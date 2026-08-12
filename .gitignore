@@ -28,3 +28,4 @@ scripts/live-tokens.mjs
 secrets.txt
 scripts/fix-inline-secrets.py
 scripts/generic-test.mjs
+scripts/reinstall-compose-inline.yaml
