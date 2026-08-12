@@ -24,3 +24,7 @@ grafana-credentials.txt
 
 # ── Truenas deploy scripts with embedded secrets ──────
 scripts/truenas-wss-admin.mjs
+scripts/live-tokens.mjs
+secrets.txt
+scripts/fix-inline-secrets.py
+scripts/generic-test.mjs

@@ -3,7 +3,7 @@ import bs58 from 'bs58';
 import { TitanQuoteProvider, type TitanQuote } from '../src/providers/titan.js';
 
 const ENDPOINT = 'johnb-mainnet-2781.mainnet.rpcpool.com';
-const TOKEN = '#### REDACTED ####';
+const TOKEN = '00000000-0000-4test-0000-000000000000';
 const SOL = 'So11111111111111111111111111111111111111112';
 const MINT = 'C8VZE8cy71FKrVKMdi8Ne9q9JNyFD7vJEbGMuaS3pump';
 

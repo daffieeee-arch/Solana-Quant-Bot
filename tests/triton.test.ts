@@ -33,7 +33,7 @@ function makeFakeClient(handlersByProgram: Record<string, (u: VixenUpdate) => vo
 }
 
 const ENDPOINT = 'johnb-mainnet-2781.mainnet.rpcpool.com';
-const TOKEN = '#### REDACTED ####';
+const TOKEN = '00000000-0000-4test-0000-000000000000';
 
 const PUMP_BUY: VixenUpdate = {
   buy: {
