@@ -1,0 +1,9 @@
+{
+  "release": "live-market-sim-full",
+  "gate": "B1",
+  "date": "2026-08-06",
+  "source_aggregate_sha256": "786c44deff40c0c09560f8ee7a95d6acea5053477d1038020cc2165db5487b53",
+  "image_build_scope_sha256": "deef3609570b2fe4bb210215862fa79689af087cc598b01d063966a76f43008d",
+  "prod_src_byte_identical": true,
+  "note": "tests/ excluded from image scope; only src+frontend+package+tsconfig+Dockerfile form the image"
+}

@@ -1,0 +1,5 @@
+{
+  "disabled": true,
+  "reason": "Stale rollback deployment payload neutralized during Gate A security cleanup.",
+  "requires": "A fresh, explicitly approved Gate B must generate rollback parameters from the exact pre-deploy TrueNAS app state after read-only verification."
+}

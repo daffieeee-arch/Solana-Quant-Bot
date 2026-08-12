@@ -1,0 +1,26 @@
+# Default-deny Docker build context. Only files explicitly copied by Dockerfile are allowed.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!tsconfig.json
+!src/
+!src/**
+!frontend/
+!frontend/index.html
+!frontend/vite.config.ts
+!frontend/tsconfig.json
+!frontend/src/
+!frontend/src/**
+data-bot
+data-bot-final
+data-bot-v3
+data-bot-v4
+data-bot-v5
+data-stream
+data-stream2
+data-stream3
+scripts/
+tests/
+*.py

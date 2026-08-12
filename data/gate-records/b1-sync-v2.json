@@ -1,0 +1,15 @@
+{
+  "release": "live-market-sim-full",
+  "gate": "B1",
+  "date": "2026-08-06",
+  "status": "SYNC_DONE_NEEDS_SECRETS",
+  "source_aggregate_sha256": "5ce214256c0cbde863caa8e91d74152d211d138856dcb4a4a2acdd7c93899030",
+  "image_build_scope_sha256": "3c99d48adb68924af0e8d797020188b74694e3e0e66a988e5bb6e2f1a16a7b6b",
+  "prod_src_byte_identical": true,
+  "secret_loading": "TRITON via _FILE mounts (readOptionalSecret added to main.ts)",
+  "pending": [
+    "triton-endpoint secret file",
+    "triton-token secret file",
+    "B2 app.update approval"
+  ]
+}

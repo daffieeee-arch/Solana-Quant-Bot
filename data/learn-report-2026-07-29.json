@@ -1,0 +1,32 @@
+{
+  "action": "hold",
+  "reason": "No challenger beat the champion",
+  "championPerf": {
+    "netReturn": -9.011615509000006,
+    "profitFactor": 0.6839986562122441,
+    "sharpeRatio": -0.1253691504922278,
+    "sortinoRatio": -0.1500788859812596,
+    "maxDrawdown": 9.908105572000006,
+    "winRate": 36.44578313253012,
+    "avgWin": 0.08060344552892562,
+    "avgLoss": 0.06757736807345968,
+    "totalTrades": 664,
+    "expectancy": -0.01357171010391564,
+    "medianTrade": -0.020604118999999997,
+    "volatility": 0.10825398473731418
+  },
+  "totalTrades": 664,
+  "analysis": {
+    "winCount": 242,
+    "lossCount": 422,
+    "stopLossRatio": 0.49096385542168675,
+    "recommendations": [],
+    "exitReasons": {
+      "trailing_stop": 272,
+      "stop_loss": 326,
+      "time_stop": 59,
+      "max_hold": 7
+    }
+  },
+  "candidatesTested": 3
+}

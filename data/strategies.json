@@ -1,0 +1,58 @@
+[
+  {
+    "id": "v1.0",
+    "status": "champion",
+    "createdAt": "2026-07-28T07:25:05.761Z",
+    "notes": "Initial baseline",
+    "performance": {
+      "netReturn": 0.21003474400000002,
+      "profitFactor": 1.0397003309404793,
+      "sharpeRatio": 0.011831302822050967,
+      "sortinoRatio": 0.019259161419283057,
+      "maxDrawdown": 1.189762658,
+      "winRate": 34.50704225352113,
+      "avgWin": 0.11225588469387753,
+      "avgLoss": 0.05688713554838709,
+      "totalTrades": 142,
+      "expectancy": 0.0014791179154929543,
+      "medianTrade": -0.016299167,
+      "volatility": 0.1250173322194243
+    }
+  },
+  {
+    "id": "v0.0.1",
+    "parent": "v1.0",
+    "createdAt": "2026-07-29T09:10:03.359Z",
+    "config": {
+      "maxStopLossPercent": 15,
+      "takeProfitPercent": 10,
+      "maxHoldMinutes": 15
+    },
+    "status": "challenger",
+    "notes": "Random exploration"
+  },
+  {
+    "id": "v0.0.2",
+    "parent": "v1.0",
+    "createdAt": "2026-07-29T09:10:03.359Z",
+    "config": {
+      "maxHoldMinutes": 10,
+      "minMomentumScore": 35,
+      "maxPositionSol": 0.4
+    },
+    "status": "challenger",
+    "notes": "Random exploration"
+  },
+  {
+    "id": "v0.0.3",
+    "parent": "v1.0",
+    "createdAt": "2026-07-29T09:10:03.359Z",
+    "config": {
+      "maxStopLossPercent": 35,
+      "takeProfitPercent": 8,
+      "trailingStopPercent": 4
+    },
+    "status": "challenger",
+    "notes": "Random exploration"
+  }
+]

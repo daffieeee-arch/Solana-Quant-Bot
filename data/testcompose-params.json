@@ -1,0 +1,5 @@
+{
+  "disabled": true,
+  "reason": "Stale deployment payload neutralized during Gate A security cleanup.",
+  "requires": "Generate fresh parameters only inside a separately approved Gate B."
+}

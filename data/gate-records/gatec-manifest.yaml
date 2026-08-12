@@ -1,0 +1,84 @@
+# Gate C diagnostic fresh app — rebuilds from synced source (has triton_config diagnostic)
+# Purpose: confirm via container log whether Triton is enabled (secret mounts readable).
+# Reuses the same immutable build path + Triton/RPC secret mounts.
+services:
+  solana-scanner-gatec:
+    build:
+      context: /mnt/fastdisk/ai/hermes/solana-paper-scanner
+      dockerfile: Dockerfile
+      args:
+        SOURCE_FREEZE_SHA256: "fe800a7b6bbe707b05e798f4aa4f4b78bd9eba17e535e8285704a06968626267"
+    image: solana-scanner-gatec:gatec
+    pull_policy: "never"
+    command: ["node", "/app/dist/main.js"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "10001:10001"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 200
+    environment:
+      MODE: "paper"
+      PAPER_STARTING_SOL: "10"
+      MAX_POSITION_SOL: "0.35"
+      MAX_CONCURRENT_POSITIONS: "4"
+      MAX_DAILY_LOSS_SOL: "0.5"
+      MIN_LIQUIDITY_USD: "3000"
+      MAX_LIQUIDITY_USD: "2000000"
+      MIN_AGE_MINUTES: "3"
+      MAX_AGE_MINUTES: "259200"
+      MIN_PRICE_CHANGE_M5_PERCENT: "1.5"
+      MIN_VOLUME_M5_USD: "1000"
+      MIN_MOMENTUM_SCORE: "50"
+      MIN_STOP_LOSS_PERCENT: "5"
+      MAX_STOP_LOSS_PERCENT: "20"
+      STOP_VOLATILITY_MULTIPLIER: "1.0"
+      BREAKEVEN_TRIGGER_PERCENT: "8"
+      MIN_PROFIT_FOR_CONTINUE_PERCENT: "2"
+      POSITION_SCORE_DIVISOR: "80"
+      LIQUIDITY_POSITION_FRACTION: "0.02"
+      STOP_LOSS_PERCENT: "12"
+      TAKE_PROFIT_PERCENT: "8"
+      TRAILING_STOP_PERCENT: "5"
+      MAX_HOLD_MINUTES: "15"
+      SIMULATED_SLIPPAGE_BPS: "100"
+      SIMULATED_FEE_BPS: "100"
+      SCAN_INTERVAL_SECONDS: "5"
+      MAX_CYCLES: "0"
+      STRICT_RISK_MODE: "false"
+      WHALE_WALLETS: ""
+      MIN_WHALE_TX_SOL: "670"
+      TRITON_ENDPOINT_FILE: "/run/secrets/triton-endpoint"
+      TRITON_TOKEN_FILE: "/run/secrets/triton-token"
+      RPC_HTTP_ENDPOINT_FILE: "/run/secrets/rpc-http-endpoint"
+      RPC_WS_ENDPOINT_FILE: "/run/secrets/rpc-ws-endpoint"
+      DATA_DIR: "/data"
+      DASHBOARD_ENABLED: "true"
+      DASHBOARD_PORT: "3000"
+    ports:
+      - "192.168.1.234:3002:3000"
+      - "100.79.221.55:3002:3000"
+    volumes:
+      - type: bind
+        source: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/rpc-http-endpoint
+        target: /run/secrets/rpc-http-endpoint
+        read_only: true
+      - type: bind
+        source: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/rpc-ws-endpoint
+        target: /run/secrets/rpc-ws-endpoint
+        read_only: true
+      - type: bind
+        source: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/triton-endpoint
+        target: /run/secrets/triton-endpoint
+        read_only: true
+      - type: bind
+        source: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/triton-token
+        target: /run/secrets/triton-token
+        read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777

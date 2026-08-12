@@ -1,0 +1,4 @@
+# Disabled stale rollback artifact.
+disabled: true
+reason: "Superseded by the exact certificate-pinned current app.config snapshot stored outside the repository."
+requires: "Generate rollback parameters from that protected snapshot only inside a separately approved Gate B."

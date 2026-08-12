@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "portfolio": {
+    "createdAt": "2026-07-25T22:27:32.819Z",
+    "availableLamports": 642611424,
+    "dailyRealizedLossLamports": 590689869,
+    "positions": [],
+    "consecutiveLosses": 2,
+    "dailyLossDateUtc": "2026-07-31"
+  },
+  "realizedPnlLamports": -9357388576,
+  "updatedAt": "2026-07-31T22:58:34.721Z"
+}

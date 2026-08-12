@@ -1,0 +1,26 @@
+# ── Dependencies / build ──────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ── Runtime data (ledger, snapshots, caches) ───────────
+data-bot-v5/
+*.ndjson
+*.log
+
+# ── Secrets (NOOIT committen) ──────────────────────────
+.env
+*.env
+secrets/
+truenas-credentials.txt
+grafana-credentials.txt
+**/*-token*.txt
+**/*-wss-admin*.mjs
+
+# ── Editors / OS ──────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+
+# ── Truenas deploy scripts with embedded secrets ──────
+scripts/truenas-wss-admin.mjs

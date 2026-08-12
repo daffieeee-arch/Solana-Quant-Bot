@@ -1,0 +1,19 @@
+// Bekende Solana memecoins (naam, mint) — 2-12 maanden oud, voor de 3-maanden backtest
+export const KNOWN_MEMECOINS = [
+  ['BONK', 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'],
+  ['WIF', 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm'],
+  ['POPCAT', '7GCihgDB8fe6KNkn2vH7a85k9XEoGzFkTkqLtT7Wg2W3'],
+  ['MEW', 'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5'],
+  ['PONKE', '5z3EqYQo9HiCEs3RkcRk4WJcNU1z3pfLQJgEa4vNxRge'],
+  ['GIGA', '63LfDmNb3MQ8mw9MtZ2B9wTbuMydbfY1cL9T7mDnJgHf5'],
+  ['MANEKI', '25hEyHw59cMv5PvR4F5AHkRaXDhfwq9JGXqWqEVrpump'],
+  ['WEN', 'WENWENvqqNya429ubCdR81ZmD69brwQaaBYY6p3LCpk'],
+  ['SAMO', '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'],
+  ['PENG', 'PENGU9U5HQ4QZgU4TkYQpJgok7fW5iU6wCkM9nGv'],
+  ['BOME', 'ukHH6c7mMyiWCf1b9pnWe29TSLMj2q6gDzSG2KfGJVsL'],
+  ['SLERF', '7BgBvyjrZX1YKz4oh9mjbwZJD7X5Hkyd3uTJGwmJSKbN'],
+  ['PEPE', '21Dt6Ne2tQ8wQ5j6G2zahtF1tskJqRmtSaaSwXjyBJVz'],
+  ['CHEEMS', '3FoUAsGDbvTD6YZ4wVKJgTB76onJUKz7GPEBNiR5b8QU'],
+  ['MICHI', '5mbKroDDYqK7mK9KjHNXz8xEQdpA2TJKiKzXpQpRkDpF'],
+  ['ZEREBRO', '8x5VqbHA8D7NkD52uNuS5nnt3PwA8pLD34ymskeSo2Wn'],
+];
