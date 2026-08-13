@@ -79,7 +79,10 @@ export function buildPumpIdentity(i: {
   entryPriceSource: PumpBondingCurveIdentity['entryPriceSource']; markPriceSource?: PumpBondingCurveIdentity['markPriceSource'];
   strategyVersion: string; schemaVersion: number;
 }): PumpBondingCurveIdentity | null {
-  if (!i.curve || i.curve.length < 10) return null; // gx:<mint> / ontbrekend → ongeldig
+  // Reviewer-fix (deleg_5181dd26, 1a): verwerp ook de gx:<mint>-only-vorm in de
+  // builder zelf — niet alleen op gate-niveau. Ontbrekende/korte curve of mint-
+  // afgeleide identity → ongeldig (nooit canonical).
+  if (!i.curve || i.curve.length < 10 || i.curve.toLowerCase() === `gx:${i.mint.toLowerCase()}`) return null;
   if (!i.mint || !i.programId || !i.baseDecimals || !i.quoteDecimals || !i.sourceTimestamp) return null;
   return {
     kind: 'pump_bonding_curve', tradeId: i.tradeId, mint: i.mint, protocol: 'pump',

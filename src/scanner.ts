@@ -405,8 +405,13 @@ export class Scanner {
       const miIsGxOnly = (snapshot.pairId ?? '').toLowerCase() === `gx:${snapshot.mint.toLowerCase()}`;
       // Fase-QH shadow-mode: evalueer de kandidaat tegen het volledige entry-contract
       // en rapporteer WOULD_ACCEPT/WOULD_REJECT, maar open (nog) geen positie —
-      // enforcement blijft voorlopig de gx-gate hieronder. Shadow-verdicts bewijzen
-      // dat de gate niet onbedoeld alles afwijst vóór ENFORCE wordt ingeschakeld.
+      // enforcement blijft voorlopig de gx-gate hieronder.
+      // NB (reviewer deleg_5181dd26, obs 3a): de live-pipeline geeft hier expliciet
+      // `identity: undefined` door (upstream MarketIdentity-constructie is nog niet
+      // aangesloten) → runtime-verdicts zijn per constructie WOULD_REJECT. Het bewijs
+      // dat geldige identities WOULD_ACCEPT krijgen (en ongeldige WOULD_REJECT met
+      // correcte reasonCode) leeft in de protocol-integratietests
+      // (tests/entry-shadow-integration.test.ts) m.b.v. recorded fixtures.
       if (this.config.entryShadowMode) {
         const decimalsOk = Number.isFinite(snapshot.poolDepth?.baseDecimals) && Number.isFinite(snapshot.poolDepth?.quoteDecimals);
         const shadow = evaluateEntryShadow({

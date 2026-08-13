@@ -65,7 +65,7 @@ export class DecimalsResolver {
       toFetch.push(mint);
     }
     if (toFetch.length) {
-      const p = this.rpc(toFetch).then((m) => m);
+      const p = this.rpc(toFetch).then((m) => m).catch(() => new Map());
       for (const mint of toFetch) this.inFlight.set(mint, p.then((m) => m.get(mint)));
       const m = await p;
       for (const [mint, dec] of m) {
