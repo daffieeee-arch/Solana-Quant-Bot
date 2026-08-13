@@ -108,13 +108,15 @@ export class TitanQuoteProvider {
 
     // T4: in-flight dedup — gelijktijdige calls voor dezelfde (mint,amount,dec)
     // delen één getSwapPrice-promise i.p.v. dubbele requests te doen.
+    // REVIEWER-FIX: de promise wordt vóór de EERSTE await gezet (de client-
+    // beschaffung zit IN de promise), zodat er geen await-gat tussen get en set
+    // ontstaat → de race (twee eerste calls die beiden de miss zien) is gedicht.
     const inflight = this.inFlight.get(cacheKeyBase);
     if (inflight) return inflight;
 
-    const client = await this.client();
-    if (!client) return undefined;
-
     const request = (async (): Promise<TitanQuote | undefined> => {
+      const client = await this.client();
+      if (!client) return undefined;
       try {
         const response = await withTimeout(
           client.getSwapPrice({
@@ -156,10 +158,17 @@ export class TitanQuoteProvider {
         const message = error instanceof Error ? error.message : String(error);
         const isConnBreak = /connect|closed|ECONN|timeout|transport|socket|dial|handshake/i.test(message);
         if (isConnBreak) {
+          // REVIEWER-FIX (T3): close de client van DEZE request (in scope) i.p.v.
+          // de huidige this.clientPromise — die kan al een NIEUWE verbinding zijn
+          // van een andere request. Alleen als deze client nog de actieve is,
+          // wordt de referentie gereset (zodat de volgende call reconnect).
           const stale = this.clientPromise;
-          this.clientPromise = undefined;
+          if (client === (await this.client())) {
+            this.clientPromise = undefined;
+          }
+          client.close().catch(() => undefined);
           if (stale) {
-            stale.then((c) => c.close().catch(() => undefined)).catch(() => undefined);
+            stale.then((c) => { if (c !== client) c.close().catch(() => undefined); }).catch(() => undefined);
           }
         }
         this.pushDiagnostic(`titan: ${message.slice(0, 160)}`);
