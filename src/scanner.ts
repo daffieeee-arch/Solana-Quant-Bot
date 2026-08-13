@@ -124,6 +124,8 @@ export class Scanner {
     private readonly clock: () => Date = () => new Date(),
     initialFirstSeenByPair: ReadonlyMap<string, string> = new Map(),
     private readonly discoveryDeadlineMs = 4_000,
+    /** Fase-Q: quarantainefilter (tradeId → uit actieve risk/concurrency). */
+    private readonly isQuarantined?: (tradeId: string) => boolean,
   ) {
     if (!Number.isInteger(discoveryDeadlineMs) || discoveryDeadlineMs <= 0) {
       throw new Error('discovery deadline must be a positive integer');
@@ -134,6 +136,16 @@ export class Scanner {
       if (!pairId || !Number.isFinite(Date.parse(firstSeenAt))) continue;
       this.pairStates.set(pairId, { firstSeenAt, touchedAtMs });
     }
+  }
+
+  /** Fase-Q: de set van gequarantinede tradeIds (als quarantainefilter actief). */
+  private quarantinedTradeIds(): ReadonlySet<string> | undefined {
+    if (!this.isQuarantined || !this.portfolio.positions.length) return undefined;
+    const ids = new Set<string>();
+    for (const p of this.portfolio.positions) {
+      if (this.isQuarantined(p.tradeId)) ids.add(p.tradeId);
+    }
+    return ids.size ? ids : undefined;
   }
 
   private ensurePairStateCapacity(nowMs: number): void {
@@ -196,11 +208,17 @@ export class Scanner {
 
   async runOnce(): Promise<ScanResult> {
     const providerErrors: string[] = [];
-    const openPositions = this.portfolio.positions.flatMap((position) => (
-      typeof position.pairId === 'string' && position.pairId.length > 0 && position.mint.length > 0
-        ? [{ pairId: position.pairId, mint: position.mint }]
-        : []
-    ));
+    const openPositions = this.portfolio.positions.flatMap((position) => {
+      // Fase-Q: gequarantinede legacy posities worden uit actieve risk/concurrency
+      // gehouden — ze worden niet gerelateerd aan een mark en mogen geen exit/stop-loss
+      // triggeren (nog geen canonical marktidentiteit, prijs is enkel UNKNOWN/impairment).
+      if (this.isQuarantined && this.isQuarantined(position.tradeId)) return [];
+      return (
+        typeof position.pairId === 'string' && position.pairId.length > 0 && position.mint.length > 0
+          ? [{ pairId: position.pairId, mint: position.mint }]
+          : []
+      );
+    });
     const openPositionKeys = new Set(openPositions.map(positionKey));
     const carriedDiscovery = this.takeLateDiscovery();
     const discoveryPromise = this.provider.fetchSnapshots();
@@ -377,6 +395,16 @@ export class Scanner {
         decisions.push({ type: 'rejected', pairId: snapshot.pairId, mint: snapshot.mint, symbol: snapshot.symbol, reason: riskGate.reason, rejectionClass: 'risk', score, source: snapshot.source, ...context });
         continue;
       }
+      // Fase-Q fail-closed entry-contract (HOLD-fase): blokkeer uitdrukkelijk de
+      // bewezen-ongeldige `gx:<mint>`-only entries (geen canonical market identity,
+      // geen herleidbare curve/vault → later onprijsbaar). De decimals/perfect-market-
+      // identity-vereiste wordtt nog NIET afgedwongen zolang upstream discovery de
+      // nodige identifiers niet betrouwbaar vult (anders blokkeren we alle entries).
+      const miIsGxOnly = (snapshot.pairId ?? '').toLowerCase() === `gx:${snapshot.mint.toLowerCase()}`;
+      if (miIsGxOnly) {
+        decisions.push({ type: 'rejected', pairId: snapshot.pairId, mint: snapshot.mint, symbol: snapshot.symbol, reason: 'missing_canonical_market_identity', rejectionClass: 'risk', score, source: snapshot.source, ...context });
+        continue;
+      }
       // Live Titan route-quoted fill price (real aggregated multi-venue): use it to
       // override the pair-derived price for the actual position size. Fail-closed:
       // if Titan is unavailable, keep the snapshot price unchanged.
@@ -430,7 +458,7 @@ export class Scanner {
         priceChangeM5Percent: snapshot.priceChangeM5Percent,
         poolDepth: snapshot.poolDepth,
         solPriceUsd: this.config.solPriceUsd,
-      }, this.config);
+      }, this.config, this.quarantinedTradeIds());
       if (entry.ok === false) {
         decisions.push({ type: 'rejected', pairId: snapshot.pairId, mint: snapshot.mint, symbol: snapshot.symbol, reason: entry.reason, rejectionClass: 'risk', score, source: snapshot.source, ...context });
         continue;

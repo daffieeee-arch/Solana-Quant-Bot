@@ -179,11 +179,16 @@ export function createPortfolio(config: PaperConfig, createdAt: string): Portfol
   };
 }
 
-export function enterPaperPosition(portfolio: Portfolio, input: EntryInput, config: PaperConfig): EntryResult {
+export function enterPaperPosition(portfolio: Portfolio, input: EntryInput, config: PaperConfig, quarantinedTradeIds?: ReadonlySet<string>): EntryResult {
   const currentPortfolio = normalizeDailyLoss(portfolio, input.at);
   if (!Number.isFinite(input.priceUsd) || input.priceUsd <= 0) return { ok: false, reason: 'invalid_price' };
   if (currentPortfolio.positions.some((position) => position.mint === input.mint)) return { ok: false, reason: 'duplicate_position' };
-  if (currentPortfolio.positions.length >= config.maxConcurrentPositions) return { ok: false, reason: 'max_concurrent_positions' };
+  // Fase-Q: concurrency-cap telt alleen ACTIEVE posities; gequarantinede legacy
+  // posities (zonder canonical market identity) nemen geen slots in beslag.
+  const activeCount = quarantinedTradeIds && quarantinedTradeIds.size > 0
+    ? currentPortfolio.positions.filter((p) => !quarantinedTradeIds.has(p.tradeId)).length
+    : currentPortfolio.positions.length;
+  if (activeCount >= config.maxConcurrentPositions) return { ok: false, reason: 'max_concurrent_positions' };
   if (currentPortfolio.dailyRealizedLossLamports >= toLamports(config.maxDailyLossSol)) return { ok: false, reason: 'daily_loss_limit' };
 
   const allocatedLamports = toLamports(computePositionSize(input.score, input.liquidityUsd, config.solPriceUsd, config, currentPortfolio.consecutiveLosses));
