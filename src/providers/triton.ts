@@ -197,9 +197,14 @@ export class TritonProvider {
     if (!Number.isFinite(priceUsd) || priceUsd <= 0) return false;
     const now = this.clock();
     this.lastPriceByMint.set(mint, { priceUsd, at: now });
+    this._trackMarkSource(mint, source);
+    return true;
+  }
+  /** Fase-W: registreer de gebruikte mark-source voor een ge-watchte mint + teller. */
+  private _trackMarkSource(mint: string, source: 'STREAM' | 'TITAN' | 'LOCAL_STATE' | 'REGISTRY' | 'RPC' | 'STALE'): void {
+    if (this.positionMarkSource.size > 5_000) this.positionMarkSource.clear();
     this.positionMarkSource.set(mint, source);
     this.positionMarkSourceCounts[source] = (this.positionMarkSourceCounts[source] ?? 0) + 1;
-    return true;
   }
 
   private cleanupPumpDepthThrottle(): void {
@@ -393,16 +398,28 @@ export class TritonProvider {
     // Fase-O freshness-regel (primaire bron): verse LOKALE stream-prijs
     // (gratis balance-pricing uit emitDiscovery) → 0 RPC zolang recent.
     const local = this.lastPriceByMint.get(mint);
-    if (local && nowMark - local.at < POSITION_MARK_FRESH_MS) return local.priceUsd;
+    if (local && nowMark - local.at < POSITION_MARK_FRESH_MS) {
+      if (this.positionWatchMints.has(mint)) this._trackMarkSource(mint, this.positionMarkSource.get(mint) ?? 'LOCAL_STATE');
+      return local.priceUsd;
+    }
     // Fallback: eerder RPC-resultaat (mark-cache, nu 90s > scan-interval)
     const markCached = this.positionMarkCache.get(mint);
-    if (markCached && nowMark - markCached.loadedAt < POSITION_MARK_CACHE_MS) return markCached.priceUsd;
+    if (markCached && nowMark - markCached.loadedAt < POSITION_MARK_CACHE_MS) {
+      if (this.positionWatchMints.has(mint)) this._trackMarkSource(mint, 'RPC');
+      return markCached.priceUsd;
+    }
     try {
       const curve = this.curveRegistry.get(mint);
       const depth = curve
         ? await this.reserveReader.fetchPumpDepth(curve, this.solPriceUsd)
         : await this.reserveReader.fetchPumpDepthByMint(mint, this.solPriceUsd);
-      if (!depth || !Number.isFinite(depth.baseReserve) || depth.baseReserve <= 0) return undefined;
+      if (!depth || !Number.isFinite(depth.baseReserve) || depth.baseReserve <= 0) {
+        // Fase-W: stale/onbeschikbare mark — tel voor observability + fail-closed.
+        this.positionMarkRpcFallbackTotal += 1;
+        this.positionMarkStaleTotal += 1;
+        if (this.positionWatchMints.has(mint)) this._trackMarkSource(mint, 'STALE');
+        return undefined;
+      }
       // spotPrijs = quoteReserve/baseReserve (SOL per token) × SOL-prijs → USD.
       const quoteUnits = depth.quoteReserve / 10 ** (depth.quoteDecimals ?? 9);
       const baseUnits = depth.baseReserve / 10 ** (depth.baseDecimals ?? 6);
@@ -415,6 +432,9 @@ export class TritonProvider {
       this.positionMarkCache.set(mint, { loadedAt: nowMark, priceUsd });
       // ook de lokale stream-prijs bijwerken (zodat volgende frames het gebruiken)
       this.lastPriceByMint.set(mint, { priceUsd, at: nowMark });
+      // Fase-W: deze mark kwam via RPC-fallback (bounded) — tellen voor observability.
+      this.positionMarkRpcFallbackTotal += 1;
+      if (this.positionWatchMints.has(mint)) this._trackMarkSource(mint, 'RPC');
       return priceUsd;
     } catch {
       return undefined;
