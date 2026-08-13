@@ -6,6 +6,7 @@ import type { MarketSnapshot } from '../src/scoring.js';
 const PUMPFUN = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 const PAIR = '4yUUpM9h9pXZLn54X4jLP4FoV8JsBK4nsSMLGaeyVuCP';
 const MINT = 'C8VZE8cy71FKrVKMdi8Ne9q9JNyFD7vJEbGMuaS3pump';
+const TOKEN_FAKE = '00000000-0000-4test-0000-000000000000';
 
 // ─── fake Triton client seam ────────────────────────────────────────────────
 function makeFakeClient() {
@@ -169,5 +170,37 @@ describe('CompositeProvider + Triton discovery', () => {
     const result = await composite.fetchSnapshots();
     // geen externe quotes (Triton-first): oude onprijsde pool → fail-closed
     expect(result.some((s) => s.pairId === 'old-pool')).toBe(false);
+  });
+
+  it('Fase C: position-mark quotes worden binnen 30s gecached (geen dubbele RPC per scan)', async () => {
+    // Directe TritonProvider waarin reserveReader gemockt is: 2× fetchPositionPriceUsd
+    // binnen de 30s-cache moeten MAAR 1 RPC-diepte-ophaling triggern (de 2e leest cache).
+    let depthCalls = 0;
+    const fakeDepth = { baseReserve: 1e6, quoteReserve: 3e9, baseDecimals: 6, quoteDecimals: 9 };
+    const fakeReserveReader = {
+      fetchPumpDepthByMint: async () => { depthCalls += 1; return fakeDepth; },
+      fetchPumpDepth: async () => fakeDepth,
+      resolveSymbol: async () => undefined,
+      assessRugSafety: async () => undefined,
+      drainDiagnostics: () => [],
+    };
+    const provider = new TritonProvider(
+      'johnb-mainnet-2781.mainnet.rpcpool.com',
+      TOKEN_FAKE,
+      // clientFactory: functie die de gRPC-client seam retourneert (geen echte gRPC)
+      (() => ({ Subscribe: () => ({ on: () => ({ on: () => undefined, cancel: () => undefined }), cancel: () => undefined }) })) as never,
+      // clock (4e) — default
+      undefined,
+      // reserveReader (5e) — mock
+      fakeReserveReader as never,
+      // options (6e)
+      { solPriceUsd: 74 } as never,
+    );
+    const p1 = await provider.fetchPositionPriceUsd(MINT);
+    const p2 = await provider.fetchPositionPriceUsd(MINT);
+    expect(p1).toBeGreaterThan(0);
+    expect(p2).toBe(p1);
+    // 2 oproepen, 1 echte depth-fetch (2e = cache-hit)
+    expect(depthCalls).toBe(1);
   });
 });

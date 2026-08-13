@@ -31,6 +31,8 @@ const MAX_PENDING_IDENTITIES = 2_000;
 const REEMIT_COOLDOWN_MS = 30_000;
 /** Zuinigheid: bonding-curve depth fetch throttlen per mint (niet op elk event). */
 const PUMP_DEPTH_THROTTLE_MS = 10 * 60_000;
+/** Fase C: position-mark cache-duur (30s — half van het scan-interval). */
+const POSITION_MARK_CACHE_MS = 30_000;
 
 // Program IDs verified from Triton Vixen docs + live sample (2026-08-06).
 const PROGRAMS = {
@@ -129,6 +131,10 @@ export class TritonProvider {
   private readonly flow = new FlowTelemetry();
   /** Zuinigheid: last-fetch timestamp per mint voor bonding-curve depth (throttle). */
   private readonly pumpDepthThrottle = new Map<string, number>();
+  /** Fase C: position-mark cache — beperkt herhaalde getAccountInfo/getTokenLargestAccounts
+   * voor open-positie-marks (deze worden per scan-cycle gecalld; 30s-cache halveert de
+   * RPC-last zonder de risk-exit-evaluatie te vertragen ten opzichte van scan-interval). */
+  private readonly positionMarkCache = new Map<string, { loadedAt: number; priceUsd: number }>();
 
   private cleanupPumpDepthThrottle(): void {
     if (this.pumpDepthThrottle.size < 20_000) return;
@@ -306,17 +312,25 @@ export class TritonProvider {
 
   /**
    * Verse USDT-prijs voor een open positie (mark-ticker). Triton-first zuinig:
-   *  - pump-mint: fetchPumpDepthByMint (1 gecachte getAccountInfo → curve-reserves)
-   *    → spotPrijs uit constant-product depth. Dat is dezelfde prijsroute die
-   *    discovery gebruikt, maar on-demand voor een positie die niet (meer) in de
-   *    actieve discovery-flow zit.
+   *  - Als de curve al bekend is (curveRegistry, van de discovery-flow), pak dan
+   *    DIRECT fetchPumpDepth(curve) = 1 RPC-call. Alleen als de curve ontbreekt
+   *    valt hij terug op fetchPumpDepthByMint (2 calls: largest+accountInfo).
+   *  - Eigen position-mark cache (POSITION_MARK_CACHE_MS = 30s): de mark hoeft
+   *    niet méér dan één keer per scan-window ververst te worden — daalt de
+   *    per-scan getAccountInfo/getTokenLargestAccounts drastisch zonder dat de
+   *    risk-exit-evaluatie (max-hold/time-stop) aan latency verliest.
    *  - fallback: undefined (fail-closed; scanner houdt de positie open).
-   * Geen externe providers. Cached via de reserveReader (cacheMs).
    */
   async fetchPositionPriceUsd(mint: string): Promise<number | undefined> {
     if (!this.reserveReader || !this.solPriceUsd) return undefined;
+    const nowMark = this.clock();
+    const markCached = this.positionMarkCache.get(mint);
+    if (markCached && nowMark - markCached.loadedAt < POSITION_MARK_CACHE_MS) return markCached.priceUsd;
     try {
-      const depth = await this.reserveReader.fetchPumpDepthByMint(mint, this.solPriceUsd);
+      const curve = this.curveRegistry.get(mint);
+      const depth = curve
+        ? await this.reserveReader.fetchPumpDepth(curve, this.solPriceUsd)
+        : await this.reserveReader.fetchPumpDepthByMint(mint, this.solPriceUsd);
       if (!depth || !Number.isFinite(depth.baseReserve) || depth.baseReserve <= 0) return undefined;
       // spotPrijs = quoteReserve/baseReserve (SOL per token) × SOL-prijs → USD.
       const quoteUnits = depth.quoteReserve / 10 ** (depth.quoteDecimals ?? 9);
@@ -324,7 +338,11 @@ export class TritonProvider {
       if (baseUnits <= 0) return undefined;
       const solPerToken = quoteUnits / baseUnits;
       if (!Number.isFinite(solPerToken) || solPerToken <= 0) return undefined;
-      return solPerToken * this.solPriceUsd;
+      const priceUsd = solPerToken * this.solPriceUsd;
+      // position-mark cache opslaan; bounded (max 500 posities-marks)
+      if (this.positionMarkCache.size > 500) this.positionMarkCache.clear();
+      this.positionMarkCache.set(mint, { loadedAt: nowMark, priceUsd });
+      return priceUsd;
     } catch {
       return undefined;
     }
