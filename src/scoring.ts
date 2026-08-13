@@ -122,29 +122,18 @@ export function evaluateMarketGate(
   if (snapshot.liquidityUsd > config.maxLiquidityUsd) {
     return { accepted: false, reason: 'liquidity_above_maximum' };
   }
-  // WS-detected pools may lack volume/momentum data — skip those gates and rely on scoreMomentum
-  const isWsDetected = (snapshot.source ?? '').startsWith('solana_rpc_ws');
-  if (!isWsDetected || snapshot.volumeM5Usd !== undefined) {
-    if (snapshot.volumeM5Usd === undefined || snapshot.volumeM5Usd < config.minVolumeM5Usd) {
-      // Triton-first: discovery-pools zonder externe volume-data (Birdeye/Gecko uit)
-      // worden NIET op 'volume_below_minimum' afgewezen — de live buy-surge/flow
-      // (Laag B, uit Vixen) is het volume-signaal. Alleen rejecten wanneer er wél
-      // een opgegeven volume is dat onder de drempel zit.
-      if (snapshot.volumeM5Usd !== undefined) {
-        return { accepted: false, reason: 'volume_below_minimum' };
-      }
-    }
+  // Triton-first: géén publieke Solana-WS-lane meer (alle sources zijn
+  // triton_*). Volume/momentum-gates gelden daarom voor alle discovery-pools.
+  // Ontbrekende volume/momentum-data (geen externe Birdeye/Gecko-call) wordt
+  // NIET afgewezen — de live buy/sell-flow (Laag B, uit Vixen) is het signaal.
+  if (snapshot.volumeM5Usd !== undefined && snapshot.volumeM5Usd < config.minVolumeM5Usd) {
+    return { accepted: false, reason: 'volume_below_minimum' };
   }
   // Contra-mode: momentum_below_minimum is omgekeerd — we zoeken juist de dip
   // (negatief/laag momentum). Deze gate alleen in surge-mode.
-  if (config.entryMode !== 'contra' && (!isWsDetected || snapshot.priceChangeM5Percent !== undefined)) {
-    if (snapshot.priceChangeM5Percent === undefined || snapshot.priceChangeM5Percent < config.minPriceChangeM5Percent) {
-      // Idem: zonder externe 5-min prijs-change (Triton-only mode) geen momentum-reject;
-      // de score-beloning voor buy-surge + koopdruk is dan het entry-signaal.
-      if (snapshot.priceChangeM5Percent !== undefined) {
-        return { accepted: false, reason: 'momentum_below_minimum' };
-      }
-    }
+  if (config.entryMode !== 'contra' && snapshot.priceChangeM5Percent !== undefined
+      && snapshot.priceChangeM5Percent < config.minPriceChangeM5Percent) {
+    return { accepted: false, reason: 'momentum_below_minimum' };
   }
   const buys = snapshot.buysM5 ?? 0;
   const sells = snapshot.sellsM5 ?? 0;

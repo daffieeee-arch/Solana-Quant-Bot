@@ -120,7 +120,15 @@ export function buildLearningObservations(
         symbol: extractSymbol(decision) || snapshot.symbol,
         pairId: decision.pairId,
       },
-      dex: snapshot.source.includes('pump') ? 'pump-fun' : snapshot.source.includes('raydium') ? 'raydium' : snapshot.source.includes('birdeye') ? 'birdeye' : 'geckoterminal',
+      // Triton-first: alle discovery-sources zijn triton_* (vixen/geyser). De oude
+      // 'birdeye'/'geckoterminal'-labels bestaan niet meer en classificeerden élke
+      // multidex-source foutief als 'geckoterminal'. Log het echte programma-venue.
+      dex: snapshot.source.includes('pump')
+        ? 'pump-fun'
+        : snapshot.source.includes('geyser') || snapshot.source.includes('generic')
+          ? 'multidex'
+          : snapshot.source.includes('meteora') ? 'meteora'
+            : snapshot.source.includes('raydium') ? 'raydium' : 'triton',
       source: snapshot.source,
       priceUsd: snapshot.priceUsd,
       liquidityUsd: snapshot.liquidityUsd,
