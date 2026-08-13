@@ -169,7 +169,10 @@ async function run(): Promise<void> {
         .map((position) => position.tradeId as string),
     ));
     reconcileLearningPending();
-    runtimeConfig = withFreshSolPrice(learnController.getChampionRuntimeConfig(), marketContext);
+    // Fase-LIVE: de champion-strategie-config komt van de learn-controller; behoud
+    // de operationele (niet-strategie) entryShadowMode-flag uit de env-config, zoniet
+    // reset de champion-update de shadow-hook naar default off (runtime-shadow bug).
+    runtimeConfig = { ...withFreshSolPrice(learnController.getChampionRuntimeConfig(), marketContext), entryShadowMode: config.entryShadowMode };
     scanner.updateConfig(runtimeConfig);
     if (config.dashboardEnabled) {
       const dashboard = await createDashboardServer({
