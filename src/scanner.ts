@@ -12,7 +12,7 @@ export type MarketProvider = {
    * planned position size. When present and the entry gate passes, the scanner
    * may override the snapshot price with this real aggregated fill price.
    */
-  fetchTitanFillUsd?(mint: string, amountLamports: number, solPriceUsd: number): Promise<number | undefined>;
+  fetchTitanFillUsd?(mint: string, amountLamports: number, solPriceUsd: number, baseDecimals?: number): Promise<number | undefined>;
   /**
    * Optional: Triton on-chain rug/honeypot assessment (getAsset, gecached 7 dagen).
    * De scanner roept dit ALLEEN aan wanneer de market-gate gepasseerd is en een
@@ -374,7 +374,15 @@ export class Scanner {
         const plannedSol = computePositionSize(score, snapshot.liquidityUsd, this.config.solPriceUsd, this.config, consecutiveLosses);
         const probeLamports = Math.max(1, Math.round(Math.min(plannedSol, this.config.maxPositionSol) * 1_000_000_000));
         try {
-          const titanUsd = await this.provider.fetchTitanFillUsd(snapshot.mint, probeLamports, this.config.solPriceUsd);
+          // T1: lever snapshot.poolDepth.baseDecimals mee zodat Titan de juiste
+          // SOL-per-token-decimaal-correctie toepast (geen 1000x-inflatie voor
+          // 6-dec tokens). Fallback: undefined → Titan gebruikt 9-dec aanname.
+          const titanUsd = await this.provider.fetchTitanFillUsd(
+            snapshot.mint,
+            probeLamports,
+            this.config.solPriceUsd,
+            snapshot.poolDepth?.baseDecimals,
+          );
           if (titanUsd !== undefined && Number.isFinite(titanUsd) && titanUsd > 0) {
             entryPriceUsd = titanUsd;
           }

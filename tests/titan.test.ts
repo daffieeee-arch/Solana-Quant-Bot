@@ -83,9 +83,57 @@ describe('TitanQuoteProvider (SDK-based)', () => {
     expect(provider.quoteToUsd(quote, 0)).toBeUndefined();
   });
 
+  it('computes correct SOL-per-token for a 9-decimal token (SOL-like)', async () => {
+    // input 1 SOL (1e9 lamports, 9-dec) → output 1.2e14 raw (=120,000 tokens @ 9-dec)
+    // SOL-per-token moet 1/120_000 = 8.333e-6 zijn, ONAFHANKELIJK van decimals-mismatch.
+    (V1Client as unknown as { __handler: (...a: never[]) => void }).__handler(async () => ({
+      amountIn: 1_000_000_000n,
+      amountOut: 120_000_000_000_000n,
+    }));
+    const provider = providerWithClock();
+    const quote = await provider.fetchQuote({ outputMint: MINT, amountLamports: 1_000_000_000, baseDecimals: 9 });
+    expect(quote).toBeDefined();
+    // 1 SOL / 120_000 tokens
+    expect(quote!.price).toBeCloseTo(1 / 120_000, 10);
+  });
+
+  it('applies baseDecimals scaling for a 6-decimal token (1000x correction)', async () => {
+    // Zelfde txn-waarden, maar het base-token heeft 6 decimals (niet 9).
+    // amountOut is RAW units (1.2e14) = 1.2e8 tokens @ 6-dec, dus SOL/token =
+    // 1e9/1e8 = 10... nee — met D=6: 1 SOL / (1.2e14/1e6 tokens) = 1/1.2e8 = 8.33e-9.
+    // Zonder baseDecimals-correctie (huidige 9-dec aanname) geeft de code
+    // 1e9/1.2e14 = 8.33e-6 = 1000x te hoog.
+    (V1Client as unknown as { __handler: (...a: never[]) => void }).__handler(async () => ({
+      amountIn: 1_000_000_000n,
+      amountOut: 120_000_000_000_000n,
+    }));
+    const provider = providerWithClock();
+    const quote6 = await provider.fetchQuote({ outputMint: MINT, amountLamports: 1_000_000_000, baseDecimals: 6 });
+    const quote9 = await provider.fetchQuote({ outputMint: MINT, amountLamports: 1_000_000_000, baseDecimals: 9 });
+    // 6-dec prijs moet 1000x LAGER zijn dan 9-dec interpretatie
+    expect(quote9!.price).toBeCloseTo(quote6!.price * 1000, 6);
+    expect(quote6!.price).toBeCloseTo(1 / 120_000_000, 10);
+  });
+
   it('rejects invalid endpoint/token', () => {
     expect(() => new TitanQuoteProvider('', TOKEN)).toThrow();
     expect(() => new TitanQuoteProvider(ENDPOINT, '')).toThrow();
     expect(() => new TitanQuoteProvider('bad\nendpoint', TOKEN)).toThrow();
+  });
+
+  it('does NOT reset the shared client on a per-pair quote error (code-14 like)', async () => {
+    // Eén handler die eerst faalt (per-paar: 'Request 0 failed with code 14'),
+    // daarna slaagt. Een per-paar fout mag de gedeelde verbinding NIET breken —
+    // de tweede call (andere mint) moet dezelfde client hergebruiken.
+    const connectMock = (V1Client as unknown as { connect: ReturnType<typeof vi.fn> }).connect;
+    const provider = providerWithClock();
+    await provider.fetchQuote({ outputMint: MINT, amountLamports: 1_000_000_000 });
+    const connectsAfterPairError = connectMock.mock.calls.length;
+    (V1Client as unknown as { __handler: (...a: never[]) => void }).__handler(async (req: { amount: number }) => {
+      throw new Error('Request 0 failed with code 14: could not determine best price');
+    });
+    await provider.fetchQuote({ outputMint: MINT, amountLamports: 1_000_000_000, baseDecimals: 9 });
+    // connect mag niet opnieuw zijn aangeroepen na een per-paar fout
+    expect(connectMock.mock.calls.length).toBe(connectsAfterPairError);
   });
 });

@@ -174,13 +174,15 @@ export class CompositeProvider implements MarketProvider {
    * cannot route (caller keeps the pair-derived price — fail-closed).
    * `WSOL` input amounts (lamports) map directly to the quote size.
    */
-  async fetchTitanFillUsd(mint: string, amountLamports: number, solPriceUsd: number): Promise<number | undefined> {
+  async fetchTitanFillUsd(mint: string, amountLamports: number, solPriceUsd: number, baseDecimals?: number): Promise<number | undefined> {
     if (!this.titan) return undefined;
     // input = SOL (v1 API prijst SOL→mint); slippage/numQuotes zitten in de
     // SDK-verbinding zelf (geen per-call params voor getSwapPrice).
+    // baseDecimals: vereist voor de correcte SOL-per-token-decimaal-correctie (T1).
     const quote = await this.titan.fetchQuote({
       outputMint: mint,
       amountLamports,
+      baseDecimals,
     });
     if (!quote) return undefined;
     const usd = this.titan.quoteToUsd(quote, solPriceUsd);
@@ -269,7 +271,7 @@ export class CompositeProvider implements MarketProvider {
         } else {
           try {
             const probe = 200_000_000; // 0.2 SOL probe size voor route-quote
-            titanUsd = await this.fetchTitanFillUsd(pool.mint, probe, this.solPriceUsd);
+            titanUsd = await this.fetchTitanFillUsd(pool.mint, probe, this.solPriceUsd, pool.poolDepth?.baseDecimals);
           } catch (error) {
             this.pushDiagnostic(`discovery_titan_price: mint=${pool.mint.slice(0, 8)}: ${errorMessage(error)}`);
           }

@@ -32,6 +32,8 @@ export type TitanQuote = {
 export class TitanQuoteProvider {
   private readonly diagnostics: string[] = [];
   private readonly cache = new Map<string, { expiresAt: number; quote: TitanQuote }>();
+  /** T4: in-flight dedup per (mint,amount,dec) — voorkomt dubbele gelijktijdige requests. */
+  private readonly inFlight = new Map<string, Promise<TitanQuote | undefined>>();
   private clientPromise: Promise<V1Client> | undefined;
   private readonly wsUrl: string;
   private readonly cacheMs: number;
@@ -84,55 +86,90 @@ export class TitanQuoteProvider {
    * Fetch a live route-quoted price (SOL input → mint output). Returns a TitanQuote,
    * or undefined if unavailable (fail-closed).
    */
-  async fetchQuote(options: { outputMint: string; amountLamports?: number }): Promise<TitanQuote | undefined> {
+  async fetchQuote(options: { outputMint: string; amountLamports?: number; baseDecimals?: number }): Promise<TitanQuote | undefined> {
     const { outputMint } = options;
     if (!isMint(outputMint)) return undefined;
     const amountLamports = options.amountLamports ?? 10 ** SOL_DECIMALS; // 1 SOL default probe
     if (!Number.isFinite(amountLamports) || amountLamports <= 0) return undefined;
-
-    const key = `${outputMint}\0${amountLamports}`;
+    // Titan's amountIn/amountOut zijn RAW token-units (geen decimaal-geschaalde
+    // UI-waarden) — bevestigd door SDK-docs ("Raw token amount (not scaled by
+    // decimals)"). Voor input=SOL (9-dec) en een base-token met D decimals is
+    // de correcte SOL-per-token-prijs: (I/1e9)/(O/10^D) = (I/O)·10^(D-9).
+    // Zonder baseDecimals (oudere callers, of als onbekend) val je terug op D=9
+    // (SOL-achtig) — dit behoudt het oude gedrag voor callers die geen decimals.
+    // kennen (fail-safe; géén regressie op de 9-dec aanname).
+    const baseDecimals = Number.isInteger(options.baseDecimals)
+      ? options.baseDecimals!
+      : SOL_DECIMALS;
+    const cacheKeyBase = `${outputMint}\\0${amountLamports}\\0${baseDecimals}`;
     const now = this.clock();
-    const cached = this.cache.get(key);
+    const cached = this.cache.get(cacheKeyBase);
     if (cached && cached.expiresAt > now) return cached.quote;
+
+    // T4: in-flight dedup — gelijktijdige calls voor dezelfde (mint,amount,dec)
+    // delen één getSwapPrice-promise i.p.v. dubbele requests te doen.
+    const inflight = this.inFlight.get(cacheKeyBase);
+    if (inflight) return inflight;
 
     const client = await this.client();
     if (!client) return undefined;
 
-    try {
-      const response = await withTimeout(
-        client.getSwapPrice({
-          inputMint: bs58.decode(SOL_MINT),
-          outputMint: bs58.decode(outputMint),
-          amount: amountLamports,
-        }),
-        this.timeoutMs,
-      );
-      const amountOut = toNumber(response.amountOut);
-      if (amountOut === undefined || amountOut <= 0 || !Number.isFinite(amountOut)) {
-        this.pushDiagnostic('titan: invalid quote payload (amountOut<=0)');
+    const request = (async (): Promise<TitanQuote | undefined> => {
+      try {
+        const response = await withTimeout(
+          client.getSwapPrice({
+            inputMint: bs58.decode(SOL_MINT),
+            outputMint: bs58.decode(outputMint),
+            amount: amountLamports,
+          }),
+          this.timeoutMs,
+        );
+        const amountOut = toNumber(response.amountOut);
+        if (amountOut === undefined || amountOut <= 0 || !Number.isFinite(amountOut)) {
+          this.pushDiagnostic('titan: invalid quote payload (amountOut<=0)');
+          return undefined;
+        }
+        // SOL-per-token met decimaal-correctie: (I/O)·10^(D-9)
+        const price = (amountLamports / amountOut) * 10 ** (baseDecimals - SOL_DECIMALS);
+        if (!Number.isFinite(price) || price <= 0) {
+          this.pushDiagnostic('titan: invalid quote price');
+          return undefined;
+        }
+        const quote: TitanQuote = {
+          price,
+          inputMint: SOL_MINT,
+          outputMint,
+          amountIn: amountLamports,
+          amountOut,
+          source: 'titan',
+        };
+        this.cache.set(cacheKeyBase, { expiresAt: this.clock() + this.cacheMs, quote });
+        return quote;
+      } catch (error) {
+        // T2/T3-lifecycle: NIET elke fout breekt de gedeelde WS-verbinding.
+        // - gRPC-status 14 = "could not determine best price" is een PER-PAAR
+        //   conditie (geen route voor dit specifieke paar) — dat is géén
+        //   verbindingsprobleem en mag de gedeelde socket niet resetten.
+        // - Echte verbindingsfouten (connect/transport/down) wél: close()+reset
+        //   zodat de volgende call reconnect. close() voorkomt de socket-leak
+        //   (T3) die de oude code had (referentie op undefined zonder close).
+        const message = error instanceof Error ? error.message : String(error);
+        const isConnBreak = /connect|closed|ECONN|timeout|transport|socket|dial|handshake/i.test(message);
+        if (isConnBreak) {
+          const stale = this.clientPromise;
+          this.clientPromise = undefined;
+          if (stale) {
+            stale.then((c) => c.close().catch(() => undefined)).catch(() => undefined);
+          }
+        }
+        this.pushDiagnostic(`titan: ${message.slice(0, 160)}`);
         return undefined;
+      } finally {
+        this.inFlight.delete(cacheKeyBase);
       }
-      const price = amountLamports / amountOut; // SOL per token
-      if (!Number.isFinite(price) || price <= 0) {
-        this.pushDiagnostic('titan: invalid quote price');
-        return undefined;
-      }
-      const quote: TitanQuote = {
-        price,
-        inputMint: SOL_MINT,
-        outputMint,
-        amountIn: amountLamports,
-        amountOut,
-        source: 'titan',
-      };
-      this.cache.set(key, { expiresAt: this.clock() + this.cacheMs, quote });
-      return quote;
-    } catch (error) {
-      // verbreek de verbinding op timeout zodat de volgende call reconnect
-      this.clientPromise = undefined;
-      this.pushDiagnostic(`titan: ${error instanceof Error ? error.message : String(error)}`);
-      return undefined;
-    }
+    })();
+    this.inFlight.set(cacheKeyBase, request);
+    return request;
   }
 
   /** Convert SOL-per-token price to USD using SOL price. */
