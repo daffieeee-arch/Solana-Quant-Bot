@@ -41,7 +41,7 @@ def freeze_hash(root: pathlib.Path) -> str:
     return h.hexdigest()
 
 FREEZE = freeze_hash(ROOT)
-IMAGE = 'solana-bot:contra-audit15-opt2'
+IMAGE = 'solana-bot:contra-audit15-watch2'
 print('[freeze]', FREEZE)
 
 # Fase-W/Provenance: immutable Git SHA van de deploy-tip (unieke rollback-marker).
