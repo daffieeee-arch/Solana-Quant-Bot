@@ -261,8 +261,11 @@ export class Scanner {
         exitedMintsThisCycle.add(snapshot.mint);
         // Fase-W: verwijder de watch bij position-close (idempotent). De mint
         // is niet meer een open positie → geen stream-prijs-routing meer nodig.
+        // Reviewer-fix: tel de OVERLEVENDE open posities op deze mint (de exited
+        // is al uit de portfolio verwijderd door evaluateOpenPosition); alleen
+        // verwijderen als géén positie op deze mint meer open is.
         if (this.provider.removePositionWatch) {
-          const stillOpen = this.portfolio.positions.some((p) => p.mint === snapshot.mint && !exitedMintsThisCycle.has(snapshot.mint));
+          const stillOpen = this.portfolio.positions.some((p) => p.mint === snapshot.mint);
           if (!stillOpen) this.provider.removePositionWatch(snapshot.mint);
         }
         decisions.push({

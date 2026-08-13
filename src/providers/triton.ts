@@ -168,6 +168,8 @@ export class TritonProvider {
   /** Fase-W: verwijder de watch bij position-close (idempotent). */
   removePositionWatch(mint: string): void {
     this.positionWatchMints.delete(mint);
+    // reviewer: prune de source-map-entry zodat deze niet onbounded groeit.
+    this.positionMarkSource.delete(mint);
   }
   /** Fase-W: reconstructie na restart — herstel watches uit de WAL/open-posities. */
   setPositionWatches(mints: readonly string[]): void {
