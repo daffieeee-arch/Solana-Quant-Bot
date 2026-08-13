@@ -51,7 +51,9 @@ export function recordShadowObservation(
   const proto = o.protocol ?? '(unknown)';
   m.byProtocol[proto] = (m.byProtocol[proto] ?? 0) + 1;
   if (o.identityUndefined) m.identityUndefined += 1;
-  else if (o.identityKind) m.identityComplete += 1;
+  // identity-compleet: identity aanwezig én verdict accepteert (identity valide
+  // ént canonical; anders zou de evaluator WOULD_REJECT geven).
+  else if (o.identityKind && o.verdict === 'WOULD_ACCEPT') m.identityComplete += 1;
   if (o.gxOnly) m.gxOnly += 1;
   if (o.decimalsKnown) m.decimalsKnown += 1;
   else m.decimalsMissing += 1;

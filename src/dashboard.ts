@@ -16,7 +16,7 @@ export type DashboardPosition = {
 };
 
 export type DashboardDecision = {
-  type: 'paper_entry' | 'paper_exit' | 'rejected' | 'duplicate_suppressed';
+  type: 'paper_entry' | 'paper_exit' | 'rejected' | 'duplicate_suppressed' | 'shadow_verdict';
   pairId: string;
   mint?: string;
   symbol?: string;
