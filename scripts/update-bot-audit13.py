@@ -41,7 +41,7 @@ def freeze_hash(root: pathlib.Path) -> str:
     return h.hexdigest()
 
 FREEZE = freeze_hash(ROOT)
-IMAGE = 'solana-bot:contra-audit14'
+IMAGE = 'solana-bot:contra-audit15'
 print('[freeze]', FREEZE)
 
 # ── bestaande app-config ophalen en bijwerken ──
@@ -79,6 +79,34 @@ FILE_KEYS = {
     'TRITON_TOKEN_FILE': '/run/secrets/triton-token',
 }
 env.update(FILE_KEYS)
+
+# ── SECURITY P0: voeg de secret-volume-mounts toe (host secret-file → /run/secrets)
+# Zonder deze volumes vindt de container de _FILE-paden niet en blijft Triton
+# fail-closed disabled. Mount host /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/<n>
+# naar /run/secrets/<n> read-only, uid/gid 10001 (de bot-container-user).
+SECRET_SRC = '/mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner'
+secrets_map = {
+    'rpc-http-endpoint': 'rpc-http-endpoint',
+    'rpc-ws-endpoint': 'rpc-ws-endpoint',
+    'triton-endpoint': 'triton-endpoint',
+    'triton-token': 'triton-token',
+}
+vols = svc.setdefault('volumes', [])
+# verwijder eventuele bestaande /run/secrets volume-mounts (idempotent)
+vols[:] = [v for v in vols if not (isinstance(v, dict) and str(v.get('target', '')).startswith('/run/secrets/'))]
+for src_name, tgt_name in secrets_map.items():
+    vols.append({
+        'host_path': f'{SECRET_SRC}/{src_name}',
+        'container_path': f'/run/secrets/{tgt_name}',
+        'read_only': True,
+    })
+    # fallback v-format (truecharts-apps variant) indien nodig
+    vols.append({
+        'source': f'{SECRET_SRC}/{src_name}',
+        'target': f'/run/secrets/{tgt_name}',
+        'type': 'bind',
+        'read_only': True,
+    })
 
 u = api('app.update', ['solana-bot', {'custom_compose_config': config}])
 print('[update] image:', svc.get('image'), '| job:', json.dumps(u.get('result'))[:60])
