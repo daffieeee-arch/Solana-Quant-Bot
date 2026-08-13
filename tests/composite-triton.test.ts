@@ -203,4 +203,30 @@ describe('CompositeProvider + Triton discovery', () => {
     // 2 oproepen, 1 echte depth-fetch (2e = cache-hit)
     expect(depthCalls).toBe(1);
   });
+
+  it('Fase-O: position-mark gebruikt verse lokale stream-prijs → 0 extra RPC', async () => {
+    // Als emitDiscovery een verse prijs voor de mint heeft geregistreerd (gratis
+    // stream balance-pricing), moet fetchPositionPriceUsd die lokale prijs gebruiken
+    // ZONDER nieuwe getAccountInfo/haaste calls.
+    let depthCalls = 0;
+    const fakeDepth = { baseReserve: 1e6, quoteReserve: 3e9, baseDecimals: 6, quoteDecimals: 9 };
+    const fakeReserveReader = {
+      fetchPumpDepthByMint: async () => { depthCalls += 1; return fakeDepth; },
+      fetchPumpDepth: async () => { depthCalls += 1; return fakeDepth; },
+      resolveSymbol: async () => undefined,
+      assessRugSafety: async () => undefined,
+      drainDiagnostics: () => [],
+    };
+    const provider = new TritonProvider(
+      'johnb-mainnet-2781.mainnet.rpcpool.com', TOKEN_FAKE,
+      (() => ({ Subscribe: () => ({ on: () => ({ on: () => undefined, cancel: () => undefined }), cancel: () => undefined }) })) as never,
+      undefined, fakeReserveReader as never, { solPriceUsd: 74 } as never,
+    );
+    // registreer een verse lokale prijs voor de mint (alsof emitDiscovery net draaide)
+    (provider as unknown as { lastPriceByMint: Map<string, { priceUsd: number; at: number }> }).lastPriceByMint.set(MINT, { priceUsd: 222, at: Date.now() });
+    const p = await provider.fetchPositionPriceUsd(MINT);
+    expect(p).toBe(222);
+    // géén RPC (locale verse prijs), zelfs als de curve onbekend is
+    expect(depthCalls).toBe(0);
+  });
 });

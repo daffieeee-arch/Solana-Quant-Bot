@@ -31,8 +31,15 @@ const MAX_PENDING_IDENTITIES = 2_000;
 const REEMIT_COOLDOWN_MS = 30_000;
 /** Zuinigheid: bonding-curve depth fetch throttlen per mint (niet op elk event). */
 const PUMP_DEPTH_THROTTLE_MS = 10 * 60_000;
-/** Fase C: position-mark cache-duur (30s — half van het scan-interval). */
-const POSITION_MARK_CACHE_MS = 30_000;
+/** Fase C: RPC-resultaat position-mark cache — gebruikt als FALLBACK wanneer
+ *  geen verse lokale stream-prijs beschikbaar is. > scan-interval (30s) zodat
+ *  binnen één venster niet elke scan opnieuw RPC doet. Keuze 90s = 3 scans.
+ *  Primaire bron is POSITION_MARK_FRESH_MS (lokale stream-prijs, 0 RPC). */
+const POSITION_MARK_CACHE_MS = 90_000;
+/** Fase-O: freshnes-venster voor de LOKALE stream-prijs (gratis balance-pricing
+ *  uit emitDiscovery). Zolang er recente stream-prijs is (dit venster), géén RPC
+ *  voor position-marks. Bewaart actuele prijzen + risk-reactie zonder RPC-kost. */
+const POSITION_MARK_FRESH_MS = 60_000;
 
 // Program IDs verified from Triton Vixen docs + live sample (2026-08-06).
 const PROGRAMS = {
@@ -135,6 +142,10 @@ export class TritonProvider {
    * voor open-positie-marks (deze worden per scan-cycle gecalld; 30s-cache halveert de
    * RPC-last zonder de risk-exit-evaluatie te vertragen ten opzichte van scan-interval). */
   private readonly positionMarkCache = new Map<string, { loadedAt: number; priceUsd: number }>();
+  /** Fase-O: laatst-geprijsde lokale stream-prijs per mint (gratis balance-pricing
+   *  uit emitDiscovery). Primaire verse bron voor position-marks — zolang deze
+   *  recent is (POSITION_MARK_FRESH_MS) wordt géén RPC gedaan. Bounded. */
+  private readonly lastPriceByMint = new Map<string, { priceUsd: number; at: number }>();
 
   private cleanupPumpDepthThrottle(): void {
     if (this.pumpDepthThrottle.size < 20_000) return;
@@ -324,6 +335,11 @@ export class TritonProvider {
   async fetchPositionPriceUsd(mint: string): Promise<number | undefined> {
     if (!this.reserveReader || !this.solPriceUsd) return undefined;
     const nowMark = this.clock();
+    // Fase-O freshness-regel (primaire bron): verse LOKALE stream-prijs
+    // (gratis balance-pricing uit emitDiscovery) → 0 RPC zolang recent.
+    const local = this.lastPriceByMint.get(mint);
+    if (local && nowMark - local.at < POSITION_MARK_FRESH_MS) return local.priceUsd;
+    // Fallback: eerder RPC-resultaat (mark-cache, nu 90s > scan-interval)
     const markCached = this.positionMarkCache.get(mint);
     if (markCached && nowMark - markCached.loadedAt < POSITION_MARK_CACHE_MS) return markCached.priceUsd;
     try {
@@ -339,9 +355,11 @@ export class TritonProvider {
       const solPerToken = quoteUnits / baseUnits;
       if (!Number.isFinite(solPerToken) || solPerToken <= 0) return undefined;
       const priceUsd = solPerToken * this.solPriceUsd;
-      // position-mark cache opslaan; bounded (max 500 posities-marks)
+      // position-mark RPC-cache opslaan; bounded (max 500 posities-marks)
       if (this.positionMarkCache.size > 500) this.positionMarkCache.clear();
       this.positionMarkCache.set(mint, { loadedAt: nowMark, priceUsd });
+      // ook de lokale stream-prijs bijwerken (zodat volgende frames het gebruiken)
+      this.lastPriceByMint.set(mint, { priceUsd, at: nowMark });
       return priceUsd;
     } catch {
       return undefined;
@@ -623,6 +641,12 @@ export class TritonProvider {
         const usd = spotPriceUsd(input.poolDepth, usdPerQuote);
         if (usd !== null && usd > 0) priceUsd = usd;
       }
+    }
+    // Fase-O: registreer de gratis stream-prijs als lokale verse-prijs-bron voor
+    // position-marks. Zolang deze recent is, hoeft de mark geen RPC te doen.
+    if (priceUsd > 0) {
+      if (this.lastPriceByMint.size > 5_000) this.lastPriceByMint.clear();
+      this.lastPriceByMint.set(input.mint, { priceUsd, at: this.clock() });
     }
     this.enqueuePending({
       pairId: input.pairId,

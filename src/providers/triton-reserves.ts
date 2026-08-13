@@ -281,6 +281,25 @@ export class TritonReserveReader {
     const now = this.clock();
     const cached = this.cache.get(`pumpmint:${mint}`);
     if (cached && cached.expiresAt > now) return cached.poolDepth;
+    // in-flight dedup: gelijktijdige calls voor dezelfde mint delen één 2-call-reeks
+    // (getTokenLargestAccounts + getAccountInfo = dure sequentie; voorkom duplicatie)
+    const inflight = this.inFlight.get(`pumpmint:${mint}`);
+    if (inflight) return inflight;
+    // correcte volgorde: registreer de promise in de map vóór loadPumpDepthByMint
+    // draait — anders start de async body (tot eerste await) de RPC al vóór set,
+    // en een 2e gelijktijdige call mist de map en dupliceert de 2-call-reeks.
+    // De load begint pas op microtask-volgorde zodra deze fetchPumpDepthByMint
+    // ontspannen is, zodat inFlight.set altijd vóór de eerste RPC staat.
+    const pending = Promise.resolve().then(() => this.loadPumpDepthByMint(mint, solPriceUsd));
+    this.inFlight.set(`pumpmint:${mint}`, pending);
+    try {
+      return await pending;
+    } finally {
+      this.inFlight.delete(`pumpmint:${mint}`);
+    }
+  }
+
+  private async loadPumpDepthByMint(mint: string, solPriceUsd: number): Promise<PoolDepth | undefined> {
     try {
       const largest = await this.rpc('getTokenLargestAccounts', [mint]) as {
         value?: Array<{ address?: string }>;

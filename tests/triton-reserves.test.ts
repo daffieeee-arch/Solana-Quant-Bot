@@ -94,4 +94,25 @@ describe('TritonReserveReader', () => {
     expect(depth?.quoteDecimals).toBe(9);
     expect(depth?.baseDecimals).toBe(6);
   });
+
+  it('dedups gelijktijdige fetchPumpDepthByMint calls (in-flight: 2 calls i.p.v. 4)', async () => {
+    let largest=0, acct=0;
+    const fetcher = vi.fn(async (url, init) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.method === 'getTokenLargestAccounts') { largest += 1; return new Response(JSON.stringify({jsonrpc:'2.0',id:body.id,result:{value:[{address:'acct111111111111111111111111111111111'}]}}),{status:200}); }
+      if (body.method === 'getAccountInfo') { acct += 1; return new Response(JSON.stringify({jsonrpc:'2.0',id:body.id,result:{value:{data:{parsed:{info:{owner:'curve12345678901234567890123456789012'}}}}}}),{status:200}); }
+      return new Response(JSON.stringify({jsonrpc:'2.0',id:body.id,result:{value:{data:['AA==','base64'],owner:'x'}}}),{status:200});
+    });
+    const reader = new TritonReserveReader('endpoint.rpcpool.com', 'token', fetcher);
+    await Promise.all([
+      reader.fetchPumpDepthByMint('mint111111111111111111111111111111111'),
+      reader.fetchPumpDepthByMint('mint111111111111111111111111111111111'),
+    ]);
+    // in-flight dedup: 1 largest voor BOTH calls (de dure lookup) i.p.v. 2.
+    // acct telt de owner-account lookup + de curve-reserves-decode (fetchPumpDepth)
+    // — die horen bij de EÉN gedeelde 2-call-reeks, niet bij een duplicatie.
+    expect(largest).toBe(1);
+    expect(acct).toBeLessThanOrEqual(3);
+  });
+
 });
