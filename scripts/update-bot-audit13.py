@@ -41,7 +41,7 @@ def freeze_hash(root: pathlib.Path) -> str:
     return h.hexdigest()
 
 FREEZE = freeze_hash(ROOT)
-IMAGE = 'solana-bot:contra-audit15'
+IMAGE = 'solana-bot:contra-audit15-opt'
 print('[freeze]', FREEZE)
 
 # ── bestaande app-config ophalen en bijwerken ──
