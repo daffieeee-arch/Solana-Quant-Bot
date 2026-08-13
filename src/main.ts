@@ -40,6 +40,8 @@ function readOptionalSecret(direct: string | undefined, filePath: string | undef
 
 async function run(): Promise<void> {
   const config = loadConfig(process.env);
+  // Fase-W/Provenance: immutable Git SHA uit de image (SOURCE_GIT_SHA build-arg).
+  const provenance = { gitSha: process.env.SOURCE_GIT_SHA ?? 'unknown', freeze: process.env.SOURCE_FREEZE_SHA256 ?? 'unknown' };
   await withRuntimeLifecycle(async (resources) => {
     // Runtime config is refreshed with market context; automatic strategy promotion is disabled.
     let runtimeConfig = config;
@@ -138,7 +140,7 @@ async function run(): Promise<void> {
         port: config.dashboardPort,
         staticDir: resolve(fileURLToPath(new URL('../', import.meta.url)), 'frontend', 'dist'),
         controlToken: process.env.DASHBOARD_CONTROL_TOKEN || undefined,
-        getStatus: () => ({ mode: 'paper', updatedAt: ledger.updatedAt, availableLamports: ledger.portfolio.availableLamports, openPositions: ledger.portfolio.positions, realizedPnlLamports: ledger.realizedPnlLamports, recentDecisions, duplicateSuppressed, closedTrades, equityHistory, markPricesByMint, marketContext, whaleInterestMints: Array.from(provider.whaleActivity.keys()), providerHealth: summarizeProviderHealth(lastProviderErrors) }),
+        getStatus: () => ({ mode: 'paper', updatedAt: ledger.updatedAt, availableLamports: ledger.portfolio.availableLamports, openPositions: ledger.portfolio.positions, realizedPnlLamports: ledger.realizedPnlLamports, recentDecisions, duplicateSuppressed, closedTrades, equityHistory, markPricesByMint, marketContext, whaleInterestMints: Array.from(provider.whaleActivity.keys()), providerHealth: summarizeProviderHealth(lastProviderErrors), build: provenance }),
         controls: {
           getEngineState: () => engine.state(),
           setScannerRunning: (running: boolean) => engine.setScannerRunning(running),

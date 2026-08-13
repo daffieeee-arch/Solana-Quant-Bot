@@ -44,11 +44,16 @@ FREEZE = freeze_hash(ROOT)
 IMAGE = 'solana-bot:contra-audit15-opt2'
 print('[freeze]', FREEZE)
 
+# Fase-W/Provenance: immutable Git SHA van de deploy-tip (unieke rollback-marker).
+GIT_SHA = subprocess.run(['git', 'rev-parse', 'HEAD'], capture_output=True, text=True, cwd=ROOT).stdout.strip()[:40] or 'unknown'
+print('[git]', GIT_SHA)
+
 # ── bestaande app-config ophalen en bijwerken ──
 r = api('app.query', [[['name', '=', 'solana-bot']], {'extra': {'retrieve_config': True}}])
 config = r['result'][0]['config']
 svc = config['services']['solana-bot']
 svc['build']['args']['SOURCE_FREEZE_SHA256'] = FREEZE
+svc['build']['args']['SOURCE_GIT_SHA'] = GIT_SHA
 svc['image'] = IMAGE
 
 # ── config-wijzigingen (strategie) ──

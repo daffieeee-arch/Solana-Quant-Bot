@@ -268,4 +268,33 @@ describe('CompositeProvider + Triton discovery', () => {
     const metrics = provider.positionWatchMetrics();
     expect((metrics.sourceByMint as Record<string, string>)[MINT]).toBe('STREAM');
   });
+
+  it('Fase-W: watch wordt verwijderd bij close; meerdere posities delen één watch', () => {
+    const fakeReserveReader = { fetchPumpDepthByMint: async () => undefined, fetchPumpDepth: async () => undefined, resolveSymbol: async () => undefined, assessRugSafety: async () => undefined, drainDiagnostics: () => [] };
+    const provider = new TritonProvider(
+      'johnb-mainnet-2781.mainnet.rpcpool.com', TOKEN_FAKE,
+      (() => ({ Subscribe: () => ({ on: () => ({ on: () => undefined, cancel: () => undefined }), cancel: () => undefined }) })) as never,
+      undefined, fakeReserveReader as never, { solPriceUsd: 74 } as never,
+    );
+    // 3 posities op 2 unieke mints → 2 watches (dedup)
+    provider.addPositionWatch(MINT);
+    provider.addPositionWatch(MINT);
+    provider.addPositionWatch(MINT + 'AAA');
+    expect(provider.activePositionWatches()).toBe(2);
+    // verwijder na close → count daalt; idempotent
+    provider.removePositionWatch(MINT);
+    provider.removePositionWatch(MINT);
+    expect(provider.activePositionWatches()).toBe(1);
+  });
+
+  it('Fase-W: setPositionWatches herstelt de watches (restart-recovery)', () => {
+    const fakeReserveReader = { fetchPumpDepthByMint: async () => undefined, fetchPumpDepth: async () => undefined, resolveSymbol: async () => undefined, assessRugSafety: async () => undefined, drainDiagnostics: () => [] };
+    const provider = new TritonProvider(
+      'johnb-mainnet-2781.mainnet.rpcpool.com', TOKEN_FAKE,
+      (() => ({ Subscribe: () => ({ on: () => ({ on: () => undefined, cancel: () => undefined }), cancel: () => undefined }) })) as never,
+      undefined, fakeReserveReader as never, { solPriceUsd: 74 } as never,
+    );
+    provider.setPositionWatches([MINT, `${MINT}AAA`, MINT]); // dedup binnen reconstructie
+    expect(provider.activePositionWatches()).toBe(2);
+  });
 });

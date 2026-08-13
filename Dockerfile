@@ -14,6 +14,10 @@ FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca440
 ARG SOURCE_FREEZE_SHA256
 RUN printf '%s' "$SOURCE_FREEZE_SHA256" | grep -Eq '^[0-9a-f]{64}$'
 LABEL org.opencontainers.image.source-freeze.sha256="$SOURCE_FREEZE_SHA256"
+# Fase-W/Provenance: immutable Git SHA + OCI revision-label (image-provenance).
+ARG SOURCE_GIT_SHA
+LABEL org.opencontainers.image.revision="$SOURCE_GIT_SHA"
+ENV SOURCE_GIT_SHA="$SOURCE_GIT_SHA"
 # ca-certificates: de native gRPC-connect (yellowstone) faalt met 'no native certs
 # found' op bookworm-slim zonder de systeem-CA-store — de geyser-stream crasht de bot.
 RUN apt-get update \
