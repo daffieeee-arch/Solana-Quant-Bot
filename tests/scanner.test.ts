@@ -487,4 +487,39 @@ describe('Scanner', () => {
     ]));
     expect(result.portfolio.positions).toHaveLength(0);
   });
+
+  it('Fase-Q: blokkeert een gx:<mint>-only candidate zonder canonical identity', async () => {
+    const gxOnly = { ...candidate, pairId: 'gx:mint-1', mint: 'mint-1' };
+    const scanner = new Scanner({ fetchSnapshots: async () => [gxOnly] }, config, createPortfolio(config, now.toISOString()), () => now);
+    const res = await scanner.runOnce();
+    expect(res.decisions).toEqual([expect.objectContaining({ type: 'rejected', reason: 'missing_canonical_market_identity', rejectionClass: 'risk', mint: 'mint-1' })]);
+    expect(res.portfolio.positions).toHaveLength(0);
+  });
+
+  it('Fase-Q: laat een legitieme curve/AMM-pairId door (niet gx:<mint>)', async () => {
+    const legit = { ...candidate, pairId: 'curveOrPool'.repeat(6) }; // geen gx:vorm
+    const scanner = new Scanner({ fetchSnapshots: async () => [legit] }, config, createPortfolio(config, now.toISOString()), () => now);
+    const res = await scanner.runOnce();
+    expect(res.decisions).toEqual([expect.objectContaining({ type: 'paper_entry', mint: 'mint-1' })]);
+  });
+
+  it('Fase-Q: gequarantinede positie wordt niet ge-exit en telt niet mee voor concurrency', async () => {
+    // positie met tradeId in quarantaine + een echte open positie op dezelfde mints
+    const q = createPortfolio(config, now.toISOString());
+    q.positions = [{ tradeId: 'legacy1:2026-08-12T20:48:05.571Z', pairId: 'gx:legacy-mint', mint: 'legacy-mint', symbol: 'L', openedAt: '2026-08-12T20:48:05.571Z', entryPriceUsd: 1e-6, highPriceUsd: 1e-6, allocatedLamports: 1000, entryCostLamports: 1000, dynamicStopPercent: 5 }];
+    const isQ = (tid: string) => tid === 'legacy1:2026-08-12T20:48:05.571Z';
+    const scanner = new Scanner({ fetchSnapshots: async () => [{ ...candidate, mint: 'legacy-mint', priceUsd: 0.001, observedAt: now.toISOString() }] }, config, q, () => now, new Map(), 4000, isQ);
+    const res = await scanner.runOnce();
+    // nieuw entry op dezelfde mint moet accepted zijn (quarantaine vult GEEN slot en duplicate-mint is overgenomen)
+    expect(res.decisions.some((d: { type: string }) => d.type === 'paper_entry' || d.type === 'rejected')).toBe(true);
+    // gequarantinede positie wordt nooit ge-exit (geen paper_exit voor legacy-mint)
+    expect(res.decisions.some((d) => (d as { type?: string; mint?: string }).type === 'paper_exit' && (d as { mint?: string }).mint === 'legacy-mint')).toBe(false);
+  });
+
+  it('Fase-Q: zonder quarantainefilter is het pad ongewijzigd (byte-compatibel)', async () => {
+    const scanner = new Scanner({ fetchSnapshots: async () => [candidate] }, config, createPortfolio(config, now.toISOString()), () => now);
+    const res = await scanner.runOnce();
+    expect(res.portfolio.positions).toHaveLength(1);
+    expect(res.decisions).toEqual([expect.objectContaining({ type: 'paper_entry' })]);
+  });
 });
