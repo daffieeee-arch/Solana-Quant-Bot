@@ -5,9 +5,12 @@ import { loadConfig } from './config.js';
 import { createDashboardServer, summarizeProviderHealth } from './dashboard.js';
 import { EngineControl } from './engine-control.js';
 import { loadScannerHistory } from './history.js';
-import { PaperLedgerPersistenceError, PaperLedgerStore } from './ledger.js';
+import { PaperLedgerPersistenceError, PaperLedgerStore, type PaperLedger } from './ledger.js';
 import { QuarantineStore } from './quarantine-store.js';
-import { LEGACY_MIGRATION_ID, runLegacyQuarantineMigration, recoveryStatusFor } from './legacy-migration.js';
+import { LEGACY_LEGACY_TRADE_IDS, recoveryStatusFor } from './legacy-migration.js';
+import { quarantinePositionViaLedger, type PositionQuarantinedEvent } from './quarantine-ledger.js';
+import { LEGACY_MIGRATION_ID, runLegacyQuarantineMigration } from './legacy-migration.js';
+import { REQUARANTINE_REASON_CODE } from './accounting.js';
 import { commitScanCycle } from './cycle-commit.js';
 import { createPortfolio } from './portfolio.js';
 import { CompositeProvider } from './providers/composite.js';
@@ -50,33 +53,37 @@ async function run(): Promise<void> {
     const ledgerStore = new PaperLedgerStore(config.dataDir);
     resources.ledgerStore = ledgerStore;
     let ledger = await ledgerStore.loadOrCreate(createPortfolio(config, new Date().toISOString()));
-    // Fase-Q: al-eerder-toegepaste legacy-migratie detecteren (alreadyApplied).
-    const migrationAppliedFile = join(config.dataDir, 'legacy-migration-applied.json');
-    let migrationApplied = false;
-    try {
-      const m = JSON.parse(readFileSync(migrationAppliedFile, 'utf8')) as { id?: string };
-      if (m?.id === LEGACY_MIGRATION_ID) migrationApplied = true;
-    } catch { /* niet eerder toegepast */ }
-    // Fase-Q: persistente quarantaine-registry — quarantaineert de 4 legacy posities
-    // (zonder canonical market identity) bij startup, idempotent over restart. Ze
-    // verlaten actieve concurrency en normale risk-exits volledig.
-    const quarantine = new QuarantineStore(join(config.dataDir, 'quarantine.json'));
+    // Fase-QH: LEDGER-AUTHORITATIVE legacy-migratie. De WAL/ledger is de enige
+    // authoritative source of truth: de 4 legacy posities worden via een echt
+    // 'position_quarantined' WAL-event UIT de portfolio-ledger verwijderd (via de
+    // crash-safe store.save-weg). De quarantaine-status is herleidbaar uit WAL-
+    // replay; geen sidecar-bestand (quarantine.json / migration-marker) als autoriteit.
     const nowIso = new Date().toISOString();
-    // Fase-Q: versiegebonden, idempotente legacy-migratie — target uitsluitend de
-    // exacte 4 legacy tradeIds (nooit mint-only, nooit alle posities). Reviewer-fix:
-    // de eerdere loop quarantineerde ELKE positie en bevroor zo niet-legacy trades.
-    const migration = runLegacyQuarantineMigration(ledger.portfolio.positions, nowIso, migrationApplied);
+    const migratedTradeIds = new Set<string>();
     let quarantinedNew = 0;
-    for (const p of migration.applied) {
+    for (const p of ledger.portfolio.positions) {
+      // filter op EXACTE legacy tradeIds (nooit mint-only, nooit alle posities)
+      if (!LEGACY_LEGACY_TRADE_IDS.includes(p.tradeId)) continue;
       const rec = recoveryStatusFor(p.tradeId);
-      if (quarantine.quarantine(p, nowIso, rec)) quarantinedNew += 1;
+      const r = await quarantinePositionViaLedger(
+        { save: (l: PaperLedger, e?: PositionQuarantinedEvent) => ledgerStore.save(l, e as never) },
+        ledger, p, nowIso, LEGACY_MIGRATION_ID, rec,
+      );
+      if (r.ok) { ledger = r.ledger; migratedTradeIds.add(p.tradeId); quarantinedNew += 1; }
     }
-    if (migration.newlyApplied) {
-      // persist alreadyApplied-markering (apart klein bestand, append-consistent)
-      writeFileSync(join(config.dataDir, 'legacy-migration-applied.json'), JSON.stringify({ id: LEGACY_MIGRATION_ID, appliedAt: nowIso }));
-      migrationApplied = true;
-    }
-    console.log(JSON.stringify({ event: 'quarantine_initialize', mode: 'paper', migrationId: LEGACY_MIGRATION_ID, newlyApplied: migration.newlyApplied, quarantinedNew, missing: migration.skippedMissing.length, total: quarantine.count() }));
+    // quarantaine-status voor scanner-filter/status-exposure (afgeleide projectie)
+    const quarantine: {
+      isQuarantined(tid: string): boolean;
+      active<T extends { tradeId: string }>(positions: readonly T[]): T[];
+      getAll(): Array<{ tradeId: string; reasonCode: string; accountingStatus: 'UNKNOWN'; pricingStatus: 'UNPRICED' }>;
+      count(): number;
+    } = {
+      isQuarantined: (tid: string) => migratedTradeIds.has(tid),
+      active: <T extends { tradeId: string }>(positions: readonly T[]): T[] => positions.filter((p) => !migratedTradeIds.has(p.tradeId)),
+      getAll: () => Array.from(migratedTradeIds).map((tradeId) => ({ tradeId, reasonCode: REQUARANTINE_REASON_CODE, accountingStatus: 'UNKNOWN' as const, pricingStatus: 'UNPRICED' as const })),
+      count: () => migratedTradeIds.size,
+    };
+    console.log(JSON.stringify({ event: 'quarantine_initialize', mode: 'paper', migrationId: LEGACY_MIGRATION_ID, newlyApplied: quarantinedNew, missing: LEGACY_LEGACY_TRADE_IDS.filter((t) => !migratedTradeIds.has(t)).length, total: migratedTradeIds.size }));
     const history = await loadScannerHistory(config.dataDir);
     let recentDecisions = history.recentDecisions;
     let duplicateSuppressed = history.duplicateSuppressed;
@@ -169,7 +176,7 @@ async function run(): Promise<void> {
         port: config.dashboardPort,
         staticDir: resolve(fileURLToPath(new URL('../', import.meta.url)), 'frontend', 'dist'),
         controlToken: process.env.DASHBOARD_CONTROL_TOKEN || undefined,
-        getStatus: () => ({ mode: 'paper', updatedAt: ledger.updatedAt, availableLamports: ledger.portfolio.availableLamports, openPositions: quarantine.active(ledger.portfolio.positions), realizedPnlLamports: ledger.realizedPnlLamports, recentDecisions, duplicateSuppressed, closedTrades, equityHistory, markPricesByMint, marketContext, whaleInterestMints: Array.from(provider.whaleActivity.keys()), providerHealth: summarizeProviderHealth(lastProviderErrors), build: provenance, quarantine: Array.from(quarantine.getAll().values()) }),
+        getStatus: () => ({ mode: 'paper', updatedAt: ledger.updatedAt, availableLamports: ledger.portfolio.availableLamports, openPositions: quarantine.active(ledger.portfolio.positions), realizedPnlLamports: ledger.realizedPnlLamports, recentDecisions, duplicateSuppressed, closedTrades, equityHistory, markPricesByMint, marketContext, whaleInterestMints: Array.from(provider.whaleActivity.keys()), providerHealth: summarizeProviderHealth(lastProviderErrors), build: provenance, quarantine: quarantine.getAll() }),
         controls: {
           getEngineState: () => engine.state(),
           setScannerRunning: (running: boolean) => engine.setScannerRunning(running),

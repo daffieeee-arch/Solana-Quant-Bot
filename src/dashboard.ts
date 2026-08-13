@@ -47,6 +47,8 @@ export type DashboardStatus = {
   closedTrades?: DashboardDecision[];
   marketContext?: MarketContext;
   whaleInterestMints?: string[];
+  /** Fase-QH: quarantined legacy posities (status-exposure, niet actief/markt). */
+  quarantine?: Array<{ tradeId: string; reasonCode: string; accountingStatus: 'UNKNOWN'; pricingStatus: 'UNPRICED' }>;
   /** Samengevatte health per data-provider, afgeleid van de laatste scan
    * providerErrors. Frontend toont een live-status i.p.v. "NOT EXPOSED". */
   providerHealth?: Array<{ provider: string; status: 'ok' | 'degraded' | 'down'; errorHint?: string }>;
