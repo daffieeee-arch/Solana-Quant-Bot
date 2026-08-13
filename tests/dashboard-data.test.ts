@@ -171,4 +171,26 @@ describe('dashboard data API', () => {
     ]);
     expect(health.find((h) => h.provider === 'TRITON')?.status).toBe('degraded');
   });
+
+  it('Fase-O: Titan pair-level no-route (code 14) degradeert NIET / blokkeert NIET', () => {
+    // T2-fix: een per-paar 'could not determine best price' (code 14, geen route)
+    // is een normale request-level uitkomst, geen provider-failure. Mag de health
+    // NIET op degraded zetten.
+    const health = summarizeProviderHealth([
+      'titan: Request 320 failed with code 14: could not determine best price',
+    ]);
+    // géén degraded/down — de provider blijft ok (verbinding+pricing werken)
+    expect(health.find((h) => h.provider === 'TRITON')?.status).toBe('ok');
+  });
+
+  it('Fase-O: Titan quote-failure voert NOOIT naar down, conn/auth breken wél', () => {
+    // tijdelijke quote-fout (code-14 equivalent op de WS) → ok (fail-closed, verbinding intact)
+    const quote = summarizeProviderHealth(['titan: could not determine best price for pair']);
+    expect(quote.find((h) => h.provider === 'TRITON')?.status).toBe('ok');
+    // echte conn/auth/stream-failure → degraded/down
+    const auth = summarizeProviderHealth(['titan: 401 unauthorized']);
+    expect(auth.find((h) => h.provider === 'TRITON')?.status).toBe('down');
+    const conn = summarizeProviderHealth(['titan: connect timeout']);
+    expect(conn.find((h) => h.provider === 'TRITON')?.status).toBe('degraded');
+  });
 });

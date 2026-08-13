@@ -247,6 +247,13 @@ export function summarizeProviderHealth(providerErrors: string[]): NonNullable<D
   };
   const classify = (error: string): { provider: string; severity: 'down' | 'degraded' } | null => {
     const e = error.toLowerCase();
+    // Fase-O: pair-level no-route / quote-failure (code 14 "could not determine
+    // best price") is een NORMALE request-level uitkomst voor een mint zonder
+    // route — GEEN provider-failure, geen degrade/down. Alleen echte
+    // verbindings/authenticatie/stream-problemen tellen.
+    if (e.includes('code 14') || e.includes('could not determine best price') || e.includes('no route')) {
+      return null;
+    }
     if (e.includes('triton') || e.includes('vixen') || e.includes('geyser') || e.includes('rpc') || e.includes('titan') || e.includes('das')) {
       return { provider: 'TRITON', severity: /stream error|subscribe failed|401|403/.test(e) ? 'down' : 'degraded' };
     }
