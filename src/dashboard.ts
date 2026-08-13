@@ -251,7 +251,10 @@ export function summarizeProviderHealth(providerErrors: string[]): NonNullable<D
     // best price") is een NORMALE request-level uitkomst voor een mint zonder
     // route — GEEN provider-failure, geen degrade/down. Alleen echte
     // verbindings/authenticatie/stream-problemen tellen.
-    if (e.includes('code 14') || e.includes('could not determine best price') || e.includes('no route')) {
+    // Reviewer-hardening: 'no route' is bewust beperkt tot 'no route found'
+    // (quote-context) — een echte netwerkfout "no route to host" (ENETUNREACH)
+    // bevat 'no route' en moet als verbindingsfout worsened worden geclassificeerd.
+    if (e.includes('code 14') || e.includes('could not determine best price') || e.includes('no route found')) {
       return null;
     }
     if (e.includes('triton') || e.includes('vixen') || e.includes('geyser') || e.includes('rpc') || e.includes('titan') || e.includes('das')) {

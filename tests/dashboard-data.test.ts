@@ -192,5 +192,9 @@ describe('dashboard data API', () => {
     expect(auth.find((h) => h.provider === 'TRITON')?.status).toBe('down');
     const conn = summarizeProviderHealth(['titan: connect timeout']);
     expect(conn.find((h) => h.provider === 'TRITON')?.status).toBe('degraded');
+    // reviewer-hardening: een ECHTE netwerkfout "no route to host" moet als
+    // verbindingsfout degraden (niet ten onrechte als ok door 'no route').
+    const noRouteHost = summarizeProviderHealth(['titan: connect to host failed: no route to host']);
+    expect(noRouteHost.find((h) => h.provider === 'TRITON')?.status).toBe('degraded');
   });
 });
