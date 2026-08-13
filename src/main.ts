@@ -199,7 +199,11 @@ async function run(): Promise<void> {
         });
         const discoveryDebug = (resources.provider as unknown as { discoveryDebug?: () => string }).discoveryDebug?.() ?? '';
         console.log(JSON.stringify({ event: 'scan_complete', cycle, mode: result.mode, coverage: 'triton_first', checkedAt: result.checkedAt, decisions: result.decisions, providerErrors: result.providerErrors, discoveryDebug, openPositions: result.portfolio.positions.length, availableLamports: result.portfolio.availableLamports }));
-        lastProviderErrors = discoveryDebug ? [...result.providerErrors, discoveryDebug] : result.providerErrors; // voor dashboard provider-health
+        // Fase-O: `discoveryDebug` is status-TELEMETRIE (bevat 'triton=', 'streams='...),
+        // geen provider-error — NIET in de health-error-array zetten (anders degradeerde
+        // TRITON elke scan door de eigen status-string). Alleen echte providerErrors
+        // (Triton/Titan RPC/diagnostic-fouten) voeden de provider-health.
+        lastProviderErrors = result.providerErrors; // voor dashboard provider-health
         engine.setScannerState('idle');
         engine.noteScan(result.checkedAt);
       } catch (error) {
