@@ -2,6 +2,9 @@ import type { MarketSnapshot, PoolDepth } from '../scoring.js';
 import { defaultHttpFetcher, fetchWithTimeout, type HttpFetcher } from './http.js';
 import { TritonReserveReader } from './triton-reserves.js';
 import { spotPriceUsd, usdPerQuoteUnit } from '../stream-price.js';
+import type { MarketIdentity } from '../market-identity2.js';
+import { buildPumpIdentityFromDecode, buildAmmIdentityFromDecode, buildIdentityFromGeneric } from '../market-identity-upstream.js';
+import { makeTradeId } from '../portfolio.js';
 import { FlowTelemetry } from '../flow-telemetry.js';
 
 /** Derive a stable pseudo-ticker from the mint address (first 6 chars, uppercase). */
@@ -487,6 +490,11 @@ export class TritonProvider {
       // Synthetische depth: prijs = execution-prijs, liquiditeit = virtuele
       // curve-reserve (~30 SOL) i.p.v. de swap-omvang (die absurd laag is).
       const poolDepth: PoolDepth = this.syntheticDepth(gen.priceLamportsPerToken, this.solPriceUsd ?? 74, dec, gen.mint);
+      // Fase-LIVE: canonical MarketIdentity uit de gedecodeerde event-data
+      // (curve-adres wanneer aanwezig; nooit gx:<mint>-fallback).
+      const marketIdentity = gen.curve
+        ? buildPumpIdentityFromDecode({ tradeId: makeTradeId(gen.mint, new Date(this.clock()).toISOString()), mint: gen.mint, programId: PROGRAMS.pumpfun, curve: gen.curve, baseDecimals: dec, quoteDecimals: 9, sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM' }) ?? undefined
+        : undefined;
       this.emitDiscovery({
         pairId: gen.curve ? `gx:${gen.curve}` : `gx:${gen.mint}`,
         mint: gen.mint,
@@ -496,6 +504,7 @@ export class TritonProvider {
         poolDepth,
         quoteMint: WSOL_MINT,
         synthetic: true,
+        marketIdentity,
       });
       // Registeer de curve-relatie als die er is (voor de getAccountInfo-fallback)
       if (gen.curve) this.curveRegistry.set(gen.mint, gen.curve);
@@ -527,6 +536,7 @@ export class TritonProvider {
         programId: PROGRAMS.pumpfun,
         poolDepth,
         quoteMint: WSOL_MINT,
+        marketIdentity: buildPumpIdentityFromDecode({ tradeId: makeTradeId(trade.accounts.mint, new Date(this.clock()).toISOString()), mint: trade.accounts.mint, programId: PROGRAMS.pumpfun, curve: trade.accounts.bondingCurve, baseDecimals: 6, quoteDecimals: 9, sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM' }) ?? undefined,
       });
       return;
     }
@@ -573,6 +583,16 @@ export class TritonProvider {
       programId: PROGRAMS.raydiumAmmv4,
       poolDepth,
       quoteMint,
+      marketIdentity: info.tokenCoin && info.tokenPc && info.lpMint
+        ? buildAmmIdentityFromDecode({
+            tradeId: makeTradeId(mint, new Date(this.clock()).toISOString()),
+            mint, programId: PROGRAMS.raydiumAmmv4, marketId: pairId,
+            baseVault: isWsolCoin ? info.tokenPc : info.tokenCoin,
+            quoteVault: isWsolCoin ? info.tokenCoin : info.tokenPc,
+            baseMint: mint, baseDecimals: 6, quoteDecimals: 9,
+            sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM',
+          }) ?? undefined
+        : undefined,
     });
   }
 
@@ -608,6 +628,16 @@ export class TritonProvider {
       programId: PROGRAMS.raydiumCpmm,
       poolDepth,
       quoteMint,
+      marketIdentity: pool.vaultA && pool.vaultB && pairId !== mint
+        ? buildAmmIdentityFromDecode({
+            tradeId: makeTradeId(mint, new Date(this.clock()).toISOString()),
+            mint, programId: PROGRAMS.raydiumCpmm, marketId: pairId,
+            baseVault: isWsolA ? pool.vaultB : pool.vaultA,
+            quoteVault: isWsolA ? pool.vaultA : pool.vaultB,
+            baseMint: mint, baseDecimals: 6, quoteDecimals: 9,
+            sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM',
+          }) ?? undefined
+        : undefined,
     });
   }
 
@@ -652,6 +682,12 @@ export class TritonProvider {
       // virtuele curve-reserve (~30 SOL) i.p.v. de swap-omvang.
       poolDepth = this.syntheticDepth(g.priceLamportsPerToken, this.solPriceUsd ?? 74, baseDec, mint);
     }
+    const genericIdentity = buildIdentityFromGeneric({
+      tradeId: makeTradeId(mint, new Date(this.clock()).toISOString()),
+      mint, curve: g?.curve, programId: g?.curve ? PROGRAMS.pumpfun : '',
+      baseDecimals: g?.baseDecimalsForPrice ?? 6, quoteDecimals: 9,
+      sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM',
+    });
     this.emitDiscovery({
       pairId: g.curve ? `gx:${g.curve}` : `gx:${mint}`,
       mint,
@@ -662,6 +698,7 @@ export class TritonProvider {
       poolDepth: poolDepth && (poolDepth.quoteReserve ?? 0) > 0 && (poolDepth.baseReserve ?? 0) > 0 ? poolDepth : undefined,
       quoteMint: poolDepth && (poolDepth.quoteReserve ?? 0) > 0 ? WSOL_MINT : undefined,
       synthetic: !!(g?.priceLamportsPerToken && poolDepth && !g?.curve),
+      marketIdentity: genericIdentity.identity,
     });
   }
 
@@ -694,6 +731,7 @@ export class TritonProvider {
     poolDepth?: PoolDepth;
     quoteMint?: string;
     synthetic?: boolean;
+    marketIdentity?: MarketIdentity;
   }): void {
     if (this.destroyed) return;
     const now = this.clock();
@@ -752,6 +790,7 @@ export class TritonProvider {
         instructionIndex: 0,
         receiptAt: observedAt,
       },
+      marketIdentity: input.marketIdentity,
     });
   }
 

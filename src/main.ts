@@ -183,7 +183,7 @@ async function run(): Promise<void> {
           setProviderEnabled: (name: string, enabled: boolean) => { engine.setProviderEnabled(name, enabled); applyProviderToggles(); },
           getProviderLatency: () => provider.getProviderLatency(),
         },
-        getDebug: () => (provider as unknown as { debugInfo?: () => Record<string, unknown> }).debugInfo?.() ?? {},
+        getDebug: () => ({ ...((provider as unknown as { debugInfo?: () => Record<string, unknown> }).debugInfo?.() ?? {}), shadowMetrics: scanner.shadowMetricsSnapshot() }),
       });
       resources.dashboard = dashboard;
       console.log(JSON.stringify({ event: 'dashboard_started', mode: 'paper', port: dashboard.port }));

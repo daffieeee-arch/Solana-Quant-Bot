@@ -40,6 +40,10 @@ export type MarketSnapshot = {
     score: number;
     flags: string[];
   };
+  /** Fase-LIVE: canonical MarketIdentity (protocol-specifiek) opgebouwd uit de
+   *  decoded event-data. Ontbreekt/undefined wanneer geen canonical pool/curve/
+   *  vault identiteit in het event aanwezig is (nooit gx:<mint>-fallback). */
+  marketIdentity?: import('./market-identity2.js').MarketIdentity;
 };
 
 export type PoolDepth = {

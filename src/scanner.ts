@@ -3,6 +3,7 @@ import { canPaperEnter } from './risk.js';
 import { enterPaperPosition, evaluateOpenPosition, computePositionSize, type Portfolio } from './portfolio.js';
 import { evaluateMarketGate, scoreMomentum, scoreContraMomentum, type DiscoveryProvenance, type MarketSnapshot } from './scoring.js';
 import { evaluateEntryShadow } from './entry-shadow.js';
+import { emptyShadowMetrics, recordShadowObservation, protocolFromSource, gxOnlyPairId, type ShadowMetrics } from './shadow-metrics.js';
 
 export type MarketProvider = {
   fetchSnapshots(): Promise<MarketSnapshot[]>;
@@ -117,6 +118,8 @@ export class Scanner {
   private readonly discoveryPromiseStates = new WeakMap<Promise<MarketSnapshot[]>, DiscoveryPromiseState>();
   /** Laag A: pools die rijpen (te jong) wordt vastgehouden i.p.v. afgewezen. */
   private readonly ripening = new Map<string, RipeningEntry>();
+  /** Fase-LIVE: shadow-evaluatie observability (accumuleert over scans). */
+  private shadowMetrics: ShadowMetrics = emptyShadowMetrics();
   private readonly MAX_RIPENING = 2_000;
 
   constructor(
@@ -148,6 +151,11 @@ export class Scanner {
       if (this.isQuarantined(p.tradeId)) ids.add(p.tradeId);
     }
     return ids.size ? ids : undefined;
+  }
+
+  /** Fase-LIVE: shadow-evaluatie observability snapshot (via dashboard/debug). */
+  shadowMetricsSnapshot(): ShadowMetrics {
+    return { ...this.shadowMetrics, byProtocol: { ...this.shadowMetrics.byProtocol }, rejectionReasons: { ...this.shadowMetrics.rejectionReasons } };
   }
 
   private ensurePairStateCapacity(nowMs: number): void {
@@ -414,14 +422,29 @@ export class Scanner {
       // (tests/entry-shadow-integration.test.ts) m.b.v. recorded fixtures.
       if (this.config.entryShadowMode) {
         const decimalsOk = Number.isFinite(snapshot.poolDepth?.baseDecimals) && Number.isFinite(snapshot.poolDepth?.quoteDecimals);
+        // Fase-LIVE: evalueer met de ECHTE upstream MarketIdentity (of undefined
+        // wanneer de decoded event-data geen canonical pool/curve identiteit bevat)
+        // en de ECHTE market freshness uit observedAt. Shadow rapporteert, blokkeert nooit.
+        const observedAtMs = Date.parse(snapshot.observedAt);
         const shadow = evaluateEntryShadow({
-          identity: undefined, // protocol-specifieke construction wordt upstream gevuld
+          identity: snapshot.marketIdentity ?? undefined,
           decimals: decimalsOk ? { base: snapshot.poolDepth!.baseDecimals, quote: snapshot.poolDepth!.quoteDecimals } : undefined,
-          marketFreshMs: 0,
+          marketFreshMs: Number.isFinite(observedAtMs) ? Math.max(0, now.getTime() - observedAtMs) : 0,
           nowMs: now.getTime(),
           maxAgeMs: 120_000,
         });
         decisions.push({ type: 'shadow_verdict', pairId: snapshot.pairId, mint: snapshot.mint, symbol: snapshot.symbol, verdict: shadow.verdict, reasonCode: shadow.reasonCode, score, source: snapshot.source });
+        // Fase-LIVE observability: tel protocol/compleetheid/decimals/freshness/reasons
+        recordShadowObservation(this.shadowMetrics, {
+          verdict: shadow.verdict,
+          reasonCode: shadow.reasonCode,
+          protocol: snapshot.marketIdentity?.kind ?? protocolFromSource(snapshot.source),
+          source: snapshot.source,
+          identityKind: snapshot.marketIdentity?.kind ?? null,
+          identityUndefined: !snapshot.marketIdentity,
+          gxOnly: gxOnlyPairId(snapshot.pairId, snapshot.mint),
+          decimalsKnown: decimalsOk,
+        });
       }
       if (miIsGxOnly) {
         decisions.push({ type: 'rejected', pairId: snapshot.pairId, mint: snapshot.mint, symbol: snapshot.symbol, reason: 'missing_canonical_market_identity', rejectionClass: 'risk', score, source: snapshot.source, ...context });
