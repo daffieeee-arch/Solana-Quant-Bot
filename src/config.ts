@@ -41,6 +41,9 @@ export type PaperConfig = {
    *             expectancy (+~4-7%/trade op het laag-druk kwartiel).
    */
   entryMode: 'surge' | 'contra';
+  /** Fase-QH: entry-gate in shadow-modus (false = enforced; true = shadow-evalueer
+   *  en rapporteer WOULD_ACCEPT/WOULD_REJECT zonder de entry-beslissing te wijzigen). */
+  entryShadowMode: boolean;
   stopLossPercent: number;
   takeProfitPercent: number;
   trailingStopPercent: number;
@@ -206,6 +209,7 @@ export function loadConfig(env: Env = process.env): PaperConfig {
     minBuyPressure: env.MIN_BUY_PRESSURE === undefined ? 0 : positiveNumber(env, 'MIN_BUY_PRESSURE'),
     contraMaxBuyPressure: env.CONTRA_MAX_BUY_PRESSURE === undefined ? 0.62 : positiveNumber(env, 'CONTRA_MAX_BUY_PRESSURE'),
     entryMode: env.ENTRY_MODE === 'contra' ? 'contra' : 'surge',
+    entryShadowMode: env.ENTRY_SHADOW_MODE === '1' || env.ENTRY_SHADOW_MODE === 'true',
     stopLossPercent: positiveNumber(env, 'STOP_LOSS_PERCENT'),
     takeProfitPercent: positiveNumber(env, 'TAKE_PROFIT_PERCENT'),
     trailingStopPercent: positiveNumber(env, 'TRAILING_STOP_PERCENT'),

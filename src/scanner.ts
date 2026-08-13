@@ -2,6 +2,7 @@ import type { PaperConfig } from './config.js';
 import { canPaperEnter } from './risk.js';
 import { enterPaperPosition, evaluateOpenPosition, computePositionSize, type Portfolio } from './portfolio.js';
 import { evaluateMarketGate, scoreMomentum, scoreContraMomentum, type DiscoveryProvenance, type MarketSnapshot } from './scoring.js';
+import { evaluateEntryShadow } from './entry-shadow.js';
 
 export type MarketProvider = {
   fetchSnapshots(): Promise<MarketSnapshot[]>;
@@ -49,7 +50,8 @@ export type ScanDecision =
   | ({ type: 'paper_entry'; tradeId: string; learningSchemaVersion: 2; pairId: string; mint: string; symbol: string; score: number; source: string; coverage: 'best_effort'; openedAt: string; entryPriceUsd: number } & MarketDecisionContext)
   | { type: 'paper_exit'; tradeId: string; learningSchemaVersion?: 2; pairId: string; mint: string; symbol: string; reason: 'stop_loss' | 'trailing_stop' | 'max_hold' | 'time_stop'; pnlLamports: number; source: string; openedAt: string; exitPriceUsd: number }
   | ({ type: 'rejected'; pairId: string; mint: string; symbol: string; reason: string; rejectionClass: 'market' | 'risk'; score: number; source: string } & MarketDecisionContext)
-  | { type: 'duplicate_suppressed'; pairId: string };
+  | { type: 'duplicate_suppressed'; pairId: string }
+  | { type: 'shadow_verdict'; pairId: string; mint: string; symbol: string; verdict: 'WOULD_ACCEPT' | 'WOULD_REJECT'; reasonCode?: string; score: number; source: string };
 
 export type ScanResult = { mode: 'paper'; portfolio: Portfolio; decisions: ScanDecision[]; snapshots: MarketSnapshot[]; checkedAt: string; providerErrors: string[] };
 
@@ -401,6 +403,21 @@ export class Scanner {
       // identity-vereiste wordtt nog NIET afgedwongen zolang upstream discovery de
       // nodige identifiers niet betrouwbaar vult (anders blokkeren we alle entries).
       const miIsGxOnly = (snapshot.pairId ?? '').toLowerCase() === `gx:${snapshot.mint.toLowerCase()}`;
+      // Fase-QH shadow-mode: evalueer de kandidaat tegen het volledige entry-contract
+      // en rapporteer WOULD_ACCEPT/WOULD_REJECT, maar open (nog) geen positie —
+      // enforcement blijft voorlopig de gx-gate hieronder. Shadow-verdicts bewijzen
+      // dat de gate niet onbedoeld alles afwijst vóór ENFORCE wordt ingeschakeld.
+      if (this.config.entryShadowMode) {
+        const decimalsOk = Number.isFinite(snapshot.poolDepth?.baseDecimals) && Number.isFinite(snapshot.poolDepth?.quoteDecimals);
+        const shadow = evaluateEntryShadow({
+          identity: undefined, // protocol-specifieke construction wordt upstream gevuld
+          decimals: decimalsOk ? { base: snapshot.poolDepth!.baseDecimals, quote: snapshot.poolDepth!.quoteDecimals } : undefined,
+          marketFreshMs: 0,
+          nowMs: now.getTime(),
+          maxAgeMs: 120_000,
+        });
+        decisions.push({ type: 'shadow_verdict', pairId: snapshot.pairId, mint: snapshot.mint, symbol: snapshot.symbol, verdict: shadow.verdict, reasonCode: shadow.reasonCode, score, source: snapshot.source });
+      }
       if (miIsGxOnly) {
         decisions.push({ type: 'rejected', pairId: snapshot.pairId, mint: snapshot.mint, symbol: snapshot.symbol, reason: 'missing_canonical_market_identity', rejectionClass: 'risk', score, source: snapshot.source, ...context });
         continue;
