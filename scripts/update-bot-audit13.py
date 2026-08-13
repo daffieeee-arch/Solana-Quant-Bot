@@ -94,17 +94,12 @@ secrets_map = {
 vols = svc.setdefault('volumes', [])
 # verwijder eventuele bestaande /run/secrets volume-mounts (idempotent)
 vols[:] = [v for v in vols if not (isinstance(v, dict) and str(v.get('target', '')).startswith('/run/secrets/'))]
-for src_name, tgt_name in secrets_map.items():
+for src_name in secrets_map:
+    # TrueNAS-apps volume-format (compose bind-mount), één per secret
     vols.append({
-        'host_path': f'{SECRET_SRC}/{src_name}',
-        'container_path': f'/run/secrets/{tgt_name}',
-        'read_only': True,
-    })
-    # fallback v-format (truecharts-apps variant) indien nodig
-    vols.append({
-        'source': f'{SECRET_SRC}/{src_name}',
-        'target': f'/run/secrets/{tgt_name}',
         'type': 'bind',
+        'source': f'{SECRET_SRC}/{src_name}',
+        'target': f'/run/secrets/{src_name}',
         'read_only': True,
     })
 
