@@ -8,7 +8,8 @@ import { flock } from 'fs-ext';
 import { makeTradeId, type Portfolio } from './portfolio.js';
 
 export type PaperLedgerEvent = {
-  type: 'paper_entry' | 'paper_exit' | 'rejected' | 'duplicate_suppressed' | 'scan_complete' | 'scan_error';
+  type: 'paper_entry' | 'paper_exit' | 'rejected' | 'duplicate_suppressed' | 'scan_complete' | 'scan_error' |
+    'position_quarantined' | 'administrative_capital_adjustment';
   at: string;
   [key: string]: unknown;
 };
@@ -989,7 +990,7 @@ function validatePosition(value: unknown, label: string): asserts value is Portf
 }
 
 function validateEvent(value: unknown, label: string): asserts value is PaperLedgerEvent {
-  const types = new Set(['paper_entry', 'paper_exit', 'rejected', 'duplicate_suppressed', 'scan_complete', 'scan_error']);
+  const types = new Set(['paper_entry', 'paper_exit', 'rejected', 'duplicate_suppressed', 'scan_complete', 'scan_error', 'position_quarantined', 'administrative_capital_adjustment']);
   if (!isRecord(value) || typeof value.type !== 'string' || !types.has(value.type) || !isTimestamp(value.at)) {
     throw new Error(`${label} has an invalid type or timestamp`);
   }
