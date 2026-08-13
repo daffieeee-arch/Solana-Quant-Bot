@@ -115,6 +115,12 @@ async function run(): Promise<void> {
     engine.syncProviders(provider.getProviderEnabled());
     applyProviderToggles();
     runtimeConfig = withFreshSolPrice(runtimeConfig, marketContext);
+    // Fase-W: bij startup de position-watches reconstruct uit de open-positie
+    // WAL-state (authoritatief) — zodat open posities direct verse stream-marks
+    // ontvangen (onderdeel 2: restart-recovery).
+    if (provider.setPositionWatches) {
+      provider.setPositionWatches(ledger.portfolio.positions.map((p) => p.mint).filter(Boolean));
+    }
     const scanner = new Scanner(provider, runtimeConfig, ledger.portfolio, undefined, history.firstSeenByPair);
     const learnController = new LearnController(config.dataDir, runtimeConfig);
     resources.opportunityStorage = learnController.storage;

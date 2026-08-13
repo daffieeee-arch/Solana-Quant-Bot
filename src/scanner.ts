@@ -26,6 +26,12 @@ export type MarketProvider = {
    * Gebruikt door fetchSnapshotsForPositions om mark-prijzen live te houden.
    */
   fetchPositionSnapshot?(mint: string): Promise<{ symbol: string; priceUsd: number } | undefined>;
+  /** Fase-W: registreer/verwijder/open-position-watches. De scanner roept deze
+   *  bij position open/close en bij startup-reconstructie (uit de WAL/open-state). */
+  addPositionWatch?(mint: string): void;
+  removePositionWatch?(mint: string): void;
+  setPositionWatches?(mints: readonly string[]): void;
+  positionWatchMetrics?(): Record<string, unknown>;
 };
 
 export type PositionQuoteIdentity = { pairId: string; mint: string };
@@ -253,6 +259,12 @@ export class Scanner {
       this.portfolio = evaluation.portfolio;
       if (evaluation.event.type === 'exit') {
         exitedMintsThisCycle.add(snapshot.mint);
+        // Fase-W: verwijder de watch bij position-close (idempotent). De mint
+        // is niet meer een open positie → geen stream-prijs-routing meer nodig.
+        if (this.provider.removePositionWatch) {
+          const stillOpen = this.portfolio.positions.some((p) => p.mint === snapshot.mint && !exitedMintsThisCycle.has(snapshot.mint));
+          if (!stillOpen) this.provider.removePositionWatch(snapshot.mint);
+        }
         decisions.push({
           type: 'paper_exit',
           tradeId: openPosition.tradeId,

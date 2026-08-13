@@ -229,4 +229,43 @@ describe('CompositeProvider + Triton discovery', () => {
     // géén RPC (locale verse prijs), zelfs als de curve onbekend is
     expect(depthCalls).toBe(0);
   });
+
+  it('Fase-W: position-watch blijft verse mark krijgen nadat mint uit discovery verdwijnt', async () => {
+    // Kern-bug: na entry verdwijnt de mint uit de discovery-consumptie (REEMIT-
+    // cooldown/schoon). Een position-WATCH moet ongeacht discovery een verse
+    // mark krijgen van de al-binnenkomende stream-update.
+    let depthCalls = 0;
+    const fakeDepth = { baseReserve: 1e6, quoteReserve: 3e9, baseDecimals: 6, quoteDecimals: 9 };
+    const fakeReserveReader = {
+      fetchPumpDepthByMint: async () => { depthCalls += 1; return fakeDepth; },
+      fetchPumpDepth: async () => { depthCalls += 1; return fakeDepth; },
+      resolveSymbol: async () => undefined,
+      assessRugSafety: async () => undefined,
+      drainDiagnostics: () => [],
+    };
+    const provider = new TritonProvider(
+      'johnb-mainnet-2781.mainnet.rpcpool.com', TOKEN_FAKE,
+      (() => ({ Subscribe: () => ({ on: () => ({ on: () => undefined, cancel: () => undefined }), cancel: () => undefined }) })) as never,
+      undefined, fakeReserveReader as never, { solPriceUsd: 74 } as never,
+    );
+    // registreer een position-watch (alsof er een open positie is)
+    provider.addPositionWatch(MINT);
+    // simuleer een stream-update via emitDiscovery (dezelfde route als live)
+    (provider as unknown as { emitDiscovery: (i: { pairId: string; mint: string; symbol: string; source: string; programId: string; poolDepth?: unknown; quoteMint?: string }) => void }).emitDiscovery({
+      pairId: `gx:${MINT}`,
+      mint: MINT,
+      symbol: 'MINTX',
+      source: 'triton_geyser_generic_multidex',
+      programId: '',
+      poolDepth: fakeDepth,
+      quoteMint: 'So11111111111111111111111111111111111111112',
+    });
+    const p = await provider.fetchPositionPriceUsd(MINT);
+    expect(p).toBeGreaterThan(0);
+    // géén RPC — de watch heeft de verse stream-prijs doorgegeven
+    expect(depthCalls).toBe(0);
+    // observability: source = STREAM
+    const metrics = provider.positionWatchMetrics();
+    expect((metrics.sourceByMint as Record<string, string>)[MINT]).toBe('STREAM');
+  });
 });

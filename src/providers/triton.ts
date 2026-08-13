@@ -146,6 +146,59 @@ export class TritonProvider {
    *  uit emitDiscovery). Primaire verse bron voor position-marks — zolang deze
    *  recent is (POSITION_MARK_FRESH_MS) wordt géén RPC gedaan. Bounded. */
   private readonly lastPriceByMint = new Map<string, { priceUsd: number; at: number }>();
+  /** Fase-W: actieve position-watch-mints (open posities). Deze mints krijgen
+   *  ALTIJD een verse mark-update uit de binnenkomende stream (vóór de discovery-
+   *  cooldown), onafhankelijk van discovery/candidate-status. Bounded. */
+  private readonly positionWatchMints = new Set<string>();
+  /** Fase-W: observability — mark-source per mint (laatste bron) + tellers. */
+  private readonly positionMarkSource = new Map<string, 'STREAM' | 'TITAN' | 'LOCAL_STATE' | 'REGISTRY' | 'RPC' | 'STALE'>();
+  private positionMarkSourceCounts: Record<string, number> = { STREAM: 0, TITAN: 0, LOCAL_STATE: 0, REGISTRY: 0, RPC: 0, STALE: 0 };
+  private positionMarkStaleTotal = 0;
+  private positionMarkRpcFallbackTotal = 0;
+
+  /** Fase-W: registreer een open positie-mint voor watch (idempotent, dedup). */
+  addPositionWatch(mint: string): void {
+    if (!mint || this.positionWatchMints.has(mint)) return;
+    this.positionWatchMints.add(mint);
+    if (this.positionWatchMints.size > 1_000) {
+      const first = this.positionWatchMints.values().next().value as string | undefined;
+      if (first !== undefined) this.positionWatchMints.delete(first);
+    }
+  }
+  /** Fase-W: verwijder de watch bij position-close (idempotent). */
+  removePositionWatch(mint: string): void {
+    this.positionWatchMints.delete(mint);
+  }
+  /** Fase-W: reconstructie na restart — herstel watches uit de WAL/open-posities. */
+  setPositionWatches(mints: readonly string[]): void {
+    this.positionWatchMints.clear();
+    for (const m of mints) this.addPositionWatch(m);
+  }
+  /** Fase-W: actieve watch-count (observability). */
+  activePositionWatches(): number {
+    return this.positionWatchMints.size;
+  }
+  /** Fase-W: observability snapshot (source-distributie + tellers). */
+  positionWatchMetrics(): Record<string, unknown> {
+    return {
+      active: this.positionWatchMints.size,
+      sourceCounts: { ...this.positionMarkSourceCounts },
+      staleTotal: this.positionMarkStaleTotal,
+      rpcFallbackTotal: this.positionMarkRpcFallbackTotal,
+      sourceByMint: Object.fromEntries(this.positionMarkSource),
+    };
+  }
+  /** Fase-W: routeer een binnenkomende stream-prijs naar een ge-watchte positie
+   *  (vóór discovery-cooldown; 0 RPC). Return true als de mint een watch had. */
+  private _routeStreamPriceToWatch(mint: string, priceUsd: number, source: 'STREAM' | 'LOCAL_STATE' | 'REGISTRY'): boolean {
+    if (!this.positionWatchMints.has(mint)) return false;
+    if (!Number.isFinite(priceUsd) || priceUsd <= 0) return false;
+    const now = this.clock();
+    this.lastPriceByMint.set(mint, { priceUsd, at: now });
+    this.positionMarkSource.set(mint, source);
+    this.positionMarkSourceCounts[source] = (this.positionMarkSourceCounts[source] ?? 0) + 1;
+    return true;
+  }
 
   private cleanupPumpDepthThrottle(): void {
     if (this.pumpDepthThrottle.size < 20_000) return;
@@ -622,18 +675,10 @@ export class TritonProvider {
   }): void {
     if (this.destroyed) return;
     const now = this.clock();
-    // Cooldown-windowdedededeupe: re-emit an already-seen pool so the scanner can
-    // re-evaluate it as it ripens (Laag A), instead of deduping it forever. Only
-    // suppress duplicates that arrive within the REEMIT_COOLDOWN_MS window.
-    const lastSeen = this.seenNewPools.get(input.pairId);
-    if (lastSeen !== undefined && now - lastSeen < REEMIT_COOLDOWN_MS) return;
-    this.seenNewPools.set(input.pairId, now);
-    this.cleanupSeenPools();
-    const observedAt = new Date(this.clock()).toISOString();
-    // Streaming self-calc price: if we have live per-pool reserves (Raydium AMMv4/CPMM
-    // via reserveReader), compute the fair-value spot price in-stream (constant product)
-    // — prefer it over the unpriced identity so composite doesn't need REST for new pools.
-    // NOTE: usdPerQuoteUnit is 1.0 for USDC/USDT-quoted pools, SOL/USD for SOL-quoted ones.
+    // Fase-W: bereken de stream-prijs EERST (zodat ge-watchte positie-mints altijd
+    // een verse update krijgen, onafhankelijk van de discovery-cooldown hieronder).
+    // Dit is de kern van de fix: na entry verdwijnt een mint uit discovery-consumptie,
+    // maar de al-binnenkomende stream-prijs moet de position-mark blijven voeden.
     let priceUsd = 0;
     if (input.poolDepth && input.quoteMint) {
       const usdPerQuote = usdPerQuoteUnit(input.quoteMint, this.solPriceUsd);
@@ -642,12 +687,21 @@ export class TritonProvider {
         if (usd !== null && usd > 0) priceUsd = usd;
       }
     }
-    // Fase-O: registreer de gratis stream-prijs als lokale verse-prijs-bron voor
-    // position-marks. Zolang deze recent is, hoeft de mark geen RPC te doen.
+    // Fase-W: routeer de STREAM-prijs altijd naar ge-watchte positie-mints (0 RPC).
+    if (priceUsd > 0) this._routeStreamPriceToWatch(input.mint, priceUsd, 'STREAM');
+    // Registreer de gratis stream-prijs als lokale verse-prijs-bron (bounded).
     if (priceUsd > 0) {
       if (this.lastPriceByMint.size > 5_000) this.lastPriceByMint.clear();
-      this.lastPriceByMint.set(input.mint, { priceUsd, at: this.clock() });
+      this.lastPriceByMint.set(input.mint, { priceUsd, at: now });
     }
+    // Cooldown-windowdedededeupe: re-emit an already-seen pool so the scanner can
+    // re-evaluate it as it ripens (Laag A), instead of deduping it forever. Only
+    // suppress duplicates that arrive within the REEMIT_COOLDOWN_MS window.
+    const lastSeen = this.seenNewPools.get(input.pairId);
+    if (lastSeen !== undefined && now - lastSeen < REEMIT_COOLDOWN_MS) return;
+    this.seenNewPools.set(input.pairId, now);
+    this.cleanupSeenPools();
+    const observedAt = new Date(this.clock()).toISOString();
     this.enqueuePending({
       pairId: input.pairId,
       mint: input.mint,

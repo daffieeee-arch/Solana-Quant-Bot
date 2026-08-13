@@ -139,6 +139,8 @@ export class CompositeProvider implements MarketProvider {
       usage: (this.triton as unknown as { usageSnapshot?: () => Record<string, unknown> })?.usageSnapshot?.(),
       // Scan-tellers over levensduur (voor zuinigheids-volume-analyse per periode).
       scanCount: this.scanCount,
+      // Fase-W: position-watch observability (source-distributie, stale, RPC-fallback).
+      positionWatch: this.positionWatchMetrics(),
       birthUptimeMs: this.uptimeMs(),
     };
   }
@@ -354,8 +356,19 @@ export class CompositeProvider implements MarketProvider {
     return evidence ? classifyRugRisk(evidence) : classifyRugRisk(undefined);
   }
 
+  // ── Fase-W: position-watch bridge (delegeert naar Triton) ──
+  addPositionWatch(mint: string): void { this.triton?.addPositionWatch(mint); }
+  removePositionWatch(mint: string): void { this.triton?.removePositionWatch(mint); }
+  setPositionWatches(mints: readonly string[]): void { this.triton?.setPositionWatches(mints); }
+  positionWatchMetrics(): Record<string, unknown> { return this.triton?.positionWatchMetrics() ?? {}; }
+
   async fetchSnapshotsForPositions(positions: readonly PositionQuoteIdentity[]): Promise<MarketSnapshot[]> {
     const unique = Array.from(new Map(positions.map((position) => [positionKey(position), position])).values());
+    // Fase-W: zorg dat elke open positie-mint een actieve watch heeft (vóór de
+    // mark-ophaling) — idempotent; meerdere posities op dezelfde mint delen één watch.
+    if (this.triton?.addPositionWatch) {
+      for (const position of unique) this.triton.addPositionWatch(position.mint);
+    }
     // Triton-first: positie-quotes komen eerst uit de laatst-geprijsde discovery-merge
     // (curve self-calc). Een positie die NIET (meer) in de actieve discovery-flow zit
     // (na entry stopt de stream voor die mint) krijgt hier een VERSE on-demand quote:
