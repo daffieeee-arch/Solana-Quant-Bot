@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Genereer reinstall-compose-inline.yaml met ECHTE inline-secret-waarden
-(geen _FILE refs, geen file-mounts) zodat de bot niet meer crasht met
-'RPC_HTTP_ENDPOINT_FILE could not be read'."""
-import json, subprocess, os, urllib.request, ssl, re
+"""Genereer reinstall-compose-inline.yaml met TRITON-secret-mounts
+(_FILE refs in env + secret-volumes), conform de beoogde secure architectuur.
+
+Vervangt de vorige inline-secret-uitvoer (die echte Triton-token-waarden in een
+getrackt/op disk staand YAML schreef én de secrets downloadde over onverifieerde
+TLS). De bot leest nu TRITON_ENDPOINT_FILE/TRITON_TOKEN_FILE via secret-mounts;
+de geheime bestanden zelf worden door TrueNAS in het container-secretvolumes
+gemonteerd (source /run/secrets/triton-* op de host) en komen NOOIT in code/git.
+"""
+import json, subprocess, os
 
 def api(method, params):
     env = dict(os.environ)
@@ -11,24 +17,16 @@ def api(method, params):
     r = subprocess.run(['node', 'truenas-wss-admin.mjs'], capture_output=True, text=True, env=env, check=True)
     return json.loads(r.stdout)
 
-def download_secret(path):
-    dl = api('core.download', ['filesystem.get', [path], 's', True])
-    rel = dl['result'][1]
-    data = urllib.request.urlopen(
-        urllib.request.Request('https://192.168.1.234' + rel),
-        timeout=15, context=ssl._create_unverified_context()).read()
-    return data.decode().strip()
-
-SECRETS = {
-    'RPC_HTTP_ENDPOINT': '/mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/rpc-http-endpoint',
-    'RPC_WS_ENDPOINT': '/mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/rpc-ws-endpoint',
-    'TRITON_ENDPOINT': '/mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/triton-endpoint',
-    'TRITON_TOKEN': '/mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/triton-token',
+# Secret-bestanden worden NIET meer gedownload/inline gezet. De _FILE-services
+# verwijzen naar /run/secrets/<name> (docker secret-volumes). Alleen de paden
+# worden geëmit in de env; de waarden leven op de host buiten git.
+SECRET_PATHS = {
+    'RPC_HTTP_ENDPOINT_FILE': '/run/secrets/rpc-http-endpoint',
+    'RPC_WS_ENDPOINT_FILE': '/run/secrets/rpc-ws-endpoint',
+    'TRITON_ENDPOINT_FILE': '/run/secrets/triton-endpoint',
+    'TRITON_TOKEN_FILE': '/run/secrets/triton-token',
 }
-vals = {}
-for k, p in SECRETS.items():
-    vals[k] = download_secret(p)
-    print(f'[secret] {k}: len={len(vals[k])}')
+print('[ok] secrets worden via /run/secrets _FILE-mounts geëmit (geen inline-waarden)')
 
 # Basis-YAML (zonder secret-mounts in volumes, met inline env)
 yaml_out = f'''services:
@@ -87,13 +85,27 @@ yaml_out = f'''services:
       LIQUIDITY_POSITION_FRACTION: "0.02"
       MIN_WHALE_TX_SOL: "1"
       SOL_PRICE_USD: "74"
-      RPC_HTTP_ENDPOINT: {json.dumps(vals['RPC_HTTP_ENDPOINT'])}
-      RPC_WS_ENDPOINT: {json.dumps(vals['RPC_WS_ENDPOINT'])}
-      TRITON_ENDPOINT: {json.dumps(vals['TRITON_ENDPOINT'])}
-      TRITON_TOKEN: {json.dumps(vals['TRITON_TOKEN'])}
+      RPC_HTTP_ENDPOINT_FILE: {json.dumps(SECRET_PATHS['RPC_HTTP_ENDPOINT_FILE'])}
+      RPC_WS_ENDPOINT_FILE: {json.dumps(SECRET_PATHS['RPC_WS_ENDPOINT_FILE'])}
+      TRITON_ENDPOINT_FILE: {json.dumps(SECRET_PATHS['TRITON_ENDPOINT_FILE'])}
+      TRITON_TOKEN_FILE: {json.dumps(SECRET_PATHS['TRITON_TOKEN_FILE'])}
       TRITON_STREAM: geyser
       ENTRY_MODE: contra
       WHALE_WALLETS: ""
+    secrets:
+      - rpc-http-endpoint
+      - rpc-ws-endpoint
+      - triton-endpoint
+      - triton-token
+secrets:
+  rpc-http-endpoint:
+    file: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/rpc-http-endpoint
+  rpc-ws-endpoint:
+    file: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/rpc-ws-endpoint
+  triton-endpoint:
+    file: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/triton-endpoint
+  triton-token:
+    file: /mnt/fastdisk/ai/hermes/secrets/solana-paper-scanner/triton-token
     volumes:
       - source: /mnt/fastdisk/ai/hermes/solana-paper-scanner/data-bot-v5
         target: /data

@@ -4,18 +4,26 @@ dist/
 *.tsbuildinfo
 
 # ── Runtime data (ledger, snapshots, caches) ───────────
+data-bot*/
+data-stream*/
 data-bot-v5/
 *.ndjson
 *.log
+.backtest-cache/
 
 # ── Secrets (NOOIT committen) ──────────────────────────
 .env
-*.env
+.env.*
+!.env.example
 secrets/
+**/secrets/
 truenas-credentials.txt
 grafana-credentials.txt
 **/*-token*.txt
 **/*-wss-admin*.mjs
+**/*api-key*.json
+data/gate-records/
+data/gate-*/
 
 # ── Editors / OS ──────────────────────────────────────
 .vscode/
@@ -29,3 +37,5 @@ secrets.txt
 scripts/fix-inline-secrets.py
 scripts/generic-test.mjs
 scripts/reinstall-compose-inline.yaml
+scripts/gen-inline-yaml.py
+scripts/reinstall-bot.py

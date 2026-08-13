@@ -62,6 +62,24 @@ env['MAX_ENTRIES_PER_SCAN'] = '1'
 # ENTRY_MODE blijft contra
 env['ENTRY_MODE'] = 'contra'
 
+# ── SECURITY P0 (audit C1/H3): strip inline secrets vóór de push ──
+# De live config bevatte TRITON_TOKEN/RPC_* inline (plaintext leesbaar via
+# app-query). De beoogde architectuur is _FILE-mounts (docker secrets op de host).
+# Deze stap verwijdert de inline secret-waarden EN stelt de _FILE-varianten in;
+# via volumes/secrets blijft de bot de waarden uit /run/secrets lezen.
+# NB: de bestandsmounts zelf worden door TrueNAS-UI/deployer toegevoegd (geen
+# inline path-leaks in de env); hier worden alleen env-keys gestript.
+SECRET_INLINE_KEYS = ('TRITON_TOKEN', 'TRITON_ENDPOINT', 'RPC_HTTP_ENDPOINT', 'RPC_WS_ENDPOINT', 'BIRDEYE_API_KEY')
+for k in SECRET_INLINE_KEYS:
+    env.pop(k, None)
+FILE_KEYS = {
+    'RPC_HTTP_ENDPOINT_FILE': '/run/secrets/rpc-http-endpoint',
+    'RPC_WS_ENDPOINT_FILE': '/run/secrets/rpc-ws-endpoint',
+    'TRITON_ENDPOINT_FILE': '/run/secrets/triton-endpoint',
+    'TRITON_TOKEN_FILE': '/run/secrets/triton-token',
+}
+env.update(FILE_KEYS)
+
 u = api('app.update', ['solana-bot', {'custom_compose_config': config}])
 print('[update] image:', svc.get('image'), '| job:', json.dumps(u.get('result'))[:60])
 print('[env] MIN_AGE=', env['MIN_AGE_MINUTES'], '| MAX_AGE=', env['MAX_AGE_MINUTES'],
