@@ -414,12 +414,10 @@ export class Scanner {
       // Fase-QH shadow-mode: evalueer de kandidaat tegen het volledige entry-contract
       // en rapporteer WOULD_ACCEPT/WOULD_REJECT, maar open (nog) geen positie —
       // enforcement blijft voorlopig de gx-gate hieronder.
-      // NB (reviewer deleg_5181dd26, obs 3a): de live-pipeline geeft hier expliciet
-      // `identity: undefined` door (upstream MarketIdentity-constructie is nog niet
-      // aangesloten) → runtime-verdicts zijn per constructie WOULD_REJECT. Het bewijs
-      // dat geldige identities WOULD_ACCEPT krijgen (en ongeldige WOULD_REJECT met
-      // correcte reasonCode) leeft in de protocol-integratietests
-      // (tests/entry-shadow-integration.test.ts) m.b.v. recorded fixtures.
+      // Fase-LIVE: de live-pipeline levert nu de ECHTE upstream MarketIdentity
+      // (uit decoded events) + ECHTE freshness. Onderstaande evaluatie gebruikt
+      // snapshot.marketIdentity (of undefined wanneer de decoded event-data geen
+      // canonical pool/curve bevat — CLMM/onbekende txn). Shadow rapporteert, blokkeert nooit.
       if (this.config.entryShadowMode) {
         const decimalsOk = Number.isFinite(snapshot.poolDepth?.baseDecimals) && Number.isFinite(snapshot.poolDepth?.quoteDecimals);
         // Fase-LIVE: evalueer met de ECHTE upstream MarketIdentity (of undefined

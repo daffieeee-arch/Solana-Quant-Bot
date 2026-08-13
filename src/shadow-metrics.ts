@@ -8,7 +8,6 @@ export type ShadowMetrics = {
   candidatesTotal: number;
   byProtocol: Record<string, number>;
   identityComplete: number;
-  identityIncomplete: number;
   identityUndefined: number;
   gxOnly: number;
   decimalsKnown: number;
@@ -22,7 +21,6 @@ const EMPTY: ShadowMetrics = {
   candidatesTotal: 0,
   byProtocol: {},
   identityComplete: 0,
-  identityIncomplete: 0,
   identityUndefined: 0,
   gxOnly: 0,
   decimalsKnown: 0,
@@ -54,7 +52,6 @@ export function recordShadowObservation(
   m.byProtocol[proto] = (m.byProtocol[proto] ?? 0) + 1;
   if (o.identityUndefined) m.identityUndefined += 1;
   else if (o.identityKind) m.identityComplete += 1;
-  else m.identityIncomplete += 1;
   if (o.gxOnly) m.gxOnly += 1;
   if (o.decimalsKnown) m.decimalsKnown += 1;
   else m.decimalsMissing += 1;

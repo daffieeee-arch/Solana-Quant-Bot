@@ -41,7 +41,7 @@ def freeze_hash(root: pathlib.Path) -> str:
     return h.hexdigest()
 
 FREEZE = freeze_hash(ROOT)
-IMAGE = 'solana-bot:contra-audit15-watch2'
+IMAGE = 'solana-bot:contra-audit15-shadow'
 print('[freeze]', FREEZE)
 
 # Fase-W/Provenance: immutable Git SHA van de deploy-tip (unieke rollback-marker).
@@ -66,6 +66,11 @@ env['MAX_HOLD_MINUTES'] = '30'
 env['MAX_ENTRIES_PER_SCAN'] = '1'
 # ENTRY_MODE blijft contra
 env['ENTRY_MODE'] = 'contra'
+# Fase-LIVE: SHADOW-ONLY — evalueert echte candidates tegen het volledige
+# MarketIdentity-entry-contract en rapporteert WOULD_ACCEPT/WOULD_REJECT,
+# maar ENFORCEERT de gate NIET (geen nieuwe entry-blokkering, geen entries
+# uitsluitend door shadow). Observability via /api/debug.shadowMetrics.
+env['ENTRY_SHADOW_MODE'] = '1'
 
 # ── SECURITY P0 (audit C1/H3): strip inline secrets vóór de push ──
 # De live config bevatte TRITON_TOKEN/RPC_* inline (plaintext leesbaar via
