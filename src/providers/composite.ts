@@ -4,6 +4,7 @@ import { SolanaRpcProvider } from './solana-rpc.js';
 import { TritonProvider } from './triton.js';
 import { TitanQuoteProvider } from './titan.js';
 import { assessRugRisk as classifyRugRisk } from '../rug-risk.js';
+import { getPumpParseFailures } from './triton-geyser.js';
 
 export type CompositeOptions = {
   maxTokens?: number;
@@ -141,6 +142,7 @@ export class CompositeProvider implements MarketProvider {
       scanCount: this.scanCount,
       // Fase-W: position-watch observability (source-distributie, stale, RPC-fallback).
       positionWatch: this.positionWatchMetrics(),
+      pumpParseFailures: getPumpParseFailures(),
       birthUptimeMs: this.uptimeMs(),
     };
   }

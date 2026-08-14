@@ -55,6 +55,43 @@ function decodeKey(key: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Bounded collector van parsePumpTxn-failure-redenen (systematic-debugging).
+ * disabled by default; activeer met env DEBUG_PARSE_PUMP=1.
+ * Max 50 entries, rotating (geen unbounded groei). Geen payload/secrets.
+ */
+export const PUMP_PARSE_DEBUG_MAX = 50;
+export const pumpParseFailures: { reason: string; hasTransaction: boolean; hasLogs: boolean; hasBuy: boolean; hasSell: boolean; hasBuyV2: boolean; hasSellV2: boolean; innerCount: number; pumpCpCount: number; accountsMin: number; accountsMax: number; allAccounts: number }[] = [];
+
+function recordPumpParseFailure(payload: any, reason: string): void {
+  if (!process.env.DEBUG_PARSE_PUMP) return;
+  if (pumpParseFailures.length >= PUMP_PARSE_DEBUG_MAX) { pumpParseFailures.shift(); }
+  const outer = payload?.transaction;
+  const inner = outer?.transaction ?? outer;
+  const logs: string[] = inner?.meta?.logMessages ?? [];
+  let hasBuy = false, hasSell = false, hasBuyV2 = false, hasSellV2 = false;
+  for (const l of logs) {
+    if (l.includes('Program log: Instruction: Buy') && !l.includes('BuyV2') && !l.includes('BuyStable')) hasBuy = true;
+    if (l.includes('Program log: Instruction: Sell') && !l.includes('SellV2') && !l.includes('SellStable')) hasSell = true;
+    if (/Program log: Instruction: BuyV2/.test(l)) hasBuyV2 = true;
+    if (/Program log: Instruction: SellV2/.test(l)) hasSellV2 = true;
+  }
+  let pumpCpCount = 0; let accountsMin = Infinity; let accountsMax = -1; let allAccounts = 0;
+  for (const group of inner?.meta?.innerInstructions ?? []) {
+    for (const ix of group?.instructions ?? []) {
+      allAccounts += 1;
+      const rawAccts = ix?.accounts;
+      const cnt = (Buffer.isBuffer(rawAccts) ? rawAccts.length : (rawAccts?.length ?? 0));
+      if (cnt < accountsMin) accountsMin = cnt;
+      if (cnt > accountsMax) accountsMax = cnt;
+      const keys = ((inner?.transaction?.message?.accountKeys ?? []) as unknown[]);
+      const progKey = keys[ix?.programIdIndex] ?? '';
+      if (String(progKey) === '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P') pumpCpCount++;
+    }
+  }
+  pumpParseFailures.push({ reason, hasTransaction: !!payload?.transaction, hasLogs: logs.length > 0, hasBuy, hasSell, hasBuyV2, hasSellV2, innerCount: (inner?.meta?.innerInstructions ?? []).length, pumpCpCount, accountsMin: accountsMin === Infinity ? 0 : accountsMin, accountsMax: accountsMax === -1 ? 0 : accountsMax, allAccounts });
+}
+
 /** Extract pump.fun buy/sell CPI from a raw geyser transaction payload. */
 export function parsePumpTxn(payload: any): { mint: string; curve: string; kind: 'buy' | 'sell' } | undefined {
   // SDK-payload: { transaction: { transaction: { signature, transaction, meta, index } } }
@@ -317,6 +354,32 @@ export function createGeyserClientFactory(hostOverride?: string, tokenOverride?:
             }
             let update: VixenUpdate | undefined;
             const pump = msg?.transaction ? parsePumpTxn(msg) : undefined;
+            // Systematic-debugging: capture failure-redenen (enabled via DEBUG_PARSE_PUMP)
+            if (!pump && msg?.transaction) {
+              const outer = msg.transaction;
+              const inner = outer?.transaction ?? outer;
+              const logs: string[] = inner?.meta?.logMessages ?? [];
+              const hasDiscLog = logs.some((l) => /Program log: Instruction: (Buy|Sell|BuyV2|SellV2)/.test(l));
+              const lowerLogs = logs.join(' ').toLowerCase();
+              const noPumpLog = !lowerLogs.includes('program log: instruction: buy') && !lowerLogs.includes('program log: instruction: sell');
+              const keys = ((inner?.transaction?.message?.accountKeys ?? []) as unknown[]).map(decodeKey);
+              const noPumpInKeys = !keys.some((k?: string) => k === '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
+              if (noPumpLog && noPumpInKeys) recordPumpParseFailure(msg, 'no_pump_log_or_keys');
+              else if (noPumpLog) recordPumpParseFailure(msg, 'log_missing_instruction');
+              else {
+                // logs matchen maar parsePumpTxn returned undefined — mogelijk account layout
+                let reasons: string[] = [];
+                for (const group of inner?.meta?.innerInstructions ?? []) {
+                  for (const ix of group?.instructions ?? []) {
+                    const rawAccts = ix?.accounts;
+                    const cnt = Buffer.isBuffer(rawAccts) ? rawAccts.length : (rawAccts?.length ?? 0);
+                    const progKey = keys[ix?.programIdIndex ?? 0];
+                    if (progKey === '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P' && cnt > 0) reasons.push(`pump_cpi_${cnt}accts`);
+                  }
+                }
+                recordPumpParseFailure(msg, reasons.length ? `log_ok_but_${reasons.join('|')}` : 'log_ok_no_pump_cpi');
+              }
+            }
             if (pump) {
               const known = firstMintPerCurve.get(pump.curve);
               if (known !== undefined && known !== pump.mint) return;
@@ -382,3 +445,6 @@ export function createGeyserClientFactory(hostOverride?: string, tokenOverride?:
     return clientLike;
   };
 }
+
+/* Snapshot voor debug-exposure (systematic-debugging capture-hook). */
+export function getPumpParseFailures() { return pumpParseFailures.slice(); }
