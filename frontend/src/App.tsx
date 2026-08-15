@@ -13,7 +13,9 @@ export type DashboardData = {
   rejections: Rejection[];
   closedTrades: ClosedTrade[];
   marketContext?: { updatedAt: string; ticker: Array<{ symbol: string; name: string; priceUsd: number; change24hPercent: number }>; solEur?: number; news: Array<{ source: string; title: string; url: string; publishedAt: string }> };
-  providerHealth?: Array<{ provider: string; status: 'ok' | 'degraded' | 'down'; count: number; lastError?: string }>;
+  providerHealth?: Array<{ provider: string; status: 'ok' | 'degraded' | 'down' | 'DISABLED_OFFLINE_ZERO_COST'; count: number; lastError?: string }>;
+  /** Offline zero-cost mode (TRITON_LIVE_ENABLED=false) — géén live Triton. */
+  offline?: 'OFFLINE_ZERO_COST';
 };
 
 type ControlsData = {
@@ -195,6 +197,12 @@ function Metric({ label, value, tone }: { label: string; value: string; tone: 'p
 function SurfaceTitle({ id, eyebrow, title, right }: { id: string; eyebrow: string; title: string; right?: React.ReactNode }) { return <header className="surface-title"><div><small>{eyebrow}</small><h2 id={id}>{title}</h2></div>{right && <span className="surface-meta">{right}</span>}</header>; }
 function MarketTicker({ context }: { context: DashboardData['marketContext'] }) { return <section className="market-ticker" aria-label="Major crypto market ticker"><span className="ticker-label">MARKET TICKER</span><div className="ticker-window"><div className="ticker-track">{context?.ticker.length ? context.ticker.map((coin) => <span className="ticker-item" key={coin.symbol} title={coin.name}><strong>{coin.symbol}</strong><b>${formatUsd(coin.priceUsd)}</b><em className={tone(coin.change24hPercent)}>{signedPercent(coin.change24hPercent)}</em></span>) : <span className="ticker-item muted">Major-coin data is temporarily unavailable</span>}</div></div><time className="ticker-source">COINGECKO · {context ? formatTime(context.updatedAt) : '—'}</time></section>; }
 function NewsPanel({ context }: { context: DashboardData['marketContext'] }) { return <aside className="surface news-surface" aria-labelledby="news-title"><SurfaceTitle id="news-title" eyebrow="SECONDARY CONTEXT · NEVER A TRADE SIGNAL" title="MARKET NEWS" right={<span>{context?.news.length ?? 0} ITEMS</span>} /><div className="news-list">{context?.news.length ? context.news.map((item) => <article className="news-row" key={`${item.url}-${item.publishedAt}`}><a href={item.url} target="_blank" rel="noreferrer">{item.title}</a><div><span>{item.source}</span><time>{formatTime(item.publishedAt)}</time></div></article>) : <Empty label="News feed is temporarily unavailable" />}</div><p className="news-disclaimer">Headlines are context only — never an automatic trade signal.</p></aside>; }
+function statusLabel(status: 'ok' | 'degraded' | 'down' | 'DISABLED_OFFLINE_ZERO_COST'): string {
+  if (status === 'ok') return 'OBSERVED';
+  if (status === 'down') return 'DOWN';
+  if (status === 'DISABLED_OFFLINE_ZERO_COST') return 'OFFLINE_ZERO_COST';
+  return 'DEGRADED';
+}
 function SystemStatus({ apiLatencyMs, scanner, updatedAt, now, providerHealth }: { apiLatencyMs: number | null; scanner: DashboardData['scanner']; updatedAt: string; now: Date; providerHealth?: DashboardData['providerHealth'] }) {
   const unavailableMetrics = ['PROVIDER LATENCY', 'RECONNECTS', 'ERRORS', 'CPU', 'MEMORY'];
   return <section className="surface system-status-surface" aria-labelledby="system-status-title">
@@ -203,13 +211,22 @@ function SystemStatus({ apiLatencyMs, scanner, updatedAt, now, providerHealth }:
       <div><span className="status-pip observed" /><strong>DASHBOARD API</strong><b>OBSERVED</b><small>DASHBOARD FETCH</small><time>{apiLatencyMs ?? 0} MS</time></div>
       <div><span className="status-pip reported" /><strong>SCANNER HEARTBEAT</strong><b>REPORTED {scanner.status.toUpperCase()}</b><small>SNAPSHOT AGE</small><time>{formatAge(now, updatedAt)}</time></div>
     </div>
-    <div className="dependency-grid">{(providerHealth?.length ? providerHealth : [
-      // TRITON-ONLY fallback: de verboden providers (BIRDEYE/GECKO/SOLANA WS)
-      // zijn uit de code gesloopt en mogen niet meer als status verschijnen.
-      { provider: 'TRITON', status: 'ok' as const },
-    ]).map((dep) => <article key={dep.provider}>
-      <span className={`status-pip ${dep.status}`} /><strong>{dep.provider}</strong><b className={dep.status === 'ok' ? 'exposed' : ''}>{dep.status === 'ok' ? 'OBSERVED' : dep.status === 'down' ? 'DOWN' : 'DEGRADED'}</b><small>{dep.errorHint ?? 'From latest scan telemetry'}</small>
-    </article>)}</div>
+    <div className="dependency-grid">
+      {(providerHealth?.length ? providerHealth : [
+        // TRITON-ONLY fallback: de verboden providers (BIRDEYE/GECKO/SOLANA WS)
+        // zijn uit de code gesloopt en mogen niet meer als status verschijnen.
+        { provider: 'TRITON', status: 'ok' as const },
+      ]).map((dep) => {
+        return (
+          <article key={dep.provider}>
+            <span className={`status-pip ${dep.status}`} />
+            <strong>{dep.provider}</strong>
+            <b className={dep.status === 'ok' ? 'exposed' : dep.status === 'DISABLED_OFFLINE_ZERO_COST' ? 'offline' : ''}>{statusLabel(dep.status)}</b>
+            <small>{dep.status === 'DISABLED_OFFLINE_ZERO_COST' ? 'OFFLINE_ZERO_COST — triton live uit (prépaid $0)' : 'From latest scan telemetry'}</small>
+          </article>
+        );
+      })}
+    </div>
     <div className="telemetry-grid">{unavailableMetrics.map((metric) => <div key={metric}><span>{metric}</span><strong className="not-exposed">NOT EXPOSED</strong></div>)}</div>
     <p className="telemetry-note">Provider labels reflect the latest scan cycle's diagnostics only — degraded/down means recent per-provider errors were observed in this window.</p>
   </section>;
