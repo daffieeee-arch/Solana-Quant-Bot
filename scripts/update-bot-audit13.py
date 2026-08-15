@@ -73,6 +73,9 @@ env['ENTRY_MODE'] = 'contra'
 env['ENTRY_SHADOW_MODE'] = '1'
 # Systematic-debugging: capture parsePumpTxn failures (bounded, disabled-by-default via env)
 env['DEBUG_PARSE_PUMP'] = '1'
+# ZERO-COST mode (2026-08-15): Triton prepaid balance = $0 → géén live Triton-consumptie.
+# TRITON_LIVE_ENABLED=false default in development; expliciete manual unlock voor reactivatie.
+env['TRITON_LIVE_ENABLED'] = 'false'
 
 # ── SECURITY P0 (audit C1/H3): strip inline secrets vóór de push ──
 # De live config bevatte TRITON_TOKEN/RPC_* inline (plaintext leesbaar via

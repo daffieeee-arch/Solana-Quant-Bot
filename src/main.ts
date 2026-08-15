@@ -111,12 +111,18 @@ async function run(): Promise<void> {
     // TRITON_STREAM=geyser gebruikt de raw Dragon's Mouth gRPC stream (auto-reconnect,
     // ~400ms sneller); default vixen = de geparsede program-stream (stabiel).
     const streamMode = (process.env.TRITON_STREAM ?? 'vixen').toLowerCase();
+    // ZERO-COST mode (2026-08-15): Triton prepaid balance is $0. TRITON_LIVE_ENABLED
+    // is default FALSE in development — géén betaalde Triton-consumptie (Dragon's Mouth
+    // subscriptions, Titan, Triton RPC) wordt gestart. De bot draait OFFLINE (dashboard,
+    // ledger, scanner-logica) zonder live data. Reactivatie: expliciet TRITON_LIVE_ENABLED=true
+    // (en voldoende balance) — de Triton-code blijft volledig aanwezig, alleen niet actief.
+    const tritonLiveEnabled = (process.env.TRITON_LIVE_ENABLED ?? 'false').toLowerCase() === 'true';
     const tritonClientFactory = streamMode === 'geyser' ? createGeyserClientFactory() : createVixenClientFactory();
     const tritonEndpoint = readOptionalSecret(process.env.TRITON_ENDPOINT, process.env.TRITON_ENDPOINT_FILE);
     const tritonToken = readOptionalSecret(process.env.TRITON_TOKEN, process.env.TRITON_TOKEN_FILE);
-    const tritonEnabled = Boolean(tritonEndpoint && tritonToken);
+    const tritonEnabled = tritonLiveEnabled && Boolean(tritonEndpoint && tritonToken);
     const tritonHost = tritonEndpoint ? tritonEndpoint.split('/')[0] ?? tritonEndpoint : undefined;
-    console.log(JSON.stringify({ event: 'triton_config', mode: 'paper', enabled: tritonEnabled, endpoint_file: process.env.TRITON_ENDPOINT_FILE ?? null, token_file: process.env.TRITON_TOKEN_FILE ?? null, endpoint_host: tritonHost, token_len: tritonToken ? tritonToken.length : 0 }));
+    console.log(JSON.stringify({ event: 'triton_config', mode: 'paper', enabled: tritonEnabled, liveEnabled: tritonLiveEnabled, reason: tritonLiveEnabled ? '' : 'zero_cost_balance_cutoff', endpoint_file: process.env.TRITON_ENDPOINT_FILE ?? null, token_file: process.env.TRITON_TOKEN_FILE ?? null, endpoint_host: tritonHost, token_len: tritonToken ? tritonToken.length : 0 }));
     const triton = tritonEnabled
       ? new TritonProvider(
           tritonEndpoint as string,
