@@ -10,6 +10,7 @@
 // WebSocket, supports accounts_data_slice (bandwidth) and from_slot replay.
 import * as GeyserPkg from '@triton-one/yellowstone-grpc';
 import bs58 from 'bs58';
+import { parsePumpSwap } from '../pump-parser.js';
 import type { TritonClientFactory, TritonClientLike, TritonStreamLike, VixenUpdate } from './triton.js';
 
 // CJS/ESM-interop: de SDK is een CJS-pakket met exports.default = Client.
@@ -94,6 +95,10 @@ function recordPumpParseFailure(payload: any, reason: string): void {
 
 /** Extract pump.fun buy/sell CPI from a raw geyser transaction payload. */
 export function parsePumpTxn(payload: any): { mint: string; curve: string; kind: 'buy' | 'sell' } | undefined {
+  // Primaire detectie: structuur/ discriminator-gebaseerd (OFFLINE parser, officiële
+  // discriminators + PDA) — log-matching is NIET langer de enige weg.
+  const structural = parsePumpSwap(payload);
+  if (structural) return structural;
   // SDK-payload: { transaction: { transaction: { signature, transaction, meta, index } } }
   const outer = payload?.transaction;
   const inner = outer?.transaction ?? outer; // {signature,isVote,transaction,meta,index}
