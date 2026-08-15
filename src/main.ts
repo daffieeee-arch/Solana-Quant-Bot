@@ -26,6 +26,7 @@ import { buildLearningObservations } from './learning-observations.js';
 import { withFreshSolPrice } from './sol-price.js';
 import { PersistentLearnCycleGate } from './learn-cycle-gate.js';
 import { withRuntimeLifecycle } from './runtime-lifecycle.js';
+import { isTritonLiveEnabled, requireLiveTritonOrThrow } from './zero-cost.js';
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -116,23 +117,35 @@ async function run(): Promise<void> {
     // subscriptions, Titan, Triton RPC) wordt gestart. De bot draait OFFLINE (dashboard,
     // ledger, scanner-logica) zonder live data. Reactivatie: expliciet TRITON_LIVE_ENABLED=true
     // (en voldoende balance) — de Triton-code blijft volledig aanwezig, alleen niet actief.
-    const tritonLiveEnabled = (process.env.TRITON_LIVE_ENABLED ?? 'false').toLowerCase() === 'true';
-    const tritonClientFactory = streamMode === 'geyser' ? createGeyserClientFactory() : createVixenClientFactory();
+    const tritonLiveEnabled = isTritonLiveEnabled();
+    // Centrale zero-cost guard: géén live-client-factory wordt geconstrueerd in offline mode.
+    // requireLiveTritonOrThrow blokkeert élke live constructie (geyser/vixen-factory, Titan,
+    // reserve-reader, RPC/DAS) wanneer TRITON_LIVE_ENABLED niet exact 'true' is.
     const tritonEndpoint = readOptionalSecret(process.env.TRITON_ENDPOINT, process.env.TRITON_ENDPOINT_FILE);
     const tritonToken = readOptionalSecret(process.env.TRITON_TOKEN, process.env.TRITON_TOKEN_FILE);
-    const tritonEnabled = tritonLiveEnabled && Boolean(tritonEndpoint && tritonToken);
+    const tritonHasSecrets = Boolean(tritonEndpoint && tritonToken);
+    const tritonEnabled = tritonLiveEnabled && tritonHasSecrets;
     const tritonHost = tritonEndpoint ? tritonEndpoint.split('/')[0] ?? tritonEndpoint : undefined;
-    console.log(JSON.stringify({ event: 'triton_config', mode: 'paper', enabled: tritonEnabled, liveEnabled: tritonLiveEnabled, reason: tritonLiveEnabled ? '' : 'zero_cost_balance_cutoff', endpoint_file: process.env.TRITON_ENDPOINT_FILE ?? null, token_file: process.env.TRITON_TOKEN_FILE ?? null, endpoint_host: tritonHost, token_len: tritonToken ? tritonToken.length : 0 }));
-    const triton = tritonEnabled
-      ? new TritonProvider(
-          tritonEndpoint as string,
-          tritonToken as string,
-          tritonClientFactory,
-          undefined,
-          new TritonReserveReader(tritonEndpoint as string, tritonToken as string),
-          { solPriceUsd: config.solPriceUsd },
-        )
-      : undefined;
+    let triton: TritonProvider | undefined;
+    let titan: TitanQuoteProvider | undefined;
+    if (tritonLiveEnabled) {
+      requireLiveTritonOrThrow(); // live-only; gooit als sandbox offline
+      const tritonClientFactory = streamMode === 'geyser' ? createGeyserClientFactory() : createVixenClientFactory();
+      console.log(JSON.stringify({ event: 'triton_config', mode: 'paper', enabled: tritonEnabled, liveEnabled: tritonLiveEnabled, reason: tritonLiveEnabled ? '' : 'zero_cost_balance_cutoff', endpoint_file: process.env.TRITON_ENDPOINT_FILE ?? null, token_file: process.env.TRITON_TOKEN_FILE ?? null, endpoint_host: tritonHost, token_len: tritonToken ? tritonToken.length : 0 }));
+      triton = tritonEnabled
+        ? new TritonProvider(
+            tritonEndpoint as string,
+            tritonToken as string,
+            tritonClientFactory,
+            undefined,
+            new TritonReserveReader(tritonEndpoint as string, tritonToken as string),
+            { solPriceUsd: config.solPriceUsd },
+          )
+        : undefined;
+      titan = tritonEnabled ? new TitanQuoteProvider(tritonEndpoint as string, tritonToken as string) : undefined;
+    } else {
+      console.log(JSON.stringify({ event: 'triton_config', mode: 'paper', enabled: false, liveEnabled: false, reason: 'zero_cost_balance_cutoff', offline: 'OFFLINE_ZERO_COST' }));
+    }
 
     const provider = new CompositeProvider({
       maxTokens: 30,
@@ -145,10 +158,8 @@ async function run(): Promise<void> {
       solPriceUsd: config.solPriceUsd,
       triton,
       // Titan live route-quote: same endpoint+token, gives real aggregated
-      // multi-venue fill prices. Optional; disabled if Triton env is absent.
-      titan: tritonEndpoint && tritonToken
-        ? new TitanQuoteProvider(tritonEndpoint, tritonToken)
-        : undefined,
+      // multi-venue fill prices. Optional; disabled if Triton env absent or zero-cost.
+      titan,
     });
     resources.provider = provider;
     const applyProviderToggles = () => {
@@ -185,7 +196,7 @@ async function run(): Promise<void> {
         port: config.dashboardPort,
         staticDir: resolve(fileURLToPath(new URL('../', import.meta.url)), 'frontend', 'dist'),
         controlToken: process.env.DASHBOARD_CONTROL_TOKEN || undefined,
-        getStatus: () => ({ mode: 'paper', updatedAt: ledger.updatedAt, availableLamports: ledger.portfolio.availableLamports, openPositions: quarantine.active(ledger.portfolio.positions), realizedPnlLamports: ledger.realizedPnlLamports, recentDecisions, duplicateSuppressed, closedTrades, equityHistory, markPricesByMint, marketContext, whaleInterestMints: Array.from(provider.whaleActivity.keys()), providerHealth: summarizeProviderHealth(lastProviderErrors), build: provenance, quarantine: quarantine.getAll() }),
+        getStatus: () => ({ mode: 'paper', offline: tritonLiveEnabled ? undefined : 'OFFLINE_ZERO_COST', updatedAt: ledger.updatedAt, availableLamports: ledger.portfolio.availableLamports, openPositions: quarantine.active(ledger.portfolio.positions), realizedPnlLamports: ledger.realizedPnlLamports, recentDecisions, duplicateSuppressed, closedTrades, equityHistory, markPricesByMint, marketContext, whaleInterestMints: Array.from(provider.whaleActivity.keys()), providerHealth: tritonLiveEnabled ? summarizeProviderHealth(lastProviderErrors) : [{ provider: 'TRITON', status: 'DISABLED_OFFLINE_ZERO_COST' as const }], build: provenance, quarantine: quarantine.getAll() }),
         controls: {
           getEngineState: () => engine.state(),
           setScannerRunning: (running: boolean) => engine.setScannerRunning(running),

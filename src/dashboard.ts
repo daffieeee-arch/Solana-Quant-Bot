@@ -50,8 +50,9 @@ export type DashboardStatus = {
   /** Fase-QH: quarantined legacy posities (status-exposure, niet actief/markt). */
   quarantine?: Array<{ tradeId: string; reasonCode: string; accountingStatus: 'UNKNOWN'; pricingStatus: 'UNPRICED' }>;
   /** Samengevatte health per data-provider, afgeleid van de laatste scan
-   * providerErrors. Frontend toont een live-status i.p.v. "NOT EXPOSED". */
-  providerHealth?: Array<{ provider: string; status: 'ok' | 'degraded' | 'down'; errorHint?: string }>;
+   * providerErrors. Frontend toont een live-status i.p.v. "NOT EXPOSED".
+   * In zero-cost mode: status = DISABLED_OFFLINE_ZERO_COST (geen ok/degraded/down). */
+  providerHealth?: Array<{ provider: string; status: 'ok' | 'degraded' | 'down' | 'DISABLED_OFFLINE_ZERO_COST'; errorHint?: string }>;
 };
 
 export type DashboardData = {
@@ -70,7 +71,7 @@ export type DashboardData = {
   }>;
   closedTrades: Array<{ pairId: string; mint: string; symbol: string; reason: string; source: string; at: string; pnlSol: number; heldMinutes?: number }>;
   marketContext?: MarketContext;
-  providerHealth?: Array<{ provider: string; status: 'ok' | 'degraded' | 'down'; errorHint?: string }>;
+  providerHealth?: Array<{ provider: string; status: 'ok' | 'degraded' | 'down' | 'DISABLED_OFFLINE_ZERO_COST'; errorHint?: string }>;
 };
 
 export type DashboardServer = { port: number; close(): Promise<void> };
