@@ -25,14 +25,14 @@ export function buildPumpIdentityFromDecode(i: {
 
 /** AMMv4/CPMM uit event (vaults + lpMint). */
 export function buildAmmIdentityFromDecode(i: {
-  tradeId: string; mint: string; programId: string; marketId: string; baseVault: string; quoteVault: string;
+  tradeId: string; mint: string; programId: string; marketId: string; baseVault: string; quoteVault: string; lpMint?: string;
   baseMint?: string; baseDecimals: number; quoteDecimals: number; sourceTimestamp: string; entryPriceSource: MarketIdentity['entryPriceSource']; strategyVersion?: string;
 }): MarketIdentity | null {
   if (!i.baseVault || !i.quoteVault) return null;
   return buildAmmIdentity({
-    tradeId: i.tradeId, mint: i.mint, programId: i.programId, marketId: i.marketId, baseVault: i.baseVault, quoteVault: i.quoteVault,
+    tradeId: i.tradeId, mint: i.mint, programId: i.programId, marketId: i.marketId, lpMint: i.lpMint, baseVault: i.baseVault, quoteVault: i.quoteVault,
     baseMint: i.baseMint, baseDecimals: i.baseDecimals, quoteDecimals: i.quoteDecimals,
-    sourceTimestamp: i.sourceTimestamp, entryPriceSource: i.entryPriceSource, strategyVersion: i.strategyVersion ?? 'contra', schemaVersion: 1,
+    sourceTimestamp: i.sourceTimestamp, entryPriceSource: i.entryPriceSource as never, strategyVersion: i.strategyVersion ?? 'contra', schemaVersion: 1,
   });
 }
 

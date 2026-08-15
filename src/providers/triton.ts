@@ -586,7 +586,8 @@ export class TritonProvider {
       marketIdentity: info.tokenCoin && info.tokenPc && info.lpMint
         ? buildAmmIdentityFromDecode({
             tradeId: makeTradeId(mint, new Date(this.clock()).toISOString()),
-            mint, programId: PROGRAMS.raydiumAmmv4, marketId: info.lpMint, // reviewer: marketId = lpMint (canonical pool), niet vault
+            mint, programId: PROGRAMS.raydiumAmmv4,
+            marketId: info.lpMint, lpMint: info.lpMint, // plaatshouder: pool-account niet beschikbaar in deze decode; lpMint als LP-token NIET als pool
             baseVault: isWsolCoin ? info.tokenPc : info.tokenCoin,
             quoteVault: isWsolCoin ? info.tokenCoin : info.tokenPc,
             baseMint: mint, baseDecimals: 6, quoteDecimals: 9,

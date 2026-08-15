@@ -32,7 +32,8 @@ export type AmmCpmmIdentity = {
   mint: string;
   protocol: 'raydium' | 'meteora' | 'orca' | string;
   programId: string;
-  marketId: string;           // = pool
+  marketId: string;           // = canonical pool-state (AmmInfo/PoolState account)
+  lpMint?: string;            // afzonderlijke LP-tokenmint (NIET de pool-id)
   baseVault: string;
   quoteVault: string;
   baseMint: string;
@@ -96,15 +97,15 @@ export function buildPumpIdentity(i: {
 
 export function buildAmmIdentity(i: {
   tradeId: string; mint: string; programId: string; marketId: string; baseVault: string; quoteVault: string;
-  baseMint?: string; baseDecimals: number; quoteDecimals: number; sourceTimestamp: string;
+  baseMint?: string; baseDecimals: number; quoteDecimals: number; sourceTimestamp: string; lpMint?: string;
   entryPriceSource: AmmCpmmIdentity['entryPriceSource']; strategyVersion: string; schemaVersion: number;
 }): AmmCpmmIdentity | null {
   if (!i.marketId || !i.baseVault || !i.quoteVault) return null;
-  if (i.marketId.toLowerCase() === i.mint.toLowerCase() || i.marketId.startsWith('gx:')) return null;
+  if (i.marketId.toLowerCase() === i.mint.toLowerCase() || i.marketId.startsWith('gx:') || i.marketId === i.lpMint) return null;
   if (!i.baseDecimals || !i.quoteDecimals || !i.sourceTimestamp) return null;
   return {
     kind: 'amm_cpmm', tradeId: i.tradeId, mint: i.mint, protocol: 'raydium',
-    programId: i.programId, marketId: i.marketId, baseVault: i.baseVault, quoteVault: i.quoteVault,
+    programId: i.programId, marketId: i.marketId, lpMint: i.lpMint, baseVault: i.baseVault, quoteVault: i.quoteVault,
     baseMint: i.baseMint ?? i.mint, quoteMint: SOL, baseDecimals: i.baseDecimals, quoteDecimals: i.quoteDecimals,
     sourceTimestamp: i.sourceTimestamp, entryPriceSource: i.entryPriceSource, markPriceSource: i.entryPriceSource,
     boundedExitFallback: true, strategyVersion: i.strategyVersion, schemaVersion: i.schemaVersion,
