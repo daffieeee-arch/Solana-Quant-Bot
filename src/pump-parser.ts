@@ -36,11 +36,16 @@ export function base58Encode(buf: Buffer): string {
 
 const discOf = (name: string) => createHash('sha256').update('global:' + name, 'utf8').digest().subarray(0, 8).toString('hex');
 
+// Officiële discriminators (pump-fun/pump-public-docs idl/pump.json, SHA256("global:<name>")[0:8]).
+// BELANGRIJK: v2-varianten gebruiken UNDERSCORE in de anchor-instructie-naam; de
+// hyphen-variant bestaat niet en levert andere (onjuiste) bytes op.
 export const PUMP_DISCRIMINATORS = {
   buy: discOf('buy'),
   sell: discOf('sell'),
-  buyV2: discOf('buy-v2'),
-  sellV2: discOf('sell-v2'),
+  buyV2: discOf('buy_v2'),
+  sellV2: discOf('sell_v2'),
+  buyExactQuoteInV2: discOf('buy_exact_quote_in_v2'),
+  buyExactSolIn: discOf('buy_exact_sol_in'),
 } as const;
 
 /** Solana PDA (findProgramAddress): seeds ‖ bump ‖ programId via sha256. */
@@ -81,7 +86,7 @@ export function parsePumpSwap(payload: any): PumpSwapResult {
       }
       if (!discHex) continue;
       let kind: 'buy' | 'sell' | undefined;
-      if (discHex === PUMP_DISCRIMINATORS.buy || discHex === PUMP_DISCRIMINATORS.buyV2) kind = 'buy';
+      if (discHex === PUMP_DISCRIMINATORS.buy || discHex === PUMP_DISCRIMINATORS.buyV2 || discHex === PUMP_DISCRIMINATORS.buyExactQuoteInV2 || discHex === PUMP_DISCRIMINATORS.buyExactSolIn) kind = 'buy';
       else if (discHex === PUMP_DISCRIMINATORS.sell || discHex === PUMP_DISCRIMINATORS.sellV2) kind = 'sell';
       if (!kind) continue;
       const rawIdx = ix?.accounts;

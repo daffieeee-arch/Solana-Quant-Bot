@@ -31,8 +31,8 @@ describe('offline end-to-end: pump event → identity → candidate → shadow-g
     expect(v.verdict).toBe('WOULD_ACCEPT');
   });
 
-  it('sell-v2 event → structureel herkend als sell', () => {
-    const parsed = parsePumpSwap(pumpEvent('sell-v2'));
+  it('sell_v2 event → structureel herkend als sell', () => {
+    const parsed = parsePumpSwap(pumpEvent('sell_v2'));
     expect(parsed).toBeTruthy();
     expect(parsed!.kind).toBe('sell');
   });
