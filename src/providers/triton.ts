@@ -536,7 +536,7 @@ export class TritonProvider {
         programId: PROGRAMS.pumpfun,
         poolDepth,
         quoteMint: WSOL_MINT,
-        marketIdentity: buildPumpIdentityFromDecode({ tradeId: makeTradeId(trade.accounts.mint, new Date(this.clock()).toISOString()), mint: trade.accounts.mint, programId: PROGRAMS.pumpfun, curve: trade.accounts.bondingCurve, baseDecimals: 6, quoteDecimals: 9, sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM' }) ?? undefined,
+        marketIdentity: buildPumpIdentityFromDecode({ tradeId: makeTradeId(trade.accounts.mint, new Date(this.clock()).toISOString()), mint: trade.accounts.mint, programId: PROGRAMS.pumpfun, curve: trade.accounts.bondingCurve, baseDecimals: poolDepth?.baseDecimals ?? 6, quoteDecimals: poolDepth?.quoteDecimals ?? 9, sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM' }) ?? undefined,
       });
       return;
     }
@@ -587,10 +587,10 @@ export class TritonProvider {
         ? buildAmmIdentityFromDecode({
             tradeId: makeTradeId(mint, new Date(this.clock()).toISOString()),
             mint, programId: PROGRAMS.raydiumAmmv4,
-            marketId: info.lpMint, lpMint: info.lpMint, // plaatshouder: pool-account niet beschikbaar in deze decode; lpMint als LP-token NIET als pool
+            marketId: info.lpMint, lpMint: info.lpMint,
             baseVault: isWsolCoin ? info.tokenPc : info.tokenCoin,
             quoteVault: isWsolCoin ? info.tokenCoin : info.tokenPc,
-            baseMint: mint, baseDecimals: 6, quoteDecimals: 9,
+            baseMint: mint, baseDecimals: poolDepth?.baseDecimals ?? 6, quoteDecimals: poolDepth?.quoteDecimals ?? 9,
             sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM',
           }) ?? undefined
         : undefined,
@@ -635,7 +635,7 @@ export class TritonProvider {
             mint, programId: PROGRAMS.raydiumCpmm, marketId: pairId,
             baseVault: isWsolA ? pool.vaultB : pool.vaultA,
             quoteVault: isWsolA ? pool.vaultA : pool.vaultB,
-            baseMint: mint, baseDecimals: 6, quoteDecimals: 9,
+            baseMint: mint, baseDecimals: poolDepth?.baseDecimals ?? 6, quoteDecimals: poolDepth?.quoteDecimals ?? 9,
             sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM',
           }) ?? undefined
         : undefined,
