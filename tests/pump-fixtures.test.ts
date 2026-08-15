@@ -3,12 +3,11 @@ import { PUMP_FIXTURES, fixturePayload, FIXTURE_MINT, FIXTURE_CURVE } from './fi
 import { parsePumpSwap } from '../src/pump-parser.js';
 
 describe('real-shape Pump fixturecorpus (IDL commit 3c6721a)', () => {
-  it('corpus dekking: 11 fixtures met provenance', () => {
-    expect(PUMP_FIXTURES.length).toBe(11);
-    // verwachte outcome-decoupage
+  it('corpus dekking: 13 fixtures met provenance', () => {
+    expect(PUMP_FIXTURES.length).toBe(13);
     const accepts = PUMP_FIXTURES.filter((f) => f.expected);
     const rejects = PUMP_FIXTURES.filter((f) => f.expected === undefined);
-    expect(accepts.length).toBe(8); // buy/sell/v2/exact/geen-logs/top-level
+    expect(accepts.length).toBe(10); // buy/sell/v2/exact/geen-logs/top-level + 2 live-mainnet
     expect(rejects.length).toBe(3); // unknown/mismatch/non-pump
   });
 

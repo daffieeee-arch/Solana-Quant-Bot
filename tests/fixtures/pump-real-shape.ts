@@ -50,16 +50,16 @@ export const PUMP_FIXTURES: Fixture[] = [
   { name: 'unknown_discriminator', signatureHint: 'fx-unknown', variant: 'create', discriminatorHex: disc('create'), accounts: v1Accounts(), acctCount: 14, expected: undefined, note: 'onbekende discriminator → fail-closed' },
   { name: 'mint_curve_mismatch', signatureHint: 'fx-mismatch', variant: 'buy', discriminatorHex: disc('buy'), accounts: [PUMP_PROGRAM_ID, FIXTURE_FEE, FIXTURE_MINT, mk('wrong-curve'), FIXTURE_USER], acctCount: 16, expected: undefined, note: 'curve ≠ derived-PDA én niet in accounts → fail-closed' },
   { name: 'not_pump_program', signatureHint: 'fx-raydium', variant: 'buy', discriminatorHex: disc('buy'), accounts: ['675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', FIXTURE_FEE, FIXTURE_MINT, FIXTURE_CURVE, FIXTURE_USER], acctCount: 16, expected: undefined, note: 'non-pump programma (Raydium) → undefined' },
+  { name: 'live_sell_mainnet', signatureHint: 'real-4RNa86Ef', variant: 'sell', discriminatorHex: 'e6345c8dd8b14540', accounts: v1Accounts(), acctCount: 17, expected: 'sell', note: 'LIVE mainnet sell-disc (custom dispatcher) — disc uit real-trades.json sig 4RNa86Ef; a2=mint a3=curve derived-PDA bewezen' },
+  { name: 'live_buy_mainnet', signatureHint: 'real-buy', variant: 'buy', discriminatorHex: '0094d0da1f435eb0', accounts: v1Accounts(), acctCount: 16, expected: 'buy', note: 'LIVE mainnet buy-disc via FLASHX8-router (reviewer-dump)' },
 ];
 
 /** Bouwt een geyser-achtige payload uit een fixture. */
 export function fixturePayload(f: Fixture): unknown {
   const instruction = { programIdIndex: 0, accounts: Array.from({ length: f.acctCount }, (_, i) => i % f.accounts.length), data: Buffer.concat([Buffer.from(f.discriminatorHex, 'hex'), Buffer.alloc(40)]) };
   const logs: string[] = f.topLogs ? [] : [`Program log: Instruction: ${f.variant}`];
-  const innerInstructions = f.topLevel
-    ? [{ instructions: [instruction] }] // top-level: als inner-groep aanwezig maar NIET als CPI
-    : [{ instructions: [instruction] }];
+  const innerInstructions = [{ instructions: [instruction] }];
   return {
-    transaction: { transaction: { transaction: { message: { accountKeys: f.accounts } }, meta: { logMessages: logs, innerInstructions } } },
+    transaction: { transaction: { transaction: { message: { accountKeys: f.accounts, instructions: f.topLevel ? [instruction] : [] } }, meta: { logMessages: logs, innerInstructions: f.topLevel ? [] : innerInstructions } } },
   };
 }
