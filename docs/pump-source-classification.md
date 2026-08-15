@@ -4,7 +4,7 @@ De Pump.fun parser herkent trade-instructies uit TWEE bronnen. Deze worden
 expliciet gescheiden — OBSERVED bytes worden NIET automatisch als officiële
 Pump-instructies behandeld.
 
-## OFFICIAL_IDL_VARIANT
+## 1. OFFICIAL_IDL_VARIANT
 Gepinde officiële IDL: `pump-fun/pump-public-docs idl/pump.json` @ commit
 `3c6721a67c0b206b` (sha256 b90bc471…), v0.1.0. Discriminator = SHA256("global:<name>")[0:8].
 
@@ -31,17 +31,24 @@ worden alleen als Pump geaccepteerd wanneer ALLE structuur-conditionals slagen:
 - aanwezige curve == derived-PDA exact
 - provenancefixture aanwezig (live_sell_mainnet / live_buy_mainnet)
 
-| disc (bytes) | notatie | familie |
-|---|---|---|
-| e6345c8dd8b14540 | observed_sell | sell (bewezen: sig 4RNa86Ef, a2=mint a3=curve=derived-PDA) |
-| 0094d0da1f435eb0 | observed_buy | buy (via FLASHX8-router) |
-| 1e7435e21cba7f11 | observed_buy_v2 | buy_v2 |
-| e822865bc7d49d0e | observed_buy_exact_sol_in | buy_exact_sol_in |
+### Classificatie (eerlijk — 2026-08-15)
+
+| disc (bytes) | notatie | familie | status |
+|---|---|---|---|
+| e6345c8dd8b14540 | liveSell | sell | **OBSERVED_RUNTIME_DISPATCH_PROVEN** (primair bewijs: real-trades.json sig 4RNa86Ef — a2=mint, a3=curve=derived-PDA exact) |
+| 0094d0da1f435eb0 | liveBuy | buy | **OBSERVED_RUNTIME_DISPATCH_EXPERIMENTAL** (geen primaire in-repo mainnet-txn; code-claim "via FLASHX8-router", acceptatie vereist volledige structurele keten) |
+| 1e7435e21cba7f11 | liveBuyV2 | buy_v2 | **OBSERVED_RUNTIME_DISPATCH_EXPERIMENTAL** (geen primaire in-repo txn) |
+| 0e822865bc7d49d0e | liveBuyExactSolIn | buy_exact_sol_in | **OBSERVED_RUNTIME_DISPATCH_EXPERIMENTAL** (geen primaire in-repo txn) |
+
+De drie EXPERIMENTAL-bytes worden NIET voorgesteld als volledig live-bewezen;
+ze worden acceptueel herkend vanwege de volledige structurele keten (program-id
+exact + PDA-cross-match + derived-curve exact), en blijven fail-closed bij
+onvoldoende accountbewijs.
 
 ## 3. Fail-closed
 
 - Onbekende discriminator → undefined (geen toekenning)
 - Niet-Pump program-id → undefined
-- mint/curve mismatch (curve ≠ derived-PDA, niet in accounts) → undefined
+- mint/curve mismatch (curve ≠ derived-PDA, niet in de accounts-set) → undefined
 - invalid accountlayout (<2 geldige 32-byte accounts) → undefined
 - Deze bytes zijn GEEN vervanging voor de IDL; ze zijn een OBSERVED-fallback.
