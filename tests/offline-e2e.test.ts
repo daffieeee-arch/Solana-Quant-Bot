@@ -4,17 +4,22 @@ import { buildPumpIdentityFromDecode } from '../src/market-identity-upstream.js'
 import { evaluateEntryShadow } from '../src/entry-shadow.js';
 import { createHash } from 'node:crypto';
 
-const MINT = '2ZA8NQS7hx4Gpump2ZA8NQS7hx4GpumpXXXXpump';
+const MINT = 'C9cAPKjWG8dsujybrn6LhXnTxAx3Y6Z9HVtrfQ1Cn8Hy';
+// geldige extra accounts voor de accountlijst
+const CURVE_ACCOUNT = '2Wh8by16GrzpMLFn51h52dHjMwzHguk8hXVB6kZBjAir';
+const USER_ACCOUNT = 'g6iB2cJB3nt4zdXdgWAwq4dXGFEK9bRip6vh5YzBbro';
 const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 const disc = (n: string) => createHash('sha256').update(`global:${n}`).digest().subarray(0, 8).toString('hex');
 
 function pumpEvent(discName: string): unknown {
-  const curve = deriveBondingCurve(MINT); // echte PDA
-  const keys = [PUMP, 'CebN5WGQ4jvEPvsVrU4EoHEp8KdnDLq126G', MINT, curve, '9xQeWvG816bUx9EPjHmaT2'];
+  const curve = derivedCurve(); // echte officiële PDA — zet op de curve-positie
+  const keys = [PUMP, FEE_ACCOUNT, MINT, curve, USER_ACCOUNT]; // v1-layout: [program, fee, mint, curve, user]
   return {
     transaction: { transaction: { transaction: { message: { accountKeys: keys } }, meta: { logMessages: [], innerInstructions: [{ instructions: [{ programIdIndex: 0, accounts: [0,1,2,3,4], data: Buffer.concat([Buffer.from(disc(discName), 'hex'), Buffer.alloc(40)]) }] }] } } },
   };
 }
+const FEE_ACCOUNT = '7XZdzfpY31KRp18UdERdaQ8LGjowd8MekGdMD8JJ4i7J';
+function derivedCurve(): string { return deriveBondingCurve(MINT); }
 
 describe('offline end-to-end: pump event → identity → candidate → shadow-gate (geen live Triton)', () => {
   it('recorded buy-event → structurele parse → canonical identity → WOULD_ACCEPT', () => {

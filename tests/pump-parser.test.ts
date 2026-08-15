@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { PUMP_DISCRIMINATORS, deriveBondingCurve, parsePumpSwap } from '../src/pump-parser.js';
-
 const disc = (name: string) => createHash('sha256').update(`global:${name}`).digest().subarray(0, 8).toString('hex');
 
-const MINT = '2ZA8NQS7hx4Gpump2ZA8NQS7hx4GpumpXXXXpump';
-const CURVE = '7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ';
-const USER = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
-const FEE_RCPT = 'CebN5WGQ4jvEPvsVrU4EoHEpgzqDtSsKVK8nEx1hbsYSW';
+// Echte geldige pump-mints (geldige 32-byte base58 pubkeys)
+const MINT = 'C9cAPKjWG8dsujybrn6LhXnTxAx3Y6Z9HVtrfQ1Cn8Hy';
+const USER = 'g6iB2cJB3nt4zdXdgWAwq4dXGFEK9bRip6vh5YzBbro';
+const FEE_RCPT = '7XZdzfpY31KRp18UdERdaQ8LGjowd8MekGdMD8JJ4i7J';
 const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+// CURVE = echte derived bonding-curve PDA van MINT (structurele PDA-relatie)
+const CURVE = deriveBondingCurve(MINT);
 
 function payload(discName: string, acctCount: number, opts?: { noLogs?: boolean; program?: string }): unknown {
   const program = opts?.program ?? PUMP;

@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
+import { PublicKey } from '@solana/web3.js';
 
 /**
  * Structurele Pump.fun swap-parser (OFFLINE).
  * Vervangt log-string/account-count afhankelijke detectie door:
  *  - officiële instruction discriminators: SHA256("global:<name>")[0:8]
- *  - bonding-curve PDA: Solana findProgramAddress via bumps (zonder web3.js)
+ *  - bonding-curve PDA via officiële @solana/web3.js PublicKey.findProgramAddressSync
  *  - correcte accountlayout per variant (mint+1-of-derived).
  */
 
@@ -12,26 +13,12 @@ export const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 export const PUMP_BONDING_CURVE_SEED = 'bonding-curve';
 export const WSOL = 'So11111111111111111111111111111111111111112';
 
-const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-const B58_INDEX: Record<string, number> = {};
-for (let i = 0; i < B58.length; i++) B58_INDEX[B58[i]] = i;
-
+// Officiële primitives (delegatie naar @solana/web3.js — géén eigen base58/bump-scan).
 export function base58Decode(s: string): Buffer {
-  let n = 0n;
-  for (const c of s) n = n * 58n + BigInt(B58_INDEX[c] ?? 0);
-  const bytes: number[] = [];
-  while (n > 0n) { bytes.unshift(Number(n % 256n)); n /= 256n; }
-  // leading 1s = zero bytes
-  for (const c of s) { if (c !== '1') break; bytes.unshift(0); }
-  return Buffer.from(bytes);
+  return Buffer.from(Array.from(new PublicKey(s).toBytes()));
 }
 export function base58Encode(buf: Buffer): string {
-  let n = 0n;
-  for (const b of buf) n = n * 256n + BigInt(b);
-  let out = '';
-  while (n > 0n) { out = B58[Number(n % 58n)] + out; n /= 58n; }
-  for (const b of buf) { if (b !== 0) break; out = '1' + out; }
-  return out || '';
+  return new PublicKey(buf).toBase58();
 }
 
 const discOf = (name: string) => createHash('sha256').update('global:' + name, 'utf8').digest().subarray(0, 8).toString('hex');
@@ -48,18 +35,16 @@ export const PUMP_DISCRIMINATORS = {
   buyExactSolIn: discOf('buy_exact_sol_in'),
 } as const;
 
-/** Solana PDA (findProgramAddress): seeds ‖ bump ‖ programId via sha256. */
+/** Solana PDA (findProgramAddress) — officiële @solana/web3.js primitive. */
 export function deriveBondingCurve(mint: string): string {
-  const seed = Buffer.concat([Buffer.from(PUMP_BONDING_CURVE_SEED, 'utf8'), base58Decode(mint)]);
-  for (let bump = 255; bump > 0; bump--) {
-    const h = createHash('sha256');
-    h.update(seed);
-    h.update(Buffer.from([bump]));
-    h.update(base58Decode(PUMP_PROGRAM_ID));
-    const addr = base58Encode(h.digest());
-    if (addr.length > 0) return addr;
+  if (!mint) return '';
+  try {
+    const mintPk = new PublicKey(mint);
+    const [pda] = PublicKey.findProgramAddressSync([Buffer.from(PUMP_BONDING_CURVE_SEED, 'utf8'), mintPk.toBuffer()], new PublicKey(PUMP_PROGRAM_ID));
+    return pda.toBase58();
+  } catch {
+    return ''; // invalid/malformed mint → fail-closed (geen curve)
   }
-  return '';
 }
 
 export type PumpSwapResult = { mint: string; curve: string; kind: 'buy' | 'sell' } | undefined;
@@ -91,33 +76,32 @@ export function parsePumpSwap(payload: any): PumpSwapResult {
       if (!kind) continue;
       const rawIdx = ix?.accounts;
       const idxs = Array.from(Buffer.isBuffer(rawIdx) ? rawIdx : Uint8Array.from(rawIdx ?? []));
-      const accs = idxs.map((i) => keys[i]);
-      // mint = pump-suffix token; curve = mint+1 (relatie) óf derived-PDA
-      const mint = accs.find((a) => a && /pump$/i.test(a));
-      if (!mint) continue;
-      const idxM = accs.indexOf(mint);
-      const curveAcc = idxM >= 0 && idxM + 1 < accs.length ? accs[idxM + 1] : undefined;
-      if (curveAcc && curveAcc.length >= 30 && curveAcc !== mint) {
-        // validate via PDA (indien resolvable)
-        const derived = deriveBondingCurve(mint);
-        if (derived && curveAcc !== derived && !curveAcc.startsWith(derived.slice(0, 12))) {
-          // fallback: accepteer curve als het apart is van mint (geen vaste offset-regel)
-        }
-        return { mint, curve: curveAcc, kind };
+      const accs = idxs.map((i) => keys[i]).filter((a): a is string => !!a && a.length >= 32);
+      if (accs.length < 2) continue;
+      // STRUCTURELE mint + curve: probeer voor elk account of zijn derived bonding-curve
+      // PDA in de account-set voorkomt. Het account wiens PDA aanwezig is = mint;
+      // de overeenkomende derived = canonical bonding curve. Geen willekeurige
+      // accountoffset/fee-wallet/fund-suffix-gok als primaire regel.
+      let mint: string | undefined;
+      let curve: string | undefined;
+      for (const a of accs) {
+        if (a === PUMP_PROGRAM_ID || a === WSOL || a === 'CebN5WGQ4jvEPvsVU4EoHEpgzq1VV2fskvCwf8gCDbZ' || a === 'CebN5WGQ4jvEPvsVsbQh5vp8KdnDLq236Gfto2vXzB1W') continue;
+        try {
+          const d = deriveBondingCurve(a);
+          if (d && accs.includes(d) && d !== a) { mint = a; curve = d; break; }
+        } catch { /* ignore */ }
       }
-      // fallback via derived PDA in accounts
-      const derived = deriveBondingCurve(mint);
-      const found = accs.find((a) => a === derived);
-      if (found) return { mint, curve: found, kind };
-      return undefined;
+      if (!mint || !curve) continue;
+      return { mint, curve, kind };
     }
   }
   return undefined;
 }
 
-/** Officiële PDA-validatie: derived == parsed? */
+/** Officiële PDA-validatie: derived (exact) == geparsde curve? */
 export function validateBondingCurve(mint: string, curve: string): boolean {
   if (!mint || !curve) return false;
   const derived = deriveBondingCurve(mint);
-  return curve === derived || curve.startsWith(derived.slice(0, 12));
+  if (!derived) return false;
+  return curve === derived;
 }
