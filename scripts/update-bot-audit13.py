@@ -41,7 +41,9 @@ def freeze_hash(root: pathlib.Path) -> str:
     return h.hexdigest()
 
 FREEZE = freeze_hash(ROOT)
-IMAGE = 'solana-bot:contra-audit16-offline-pump'
+# Unieke immutable tag per build: SHA-suffix forceert een nieuwe lokale build
+# (vaste tag + pull_policy:never herbouwde NIET — running sha bleef verouderd).
+IMAGE = f'solana-bot:contra-audit16-offline-pump-{subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip()[:10]}'
 print('[freeze]', FREEZE)
 
 # Fase-W/Provenance: immutable Git SHA van de deploy-tip (unieke rollback-marker).

@@ -38,7 +38,7 @@ worden alleen als Pump geaccepteerd wanneer ALLE structuur-conditionals slagen:
 | e6345c8dd8b14540 | liveSell | sell | **OBSERVED_RUNTIME_DISPATCH_PROVEN** (primair bewijs: real-trades.json sig 4RNa86Ef — a2=mint, a3=curve=derived-PDA exact) |
 | 0094d0da1f435eb0 | liveBuy | buy | **OBSERVED_RUNTIME_DISPATCH_EXPERIMENTAL** (geen primaire in-repo mainnet-txn; code-claim "via FLASHX8-router", acceptatie vereist volledige structurele keten) |
 | 1e7435e21cba7f11 | liveBuyV2 | buy_v2 | **OBSERVED_RUNTIME_DISPATCH_EXPERIMENTAL** (geen primaire in-repo txn) |
-| 0e822865bc7d49d0e | liveBuyExactSolIn | buy_exact_sol_in | **OBSERVED_RUNTIME_DISPATCH_EXPERIMENTAL** (geen primaire in-repo txn) |
+| e822865bc7d49d0e | liveBuyExactSolIn | buy_exact_sol_in | **OBSERVED_RUNTIME_DISPATCH_EXPERIMENTAL** (geen primaire in-repo txn) |
 
 De drie EXPERIMENTAL-bytes worden NIET voorgesteld als volledig live-bewezen;
 ze worden acceptueel herkend vanwege de volledige structurele keten (program-id
