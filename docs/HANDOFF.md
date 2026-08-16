@@ -72,7 +72,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 
 ## Current review task
 
-PR #1 received three `REQUEST_CHANGES` review rounds. The current branch contains the round-3 policy fixes and still requires a fresh independent verdict. Read:
+PR #1 received multiple `REQUEST_CHANGES` review rounds. The current branch contains the round-3 policy fixes and the subsequent current-state documentation correction, and still requires a fresh independent verdict. Read:
 
 1. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
 2. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`

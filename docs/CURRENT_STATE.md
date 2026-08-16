@@ -65,7 +65,7 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 ## Tests and CI
 
 - Immutable functional baseline: 592 tests, build green, TypeScript clean.
-- PR #1 adds four negative CI-policy tests; the expected full total is 596.
+- PR #1 adds 18 CI-policy tests; the expected full total is 610.
 - GitHub CI runs repository policy, critical zero-cost/Pump tests, full tests, typecheck, and build with `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
 - GitHub's automatic token is read-only (`contents: read`) and checkout credentials are not persisted. No repository or production secrets are consumed.
 
