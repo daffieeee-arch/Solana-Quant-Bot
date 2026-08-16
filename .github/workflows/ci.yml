@@ -53,9 +53,10 @@ jobs:
       - name: Enforce repository and zero-cost policy
         run: npm run ci:policy
 
-      - name: Run critical zero-cost and Pump lifecycle tests
+      - name: Run policy bypass and critical zero-cost/Pump tests
         run: >-
           npx vitest run
+          tests/ci-policy.test.ts
           tests/zero-cost.test.ts
           tests/pump-replay.test.ts
           tests/pump-vertical-slice.test.ts

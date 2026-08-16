@@ -1,53 +1,46 @@
 # KNOWN_ISSUES.md — Open issues and HOLDs
 
-Only current unresolved items belong here.
+Only current open items belong here. Resolved issues remain in Git history.
 
-## Triton live and cost safety
+## Triton live and cost
 
-1. **Balance is $0.** Live Triton reactivation is blocked.
-2. **Connectivity root cause remains technically unconfirmed.** Prepaid cutoff is the leading explanation for pending/no-event streams, but production endpoint/auth must be re-proven only after safeguards and a bounded future test.
-3. **First $125 cost attribution is unresolved.** Local RPC counters cannot explain the full spend; Triton Billable Items/product-level usage is still required.
-4. **Runtime budget protection is incomplete.** Maximum test duration, request/byte metering, cost estimator, warning threshold, hard stop, and automatic disconnect are documented but not fully implemented.
-5. **Grafana cost observability is missing.** No complete per-service Triton cost dashboard or alerts exist.
+1. **Balance $0:** live reactivation is blocked; prepaid-cutoff is likely but technically unconfirmed until a later bounded test.
+2. **Cost attribution unknown:** first $125 is not tied to a verified Billable Items breakdown.
+3. **Live Pump connectivity:** first-event/subscription health must be re-proven after any future reactivation.
+4. **Cost controls incomplete:** max duration, per-service request/byte metering, warning threshold, hard stop, and automatic disconnect are not implemented.
 
-## Pump parser and transaction coverage
+## MarketIdentity and parser
 
-6. **Observed dispatcher provenance is partial.** `liveSell` has primary in-repo evidence; `liveBuy`, `liveBuyV2`, and `liveBuyExactSolIn` remain experimental and require full structural/PDA validation.
-7. **Live binary differs from the pinned public IDL.** Revalidate observed dispatch forms during any future live shadow test.
-8. **Versioned transaction loaded-address resolution needs deeper real-shape coverage.** Current fixtures prove shape handling but do not fully demonstrate all `meta.loadedAddresses` cases from live transactions.
+5. **Broader MarketIdentity enforcement is off:** full contract is shadow-only; only exact `gx:<mint>` identities are currently hard-blocked.
+6. **Observed Pump dispatchers partly experimental:** liveBuy/liveBuyV2/liveBuyExactSolIn lack primary in-repo mainnet transactions.
+7. **Deep loaded-address resolution incomplete:** tests cover versioned shapes but not complete real-world address-table resolution through every parser path.
+8. **Non-Pump completeness missing:** PumpSwap, Raydium, Meteora, Orca, Moonshot, Jupiter, and CLMM routes require protocol-specific canonical identity, decimals, price state, exit route, and evidence before being called supported.
+9. Some generic AMM/CLMM builders remain Raydium-oriented and must not be treated as universal protocol support.
 
-## Protocol identities
+## TrueNAS and runtime
 
-9. **Non-Pump identities are incomplete.** AMMv4/CPMM need reliable canonical pool-state wiring; CLMM requires pool/vault/tick-state decoding; PumpSwap, Meteora, Orca, Moonshot/Moonit, and Jupiter need separate protocol-specific work.
-10. **Generic builders are not generic support.** Existing AMM/CLMM types and lane labels must not be treated as production-ready protocol coverage.
-
-## Entry and strategy validation
-
-11. **MarketIdentity enforcement remains off.** Shadow-only until live connectivity and a representative shadow window prove valid identities are populated without broad false rejection.
-12. **A technically correct Pump pipeline has not proven a profitable edge.** A chronological, walk-forward, out-of-sample historical research harness is the next product phase.
-13. **Automatic strategy promotion is disabled.** Deterministic historical quote/replay parity is not yet sufficient for safe self-promotion.
-
-## ClickHouse and TrueNAS
-
-14. **ClickHouse autostart after NAS reboot is not structural.** It currently runs as a manually started host-network process rather than a dedicated TrueNAS service/app.
-15. **ClickHouse default user and LAN exposure remain unsafe.** The passwordless default user is reachable over HTTP 8123; staged service-user/network hardening is pending.
-16. **ClickHouse current table is unpartitioned.** Avoid global `OPTIMIZE ... FINAL`; any migration/finalization must be separately designed and approved.
+10. **Bot app currently stopped:** configured image/provenance is known, but a fresh app query is required before claiming it is running.
+11. **ClickHouse autostart unresolved:** ClickHouse is a separate process and does not structurally start after NAS reboot.
+12. **ClickHouse default-user/LAN exposure:** default user lacks adequate hardening and HTTP 8123 is LAN-reachable.
 
 ## Backfill
 
-17. **Old Faithful/Jetstreamer backfill is paused.** Supervisors and repair cron must not be restarted without approval.
-18. **Completion logic is wrong.** A fixed row-count threshold must be replaced by source-cursor/end-slot and pending-range/error semantics.
-19. **Stall watchdog has false positives.** It needs source-cursor/heartbeat states such as WRITING, SEEKING_EMPTY_SLOTS, NETWORK_RETRY, STALLED, and COMPLETE.
-20. **Repair cron can duplicate work.** Existing-process guards and reliable status/checkpoint semantics are required.
+13. **Backfill paused:** supervisors and repair cron remain stopped.
+14. **Completion logic is wrong:** row-count threshold is not a valid completion definition; use source cursor/max-slot and bounded retry state.
+15. **Stall watchdog false positives:** progress must use heartbeat/source cursor and distinguish WRITING, SEEKING, NETWORK_RETRY, STALLED, and COMPLETE.
+16. **Repair supervisor guard:** duplicate supervisor starts and stale status files remain open risks.
 
 ## Historical data contract
 
-21. **v1 is only `TRANSACTION_NET_SWAP`.** Multi-hop, inner-CPI, exact pool event, and route detail are absent.
-22. **The true dataset-wide retry overlap is unknown.** About 3.4% cross-part exact-retry overlap was observed in a sampled range; the sample is not a full-dataset estimate, and normal ReplacingMergeTree background merges may already have consolidated some duplicates.
-23. **v2 event-level pipeline is design-only.** Bronze/Silver/Gold DDL, parser, provenance, pilot, and cost measurements are not implemented.
+17. **v1 is transaction-net only:** multi-hop, inner-CPI, pool-route, and event-level detail are not preserved.
+18. **Duplicate estimate is limited:** roughly 3.4% cross-part exact-retry overlap was observed in a biased sample. The dataset-wide ratio is unknown and normal background merges may already have consolidated some rows. Do not claim that no deduplication occurred merely because no global `OPTIMIZE FINAL` was run.
+19. **v2 event-level pipeline remains design work:** Bronze/Silver/Gold schema, parser provenance, and a pilot source pass are not implemented.
 
-## Repository and CI
+## Repository and dependencies
 
-24. **CI enforcement is new.** The workflow introduced by `chore/repo-alignment-ci` must complete a first green run and then be made a required branch-protection check.
-25. **Legacy runtime artifacts remain in published history.** They are removed from the current tree without rewriting history. Do not reintroduce them; use `tests/fixtures/` for intentional deterministic samples.
-26. **`OFFLINE_ZERO_COST` is not fully network-isolated.** The normal runtime can still request free CoinGecko/CoinDesk context. Use network-isolated replay for deterministic research.
+20. **Dependency audit follow-up:** current lockfile reports three moderate production-chain findings through `@solana/web3.js -> jayson -> uuid@8.3.2` and one high dev-chain finding through Vite/PostCSS/nanoid. They predate PR #1; investigate root-cause-first and do not run `npm audit fix --force` blindly.
+21. **Frontend bundle warning:** production bundle remains about 585 kB and Vite reports a non-blocking chunk-size warning.
+
+## Research
+
+22. Technical Pump lifecycle correctness is proven offline, but strategy profitability and out-of-sample edge are not. Build the Phase 2 historical research harness before protocol expansion or renewed live spend.

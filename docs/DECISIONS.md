@@ -6,7 +6,7 @@ Short rationale per current decision. Git history contains the detailed evolutio
 
 **Decision:** Dragon's Mouth/geyser, Triton RPC, DAS, and Titan are the intended primary live Solana backend when explicitly enabled.
 
-**Rationale:** one paid infrastructure contract and one monitored integration surface. This does not ban supporting components such as ClickHouse, Old Faithful/Jetstreamer, Grafana, CoinGecko/CoinDesk market context, or frontend links.
+**Rationale:** one paid infrastructure contract and one monitored integration surface. Supporting components such as ClickHouse, Old Faithful/Jetstreamer, Grafana, CoinGecko/CoinDesk context, and frontend links remain allowed.
 
 ## 2. Zero-cost live default
 
@@ -24,19 +24,19 @@ Short rationale per current decision. Git history contains the detailed evolutio
 
 **Decision:** distinguish `OFFLINE_ZERO_COST` from `NETWORK_ISOLATED_REPLAY`.
 
-**Rationale:** the ordinary zero-Triton runtime may still use free external context feeds; reproducible research must be completely network-isolated.
+**Rationale:** ordinary zero-Triton runtime may still use free external context feeds; reproducible research must be completely network-isolated.
 
 ## 5. Pump-only proven baseline
 
-**Decision:** Pump.fun is the only `SUPPORTED_AND_TESTED` protocol. All other protocol identities remain fail-closed.
+**Decision:** Pump.fun is the only `SUPPORTED_AND_TESTED` protocol. Other protocol routes remain incomplete even where parsers or filters exist.
 
-**Rationale:** every protocol needs canonical identity, decimals, price state, exit path, real-shape fixtures, and independent review. Program filters and generic lanes are not support.
+**Rationale:** support requires canonical identity, decimals, price state, exit path, real-shape fixtures, and independent review.
 
-## 6. Fail-closed MarketIdentity
+## 6. MarketIdentity is shadow-first, not broadly enforced yet
 
-**Decision:** reject entries without complete canonical identity, proven decimals, freshness, and bounded mark/exit sources. `gx:<mint>` is never canonical.
+**Decision:** evaluate the complete canonical identity, decimals, freshness, and bounded mark/exit contract fail-closed in shadow mode. Record `WOULD_ACCEPT`/`WOULD_REJECT`. Enforce only the current exact `gx:<mint>` hard gate until broader enforcement receives live shadow evidence and explicit approval.
 
-**Rationale:** prevents stale, orphaned, or unpriceable positions from polluting paper results.
+**Rationale:** this preserves evidence gathering without falsely claiming that every incomplete identity is already blocked from the legacy entry flow.
 
 ## 7. WAL/ledger is the state authority
 
@@ -48,7 +48,7 @@ Short rationale per current decision. Git history contains the detailed evolutio
 
 **Decision:** all new work branches from current `origin/main`, uses a pull request, and never edits `main` directly.
 
-**Rationale:** the original local `fix/audit14` name no longer maps cleanly to multi-agent GitHub workflows. Immutable tags preserve functional baselines.
+**Rationale:** immutable tags preserve functional baselines while multi-agent repository work advances.
 
 ## 9. Functional baseline and repository tip are separate
 
@@ -56,23 +56,23 @@ Short rationale per current decision. Git history contains the detailed evolutio
 
 **Rationale:** avoids provenance confusion for Hermes, Cursor, CI, and deployment.
 
-## 10. Runtime data is not source code
+## 10. Runtime and deployment scratch data is not source code
 
-**Decision:** `.backtest-cache/`, `data-bot*/`, `data-stream*/`, ledgers, locks, logs, generated reports, and build outputs are removed from the current tree and remain ignored.
+**Decision:** root `data/`, `.backtest-cache/`, `data-bot*/`, `data-stream*/`, runtime ledgers/locks, generated reports, and obsolete ignored deployment helpers are removed from the current tree and remain ignored.
 
-**Rationale:** prevent stale state from confusing agents and keep clones reproducible. Reusable deterministic samples belong under `tests/fixtures/`. Published history is not rewritten by this cleanup.
+**Rationale:** prevent stale state or destructive legacy tooling from confusing agents. Reusable deterministic samples belong under `tests/fixtures/`. Published history is preserved.
 
 ## 11. GitHub CI is validation-only
 
-**Decision:** GitHub-hosted CI runs repository policy, zero-cost/Pump tests, the full test suite, TypeScript, and build. It has read-only permissions, no production secrets, and no deployment step.
+**Decision:** GitHub-hosted CI runs repository policy, negative policy tests, zero-cost/Pump tests, the full suite, TypeScript, and build. The automatic `GITHUB_TOKEN` is limited to `contents: read`, checkout credentials are not persisted, and no repository or production secrets are consumed.
 
 **Rationale:** independent verification without exposing TrueNAS or triggering paid/live infrastructure.
 
 ## 12. ClickHouse is historical, not latency-critical state
 
-**Decision:** ClickHouse stores historical/research data and is accessed by Hermes through a bounded read-only MCP user.
+**Decision:** ClickHouse stores historical/research data and is accessed through a bounded read-only MCP user.
 
-**Rationale:** isolate research workload from the live scanner and prevent database failures from controlling trading state.
+**Rationale:** isolate research workload from scanner state and prevent database failures from controlling paper positions.
 
 ## 13. v1 and v2 data contracts are different
 
@@ -84,10 +84,10 @@ Short rationale per current decision. Git history contains the detailed evolutio
 
 **Decision:** classify official IDL variants separately from proven and experimental observed dispatch bytes.
 
-**Rationale:** the live binary has emitted custom dispatcher bytes not fully described by the pinned public IDL. Experimental patterns require full structural and PDA validation.
+**Rationale:** live binary behavior is not fully represented by the pinned public IDL; experimental patterns require full structural and PDA validation.
 
-## 15. Offline-first strategy validation precedes protocol expansion
+## 15. Offline strategy validation precedes protocol expansion
 
-**Decision:** after repository alignment and CI, build a Pump-only historical research harness and test out-of-sample edge before adding another DEX/protocol.
+**Decision:** after repository alignment and CI, build a Pump-only historical research harness and test out-of-sample edge before adding another protocol.
 
-**Rationale:** technical completeness does not prove profitability; complexity and live costs must be justified by research evidence.
+**Rationale:** technical completeness does not prove profitability; complexity and live costs must be justified by evidence.

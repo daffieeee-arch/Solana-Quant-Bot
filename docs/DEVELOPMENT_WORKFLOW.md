@@ -1,22 +1,24 @@
-# DEVELOPMENT_WORKFLOW.md — Development and review workflow
+# DEVELOPMENT_WORKFLOW.md — Development workflow
 
-## Branching
+## Branch per task
 
-- GitHub `main` is the integration branch.
-- Start every task from current `origin/main`:
+- Fetch current GitHub `main` and create a dedicated feature/chore/research branch.
+- Never edit `main` directly.
+- Keep commits small and logically scoped.
+- Preserve immutable functional tags; do not reinterpret a moving repository tip as the runtime baseline.
+
+Example:
 
 ```bash
 git fetch origin
-git switch -c <type>/<short-task> origin/main
+git switch main
+git pull --ff-only
+git switch -c phase2/pump-offline-research
 ```
 
-- Never work directly on `main`.
-- Keep one concern per branch and use small logical commits.
-- The immutable runtime recovery baseline remains `offline-pump-baseline-20260815`; do not move or recreate that tag.
+Stop if local uncommitted work would be overwritten.
 
-## Local quality gates
-
-Run before pushing or opening a pull request:
+## Quality gates
 
 ```bash
 npm ci
@@ -28,130 +30,100 @@ git diff --check
 git status --porcelain
 ```
 
-Use targeted TDD tests first, then the full suite. Frontend changes require the full frontend build through `npm run build`.
+- Write targeted tests first for behavior changes.
+- Run the full suite before requesting review.
+- GitHub CI must be green before merge.
+- Review workflow logs, not only the green badge.
 
 ## Engineering discipline
 
-- `systematic-debugging`: prove root cause before changing behavior.
-- `test-driven-development`: create a failing regression test before a fix where practical.
-- `requesting-code-review`: use fresh-context reviewers for parser, identity, state, security, cost, and deployment changes.
-- `codebase-inspection`: reconstruct actual code/runtime behavior rather than trusting old docs.
-- WAL-sensitive work must be reviewed for crash windows, idempotency, and deterministic replay.
-- Protocol claims require current official documentation through the appropriate MCP or primary source.
-
-## Pull requests
-
-Every functional or repository-policy change should use a pull request into `main`.
-
-The PR description must include:
-
-- purpose and scope
-- base and head SHAs
-- files/modules changed
-- tests and checks run
-- safety impact
-- live-cost impact
-- deployment impact
-- rollback/recovery point
-- known limitations
-
-Do not merge until:
-
-1. GitHub CI is green.
-2. Hermes or another primary implementer reviews the full diff.
-3. At least one independent fresh-context reviewer approves risk-sensitive work.
-4. No unresolved secret, live-cost, state, or provenance concern remains.
-
-## GitHub CI
-
-Workflow: `.github/workflows/ci.yml`.
-
-It runs on pushes to normal work branches and pull requests into `main`. It uses a GitHub-hosted runner with:
-
-- read-only repository permission
-- no production secrets
-- `MODE=paper`
-- `TRITON_LIVE_ENABLED=false`
-- `ENTRY_SHADOW_MODE=true`
-- repository-policy checks
-- targeted zero-cost/Pump lifecycle tests
-- full test suite
-- TypeScript check
-- production build
-
-CI never:
-
-- deploys to TrueNAS
-- uses SSH into the NAS
-- receives Triton, TrueNAS, Grafana, ClickHouse, or dashboard secrets
-- enables live data
-- starts the backfill
-
-After the first green run, configure branch protection on `main` to require the `tests-build-zero-cost` check and a pull request before merge.
-
-## Repository hygiene
-
-Runtime state and generated output are not source code:
-
-- `.backtest-cache/`
-- `data-bot*/`
-- `data-stream*/`
-- `dist/`
-- logs, ledgers, locks, generated reports
-
-These paths must remain untracked. Reusable, deterministic, provenance-documented samples belong in `tests/fixtures/`.
-
-The policy script checks the current tree. Historical commits may still contain legacy artifacts; published history is not rewritten without a separate approved migration.
+- Use systematic debugging: confirm root cause before changing code.
+- Use TDD for parser, identity, accounting, persistence, and safety guards.
+- Use fresh-context reviewers for security-sensitive and protocol-sensitive changes.
+- Treat WAL/ledger changes as crash-safety work.
+- Verify protocol claims with official docs/MCPs, not model memory.
+- Do not let the implementing model be the only reviewer.
 
 ## MCP usage
 
-- `triton-docs` and `solana-mcp`: protocol/API semantics, not live calls.
-- `clickhouse`: bounded read-only queries only.
+- `triton-docs`, `solana-mcp`: protocol/API semantics; no paid live probes unless separately approved.
+- `clickhouse`: bounded read-only queries through `hermes_ro`.
 - `truenas-mcp`: read-only by default; mutations require explicit approval.
 - `old-faithful-docs`: archive/backfill semantics.
-- `grafana`: observability reads and dashboard work, never a route to live cost tests.
+- `grafana`: read metrics; do not activate cost tests.
+
+## Pull requests
+
+Every non-trivial change should include:
+
+- purpose and scope;
+- base/head SHAs;
+- functional baseline impact;
+- tests and CI evidence;
+- safety/deployment impact;
+- unresolved assumptions;
+- explicit reviewer verdict.
+
+Do not merge a draft PR. Do not auto-merge safety-sensitive work.
+
+## GitHub CI security
+
+- GitHub's automatic `GITHUB_TOKEN` is limited to `contents: read`.
+- Checkout credentials are not persisted.
+- No repository or production secrets are consumed.
+- CI forces `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
+- CI is validation-only: no Docker push, SSH, TrueNAS access, deployment, Triton activation, ClickHouse mutation, or backfill action.
+- Workflow changes are security-sensitive and need independent review.
+
+## Repository hygiene
+
+The current source tree must not track:
+
+- root `data/` runtime/deployment scratch;
+- `.backtest-cache/`;
+- `data-bot*/` or `data-stream*/`;
+- runtime ledgers, runtime lock files, logs, generated reports, or build output;
+- ignored legacy deployment scripts;
+- secrets or credential artifacts.
+
+`package-lock.json` is a required dependency lockfile and is not a runtime lock file. Reproducible samples belong under `tests/fixtures/` with provenance.
+
+The policy runs both explicit path checks and `git ls-files -ci --exclude-standard`; a tracked ignored file is a failure unless a future explicit whitelist is independently justified.
+
+## MarketIdentity changes
+
+Current behavior must be stated accurately:
+
+- full identity/decimals/freshness/exit-path contract is evaluated in shadow mode;
+- shadow rejections do not generally block legacy entry;
+- exact `gx:<mint>` is the current hard identity rejection;
+- broader enforcement requires explicit approval and live shadow evidence.
+
+Do not describe future enforcement as already active.
 
 ## Deployment
 
-Deployment is always separate from CI and requires explicit user approval.
+Deployment is separate from CI and requires:
 
-Required deployment gates:
+1. explicit user approval;
+2. green tests/build/CI;
+3. immutable image tag;
+4. rollback tag;
+5. runtime `SOURCE_GIT_SHA` proof;
+6. post-deploy observation;
+7. live-cost controls before any Triton reactivation.
 
-- green local and GitHub checks
-- clean Git tree
-- immutable image tag containing the exact Git SHA
-- runtime `build.gitSha` match
-- rollback tag/point
-- secret-mount verification without exposure
-- no live Triton unless separately approved and budget-protected
+The 2026-08-16 read-only review observed the app as stopped. Do not start it as part of repository review.
 
-Never use a missing secret mount as justification to restore an inline secret.
+## Dependency updates
 
-## Synchronizing GitHub and TrueNAS
-
-Changes made by Cursor, Codex, or this ChatGPT GitHub integration exist on GitHub first. Before Hermes reviews or continues locally:
-
-```bash
-git fetch origin
-git switch <branch>
-git pull --ff-only
-```
-
-Hermes must not overwrite remote work from a stale local branch. Use `git status`, `git branch -vv`, and compare SHAs before editing.
+- Investigate `npm audit` findings by dependency chain and actual exposure.
+- Prefer minimal compatible updates with tests.
+- Never run `npm audit fix --force` blindly.
+- Keep dependency changes out of unrelated documentation/CI PRs unless a confirmed blocker requires them.
 
 ## Offline-first research
 
-- Parser, MarketIdentity, accounting, and strategy logic must be fixture-testable without live services.
-- Historical research must be chronological and network-isolated.
-- No external price/news fetches during deterministic replay.
-- Never optimize parameters on the final test period.
-
-## Never
-
-- commit secrets or private keys
-- force-push published branches/tags without separate approval
-- merge red CI
-- activate live Triton without safeguards and approval
-- execute real blockchain transactions
-- restart the paused backfill without approval
-- mutate ClickHouse during unrelated bot work
+- `OFFLINE_ZERO_COST` is not necessarily network-isolated.
+- Backtests and reproducible replay use `NETWORK_ISOLATED_REPLAY` with fixtures/mocks and blocked network access.
+- Strategy research must use chronological train/validation/test separation and out-of-sample evaluation before any protocol expansion or renewed live spend.

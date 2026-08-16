@@ -1,5 +1,0 @@
-{
-  "disabled": true,
-  "reason": "Stale deployment payload neutralized during Gate A security cleanup.",
-  "requires": "A fresh, explicitly approved Gate B must generate deployment parameters from the credential-free manifest after read-only secret files are provisioned and verified."
-}

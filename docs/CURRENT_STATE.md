@@ -1,95 +1,86 @@
-# CURRENT_STATE.md — Current project status
+# CURRENT_STATE.md — Current project state
 
-*Source of truth: Git and running code. Last repository-alignment review: 2026-08-16.*
+*Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-16.*
 
 ## Git and GitHub
 
-- GitHub repository: `daffieeee-arch/solana-paper-scanner`
-- Default branch: `main`
-- Repository-alignment and CI work: `chore/repo-alignment-ci` until reviewed and merged
-- Repository tip is moving; obtain it with `git rev-parse HEAD` or GitHub.
+- Repository: `daffieeee-arch/solana-paper-scanner`
+- Integration branch: `main`
+- Repository tip is moving; retrieve the current SHA with `git rev-parse HEAD` or GitHub rather than treating a docs SHA as the runtime baseline.
+- PR #1 branch: `chore/repo-alignment-ci`
 - Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
-- Baseline tag: `offline-pump-baseline-20260815` → exact functional baseline
-- Runtime image source: `3e95a3c`, not the later docs/CI commits
-- Current tracked-tree policy removes runtime/cache directories; published history is not rewritten
+- Baseline tag: `offline-pump-baseline-20260815`
+- Published history is preserved; runtime/cache cleanup affects only the current tree.
 
-## Runtime
+## TrueNAS app state
 
-- Running image: `solana-bot:contra-audit16-offline-pump-3e95a3c` on TrueNAS
-- Mode: `OFFLINE_ZERO_COST`
-- `TRITON_LIVE_ENABLED=false`
-- Provider status: `TRITON / DISABLED_OFFLINE_ZERO_COST`
-- Verified at baseline: zero Triton/Titan/Dragon's Mouth/RPC/DAS clients, subscriptions, and calls
-- Mode remains paper-only; no live execution path is approved
-
-`OFFLINE_ZERO_COST` means zero paid Triton consumption. It does not guarantee a fully air-gapped runtime because free CoinGecko/CoinDesk market-context reads may still occur. Deterministic tests use network-isolated replay.
+- Configured image: `solana-bot:contra-audit16-offline-pump-3e95a3c`
+- Configured `SOURCE_GIT_SHA`: `3e95a3c…`
+- Configured `TRITON_LIVE_ENABLED=false`
+- Last read-only query during the 2026-08-16 PR review: **STOPPED**, `active_containers=0`
+- Therefore the image is configured/deployed but must not be described as currently running without a fresh app query.
+- The review must not start the app.
 
 ## Protocol status
 
 | Protocol | Status |
 |---|---|
-| Pump.fun | `SUPPORTED_AND_TESTED` offline: official IDL variants, bounded observed dispatchers, PDA validation, TP/SL lifecycle, WAL replay |
-| PumpSwap | `IDENTITY_INCOMPLETE` |
-| Raydium AMMv4 | `IDENTITY_INCOMPLETE` |
-| Raydium CPMM | `IDENTITY_INCOMPLETE` |
-| Raydium CLMM | `NOT_YET_SUPPORTED` |
-| Meteora | `IDENTITY_INCOMPLETE` |
-| Orca Whirlpool | `IDENTITY_INCOMPLETE` |
-| Moonshot/Moonit | `IDENTITY_INCOMPLETE` |
-| Jupiter | `IDENTITY_INCOMPLETE` |
-
-Non-Pump builders and lane labels must not be interpreted as full protocol support.
+| Pump.fun | `SUPPORTED_AND_TESTED` offline: structural parser, PDA validation, fixtures, paper TP/SL/WAL replay |
+| PumpSwap, Raydium AMMv4/CPMM/CLMM, Meteora, Orca, Moonshot, Jupiter | parser/program coverage may exist, but canonical identity, pricing, exit, and live evidence are incomplete; do not call these supported |
 
 ## MarketIdentity and entry gate
 
-- Pump MarketIdentity is validated offline using structural instruction decoding and official Solana PDA primitives.
-- `gx:<mint>` is rejected as non-canonical.
-- Unknown/default decimals are not allowed through future enforcement.
-- Entry gate remains `SHADOW`; enforcement is intentionally off.
-- Versioned-transaction loaded-address resolution still needs deeper real-shape coverage before live reactivation.
+- The complete canonical identity, decimals, freshness, and bounded exit-path contract is implemented and tested as a fail-closed **shadow evaluator**.
+- Shadow verdicts (`WOULD_ACCEPT`/`WOULD_REJECT`) do not generally block the legacy entry flow.
+- The currently enforced hard identity gate rejects exact `gx:<mint>` identities.
+- Broader MarketIdentity enforcement remains off and requires explicit approval plus live shadow evidence.
 
-## State, accounting, and replay
+## Zero-cost and network status
 
-- Append-only WAL/ledger is authoritative.
-- Legacy orphaned positions are quarantined through ledger events, not fictitious exits.
-- Normal take-profit and stop-loss lifecycles have deterministic PnL and replay tests.
-- Automatic strategy promotion is disabled pending a deterministic historical quote/replay path.
-
-## Triton live status and costs
-
-- Prepaid balance: $0
-- Live endpoint cutoff is the leading explanation for pending/no-event streams, but production auth/cutoff remains technically unconfirmed until a bounded future test.
-- The first $125 cost attribution is unresolved.
-- No top-up or live unlock is allowed before request/byte metering, maximum duration, warning thresholds, a hard stop, and automatic disconnect are implemented and tested.
+- `TRITON_LIVE_ENABLED=false` is the default and blocks live Triton/Vixen/Geyser/Titan/RPC/DAS client construction.
+- `OFFLINE_ZERO_COST` means no paid Triton usage; free CoinGecko/CoinDesk context reads may still occur in the ordinary app.
+- `NETWORK_ISOLATED_REPLAY` is stricter and permits no external network calls.
+- Triton balance is $0. Live connectivity and the prepaid-cutoff hypothesis remain technically unconfirmed until a later, budget-bounded reactivation.
 
 ## ClickHouse, backfill, and Grafana
 
-- ClickHouse data remains intact at roughly 563 million v1 rows.
-- ClickHouse runs as a host-network process and still lacks a structural TrueNAS autostart service.
-- Read-only MCP user: `hermes_ro`.
-- Default ClickHouse user without a password remains reachable on the LAN; staged hardening is pending.
-- Old Faithful/Jetstreamer backfill is paused; supervisors and repair cron must not be restarted without approval.
-- Completion threshold, heartbeat/watchdog, and duplicate-supervisor guards remain open.
-- Grafana runs, but Triton cost metrics and alerts are not implemented.
+- ClickHouse data remains intact at roughly 563M physical rows / about 86–92 GB, subject to previously documented measurement differences.
+- Backfill supervisors and repair cron are paused.
+- ClickHouse MCP user `hermes_ro` is read-only.
+- Grafana is available for read-only observability.
+- Open infrastructure issues: ClickHouse autostart, default-user/LAN exposure, completion logic, stall watchdog, and repair supervisor guards.
 
-## Historical data contract
+## Repository hygiene
 
-The existing `memecoin_swaps` table is v1 `TRANSACTION_NET_SWAP`: at most one dominant/net swap row per transaction. It is not a complete event-level tape. A sampled cross-part retry overlap of about 3.4% was observed in one physical range; the dataset-wide duplicate ratio is not proven, and normal ReplacingMergeTree background merges may already have consolidated some rows. Do not run a global `OPTIMIZE ... FINAL`.
+PR #1 removes current-tree runtime/deployment scratch state while preserving history:
 
-Future v2 remains a Bronze/Silver/Gold design for event observations, current events, and transaction-net research output.
+- `data/`
+- `.backtest-cache/`
+- `data-bot*/`
+- `data-stream*/`
+- ignored legacy helpers `scripts/gen-inline-yaml.py` and `scripts/reinstall-bot.py`
 
-## Quality status
+Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 
-- Functional baseline: 592/592 tests
-- Build: green
-- TypeScript: zero errors
-- Secret scan: clean at the published baseline
-- GitHub CI is introduced by `chore/repo-alignment-ci`; its first green run and branch-protection setup must be verified before treating CI as an enforced gate
+## Tests and CI
 
-## Immediate next steps
+- Immutable functional baseline: 592 tests, build green, TypeScript clean.
+- PR #1 adds four negative CI-policy tests; the expected full total is 596.
+- GitHub CI runs repository policy, critical zero-cost/Pump tests, full tests, typecheck, and build with `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
+- GitHub's automatic token is read-only (`contents: read`) and checkout credentials are not persisted. No repository or production secrets are consumed.
 
-1. Review this alignment/CI branch using `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`.
-2. Require the GitHub CI workflow to pass.
-3. Merge only after Hermes and an independent reviewer approve the docs, repository cleanup, and workflow.
-4. Create `phase2/pump-offline-research` from updated `main`.
-5. Audit Pump data suitability and build a professional offline research/backtest harness before expanding to another protocol or spending more on live infrastructure.
+## Open blockers
+
+1. Triton balance $0 and cost attribution unresolved.
+2. Live Pump first-event/connectivity not re-proven.
+3. Live budget duration, request/byte metering, hard stops, and auto-disconnect not implemented.
+4. MarketIdentity broader enforcement remains shadow-only.
+5. Deep loaded-address resolution for real versioned transactions remains incomplete.
+6. Non-Pump identity/pricing/exit paths are incomplete.
+7. ClickHouse and backfill infrastructure fixes remain open.
+8. v2 event-level Bronze/Silver/Gold pipeline remains design work.
+9. Dependency audit reports three moderate production-chain findings and one high dev-chain finding; investigate separately without forced auto-fix.
+
+## Next recommended product task
+
+After PR #1 is approved and merged, create `phase2/pump-offline-research` from updated `main`. Perform a read-only data-suitability and live/replay/backtest-parity audit, then build a reproducible Pump-only historical research harness. Do not expand to another protocol until out-of-sample evidence justifies the complexity and cost.

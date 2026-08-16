@@ -2,90 +2,70 @@
 
 ## Review request
 
-Hermes: read this document first, then review the entire diff of branch `chore/repo-alignment-ci` against GitHub `main`.
-
-This branch was prepared through the GitHub integration after an independent repository review. It intentionally does **not** deploy, enable Triton, restart the backfill, mutate ClickHouse, or change the proven Pump trading logic.
-
-Return one explicit verdict:
+Review the latest head of `chore/repo-alignment-ci` against GitHub `main` and return one explicit verdict:
 
 - `APPROVE`
 - `REQUEST_CHANGES`
-- `HOLD` if the branch cannot be safely verified
+- `HOLD`
 
-Do not merge or deploy automatically.
+Do not merge, deploy, start the app, enable Triton, restart the backfill, or mutate ClickHouse.
+
+## Review history
+
+Round 1 reviewed original PR head `7d1f82f9255bafdeb4c1396bd09567079fb5cdf3` and returned `REQUEST_CHANGES` for:
+
+1. residual tracked runtime/ignored files and incomplete matching;
+2. MarketIdentity enforcement overclaims;
+3. a comment/quoted-value bypass in the zero-cost workflow policy;
+4. supporting documentation inaccuracies about app state, GitHub token, and runtime lockfiles.
+
+Read [`docs/HERMES_REVIEW_RESPONSE_ROUND1.md`](HERMES_REVIEW_RESPONSE_ROUND1.md) before re-reviewing. Review the **latest branch head**, not only the original commit.
 
 ## Base and recovery point
 
-- PR base: GitHub `main` at docs handoff commit `b42450affb6522e6b6c9d67f32285b5c070fb087`
-- Immutable functional/runtime baseline remains `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
+- PR base: GitHub `main` at `b42450affb6522e6b6c9d67f32285b5c070fb087`
+- Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
 - Baseline tag: `offline-pump-baseline-20260815`
-- Running TrueNAS image remains built from `3e95a3c`
+- Configured TrueNAS image: `solana-bot:contra-audit16-offline-pump-3e95a3c`
+- Last read-only app observation: `STOPPED`, `active_containers=0`
 
-The repository alignment must not move or reinterpret the functional baseline tag.
+The branch must not move or reinterpret the functional baseline tag.
 
-## Why these changes were made
-
-An independent GitHub review found that the core code matched the recent work, but the repository presentation and controls did not:
-
-1. `README.md` still described an obsolete DexScreener/Helius/Birdeye-era scanner.
-2. Docs confused moving GitHub HEAD with the immutable runtime baseline.
-3. Workflow instructions still told agents to branch from local `fix/audit14`, while GitHub exposes `main`.
-4. Tracked runtime/cache directories contradicted `.gitignore` and could mislead Cursor/Hermes.
-5. The v1 duplicate claim overstated what the sampled ClickHouse evidence proved.
-6. `OFFLINE_ZERO_COST` was being described too much like full network isolation.
-7. The loaded-address gap for versioned transactions was not prominent enough.
-8. The next task had drifted: professional Pump-only offline research should precede another protocol.
-9. GitHub had no independent CI status checks.
-
-## Scope of this branch
+## Intended scope
 
 ### Documentation alignment
 
-- Rewrite `README.md` to reflect the current offline Pump baseline.
-- Update `AGENTS.md`, `HANDOFF`, `CURRENT_STATE`, `ARCHITECTURE`, `DECISIONS`, `KNOWN_ISSUES`, and `DEVELOPMENT_WORKFLOW`.
-- Distinguish:
-  - moving repository tip
-  - immutable functional/runtime baseline
-  - running image SHA
-- Clarify Triton-only scope, zero-cost versus network-isolated replay, protocol HOLDs, and the Phase 2 research sequence.
+- Replace the obsolete README.
+- Distinguish moving repository tip, immutable functional baseline, configured image, and actual app state.
+- State MarketIdentity accurately: full contract shadow-only, exact `gx:<mint>` hard gate currently enforced.
+- Distinguish `OFFLINE_ZERO_COST` from `NETWORK_ISOLATED_REPLAY`.
+- Update Phase 2 sequence: Pump-only offline research before protocol expansion.
 
 ### Repository hygiene
 
-Remove from the current tree, while preserving published history:
+Remove from the current tree while preserving history:
 
+- root `data/`
 - `.backtest-cache/`
-- `data-bot/`
-- `data-bot-final/`
-- `data-bot-v3/`
-- `data-bot-v4/`
-- `data-stream/`
+- all `data-bot*/`
+- all `data-stream*/`
+- ignored legacy helpers `scripts/gen-inline-yaml.py` and `scripts/reinstall-bot.py`
 
-These are runtime/cache outputs, not reproducible source. Deliberate reusable samples must live under `tests/fixtures/` with provenance.
-
-Confirm that no test, build, startup, or fixture path relies on the removed tracked files. The live TrueNAS runtime directories are outside this GitHub branch operation and must not be deleted from the NAS.
+No live TrueNAS runtime path is deleted by this Git branch operation. Reusable deterministic samples belong under `tests/fixtures/`.
 
 ### CI and policy
 
-- Add `.github/workflows/ci.yml`.
-- Add `scripts/ci-repository-policy.mjs`.
-- Add `npm run ci:policy`.
-- Make `.env.example` explicitly paper-only, shadow-only, and Triton-live disabled.
-- Add `docs/CI.md`.
+- `.github/workflows/ci.yml`
+- `scripts/ci-repository-policy.mjs`
+- `tests/ci-policy.test.ts`
+- `npm run ci:policy`
+- `docs/CI.md`
 
-The workflow must:
-
-- use read-only GitHub permissions
-- receive no secrets
-- force `MODE=paper` and `TRITON_LIVE_ENABLED=false`
-- run targeted zero-cost/Pump tests and the full suite
-- run TypeScript and build
-- never deploy, SSH to TrueNAS, start the backfill, or activate paid services
+The workflow must use only the automatic read-only `GITHUB_TOKEN`, persist no checkout credentials, consume no repository/production secrets, force paper/shadow/zero-cost values, and perform no deployment or infrastructure mutation.
 
 ## Required review procedure
 
 ### 1. Synchronize safely
-
-Do not edit from a stale local branch.
 
 ```bash
 cd /opt/data/solana-paper-scanner
@@ -94,33 +74,35 @@ git switch chore/repo-alignment-ci
 git pull --ff-only
 ```
 
-If local uncommitted work exists, stop and report it. Do not reset or overwrite it.
+Stop if local work would be overwritten.
 
-### 2. Inspect the full diff
+### 2. Inspect complete diff
 
 ```bash
 git diff --stat origin/main...HEAD
 git diff origin/main...HEAD
 ```
 
-Check that the branch contains only repository alignment, CI/policy, example config, and current-tree cleanup. Confirm no functional trading/provider/ledger/parser code changed.
+Confirm no functional changes under `src/`, frontend, existing tests, or package-lock. The only intended new test is `tests/ci-policy.test.ts`.
 
-### 3. Verify removed paths
+### 3. Verify repository hygiene
 
 ```bash
-git ls-files '.backtest-cache/**' 'data-bot*/**' 'data-stream*/**'
+git ls-files '.backtest-cache/**' 'data/**' 'data-bot*/**' 'data-stream*/**'
+git ls-files -ci --exclude-standard
 ```
 
-Expected result: no tracked files.
+Expected: no output from either command.
 
-Check whether any removed `strategies-v2.json` value is intentionally required. If a deterministic sample is required, request moving a sanitized, documented version to `tests/fixtures/`; do not restore runtime directories.
+Confirm `scripts/gen-inline-yaml.py` and `scripts/reinstall-bot.py` are absent from the current tree.
 
-### 4. Run quality gates
+### 4. Run gates
 
 ```bash
 npm ci
 npm run ci:policy
 npx vitest run \
+  tests/ci-policy.test.ts \
   tests/zero-cost.test.ts \
   tests/pump-replay.test.ts \
   tests/pump-vertical-slice.test.ts \
@@ -132,63 +114,63 @@ git diff --check
 git status --porcelain
 ```
 
-Expected pre-review baseline remains at least 592 passing tests. A changed total is acceptable only if fully explained; this branch is not intended to change tests.
+Expected full-suite total after the four policy tests: 596, unless a clearly explained dependency/test-runner difference occurs.
 
-### 5. Inspect GitHub Actions
+### 5. Adversarial policy validation
+
+Confirm the policy rejects:
+
+```yaml
+# TRITON_LIVE_ENABLED: 'false'
+TRITON_LIVE_ENABLED: 'true'
+```
+
+Also confirm it rejects quoted/unquoted `true` and duplicate active assignments.
+
+### 6. Inspect latest GitHub Actions run
+
+Verify the actual latest branch run and logs, including:
+
+- read-only permissions;
+- `persist-credentials: false`;
+- no repository/production secrets;
+- policy and negative policy tests pass;
+- full suite, typecheck, and build pass;
+- no deployment/live/backfill/ClickHouse action.
+
+### 7. Documentation against code/runtime
 
 Verify:
 
-- actions are official and versioned
-- `permissions: contents: read`
-- `persist-credentials: false`
-- no `secrets.*`
-- no deployment or container registry push
-- no Triton/live environment unlock
-- no unbounded external analysis step
-- npm cache is based on `package-lock.json`
+- full MarketIdentity contract is shadow-only;
+- exact `gx:<mint>` is the current hard identity gate;
+- Triton clients remain behind explicit live construction;
+- ordinary zero-cost runtime can still use free context;
+- replay is network-isolated;
+- Pump is the only proven complete protocol;
+- configured app was last observed stopped;
+- loaded-address coverage remains open;
+- ClickHouse duplicate wording is appropriately qualified.
 
-Review the actual workflow run and logs after push.
+### 8. Fresh-context reviewer
 
-### 6. Review documentation against code
+Give a fresh reviewer this document, the response document, full diff, workflow/policy, AGENTS, and HANDOFF. Ask whether all round-1 blockers are closed without changing runtime behavior.
 
-Specifically verify:
-
-- `src/main.ts` really constructs Triton providers only behind the live guard
-- `OFFLINE_ZERO_COST` can still permit free market-context fetches
-- replay tests are network-isolated
-- Pump is the only fully validated protocol
-- entry enforcement remains shadow-only
-- running image still comes from `3e95a3c`
-- loaded-address coverage remains an open issue
-- the ClickHouse duplicate wording is appropriately qualified
-
-### 7. Independent reviewer
-
-Use one fresh-context reviewer given only:
-
-- this document
-- the branch diff
-- `AGENTS.md`
-- `docs/HANDOFF.md`
-- the workflow and policy script
-
-Ask whether the branch improves clarity and safety without changing runtime behavior.
-
-## Review output format
+## Output
 
 Return:
 
-1. Verdict: `APPROVE`, `REQUEST_CHANGES`, or `HOLD`
-2. Local branch/head reviewed
-3. GitHub CI run/status reviewed
-4. Tests/build/typecheck/policy results
-5. Runtime/cache cleanup verdict
-6. Documentation accuracy verdict
-7. CI security verdict
-8. Any false or stale claim with file/line evidence
-9. Any required changes, severity, and minimal fix
-10. Confirmation: no deployment, no live Triton, no backfill restart
+1. verdict;
+2. exact branch/head;
+3. local and GitHub CI evidence;
+4. cleanup verdict;
+5. MarketIdentity documentation verdict;
+6. policy-bypass verdict;
+7. CI security verdict;
+8. dependency-audit classification;
+9. remaining required changes;
+10. confirmation that no merge/deployment/live/backfill/database action occurred.
 
 ## Merge policy
 
-Do not merge from Hermes automatically. After approval, report the verdict to the user. Merge only after explicit user approval and green GitHub CI. No TrueNAS deployment is required for this docs/CI/repository-hygiene change.
+Do not merge automatically. Merge only after green CI, independent approval, and explicit user permission. No TrueNAS deployment is required for this repository-alignment/CI change.

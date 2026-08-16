@@ -4,9 +4,9 @@ dist/
 *.tsbuildinfo
 
 # ── Runtime data (ledger, snapshots, caches) ───────────
+data/
 data-bot*/
 data-stream*/
-data-bot-v5/
 *.ndjson
 *.log
 .backtest-cache/
@@ -22,15 +22,13 @@ grafana-credentials.txt
 **/*-token*.txt
 **/*-wss-admin*.mjs
 **/*api-key*.json
-data/gate-records/
-data/gate-*/
 
 # ── Editors / OS ──────────────────────────────────────
 .vscode/
 .idea/
 .DS_Store
 
-# ── Truenas deploy scripts with embedded secrets ──────
+# ── Legacy/deploy helpers that must not be tracked ─────
 scripts/truenas-wss-admin.mjs
 scripts/live-tokens.mjs
 secrets.txt

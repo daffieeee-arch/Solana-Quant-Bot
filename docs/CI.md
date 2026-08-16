@@ -2,75 +2,85 @@
 
 ## Purpose
 
-The initial CI workflow independently validates the repository without touching TrueNAS or paid/live infrastructure.
+The CI workflow independently validates a clean clone without touching TrueNAS or paid/live infrastructure.
 
-Workflow file: `.github/workflows/ci.yml`
-
-Job name: `tests-build-zero-cost`
+- Workflow: `.github/workflows/ci.yml`
+- Job: `tests-build-zero-cost`
 
 ## Triggers
 
 - Pull requests targeting `main`
 - Pushes to `main`
-- Pushes to normal work branches such as `chore/**`, `feature/**`, `phase2/**`, `ci/**`, and `cursor/**`
+- Pushes to `chore/**`, `feature/**`, `phase2/**`, `ci/**`, and `cursor/**`
 - Manual `workflow_dispatch`
 
 ## Security posture
 
 - GitHub-hosted Ubuntu runner
-- Repository permission: `contents: read`
-- Checkout credentials are not persisted
-- No GitHub or production secret is provided to the job
+- Automatic `GITHUB_TOKEN` limited to `contents: read`
+- Checkout uses `persist-credentials: false`
+- No repository or production secrets are consumed
 - `MODE=paper`
 - `TRITON_LIVE_ENABLED=false`
 - `ENTRY_SHADOW_MODE=true`
-- No Docker image push
-- No SSH, TrueNAS deployment, or external service activation
+- No Docker push, SSH, TrueNAS access, deployment, external service activation, backfill action, or ClickHouse mutation
+
+GitHub always creates a job token. The security claim is therefore not “no GitHub token exists”; it is that the automatic token is read-only and is not persisted, and no additional secrets are supplied.
 
 ## Checks
 
-1. Checkout with full Git history for repository-policy checks.
-2. Install Node.js 22 and npm dependencies through `npm ci`.
+1. Checkout full history without persisting credentials.
+2. Install locked dependencies with `npm ci`.
 3. Run `npm run ci:policy`:
-   - rejects tracked runtime/cache/secret paths
-   - checks `.env.example` is paper-only and zero-cost
-   - checks for private-key headers and targeted hardcoded credential assignments
-   - checks the project remains private and the workflow itself remains read-only/zero-cost
-4. Run targeted critical tests:
-   - zero-cost guard
-   - Pump parser replay
-   - Pump vertical slice
-   - normal TP/SL lifecycle and network-isolated replay
-5. Run the complete test suite.
-6. Run `npx tsc --noEmit`.
-7. Run `npm run build`.
-8. Run `git diff --check`.
+   - fails on any tracked file ignored by `.gitignore` using `git ls-files -ci --exclude-standard`;
+   - rejects root runtime/cache paths including `data/`, `data-bot*`, and `data-stream*`;
+   - rejects legacy ignored destructive deployment helpers;
+   - verifies `.env.example` safe defaults;
+   - scans targeted credential/private-key patterns;
+   - parses active YAML scalar assignments and requires exactly one effective zero-cost configuration;
+   - rejects workflow secret references and deployment fragments.
+4. Run negative CI-policy tests, including comment/quoted-value bypass attempts.
+5. Run critical zero-cost and Pump lifecycle tests.
+6. Run the complete test suite.
+7. Run `npx tsc --noEmit`.
+8. Run backend/frontend build.
+9. Run `git diff --check` and verify checks did not modify tracked files.
 
-## Limitations
+## Policy threat cases
 
-The local repository-policy script is a focused guardrail, not a substitute for a dedicated secret-scanning product. Continue pre-push history scans for high-risk changes and enable GitHub secret scanning when available for this private repository.
+The policy tests must reject at least:
 
-CI proves that a clean clone passes the project checks. It does not prove:
+```yaml
+# TRITON_LIVE_ENABLED: 'false'
+TRITON_LIVE_ENABLED: 'true'
+```
 
-- TrueNAS deployment correctness
-- live Triton connectivity
-- strategy profitability
-- protocol correctness beyond available fixtures/tests
-- historical ClickHouse integrity
+They also reject unquoted `true`, double-quoted `"true"`, and duplicate active assignments. Comments do not satisfy required values.
 
-## First-run procedure
+## What CI proves
 
-1. Push `chore/repo-alignment-ci`.
-2. Confirm the workflow is present and the job starts.
-3. Inspect every step and logs; do not merely rely on a green summary.
-4. If green, open the pull request into `main`.
-5. Have Hermes review `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md` and the full PR diff.
-6. Merge only after review approval.
-7. Configure branch protection on `main`:
-   - require a pull request
-   - require `tests-build-zero-cost`
-   - block force pushes
-   - require conversation resolution where available
+- clean-clone dependency installation works;
+- repository hygiene policy passes;
+- critical and full tests pass;
+- TypeScript and build pass;
+- the workflow remains validation-only and zero-cost by configuration.
+
+CI does not prove:
+
+- TrueNAS deployment/runtime status;
+- live Triton connectivity;
+- strategy profitability;
+- correctness beyond available fixtures/tests;
+- ClickHouse/backfill integrity.
+
+## Dependency audit
+
+The current lockfile reports existing audit findings:
+
+- three moderate production-chain findings through `@solana/web3.js -> jayson -> uuid@8.3.2`;
+- one high dev-chain finding through Vite/PostCSS/nanoid.
+
+These predate PR #1. Investigate separately; do not use `npm audit fix --force` in this alignment PR.
 
 ## Local equivalent
 
@@ -78,6 +88,7 @@ CI proves that a clean clone passes the project checks. It does not prove:
 npm ci
 npm run ci:policy
 npx vitest run \
+  tests/ci-policy.test.ts \
   tests/zero-cost.test.ts \
   tests/pump-replay.test.ts \
   tests/pump-vertical-slice.test.ts \
@@ -88,6 +99,14 @@ npm run build
 git diff --check
 ```
 
-## Changes to the workflow
+## Merge and branch protection
 
-Treat CI changes as security-sensitive. Review action versions, permissions, environment variables, cache behavior, and any new network or credential requirement. CI must remain validation-only unless the user separately approves a future deployment design.
+After approval:
+
+- require pull requests for `main`;
+- require `tests-build-zero-cost`;
+- block force pushes;
+- require conversation resolution where available;
+- keep deployment outside CI unless a future design receives separate explicit approval.
+
+Treat every workflow/policy change as security-sensitive and review the actual logs, not only the status badge.

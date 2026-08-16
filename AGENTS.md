@@ -1,6 +1,6 @@
 # AGENTS.md — Solana Paper Trading Bot
 
-Read [`docs/HANDOFF.md`](docs/HANDOFF.md) first. This file is the compact, cross-tool instruction set for Hermes, Cursor, Codex, and other coding agents.
+Read [`docs/HANDOFF.md`](docs/HANDOFF.md) first. This is the compact cross-tool instruction set for Hermes, Cursor, Codex, and other coding agents.
 
 ## Project goal
 
@@ -8,25 +8,25 @@ Build a professional Solana **paper-trading and research** platform. Pump.fun is
 
 ## Source of truth and baselines
 
-- GitHub default branch: `main`
-- Create every task branch from the current `origin/main`; never edit `main` directly.
-- Current repository tip is expected to move as docs, CI, and research tooling improve.
-- Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
-- Baseline tag: `offline-pump-baseline-20260815`
-- Running baseline image: `solana-bot:contra-audit16-offline-pump-3e95a3c`
+- GitHub integration branch: `main`; create every task branch from current `origin/main` and never edit `main` directly.
+- Repository HEAD is allowed to move as docs, CI, and research tooling improve.
+- Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`.
+- Baseline tag: `offline-pump-baseline-20260815`.
+- Configured baseline image: `solana-bot:contra-audit16-offline-pump-3e95a3c`.
+- Last read-only TrueNAS observation on 2026-08-16: app **STOPPED**, `active_containers=0`. Do not call it running without a fresh query.
 
-Do not call a moving repository HEAD the runtime baseline. Always distinguish repository tip, functional baseline, and running image SHA.
+Always distinguish repository tip, functional baseline, configured image, and actual runtime state.
 
 ## Core architecture rules
 
 - **Primary live Solana backend:** Triton One for Dragon's Mouth/geyser, RPC, DAS, and Titan when explicitly enabled.
-- Allowed non-provider components include ClickHouse, Old Faithful/Jetstreamer, Grafana, frontend libraries, CoinGecko/CoinDesk market context, and external UI links.
+- Supporting components may include ClickHouse, Old Faithful/Jetstreamer, Grafana, frontend libraries, CoinGecko/CoinDesk context, and external UI links.
 - Helius, Birdeye, QuickNode, Alchemy, public Solana RPC/WS, and similar providers must not silently re-enter the primary backend path.
 - **Zero-cost default:** `TRITON_LIVE_ENABLED=false` means no live Triton client construction.
-- **MarketIdentity fail-closed:** no entry without a canonical market identity, proven decimals, fresh source data, and a bounded pricing/exit path. `gx:<mint>` is never canonical.
+- **MarketIdentity status:** the complete canonical-identity/decimals/freshness/exit-path contract is evaluated fail-closed in shadow mode. It records `WOULD_ACCEPT`/`WOULD_REJECT` but does not generally block the legacy entry flow. The currently enforced hard identity gate rejects exact `gx:<mint>` identities.
 - **WAL/ledger is authoritative state.** Quarantine is an append-only administrative ledger event.
-- **Pump-only proven baseline.** Other protocols remain fail-closed until separately decoded, identified, tested, and reviewed.
-- MarketIdentity entry enforcement remains off; shadow evaluation only.
+- **Pump-only proven baseline.** Other protocols remain incomplete until separately decoded, identified, tested, and reviewed.
+- Broader MarketIdentity enforcement remains off pending live shadow evidence and explicit approval.
 
 ## Safety constraints
 
@@ -59,11 +59,9 @@ Verify protocol/API claims against official documentation rather than model memo
 
 ## Required engineering discipline
 
-Use `systematic-debugging`, `test-driven-development`, `requesting-code-review`, `codebase-inspection`, and fresh-context reviewer subagents where relevant. Treat WAL changes as crash-safety work. Use protocol-specific reviewers for parser and MarketIdentity changes.
+Use systematic debugging, TDD, codebase inspection, requesting code review, and fresh-context reviewers where relevant. Treat WAL changes as crash-safety work and use protocol-specific review for parser/MarketIdentity changes.
 
 ## Quality gates
-
-Run before every pull request and merge:
 
 ```bash
 npm ci
@@ -75,11 +73,12 @@ git diff --check
 git status --porcelain
 ```
 
-GitHub CI must be green. CI receives no production secrets, forces zero-cost mode, and never deploys.
+GitHub CI must be green. The automatic `GITHUB_TOKEN` is restricted to `contents: read` and checkout credentials are not persisted. CI receives no repository or production secrets and never deploys.
 
 ## Repository hygiene
 
-- Runtime state and caches do not belong in the current tree: `.backtest-cache/`, `data-bot*/`, `data-stream*/`, `dist/`, logs, ledgers, lockfiles, and generated reports.
+- Runtime state and caches do not belong in the current tree: `data/`, `.backtest-cache/`, `data-bot*/`, `data-stream*/`, `dist/`, logs, ledgers, **runtime lock files**, generated reports, and deployment scratch artifacts.
+- `package-lock.json` is a required dependency lockfile and must remain tracked.
 - Reusable deterministic data belongs under `tests/fixtures/` with provenance.
 - Historical runtime artifacts may remain in old commits; do not rewrite published history without a separate approved migration.
 
@@ -92,8 +91,9 @@ GitHub CI must be green. CI receives no production secrets, forces zero-cost mod
 5. `docs/KNOWN_ISSUES.md`
 6. `docs/DEVELOPMENT_WORKFLOW.md`
 7. `docs/CI.md`
-8. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md` when reviewing the repository-alignment PR
-9. `docs/triton-cost-safety.md`
-10. `docs/offline-hardening-decimals-cost.md`
-11. `docs/pump-source-classification.md`
-12. `docs/protocol-coverage.md`
+8. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+9. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+10. `docs/triton-cost-safety.md`
+11. `docs/offline-hardening-decimals-cost.md`
+12. `docs/pump-source-classification.md`
+13. `docs/protocol-coverage.md`
