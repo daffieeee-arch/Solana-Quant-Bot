@@ -1,81 +1,111 @@
-# ARCHITECTURE.md — End-to-end architectuur
+# ARCHITECTURE.md — End-to-end architecture
 
-*Statuslabels: ✅ bewezen (getest/deployed) · 🔶 functioneel maar HOLD · ⛔ future/ontwerp*
+Status markers: ✅ proven offline/tested · 🔶 implemented or partially available but HOLD · ⛔ future/design.
 
-## Dataflow (live Triton — wanneer TRITON_LIVE_ENABLED=true)
+## Live path when explicitly enabled
 
-```
-Dragon's Mouth/geyser (Triton) ─ client-factory (geyser of vixen) ─→ VixenEvents
-   │  program-ids: 6EF8 (pump), 675k (AMMv4), CPMM, CAMM, cpamdp, whir, pAMM, Moon, JUP6
-   ▼
-decode/normalization (triton-geyser.ts / triton.ts)
-   ├─ parsePumpSwap (structureel: discriminator + PDA-cross-match) → mint/curve/kind ✅
-   └─ parseGenericSwap / onRaydiumUpdate / onCpmmUpdate (per programma)
-   ▼
-MarketSnapshot (scoring.ts) — poolDepth, programId, pairId, marketIdentity ⛔ optional
-   ▼
-MarketIdentity (market-identity2.ts, discriminated union)
-   ├─ pump_bonding_curve (PDA ["bonding-curve", mint]) ✅
-   ├─ amm_cpmm (marketId=pool-state, lpMint apart) 🔶 identity-incomplete
-   └─ clmm (ontwerp) ⛔
-   ▼
-Scanner (scanner.ts) — + contra-momentum score/score, entry-gate (shadow), risk
-   ▼
-Paper execution (portfolio.ts) — enter/exit positions, risk (stop-loss/trailing/max-hold)
-   ▼
-WAL/ledger (ledger.ts) — append-only crash-safe journal; authoritative state ✅
-   ▼
-Quarantine/accounting (accounting.ts + capital-accounting.ts) — administratief WAL-event ✅
+```text
+Triton Dragon's Mouth / geyser
+  -> Vixen/raw program updates
+  -> protocol-specific decode and normalization
+  -> MarketSnapshot
+  -> MarketIdentity shadow evaluator
+  -> legacy scanner gates plus currently enforced gx:<mint> hard block
+  -> paper portfolio / risk / exits
+  -> append-only WAL ledger
+  -> administrative quarantine/accounting events
 ```
 
-## Zero-cost offline mode (TRITON_LIVE_ENABLED=false) ✅ bewezen
+Program subscriptions/parsers for PumpSwap, Raydium, Meteora, Orca, Moonshot, Jupiter, and others do **not** by themselves establish full protocol support. Canonical pool/market identity, decimals, price state, exit path, fixtures, and independent review are still required.
 
-- main.ts bouwt **niets** (geen geyser/vixen-factory, geen TritonProvider/TitanProvider/reserve-reader)
-- `requireLiveTritonOrThrow` op centrale grens; status `OFFLINE_ZERO_COST`, health `DISABLED_OFFLINE_ZERO_COST`
-- Bot draait offline: dashboard, ledger-replay, scanner-logica, shadow-MarketIdentity-evaluatie
+## MarketIdentity status
 
-## Strategy & risk
+The complete identity contract checks canonical identity, decimals, freshness, and bounded mark/exit sources. It is currently evaluated fail-closed in **shadow mode** and emits `WOULD_ACCEPT` or `WOULD_REJECT`.
 
-- Contra-momentum (ENTRY_MODE=contra): dip-kopen, surge/sniping anti-edge
-- Risk: stop-loss (dynamisch volxpect), trailing-stop, max-hold, time-stop, breakeven-buffer
-- Paper: entryCost + slippage/fee → realistische PnL; exit via WAL-event
+Current enforcement is narrower:
 
-## ClickHouse (historisch, naast bot) ✅ draaiend · 🔶 backfill gepauzeerd
+- exact `gx:<mint>` identity is hard-blocked;
+- broader shadow rejection does not generally stop the legacy entry flow;
+- broader enforcement remains off pending live shadow evidence and explicit approval.
 
-- `memecoin_swaps`: ReplacingMergeTree(slot) ORDER BY signature (v1 TRANSACTION_NET_SWAP)
-- v2-ontwerp: Bronze (event-level) / Silver (current) / Gold (net) — zie vorige docs
+## Zero-cost modes
 
-## Old Faithful / Jetstreamer 🔶 gepauzeerd
+### `OFFLINE_ZERO_COST` ✅
 
-- Backfill supervisors gepauzeerd (cron paused); data veilig; resume =zelfde supervisor-command met epoch-skip-dedup
+When `TRITON_LIVE_ENABLED` is not exactly `true`:
 
-## Grafana ✅ draait
+- no Vixen/Geyser factory is constructed;
+- no Triton provider, Titan provider, reserve reader, RPC, or DAS client is constructed;
+- no paid Triton subscription/reconnect loop starts;
+- status reports `OFFLINE_ZERO_COST` and `DISABLED_OFFLINE_ZERO_COST`.
 
-- Op 192.168.1.234:30037; geen live Triton-costs-metrics zonder budget-safeguards (⛔)
+The ordinary runtime may still use free CoinGecko/CoinDesk context. This mode is therefore not necessarily air-gapped.
 
-## Frontend/backend
+### `NETWORK_ISOLATED_REPLAY` ✅
 
-- Backend: Node/TS (src/main.ts dashboard, /api/status, /api/controls, /api/debug)
-- Frontend: React (frontend/src/App.tsx) — toont OFFLINE_ZERO_COST + DISABLED health
-- Dashboard: 100.79.221.55:3000 (Tailscale) / 192.168.1.234:3000 (LAN)
+Deterministic tests use fixtures/mocks and block all external fetches. This is the appropriate mode for reproducible strategy research.
 
-## TrueNAS deployment
+## Pump baseline ✅
 
-- App `solana-bot` (custom, host_network) met secret-mounts `/run/secrets/*` (Triton-endpoint/token, rpc-*)
-- Image gebouwd uit git (SOURCE_GIT_SHA → runtime provenance); immutable tags beginkaarten per build
-- ClickHouse: los proces host_network poort 8123/9000 (geen TrueNAS-app; autostart niet structureel)
+- structural instruction discriminators;
+- official `@solana/web3.js` PDA derivation;
+- exact mint/curve cross-match;
+- official IDL variants plus tiered observed dispatchers;
+- offline identity/shadow evaluation;
+- deterministic TP/SL, fee/slippage, accounting, WAL replay, and quarantine tests.
 
-## Bewezen vs future/HOLD
+Deep real-world loaded-address resolution for versioned transactions remains a HOLD item.
 
-| Onderdeel | Status |
+## State and accounting ✅
+
+- WAL/ledger is authoritative;
+- entries/exits are append-only paper events;
+- quarantine is an administrative ledger event, not a fictitious trade exit;
+- replay must reconstruct the same portfolio and capital state;
+- automatic strategy promotion is disabled until deterministic quote-path research exists.
+
+## Historical data
+
+```text
+Old Faithful public archive (paused ingestion)
+  -> Jetstreamer / v1 parser
+  -> local ClickHouse TRANSACTION_NET_SWAP dataset
+  -> read-only research / Grafana
+```
+
+v1 stores at most one dominant/net swap per transaction. It is not an event-level tape. The future v2 design uses Bronze/Silver/Gold layers for provenance-preserving event data and derived transaction-net data.
+
+## TrueNAS state
+
+- Configured app image: `solana-bot:contra-audit16-offline-pump-3e95a3c`.
+- Configured live flag: false.
+- Last read-only observation on 2026-08-16: app **STOPPED**, `active_containers=0`.
+- ClickHouse runs as a separate host-network process and lacks structural autostart.
+- Backfill supervisors and repair cron are paused.
+
+## CI architecture
+
+GitHub Actions is validation-only:
+
+- GitHub-hosted Ubuntu runner;
+- automatic `GITHUB_TOKEN` limited to `contents: read`;
+- checkout credentials not persisted;
+- no repository or production secrets consumed;
+- `MODE=paper`, `TRITON_LIVE_ENABLED=false`, `ENTRY_SHADOW_MODE=true`;
+- repository policy, negative policy tests, Pump/zero-cost tests, full suite, typecheck, and build;
+- no deployment, TrueNAS access, Triton activation, backfill action, or ClickHouse mutation.
+
+## Status summary
+
+| Component | Status |
 |---|---|
-| Offline zero-cost mode | ✅ bewezen |
-| Pump parse (IDL + observed) | ✅ bewezen (offline fixtures) |
-| PDA/address primitives (web3.js) | ✅ bewezen |
-| WAL/ledger | ✅ bewezen |
-| Quarantine/accounting | ✅ bewezen |
-| TP/SL lifecycle + replay | ✅ bewezen (offline) |
-| Live Dragon's Mouth connect | 🔶 HOLD (balance $0) |
-| MarketIdentity ENFORCE | ⛔ HOLD (shadow) |
-| Non-Pump identities | ⛔ future |
-| v2 event-level backfill | ⛔ ontwerp |
+| Zero-cost Triton construction guard | ✅ |
+| Network-isolated replay | ✅ |
+| Pump parser/PDA/offline lifecycle | ✅ |
+| WAL/quarantine/accounting | ✅ |
+| Full MarketIdentity shadow contract | ✅ shadow only |
+| Broader MarketIdentity enforcement | 🔶 HOLD |
+| Live Dragon's Mouth connectivity | 🔶 HOLD, balance $0 |
+| Non-Pump protocol completeness | ⛔ incomplete |
+| ClickHouse/backfill operational hardening | 🔶 HOLD |
+| v2 event-level data pipeline | ⛔ design |

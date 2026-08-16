@@ -1,37 +1,46 @@
-# KNOWN_ISSUES.md — Open issues & HOLDs
+# KNOWN_ISSUES.md — Open issues and HOLDs
 
-*Alleen actuele open punten. Resolved zaken zijn niet opgenomen.*
+Only current open items belong here. Resolved issues remain in Git history.
 
-## Triton-live
-1. **Balance $0** — live Triton-live reactivatie geblokkeerd; endpoint cut off (vermoedelijk prepaid-cutoff; technisch UNCONFIRMED tot live-test)
-2. **Cost-attributie onbekend** — $125-verbruik niet gelinkt aan Billable Items-portal; alleen lokale counters (ESTIMATED/UNKNOWN)
-3. **Live Pump connectivity** — na een eventuele top-up moet first-event opnieuw bewezen worden (subs/pending 0-events-issue)
+## Triton live and cost
 
-## Pump-parser
-4. **Observed dispatchers deels EXPERIMENTAL** — liveBuy/liveBuyV2/liveBuyExactSolIn hebben geen primaire in-repo mainnet-txn; alleen structurele keten accepteert ze (fail-closed bij onvoldoende bewijs)
-5. **Live binary gebruikt custom dispatcher** (niet sha256("global:<name>")) — de officiële IDL beschrijft de live binary niet volledig; bij reactivatie opnieuw verifiëren
+1. **Balance $0:** live reactivation is blocked; prepaid-cutoff is likely but technically unconfirmed until a later bounded test.
+2. **Cost attribution unknown:** first $125 is not tied to a verified Billable Items breakdown.
+3. **Live Pump connectivity:** first-event/subscription health must be re-proven after any future reactivation.
+4. **Cost controls incomplete:** max duration, per-service request/byte metering, warning threshold, hard stop, and automatic disconnect are not implemented.
 
-## Protocol-identities
-6. **Non-Pump identities incompleet** — AMMv4/CPMM canonical pool-state (≠lpMint), CLMM tick/vault, Meteora/Orca/Moonshot/Jupiter: decoder-uitbreiding nodig (separate ronde)
+## MarketIdentity and parser
 
-## Entry-gate
-7. **MarketIdentity ENFORCEMENT UIT** — bewust; shadow-only tot live-connectiviteit + shadow-venster bewijst dat niet alles wordt afgewezen
+5. **Broader MarketIdentity enforcement is off:** full contract is shadow-only; only exact `gx:<mint>` identities are currently hard-blocked.
+6. **Observed Pump dispatchers partly experimental:** liveBuy/liveBuyV2/liveBuyExactSolIn lack primary in-repo mainnet transactions.
+7. **Deep loaded-address resolution incomplete:** tests cover versioned shapes but not complete real-world address-table resolution through every parser path.
+8. **Non-Pump completeness missing:** PumpSwap, Raydium, Meteora, Orca, Moonshot, Jupiter, and CLMM routes require protocol-specific canonical identity, decimals, price state, exit route, and evidence before being called supported.
+9. Some generic AMM/CLMM builders remain Raydium-oriented and must not be treated as universal protocol support.
 
-## ClickHouse / TrueNAS
-8. **ClickHouse autostart na NAS-reboot niet structureel opgelost** — draait als los proces; geen TrueNAS-app/auto-start (handmatige start nodig na reboot)
-9. **ClickHouse default-user/LAN exposure** — `default` zonder wachtwoord, HTTP 8123 bereikbaar vanaf LAN; staged hardening pending (niet uitgevoerd tijdens deze fasen)
-10. **ClickHouse MCP least-privilege user aangemaakt** (hermes_ro) — maar default-user-exposure blijft open; hardening-plan in oudere docs
+## TrueNAS and runtime
+
+10. **Bot app currently stopped:** configured image/provenance is known, but a fresh app query is required before claiming it is running.
+11. **ClickHouse autostart unresolved:** ClickHouse is a separate process and does not structurally start after NAS reboot.
+12. **ClickHouse default-user/LAN exposure:** default user lacks adequate hardening and HTTP 8123 is LAN-reachable.
 
 ## Backfill
-11. **Backfill gepauzeerd** (supervisors + cron) — resume-gates nog niet doorlopen; bewuste pauze
-12. **Completion-logica foutief** (390k-drempel op count i.p.v. max-slot+cursor) — open fix-ontwerp
-13. **Stall-watchdog false-positives** — heartbeat/source-cursor ontwerp nodig (WRITING/SEEKING/NETWORK_RETRY/STALLED/COMPLETE)
-14. **Repair-cron kan dubbele supervisors starten** + pad-fix nodig; jamlocatie-status-files onbetrouwbaar
 
-## Data/schema
-15. **v1 duplicate-ratio ~3,5% (cross-part retry overlap)** — niet gededupliceerd (geen OPTIMIZE/FINAL); v2 event-level backfill = ontwerp (Bronze/Silver/Gold)
-16. **v1 slechts TRANSACTION_NET_SWAP** — multi-hop/inner-CPI/pool-detail ontbreekt; v2 nodig voor event-level
+13. **Backfill paused:** supervisors and repair cron remain stopped.
+14. **Completion logic is wrong:** row-count threshold is not a valid completion definition; use source cursor/max-slot and bounded retry state.
+15. **Stall watchdog false positives:** progress must use heartbeat/source cursor and distinguish WRITING, SEEKING, NETWORK_RETRY, STALLED, and COMPLETE.
+16. **Repair supervisor guard:** duplicate supervisor starts and stale status files remain open risks.
 
-## Overig
-17. **Grafana live Triton-cost-metrics ontbreken** (budget-safeguards-leeg) — NOT_IMPLEMENTED
-18. **Cost-safety**: max-test-duration, warning/hard-stop-thresholds, automatic-disconnect = DOCUMENTED_ONLY — nog niet geïmplementeerd
+## Historical data contract
+
+17. **v1 is transaction-net only:** multi-hop, inner-CPI, pool-route, and event-level detail are not preserved.
+18. **Duplicate estimate is limited:** roughly 3.4% cross-part exact-retry overlap was observed in a biased sample. The dataset-wide ratio is unknown and normal background merges may already have consolidated some rows. Do not claim that no deduplication occurred merely because no global `OPTIMIZE FINAL` was run.
+19. **v2 event-level pipeline remains design work:** Bronze/Silver/Gold schema, parser provenance, and a pilot source pass are not implemented.
+
+## Repository and dependencies
+
+20. **Dependency audit follow-up:** current lockfile reports three moderate production-chain findings through `@solana/web3.js -> jayson -> uuid@8.3.2` and one high dev-chain finding through Vite/PostCSS/nanoid. They predate PR #1; investigate root-cause-first and do not run `npm audit fix --force` blindly.
+21. **Frontend bundle warning:** production bundle remains about 585 kB and Vite reports a non-blocking chunk-size warning.
+
+## Research
+
+22. Technical Pump lifecycle correctness is proven offline, but strategy profitability and out-of-sample edge are not. Build the Phase 2 historical research harness before protocol expansion or renewed live spend.

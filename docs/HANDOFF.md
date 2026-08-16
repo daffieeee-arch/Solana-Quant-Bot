@@ -1,84 +1,105 @@
-# HANDOFF.md — Lees dit bestand eerst
+# HANDOFF.md — Read this first
 
-*Doel: een fresh-context agent (Hermes/Cursor/LLM) reconstruert in enkele minuten de huidige werkelijkheid zonder de chatgeschiedenis te lezen.*
+This file lets a fresh Hermes, Cursor, Codex, or other coding agent reconstruct the project without the long Telegram history.
 
-## Wat bouwen we?
+## What are we building?
 
-Een **Triton-only Solana paper-trading bot** die pump.fun-launches detecteert via
-Dragon's Mouth/Vixen-geyser-streams, met contra-momentum-entry, volledig **paper-only**
-(nooit echte transacties). Zero-cost door default-offline mode. Geen live funds.
+A paper-only Solana trading research platform. Triton One is the intended primary live Solana backend when explicitly enabled. Development is offline-first and zero-cost. Pump.fun is the only protocol validated end-to-end offline.
 
-## Waar staan we nu?
+## Repository and recovery baseline
 
-- Branch `fix/audit14` · HEAD `3e95a3c` · werkboom clean
-- Running image `solana-bot:contra-audit16-offline-pump-3e95a3c` · **OFFLINE_ZERO_COST** (TRITON_LIVE_ENABLED=false; balance $0)
-- 592/592 tests · build ✓ · tsc 0
-- GitHub `daffieeee-arch/solana-paper-scanner` (main = baseline) — push via SSH-deploy-key
-- Baseline-tag `offline-pump-baseline-20260815` → HEAD 3e95a3c
+- GitHub: `daffieeee-arch/solana-paper-scanner`
+- Integration branch: `main`; branch every task from current `origin/main`
+- Current repository tip: read it from Git; do not hardcode it as the runtime baseline
+- Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
+- Baseline tag: `offline-pump-baseline-20260815`
+- Configured image: `solana-bot:contra-audit16-offline-pump-3e95a3c`
+- Last read-only TrueNAS observation on 2026-08-16: app **STOPPED**, `active_containers=0`
+- PR #1 branch: `chore/repo-alignment-ci`
 
-## Wat is bewezen?
+## What is proven?
 
-- Zero-cost offline mode (geen clients/calls/subscriptions; status + health correct)
-- Pump.fun parser: structureel (discriminator + PDA) — officiële IDL-varianten + live-observed
-- PDA-validatie via officiële `@solana/web3.js` (100-fixture-bewijs)
-- WAL/ledger authoritative + quarantine als WAL-event (`position_quarantined`)
-- TP/SL paper-lifecycli offline + netwerkloos (fetch-spy 0); WAL-replay deterministisch
-- MarketIdentity fail-closed (gx-only/unknown/mismatch → reject)
+- `OFFLINE_ZERO_COST`: no paid Triton clients, subscriptions, reconnect loops, or calls when the live flag is not exactly `true`
+- Pump structural parsing with discriminators and official `@solana/web3.js` PDA primitives
+- Pump identity construction and full MarketIdentity contract evaluation in shadow mode
+- Exact `gx:<mint>` identities are hard-blocked
+- Official IDL variants plus tiered observed-dispatch fixtures
+- Deterministic take-profit and stop-loss paper lifecycles
+- PnL/accounting checks and WAL restart/replay
+- Ledger-authoritative quarantine without fictitious exits
+- Network-isolated replay tests with external fetches blocked
 
-## Wat is NIET bewezen?
+## What is not proven?
 
-- **Live Triton-connectiviteit** (balance $0; eerst bit-cutoff-vermoeden)
-- Pump observed dispatchers experimenteel deel (geen primaire txn)
-- Non-Pump protocols (AMMv4/CPMM/CLMM/Meteora/Orca/Moonshot/Jupiter) incomplete
-- MarketIdentity ENFORCEMENT (shadow-only)
-- Backfill completion/watchdog-fixes
-- v2 event-level data-architectuur (ontwerp)
+- Broader MarketIdentity enforcement; full contract verdicts are still shadow-only
+- Live Dragon's Mouth connectivity after Triton balance reached $0
+- Product-level cost attribution for the first $125
+- Runtime duration/metering/budget hard stops and auto-disconnect
+- Deep loaded-address resolution for real versioned transactions
+- Non-Pump canonical identities, price state, and exit paths
+- Complete event-level historical data; v1 is transaction-net only
+- Backfill completion/watchdog/repair fixes
+- ClickHouse autostart and LAN/default-user hardening
 
-## Wat mag absoluut niet?
+## Terminology
 
-- Nooit live Triton/Titan/RPC/DAS-verkeer in offline mode
-- Nooit echte blockchaintransacties
-- Nooit secrets committen; nooit inline-secrets in code
-- Nooit backfill herstarten zonder expliciete opdracht
-- Nooit ClickHouse stop/ALTER/OPTIMIZE/FINAL
-- Nooit config met TRITON_LIVE_ENABLED=true zonder balance + budget-safeguards
-- Geen deployment/ENFORCE zonder approval + immutable tag + Git-SHA-proof
+- `OFFLINE_ZERO_COST`: no paid Triton usage; free context fetches may still occur.
+- `NETWORK_ISOLATED_REPLAY`: no external network calls at all.
 
-## Belangrijke bestanden/modules
+## Absolute constraints
 
-- `src/main.ts` — boot, zero-cost guard, dashboard/status
-- `src/zero-cost.ts` — TRITON_LIVE_ENABLED-guard (strikt 'true')
-- `src/providers/triton-geyser.ts` — geyser-stream, parsePumpTxn
-- `src/providers/triton.ts` — decode/normalization, emitDiscovery
-- `src/pump-parser.ts` — structurele Pump-parser + PDA (officiële web3.js)
-- `src/market-identity2.ts` / `src/market-identity-upstream.ts` — discriminated identity
-- `src/entry-shadow.ts` — shadow entry-gate (WOULD_ACCEPT/REJECT)
-- `src/scanner.ts` — scan-loop, candidate-evaluatie
-- `src/portfolio.ts` — paper entry/exit/risk (TP/SL/trailing)
-- `src/ledger.ts` — crash-safe WAL; `src/accounting.ts`+`capital-accounting.ts` — quarantaine
-- `src/config.ts`, `src/dashboard.ts`, `frontend/src/App.tsx`
-- `scripts/update-bot-audit13.py` — deploy (image-tag + provenance)
+- No real transactions, signing, or live orders.
+- Do not enable/top up Triton without explicit approval and tested cost safeguards.
+- Do not commit secrets or expose secret-file contents.
+- Do not restart the paused Old Faithful/Jetstreamer backfill without explicit approval.
+- Do not mutate/optimize/finalize ClickHouse casually.
+- Do not work directly on `main`.
+- Do not deploy without approval, immutable provenance, and rollback.
 
-## Welke MCP's/tools bestaan?
+## Important modules
 
-- triton-docs · solana-mcp · truenas-mcp · old-faithful-docs · clickhouse (read-only) · grafana
-- Skills: systematic-debugging · test-driven-development · requesting-code-review · codebase-inspection · crash-safe-persistence · github-pr-workflow · secure-git-push
+- `src/main.ts` — boot, zero-cost activation boundary, status
+- `src/zero-cost.ts` — strict live-Triton unlock
+- `src/pump-parser.ts` — structural Pump parser and PDA validation
+- `src/providers/triton-geyser.ts`, `src/providers/triton.ts` — live transport/normalization
+- `src/market-identity2.ts`, `src/market-identity-upstream.ts`, `src/entry-shadow.ts` — identity and shadow contract
+- `src/scanner.ts` — legacy scan/entry flow plus shadow verdicts and gx hard gate
+- `src/portfolio.ts` — paper risk and exits
+- `src/ledger.ts` — crash-safe WAL
+- `src/accounting.ts`, `src/capital-accounting.ts`, `src/quarantine-ledger.ts` — administrative state/exposure
+- `src/learn-controller.ts` — analysis only; automatic promotion disabled
+- `.github/workflows/ci.yml`, `scripts/ci-repository-policy.mjs` — validation-only CI
 
-## Eerstvolgende taak
+## Current review task
 
-1. **Nu (offline)**: v2-event-level-pipeline-ontwerp (Bronze/Silver/Gold) óf protocol-coverage-uitbreiding (AMMv4/CPMM pool-state decoder) — géen live Triton.
-2. **Bij reactivatie** (na top-up + budget-safeguards): Pump-connectivity-proof (first-event) + shadow-venster vóór ENFORCE-overweging.
+PR #1 received multiple `REQUEST_CHANGES` review rounds. The current branch contains the round-3 policy fixes and the subsequent current-state documentation correction, and still requires a fresh independent verdict. Read:
+
+1. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+2. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+3. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+4. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+
+Review the latest branch head, rerun all gates, inspect the latest GitHub Actions run, use a fresh-context reviewer, and return `APPROVE`, `REQUEST_CHANGES`, or `HOLD`. Do not merge, deploy, start the app, or restart the backfill.
+
+## Next product task after merge
+
+Create `phase2/pump-offline-research` from updated `main`. Start with a read-only data-suitability and live/replay/backtest-parity audit, then build a reproducible Pump-only historical research harness. Do not add another protocol until Pump demonstrates credible out-of-sample value.
 
 ## Recovery source of truth
 
-- **Git SHA**: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
-- **Tag**: `offline-pump-baseline-20260815`
-- **Bundle-backup** (lokaal, buiten repo): `/opt/data/backup-git/solana-paper-scanner-backup-20260815.bundle`
+- Functional SHA: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
+- Tag: `offline-pump-baseline-20260815`
+- Local bundle: `/opt/data/backup-git/solana-paper-scanner-backup-20260815.bundle`
 
-## Daarna lezen
+## Read next
 
-1. `docs/CURRENT_STATE.md` (exacte status)
-2. `docs/ARCHITECTURE.md` (end-to-end)
-3. `AGENTS.md` (projectregels)
-4. `docs/DECISIONS.md` · `docs/KNOWN_ISSUES.md` · `docs/DEVELOPMENT_WORKFLOW.md`
-5. `docs/triton-cost-safety.md` · `docs/offline-hardening-decimals-cost.md` · `docs/pump-source-classification.md` · `docs/protocol-coverage.md`
+1. `docs/CURRENT_STATE.md`
+2. `docs/ARCHITECTURE.md`
+3. `docs/DECISIONS.md`
+4. `docs/KNOWN_ISSUES.md`
+5. `docs/DEVELOPMENT_WORKFLOW.md`
+6. `docs/CI.md`
+7. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+8. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+9. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+10. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
