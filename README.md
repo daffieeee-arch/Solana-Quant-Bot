@@ -1,45 +1,80 @@
 # Solana Paper Scanner
 
-A **paper-only** Solana momentum scanner. It does not contain wallet code, seed-phrase support, transaction signing, or real order submission.
+Private, **paper-only** Solana trading research project. The repository currently contains a reproducible offline Pump.fun baseline; it does **not** contain wallet signing or real-order execution.
 
-## Safety properties
+## Current status
 
-- `MODE` must be exactly `paper`; all other modes fail at startup.
-- The scanner only makes public GET/read-only market-data requests to DexScreener.
-- It runs only in `MODE=paper`; it has no wallet, signing, transaction-submission, or real-order code.
-- Paper state is persisted atomically in the configured `DATA_DIR` and event history is stored in `events.ndjson`.
-- The dashboard is read-only and should only be exposed on a trusted LAN with its local dashboard token.
-- DexScreener's public latest-token feed is **best effort**, not complete Solana launch coverage and not investment advice.
+- GitHub default branch: `main`
+- Current repository tip moves as documentation and tooling change.
+- Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
+- Baseline tag: `offline-pump-baseline-20260815`
+- Running TrueNAS image: `solana-bot:contra-audit16-offline-pump-3e95a3c`
+- Runtime mode: `OFFLINE_ZERO_COST`
+- Verified baseline quality: 592 tests, build green, TypeScript clean
 
-## Run a one-cycle demo (no Docker / no writes)
+Start with [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md). They are the source of project context for Hermes, Cursor, Codex, and other coding agents.
 
-```bash
-cd /opt/data/solana-paper-scanner
-set -a; . ./.env.example; set +a
-MAX_CYCLES=1 npm run dev
+## Safety model
+
+- `MODE=paper` only; live execution is not implemented.
+- `TRITON_LIVE_ENABLED=false` is the default and prevents construction of Dragon's Mouth, Titan, Triton RPC, and DAS clients.
+- MarketIdentity is fail-closed: no entry without a canonical market identity and proven decimals.
+- Pump.fun is the only protocol currently validated end-to-end offline.
+- Non-Pump protocols remain `IDENTITY_INCOMPLETE` or `NOT_YET_SUPPORTED`.
+- MarketIdentity enforcement remains off; the gate is shadow-only.
+- No secrets belong in Git. Runtime credentials are supplied through protected `_FILE` mounts on TrueNAS.
+
+`OFFLINE_ZERO_COST` means **zero paid Triton consumption**. It is not synonymous with a fully air-gapped process: the ordinary runtime may still attempt free market/news context reads. Deterministic replay tests use `NETWORK_ISOLATED_REPLAY` semantics and allow no external network calls.
+
+## Architecture at a glance
+
+```text
+Triton live data (disabled by default)
+  -> decode / normalization
+  -> canonical MarketIdentity
+  -> scanner / scoring / entry shadow gate
+  -> paper portfolio / risk / exits
+  -> append-only WAL ledger
+
+Old Faithful / Jetstreamer (paused)
+  -> local ClickHouse historical dataset
+  -> offline research / replay / Grafana
 ```
 
-Expected output is one JSON object. It may have zero entries: the safety gates deliberately reject candidates with unavailable/insufficient market data.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and status markers.
 
-## Test and build
+## Local quality checks
 
 ```bash
+npm ci
+npm run ci:policy
 npm test
+npx tsc --noEmit
 npm run build
 ```
 
-## Docker build
+The GitHub Actions workflow runs the same core checks on pushes and pull requests. It has read-only repository permissions, receives no production secrets, never deploys to TrueNAS, and forces `TRITON_LIVE_ENABLED=false`.
 
-```bash
-docker build -t solana-paper-scanner:demo .
-docker run --rm --env-file .env.example -e MAX_CYCLES=1 solana-paper-scanner:demo
-```
+## Development workflow
 
-No wallet, private key, seed phrase, or real funds are needed or accepted.
+1. Branch from `origin/main`.
+2. Keep changes focused and test-driven.
+3. Open a pull request.
+4. Require green CI and an independent review before merge.
+5. Deploy manually only after explicit approval, an immutable image tag, and runtime Git-SHA verification.
 
-## Current limitations / next decisions
+Do not work directly on `main`. The functional baseline remains recoverable through its immutable tag even as repository documentation and tooling advance.
 
-1. Add persistent *paper-only* state after the output format has been reviewed.
-2. Add Telegram notifications using a dedicated bot token only if desired.
-3. For meaningful real-time launch coverage, choose a paid/on-chain provider (Helius or Birdeye) and add a risk provider (for example Rugcheck) before considering any execution work.
-4. Any future live-trading function requires separate approval, independent review, a new hot wallet with a limited balance, a kill switch, and a fresh implementation scope.
+## Historical data
+
+ClickHouse currently contains the paused v1 `TRANSACTION_NET_SWAP` dataset. It is useful for transaction-level net-flow research, but it is not a complete event-level swap tape. Multi-hop and inner-CPI event detail require the future Bronze/Silver/Gold v2 pipeline.
+
+## Important limitations
+
+- Triton prepaid balance is currently $0; live connectivity has not been re-proven.
+- Cost attribution for the first $125 remains unresolved.
+- Live budget guards and hard-stop metering are not fully implemented.
+- ClickHouse autostart and LAN/default-user hardening remain open.
+- The Old Faithful/Jetstreamer backfill is paused until completion, watchdog, and repair logic are corrected.
+
+This repository is research software, not investment advice.

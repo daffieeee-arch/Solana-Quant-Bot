@@ -9,7 +9,8 @@
     "build": "tsc -p tsconfig.json && npm run build:frontend",
     "build:frontend": "vite build --config frontend/vite.config.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "ci:policy": "node scripts/ci-repository-policy.mjs"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",

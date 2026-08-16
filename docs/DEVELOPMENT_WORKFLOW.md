@@ -1,69 +1,157 @@
-# DEVELOPMENT_WORKFLOW.md — Werkwijze
+# DEVELOPMENT_WORKFLOW.md — Development and review workflow
 
-## Branch-per-taak
+## Branching
 
-- Elke taak op een eigen branch vanaf `fix/audit14` (of een nieuwere stabiele tip)
-- Nooit direct werk op de baseline-tip; nooit ongeverifieerde code naar `main`
-- Klein logische commits met herkenbare messages
-
-## Quality gates (vóór merge)
+- GitHub `main` is the integration branch.
+- Start every task from current `origin/main`:
 
 ```bash
-npx vitest run          # volledige suite groen
-npm run build          # build ✓
-npx tsc --noEmit       # 0 errors
-git status --porcelain # clean
-# secret-scan (push-risico): git log --all + tracked files
+git fetch origin
+git switch -c <type>/<short-task> origin/main
 ```
 
-- Targeted tests eerst (TDD), daarna volle suite
-- Frontend: build + tests
+- Never work directly on `main`.
+- Keep one concern per branch and use small logical commits.
+- The immutable runtime recovery baseline remains `offline-pump-baseline-20260815`; do not move or recreate that tag.
 
-## Ontwikkeldiscipline
+## Local quality gates
 
-- `test-driven-development` (tests vóór fix-groen)
-- `systematic-debugging` (root-cause eerst, geen gok-fixes)
-- `requesting-code-review` + fresh-context reviewer-subagents bij verandering in
-  risico-gevoelige paden (parser, identity, ledger, zero-cost, quarantaine)
-- `codebase-inspection` voor grote codebases
-- `crash-safe-persistence`-overwegingen bij WAL/ledger-wijzigingen
+Run before pushing or opening a pull request:
 
-## MCP usage policy
+```bash
+npm ci
+npm run ci:policy
+npm test
+npx tsc --noEmit
+npm run build
+git diff --check
+git status --porcelain
+```
 
-- triton-docs/solana-mcp: protocol-semantiek onderzoeken (géén live-calls)
-- clickhouse MCP: uitsluitend read-only, begrensd (hermes_ro), nooit zware scans
-- truenas-mcp: read-only voorkeur; app-mutaties alleen na approval
-- old-faithful-docs: backfill/archief-semantiek
-- Grafana: metrics lezen; geen live Triton-cost-tests zonder budget
+Use targeted TDD tests first, then the full suite. Frontend changes require the full frontend build through `npm run build`.
 
-## Deployment
+## Engineering discipline
 
-- Alleen na expliciete user approval
-- Unieke immutable image-tag per build (bv. `contra-audit16-offline-pump-<sha>`)
-- Git-SHA-provenance verplicht (runtime build.gitSha = exacte commit)
-- Rollback-tag annoteren vóór deploy
-- Banner: TRITON_LIVE_ENABLED expliciet (false in offline)
+- `systematic-debugging`: prove root cause before changing behavior.
+- `test-driven-development`: create a failing regression test before a fix where practical.
+- `requesting-code-review`: use fresh-context reviewers for parser, identity, state, security, cost, and deployment changes.
+- `codebase-inspection`: reconstruct actual code/runtime behavior rather than trusting old docs.
+- WAL-sensitive work must be reviewed for crash windows, idempotency, and deterministic replay.
+- Protocol claims require current official documentation through the appropriate MCP or primary source.
+
+## Pull requests
+
+Every functional or repository-policy change should use a pull request into `main`.
+
+The PR description must include:
+
+- purpose and scope
+- base and head SHAs
+- files/modules changed
+- tests and checks run
+- safety impact
+- live-cost impact
+- deployment impact
+- rollback/recovery point
+- known limitations
+
+Do not merge until:
+
+1. GitHub CI is green.
+2. Hermes or another primary implementer reviews the full diff.
+3. At least one independent fresh-context reviewer approves risk-sensitive work.
+4. No unresolved secret, live-cost, state, or provenance concern remains.
 
 ## GitHub CI
 
-- Huidige status: **geen geconfigureerde CI** (private repo, push via deploy-key)
-- Toekomst: lint/test-pipeline zonder secrets (secrets zitten alleen in `_FILE`-mounts op TrueNAS)
+Workflow: `.github/workflows/ci.yml`.
 
-## Rollback/tag/provenance
+It runs on pushes to normal work branches and pull requests into `main`. It uses a GitHub-hosted runner with:
 
-- Immutable annotated tags voor alle milestone/baseline-punten
-- Provenance: `SOURCE_GIT_SHA` build-arg + OCI-revision → `/api/status.build.gitSha`
+- read-only repository permission
+- no production secrets
+- `MODE=paper`
+- `TRITON_LIVE_ENABLED=false`
+- `ENTRY_SHADOW_MODE=true`
+- repository-policy checks
+- targeted zero-cost/Pump lifecycle tests
+- full test suite
+- TypeScript check
+- production build
 
-## Nooit
+CI never:
 
-- Secrets committen (`.env*`, `secrets/`, `*-token*.txt`, `*-wss-admin*.mjs`, inline keys)
-- Force-push of `--tags`/`--mirror` naar GitHub
-- Live Triton/Titan/RPC/DAS-verkeer zonder balance + budget-safeguards
-- Backfill herstarten zonder expliciete opdracht
-- Echte blockchaintransacties
+- deploys to TrueNAS
+- uses SSH into the NAS
+- receives Triton, TrueNAS, Grafana, ClickHouse, or dashboard secrets
+- enables live data
+- starts the backfill
 
-## Offline-first
+After the first green run, configure branch protection on `main` to require the `tests-build-zero-cost` check and a pull request before merge.
 
-- Parser/identity/accounting-paden testbaar zonder netwerk (mocks + fixtures, fetch-spy=0)
-- Live-functies nooit nodig voor tests
-- Determinisme: clock-injectie, geen externe prijzen in tests
+## Repository hygiene
+
+Runtime state and generated output are not source code:
+
+- `.backtest-cache/`
+- `data-bot*/`
+- `data-stream*/`
+- `dist/`
+- logs, ledgers, locks, generated reports
+
+These paths must remain untracked. Reusable, deterministic, provenance-documented samples belong in `tests/fixtures/`.
+
+The policy script checks the current tree. Historical commits may still contain legacy artifacts; published history is not rewritten without a separate approved migration.
+
+## MCP usage
+
+- `triton-docs` and `solana-mcp`: protocol/API semantics, not live calls.
+- `clickhouse`: bounded read-only queries only.
+- `truenas-mcp`: read-only by default; mutations require explicit approval.
+- `old-faithful-docs`: archive/backfill semantics.
+- `grafana`: observability reads and dashboard work, never a route to live cost tests.
+
+## Deployment
+
+Deployment is always separate from CI and requires explicit user approval.
+
+Required deployment gates:
+
+- green local and GitHub checks
+- clean Git tree
+- immutable image tag containing the exact Git SHA
+- runtime `build.gitSha` match
+- rollback tag/point
+- secret-mount verification without exposure
+- no live Triton unless separately approved and budget-protected
+
+Never use a missing secret mount as justification to restore an inline secret.
+
+## Synchronizing GitHub and TrueNAS
+
+Changes made by Cursor, Codex, or this ChatGPT GitHub integration exist on GitHub first. Before Hermes reviews or continues locally:
+
+```bash
+git fetch origin
+git switch <branch>
+git pull --ff-only
+```
+
+Hermes must not overwrite remote work from a stale local branch. Use `git status`, `git branch -vv`, and compare SHAs before editing.
+
+## Offline-first research
+
+- Parser, MarketIdentity, accounting, and strategy logic must be fixture-testable without live services.
+- Historical research must be chronological and network-isolated.
+- No external price/news fetches during deterministic replay.
+- Never optimize parameters on the final test period.
+
+## Never
+
+- commit secrets or private keys
+- force-push published branches/tags without separate approval
+- merge red CI
+- activate live Triton without safeguards and approval
+- execute real blockchain transactions
+- restart the paused backfill without approval
+- mutate ClickHouse during unrelated bot work

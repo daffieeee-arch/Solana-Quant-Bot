@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'chore/**'
+      - 'feature/**'
+      - 'phase2/**'
+      - 'ci/**'
+      - 'cursor/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  MODE: paper
+  TRITON_LIVE_ENABLED: 'false'
+  ENTRY_SHADOW_MODE: 'true'
+
+jobs:
+  quality:
+    name: tests-build-zero-cost
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Enforce repository and zero-cost policy
+        run: npm run ci:policy
+
+      - name: Run critical zero-cost and Pump lifecycle tests
+        run: >-
+          npx vitest run
+          tests/zero-cost.test.ts
+          tests/pump-replay.test.ts
+          tests/pump-vertical-slice.test.ts
+          tests/lifecycle-tp-sl.test.ts
+
+      - name: Run complete test suite
+        run: npm test
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Build backend and frontend
+        run: npm run build
+
+      - name: Check whitespace and patch integrity
+        run: git diff --check
+
+      - name: Verify tracked files were not modified by checks
+        shell: bash
+        run: |
+          changes="$(git status --porcelain --untracked-files=no)"
+          if [ -n "$changes" ]; then
+            printf '%s\n' "$changes"
+            echo 'Tracked files changed during CI.' >&2
+            exit 1
+          fi
