@@ -8,9 +8,10 @@ Read first:
 
 1. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
 2. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-3. `AGENTS.md`
-4. `docs/HANDOFF.md`
-5. `docs/CI.md`
+3. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+4. `AGENTS.md`
+5. `docs/HANDOFF.md`
+6. `docs/CI.md`
 
 Return one explicit verdict: `APPROVE`, `REQUEST_CHANGES`, or `HOLD`.
 
@@ -23,7 +24,7 @@ Do not merge, deploy, start the stopped app, activate Triton, restart the backfi
 - Tag `offline-pump-baseline-20260815` must still point to that functional baseline.
 - Configured TrueNAS image remains based on `3e95a3c`.
 - Last verified app state is `STOPPED`, `active_containers=0` unless a fresh read-only query proves otherwise.
-- No existing `src/`, frontend, existing test, or `package-lock.json` behavior is intended to change in this PR.
+- No existing `src/`, frontend, or existing test behavior is intended to change in this PR. `package.json` and `package-lock.json` intentionally add only the patched `yaml@2.9.0` dev/CI parser dependency.
 
 ## Synchronize safely
 
@@ -61,16 +62,16 @@ Inspect `scripts/ci-repository-policy.mjs`, `scripts/lib/*.mjs`, `.github/workfl
 
 Verify that the parser and validator:
 
-1. parse block and inline mappings/sequences;
-2. normalize quoted keys;
-3. reject duplicate block and inline keys;
-4. fail closed on unsupported YAML features;
-5. require top-level permissions exactly `contents: read`;
-6. reject every nested/job permission override;
-7. allow safety environment keys only in top-level `env` with exact safe values;
-8. reject job, step, container, inline-map, quoted-key, or other nested overrides;
+1. use strict, duplicate-aware YAML 1.2 semantics for block/inline mappings, sequences, quoted keys, comments, and scalars;
+2. reject duplicate block and inline keys and fail closed on intentionally unsupported YAML features;
+3. require the tracked workflow file set to be exactly `.github/workflows/ci.yml`;
+4. require the exact canonical trigger, concurrency, environment, job, `ubuntu-24.04` runner, ordered steps, actions, inputs, and commands;
+5. require top-level permissions exactly `contents: read` and reject every nested/job override;
+6. allow safety environment keys only in top-level `env` with exact safe values;
+7. reject job, step, container, inline-map, quoted-key, or other nested overrides;
+8. reject extra jobs, self-hosted runners, job containers, services, reusable workflow jobs, and a second workflow;
 9. require exactly one checkout and explicit `persist-credentials: false`;
-10. reject unapproved actions, reusable workflow jobs, secret references, `GITHUB_ENV` mutation, live unlocks, and deployment commands.
+10. reject unapproved actions/inputs, arbitrary commands, dot/index/whole-context secret references, `GITHUB_ENV`, `${{ github.env }}`, live unlocks, and deployment commands.
 
 Independently reproduce these mutations in a temporary copy:
 
@@ -83,6 +84,12 @@ Independently reproduce these mutations in a temporary copy:
 - second checkout with explicit false;
 - duplicate block and inline keys;
 - nested `container.env` live override.
+- attached-hash YAML differential (`echo safe#; ssh host`);
+- block-scalar indentation/chomping variants;
+- bracket and whole-context secrets;
+- `github.env` and expression-based live unlocks;
+- extra jobs, self-hosted runners, containers, services, arbitrary commands, and action-input drift;
+- trigger drift and a second tracked workflow.
 
 Every mutation must fail.
 
@@ -105,7 +112,13 @@ git status --porcelain
 git ls-files -ci --exclude-standard
 ```
 
-A test-count increase is expected because additional policy tests were added. Explain the exact totals.
+Expected committed totals after the round-3 fixes:
+
+- repository policy: PASS with 236 tracked files and 0 tracked ignored files;
+- policy tests: 18/18;
+- targeted tests: 40/40 in 5 files;
+- full suite: 610/610 in 62 files;
+- typecheck/build/diff/tree: PASS/clean.
 
 ## Workflow inspection
 
@@ -114,7 +127,7 @@ Confirm:
 - official reviewed action versions only;
 - automatic `GITHUB_TOKEN` limited to `contents: read`;
 - one checkout with `persist-credentials: false`;
-- no `secrets.*` or production credentials;
+- no dot/index/whole-context secret references or production credentials;
 - no deployment, SSH/SCP, Docker push, TrueNAS, live Triton, backfill, or ClickHouse action;
 - pull-request whitespace checking uses explicit base/head SHAs;
 - push whitespace checking inspects the committed HEAD patch;

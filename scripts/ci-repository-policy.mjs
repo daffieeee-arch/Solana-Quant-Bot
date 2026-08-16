@@ -4,10 +4,16 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { validateWorkflowConfiguration } from './lib/workflow-policy.mjs';
+import {
+  validateTrackedWorkflowPaths,
+  validateWorkflowConfiguration,
+} from './lib/workflow-policy.mjs';
 
 export { parseWorkflowYaml } from './lib/strict-yaml.mjs';
-export { validateWorkflowConfiguration } from './lib/workflow-policy.mjs';
+export {
+  validateTrackedWorkflowPaths,
+  validateWorkflowConfiguration,
+} from './lib/workflow-policy.mjs';
 
 function runPolicy() {
   const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
@@ -24,6 +30,7 @@ function runPolicy() {
 
   const errors = [];
   const warnings = [];
+  errors.push(...validateTrackedWorkflowPaths(tracked));
   for (const path of trackedIgnored) {
     errors.push(`tracked file is ignored by .gitignore and must be reconciled: ${path}`);
   }
@@ -53,8 +60,8 @@ function runPolicy() {
     'docs/CI.md',
     'docs/CURRENT_STATE.md',
     'docs/HANDOFF.md',
+    'docs/HERMES_REVIEW_RESPONSE_ROUND3.md',
     'package-lock.json',
-    'scripts/lib/strict-yaml-flow.mjs',
     'scripts/lib/strict-yaml.mjs',
     'scripts/lib/workflow-policy.mjs',
     'tests/ci-policy.test.ts',

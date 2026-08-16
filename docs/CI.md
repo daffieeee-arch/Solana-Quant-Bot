@@ -15,6 +15,8 @@ Job name: `tests-build-zero-cost`.
 ## Security posture
 
 - GitHub-hosted Ubuntu runner;
+- exactly one tracked workflow file: `.github/workflows/ci.yml`;
+- exactly one `quality` job on `ubuntu-24.04`; self-hosted runners, extra jobs, job containers, and services are forbidden;
 - top-level permissions are exactly `contents: read`;
 - job-level permission overrides are forbidden;
 - GitHub's automatic `GITHUB_TOKEN` is therefore read-only;
@@ -24,31 +26,33 @@ Job name: `tests-build-zero-cost`.
 - no repository or production secrets are referenced;
 - `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true` are defined once at workflow level;
 - safety variables may not be overridden by a job, step, container, inline map, quoted key, or another nested mapping;
+- the ordered action inputs and `run` commands must exactly match the reviewed validation-only workflow;
 - no Docker push, SSH/SCP, kubectl, TrueNAS deployment, Triton activation, backfill action, or ClickHouse mutation.
 
 ## Semantic workflow policy
 
-`scripts/ci-repository-policy.mjs` parses the workflow into a semantic object before validating it. It does not use substring presence as proof of safety.
+`scripts/ci-repository-policy.mjs` parses the workflow into a semantic object before validating it. It does not use substring presence as proof of safety. `yaml@2.9.0` is a direct dev/CI dependency; production runtime code does not import it.
 
-The parser supports the deliberately small canonical YAML subset used by this repository:
+The adapter uses a standards-compliant YAML 1.2 parser with strict parsing and duplicate-key rejection. The repository still accepts only the deliberately small canonical subset used by this workflow:
 
 - block mappings and sequences with two-space indentation;
 - quoted and unquoted scalar keys;
 - quoted and unquoted scalar values;
 - inline/flow mappings and sequences;
-- comments outside quoted strings;
+- YAML-correct comments and plain scalars, including attached `#` characters that are not comments;
 - booleans, numbers, nulls, and strings.
 
-Duplicate keys are rejected in block and inline mappings. Unsupported YAML features such as anchors, aliases, merge keys, tags, complex keys, document directives, tabs, and block scalars fail closed. Keeping the workflow in this canonical subset makes the security policy deterministic without adding a runtime dependency.
+Duplicate keys are rejected in block and inline mappings. Unsupported YAML features such as anchors, aliases, merge keys, explicit tags, document directives/markers, tabs, and block/folded scalars fail closed. Keeping the workflow in this canonical subset makes the security policy deterministic without adding a production runtime dependency.
 
 The validator checks effective structure at every relevant scope:
 
-1. top-level permissions must be exactly `{ contents: read }`;
-2. top-level safety environment values must have their exact safe values;
-3. safety keys may not appear anywhere else in the parsed tree;
-4. nested/job permissions are forbidden;
-5. every checkout is checked independently and exactly one is allowed;
-6. unapproved actions, secret references, live unlocks, `GITHUB_ENV` mutation, and deployment commands are rejected.
+1. the tracked workflow file set must be exactly `.github/workflows/ci.yml`;
+2. triggers, concurrency, permissions, environment, job, runner, ordered steps, actions, inputs, and commands must match the canonical validation-only structure exactly;
+3. top-level permissions must be exactly `{ contents: read }`;
+4. top-level safety environment values must have their exact safe values and safety keys may not appear elsewhere;
+5. nested/job permissions, extra jobs, self-hosted runners, containers, services, and reusable jobs are forbidden;
+6. every checkout is checked independently and exactly one is allowed;
+7. dot/index/whole-context secret references, live unlocks, `GITHUB_ENV`, `${{ github.env }}`, unapproved actions/inputs, arbitrary commands, and deployment commands are rejected.
 
 Adversarial tests cover:
 
@@ -61,7 +65,15 @@ Adversarial tests cover:
 - job-level `write-all` and inline write permission maps;
 - second checkout steps with default or explicit credential settings;
 - nested `container.env` overrides;
+- YAML comment differentials such as `echo safe#; ssh host`;
+- block-scalar indentation/chomping variants;
+- secret index and whole-context expressions;
+- `github.env` and expression-based live unlocks;
+- self-hosted runners, extra jobs, containers, and services;
+- arbitrary commands, action-input drift, trigger drift, and a second tracked workflow;
 - unsupported YAML syntax failing closed.
+
+Current committed totals after the round-3 fixes are 18 policy tests, 40 targeted tests, and 610 tests across 62 files in the complete suite.
 
 ## Checks
 

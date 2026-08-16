@@ -72,10 +72,12 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 
 ## Current review task
 
-PR #1 received `REQUEST_CHANGES`. Read:
+PR #1 received three `REQUEST_CHANGES` review rounds. The current branch contains the round-3 policy fixes and still requires a fresh independent verdict. Read:
 
 1. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-2. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+2. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+3. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+4. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
 
 Review the latest branch head, rerun all gates, inspect the latest GitHub Actions run, use a fresh-context reviewer, and return `APPROVE`, `REQUEST_CHANGES`, or `HOLD`. Do not merge, deploy, start the app, or restart the backfill.
 
@@ -98,4 +100,6 @@ Create `phase2/pump-offline-research` from updated `main`. Start with a read-onl
 5. `docs/DEVELOPMENT_WORKFLOW.md`
 6. `docs/CI.md`
 7. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-8. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+8. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+9. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+10. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
