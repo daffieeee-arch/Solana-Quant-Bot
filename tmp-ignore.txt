@@ -1,0 +1,39 @@
+# ── Dependencies / build ──────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+
+# ── Runtime data (ledger, snapshots, caches) ───────────
+data/
+data-bot*/
+data-stream*/
+*.ndjson
+*.log
+.backtest-cache/
+
+# ── Secrets (NOOIT committen) ──────────────────────────
+.env
+.env.*
+!.env.example
+secrets/
+**/secrets/
+truenas-credentials.txt
+grafana-credentials.txt
+**/*-token*.txt
+**/*-wss-admin*.mjs
+**/*api-key*.json
+
+# ── Editors / OS ──────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+
+# ── Legacy/deploy helpers that must not be tracked ─────
+scripts/truenas-wss-admin.mjs
+scripts/live-tokens.mjs
+secrets.txt
+scripts/fix-inline-secrets.py
+scripts/generic-test.mjs
+scripts/reinstall-compose-inline.yaml
+scripts/gen-inline-yaml.py
+scripts/reinstall-bot.py
