@@ -2,85 +2,91 @@
 
 ## Purpose
 
-The CI workflow independently validates a clean clone without touching TrueNAS or paid/live infrastructure.
+The workflow in `.github/workflows/ci.yml` independently validates a clean clone without touching TrueNAS or paid/live infrastructure. It is a validation workflow, not a deployment workflow.
 
-- Workflow: `.github/workflows/ci.yml`
-- Job: `tests-build-zero-cost`
+Job name: `tests-build-zero-cost`.
 
 ## Triggers
 
-- Pull requests targeting `main`
-- Pushes to `main`
-- Pushes to `chore/**`, `feature/**`, `phase2/**`, `ci/**`, and `cursor/**`
-- Manual `workflow_dispatch`
+- pull requests targeting `main`;
+- pushes to `main` and normal work branches (`chore/**`, `feature/**`, `phase2/**`, `ci/**`, `cursor/**`);
+- manual `workflow_dispatch`.
 
 ## Security posture
 
-- GitHub-hosted Ubuntu runner
-- Automatic `GITHUB_TOKEN` limited to `contents: read`
-- Checkout uses `persist-credentials: false`
-- No repository or production secrets are consumed
-- `MODE=paper`
-- `TRITON_LIVE_ENABLED=false`
-- `ENTRY_SHADOW_MODE=true`
-- No Docker push, SSH, TrueNAS access, deployment, external service activation, backfill action, or ClickHouse mutation
+- GitHub-hosted Ubuntu runner;
+- top-level permissions are exactly `contents: read`;
+- job-level permission overrides are forbidden;
+- GitHub's automatic `GITHUB_TOKEN` is therefore read-only;
+- checkout credentials are not persisted;
+- exactly one `actions/checkout` step is allowed, and it must explicitly set `persist-credentials: false`;
+- only the reviewed `actions/checkout@v7.0.1` and `actions/setup-node@v7.0.0` actions are allowed;
+- no repository or production secrets are referenced;
+- `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true` are defined once at workflow level;
+- safety variables may not be overridden by a job, step, container, inline map, quoted key, or another nested mapping;
+- no Docker push, SSH/SCP, kubectl, TrueNAS deployment, Triton activation, backfill action, or ClickHouse mutation.
 
-GitHub always creates a job token. The security claim is therefore not “no GitHub token exists”; it is that the automatic token is read-only and is not persisted, and no additional secrets are supplied.
+## Semantic workflow policy
+
+`scripts/ci-repository-policy.mjs` parses the workflow into a semantic object before validating it. It does not use substring presence as proof of safety.
+
+The parser supports the deliberately small canonical YAML subset used by this repository:
+
+- block mappings and sequences with two-space indentation;
+- quoted and unquoted scalar keys;
+- quoted and unquoted scalar values;
+- inline/flow mappings and sequences;
+- comments outside quoted strings;
+- booleans, numbers, nulls, and strings.
+
+Duplicate keys are rejected in block and inline mappings. Unsupported YAML features such as anchors, aliases, merge keys, tags, complex keys, document directives, tabs, and block scalars fail closed. Keeping the workflow in this canonical subset makes the security policy deterministic without adding a runtime dependency.
+
+The validator checks effective structure at every relevant scope:
+
+1. top-level permissions must be exactly `{ contents: read }`;
+2. top-level safety environment values must have their exact safe values;
+3. safety keys may not appear anywhere else in the parsed tree;
+4. nested/job permissions are forbidden;
+5. every checkout is checked independently and exactly one is allowed;
+6. unapproved actions, secret references, live unlocks, `GITHUB_ENV` mutation, and deployment commands are rejected.
+
+Adversarial tests cover:
+
+- comment-based false-value camouflage;
+- quoted and unquoted live values;
+- duplicate block and inline keys;
+- job-level inline live overrides;
+- step-level inline live overrides;
+- quoted live keys;
+- job-level `write-all` and inline write permission maps;
+- second checkout steps with default or explicit credential settings;
+- nested `container.env` overrides;
+- unsupported YAML syntax failing closed.
 
 ## Checks
 
-1. Checkout full history without persisting credentials.
-2. Install locked dependencies with `npm ci`.
-3. Run `npm run ci:policy`:
-   - fails on any tracked file ignored by `.gitignore` using `git ls-files -ci --exclude-standard`;
-   - rejects root runtime/cache paths including `data/`, `data-bot*`, and `data-stream*`;
-   - rejects legacy ignored destructive deployment helpers;
-   - verifies `.env.example` safe defaults;
-   - scans targeted credential/private-key patterns;
-   - parses active YAML scalar assignments and requires exactly one effective zero-cost configuration;
-   - rejects workflow secret references and deployment fragments.
-4. Run negative CI-policy tests, including comment/quoted-value bypass attempts.
-5. Run critical zero-cost and Pump lifecycle tests.
-6. Run the complete test suite.
-7. Run `npx tsc --noEmit`.
-8. Run backend/frontend build.
-9. Run `git diff --check` and verify checks did not modify tracked files.
+1. `npm ci` from the committed lockfile;
+2. `npm run ci:policy`;
+3. targeted policy, zero-cost, Pump replay, vertical-slice, and TP/SL lifecycle tests;
+4. complete Vitest suite;
+5. `npx tsc --noEmit`;
+6. backend and frontend build;
+7. committed patch whitespace validation:
+   - pull requests use the explicit GitHub base and head SHAs;
+   - pushes inspect the committed HEAD patch;
+8. verification that checks did not modify tracked files.
 
-## Policy threat cases
-
-The policy tests must reject at least:
-
-```yaml
-# TRITON_LIVE_ENABLED: 'false'
-TRITON_LIVE_ENABLED: 'true'
-```
-
-They also reject unquoted `true`, double-quoted `"true"`, and duplicate active assignments. Comments do not satisfy required values.
-
-## What CI proves
-
-- clean-clone dependency installation works;
-- repository hygiene policy passes;
-- critical and full tests pass;
-- TypeScript and build pass;
-- the workflow remains validation-only and zero-cost by configuration.
+## Limits
 
 CI does not prove:
 
-- TrueNAS deployment/runtime status;
+- TrueNAS deployment correctness;
 - live Triton connectivity;
 - strategy profitability;
-- correctness beyond available fixtures/tests;
-- ClickHouse/backfill integrity.
+- protocol correctness beyond available fixtures;
+- historical ClickHouse integrity.
 
-## Dependency audit
-
-The current lockfile reports existing audit findings:
-
-- three moderate production-chain findings through `@solana/web3.js -> jayson -> uuid@8.3.2`;
-- one high dev-chain finding through Vite/PostCSS/nanoid.
-
-These predate PR #1. Investigate separately; do not use `npm audit fix --force` in this alignment PR.
+The repository policy is a focused guardrail, not a substitute for GitHub secret scanning or a dedicated dependency/security program.
 
 ## Local equivalent
 
@@ -96,17 +102,11 @@ npx vitest run \
 npm test
 npx tsc --noEmit
 npm run build
-git diff --check
+git diff --check origin/main...HEAD
+git status --porcelain
+git ls-files -ci --exclude-standard
 ```
 
-## Merge and branch protection
+## Changes to CI
 
-After approval:
-
-- require pull requests for `main`;
-- require `tests-build-zero-cost`;
-- block force pushes;
-- require conversation resolution where available;
-- keep deployment outside CI unless a future design receives separate explicit approval.
-
-Treat every workflow/policy change as security-sensitive and review the actual logs, not only the status badge.
+Treat workflow and policy changes as security-sensitive. Keep the parser tests adversarial, inspect every action and permission scope, and require fresh-context review before merge. Do not add deployment behavior to this workflow without a separate approved design.

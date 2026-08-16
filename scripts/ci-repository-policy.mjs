@@ -4,107 +4,10 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import { extname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateWorkflowConfiguration } from './lib/workflow-policy.mjs';
 
-/** Remove a YAML comment while preserving # characters inside quoted scalars. */
-export function stripYamlComment(line) {
-  let quote = null;
-  let escaped = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index];
-    if (quote === '"' && escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote === '"' && character === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (quote) {
-      if (character === quote) {
-        if (quote === "'" && line[index + 1] === "'") {
-          index += 1;
-          continue;
-        }
-        quote = null;
-      }
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      continue;
-    }
-    if (character === '#') return line.slice(0, index);
-  }
-  return line;
-}
-
-function unquoteYamlScalar(raw) {
-  const value = raw.trim();
-  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) {
-    return value.slice(1, -1).replace(/''/g, "'");
-  }
-  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
-    try {
-      return JSON.parse(value);
-    } catch {
-      return value.slice(1, -1);
-    }
-  }
-  return value;
-}
-
-/** Return all active scalar assignments for one YAML key, ignoring comments. */
-export function activeYamlScalarValues(yaml, key) {
-  const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`^\\s*${escapedKey}\\s*:\\s*(.*?)\\s*$`);
-  const values = [];
-  for (const line of yaml.split(/\r?\n/)) {
-    const activeLine = stripYamlComment(line).trimEnd();
-    if (!activeLine.trim()) continue;
-    const match = activeLine.match(pattern);
-    if (!match || !match[1]?.trim()) continue;
-    values.push(unquoteYamlScalar(match[1]));
-  }
-  return values;
-}
-
-/** Validate effective security-sensitive values in the CI workflow. */
-export function validateWorkflowConfiguration(workflow) {
-  const errors = [];
-  const requireExactly = (key, expected) => {
-    const values = activeYamlScalarValues(workflow, key);
-    if (values.length !== 1) {
-      errors.push(`workflow must contain exactly one active ${key} assignment; found ${values.length}`);
-      return;
-    }
-    if (String(values[0]).trim().toLowerCase() !== expected.toLowerCase()) {
-      errors.push(`workflow ${key} must equal ${expected}; found ${JSON.stringify(values[0])}`);
-    }
-  };
-
-  requireExactly('contents', 'read');
-  requireExactly('persist-credentials', 'false');
-  requireExactly('CI', 'true');
-  requireExactly('MODE', 'paper');
-  requireExactly('TRITON_LIVE_ENABLED', 'false');
-  requireExactly('ENTRY_SHADOW_MODE', 'true');
-
-  const activeText = workflow
-    .split(/\r?\n/)
-    .map(stripYamlComment)
-    .filter((line) => line.trim().length > 0)
-    .join('\n');
-
-  if (/\bsecrets\.[A-Za-z0-9_]+/.test(activeText)) {
-    errors.push('CI workflow must not consume repository or production secrets');
-  }
-  for (const forbidden of ['docker push', 'kubectl ', 'ssh ', 'scp ']) {
-    if (activeText.toLowerCase().includes(forbidden)) {
-      errors.push(`CI workflow contains forbidden deployment fragment: ${forbidden}`);
-    }
-  }
-  return errors;
-}
+export { parseWorkflowYaml } from './lib/strict-yaml.mjs';
+export { validateWorkflowConfiguration } from './lib/workflow-policy.mjs';
 
 function runPolicy() {
   const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
@@ -114,7 +17,6 @@ function runPolicy() {
     .split('\0')
     .filter(Boolean)
     .sort();
-
   const trackedIgnored = execFileSync('git', ['ls-files', '-ci', '--exclude-standard', '-z'], { encoding: 'utf8' })
     .split('\0')
     .filter(Boolean)
@@ -122,7 +24,6 @@ function runPolicy() {
 
   const errors = [];
   const warnings = [];
-
   for (const path of trackedIgnored) {
     errors.push(`tracked file is ignored by .gitignore and must be reconciled: ${path}`);
   }
@@ -138,7 +39,6 @@ function runPolicy() {
     ['runtime log', /\.(?:log|ndjson)$/i],
     ['legacy destructive deploy helper', /^scripts\/(?:gen-inline-yaml\.py|reinstall-bot\.py)$/],
   ];
-
   for (const path of tracked) {
     for (const [label, pattern] of forbiddenPathRules) {
       if (pattern.test(path)) errors.push(`${label} must not be tracked: ${path}`);
@@ -154,6 +54,9 @@ function runPolicy() {
     'docs/CURRENT_STATE.md',
     'docs/HANDOFF.md',
     'package-lock.json',
+    'scripts/lib/strict-yaml-flow.mjs',
+    'scripts/lib/strict-yaml.mjs',
+    'scripts/lib/workflow-policy.mjs',
     'tests/ci-policy.test.ts',
   ];
   for (const path of requiredTracked) {
@@ -161,7 +64,6 @@ function runPolicy() {
   }
 
   const text = (path) => readFileSync(path, 'utf8');
-
   const envExample = text('.env.example');
   for (const requiredLine of ['MODE=paper', 'TRITON_LIVE_ENABLED=false', 'ENTRY_SHADOW_MODE=true']) {
     if (!envExample.split(/\r?\n/).includes(requiredLine)) {
@@ -182,7 +84,6 @@ function runPolicy() {
   if (!zeroCost.includes("raw.trim().toLowerCase() === 'true'")) {
     errors.push('zero-cost unlock must remain strict: only explicit true enables live Triton');
   }
-
   errors.push(...validateWorkflowConfiguration(text('.github/workflows/ci.yml')));
 
   const textExtensions = new Set([
@@ -198,11 +99,19 @@ function runPolicy() {
     const extension = extname(path).toLowerCase();
     if (!textExtensions.has(extension) && !explicitTextFiles.has(path)) continue;
     let stats;
-    try { stats = statSync(path); } catch { continue; }
+    try {
+      stats = statSync(path);
+    } catch {
+      continue;
+    }
     if (!stats.isFile() || stats.size > 2 * 1024 * 1024) continue;
 
     let content;
-    try { content = text(path); } catch { continue; }
+    try {
+      content = text(path);
+    } catch {
+      continue;
+    }
     if (content.includes('\0')) continue;
 
     if (privateKeyHeader.test(content)) errors.push(`private-key header detected in tracked file: ${path}`);
@@ -224,12 +133,12 @@ function runPolicy() {
 
   if (errors.length > 0) {
     console.error('Repository policy FAILED');
-    for (const error of errors) console.error(`- ${error}`);
+    for (const error of [...new Set(errors)]) console.error(`- ${error}`);
     for (const warning of warnings) console.error(`- warning: ${warning}`);
     process.exit(1);
   }
 
-  console.log(`Repository policy PASS (${tracked.length} tracked files checked; no tracked ignored files)`);
+  console.log(`Repository policy PASS (${tracked.length} tracked files checked; no tracked ignored files; workflow parsed semantically)`);
   for (const warning of warnings) console.warn(`warning: ${warning}`);
 }
 
