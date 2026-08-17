@@ -128,7 +128,7 @@ npm --silent run research:pump-offline -- \
 
 The fixture intentionally contains no historical rows; it pins the audited v1 parser/capability contract and must return `BLOCKED` with exit code 2. It is not a data export.
 
-`npm run build` also executes `verify:research-transport` against every built research module, the actual compiled CLI, and the Phase 3 Bronze capture module under ESM and CommonJS import guards. Loading HTTP/1, HTTP/2, HTTPS, net/TLS, UDP/DNS, WebSocket/fetch/browser transports, child processes/workers, or the broad `@solana/web3.js` root fails the build. Both runtime probes additionally run under a generated Linux seccomp cBPF filter; the build fails unless a self-test proves network syscalls return `EPERM`. Pump PDA derivation uses a narrow local crypto/base58 primitive whose bytes are regression-tested against `PublicKey.findProgramAddressSync`.
+`npm run build` also executes `verify:research-transport` against every built research module, the actual compiled CLI, and the Phase 3 Bronze capture module under ESM and CommonJS import guards. Loading HTTP/1, HTTP/2, HTTPS, net/TLS, UDP/DNS, WebSocket/fetch/browser transports, child processes/workers, or the broad `@solana/web3.js` root fails the build. Both runtime probes additionally run under a generated Linux seccomp cBPF filter installed by a temporary hardened launcher compiled from tracked source; the build fails unless compilation succeeds and a self-test proves network syscalls return `EPERM`. Pump PDA derivation uses a narrow local crypto/base58 primitive whose bytes are regression-tested against `PublicKey.findProgramAddressSync`.
 
 ## Next data step
 

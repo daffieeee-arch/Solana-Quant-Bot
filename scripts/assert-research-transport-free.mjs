@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
+import { buildResearchSeccompLauncher } from './build-research-seccomp-launcher.mjs';
 import { writeResearchNetworkDenyFilter } from './write-research-seccomp-filter.mjs';
 
 const root = resolve(import.meta.dirname, '..');
@@ -192,13 +193,14 @@ if (staticOnly) {
 
 const isolationRoot = await mkdtemp(join(tmpdir(), 'research-network-isolation-'));
 const seccompFilter = join(isolationRoot, 'network-deny.bpf');
+const seccompLauncher = join(isolationRoot, 'research-seccomp-launcher');
 process.on('exit', () => rmSync(isolationRoot, { recursive: true, force: true }));
 await writeResearchNetworkDenyFilter(seccompFilter);
+await buildResearchSeccompLauncher(seccompLauncher);
 
 function isolatedNode(arguments_, options) {
-  return spawnSync('setpriv', [
-    '--nnp',
-    '--seccomp-filter', seccompFilter,
+  return spawnSync(seccompLauncher, [
+    seccompFilter,
     process.execPath,
     ...arguments_,
   ], options);

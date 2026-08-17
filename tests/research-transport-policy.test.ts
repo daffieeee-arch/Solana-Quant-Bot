@@ -9,6 +9,7 @@ const policyEntrypoint = resolve(repositoryRoot, 'scripts/assert-research-transp
 const runtimePreload = resolve(repositoryRoot, 'scripts/research-transport-preload.cjs');
 const runtimeRegister = resolve(repositoryRoot, 'scripts/research-transport-register.mjs');
 const seccompBuilder = resolve(repositoryRoot, 'scripts/write-research-seccomp-filter.mjs');
+const seccompLauncherBuilder = resolve(repositoryRoot, 'scripts/build-research-seccomp-launcher.mjs');
 const scratch: string[] = [];
 
 afterEach(async () => {
@@ -161,19 +162,25 @@ describe('research transport policy entrypoint', () => {
     const base = await mkdtemp(join(tmpdir(), 'research-seccomp-policy-'));
     scratch.push(base);
     const filter = join(base, 'network-deny.bpf');
+    const launcher = join(base, 'research-seccomp-launcher');
     const generated = spawnSync(process.execPath, [seccompBuilder, filter], {
       cwd: repositoryRoot,
       encoding: 'utf8',
     });
     expect(generated.status, generated.stderr).toBe(0);
-    const normal = spawnSync('setpriv', [
-      '--nnp', '--seccomp-filter', filter,
+    const compiled = spawnSync(process.execPath, [seccompLauncherBuilder, launcher], {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+    });
+    expect(compiled.status, compiled.stderr).toBe(0);
+    const normal = spawnSync(launcher, [
+      filter,
       process.execPath, '--eval', "process.stdout.write('NORMAL_OK')",
     ], { encoding: 'utf8' });
     expect(normal.status, normal.stderr).toBe(0);
     expect(normal.stdout).toBe('NORMAL_OK');
-    const network = spawnSync('setpriv', [
-      '--nnp', '--seccomp-filter', filter,
+    const network = spawnSync(launcher, [
+      filter,
       process.execPath, '--eval', `
         const net = require('node:net');
         const socket = net.connect({ host: '127.0.0.1', port: 9 });
