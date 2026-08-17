@@ -34,7 +34,7 @@ Only current open items belong here. Resolved issues remain in Git history.
 
 17. **v1 is transaction-net only:** multi-hop, inner-CPI, pool-route, and event-level detail are not preserved.
 18. **Duplicate estimate is limited:** roughly 3.4% cross-part exact-retry overlap was observed in a biased sample. The dataset-wide ratio is unknown and normal background merges may already have consolidated some rows. Do not claim that no deduplication occurred merely because no global `OPTIMIZE FINAL` was run.
-19. **v2 event-level pipeline remains design work:** Bronze/Silver/Gold schema, parser provenance, and a pilot source pass are not implemented.
+19. **v2 event-level pipeline remains incomplete:** the pure Bronze capture boundary exists, but the real archive adapter, Silver/Gold schema and decoding, reviewed parser provenance, and an approved pilot source pass are not implemented.
 
 ## Repository and dependencies
 
@@ -43,4 +43,4 @@ Only current open items belong here. Resolved issues remain in Git history.
 
 ## Research
 
-22. Technical Pump lifecycle correctness and the fail-closed Phase 2 harness are implemented offline, but strategy profitability and out-of-sample edge remain unproven. Do not tune, expand protocols, or renew live spend until a separate `PUMP_SNAPSHOT_V2` parser/export receives independent provenance review and real-registry approval.
+22. Technical Pump lifecycle correctness, the fail-closed Phase 2 harness, and a transport-free Phase 3 Bronze candidate boundary are implemented offline, but strategy profitability and out-of-sample edge remain unproven. Bronze does not decode canonical trade events or assert `isExecutedTrade`. Do not tune, expand protocols, or renew live spend until a separate `PUMP_SNAPSHOT_V2` Silver parser/export receives independent provenance review and real-registry approval.

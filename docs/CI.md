@@ -73,11 +73,11 @@ Adversarial tests cover:
 - arbitrary commands, action-input drift, trigger drift, and a second tracked workflow;
 - unsupported YAML syntax failing closed.
 
-Current Phase-2 totals are 18 policy tests, 40 targeted critical tests, and 636 tests across 63 files in the complete suite. The twenty-five Pump historical-research tests run through the complete suite.
+The complete suite includes adversarial repository-policy, zero-cost, Pump lifecycle/research, Phase-3 Bronze, transport-policy, forensic-generator, and immutable-manifest coverage. Exact totals are reported from the fresh CI run rather than kept as a stale Phase-specific constant here.
 
 ## Checks
 
-The backend build runs `verify:research-transport` after TypeScript compilation. It executes the built v1 CLI under ESM/CJS import guards and fails if any HTTP(S), net/TLS, fetch/WebSocket, or `@solana/web3.js` transport-capable module enters the research graph.
+The backend build runs `verify:research-transport` after TypeScript compilation. A TypeScript-AST policy follows every statically discoverable local import transitively (including helpers outside `dist/research`), allows only explicit file/crypto/base58 modules, and rejects non-literal loads plus direct or constant-foldable capability reflection using lexical TypeScript-symbol binding rather than name-global substitution. Non-constant reflection is contained by the runtime boundary rather than claimed as statically decidable: ESM/CJS guards block HTTP/1, HTTP/2, HTTPS, net/TLS, UDP/DNS, browser transports, process loaders and arbitrary native addons; `process.getBuiltinModule` is all-deny. The built v1 CLI and Bronze import run under those guards and a generated Linux seccomp cBPF filter. The gate compiles a temporary hardened launcher from tracked C source, installs `NO_NEW_PRIVS` plus the filter, and requires a socket self-test to receive `EPERM`; a missing C compiler, unsupported architecture/kernel, compile failure, or ineffective filter fails the build. It does not depend on the host util-linux `setpriv` version.
 
 1. `npm ci` from the committed lockfile;
 2. `npm run ci:policy`;
