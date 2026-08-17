@@ -1,0 +1,240 @@
+{
+  "allowedUses": [
+    "forensic parser baseline",
+    "v1-to-v2 differential coverage checks",
+    "infrastructure and storage benchmarking",
+    "negative capability-control fixture provenance"
+  ],
+  "coverage": {
+    "claim": "INCOMPLETE",
+    "note": "Coverage sources conflict and were not reconciled by starting ClickHouse; no completeness claim is permitted.",
+    "provenanceDocumentClaimedCompleteEpochs": [
+      976,
+      977,
+      978,
+      979,
+      980,
+      981,
+      982,
+      983,
+      984,
+      985,
+      986,
+      987,
+      988,
+      989,
+      990,
+      991,
+      993
+    ],
+    "reconciliationStatus": "UNRESOLVED_CONFLICTING_PROVENANCE_AND_SUPERVISOR_STATE",
+    "requestedEpochsInclusive": [
+      976,
+      1014
+    ],
+    "supervisorDoneEpochs": [
+      978,
+      981,
+      990
+    ],
+    "supervisorFailedEpochs": [
+      976,
+      977,
+      979,
+      980,
+      982,
+      983,
+      984,
+      985,
+      986,
+      987,
+      988
+    ],
+    "supervisorStatusFileSha256": {
+      "A.status": "2e163373fc3685cbe71200d16bb52b19ae1056d4b707a35358bf1f9bbf77ca4e",
+      "B.status": "ddda6bb50297f2e7357aa34a98c013b37d04d6baead6ba33bf15d215be463939",
+      "C.status": "eecb646e4d81e29b1e41c50d52c93d45c0d5a814345c37a2eecb300e8f3202f0"
+    },
+    "supervisorStatusRangeInclusive": [
+      976,
+      990
+    ],
+    "supervisorUnrecordedEpochs": [
+      989
+    ]
+  },
+  "datasetContract": "TRANSACTION_NET_SWAP_V1",
+  "forbiddenUses": [
+    "Pump strategy optimization",
+    "profitability or expectancy claims",
+    "chronological out-of-sample evidence",
+    "live/paper configuration promotion"
+  ],
+  "generator": "scripts/build-v1-forensic-manifest.py",
+  "knownLimitations": [
+    "writer quiescence was not verified by this generator",
+    "payload files were not independently rehashed against ClickHouse checksums metadata",
+    "requires WSOL token-balance deltas and undercovers direct native-SOL Pump trades",
+    "omits loaded-address resolution and inner-event parity",
+    "emits at most one dominant transaction-net swap per signature",
+    "has no canonical Pump launch, curve event coordinates, or causal gate snapshots",
+    "price_lamports_per_token stores an unscaled raw-unit ratio and is mislabeled",
+    "physical rows include exact retry duplicates across active parts",
+    "epoch coverage is incomplete and source status claims conflict"
+  ],
+  "observationMode": "READ_ONLY_FILESYSTEM_SNAPSHOT",
+  "observedAt": "2026-08-17T12:07:54.603Z",
+  "observedAtSource": "OPERATOR_SUPPLIED_NOT_VERIFIED_BY_GENERATOR",
+  "parserProvenance": {
+    "binaryBytes": 210498432,
+    "binarySha256": "ca9510bb403921c5247c568fbcc4107287f9daf7d180344072791268ad818966",
+    "provenanceDocumentSha256": "0af8bb0927861174554deeafb98e4eaf42ac927a1bc7c56255e09bad63769f1a",
+    "repositoryCommit": "0efc5ed3c17e6500d34f9fe4f68242a0c98dc3cc",
+    "repositoryState": "clean",
+    "sourceSha256": "1985e5f4e30f5fde9a409dd7d156cef279d877e493f30fb8528c61ea31e04bf1"
+  },
+  "payloadVerification": "METADATA_ONLY_NOT_REHASHED",
+  "schemaVersion": "V1_FORENSIC_MANIFEST_1",
+  "status": "SUPERSEDED_NOT_PUMP_OOS_EVIDENCE",
+  "table": {
+    "activePartCount": 15,
+    "activePartFileAllocatedBytes": 91555986432,
+    "activePartFileApparentBytes": 92499438857,
+    "database": "default",
+    "ddlSha256": "dde1157bbc706ba26c5af5409b6ef15fae4fb5559de80d643e96846c9d21cf74",
+    "detachedEntries": [],
+    "engine": "ReplacingMergeTree(slot)",
+    "name": "memecoin_swaps",
+    "orderBy": [
+      "signature"
+    ],
+    "partitioning": "single all partition",
+    "parts": [
+      {
+        "checksumsTxtSha256": "d89881da0a436747d5cf68792b85de213b081ae5e0aab13166d06d2370e16824",
+        "countTxtSha256": "0e6ca9b14255bf5352b2606d61a444f613b6d14e1b82be8728c569e0cfffcb6d",
+        "fileAllocatedBytes": 23757662720,
+        "fileApparentBytes": 24013123515,
+        "name": "all_1_155464_15",
+        "rows": 145372739
+      },
+      {
+        "checksumsTxtSha256": "b7e2f48b5ef61712940b3ebe2ea0d60d0a753f3d5d9a64623299b4cccc9696a3",
+        "countTxtSha256": "bfb0961661f95bb49e92bc5a1b3692858a68471a370de999c76bf9736f5a0af1",
+        "fileAllocatedBytes": 31109896704,
+        "fileApparentBytes": 31434281119,
+        "name": "all_155465_324544_14",
+        "rows": 190048710
+      },
+      {
+        "checksumsTxtSha256": "4131df884cebcb0e47a8aaa6b03f55626e6427c72b44d86e90efa50d4065d37b",
+        "countTxtSha256": "7b18821d0bfa9d9effe7596ac88048f08fff364bd1553667a9046e45bf0e49d1",
+        "fileAllocatedBytes": 21077965312,
+        "fileApparentBytes": 21281155787,
+        "name": "all_324545_439770_14",
+        "rows": 129588332
+      },
+      {
+        "checksumsTxtSha256": "18760149e86a6098bc959e33cb6587afeb266c0f43988f1b5cfb486f17ae173b",
+        "countTxtSha256": "1b3d45bfcf755878553dfed415c293f3cdc811dcfc8eea8b2c0f000339cbb386",
+        "fileAllocatedBytes": 5385988608,
+        "fileApparentBytes": 5441763332,
+        "name": "all_439771_471040_14",
+        "rows": 33555957
+      },
+      {
+        "checksumsTxtSha256": "8a17195e20a8f6d8fde5f77b7fa4b433ae73dbf2812b6b404226475208724f28",
+        "countTxtSha256": "263c00028b0dbd6dc80c4efad77ae469e28f50f27b9fbc2ddb02947fe7532eb7",
+        "fileAllocatedBytes": 4861450752,
+        "fileApparentBytes": 4911954107,
+        "name": "all_471041_495979_12",
+        "rows": 30441502
+      },
+      {
+        "checksumsTxtSha256": "86e1493d3371b0107478f1ee35778db0fd23973ae7c92917fb5419ec9cb68b5d",
+        "countTxtSha256": "895e0b50495a25243be283d8d3e74fd425d28a2702d9060bc3384e760161d5ea",
+        "fileAllocatedBytes": 4749535744,
+        "fileApparentBytes": 4798487937,
+        "name": "all_495980_520342_12",
+        "rows": 29911554
+      },
+      {
+        "checksumsTxtSha256": "4571e9fcae73f53fdfe2f9d27a369666c62c83991d70df5a2ea8afecf4df7072",
+        "countTxtSha256": "78a06997ca600f6a8aac640fd30ab0cee4c2b3fb3aba6142e78c58870b429efb",
+        "fileAllocatedBytes": 378391040,
+        "fileApparentBytes": 382219789,
+        "name": "all_520343_522360_9",
+        "rows": 2450758
+      },
+      {
+        "checksumsTxtSha256": "5621f9cf68419b6fa801649d725fee7b58cb8c53e735e8bae1247cc9281f32b7",
+        "countTxtSha256": "494bde1d5849d2e26e90a4c3af850a882227f0f82f3b8099233c03842d6012cd",
+        "fileAllocatedBytes": 56592896,
+        "fileApparentBytes": 57027049,
+        "name": "all_522361_522671_7",
+        "rows": 370568
+      },
+      {
+        "checksumsTxtSha256": "704a5ad1d89ce30f3dc986a7f043c052acc8272b323eb01e18875a5d37659753",
+        "countTxtSha256": "e2d5aecc4f0fb65fdd867895c916b78b020659aa588793ae92714f1c0016487b",
+        "fileAllocatedBytes": 78973440,
+        "fileApparentBytes": 79639123,
+        "name": "all_522672_523109_8",
+        "rows": 517659
+      },
+      {
+        "checksumsTxtSha256": "7613beceb5aa2fc7cd529fd49b9eec76fd26daa4f89c9241cb847bfe53ddae49",
+        "countTxtSha256": "34bfed84dabfd73b57c8544462f88057f3cd21b89e73af7c69f985f06d855d5c",
+        "fileAllocatedBytes": 49416704,
+        "fileApparentBytes": 49743117,
+        "name": "all_523110_523388_8",
+        "rows": 324846
+      },
+      {
+        "checksumsTxtSha256": "63c460a89f9cb27b6ae9d115904756fd664f59b715d12185378a58a534dbc044",
+        "countTxtSha256": "6b074c98a712722718cf331912fb2c024ee3f285bdc760fd428f7f9bcd827d3c",
+        "fileAllocatedBytes": 19139072,
+        "fileApparentBytes": 19175474,
+        "name": "all_523389_523490_6",
+        "rows": 128171
+      },
+      {
+        "checksumsTxtSha256": "6b249258f335c9fe4daced37d344bb9858ff087e053bad99dddad1f88e491751",
+        "countTxtSha256": "c07828b7d52ad8cb373f9924b730fba9afe8c1337a4555a0cad3a68c80785e68",
+        "fileAllocatedBytes": 13691392,
+        "fileApparentBytes": 13659597,
+        "name": "all_523491_523572_7",
+        "rows": 90094
+      },
+      {
+        "checksumsTxtSha256": "4b536160a674d9920c810629a499a170a916d30c39fa5167f411234a0750910e",
+        "countTxtSha256": "1904813b171743a06b7680ee4965495c7079b54019505d7ae3d0aa8fee110bff",
+        "fileAllocatedBytes": 15559168,
+        "fileApparentBytes": 15538464,
+        "name": "all_523573_523655_7",
+        "rows": 103663
+      },
+      {
+        "checksumsTxtSha256": "797150512c02f9e1b6d918449f0239bda6869c4cb9cd12ea989a848c044e2307",
+        "countTxtSha256": "5fa545cedfe5c2e9d2b8e71c825351c71e005dcdf470526bf8e06533b91c0010",
+        "fileAllocatedBytes": 1660416,
+        "fileApparentBytes": 1637744,
+        "name": "all_523656_523664_3",
+        "rows": 11031
+      },
+      {
+        "checksumsTxtSha256": "f2f64cfcabf67767400ed96e05b49cac24330822d580092eaef26b48d217dfe0",
+        "countTxtSha256": "8df66f64b57424391d363fd6b811fed3c430c77597da265025728bd637bad804",
+        "fileAllocatedBytes": 62464,
+        "fileApparentBytes": 32703,
+        "name": "all_523665_523665_1",
+        "rows": 208
+      }
+    ],
+    "physicalRows": 562915792,
+    "tableRootAllocatedBytes": 91556249600,
+    "tableRootApparentFileBytes": 92499438858,
+    "uuid": "17c42dd2-2249-496e-8558-c6f41bedd731"
+  },
+  "writerState": "NOT_VERIFIED_BY_GENERATOR"
+}

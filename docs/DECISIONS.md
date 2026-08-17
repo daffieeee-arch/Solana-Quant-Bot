@@ -97,3 +97,9 @@ Short rationale per current decision. Git history contains the detailed evolutio
 **Decision:** `TRANSACTION_NET_SWAP_V1` is not accepted as Pump OOS/parity evidence. The file-only harness can accept only a registry-approved `PUMP_SNAPSHOT_V2` parser/query tuple with canonical Pump PDA identity, complete event/scan-cycle ordering, causal feature windows, historical SOL/USD, explicit live-gate snapshots, purged chronological splits, and a hold-horizon embargo. The registry remains empty until the separate v2 exporter is reviewed; self-asserted manifests stay `BLOCKED`. Pool-depth replay is rejected until production 6/9-decimal conversion is corrected and reviewed.
 
 **Rationale:** a large row count cannot compensate for missing protocol semantics, wrong price units, or train/test leakage. Unsuitable data must produce `BLOCKED`, not a plausible-looking expectancy number.
+
+## 17. Preserve v1; build v2 through separately reviewed Bronze, Silver, and Gold gates
+
+**Decision:** keep `TRANSACTION_NET_SWAP_V1` as immutable forensic evidence with status `SUPERSEDED_NOT_PUMP_OOS_EVIDENCE`. Phase 3 first establishes a transport-free Bronze transaction/instruction capture boundary. A separate Old Faithful adapter, Silver event/state decoder, Gold causal feature layer, registry approval, and pilot/full-backfill approvals remain independent gates.
+
+**Rationale:** derived v1 rows cannot recover information discarded by the old parser. Preserving evidence while rebuilding from immutable source avoids destructive cleanup, prevents Bronze completeness from being mistaken for research readiness, and keeps stateful features fail-closed.
