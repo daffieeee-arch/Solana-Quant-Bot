@@ -73,9 +73,11 @@ Adversarial tests cover:
 - arbitrary commands, action-input drift, trigger drift, and a second tracked workflow;
 - unsupported YAML syntax failing closed.
 
-Current committed totals after the round-3 fixes are 18 policy tests, 40 targeted tests, and 610 tests across 62 files in the complete suite.
+Current Phase-2 totals are 18 policy tests, 40 targeted critical tests, and 636 tests across 63 files in the complete suite. The twenty-five Pump historical-research tests run through the complete suite.
 
 ## Checks
+
+The backend build runs `verify:research-transport` after TypeScript compilation. It executes the built v1 CLI under ESM/CJS import guards and fails if any HTTP(S), net/TLS, fetch/WebSocket, or `@solana/web3.js` transport-capable module enters the research graph.
 
 1. `npm ci` from the committed lockfile;
 2. `npm run ci:policy`;

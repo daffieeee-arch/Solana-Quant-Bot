@@ -1,13 +1,14 @@
 # CURRENT_STATE.md — Current project state
 
-*Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-16.*
+*Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-17.*
 
 ## Git and GitHub
 
 - Repository: `daffieeee-arch/solana-paper-scanner`
 - Integration branch: `main`
 - Repository tip is moving; retrieve the current SHA with `git rev-parse HEAD` or GitHub rather than treating a docs SHA as the runtime baseline.
-- PR #1 branch: `chore/repo-alignment-ci`
+- PR #1 was squash-merged as `e56045bb19670ed37fe76a08d731ec74e5882155`; post-merge main CI succeeded.
+- Current research branch: `phase2/pump-offline-research`
 - Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
 - Baseline tag: `offline-pump-baseline-20260815`
 - Published history is preserved; runtime/cache cleanup affects only the current tree.
@@ -45,6 +46,8 @@
 ## ClickHouse, backfill, and Grafana
 
 - ClickHouse data remains intact at roughly 563M physical rows / about 86–92 GB, subject to previously documented measurement differences.
+- A bounded 2026-08-16 audit confirmed 562,915,792 physical rows, 15 active parts, and no part drift during the audit; ClickHouse was returned to its prior stopped state.
+- `TRANSACTION_NET_SWAP_V1` is blocked as Pump OOS/parity evidence because it lacks native-SOL, inner-instruction, loaded-address, canonical-launch, exact-unit, and live-gate snapshot capabilities.
 - Backfill supervisors and repair cron are paused.
 - ClickHouse MCP user `hermes_ro` is read-only.
 - Grafana is available for read-only observability.
@@ -65,7 +68,7 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 ## Tests and CI
 
 - Immutable functional baseline: 592 tests, build green, TypeScript clean.
-- PR #1 adds 18 CI-policy tests; the expected full total is 610.
+- PR #1 adds 18 CI-policy tests; Phase 2 adds 25 Pump historical-research tests. The current verified full total is 636 across 63 files.
 - GitHub CI runs repository policy, critical zero-cost/Pump tests, full tests, typecheck, and build with `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
 - GitHub's automatic token is read-only (`contents: read`) and checkout credentials are not persisted. No repository or production secrets are consumed.
 
@@ -78,9 +81,9 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 5. Deep loaded-address resolution for real versioned transactions remains incomplete.
 6. Non-Pump identity/pricing/exit paths are incomplete.
 7. ClickHouse and backfill infrastructure fixes remain open.
-8. v2 event-level Bronze/Silver/Gold pipeline remains design work.
+8. A reviewed `PUMP_SNAPSHOT_V2` parser/export is still required before chronological Pump OOS evidence can be produced; the provenance registry is empty, v1 must not be used for tuning, and pool-depth replay remains HOLD pending decimal-math correction.
 9. Dependency audit reports three moderate production-chain findings and one high dev-chain finding; investigate separately without forced auto-fix.
 
 ## Next recommended product task
 
-After PR #1 is approved and merged, create `phase2/pump-offline-research` from updated `main`. Perform a read-only data-suitability and live/replay/backtest-parity audit, then build a reproducible Pump-only historical research harness. Do not expand to another protocol until out-of-sample evidence justifies the complexity and cost.
+Complete independent review and CI for `phase2/pump-offline-research`, then design a separate provenance-preserving `PUMP_SNAPSHOT_V2` Old Faithful parser/export. Do not tune on v1 or expand to another protocol until chronological Pump out-of-sample evidence justifies the complexity and cost.

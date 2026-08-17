@@ -91,3 +91,9 @@ Short rationale per current decision. Git history contains the detailed evolutio
 **Decision:** after repository alignment and CI, build a Pump-only historical research harness and test out-of-sample edge before adding another protocol.
 
 **Rationale:** technical completeness does not prove profitability; complexity and live costs must be justified by evidence.
+
+## 16. Pump historical research fails closed on source capability
+
+**Decision:** `TRANSACTION_NET_SWAP_V1` is not accepted as Pump OOS/parity evidence. The file-only harness can accept only a registry-approved `PUMP_SNAPSHOT_V2` parser/query tuple with canonical Pump PDA identity, complete event/scan-cycle ordering, causal feature windows, historical SOL/USD, explicit live-gate snapshots, purged chronological splits, and a hold-horizon embargo. The registry remains empty until the separate v2 exporter is reviewed; self-asserted manifests stay `BLOCKED`. Pool-depth replay is rejected until production 6/9-decimal conversion is corrected and reviewed.
+
+**Rationale:** a large row count cannot compensate for missing protocol semantics, wrong price units, or train/test leakage. Unsuitable data must produce `BLOCKED`, not a plausible-looking expectancy number.

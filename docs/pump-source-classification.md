@@ -27,7 +27,7 @@ worden alleen als Pump geaccepteerd wanneer ALLE structuur-conditionals slagen:
 - program-id exact matcht (6EF8rrect…)
 - accountlayout voldoende bewijs (mint à curve met derived-PDA in de set)
 - mint geldig (32-byte base58)
-- bonding-curve afgeleid met officiële `@solana/web3.js findProgramAddressSync`
+- bonding-curve afgeleid met de smalle lokale transportvrije PDA-primitive; officiële `PublicKey.findProgramAddressSync` is uitsluitend de byte-/gedragsoracle in tests
 - aanwezige curve == derived-PDA exact
 - provenancefixture aanwezig (live_sell_mainnet / live_buy_mainnet)
 

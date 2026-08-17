@@ -43,4 +43,4 @@ Only current open items belong here. Resolved issues remain in Git history.
 
 ## Research
 
-22. Technical Pump lifecycle correctness is proven offline, but strategy profitability and out-of-sample edge are not. Build the Phase 2 historical research harness before protocol expansion or renewed live spend.
+22. Technical Pump lifecycle correctness and the fail-closed Phase 2 harness are implemented offline, but strategy profitability and out-of-sample edge remain unproven. Do not tune, expand protocols, or renew live spend until a separate `PUMP_SNAPSHOT_V2` parser/export receives independent provenance review and real-registry approval.

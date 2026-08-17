@@ -1,25 +1,31 @@
 import { createHash } from 'node:crypto';
-import { PublicKey } from '@solana/web3.js';
+import {
+  PUMP_BONDING_CURVE_SEED,
+  PUMP_PROGRAM_ID,
+  WSOL,
+  base58Decode,
+  base58Encode,
+  deriveBondingCurve,
+  validateBondingCurve,
+} from './pump-address.js';
+
+export {
+  PUMP_BONDING_CURVE_SEED,
+  PUMP_PROGRAM_ID,
+  WSOL,
+  base58Decode,
+  base58Encode,
+  deriveBondingCurve,
+  validateBondingCurve,
+};
 
 /**
  * Structurele Pump.fun swap-parser (OFFLINE).
  * Vervangt log-string/account-count afhankelijke detectie door:
  *  - officiële instruction discriminators: SHA256("global:<name>")[0:8]
- *  - bonding-curve PDA via officiële @solana/web3.js PublicKey.findProgramAddressSync
+ *  - bonding-curve PDA via a pure primitive byte-checked against web3.js in tests
  *  - correcte accountlayout per variant (mint+1-of-derived).
  */
-
-export const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
-export const PUMP_BONDING_CURVE_SEED = 'bonding-curve';
-export const WSOL = 'So11111111111111111111111111111111111111112';
-
-// Officiële primitives (delegatie naar @solana/web3.js — géén eigen base58/bump-scan).
-export function base58Decode(s: string): Buffer {
-  return Buffer.from(Array.from(new PublicKey(s).toBytes()));
-}
-export function base58Encode(buf: Buffer): string {
-  return new PublicKey(buf).toBase58();
-}
 
 const discOf = (name: string) => createHash('sha256').update('global:' + name, 'utf8').digest().subarray(0, 8).toString('hex');
 
@@ -43,17 +49,6 @@ export const PUMP_DISCRIMINATORS = {
   liveBuyExactSolIn: 'e822865bc7d49d0e',
 } as const;
 
-/** Solana PDA (findProgramAddress) — officiële @solana/web3.js primitive. */
-export function deriveBondingCurve(mint: string): string {
-  if (!mint) return '';
-  try {
-    const mintPk = new PublicKey(mint);
-    const [pda] = PublicKey.findProgramAddressSync([Buffer.from(PUMP_BONDING_CURVE_SEED, 'utf8'), mintPk.toBuffer()], new PublicKey(PUMP_PROGRAM_ID));
-    return pda.toBase58();
-  } catch {
-    return ''; // invalid/malformed mint → fail-closed (geen curve)
-  }
-}
 
 export type PumpSwapResult = { mint: string; curve: string; kind: 'buy' | 'sell' } | undefined;
 
@@ -112,12 +107,4 @@ export function parsePumpSwap(payload: any): PumpSwapResult {
     for (const ix of group?.instructions ?? []) { const r = tryIx(ix); if (r) return r; }
   }
   return undefined;
-}
-
-/** Officiële PDA-validatie: derived (exact) == geparsde curve? */
-export function validateBondingCurve(mint: string, curve: string): boolean {
-  if (!mint || !curve) return false;
-  const derived = deriveBondingCurve(mint);
-  if (!derived) return false;
-  return curve === derived;
 }

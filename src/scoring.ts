@@ -1,4 +1,5 @@
 import type { PaperConfig } from './config.js';
+import { MAX_POSITION_QUOTE_AGE_MS } from './quote-freshness.js';
 
 export type DiscoveryProvenance = {
   signature: string;
@@ -83,7 +84,7 @@ export type MarketGate =
         | 'contra_momentum_high';
     };
 
-const MAX_OBSERVATION_AGE_MS = 2 * 60_000;
+const MAX_OBSERVATION_AGE_MS = MAX_POSITION_QUOTE_AGE_MS;
 
 function hasInvalidNumericMarketData(snapshot: MarketSnapshot, allowUnpriced: boolean): boolean {
   if (allowUnpriced) {
