@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PublicKey } from '@solana/web3.js';
 import { deriveBondingCurve, validateBondingCurve, base58Decode, base58Encode } from '../src/pump-parser.js';
+import { decodePublicKey } from '../src/solana-pda.js';
 import { createHash } from 'node:crypto';
 
 const PUMP = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
@@ -33,15 +34,21 @@ describe('PDA/address primitives vs officiële @solana/web3.js', () => {
     expect(validateBondingCurve(mintStr, otherProgram.toBase58())).toBe(false);
   });
 
-  it('base58 roundtrip + invalid key edgecases (fail-closed via officiële library)', () => {
+  it('base58 roundtrip + invalid key edgecases fail closed in the local primitive', () => {
     for (const m of MINTS) {
       const bytes = base58Decode(m);
       expect(base58Encode(bytes)).toBe(m);
     }
-    // Invalid base58/pubkey → officiële library gooit (fail-closed), geen stille corruptie
+    // Invalid base58/pubkey → local primitive throws fail-closed; official web3.js is the comparison oracle above.
     expect(() => base58Decode('0OIl')).toThrow();
     // lege input edge
     expect(() => base58Decode('')).toThrow();
+  });
+
+  it('rejects oversized and malformed public-key text before base58 decoding', () => {
+    expect(() => decodePublicKey('1'.repeat(10_000))).toThrow(/public key text/i);
+    expect(() => decodePublicKey('0'.repeat(44))).toThrow(/public key text/i);
+    expect(() => decodePublicKey(7 as unknown as string)).toThrow(/public key text/i);
   });
 
   it('100 deterministische fixtures (variërende laatste bytes) matchen officiële PDA', () => {

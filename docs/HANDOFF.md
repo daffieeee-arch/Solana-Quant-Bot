@@ -15,12 +15,12 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - Baseline tag: `offline-pump-baseline-20260815`
 - Configured image: `solana-bot:contra-audit16-offline-pump-3e95a3c`
 - Last read-only TrueNAS observation on 2026-08-16: app **STOPPED**, `active_containers=0`
-- PR #1 branch: `chore/repo-alignment-ci`
+- PR #1 was squash-merged to `main` as `e56045bb19670ed37fe76a08d731ec74e5882155`; current work is on `phase2/pump-offline-research`
 
 ## What is proven?
 
 - `OFFLINE_ZERO_COST`: no paid Triton clients, subscriptions, reconnect loops, or calls when the live flag is not exactly `true`
-- Pump structural parsing with discriminators and official `@solana/web3.js` PDA primitives
+- Pump structural parsing with discriminators and a narrow local transport-free PDA primitive, byte-checked against official `@solana/web3.js` in tests
 - Pump identity construction and full MarketIdentity contract evaluation in shadow mode
 - Exact `gx:<mint>` identities are hard-blocked
 - Official IDL variants plus tiered observed-dispatch fixtures
@@ -28,6 +28,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - PnL/accounting checks and WAL restart/replay
 - Ledger-authoritative quarantine without fictitious exits
 - Network-isolated replay tests with external fetches blocked
+- A file-only Pump research harness that rejects unsuitable v1 data before simulation and reuses production gates/scoring/portfolio lifecycle for accepted v2 snapshots
 
 ## What is not proven?
 
@@ -68,22 +69,20 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - `src/ledger.ts` — crash-safe WAL
 - `src/accounting.ts`, `src/capital-accounting.ts`, `src/quarantine-ledger.ts` — administrative state/exposure
 - `src/learn-controller.ts` — analysis only; automatic promotion disabled
+- `src/research/pump-historical.ts`, `src/research/pump-historical-cli.ts` — fail-closed, file-only Pump research readiness and production-lifecycle replay
 - `.github/workflows/ci.yml`, `scripts/ci-repository-policy.mjs` — validation-only CI
 
-## Current review task
+## Current task
 
-PR #1 received multiple `REQUEST_CHANGES` review rounds. The current branch contains the round-3 policy fixes and the subsequent current-state documentation correction, and still requires a fresh independent verdict. Read:
+PR #1 is squash-merged to `main` as `e56045bb19670ed37fe76a08d731ec74e5882155`; post-merge main CI succeeded. Current work is isolated on `phase2/pump-offline-research`.
 
-1. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-2. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-3. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-4. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+The read-only data-suitability audit found `TRANSACTION_NET_SWAP_V1` unfit for Pump OOS/parity. The new harness blocks v1 before simulation and also blocks every self-asserted v2 manifest: the real-v2 reviewed-provenance registry is intentionally empty until a separate parser/export review. Pool-depth replay is HOLD pending correction of production 6/9-decimal conversion. Read `docs/PUMP_OFFLINE_RESEARCH.md` and rerun the targeted/full gates before review.
 
-Review the latest branch head, rerun all gates, inspect the latest GitHub Actions run, use a fresh-context reviewer, and return `APPROVE`, `REQUEST_CHANGES`, or `HOLD`. Do not merge, deploy, start the app, or restart the backfill.
+Do not deploy, start the app, enable Triton, restart the backfill, or mutate ClickHouse as part of this research task.
 
-## Next product task after merge
+## Next product task after this branch
 
-Create `phase2/pump-offline-research` from updated `main`. Start with a read-only data-suitability and live/replay/backtest-parity audit, then build a reproducible Pump-only historical research harness. Do not add another protocol until Pump demonstrates credible out-of-sample value.
+Design and independently review a separate v2 Old Faithful Pump parser/export that captures native SOL deltas, inner instructions, loaded addresses, canonical discriminator+PDA identity, transaction order, canonical launch time, and remaining live-gate snapshots. Do not tune strategy parameters on v1 and do not add another protocol until Pump demonstrates credible chronological out-of-sample value.
 
 ## Recovery source of truth
 
@@ -99,7 +98,8 @@ Create `phase2/pump-offline-research` from updated `main`. Start with a read-onl
 4. `docs/KNOWN_ISSUES.md`
 5. `docs/DEVELOPMENT_WORKFLOW.md`
 6. `docs/CI.md`
-7. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-8. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-9. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-10. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+7. `docs/PUMP_OFFLINE_RESEARCH.md`
+8. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+9. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+10. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+11. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

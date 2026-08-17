@@ -4,6 +4,7 @@ import { enterPaperPosition, evaluateOpenPosition, computePositionSize, type Por
 import { evaluateMarketGate, scoreMomentum, scoreContraMomentum, type DiscoveryProvenance, type MarketSnapshot } from './scoring.js';
 import { evaluateEntryShadow } from './entry-shadow.js';
 import { emptyShadowMetrics, recordShadowObservation, protocolFromSource, gxOnlyPairId, type ShadowMetrics } from './shadow-metrics.js';
+import { isFreshPositionQuote } from './quote-freshness.js';
 
 export type MarketProvider = {
   fetchSnapshots(): Promise<MarketSnapshot[]>;
@@ -56,7 +57,6 @@ export type ScanDecision =
 
 export type ScanResult = { mode: 'paper'; portfolio: Portfolio; decisions: ScanDecision[]; snapshots: MarketSnapshot[]; checkedAt: string; providerErrors: string[] };
 
-const MAX_POSITION_QUOTE_AGE_MS = 2 * 60_000;
 const MAX_PAIR_STATES = 10_000;
 const PAIR_STATE_IDLE_TTL_MS = 6 * 60 * 60_000;
 const MAX_LATE_DISCOVERY_SNAPSHOTS = 500;
@@ -95,16 +95,6 @@ function marketDecisionContext(snapshot: MarketSnapshot, firstSeenAt: string, ev
     ...(snapshot.discovery ? { discovery: snapshot.discovery } : {}),
     ...(Number.isFinite(delay) ? { detectionDelayMs: Math.max(0, delay) } : {}),
   };
-}
-
-function isFreshPositionQuote(snapshot: MarketSnapshot, now: Date): boolean {
-  const observedAt = Date.parse(snapshot.observedAt);
-  const ageMs = now.getTime() - observedAt;
-  return Number.isFinite(snapshot.priceUsd)
-    && snapshot.priceUsd > 0
-    && Number.isFinite(observedAt)
-    && ageMs >= 0
-    && ageMs <= MAX_POSITION_QUOTE_AGE_MS;
 }
 
 function positionKey(identity: PositionQuoteIdentity): string {

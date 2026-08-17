@@ -48,7 +48,7 @@ Deterministic tests use fixtures/mocks and block all external fetches. This is t
 ## Pump baseline ✅
 
 - structural instruction discriminators;
-- official `@solana/web3.js` PDA derivation;
+- narrow local transport-free PDA derivation, byte-checked against official `@solana/web3.js` in tests;
 - exact mint/curve cross-match;
 - official IDL variants plus tiered observed dispatchers;
 - offline identity/shadow evaluation;
@@ -70,10 +70,17 @@ Deep real-world loaded-address resolution for versioned transactions remains a H
 Old Faithful public archive (paused ingestion)
   -> Jetstreamer / v1 parser
   -> local ClickHouse TRANSACTION_NET_SWAP dataset
-  -> read-only research / Grafana
+  -> bounded read-only suitability audit / Grafana
+  -> v1 BLOCKED for Pump OOS/parity
+
+Future reviewed PUMP_SNAPSHOT_V2 export
+  -> manifest + content hashes + canonical Pump identity/snapshots
+  -> file-only fail-closed harness
+  -> mint-disjoint chronological train / validation / test
+  -> production gate, score, sizing, fee/slippage, and exit lifecycle
 ```
 
-v1 stores at most one dominant/net swap per transaction. It is not an event-level tape. The future v2 design uses Bronze/Silver/Gold layers for provenance-preserving event data and derived transaction-net data.
+v1 stores at most one dominant/net swap per transaction. It is not an event-level tape and is explicitly rejected as Pump OOS/parity evidence. The harness is implemented, but credible results remain HOLD until an independently reviewed v2 export provides native-SOL deltas, inner instructions, loaded addresses, canonical launch/curve identity, exact units, historical SOL/USD, and live-gate snapshots.
 
 ## TrueNAS state
 
@@ -102,10 +109,11 @@ GitHub Actions is validation-only:
 | Zero-cost Triton construction guard | ✅ |
 | Network-isolated replay | ✅ |
 | Pump parser/PDA/offline lifecycle | ✅ |
+| Pump historical harness | ✅ engine; 🔶 data HOLD (`PUMP_SNAPSHOT_V2` absent) |
 | WAL/quarantine/accounting | ✅ |
 | Full MarketIdentity shadow contract | ✅ shadow only |
 | Broader MarketIdentity enforcement | 🔶 HOLD |
 | Live Dragon's Mouth connectivity | 🔶 HOLD, balance $0 |
 | Non-Pump protocol completeness | ⛔ incomplete |
 | ClickHouse/backfill operational hardening | 🔶 HOLD |
-| v2 event-level data pipeline | ⛔ design |
+| v2 event-level data pipeline/export | ⛔ required next |

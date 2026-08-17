@@ -10,7 +10,7 @@ Private, **paper-only** Solana trading research project. The repository contains
 - Configured TrueNAS image: `solana-bot:contra-audit16-offline-pump-3e95a3c`.
 - Last verified app state during the 2026-08-16 review: **STOPPED**, `active_containers=0`; do not describe it as currently running without a fresh runtime query.
 - Configured runtime mode: `OFFLINE_ZERO_COST` with `TRITON_LIVE_ENABLED=false`.
-- Functional baseline quality: 592 tests, build green, TypeScript clean. Repository-policy tests added by PR #1 are validated independently by CI.
+- Immutable functional baseline quality: 592 tests. Current Phase-2 branch quality: 636 tests across 63 files, build green, and TypeScript clean.
 
 Read [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md) before changing code.
 
@@ -67,6 +67,8 @@ Do not work directly on `main`. The immutable functional baseline remains recove
 ## Historical data
 
 ClickHouse contains the paused v1 `TRANSACTION_NET_SWAP` dataset. It supports transaction-level net-flow research, not a complete event-level tape. Multi-hop and inner-CPI detail require the future Bronze/Silver/Gold v2 pipeline.
+
+The file-only Pump historical harness rejects v1 as OOS/parity evidence. See [`docs/PUMP_OFFLINE_RESEARCH.md`](docs/PUMP_OFFLINE_RESEARCH.md) for the audited limitations and required `PUMP_SNAPSHOT_V2` contract.
 
 ## Important limitations
 

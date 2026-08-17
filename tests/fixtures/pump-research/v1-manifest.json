@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "sourceContract": "TRANSACTION_NET_SWAP_V1",
+  "parserGitSha": "0efc5ed3c17e6500d34f9fe4f68242a0c98dc3cc",
+  "exportQuerySha256": "46d04e9ace4fe4953fd08b9667dd2c4a4c9bd79d021d1ab02f72be1cfdd09406",
+  "rowsSha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+  "generatedAt": "2026-08-16T23:49:20.000Z",
+  "window": {
+    "startInclusive": "2026-06-18T12:03:46.000Z",
+    "endExclusive": "2026-06-28T06:13:15.000Z"
+  },
+  "split": {
+    "trainEndExclusive": "2026-06-22T00:00:00.000Z",
+    "validationEndExclusive": "2026-06-25T00:00:00.000Z"
+  },
+  "capabilities": {
+    "structuralPumpIdentity": false,
+    "nativeSolBalanceDeltas": false,
+    "innerInstructions": false,
+    "loadedAddresses": false,
+    "canonicalLaunchTimestamp": false,
+    "transactionOrder": false,
+    "exactPriceUnits": false,
+    "historicalSolUsd": false,
+    "liquiditySnapshots": false,
+    "rugRiskSnapshots": false,
+    "whaleFlowSnapshots": false
+  }
+}

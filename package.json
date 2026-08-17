@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "start": "node dist/main.js",
-    "build": "tsc -p tsconfig.json && npm run build:frontend",
+    "build": "tsc -p tsconfig.json && npm run verify:research-transport && npm run build:frontend",
+    "verify:research-transport": "node scripts/assert-research-transport-free.mjs",
     "build:frontend": "vite build --config frontend/vite.config.ts",
+    "research:pump-offline": "node dist/research/pump-historical-cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "ci:policy": "node scripts/ci-repository-policy.mjs"
