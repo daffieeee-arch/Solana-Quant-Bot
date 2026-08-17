@@ -228,15 +228,7 @@ describe('PaperLedgerStore lifecycle', () => {
       order.push('load');
       return ledger;
     });
-    const initializationHookRan = await Promise.race([
-      initializationStarted.then(() => true),
-      new Promise<false>((resolve) => setTimeout(() => resolve(false), 50)),
-    ]);
-    if (!initializationHookRan) {
-      await store.close();
-      expect(initializationHookRan).toBe(true);
-      return;
-    }
+    await initializationStarted;
     const handles = store as unknown as { directoryHandle: Awaited<ReturnType<typeof open>>; canonicalHandle: Awaited<ReturnType<typeof open>> };
     const directoryHandle = handles.directoryHandle;
     const canonicalHandle = handles.canonicalHandle;
