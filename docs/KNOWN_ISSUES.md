@@ -34,7 +34,7 @@ Only current open items belong here. Resolved issues remain in Git history.
 
 17. **v1 is transaction-net only:** multi-hop, inner-CPI, pool-route, and event-level detail are not preserved.
 18. **Duplicate estimate is limited:** roughly 3.4% cross-part exact-retry overlap was observed in a biased sample. The dataset-wide ratio is unknown and normal background merges may already have consolidated some rows. Do not claim that no deduplication occurred merely because no global `OPTIMIZE FINAL` was run.
-19. **v2 event-level pipeline remains incomplete:** the pure Bronze capture boundary exists, but the real archive adapter, Silver/Gold schema and decoding, reviewed parser provenance, and an approved pilot source pass are not implemented.
+19. **v2 event-level pipeline remains incomplete:** the pure Bronze capture and local Phase 4 source-manifest/Jetstreamer-envelope/slot-inventory coverage contracts exist, but the real read-only Rust reducer, durable file/coverage writer, CAR-byte verification, Silver/Gold schema and decoding, reviewed parser provenance, and an approved pilot source pass are not implemented.
 
 ## Repository and dependencies
 

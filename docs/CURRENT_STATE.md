@@ -9,7 +9,8 @@
 - Repository tip is moving; retrieve the current SHA with `git rev-parse HEAD` or GitHub rather than treating a docs SHA as the runtime baseline.
 - PR #2 (Phase 2 fail-closed historical harness) was squash-merged as `d13f7f929e41258f81025a26c5495370cb528ee2`.
 - PR #3 removed a scheduler-sensitive ledger lifecycle test race and was squash-merged as `fc03f13de1e417848cdddc254224565dec360566`; post-merge main CI succeeded.
-- Current research branch: `phase3/pump-v2-bronze-pilot`
+- PR #4 (Phase 3 Pump v2 Bronze capture) was squash-merged as `f3d4dbc12d292ade44acf814b493aeaff0aae891`; post-merge CI run `32058232903` succeeded.
+- Current research branch: `phase4/old-faithful-jetstreamer-adapter`, based exactly on the PR #4 merge commit.
 - Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
 - Baseline tag: `offline-pump-baseline-20260815`
 - Published history is preserved; runtime/cache cleanup affects only the current tree.
@@ -71,7 +72,8 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 ## Tests and CI
 
 - Immutable functional baseline: 592 tests, build green, TypeScript clean.
-- PR #1 adds adversarial CI-policy coverage; Phase 2 adds the Pump historical-research harness; Phase 3 adds Bronze capture, transitive transport-policy plus syscall isolation, forensic-generator, and immutable-manifest contract tests. The fresh complete Node-22 suite passes 742 tests across 67 files after the latest NO-GO remediation.
+- PR #1 adds adversarial CI-policy coverage; Phase 2 adds the Pump historical-research harness; Phase 3 adds Bronze capture, transitive transport-policy plus syscall isolation, forensic-generator, and immutable-manifest contract tests. Phase 4 currently adds the transport-free source-manifest/Jetstreamer-envelope/slot-inventory coverage boundary.
+- Fresh local certified Node `v22.23.2`: **785/785 tests across 68 files**, TypeScript clean, build green, research transport-free graph PASS.
 - GitHub CI runs repository policy, critical zero-cost/Pump tests, full tests, typecheck, and build with `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
 - GitHub's automatic token is read-only (`contents: read`) and checkout credentials are not persisted. No repository or production secrets are consumed.
 
@@ -81,7 +83,7 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 2. Live Pump first-event/connectivity not re-proven.
 3. Live budget duration, request/byte metering, hard stops, and auto-disconnect not implemented.
 4. MarketIdentity broader enforcement remains shadow-only.
-5. The Bronze capture contract resolves complete static + loaded writable + loaded readonly account vectors, but the real Old Faithful/Jetstreamer adapter that supplies those fields remains unimplemented and unproven.
+5. The transport-free Phase 4 source-manifest, Jetstreamer envelope, and slot-inventory reconciliation boundary exists locally, but the real read-only Rust reducer that consumes actual Jetstreamer callbacks and durably emits these records remains unimplemented and unproven.
 6. Non-Pump identity/pricing/exit paths are incomplete.
 7. ClickHouse and backfill infrastructure fixes remain open.
 8. A reviewed `PUMP_SNAPSHOT_V2` Silver parser/export is still required before chronological Pump OOS evidence can be produced. The Phase 3 Bronze capture is not registry-approved research data; the registry remains empty, v1 must not be used for tuning, and pool-depth replay remains HOLD pending decimal-math correction.
@@ -89,4 +91,4 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 
 ## Next recommended product task
 
-Independently review and land the transport-free Phase 3 Bronze capture contract. Then build a separate read-only Old Faithful/Jetstreamer adapter and run only a tiny approved fixture/slot pilot before one complete epoch. Do not start ClickHouse/backfill, tune on v1, or claim OOS readiness from Bronze capture alone.
+Independently review the exact local Phase 4 contract patch. After review, implement a separate read-only, file-output-only Rust reducer against pinned Jetstreamer `v0.7.0`, with transaction-to-block-time buffering and crash-safe immutable outputs. Stop for explicit approval before commit/push/PR under the current double-GO process and separately before any real Old Faithful slot pilot. Do not start ClickHouse/backfill, tune on v1, or claim OOS readiness from Bronze/coverage artifacts alone.

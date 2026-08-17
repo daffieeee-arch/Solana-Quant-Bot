@@ -1,0 +1,93 @@
+# Phase 4 — Old Faithful / Jetstreamer adapter boundary
+
+## Status
+
+**LOCAL IMPLEMENTATION CHECKPOINT — NOT RESEARCH READY.**
+
+Phase 3 is merged on `main` at squash commit `f3d4dbc12d292ade44acf814b493aeaff0aae891`. Phase 4 is isolated on `phase4/old-faithful-jetstreamer-adapter` and currently contains only a transport-free TypeScript contract plus fixture tests. It has not streamed Old Faithful, run Jetstreamer, started ClickHouse, restarted the paused backfill, approved a real provenance tuple, or produced strategy evidence.
+
+## Pinned source contracts
+
+- Old Faithful epoch artifacts are published per epoch as CAR bytes, a CAR SHA-256 file, an epoch CID, a slot inventory, recap metadata, and indexes.
+- The adapter contract was checked against Jetstreamer `v0.7.0` at `cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24`.
+- `TransactionData` exposes the slot, `transaction_slot_index`, signature, vote classification, status metadata, and decoded versioned transaction.
+- `BlockData` supplies block time separately. A real reducer must therefore buffer transaction projections by slot and join them only when the matching block callback arrives.
+- `PossibleLeaderSkipped` is provisional: it may mean a truly skipped slot or a late block. It is not archive-completeness proof by itself.
+
+## Implemented boundary
+
+`src/research/old-faithful-jetstreamer-adapter.ts` adds:
+
+1. `OLD_FAITHFUL_EPOCH_SOURCE_1`
+   - exact-key, fail-closed source validation;
+   - structurally decoded CIDv1 DAG-CBOR/SHA-256 epoch CID, CAR SHA-256, and exact CAR byte size;
+   - exact slot-inventory SHA-256, byte size, entry count, first/last slot;
+   - exact full epoch range derived from the pinned Jetstreamer `epoch * 432000` contract;
+   - domain-separated source identity:
+     `SHA256("OLD_FAITHFUL_OF1_SOURCE_MANIFEST_1\n" || canonicalSourceBytes)`.
+2. `JETSTREAMER_ADAPTER_PROVENANCE_1`
+   - separately pins Jetstreamer revision, plugin revision, and plugin-source SHA-256;
+   - has its own exact-key validation and domain-separated hash, so changing processor bytes does not change source identity.
+3. `JETSTREAMER_TRANSACTION_BLOCK_1`
+   - explicit transaction/block slot equality;
+   - non-vote Pump projection only;
+   - exact transaction index, signature, Unix block time, native/token integer strings, static and loaded addresses, top-level and inner instructions;
+   - delegates initial Bronze normalization and Pump quarantine semantics to the reviewed `PUMP_V2_BRONZE_TRANSACTION_1` boundary.
+4. `OLD_FAITHFUL_PUMP_V2_OBSERVATION_1`
+   - binds every Bronze transaction to both normalized source identity and separate adapter provenance.
+5. `OLD_FAITHFUL_COVERAGE_LEDGER_1`
+   - takes a separate bounded requested half-open range inside the full source epoch;
+   - verifies the complete official slot-inventory bytes against the source manifest before filtering to that requested range;
+   - requires canonical newline-delimited, strictly increasing safe-integer slots;
+   - reconciles block callbacks with slots present in the pinned archive inventory;
+   - resolves a provisional skip only when a matching inventory-backed block callback exists;
+   - treats exact retries idempotently, enforces unique `(slot, transaction_slot_index)` and signature identities, and rejects conflicts;
+   - revalidates exact Bronze/candidate/quarantine structure, carries the static-account boundary, re-derives candidates and canonical event keys from validated Pump instructions, binds known discriminator semantics, resolved account/index identity, token-balance ordering/ranges, stack-height rules, producer log/reference budgets, bounds canonical observation bytes, and hashes order-independent canonical evidence;
+   - binds transaction observations to matching non-skipped blocks and exact block times;
+   - labels transaction coverage as `PUMP_V2_NON_VOTE_ONLY`;
+   - requires both complete callback coverage and exact inventory agreement before `archiveSlotInventoryReconciled: true`;
+   - keeps `researchReady: false` even when callback and archive-slot inventory reconciliation pass.
+
+`archiveSlotInventoryReconciled` means only that the supplied callbacks agree with the hash-pinned slot inventory for the requested range. It does **not** prove that the complete CAR bytes were downloaded and hashed, that every transaction was emitted durably by a real reducer, or that Silver/Gold research data is approved.
+
+## Tests and local gates
+
+`tests/old-faithful-jetstreamer-adapter.test.ts` covers:
+
+- canonical transaction/block-to-Bronze projection with separate source and processor provenance;
+- manifest/CID/hash/epoch-range rejection, structurally invalid CID rejection, and unknown-field rejection;
+- transaction/block slot binding, range binding, vote rejection, canonical block time, and static-account boundary enforcement;
+- complete-inventory filtering to a bounded requested range;
+- out-of-order callbacks, exact block retries, provisional skip→block resolution, post-resolution provisional retry deduplication, incomplete-callback honesty, and archive slot-inventory reconciliation;
+- exact and property-reordered transaction retry deduplication;
+- conflicting `(slot, transaction_slot_index)` or signature identity rejection;
+- fabricated candidate, sparse instruction, unknown-field, and oversized nested observation rejection.
+
+Fresh certified Node `v22.23.2` results for the current local checkpoint:
+
+- full suite: **785/785 passed across 68 files**;
+- TypeScript: clean;
+- build: green;
+- research transport-free built graph: PASS;
+- frontend build: green with the pre-existing non-blocking bundle-size warning.
+
+## Remaining Phase 4 gate
+
+The next code slice is a separate read-only, file-output-only Rust reducer against the pinned Jetstreamer API. It must:
+
+1. project actual legacy and v0 `TransactionData` without lossy numeric conversion;
+2. buffer by `(slot, transaction_slot_index)` until matching `BlockData::Block` supplies time;
+3. preserve failed transactions, loaded-address order, inner CPI coordinates, token owners/program IDs, and raw amounts;
+4. handle provisional `PossibleLeaderSkipped` callbacks without prematurely finalizing absence;
+5. write immutable per-slot output plus a crash-safe append-only coverage ledger;
+6. remain independent of ClickHouse and the paused legacy backfill.
+
+Before any real archive read, run, or slot pilot:
+
+- independently review the exact local patch;
+- bind review and tests to an exact commit;
+- obtain explicit user approval for the bounded slot range and source artifacts;
+- set byte/time/storage limits and an abort policy;
+- verify outputs and inventory reconciliation before considering one complete epoch.
+
+No deployment, app start, Triton activation, ClickHouse mutation, Old Faithful CAR stream, or backfill restart is authorized by this checkpoint.
