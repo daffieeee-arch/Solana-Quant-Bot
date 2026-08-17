@@ -2,9 +2,9 @@
 
 ## Status
 
-**LOCAL IMPLEMENTATION CHECKPOINT — NOT RESEARCH READY.**
+**MERGED CONTRACT BOUNDARY — `researchReady: false`.**
 
-Phase 3 is merged on `main` at squash commit `f3d4dbc12d292ade44acf814b493aeaff0aae891`. Phase 4 is isolated on `phase4/old-faithful-jetstreamer-adapter` and currently contains only a transport-free TypeScript contract plus fixture tests. It has not streamed Old Faithful, run Jetstreamer, started ClickHouse, restarted the paused backfill, approved a real provenance tuple, or produced strategy evidence.
+Phase 4 was squash-merged through PR #5 on `main` as `c7a66292e2b02bc33999e558017a3a742498285d`. It contains only a transport-free TypeScript contract boundary plus fixture tests. It has not streamed or downloaded Old Faithful CAR bytes, run a real Jetstreamer reducer or slot pilot, started ClickHouse, restarted the paused backfill, approved a real provenance tuple, or produced strategy evidence.
 
 ## Pinned source contracts
 
@@ -50,7 +50,7 @@ Phase 3 is merged on `main` at squash commit `f3d4dbc12d292ade44acf814b493aeaff0
 
 `archiveSlotInventoryReconciled` means only that the supplied callbacks agree with the hash-pinned slot inventory for the requested range. It does **not** prove that the complete CAR bytes were downloaded and hashed, that every transaction was emitted durably by a real reducer, or that Silver/Gold research data is approved.
 
-## Tests and local gates
+## Tests and merge gates
 
 `tests/old-faithful-jetstreamer-adapter.test.ts` covers:
 
@@ -63,11 +63,12 @@ Phase 3 is merged on `main` at squash commit `f3d4dbc12d292ade44acf814b493aeaff0
 - conflicting `(slot, transaction_slot_index)` or signature identity rejection;
 - fabricated candidate, sparse instruction, unknown-field, and oversized nested observation rejection.
 
-Fresh certified Node `v22.23.2` results for the current local checkpoint:
+Fresh certified Node `v22.23.2` results, re-proven by post-merge main CI run `32072251102`:
 
 - full suite: **785/785 passed across 68 files**;
 - TypeScript: clean;
 - build: green;
+- repository policy: PASS;
 - research transport-free built graph: PASS;
 - frontend build: green with the pre-existing non-blocking bundle-size warning.
 
@@ -84,10 +85,10 @@ The next code slice is a separate read-only, file-output-only Rust reducer again
 
 Before any real archive read, run, or slot pilot:
 
-- independently review the exact local patch;
+- implement and independently review the exact Rust-reducer patch on a new feature branch;
 - bind review and tests to an exact commit;
 - obtain explicit user approval for the bounded slot range and source artifacts;
 - set byte/time/storage limits and an abort policy;
 - verify outputs and inventory reconciliation before considering one complete epoch.
 
-No deployment, app start, Triton activation, ClickHouse mutation, Old Faithful CAR stream, or backfill restart is authorized by this checkpoint.
+No deployment, app start, Triton activation, ClickHouse mutation, Old Faithful CAR download/stream, real slot pilot, or backfill restart is authorized by this merged contract boundary.

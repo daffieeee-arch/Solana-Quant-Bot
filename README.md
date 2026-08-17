@@ -10,7 +10,7 @@ Private, **paper-only** Solana trading research project. The repository contains
 - Configured TrueNAS image: `solana-bot:contra-audit16-offline-pump-3e95a3c`.
 - Last verified app state during the 2026-08-16 review: **STOPPED**, `active_containers=0`; do not describe it as currently running without a fresh runtime query.
 - Configured runtime mode: `OFFLINE_ZERO_COST` with `TRITON_LIVE_ENABLED=false`.
-- Immutable functional baseline quality: 592 tests. The current local Phase-4 branch passes 785 tests across 68 files under Node 22, including adversarial Bronze, transport-isolation, immutable-source, slot-coverage, and persisted-observation gates. Phase 4 remains uncommitted and not research-ready pending independent review.
+- Immutable functional baseline quality: 592 tests. Phase 4 was squash-merged through PR #5 as a transport-free Old Faithful/Jetstreamer contract boundary; post-merge main CI passes 785 tests across 68 files under Node 22 plus TypeScript, build, repository-policy, and transport-isolation gates. The boundary remains explicitly `researchReady: false`.
 
 Read [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md) before changing code.
 
@@ -66,7 +66,7 @@ Do not work directly on `main`. The immutable functional baseline remains recove
 
 ## Historical data
 
-ClickHouse contains the paused v1 `TRANSACTION_NET_SWAP` dataset. It supports transaction-level net-flow forensics, not a complete event-level tape or Pump strategy evidence. Bronze capture exists as a pure boundary; a real archive adapter plus Silver/Gold event/state layers remain required.
+ClickHouse contains the paused v1 `TRANSACTION_NET_SWAP` dataset. It supports transaction-level net-flow forensics, not a complete event-level tape or Pump strategy evidence. Bronze capture and the merged Phase-4 archive contract boundary exist, but a real read-only Jetstreamer reducer plus Silver/Gold event/state layers remain required.
 
 The file-only Pump historical harness rejects v1 as OOS/parity evidence. See [`docs/PUMP_OFFLINE_RESEARCH.md`](docs/PUMP_OFFLINE_RESEARCH.md) for the audited limitations and required `PUMP_SNAPSHOT_V2` contract.
 

@@ -17,7 +17,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - Last read-only TrueNAS observation on 2026-08-16: app **STOPPED**, `active_containers=0`
 - PR #2 was squash-merged to `main` as `d13f7f929e41258f81025a26c5495370cb528ee2`; the ledger CI-race hotfix PR #3 was squash-merged as `fc03f13de1e417848cdddc254224565dec360566`.
 - PR #4 (Phase 3 Bronze capture) was squash-merged as `f3d4dbc12d292ade44acf814b493aeaff0aae891`; post-merge CI succeeded.
-- Current work is isolated on `phase4/old-faithful-jetstreamer-adapter`.
+- PR #5 (Phase 4 Old Faithful/Jetstreamer contract boundary) was squash-merged as `c7a66292e2b02bc33999e558017a3a742498285d`; post-merge main CI run `32072251102` succeeded.
 
 ## What is proven?
 
@@ -32,7 +32,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - Network-isolated replay tests with external fetches blocked
 - A file-only Pump research harness that rejects unsuitable v1 data before simulation and reuses production gates/scoring/portfolio lifecycle for accepted v2 snapshots
 - A transport-free `PUMP_V2_BRONZE_TRANSACTION_1` capture boundary with strict chain coordinates, loaded-address resolution, top-level/inner instruction ordering, exact native/token integer strings, every Pump candidate, PDA identity, failed-transaction separation, and explicit quarantine
-- A local Phase 4 contract that binds Pump Bronze observations to exact-key, domain-hashed Old Faithful source manifests and reconciles Jetstreamer block callbacks against hash-pinned slot-inventory bytes while remaining `researchReady: false`
+- The merged Phase 4 contract boundary binds Pump Bronze observations to exact-key, domain-hashed Old Faithful source manifests and reconciles Jetstreamer block callbacks against hash-pinned slot-inventory bytes while remaining `researchReady: false`
 - A machine-readable read-only v1 forensic manifest that preserves 15 parts / 562,915,792 rows as incomplete `TRANSACTION_NET_SWAP_V1` evidence, never Pump OOS evidence; generator-side writer state is explicitly unverified
 
 ## What is not proven?
@@ -85,15 +85,15 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 
 ## Current task
 
-Phase 3 is merged through PR #4 with green post-merge CI. The local Phase 4 branch, based exactly on merge commit `f3d4dbc12d292ade44acf814b493aeaff0aae891`, implements only the transport-free TypeScript boundary described in `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`: separate immutable source and adapter-provenance identities, Jetstreamer transaction/block envelope mapping into the reviewed Bronze capture, exact full-inventory verification filtered to a bounded requested range, deterministic callback/transaction coverage, and explicit `researchReady: false`. Fresh certified Node `v22.23.2` gates pass 785 tests across 68 files, TypeScript, build, and the research transport-free graph.
+Phase 4 is merged through PR #5 as `c7a66292e2b02bc33999e558017a3a742498285d` with successful post-merge main CI. It implements only the transport-free TypeScript boundary described in `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`: separate immutable source and adapter-provenance identities, Jetstreamer transaction/block envelope mapping into the reviewed Bronze capture, exact full-inventory verification filtered to a bounded requested range, deterministic callback/transaction coverage, and explicit `researchReady: false`. Post-merge CI passes 785 tests across 68 files, TypeScript, build, repository policy, and the research transport-free graph.
 
 The read-only data-suitability audit still classifies `TRANSACTION_NET_SWAP_V1` as unfit for Pump OOS/parity. Phase 4 does not create Silver/Gold data or registry approval. The real-v2 reviewed-provenance registry remains intentionally empty. Pool-depth replay remains HOLD pending correction of production 6/9-decimal conversion. Read `docs/PUMP_OFFLINE_RESEARCH.md`, `docs/PHASE3_PUMP_V2_PILOT.md`, and `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md` before review.
 
-Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickHouse, or stream a real Old Faithful CAR as part of this local contract checkpoint.
+Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickHouse, download/stream a real Old Faithful CAR, or run a real slot pilot as part of this merged contract boundary.
 
-## Next product task after this branch
+## Next product task
 
-Run independent exact-patch review. Then implement the separate read-only, file-output-only Rust reducer against pinned Jetstreamer `v0.7.0`, including transaction-to-block-time buffering and crash-safe immutable output. Stop for explicit double-GO before commit/push/PR and obtain a separate explicit approval before any bounded real slot pilot. Silver events/state, causal rug-risk parity, registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
+Create a new feature branch from current `origin/main` for the separate read-only, file-output-only Rust reducer against pinned Jetstreamer `v0.7.0`, including transaction-to-block-time buffering and crash-safe immutable output. Preserve strict TDD, full quality gates, exact-patch binding, and two independent reviews; stop for explicit GO before commit/push/PR and obtain separate explicit approval before any bounded real slot pilot or CAR download. Silver events/state, causal rug-risk parity, registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
 
 ## Recovery source of truth
 
