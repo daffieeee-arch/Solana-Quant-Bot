@@ -44,7 +44,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - Deep loaded-address resolution for real versioned transactions
 - Non-Pump canonical identities, price state, and exit paths
 - Complete event-level historical data; v1 is transaction-net only
-- A real read-only Jetstreamer Rust reducer that consumes actual `TransactionData`/`BlockData`, joins block time, and durably emits the Phase 4 envelopes/coverage ledger
+- A committed, merged, real-archive-proven read-only Jetstreamer Rust reducer; the Phase-5 branch currently contains only an uncommitted fixture-verified candidate
 - Complete CAR-byte verification or any approved real Old Faithful slot pilot
 - Silver Pump TradeEvent/state decoding, causal rug/holder/authority snapshots, registry approval, or any strategy result from the Bronze pilot
 - Backfill completion/watchdog/repair fixes
@@ -80,6 +80,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - `src/research/pump-historical.ts`, `src/research/pump-historical-cli.ts` — fail-closed, file-only Pump research readiness and production-lifecycle replay
 - `src/research/pump-v2-bronze.ts` — strict transport-free Phase 3 transaction/instruction/Pump-candidate capture boundary
 - `src/research/old-faithful-jetstreamer-adapter.ts` — Phase 4 source-manifest, Jetstreamer envelope, Bronze binding, and slot-inventory coverage contract
+- `rust/old-faithful-pump-reducer`, `rust/linux-kernel-namespace-lock`, `rust/jetstreamer-v0-7-callback-types`, and `rust/solana-runtime-v3.1.12-bank-types` — uncommitted Phase-5 reducer candidate, Linux crash-released namespace lock, and transport-free callback snapshots pinned to Jetstreamer/runtime provenance, with atomically published immutable slot output/WAL/checkpoints, pinned authoritative directory identities, bounded crash-residue recovery, and adversarial fixtures
 - `docs/PHASE3_PUMP_V2_PILOT.md`, `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`, `docs/research/V1_FORENSIC_MANIFEST.json` — phase gates and immutable evidence contracts
 - `.github/workflows/ci.yml`, `scripts/ci-repository-policy.mjs` — validation-only CI
 
@@ -93,7 +94,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-Create a new feature branch from current `origin/main` for the separate read-only, file-output-only Rust reducer against pinned Jetstreamer `v0.7.0`, including transaction-to-block-time buffering and crash-safe immutable output. Preserve strict TDD, full quality gates, exact-patch binding, and two independent reviews; stop for explicit GO before commit/push/PR and obtain separate explicit approval before any bounded real slot pilot or CAR download. Silver events/state, causal rug-risk parity, registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
+Finish exact-patch review of the uncommitted Phase-5 Rust reducer candidate, then stop for explicit GO before commit/push/PR. A separate explicit approval remains mandatory before any bounded real slot pilot or CAR download. Silver events/state, causal rug-risk parity, registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
 
 ## Recovery source of truth
 

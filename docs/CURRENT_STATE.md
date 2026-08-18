@@ -84,7 +84,7 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 2. Live Pump first-event/connectivity not re-proven.
 3. Live budget duration, request/byte metering, hard stops, and auto-disconnect not implemented.
 4. MarketIdentity broader enforcement remains shadow-only.
-5. The transport-free Phase 4 source-manifest, Jetstreamer envelope, and slot-inventory reconciliation contract boundary is merged, but remains `researchReady: false`; the real read-only Rust reducer that consumes actual Jetstreamer callbacks and durably emits these records remains unimplemented and unproven.
+5. The transport-free Phase 4 contract boundary is merged. Phase 5 has an uncommitted fixture-verified Rust reducer candidate against pinned Jetstreamer v0.7.0, but it is not merged, has not read real CAR bytes, and remains `researchReady: false`.
 6. Non-Pump identity/pricing/exit paths are incomplete.
 7. ClickHouse and backfill infrastructure fixes remain open.
 8. A reviewed `PUMP_SNAPSHOT_V2` Silver parser/export is still required before chronological Pump OOS evidence can be produced. The Phase 3 Bronze capture is not registry-approved research data; the registry remains empty, v1 must not be used for tuning, and pool-depth replay remains HOLD pending decimal-math correction.
@@ -92,4 +92,4 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 
 ## Next recommended product task
 
-Start the real read-only, file-output-only Rust reducer against pinned Jetstreamer `v0.7.0` only on a new feature branch from current `origin/main`, with transaction-to-block-time buffering and crash-safe immutable outputs. Preserve strict TDD, exact-patch binding, full quality gates, two independent reviews, and an explicit GO before commit/push/PR; obtain a separate explicit approval before any real Old Faithful slot pilot or CAR download. Do not start ClickHouse/backfill, tune on v1, or claim OOS readiness from Bronze/coverage artifacts alone.
+Complete exact-patch review of the uncommitted Phase-5 reducer candidate and stop for explicit GO before commit/push/PR. Obtain separate explicit approval before any real Old Faithful slot pilot or CAR download. Do not start ClickHouse/backfill, tune on v1, or claim OOS readiness from Bronze/coverage artifacts alone.

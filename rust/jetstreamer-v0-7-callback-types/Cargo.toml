@@ -1,0 +1,31 @@
+[package]
+name = "jetstreamer-firehose"
+version = "0.7.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Transport-free vendored Jetstreamer v0.7.0 callback type snapshot"
+
+[package.metadata.upstream]
+repository = "https://github.com/anza-xyz/jetstreamer.git"
+tag = "jetstreamer-firehose@v0.7.0"
+revision = "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24"
+firehose_rs_sha256 = "572ec56122e898f2318adc34d5998296b4fa0d31cf4bcab40950f5615a526a00"
+
+[lib]
+name = "jetstreamer_firehose"
+path = "src/lib.rs"
+
+[dependencies]
+solana-hash = "=3.1.0"
+solana-runtime = { version = "=3.1.12", path = "../solana-runtime-v3.1.12-bank-types" }
+solana-signature = "=3.1.0"
+solana-transaction = "=3.0.2"
+solana-transaction-status = "=3.1.12"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
