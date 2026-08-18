@@ -18,6 +18,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - PR #2 was squash-merged to `main` as `d13f7f929e41258f81025a26c5495370cb528ee2`; the ledger CI-race hotfix PR #3 was squash-merged as `fc03f13de1e417848cdddc254224565dec360566`.
 - PR #4 (Phase 3 Bronze capture) was squash-merged as `f3d4dbc12d292ade44acf814b493aeaff0aae891`; post-merge CI succeeded.
 - PR #5 (Phase 4 Old Faithful/Jetstreamer contract boundary) was squash-merged as `c7a66292e2b02bc33999e558017a3a742498285d`; post-merge main CI run `32072251102` succeeded.
+- PR #7 contains the committed and pushed fixture-verified Phase-5 Rust reducer. It is open and not merged; no real archive/CAR/slot data has been processed, and `researchReady: false` remains mandatory.
 
 ## What is proven?
 
@@ -44,7 +45,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - Deep loaded-address resolution for real versioned transactions
 - Non-Pump canonical identities, price state, and exit paths
 - Complete event-level historical data; v1 is transaction-net only
-- A committed, merged, real-archive-proven read-only Jetstreamer Rust reducer; the Phase-5 branch currently contains only an uncommitted fixture-verified candidate
+- A merged, real-archive-proven read-only Jetstreamer Rust reducer; the fixture-verified Phase-5 implementation is committed and pushed in open PR #7 but is not merged, has processed no real archive/CAR/slot data, and remains `researchReady: false`
 - Complete CAR-byte verification or any approved real Old Faithful slot pilot
 - Silver Pump TradeEvent/state decoding, causal rug/holder/authority snapshots, registry approval, or any strategy result from the Bronze pilot
 - Backfill completion/watchdog/repair fixes
@@ -80,21 +81,21 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - `src/research/pump-historical.ts`, `src/research/pump-historical-cli.ts` — fail-closed, file-only Pump research readiness and production-lifecycle replay
 - `src/research/pump-v2-bronze.ts` — strict transport-free Phase 3 transaction/instruction/Pump-candidate capture boundary
 - `src/research/old-faithful-jetstreamer-adapter.ts` — Phase 4 source-manifest, Jetstreamer envelope, Bronze binding, and slot-inventory coverage contract
-- `rust/old-faithful-pump-reducer`, `rust/linux-kernel-namespace-lock`, `rust/jetstreamer-v0-7-callback-types`, and `rust/solana-runtime-v3.1.12-bank-types` — uncommitted Phase-5 reducer candidate, Linux crash-released namespace lock, and transport-free callback snapshots pinned to Jetstreamer/runtime provenance, with atomically published immutable slot output/WAL/checkpoints, pinned authoritative directory identities, bounded crash-residue recovery, and adversarial fixtures
+- `rust/old-faithful-pump-reducer`, `rust/linux-kernel-namespace-lock`, `rust/jetstreamer-v0-7-callback-types`, and `rust/solana-runtime-v3.1.12-bank-types` — committed and pushed Phase-5 reducer in open PR #7, Linux crash-released namespace lock, and transport-free callback snapshots pinned to Jetstreamer/runtime provenance, with atomically published immutable slot output/WAL/checkpoints, pinned authoritative directory identities, bounded crash-residue recovery, and adversarial fixtures; not merged and not run on real archive/CAR/slot data
 - `docs/PHASE3_PUMP_V2_PILOT.md`, `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`, `docs/research/V1_FORENSIC_MANIFEST.json` — phase gates and immutable evidence contracts
 - `.github/workflows/ci.yml`, `scripts/ci-repository-policy.mjs` — validation-only CI
 
 ## Current task
 
-Phase 4 is merged through PR #5 as `c7a66292e2b02bc33999e558017a3a742498285d` with successful post-merge main CI. It implements only the transport-free TypeScript boundary described in `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`: separate immutable source and adapter-provenance identities, Jetstreamer transaction/block envelope mapping into the reviewed Bronze capture, exact full-inventory verification filtered to a bounded requested range, deterministic callback/transaction coverage, and explicit `researchReady: false`. Post-merge CI passes 785 tests across 68 files, TypeScript, build, repository policy, and the research transport-free graph.
+Phase 4 is merged through PR #5 as `c7a66292e2b02bc33999e558017a3a742498285d` with successful post-merge main CI. Phase 5 is committed and pushed in open PR #7 and is not merged. Its canonical CI update requires Node plus exact Rust 1.97.1 formatting, clippy, all-target tests, and locked build. The reducer has processed no real archive/CAR/slot data and remains `researchReady: false`.
 
 The read-only data-suitability audit still classifies `TRANSACTION_NET_SWAP_V1` as unfit for Pump OOS/parity. Phase 4 does not create Silver/Gold data or registry approval. The real-v2 reviewed-provenance registry remains intentionally empty. Pool-depth replay remains HOLD pending correction of production 6/9-decimal conversion. Read `docs/PUMP_OFFLINE_RESEARCH.md`, `docs/PHASE3_PUMP_V2_PILOT.md`, and `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md` before review.
 
-Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickHouse, download/stream a real Old Faithful CAR, or run a real slot pilot as part of this merged contract boundary.
+Do not merge PR #7 without a separate explicit merge GO. Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickHouse, download/stream a real Old Faithful CAR, or run a real slot pilot.
 
 ## Next product task
 
-Finish exact-patch review of the uncommitted Phase-5 Rust reducer candidate, then stop for explicit GO before commit/push/PR. A separate explicit approval remains mandatory before any bounded real slot pilot or CAR download. Silver events/state, causal rug-risk parity, registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
+Complete fresh-context review and GitHub CI validation of the committed Phase-5 PR #7 update, then stop before merge. A separate explicit merge GO and separate approval before any bounded real slot pilot or CAR download remain mandatory. Silver events/state, causal rug-risk parity, registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
 
 ## Recovery source of truth
 

@@ -23,10 +23,11 @@ Job name: `tests-build-zero-cost`.
 - checkout credentials are not persisted;
 - exactly one `actions/checkout` step is allowed, and it must explicitly set `persist-credentials: false`;
 - only the reviewed `actions/checkout@v7.0.1` and `actions/setup-node@v7.0.0` actions are allowed;
+- the Rust toolchain is installed by the exact canonical `rustup` command and pinned to `1.97.1` with only `clippy` and `rustfmt` components;
 - no repository or production secrets are referenced;
 - `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true` are defined once at workflow level;
 - safety variables may not be overridden by a job, step, container, inline map, quoted key, or another nested mapping;
-- the ordered action inputs and `run` commands must exactly match the reviewed validation-only workflow;
+- the ordered action inputs and `run` commands, including every Rust gate, must exactly match the reviewed validation-only workflow;
 - no Docker push, SSH/SCP, kubectl, TrueNAS deployment, Triton activation, backfill action, or ClickHouse mutation.
 
 ## Semantic workflow policy
@@ -71,6 +72,7 @@ Adversarial tests cover:
 - `github.env` and expression-based live unlocks;
 - self-hosted runners, extra jobs, containers, and services;
 - arbitrary commands, action-input drift, trigger drift, and a second tracked workflow;
+- Rust toolchain drift, removal/replacement of any Rust gate, loss of `--locked`/`--all-targets`, or weakening of `-D warnings`;
 - unsupported YAML syntax failing closed.
 
 The complete suite includes adversarial repository-policy, zero-cost, Pump lifecycle/research, Phase-3 Bronze, transport-policy, forensic-generator, and immutable-manifest coverage. Exact totals are reported from the fresh CI run rather than kept as a stale Phase-specific constant here.
@@ -85,10 +87,15 @@ The backend build runs `verify:research-transport` after TypeScript compilation.
 4. complete Vitest suite;
 5. `npx tsc --noEmit`;
 6. backend and frontend build;
-7. committed patch whitespace validation:
+7. exact Rust `1.97.1` toolchain installation with `clippy` and `rustfmt`;
+8. reducer `cargo fmt --check` plus separate format checks for the Linux namespace-lock, Jetstreamer callback snapshot, and Solana runtime snapshot crates;
+9. locked all-target reducer clippy with `-D warnings`;
+10. locked all-target reducer tests, including all Linux System V writer-exclusion and crash/recovery integration tests;
+11. locked reducer build;
+12. committed patch whitespace validation:
    - pull requests use the explicit GitHub base and head SHAs;
    - pushes inspect the committed HEAD patch;
-8. verification that checks did not modify tracked files.
+13. verification that checks did not modify tracked files.
 
 ## Limits
 
@@ -116,6 +123,14 @@ npx vitest run \
 npm test
 npx tsc --noEmit
 npm run build
+rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
+cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
+cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
+cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
+cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
+cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
+cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked
 git diff --check origin/main...HEAD
 git status --porcelain
 git ls-files -ci --exclude-standard

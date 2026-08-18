@@ -56,6 +56,8 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: package-lock.json
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
       - name: Install locked dependencies
         run: npm ci
       - name: Enforce repository and zero-cost policy
@@ -68,6 +70,20 @@ jobs:
         run: npx tsc --noEmit
       - name: Build backend and frontend
         run: npm run build
+      - name: Check Rust reducer formatting
+        run: cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
+      - name: Check Linux namespace-lock formatting
+        run: cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
+      - name: Check Jetstreamer callback snapshot formatting
+        run: cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
+      - name: Check Solana runtime snapshot formatting
+        run: cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
+      - name: Lint Rust reducer
+        run: cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
+      - name: Test Rust reducer
+        run: cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
+      - name: Build Rust reducer
+        run: cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked
       - name: Check committed pull-request patch integrity
         if: github.event_name == 'pull_request'
         run: git diff --check "\${{ github.event.pull_request.base.sha }}...\${{ github.event.pull_request.head.sha }}"
@@ -87,7 +103,50 @@ const addStep = (body: string) => SAFE_WORKFLOW.replace(
 describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
-    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(11);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(19);
+  });
+
+  it('requires every exact pinned Rust gate and rejects silent removal or replacement', () => {
+    const requiredRustCommands = [
+      'rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt',
+      'cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check',
+      'cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check',
+      'cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check',
+      'cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check',
+      'cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings',
+      'cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets',
+      'cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked',
+    ];
+    for (const command of requiredRustCommands) {
+      const removed = SAFE_WORKFLOW
+        .split('\n')
+        .filter((line) => !line.includes(command) && !line.includes(`name: ${
+          command.includes('toolchain') ? 'Install pinned Rust toolchain'
+            : command.includes('namespace-lock') ? 'Check Linux namespace-lock formatting'
+              : command.includes('jetstreamer') ? 'Check Jetstreamer callback snapshot formatting'
+                : command.includes('solana-runtime') ? 'Check Solana runtime snapshot formatting'
+                  : command.includes(' fmt ') ? 'Check Rust reducer formatting'
+                    : command.includes(' clippy ') ? 'Lint Rust reducer'
+                      : command.includes(' test ') ? 'Test Rust reducer'
+                        : 'Build Rust reducer'
+        }`))
+        .join('\n');
+      expect(errors(removed)).toMatch(/canonical steps|canonical workflow/i);
+      expect(errors(SAFE_WORKFLOW.replace(command, 'npm test'))).toMatch(/unapproved run command|canonical workflow/i);
+    }
+  });
+
+  it('rejects Rust toolchain drift and weakening of the all-targets locked gates', () => {
+    const variants = [
+      SAFE_WORKFLOW.replace('toolchain install 1.97.1', 'toolchain install stable'),
+      SAFE_WORKFLOW.replace('clippy --manifest-path', 'clippy --no-deps --manifest-path'),
+      SAFE_WORKFLOW.replace('test --manifest-path', 'test --lib --manifest-path'),
+      SAFE_WORKFLOW.replace('build --manifest-path', 'build --release --manifest-path'),
+      SAFE_WORKFLOW.replace(' --locked --all-targets -- -D warnings', ' --all-targets'),
+    ];
+    for (const variant of variants) {
+      expect(errors(variant)).toMatch(/unapproved run command|canonical workflow/i);
+    }
   });
 
   it('rejects the original comment bypass and quoted/unquoted top-level live values', () => {

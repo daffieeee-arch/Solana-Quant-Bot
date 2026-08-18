@@ -69,6 +69,14 @@ npm run ci:policy
 npm test
 npx tsc --noEmit
 npm run build
+rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
+cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
+cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
+cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
+cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
+cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
+cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked
 git diff --check
 git status --porcelain
 ```

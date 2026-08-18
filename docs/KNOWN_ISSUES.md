@@ -34,7 +34,7 @@ Only current open items belong here. Resolved issues remain in Git history.
 
 17. **v1 is transaction-net only:** multi-hop, inner-CPI, pool-route, and event-level detail are not preserved.
 18. **Duplicate estimate is limited:** roughly 3.4% cross-part exact-retry overlap was observed in a biased sample. The dataset-wide ratio is unknown and normal background merges may already have consolidated some rows. Do not claim that no deduplication occurred merely because no global `OPTIMIZE FINAL` was run.
-19. **v2 event-level pipeline remains incomplete:** Bronze capture and the merged Phase-4 contracts exist; Phase 5 has only an uncommitted fixture-verified Rust reducer candidate. Real CAR-byte verification, a reviewed/merged reducer, Silver/Gold schema and decoding, reviewed parser provenance, and an approved pilot source pass remain absent.
+19. **v2 event-level pipeline remains incomplete:** Bronze capture and the merged Phase-4 contracts exist; the fixture-verified Phase-5 Rust reducer is committed and pushed in open PR #7 but remains unmerged and `researchReady: false`. Real CAR-byte verification, a merged reducer, Silver/Gold schema and decoding, reviewed parser provenance, and an approved pilot source pass remain absent.
 
 ## Repository and dependencies
 

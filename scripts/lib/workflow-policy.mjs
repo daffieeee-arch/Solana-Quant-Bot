@@ -33,6 +33,10 @@ const CANONICAL_STEPS = [
     uses: 'actions/setup-node@v7.0.0',
     with: { 'node-version': '22', cache: 'npm', 'cache-dependency-path': 'package-lock.json' },
   },
+  {
+    name: 'Install pinned Rust toolchain',
+    run: 'rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt',
+  },
   { name: 'Install locked dependencies', run: 'npm ci' },
   { name: 'Enforce repository and zero-cost policy', run: 'npm run ci:policy' },
   {
@@ -42,6 +46,34 @@ const CANONICAL_STEPS = [
   { name: 'Run complete test suite', run: 'npm test' },
   { name: 'Type-check', run: 'npx tsc --noEmit' },
   { name: 'Build backend and frontend', run: 'npm run build' },
+  {
+    name: 'Check Rust reducer formatting',
+    run: 'cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check',
+  },
+  {
+    name: 'Check Linux namespace-lock formatting',
+    run: 'cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check',
+  },
+  {
+    name: 'Check Jetstreamer callback snapshot formatting',
+    run: 'cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check',
+  },
+  {
+    name: 'Check Solana runtime snapshot formatting',
+    run: 'cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check',
+  },
+  {
+    name: 'Lint Rust reducer',
+    run: 'cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings',
+  },
+  {
+    name: 'Test Rust reducer',
+    run: 'cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets',
+  },
+  {
+    name: 'Build Rust reducer',
+    run: 'cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked',
+  },
   {
     name: 'Check committed pull-request patch integrity',
     if: "github.event_name == 'pull_request'",
