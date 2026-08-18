@@ -72,21 +72,24 @@ Fresh certified Node `v22.23.2` results, re-proven by post-merge main CI run `32
 - research transport-free built graph: PASS;
 - frontend build: green with the pre-existing non-blocking bundle-size warning.
 
-## Remaining Phase 4 gate
+## Phase 5 open pull request
 
-The next code slice is a separate read-only, file-output-only Rust reducer against the pinned Jetstreamer API. It must:
+Open PR #7 contains the committed and pushed fixture-verified read-only, file-output-only Phase-5 Rust reducer against transport-free callback-type snapshots pinned to Jetstreamer v0.7.0 commit `cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24` and `solana-runtime` v3.1.12. It remains unmerged, has processed no real archive/CAR/slot data, and remains `researchReady: false`. The vendored packages record the audited upstream `firehose.rs` SHA-256, crates.io runtime checksum, and reward-type source SHA-256 while excluding HTTP, QUIC, Tokio, socket, metrics-client, and archive-client implementations. It:
 
-1. project actual legacy and v0 `TransactionData` without lossy numeric conversion;
-2. buffer by `(slot, transaction_slot_index)` until matching `BlockData::Block` supplies time;
-3. preserve failed transactions, loaded-address order, inner CPI coordinates, token owners/program IDs, and raw amounts;
-4. handle provisional `PossibleLeaderSkipped` callbacks without prematurely finalizing absence;
-5. write immutable per-slot output plus a crash-safe append-only coverage ledger;
-6. remain independent of ClickHouse and the paused legacy backfill.
+1. projects the pinned `TransactionData`/`BlockData` callback payload fields for legacy and v0 transactions without lossy numeric conversion;
+2. buffers by `(slot, transaction_slot_index)` until matching `BlockData::Block` supplies time;
+3. preserves failed transactions, loaded-address order, inner CPI coordinates, token owners/program IDs, and raw amounts;
+4. handles provisional `PossibleLeaderSkipped` callbacks without prematurely finalizing absence;
+5. writes immutable per-slot output plus crash-safe WAL/checkpoints and an append-only coverage ledger; WALs, checkpoint generations, and slot artifacts are fully written and synced at non-authoritative deterministic temporary paths before atomic hard-link publication, while startup discards bounded recognized crash residue (including the prior UUID slot-temp format) and retains fail-closed validation for malformed authoritative files; startup re-derives canonical slot bytes and transaction/block semantics from checkpoint state before WAL publication, enforces the current output and manifest-derived artifact-count bounds before recovery mutation, preserves invalid WAL evidence, refuses already-covered WAL slots, and refuses to recreate a missing authoritative coverage ledger over established state; an active writer pins and revalidates the output, slots, and checkpoints directory identities, revalidates the exact artifact/coverage/state set before every commit, and synchronously resolves a durable WAL before accepting a retry;
+6. on Linux, maps the same-effective-UID, normalized-output namespace to a System V semaphore collision registry whose slots store complete SHA-256 fingerprints and use separate `SEM_UNDO` active-writer semaphores; distinct full namespaces sharing the 32-bit registry key do not alias, process death releases active ownership without pathname or `/proc` discovery, incompatible/full registries fail closed, and external plus in-output hard-linked advisory-lock paths remain defense in depth against accidental/pathname-level conflicts;
+7. remains independent of ClickHouse and the paused legacy backfill.
+
+This is not merged or real-archive proof. `researchReady` remains hard-coded false.
 
 Before any real archive read, run, or slot pilot:
 
-- implement and independently review the exact Rust-reducer patch on a new feature branch;
-- bind review and tests to an exact commit;
+- merge PR #7 only after a separate explicit merge GO and green exact-head GitHub CI;
+- keep every review, test, and CI result bound to the exact PR head;
 - obtain explicit user approval for the bounded slot range and source artifacts;
 - set byte/time/storage limits and an abort policy;
 - verify outputs and inventory reconciliation before considering one complete epoch.

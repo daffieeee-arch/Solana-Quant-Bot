@@ -1,0 +1,42 @@
+[package]
+name = "old-faithful-pump-reducer"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "UNLICENSED"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+base64 = "0.22"
+fs2 = "0.4"
+jetstreamer-firehose = { version = "=0.7.0", path = "../jetstreamer-v0-7-callback-types" }
+linux-kernel-namespace-lock = { path = "../linux-kernel-namespace-lock" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+solana-address = { version = "=1.1.0", features = ["curve25519", "decode", "std"] }
+
+solana-account-decoder-client-types = "=3.1.12"
+solana-message = "=3.0.1"
+solana-hash = "=3.1.0"
+solana-signature = "=3.1.0"
+solana-transaction = "=3.0.2"
+solana-transaction-error = "=3.2.0"
+solana-transaction-status = "=3.1.12"
+thiserror = "2"
+time = { version = "0.3", features = ["formatting", "macros"] }
+
+[dev-dependencies]
+hex = "0.4"
+linux-kernel-namespace-lock = { path = "../linux-kernel-namespace-lock", features = ["test-support"] }
+solana-reward-info = "=3.0.0"
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

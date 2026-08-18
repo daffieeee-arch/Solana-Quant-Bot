@@ -1,0 +1,28 @@
+[package]
+name = "solana-runtime"
+version = "3.1.12"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+description = "Transport-free vendored Solana runtime bank reward callback type snapshot"
+
+[package.metadata.upstream]
+crate = "solana-runtime"
+version = "3.1.12"
+crate_checksum = "0eb482d0c82ee826621758e7fdba331cd78857a94107247a2674216abb4ff808"
+partitioned_epoch_rewards_source_sha256 = "58d97efa198e8997f72681b7def92a5cee1ef859902047c5a05fccafe90199db"
+
+[lib]
+name = "solana_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+solana-address = { version = "=1.1.0", features = ["std"] }
+solana-reward-info = "=3.0.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

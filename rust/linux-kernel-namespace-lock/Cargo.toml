@@ -1,0 +1,17 @@
+[package]
+name = "linux-kernel-namespace-lock"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "UNLICENSED"
+
+[features]
+test-support = []
+
+[dependencies]
+libc = "0.2"
+sha2 = "0.10"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
