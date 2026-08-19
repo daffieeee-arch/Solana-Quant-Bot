@@ -2,9 +2,9 @@
 
 ## Status
 
-**OFFLINE, FIXTURE-ONLY CONTRACT CANDIDATE — `researchReady: false`.**
+**MERGED OFFLINE, FIXTURE-ONLY CONTRACT — `researchReady: false`.**
 
-Phase 6A adds a canonical Pump `CreateEvent`/`TradeEvent` boundary above the merged Bronze capture and Phase-5 Rust reducer. It does not approve a historical dataset, process real archive/CAR/slot bytes, or make any strategy result research-ready.
+Phase 6A was squash-merged through PR #9 as `95511866c31b6325c2341b5b7a3b98c9503d85d1`; post-merge main CI run `32231262382` passed Node 953/953, Rust 60/60, TypeScript, builds, policy, transport isolation, push integrity, and clean-tree gates. It adds a canonical Pump `CreateEvent`/`TradeEvent` boundary above the merged Bronze capture and Phase-5 Rust reducer. It does not approve a historical dataset, process real archive/CAR/slot bytes, provide OOS or profitability evidence, or make any strategy result research-ready.
 
 The implementation is intentionally not connected to Triton, Old Faithful streaming, ClickHouse, the paused backfill, the application runtime, or any deployment path.
 
