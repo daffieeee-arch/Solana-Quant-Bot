@@ -62,6 +62,8 @@ export const eventAuthority = pda('__event_authority');
 export const global = pda('global');
 export const mintAuthority = pda('mint-authority');
 export const associatedCurve = ata(curve, TOKEN_PROGRAM, mint);
+export const associatedCurveToken2022 = ata(curve, TOKEN_2022_PROGRAM, mint);
+export const quoteAssociatedCurve = ata(curve, TOKEN_PROGRAM, WSOL);
 export const associatedUser = ata(user, TOKEN_PROGRAM, mint);
 export const globalVolumeAccumulator = pda('global_volume_accumulator');
 export const userVolumeAccumulator = pda('user_volume_accumulator', user);
@@ -145,7 +147,12 @@ function createInstructionHex(variant: 'create' | 'create_v2'): string {
   ]).toString('hex');
 }
 
-function tradeAccounts(variant: Exclude<SupportedFixtureVariant, 'create' | 'create_v2'>): string[] {
+function tradeAccounts(
+  variant: Exclude<SupportedFixtureVariant, 'create' | 'create_v2'>,
+  baseTokenProgram: typeof TOKEN_PROGRAM | typeof TOKEN_2022_PROGRAM = TOKEN_PROGRAM,
+): string[] {
+  const baseCurveAta = ata(curve, baseTokenProgram, mint);
+  const baseUserAta = ata(user, baseTokenProgram, mint);
   if (variant === 'buy_v2' || variant === 'sell_v2' || variant === 'buy_exact_quote_in_v2') {
     const buybackFeeRecipient = key(42);
     const quoteFeeAta = ata(feeRecipient, TOKEN_PROGRAM, WSOL);
@@ -156,9 +163,9 @@ function tradeAccounts(variant: Exclude<SupportedFixtureVariant, 'create' | 'cre
     const sharingConfig = programPda(FEE_PROGRAM, [Buffer.from('sharing-config'), decodePublicKey(mint)]);
     const associatedUserVolume = ata(userVolumeAccumulator, TOKEN_PROGRAM, WSOL);
     const base = [
-      global, mint, WSOL, TOKEN_PROGRAM, TOKEN_PROGRAM, ASSOCIATED_TOKEN_PROGRAM,
-      feeRecipient, quoteFeeAta, buybackFeeRecipient, quoteBuybackAta, curve, associatedCurve, quoteCurveAta, user,
-      associatedUser, quoteUserAta, creatorVault, associatedCreatorVault, sharingConfig, globalVolumeAccumulator,
+      global, mint, WSOL, baseTokenProgram, TOKEN_PROGRAM, ASSOCIATED_TOKEN_PROGRAM,
+      feeRecipient, quoteFeeAta, buybackFeeRecipient, quoteBuybackAta, curve, baseCurveAta, quoteCurveAta, user,
+      baseUserAta, quoteUserAta, creatorVault, associatedCreatorVault, sharingConfig, globalVolumeAccumulator,
       userVolumeAccumulator, associatedUserVolume, feeConfig, FEE_PROGRAM, SYSTEM_PROGRAM, eventAuthority, PUMP_PROGRAM_ID,
     ];
     if (variant === 'sell_v2') base.splice(19, 1);
@@ -185,10 +192,17 @@ function createAccounts(variant: 'create' | 'create_v2'): string[] {
 
 export function bronzeFixture(
   variant: SupportedFixtureVariant = 'buy',
-  options: { innerParent?: boolean; failed?: boolean; eventOverrides?: Record<string, unknown> } = {},
+  options: {
+    innerParent?: boolean;
+    failed?: boolean;
+    eventOverrides?: Record<string, unknown>;
+    baseTokenProgram?: typeof TOKEN_PROGRAM | typeof TOKEN_2022_PROGRAM;
+  } = {},
 ): PumpV2BronzeTransaction {
   const isCreate = variant === 'create' || variant === 'create_v2';
-  const accounts = isCreate ? createAccounts(variant) : tradeAccounts(variant);
+  if (isCreate && options.baseTokenProgram !== undefined) throw new Error('baseTokenProgram is trade-only');
+  const baseTokenProgram = options.baseTokenProgram ?? TOKEN_PROGRAM;
+  const accounts = isCreate ? createAccounts(variant) : tradeAccounts(variant, baseTokenProgram);
   const allKeys = Array.from(new Set([key(1), ...accounts]));
   const index = (address: string) => allKeys.indexOf(address);
   const parent: PumpV2LocatedInstruction = {
@@ -234,12 +248,14 @@ export function bronzeFixture(
     const buybackFee = BigInt(String(options.eventOverrides?.buybackFee ?? ceilFee(buybackFeeBps)));
     const cashback = BigInt(String(options.eventOverrides?.cashback ?? ceilFee(cashbackFeeBps)));
     const buy = variant !== 'sell' && variant !== 'sell_v2';
-    const userIndex = index(associatedUser);
-    const curveIndex = index(associatedCurve);
+    const baseUserAta = ata(user, baseTokenProgram, mint);
+    const baseCurveAta = ata(curve, baseTokenProgram, mint);
+    const userIndex = index(baseUserAta);
+    const curveIndex = index(baseCurveAta);
     const beforeUser = 10_000_000n;
     const beforeCurve = 100_000_000n;
     const balance = (accountIndex: number, owner: string, amount: bigint): PumpV2TokenBalance => ({
-      accountIndex, mint, owner, programId: TOKEN_PROGRAM, decimals: 6, amount: amount.toString(),
+      accountIndex, mint, owner, programId: baseTokenProgram, decimals: 6, amount: amount.toString(),
     });
     preTokenBalances.push(balance(userIndex, user, beforeUser), balance(curveIndex, curve, beforeCurve));
     postTokenBalances.push(
@@ -247,7 +263,7 @@ export function bronzeFixture(
       balance(curveIndex, curve, options.failed ? beforeCurve : beforeCurve + (buy ? -tokenAmount : tokenAmount)),
     );
     if (variant.endsWith('_v2')) {
-      const roles = tradeAccounts(variant);
+      const roles = tradeAccounts(variant, baseTokenProgram);
       const quoteUserAddress = roles[15]!;
       const quoteCurveAddress = roles[12]!;
       const quoteFeeAddress = roles[7]!;

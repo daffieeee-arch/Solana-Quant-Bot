@@ -40,6 +40,24 @@ describe('research transport policy entrypoint', () => {
     expect(result.stderr).toBe('');
   });
 
+  it('allows only the exact node:util types binding in the Phase 6B state root', async () => {
+    const result = await runStaticPolicy(`
+      import { types as utilTypes } from 'node:util';
+      export const isProxy = (value) => utilTypes.isProxy(value);
+    `, undefined, 'pump-silver-state-contract.js');
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Research transport-free static graph PASS');
+  });
+
+  it('rejects node:util outside the exact Phase 6B state root', async () => {
+    const result = await runStaticPolicy(`
+      import { types as utilTypes } from 'node:util';
+      export const isProxy = (value) => utilTypes.isProxy(value);
+    `);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forbidden research capability');
+  });
+
   it('allows only fixed registry-key descriptor reads in the exact Pump Silver normalizer', async () => {
     const result = await runStaticPolicy(`
       function normalizeFixtureRegistryEntry(entry) {
@@ -49,6 +67,72 @@ describe('research transport policy entrypoint', () => {
     `, undefined, 'pump-silver-contract.js');
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain('Research transport-free static graph PASS');
+  });
+
+  it('allows exact data-descriptor validation in the Phase 6B exact-key helper only', async () => {
+    const result = await runStaticPolicy(`
+      function hasExactOwnKeys(value, expected) {
+        const names = Object.getOwnPropertyNames(value);
+        if (!names.every((name) => expected.includes(name))) return false;
+        for (const name of names) {
+          const descriptor = Object.getOwnPropertyDescriptor(value, name);
+          if (descriptor?.enumerable !== true || !Object.hasOwn(descriptor, 'value')) return false;
+        }
+        return true;
+      }
+      export const validate = hasExactOwnKeys;
+    `, undefined, 'pump-silver-state-contract.js');
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Research transport-free static graph PASS');
+  });
+
+  it('rejects a descriptor-loop value capability escape', async () => {
+    const result = await runStaticPolicy(`
+      function hasExactOwnKeys(value, expected) {
+        const names = Object.getOwnPropertyNames(value);
+        if (!names.every((name) => expected.includes(name))) return false;
+        for (const name of names) {
+          const descriptor = Object.getOwnPropertyDescriptor(value, name);
+          const make = descriptor.value;
+          const proc = make('return process')();
+          const builtinKey = ['getBuiltin', 'Module'].join('');
+          return typeof proc[builtinKey]('node:http2').connect === 'function';
+        }
+        return true;
+      }
+      export const validate = hasExactOwnKeys;
+    `, undefined, 'pump-silver-state-contract.js');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forbidden research capability');
+    expect(result.stdout).not.toContain('PASS');
+  });
+
+  it('rejects a free local descriptor key inside the exact-key helper', async () => {
+    const result = await runStaticPolicy(`
+      function hasExactOwnKeys(value, expected) {
+        const name = 'constructor';
+        return Object.getOwnPropertyDescriptor(value, name);
+      }
+      export const validate = hasExactOwnKeys;
+    `, undefined, 'pump-silver-state-contract.js');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forbidden research capability');
+    expect(result.stdout).not.toContain('PASS');
+  });
+
+  it.each([
+    ['wrong Phase 6B helper', 'pump-silver-state-contract.js', 'otherExactOwnKeys'],
+    ['wrong Phase 6B file', 'entry.js', 'hasExactOwnKeys'],
+  ] as const)('rejects dynamic descriptor validation with %s', async (_label, file, functionName) => {
+    const result = await runStaticPolicy(`
+      function ${functionName}(value, expected) {
+        const names = Object.getOwnPropertyNames(value);
+        return names.every((name) => Object.getOwnPropertyDescriptor(value, name));
+      }
+      export const validate = ${functionName};
+    `, undefined, file);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forbidden research capability');
   });
 
   it.each([

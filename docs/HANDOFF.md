@@ -37,6 +37,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - The merged Phase 4 contract boundary binds Pump Bronze observations to exact-key, domain-hashed Old Faithful source manifests and reconciles Jetstreamer block callbacks against hash-pinned slot-inventory bytes while remaining `researchReady: false`
 - The merged Phase-5 reducer is fixture-verified, read-only, transport-free, pinned to Rust 1.97.1 and Jetstreamer/runtime provenance, and protected by deterministic WAL/checkpoint/coverage plus Linux single-writer gates; it remains `researchReady: false`
 - Merged Phase 6A adds a synthetic, fixture-only canonical Pump `CreateEvent`/`TradeEvent` contract, exact Bronze/CPI-coordinate and account-role validation, and shared Rust/TypeScript golden-vector decoding. Its registry is unapproved and every output remains `researchReady: false`.
+- The Phase 6B branch candidate adds only a synthetic exact-state Pump bonding-curve/mint/base-token-account and v2 quote-token-account before/after contract, complete parent/event causal coordinates, exact golden CAR/inventory/parser/coverage/budget provenance, 34 bounded quarantine codes, seven golden plus 44 adversarial shared Rust/TypeScript vectors, and a transport-free observability description. Every snapshot binds owner, canonical lamports, executable flag and raw data; legacy native quote reserves reconcile to curve-account lamports plus the exact pinned `1_000_000`-lamport synthetic rentreserve, while every other successful account role requires exact pre/post lamport equality. Creator and mayhem state bind to the authenticated Phase 6A event, cashback-coin state is pinned false by the closed synthetic fixture epoch, Token-2022 and failed bindings are directly derived from their authoritative Phase 6A fixtures, provenance/rerun evidence is authenticated before rollback classification, and failed executions require exact full account-state rollback. Public unknown-input validation is inert for accessors/proxies/coercion hooks, accepted and quarantined outputs are detached and deeply immutable, and both languages independently rederive base/v2 quote ATAs. The current Jetstreamer callback still has no instruction-exact complete account state; no runtime integration, real activation range, CAR/archive/slot data or pilot exists, and `approved: false`, `researchReady: false`, and `pilotEligible: false` remain hard-coded.
 - A machine-readable read-only v1 forensic manifest that preserves 15 parts / 562,915,792 rows as incomplete `TRANSACTION_NET_SWAP_V1` evidence, never Pump OOS evidence; generator-side writer state is explicitly unverified
 
 ## What is not proven?
@@ -99,7 +100,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-Phase 6A is merged and independently reviewed. When separately authorized, the next safe development gate is an offline Silver state/provenance contract with independently evidenced activation-slot ranges; it still must not download CAR bytes or run a slot pilot. Separate approval before any bounded real slot pilot or CAR download remains mandatory. Causal rug-risk parity, real registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
+Phase 6B now proves only the offline synthetic state/provenance contract. The next safe gate is **not** a pilot: independently prove a source capability for instruction-exact raw pre/post account bytes plus real deployment/IDL/layout activation boundaries. No CAR download, slot pilot, registry approval, callback/reducer integration, causal risk feature, or chronological research may begin without a separate explicit authorization. `researchReady` remains false.
 
 ## Recovery source of truth
 
@@ -119,7 +120,8 @@ Phase 6A is merged and independently reviewed. When separately authorized, the n
 8. `docs/PHASE3_PUMP_V2_PILOT.md`
 9. `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`
 10. `docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md`
-11. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-12. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-13. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-14. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+11. `docs/PHASE6B_PUMP_SILVER_STATE_PROVENANCE_CONTRACT.md`
+12. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+13. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+14. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+15. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

@@ -22,6 +22,8 @@ use time::{OffsetDateTime, macros::format_description};
 
 mod silver_event;
 pub use silver_event::{SilverEventError, decode_pump_silver_event_hex};
+mod silver_state;
+pub use silver_state::evaluate_pump_silver_state_fixture;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
