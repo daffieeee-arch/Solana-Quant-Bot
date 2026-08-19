@@ -19,6 +19,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - PR #4 (Phase 3 Bronze capture) was squash-merged as `f3d4dbc12d292ade44acf814b493aeaff0aae891`; post-merge CI succeeded.
 - PR #5 (Phase 4 Old Faithful/Jetstreamer contract boundary) was squash-merged as `c7a66292e2b02bc33999e558017a3a742498285d`; post-merge main CI run `32072251102` succeeded.
 - PR #7 (fixture-verified Phase-5 Rust reducer) was squash-merged as `9739eed415c90e4433b77e0cabc46bd32577bb9e`; post-merge main CI run `32162322487` succeeded. No real archive/CAR/slot data has been processed, and `researchReady: false` remains mandatory.
+- PR #9 (Phase 6A canonical Pump Silver event contract) was squash-merged as `95511866c31b6325c2341b5b7a3b98c9503d85d1`; post-merge main CI run `32231262382` passed Node 953/953, Rust 60/60, TypeScript, builds, policy, transport isolation, push integrity, and clean-tree gates. It is fixture-only, used no real CAR/archive/slot data, provides no OOS or profitability evidence, and remains `researchReady: false`.
 
 ## What is proven?
 
@@ -35,7 +36,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - A transport-free `PUMP_V2_BRONZE_TRANSACTION_1` capture boundary with strict chain coordinates, loaded-address resolution, top-level/inner instruction ordering, exact native/token integer strings, every Pump candidate, PDA identity, failed-transaction separation, and explicit quarantine
 - The merged Phase 4 contract boundary binds Pump Bronze observations to exact-key, domain-hashed Old Faithful source manifests and reconciles Jetstreamer block callbacks against hash-pinned slot-inventory bytes while remaining `researchReady: false`
 - The merged Phase-5 reducer is fixture-verified, read-only, transport-free, pinned to Rust 1.97.1 and Jetstreamer/runtime provenance, and protected by deterministic WAL/checkpoint/coverage plus Linux single-writer gates; it remains `researchReady: false`
-- The Phase 6A branch adds a synthetic, fixture-only canonical Pump `CreateEvent`/`TradeEvent` contract, exact Bronze/CPI-coordinate and account-role validation, and shared Rust/TypeScript golden-vector decoding. Its registry is unapproved and every output remains `researchReady: false`.
+- Merged Phase 6A adds a synthetic, fixture-only canonical Pump `CreateEvent`/`TradeEvent` contract, exact Bronze/CPI-coordinate and account-role validation, and shared Rust/TypeScript golden-vector decoding. Its registry is unapproved and every output remains `researchReady: false`.
 - A machine-readable read-only v1 forensic manifest that preserves 15 parts / 562,915,792 rows as incomplete `TRANSACTION_NET_SWAP_V1` evidence, never Pump OOS evidence; generator-side writer state is explicitly unverified
 
 ## What is not proven?
@@ -83,22 +84,22 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - `src/research/pump-historical.ts`, `src/research/pump-historical-cli.ts` — fail-closed, file-only Pump research readiness and production-lifecycle replay
 - `src/research/pump-v2-bronze.ts` — strict transport-free Phase 3 transaction/instruction/Pump-candidate capture boundary
 - `src/research/old-faithful-jetstreamer-adapter.ts` — Phase 4 source-manifest, Jetstreamer envelope, Bronze binding, and slot-inventory coverage contract
-- `src/research/pump-silver-event.ts`, `src/research/pump-silver-contract.ts`, and `rust/old-faithful-pump-reducer/src/silver_event.rs` — Phase 6A fixture-only event wire/parity and fail-closed transaction-contract candidate; never real-registry approval
+- `src/research/pump-silver-event.ts`, `src/research/pump-silver-contract.ts`, and `rust/old-faithful-pump-reducer/src/silver_event.rs` — merged Phase 6A fixture-only event wire/parity and fail-closed transaction contract; never real-registry approval
 - `rust/old-faithful-pump-reducer`, `rust/linux-kernel-namespace-lock`, `rust/jetstreamer-v0-7-callback-types`, and `rust/solana-runtime-v3.1.12-bank-types` — merged Phase-5 reducer, Linux crash-released namespace lock, and transport-free callback snapshots pinned to Jetstreamer/runtime provenance, with atomically published immutable slot output/WAL/checkpoints, pinned authoritative directory identities, bounded crash-residue recovery, and adversarial fixtures; not run on real archive/CAR/slot data and still `researchReady: false`
 - `docs/PHASE3_PUMP_V2_PILOT.md`, `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`, `docs/research/V1_FORENSIC_MANIFEST.json` — phase gates and immutable evidence contracts
 - `.github/workflows/ci.yml`, `scripts/ci-repository-policy.mjs` — validation-only CI
 
 ## Current task
 
-Phase 4 is merged through PR #5 as `c7a66292e2b02bc33999e558017a3a742498285d`. Phase 5 is squash-merged through PR #7 as `9739eed415c90e4433b77e0cabc46bd32577bb9e`; post-merge main CI run `32162322487` passed Node 787/787, Rust 58/58, exact Rust 1.97.1 formatting/clippy/build, TypeScript, backend/frontend build, repository policy, transport isolation, push integrity, and clean-tree gates. The reducer has processed no real archive/CAR/slot data and remains `researchReady: false`.
+Phase 6A is squash-merged through PR #9 as `95511866c31b6325c2341b5b7a3b98c9503d85d1`; post-merge main CI run `32231262382` passed Node 953/953, Rust 60/60, exact Rust 1.97.1 formatting/clippy/build, TypeScript, backend/frontend build, repository policy, transport isolation, push integrity, and clean-tree gates. The fixture-only contract and reducer have processed no real archive/CAR/slot data and remain `researchReady: false`.
 
-The read-only data-suitability audit still classifies `TRANSACTION_NET_SWAP_V1` as unfit for Pump OOS/parity. Phase 6A is synthetic and fixture-only: it does not create real-registry approval, Gold data, or strategy evidence. The real-v2 reviewed-provenance registry remains intentionally empty. Production depth accounting is corrected and regression-tested on this branch for exact 6/9 and legitimate-scale 9/9 raw quantities, integer pool outputs, WAL persistence, and fail-closed unsafe aggregates, but pool-depth research remains HOLD until real source and fill-impact provenance are separately approved. Read `docs/PUMP_OFFLINE_RESEARCH.md`, `docs/PHASE3_PUMP_V2_PILOT.md`, `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`, and `docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md` before review.
+The read-only data-suitability audit still classifies `TRANSACTION_NET_SWAP_V1` as unfit for Pump OOS/parity. Merged Phase 6A is synthetic and fixture-only: it does not create real-registry approval, Gold data, OOS results, profitability evidence, or strategy evidence. The real-v2 reviewed-provenance registry remains intentionally empty. Production depth accounting is corrected and regression-tested in merged Phase 6A for exact 6/9 and legitimate-scale 9/9 raw quantities, integer pool outputs, WAL persistence, and fail-closed unsafe aggregates, but pool-depth research remains HOLD until real source and fill-impact provenance are separately approved. Read `docs/PUMP_OFFLINE_RESEARCH.md`, `docs/PHASE3_PUMP_V2_PILOT.md`, `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`, and `docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md` before review.
 
 Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickHouse, download/stream a real Old Faithful CAR, or run a real slot pilot without the required separate explicit approval.
 
 ## Next product task
 
-Complete and independently review the exact staged Phase 6A fixture-only bytes. After Phase 6A, the next safe development gate is an offline Silver state/provenance contract with independently evidenced activation-slot ranges; it still must not download CAR bytes or run a slot pilot. Separate approval before any bounded real slot pilot or CAR download remains mandatory. Causal rug-risk parity, real registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
+Phase 6A is merged and independently reviewed. When separately authorized, the next safe development gate is an offline Silver state/provenance contract with independently evidenced activation-slot ranges; it still must not download CAR bytes or run a slot pilot. Separate approval before any bounded real slot pilot or CAR download remains mandatory. Causal rug-risk parity, real registry approval, exact `[T0,T3)` backfill, and walk-forward research remain later gates.
 
 ## Recovery source of truth
 
