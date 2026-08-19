@@ -1,6 +1,6 @@
 # Phase 6B — Pump Silver State & Provenance Contract
 
-Status: implemented on the Phase 6B branch as a fully offline, synthetic, fixture-only contract.
+Status: squash-merged through PR #12 as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` succeeded. The contract remains fully offline, synthetic and fixture-only.
 
 This phase does **not** make the historical pipeline research-ready. Every accepted and quarantined output has:
 
@@ -319,18 +319,24 @@ Phase 6B does not modify:
 
 The repository transport-isolation scan covers the built `dist/research` graph. The new module imports only deterministic local code, `node:crypto`, `node:util` and `bs58`.
 
-## 12. Gate to any real pilot
+## 12. Pilot A and Pilot B boundaries
 
-A real bounded slot pilot remains HOLD until a separate review proves all of the following:
+The next step is only to design and exactly freeze a **Pilot A Readiness Package**. It does not authorize a CAR download, archive stream, slot run or pilot. The separate Old Faithful thread remains paused and read-only.
 
-- a source supplies instruction-exact complete pre/post account state or a deterministic era-faithful replay boundary;
-- deployment/codehash and upgrade boundaries are established independently;
-- slot-effective IDL, discriminator and layout ranges are evidenced without gaps or overlaps;
-- real CAR CID/SHA/size and slot inventory are independently verified;
-- parser/reducer/adapter identities are bound to immutable reviewed bytes;
-- source, output, coverage and rerun hashes reproduce;
-- every bounded budget and skip/quarantine rule is approved;
-- TypeScript/Rust real-source parity is green;
-- the pilot receives separate explicit authorization.
+### Pilot A — Old Faithful event/transport
 
-Until then, `researchReady` remains hard false and no registry entry can be approved.
+Pilot A may run later only after the readiness package receives a separate fresh review, a bandwidth-cap preflight succeeds, and the user gives an explicit execution GO. It may prove bounded:
+
+- blocks and transactions;
+- top-level and inner instructions;
+- logs and decoded events;
+- coverage, skips and quarantine;
+- deterministic source/output/rerun hashes.
+
+Pilot A does not require a historical raw-account-state source before its readiness gate because it is not a state pilot. It may never claim instruction-exact raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness or profitability. Transaction-wide balances and event-reported state remain non-authoritative for raw state.
+
+### Pilot B — state-enriched
+
+Pilot B remains NO-GO until a separate review proves a reliable instruction-exact raw-account-state source or deterministic era-faithful replay boundary, causal event/state binding, deployment/codehash and upgrade boundaries, and real slot-effective activation/IDL/layout ranges without gaps or overlaps. It also requires independently verified source inventory, immutable parser/reducer/adapter identities, reproducible coverage and rerun hashes, bounded budgets, TypeScript/Rust real-source parity and explicit execution authorization.
+
+Until those separate gates pass, `approved`, `researchReady`, and `pilotEligible` remain hard false; no real registry entry can be approved and no OOS, execution or profitability claim is permitted.
