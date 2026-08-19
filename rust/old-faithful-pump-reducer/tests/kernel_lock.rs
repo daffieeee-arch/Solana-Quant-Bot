@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use old_faithful_pump_reducer::{
@@ -61,6 +61,50 @@ fn wait_for(path: &Path) {
         thread::sleep(Duration::from_millis(5));
     }
     panic!("timed out waiting for {}", path.display());
+}
+
+fn wait_for_writer_status(path: &Path) -> Result<String, String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let last_observation = match std::fs::read(path) {
+            Ok(status) if status == b"ok" || status == b"err" => {
+                return String::from_utf8(status).map_err(|error| error.to_string());
+            }
+            Ok(status) => format!("content {:?}", String::from_utf8_lossy(&status)),
+            Err(error) => format!("read error: {error}"),
+        };
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for exact writer status at {} (last observation: {last_observation})",
+                path.display()
+            ));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn reap_child(child: &mut Child, label: &str) -> Result<std::process::ExitStatus, String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            Ok(None) => {
+                let kill = child.kill();
+                let reap = child.wait();
+                return Err(format!(
+                    "{label} timed out; kill result: {kill:?}; reap result: {reap:?}"
+                ));
+            }
+            Err(error) => {
+                let kill = child.kill();
+                let reap = child.wait();
+                return Err(format!(
+                    "failed to poll {label}: {error}; kill result: {kill:?}; reap result: {reap:?}"
+                ));
+            }
+        }
+    }
 }
 
 fn set_nondumpable() {
@@ -207,8 +251,8 @@ fn killed_writer_releases_kernel_namespace_immediately() {
         &release,
         "killed_writer_releases_kernel_namespace_immediately",
     );
-    wait_for(&ready);
-    assert_eq!(std::fs::read(&ready).unwrap(), b"ok");
+    let status = wait_for_writer_status(&ready).unwrap();
+    assert_eq!(status, "ok");
     child.kill().unwrap();
     let _ = child.wait().unwrap();
     let replacement = Phase5Reducer::open(config(output)).unwrap();
@@ -276,6 +320,27 @@ fn uninitialized_incompatible_registry_is_not_removed_or_bypassed() {
 }
 
 #[test]
+fn writer_status_waits_for_complete_content_after_empty_ready_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let ready = temp.path().join("writer.ready");
+    std::fs::File::create(&ready).unwrap();
+    assert_eq!(std::fs::read(&ready).unwrap(), b"");
+
+    let published_ready = ready.clone();
+    let publisher = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(25));
+        std::fs::write(&published_ready, b"o").unwrap();
+        thread::sleep(Duration::from_millis(25));
+        std::fs::write(&published_ready, b"ok").unwrap();
+    });
+
+    let status = wait_for_writer_status(&ready).unwrap();
+    publisher.join().unwrap();
+    let owners = usize::from(status == "ok");
+    assert_eq!(owners, 1, "complete delayed status was {status:?}");
+}
+
+#[test]
 fn simultaneous_writers_elect_exactly_one_owner() {
     if maybe_run_child() {
         return;
@@ -300,15 +365,31 @@ fn simultaneous_writers_elect_exactly_one_owner() {
             &release,
             "simultaneous_writers_elect_exactly_one_owner",
         );
-        wait_for(&ready_a);
-        wait_for(&ready_b);
-        let owners = [ready_a, ready_b]
-            .iter()
-            .filter(|path| std::fs::read(path).unwrap() == b"ok")
+        let status_a = wait_for_writer_status(&ready_a);
+        let status_b = wait_for_writer_status(&ready_b);
+        let release_result = std::fs::write(&release, b"release");
+        if release_result.is_err() {
+            let _ = child_a.kill();
+            let _ = child_b.kill();
+        }
+        let exit_a = reap_child(&mut child_a, "child A");
+        let exit_b = reap_child(&mut child_b, "child B");
+        let owners = [&status_a, &status_b]
+            .into_iter()
+            .filter(|status| matches!(status, Ok(value) if value == "ok"))
             .count();
-        assert_eq!(owners, 1, "trial {trial} did not elect exactly one owner");
-        std::fs::write(&release, b"release").unwrap();
-        assert!(child_a.wait().unwrap().success());
-        assert!(child_b.wait().unwrap().success());
+        let exact_election = matches!(
+            (&status_a, &status_b),
+            (Ok(status_a), Ok(status_b))
+                if (status_a == "ok" && status_b == "err")
+                    || (status_a == "err" && status_b == "ok")
+        );
+        let children_succeeded = [&exit_a, &exit_b]
+            .into_iter()
+            .all(|status| status.as_ref().is_ok_and(std::process::ExitStatus::success));
+        assert!(
+            release_result.is_ok() && children_succeeded && exact_election,
+            "trial {trial} failed: status_a={status_a:?}, status_b={status_b:?}, release={release_result:?}, exit_a={exit_a:?}, exit_b={exit_b:?}, owners={owners}"
+        );
     }
 }
