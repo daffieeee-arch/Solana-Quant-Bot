@@ -129,6 +129,18 @@ function enclosingFunctionLike(node) {
   return undefined;
 }
 
+function isAllowedPumpSilverUtilImport(file, graphRoot, sourceFile, specifier) {
+  if (specifier !== 'node:util' || file !== resolve(graphRoot, 'pump-silver-state-contract.js')) return false;
+  const imports = sourceFile.statements.filter((statement) => ts.isImportDeclaration(statement)
+    && ts.isStringLiteral(statement.moduleSpecifier) && statement.moduleSpecifier.text === 'node:util');
+  if (imports.length !== 1) return false;
+  const clause = imports[0].importClause;
+  if (!clause || clause.isTypeOnly || clause.name || !clause.namedBindings
+    || !ts.isNamedImports(clause.namedBindings) || clause.namedBindings.elements.length !== 1) return false;
+  const element = clause.namedBindings.elements[0];
+  return !element.isTypeOnly && element.propertyName?.text === 'types' && element.name.text === 'utilTypes';
+}
+
 function isAllowedPumpSilverRegistryDescriptorRead(node, checker, file, graphRoot) {
   if (file !== resolve(graphRoot, 'pump-silver-contract.js')
     || !ts.isPropertyAccessExpression(node)
@@ -152,6 +164,97 @@ function isAllowedPumpSilverRegistryDescriptorRead(node, checker, file, graphRoo
   const argumentSymbol = checker.getSymbolAtLocation(call.arguments[0]);
   const parameterSymbol = checker.getSymbolAtLocation(declaration.parameters[0].name);
   return argumentSymbol !== undefined && argumentSymbol === parameterSymbol;
+}
+
+function isAllowedPumpSilverStateDescriptorRead(node, checker, file, graphRoot) {
+  if (file !== resolve(graphRoot, 'pump-silver-state-contract.js')
+    || !ts.isPropertyAccessExpression(node)
+    || !ts.isIdentifier(node.expression)
+    || node.expression.text !== 'Object'
+    || node.name.text !== 'getOwnPropertyDescriptor') return false;
+  const objectSymbol = checker.getSymbolAtLocation(node.expression);
+  if (objectSymbol?.declarations?.some((declaration) => declaration.getSourceFile() === node.getSourceFile())) return false;
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.expression !== node || call.arguments.length !== 2
+    || !ts.isIdentifier(call.arguments[0]) || !ts.isIdentifier(call.arguments[1])
+    || call.arguments[1].text !== 'name') return false;
+  const declaration = enclosingFunctionLike(node);
+  if (!declaration || !ts.isFunctionDeclaration(declaration)
+    || declaration.parent !== declaration.getSourceFile()
+    || declaration.name?.text !== 'hasExactOwnKeys'
+    || declaration.parameters.length !== 2
+    || !ts.isIdentifier(declaration.parameters[0].name)
+    || declaration.parameters[0].name.text !== 'value') return false;
+  const valueSymbol = checker.getSymbolAtLocation(call.arguments[0]);
+  const valueParameter = checker.getSymbolAtLocation(declaration.parameters[0].name);
+  const nameSymbol = checker.getSymbolAtLocation(call.arguments[1]);
+  const nameDeclaration = nameSymbol?.declarations?.[0];
+  if (valueSymbol === undefined || valueSymbol !== valueParameter
+    || nameDeclaration === undefined || !ts.isVariableDeclaration(nameDeclaration)
+    || !ts.isIdentifier(nameDeclaration.name) || nameDeclaration.name.text !== 'name'
+    || !ts.isVariableDeclarationList(nameDeclaration.parent)
+    || !ts.isForOfStatement(nameDeclaration.parent.parent)
+    || nameDeclaration.parent.parent.initializer !== nameDeclaration.parent
+    || !ts.isIdentifier(nameDeclaration.parent.parent.expression)) return false;
+  const namesUse = nameDeclaration.parent.parent.expression;
+  const namesSymbol = checker.getSymbolAtLocation(namesUse);
+  const namesDeclaration = namesSymbol?.declarations?.[0];
+  if (namesDeclaration === undefined || !ts.isVariableDeclaration(namesDeclaration)
+    || !ts.isIdentifier(namesDeclaration.name) || namesDeclaration.name.text !== 'names'
+    || namesDeclaration.getSourceFile() !== declaration.getSourceFile()
+    || namesDeclaration.getStart() <= declaration.getStart()
+    || namesDeclaration.getEnd() >= nameDeclaration.parent.parent.getStart()
+    || !namesDeclaration.initializer || !ts.isCallExpression(namesDeclaration.initializer)
+    || namesDeclaration.initializer.arguments.length !== 1
+    || !ts.isIdentifier(namesDeclaration.initializer.arguments[0])
+    || !ts.isPropertyAccessExpression(namesDeclaration.initializer.expression)
+    || !ts.isIdentifier(namesDeclaration.initializer.expression.expression)
+    || namesDeclaration.initializer.expression.expression.text !== 'Object'
+    || namesDeclaration.initializer.expression.name.text !== 'getOwnPropertyNames') return false;
+  const namesObjectSymbol = checker.getSymbolAtLocation(namesDeclaration.initializer.expression.expression);
+  const namesValueSymbol = checker.getSymbolAtLocation(namesDeclaration.initializer.arguments[0]);
+  if (namesObjectSymbol?.declarations?.some((entry) => entry.getSourceFile() === node.getSourceFile())
+    || namesValueSymbol === undefined || namesValueSymbol !== valueParameter) return false;
+
+  const descriptorDeclaration = call.parent;
+  if (!ts.isVariableDeclaration(descriptorDeclaration)
+    || descriptorDeclaration.initializer !== call
+    || !ts.isIdentifier(descriptorDeclaration.name)
+    || descriptorDeclaration.name.text !== 'descriptor') return false;
+  const descriptorSymbol = checker.getSymbolAtLocation(descriptorDeclaration.name);
+  if (descriptorSymbol === undefined) return false;
+  let descriptorUsesAreSafe = true;
+  const validateDescriptorUse = (candidate) => {
+    if (!descriptorUsesAreSafe) return;
+    if (ts.isIdentifier(candidate) && checker.getSymbolAtLocation(candidate) === descriptorSymbol) {
+      if (candidate === descriptorDeclaration.name) return;
+      const parent = candidate.parent;
+      const isPresenceCheck = ts.isPrefixUnaryExpression(parent)
+        && parent.operator === ts.SyntaxKind.ExclamationToken && parent.operand === candidate;
+      const isEnumerableComparison = ts.isPropertyAccessExpression(parent)
+        && parent.expression === candidate && parent.name.text === 'enumerable'
+        && ts.isBinaryExpression(parent.parent)
+        && parent.parent.left === parent
+        && [ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken]
+          .includes(parent.parent.operatorToken.kind);
+      const isExactValuePresenceCheck = ts.isCallExpression(parent)
+        && parent.arguments.length === 2 && parent.arguments[0] === candidate
+        && ts.isStringLiteral(parent.arguments[1]) && parent.arguments[1].text === 'value'
+        && ts.isPropertyAccessExpression(parent.expression)
+        && ts.isIdentifier(parent.expression.expression)
+        && parent.expression.expression.text === 'Object'
+        && parent.expression.name.text === 'hasOwn'
+        && !checker.getSymbolAtLocation(parent.expression.expression)?.declarations
+          ?.some((entry) => entry.getSourceFile() === node.getSourceFile());
+      if (!isPresenceCheck && !isEnumerableComparison && !isExactValuePresenceCheck) {
+        descriptorUsesAreSafe = false;
+        return;
+      }
+    }
+    ts.forEachChild(candidate, validateDescriptorUse);
+  };
+  validateDescriptorUse(declaration);
+  return descriptorUsesAreSafe;
 }
 
 async function assertStaticGraph(directory) {
@@ -194,7 +297,8 @@ async function assertStaticGraph(directory) {
       }
       const accessedProperty = propertyName(node, checker);
       if (accessedProperty && forbiddenProperties.has(accessedProperty)
-        && !isAllowedPumpSilverRegistryDescriptorRead(node, checker, file, directory)) {
+        && !isAllowedPumpSilverRegistryDescriptorRead(node, checker, file, directory)
+        && !isAllowedPumpSilverStateDescriptorRead(node, checker, file, directory)) {
         throw new Error(`forbidden research capability: property ${accessedProperty} in ${file}`);
       }
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {
@@ -214,7 +318,8 @@ async function assertStaticGraph(directory) {
     visit(sourceFile);
     for (const specifier of specifiers) {
       if (specifier.startsWith('.')) pending.push(await resolveLocalModule(file, specifier));
-      else if (!allowedModules.has(specifier)) {
+      else if (!allowedModules.has(specifier)
+        && !isAllowedPumpSilverUtilImport(file, directory, sourceFile, specifier)) {
         throw new Error(`forbidden research capability: unapproved module ${specifier} in ${file}`);
       }
     }
