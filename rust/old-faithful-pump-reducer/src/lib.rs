@@ -20,6 +20,9 @@ use solana_transaction_status::TransactionTokenBalance;
 use thiserror::Error;
 use time::{OffsetDateTime, macros::format_description};
 
+mod silver_event;
+pub use silver_event::{SilverEventError, decode_pump_silver_event_hex};
+
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 

@@ -28,6 +28,12 @@ const forbiddenProperties = new Set([
   'getOwnPropertyDescriptor', 'getOwnPropertyDescriptors', 'mainModule', 'require',
   'sendBeacon', '__proto__', 'fetch', 'WebSocket', 'EventSource', 'XMLHttpRequest',
 ]);
+const allowedPumpSilverRegistryDescriptorKeys = new Set([
+  'startInclusive',
+  'endExclusive',
+  'officialDocsCommit',
+  'pumpIdlSha256',
+]);
 const allowedDirectProcessProperties = new Set([
   'argv', 'env', 'execPath', 'exit', 'exitCode', 'stderr', 'stdout',
 ]);
@@ -112,6 +118,42 @@ function directProcessProperty(node, checker) {
   return null;
 }
 
+function enclosingFunctionLike(node) {
+  let current = node.parent;
+  while (current) {
+    if (ts.isFunctionDeclaration(current) || ts.isFunctionExpression(current)
+      || ts.isArrowFunction(current) || ts.isMethodDeclaration(current)
+      || ts.isGetAccessorDeclaration(current) || ts.isSetAccessorDeclaration(current)) return current;
+    current = current.parent;
+  }
+  return undefined;
+}
+
+function isAllowedPumpSilverRegistryDescriptorRead(node, checker, file, graphRoot) {
+  if (file !== resolve(graphRoot, 'pump-silver-contract.js')
+    || !ts.isPropertyAccessExpression(node)
+    || !ts.isIdentifier(node.expression)
+    || node.expression.text !== 'Object'
+    || node.name.text !== 'getOwnPropertyDescriptor') return false;
+  const objectSymbol = checker.getSymbolAtLocation(node.expression);
+  if (objectSymbol?.declarations?.some((declaration) => declaration.getSourceFile() === node.getSourceFile())) return false;
+  const call = node.parent;
+  if (!ts.isCallExpression(call) || call.expression !== node || call.arguments.length !== 2
+    || !ts.isIdentifier(call.arguments[0])
+    || !ts.isStringLiteral(call.arguments[1])
+    || !allowedPumpSilverRegistryDescriptorKeys.has(call.arguments[1].text)) return false;
+  const declaration = enclosingFunctionLike(node);
+  if (!declaration || !ts.isFunctionDeclaration(declaration)
+    || declaration.parent !== declaration.getSourceFile()
+    || declaration.name?.text !== 'normalizeFixtureRegistryEntry'
+    || declaration.parameters.length !== 1
+    || !ts.isIdentifier(declaration.parameters[0].name)
+    || declaration.parameters[0].name.text !== 'entry') return false;
+  const argumentSymbol = checker.getSymbolAtLocation(call.arguments[0]);
+  const parameterSymbol = checker.getSymbolAtLocation(declaration.parameters[0].name);
+  return argumentSymbol !== undefined && argumentSymbol === parameterSymbol;
+}
+
 async function assertStaticGraph(directory) {
   const pending = await javascriptFiles(directory);
   const seen = new Set();
@@ -151,7 +193,8 @@ async function assertStaticGraph(directory) {
         throw new Error(`forbidden research capability: process property ${String(processProperty)} in ${file}`);
       }
       const accessedProperty = propertyName(node, checker);
-      if (accessedProperty && forbiddenProperties.has(accessedProperty)) {
+      if (accessedProperty && forbiddenProperties.has(accessedProperty)
+        && !isAllowedPumpSilverRegistryDescriptorRead(node, checker, file, directory)) {
         throw new Error(`forbidden research capability: property ${accessedProperty} in ${file}`);
       }
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier) {

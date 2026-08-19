@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { createPortfolio, enterPaperPosition, evaluateOpenPosition } from '../src/portfolio.js';
+import {
+  constantProductBuyPrice, constantProductBuyQuoteRaw, constantProductSellQuoteRaw, rawQuoteToUsd,
+} from '../src/pool-depth.js';
+import { PaperLedgerStore } from '../src/ledger.js';
+import type { PoolDepth } from '../src/scoring.js';
 
 const config = loadConfig({
   MODE: 'paper', PAPER_STARTING_SOL: '10', MAX_POSITION_SOL: '0.25', MAX_CONCURRENT_POSITIONS: '2', MAX_DAILY_LOSS_SOL: '0.5',
@@ -139,6 +147,253 @@ describe('paper portfolio', () => {
     // Now drop below breakeven (0.998 * 1.015 = 1.01297). Price 0.99 should trigger stop.
     const afterDrop = evaluateOpenPosition(atHigh.portfolio, { pairId: 'pair-1', mint: 'mint-1' }, 0.99, '2026-07-24T00:03:00.000Z', config);
     expect(afterDrop.event).toMatchObject({ type: 'exit', reason: 'stop_loss' });
+  });
+
+  it('uses exact constant-product entry impact and raw token quantity for 6/9-decimal pools', () => {
+    const sixDecimalDepth: PoolDepth = {
+      baseReserve: 100_000_000_000,
+      quoteReserve: 10_000_000_000,
+      baseDecimals: 6,
+      quoteDecimals: 9,
+      feeNumerator: 25,
+      feeDenominator: 10_000,
+    };
+    const depths = [
+      sixDecimalDepth,
+      { ...sixDecimalDepth, baseReserve: Number(sixDecimalDepth.baseReserve) * 1_000, baseDecimals: 9 },
+    ];
+    const positions = depths.map((poolDepth, index) => {
+      const entered = enterPaperPosition(createPortfolio(config, '2026-07-24T00:00:00.000Z'), {
+        ...entryInput50,
+        pairId: `depth-${index}`,
+        mint: `depth-mint-${index}`,
+        priceUsd: 0.01,
+        score: 100,
+        liquidityUsd: undefined,
+        poolDepth,
+        solPriceUsd: 100,
+      }, config);
+      if (!entered.ok) throw new Error('expected depth entry');
+      const expectedRawPrice = constantProductBuyPrice(poolDepth, entered.position.allocatedLamports)!;
+      const expectedBaseAmountRaw = constantProductBuyQuoteRaw(poolDepth, entered.position.allocatedLamports)!;
+      const expectedEntryPriceUsd = Math.max(
+        rawQuoteToUsd(expectedRawPrice, poolDepth.baseDecimals, poolDepth.quoteDecimals, 100),
+        0.01,
+      );
+      expect(entered.position.entryPriceUsd).toBeCloseTo(expectedEntryPriceUsd, 15);
+      expect(entered.position.baseAmountRaw).toBe(expectedBaseAmountRaw);
+      expect(entered.position.baseDecimals).toBe(poolDepth.baseDecimals);
+      expect(entered.position.baseTokensUsd).toBeCloseTo(25, 7);
+
+      const exited = evaluateOpenPosition(
+        entered.portfolio,
+        { pairId: entered.position.pairId, mint: entered.position.mint },
+        0.01,
+        '2026-07-24T00:24:00.000Z',
+        config,
+        poolDepth,
+      );
+      expect(exited.event).toMatchObject({ type: 'exit', reason: 'time_stop' });
+      if (exited.event.type !== 'exit') throw new Error('expected depth exit');
+      const exactPoolQuoteOut = constantProductSellQuoteRaw(poolDepth, expectedBaseAmountRaw)!;
+      expect(exited.event.proceedsLamports).toBeLessThanOrEqual(Number(exactPoolQuoteOut));
+      return { position: entered.position, proceedsLamports: exited.event.proceedsLamports };
+    });
+    expect(Number(positions[0]!.position.baseAmountRaw!) / 10 ** positions[0]!.position.baseDecimals!)
+      .toBeCloseTo(Number(positions[1]!.position.baseAmountRaw!) / 10 ** positions[1]!.position.baseDecimals!, 5);
+    expect(positions[0]!.proceedsLamports).toBeCloseTo(positions[1]!.proceedsLamports, 0);
+  });
+
+  it('rejects explicit malformed entry depth instead of using legacy pricing', () => {
+    const result = enterPaperPosition(createPortfolio(config, '2026-07-24T00:00:00.000Z'), {
+      ...entryInput50,
+      poolDepth: {
+        baseReserve: 100_000_000_000,
+        quoteReserve: 10_000_000_000,
+        baseDecimals: 6,
+        quoteDecimals: 9,
+        feeNumerator: -25,
+        feeDenominator: 10_000,
+      },
+      solPriceUsd: 100,
+    }, config);
+    expect(result).toEqual({ ok: false, reason: 'invalid_pool_depth' });
+  });
+
+  it('persists and exits an exact legitimate-scale 9/9 raw position', async () => {
+    const initial = createPortfolio(config, '2026-07-24T00:00:00.000Z');
+    const poolDepth: PoolDepth = {
+      baseReserve: '1000000000000000000',
+      quoteReserve: '10000000000',
+      baseDecimals: 9,
+      quoteDecimals: 9,
+      feeNumerator: 25,
+      feeDenominator: 10_000,
+    };
+    const entered = enterPaperPosition(initial, {
+      ...entryInput50,
+      pairId: 'exact-9-9',
+      mint: 'exact-9-9-mint',
+      priceUsd: 0.000_001,
+      score: 100,
+      liquidityUsd: undefined,
+      poolDepth,
+      solPriceUsd: 100,
+    }, config);
+    if (!entered.ok) throw new Error(`expected exact depth entry: ${entered.reason}`);
+
+    const netQuoteNumerator = BigInt(entered.position.allocatedLamports) * 9_975n;
+    const expectedBaseRaw = 1_000_000_000_000_000_000n * netQuoteNumerator
+      / (10_000_000_000n * 10_000n + netQuoteNumerator);
+    expect(entered.position.baseAmountRaw).toBe(expectedBaseRaw.toString());
+
+    const directory = await mkdtemp(join(tmpdir(), 'portfolio-exact-depth-'));
+    try {
+      const store = new PaperLedgerStore(directory);
+      const ledger = await store.loadOrCreate(initial);
+      await store.save({ ...ledger, portfolio: entered.portfolio, updatedAt: '2026-07-24T00:02:00.000Z' });
+      await store.close();
+
+      const reopened = new PaperLedgerStore(directory);
+      const loaded = await reopened.loadOrCreate(initial);
+      expect(loaded.portfolio.positions[0]?.baseAmountRaw).toBe(expectedBaseRaw.toString());
+      await reopened.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+
+    const netBaseNumerator = expectedBaseRaw * 9_975n;
+    const poolQuoteOut = 10_000_000_000n * netBaseNumerator
+      / (1_000_000_000_000_000_000n * 10_000n + netBaseNumerator);
+    const expectedProceeds = poolQuoteOut * 9_900n / 10_000n;
+    const exited = evaluateOpenPosition(
+      entered.portfolio,
+      { pairId: entered.position.pairId, mint: entered.position.mint },
+      entered.position.entryPriceUsd,
+      '2026-07-24T00:24:00.000Z',
+      config,
+      poolDepth,
+    );
+    expect(exited.event).toEqual({
+      type: 'exit', reason: 'time_stop',
+      proceedsLamports: Number(expectedProceeds),
+      pnlLamports: Number(expectedProceeds) - entered.position.entryCostLamports,
+    });
+  });
+
+  it('holds instead of overflowing safe-integer portfolio aggregates', () => {
+    const poolDepth: PoolDepth = {
+      baseReserve: '1000000000000000000', quoteReserve: '10000000000',
+      baseDecimals: 9, quoteDecimals: 9, feeNumerator: 25, feeDenominator: 10_000,
+    };
+    const entered = enterPaperPosition(createPortfolio(config, '2026-07-24T00:00:00.000Z'), {
+      ...entryInput50,
+      pairId: 'safe-aggregate',
+      mint: 'safe-aggregate-mint',
+      priceUsd: 0.000_001,
+      score: 100,
+      liquidityUsd: undefined,
+      poolDepth,
+      solPriceUsd: 100,
+    }, config);
+    if (!entered.ok) throw new Error(`expected exact depth entry: ${entered.reason}`);
+    const overflowPortfolio = { ...entered.portfolio, availableLamports: Number.MAX_SAFE_INTEGER };
+    const result = evaluateOpenPosition(
+      overflowPortfolio,
+      { pairId: entered.position.pairId, mint: entered.position.mint },
+      entered.position.entryPriceUsd,
+      '2026-07-24T00:24:00.000Z',
+      config,
+      poolDepth,
+    );
+    expect(result).toEqual({ portfolio: overflowPortfolio, event: { type: 'hold' } });
+  });
+
+  it('keeps a next-day depth-aware HOLD byte-equivalent when current depth is missing', () => {
+    const poolDepth: PoolDepth = {
+      baseReserve: '1000000000000000000', quoteReserve: '10000000000',
+      baseDecimals: 9, quoteDecimals: 9, feeNumerator: 25, feeDenominator: 10_000,
+    };
+    const entered = enterPaperPosition(createPortfolio(config, '2026-07-24T00:00:00.000Z'), {
+      ...entryInput50,
+      priceUsd: 0.000001,
+      poolDepth,
+      solPriceUsd: 100,
+    }, config);
+    if (!entered.ok) throw new Error('expected depth-aware entry');
+    const before = {
+      ...entered.portfolio,
+      dailyRealizedLossLamports: 123_456,
+      dailyLossDateUtc: '2026-07-24',
+    };
+    const result = evaluateOpenPosition(
+      before,
+      { pairId: entered.position.pairId, mint: entered.position.mint },
+      entered.position.entryPriceUsd,
+      '2026-07-25T00:02:00.000Z',
+      config,
+      undefined,
+    );
+    expect(result.event).toEqual({ type: 'hold' });
+    expect(result.portfolio).toEqual(before);
+    expect(JSON.stringify(result.portfolio)).toBe(JSON.stringify(before));
+  });
+
+  it.each([
+    ['missing depth', undefined],
+    ['base-decimal mismatch', {
+      baseReserve: 100_000_000_000_000,
+      quoteReserve: 10_000_000_000,
+      baseDecimals: 9,
+      quoteDecimals: 9,
+      feeNumerator: 25,
+      feeDenominator: 10_000,
+    }],
+    ['invalid depth', {
+      baseReserve: 0,
+      quoteReserve: 10_000_000_000,
+      baseDecimals: 6,
+      quoteDecimals: 9,
+      feeNumerator: 25,
+      feeDenominator: 10_000,
+    }],
+    ['malformed fee depth', {
+      baseReserve: 100_000_000_000,
+      quoteReserve: 10_000_000_000,
+      baseDecimals: 6,
+      quoteDecimals: 9,
+      feeNumerator: -25,
+      feeDenominator: 10_000,
+    }],
+  ] as const)('holds a depth-aware position when exit depth is %s', (_label, exitDepth) => {
+    const entryDepth: PoolDepth = {
+      baseReserve: 100_000_000_000,
+      quoteReserve: 10_000_000_000,
+      baseDecimals: 6,
+      quoteDecimals: 9,
+      feeNumerator: 25,
+      feeDenominator: 10_000,
+    };
+    const entered = enterPaperPosition(createPortfolio(config, '2026-07-24T00:00:00.000Z'), {
+      ...entryInput50,
+      priceUsd: 0.01,
+      score: 100,
+      liquidityUsd: undefined,
+      poolDepth: entryDepth,
+      solPriceUsd: 100,
+    }, config);
+    if (!entered.ok) throw new Error('expected depth entry');
+
+    const evaluated = evaluateOpenPosition(
+      entered.portfolio,
+      { pairId: entered.position.pairId, mint: entered.position.mint },
+      0.009,
+      '2026-07-24T00:24:00.000Z',
+      config,
+      exitDepth,
+    );
+    expect(evaluated.event).toEqual({ type: 'hold' });
+    expect(evaluated.portfolio).toEqual(entered.portfolio);
   });
 
   it('tracks consecutive losses and resets on win', () => {

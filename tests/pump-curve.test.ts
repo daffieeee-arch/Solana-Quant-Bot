@@ -23,16 +23,40 @@ describe('Pump.fun bonding-curve decoder (Triton-first self-calc)', () => {
     const b64 = buildCurveBase64(1_000_000_000n, 30_000_000_000n, 1_000_000_000n);
     const curve = decodePumpCurve(b64);
     expect(curve).toBeDefined();
-    expect(curve!.virtualTokenReserves).toBe(1_000_000_000);
-    expect(curve!.virtualSolReserves).toBe(30_000_000_000);
+    expect(curve!.virtualTokenReserves).toBe('1000000000');
+    expect(curve!.virtualSolReserves).toBe('30000000000');
 
     const depth = pumpCurveToDepth(curve!);
     expect(depth).toBeDefined();
-    expect(depth!.quoteReserve).toBe(30_000_000_000); // SOL
-    expect(depth!.baseReserve).toBe(1_000_000_000);   // token
+    expect(depth!.quoteReserve).toBe('30000000000'); // SOL
+    expect(depth!.baseReserve).toBe('1000000000');   // token
     expect(depth!.quoteDecimals).toBe(9);
     expect(depth!.baseDecimals).toBe(6);
     expect(depth!.bondingCurve).toBe(true);
+  });
+
+  it('preserves the full u64 reserve domain without number coercion', () => {
+    const b64 = buildCurveBase64(18_446_744_073_709_551_615n, 9_007_199_254_740_993n, 1n);
+    expect(decodePumpCurve(b64)).toEqual({
+      virtualTokenReserves: '18446744073709551615',
+      virtualSolReserves: '9007199254740993',
+      tokenTotalSupply: '1',
+    });
+  });
+
+  it('fails closed on malformed raw reserve strings without throwing', () => {
+    for (const reserve of ['1e9', '-1', '01', '18446744073709551616']) {
+      expect(() => pumpCurveToDepth({
+        virtualTokenReserves: reserve,
+        virtualSolReserves: '30000000000',
+        tokenTotalSupply: '1',
+      })).not.toThrow();
+      expect(pumpCurveToDepth({
+        virtualTokenReserves: reserve,
+        virtualSolReserves: '30000000000',
+        tokenTotalSupply: '1',
+      })).toBeUndefined();
+    }
   });
 
   it('fails closed on non-positive reserves or short buffer', () => {

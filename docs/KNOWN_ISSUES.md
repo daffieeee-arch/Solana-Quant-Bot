@@ -34,7 +34,7 @@ Only current open items belong here. Resolved issues remain in Git history.
 
 17. **v1 is transaction-net only:** multi-hop, inner-CPI, pool-route, and event-level detail are not preserved.
 18. **Duplicate estimate is limited:** roughly 3.4% cross-part exact-retry overlap was observed in a biased sample. The dataset-wide ratio is unknown and normal background merges may already have consolidated some rows. Do not claim that no deduplication occurred merely because no global `OPTIMIZE FINAL` was run.
-19. **v2 event-level pipeline remains incomplete:** Bronze capture and the merged Phase-4 contracts exist; the fixture-verified Phase-5 Rust reducer is committed and pushed in open PR #7 but remains unmerged and `researchReady: false`. Real CAR-byte verification, a merged reducer, Silver/Gold schema and decoding, reviewed parser provenance, and an approved pilot source pass remain absent.
+19. **v2 event-level pipeline remains incomplete:** Bronze capture, the Phase-4 contracts, and the fixture-verified Phase-5 Rust reducer are merged; Phase 5 has processed no real archive/CAR/slot data and remains `researchReady: false`. Phase 6A adds only a synthetic, fixture-only Silver event-contract candidate. Real activation-slot provenance, CAR-byte verification, a bounded source pilot, Silver state/risk evidence, Gold features, registry approval, and strategy evidence remain absent.
 
 ## Repository and dependencies
 
@@ -43,4 +43,4 @@ Only current open items belong here. Resolved issues remain in Git history.
 
 ## Research
 
-22. Technical Pump lifecycle correctness, the fail-closed Phase 2 harness, and a transport-free Phase 3 Bronze candidate boundary are implemented offline, but strategy profitability and out-of-sample edge remain unproven. Bronze does not decode canonical trade events or assert `isExecutedTrade`. Do not tune, expand protocols, or renew live spend until a separate `PUMP_SNAPSHOT_V2` Silver parser/export receives independent provenance review and real-registry approval.
+22. Technical Pump lifecycle correctness, the fail-closed Phase 2 harness, the transport-free Phase 3 Bronze candidate boundary, and a fixture-only Phase 6A Silver event-contract candidate are implemented offline, but strategy profitability and out-of-sample edge remain unproven. Bronze itself still does not decode canonical trade events or assert `isExecutedTrade`; Phase 6A remains synthetic, unapproved, and `researchReady: false`. Do not tune, expand protocols, or renew live spend until a real slot-effective parser/export provenance tuple receives independent review and registry approval.

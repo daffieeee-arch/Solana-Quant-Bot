@@ -1,4 +1,5 @@
 import type { PoolDepth } from './scoring.js';
+import { constantProductMidPriceRaw } from './pool-depth.js';
 
 /**
  * Streaming self-calculated price for pools discovered via Triton Vixen.
@@ -24,8 +25,6 @@ export const USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
  * Returns null on invalid depth/fee so callers fail closed.
  */
 export function spotPriceUsd(depth: PoolDepth, usdPerQuoteUnit: number): number | null {
-  if (!Number.isFinite(depth.baseReserve) || depth.baseReserve <= 0) return null;
-  if (!Number.isFinite(depth.quoteReserve) || depth.quoteReserve <= 0) return null;
   if (!Number.isFinite(usdPerQuoteUnit) || usdPerQuoteUnit <= 0) return null;
   if (!Number.isInteger(depth.baseDecimals) || depth.baseDecimals < 0 || depth.baseDecimals > 18) return null;
   if (!Number.isInteger(depth.quoteDecimals) || depth.quoteDecimals < 0 || depth.quoteDecimals > 18) return null;
@@ -33,7 +32,8 @@ export function spotPriceUsd(depth: PoolDepth, usdPerQuoteUnit: number): number 
   // counts; the stored calories differ per token, so we compensate:
   //   price(baseUnits->quoteUnits) = (quoteReserve/10^quoteDecimals) / (baseReserve/10^baseDecimals)
   //                                 = (quoteReserve/baseReserve) * 10^(baseDecimals - quoteDecimals)
-  const rawPerBase = depth.quoteReserve / depth.baseReserve;
+  const rawPerBase = constantProductMidPriceRaw(depth);
+  if (rawPerBase === null) return null;
   const quotePerBase = rawPerBase * 10 ** (depth.baseDecimals - depth.quoteDecimals);
   return quotePerBase * usdPerQuoteUnit;
 }

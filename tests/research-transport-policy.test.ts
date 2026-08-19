@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -16,12 +16,14 @@ afterEach(async () => {
   await Promise.all(scratch.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
-async function runStaticPolicy(source: string, siblingSource?: string) {
+async function runStaticPolicy(source: string, siblingSource?: string, entryName = 'entry.js') {
   const base = await mkdtemp(join(tmpdir(), 'research-transport-policy-'));
   scratch.push(base);
   const graphRoot = join(base, 'graph');
   await mkdir(graphRoot);
-  await writeFile(join(graphRoot, 'entry.js'), source, 'utf8');
+  const entryPath = join(graphRoot, entryName);
+  await mkdir(dirname(entryPath), { recursive: true });
+  await writeFile(entryPath, source, 'utf8');
   if (siblingSource !== undefined) await writeFile(join(base, 'helper.js'), siblingSource, 'utf8');
   return spawnSync(process.execPath, [policyEntrypoint, '--static-only', graphRoot], {
     cwd: repositoryRoot,
@@ -36,6 +38,81 @@ describe('research transport policy entrypoint', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Research transport-free static graph PASS');
     expect(result.stderr).toBe('');
+  });
+
+  it('allows only fixed registry-key descriptor reads in the exact Pump Silver normalizer', async () => {
+    const result = await runStaticPolicy(`
+      function normalizeFixtureRegistryEntry(entry) {
+        return Object.getOwnPropertyDescriptor(entry, 'startInclusive');
+      }
+      export const normalize = normalizeFixtureRegistryEntry;
+    `, undefined, 'pump-silver-contract.js');
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain('Research transport-free static graph PASS');
+  });
+
+  it.each([
+    ['wrong built file', 'entry.js', 'normalizeFixtureRegistryEntry', 'startInclusive'],
+    ['same basename below graph root', 'nested/pump-silver-contract.js', 'normalizeFixtureRegistryEntry', 'startInclusive'],
+    ['wrong function', 'pump-silver-contract.js', 'otherNormalizer', 'startInclusive'],
+    ['unknown key', 'pump-silver-contract.js', 'normalizeFixtureRegistryEntry', 'constructor'],
+  ] as const)('rejects registry descriptor access with %s', async (_label, file, functionName, key) => {
+    const result = await runStaticPolicy(`
+      function ${functionName}(entry) {
+        return Object.getOwnPropertyDescriptor(entry, '${key}');
+      }
+      export const normalize = ${functionName};
+    `, undefined, file);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forbidden research capability');
+  });
+
+  it.each([
+    ['wrong top-level parameter name', `
+      function normalizeFixtureRegistryEntry(candidate) {
+        return Object.getOwnPropertyDescriptor(candidate, 'startInclusive');
+      }
+      export const normalize = normalizeFixtureRegistryEntry;
+    `],
+    ['nested normalizer declaration', `
+      function outer() {
+        function normalizeFixtureRegistryEntry(entry) {
+          return Object.getOwnPropertyDescriptor(entry, 'startInclusive');
+        }
+        return normalizeFixtureRegistryEntry;
+      }
+      export const normalize = outer();
+    `],
+    ['concatenated descriptor key', `
+      function normalizeFixtureRegistryEntry(entry) {
+        return Object.getOwnPropertyDescriptor(entry, 'start' + 'Inclusive');
+      }
+      export const normalize = normalizeFixtureRegistryEntry;
+    `],
+    ['const-aliased descriptor key', `
+      function normalizeFixtureRegistryEntry(entry) {
+        const key = 'startInclusive';
+        return Object.getOwnPropertyDescriptor(entry, key);
+      }
+      export const normalize = normalizeFixtureRegistryEntry;
+    `],
+    ['shadowed arrow parameter', `
+      function normalizeFixtureRegistryEntry(entry) {
+        return ((entry) => Object.getOwnPropertyDescriptor(entry, 'startInclusive'))({});
+      }
+      export const normalize = normalizeFixtureRegistryEntry;
+    `],
+    ['shadowed function-expression parameter', `
+      function normalizeFixtureRegistryEntry(entry) {
+        return (function (entry) { return Object.getOwnPropertyDescriptor(entry, 'startInclusive'); })({});
+      }
+      export const normalize = normalizeFixtureRegistryEntry;
+    `],
+  ] as const)('rejects %s in the Pump Silver descriptor exception', async (_label, source) => {
+    const result = await runStaticPolicy(source, undefined, 'pump-silver-contract.js');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forbidden research capability');
+    expect(result.stdout).not.toContain('PASS');
   });
 
   it.each([
@@ -57,6 +134,7 @@ describe('research transport policy entrypoint', () => {
     ['const-computed process binding', "const first = 'bind'; const second = 'ing';\nexport const tcp = process[first + second]('tcp_wrap');\n"],
     ['const-computed constructor reflection', "const key = 'constructor';\nexport const transport = ({})[key][key]('return 1')();\n"],
     ['lexically shadowed process binding', "const capability = 'binding'; { const capability = 'argv'; void capability; }\nexport const tcp = process[capability]('tcp_wrap');\n"],
+    ['unscoped property descriptor reflection', "export const descriptor = (value) => Object.getOwnPropertyDescriptor(value, 'safe');\n"],
   ])('rejects %s in the actual policy entrypoint', async (_label, source) => {
     const result = await runStaticPolicy(source);
     expect(result.status).toBe(1);

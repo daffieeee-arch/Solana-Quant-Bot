@@ -4,6 +4,13 @@ import { decodePumpCurve, pumpCurveToDepth } from '../pump-curve.js';
 
 const MAX_CACHE_ENTRIES = 5_000;
 const MAX_DIAGNOSTICS = 500;
+const RAW_U64 = /^(?:0|[1-9][0-9]{0,19})$/;
+const U64_MAX = 18_446_744_073_709_551_615n;
+
+function validPositiveRawU64(value: unknown): value is string {
+  return typeof value === 'string' && RAW_U64.test(value)
+    && BigInt(value) > 0n && BigInt(value) <= U64_MAX;
+}
 
 type TokenAccountBalance = {
   context?: { slot?: number };
@@ -195,9 +202,9 @@ export class TritonReserveReader {
         this.rpc('getTokenAccountBalance', [baseVault]),
       ]) as [TokenAccountBalance, TokenAccountBalance];
 
-      const quoteRaw = Number(quoteRes.value?.amount);
-      const baseRaw = Number(baseRes.value?.amount);
-      if (!Number.isFinite(quoteRaw) || quoteRaw <= 0 || !Number.isFinite(baseRaw) || baseRaw <= 0) {
+      const quoteRaw = quoteRes.value?.amount;
+      const baseRaw = baseRes.value?.amount;
+      if (!validPositiveRawU64(quoteRaw) || !validPositiveRawU64(baseRaw)) {
         this.pushDiagnostic(`pool_depth: non-positive balance key=${key}`);
         return undefined;
       }
@@ -251,8 +258,8 @@ export class TritonReserveReader {
       // account decodeert met absurde reserves (miljarden SOL) → liquiditeit >1M
       // USD is onmogelijk voor een verse curve → fail-closed i.p.v. absurde
       // liquiditeit door te geven (die alle gates op liquidity_above_maximum zet).
-      if (depth && Number.isFinite(depth.quoteReserve) && depth.quoteReserve > 0 && Number.isFinite(solPriceUsd) && solPriceUsd > 0) {
-        const solReserves = depth.quoteReserve / 10 ** (depth.quoteDecimals ?? 9);
+      if (depth && Number.isFinite(Number(depth.quoteReserve)) && Number(depth.quoteReserve) > 0 && Number.isFinite(solPriceUsd) && solPriceUsd > 0) {
+        const solReserves = Number(depth.quoteReserve) / 10 ** (depth.quoteDecimals ?? 9);
         const liqUsd = 2 * solReserves * solPriceUsd;
         if (liqUsd > 1_000_000) {
           this.pushDiagnostic(`pump_depth: implausible curve liq=${Math.round(liqUsd)} curve=${bondingCurve.slice(0, 8)}`);
@@ -323,8 +330,8 @@ export class TritonReserveReader {
       // ~10-85 SOL (~1-6k USD liquide per zijde; curve-liquiditeit ≤ ~1M USD).
       // Een grootste-holder-vault ná AMM-migratie decodeert als onzinfactoren
       // (miljarden SOL-reserves) → fail-closed i.p.v. absurde liquiditeit door te geven.
-      if (depth && Number.isFinite(depth.quoteReserve) && depth.quoteReserve > 0) {
-        const solReserves = depth.quoteReserve / 10 ** (depth.quoteDecimals ?? 9);
+      if (depth && Number.isFinite(Number(depth.quoteReserve)) && Number(depth.quoteReserve) > 0) {
+        const solReserves = Number(depth.quoteReserve) / 10 ** (depth.quoteDecimals ?? 9);
         const liqUsd = 2 * solReserves * solPriceUsd;
         if (liqUsd > 1_000_000) {
           this.pushDiagnostic(`pumpmint: implausible curve liq=${Math.round(liqUsd)} mint=${mint.slice(0, 8)}`);

@@ -72,9 +72,9 @@ Fresh certified Node `v22.23.2` results, re-proven by post-merge main CI run `32
 - research transport-free built graph: PASS;
 - frontend build: green with the pre-existing non-blocking bundle-size warning.
 
-## Phase 5 open pull request
+## Phase 5 merged status
 
-Open PR #7 contains the committed and pushed fixture-verified read-only, file-output-only Phase-5 Rust reducer against transport-free callback-type snapshots pinned to Jetstreamer v0.7.0 commit `cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24` and `solana-runtime` v3.1.12. It remains unmerged, has processed no real archive/CAR/slot data, and remains `researchReady: false`. The vendored packages record the audited upstream `firehose.rs` SHA-256, crates.io runtime checksum, and reward-type source SHA-256 while excluding HTTP, QUIC, Tokio, socket, metrics-client, and archive-client implementations. It:
+PR #7 was squash-merged as `9739eed415c90e4433b77e0cabc46bd32577bb9e`; post-merge main CI run `32162322487` succeeded. It contains the fixture-verified read-only, file-output-only Phase-5 Rust reducer against transport-free callback-type snapshots pinned to Jetstreamer v0.7.0 commit `cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24` and `solana-runtime` v3.1.12. It has processed no real archive/CAR/slot data and remains `researchReady: false`. The vendored packages record the audited upstream `firehose.rs` SHA-256, crates.io runtime checksum, and reward-type source SHA-256 while excluding HTTP, QUIC, Tokio, socket, metrics-client, and archive-client implementations. It:
 
 1. projects the pinned `TransactionData`/`BlockData` callback payload fields for legacy and v0 transactions without lossy numeric conversion;
 2. buffers by `(slot, transaction_slot_index)` until matching `BlockData::Block` supplies time;
@@ -84,12 +84,11 @@ Open PR #7 contains the committed and pushed fixture-verified read-only, file-ou
 6. on Linux, maps the same-effective-UID, normalized-output namespace to a System V semaphore collision registry whose slots store complete SHA-256 fingerprints and use separate `SEM_UNDO` active-writer semaphores; distinct full namespaces sharing the 32-bit registry key do not alias, process death releases active ownership without pathname or `/proc` discovery, incompatible/full registries fail closed, and external plus in-output hard-linked advisory-lock paths remain defense in depth against accidental/pathname-level conflicts;
 7. remains independent of ClickHouse and the paused legacy backfill.
 
-This is not merged or real-archive proof. `researchReady` remains hard-coded false.
+This merged implementation is not real-archive proof. `researchReady` remains hard-coded false.
 
 Before any real archive read, run, or slot pilot:
 
-- merge PR #7 only after a separate explicit merge GO and green exact-head GitHub CI;
-- keep every review, test, and CI result bound to the exact PR head;
+- keep every review, test, and future evidence result bound to exact immutable bytes;
 - obtain explicit user approval for the bounded slot range and source artifacts;
 - set byte/time/storage limits and an abort policy;
 - verify outputs and inventory reconciliation before considering one complete epoch.

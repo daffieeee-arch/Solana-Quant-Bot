@@ -945,6 +945,23 @@ function validateLedger(value: unknown, label: string): asserts value is PaperLe
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_LEDGER_STATE_BYTES) throw new Error(`${label} exceeds its byte limit`);
 }
 
+function validPersistedRawAmount(value: unknown): boolean {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0;
+  return typeof value === 'string' && /^(?:[1-9][0-9]{0,19})$/.test(value)
+    && BigInt(value) <= 18_446_744_073_709_551_615n;
+}
+
+function validDepthAwarePositionFields(position: Record<string, unknown>): boolean {
+  const hasRawAmount = position.baseAmountRaw !== undefined;
+  const hasBaseDecimals = position.baseDecimals !== undefined;
+  return hasRawAmount === hasBaseDecimals
+    && (!hasRawAmount || (validPersistedRawAmount(position.baseAmountRaw)
+      && Number.isInteger(position.baseDecimals)
+      && (position.baseDecimals as number) >= 0
+      && (position.baseDecimals as number) <= 18))
+    && (position.baseTokensUsd === undefined || isPositiveFinite(position.baseTokensUsd));
+}
+
 function isLegacyLedger(value: unknown): value is PaperLedger {
   if (!isRecord(value) || value.schemaVersion !== 1 || !isSafeInteger(value.realizedPnlLamports) || !isTimestamp(value.updatedAt)) return false;
   const portfolio = value.portfolio;
@@ -959,7 +976,8 @@ function isLegacyLedger(value: unknown): value is PaperLedger {
     && isNonEmptyString(position.pairId) && isNonEmptyString(position.mint) && isNonEmptyString(position.symbol)
     && isTimestamp(position.openedAt) && isPositiveFinite(position.entryPriceUsd) && isPositiveFinite(position.highPriceUsd)
     && position.highPriceUsd >= position.entryPriceUsd && isPositiveSafeInteger(position.allocatedLamports)
-    && isPositiveSafeInteger(position.entryCostLamports) && isPositiveFinite(position.dynamicStopPercent));
+    && isPositiveSafeInteger(position.entryCostLamports) && isPositiveFinite(position.dynamicStopPercent)
+    && validDepthAwarePositionFields(position));
 }
 
 function validatePortfolio(value: unknown, label: string): asserts value is Portfolio {
@@ -986,6 +1004,7 @@ function validatePosition(value: unknown, label: string): asserts value is Portf
     || !isTimestamp(value.openedAt) || !isPositiveFinite(value.entryPriceUsd) || !isPositiveFinite(value.highPriceUsd)
     || value.highPriceUsd < value.entryPriceUsd || !isPositiveSafeInteger(value.allocatedLamports)
     || !isPositiveSafeInteger(value.entryCostLamports) || !isPositiveFinite(value.dynamicStopPercent)
+    || !validDepthAwarePositionFields(value)
     || value.tradeId !== makeTradeId(value.mint, value.openedAt)) throw new Error(`${label} has an invalid position`);
 }
 

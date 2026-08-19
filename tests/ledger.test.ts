@@ -451,6 +451,39 @@ describe('PaperLedgerStore append and compare-and-swap', () => {
     await store.close();
   });
 
+  it.each([
+    ['negative raw amount', { baseAmountRaw: -1, baseDecimals: 6 }],
+    ['raw amount above u64', { baseAmountRaw: '18446744073709551616', baseDecimals: 6 }],
+    ['missing decimal pair', { baseAmountRaw: 1 }],
+    ['orphan decimal pair', { baseDecimals: 6 }],
+    ['out-of-domain decimals', { baseAmountRaw: 1, baseDecimals: 19 }],
+    ['negative USD notional', { baseTokensUsd: -1 }],
+  ] as const)('rejects malformed depth-aware position state: %s', async (_label, extra) => {
+    const directory = await mkdtemp(join(tmpdir(), 'paper-ledger-v2-depth-position-'));
+    const store = new PaperLedgerStore(directory);
+    const ledger = await store.loadOrCreate(initialPortfolio());
+    const position = {
+      tradeId: 'mint-depth:2026-07-30T00:00:00.000Z',
+      learningSchemaVersion: 2 as const,
+      pairId: 'pair-depth',
+      mint: 'mint-depth',
+      symbol: 'DEPTH',
+      openedAt: '2026-07-30T00:00:00.000Z',
+      entryPriceUsd: 0.01,
+      highPriceUsd: 0.01,
+      allocatedLamports: 250_000_000,
+      entryCostLamports: 252_500_000,
+      dynamicStopPercent: 5,
+      ...extra,
+    };
+    await expect(store.save({
+      ...ledger,
+      portfolio: { ...ledger.portfolio, positions: [position] },
+      updatedAt: '2026-07-30T00:01:00.000Z',
+    })).rejects.toThrow(/invalid position/i);
+    await store.close();
+  });
+
   it('enforces the serialized event byte boundary before publishing WAL', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'paper-ledger-v2-event-bound-'));
     const store = new PaperLedgerStore(directory);

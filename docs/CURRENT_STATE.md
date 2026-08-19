@@ -13,6 +13,7 @@
 - PR #5 (Phase 4 Old Faithful/Jetstreamer contract boundary) was squash-merged as `c7a66292e2b02bc33999e558017a3a742498285d`; post-merge main CI run `32072251102` succeeded.
 - PR #7 (fixture-verified Phase-5 Rust reducer) was squash-merged as `9739eed415c90e4433b77e0cabc46bd32577bb9e`; post-merge main CI run `32162322487` succeeded. No real archive/CAR/slot data has been processed, and `researchReady: false` remains mandatory.
 - Phase 4 and the fixture-verified Phase-5 reducer are merged on `main` as transport-free, read-only contract boundaries. Phase 5 is not real-archive evidence and remains `researchReady: false`.
+- The Phase 6A branch adds only a synthetic, fixture-only canonical Pump Silver event/transaction contract plus Rust/TypeScript event-vector parity. Its bounded registry interval is explicitly not real activation-slot evidence; registry approval and `researchReady` remain false.
 - Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
 - Baseline tag: `offline-pump-baseline-20260815`
 - Published history is preserved; runtime/cache cleanup affects only the current tree.
@@ -88,9 +89,9 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 5. The transport-free Phase 4 contract boundary and fixture-verified Phase-5 Rust reducer against pinned Jetstreamer v0.7.0 are merged. The reducer has processed no real archive/CAR/slot bytes and remains `researchReady: false`; real-archive proof is still blocked pending separate approval.
 6. Non-Pump identity/pricing/exit paths are incomplete.
 7. ClickHouse and backfill infrastructure fixes remain open.
-8. A reviewed `PUMP_SNAPSHOT_V2` Silver parser/export is still required before chronological Pump OOS evidence can be produced. The Phase 3 Bronze capture is not registry-approved research data; the registry remains empty, v1 must not be used for tuning, and pool-depth replay remains HOLD pending decimal-math correction.
+8. A real-provenance `PUMP_SNAPSHOT_V2` Silver parser/export is still required before chronological Pump OOS evidence can be produced. Phase 6A is fixture-only and unapproved; the real registry remains empty, v1 must not be used for tuning, and pool-depth replay remains HOLD despite the branch's corrected 6/9 conversion until source/fill-impact provenance is approved.
 9. Dependency audit reports three moderate production-chain findings and one high dev-chain finding; investigate separately without forced auto-fix.
 
 ## Next recommended product task
 
-Phase 5 is merged and remains fixture-only with `researchReady: false`. Begin any next development phase in a new session. Obtain separate explicit approval before any real Old Faithful slot pilot or CAR download. Do not start ClickHouse/backfill, tune on v1, or claim OOS readiness from Bronze/coverage artifacts alone.
+Finish exact-byte review of the Phase 6A fixture-only contract. The next development gate is an offline Silver state/provenance contract with independently evidenced activation-slot ranges; obtain separate explicit approval before any real Old Faithful slot pilot or CAR download. Do not start ClickHouse/backfill, tune on v1, or claim OOS readiness from Bronze, fixture-only Silver, or coverage artifacts.

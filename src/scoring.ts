@@ -48,10 +48,10 @@ export type MarketSnapshot = {
 };
 
 export type PoolDepth = {
-  /** Base (traded token) reserve in its own base units, scaled by 10^baseDecimals. */
-  baseReserve: number;
-  /** Quote (SOL or stablecoin) reserve in quote units, scaled by 10^quoteDecimals. */
-  quoteReserve: number;
+  /** Exact raw reserve: safe integer number or canonical unsigned decimal string. */
+  baseReserve: number | string;
+  /** Exact raw reserve: safe integer number or canonical unsigned decimal string. */
+  quoteReserve: number | string;
   baseDecimals: number;
   quoteDecimals: number;
   /** Constant-product fee numerator/denominator if known (default 0.25%). */

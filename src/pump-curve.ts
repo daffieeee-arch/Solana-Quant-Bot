@@ -20,10 +20,19 @@ import type { PoolDepth } from './scoring.js';
  */
 
 export type PumpCurveReserves = {
-  virtualTokenReserves: number;
-  virtualSolReserves: number;
-  tokenTotalSupply: number;
+  virtualTokenReserves: string;
+  virtualSolReserves: string;
+  tokenTotalSupply: string;
 };
+
+const RAW_U64 = /^(?:0|[1-9][0-9]{0,19})$/;
+const U64_MAX = 18_446_744_073_709_551_615n;
+
+function rawU64(value: unknown): bigint | null {
+  if (typeof value !== 'string' || !RAW_U64.test(value)) return null;
+  const parsed = BigInt(value);
+  return parsed <= U64_MAX ? parsed : null;
+}
 
 /** Decode a Pump.fun bonding-curve base64 account back to virtual reserves (big-endian-safe, LE u64). */
 export function decodePumpCurve(base64: string): PumpCurveReserves | undefined {
@@ -36,16 +45,14 @@ export function decodePumpCurve(base64: string): PumpCurveReserves | undefined {
   // need at least through token_total_supply (offset 80 + 8 = 88); een account van
   // 80-87 bytes maakte `BigInt(bytes[i])` met undefined → TypeError (crash).
   if (bytes.length < 88) return undefined;
-  const readU64 = (offset: number): number => {
-    // read as BigInt to stay exact, then to number (reserves often below 2^53)
+  const readU64 = (offset: number): string => {
     let n = 0n;
     for (let i = offset + 7; i >= offset; i -= 1) n = (n << 8n) | BigInt(bytes[i]!);
-    return Number(n);
+    return n.toString();
   };
   const virtualTokenReserves = readU64(64);
   const virtualSolReserves = readU64(72);
   const tokenTotalSupply = readU64(80);
-  if (!Number.isFinite(virtualTokenReserves) || !Number.isFinite(virtualSolReserves)) return undefined;
   return { virtualTokenReserves, virtualSolReserves, tokenTotalSupply };
 }
 
@@ -54,7 +61,10 @@ export function decodePumpCurve(base64: string): PumpCurveReserves | undefined {
  * Base = the traded token (6 decimals per Pump.fun convention), quote = WSOL (9 decimals).
  */
 export function pumpCurveToDepth(curve: PumpCurveReserves): PoolDepth | undefined {
-  if (!curve || curve.virtualTokenReserves <= 0 || curve.virtualSolReserves <= 0) return undefined;
+  if (!curve) return undefined;
+  const tokenReserve = rawU64(curve.virtualTokenReserves);
+  const solReserve = rawU64(curve.virtualSolReserves);
+  if (tokenReserve === null || tokenReserve <= 0n || solReserve === null || solReserve <= 0n) return undefined;
   return {
     // quote first (WSOL) — matches the existing PoolDepth ordering (quoteReserve/baseReserve)
     quoteReserve: curve.virtualSolReserves,
