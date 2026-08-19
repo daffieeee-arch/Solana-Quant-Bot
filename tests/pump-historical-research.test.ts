@@ -408,7 +408,7 @@ describe('Pump historical bounded simulation', () => {
     expect(result.censoredOpenPositions).toHaveLength(1);
   });
 
-  it('fails closed before returning unsafe-integer lamport accounting', () => {
+  it('censors the position before returning unsafe-integer lamport accounting', () => {
     const launch = '2026-01-02T00:00:00.000Z';
     const largeConfig = {
       ...config,
@@ -423,10 +423,10 @@ describe('Pump historical bounded simulation', () => {
       record('unsafe-lamports', '2026-01-02T00:12:00.000Z', launch, 20, { liquidityUsd: 1_000_000_000_000_000 }),
     ];
     const report = runSyntheticReport([...rows, ...splitFillers(largeConfig)], largeConfig);
-    expect(report).toMatchObject({
-      status: 'BLOCKED',
-      suitability: { blockers: expect.arrayContaining(['non_finite_or_invalid_simulation_output']) },
-    });
+    expect(report.status).toBe('SYNTHETIC_TEST_ONLY');
+    expect(report.results.train.closedTrades).toEqual([]);
+    expect(report.results.train.censoredOpenPositions).toHaveLength(1);
+    expect(report.results.train.realizedPnlLamports).toBe(0);
   });
 });
 

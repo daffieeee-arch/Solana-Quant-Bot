@@ -8,7 +8,10 @@ describe('spotPriceUsd', () => {
   it('berekent fair-value prijs uit reserves (constant-product ratio, geen impact)', () => {
     // 1e18 base tokens(9dec) = 1e9 token; 7.5e15 quote lamports(9dec) = 7.5e6 SOL
     // price = 7.5e6 SOL / 1e9 token = 0.0075 SOL/token → *150 = 1.125 USD/token
-    const depth: PoolDepth = { baseReserve: 1e18, quoteReserve: 7.5e15, baseDecimals: 9, quoteDecimals: 9 };
+    const depth: PoolDepth = {
+      baseReserve: '1000000000000000000', quoteReserve: '7500000000000000',
+      baseDecimals: 9, quoteDecimals: 9,
+    };
     expect(spotPriceUsd(depth, SOL_PRICE)).toBeCloseTo(1.125, 6);
   });
 

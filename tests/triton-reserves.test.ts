@@ -95,6 +95,21 @@ describe('TritonReserveReader', () => {
     expect(depth?.baseDecimals).toBe(6);
   });
 
+  it('preserves token-account raw balances above MAX_SAFE_INTEGER', async () => {
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      const isQuote = body.params[0] === 'quoteVault';
+      return new Response(JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        result: { value: { amount: isQuote ? '10000000000' : '9007199254740993', decimals: 9 } },
+      }), { status: 200 });
+    });
+    const reader = new TritonReserveReader('endpoint.rpcpool.com', 'token', fetcher);
+    const depth = await reader.fetchDepth('exact:test', 'quoteVault', 'baseVault');
+    expect(depth?.quoteReserve).toBe('10000000000');
+    expect(depth?.baseReserve).toBe('9007199254740993');
+  });
+
   it('dedups gelijktijdige fetchPumpDepthByMint calls (in-flight: 2 calls i.p.v. 4)', async () => {
     let largest=0, acct=0;
     const fetcher = vi.fn(async (url, init) => {

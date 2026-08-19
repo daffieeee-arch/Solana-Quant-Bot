@@ -1,0 +1,79 @@
+{
+  "schemaVersion": "PUMP_SILVER_EVENT_GOLDEN_VECTORS_1",
+  "provenance": {
+    "repository": "https://github.com/pump-fun/pump-public-docs",
+    "gitSha": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+    "idlPath": "idl/pump.json",
+    "idlSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49"
+  },
+  "vectors": [
+    {
+      "name": "trade-buy-current-official",
+      "dataHex": "e445a52e51cb9a1dbddb7fd34ee661ee1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f40420f000000000080841e00000000000120202020202020202020202020202020202020202020202020202020202020204069d166000000000076be370700000000f08d9e11ce030000ca9a3b0000000000587b5280cf0200212121212121212121212121212121212121212121212121212121212121212164000000000000001027000000000000222222222222222222222222222222222222222222222222222222222222222232000000000000008813000000000000010900000000000000070000000000000040420f00000000004169d16600000000030000006275790000000000000000000000000000000000000000000000000000000000000000000100000022222222222222222222222222222222222222222222222222222222222222221027069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f0000000000140420f00000000000076be370700000000ca9a3b00000000",
+      "expected": {
+        "eventType": "trade",
+        "mint": "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv",
+        "solAmount": "1000000",
+        "tokenAmount": "2000000",
+        "isBuy": true,
+        "user": "3AQTaduKvYWFTu1ExZSQK1hQp5jSZ2yEt4KzsASAufKd",
+        "timestamp": "1725000000",
+        "virtualSolReserves": "31000000000",
+        "virtualTokenReserves": "1071000000000000",
+        "realSolReserves": "1000000000",
+        "realTokenReserves": "791100000000000",
+        "feeRecipient": "3EKkiwNLWqoUbzFkPrmKbtUB4EweE6f4STzevYUmezeL",
+        "feeBasisPoints": "100",
+        "fee": "10000",
+        "creator": "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3",
+        "creatorFeeBasisPoints": "50",
+        "creatorFee": "5000",
+        "trackVolume": true,
+        "totalUnclaimedTokens": "9",
+        "totalClaimedTokens": "7",
+        "currentSolVolume": "1000000",
+        "lastUpdateTimestamp": "1725000001",
+        "ixName": "buy",
+        "mayhemMode": false,
+        "cashbackFeeBasisPoints": "0",
+        "cashback": "0",
+        "buybackFeeBasisPoints": "0",
+        "buybackFee": "0",
+        "shareholders": [
+          {
+            "address": "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3",
+            "shareBps": 10000
+          }
+        ],
+        "quoteMint": "So11111111111111111111111111111111111111112",
+        "quoteAmount": "1000000",
+        "virtualQuoteReserves": "31000000000",
+        "realQuoteReserves": "1000000000"
+      }
+    },
+    {
+      "name": "create-current-official",
+      "dataHex": "e445a52e51cb9a1d1b72a94ddeeb63760c0000004669787475726520436f696e030000004649582400000068747470733a2f2f6578616d706c652e696e76616c69642f666978747572652e6a736f6e1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f2323232323232323232323232323232323232323232323232323232323232323202020202020202020202020202020202020202020202020202020202020202022222222222222222222222222222222222222222222222222222222222222224069d166000000000010d847e3cf030000ac23fc060000000078c5fb51d102000080c6a47e8d030006ddf6e1d765a193d9cbe146ceeb79ac1cb485ed5f5b37913a8cf5857eff00a90000069b8857feab8184fb687f634618c035dac439dc1aeb3b5598a0f0000000000100ac23fc06000000",
+      "expected": {
+        "eventType": "create",
+        "name": "Fixture Coin",
+        "symbol": "FIX",
+        "uri": "https://example.invalid/fixture.json",
+        "mint": "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv",
+        "bondingCurve": "3NAM1YJMhSPvtAkmGTRABe1hYZN3aE2hZHKy3JZy9fHk",
+        "user": "3AQTaduKvYWFTu1ExZSQK1hQp5jSZ2yEt4KzsASAufKd",
+        "creator": "3JF3sEqM796hk5WFqA6EtmEwJQ9quALszsfJyvXNQKy3",
+        "timestamp": "1725000000",
+        "virtualTokenReserves": "1073000000000000",
+        "virtualSolReserves": "30000000000",
+        "realTokenReserves": "793100000000000",
+        "tokenTotalSupply": "1000000000000000",
+        "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "isMayhemMode": false,
+        "isCashbackEnabled": false,
+        "quoteMint": "So11111111111111111111111111111111111111112",
+        "virtualQuoteReserves": "30000000000"
+      }
+    }
+  ]
+}

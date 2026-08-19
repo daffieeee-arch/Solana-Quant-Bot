@@ -2,6 +2,7 @@ import type { MarketSnapshot, PoolDepth } from '../scoring.js';
 import { defaultHttpFetcher, fetchWithTimeout, type HttpFetcher } from './http.js';
 import { TritonReserveReader } from './triton-reserves.js';
 import { spotPriceUsd, usdPerQuoteUnit } from '../stream-price.js';
+import { constantProductMidPriceRaw } from '../pool-depth.js';
 import type { MarketIdentity } from '../market-identity2.js';
 import { buildPumpIdentityFromDecode, buildAmmIdentityFromDecode, buildIdentityFromGeneric } from '../market-identity-upstream.js';
 import { makeTradeId } from '../portfolio.js';
@@ -416,20 +417,14 @@ export class TritonProvider {
       const depth = curve
         ? await this.reserveReader.fetchPumpDepth(curve, this.solPriceUsd)
         : await this.reserveReader.fetchPumpDepthByMint(mint, this.solPriceUsd);
-      if (!depth || !Number.isFinite(depth.baseReserve) || depth.baseReserve <= 0) {
+      const priceUsd = depth ? spotPriceUsd(depth, this.solPriceUsd) : null;
+      if (priceUsd === null) {
         // Fase-W: stale/onbeschikbare mark — tel voor observability + fail-closed.
         this.positionMarkRpcFallbackTotal += 1;
         this.positionMarkStaleTotal += 1;
         if (this.positionWatchMints.has(mint)) this._trackMarkSource(mint, 'STALE');
         return undefined;
       }
-      // spotPrijs = quoteReserve/baseReserve (SOL per token) × SOL-prijs → USD.
-      const quoteUnits = depth.quoteReserve / 10 ** (depth.quoteDecimals ?? 9);
-      const baseUnits = depth.baseReserve / 10 ** (depth.baseDecimals ?? 6);
-      if (baseUnits <= 0) return undefined;
-      const solPerToken = quoteUnits / baseUnits;
-      if (!Number.isFinite(solPerToken) || solPerToken <= 0) return undefined;
-      const priceUsd = solPerToken * this.solPriceUsd;
       // position-mark RPC-cache opslaan; bounded (max 500 posities-marks)
       if (this.positionMarkCache.size > 500) this.positionMarkCache.clear();
       this.positionMarkCache.set(mint, { loadedAt: nowMark, priceUsd });
@@ -689,6 +684,7 @@ export class TritonProvider {
       baseDecimals: g?.baseDecimalsForPrice ?? 6, quoteDecimals: 9,
       sourceTimestamp: new Date(this.clock()).toISOString(), entryPriceSource: 'STREAM',
     });
+    const validPoolDepth = poolDepth && constantProductMidPriceRaw(poolDepth) !== null ? poolDepth : undefined;
     this.emitDiscovery({
       pairId: g.curve ? `gx:${g.curve}` : `gx:${mint}`,
       mint,
@@ -696,9 +692,9 @@ export class TritonProvider {
       source: 'triton_geyser_generic_multidex',
       // programId unknown per-txn here; composite prices via mint + reserves.
       programId: '',
-      poolDepth: poolDepth && (poolDepth.quoteReserve ?? 0) > 0 && (poolDepth.baseReserve ?? 0) > 0 ? poolDepth : undefined,
-      quoteMint: poolDepth && (poolDepth.quoteReserve ?? 0) > 0 ? WSOL_MINT : undefined,
-      synthetic: !!(g?.priceLamportsPerToken && poolDepth && !g?.curve),
+      poolDepth: validPoolDepth,
+      quoteMint: validPoolDepth ? WSOL_MINT : undefined,
+      synthetic: !!(g?.priceLamportsPerToken && validPoolDepth && !g?.curve),
       marketIdentity: genericIdentity.identity,
     });
   }
@@ -717,7 +713,9 @@ export class TritonProvider {
     const baseReserve = P_sol > 0 ? (30 / P_sol) * (10 ** baseDecimals) : 0;
     return {
       quoteReserve,
-      baseReserve: Math.round(baseReserve),
+      baseReserve: Number.isSafeInteger(Math.round(baseReserve))
+        ? Math.round(baseReserve)
+        : Math.round(baseReserve).toFixed(0),
       quoteDecimals: 9,
       baseDecimals,
       syntheticPriceLamportsPerToken: priceLamportsPerToken,
@@ -816,11 +814,11 @@ export class TritonProvider {
   /** Liquiditeit ≈ 2× quote-reserves in USD via de quote-mint (T2-B3-fix). */
   private curveLiquidityUsd(depth: PoolDepth, quoteMint: string | undefined): number | undefined {
     if (!this.solPriceUsd || !Number.isFinite(this.solPriceUsd) || this.solPriceUsd <= 0) return undefined;
-    if (!Number.isFinite(depth.quoteReserve) || depth.quoteReserve <= 0) return undefined;
+    if (constantProductMidPriceRaw(depth) === null) return undefined;
     const quoteUnitUsd = quoteMint ? usdPerQuoteUnit(quoteMint, this.solPriceUsd) : null;
     // Onbekende quote (niet WSOL/USDC/USDT) → geen liquiditeits-schatting (fail-closed).
     if (quoteUnitUsd === null) return undefined;
-    const quoteUnits = depth.quoteReserve / 10 ** (depth.quoteDecimals ?? 9);
+    const quoteUnits = Number(depth.quoteReserve) / 10 ** (depth.quoteDecimals ?? 9);
     // 2× (beide zijden van de curve/pool) × USD-waarde per quote-unit.
     return Number((2 * quoteUnits * quoteUnitUsd).toFixed(2));
   }

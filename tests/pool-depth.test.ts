@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   constantProductBuyPrice,
+  constantProductBuyQuoteRaw,
   constantProductSellPrice,
+  constantProductSellQuoteRaw,
   usdToQuoteRaw,
   rawBaseToUnits,
   rawQuoteToUsd,
@@ -11,7 +13,7 @@ import type { PoolDepth } from '../src/scoring.js';
 // Raydium AMMv4 pool: base token 9 decimals, quote WSOL 9 decimals.
 // quoteReserve=150e9 (150 SOL), baseReserve=1e18 (1e9 tokens).
 const depth: PoolDepth = {
-  baseReserve: 1_000_000_000 * 10 ** 9, // 1e18 raw = 1e9 tokens
+  baseReserve: '1000000000000000000',    // 1e18 raw = 1e9 tokens
   quoteReserve: 150 * 1e9,               // 1.5e11 raw = 150 SOL
   baseDecimals: 9,
   quoteDecimals: 9,
@@ -20,9 +22,25 @@ const depth: PoolDepth = {
 };
 const SOL = 150;
 // Mid = quoteReserve/baseReserve (decimals cancel) = 1.5e-7 SOL/token
-const MID_SOL_PER_TOKEN = depth.quoteReserve / depth.baseReserve;
+const MID_SOL_PER_TOKEN = Number(depth.quoteReserve) / Number(depth.baseReserve);
 
 describe('constantProductBuyPrice', () => {
+  it('keeps legitimate-scale 9/9 reserves exact and emits integer raw units', () => {
+    const exactDepth: PoolDepth = {
+      ...depth,
+      baseReserve: '1000000000000000000',
+      quoteReserve: '10000000000',
+    };
+    const quoteInRaw = 250_000_000;
+    const netQuoteNumerator = BigInt(quoteInRaw) * 9_975n;
+    const expected = 1_000_000_000_000_000_000n * netQuoteNumerator
+      / (10_000_000_000n * 10_000n + netQuoteNumerator);
+
+    expect(constantProductBuyQuoteRaw(exactDepth, quoteInRaw)).toBe(expected.toString());
+    expect(constantProductBuyPrice(exactDepth, quoteInRaw)).not.toBeNull();
+    expect(constantProductBuyQuoteRaw({ ...exactDepth, baseReserve: 1e18 }, quoteInRaw)).toBeNull();
+  });
+
   it('returns the mid price for an infinitesimal buy', () => {
     const execRaw = constantProductBuyPrice(depth, 1)!; // 1 lamport
     expect(execRaw).toBeCloseTo(MID_SOL_PER_TOKEN, 4);
@@ -48,8 +66,25 @@ describe('constantProductBuyPrice', () => {
 });
 
 describe('constantProductSellPrice', () => {
+  it('floors executable quote output to an integer minor unit', () => {
+    const exactDepth: PoolDepth = {
+      baseReserve: '100000000000', quoteReserve: '10000000000',
+      baseDecimals: 6, quoteDecimals: 9, feeNumerator: 25, feeDenominator: 10_000,
+    };
+    const baseInRaw = '2433075187';
+    const netBaseNumerator = BigInt(baseInRaw) * 9_975n;
+    const expected = 10_000_000_000n * netBaseNumerator
+      / (100_000_000_000n * 10_000n + netBaseNumerator);
+    expect(constantProductSellQuoteRaw(exactDepth, baseInRaw)).toBe(expected.toString());
+    expect(BigInt(constantProductSellQuoteRaw(exactDepth, baseInRaw)!)).toBe(expected);
+  });
+
+  it.each([-25, -0.5, 0.5, 10_000])('rejects malformed fee numerator %s', (feeNumerator) => {
+    expect(constantProductSellPrice({ ...depth, feeNumerator }, 1_000_000)).toBeNull();
+  });
+
   it('returns a lower (worse) exec price for a large sell of base tokens', () => {
-    const baseInRaw = 20_000_000 * 1e9; // 20M base tokens
+    const baseInRaw = '20000000000000000'; // 20M base tokens
     const execRaw = constantProductSellPrice(depth, baseInRaw)!;
     expect(execRaw).toBeLessThan(MID_SOL_PER_TOKEN); // adverse for seller
   });
@@ -61,9 +96,15 @@ describe('conversion helpers', () => {
     expect(sol).toBeCloseTo(0.2 * 1e9, 4);
   });
 
-  it('rawQuoteToUsd converts quote-per-base ratio to USD price', () => {
-    // 1.2e-7 SOL/token * 150 = 1.8e-5 USD/token
-    expect(rawQuoteToUsd(1.2e-7, 9, SOL)).toBeCloseTo(1.8e-5, 8);
+  it('rawQuoteToUsd converts a raw quote/base ratio with equal decimals', () => {
+    // 1.2e-7 raw WSOL/raw token with 9/9 decimals = 1.2e-7 SOL/token.
+    expect(rawQuoteToUsd(1.2e-7, 9, 9, SOL)).toBeCloseTo(1.8e-5, 8);
+  });
+
+  it('rawQuoteToUsd applies the exact 6/9 decimal scale', () => {
+    const rawLamportsPerRawToken = 0.00008978874258517292;
+    expect(rawQuoteToUsd(rawLamportsPerRawToken, 6, 9, SOL))
+      .toBeCloseTo(0.000013468311387775938, 15);
   });
 
   it('rawBaseToUnits scales raw base by decimals', () => {
@@ -86,9 +127,14 @@ describe('end-to-end price impact realism (real captured pump.fun pool)', () => 
     };
     const solUsd = 150;
     const quoteInRaw = usdToQuoteRaw(30, 9, solUsd); // $30 → 2e8 lamports
-    const midUsd = rawQuoteToUsd(thin.quoteReserve / thin.baseReserve, 9, solUsd);
+    const midUsd = rawQuoteToUsd(
+      thin.quoteReserve / thin.baseReserve,
+      thin.baseDecimals,
+      thin.quoteDecimals,
+      solUsd,
+    );
     const execRaw = constantProductBuyPrice(thin, quoteInRaw)!;
-    const execUsd = rawQuoteToUsd(execRaw, 9, solUsd);
+    const execUsd = rawQuoteToUsd(execRaw, thin.baseDecimals, thin.quoteDecimals, solUsd);
     expect(execUsd).toBeGreaterThan(midUsd);
     const impactPct = ((execUsd - midUsd) / midUsd) * 100;
     expect(impactPct).toBeGreaterThan(0.01); // real slippage in thin pool
