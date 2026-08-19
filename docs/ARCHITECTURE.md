@@ -116,4 +116,6 @@ GitHub Actions is validation-only:
 | Live Dragon's Mouth connectivity | 🔶 HOLD, balance $0 |
 | Non-Pump protocol completeness | ⛔ incomplete |
 | ClickHouse/backfill operational hardening | 🔶 HOLD |
-| v2 event-level data pipeline/export | ⛔ required next |
+| Phase 6B synthetic state/provenance contract | ✅ merged via PR #12; fixture-only; `approved: false`, `researchReady: false`, `pilotEligible: false` |
+| Pilot A Readiness Package | ⛔ design and exact freeze is the only next step; no download, stream, preflight or pilot execution authorized |
+| Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |
