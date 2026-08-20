@@ -321,11 +321,11 @@ The repository transport-isolation scan covers the built `dist/research` graph. 
 
 ## 12. Pilot A and Pilot B boundaries
 
-The next step is only to design and exactly freeze a **Pilot A Readiness Package**. It does not authorize a CAR download, archive stream, slot run or pilot. The separate Old Faithful thread remains paused and read-only.
+The Phase-7 Pilot A readiness package was merged through PR #14 as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; see [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). Merge does not authorize a CAR/range download, archive stream, slot run, bandwidth preflight, or pilot. The package remains `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false`; all ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`.
 
 ### Pilot A — Old Faithful event/transport
 
-Pilot A may run later only after the readiness package receives a separate fresh review, a bandwidth-cap preflight succeeds, and the user gives an explicit execution GO. It may prove bounded:
+The required sequence before any possible Pilot A is: read-only historical deployment/upgrade/IDL/discriminator/layout activation-evidence research for `[422506000, 422507000)` → separately enforced and adversarially tested GitHub Actions citationgate → separately approved bandwidth-cap preflight → another explicit Pilot A execution GO. The local exact-byte citationgate passed on the merged package bytes, but post-merge run `32350736436` has no separate citationgate step. Only after all prior gates may Pilot A prove bounded:
 
 - blocks and transactions;
 - top-level and inner instructions;

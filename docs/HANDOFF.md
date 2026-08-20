@@ -21,6 +21,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - PR #7 (fixture-verified Phase-5 Rust reducer) was squash-merged as `9739eed415c90e4433b77e0cabc46bd32577bb9e`; post-merge main CI run `32162322487` succeeded. No real archive/CAR/slot data has been processed, and `researchReady: false` remains mandatory.
 - PR #9 (Phase 6A canonical Pump Silver event contract) was squash-merged as `95511866c31b6325c2341b5b7a3b98c9503d85d1`; post-merge main CI run `32231262382` passed Node 953/953, Rust 60/60, TypeScript, builds, policy, transport isolation, push integrity, and clean-tree gates. It is fixture-only, used no real CAR/archive/slot data, provides no OOS or profitability evidence, and remains `researchReady: false`.
 - PR #12 (Phase 6B Pump Silver state/provenance contract) was squash-merged as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` passed Node 1,111/1,111 across 71 files, the focused Phase 6B file 151/151, Rust 68/68, shared TypeScript/Rust parity, TypeScript, builds, policy, transport isolation, push integrity, and clean-tree gates. It is fully offline, synthetic and fixture-only; `approved: false`, `researchReady: false`, and `pilotEligible: false` remain mandatory.
+- PR #14 (Phase-7 Pilot A readiness package) was squash-merged as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge main CI run `32350736436` passed focused readiness 86/86, Node 1,197/1,197 across 72 files, Rust 68/68 and all required TypeScript/build/transport/policy/Rust/push-integrity/clean-tree gates. The merge changes no content status: `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 
 ## What is proven?
 
@@ -93,7 +94,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 
 ## Current task
 
-Phase 7 now contains an offline Pilot A readiness candidate; read [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It pins official epoch-978 sidecars and `[422506000, 422507000)`, but no on-chain evidence proves the pinned Pump layouts active over that range. The verdict is `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` remain mandatory. No CAR/range bytes, block/transaction payloads, cap preflight, archive stream, slot processing, or pilot execution occurred.
+Phase 7 is merged through PR #14; read [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It pins official epoch-978 sidecars and `[422506000, 422507000)`, but no on-chain evidence proves the pinned Pump layouts active over that range. All ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`; the verdict remains `HOLD_UNPROVEN_ACTIVATION` with `approved: false`, `researchReady: false`, and `pilotEligible: false`. No CAR/range bytes, block/transaction payloads, cap preflight, archive stream, slot processing, or pilot execution occurred.
 
 Phase 6B is squash-merged through PR #12 as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` passed all required gates. The merged Phase 6A/6B contracts remain fully offline, synthetic and fixture-only, have processed no real archive/CAR/slot/accountstate data, provide no OOS, execution or profitability evidence, and keep `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 
@@ -103,7 +104,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-The next step is **only to review and exactly freeze the implemented Phase-7 readiness candidate**, not to execute a pilot. Pilot A remains limited to Old Faithful event/transport evidence and requires separate exact-byte review, proven activation, bandwidth-cap preflight and explicit execution GO. It may never claim raw state, liquidity, position-size impact, execution-grade returns, OOS readiness or profitability.
+The next step is **read-only historical Pump activation-evidence research** for deployment/upgrade, IDL, discriminator, and layout boundaries over the candidate range. Next comes a separately reviewed GitHub Actions citationgate: the local exact-byte citationgate passed, but remote CI does not enforce it separately. Only after activation evidence and citation CI-hardening may a separately authorized bandwidth-cap preflight be considered; Pilot A still requires another explicit execution GO. It may never claim raw state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
