@@ -39,9 +39,10 @@ const CANONICAL_STEPS = [
   },
   { name: 'Install locked dependencies', run: 'npm ci' },
   { name: 'Enforce repository and zero-cost policy', run: 'npm run ci:policy' },
+  { name: 'Enforce offline research citation gate', run: 'npm run ci:research-citations' },
   {
     name: 'Run policy bypass and critical zero-cost/Pump tests',
-    run: 'npx vitest run tests/ci-policy.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts',
+    run: 'npx vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts',
   },
   { name: 'Run complete test suite', run: 'npm test' },
   { name: 'Type-check', run: 'npx tsc --noEmit' },

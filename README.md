@@ -13,7 +13,8 @@ Private, **paper-only** Solana trading research project. The repository contains
 - Immutable functional baseline quality: 592 tests. Phase 4 was squash-merged through PR #5 as a transport-free Old Faithful/Jetstreamer contract boundary. The fixture-verified Phase-5 Rust reducer was squash-merged through PR #7 as `9739eed415c90e4433b77e0cabc46bd32577bb9e`. Phase 6A was squash-merged through PR #9 as `95511866c31b6325c2341b5b7a3b98c9503d85d1`; post-merge main CI run `32231262382` passed Node 953/953 across 70 files, Rust 60/60 under Rust 1.97.1, TypeScript, backend/frontend build, repository policy, transport isolation, push integrity, and clean-tree gates.
 - Phase 6B was squash-merged through PR #12 as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` passed Node 1,111/1,111 across 71 files, the focused Phase 6B file 151/151, Rust 68/68, shared TypeScript/Rust parity, TypeScript, backend/frontend build, repository policy, transport isolation, push integrity, and clean-tree gates. It remains fully offline, synthetic and fixture-only, is not wired to Jetstreamer callbacks or reducer execution, claims no real activation range, and keeps `approved: false`, `researchReady: false`, and `pilotEligible: false`; see [`docs/PHASE6B_PUMP_SILVER_STATE_PROVENANCE_CONTRACT.md`](docs/PHASE6B_PUMP_SILVER_STATE_PROVENANCE_CONTRACT.md).
 - PR #14 merged the offline Phase-7 Pilot A readiness package to `main` as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; see [`docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). Post-merge CI run `32350736436` passed focused readiness 86/86, Node 1,197/1,197 across 72 files, Rust 68/68, TypeScript, builds, transport isolation, policy, Rust gates, push integrity, and clean-tree checks. The package remains `CANDIDATE_UNAPPROVED` and `HOLD_UNPROVEN_ACTIVATION` with `approved: false`, `researchReady: false`, and `pilotEligible: false`; all ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`.
-- Merge is not Pilot authorization. The next sequence is read-only activation-evidence research, then remote citationgate CI hardening, then a separately authorized bandwidth-cap preflight, and only then possibly Pilot A under new explicit GO. Pilot B and accepted real-data Silver remain NO-GO. No CAR/range download, archive stream, slot processing, network shaping, ClickHouse/backfill action, strategy research, OOS, execution, or profitability claim is authorized.
+- Phase 7A read-only activation research is now persisted in [`docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`](docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md): 0/10 entries meet `PROVEN_AT_SLOT_RANGE`; all remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`. The Phase-7B candidate adds a tracked offline `ci:research-citations` gate and exact workflow enforcement, but does not change the registry, Silver eligibility, runtime, `researchReady: false`, or `pilotEligible: false`.
+- Merge is not Pilot authorization. Bandwidth preflight, network shaping, CAR/range retrieval, archive streaming, slot processing, Pilot A/B, ClickHouse/backfill, strategy research, OOS, execution, and profitability remain unauthorized.
 
 Read [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md) before changing code.
 
@@ -50,6 +51,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for status markers and limits
 ```bash
 npm ci
 npm run ci:policy
+npm run ci:research-citations
 npm test
 npx tsc --noEmit
 npm run build

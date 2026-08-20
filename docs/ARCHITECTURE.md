@@ -84,7 +84,7 @@ v1 stores at most one dominant/net swap per transaction. It is not an event-leve
 
 The offline Phase-7 readiness boundary is documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) and merged through PR #14 as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge CI run `32350736436` succeeded. It validates a machine-readable epoch-978 source candidate and event/transport plan but has no production runtime caller. Activation remains `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` are invariant. All ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`, so accepted Silver for real data is unavailable.
 
-The next gated sequence is: read-only deployment/upgrade/IDL/discriminator/layout activation evidence → add and adversarially test a separate remote citationgate in GitHub Actions → separately authorize and prove the bandwidth cap → only then consider Pilot A under new explicit GO. Merge itself authorizes none of those actions.
+Phase 7A has completed the bounded read-only activation investigation: ProgramData boundaries and official/on-chain IDL structures are corroborated, but 0/10 entries meet the strict promotion norm. The Phase-7B candidate persists this evidence and adds an offline citationgate plus exact workflow enforcement. Neither changes runtime or registry semantics. Bandwidth preflight and Pilot A remain separately gated and unauthorized.
 
 ## TrueNAS state
 
@@ -122,4 +122,5 @@ GitHub Actions is validation-only:
 | ClickHouse/backfill operational hardening | 🔶 HOLD |
 | Phase 6B synthetic state/provenance contract | ✅ merged via PR #12; fixture-only; `approved: false`, `researchReady: false`, `pilotEligible: false` |
 | Pilot A Readiness Package | ✅ package merged via PR #14; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, `pilotEligible: false`; no preflight or pilot authorized |
+| Phase 7A evidence / Phase 7B citation gate | 🔶 candidate: evidence persisted, 0/10 proven, offline CI gate implemented; no registry/runtime/pilot authorization |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |

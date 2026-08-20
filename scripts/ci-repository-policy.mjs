@@ -8,6 +8,10 @@ import {
   validateTrackedWorkflowPaths,
   validateWorkflowConfiguration,
 } from './lib/workflow-policy.mjs';
+import {
+  validateCitationModuleGraph,
+  validateTrackedResearchPaths,
+} from './ci-research-citations.mjs';
 
 export { parseWorkflowYaml } from './lib/strict-yaml.mjs';
 export {
@@ -31,6 +35,8 @@ function runPolicy() {
   const errors = [];
   const warnings = [];
   errors.push(...validateTrackedWorkflowPaths(tracked));
+  errors.push(...validateTrackedResearchPaths(tracked));
+  errors.push(...validateCitationModuleGraph({ root }));
   for (const path of trackedIgnored) {
     errors.push(`tracked file is ignored by .gitignore and must be reconciled: ${path}`);
   }
@@ -60,11 +66,16 @@ function runPolicy() {
     'docs/CI.md',
     'docs/CURRENT_STATE.md',
     'docs/HANDOFF.md',
+    'docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md',
+    'docs/research/PUMP_ACTIVATION_EVIDENCE_EPOCH_978.json',
+    'docs/research/PUMP_ACTIVATION_SCRATCH_MANIFEST.json',
     'docs/HERMES_REVIEW_RESPONSE_ROUND3.md',
     'package-lock.json',
+    'scripts/ci-research-citations.mjs',
     'scripts/lib/strict-yaml.mjs',
     'scripts/lib/workflow-policy.mjs',
     'tests/ci-policy.test.ts',
+    'tests/ci-research-citations.test.ts',
   ];
   for (const path of requiredTracked) {
     if (!tracked.includes(path)) errors.push(`required repository file is not tracked: ${path}`);
@@ -85,6 +96,9 @@ function runPolicy() {
   if (packageJson.private !== true) errors.push('package.json must keep private=true');
   if (packageJson.scripts?.['ci:policy'] !== 'node scripts/ci-repository-policy.mjs') {
     errors.push('package.json must expose the expected ci:policy script');
+  }
+  if (packageJson.scripts?.['ci:research-citations'] !== 'node scripts/ci-research-citations.mjs') {
+    errors.push('package.json must expose the expected offline ci:research-citations script');
   }
 
   const zeroCost = text('src/zero-cost.ts');
