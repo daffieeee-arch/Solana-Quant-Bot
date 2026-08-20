@@ -1,0 +1,34 @@
+{
+  "schemaVersion": "OLD_FAITHFUL_EPOCH_978_SOURCE_MANIFEST_1",
+  "status": "CANDIDATE_UNAPPROVED",
+  "approved": false,
+  "pilotEligible": false,
+  "researchReady": false,
+  "epoch": 978,
+  "canonicalEpochRange": {
+    "startInclusive": 422496000,
+    "endExclusive": 422928000
+  },
+  "epochCid": "bafyreidv5xfqynnope3ul23a7qhcl4csf52ts2wcxdeoi5gqlbkwsn3k4m",
+  "car": {
+    "url": "https://files.old-faithful.net/978/epoch-978.car",
+    "sizeBytes": "709264399796",
+    "sha256": "4ceef2830882036491f2f5a0fbc9ba5ccb94e7783a6723c42336969a50cb212c",
+    "payloadBytesReadDuringReadiness": "0"
+  },
+  "inventory": {
+    "url": "https://files.old-faithful.net/978/978.slots.txt",
+    "sizeBytes": 4313880,
+    "sha256": "1de4b8689cfe7362b6129e8123f53fe3863616d7bb7c08338d157bb6d4754e97",
+    "totalEntryCount": 431388,
+    "extraBoundarySlot": 422495999,
+    "canonicalRangeEntryCount": 431387,
+    "canonicalRangeAbsentSlotCount": 613,
+    "semantics": "UNRESOLVED_BOUNDARY_ENTRY_FILTER_BEFORE_RANGE_SELECTION"
+  },
+  "recap": {
+    "url": "https://files.old-faithful.net/978/978.recap.yaml",
+    "sizeBytes": 1260,
+    "sha256": "2666bac343424fa6d18b3a01e1512a6231eac6a1e6bdd40f8d0f5d9157d121db"
+  }
+}

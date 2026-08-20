@@ -82,6 +82,8 @@ Future reviewed PUMP_SNAPSHOT_V2 export
 
 v1 stores at most one dominant/net swap per transaction. It is not an event-level tape and is explicitly rejected as Pump OOS/parity evidence. The harness is implemented, but credible results remain HOLD until an independently reviewed v2 export provides native-SOL deltas, inner instructions, loaded addresses, canonical launch/curve identity, exact units, historical SOL/USD, and live-gate snapshots.
 
+The offline Phase-7 readiness boundary is defined in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It validates a machine-readable epoch-978 source candidate and event/transport plan but has no production runtime caller. Activation remains `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` are invariant.
+
 ## TrueNAS state
 
 - Configured app image: `solana-bot:contra-audit16-offline-pump-3e95a3c`.
@@ -117,5 +119,5 @@ GitHub Actions is validation-only:
 | Non-Pump protocol completeness | ⛔ incomplete |
 | ClickHouse/backfill operational hardening | 🔶 HOLD |
 | Phase 6B synthetic state/provenance contract | ✅ merged via PR #12; fixture-only; `approved: false`, `researchReady: false`, `pilotEligible: false` |
-| Pilot A Readiness Package | ⛔ design and exact freeze is the only next step; no download, stream, preflight or pilot execution authorized |
+| Pilot A Readiness Package | 🔶 offline candidate implemented; `HOLD_UNPROVEN_ACTIVATION`; `pilotEligible: false`; no download, stream, preflight or pilot execution authorized |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |

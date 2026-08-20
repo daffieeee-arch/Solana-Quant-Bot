@@ -93,8 +93,14 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 8. A real-provenance `PUMP_SNAPSHOT_V2` Silver parser/export is still required before chronological Pump OOS evidence can be produced. Merged Phase 6A is fixture-only and unapproved; the real registry remains empty, v1 must not be used for tuning, and pool-depth replay remains HOLD despite the merged contract's corrected 6/9 conversion until source/fill-impact provenance is approved.
 9. Dependency audit reports three moderate production-chain findings and one high dev-chain finding; investigate separately without forced auto-fix.
 
+## Phase 7 Pilot A readiness candidate
+
+The fully offline readiness package is documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It pins official epoch-978 metadata, the bounded `[422506000, 422507000)` range, event/transport output contracts, source/toolchain hashes, budgets, aborts, and observability/frontend boundaries. It adds no downloader, callback, reducer runtime integration, stream, or pilot execution path.
+
+The slot-effective registry remains `HOLD_UNPROVEN_ACTIVATION`: official IDL bytes prove supported structures but not epoch-978 activation. All results retain `approved: false`, `researchReady: false`, and `pilotEligible: false`.
+
 ## Next recommended product task
 
-The next step is only to design and exactly freeze a **Pilot A Readiness Package**. Pilot A is an Old Faithful event/transport pilot that may run only after that package receives a separate review, a bandwidth-cap preflight succeeds, and the user gives an explicit execution GO. Pilot A can prove bounded blocks, transactions, instructions, logs, events, coverage, quarantine and deterministic reruns without first requiring a historical raw-account-state source. It cannot prove or claim raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness or profitability.
+The next step is to review and exactly freeze the implemented Phase-7 readiness candidate. Pilot A may run only after two exact-byte reviewers return GO/GO, a separately authorized bandwidth-cap preflight succeeds, slot-effective activation is proven, and the user gives explicit execution GO. Pilot A cannot prove or claim raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness or profitability.
 
 **Pilot B** is the state-enriched pilot and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, slot processing or pilot is authorized by this documentation. The separate Old Faithful thread remains paused and read-only; do not start ClickHouse/backfill, tune on v1, or infer research readiness from Bronze, fixture-only Silver or coverage artifacts.
