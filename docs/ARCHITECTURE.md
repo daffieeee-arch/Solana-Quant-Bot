@@ -82,7 +82,9 @@ Future reviewed PUMP_SNAPSHOT_V2 export
 
 v1 stores at most one dominant/net swap per transaction. It is not an event-level tape and is explicitly rejected as Pump OOS/parity evidence. The harness is implemented, but credible results remain HOLD until an independently reviewed v2 export provides native-SOL deltas, inner instructions, loaded addresses, canonical launch/curve identity, exact units, historical SOL/USD, and live-gate snapshots.
 
-The offline Phase-7 readiness boundary is defined in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It validates a machine-readable epoch-978 source candidate and event/transport plan but has no production runtime caller. Activation remains `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` are invariant.
+The offline Phase-7 readiness boundary is documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) and merged through PR #14 as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge CI run `32350736436` succeeded. It validates a machine-readable epoch-978 source candidate and event/transport plan but has no production runtime caller. Activation remains `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` are invariant. All ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`, so accepted Silver for real data is unavailable.
+
+The next gated sequence is: read-only deployment/upgrade/IDL/discriminator/layout activation evidence → add and adversarially test a separate remote citationgate in GitHub Actions → separately authorize and prove the bandwidth cap → only then consider Pilot A under new explicit GO. Merge itself authorizes none of those actions.
 
 ## TrueNAS state
 
@@ -119,5 +121,5 @@ GitHub Actions is validation-only:
 | Non-Pump protocol completeness | ⛔ incomplete |
 | ClickHouse/backfill operational hardening | 🔶 HOLD |
 | Phase 6B synthetic state/provenance contract | ✅ merged via PR #12; fixture-only; `approved: false`, `researchReady: false`, `pilotEligible: false` |
-| Pilot A Readiness Package | 🔶 offline candidate implemented; `HOLD_UNPROVEN_ACTIVATION`; `pilotEligible: false`; no download, stream, preflight or pilot execution authorized |
+| Pilot A Readiness Package | ✅ package merged via PR #14; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, `pilotEligible: false`; no preflight or pilot authorized |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |

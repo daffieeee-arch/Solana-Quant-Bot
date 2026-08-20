@@ -16,6 +16,14 @@ De flags zijn permanent fail-closed:
 
 De evaluator kan deze waarden niet verhogen. Een structureel geldige kandidaat eindigt in `HOLD_UNPROVEN_ACTIVATION`; ongeldige of driftende input eindigt in `QUARANTINED`.
 
+## Merge record
+
+- PR #14 squash-merged this package to `main` as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`.
+- Post-merge GitHub Actions run `32350736436` completed successfully with focused readiness 86/86, Node 1,197/1,197 across 72 files, Rust 68/68, TypeScript, builds, transport isolation, policy, four Rust format checks, clippy `-D warnings`, locked Rust tests/build, committed push integrity, and tracked-tree cleanliness.
+- Merge records delivery only. The package remains `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false`.
+- All ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`; accepted Silver decode for real data remains forbidden.
+- No bandwidth-preflight, network shaping, CAR/range retrieval, archive stream, Pilot A, Pilot B, real slot processing, ClickHouse/backfill, strategy research, OOS, execution, or profitability work is authorized.
+
 Deze fase deed en autoriseert:
 
 - geen CAR- of HTTP-rangedownload;
@@ -319,6 +327,8 @@ Pilot A mag liquidity, holderstate, raw accountstate, executable fills of profit
 - Drie-maandenrun: **NO-GO**.
 - OOS, execution en profitability: **NO-GO**.
 
+De eerstvolgende inhoudelijke taak is read-only onderzoek naar historisch Pump deployment-/upgrade-, IDL-, discriminator- en layout-activatiebewijs voor `[422506000, 422507000)`. Daarna moet GitHub Actions een afzonderlijke remote citationgate krijgen en adversarial worden getest. De lokale exact-byte citationgate is geslaagd op de gemergde packagebytes, maar run `32350736436` bevat nog geen afzonderlijke citationgate-step. Pas na activation evidence en citation CI-hardening kan een bandwidth-cap-preflight onder nieuwe expliciete toestemming worden overwogen; Pilot A blijft daarachter opnieuw afzonderlijk gated.
+
 ## 14. Lokale gate-evidence vóór staged-byte review
 
 Onder exact Node `22.23.2` en Rust `1.97.1`:
@@ -330,6 +340,7 @@ Onder exact Node `22.23.2` en Rust `1.97.1`:
 - backend/frontend-build: groen, met alleen de bestaande niet-blokkerende Vite chunk-waarschuwing;
 - Rust fmt, clippy `-D warnings`, locked tests en locked build: groen;
 - repository policy, compiled research transport isolation, `git diff --check`, citationgate en tracked-secretsscan: groen.
+- post-merge main-CI run `32350736436`: groen op `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; remote citationgate nog niet als aparte workflowstep aanwezig.
 
 Deze gate-evidence is readiness-package-evidence, geen pilot-, source-payload-, OOS- of profitabilitybewijs.
 

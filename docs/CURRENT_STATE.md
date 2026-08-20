@@ -1,6 +1,6 @@
 # CURRENT_STATE.md — Current project state
 
-*Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-19.*
+*Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-20.*
 
 ## Git and GitHub
 
@@ -15,6 +15,7 @@
 - Phase 4 and the fixture-verified Phase-5 reducer are merged on `main` as transport-free, read-only contract boundaries. Phase 5 is not real-archive evidence and remains `researchReady: false`.
 - PR #9 (synthetic, fixture-only canonical Pump Silver event/transaction contract plus Rust/TypeScript event-vector parity) was squash-merged as `95511866c31b6325c2341b5b7a3b98c9503d85d1`; post-merge main CI run `32231262382` succeeded. Its bounded registry interval is explicitly not real activation-slot evidence; registry approval and `researchReady` remain false, and no real CAR/archive/slot data, OOS result, or profitability evidence was produced.
 - PR #12 merged the fully offline, synthetic, fixture-only Phase 6B exact-state/provenance contract as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` succeeded. It provides a 34-code bounded quarantine contract and seven golden plus 44 adversarial shared Rust/TypeScript state vectors; snapshots bind owner, canonical lamports, executable flag and raw data, while Token-2022 and failed bindings derive from authoritative Phase 6A fixtures. It has no callback/reducer runtime caller, uses no real CAR/archive/slot/accountstate or dataset bytes, leaves `approved: false`, `researchReady: false`, and `pilotEligible: false`, and provides no OOS, execution or profitability evidence.
+- PR #14 merged the GO/GO-reviewed Phase-7 Pilot A readiness package as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge main CI run `32350736436` succeeded with focused readiness 86/86, Node 1,197/1,197 across 72 files and Rust 68/68 plus all required TypeScript/build/transport/policy/Rust/push-integrity/clean-tree gates. It remains `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 - Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
 - Baseline tag: `offline-pump-baseline-20260815`
 - Published history is preserved; runtime/cache cleanup affects only the current tree.
@@ -77,7 +78,7 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 
 - Immutable functional baseline: 592 tests, build green, TypeScript clean.
 - PR #1 adds adversarial CI-policy coverage; Phase 2 adds the Pump historical-research harness; Phase 3 adds Bronze capture, transitive transport-policy plus syscall isolation, forensic-generator, and immutable-manifest contract tests. Merged Phase 4 adds the transport-free source-manifest/Jetstreamer-envelope/slot-inventory coverage boundary.
-- Fresh post-merge main CI run `32301299856` at `71ab573c6c23080881022a8ee28ed2e24f94bbff`: **1,111/1,111 Node tests across 71 files**, the focused Phase 6B file **151/151**, and **68/68 Rust tests**, TypeScript/Rust parity green for seven golden plus 44 adversarial vectors, TypeScript clean, backend/frontend build green, all Rust formatting/clippy/locked-test/locked-build gates green, repository policy PASS, research transport-free graph PASS, committed push integrity PASS, and tracked tree clean.
+- Latest post-merge main CI run `32350736436` at `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`: **1,197/1,197 Node tests across 72 files**, the focused Phase-7 readiness file **86/86**, and **68/68 Rust tests**; TypeScript, backend/frontend build, all four Rust formatting checks, clippy `-D warnings`, locked Rust tests/build, repository policy, research transport-free graph, committed push integrity, and tracked-tree cleanliness all passed. The local exact-byte citationgate passed on the merged package bytes, but this GitHub Actions run has no separately enforced citationgate step.
 - The merged canonical workflow runs repository policy, critical zero-cost/Pump tests, the full Node suite, typecheck/build/transport isolation, and the complete Phase-5 Rust gate pinned to Rust 1.97.1: reducer plus three supporting-crate format checks, locked all-target clippy/test, and locked build. It keeps `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
 - GitHub's automatic token is read-only (`contents: read`) and checkout credentials are not persisted. No repository or production secrets are consumed.
 
@@ -93,14 +94,14 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 8. A real-provenance `PUMP_SNAPSHOT_V2` Silver parser/export is still required before chronological Pump OOS evidence can be produced. Merged Phase 6A is fixture-only and unapproved; the real registry remains empty, v1 must not be used for tuning, and pool-depth replay remains HOLD despite the merged contract's corrected 6/9 conversion until source/fill-impact provenance is approved.
 9. Dependency audit reports three moderate production-chain findings and one high dev-chain finding; investigate separately without forced auto-fix.
 
-## Phase 7 Pilot A readiness candidate
+## Phase 7 Pilot A readiness package — merged, content HOLD
 
-The fully offline readiness package is documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It pins official epoch-978 metadata, the bounded `[422506000, 422507000)` range, event/transport output contracts, source/toolchain hashes, budgets, aborts, and observability/frontend boundaries. It adds no downloader, callback, reducer runtime integration, stream, or pilot execution path.
+The fully offline readiness package is merged through PR #14 and documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It pins official epoch-978 metadata, the bounded `[422506000, 422507000)` range, event/transport output contracts, source/toolchain hashes, budgets, aborts, and observability/frontend boundaries. It adds no downloader, callback, reducer runtime integration, stream, or pilot execution path.
 
 The slot-effective registry remains `HOLD_UNPROVEN_ACTIVATION`: official IDL bytes prove supported structures but not epoch-978 activation. All results retain `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 
 ## Next recommended product task
 
-The next step is to review and exactly freeze the implemented Phase-7 readiness candidate. Pilot A may run only after two exact-byte reviewers return GO/GO, a separately authorized bandwidth-cap preflight succeeds, slot-effective activation is proven, and the user gives explicit execution GO. Pilot A cannot prove or claim raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness or profitability.
+The next task is read-only research for historical Pump deployment/upgrade, IDL, discriminator, and layout activation evidence over `[422506000, 422507000)`. If that evidence is sufficient, a separate GitHub Actions citationgate must be implemented and adversarially tested; the local exact-byte citationgate passed on the merged package bytes, but GitHub Actions does not yet enforce it as a separate step. Only after both gates may a separately authorized bandwidth-cap preflight be considered, followed—under another explicit GO—by a possible Pilot A. Pilot A cannot prove or claim raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
 
 **Pilot B** is the state-enriched pilot and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, slot processing or pilot is authorized by this documentation. The separate Old Faithful thread remains paused and read-only; do not start ClickHouse/backfill, tune on v1, or infer research readiness from Bronze, fixture-only Silver or coverage artifacts.
