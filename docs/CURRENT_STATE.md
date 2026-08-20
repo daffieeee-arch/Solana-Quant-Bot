@@ -78,7 +78,7 @@ Deterministic reusable samples belong under `tests/fixtures/` with provenance.
 
 - Immutable functional baseline: 592 tests, build green, TypeScript clean.
 - PR #1 adds adversarial CI-policy coverage; Phase 2 adds the Pump historical-research harness; Phase 3 adds Bronze capture, transitive transport-policy plus syscall isolation, forensic-generator, and immutable-manifest contract tests. Merged Phase 4 adds the transport-free source-manifest/Jetstreamer-envelope/slot-inventory coverage boundary.
-- Latest post-merge main CI run `32350736436` at `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`: **1,197/1,197 Node tests across 72 files**, the focused Phase-7 readiness file **86/86**, and **68/68 Rust tests**; TypeScript, backend/frontend build, all four Rust formatting checks, clippy `-D warnings`, locked Rust tests/build, repository policy, research transport-free graph, committed push integrity, and tracked-tree cleanliness all passed. The local exact-byte citationgate passed on the merged package bytes, but this GitHub Actions run has no separately enforced citationgate step.
+- Latest post-merge main CI run `32397224604` at `784192a675e31d78da82852e91ceb254eccae982`: **1,231/1,231 Node tests across 73 files**, citation **33/33**, policy **21/21**, and **68/68 Rust tests**. The separate offline citation step ran exactly once and succeeded; TypeScript, backend/frontend build, all four Rust formatting checks, clippy `-D warnings`, locked Rust tests/build, repository policy, research transport-free graph, committed push integrity, and tracked-tree cleanliness all passed.
 - The merged canonical workflow runs repository policy, critical zero-cost/Pump tests, the full Node suite, typecheck/build/transport isolation, and the complete Phase-5 Rust gate pinned to Rust 1.97.1: reducer plus three supporting-crate format checks, locked all-target clippy/test, and locked build. It keeps `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
 - GitHub's automatic token is read-only (`contents: read`) and checkout credentials are not persisted. No repository or production secrets are consumed.
 
@@ -100,14 +100,14 @@ The fully offline readiness package is merged through PR #14 and documented in [
 
 The slot-effective registry remains `HOLD_UNPROVEN_ACTIVATION`: official IDL bytes prove supported structures but not epoch-978 activation. All results retain `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 
-## Phase 7A evidence and Phase 7B citation candidate
+## Phase 7A evidence and merged Phase 7B citation gate
 
 The bounded Phase-7A read-only investigation is persisted in [`PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`](PHASE7A_PUMP_ACTIVATION_EVIDENCE.md) and machine-readable manifests. It proves ProgramData boundaries and exact official/on-chain IDL structural agreement, but not the historical ELF/source/IDL-to-binary relation or raw candidate-range semantics. Consequently, 0/10 entries are `PROVEN_AT_SLOT_RANGE`; all ten remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`.
 
-The Phase-7B branch candidate adds an offline deterministic `ci:research-citations` script, adversarial citation tests, and an exact canonical GitHub Actions step. It persists only hashes/manifests, not raw scratch responses, and changes no registry, accepted Silver, runtime, downloader, bandwidth plan, or execution authorization. Until exact-byte review and later merge/CI occur, this is candidate evidence only.
+PR #16 merged the offline deterministic `ci:research-citations` script, adversarial citation tests, and exact canonical GitHub Actions step as `784192a675e31d78da82852e91ceb254eccae982`. Post-merge run `32397224604` is green. It persists only hashes/manifests, not raw scratch responses, and changes no registry, accepted Silver, runtime, downloader, bandwidth plan, or execution authorization.
 
 ## Next recommended product task
 
-The next task is exact-byte review of the Phase-7B evidence/citation candidate. No bandwidth-cap preflight or Pilot A may be considered merely because the evidence is persisted or the citationgate exists; both still require later, separate explicit authorization and all remaining readiness blockers. Pilot A cannot prove or claim raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
+The next development milestone is to separate transport-pilot eligibility from accepted-Silver eligibility, build a Bronze-only Pilot A runner, and build a visible Research Cockpit plus observability adapter. This milestone is not executed or authorized by this docs PR. No bandwidth-cap preflight or Pilot A may be considered merely because the evidence and citationgate are merged; both still require separate explicit authorization and all remaining readiness gates.
 
 **Pilot B** is the state-enriched pilot and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, slot processing or pilot is authorized by this documentation. The separate Old Faithful thread remains paused and read-only; do not start ClickHouse/backfill, tune on v1, or infer research readiness from Bronze, fixture-only Silver or coverage artifacts.
