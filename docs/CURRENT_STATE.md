@@ -100,8 +100,14 @@ The fully offline readiness package is merged through PR #14 and documented in [
 
 The slot-effective registry remains `HOLD_UNPROVEN_ACTIVATION`: official IDL bytes prove supported structures but not epoch-978 activation. All results retain `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 
+## Phase 7A evidence and Phase 7B citation candidate
+
+The bounded Phase-7A read-only investigation is persisted in [`PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`](PHASE7A_PUMP_ACTIVATION_EVIDENCE.md) and machine-readable manifests. It proves ProgramData boundaries and exact official/on-chain IDL structural agreement, but not the historical ELF/source/IDL-to-binary relation or raw candidate-range semantics. Consequently, 0/10 entries are `PROVEN_AT_SLOT_RANGE`; all ten remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`.
+
+The Phase-7B branch candidate adds an offline deterministic `ci:research-citations` script, adversarial citation tests, and an exact canonical GitHub Actions step. It persists only hashes/manifests, not raw scratch responses, and changes no registry, accepted Silver, runtime, downloader, bandwidth plan, or execution authorization. Until exact-byte review and later merge/CI occur, this is candidate evidence only.
+
 ## Next recommended product task
 
-The next task is read-only research for historical Pump deployment/upgrade, IDL, discriminator, and layout activation evidence over `[422506000, 422507000)`. If that evidence is sufficient, a separate GitHub Actions citationgate must be implemented and adversarially tested; the local exact-byte citationgate passed on the merged package bytes, but GitHub Actions does not yet enforce it as a separate step. Only after both gates may a separately authorized bandwidth-cap preflight be considered, followed—under another explicit GO—by a possible Pilot A. Pilot A cannot prove or claim raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
+The next task is exact-byte review of the Phase-7B evidence/citation candidate. No bandwidth-cap preflight or Pilot A may be considered merely because the evidence is persisted or the citationgate exists; both still require later, separate explicit authorization and all remaining readiness blockers. Pilot A cannot prove or claim raw account state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
 
 **Pilot B** is the state-enriched pilot and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, slot processing or pilot is authorized by this documentation. The separate Old Faithful thread remains paused and read-only; do not start ClickHouse/backfill, tune on v1, or infer research readiness from Bronze, fixture-only Silver or coverage artifacts.

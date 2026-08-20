@@ -28,6 +28,7 @@ Job name: `tests-build-zero-cost`.
 - `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true` are defined once at workflow level;
 - safety variables may not be overridden by a job, step, container, inline map, quoted key, or another nested mapping;
 - the ordered action inputs and `run` commands, including every Rust gate, must exactly match the reviewed validation-only workflow;
+- a separate offline `npm run ci:research-citations` step is mandatory after repository policy and before tests; comments, renaming, attached-hash command drift, omission, or moving it outside the canonical job fail policy;
 - no Docker push, SSH/SCP, kubectl, TrueNAS deployment, Triton activation, backfill action, or ClickHouse mutation.
 
 ## Semantic workflow policy
@@ -73,6 +74,7 @@ Adversarial tests cover:
 - self-hosted runners, extra jobs, containers, and services;
 - arbitrary commands, action-input drift, trigger drift, and a second tracked workflow;
 - Rust toolchain drift, removal/replacement of any Rust gate, loss of `--locked`/`--all-targets`, or weakening of `-D warnings`;
+- citation-step omission, comment-only substitution, name/command drift, mutable GitHub default-branch evidence URLs, missing claim/source IDs, scratch/hash drift, stale activation promotion, or authorization escalation;
 - unsupported YAML syntax failing closed.
 
 The complete suite includes adversarial repository-policy, zero-cost, Pump lifecycle/research, Phase-3 Bronze, transport-policy, forensic-generator, and immutable-manifest coverage. Exact totals are reported from the fresh CI run rather than kept as a stale Phase-specific constant here.
@@ -83,19 +85,20 @@ The backend build runs `verify:research-transport` after TypeScript compilation.
 
 1. `npm ci` from the committed lockfile;
 2. `npm run ci:policy`;
-3. targeted policy, zero-cost, Pump replay, vertical-slice, and TP/SL lifecycle tests;
-4. complete Vitest suite;
-5. `npx tsc --noEmit`;
-6. backend and frontend build;
-7. exact Rust `1.97.1` toolchain installation with `clippy` and `rustfmt`;
-8. reducer `cargo fmt --check` plus separate format checks for the Linux namespace-lock, Jetstreamer callback snapshot, and Solana runtime snapshot crates;
-9. locked all-target reducer clippy with `-D warnings`;
-10. locked all-target reducer tests, including all Linux System V writer-exclusion and crash/recovery integration tests;
-11. locked reducer build;
-12. committed patch whitespace validation:
+3. `npm run ci:research-citations` with no network access;
+4. targeted policy, citation, zero-cost, Pump replay, vertical-slice, and TP/SL lifecycle tests;
+5. complete Vitest suite;
+6. `npx tsc --noEmit`;
+7. backend and frontend build;
+8. exact Rust `1.97.1` toolchain installation with `clippy` and `rustfmt`;
+9. reducer `cargo fmt --check` plus separate format checks for the Linux namespace-lock, Jetstreamer callback snapshot, and Solana runtime snapshot crates;
+10. locked all-target reducer clippy with `-D warnings`;
+11. locked all-target reducer tests, including all Linux System V writer-exclusion and crash/recovery integration tests;
+12. locked reducer build;
+13. committed patch whitespace validation:
    - pull requests use the explicit GitHub base and head SHAs;
    - pushes inspect the committed HEAD patch;
-13. verification that checks did not modify tracked files.
+14. verification that checks did not modify tracked files.
 
 ## Limits
 
@@ -114,8 +117,10 @@ The repository policy is a focused guardrail, not a substitute for GitHub secret
 ```bash
 npm ci
 npm run ci:policy
+npm run ci:research-citations
 npx vitest run \
   tests/ci-policy.test.ts \
+  tests/ci-research-citations.test.ts \
   tests/zero-cost.test.ts \
   tests/pump-replay.test.ts \
   tests/pump-vertical-slice.test.ts \

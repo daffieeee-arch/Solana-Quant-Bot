@@ -1,0 +1,1154 @@
+{
+  "activationVerdict": "HOLD_UNPROVEN_ACTIVATION",
+  "approved": false,
+  "authorizations": {
+    "acceptedSilverAuthorized": false,
+    "archiveStreamAuthorized": false,
+    "bandwidthPreflightAuthorized": false,
+    "carOrRangeRetrievalAuthorized": false,
+    "networkShapingAuthorized": false,
+    "pilotAExecutionAuthorized": false,
+    "pilotBExecutionAuthorized": false,
+    "realSlotProcessingAuthorized": false,
+    "registryUpdateAuthorized": false,
+    "runtimeMutationAuthorized": false
+  },
+  "binary": {
+    "candidateBuffer": "DWw4MsDK6gr571t95W4cYUSsWCF66t3HvP7mdLyf2QcK",
+    "candidateBufferSignatureCount": 1457,
+    "candidateElfSha256": null,
+    "classification": "BINARY_TO_SOURCE_MAPPING_UNPROVEN",
+    "reconstructionAttempted": false,
+    "sourceToBinaryMapping": "UNPROVEN"
+  },
+  "candidateRange": {
+    "endBlockTime": 1779886805,
+    "endExclusive": 422507000,
+    "epoch": 978,
+    "startBlockTime": 1779886412,
+    "startInclusive": 422506000
+  },
+  "citationContract": {
+    "allLoadBearingClaimsRequirePrimarySources": true,
+    "claimMarkerFormat": "[claim:<claimId>]",
+    "documentPath": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md",
+    "mutableGithubDefaultBranchUrlsForbiddenWhenImmutableRefRequired": true,
+    "scratchManifestRequired": true
+  },
+  "claims": [
+    {
+      "claimId": "ACT-CANDIDATE-TIME",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-CANDIDATE-TIME]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/candidateRange/startBlockTime",
+        "/candidateRange/endBlockTime"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-SOLANA-SLOT-START-TIME",
+        "SRC-SOLANA-SLOT-START-BLOCK",
+        "SRC-SOLANA-SLOT-END-TIME",
+        "SRC-SOLANA-SLOT-END-BLOCK"
+      ],
+      "statement": "Candidate time boundaries are raw-RPC corroborated."
+    },
+    {
+      "claimId": "ACT-PROGRAMDATA",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-PROGRAMDATA]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/program/programData",
+        "/program/loader"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-SOLANA-PROGRAM-ACCOUNT",
+        "SRC-SOLANA-PROGRAMDATA-ACCOUNT",
+        "SRC-SOLANA-SDK-LOADER-STATE"
+      ],
+      "statement": "ProgramData is derived from the raw upgradeable Program account."
+    },
+    {
+      "claimId": "ACT-UPGRADE-BOUNDARY",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-UPGRADE-BOUNDARY]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/upgradeHistory/deploymentSlot",
+        "/upgradeHistory/lastUpgradeBeforeRange",
+        "/upgradeHistory/firstUpgradeAfterRange",
+        "/upgradeHistory/programDataSignatureInsideRange"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-SOLANA-PROGRAMDATA-SIGS-1",
+        "SRC-SOLANA-PROGRAMDATA-SIGS-2",
+        "SRC-SOLANA-PROGRAMDATA-TX-BOUNDARIES",
+        "SRC-SOLANA-PROGRAMDATA-TX-BATCH-005-RETRY-2",
+        "SRC-SOLANA-SDK-LOADER-INSTRUCTION"
+      ],
+      "statement": "Deployment slot 241767269, last pre-range Upgrade 422112651, first post-range Upgrade 433095571, and no ProgramData signature in the candidate range are bound to raw loader evidence."
+    },
+    {
+      "claimId": "ACT-HISTORY-INCOMPLETE",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-HISTORY-INCOMPLETE]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/upgradeHistory/classification",
+        "/upgradeHistory/signatureCount",
+        "/upgradeHistory/retrievedTransactionDetails",
+        "/upgradeHistory/missingTransactionDetails"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-SOLANA-PROGRAMDATA-SIGS-1",
+        "SRC-SOLANA-PROGRAMDATA-SIGS-2",
+        "SRC-SOLANA-PROGRAMDATA-TX-BOUNDARIES",
+        "SRC-SOLANA-PROGRAMDATA-TX-BATCH-002",
+        "SRC-SOLANA-PROGRAMDATA-TX-BATCH-003",
+        "SRC-SOLANA-PROGRAMDATA-TX-BATCH-004",
+        "SRC-SOLANA-PROGRAMDATA-TX-BATCH-005",
+        "SRC-SOLANA-PROGRAMDATA-TX-BATCH-005-RETRY-1",
+        "SRC-SOLANA-PROGRAMDATA-TX-BATCH-005-RETRY-2",
+        "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-001",
+        "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-002",
+        "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-003",
+        "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-004",
+        "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-005",
+        "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-006"
+      ],
+      "statement": "ProgramData pagination closes at 96 signatures, but only 88 transaction details were retrieved and 8 remain unavailable, so global loader history is incomplete."
+    },
+    {
+      "claimId": "ACT-BINARY-UNPROVEN",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-BINARY-UNPROVEN]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/binary/classification",
+        "/binary/candidateElfSha256",
+        "/binary/sourceToBinaryMapping"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-SOLANA-PROGRAMDATA-TX-BOUNDARIES",
+        "SRC-SOLANA-CANDIDATE-BUFFER-SIGS-1",
+        "SRC-SOLANA-CANDIDATE-BUFFER-SIGS-2",
+        "SRC-PUMP-RELEASES",
+        "SRC-PUMP-TAGS"
+      ],
+      "statement": "The candidate buffer has 1457 signatures, while candidate ELF and cryptographic source/IDL-to-binary mapping remain unproven and official release/tag artifacts are absent."
+    },
+    {
+      "claimId": "ACT-OFFICIAL-IDL",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-OFFICIAL-IDL]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/officialIdl/classification",
+        "/registryEntries"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-PUMP-IDL-HISTORY",
+        "SRC-PUMP-IDL-CANDIDATE-REVISION"
+      ],
+      "statement": "All ten structures are officially documented before the candidate blocktime."
+    },
+    {
+      "claimId": "ACT-ONCHAIN-IDL",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-ONCHAIN-IDL]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/onchainIdl/address",
+        "/onchainIdl/lastWriteSlot",
+        "/onchainIdl/signatureCount",
+        "/onchainIdl/transactionCount",
+        "/onchainIdl/allTenRelevantStructuresMatchOfficial",
+        "/onchainIdl/binaryMapping"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-ANCHOR-IDL-DERIVATION",
+        "SRC-ANCHOR-LEGACY-IDL-CLI",
+        "SRC-SOLANA-ANCHOR-IDL-ACCOUNT",
+        "SRC-SOLANA-ANCHOR-IDL-SIGS-1",
+        "SRC-SOLANA-ANCHOR-IDL-SIGS-2",
+        "SRC-SOLANA-ANCHOR-IDL-LAST-WRITE",
+        "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-002",
+        "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-003",
+        "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-004",
+        "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-005",
+        "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-006",
+        "SRC-SOLANA-ANCHOR-IDL-TX-FINAL-RETRY-1",
+        "SRC-SOLANA-ANCHOR-IDL-TX-FINAL-RETRY-2",
+        "SRC-PUMP-IDL-CANDIDATE-REVISION"
+      ],
+      "statement": "The legacy Anchor IDL history closes at 48 signatures and 48 transactions before the candidate; all ten structures match official IDL, but binary mapping is unproven."
+    },
+    {
+      "claimId": "ACT-RANGE-OBSERVATIONS",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-RANGE-OBSERVATIONS]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/rangeObservations/status",
+        "/networkBudget/candidateRangeTransactionResponses",
+        "/networkBudget/indexPayloadBytes"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-OF1-FILES-DOC",
+        "SRC-OF1-SIG-TO-CID-HEAD",
+        "SRC-OF1-SIG-EXISTS-HEAD",
+        "SRC-OF1-GSFA-HEAD"
+      ],
+      "statement": "Raw candidate-range observations were unavailable within bounds."
+    },
+    {
+      "claimId": "ACT-NETWORK-BUDGET",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-NETWORK-BUDGET]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/networkBudget/requestCount",
+        "/networkBudget/responseBodyBytes"
+      ],
+      "loadBearing": false,
+      "sourceIds": [
+        "SRC-SCRATCH-INVENTORY"
+      ],
+      "statement": "Network use remained within the fixed Phase 7A limits."
+    },
+    {
+      "claimId": "ACT-SCRATCH-BINDING",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-SCRATCH-BINDING]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/scratchBinding/inventorySha256",
+        "/scratchBinding/inventoryChecksumSidecarSha256"
+      ],
+      "loadBearing": false,
+      "sourceIds": [
+        "SRC-SCRATCH-INVENTORY"
+      ],
+      "statement": "The external scratch is fully hash-inventoried and raw responses are not committed."
+    },
+    {
+      "claimId": "ACT-REGISTRY-HOLD",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-REGISTRY-HOLD]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/promotionCount",
+        "/registryMutationPerformed",
+        "/activationVerdict",
+        "/registryEntries"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-SOLANA-PROGRAMDATA-SIGS-1",
+        "SRC-SOLANA-PROGRAMDATA-TX-BOUNDARIES",
+        "SRC-PUMP-IDL-CANDIDATE-REVISION",
+        "SRC-SOLANA-ANCHOR-IDL-ACCOUNT"
+      ],
+      "statement": "Zero of ten entries are proven and every registry verdict remains unproven activation."
+    },
+    {
+      "claimId": "ACT-NO-AUTHORIZATION",
+      "documentRefs": [
+        {
+          "marker": "[claim:ACT-NO-AUTHORIZATION]",
+          "path": "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md"
+        }
+      ],
+      "evidencePointers": [
+        "/authorizations",
+        "/researchReady",
+        "/pilotEligible"
+      ],
+      "loadBearing": true,
+      "sourceIds": [
+        "SRC-SOLANA-PROGRAMDATA-SIGS-1",
+        "SRC-PUMP-IDL-CANDIDATE-REVISION"
+      ],
+      "statement": "No registry, Silver, preflight, pilot, payload, or runtime authorization is granted."
+    }
+  ],
+  "networkBudget": {
+    "candidateRangeTransactionResponses": 0,
+    "carPayloadBytes": 0,
+    "carRangeBytes": 0,
+    "indexPayloadBytes": 0,
+    "paidProviderRequests": 0,
+    "requestCap": 500,
+    "requestCount": 86,
+    "responseBodyBytes": 22117677,
+    "responseBodyCapBytes": 104857600,
+    "tritonRequests": 0
+  },
+  "officialIdl": {
+    "allTenEntriesPresent": true,
+    "classification": "OFFICIAL_STRUCTURE_DOCUMENTED",
+    "firstCommitAfterRange": null,
+    "historyCommitCount": 15,
+    "lastCommitBeforeRange": "3c6721a67c0b206b39130b454c8ba22a83ce972e"
+  },
+  "onchainIdl": {
+    "address": "AYgC53tU5BbP2NAnv5nConJxAdpQZctvmZK88pu69xRs",
+    "allTenRelevantStructuresMatchOfficial": true,
+    "authority": "GUYCUEpxSkm1ccDo3LSKMR4Xpe5bgMnEZaFygWUSEVH3",
+    "binaryMapping": "UNPROVEN",
+    "lastWriteSlot": 419747849,
+    "relevantTransactionCount": 44,
+    "signatureCount": 48,
+    "signatureHistoryComplete": true,
+    "transactionCount": 48,
+    "transactionHistoryComplete": true
+  },
+  "pilotEligible": false,
+  "program": {
+    "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
+    "programData": "B5MvUwXdiW1NMM6QFFD3ssPKBujD4zMohncbM73Z2BQu",
+    "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+  },
+  "promotionCount": 0,
+  "rangeObservations": {
+    "accountRoleObservations": 0,
+    "candidateTransactionResponses": 0,
+    "discriminatorObservations": 0,
+    "eventLayoutObservations": 0,
+    "semanticReconciliations": 0,
+    "status": "TARGETED_RANGE_OBSERVATION_NOT_AVAILABLE_WITHIN_BOUNDS"
+  },
+  "registryEntries": [
+    {
+      "discriminator": "181ec828051c0777",
+      "entryId": "instruction:create",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "d6904cec5f8b31b4",
+      "entryId": "instruction:create_v2",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "66063d1201daebea",
+      "entryId": "instruction:buy",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "33e685a4017f83ad",
+      "entryId": "instruction:sell",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "38fc74089edfcd5f",
+      "entryId": "instruction:buy_exact_sol_in",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "b817ee6167c5d33d",
+      "entryId": "instruction:buy_v2",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "5df6823ce7e940b2",
+      "entryId": "instruction:sell_v2",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "c2ab1c46684d5b2f",
+      "entryId": "instruction:buy_exact_quote_in_v2",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "1b72a94ddeeb6376",
+      "entryId": "event:CreateEvent",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    },
+    {
+      "discriminator": "bddb7fd34ee661ee",
+      "entryId": "event:TradeEvent",
+      "provenAtSlotRange": false,
+      "rawRangeObservationCount": 0,
+      "recommendedRegistryVerdict": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "researchClassifications": [
+        "DIRECT_ONCHAIN_BOUNDARY_PROVEN",
+        "OFFICIAL_STRUCTURE_DOCUMENTED",
+        "BINARY_TO_SOURCE_MAPPING_UNPROVEN"
+      ]
+    }
+  ],
+  "registryMutationPerformed": false,
+  "researchReady": false,
+  "schemaVersion": "PUMP_ACTIVATION_EVIDENCE_EPOCH_978_1",
+  "scratchBinding": {
+    "inventoryBytes": 36806,
+    "inventoryChecksumSidecarBytes": 96,
+    "inventoryChecksumSidecarSha256": "5ee43fc45ffa26dcbc82d89d52afd0769d9f8661251e4e5fc7dea2f1dcbf5fbb",
+    "inventorySha256": "2251ec21a1ef905fd41e5a62e198f6bcf6ff163add20f29ceaac3392ec691c2c",
+    "manifestPath": "docs/research/PUMP_ACTIVATION_SCRATCH_MANIFEST.json",
+    "rawResponsesCommitted": false,
+    "scratchRoot": "/opt/data/research-scratch/pump-activation-evidence-epoch978",
+    "totalScratchFiles": 201
+  },
+  "sources": [
+    {
+      "contentLength": null,
+      "gitBlobIdentityVerifiedFromScratchBytes": true,
+      "gitBlobSha1": "fcd537ab6753fabe0a2096170ee0abb84f00c472",
+      "immutableRef": "fcd537ab6753fabe0a2096170ee0abb84f00c472",
+      "immutableRefRequired": true,
+      "immutableRefType": "GIT_BLOB_SHA1",
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 163599,
+      "responseSha256": "c103d5bb09811ec1794b00c5613e72c7b3e612d6a7179b6a1d60e605ff712805",
+      "scratchPath": "responses/017-agave-bpf-loader-lib-source.body",
+      "sourceId": "SRC-AGAVE-BPF-LOADER",
+      "sourceType": "OFFICIAL_SOLANA_SOURCE",
+      "url": "https://api.github.com/repos/anza-xyz/agave/git/blobs/fcd537ab6753fabe0a2096170ee0abb84f00c472"
+    },
+    {
+      "contentLength": null,
+      "gitBlobIdentityVerifiedFromScratchBytes": true,
+      "gitBlobSha1": "a5dee9e03a4c53a6fbd954697c0f28500757751a",
+      "immutableRef": "a5dee9e03a4c53a6fbd954697c0f28500757751a",
+      "immutableRefRequired": true,
+      "immutableRefType": "GIT_BLOB_SHA1",
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 2687,
+      "responseSha256": "982b69aee8b4f86a5c3f5f7703f63f16fc9ce65a72ed15442b9416f182bf0fa7",
+      "scratchPath": "responses/063-anchor-lang-idl-source.body",
+      "sourceId": "SRC-ANCHOR-IDL-DERIVATION",
+      "sourceType": "OFFICIAL_ANCHOR_SOURCE",
+      "url": "https://api.github.com/repos/otter-sec/anchor/git/blobs/a5dee9e03a4c53a6fbd954697c0f28500757751a"
+    },
+    {
+      "contentLength": null,
+      "gitBlobIdentityVerifiedFromScratchBytes": true,
+      "gitBlobSha1": "829e80beb4712dc60dcfb9a4e78c395720e33513",
+      "immutableRef": "829e80beb4712dc60dcfb9a4e78c395720e33513",
+      "immutableRefRequired": true,
+      "immutableRefType": "GIT_BLOB_SHA1",
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 27488,
+      "responseSha256": "07be8c12fd38d1f637081b0a6d0b969baaf03a8514a68f78f9ebdb446ac4fe96",
+      "scratchPath": "responses/064-anchor-cli-legacy-idl-source.body",
+      "sourceId": "SRC-ANCHOR-LEGACY-IDL-CLI",
+      "sourceType": "OFFICIAL_ANCHOR_SOURCE",
+      "url": "https://api.github.com/repos/otter-sec/anchor/git/blobs/829e80beb4712dc60dcfb9a4e78c395720e33513"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 389078,
+      "responseSha256": "2e48f38a7bc2db5ca44529c4becddea0f178929ec0af9cfbac9e322db204b958",
+      "scratchPath": "responses/077-old-faithful-of1-files-doc.body",
+      "sourceId": "SRC-OF1-FILES-DOC",
+      "sourceType": "OFFICIAL_OLD_FAITHFUL_DOC",
+      "url": "https://docs.old-faithful.net/references/of1-files"
+    },
+    {
+      "contentLength": 35418686975,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "HEAD",
+      "responseBytes": 0,
+      "responseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scratchPath": "responses/080-of1-epoch978-gsfa-head.body",
+      "sourceId": "SRC-OF1-GSFA-HEAD",
+      "sourceType": "OFFICIAL_OLD_FAITHFUL_HEAD",
+      "url": "https://files.old-faithful.net/978/epoch-978-gsfa.index.tar.zstd"
+    },
+    {
+      "contentLength": 4193236681,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "HEAD",
+      "responseBytes": 0,
+      "responseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scratchPath": "responses/079-of1-epoch978-sig-exists-head.body",
+      "sourceId": "SRC-OF1-SIG-EXISTS-HEAD",
+      "sourceType": "OFFICIAL_OLD_FAITHFUL_HEAD",
+      "url": "https://files.old-faithful.net/978/epoch-978-bafyreidv5xfqynnope3ul23a7qhcl4csf52ts2wcxdeoi5gqlbkwsn3k4m-mainnet-sig-exists.index"
+    },
+    {
+      "contentLength": 20440755594,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "HEAD",
+      "responseBytes": 0,
+      "responseSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "scratchPath": "responses/078-of1-epoch978-sig-to-cid-head.body",
+      "sourceId": "SRC-OF1-SIG-TO-CID-HEAD",
+      "sourceType": "OFFICIAL_OLD_FAITHFUL_HEAD",
+      "url": "https://files.old-faithful.net/978/epoch-978-bafyreidv5xfqynnope3ul23a7qhcl4csf52ts2wcxdeoi5gqlbkwsn3k4m-mainnet-sig-to-cid.index"
+    },
+    {
+      "contentLength": null,
+      "gitBlobIdentityVerifiedFromScratchBytes": true,
+      "gitBlobSha1": "062e66f032bb9f295353b573be3400070bd55e5b",
+      "immutableRef": "3c6721a67c0b206b39130b454c8ba22a83ce972e",
+      "immutableRefRequired": true,
+      "immutableRefType": "GIT_COMMIT_SHA1",
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 169632,
+      "responseSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+      "scratchPath": "responses/058-pump-idl-015-3c6721a67c0b.body",
+      "sourceId": "SRC-PUMP-IDL-CANDIDATE-REVISION",
+      "sourceType": "OFFICIAL_PUMP_IDL",
+      "url": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/3c6721a67c0b206b39130b454c8ba22a83ce972e/idl/pump.json"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 43824,
+      "responseSha256": "43d05cfdea2d9a461ee11ee08e5420063b196efd4ea9235572f6a020913e69f9",
+      "scratchPath": "responses/043-pump-idl-commit-history-page-001.body",
+      "sourceId": "SRC-PUMP-IDL-HISTORY",
+      "sourceType": "OFFICIAL_PUMP_GIT_HISTORY",
+      "url": "https://api.github.com/repos/pump-fun/pump-public-docs/commits?path=idl%2Fpump.json&per_page=100&page=1"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 2,
+      "responseSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "scratchPath": "responses/081-pump-public-docs-releases.body",
+      "sourceId": "SRC-PUMP-RELEASES",
+      "sourceType": "OFFICIAL_PUMP_GITHUB_API",
+      "url": "https://api.github.com/repos/pump-fun/pump-public-docs/releases?per_page=100&page=1"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 2,
+      "responseSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "scratchPath": "responses/082-pump-public-docs-tags.body",
+      "sourceId": "SRC-PUMP-TAGS",
+      "sourceType": "OFFICIAL_PUMP_GITHUB_API",
+      "url": "https://api.github.com/repos/pump-fun/pump-public-docs/tags?per_page=100&page=1"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 36806,
+      "responseSha256": "2251ec21a1ef905fd41e5a62e198f6bcf6ff163add20f29ceaac3392ec691c2c",
+      "scratchPath": "scratch-inventory.json",
+      "sourceId": "SRC-SCRATCH-INVENTORY",
+      "sourceType": "LOCAL_IMMUTABLE_HASH_CHAIN",
+      "url": "file:///opt/data/research-scratch/pump-activation-evidence-epoch978/scratch-inventory.json"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 25510,
+      "responseSha256": "6eeac49b30a722f452fe494a90d94cf11a68d77930d05f2e2be504901a4b21ba",
+      "scratchPath": "responses/065-anchor-idl-account-current.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-ACCOUNT",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 16483,
+      "responseSha256": "41a0446e51fa600770d2476673b72b2342447dc7a29f27267511d1b3ca1e6c25",
+      "scratchPath": "responses/068-anchor-idl-transactions-batch-001.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-LAST-WRITE",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 10913,
+      "responseSha256": "1a030bcd308df3dd664a11fa48afa75d46d7bfabc14e543b44b210e4e94a0b46",
+      "scratchPath": "responses/066-anchor-idl-signatures-page-001.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-SIGS-1",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 37,
+      "responseSha256": "d5d4570915ae356dcee912806f2822465692ce1aa3533894cc2fc1e8385455f6",
+      "scratchPath": "responses/067-anchor-idl-signatures-page-002.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-SIGS-2",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 16665,
+      "responseSha256": "3e5d17712277c3aa79b4806abe3d9b4fe810b51c6d0708b6b79f1fb9a867b2be",
+      "scratchPath": "responses/069-anchor-idl-transactions-batch-002.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-002",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 11475,
+      "responseSha256": "a6c5760f388fd1f841a09bdc2221d236d497386e070a9ca21ea91030a0574723",
+      "scratchPath": "responses/070-anchor-idl-transactions-batch-003.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-003",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 10506,
+      "responseSha256": "c0670382e0968bdfe14fb0580ce26a424f63aeba38e71d29ba6180f0da33b824",
+      "scratchPath": "responses/071-anchor-idl-transactions-batch-004.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-004",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 801,
+      "responseSha256": "a230f6935c829f3f4939ac9ca8ea5a400822dcc4c3ea275eb1615a01faa21159",
+      "scratchPath": "responses/072-anchor-idl-transactions-batch-005.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-005",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 2768,
+      "responseSha256": "b8af7f45218bc6a9317211bb19cf296370e4105e802e030ee5f98e95f41efe9d",
+      "scratchPath": "responses/073-anchor-idl-transactions-batch-006.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-TX-BATCH-006",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 14665,
+      "responseSha256": "f48a9097414aed3959d99d368b92b514a397a6847d3e9077155a62e4fa7d5ba2",
+      "scratchPath": "responses/074-anchor-idl-final-retry-001.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-TX-FINAL-RETRY-1",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 13719,
+      "responseSha256": "4460be7d392925274bb016a321c1912ccb96dc8d1fa528022c68b6dd21949bef",
+      "scratchPath": "responses/075-anchor-idl-final-retry-002.body",
+      "sourceId": "SRC-SOLANA-ANCHOR-IDL-TX-FINAL-RETRY-2",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 223822,
+      "responseSha256": "006b2329e87bc18d7a26b167140f7ecd834c1705fc179cc73d564ce8027716e8",
+      "scratchPath": "responses/037-candidate-buffer-signatures-page-001.body",
+      "sourceId": "SRC-SOLANA-CANDIDATE-BUFFER-SIGS-1",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 102285,
+      "responseSha256": "38cc40b17831166e1781932664824e28308da782ba0821f5e84cd5e594efd181",
+      "scratchPath": "responses/040-candidate-buffer-signatures-page-002.body",
+      "sourceId": "SRC-SOLANA-CANDIDATE-BUFFER-SIGS-2",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 303,
+      "responseSha256": "9e81fe605813df2642be04d8a50d3409aa7c1768b2e1d9187fdb7b24f2b4c1c4",
+      "scratchPath": "responses/008-pump-program-account.body",
+      "sourceId": "SRC-SOLANA-PROGRAM-ACCOUNT",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 13981279,
+      "responseSha256": "7c0b3207f9ba2afac05fa474b7d18e7573eac4293a5263956b757cbe29071864",
+      "scratchPath": "responses/010-pump-programdata-account.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-ACCOUNT",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 21742,
+      "responseSha256": "ba91e7836670d47a97c4c3e0eb149a66d8908cfe0d6a7263066e2acc177328e3",
+      "scratchPath": "responses/021-programdata-signatures-page-001.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-SIGS-1",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 37,
+      "responseSha256": "d5d4570915ae356dcee912806f2822465692ce1aa3533894cc2fc1e8385455f6",
+      "scratchPath": "responses/022-programdata-signatures-page-002.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-SIGS-2",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 27314,
+      "responseSha256": "329c4457f95abca8c7bfe961c4b23b32d070bbc9d9f45f2150af92f350baf4cb",
+      "scratchPath": "responses/024-programdata-transactions-batch-002.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-BATCH-002",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 35868,
+      "responseSha256": "28228cbd7e334c6053d1eb4229b0b96dfff23ea1705c612f770c85cc2d81297c",
+      "scratchPath": "responses/025-programdata-transactions-batch-003.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-BATCH-003",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 23658,
+      "responseSha256": "bd183d6649d7c0b26fe1df067c13cbefca8c3b27abd203797be3b6ae7f89ff21",
+      "scratchPath": "responses/026-programdata-transactions-batch-004.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-BATCH-004",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 1706,
+      "responseSha256": "381aa5547009ead10d14ab10e9396ed26750b50bf3b9728bc9900de489df375f",
+      "scratchPath": "responses/027-programdata-transactions-batch-005.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-BATCH-005",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 13680,
+      "responseSha256": "22b985e53df4b6c7dfa4da75fe90b7df5fc57f12c4bc40eb55fbf698ca2f4c58",
+      "scratchPath": "responses/028-programdata-transactions-batch-005-retry-part-1.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-BATCH-005-RETRY-1",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 12456,
+      "responseSha256": "a6ac474b9f739d633a1ccf38546bbc6f41934f390fa9511dc943f6b06efb632b",
+      "scratchPath": "responses/029-programdata-transactions-batch-005-retry-part-2.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-BATCH-005-RETRY-2",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 40379,
+      "responseSha256": "1eff3bf376712732993f05e00d6f85505ca69e50dadf85014dce3b397a295c14",
+      "scratchPath": "responses/023-programdata-transactions-batch-001.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-BOUNDARIES",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 23534,
+      "responseSha256": "9e20038678882bb67d30faf2c3c1cd76199e3697334c4d22a6b8ae1f43050486",
+      "scratchPath": "responses/030-programdata-missing-final-retry-001.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-001",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 34501,
+      "responseSha256": "a3860ff0cb9d050f270506c2607925a13e56bf29dfeddc816c77377193a6cd80",
+      "scratchPath": "responses/031-programdata-missing-final-retry-002.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-002",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 33305,
+      "responseSha256": "9f17381bbda94964a2141fbcf197d53178a943d95f5f50ce0bbfbc691a8a22c1",
+      "scratchPath": "responses/032-programdata-missing-final-retry-003.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-003",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 801,
+      "responseSha256": "ac76803c26f8b6e8724b5d6ca41ff438dac024cd200a9be49c03d34f990ed13a",
+      "scratchPath": "responses/033-programdata-missing-final-retry-004.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-004",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 36364,
+      "responseSha256": "f2154e3ef799aa6158f0543b55939c1e923b5e4ea810d9e9089f57c4b6de1454",
+      "scratchPath": "responses/034-programdata-missing-final-retry-005.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-005",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 14034,
+      "responseSha256": "5c7bcabd1905450ff41308f443f250a641ccc6243e861a32919b60f452b9ba0b",
+      "scratchPath": "responses/035-programdata-missing-final-retry-006.body",
+      "sourceId": "SRC-SOLANA-PROGRAMDATA-TX-FINAL-RETRY-006",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "gitBlobIdentityVerifiedFromScratchBytes": true,
+      "gitBlobSha1": "36c451ea7bf1b108a271cb45ee8b076ff82bd0e1",
+      "immutableRef": "36c451ea7bf1b108a271cb45ee8b076ff82bd0e1",
+      "immutableRefRequired": true,
+      "immutableRefType": "GIT_BLOB_SHA1",
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 31608,
+      "responseSha256": "c6e21d9c942a751df3a2bfe3651c03e1bcc5746511c90d0370ae084db3230658",
+      "scratchPath": "responses/020-solana-sdk-loader-v3-instruction-source.body",
+      "sourceId": "SRC-SOLANA-SDK-LOADER-INSTRUCTION",
+      "sourceType": "OFFICIAL_SOLANA_SOURCE",
+      "url": "https://api.github.com/repos/anza-xyz/solana-sdk/git/blobs/36c451ea7bf1b108a271cb45ee8b076ff82bd0e1"
+    },
+    {
+      "contentLength": null,
+      "gitBlobIdentityVerifiedFromScratchBytes": true,
+      "gitBlobSha1": "3bf81958e2b355d5c6b9eca8e266f9771d40c0de",
+      "immutableRef": "3bf81958e2b355d5c6b9eca8e266f9771d40c0de",
+      "immutableRefRequired": true,
+      "immutableRefType": "GIT_BLOB_SHA1",
+      "primary": true,
+      "requestMethod": "GET",
+      "responseBytes": 4943,
+      "responseSha256": "64f6ee5c4e712bcccae38b4450f679d25e50c132dc8cf9ec40d1756e5c63cb1c",
+      "scratchPath": "responses/019-solana-sdk-loader-v3-state-source.body",
+      "sourceId": "SRC-SOLANA-SDK-LOADER-STATE",
+      "sourceType": "OFFICIAL_SOLANA_SOURCE",
+      "url": "https://api.github.com/repos/anza-xyz/solana-sdk/git/blobs/3bf81958e2b355d5c6b9eca8e266f9771d40c0de"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 232,
+      "responseSha256": "0d387227ce5c390a4d7e3a532f036b2bae716fb9bc152b2f6eb1aea230d364fe",
+      "scratchPath": "responses/005-slot-422506999-getBlock.body",
+      "sourceId": "SRC-SOLANA-SLOT-END-BLOCK",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 45,
+      "responseSha256": "2ef14adb672e29a89e105f16a1caa0e1f0d0c6eb7fb0956aa037ab0e90e72bea",
+      "scratchPath": "responses/004-slot-422506999-getBlockTime.body",
+      "sourceId": "SRC-SOLANA-SLOT-END-TIME",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 232,
+      "responseSha256": "3cdd6d45749c7f3ef2532939c1a8fe8f5c45910678968e216c42ab56003ae1bc",
+      "scratchPath": "responses/003-slot-422506000-getBlock.body",
+      "sourceId": "SRC-SOLANA-SLOT-START-BLOCK",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    },
+    {
+      "contentLength": null,
+      "immutableRef": null,
+      "immutableRefRequired": false,
+      "primary": true,
+      "requestMethod": "POST",
+      "responseBytes": 45,
+      "responseSha256": "80708528d973019636bb3ee5cf54f812b22e00d1f3fb6f07c3ef90a05144ead8",
+      "scratchPath": "responses/002-slot-422506000-getBlockTime.body",
+      "sourceId": "SRC-SOLANA-SLOT-START-TIME",
+      "sourceType": "RAW_SOLANA_RPC",
+      "url": "https://api.mainnet-beta.solana.com"
+    }
+  ],
+  "status": "CANDIDATE_UNAPPROVED",
+  "upgradeHistory": {
+    "classification": "INCOMPLETE_UPGRADE_HISTORY",
+    "deploymentSlot": 241767269,
+    "firstUpgradeAfterRange": 433095571,
+    "lastUpgradeBeforeRange": 422112651,
+    "missingTransactionDetails": 8,
+    "oneVersionContinuouslyActiveAcrossRange": true,
+    "programDataSignatureInsideRange": false,
+    "retrievedTransactionDetails": 88,
+    "signatureCount": 96
+  }
+}

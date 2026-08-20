@@ -62,8 +62,10 @@ jobs:
         run: npm ci
       - name: Enforce repository and zero-cost policy
         run: npm run ci:policy
+      - name: Enforce offline research citation gate
+        run: npm run ci:research-citations
       - name: Run policy bypass and critical zero-cost/Pump tests
-        run: npx vitest run tests/ci-policy.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts
+        run: npx vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts
       - name: Run complete test suite
         run: npm test
       - name: Type-check
@@ -103,7 +105,31 @@ const addStep = (body: string) => SAFE_WORKFLOW.replace(
 describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
-    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(19);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(20);
+  });
+
+  it('requires the real citation step and rejects comments, renaming, or formatting drift as substitutes', () => {
+    const removed = SAFE_WORKFLOW
+      .split('\n')
+      .filter((line) => !line.includes('Enforce offline research citation gate') && !line.includes('npm run ci:research-citations'))
+      .join('\n');
+    const commentOnly = SAFE_WORKFLOW.replace(
+      '      - name: Enforce offline research citation gate\n        run: npm run ci:research-citations',
+      '      # - name: Enforce offline research citation gate\n      #   run: npm run ci:research-citations',
+    );
+    const renamed = SAFE_WORKFLOW.replace('Enforce offline research citation gate', 'Citation notes');
+    const commandDrift = SAFE_WORKFLOW.replace(
+      '        run: npm run ci:research-citations',
+      '        run: npm run ci:research-citations# formatting-bypass',
+    );
+    for (const [label, unsafe] of [
+      ['removed', removed],
+      ['commentOnly', commentOnly],
+      ['renamed', renamed],
+      ['commandDrift', commandDrift],
+    ] as const) {
+      expect(errors(unsafe), label).toMatch(/canonical steps|canonical workflow|unapproved run command/i);
+    }
   });
 
   it('requires every exact pinned Rust gate and rejects silent removal or replacement', () => {

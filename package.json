@@ -12,7 +12,8 @@
     "research:pump-offline": "node dist/research/pump-historical-cli.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "ci:policy": "node scripts/ci-repository-policy.mjs"
+    "ci:policy": "node scripts/ci-repository-policy.mjs",
+    "ci:research-citations": "node scripts/ci-research-citations.mjs"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",

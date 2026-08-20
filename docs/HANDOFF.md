@@ -96,6 +96,8 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 
 Phase 7 is merged through PR #14; read [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It pins official epoch-978 sidecars and `[422506000, 422507000)`, but no on-chain evidence proves the pinned Pump layouts active over that range. All ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`; the verdict remains `HOLD_UNPROVEN_ACTIVATION` with `approved: false`, `researchReady: false`, and `pilotEligible: false`. No CAR/range bytes, block/transaction payloads, cap preflight, archive stream, slot processing, or pilot execution occurred.
 
+Phase 7A has completed read-only and is persisted by the Phase-7B candidate in [`PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`](PHASE7A_PUMP_ACTIVATION_EVIDENCE.md). ProgramData boundaries and exact official/on-chain IDL structure are corroborated, but global loader transaction details are incomplete, historical ELF/source mapping is unproven, and candidate-range raw semantic observations are unavailable within bounds. Therefore 0/10 entries are proven. Phase 7B also adds a tracked offline citationgate and exact workflow-policy enforcement; it adds no runtime or pilot path.
+
 Phase 6B is squash-merged through PR #12 as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` passed all required gates. The merged Phase 6A/6B contracts remain fully offline, synthetic and fixture-only, have processed no real archive/CAR/slot/accountstate data, provide no OOS, execution or profitability evidence, and keep `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 
 The read-only data-suitability audit still classifies `TRANSACTION_NET_SWAP_V1` as unfit for Pump OOS/parity. Merged Phase 6A is synthetic and fixture-only: it does not create real-registry approval, Gold data, OOS results, profitability evidence, or strategy evidence. The real-v2 reviewed-provenance registry remains intentionally empty. Production depth accounting is corrected and regression-tested in merged Phase 6A for exact 6/9 and legitimate-scale 9/9 raw quantities, integer pool outputs, WAL persistence, and fail-closed unsafe aggregates, but pool-depth research remains HOLD until real source and fill-impact provenance are separately approved. Read `docs/PUMP_OFFLINE_RESEARCH.md`, `docs/PHASE3_PUMP_V2_PILOT.md`, `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`, and `docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md` before review.
@@ -104,7 +106,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-The next step is **read-only historical Pump activation-evidence research** for deployment/upgrade, IDL, discriminator, and layout boundaries over the candidate range. Next comes a separately reviewed GitHub Actions citationgate: the local exact-byte citationgate passed, but remote CI does not enforce it separately. Only after activation evidence and citation CI-hardening may a separately authorized bandwidth-cap preflight be considered; Pilot A still requires another explicit execution GO. It may never claim raw state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
+The next step is exact-byte review of the Phase-7B evidence/citation candidate, followed by the normal commit/push/PR lifecycle only under separate authorization. No bandwidth preflight or Pilot A is authorized. Pilot A still requires another explicit execution GO and may never claim raw state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
@@ -128,7 +130,8 @@ Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state s
 10. `docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md`
 11. `docs/PHASE6B_PUMP_SILVER_STATE_PROVENANCE_CONTRACT.md`
 12. `docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`
-13. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-14. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-15. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-16. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+13. `docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`
+14. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+15. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+16. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+17. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

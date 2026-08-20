@@ -327,7 +327,7 @@ Pilot A mag liquidity, holderstate, raw accountstate, executable fills of profit
 - Drie-maandenrun: **NO-GO**.
 - OOS, execution en profitability: **NO-GO**.
 
-De eerstvolgende inhoudelijke taak is read-only onderzoek naar historisch Pump deployment-/upgrade-, IDL-, discriminator- en layout-activatiebewijs voor `[422506000, 422507000)`. Daarna moet GitHub Actions een afzonderlijke remote citationgate krijgen en adversarial worden getest. De lokale exact-byte citationgate is geslaagd op de gemergde packagebytes, maar run `32350736436` bevat nog geen afzonderlijke citationgate-step. Pas na activation evidence en citation CI-hardening kan een bandwidth-cap-preflight onder nieuwe expliciete toestemming worden overwogen; Pilot A blijft daarachter opnieuw afzonderlijk gated.
+Phase 7A read-only activation research is complete and persisted by the Phase-7B candidate. It corroborates ProgramData boundaries and all ten official/on-chain IDL structures, but proves no historical ELF/source mapping or raw candidate semantics; 0/10 entries meet `PROVEN_AT_SLOT_RANGE`. Phase 7B adds an offline deterministic citationgate and exact workflow-policy enforcement only. Bandwidth preflight and Pilot A remain behind separate future explicit authorization.
 
 ## 14. Lokale gate-evidence vóór staged-byte review
 
