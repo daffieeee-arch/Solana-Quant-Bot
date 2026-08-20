@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "OLD_FAITHFUL_OFFICIAL_METADATA_VERIFICATION_1",
+  "sourceBase": "https://files.old-faithful.net/978/",
+  "allChecksPass": true,
+  "networkBodyBytes": 4315301,
+  "networkCapBytes": 52428800,
+  "carRequestMethod": "HEAD",
+  "carPayloadBytesRead": 0,
+  "files": {
+    "epoch-978.cid": {
+      "bytes": 60,
+      "sha256": "8db9cecc883c7b759a9975230b09c34b2a4e6b349e445b5d92d96b02b9408ba2"
+    },
+    "epoch-978.sha256": {
+      "bytes": 101,
+      "sha256": "a7b6e38f47efd59831641cccf4eaf24870c9176c876d7bd5ccf21163bceb95f0"
+    },
+    "978.slots.txt": {
+      "bytes": 4313880,
+      "sha256": "1de4b8689cfe7362b6129e8123f53fe3863616d7bb7c08338d157bb6d4754e97"
+    },
+    "978.recap.yaml": {
+      "bytes": 1260,
+      "sha256": "2666bac343424fa6d18b3a01e1512a6231eac6a1e6bdd40f8d0f5d9157d121db"
+    }
+  },
+  "epochCid": "bafyreidv5xfqynnope3ul23a7qhcl4csf52ts2wcxdeoi5gqlbkwsn3k4m",
+  "carContentLength": "709264399796",
+  "carSha256FromOfficialSidecar": "4ceef2830882036491f2f5a0fbc9ba5ccb94e7783a6723c42336969a50cb212c",
+  "inventory": {
+    "totalEntries": 431388,
+    "first": 422495999,
+    "last": 422927999,
+    "outsideCanonicalRange": [422495999],
+    "canonicalRangeEntries": 431387,
+    "canonicalRangeAbsentSlots": 613,
+    "pilotRangeStartInclusive": 422506000,
+    "pilotRangeEndExclusive": 422507000,
+    "pilotRangeEntries": 1000,
+    "pilotRangeContiguous": true
+  },
+  "nonClaims": {
+    "carBytesVerified": false,
+    "blockOrTransactionPayloadRead": false,
+    "archiveStreamStarted": false,
+    "pilotExecuted": false
+  }
+}

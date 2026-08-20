@@ -93,6 +93,8 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 
 ## Current task
 
+Phase 7 now contains an offline Pilot A readiness candidate; read [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). It pins official epoch-978 sidecars and `[422506000, 422507000)`, but no on-chain evidence proves the pinned Pump layouts active over that range. The verdict is `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` remain mandatory. No CAR/range bytes, block/transaction payloads, cap preflight, archive stream, slot processing, or pilot execution occurred.
+
 Phase 6B is squash-merged through PR #12 as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` passed all required gates. The merged Phase 6A/6B contracts remain fully offline, synthetic and fixture-only, have processed no real archive/CAR/slot/accountstate data, provide no OOS, execution or profitability evidence, and keep `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 
 The read-only data-suitability audit still classifies `TRANSACTION_NET_SWAP_V1` as unfit for Pump OOS/parity. Merged Phase 6A is synthetic and fixture-only: it does not create real-registry approval, Gold data, OOS results, profitability evidence, or strategy evidence. The real-v2 reviewed-provenance registry remains intentionally empty. Production depth accounting is corrected and regression-tested in merged Phase 6A for exact 6/9 and legitimate-scale 9/9 raw quantities, integer pool outputs, WAL persistence, and fail-closed unsafe aggregates, but pool-depth research remains HOLD until real source and fill-impact provenance are separately approved. Read `docs/PUMP_OFFLINE_RESEARCH.md`, `docs/PHASE3_PUMP_V2_PILOT.md`, `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`, and `docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md` before review.
@@ -101,7 +103,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-The next step is **only to design and exactly freeze the Pilot A Readiness Package**, not to execute a pilot. Pilot A is limited to Old Faithful event/transport evidence and may run later only after a separate readiness review, bandwidth-cap preflight and explicit execution GO. It may prove blocks, transactions, instructions, logs, events, coverage, quarantine and deterministic reruns without first requiring historical raw account state, but may never claim raw state, liquidity, position-size impact, execution-grade returns, OOS readiness or profitability.
+The next step is **only to review and exactly freeze the implemented Phase-7 readiness candidate**, not to execute a pilot. Pilot A remains limited to Old Faithful event/transport evidence and requires separate exact-byte review, proven activation, bandwidth-cap preflight and explicit execution GO. It may never claim raw state, liquidity, position-size impact, execution-grade returns, OOS readiness or profitability.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
@@ -124,7 +126,8 @@ Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state s
 9. `docs/PHASE4_OLD_FAITHFUL_ADAPTER.md`
 10. `docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md`
 11. `docs/PHASE6B_PUMP_SILVER_STATE_PROVENANCE_CONTRACT.md`
-12. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-13. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-14. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-15. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+12. `docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`
+13. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+14. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+15. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+16. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

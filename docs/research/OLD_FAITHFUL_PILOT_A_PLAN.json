@@ -1,0 +1,640 @@
+{
+  "schemaVersion": "OLD_FAITHFUL_PILOT_A_READINESS_PACKAGE_1",
+  "packageKind": "OLD_FAITHFUL_EVENT_TRANSPORT_PILOT",
+  "status": "CANDIDATE_UNAPPROVED",
+  "approved": false,
+  "pilotEligible": false,
+  "researchReady": false,
+  "sourceManifestPath": "docs/research/OLD_FAITHFUL_EPOCH_978_SOURCE_MANIFEST.json",
+  "pilotRange": {
+    "epoch": 978,
+    "startInclusive": 422506000,
+    "endExclusive": 422507000,
+    "requestedSlots": 1000,
+    "inventorySlotsPresent": 1000,
+    "selectionPolicy": "SOURCE_AND_ENGINEERING_PROPERTIES_ONLY",
+    "selectionNonClaims": [
+      "NO_PROFIT_SELECTION",
+      "NO_TOKEN_PERFORMANCE_SELECTION",
+      "NO_KNOWN_WINNER_SELECTION"
+    ],
+    "transportCoverageStatus": "NOT_RUN",
+    "eventSemanticCoverageStatus": "NOT_RUN",
+    "followUpRangePolicy": "FIRST_ASCENDING_SUBSEQUENT_1000_SLOT_HALF_OPEN_WINDOW_WITH_COMPLETE_PINNED_INVENTORY_WITHOUT_EVENT_OR_OUTCOME_INSPECTION"
+  },
+  "claimBoundary": {
+    "mayLaterProve": [
+      "BOUNDED_INDEXED_OF1_RETRIEVAL",
+      "BLOCKS",
+      "TRANSACTIONS",
+      "TOP_LEVEL_INSTRUCTIONS",
+      "INNER_INSTRUCTIONS",
+      "LOGS",
+      "PUMP_CREATE_TRADE_EVENT_EVIDENCE",
+      "LEDGER_ORDERING",
+      "TRANSPORT_COVERAGE",
+      "QUARANTINE",
+      "RETRIES_AND_IDEMPOTENCE",
+      "DETERMINISTIC_RERUN_HASHES",
+      "NETWORK_CPU_RAM_DISK_RUNTIME_PROFILE"
+    ],
+    "mustNeverClaim": [
+      "RAW_HISTORICAL_ACCOUNT_STATE",
+      "INSTRUCTION_EXACT_STATE",
+      "AUTHORITATIVE_BONDING_CURVE_STATE",
+      "AUTHORITATIVE_MINT_STATE",
+      "HOLDER_STATE",
+      "EXACT_LIQUIDITY",
+      "POSITION_SIZE_DEPENDENT_IMPACT",
+      "COUNTERFACTUAL_EXECUTABLE_FILLS",
+      "EXECUTION_GRADE_RETURNS",
+      "OOS_READINESS",
+      "PROFITABILITY"
+    ]
+  },
+  "registry": {
+    "schemaVersion": "PUMP_SLOT_EFFECTIVE_REGISTRY_CANDIDATE_1",
+    "candidateRange": {
+      "startInclusive": 422506000,
+      "endExclusive": 422507000
+    },
+    "allowedClassifications": [
+      "PROVEN_AT_SLOT_RANGE",
+      "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+      "UNKNOWN"
+    ],
+    "acceptancePolicy": "ONLY_PROVEN_AT_SLOT_RANGE_MAY_PRODUCE_ACCEPTED_SILVER",
+    "unknownPolicy": "BRONZE_RAW_AND_QUARANTINE_ONLY",
+    "activationVerdict": "HOLD_UNPROVEN_ACTIVATION",
+    "commonOfficialProvenance": {
+      "repository": "https://github.com/pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "idl/pump.json",
+      "sourceUrl": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/idl/pump.json",
+      "sourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+      "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "onChainDeploymentOrUpgradeEvidence": null,
+      "activationEvidenceStatus": "NONE_FOUND_IN_APPROVED_PRIMARY_SOURCES"
+    },
+    "entries": [
+      {
+        "entryId": "instruction:create",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "create",
+        "discriminatorHex": "181ec828051c0777",
+        "instructionOrEventLayout": "PINNED_IDL_CREATE_LAYOUT",
+        "accountLayout": "PINNED_IDL_CREATE_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "instruction:create_v2",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "create_v2",
+        "discriminatorHex": "d6904cec5f8b31b4",
+        "instructionOrEventLayout": "PINNED_IDL_CREATE_V2_LAYOUT",
+        "accountLayout": "PINNED_IDL_CREATE_V2_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "instruction:buy",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "buy",
+        "discriminatorHex": "66063d1201daebea",
+        "instructionOrEventLayout": "PINNED_IDL_BUY_LAYOUT",
+        "accountLayout": "PINNED_IDL_BUY_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "instruction:sell",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "sell",
+        "discriminatorHex": "33e685a4017f83ad",
+        "instructionOrEventLayout": "PINNED_IDL_SELL_LAYOUT",
+        "accountLayout": "PINNED_IDL_SELL_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "instruction:buy_exact_sol_in",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "buy_exact_sol_in",
+        "discriminatorHex": "38fc74089edfcd5f",
+        "instructionOrEventLayout": "PINNED_IDL_BUY_EXACT_SOL_IN_LAYOUT",
+        "accountLayout": "PINNED_IDL_BUY_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "instruction:buy_v2",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "buy_v2",
+        "discriminatorHex": "b817ee6167c5d33d",
+        "instructionOrEventLayout": "PINNED_IDL_BUY_V2_LAYOUT",
+        "accountLayout": "PINNED_IDL_BUY_V2_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "instruction:sell_v2",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "sell_v2",
+        "discriminatorHex": "5df6823ce7e940b2",
+        "instructionOrEventLayout": "PINNED_IDL_SELL_V2_LAYOUT",
+        "accountLayout": "PINNED_IDL_SELL_V2_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "instruction:buy_exact_quote_in_v2",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "INSTRUCTION",
+        "variant": "buy_exact_quote_in_v2",
+        "discriminatorHex": "c2ab1c46684d5b2f",
+        "instructionOrEventLayout": "PINNED_IDL_BUY_EXACT_QUOTE_IN_V2_LAYOUT",
+        "accountLayout": "PINNED_IDL_BUY_V2_ACCOUNT_ROLES",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "event:CreateEvent",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "EVENT",
+        "variant": "CreateEvent",
+        "discriminatorHex": "1b72a94ddeeb6376",
+        "instructionOrEventLayout": "PINNED_IDL_CREATE_EVENT_BORSH_LAYOUT",
+        "accountLayout": "ANCHOR_SELF_CPI_EVENT_AUTHORITY_BINDING",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      },
+      {
+        "entryId": "event:TradeEvent",
+        "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+        "kind": "EVENT",
+        "variant": "TradeEvent",
+        "discriminatorHex": "bddb7fd34ee661ee",
+        "instructionOrEventLayout": "PINNED_IDL_TRADE_EVENT_BORSH_LAYOUT",
+        "accountLayout": "ANCHOR_SELF_CPI_EVENT_AUTHORITY_BINDING",
+        "classification": "STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION",
+        "officialDocsCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "officialSourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+        "evidenceSource": "OFFICIAL_PUMP_IDL_ONLY",
+        "onChainActivationEvidence": null,
+        "startInclusive": null,
+        "endExclusive": null,
+        "uncertainty": "IDL_CONTENT_DOES_NOT_PROVE_EPOCH_978_ACTIVATION"
+      }
+    ]
+  },
+  "sourceAndToolchainFreeze": {
+    "repositoryMainGitSha": "16fa8fac09b3a96f1210503152f10b6ff6af5e4a",
+    "jetstreamerVersion": "0.7.0",
+    "jetstreamerGitSha": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+    "jetstreamerFirehoseSourceSha256": "572ec56122e898f2318adc34d5998296b4fa0d31cf4bcab40950f5615a526a00",
+    "localJetstreamerWorkspaceClassification": "INSUFFICIENT_PROVENANCE_NOT_ALLOWED",
+    "node": {
+      "version": "22.23.2",
+      "abi": "127",
+      "distribution": "node-v22.23.2-linux-x64",
+      "archiveSha256": "d60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307"
+    },
+    "rust": {
+      "version": "1.97.1",
+      "commitHash": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+      "hostTarget": "x86_64-unknown-linux-gnu",
+      "llvmVersion": "22.1.6"
+    },
+    "lockfiles": {
+      "packageLockSha256": "88da77e840dc08dcc9c8deaee993d89584b16b1f918e058b5f2b4414ca77c06f",
+      "cargoLockSha256": "850a84e6a4781381f2c84efca4c5975612f5729e6872a3aac4bc1ff2ebfb6062"
+    },
+    "buildConfig": {
+      "tsconfigSha256": "8ea19ab6fa1835a2c57ec8427083b564a0ef527de9f3e5597708738766f83a27",
+      "cargoTomlSha256": "7c8424a9a1677b9dd24125a59945a27ee4c797118b4f4142b705fa38a1ce2c0b",
+      "lockedDependenciesRequired": true,
+      "pilotBinaryBuildAuthorized": false
+    },
+    "sourceFiles": {
+      "src/research/old-faithful-jetstreamer-adapter.ts": "603b0fecf57cb771a6ff5ff3956cceb0c696ec3acd9b227613a11d869ba82b81",
+      "src/research/pump-v2-bronze.ts": "e32d0c4babd8d410cdf87adecab94d273603802f803f72156b76bcd9916a25d9",
+      "src/research/pump-silver-event.ts": "7bdf657447a8659b0b7ee67221e129fdd13a49785f5da71b140c3c80b944c97f",
+      "src/research/pump-silver-contract.ts": "7b3bbd6202e7aada67eef89aec9b7eeb363f2dab53cf0c78748f7c2d9f98055f",
+      "rust/old-faithful-pump-reducer/src/lib.rs": "4fd0038fdbd0e0d18fae9f855406d518babd833c9cf773f0dffee06940059051",
+      "rust/old-faithful-pump-reducer/src/silver_event.rs": "022f96c39fd5ee3ec719f8eb40eb120bbdcba56b73975981de890a498481ffd3"
+    },
+    "futureBuildRecipe": {
+      "source": "CLEAN_CHECKOUT_AT_PINNED_REPOSITORY_SHA_ONLY",
+      "nodeInstall": "NODE_22_23_2_NPM_CI_FROM_PINNED_PACKAGE_LOCK",
+      "rustBuild": "CARGO_PLUS_1_97_1_BUILD_LOCKED_FROM_PINNED_CARGO_LOCK",
+      "networkDuringPilotBinaryRuntime": "FORBIDDEN_EXCEPT_SEPARATELY_APPROVED_OF1_RETRIEVAL_COMPONENT",
+      "buildNow": false
+    }
+  },
+  "outputContract": {
+    "immutablePerSlotBronze": {
+      "schemaVersion": "PUMP_V2_BRONZE_TRANSACTION_1",
+      "required": true,
+      "contentHashRequired": true
+    },
+    "immutablePerSlotSilverEventOnly": {
+      "schemaVersion": "PUMP_SILVER_TRANSACTION_CONTRACT_1",
+      "required": true,
+      "acceptedDecodeRequires": "PROVEN_AT_SLOT_RANGE",
+      "accountStateFields": "UNAVAILABLE_OF1"
+    },
+    "quarantine": {
+      "rawEvidenceRequired": true,
+      "unknownDiscriminatorRequired": true,
+      "bestEffortDecodeForbidden": true
+    },
+    "coverageLedger": {
+      "transportCoveragePass": "ALL_1000_INVENTORY_SLOTS_RECONCILED_WITHOUT_CONFLICT",
+      "eventSemanticCoveragePass": "SEPARATE_CATEGORY_COUNTS_REPORTED_WITHOUT_REQUIRING_EVERY_CATEGORY",
+      "requiredEventCounts": [
+        "SUCCESSFUL_CREATES",
+        "FAILED_CREATE_ATTEMPTS",
+        "BUYS",
+        "SELLS",
+        "FAILED_PUMP_TRANSACTIONS",
+        "UNKNOWN_DISCRIMINATORS",
+        "TOP_LEVEL_PUMP_INSTRUCTIONS",
+        "INNER_CPI_PUMP_INSTRUCTIONS",
+        "LEGACY_TRANSACTIONS",
+        "V0_TRANSACTIONS",
+        "COMPLETION_EVENTS",
+        "MIGRATIONS"
+      ]
+    },
+    "retryDuplicateConflictLedger": {
+      "exactRetry": "IDEMPOTENT",
+      "duplicateConflict": "ABORT",
+      "signatureOrCoordinateConflict": "ABORT"
+    },
+    "wal": {
+      "required": true,
+      "appendOnly": true,
+      "failure": "ABORT"
+    },
+    "checkpoints": {
+      "required": true,
+      "contentHashRequired": true,
+      "failure": "ABORT"
+    },
+    "aggregateManifest": {
+      "sourceHashesRequired": true,
+      "configAndSchemaHashesRequired": true,
+      "perSlotContentHashesRequired": true,
+      "aggregateContentHashRequired": true,
+      "deterministicRerunHashRequired": true,
+      "wireBytesRangesAndRetriesRequired": true
+    },
+    "accountStatePolicy": {
+      "rawHistoricalAccountState": "UNAVAILABLE_OF1",
+      "instructionExactState": "UNAVAILABLE_OF1",
+      "authoritativeCurveOrMintState": "UNAVAILABLE_OF1",
+      "zeroFillForbidden": true,
+      "eventReserveBackfillForbidden": true,
+      "transactionWideBalanceBackfillForbidden": true,
+      "currentStateBackfillForbidden": true
+    },
+    "boundedReasonCodes": [
+      "SOURCE_METADATA_DRIFT",
+      "SOURCE_IDENTITY_MISMATCH",
+      "INVENTORY_MISMATCH",
+      "OUT_OF_RANGE_SLOT",
+      "DUPLICATE_CONFLICT",
+      "TRANSACTION_IDENTITY_CONFLICT",
+      "UNKNOWN_DISCRIMINATOR",
+      "UNPROVEN_ACTIVATION",
+      "AMBIGUOUS_EVENT",
+      "MALFORMED_EVENT",
+      "FAILED_PUMP_TRANSACTION",
+      "COVERAGE_GAP",
+      "WAL_FAILURE",
+      "CHECKPOINT_FAILURE",
+      "BUDGET_EXCEEDED",
+      "DISK_SAFETY_MARGIN",
+      "LIMITER_INACTIVE",
+      "WIRE_RATE_STALE",
+      "BANDWIDTH_CAP_EXCEEDED",
+      "DETERMINISTIC_RERUN_MISMATCH",
+      "UNEXPECTED_NETWORK_CAPABILITY",
+      "APPROVAL_ESCALATION_ATTEMPT",
+      "ACCOUNT_STATE_CLAIM_FORBIDDEN",
+      "OBSERVABILITY_INFLUENCE_FORBIDDEN"
+    ]
+  },
+  "bandwidthCapPreflightPlan": {
+    "status": "DESIGNED_NOT_EXECUTED",
+    "connectionCapacityBitsPerSecond": 1000000000,
+    "absoluteHardCapBitsPerSecond": 799000000,
+    "applicationTargetBytesPerSecond": 89128960,
+    "applicationAbsoluteMaxBytesPerSecond": 94371840,
+    "measurementWindowsSeconds": [1, 10, 60],
+    "wireRateNotPayloadOnly": true,
+    "limiterActiveHeartbeatRequired": true,
+    "burstControlRequired": true,
+    "sequentialStreams": 1,
+    "parallelRangeWorkers": 0,
+    "routerWanOption": "BACK_UP_EXISTING_QOS_THEN_APPLY_WAN_INGRESS_CEILING_BELOW_800_MBIT_S_AND_VERIFY_ROUTER_COUNTERS",
+    "trueNasIfbOption": "IDENTIFY_ACTUAL_WAN_FACING_INTERFACE_FROM_ROUTE_AND_COUNTER_DELTA_THEN_APPLY_IFB_INGRESS_SHAPING_WITH_CRASH_SAFE_CLEANUP",
+    "containerProcessLimits": "CGROUP_MEMORY_CPU_AND_SINGLE_PROCESS_READER_WRITER_LIMITS_DO_NOT_REPLACE_WIRE_SHAPING",
+    "interfaceIdentification": "DEFAULT_ROUTE_PLUS_READ_ONLY_INTERFACE_COUNTER_CORRELATION_DURING_SEPARATELY_APPROVED_PREFLIGHT",
+    "backup": "EXPORT_ROUTER_QOS_AND_CAPTURE_TC_QDISC_FILTER_LINK_STATE_BEFORE_CHANGE",
+    "rollback": "RESTORE_ROUTER_EXPORT_AND_DELETE_ONLY_TAGGED_PILOT_QDISC_IFB_FILTERS",
+    "crashCleanup": "SYSTEMD_TRANSIENT_UNIT_OR_TRAP_REMOVES_ONLY_TAGGED_PILOT_NETWORK_OBJECTS_AND_REVERIFIES_BASELINE",
+    "manualHouseholdCheck": "USER_CONFIRMS_VIDEO_CALL_STREAMING_AND_NORMAL_BROWSING_ON_OTHER_DEVICES_BEFORE_AND_DURING_TARGET_RATE_STAGE",
+    "abortOnLimiterOrMeasurementFailure": true,
+    "jetstreamerCapacitySettingIsLimiterProof": false,
+    "executed": false
+  },
+  "pilotBudget": {
+    "requestedSlots": 1000,
+    "maxWireBytes": 8589934592,
+    "maxVerifiedRangeCacheBytes": 8589934592,
+    "maxBronzeSilverOutputBytes": 10737418240,
+    "maxWalCheckpointManifestBytes": 2147483648,
+    "minimumFreeBytesBeforeStart": 42949672960,
+    "maxRuntimeSeconds": 3600,
+    "cgroupMemoryHardLimitBytes": 17179869184,
+    "rssAbortThresholdBytes": 12884901888,
+    "rssAbortMustBeSustained": true,
+    "readers": 1,
+    "writers": 1,
+    "isolatedImmutableOutputMapRequired": true
+  },
+  "abortConditions": [
+    "BANDWIDTH_LIMIT_EXCEEDED",
+    "LIMITER_INACTIVE",
+    "WIRE_RATE_METRICS_STALE",
+    "SOURCE_METADATA_DRIFT",
+    "CID_SHA_SIZE_MISMATCH",
+    "INVENTORY_CONFLICT",
+    "OUT_OF_RANGE_SLOT",
+    "DUPLICATE_CONFLICT",
+    "COVERAGE_NOT_CLOSED",
+    "UNKNOWN_REGISTRY_LAYOUT_OUTSIDE_QUARANTINE",
+    "BUDGET_EXCEEDED",
+    "WAL_FAILURE",
+    "CHECKPOINT_FAILURE",
+    "DISK_SAFETY_MARGIN_VIOLATION",
+    "DETERMINISTIC_RERUN_MISMATCH",
+    "UNEXPECTED_NETWORK_CAPABILITY",
+    "RESEARCH_READY_OR_PILOT_ELIGIBLE_ESCALATION"
+  ],
+  "observabilitySideChannel": {
+    "status": "CONTRACT_ONLY_NOT_IMPLEMENTED",
+    "dashboardGroups": [
+      "DOWNLOAD_NETWORK_SAFETY",
+      "PIPELINE_HEALTH",
+      "COVERAGE_DATA_QUALITY",
+      "AGGREGATE_MARKET_RESEARCH_LATER_CLICKHOUSE",
+      "STRATEGY_VALIDATION_ONLY_AFTER_APPROVED_GOLD"
+    ],
+    "metrics": [
+      "wire_bytes_total",
+      "payload_bytes_total",
+      "current_wire_rate_bits_per_second",
+      "network_cap_status",
+      "retries_total",
+      "timeouts_total",
+      "requested_slots",
+      "reconciled_slots",
+      "callbacks_total",
+      "transactions_total",
+      "pump_candidates_total",
+      "silver_events_total",
+      "quarantines_total",
+      "queue_depth",
+      "current_slot",
+      "last_completed_slot",
+      "wal_results_total",
+      "checkpoint_results_total",
+      "process_resident_memory_bytes",
+      "process_cpu_seconds_total",
+      "disk_throughput_bytes_per_second",
+      "disk_free_bytes",
+      "deterministic_rerun_matches_total",
+      "deterministic_rerun_mismatches_total"
+    ],
+    "allowedLabels": [
+      "stage",
+      "result",
+      "quarantine_reason",
+      "source",
+      "schema_version",
+      "run_mode"
+    ],
+    "labelValues": {
+      "stage": [
+        "download",
+        "transport",
+        "bronze",
+        "silver",
+        "coverage",
+        "wal",
+        "checkpoint"
+      ],
+      "result": [
+        "success",
+        "failure",
+        "retry",
+        "timeout",
+        "match",
+        "mismatch",
+        "reconciled",
+        "quarantined",
+        "aborted"
+      ],
+      "quarantine_reason": [
+        "SOURCE_METADATA_DRIFT",
+        "SOURCE_IDENTITY_MISMATCH",
+        "INVENTORY_MISMATCH",
+        "OUT_OF_RANGE_SLOT",
+        "DUPLICATE_CONFLICT",
+        "TRANSACTION_IDENTITY_CONFLICT",
+        "UNKNOWN_DISCRIMINATOR",
+        "UNPROVEN_ACTIVATION",
+        "AMBIGUOUS_EVENT",
+        "MALFORMED_EVENT",
+        "FAILED_PUMP_TRANSACTION",
+        "COVERAGE_GAP",
+        "WAL_FAILURE",
+        "CHECKPOINT_FAILURE",
+        "BUDGET_EXCEEDED",
+        "DISK_SAFETY_MARGIN",
+        "LIMITER_INACTIVE",
+        "WIRE_RATE_STALE",
+        "BANDWIDTH_CAP_EXCEEDED",
+        "DETERMINISTIC_RERUN_MISMATCH",
+        "UNEXPECTED_NETWORK_CAPABILITY",
+        "APPROVAL_ESCALATION_ATTEMPT",
+        "ACCOUNT_STATE_CLAIM_FORBIDDEN",
+        "OBSERVABILITY_INFLUENCE_FORBIDDEN"
+      ],
+      "source": [
+        "old_faithful_of1",
+        "jetstreamer",
+        "pilot_a"
+      ],
+      "schema_version": [
+        "OLD_FAITHFUL_EPOCH_978_SOURCE_MANIFEST_1",
+        "PUMP_V2_BRONZE_TRANSACTION_1",
+        "PUMP_SILVER_TRANSACTION_CONTRACT_1",
+        "OLD_FAITHFUL_COVERAGE_LEDGER_1"
+      ],
+      "run_mode": [
+        "readiness_only",
+        "cap_preflight",
+        "pilot_a_event_transport"
+      ]
+    },
+    "forbiddenLabels": [
+      "mint",
+      "signature",
+      "wallet",
+      "account_pubkey",
+      "slot",
+      "transaction_id",
+      "event_key",
+      "run_id",
+      "arbitrary_error_text"
+    ],
+    "canonicalDatasetInfluence": false,
+    "orderingInfluence": false,
+    "hashInfluence": false,
+    "acceptanceInfluence": false,
+    "quarantineDecisionInfluence": false
+  },
+  "frontendContract": {
+    "status": "QUERY_CONTRACT_ONLY_NOT_IMPLEMENTED",
+    "evidenceBadges": [
+      "OBSERVED",
+      "DERIVED",
+      "INFERRED",
+      "UNKNOWN",
+      "QUARANTINED",
+      "SYNTHETIC",
+      "REAL_UNAPPROVED",
+      "RESEARCH_READY"
+    ],
+    "requiredRowFields": [
+      "datasetId",
+      "runId",
+      "asOfSlot",
+      "asOfTime",
+      "provenanceId",
+      "approvalStatus",
+      "evidenceBadge",
+      "completeness",
+      "uncertainty"
+    ],
+    "screens": {
+      "datasetRunSelector": "/api/research/datasets",
+      "provenanceDataQuality": "/api/research/datasets/{datasetId}/provenance",
+      "tokenLifecycleExplorer": "/api/research/datasets/{datasetId}/tokens/{mint}/lifecycle?asOfSlot={slot}",
+      "tradeTape": "/api/research/datasets/{datasetId}/tokens/{mint}/trades?cursor={cursor}",
+      "eventInstructionInspector": "/api/research/datasets/{datasetId}/events/{eventKey}",
+      "quantFeatureExplorer": "/api/research/datasets/{datasetId}/observations?asOfSlot={slot}",
+      "coverageQuarantineExplorer": "/api/research/datasets/{datasetId}/coverage"
+    },
+    "pilotAForbiddenProvenViews": [
+      "LIQUIDITY",
+      "HOLDER_STATE",
+      "RAW_ACCOUNT_STATE",
+      "EXECUTABLE_FILL",
+      "PROFITABILITY"
+    ]
+  },
+  "hashBindings": {
+    "sourceManifestSha256": "43a517c9fe9f03e4ee1cc6464fabe422946468858bbb784e301be50d1d4eed6f",
+    "registrySha256": "a63d36f4d1577702760ce1234e5c9c75f5fdadb6c90d0ed98c1832a31bf8a397",
+    "observabilitySha256": "9d205ed873f8ca6913e01109858c06761f4ad664e9466c5039caaabed79cac4b",
+    "frontendSha256": "2fe0d71fadeed15627ae2d3502b93608dc354cd916aa0e65a6ba8141bbcfc1ea",
+    "outputSchemaSha256": {
+      "immutablePerSlotBronze": "4540c755d61ec8a3a42c00d4bc06ac43f1e3cd8d78ab4fde36f0cf7b1041efc4",
+      "immutablePerSlotSilverEventOnly": "443df96a3c702b498170cbdd679de0d8620cd18f57c142bf02b533bdfed582f3",
+      "quarantine": "72a453dc6c497ce0ddb704af12a04954de744603634a0a11ac5ffd4d3b67cc5a",
+      "coverageLedger": "527a9706ad20ed6ad15aabc917757173a61f2be1d2e1153498cd566920713def",
+      "retryDuplicateConflictLedger": "c671b69df57ee6082deeeef7005a344f7aefbd66f7f137887d3c64d935d51fa3",
+      "wal": "fca68be8885998896b4bfa8803483e1c00dfb53a1eca211fca3adb076f2b303c",
+      "checkpoints": "f03952119245e5319da47d3191a725c0141ac409e2f8f5b928f77a87555e326b",
+      "aggregateManifest": "2e0b06d7745d0d7c6cbb206040f90da6714996442f5d355b8e951b58f47bc84a",
+      "accountStatePolicy": "d58b063081f0bcdac8e9723e54309f9dae92ab369face68c6b0968a29e3059a5",
+      "boundedReasonCodes": "b7e4dab0c0d29411e407a913920d6d466e946fd47bf33026da3474f378f2bde2"
+    },
+    "packageCoreSha256": "154ac2c5da0e413c54c552079817fe35974a1f56f6d9824e034cb65f30df9eff"
+  },
+  "executionAuthorization": {
+    "bandwidthCapPreflightAuthorized": false,
+    "carOrRangeDownloadAuthorized": false,
+    "archiveStreamAuthorized": false,
+    "slotProcessingAuthorized": false,
+    "pilotAExecutionAuthorized": false,
+    "pilotBAuthorized": false,
+    "clickHouseOrBackfillAuthorized": false
+  }
+}
