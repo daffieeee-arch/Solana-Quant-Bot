@@ -84,7 +84,9 @@ v1 stores at most one dominant/net swap per transaction. It is not an event-leve
 
 The offline Phase-7 readiness boundary is documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) and merged through PR #14 as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge CI run `32350736436` succeeded. It validates a machine-readable epoch-978 source candidate and event/transport plan but has no production runtime caller. Activation remains `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` are invariant. All ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`, so accepted Silver for real data is unavailable.
 
-Phase 7A has completed the bounded read-only activation investigation: ProgramData boundaries and official/on-chain IDL structures are corroborated, but 0/10 entries meet the strict promotion norm. The Phase-7B candidate persists this evidence and adds an offline citationgate plus exact workflow enforcement. Neither changes runtime or registry semantics. Bandwidth preflight and Pilot A remain separately gated and unauthorized.
+Phase 7A completed the bounded read-only activation investigation: ProgramData boundaries and official/on-chain IDL structures are corroborated, but 0/10 entries meet the strict promotion norm. Phase 7B was merged through PR #16 as `784192a675e31d78da82852e91ceb254eccae982`; post-merge CI run `32397224604` proved the separate offline citationgate active and green on `main`. It changes no runtime or registry semantics. Bandwidth preflight and Pilot A remain separately gated and unauthorized.
+
+The next architecture milestone is design-only until separately authorized: split transport-pilot eligibility from accepted-Silver eligibility, add a Bronze-only Pilot A runner, and add a visible Research Cockpit plus observability adapter. None is implemented by the Phase-7B merge or this docs synchronization.
 
 ## TrueNAS state
 
@@ -122,5 +124,5 @@ GitHub Actions is validation-only:
 | ClickHouse/backfill operational hardening | 🔶 HOLD |
 | Phase 6B synthetic state/provenance contract | ✅ merged via PR #12; fixture-only; `approved: false`, `researchReady: false`, `pilotEligible: false` |
 | Pilot A Readiness Package | ✅ package merged via PR #14; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, `pilotEligible: false`; no preflight or pilot authorized |
-| Phase 7A evidence / Phase 7B citation gate | 🔶 candidate: evidence persisted, 0/10 proven, offline CI gate implemented; no registry/runtime/pilot authorization |
+| Phase 7A evidence / Phase 7B citation gate | ✅ merged via PR #16; post-merge run `32397224604` green; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, 0/10 proven, no registry/runtime/pilot authorization |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |

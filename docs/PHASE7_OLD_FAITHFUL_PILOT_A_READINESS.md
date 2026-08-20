@@ -327,7 +327,7 @@ Pilot A mag liquidity, holderstate, raw accountstate, executable fills of profit
 - Drie-maandenrun: **NO-GO**.
 - OOS, execution en profitability: **NO-GO**.
 
-Phase 7A read-only activation research is complete and persisted by the Phase-7B candidate. It corroborates ProgramData boundaries and all ten official/on-chain IDL structures, but proves no historical ELF/source mapping or raw candidate semantics; 0/10 entries meet `PROVEN_AT_SLOT_RANGE`. Phase 7B adds an offline deterministic citationgate and exact workflow-policy enforcement only. Bandwidth preflight and Pilot A remain behind separate future explicit authorization.
+Phase 7A read-only activation research is complete. PR #16 merged the persisted evidence and offline deterministic citationgate as `784192a675e31d78da82852e91ceb254eccae982`; post-merge run `32397224604` executed that separate step successfully. Historical ELF/source mapping and raw candidate semantics remain unproven; 0/10 entries meet `PROVEN_AT_SLOT_RANGE`. Bandwidth preflight and Pilot A remain behind separate future explicit authorization.
 
 ## 14. Lokale gate-evidence vóór staged-byte review
 
@@ -340,7 +340,7 @@ Onder exact Node `22.23.2` en Rust `1.97.1`:
 - backend/frontend-build: groen, met alleen de bestaande niet-blokkerende Vite chunk-waarschuwing;
 - Rust fmt, clippy `-D warnings`, locked tests en locked build: groen;
 - repository policy, compiled research transport isolation, `git diff --check`, citationgate en tracked-secretsscan: groen.
-- post-merge main-CI run `32350736436`: groen op `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; remote citationgate nog niet als aparte workflowstep aanwezig.
+- Phase-7B post-merge main-CI run `32397224604`: groen op `784192a675e31d78da82852e91ceb254eccae982`; citationgate 33/33 and policy 21/21, met de afzonderlijke offline citationstep actief en succesvol.
 
 Deze gate-evidence is readiness-package-evidence, geen pilot-, source-payload-, OOS- of profitabilitybewijs.
 
