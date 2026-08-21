@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { validatePlatformManifest } from '../scripts/phase8d1/resolve-base-images.mjs';
 
 describe('Phase 8D1 default-deny Docker build context', () => {
   it('allows exactly the source domains required by the two reviewed Dockerfiles', () => {
@@ -16,5 +17,15 @@ describe('Phase 8D1 default-deny Docker build context', () => {
     ]) expect(ignore).toContain(required);
     expect(ignore).not.toContain('!rust/**');
     for (const forbidden of ['!.git/', '!.env', '!secrets/', '!data/', '!tests/']) expect(ignore).not.toContain(forbidden);
+  });
+});
+
+describe('Phase 8D1 Buildx manifest digest contract', () => {
+  it('uses the explicit formatted Manifest digest while sizing the separate raw platform manifest', () => {
+    const digest=`sha256:${'a'.repeat(64)}`;
+    const formatted={digest,mediaType:'application/vnd.oci.image.manifest.v1+json',size:123};
+    const raw={schemaVersion:2,mediaType:'application/vnd.oci.image.manifest.v1+json',config:{size:1},layers:[{size:2}]};
+    expect(validatePlatformManifest({digest},formatted,raw).config.size).toBe(1);
+    expect(()=>validatePlatformManifest({digest},{...formatted,digest:`sha256:${'b'.repeat(64)}`},raw)).toThrow(/PLATFORM_DIGEST_DRIFT/);
   });
 });

@@ -7,9 +7,18 @@ import { resolve } from 'node:path';
 function run(command, args, options = {}) {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options }).trim();
 }
-function sha256(bytes) { return `sha256:${createHash('sha256').update(bytes).digest('hex')}`; }
 function exactRef(spec) { return `${spec.repository.split('/').at(-1)}:${spec.versionTag}`; }
 function repositoryRef(spec) { return `${spec.registry}/${spec.repository}`; }
+function inspectManifest(ref) {
+  const manifest = JSON.parse(run('docker', ['buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest}}', ref]));
+  if (!/^sha256:[0-9a-f]{64}$/.test(manifest?.digest ?? '')) throw new Error('INVALID_EXPLICIT_MANIFEST_DIGEST');
+  return manifest;
+}
+function inspectRawManifest(ref) {
+  const manifest = JSON.parse(run('docker', ['buildx', 'imagetools', 'inspect', '--raw', ref]));
+  if (!manifest?.config || !Array.isArray(manifest.layers)) throw new Error('INVALID_PLATFORM_MANIFEST');
+  return manifest;
+}
 
 export function resolveDescriptor(index, platform = 'linux/amd64') {
   const [os, architecture] = platform.split('/');
@@ -24,19 +33,21 @@ export function compressedSize(manifest) {
   if (values.some(x => !Number.isSafeInteger(x) || x < 1)) throw new Error('INVALID_COMPRESSED_SIZE');
   return values.reduce((a, b) => a + b, 0);
 }
+export function validatePlatformManifest(descriptor, formattedManifest, rawManifest) {
+  if (formattedManifest?.digest !== descriptor?.digest) throw new Error('PLATFORM_DIGEST_DRIFT');
+  compressedSize(rawManifest);
+  return rawManifest;
+}
 
 function resolveOne(name, spec, platform) {
   const tagRef = exactRef(spec);
-  const indexRaw = run('docker', ['buildx', 'imagetools', 'inspect', '--raw', tagRef]);
-  const index = JSON.parse(indexRaw);
-  const manifestListDigest = sha256(indexRaw);
+  const index = inspectManifest(tagRef);
+  const manifestListDigest = index.digest;
   const descriptor = resolveDescriptor(index, platform);
   const repo = repositoryRef(spec);
   const digestRef = `${repo}@${descriptor.digest}`;
   if (!/@sha256:[0-9a-f]{64}$/.test(digestRef)) throw new Error(`DIGEST_QUALIFIED_REFERENCE_REQUIRED:${name}`);
-  const platformRaw = run('docker', ['buildx', 'imagetools', 'inspect', '--raw', digestRef]);
-  if (sha256(platformRaw) !== descriptor.digest) throw new Error(`PLATFORM_DIGEST_DRIFT:${name}`);
-  const manifest = JSON.parse(platformRaw);
+  const manifest = validatePlatformManifest(descriptor, inspectManifest(digestRef), inspectRawManifest(digestRef));
   return {
     name, registry: spec.registry, repository: spec.repository, versionTag: spec.versionTag,
     manifestListDigest, linuxAmd64Digest: descriptor.digest, digestRef,
