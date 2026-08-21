@@ -108,7 +108,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-Phase 8C is the current offline implementation candidate; read [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). It adds a cockpit-only runtime and frontend, inert graph/seccomp gates, separate unapplied image/dataset/deployment contracts, `LEGACY_FORENSIC_V1` exports, a new Grafana suite, and ClickHouse domain/runbook designs. No service, dataset, live dashboard, image, payload, preflight, accepted Silver, strategy input or pilot is authorized.
+Phase 8C is merged through PR #19 as `6c597b4c2c274583a4fdd9ba7a24db44c21df5a8`; its cockpit/image/dataset/Grafana contracts remain unapplied. Phase 8D stopped before mutation because Hermes has no safe container builder/runtime. Phase 8D1 is the current uncommitted candidate; read [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md). It defines no-push GitHub-hosted verification and a separate future manual private-GHCR publish contract. Remote image/container gates remain `NOT_EXECUTED_PENDING_DELIVERY`; no package, credential, service, dataset, live dashboard, payload, accepted Silver, strategy input or pilot is authorized.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
@@ -135,7 +135,8 @@ Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state s
 13. `docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`
 14. `docs/PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`
 15. `docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`
-16. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-17. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-18. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-19. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+16. `docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`
+17. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+18. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+19. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+20. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

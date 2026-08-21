@@ -96,9 +96,12 @@ export function validatePhase8CContracts(input) {
 
   if (typeof cockpitDockerfile !== 'string' || /dist\/main\.js|(?:^|\/)scanner|(?:^|\/)ledger/u.test(cockpitDockerfile)
     || !cockpitDockerfile.includes('USER ${COCKPIT_UID}:${COCKPIT_GID}')) errors.push('invalid cockpit Dockerfile boundary');
-  if (!/^ARG NODE_IMAGE$/mu.test(cockpitDockerfile) || /^ARG NODE_IMAGE=/mu.test(cockpitDockerfile)
-    || occurrences(cockpitDockerfile, /^FROM \$\{NODE_IMAGE\}(?: AS \w+)?$/gmu) !== 2
-    || !/"\$NODE_IMAGE" \| grep -Eq '@sha256:\[0-9a-f\]\{64\}\$'/u.test(cockpitDockerfile)) errors.push('unverified cockpit base image forbidden');
+  if (!/^ARG NODE_BUILDER_IMAGE$/mu.test(cockpitDockerfile) || !/^ARG NODE_RUNTIME_IMAGE$/mu.test(cockpitDockerfile)
+    || /^ARG NODE_(?:BUILDER|RUNTIME)_IMAGE=/mu.test(cockpitDockerfile)
+    || occurrences(cockpitDockerfile, /^FROM \$\{NODE_BUILDER_IMAGE\} AS build$/gmu) !== 1
+    || occurrences(cockpitDockerfile, /^FROM \$\{NODE_RUNTIME_IMAGE\} AS runtime$/gmu) !== 1
+    || !/"\$NODE_BUILDER_IMAGE" \| grep -Eq '@sha256:\[0-9a-f\]\{64\}\$'/u.test(cockpitDockerfile)
+    || !/"\$NODE_RUNTIME_IMAGE" \| grep -Eq '@sha256:\[0-9a-f\]\{64\}\$'/u.test(cockpitDockerfile)) errors.push('unverified cockpit base image forbidden');
   if (typeof runnerDockerfile !== 'string' || /node_modules|package\.json|dist\/main\.js/u.test(runnerDockerfile)
     || !runnerDockerfile.includes('ENTRYPOINT ["/phase8a-bronze-runner"]')
     || occurrences(runnerDockerfile, /^FROM \$\{RUST_BUILDER_IMAGE\} AS build$/gmu) !== 1

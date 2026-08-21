@@ -1,0 +1,148 @@
+{
+  "schemaVersion": "PHASE8D1_REMOTE_BUILD_CONTRACT_1",
+  "status": "REMOTE_ISOLATED_GITHUB_BUILDER",
+  "sourceBaseSha": "6c597b4c2c274583a4fdd9ba7a24db44c21df5a8",
+  "platform": "linux/amd64",
+  "maxCompressedBaseImageBytes": 3221225472,
+  "baseImageLock": "deployment/phase8d1/base-image-lock.json",
+  "baseImageLockSha256": "153f5992d0a08001a016a64c95e0ea76a5db9dab1ee9016a8c5a1b4d1ba075d1",
+  "workflowSha256": {
+    "verify": "6efa22c2c58aa791e55b513ac71617b45bd993ec11733f717a89a2a786b80073",
+    "publish": "46d392f0cfc93e9d09c52d0e4edbb2c4be2831b1a6bf5cc2a1528a22034e13d9"
+  },
+  "supplyChainFileSha256": {
+    "containers/Dockerfile.cockpit": "fd43c2b105ebf2c40678e2d644d6a2bf58f6a3d72970d9ae33423021d43471a8",
+    "containers/Dockerfile.phase8a-runner": "7e133b806edf531fea4081a8bc50d80a8fb15da939c9db8af42e384c7314bb23",
+    "deployment/phase8d1/cockpit-egress-deny-seccomp.json": "722a84bebfac5ef5dc744b6942cc1c018b7ef91ad6b359db92ebf2ba0e9796ae",
+    "deployment/phase8d1/runtime-identities.json": "34f8a43c6b61546f0e6b0b9c31b085df8dde49ed7193dc833f90608c74e52379",
+    "deployment/phase8d1/runtime-identity-drift-55-to-59.json": "8721cad73098cab2c7fc7680c1b0faf8d8246a25066dd0c8db3daa76cac699f2",
+    "deployment/phase8d1/expected-fixture-files.sha256": "aa18a485c53caeb99098e366bce57d3f15d922bf8d60db60205d9c38d2aca258",
+    "deployment/phase8d1/release-manifest.schema.json": "8586f821b7b3fb2504de3a50e4704be7cc51c5f01c4b49b65b7db35f1e0791ae",
+    "scripts/phase8d1/resolve-base-images.mjs": "1247c99d1f757ba4dde2b02b3c644e1478bf52107a412b593cbfcfe6a5a3c54f",
+    "scripts/phase8d1/prebuild-hashes.sh": "bd9dcbf3f6e466d1686ce30823442f55c0fe71563526613de6165432c743b389",
+    "scripts/phase8d1/verify-images.sh": "2f54a0b2395a8b12ec62d702c3099655cf1fd7046cbda0c4fcea6d34aaca6687",
+    "scripts/phase8d1/inventory-rootfs.py": "687e1208cadb29bcaa008bd4e4987bdca5462df4245789ba17628d30568cbbcc",
+    "scripts/phase8d1/validate-image-metadata.mjs": "f495b124c4b7a51280e904a77ed8ba89975066f0d7525730af4f98cb9b715884",
+    "scripts/phase8d1/publish-gates.sh": "75d28d5cb8f66f15c1aeab44f4c7084c2c057b22af9655cd0377c2ed1ca44ce7",
+    "scripts/phase8d1/verify-published-images.sh": "a70c82709ef15e8a1140763bb67e116f31aac1de46c4e0050d927321a16c1190",
+    "scripts/phase8d1/json-schema-subset.mjs": "bc5a648415bd749cf034de3b35f7d5ac5956fff1fdb6f7eccf140a73368762bc",
+    "scripts/phase8d1/validate-release-manifest.mjs": "316cc75312f16f1a5e0af676b1fc9828d7780de1bc27863ed8ae6b1f6158f1a4",
+    "scripts/phase8d1/validate-runtime-identities.mjs": "bca0a68c761adbc884c73da1f4c160e2842bf14008ac8a6ed87edce7b49d2c99"
+  },
+  "baseImages": {
+    "nodeBuilder": {
+      "registry": "docker.io",
+      "repository": "library/node",
+      "versionTag": "22.23.2-bookworm",
+      "requiredSoftwareVersion": "v22.23.2",
+      "digestRequired": true
+    },
+    "nodeRuntime": {
+      "registry": "docker.io",
+      "repository": "library/node",
+      "versionTag": "22.23.2-bookworm-slim",
+      "requiredSoftwareVersion": "v22.23.2",
+      "digestRequired": true
+    },
+    "rust": {
+      "registry": "docker.io",
+      "repository": "library/rust",
+      "versionTag": "1.97.1-bookworm",
+      "requiredSoftwareVersion": "rustc 1.97.1",
+      "digestRequired": true
+    },
+    "runnerRuntime": {
+      "registry": "docker.io",
+      "repository": "library/debian",
+      "versionTag": "12.11-slim",
+      "requiredSoftwareVersion": "Debian GNU/Linux 12",
+      "digestRequired": true,
+      "selectionRationale": "Official minimal Debian glibc runtime; shell retained for deterministic CI inspection because distroless compatibility is not yet independently proven."
+    }
+  },
+  "runtimeIdentities": {
+    "runnerUid": 61000,
+    "cockpitUid": 61001,
+    "fixtureReadGid": 61000,
+    "status": "SELECTED_READ_ONLY_NOT_APPLIED"
+  },
+  "allowedBuildArgs": [
+    "NODE_BUILDER_IMAGE", "NODE_RUNTIME_IMAGE", "RUST_BUILDER_IMAGE", "RUNNER_RUNTIME_IMAGE",
+    "SOURCE_GIT_SHA", "PACKAGE_LOCK_SHA256", "CARGO_LOCK_SHA256",
+    "COCKPIT_ENTRYPOINT_SHA256", "COCKPIT_RUNTIME_TREE_SHA256", "FRONTEND_BUILD_SHA256", "RUNNER_BINARY_SHA256",
+    "COCKPIT_UID", "COCKPIT_GID", "RUNNER_UID", "RUNNER_GID"
+  ],
+  "forbiddenBuildArgs": ["TOKEN", "PASSWORD", "SECRET", "API_KEY", "COOKIE", "CREDENTIAL"],
+  "verify": {
+    "push": false,
+    "registryLogin": false,
+    "artifactRetentionDays": 7,
+    "artifactMaxBytes": 1048576,
+    "exactPrHeadCheckout": true,
+    "persistCredentials": false
+  },
+  "runnerTests": {
+    "independentRuns": 2,
+    "network": "none",
+    "readOnlyRoot": true,
+    "capDrop": ["ALL"],
+    "noNewPrivileges": true,
+    "pids": 64,
+    "cpus": 2,
+    "memoryBytes": 4294967296,
+    "retainedFiles": 20,
+    "expectedFileManifestSha256": "aa18a485c53caeb99098e366bce57d3f15d922bf8d60db60205d9c38d2aca258",
+    "fixtureInputSha256": "a57dc097e4651d3fae4942e2a872d087ef1fb5265cde51a4a9e37e43a4671e82",
+    "runId": "phase8a-fixture-a57dc097e4651d3fae4942e2a872d087ef1fb5265cde51a4a9e37e43a4671e82",
+    "aggregateHash": "7123c27ffcfd3388b6fa2b98cc3c59be0b42028cf6778404ba645b83254f4791",
+    "semanticRerunHash": "94c954098b0bbf1b772932395333af28c1b5317c8e1c0f6c88381f0e2ab5e3b0"
+  },
+  "cockpitTests": {
+    "unavailable": true,
+    "syntheticProvider": true,
+    "networkIsolation": "INTERNAL_NETWORK_WITHOUT_EXTERNAL_ROUTE_PLUS_SECCOMP_CONNECT_DENY",
+    "readOnlyRoot": true,
+    "capDrop": ["ALL"],
+    "noNewPrivileges": true,
+    "pids": 64,
+    "cpus": 1,
+    "memoryBytes": 536870912
+  },
+  "publish": {
+    "trigger": "workflow_dispatch",
+    "confirmation": "PUBLISH_SYNTHETIC_PHASE8D_IMAGES",
+    "mainOnly": true,
+    "sourceShaEqualsGithubSha": true,
+    "sourceShaEqualsLiveMain": true,
+    "normalCiRequired": true,
+    "imageVerifyRequired": true,
+    "packageVisibility": "private",
+    "repositoryLinked": true,
+    "overwriteExistingTag": false,
+    "uniqueTagRequired": true,
+    "deploymentIdentity": "REGISTRY_DIGEST_ONLY",
+    "provenance": "mode=max",
+    "sbom": "spdx",
+    "finalDigestRetestRequired": true,
+    "packages": ["phase8a-research-cockpit", "phase8a-bronze-runner"]
+  },
+  "trueNas": {
+    "mutationsAuthorized": false,
+    "deploymentAuthorized": false,
+    "privatePullCredentialPhase": "PHASE_8D2",
+    "privatePullCredentialCreated": false
+  },
+  "nonClaims": {
+    "currentCandidateStatus": "NOT_EXECUTED_PENDING_DELIVERY",
+    "imagesInPrAfterSuccessfulVerify": "BUILT_AND_TESTED_REMOTE_ONLY",
+    "imagesPushed": false,
+    "trueNasDeployed": false,
+    "datasetCreated": false,
+    "grafanaModified": false,
+    "clickhouseModified": false,
+    "transportPilotEligible": false,
+    "acceptedSilverEligible": false,
+    "researchReady": false,
+    "pilotEligible": false
+  }
+}

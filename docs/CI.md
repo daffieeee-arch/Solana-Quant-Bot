@@ -130,6 +130,7 @@ npx vitest run \
 npm test
 npx tsc --noEmit
 npm run build
+npm run verify:phase8d1-supply-chain
 rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
@@ -146,3 +147,7 @@ git ls-files -ci --exclude-standard
 ## Changes to CI
 
 Treat workflow and policy changes as security-sensitive. Keep the parser tests adversarial, inspect every action and permission scope, and require fresh-context review before merge. Do not add deployment behavior to this workflow without a separate approved design.
+
+## Phase 8D1 remote image workflows
+
+`phase8d-images-verify.yml` is no-push PR/reusable verification with only `contents: read`. `phase8d-images-publish.yml` is manual-only; it reruns normal CI and verify on exact main, then grants `packages: write` only to the publish job. Every external action is full-SHA pinned. Phase 8D1 does not dispatch publish, use a PAT, mount a Docker socket, contact TrueNAS or claim remote image gates before a later authorized delivery executes the PR workflow.

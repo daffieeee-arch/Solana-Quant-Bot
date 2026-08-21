@@ -237,3 +237,7 @@ Desktop/mobile overflow, exact source/HOLD/false badges, UNAVAILABLE without zer
 ## Absolute nonactions
 
 Phase 8C performs no dataset/zvol/mount/share creation, app change/start, image download/push/deploy, Grafana import/edit/delete, datasource/plugin change, ClickHouse start/query/mutation, Prometheus/Loki installation, persistent fixture replay, LAN/Tailscale listener, payload retrieval, bandwidth preflight, Pilot A/B, accepted Silver, registry promotion, backfill, strategy, OOS, execution or profitability work.
+
+## Phase 8D / 8D1 continuation
+
+Phase 8D stopped before mutation because the Hermes namespace has no container builder/runtime. Phase 8D1 deliberately keeps Docker/containerd sockets out of Hermes and defines `REMOTE_ISOLATED_GITHUB_BUILDER` verification plus a separate manual private-GHCR publish contract. No image has been remotely built or pushed by the uncommitted Phase-8D1 candidate; dataset/app/Grafana/ClickHouse state remains unchanged. See [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md).

@@ -25,13 +25,13 @@ function walk(value, path, visitor) {
 const CANONICAL_STEPS = [
   {
     name: 'Check out repository',
-    uses: 'actions/checkout@v7.0.1',
+    uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
     with: { 'fetch-depth': 0, 'persist-credentials': false },
   },
   {
     name: 'Set up Node.js',
-    uses: 'actions/setup-node@v7.0.0',
-    with: { 'node-version': '22', cache: 'npm', 'cache-dependency-path': 'package-lock.json' },
+    uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+    with: { 'node-version': '22.23.2', cache: 'npm', 'cache-dependency-path': 'package-lock.json' },
   },
   {
     name: 'Install pinned Rust toolchain',
@@ -98,6 +98,7 @@ const CANONICAL_WORKFLOW = {
       branches: ['main', 'chore/**', 'feature/**', 'phase2/**', 'ci/**', 'cursor/**'],
     },
     pull_request: { branches: ['main'] },
+    workflow_call: {},
     workflow_dispatch: {},
   },
   permissions: { contents: 'read' },
@@ -125,7 +126,11 @@ export function validateTrackedWorkflowPaths(trackedPaths) {
   const workflowPaths = trackedPaths
     .filter((path) => /^\.github\/workflows\/[^/]+\.ya?ml$/i.test(path))
     .sort();
-  const expected = ['.github/workflows/ci.yml'];
+  const expected = [
+    '.github/workflows/ci.yml',
+    '.github/workflows/phase8d-images-publish.yml',
+    '.github/workflows/phase8d-images-verify.yml',
+  ];
   return isDeepStrictEqual(workflowPaths, expected)
     ? []
     : [`tracked workflow file set must be exactly ${expected.join(', ')}; found ${workflowPaths.join(', ') || 'none'}`];
@@ -220,7 +225,10 @@ export function validateWorkflowConfiguration(workflow) {
         }
         if (own(step, 'uses')) {
           const action = String(step.uses);
-          const allowed = new Set(['actions/checkout@v7.0.1', 'actions/setup-node@v7.0.0']);
+          const allowed = new Set([
+            'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+            'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+          ]);
           if (!allowed.has(action)) {
             errors.push(`unapproved action ${JSON.stringify(action)} in job ${jobName} step ${stepIndex + 1}`);
           }

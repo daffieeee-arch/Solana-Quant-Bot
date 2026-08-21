@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "PHASE8D1_BASE_IMAGE_LOCK_1",
+  "observedAt": "2026-08-21T17:46:46.060128+00:00",
+  "source": "Docker Hub public tag API read-only planning observation",
+  "platform": "linux/amd64",
+  "images": [
+    {
+      "name": "nodeBuilder",
+      "registry": "docker.io",
+      "repository": "library/node",
+      "versionTag": "22.23.2-bookworm",
+      "manifestListDigest": "sha256:0557ac14e0d45d02ed563067b82856ca5e7aa3437fa28d98d4350ea9c3d9494a",
+      "linuxAmd64Digest": "sha256:673fce836d5a9185da33352682bfedb17c174d016370d08616748dff76fda862",
+      "compressedSizeBytes": 408416963
+    },
+    {
+      "name": "nodeRuntime",
+      "registry": "docker.io",
+      "repository": "library/node",
+      "versionTag": "22.23.2-bookworm-slim",
+      "manifestListDigest": "sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436",
+      "linuxAmd64Digest": "sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066",
+      "compressedSizeBytes": 79886705
+    },
+    {
+      "name": "rust",
+      "registry": "docker.io",
+      "repository": "library/rust",
+      "versionTag": "1.97.1-bookworm",
+      "manifestListDigest": "sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97",
+      "linuxAmd64Digest": "sha256:408fe88047cef61a2087653b0c5255fa51c0f2d6d94ddedd7a2562a9b91a46f6",
+      "compressedSizeBytes": 566462087
+    },
+    {
+      "name": "runnerRuntime",
+      "registry": "docker.io",
+      "repository": "library/debian",
+      "versionTag": "12.11-slim",
+      "manifestListDigest": "sha256:b1a741487078b369e78119849663d7f1a5341ef2768798f7b7406c4240f86aef",
+      "linuxAmd64Digest": "sha256:cea2634840f5a87503d8210e4df97b9f23a2acd67ff860a76c133d963032f866",
+      "compressedSizeBytes": 28230255
+    }
+  ],
+  "oneBaseSetCompressedSizeBytes": 1082996010,
+  "conservativeTwoNamespaceMaximumBytes": 2165992020,
+  "maxDownloadedBytes": 3221225472,
+  "buildIdentity": "LINUX_AMD64_DIGEST_ONLY",
+  "tagDriftPolicy": "FAIL_CLOSED_REVIEW_NEW_LOCK"
+}

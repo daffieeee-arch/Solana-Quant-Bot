@@ -8,10 +8,12 @@ describe('Phase 8C image, dataset and deployment contracts', () => {
     const cockpit = readFileSync('containers/Dockerfile.cockpit', 'utf8');
     const runner = readFileSync('containers/Dockerfile.phase8a-runner', 'utf8');
     expect(cockpit).toContain('ARG SOURCE_GIT_SHA');
-    expect(cockpit).toMatch(/^ARG NODE_IMAGE$/m);
-    expect(cockpit).not.toMatch(/^ARG NODE_IMAGE=/m);
+    expect(cockpit).toMatch(/^ARG NODE_BUILDER_IMAGE$/m);
+    expect(cockpit).toMatch(/^ARG NODE_RUNTIME_IMAGE$/m);
+    expect(cockpit).not.toMatch(/^ARG NODE_(?:BUILDER|RUNTIME)_IMAGE=/m);
     expect(cockpit).toContain('ARG PACKAGE_LOCK_SHA256');
     expect(cockpit).toContain('ARG COCKPIT_ENTRYPOINT_SHA256');
+    expect(cockpit).toContain('ARG COCKPIT_RUNTIME_TREE_SHA256');
     expect(cockpit).toContain('ARG FRONTEND_BUILD_SHA256');
     expect(cockpit).toMatch(/USER \$\{COCKPIT_UID\}:\$\{COCKPIT_GID\}/);
     expect(cockpit).toContain('HEALTHCHECK');

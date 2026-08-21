@@ -24,6 +24,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_call: {}
   workflow_dispatch: {}
 
 permissions:
@@ -46,14 +47,14 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up Node.js
-        uses: actions/setup-node@v7.0.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '22'
+          node-version: '22.23.2'
           cache: npm
           cache-dependency-path: package-lock.json
       - name: Install pinned Rust toolchain
@@ -243,7 +244,7 @@ describe('semantic CI workflow policy', () => {
   it('checks every checkout and rejects a second checkout with default persistence', () => {
     const unsafe = SAFE_WORKFLOW.replace(
       '      - name: Install locked dependencies',
-      '      - uses: actions/checkout@v7.0.1\n      - name: Install locked dependencies',
+      '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - name: Install locked dependencies',
     );
     expect(errors(unsafe)).toMatch(/every checkout step.*persist-credentials: false/i);
     expect(errors(unsafe)).toMatch(/exactly one actions\/checkout step/i);
@@ -252,7 +253,7 @@ describe('semantic CI workflow policy', () => {
   it('rejects a second checkout even when both disable credential persistence', () => {
     const unsafe = SAFE_WORKFLOW.replace(
       '      - name: Install locked dependencies',
-      '      - uses: actions/checkout@v7.0.1\n        with: { persist-credentials: false }\n      - name: Install locked dependencies',
+      '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with: { persist-credentials: false }\n      - name: Install locked dependencies',
     );
     expect(errors(unsafe)).toMatch(/exactly one actions\/checkout step/i);
   });
@@ -328,20 +329,22 @@ describe('semantic CI workflow policy', () => {
     const variants = [
       addStep('      - name: deploy\n        run: /usr/bin/ssh deploy@example.invalid'),
       addStep('      - name: deploy\n        run: docker buildx build --push .'),
-      SAFE_WORKFLOW.replace("          node-version: '22'", "          node-version: '23'"),
+      SAFE_WORKFLOW.replace("          node-version: '22.23.2'", "          node-version: '23'"),
     ];
     for (const variant of variants) {
       expect(errors(variant)).toMatch(/unapproved run command|canonical workflow|action input/i);
     }
   });
 
-  it('rejects trigger drift and any second tracked workflow', () => {
+  it('rejects trigger drift and any workflow outside the three reviewed files', () => {
     const pullRequestTarget = SAFE_WORKFLOW.replace('  pull_request:', '  pull_request_target:');
     expect(errors(pullRequestTarget)).toMatch(/trigger|canonical workflow/i);
-    expect(workflowFileSetErrors(['.github/workflows/ci.yml'])).toBe('');
-    expect(workflowFileSetErrors([
+    const reviewed = [
       '.github/workflows/ci.yml',
-      '.github/workflows/deploy.yml',
-    ])).toMatch(/workflow file set/i);
+      '.github/workflows/phase8d-images-publish.yml',
+      '.github/workflows/phase8d-images-verify.yml',
+    ];
+    expect(workflowFileSetErrors(reviewed)).toBe('');
+    expect(workflowFileSetErrors([...reviewed, '.github/workflows/deploy.yml'])).toMatch(/workflow file set/i);
   });
 });

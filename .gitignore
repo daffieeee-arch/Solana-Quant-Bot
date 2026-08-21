@@ -3,6 +3,8 @@ node_modules/
 dist/
 frontend/cockpit-dist/
 *.tsbuildinfo
+__pycache__/
+*.pyc
 rust/**/target/
 
 # ── Runtime data (ledger, snapshots, caches) ───────────

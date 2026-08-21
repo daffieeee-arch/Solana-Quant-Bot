@@ -1,0 +1,134 @@
+name: Phase 8D images verify
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.dockerignore'
+      - '.github/workflows/phase8d-images-verify.yml'
+      - '.github/workflows/phase8d-images-publish.yml'
+      - 'containers/**'
+      - 'deployment/phase8d1/**'
+      - 'scripts/phase8d1/**'
+      - 'src/cockpit-*.ts'
+      - 'src/research/phase8a-*.ts'
+      - 'frontend/cockpit.html'
+      - 'frontend/src/cockpit*'
+      - 'frontend/src/research/**'
+      - 'frontend/vite.cockpit.config.ts'
+      - 'rust/**'
+      - 'tests/fixtures/phase8a/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'tsconfig.json'
+  workflow_dispatch: {}
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase8d-images-verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify-images-no-push:
+    name: remote-images-no-push
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up isolated Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          driver: docker-container
+          install: true
+      - name: Require GitHub-hosted Linux amd64 runner
+        run: |
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -m)" = x86_64
+      - name: Enforce Phase 8D1 workflow policy
+        run: node scripts/phase8d1/assert-phase8d1-supply-chain.mjs
+      - name: Resolve and pull exact base digests sequentially
+        id: bases
+        run: node scripts/phase8d1/resolve-base-images.mjs resolve phase8d1-evidence/base-images.json
+      - name: Prebuild in exact digest-pinned builders
+        id: hashes
+        run: scripts/phase8d1/prebuild-hashes.sh phase8d1-evidence/base-images.json phase8d1-evidence/prebuild-hashes.json
+      - name: Build cockpit candidate locally only
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: containers/Dockerfile.cockpit
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: local/phase8a-research-cockpit:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.cockpit_entrypoint_short }}-${{ steps.hashes.outputs.frontend_build_short }}
+          build-args: |
+            NODE_BUILDER_IMAGE=${{ steps.bases.outputs.node_builder_ref }}
+            NODE_RUNTIME_IMAGE=${{ steps.bases.outputs.node_runtime_ref }}
+            SOURCE_GIT_SHA=${{ steps.hashes.outputs.source_sha }}
+            PACKAGE_LOCK_SHA256=${{ steps.hashes.outputs.package_lock_sha }}
+            COCKPIT_ENTRYPOINT_SHA256=${{ steps.hashes.outputs.cockpit_entrypoint_sha }}
+            COCKPIT_RUNTIME_TREE_SHA256=${{ steps.hashes.outputs.cockpit_runtime_tree_sha }}
+            FRONTEND_BUILD_SHA256=${{ steps.hashes.outputs.frontend_build_sha }}
+            COCKPIT_UID=${{ steps.hashes.outputs.cockpit_uid }}
+            COCKPIT_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Build runner candidate locally only
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: containers/Dockerfile.phase8a-runner
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: local/phase8a-bronze-runner:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.runner_binary_short }}
+          build-args: |
+            RUST_BUILDER_IMAGE=${{ steps.bases.outputs.rust_ref }}
+            RUNNER_RUNTIME_IMAGE=${{ steps.bases.outputs.runtime_ref }}
+            SOURCE_GIT_SHA=${{ steps.hashes.outputs.source_sha }}
+            RUNNER_BINARY_SHA256=${{ steps.hashes.outputs.runner_binary_sha }}
+            CARGO_LOCK_SHA256=${{ steps.hashes.outputs.cargo_lock_sha }}
+            RUNNER_UID=${{ steps.hashes.outputs.runner_uid }}
+            RUNNER_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Inspect images and run networkless synthetic verification
+        env:
+          COCKPIT_IMAGE: local/phase8a-research-cockpit:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.cockpit_entrypoint_short }}-${{ steps.hashes.outputs.frontend_build_short }}
+          RUNNER_IMAGE: local/phase8a-bronze-runner:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.runner_binary_short }}
+          BASE_MANIFEST: phase8d1-evidence/base-images.json
+          PREBUILD_MANIFEST: phase8d1-evidence/prebuild-hashes.json
+          EVIDENCE_DIR: phase8d1-evidence
+          PUBLISH_MODE: verify
+        run: scripts/phase8d1/verify-images.sh
+      - name: Re-resolve bases and reject digest drift
+        run: node scripts/phase8d1/resolve-base-images.mjs compare phase8d1-evidence/base-images.json
+      - name: Validate bounded verification manifest
+        run: |
+          test "$(stat -c %s phase8d1-evidence/release-manifest.json)" -le 1048576
+          node scripts/phase8d1/validate-release-manifest.mjs phase8d1-evidence/release-manifest.json
+          jq -e '.status=="VERIFY_ONLY_SUCCEEDED" and .nonActions.imagePush==false and .nonActions.trueNasMutation==false and .runnerVerification.byteIdentical==true and .runnerVerification.retainedFiles==20 and .cockpitVerification.unavailableVerdict=="PASS" and .cockpitVerification.providerVerdict=="PASS"' phase8d1-evidence/release-manifest.json >/dev/null
+          test -z "$(docker ps -a --filter name=phase8d1- --format '{{.Names}}')"
+      - name: Upload bounded verification evidence
+        if: always() && hashFiles('phase8d1-evidence/release-manifest.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase8d1-verify-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            phase8d1-evidence/*.json
+            phase8d1-evidence/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 9
+          include-hidden-files: false
+      - name: Verify tracked tree is unchanged
+        run: test -z "$(git status --porcelain --untracked-files=no)"
