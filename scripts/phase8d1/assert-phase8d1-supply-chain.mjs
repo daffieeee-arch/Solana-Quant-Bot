@@ -12,7 +12,7 @@ const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj ?? {}, key);
 const keys = obj => Object.keys(obj ?? {}).sort();
 const exactKeys = (obj, expected) => JSON.stringify(keys(obj)) === JSON.stringify([...expected].sort());
 const containsAll = (value, markers) => markers.every(marker => value.includes(marker));
-const VERIFY_SEMANTIC_SHA256='be0294557eccf05ecd29aeec7310eb190e67b9ee803b73f4cab9414b3ca93567';
+const VERIFY_SEMANTIC_SHA256='5330ddff763fa11962579c43906f063b56f697bd2814659de0cbe0b27f9abbdd';
 const PUBLISH_SEMANTIC_SHA256='4dba62f9cf15748fc4e2066a6086da2e4b6902159e94fef892fe03c4198a220d';
 
 export function loadPhase8D1Inputs(root = process.cwd()) {
@@ -86,6 +86,11 @@ export function validatePhase8D1Inputs(input) {
   if (/push:\s*true/.test(input.verifyText)) errors.push('forbidden PR image publish');
   if (!containsAll(input.verifyText,['persist-credentials: false','github.event.pull_request.head.sha || github.sha','platforms: linux/amd64','push: false','provenance: false','sbom: false','remote-images-no-push'])) errors.push('missing no-push PR isolation');
   if (!containsAll(input.verifyText,['networkless synthetic verification','phase8d1-evidence/release-manifest.json','retention-days: 7'])) errors.push('missing bounded verify artifact');
+  const verifySteps=verify.jobs?.['verify-images-no-push']?.steps ?? [];
+  const nodeSetupIndex=verifySteps.findIndex(step=>String(step.uses??'').startsWith('actions/setup-node@')&&step.with?.['node-version']==='22.23.2');
+  const npmCiIndex=verifySteps.findIndex(step=>step.run==='npm ci');
+  const policyIndex=verifySteps.findIndex(step=>step.run==='node scripts/phase8d1/assert-phase8d1-supply-chain.mjs');
+  if(nodeSetupIndex<0||npmCiIndex<=nodeSetupIndex||policyIndex<=npmCiIndex)errors.push('missing locked Node policy dependency bootstrap');
 
   if (!exactKeys(publish.on,['workflow_dispatch'])) errors.push('invalid publish trigger');
   const inputs=publish.on?.workflow_dispatch?.inputs;

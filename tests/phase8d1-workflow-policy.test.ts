@@ -16,6 +16,14 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
     expect(validatePhase8D1Inputs(candidate())).toEqual([]);
   });
 
+  it('installs locked Node 22 dependencies before executing the production policy', () => {
+    const steps=candidate().verifyWorkflow.jobs['verify-images-no-push'].steps;
+    const setup=steps.findIndex((step:any)=>String(step.uses??'').startsWith('actions/setup-node@')&&step.with?.['node-version']==='22.23.2');
+    const install=steps.findIndex((step:any)=>step.run==='npm ci');
+    const policy=steps.findIndex((step:any)=>step.run==='node scripts/phase8d1/assert-phase8d1-supply-chain.mjs');
+    expect(setup).toBeGreaterThan(-1);expect(install).toBeGreaterThan(setup);expect(policy).toBeGreaterThan(install);
+  });
+
   it('requires real GITHUB_TOKEN API authentication, Docker seccomp EPERM, and env/rootfs content secret scans', () => {
     const input = candidate();
     expect(input.publishText).not.toContain('Authorization: Bearer ***');

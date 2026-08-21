@@ -7,7 +7,7 @@
   "baseImageLock": "deployment/phase8d1/base-image-lock.json",
   "baseImageLockSha256": "153f5992d0a08001a016a64c95e0ea76a5db9dab1ee9016a8c5a1b4d1ba075d1",
   "workflowSha256": {
-    "verify": "6efa22c2c58aa791e55b513ac71617b45bd993ec11733f717a89a2a786b80073",
+    "verify": "e36330381af5f5a604b3fc3e4f6fa3d243cf61f579020cfb21989ed1a01fd520",
     "publish": "46d392f0cfc93e9d09c52d0e4edbb2c4be2831b1a6bf5cc2a1528a22034e13d9"
   },
   "supplyChainFileSha256": {
