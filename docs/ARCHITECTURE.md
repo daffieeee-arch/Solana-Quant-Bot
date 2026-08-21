@@ -86,7 +86,7 @@ The offline Phase-7 readiness boundary is documented in [`PHASE7_OLD_FAITHFUL_PI
 
 Phase 7A completed the bounded read-only activation investigation: ProgramData boundaries and official/on-chain IDL structures are corroborated, but 0/10 entries meet the strict promotion norm. Phase 7B was merged through PR #16 as `784192a675e31d78da82852e91ceb254eccae982`; post-merge CI run `32397224604` proved the separate offline citationgate active and green on `main`. It changes no runtime or registry semantics. Bandwidth preflight and Pilot A remain separately gated and unauthorized.
 
-The next architecture milestone is design-only until separately authorized: split transport-pilot eligibility from accepted-Silver eligibility, add a Bronze-only Pilot A runner, and add a visible Research Cockpit plus observability adapter. None is implemented by the Phase-7B merge or this docs synchronization.
+Phase 8A implements that milestone only for `SYNTHETIC_FIXTURE_ONLY`: a separate fail-closed eligibility contract, a Rust file adapter that calls the existing Phase-5 reducer, a bounded optional dashboard provider, a lazy Research Cockpit and a pure metrics/Grafana contract. The reducer remains authoritative for WAL/checkpoints/coverage/deduplication. This is an offline product surface, not transport eligibility, accepted Silver, research readiness or pilot authorization; see [`PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`](PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md).
 
 ## TrueNAS state
 
@@ -125,4 +125,5 @@ GitHub Actions is validation-only:
 | Phase 6B synthetic state/provenance contract | ✅ merged via PR #12; fixture-only; `approved: false`, `researchReady: false`, `pilotEligible: false` |
 | Pilot A Readiness Package | ✅ package merged via PR #14; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, `pilotEligible: false`; no preflight or pilot authorized |
 | Phase 7A evidence / Phase 7B citation gate | ✅ merged via PR #16; post-merge run `32397224604` green; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, 0/10 proven, no registry/runtime/pilot authorization |
+| Phase 8A Bronze runner / Research Cockpit | 🔶 offline fixture candidate implemented; reducer reused; transport/Silver/research eligibility remain false; no real payload or pilot |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |

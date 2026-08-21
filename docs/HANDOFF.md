@@ -22,6 +22,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - PR #9 (Phase 6A canonical Pump Silver event contract) was squash-merged as `95511866c31b6325c2341b5b7a3b98c9503d85d1`; post-merge main CI run `32231262382` passed Node 953/953, Rust 60/60, TypeScript, builds, policy, transport isolation, push integrity, and clean-tree gates. It is fixture-only, used no real CAR/archive/slot data, provides no OOS or profitability evidence, and remains `researchReady: false`.
 - PR #12 (Phase 6B Pump Silver state/provenance contract) was squash-merged as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` passed Node 1,111/1,111 across 71 files, the focused Phase 6B file 151/151, Rust 68/68, shared TypeScript/Rust parity, TypeScript, builds, policy, transport isolation, push integrity, and clean-tree gates. It is fully offline, synthetic and fixture-only; `approved: false`, `researchReady: false`, and `pilotEligible: false` remain mandatory.
 - PR #14 (Phase-7 Pilot A readiness package) was squash-merged as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge main CI run `32350736436` passed focused readiness 86/86, Node 1,197/1,197 across 72 files, Rust 68/68 and all required TypeScript/build/transport/policy/Rust/push-integrity/clean-tree gates. The merge changes no content status: `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false`.
+- PR #16 merged Phase-7A evidence and the offline citationgate as `784192a675e31d78da82852e91ceb254eccae982`; docs PR #17 merged as `41cd2ecfda55a8019605886f10e7bb144fa6d584`. Post-merge run `32411239867` passed citation 33/33, policy 21/21, Node 1,231/1,231 across 73 files, Rust 68/68 and all required gates.
 
 ## What is proven?
 
@@ -106,7 +107,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-The next development milestone is transport-pilot eligibility separated from accepted-Silver eligibility, a Bronze-only Pilot A runner, and a visible Research Cockpit plus observability adapter. These are milestones only: this docs branch does not implement or authorize them. No bandwidth preflight or Pilot A is authorized; Pilot A still requires another explicit execution GO and may never claim raw state, liquidity, position-size impact, execution-grade returns, OOS readiness, or profitability.
+Phase 8A implements the milestone as a strictly offline fixture candidate; read [`PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`](PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md). The direct Rust runner calls the existing reducer and publishes deterministic Bronze/WAL/checkpoint/coverage output. The optional GET-only provider and lazy cockpit show synthetic/shadow evidence and explicit HOLD/false gates. No real payload, preflight, accepted Silver, strategy input or pilot is authorized.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
@@ -131,7 +132,8 @@ Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state s
 11. `docs/PHASE6B_PUMP_SILVER_STATE_PROVENANCE_CONTRACT.md`
 12. `docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`
 13. `docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`
-14. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-15. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-16. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-17. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+14. `docs/PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`
+15. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+16. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+17. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+18. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

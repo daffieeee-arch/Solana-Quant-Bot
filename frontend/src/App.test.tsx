@@ -273,4 +273,48 @@ describe('App', () => {
     expect(newsHeading.closest('.secondary-context')).not.toBeNull();
     expect(screen.getByText('SECONDARY CONTEXT · NEVER A TRADE SIGNAL')).toBeInTheDocument();
   });
+
+  it('lazy-loads an accessible Research workspace without breaking Paper Monitor navigation', async () => {
+    const researchBodies: Record<string, unknown> = {
+      summary: {
+        schemaVersion: 'PHASE8A_RESEARCH_SUMMARY_RESPONSE_1', sourceClass: 'SYNTHETIC_FIXTURE_ONLY', runId: 'fixture-run', observedAt: '2026-08-20T20:00:00.000Z', evidenceClass: 'SYNTHETIC', realData: false, acceptedSilver: false, researchReady: false, activationVerdict: 'HOLD_UNPROVEN_ACTIVATION',
+        eligibility: { pilotEligible: false, transportPilot: { contractReady: true, inputMode: 'SYNTHETIC_FIXTURE_ONLY', preflightStatus: 'NOT_RUN', eligible: false, executionAuthorized: false }, acceptedSilver: { eligible: false, activationVerdict: 'HOLD_UNPROVEN_ACTIVATION', provenRegistryEntries: 0, totalRegistryEntries: 10 }, research: { approved: false, researchReady: false, strategyInputEligible: false, profitabilityEvidence: false } },
+        progress: { requestedSlots: 0, reconciledSlots: 0, skippedSlots: 0, provisionalSlots: 0, resolvedSlots: 0, currentSlot: 0, lastCompletedSlot: 0, coveragePercent: 0, deterministicRerun: 'MATCH' },
+        dataflow: { callbacks: 0, blocks: 0, transactions: 0, topLevelInstructions: 0, innerInstructions: 0, pumpCandidates: 0, failedPumpTransactions: 0, unknownDiscriminators: 0, quarantines: 0, exactRetries: 0, duplicateConflicts: 0 },
+      },
+      events: { schemaVersion: 'PHASE8A_RESEARCH_EVENTS_RESPONSE_1', rows: [], total: 0, cursor: 0, limit: 50, nextCursor: null },
+      quarantines: { schemaVersion: 'PHASE8A_RESEARCH_QUARANTINES_RESPONSE_1', rows: [], total: 0, cursor: 0, limit: 50, nextCursor: null },
+      provenance: { schemaVersion: 'PHASE8A_RESEARCH_PROVENANCE_RESPONSE_1', provenance: { sourceManifestSha256: '1'.repeat(64), configSha256: '2'.repeat(64), schemaSha256: '3'.repeat(64), reducerGitSha: '4'.repeat(40), inputSha256: '5'.repeat(64), aggregateOutputSha256: '6'.repeat(64), rerunSha256: '6'.repeat(64), approvalStatus: 'CANDIDATE_UNAPPROVED', completeness: 'FIXTURE_COMPLETE', uncertainty: 'UNPROVEN_ACTIVATION' } },
+      metrics: { schemaVersion: 'PHASE8A_RESEARCH_METRICS_RESPONSE_1', metrics: { bytesRead: 0, bytesWritten: 0, outputBytes: 0, queueDepth: 0, peakRssBytes: 0, stageDurationsMs: {}, walClean: 1, checkpointPublished: 1, quarantineByReason: {} } },
+    };
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/dashboard-data') return Promise.resolve({ ok: true, json: async () => dashboardData });
+      if (url === '/api/controls') return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+      const key = url.includes('/events') ? 'events' : url.includes('/quarantines') ? 'quarantines' : url.includes('/provenance') ? 'provenance' : url.includes('/metrics') ? 'metrics' : 'summary';
+      return Promise.resolve({ ok: true, json: async () => researchBodies[key] });
+    }));
+    render(<App pollMs={60_000} />);
+    const paper = await screen.findByRole('tab', { name: 'Paper Monitor' });
+    const research = screen.getByRole('tab', { name: 'Research // Pilot A' });
+    expect(paper).toHaveAttribute('aria-selected', 'true');
+    expect(research).toHaveAttribute('aria-selected', 'false');
+    fireEvent.click(research);
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'RESEARCH // PILOT A' })).toBeInTheDocument());
+    expect(research).toHaveAttribute('aria-selected', 'true');
+    research.focus();
+    fireEvent.keyDown(research, { key: 'ArrowLeft' });
+    await waitFor(() => expect(paper).toHaveFocus());
+    expect(await screen.findByText('PAPER // MONITOR')).toBeInTheDocument();
+    expect(paper).toHaveAttribute('aria-selected', 'true');
+    expect(readFileSync('frontend/src/App.tsx', 'utf8')).toContain("lazy(() => import('./research/ResearchCockpit.js').then");
+  });
+
+  it('keeps the Research tab reachable when the paper endpoint is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) }));
+    render(<App pollMs={60_000} />);
+    const research = screen.getByRole('tab', { name: 'Research // Pilot A' });
+    fireEvent.click(research);
+    expect(await screen.findByText('RESEARCH OUTPUT UNAVAILABLE')).toBeInTheDocument();
+  });
 });

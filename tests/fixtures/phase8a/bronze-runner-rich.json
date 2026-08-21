@@ -1,0 +1,442 @@
+{
+  "schemaVersion": "PHASE8A_BRONZE_FIXTURE_INPUT_1",
+  "sourceClass": "SYNTHETIC_FIXTURE_ONLY",
+  "observedAt": "2026-08-20T20:00:00.000Z",
+  "sourceManifest": {
+    "schemaVersion": "OLD_FAITHFUL_EPOCH_SOURCE_1",
+    "epoch": 1000,
+    "epochCid": "bafyreihvgnloaiilehijbe42cloousmwvl2z666zr7wvqprs6wnqfeqo4q",
+    "carSha256": "3c9727378e617f5cba8b5e206bce8fc6ae5df34d3a4408eeb69aea4d62ac7218",
+    "carFileSizeBytes": "767389334224",
+    "slotsFileSha256": "b04cec20c168d256fadcebc8626b711ac12558b207142dd6872d0deb382e8930",
+    "slotsFileSizeBytes": 4317820,
+    "slotsFileEntryCount": 431782,
+    "slotsFirst": 431999999,
+    "slotsLast": 432431999,
+    "slotRange": {
+      "startInclusive": 432000000,
+      "endExclusive": 432432000
+    }
+  },
+  "sourceManifestSha256": "0e822203d4363cbd5b3863fe257e93c999d9925b10f8c4100f64856ec81bf425",
+  "adapterProvenance": {
+    "schemaVersion": "JETSTREAMER_ADAPTER_PROVENANCE_1",
+    "jetstreamerGitSha": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+    "pluginGitSha": "1111111111111111111111111111111111111111",
+    "pluginSourceSha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "adapterProvenanceSha256": "821034a2711a97b037eda896b05d11c9de9b63eb29a0566a637d40003a04af2e",
+  "reducerProvenance": {
+    "schemaVersion": "OLD_FAITHFUL_RUST_REDUCER_PROVENANCE_1",
+    "reducerGitSha": "3333333333333333333333333333333333333333",
+    "reducerSourceSha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "jetstreamerGitSha": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24"
+  },
+  "reducerProvenanceSha256": "69cef4043859185b1d02bfd0a876838ae63b041afcca528d645b8b9b50c819ef",
+  "config": {
+    "maxCallbacks": 128,
+    "maxSlots": 16,
+    "maxTransactionsPerSlot": 32,
+    "maxRuntimeSeconds": 30,
+    "maxOutputBytes": 33554432
+  },
+  "configSha256": "a3b25f29d7ba57850fa827768c9e09d171a47051a6c66df2a76437ae1fff4d30",
+  "schemaSha256": "a5c19e0a0944932567fbb0b5a530310a3212b3ada968836267df581601382cb6",
+  "expectedSlotRange": {
+    "startInclusive": 432000100,
+    "endExclusive": 432000103
+  },
+  "observability": {
+    "bytesRead": 18000,
+    "bytesWritten": 42000,
+    "queueDepth": 2,
+    "peakRssBytes": 24000000,
+    "outputBytes": 42000,
+    "stageDurationsMs": {
+      "validate": 2,
+      "reduce": 5,
+      "publish": 3
+    },
+    "walStatus": "CLEAN",
+    "checkpointStatus": "PUBLISHED",
+    "quarantineByReason": {
+      "UNKNOWN_DISCRIMINATOR": 2,
+      "FAILED_TRANSACTION": 1
+    }
+  },
+  "callbacks": [
+    {
+      "kind": "possibleLeaderSkipped",
+      "possibleLeaderSkipped": {
+        "slot": 432000100
+      }
+    },
+    {
+      "kind": "transaction",
+      "transaction": {
+        "slot": 432000100,
+        "transactionIndex": 0,
+        "signatureByte": 1,
+        "messageHashByte": 1,
+        "isVote": false,
+        "version": "legacy",
+        "executionStatus": "succeeded",
+        "feeLamports": "5000",
+        "staticAccountKeys": [
+          "11111111111111111111111111111111",
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv",
+          "8FmD9pLWsuBapZ2WvccMR4BE9UMNqQJFy9kJcBQHyr8"
+        ],
+        "loadedAddresses": {
+          "writable": [],
+          "readonly": []
+        },
+        "addressTableLookups": [],
+        "preBalancesLamports": [
+          "10000",
+          "0",
+          "0",
+          "0"
+        ],
+        "postBalancesLamports": [
+          "5000",
+          "0",
+          "0",
+          "0"
+        ],
+        "instructions": [
+          {
+            "programIdIndex": 1,
+            "accounts": [
+              2,
+              3
+            ],
+            "dataHex": "181ec828051c0777"
+          }
+        ],
+        "innerInstructions": [],
+        "logMessages": [],
+        "preTokenBalances": [],
+        "postTokenBalances": []
+      }
+    },
+    {
+      "kind": "transaction",
+      "transaction": {
+        "slot": 432000100,
+        "transactionIndex": 0,
+        "signatureByte": 1,
+        "messageHashByte": 1,
+        "isVote": false,
+        "version": "legacy",
+        "executionStatus": "succeeded",
+        "feeLamports": "5000",
+        "staticAccountKeys": [
+          "11111111111111111111111111111111",
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv",
+          "8FmD9pLWsuBapZ2WvccMR4BE9UMNqQJFy9kJcBQHyr8"
+        ],
+        "loadedAddresses": {
+          "writable": [],
+          "readonly": []
+        },
+        "addressTableLookups": [],
+        "preBalancesLamports": [
+          "10000",
+          "0",
+          "0",
+          "0"
+        ],
+        "postBalancesLamports": [
+          "5000",
+          "0",
+          "0",
+          "0"
+        ],
+        "instructions": [
+          {
+            "programIdIndex": 1,
+            "accounts": [
+              2,
+              3
+            ],
+            "dataHex": "181ec828051c0777"
+          }
+        ],
+        "innerInstructions": [],
+        "logMessages": [],
+        "preTokenBalances": [],
+        "postTokenBalances": []
+      }
+    },
+    {
+      "kind": "transaction",
+      "transaction": {
+        "slot": 432000100,
+        "transactionIndex": 1,
+        "signatureByte": 2,
+        "messageHashByte": 2,
+        "isVote": false,
+        "version": "legacy",
+        "executionStatus": "succeeded",
+        "feeLamports": "5000",
+        "staticAccountKeys": [
+          "11111111111111111111111111111111",
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv",
+          "8FmD9pLWsuBapZ2WvccMR4BE9UMNqQJFy9kJcBQHyr8"
+        ],
+        "loadedAddresses": {
+          "writable": [],
+          "readonly": []
+        },
+        "addressTableLookups": [],
+        "preBalancesLamports": [
+          "10000",
+          "0",
+          "0",
+          "0"
+        ],
+        "postBalancesLamports": [
+          "5000",
+          "0",
+          "0",
+          "0"
+        ],
+        "instructions": [
+          {
+            "programIdIndex": 1,
+            "accounts": [
+              2,
+              3
+            ],
+            "dataHex": "66063d1201daebea"
+          }
+        ],
+        "innerInstructions": [],
+        "logMessages": [],
+        "preTokenBalances": [],
+        "postTokenBalances": []
+      }
+    },
+    {
+      "kind": "block",
+      "block": {
+        "slot": 432000100,
+        "parentSlot": 432000099,
+        "parentBlockhashByte": 235,
+        "blockhashByte": 236,
+        "blockTime": 1700000100,
+        "blockHeight": 200000000,
+        "executedTransactionCount": 2,
+        "entryCount": 1
+      }
+    },
+    {
+      "kind": "block",
+      "block": {
+        "slot": 432000101,
+        "parentSlot": 432000100,
+        "parentBlockhashByte": 236,
+        "blockhashByte": 237,
+        "blockTime": 1700000101,
+        "blockHeight": 200000001,
+        "executedTransactionCount": 2,
+        "entryCount": 1
+      }
+    },
+    {
+      "kind": "transaction",
+      "transaction": {
+        "slot": 432000101,
+        "transactionIndex": 0,
+        "signatureByte": 3,
+        "messageHashByte": 3,
+        "isVote": false,
+        "version": "v0",
+        "executionStatus": "failed",
+        "feeLamports": "5000",
+        "staticAccountKeys": [
+          "11111111111111111111111111111111",
+          "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        ],
+        "loadedAddresses": {
+          "writable": [
+            "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+            "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv"
+          ],
+          "readonly": [
+            "8FmD9pLWsuBapZ2WvccMR4BE9UMNqQJFy9kJcBQHyr8"
+          ]
+        },
+        "addressTableLookups": [
+          {
+            "accountKey": "SysvarRent111111111111111111111111111111111",
+            "writableIndexes": [
+              0,
+              1
+            ],
+            "readonlyIndexes": [
+              2
+            ]
+          }
+        ],
+        "preBalancesLamports": [
+          "10000",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "postBalancesLamports": [
+          "5000",
+          "0",
+          "0",
+          "0",
+          "0"
+        ],
+        "instructions": [
+          {
+            "programIdIndex": 1,
+            "accounts": [],
+            "dataHex": "00"
+          }
+        ],
+        "innerInstructions": [
+          {
+            "parentInstructionIndex": 0,
+            "instructions": [
+              {
+                "programIdIndex": 2,
+                "accounts": [
+                  3,
+                  4
+                ],
+                "dataHex": "33e685a4017f83ad",
+                "stackHeight": 2
+              }
+            ]
+          }
+        ],
+        "logMessages": [],
+        "preTokenBalances": [],
+        "postTokenBalances": []
+      }
+    },
+    {
+      "kind": "transaction",
+      "transaction": {
+        "slot": 432000101,
+        "transactionIndex": 1,
+        "signatureByte": 4,
+        "messageHashByte": 4,
+        "isVote": false,
+        "version": "legacy",
+        "executionStatus": "succeeded",
+        "feeLamports": "5000",
+        "staticAccountKeys": [
+          "11111111111111111111111111111111",
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv",
+          "8FmD9pLWsuBapZ2WvccMR4BE9UMNqQJFy9kJcBQHyr8"
+        ],
+        "loadedAddresses": {
+          "writable": [],
+          "readonly": []
+        },
+        "addressTableLookups": [],
+        "preBalancesLamports": [
+          "10000",
+          "0",
+          "0",
+          "0"
+        ],
+        "postBalancesLamports": [
+          "5000",
+          "0",
+          "0",
+          "0"
+        ],
+        "instructions": [
+          {
+            "programIdIndex": 1,
+            "accounts": [
+              2,
+              3
+            ],
+            "dataHex": "ffffffffffffffff"
+          }
+        ],
+        "innerInstructions": [],
+        "logMessages": [],
+        "preTokenBalances": [],
+        "postTokenBalances": []
+      }
+    },
+    {
+      "kind": "transaction",
+      "transaction": {
+        "slot": 432000102,
+        "transactionIndex": 0,
+        "signatureByte": 5,
+        "messageHashByte": 5,
+        "isVote": false,
+        "version": "legacy",
+        "executionStatus": "succeeded",
+        "feeLamports": "5000",
+        "staticAccountKeys": [
+          "11111111111111111111111111111111",
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "36VASLSKLFD2KokjXG7V28veZvXEsyHRKefLonPaAKzv",
+          "8FmD9pLWsuBapZ2WvccMR4BE9UMNqQJFy9kJcBQHyr8"
+        ],
+        "loadedAddresses": {
+          "writable": [],
+          "readonly": []
+        },
+        "addressTableLookups": [],
+        "preBalancesLamports": [
+          "10000",
+          "0",
+          "0",
+          "0"
+        ],
+        "postBalancesLamports": [
+          "5000",
+          "0",
+          "0",
+          "0"
+        ],
+        "instructions": [
+          {
+            "programIdIndex": 1,
+            "accounts": [
+              2,
+              3
+            ],
+            "dataHex": "66063d1201daebea"
+          }
+        ],
+        "innerInstructions": [],
+        "logMessages": [],
+        "preTokenBalances": [],
+        "postTokenBalances": []
+      }
+    },
+    {
+      "kind": "block",
+      "block": {
+        "slot": 432000102,
+        "parentSlot": 432000101,
+        "parentBlockhashByte": 237,
+        "blockhashByte": 238,
+        "blockTime": 1700000102,
+        "blockHeight": 200000002,
+        "executedTransactionCount": 1,
+        "entryCount": 1
+      }
+    }
+  ]
+}

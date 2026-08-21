@@ -76,6 +76,22 @@ export type DashboardData = {
 
 export type DashboardServer = { port: number; close(): Promise<void> };
 
+export type ResearchPageQuery = Readonly<{ cursor: number; limit: number }>;
+
+export type ResearchDashboardProvider = Readonly<{
+  getSummary(): unknown | Promise<unknown>;
+  getEvents(query: ResearchPageQuery): unknown | Promise<unknown>;
+  getQuarantines(query: ResearchPageQuery): unknown | Promise<unknown>;
+  getProvenance(): unknown | Promise<unknown>;
+  getMetrics(): unknown | Promise<unknown>;
+  getPrometheus(): string | Promise<string>;
+}>;
+
+const RESEARCH_API_PREFIX = '/api/research/pilot-a/';
+const MAX_RESEARCH_API_BYTES = 256 * 1024;
+const MAX_RESEARCH_PAGE_LIMIT = 100;
+const MAX_RESEARCH_CURSOR = 1_000_000;
+
 export type DashboardControls = {
   getEngineState(): { scannerRunning: boolean; scannerState: string; providers: Record<string, boolean>; lastScanAt?: string; cycles: number };
   setScannerRunning(running: boolean): void;
@@ -101,18 +117,89 @@ function corsHeaders(): Record<string, string> {
   };
 }
 
-export async function createDashboardServer(options: { port: number; staticDir?: string; getStatus(): DashboardStatus; controls?: DashboardControls; getDebug?(): Record<string, unknown>; controlToken?: string }): Promise<DashboardServer> {
-  const handleRequest = async (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): Promise<void> => {
-    let path: string;
-    try {
-      path = new URL(request.url ?? '/', 'http://localhost').pathname;
-    } catch {
-      path = '/';
+function researchError(response: import('node:http').ServerResponse, status: number, value: 'UNAVAILABLE' | 'INVALID_REQUEST' | 'INTERNAL_ERROR'): void {
+  json(response, { schemaVersion: 'PHASE8A_RESEARCH_API_ERROR_1', status: value }, undefined, status);
+}
+
+function parseResearchPageQuery(url: URL): ResearchPageQuery | undefined {
+  const allowed = new Set(['cursor', 'limit']);
+  for (const key of url.searchParams.keys()) if (!allowed.has(key)) return undefined;
+  if (url.searchParams.getAll('cursor').length > 1 || url.searchParams.getAll('limit').length > 1) return undefined;
+  const cursorText = url.searchParams.get('cursor') ?? '0';
+  const limitText = url.searchParams.get('limit') ?? '50';
+  if (!/^(0|[1-9]\d*)$/.test(cursorText) || !/^[1-9]\d*$/.test(limitText)) return undefined;
+  const cursor = Number(cursorText);
+  const limit = Number(limitText);
+  if (!Number.isSafeInteger(cursor) || cursor > MAX_RESEARCH_CURSOR
+    || !Number.isSafeInteger(limit) || limit > MAX_RESEARCH_PAGE_LIMIT) return undefined;
+  return { cursor, limit };
+}
+
+function boundedResearchJson(response: import('node:http').ServerResponse, value: unknown): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)
+    || typeof (value as Record<string, unknown>).schemaVersion !== 'string') throw new Error('invalid_research_response');
+  const bytes = Buffer.from(JSON.stringify(value));
+  if (bytes.length > MAX_RESEARCH_API_BYTES) throw new Error('research_response_too_large');
+  response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': String(bytes.length), 'cache-control': 'no-store' });
+  response.end(bytes);
+}
+
+async function handleResearchRequest(
+  request: import('node:http').IncomingMessage,
+  response: import('node:http').ServerResponse,
+  url: URL,
+  provider: ResearchDashboardProvider | undefined,
+): Promise<void> {
+  if (request.method !== 'GET') {
+    researchError(response, 405, 'INVALID_REQUEST');
+    return;
+  }
+  if (!provider) {
+    researchError(response, 404, 'UNAVAILABLE');
+    return;
+  }
+  try {
+    const route = url.pathname.slice(RESEARCH_API_PREFIX.length);
+    if (route === 'events' || route === 'quarantines') {
+      const query = parseResearchPageQuery(url);
+      if (!query) { researchError(response, 400, 'INVALID_REQUEST'); return; }
+      const value = route === 'events' ? await provider.getEvents(query) : await provider.getQuarantines(query);
+      boundedResearchJson(response, value);
+      return;
     }
+    if ([...url.searchParams.keys()].length > 0) { researchError(response, 400, 'INVALID_REQUEST'); return; }
+    if (route === 'summary') boundedResearchJson(response, await provider.getSummary());
+    else if (route === 'provenance') boundedResearchJson(response, await provider.getProvenance());
+    else if (route === 'metrics') boundedResearchJson(response, await provider.getMetrics());
+    else if (route === 'metrics/prometheus') {
+      const value = await provider.getPrometheus();
+      const bytes = Buffer.from(value);
+      if (bytes.length > MAX_RESEARCH_API_BYTES) throw new Error('research_response_too_large');
+      response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'content-length': String(bytes.length), 'cache-control': 'no-store' });
+      response.end(bytes);
+    } else researchError(response, 404, 'UNAVAILABLE');
+  } catch {
+    researchError(response, 500, 'INTERNAL_ERROR');
+  }
+}
+
+export async function createDashboardServer(options: { port: number; bindHost?: string; staticDir?: string; getStatus(): DashboardStatus; controls?: DashboardControls; getDebug?(): Record<string, unknown>; controlToken?: string; researchProvider?: ResearchDashboardProvider }): Promise<DashboardServer> {
+  const handleRequest = async (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): Promise<void> => {
+    let requestUrl: URL;
+    try {
+      requestUrl = new URL(request.url ?? '/', 'http://localhost');
+    } catch {
+      requestUrl = new URL('http://localhost/');
+    }
+    const path = requestUrl.pathname;
     if (request.method === 'OPTIONS') {
       response.writeHead(204, corsHeaders()); response.end(); return;
     }
     if (path === '/healthz') { response.end('ok'); return; }
+    if (path.startsWith(RESEARCH_API_PREFIX)) {
+      await handleResearchRequest(request, response, requestUrl, options.researchProvider);
+      return;
+    }
     if (path === '/api/control' && request.method === 'POST' && options.controls) {
       // Auth voor mutaties: als een controlToken is geconfigureerd, eisen we
       // `Authorization: Bearer <token>` — anders kan élke netwerkclient de
@@ -168,7 +255,7 @@ export async function createDashboardServer(options: { port: number; staticDir?:
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.port, '0.0.0.0', () => resolve());
+    server.listen(options.port, options.bindHost ?? '0.0.0.0', () => resolve());
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Dashboard did not bind a TCP port');
@@ -371,8 +458,8 @@ function contentType(filePath: string): string {
   return ({ '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' })[extname(filePath)] ?? 'application/octet-stream';
 }
 
-function json(response: import('node:http').ServerResponse, body: unknown, extraHeaders?: Record<string, string>): void {
-  response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', ...extraHeaders });
+function json(response: import('node:http').ServerResponse, body: unknown, extraHeaders?: Record<string, string>, status = 200): void {
+  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...extraHeaders });
   response.end(JSON.stringify(body));
 }
 function close(server: Server): Promise<void> { return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }

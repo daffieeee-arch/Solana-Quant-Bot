@@ -27,6 +27,7 @@ import { withFreshSolPrice } from './sol-price.js';
 import { PersistentLearnCycleGate } from './learn-cycle-gate.js';
 import { withRuntimeLifecycle } from './runtime-lifecycle.js';
 import { isTritonLiveEnabled, requireLiveTritonOrThrow } from './zero-cost.js';
+import { createOptionalPhase8AResearchProvider } from './research/phase8a-research-provider.js';
 
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
@@ -204,6 +205,7 @@ async function run(): Promise<void> {
           getProviderLatency: () => provider.getProviderLatency(),
         },
         getDebug: () => ({ ...((provider as unknown as { debugInfo?: () => Record<string, unknown> }).debugInfo?.() ?? {}), shadowMetrics: scanner.shadowMetricsSnapshot() }),
+        researchProvider: createOptionalPhase8AResearchProvider(process.env),
       });
       resources.dashboard = dashboard;
       console.log(JSON.stringify({ event: 'dashboard_started', mode: 'paper', port: dashboard.port }));

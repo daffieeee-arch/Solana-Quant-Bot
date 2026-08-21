@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 42,
+  "xPhase8aContract": "PHASE8A_GRAFANA_DASHBOARD_CONTRACT_1",
+  "title": "Pilot A — Event Transport & Data Quality",
+  "tags": ["phase8a", "fixture-only", "bronze", "read-only"],
+  "editable": false,
+  "time": { "from": "now-15m", "to": "now" },
+  "__inputs": [{
+    "name": "DS_PROMETHEUS",
+    "label": "Prometheus datasource",
+    "description": "Select the Prometheus-compatible datasource for the optional Phase-8A metrics snapshot.",
+    "type": "datasource",
+    "pluginId": "prometheus",
+    "pluginName": "Prometheus"
+  }],
+  "templating": {
+    "list": [{
+      "name": "DS_PROMETHEUS",
+      "type": "datasource",
+      "query": "prometheus",
+      "label": "Prometheus datasource"
+    }]
+  },
+  "panels": [
+    { "id": 1, "title": "Requested vs reconciled slots", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_requested_slots" }, { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_reconciled_slots" }] },
+    { "id": 2, "title": "Slots / sec", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(phase8a_reconciled_slots[1m])" }] },
+    { "id": 3, "title": "Transactions / sec", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(phase8a_transactions_total[1m])" }] },
+    { "id": 4, "title": "Pump candidates / sec", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(phase8a_pump_candidates_total[1m])" }] },
+    { "id": 5, "title": "Unknown & quarantine rate", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "rate(phase8a_quarantines_total[1m])" }] },
+    { "id": 6, "title": "Quarantine reasons", "type": "barchart", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum by (quarantine_reason) (phase8a_quarantines_by_reason_total)" }] },
+    { "id": 7, "title": "Exact retries & conflicts", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_exact_retries_total" }, { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_duplicate_conflicts_total" }] },
+    { "id": 8, "title": "Bytes read / written", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_bytes_read" }, { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_bytes_written" }] },
+    { "id": 9, "title": "Queue depth", "type": "timeseries", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_queue_depth" }] },
+    { "id": 10, "title": "Peak RSS", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_peak_rss_bytes" }] },
+    { "id": 11, "title": "WAL & checkpoint results", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_wal_clean" }, { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_checkpoint_published" }] },
+    { "id": 12, "title": "Deterministic rerun", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_deterministic_rerun_match" }] },
+    { "id": 13, "title": "Transport eligibility", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_transport_eligible" }] },
+    { "id": 14, "title": "Accepted Silver eligibility", "type": "stat", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "phase8a_accepted_silver_eligible" }] }
+  ]
+}
