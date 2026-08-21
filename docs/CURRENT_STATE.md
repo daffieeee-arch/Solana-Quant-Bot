@@ -1,6 +1,6 @@
 # CURRENT_STATE.md — Current project state
 
-*Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-20.*
+*Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-21.*
 
 ## Git and GitHub
 
@@ -17,6 +17,8 @@
 - PR #12 merged the fully offline, synthetic, fixture-only Phase 6B exact-state/provenance contract as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` succeeded. It provides a 34-code bounded quarantine contract and seven golden plus 44 adversarial shared Rust/TypeScript state vectors; snapshots bind owner, canonical lamports, executable flag and raw data, while Token-2022 and failed bindings derive from authoritative Phase 6A fixtures. It has no callback/reducer runtime caller, uses no real CAR/archive/slot/accountstate or dataset bytes, leaves `approved: false`, `researchReady: false`, and `pilotEligible: false`, and provides no OOS, execution or profitability evidence.
 - PR #14 merged the GO/GO-reviewed Phase-7 Pilot A readiness package as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge main CI run `32350736436` succeeded with focused readiness 86/86, Node 1,197/1,197 across 72 files and Rust 68/68 plus all required TypeScript/build/transport/policy/Rust/push-integrity/clean-tree gates. It remains `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 - PR #16 merged Phase-7A evidence plus the remote offline citationgate as `784192a675e31d78da82852e91ceb254eccae982`; docs synchronization PR #17 merged as `41cd2ecfda55a8019605886f10e7bb144fa6d584`.
+- PR #18 squash-merged the GO/GO-reviewed Phase-8A Bronze runner and Research Cockpit as `404019d3562afd3c10c1f65da141ab4e3f5ba1fc`; post-merge CI run `32466795771` passed Node 1,273/1,273 across 78 files, focused runner 15/15, full Rust 83/83 and every required gate. All eligibility/nonclaim values remain false/HOLD.
+- Phase 8C is an unapplied feature-branch candidate: cockpit-only runtime, image/dataset/deployment contracts, legacy Grafana archive, new Grafana-as-Code suite and ClickHouse domain plan. No service, dataset, image or live Grafana object is changed; see [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).
 - Immutable functional/runtime baseline: `3e95a3cb79acd9dab0b7568032712e5a26f6ec37`
 - Baseline tag: `offline-pump-baseline-20260815`
 - Published history is preserved; runtime/cache cleanup affects only the current tree.
@@ -107,10 +109,10 @@ The bounded Phase-7A read-only investigation is persisted in [`PHASE7A_PUMP_ACTI
 
 PR #16 merged the offline deterministic `ci:research-citations` script, adversarial citation tests, and exact canonical GitHub Actions step as `784192a675e31d78da82852e91ceb254eccae982`. Post-merge run `32397224604` is green. It persists only hashes/manifests, not raw scratch responses, and changes no registry, accepted Silver, runtime, downloader, bandwidth plan, or execution authorization.
 
-## Next recommended product task
+## Current product task
 
-Phase 8A now implements that milestone as an offline fixture-only candidate. `transportPilot.contractReady` is true while preflight is `NOT_RUN`, transport eligibility/execution authorization are false, accepted Silver is false with 0/10 proven entries, and every research/strategy/profitability flag is false. The direct Rust command reuses `Phase5Reducer`; the existing dashboard optionally exposes bounded GET-only research data and a lazy cockpit. No bandwidth-cap preflight or Pilot A may be inferred from this implementation.
+Phase 8C makes the merged Phase-8A cockpit separately buildable and inert, while keeping `transportPilot.inputMode: SYNTHETIC_FIXTURE_ONLY`, transport eligibility/execution authorization false, accepted Silver false/HOLD, `researchReady: false`, `strategyInputEligible: false`, `profitabilityEvidence: false`, and `pilotEligible: false`. All TrueNAS, Grafana, ClickHouse, Prometheus/Loki and dataset plans remain unapplied.
 
-The next real-data gate remains a separately authorized bandwidth-cap preflight followed by another explicit real transport authorization. Phase 8A itself must first pass exact-byte GO/GO review and normal delivery.
+The next real-data gate remains a separately authorized bandwidth-cap preflight followed by another explicit real transport authorization. Phase 8C does not satisfy or authorize either gate.
 
 **Pilot B** is the state-enriched pilot and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, slot processing or pilot is authorized by this documentation. The separate Old Faithful thread remains paused and read-only; do not start ClickHouse/backfill, tune on v1, or infer research readiness from Bronze, fixture-only Silver or coverage artifacts.

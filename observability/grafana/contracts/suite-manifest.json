@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "PHASE8C_GRAFANA_SUITE_1",
+  "folder": "Solana Research Platform",
+  "grafanaVersion": "13.2.0",
+  "schemaVersionNumber": 42,
+  "provisioningOnly": true,
+  "liveImportAuthorized": false,
+  "dashboards": [
+    {
+      "file": "00-research-command-center.json",
+      "uid": "srp-00-command-center",
+      "title": "00 — Research Command Center"
+    },
+    {
+      "file": "10-ingest-network-pipeline-safety.json",
+      "uid": "srp-10-pipeline-safety",
+      "title": "10 — Ingest, Network & Pipeline Safety"
+    },
+    {
+      "file": "20-provenance-coverage-data-quality.json",
+      "uid": "srp-20-provenance-quality",
+      "title": "20 — Provenance, Coverage & Data Quality"
+    },
+    {
+      "file": "30-pump-market-microstructure.json",
+      "uid": "srp-30-pump-microstructure",
+      "title": "30 — Pump Market Microstructure"
+    },
+    {
+      "file": "40-token-lifecycle-cohorts.json",
+      "uid": "srp-40-lifecycle-cohorts",
+      "title": "40 — Token Lifecycle & Cohort Analysis"
+    },
+    {
+      "file": "50-execution-liquidity-capacity.json",
+      "uid": "srp-50-execution-capacity",
+      "title": "50 — Execution, Liquidity & Capacity"
+    },
+    {
+      "file": "60-strategy-lab-oos.json",
+      "uid": "srp-60-strategy-oos",
+      "title": "60 — Strategy Lab & OOS Validation"
+    },
+    {
+      "file": "70-live-paper-operations.json",
+      "uid": "srp-70-paper-operations",
+      "title": "70 — Live Paper Trading Operations"
+    },
+    {
+      "file": "90-platform-clickhouse-ci.json",
+      "uid": "srp-90-platform-ci",
+      "title": "90 — Platform, ClickHouse & CI"
+    },
+    {
+      "file": "99-legacy-forensic-v1.json",
+      "uid": "srp-99-legacy-forensic",
+      "title": "99 — Legacy / Forensic V1"
+    }
+  ],
+  "folderUid": "srp-research-platform",
+  "measurementBasis": "FIXTURE_PINNED_NOT_MEASURED",
+  "datasourcePolicy": {
+    "00": [
+      "PROMETHEUS",
+      "OPS",
+      "GITHUB_OPTIONAL"
+    ],
+    "10": [
+      "PROMETHEUS"
+    ],
+    "20": [
+      "PROMETHEUS",
+      "BRONZE",
+      "SILVER",
+      "OPS"
+    ],
+    "30": [
+      "SILVER"
+    ],
+    "40": [
+      "SILVER",
+      "GOLD"
+    ],
+    "50": [
+      "SILVER",
+      "GOLD_UNAVAILABLE"
+    ],
+    "60": [
+      "GOLD_UNAVAILABLE"
+    ],
+    "70": [
+      "PROMETHEUS",
+      "OPS_UNAVAILABLE"
+    ],
+    "90": [
+      "PROMETHEUS",
+      "OPS",
+      "GITHUB_OPTIONAL"
+    ],
+    "99": [
+      "FORENSIC_V1_ONLY"
+    ]
+  }
+}

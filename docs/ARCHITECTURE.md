@@ -88,6 +88,8 @@ Phase 7A completed the bounded read-only activation investigation: ProgramData b
 
 Phase 8A implements that milestone only for `SYNTHETIC_FIXTURE_ONLY`: a separate fail-closed eligibility contract, a Rust file adapter that calls the existing Phase-5 reducer, a bounded optional dashboard provider, a lazy Research Cockpit and a pure metrics/Grafana contract. The reducer remains authoritative for WAL/checkpoints/coverage/deduplication. This is an offline product surface, not transport eligibility, accepted Silver, research readiness or pilot authorization; see [`PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`](PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md).
 
+Phase 8C adds a separately built **cockpit-only** entrypoint and frontend whose compiled graph cannot reach scanner, ledger, portfolio, strategy, learning, provider or trading modules. It also defines separate unapplied cockpit/runner image contracts, a dedicated POSIX fixture-dataset plan, `LEGACY_FORENSIC_V1` archives, the new Solana Research Platform dashboard suite, and future `solana_bronze`/`silver`/`gold`/`ops`/`forensic_v1` domains. It performs no deployment or infrastructure mutation; see [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).
+
 ## TrueNAS state
 
 - Configured app image: `solana-bot:contra-audit16-offline-pump-3e95a3c`.
@@ -126,4 +128,5 @@ GitHub Actions is validation-only:
 | Pilot A Readiness Package | ✅ package merged via PR #14; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, `pilotEligible: false`; no preflight or pilot authorized |
 | Phase 7A evidence / Phase 7B citation gate | ✅ merged via PR #16; post-merge run `32397224604` green; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, 0/10 proven, no registry/runtime/pilot authorization |
 | Phase 8A Bronze runner / Research Cockpit | 🔶 offline fixture candidate implemented; reducer reused; transport/Silver/research eligibility remain false; no real payload or pilot |
+| Phase 8C cockpit-only / Grafana-as-Code | 🔶 offline candidate implemented; compiled/runtime inertness proven locally; contracts unapplied and not deployed; legacy is `LEGACY_FORENSIC_V1` |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |

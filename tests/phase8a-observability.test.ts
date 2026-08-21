@@ -63,8 +63,8 @@ describe('Phase 8A pure observability adapter', () => {
       for (const target of panel.targets) expect(target.datasource).toEqual({ type: 'prometheus', uid: '${DS_PROMETHEUS}' });
     }
     expect(titles).toEqual(expect.arrayContaining([
-      'Requested vs reconciled slots', 'Slots / sec', 'Transactions / sec', 'Pump candidates / sec',
-      'Unknown & quarantine rate', 'Quarantine reasons', 'Exact retries & conflicts', 'Bytes read / written',
+      'Requested vs reconciled slots', '[REPLAY ONLY] Slots / sec', '[REPLAY ONLY] Transactions / sec', '[REPLAY ONLY] Pump candidates / sec',
+      '[REPLAY ONLY] Unknown & quarantine rate', 'Quarantine reasons', 'Exact retries & conflicts', 'Bytes read / written',
       'Queue depth', 'Peak RSS', 'WAL & checkpoint results', 'Deterministic rerun',
       'Transport eligibility', 'Accepted Silver eligibility',
     ]));

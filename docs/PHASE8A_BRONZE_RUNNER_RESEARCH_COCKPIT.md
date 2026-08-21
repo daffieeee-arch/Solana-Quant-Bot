@@ -2,7 +2,9 @@
 
 ## Status
 
-**OFFLINE FIXTURE IMPLEMENTATION CANDIDATE — NOT A PILOT — `HOLD_UNPROVEN_ACTIVATION`.**
+**MERGED OFFLINE FIXTURE IMPLEMENTATION — NOT A PILOT — `HOLD_UNPROVEN_ACTIVATION`.**
+
+PR #18 squash-merged Phase 8A as `404019d3562afd3c10c1f65da141ab4e3f5ba1fc`; post-merge CI run `32466795771` passed Node 1,273/1,273 across 78 files, focused runner 15/15, full Rust 83/83 and every required validation gate. Merge changes no eligibility or authorization status.
 
 Phase 8A makes the synthetic event/transport path visible without changing any real-data authorization. The implementation is deliberately split into four independent boundaries:
 
@@ -237,3 +239,5 @@ Phase 8A performs and authorizes no:
 - strategy scoring, paper entry/exit, OOS, execution or profitability claim.
 
 The next real-data gate remains a separately authorized bandwidth-cap preflight and later explicit real transport authorization. A green fixture runner and cockpit do not satisfy either gate.
+
+Phase 8C adds an unapplied cockpit-only production entrypoint, separate cockpit/runner image contracts, a dedicated POSIX dataset plan, `LEGACY_FORENSIC_V1` archives and a new Grafana-as-Code suite. Static fixture snapshots are separated from unauthorized bounded replay rates. See [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).

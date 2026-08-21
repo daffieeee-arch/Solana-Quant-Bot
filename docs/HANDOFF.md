@@ -23,6 +23,7 @@ A paper-only Solana trading research platform. Triton One is the intended primar
 - PR #12 (Phase 6B Pump Silver state/provenance contract) was squash-merged as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` passed Node 1,111/1,111 across 71 files, the focused Phase 6B file 151/151, Rust 68/68, shared TypeScript/Rust parity, TypeScript, builds, policy, transport isolation, push integrity, and clean-tree gates. It is fully offline, synthetic and fixture-only; `approved: false`, `researchReady: false`, and `pilotEligible: false` remain mandatory.
 - PR #14 (Phase-7 Pilot A readiness package) was squash-merged as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge main CI run `32350736436` passed focused readiness 86/86, Node 1,197/1,197 across 72 files, Rust 68/68 and all required TypeScript/build/transport/policy/Rust/push-integrity/clean-tree gates. The merge changes no content status: `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false`.
 - PR #16 merged Phase-7A evidence and the offline citationgate as `784192a675e31d78da82852e91ceb254eccae982`; docs PR #17 merged as `41cd2ecfda55a8019605886f10e7bb144fa6d584`. Post-merge run `32411239867` passed citation 33/33, policy 21/21, Node 1,231/1,231 across 73 files, Rust 68/68 and all required gates.
+- PR #18 squash-merged Phase 8A as `404019d3562afd3c10c1f65da141ab4e3f5ba1fc`; post-merge run `32466795771` passed Node 1,273/1,273 across 78 files, focused runner 15/15, full Rust 83/83 and all gates. Phase 8A remains `SYNTHETIC_FIXTURE_ONLY`, `HOLD_UNPROVEN_ACTIVATION`, and not research/strategy/pilot eligible.
 
 ## What is proven?
 
@@ -107,7 +108,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-Phase 8A implements the milestone as a strictly offline fixture candidate; read [`PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`](PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md). The direct Rust runner calls the existing reducer and publishes deterministic Bronze/WAL/checkpoint/coverage output. The optional GET-only provider and lazy cockpit show synthetic/shadow evidence and explicit HOLD/false gates. No real payload, preflight, accepted Silver, strategy input or pilot is authorized.
+Phase 8C is the current offline implementation candidate; read [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). It adds a cockpit-only runtime and frontend, inert graph/seccomp gates, separate unapplied image/dataset/deployment contracts, `LEGACY_FORENSIC_V1` exports, a new Grafana suite, and ClickHouse domain/runbook designs. No service, dataset, live dashboard, image, payload, preflight, accepted Silver, strategy input or pilot is authorized.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
@@ -133,7 +134,8 @@ Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state s
 12. `docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`
 13. `docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`
 14. `docs/PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`
-15. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-16. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-17. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-18. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+15. `docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`
+16. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+17. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+18. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+19. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

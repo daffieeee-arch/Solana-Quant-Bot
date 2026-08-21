@@ -78,11 +78,11 @@ export function ResearchCockpit() {
   return <main className="research-cockpit">
     <header className="research-header">
       <div><span className="research-kicker">EVENT / TRANSPORT EVIDENCE · READ ONLY</span><h1>RESEARCH // PILOT A</h1><p>Offline Bronze fixture replay. Structural evidence only; never strategy input.</p></div>
-      <div className="research-badges"><Badge tone="synthetic">SYNTHETIC</Badge><Badge tone="hold">{summary.activationVerdict}</Badge></div>
+      <div className="research-badges"><Badge tone="synthetic">{summary.sourceClass}</Badge><Badge tone="hold">{summary.activationVerdict}</Badge></div>
     </header>
 
     <section className="eligibility-strip" aria-label="Research eligibility status">
-      <Status label="SOURCE CLASS" value="SYNTHETIC" />
+      <Status label="SOURCE CLASS" value={summary.sourceClass} />
       <Status label="TRANSPORT CONTRACT" value={summary.eligibility.transportPilot.contractReady ? 'READY' : 'NOT READY'} />
       <Status label="TRANSPORT ELIGIBLE" value="FALSE" />
       <Status label="EXECUTION AUTHORIZED" value="FALSE" />

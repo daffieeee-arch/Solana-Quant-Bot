@@ -1,11 +1,14 @@
 # ── Dependencies / build ──────────────────────────────
 node_modules/
 dist/
+frontend/cockpit-dist/
 *.tsbuildinfo
 rust/**/target/
 
 # ── Runtime data (ledger, snapshots, caches) ───────────
 data/
+!docs/data/
+!docs/data/**
 data-bot*/
 data-stream*/
 *.ndjson

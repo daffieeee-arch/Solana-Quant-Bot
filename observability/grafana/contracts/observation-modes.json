@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "PHASE8C_OBSERVATION_MODES_1",
+  "default": "STATIC_FIXTURE_SNAPSHOT",
+  "values": [
+    "STATIC_FIXTURE_SNAPSHOT",
+    "BOUNDED_REPLAY_STREAM"
+  ],
+  "staticForbiddenFunctions": [
+    "rate",
+    "irate",
+    "increase",
+    "delta"
+  ],
+  "boundedReplayAuthorized": false
+}

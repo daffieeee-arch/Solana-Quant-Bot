@@ -46,7 +46,7 @@ describe('ResearchCockpit', () => {
     mockResearchFetch();
     render(<ResearchCockpit />);
     await waitFor(() => expect(screen.getByRole('heading', { name: 'RESEARCH // PILOT A' })).toBeInTheDocument());
-    expect(screen.getAllByText('SYNTHETIC').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('SYNTHETIC_FIXTURE_ONLY').length).toBeGreaterThan(0);
     expect(screen.getByText('HOLD_UNPROVEN_ACTIVATION')).toBeInTheDocument();
     expect(screen.getByText('TRANSPORT ELIGIBLE · FALSE')).toBeInTheDocument();
     expect(screen.getByText('EXECUTION AUTHORIZED · FALSE')).toBeInTheDocument();

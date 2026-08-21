@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "PHASE8C_TRUENAS_DEPLOYMENT_PLAN_1",
+  "applied": false,
+  "existingApp": {
+    "name": "solana-bot",
+    "configuredImage": "solana-bot:contra-audit16-offline-pump-3e95a3c",
+    "requiredState": "STOPPED",
+    "mutationAuthorized": false
+  },
+  "apps": [
+    {
+      "name": "phase8a-fixture-runner",
+      "lifecycle": "ONE_SHOT",
+      "image": "REQUIRES_IMMUTABLE_PHASE8A_RUNNER_TAG",
+      "network": "NONE",
+      "hostPorts": [],
+      "user": { "uid": null, "gid": null, "status": "UNRESOLVED_REQUIRES_OPERATIONS_APPROVAL" },
+      "mounts": {
+        "input": { "containerPath": "/input/bronze-runner-rich.json", "access": "READ_ONLY" },
+        "output": { "containerPath": "/output", "access": "READ_WRITE" }
+      },
+      "security": { "readOnlyRootFilesystem": true, "capDrop": ["ALL"], "noNewPrivileges": true, "privileged": false, "dockerSocket": false, "hostPid": false, "hostIpc": false },
+      "resources": { "cpus": 2, "memoryBytes": 4294967296, "pids": 64 },
+      "successState": "COMPLETED_STOPPED",
+      "postSuccess": ["verify 20-file manifest and hashes", "verify files 0444 and directories 0555", "verify append/create denied", "create approved ZFS snapshot"],
+      "rollback": ["stop one-shot app if still active", "remove app definition", "preserve failed output for bounded forensic review or remove before retry", "restore dataset from pre-run snapshot if approved"]
+    },
+    {
+      "name": "phase8a-research-cockpit",
+      "lifecycle": "LONG_RUNNING_INERT",
+      "image": "REQUIRES_IMMUTABLE_COCKPIT_TAG",
+      "network": "EXPLICIT_INGRESS_ONLY_OUTBOUND_DENY",
+      "hostPorts": [],
+      "hostBinding": { "status": "UNRESOLVED_REQUIRES_EXPLICIT_OPERATIONS_APPROVAL", "allowedClasses": ["EXACT_LAN_IP", "EXACT_TAILSCALE_IP"], "wildcardAllowed": false },
+      "environment": { "COCKPIT_BIND_HOST": "REQUIRES_APPROVAL", "COCKPIT_PORT": "REQUIRES_APPROVAL", "PHASE8A_RESEARCH_OUTPUT_DIR": "/research-output" },
+      "user": { "uid": null, "gid": null, "status": "UNRESOLVED_REQUIRES_OPERATIONS_APPROVAL" },
+      "mounts": { "output": { "containerPath": "/research-output", "access": "READ_ONLY" } },
+      "security": { "readOnlyRootFilesystem": true, "capDrop": ["ALL"], "noNewPrivileges": true, "privileged": false, "dockerSocket": false, "hostPid": false, "hostIpc": false },
+      "resources": { "cpus": 1, "memoryBytes": 536870912, "pids": 64 },
+      "healthcheck": "/healthz",
+      "readiness": "/readyz",
+      "forbiddenRuntime": ["scanner", "ledger", "portfolio", "strategy", "learning", "providers", "Triton", "Titan", "RPC", "WebSocket", "ClickHouse", "backfill", "wallet", "signing", "child_process"],
+      "rollback": ["stop cockpit app", "remove cockpit app definition", "remove read-only mount", "return to no-app STOPPED state"]
+    }
+  ],
+  "acceptance": ["dedicated POSIX dataset", "runner and cockpit images bound to same main SHA", "one-shot networkless replay", "20/20 baseline equality", "immutable output and snapshot", "read-only cockpit mount", "required false/HOLD badges", "no scanner/ledger/provider/trading process", "no outbound connection", "browser access", "Grafana not required", "rollback tested"],
+  "operationsAuthorized": false
+}
