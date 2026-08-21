@@ -15,7 +15,7 @@ Private, **paper-only** Solana trading research project. The repository contains
 - PR #14 merged the offline Phase-7 Pilot A readiness package to `main` as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; see [`docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md). Post-merge CI run `32350736436` passed focused readiness 86/86, Node 1,197/1,197 across 72 files, Rust 68/68, TypeScript, builds, transport isolation, policy, Rust gates, push integrity, and clean-tree checks. The package remains `CANDIDATE_UNAPPROVED` and `HOLD_UNPROVEN_ACTIVATION` with `approved: false`, `researchReady: false`, and `pilotEligible: false`; all ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`.
 - PR #16 merged Phase 7B as `784192a675e31d78da82852e91ceb254eccae982`; post-merge main CI run `32397224604` passed the separate offline citation step, citation 33/33, policy 21/21, Node 1,231/1,231 across 73 files, Rust 68/68 and all required TypeScript/build/transport/Rust/push-integrity/clean-tree gates. Phase 7A evidence remains 0/10 `PROVEN_AT_SLOT_RANGE`; all ten entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`.
 - Phase 7B remains `CANDIDATE_UNAPPROVED` and `HOLD_UNPROVEN_ACTIVATION` with `approved: false`, `researchReady: false`, and `pilotEligible: false`. Merge is not authorization for registry promotion, accepted Silver, bandwidth preflight, network shaping, CAR/range retrieval, Pilot A/B, strategy research, OOS, execution, or profitability.
-- The next development milestone is to separate transport-pilot eligibility from accepted-Silver eligibility, design a Bronze-only Pilot A runner, and design a visible Research Cockpit plus observability adapter. Those features are not implemented or authorized by this documentation update.
+- Phase 8A implements a review-candidate, fixture-only eligibility split, a Rust Bronze-only file runner around the existing Phase-5 reducer, an optional read-only research API, a lazy `RESEARCH // PILOT A` cockpit, and a pure observability/Grafana contract. See [`docs/PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`](docs/PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md). A working fixture replay changes none of `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `pilotEligible: false`, accepted Silver, or research readiness.
 
 Read [`AGENTS.md`](AGENTS.md) and [`docs/HANDOFF.md`](docs/HANDOFF.md) before changing code.
 
@@ -53,6 +53,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for status markers and limits
 npm ci
 npm run ci:policy
 npm run ci:research-citations
+npm run research:pilot-a:fixture -- --input tests/fixtures/phase8a/bronze-runner-rich.json --output /absolute/new/output
 npm test
 npx tsc --noEmit
 npm run build

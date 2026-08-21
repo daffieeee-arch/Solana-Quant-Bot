@@ -6,14 +6,16 @@
   "scripts": {
     "dev": "tsx src/main.ts",
     "start": "node dist/main.js",
-    "build": "tsc -p tsconfig.json && npm run verify:research-transport && npm run build:frontend",
+    "build": "tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:frontend",
     "verify:research-transport": "node scripts/assert-research-transport-free.mjs",
     "build:frontend": "vite build --config frontend/vite.config.ts",
     "research:pump-offline": "node dist/research/pump-historical-cli.js",
+    "research:pilot-a:fixture": "cargo +1.97.1 run --quiet --locked --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --bin phase8a-bronze-runner --",
     "test": "vitest run",
     "test:watch": "vitest",
     "ci:policy": "node scripts/ci-repository-policy.mjs",
-    "ci:research-citations": "node scripts/ci-research-citations.mjs"
+    "ci:research-citations": "node scripts/ci-research-citations.mjs",
+    "verify:phase8a-runner-offline": "node scripts/assert-phase8a-runner-offline.mjs"
   },
   "devDependencies": {
     "@testing-library/dom": "^10.4.1",

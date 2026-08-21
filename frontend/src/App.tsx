@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Area, AreaChart, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 export type DashboardData = {
@@ -35,7 +35,10 @@ type ClosedTrade = { pairId: string; mint: string; symbol: string; reason: strin
 
 type AppProps = { pollMs?: number };
 
+const LazyResearchCockpit = lazy(() => import('./research/ResearchCockpit.js').then((module) => ({ default: module.ResearchCockpit })));
+
 export function App({ pollMs = 5_000 }: AppProps) {
+  const [workspace, setWorkspace] = useState<'paper' | 'research'>('paper');
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedMint, setSelectedMint] = useState<string | null>(null);
@@ -86,7 +89,9 @@ export function App({ pollMs = 5_000 }: AppProps) {
     const pct = start > 0 ? (change / start) * 100 : 0;
     return <div style={{ background: '#0f172a', border: '1px solid #334155', padding: '8px 12px', fontSize: 12 }}><p style={{ margin: 0, color: '#94a3b8' }}>{formatTime(label)}</p><p style={{ margin: '4px 0 0', color: '#f8fafc', fontWeight: 700 }}>{val.toFixed(4)} SOL</p><p style={{ margin: 0, color: change >= 0 ? '#22c55e' : '#ef4444' }}>{change >= 0 ? '+' : ''}{change.toFixed(4)} SOL ({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)</p></div>;
   }, [chartData]);
-  if (!data) return <main className="boot"><span className="pulse" /> <span>{error ?? 'Synchronizing paper ledger…'}</span></main>;
+  const workspaceTabs = <WorkspaceTabs workspace={workspace} setWorkspace={setWorkspace} />;
+  if (workspace === 'research') return <>{workspaceTabs}<Suspense fallback={<main className="boot"><span className="pulse" /><span>Loading Research Cockpit…</span></main>}><LazyResearchCockpit /></Suspense></>;
+  if (!data) return <>{workspaceTabs}<main className="boot"><span className="pulse" /> <span>{error ?? 'Synchronizing paper ledger…'}</span></main></>;
   const solUsd = data.marketContext?.ticker.find((coin) => coin.symbol === 'SOL')?.priceUsd;
   const activeCurrency = currency === 'USD' && solUsd ? 'USD' : currency === 'EUR' && data.marketContext?.solEur ? 'EUR' : 'SOL';
   const solRate = activeCurrency === 'USD' ? solUsd : activeCurrency === 'EUR' ? data.marketContext?.solEur : undefined;
@@ -95,7 +100,7 @@ export function App({ pollMs = 5_000 }: AppProps) {
   const unrealizedPnlSol = data.positions.reduce((total, position) => total + position.unrealizedPnlSol, 0);
 
   return (
-    <main className="monitor-shell">
+    <>{workspaceTabs}<main className="monitor-shell">
       <header className="masthead">
         <div className="brand"><span className="brand-mark">◢</span><div><strong>PAPER // MONITOR</strong><small>SOLANA SCANNER · READ ONLY</small></div></div>
         <div className="system-state"><span className="live-dot" /> SCANNER {data.scanner.status.toUpperCase()} <span className="separator">/</span> <time dateTime={now.toISOString()} aria-label="Current Netherlands time">{formatNlTime(now)}</time> <span className="separator">/</span> <time dateTime={data.updatedAt}>SCAN AGE {formatAge(now, data.updatedAt)}</time></div>
@@ -189,8 +194,31 @@ export function App({ pollMs = 5_000 }: AppProps) {
         <EngineControlSection />
         <NewsPanel context={data.marketContext} />
       </section>
-    </main>
+    </main></>
   );
+}
+
+function WorkspaceTabs({ workspace, setWorkspace }: {
+  workspace: 'paper' | 'research';
+  setWorkspace: (workspace: 'paper' | 'research') => void;
+}) {
+  const paperRef = useRef<HTMLButtonElement>(null);
+  const researchRef = useRef<HTMLButtonElement>(null);
+  const select = (value: 'paper' | 'research') => setWorkspace(value);
+  const keyboard = (event: React.KeyboardEvent<HTMLButtonElement>, current: 'paper' | 'research') => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      const next = current === 'paper' ? 'research' : 'paper';
+      select(next);
+      queueMicrotask(() => (next === 'paper' ? paperRef : researchRef).current?.focus());
+    }
+  };
+  return <nav className="workspace-nav" aria-label="Monitoring workspace">
+    <div role="tablist" aria-label="Monitoring views">
+      <button ref={paperRef} type="button" role="tab" tabIndex={workspace === 'paper' ? 0 : -1} aria-selected={workspace === 'paper'} className={workspace === 'paper' ? 'active' : ''} onClick={() => select('paper')} onKeyDown={(event) => keyboard(event, 'paper')}>Paper Monitor</button>
+      <button ref={researchRef} type="button" role="tab" tabIndex={workspace === 'research' ? 0 : -1} aria-selected={workspace === 'research'} className={workspace === 'research' ? 'active' : ''} onClick={() => select('research')} onKeyDown={(event) => keyboard(event, 'research')}>Research // Pilot A</button>
+    </div>
+  </nav>;
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone: 'positive' | 'negative' | 'neutral' }) { return <div className="metric"><span>{label}</span><strong className={tone}>{value}</strong></div>; }

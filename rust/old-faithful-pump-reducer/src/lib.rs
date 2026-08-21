@@ -20,6 +20,8 @@ use solana_transaction_status::TransactionTokenBalance;
 use thiserror::Error;
 use time::{OffsetDateTime, macros::format_description};
 
+mod phase8a_runner;
+pub use phase8a_runner::phase8a_bronze_runner_main;
 mod silver_event;
 pub use silver_event::{SilverEventError, decode_pump_silver_event_hex};
 mod silver_state;
