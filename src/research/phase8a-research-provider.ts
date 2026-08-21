@@ -3,7 +3,7 @@ import {
   renderPhase8APrometheus,
   type Phase8AObservabilityInput,
 } from './phase8a-observability.js';
-import type { ResearchDashboardProvider, ResearchPageQuery } from '../dashboard.js';
+import type { ResearchDashboardProvider, ResearchPageQuery } from './phase8a-research-contract.js';
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs';
 import { dirname, isAbsolute, join, parse, resolve } from 'node:path';
 

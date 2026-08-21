@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "PHASE8C_CLICKHOUSE_DOMAIN_PLAN_1",
+  "applied": false,
+  "ddlAuthorized": false,
+  "defaultResearchDomain": null,
+  "contextFieldContract": ["dataset_id", "run_id", "source_class", "schema_version", "parser_version", "registry_version", "evidence_class", "approval_status", "research_ready", "as_of_slot", "available_at", "coverage_status", "content_hash"],
+  "domains": [
+    {
+      "name": "solana_bronze",
+      "purpose": "immutable source and reducer evidence",
+      "plannedEntities": ["source_manifests", "blocks", "transactions", "instructions", "logs", "balances", "callbacks", "retries", "coverage", "quarantines"],
+      "contextFields": ["dataset_id", "run_id", "source_class", "schema_version", "parser_version", "registry_version", "evidence_class", "approval_status", "research_ready", "as_of_slot", "available_at", "coverage_status", "content_hash"]
+    },
+    {
+      "name": "solana_silver",
+      "purpose": "canonical Pump facts after activation and state approval",
+      "plannedEntities": ["pump_creates", "pump_trades", "lifecycle_events", "migrations", "event_reported_state", "account_verified_state", "mint_state", "wallet_actions", "execution_context"],
+      "contextFields": ["dataset_id", "run_id", "source_class", "schema_version", "parser_version", "registry_version", "evidence_class", "approval_status", "research_ready", "as_of_slot", "available_at", "coverage_status", "content_hash"]
+    },
+    {
+      "name": "solana_gold",
+      "purpose": "approved point-in-time research products",
+      "plannedEntities": ["observation_snapshots", "features", "labels", "cohorts", "splits", "immutable_trial_ledger", "oos_reports"],
+      "contextFields": ["dataset_id", "run_id", "source_class", "schema_version", "parser_version", "registry_version", "evidence_class", "approval_status", "research_ready", "as_of_slot", "available_at", "coverage_status", "content_hash"]
+    },
+    {
+      "name": "solana_ops",
+      "purpose": "pipeline and platform operations",
+      "plannedEntities": ["run_status", "manifests", "heartbeats", "pipeline_performance", "data_quality_summaries"],
+      "contextFields": ["dataset_id", "run_id", "source_class", "schema_version", "parser_version", "registry_version", "evidence_class", "approval_status", "research_ready", "as_of_slot", "available_at", "coverage_status", "content_hash"]
+    },
+    {
+      "name": "solana_forensic_v1",
+      "purpose": "preserved historical transaction-net evidence only",
+      "classification": "LEGACY_FORENSIC_V1",
+      "dataUse": "FORENSIC_ONLY",
+      "defaultResearchDatasource": false,
+      "strategyGroundTruth": false,
+      "plannedEntities": ["memecoin_swaps", "live_bot_decisions", "contra_expectancy", "age_windows", "vol_clusters", "score_grid"],
+      "contextFields": ["legacy_schema", "observed_manifest_hash", "forensic_warning"]
+    }
+  ],
+  "migrationOrder": ["archive legacy Grafana dashboards", "snapshot or clone forensic source", "establish dedicated read-only user", "separate forensic_v1", "approve future domain schemas", "provision new dashboards", "remove old live dashboards only after replacement gates"],
+  "sourceMutationAuthorized": false
+}

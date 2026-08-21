@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { extname, relative, resolve, sep } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import type { MarketContext } from './providers/market-context.js';
+import type { ResearchDashboardProvider, ResearchPageQuery } from './research/phase8a-research-contract.js';
+export type { ResearchDashboardProvider, ResearchPageQuery } from './research/phase8a-research-contract.js';
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
 
@@ -76,16 +78,6 @@ export type DashboardData = {
 
 export type DashboardServer = { port: number; close(): Promise<void> };
 
-export type ResearchPageQuery = Readonly<{ cursor: number; limit: number }>;
-
-export type ResearchDashboardProvider = Readonly<{
-  getSummary(): unknown | Promise<unknown>;
-  getEvents(query: ResearchPageQuery): unknown | Promise<unknown>;
-  getQuarantines(query: ResearchPageQuery): unknown | Promise<unknown>;
-  getProvenance(): unknown | Promise<unknown>;
-  getMetrics(): unknown | Promise<unknown>;
-  getPrometheus(): string | Promise<string>;
-}>;
 
 const RESEARCH_API_PREFIX = '/api/research/pilot-a/';
 const MAX_RESEARCH_API_BYTES = 256 * 1024;

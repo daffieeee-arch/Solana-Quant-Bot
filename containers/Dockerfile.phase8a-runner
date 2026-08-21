@@ -1,0 +1,39 @@
+ARG RUST_BUILDER_IMAGE
+ARG RUNNER_RUNTIME_IMAGE
+ARG SOURCE_GIT_SHA
+ARG RUNNER_BINARY_SHA256
+ARG RUNNER_UID
+ARG RUNNER_GID
+FROM ${RUST_BUILDER_IMAGE} AS build
+ARG RUST_BUILDER_IMAGE
+ARG RUNNER_RUNTIME_IMAGE
+ARG SOURCE_GIT_SHA
+ARG RUNNER_BINARY_SHA256
+ARG RUNNER_UID
+ARG RUNNER_GID
+WORKDIR /src
+RUN printf '%s' "$RUST_BUILDER_IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$' \
+ && printf '%s' "$RUNNER_RUNTIME_IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$' \
+ && printf '%s' "$SOURCE_GIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
+ && printf '%s' "$RUNNER_BINARY_SHA256" | grep -Eq '^[0-9a-f]{64}$' \
+ && printf '%s:%s' "$RUNNER_UID" "$RUNNER_GID" | grep -Eq '^[1-9][0-9]*:[1-9][0-9]*$'
+COPY rust/old-faithful-pump-reducer/Cargo.toml rust/old-faithful-pump-reducer/Cargo.lock ./rust/old-faithful-pump-reducer/
+COPY rust/old-faithful-pump-reducer/src ./rust/old-faithful-pump-reducer/src
+COPY rust/linux-kernel-namespace-lock ./rust/linux-kernel-namespace-lock
+COPY rust/jetstreamer-v0-7-callback-types ./rust/jetstreamer-v0-7-callback-types
+COPY rust/solana-runtime-v3.1.12-bank-types ./rust/solana-runtime-v3.1.12-bank-types
+RUN rustc --version | grep -F '1.97.1' \
+ && cargo +1.97.1 build --locked --release --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --bin phase8a-bronze-runner \
+ && printf '%s  rust/old-faithful-pump-reducer/target/release/phase8a-bronze-runner\n' "$RUNNER_BINARY_SHA256" | sha256sum --check --strict
+
+FROM ${RUNNER_RUNTIME_IMAGE} AS runtime
+ARG SOURCE_GIT_SHA
+ARG RUNNER_BINARY_SHA256
+ARG RUNNER_UID
+ARG RUNNER_GID
+LABEL org.opencontainers.image.revision="$SOURCE_GIT_SHA" \
+      io.nous.phase8c.runner-binary.sha256="$RUNNER_BINARY_SHA256" \
+      io.nous.phase8c.runtime="PHASE8A_ONE_SHOT_SYNTHETIC_ONLY"
+COPY --from=build /src/rust/old-faithful-pump-reducer/target/release/phase8a-bronze-runner /phase8a-bronze-runner
+USER ${RUNNER_UID}:${RUNNER_GID}
+ENTRYPOINT ["/phase8a-bronze-runner"]

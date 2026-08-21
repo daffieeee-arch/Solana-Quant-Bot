@@ -1,0 +1,557 @@
+{
+  "schemaVersion": 42,
+  "xPhase8cContract": "PHASE8C_GRAFANA_DASHBOARD_1",
+  "uid": "srp-20-provenance-quality",
+  "title": "20 — Provenance, Coverage & Data Quality",
+  "tags": [
+    "solana-research-platform",
+    "grafana-as-code",
+    "read-only"
+  ],
+  "editable": false,
+  "timezone": "utc",
+  "refresh": false,
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "links": [],
+  "xCockpitPath": "/",
+  "templating": {
+    "list": [
+      {
+        "name": "observation_mode",
+        "label": "Observation mode",
+        "type": "custom",
+        "query": "STATIC_FIXTURE_SNAPSHOT,BOUNDED_REPLAY_STREAM",
+        "current": {
+          "text": "STATIC_FIXTURE_SNAPSHOT",
+          "value": "STATIC_FIXTURE_SNAPSHOT"
+        },
+        "options": [
+          {
+            "text": "STATIC_FIXTURE_SNAPSHOT",
+            "value": "STATIC_FIXTURE_SNAPSHOT",
+            "selected": true
+          },
+          {
+            "text": "BOUNDED_REPLAY_STREAM",
+            "value": "BOUNDED_REPLAY_STREAM",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "name": "source_class",
+        "label": "Source class",
+        "type": "custom",
+        "query": "SYNTHETIC_FIXTURE_ONLY",
+        "current": {
+          "text": "SYNTHETIC_FIXTURE_ONLY",
+          "value": "SYNTHETIC_FIXTURE_ONLY"
+        },
+        "options": [
+          {
+            "text": "SYNTHETIC_FIXTURE_ONLY",
+            "value": "SYNTHETIC_FIXTURE_ONLY",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "dataset_id",
+        "label": "Dataset ID",
+        "type": "custom",
+        "query": "UNAVAILABLE",
+        "current": {
+          "text": "UNAVAILABLE",
+          "value": "UNAVAILABLE"
+        },
+        "options": [
+          {
+            "text": "UNAVAILABLE",
+            "value": "UNAVAILABLE",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "run_id",
+        "label": "Run ID",
+        "type": "custom",
+        "query": "UNAVAILABLE",
+        "current": {
+          "text": "UNAVAILABLE",
+          "value": "UNAVAILABLE"
+        },
+        "options": [
+          {
+            "text": "UNAVAILABLE",
+            "value": "UNAVAILABLE",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "schema_version",
+        "label": "Schema version",
+        "type": "custom",
+        "query": "PHASE8A_COCKPIT_SNAPSHOT_1",
+        "current": {
+          "text": "PHASE8A_COCKPIT_SNAPSHOT_1",
+          "value": "PHASE8A_COCKPIT_SNAPSHOT_1"
+        },
+        "options": [
+          {
+            "text": "PHASE8A_COCKPIT_SNAPSHOT_1",
+            "value": "PHASE8A_COCKPIT_SNAPSHOT_1",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "evidence_class",
+        "label": "Evidence class",
+        "type": "custom",
+        "query": "SYNTHETIC",
+        "current": {
+          "text": "SYNTHETIC",
+          "value": "SYNTHETIC"
+        },
+        "options": [
+          {
+            "text": "SYNTHETIC",
+            "value": "SYNTHETIC",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "measurement_basis",
+        "label": "Measurement basis",
+        "type": "custom",
+        "query": "FIXTURE_PINNED_NOT_MEASURED",
+        "current": {
+          "text": "FIXTURE_PINNED_NOT_MEASURED",
+          "value": "FIXTURE_PINNED_NOT_MEASURED"
+        },
+        "options": [
+          {
+            "text": "FIXTURE_PINNED_NOT_MEASURED",
+            "value": "FIXTURE_PINNED_NOT_MEASURED",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "approval_status",
+        "label": "Approval status",
+        "type": "custom",
+        "query": "CANDIDATE_UNAPPROVED",
+        "current": {
+          "text": "CANDIDATE_UNAPPROVED",
+          "value": "CANDIDATE_UNAPPROVED"
+        },
+        "options": [
+          {
+            "text": "CANDIDATE_UNAPPROVED",
+            "value": "CANDIDATE_UNAPPROVED",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "activation_verdict",
+        "label": "Activation verdict",
+        "type": "custom",
+        "query": "HOLD_UNPROVEN_ACTIVATION",
+        "current": {
+          "text": "HOLD_UNPROVEN_ACTIVATION",
+          "value": "HOLD_UNPROVEN_ACTIVATION"
+        },
+        "options": [
+          {
+            "text": "HOLD_UNPROVEN_ACTIVATION",
+            "value": "HOLD_UNPROVEN_ACTIVATION",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "transport_eligibility",
+        "label": "Transport eligibility",
+        "type": "custom",
+        "query": "false",
+        "current": {
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "text": "false",
+            "value": "false",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "execution_authorization",
+        "label": "Execution authorization",
+        "type": "custom",
+        "query": "false",
+        "current": {
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "text": "false",
+            "value": "false",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "accepted_silver_eligibility",
+        "label": "Accepted Silver eligibility",
+        "type": "custom",
+        "query": "false",
+        "current": {
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "text": "false",
+            "value": "false",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "researchready",
+        "label": "researchReady",
+        "type": "custom",
+        "query": "false",
+        "current": {
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "text": "false",
+            "value": "false",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "strategyinputeligible",
+        "label": "strategyInputEligible",
+        "type": "custom",
+        "query": "false",
+        "current": {
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "text": "false",
+            "value": "false",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "profitability_evidence",
+        "label": "Profitability evidence",
+        "type": "custom",
+        "query": "false",
+        "current": {
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "text": "false",
+            "value": "false",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "pilot_eligible",
+        "label": "Pilot eligible",
+        "type": "custom",
+        "query": "false",
+        "current": {
+          "text": "false",
+          "value": "false"
+        },
+        "options": [
+          {
+            "text": "false",
+            "value": "false",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "completeness",
+        "label": "Completeness",
+        "type": "custom",
+        "query": "UNAVAILABLE",
+        "current": {
+          "text": "UNAVAILABLE",
+          "value": "UNAVAILABLE"
+        },
+        "options": [
+          {
+            "text": "UNAVAILABLE",
+            "value": "UNAVAILABLE",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "coverage",
+        "label": "Coverage",
+        "type": "custom",
+        "query": "UNAVAILABLE",
+        "current": {
+          "text": "UNAVAILABLE",
+          "value": "UNAVAILABLE"
+        },
+        "options": [
+          {
+            "text": "UNAVAILABLE",
+            "value": "UNAVAILABLE",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "uncertainty",
+        "label": "Uncertainty",
+        "type": "custom",
+        "query": "UNPROVEN_ACTIVATION",
+        "current": {
+          "text": "UNPROVEN_ACTIVATION",
+          "value": "UNPROVEN_ACTIVATION"
+        },
+        "options": [
+          {
+            "text": "UNPROVEN_ACTIVATION",
+            "value": "UNPROVEN_ACTIVATION",
+            "selected": true
+          }
+        ]
+      },
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1
+      },
+      {
+        "name": "DS_CLICKHOUSE_BRONZE",
+        "label": "ClickHouse Bronze",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1
+      },
+      {
+        "name": "DS_CLICKHOUSE_SILVER",
+        "label": "ClickHouse Silver",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1
+      },
+      {
+        "name": "DS_CLICKHOUSE_OPS",
+        "label": "ClickHouse Ops",
+        "type": "datasource",
+        "query": "grafana-clickhouse-datasource",
+        "refresh": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Research status",
+      "type": "text",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "# RESEARCH STATUS HEADER — UNAVAILABLE IS NEVER ZERO\n\n| field | value |\n|---|---|\n| source class | `$source_class` |\n| dataset ID | `$dataset_id` |\n| run ID | `$run_id` |\n| schema version | `$schema_version` |\n| evidence class | `$evidence_class` |\n| measurement basis | `$measurement_basis` |\n| approval status | `$approval_status` |\n| activation verdict | `$activation_verdict` |\n| transport eligibility | `$transport_eligibility` |\n| execution authorization | `$execution_authorization` |\n| accepted Silver eligibility | `$accepted_silver_eligibility` |\n| researchReady | `$researchready` |\n| strategyInputEligible | `$strategyinputeligible` |\n| profitability evidence | `$profitability_evidence` |\n| pilot eligible | `$pilot_eligible` |\n| completeness | `$completeness` |\n| coverage | `$coverage` |\n| uncertainty | `$uncertainty` |\n\n**Phase 8A: SYNTHETIC_FIXTURE_ONLY · FIXTURE_PINNED_NOT_MEASURED · HOLD_UNPROVEN_ACTIVATION · no trading, execution or profitability claim. Missing layers are UNAVAILABLE.**"
+      },
+      "transparent": false,
+      "xContract": "RESEARCH_STATUS_HEADER_1"
+    },
+    {
+      "id": 2,
+      "title": "Provenance & Quality Contract",
+      "type": "text",
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "Requested/present/skipped/missing/provisional/resolved coverage; duplicate/identity conflicts; failed transactions; unknown discriminators; bounded quarantines; source CID/SHA/inventory; parser/reducer/schema/config hashes; drift; registry and account-state coverage."
+      },
+      "transparent": false
+    },
+    {
+      "id": 3,
+      "title": "Quarantines total",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "phase8a_quarantines_total{run_mode=\"fixture_replay\"}"
+        }
+      ],
+      "xObservationMode": "STATIC_FIXTURE_SNAPSHOT",
+      "xVisibleWhen": "STATIC_FIXTURE_SNAPSHOT"
+    },
+    {
+      "id": 4,
+      "title": "Exact retries",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "phase8a_exact_retries_total{run_mode=\"fixture_replay\"}"
+        }
+      ],
+      "xObservationMode": "STATIC_FIXTURE_SNAPSHOT",
+      "xVisibleWhen": "STATIC_FIXTURE_SNAPSHOT"
+    },
+    {
+      "id": 5,
+      "title": "Duplicate conflicts",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "phase8a_duplicate_conflicts_total{run_mode=\"fixture_replay\"}"
+        }
+      ],
+      "xObservationMode": "STATIC_FIXTURE_SNAPSHOT",
+      "xVisibleWhen": "STATIC_FIXTURE_SNAPSHOT"
+    },
+    {
+      "id": 6,
+      "title": "Checkpoint published",
+      "type": "stat",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 11
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "phase8a_checkpoint_published{run_mode=\"fixture_replay\"}"
+        }
+      ],
+      "xObservationMode": "STATIC_FIXTURE_SNAPSHOT",
+      "xVisibleWhen": "STATIC_FIXTURE_SNAPSHOT"
+    }
+  ],
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "Select the separately approved Prometheus datasource. No credential or UID is stored in Git.",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    },
+    {
+      "name": "DS_CLICKHOUSE_BRONZE",
+      "label": "ClickHouse Bronze",
+      "description": "Select the separately approved ClickHouse Bronze datasource. No credential or UID is stored in Git.",
+      "type": "datasource",
+      "pluginId": "grafana-clickhouse-datasource",
+      "pluginName": "ClickHouse Bronze"
+    },
+    {
+      "name": "DS_CLICKHOUSE_SILVER",
+      "label": "ClickHouse Silver",
+      "description": "Select the separately approved ClickHouse Silver datasource. No credential or UID is stored in Git.",
+      "type": "datasource",
+      "pluginId": "grafana-clickhouse-datasource",
+      "pluginName": "ClickHouse Silver"
+    },
+    {
+      "name": "DS_CLICKHOUSE_OPS",
+      "label": "ClickHouse Ops",
+      "description": "Select the separately approved ClickHouse Ops datasource. No credential or UID is stored in Git.",
+      "type": "datasource",
+      "pluginId": "grafana-clickhouse-datasource",
+      "pluginName": "ClickHouse Ops"
+    }
+  ]
+}

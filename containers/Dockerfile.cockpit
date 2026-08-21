@@ -1,0 +1,58 @@
+ARG NODE_IMAGE
+ARG SOURCE_GIT_SHA
+ARG PACKAGE_LOCK_SHA256
+ARG COCKPIT_ENTRYPOINT_SHA256
+ARG FRONTEND_BUILD_SHA256
+ARG COCKPIT_UID
+ARG COCKPIT_GID
+FROM ${NODE_IMAGE} AS build
+ARG NODE_IMAGE
+ARG SOURCE_GIT_SHA
+ARG PACKAGE_LOCK_SHA256
+ARG COCKPIT_ENTRYPOINT_SHA256
+ARG FRONTEND_BUILD_SHA256
+ARG COCKPIT_UID
+ARG COCKPIT_GID
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN printf '%s' "$NODE_IMAGE" | grep -Eq '@sha256:[0-9a-f]{64}$' \
+ && printf '%s' "$SOURCE_GIT_SHA" | grep -Eq '^[0-9a-f]{40}$' \
+ && printf '%s' "$PACKAGE_LOCK_SHA256" | grep -Eq '^[0-9a-f]{64}$' \
+ && printf '%s' "$COCKPIT_ENTRYPOINT_SHA256" | grep -Eq '^[0-9a-f]{64}$' \
+ && printf '%s' "$FRONTEND_BUILD_SHA256" | grep -Eq '^[0-9a-f]{64}$' \
+ && printf '%s:%s' "$COCKPIT_UID" "$COCKPIT_GID" | grep -Eq '^[1-9][0-9]*:[1-9][0-9]*$' \
+ && printf '%s  package-lock.json\n' "$PACKAGE_LOCK_SHA256" | sha256sum --check --strict
+RUN npm ci
+COPY tsconfig.json ./
+COPY src ./src
+COPY frontend ./frontend
+RUN node ./node_modules/typescript/bin/tsc -p tsconfig.json \
+ && npm run build:cockpit \
+ && printf '%s  dist/cockpit-main.js\n' "$COCKPIT_ENTRYPOINT_SHA256" | sha256sum --check --strict \
+ && test "$(find /app/frontend/cockpit-dist -type f -exec sha256sum {} \; | LC_ALL=C sort | sha256sum | cut -d' ' -f1)" = "$FRONTEND_BUILD_SHA256" \
+ && npm prune --omit=dev \
+ && npm cache clean --force
+
+FROM ${NODE_IMAGE} AS runtime
+ARG SOURCE_GIT_SHA
+ARG PACKAGE_LOCK_SHA256
+ARG COCKPIT_ENTRYPOINT_SHA256
+ARG FRONTEND_BUILD_SHA256
+ARG COCKPIT_UID
+ARG COCKPIT_GID
+LABEL org.opencontainers.image.revision="$SOURCE_GIT_SHA" \
+      io.nous.phase8c.package-lock.sha256="$PACKAGE_LOCK_SHA256" \
+      io.nous.phase8c.cockpit-entrypoint.sha256="$COCKPIT_ENTRYPOINT_SHA256" \
+      io.nous.phase8c.frontend-build.sha256="$FRONTEND_BUILD_SHA256" \
+      io.nous.phase8c.runtime="COCKPIT_ONLY"
+WORKDIR /app
+COPY --from=build /app/dist/cockpit-main.js /app/dist/cockpit-main.js
+COPY --from=build /app/dist/cockpit-config.js /app/dist/cockpit-config.js
+COPY --from=build /app/dist/cockpit-server.js /app/dist/cockpit-server.js
+COPY --from=build /app/dist/research/phase8a-research-provider.js /app/dist/research/phase8a-research-provider.js
+COPY --from=build /app/dist/research/phase8a-observability.js /app/dist/research/phase8a-observability.js
+COPY --from=build /app/frontend/cockpit-dist /app/frontend/cockpit-dist
+ENV NODE_ENV=production
+USER ${COCKPIT_UID}:${COCKPIT_GID}
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 CMD ["node", "-e", "require('node:http').get({host:'127.0.0.1',port:Number(process.env.COCKPIT_PORT),path:'/healthz'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+ENTRYPOINT ["node", "/app/dist/cockpit-main.js"]

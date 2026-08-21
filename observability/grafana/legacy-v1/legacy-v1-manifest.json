@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "PHASE8C_LEGACY_V1_MANIFEST_1",
+  "classification": "LEGACY_FORENSIC_V1",
+  "dataUse": "FORENSIC_ONLY",
+  "researchStatus": "NOT_RESEARCH_READY",
+  "strategyStatus": "NOT_STRATEGY_EVIDENCE",
+  "profitabilityStatus": "NOT_FOR_PROFITABILITY_CLAIMS",
+  "observedAt": "2026-08-21T11:07:53.508491+00:00",
+  "grafanaVersion": "13.2.0",
+  "liveObjectsModified": false,
+  "dashboards": [
+    {
+      "originalUid": "memecoin-contra",
+      "title": "Memecoin Backtest — Contra Strategie",
+      "folder": "General",
+      "version": 1,
+      "provisioned": false,
+      "sourceResponseSha256": "23906769f250129a3c7e90150f8d6678efa751aeb2fef77ccb6c4b62ce29898a",
+      "exportSha256": "636aee7c628daa70875d8e899101b7ca933a30f9e268f17e03de24580a16f7f9",
+      "archiveFileSha256": "84d66e14360060f894979817f1dd9199d3ca59d44c7d0dccda1fb51797ed2980",
+      "sourceEndpoint": "/api/dashboards/uid/memecoin-contra"
+    },
+    {
+      "originalUid": "memecoin-contra-strategy",
+      "title": "Memecoin Contra Strategie — Expectancy & Data",
+      "folder": "General",
+      "version": 4,
+      "provisioned": false,
+      "sourceResponseSha256": "d2b340cf5db4bcb0f891d8f25df8a1eac91f5ddf2c63908cd938103ee60d72bf",
+      "exportSha256": "d1c918dfe7ae16755a0295b39a19eee22d813d31c4caaf1529c5a5c3dfe02d03",
+      "archiveFileSha256": "4dfcca4b9a33aa57e85223ea52ea24ee63a06dc95c7897c3f315b6aa0a102b21",
+      "sourceEndpoint": "/api/dashboards/uid/memecoin-contra-strategy"
+    }
+  ],
+  "removalGate": "ONLY_AFTER_HASHED_EXPORTS_SCREENSHOTS_DEPENDENCIES_AND_REPLACEMENT_BASE_DASHBOARDS_EXIST"
+}

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "PHASE8C_IMAGE_CONTRACTS_1",
+  "applied": false,
+  "buildAttempted": false,
+  "buildHoldReason": "REQUIRED_BASE_IMAGES_NOT_PRESENT_LOCALLY_NO_DOWNLOAD_AUTHORIZED",
+  "images": [
+    {
+      "name": "phase8a-research-cockpit",
+      "dockerfile": "containers/Dockerfile.cockpit",
+      "runtime": "COCKPIT_ONLY",
+      "tagContract": "phase8a-research-cockpit:<SOURCE_GIT_SHA>-<COCKPIT_ENTRYPOINT_SHA256_12>-<FRONTEND_BUILD_SHA256_12>",
+      "tagPolicy": "IMMUTABLE_UNIQUE_TAG_REQUIRED",
+      "mutableTagAllowed": false,
+      "sourceGitShaRequired": true,
+      "baseImage": null,
+      "baseImageStatus": "UNRESOLVED_EXACT_DIGEST_REQUIRED_NO_PULL_PERFORMED",
+      "hashBindings": ["package-lock", "cockpit-entrypoint", "frontend-build"],
+      "uid": null,
+      "gid": null,
+      "identityStatus": "UNRESOLVED_REQUIRES_OPERATIONS_APPROVAL",
+      "included": ["dist/cockpit-main.js", "dist/cockpit-config.js", "dist/cockpit-server.js", "dist/research/phase8a-research-provider.js", "dist/research/phase8a-observability.js", "frontend/cockpit-dist"],
+      "excluded": ["dist/main.js", "scanner", "ledger", "providers", "Rust", "Cargo", "Git", "fixture-output", "secrets", "CAR-data", "ClickHouse-data", "source-history"],
+      "security": { "nonRoot": true, "readOnlyRootFilesystem": true, "capDrop": ["ALL"], "noNewPrivileges": true, "privileged": false, "dockerSocket": false, "hostPid": false, "hostIpc": false },
+      "resources": { "cpus": 1, "memoryBytes": 536870912, "pids": 64 },
+      "healthcheck": "/healthz",
+      "outboundNetwork": "DENY"
+    },
+    {
+      "name": "phase8a-bronze-runner",
+      "dockerfile": "containers/Dockerfile.phase8a-runner",
+      "runtime": "ONE_SHOT_SYNTHETIC_ONLY",
+      "tagContract": "phase8a-bronze-runner:<SOURCE_GIT_SHA>-<RUNNER_BINARY_SHA256_12>",
+      "tagPolicy": "IMMUTABLE_UNIQUE_TAG_REQUIRED",
+      "mutableTagAllowed": false,
+      "sourceGitShaRequired": true,
+      "hashBindings": ["runner-binary"],
+      "builderImage": null,
+      "runtimeImage": null,
+      "baseImageStatus": "UNRESOLVED_EXACT_DIGEST_REQUIRED_NO_PULL_PERFORMED",
+      "uid": null,
+      "gid": null,
+      "identityStatus": "UNRESOLVED_REQUIRES_OPERATIONS_APPROVAL",
+      "included": ["phase8a-bronze-runner"],
+      "excluded": ["Node", "node_modules", "frontend", "scanner", "ledger", "providers", "shell-when-runtime-base-allows-distroless", "fixture-output", "secrets", "live-config"],
+      "security": { "nonRoot": true, "readOnlyRootFilesystem": true, "capDrop": ["ALL"], "noNewPrivileges": true, "privileged": false, "dockerSocket": false, "hostPid": false, "hostIpc": false },
+      "resources": { "cpus": 2, "memoryBytes": 4294967296, "pids": 64 },
+      "network": "NONE",
+      "inputMount": "READ_ONLY",
+      "outputMount": "READ_WRITE"
+    }
+  ]
+}

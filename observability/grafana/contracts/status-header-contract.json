@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "PHASE8C_RESEARCH_STATUS_HEADER_1",
+  "requiredFields": [
+    "source_class",
+    "dataset_id",
+    "run_id",
+    "schema_version",
+    "evidence_class",
+    "approval_status",
+    "activation_verdict",
+    "transport_eligibility",
+    "execution_authorization",
+    "accepted_silver_eligibility",
+    "researchReady",
+    "strategyInputEligible",
+    "completeness",
+    "coverage",
+    "uncertainty",
+    "measurement_basis",
+    "profitabilityEvidence",
+    "pilotEligible"
+  ],
+  "phase8a": {
+    "sourceClass": "SYNTHETIC_FIXTURE_ONLY",
+    "activationVerdict": "HOLD_UNPROVEN_ACTIVATION",
+    "transportEligible": false,
+    "executionAuthorized": false,
+    "acceptedSilverEligible": false,
+    "researchReady": false,
+    "strategyInputEligible": false,
+    "profitabilityEvidence": false,
+    "pilotEligible": false,
+    "measurementBasis": "FIXTURE_PINNED_NOT_MEASURED"
+  },
+  "missingLayerStatus": "UNAVAILABLE",
+  "zeroAsUnavailableForbidden": true,
+  "profitabilityClaimAuthorized": false
+}
