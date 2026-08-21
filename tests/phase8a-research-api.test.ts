@@ -13,7 +13,12 @@ import {
   createInMemoryPhase8AResearchProvider,
   createOptionalPhase8AResearchProvider,
 } from '../src/research/phase8a-research-provider.js';
+import { resolveBuiltRunnerArtifact } from '../scripts/assert-phase8a-runner-offline.mjs';
 import { phase8aCockpitSnapshot } from './fixtures/phase8a/research-output.js';
+
+const RUNNER_COMPILE_TIMEOUT_MS = 240_000;
+const RUNNER_EXECUTION_TIMEOUT_MS = 15_000;
+const RUNNER_INTEGRATION_TEST_TIMEOUT_MS = 270_000;
 
 let dashboard: DashboardServer | undefined;
 afterEach(async () => { await dashboard?.close(); dashboard = undefined; });
@@ -141,13 +146,22 @@ describe('Phase 8A optional read-only dashboard provider', () => {
     const root = await mkdtemp(join(tmpdir(), 'phase8a-real-provider-'));
     const output = join(root, 'output');
     try {
-      execFileSync('cargo', [
-        '+1.97.1', 'run', '--quiet', '--locked',
+      const buildOutput = execFileSync('cargo', [
+        '+1.97.1', 'build', '--locked', '--message-format=json-render-diagnostics',
         '--manifest-path', 'rust/old-faithful-pump-reducer/Cargo.toml',
-        '--bin', 'phase8a-bronze-runner', '--',
+        '--bin', 'phase8a-bronze-runner',
+      ], {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+        stdio: 'pipe',
+        timeout: RUNNER_COMPILE_TIMEOUT_MS,
+      });
+      const binary = resolveBuiltRunnerArtifact(buildOutput);
+      execFileSync(binary, [
         '--input', 'tests/fixtures/phase8a/bronze-runner-rich.json',
         '--output', output,
-      ], { cwd: process.cwd(), stdio: 'pipe', timeout: 55_000 });
+      ], { cwd: process.cwd(), stdio: 'pipe', timeout: RUNNER_EXECUTION_TIMEOUT_MS });
       const provider = createFilePhase8AResearchProvider(output);
       expect(await provider.getSummary()).toMatchObject({
         sourceClass: 'SYNTHETIC_FIXTURE_ONLY',
@@ -163,7 +177,7 @@ describe('Phase 8A optional read-only dashboard provider', () => {
       try { await makeWritable(root); } catch { /* partial failure before publication */ }
       await rm(root, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, RUNNER_INTEGRATION_TEST_TIMEOUT_MS);
 
   it('pages the bounded cockpit snapshot while size-checking audit NDJSON', async () => {
     const root = await mkdtemp(join(tmpdir(), 'phase8a-provider-'));
