@@ -69,7 +69,7 @@ describe('Phase 8D1 verification shell initialization', () => {
     expect(script).toContain('-e COCKPIT_BIND_HOST=127.0.0.1');
     expect(script).not.toContain('-p 127.0.0.1::3000');
     expect(script).toContain("test \"$(docker inspect --format '{{.HostConfig.NetworkMode}}' \"$name\")\" = none");
-    expect(script).toContain("test \"$(docker inspect --format '{{json .HostConfig.PortBindings}}' \"$name\")\" = null");
+    expect(script).toContain("docker inspect \"$name\" | jq -e '.[0].HostConfig.NetworkMode==\"none\" and ((.[0].HostConfig.PortBindings // {}) | type==\"object\" and length==0)'");
     expect(script).toContain('sudo nsenter --target "$pid" --net curl');
     expect(script).toContain("connect({host:\"1.1.1.1\",port:443");
   });

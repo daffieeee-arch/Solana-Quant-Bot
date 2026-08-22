@@ -121,7 +121,7 @@ start_cockpit(){
   pid="$(docker inspect --format '{{.State.Pid}}' "$name")"
   [[ "$pid" =~ ^[1-9][0-9]*$ ]]
   test "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$name")" = none
-  test "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$name")" = null
+  docker inspect "$name" | jq -e '.[0].HostConfig.NetworkMode=="none" and ((.[0].HostConfig.PortBindings // {}) | type=="object" and length==0)' >/dev/null
   for _ in $(seq 1 60); do sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/healthz" >/dev/null 2>&1 && break; sleep 1; done
   sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/healthz" >/dev/null
   docker exec "$name" node -e 'console.log(JSON.stringify({uid:process.getuid(),gid:process.getgid(),groups:process.getgroups()}))' > "$EVIDENCE_DIR/cockpit-$mode-identity.json"
