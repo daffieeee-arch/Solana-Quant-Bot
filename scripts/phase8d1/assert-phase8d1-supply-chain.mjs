@@ -138,7 +138,7 @@ export function validatePhase8D1Inputs(input) {
   catch { errors.push('runtime identity drift evidence invalid JSON'); }
   if (contract.verify?.push!==false || contract.verify?.registryLogin!==false) errors.push('invalid verify publish contract');
   if (contract.runnerTests?.independentRuns!==2 || contract.runnerTests?.retainedFiles!==20 || contract.runnerTests?.network!=='none') errors.push('invalid networkless runner equality contract');
-  if (contract.cockpitTests?.unavailable!==true || contract.cockpitTests?.syntheticProvider!==true) errors.push('missing cockpit test modes');
+  if (contract.cockpitTests?.unavailable!==true || contract.cockpitTests?.syntheticProvider!==true || contract.cockpitTests?.networkIsolation!=='NETWORK_NONE_LOOPBACK_NSENTER_PROBE_PLUS_SECCOMP_CONNECT_DENY') errors.push('missing cockpit test modes or network-none isolation');
   if (contract.publish?.trigger!=='workflow_dispatch' || contract.publish?.confirmation!=='PUBLISH_SYNTHETIC_PHASE8D_IMAGES' || !contract.publish.mainOnly || !contract.publish.sourceShaEqualsGithubSha || !contract.publish.sourceShaEqualsLiveMain) errors.push('invalid publish authorization contract');
   if (contract.publish?.packageVisibility!=='private' || contract.publish?.overwriteExistingTag!==false || contract.publish?.deploymentIdentity!=='REGISTRY_DIGEST_ONLY') errors.push('invalid private immutable GHCR contract');
   if (contract.publish?.provenance!=='mode=max' || contract.publish?.sbom!=='spdx' || contract.publish?.finalDigestRetestRequired!==true) errors.push('missing supply-chain attestations or digest retest');

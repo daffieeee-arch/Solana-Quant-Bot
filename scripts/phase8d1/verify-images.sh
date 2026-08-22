@@ -16,11 +16,9 @@ EXPECTED_RUN_ID='phase8a-fixture-a57dc097e4651d3fae4942e2a872d087ef1fb5265cde51a
 EXPECTED_AGG='7123c27ffcfd3388b6fa2b98cc3c59be0b42028cf6778404ba645b83254f4791'
 EXPECTED_RERUN='94c954098b0bbf1b772932395333af28c1b5317c8e1c0f6c88381f0e2ab5e3b0'
 NAMES=()
-NETWORKS=()
 TMP="$(mktemp -d)"
 cleanup(){
   for name in "${NAMES[@]:-}"; do docker rm -f "$name" >/dev/null 2>&1 || true; done
-  for network in "${NETWORKS[@]:-}"; do docker network rm "$network" >/dev/null 2>&1 || true; done
   sudo rm -rf "$TMP"
 }
 trap cleanup EXIT
@@ -110,8 +108,6 @@ run_once 2
 diff -u "$EVIDENCE_DIR/runner-1-files.sha256" "$EVIDENCE_DIR/runner-2-files.sha256"
 diff -r "$TMP/output-1/run" "$TMP/output-2/run"
 
-network="phase8d1-internal-${GITHUB_RUN_ID:-local}-${RANDOM}"
-docker network create --internal "$network" >/dev/null; NETWORKS+=("$network")
 start_cockpit(){
   local mode="$1"
   local name="phase8d1-cockpit-${mode}-${GITHUB_RUN_ID:-local}"
@@ -120,24 +116,27 @@ start_cockpit(){
   local mounts=()
   if [[ "$mode" == provider ]]; then mounts=(-v "$TMP/output-1/run:/research-output:ro" -e PHASE8A_RESEARCH_OUTPUT_DIR=/research-output); fi
   NAMES+=("$name")
-  docker run -d --name "$name" --platform linux/amd64 --network "$network" --read-only --cap-drop ALL --security-opt no-new-privileges --security-opt "seccomp=$seccomp_profile" --no-healthcheck --pids-limit 64 --cpus 1 --memory 512m --user "$COCKPIT_UID:$SHARED_GID" --tmpfs /tmp:rw,noexec,nosuid,size=16m -e COCKPIT_BIND_HOST=0.0.0.0 -e COCKPIT_PORT=3000 -p 127.0.0.1::3000 "${mounts[@]}" "$COCKPIT_IMAGE" >/dev/null
-  local port
-  for _ in $(seq 1 60); do port="$(docker port "$name" 3000/tcp 2>/dev/null | sed -nE 's#^127\.0\.0\.1:([0-9]+)$#\1#p' || true)"; [[ -n "$port" ]] && curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null && break; sleep 1; done
-  test -n "$port"
-  curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null
+  docker run -d --name "$name" --platform linux/amd64 --network none --read-only --cap-drop ALL --security-opt no-new-privileges --security-opt "seccomp=$seccomp_profile" --no-healthcheck --pids-limit 64 --cpus 1 --memory 512m --user "$COCKPIT_UID:$SHARED_GID" --tmpfs /tmp:rw,noexec,nosuid,size=16m -e COCKPIT_BIND_HOST=127.0.0.1 -e COCKPIT_PORT=3000 "${mounts[@]}" "$COCKPIT_IMAGE" >/dev/null
+  local pid
+  pid="$(docker inspect --format '{{.State.Pid}}' "$name")"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+  test "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$name")" = none
+  test "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$name")" = null
+  for _ in $(seq 1 60); do sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/healthz" >/dev/null 2>&1 && break; sleep 1; done
+  sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/healthz" >/dev/null
   docker exec "$name" node -e 'console.log(JSON.stringify({uid:process.getuid(),gid:process.getgid(),groups:process.getgroups()}))' > "$EVIDENCE_DIR/cockpit-$mode-identity.json"
   jq -e --argjson uid "$COCKPIT_UID" --argjson gid "$SHARED_GID" '.uid==$uid and .gid==$gid and (.groups|all(.==$gid))' "$EVIDENCE_DIR/cockpit-$mode-identity.json" >/dev/null
-  curl -fsS "http://127.0.0.1:$port/" | grep -F 'Phase-8A Research Cockpit' >/dev/null
-  for method in POST PUT PATCH DELETE; do test "$(curl -sS -o /dev/null -w '%{http_code}' -X "$method" "http://127.0.0.1:$port/")" = 405; done
-  for route in /api/dashboard-data /api/controls /api/debug /api/replay /api/start /api/stop; do test "$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port$route")" = 404; done
+  sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/" | grep -F 'Phase-8A Research Cockpit' >/dev/null
+  for method in POST PUT PATCH DELETE; do test "$(sudo nsenter --target "$pid" --net curl -sS -o /dev/null -w '%{http_code}' -X "$method" "http://127.0.0.1:3000/")" = 405; done
+  for route in /api/dashboard-data /api/controls /api/debug /api/replay /api/start /api/stop; do test "$(sudo nsenter --target "$pid" --net curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000$route")" = 404; done
   if [[ "$mode" == unavailable ]]; then
-    test "$(curl -sS -o "$EVIDENCE_DIR/cockpit-unavailable-ready.json" -w '%{http_code}' "http://127.0.0.1:$port/readyz")" = 503
+    test "$(sudo nsenter --target "$pid" --net curl -sS -o "$EVIDENCE_DIR/cockpit-unavailable-ready.json" -w '%{http_code}' "http://127.0.0.1:3000/readyz")" = 503
     grep -F 'UNAVAILABLE' "$EVIDENCE_DIR/cockpit-unavailable-ready.json" >/dev/null
   else
-    curl -fsS "http://127.0.0.1:$port/readyz" > "$EVIDENCE_DIR/cockpit-provider-ready.json"
-    curl -fsS "http://127.0.0.1:$port/api/research/pilot-a/summary" > "$EVIDENCE_DIR/cockpit-summary.json"
+    sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/readyz" > "$EVIDENCE_DIR/cockpit-provider-ready.json"
+    sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/api/research/pilot-a/summary" > "$EVIDENCE_DIR/cockpit-summary.json"
     jq -e '.sourceClass=="SYNTHETIC_FIXTURE_ONLY" and .activationVerdict=="HOLD_UNPROVEN_ACTIVATION" and .acceptedSilver==false and .researchReady==false and .eligibility.pilotEligible==false and .eligibility.transportPilot.eligible==false and .eligibility.transportPilot.executionAuthorized==false and .eligibility.acceptedSilver.eligible==false and .eligibility.research.researchReady==false and .eligibility.research.strategyInputEligible==false and .eligibility.research.profitabilityEvidence==false' "$EVIDENCE_DIR/cockpit-summary.json" >/dev/null
-    for route in events quarantines provenance metrics metrics/prometheus; do curl -fsS "http://127.0.0.1:$port/api/research/pilot-a/$route" >/dev/null; done
+    for route in events quarantines provenance metrics metrics/prometheus; do sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/api/research/pilot-a/$route" >/dev/null; done
   fi
   set +e
   docker exec "$name" node -e 'const socket=require("node:net").connect({host:"1.1.1.1",port:443,timeout:1500});socket.on("connect",()=>process.exit(9));socket.on("error",error=>process.exit(error.code==="EPERM"?0:8));socket.on("timeout",()=>process.exit(7))'
@@ -157,7 +156,6 @@ after_manifest="$EVIDENCE_DIR/provider-output-after.sha256"
 (cd "$TMP/output-1/run" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) > "$after_manifest"
 diff -u "$EVIDENCE_DIR/runner-1-files.sha256" "$after_manifest"
 after="$(sha256sum "$after_manifest" | cut -d' ' -f1)"; test "$before" = "$after"
-docker network rm "$network" >/dev/null; NETWORKS=()
 test -z "$(docker ps -a --filter name=phase8d1- --format '{{.Names}}')"
 
 image_id_cockpit="$(docker image inspect --format '{{.Id}}' "$COCKPIT_IMAGE")"

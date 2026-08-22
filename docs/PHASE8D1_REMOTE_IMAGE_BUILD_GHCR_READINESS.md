@@ -143,7 +143,7 @@ Two independent runs use `--network none`, read-only root, cap-drop ALL, no-new-
 
 ### Cockpit
 
-An internal Docker network has no external route, and a Docker seccomp profile returns `EPERM` for `connect`, `sendto`, `sendmsg` and `sendmmsg`. The external host performs health/readiness probes while the container healthcheck is disabled for this seccomp test. Both modes use read-only root, cap-drop ALL, no-new-privileges, 64 PIDs, 1 CPU, 512 MiB and `61001:61000`.
+Cockpit containers run with Docker `--network none`, bind only `127.0.0.1:3000` inside their isolated network namespaces, publish no host port, and are probed by the external host runner through `nsenter --net`. The tracked Docker seccomp profile independently returns `EPERM` for `connect`, `sendto`, `sendmsg` and `sendmmsg`; the verifier requires `NetworkMode=none`, null port bindings, and an exact `EPERM` outbound probe. Both modes use read-only root, cap-drop ALL, no-new-privileges, 64 PIDs, 1 CPU, 512 MiB and `61001:61000`.
 
 - UNAVAILABLE: health 200, readiness 503/UNAVAILABLE, frontend, GET/HEAD-only and no control/trading routes.
 - Synthetic provider: successful output mounted RO; readiness 200; bounded summary/events/quarantines/provenance/metrics; exact synthetic/HOLD/false states; output byte-identical before/after.

@@ -62,6 +62,7 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
   rejected('missing double runner replay', x => { x.contract.runnerTests.independentRuns = 1; });
   rejected('missing 20 file equality', x => { x.contract.runnerTests.retainedFiles = 19; });
   rejected('missing unavailable cockpit test', x => { x.contract.cockpitTests.unavailable = false; });
+  rejected('cockpit network route instead of network none', x => { x.contract.cockpitTests.networkIsolation='BRIDGE_WITH_SECCOMP'; });
   rejected('missing provider cockpit test', x => { x.contract.cockpitTests.syntheticProvider = false; });
   rejected('publish trigger other than dispatch', x => { x.publishWorkflow.on.push = { branches: ['main'] }; });
   rejected('wrong confirmation', x => { x.contract.publish.confirmation = 'YES'; });

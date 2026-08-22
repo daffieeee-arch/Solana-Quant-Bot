@@ -63,10 +63,14 @@ describe('Phase 8D1 verification shell initialization', () => {
     const lines=readFileSync('scripts/phase8d1/verify-images.sh','utf8').split(/\r?\n/);
     for(const line of lines){const declared=/^\s*local\s+([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1];if(declared)expect(line).not.toMatch(new RegExp(`\\$(?:${declared}(?:[^A-Za-z0-9_]|$)|\\{${declared}\\})`));}
   });
-  it('tolerates only transient unpublished-port probes and still requires a loopback binding', () => {
+  it('probes a loopback-only network-none cockpit from the host namespace without publishing a port', () => {
     const script=readFileSync('scripts/phase8d1/verify-images.sh','utf8');
-    expect(script).toContain("docker port \"$name\" 3000/tcp 2>/dev/null | sed -nE 's#^127\\.0\\.0\\.1:([0-9]+)$#\\1#p' || true");
-    expect(script).toContain('test -n "$port"\n  curl -fsS "http://127.0.0.1:$port/healthz"');
-    expect(script).toContain('-p 127.0.0.1::3000');
+    expect(script).toContain('--network none');
+    expect(script).toContain('-e COCKPIT_BIND_HOST=127.0.0.1');
+    expect(script).not.toContain('-p 127.0.0.1::3000');
+    expect(script).toContain("test \"$(docker inspect --format '{{.HostConfig.NetworkMode}}' \"$name\")\" = none");
+    expect(script).toContain("test \"$(docker inspect --format '{{json .HostConfig.PortBindings}}' \"$name\")\" = null");
+    expect(script).toContain('sudo nsenter --target "$pid" --net curl');
+    expect(script).toContain("connect({host:\"1.1.1.1\",port:443");
   });
 });
