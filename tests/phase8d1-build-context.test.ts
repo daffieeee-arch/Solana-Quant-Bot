@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { validatePlatformManifest } from '../scripts/phase8d1/resolve-base-images.mjs';
+import { classifyRegistryFailure, validatePlatformManifest } from '../scripts/phase8d1/resolve-base-images.mjs';
 
 describe('Phase 8D1 default-deny Docker build context', () => {
   it('allows exactly the source domains required by the two reviewed Dockerfiles', () => {
@@ -27,5 +27,14 @@ describe('Phase 8D1 Buildx manifest digest contract', () => {
     const raw={schemaVersion:2,mediaType:'application/vnd.oci.image.manifest.v1+json',config:{size:1},layers:[{size:2}]};
     expect(validatePlatformManifest({digest},formatted,raw).config.size).toBe(1);
     expect(()=>validatePlatformManifest({digest},{...formatted,digest:`sha256:${'b'.repeat(64)}`},raw)).toThrow(/PLATFORM_DIGEST_DRIFT/);
+  });
+  it('retries only bounded transient registry transport failures', () => {
+    for(const value of ['read: connection reset by peer','unexpected EOF','TLS handshake timeout','503 Service Unavailable'])expect(classifyRegistryFailure(value)).toBe('RETRY');
+    for(const value of ['toomanyrequests: rate limit','429 Too Many Requests','401 Unauthorized','403 Forbidden','manifest unknown'])expect(classifyRegistryFailure(value)).toBe('STOP');
+  });
+  it('never retries image pulls so the reviewed two-cache download budget remains valid', () => {
+    const resolver=readFileSync('scripts/phase8d1/resolve-base-images.mjs','utf8');
+    expect(resolver).toContain("run('docker', ['pull', '--platform', contract.platform, row.digestRef])");
+    expect(resolver).not.toContain("runRegistry('docker', ['pull'");
   });
 });

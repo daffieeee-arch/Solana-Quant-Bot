@@ -7,15 +7,34 @@ import { resolve } from 'node:path';
 function run(command, args, options = {}) {
   return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...options }).trim();
 }
+export function classifyRegistryFailure(message) {
+  const value=String(message);
+  if (/toomanyrequests|rate.?limit|429|unauthorized|forbidden|\b401\b|\b403\b|manifest unknown|not found|name unknown/i.test(value)) return 'STOP';
+  if (/connection reset by peer|unexpected eof|tls handshake timeout|i\/o timeout|network is unreachable|temporary failure|bad gateway|service unavailable|gateway timeout|\b50[0-4]\b/i.test(value)) return 'RETRY';
+  return 'STOP';
+}
+function pause(milliseconds) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,milliseconds); }
+function runRegistry(command,args) {
+  for(let attempt=1;attempt<=3;attempt++){
+    try{return run(command,args);}
+    catch(error){
+      const message=`${error?.stderr??''}\n${error?.message??''}`;
+      if(classifyRegistryFailure(message)!=='RETRY')throw new Error('REGISTRY_NON_RETRYABLE_FAILURE');
+      if(attempt===3)throw new Error('REGISTRY_TRANSIENT_EXHAUSTED');
+      process.stderr.write(`REGISTRY_TRANSIENT_RETRY:${attempt}\n`);pause(attempt*1000);
+    }
+  }
+  throw new Error('REGISTRY_TRANSIENT_EXHAUSTED');
+}
 function exactRef(spec) { return `${spec.repository.split('/').at(-1)}:${spec.versionTag}`; }
 function repositoryRef(spec) { return `${spec.registry}/${spec.repository}`; }
 function inspectManifest(ref) {
-  const manifest = JSON.parse(run('docker', ['buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest}}', ref]));
+  const manifest = JSON.parse(runRegistry('docker', ['buildx', 'imagetools', 'inspect', '--format', '{{json .Manifest}}', ref]));
   if (!/^sha256:[0-9a-f]{64}$/.test(manifest?.digest ?? '')) throw new Error('INVALID_EXPLICIT_MANIFEST_DIGEST');
   return manifest;
 }
 function inspectRawManifest(ref) {
-  const manifest = JSON.parse(run('docker', ['buildx', 'imagetools', 'inspect', '--raw', ref]));
+  const manifest = JSON.parse(runRegistry('docker', ['buildx', 'imagetools', 'inspect', '--raw', ref]));
   if (!manifest?.config || !Array.isArray(manifest.layers)) throw new Error('INVALID_PLATFORM_MANIFEST');
   return manifest;
 }
