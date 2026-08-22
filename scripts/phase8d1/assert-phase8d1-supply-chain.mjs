@@ -43,6 +43,7 @@ export function loadPhase8D1Inputs(root = process.cwd()) {
     supplyChainFileText,
     baseLockText: text(at('deployment/phase8d1/base-image-lock.json')),
     baseLock: json(at('deployment/phase8d1/base-image-lock.json')),
+    publicKeyAllowlist: json(at('deployment/phase8d1/rootfs-public-key-test-vectors.json')),
     releaseSchema: json(at('deployment/phase8d1/release-manifest.schema.json')),
     cockpitDockerfile: text(at('containers/Dockerfile.cockpit')),
     runnerDockerfile: text(at('containers/Dockerfile.phase8a-runner')),
@@ -122,6 +123,11 @@ export function validatePhase8D1Inputs(input) {
     const locked=baseLock.images?.find(image=>image.name===name);
     if (!locked || locked.registry!==spec.registry || locked.repository!==spec.repository || locked.versionTag!==spec.versionTag || !/^sha256:[0-9a-f]{64}$/.test(locked.manifestListDigest??'') || !/^sha256:[0-9a-f]{64}$/.test(locked.linuxAmd64Digest??'')) errors.push(`base lock mismatch:${name}`);
   }
+  const allowlist=input.publicKeyAllowlist;
+  const allowEntries=allowlist?.entries;
+  const expectedPublicVector={path:'usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3',candidateSha256:'a4d138d7ef9748464117b44fb9c0a4b5b85a1599a127d02690abaa96d03c16e6',classification:'PUBLIC_GNUTLS_KAT_NOT_CREDENTIAL',sourceCommit:'ca61668d7764fc29fb4cc2aa396cb035e176636d',sourceUrl:'https://github.com/gnutls/gnutls/blob/ca61668d7764fc29fb4cc2aa396cb035e176636d/lib/crypto-selftests-pk.c',symbol:'gost12_512_privkey',package:'libgnutls30',packageVersionFamily:'3.7.9',baseImageName:'nodeRuntime',baseLinuxAmd64Digest:'sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066'};
+  if(!exactKeys(allowlist,['schemaVersion','entries'])||allowlist?.schemaVersion!=='PHASE8D1_PUBLIC_KEY_TEST_VECTOR_ALLOWLIST_1'||!Array.isArray(allowEntries)||allowEntries.length!==1||!exactKeys(allowEntries[0],Object.keys(expectedPublicVector))||Object.entries(expectedPublicVector).some(([key,value])=>allowEntries[0]?.[key]!==value))errors.push('invalid public GnuTLS KAT allowlist');
+  if(baseLock.images?.find(image=>image.name==='nodeRuntime')?.linuxAmd64Digest!==expectedPublicVector.baseLinuxAmd64Digest)errors.push('public GnuTLS KAT base digest mismatch');
   const ids=contract.runtimeIdentities;
   if (ids?.runnerUid!==61000 || ids?.cockpitUid!==61001 || ids?.fixtureReadGid!==61000 || ids?.status!=='SELECTED_READ_ONLY_NOT_APPLIED') errors.push('invalid runtime identities');
   errors.push(...validateRuntimeIdentityEvidence(identities));

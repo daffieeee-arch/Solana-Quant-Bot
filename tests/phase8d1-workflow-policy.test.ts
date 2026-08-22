@@ -54,6 +54,7 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
   rejected('missing linux amd64', x => { x.contract.platform = 'linux/arm64'; });
   rejected('missing base digest resolution', x => { x.verifyScript = x.verifyScript.replaceAll('@sha256:', '@shaXXX:'); });
   rejected('reviewed base lock drift', x => { x.baseLock.images[0].linuxAmd64Digest = `sha256:${'0'.repeat(64)}`; x.baseLockText = JSON.stringify(x.baseLock); });
+  rejected('public GnuTLS KAT allowlist drift', x => { x.publicKeyAllowlist ??={entries:[{}]};x.publicKeyAllowlist.entries[0].path='usr/lib/forged.so'; });
   rejected('more than 3 GiB pull budget', x => { x.contract.maxCompressedBaseImageBytes = 4 * 1024 ** 3; });
   rejected('Docker socket mount', x => { x.verifyText += '\n-v /var/run/docker.sock:/var/run/docker.sock'; });
   rejected('TrueNAS operation', x => { x.verifyText += '\ntruenas app.update'; });

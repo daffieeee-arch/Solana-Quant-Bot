@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "PHASE8D1_PUBLIC_KEY_TEST_VECTOR_ALLOWLIST_1",
+  "entries": [
+    {
+      "path": "usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3",
+      "candidateSha256": "a4d138d7ef9748464117b44fb9c0a4b5b85a1599a127d02690abaa96d03c16e6",
+      "classification": "PUBLIC_GNUTLS_KAT_NOT_CREDENTIAL",
+      "sourceCommit": "ca61668d7764fc29fb4cc2aa396cb035e176636d",
+      "sourceUrl": "https://github.com/gnutls/gnutls/blob/ca61668d7764fc29fb4cc2aa396cb035e176636d/lib/crypto-selftests-pk.c",
+      "symbol": "gost12_512_privkey",
+      "package": "libgnutls30",
+      "packageVersionFamily": "3.7.9",
+      "baseImageName": "nodeRuntime",
+      "baseLinuxAmd64Digest": "sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066"
+    }
+  ]
+}
