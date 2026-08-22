@@ -30,7 +30,7 @@ describe('Phase 8C contract policy', () => {
     ['share enabled', (x: any) => { x.dataset.shares.nfs = true; }],
     ['mutable image tag', (x: any) => { x.images.images[0].mutableTagAllowed = true; x.images.images[0].tagContract = 'latest'; }],
     ['existing app mutation', (x: any) => { x.deployment.existingApp.mutationAuthorized = true; }],
-    ['mutable cockpit base image', (x: any) => { x.cockpitDockerfile = x.cockpitDockerfile.replaceAll('FROM ${NODE_IMAGE}', 'FROM node:22'); }],
+    ['mutable cockpit base image', (x: any) => { x.cockpitDockerfile = x.cockpitDockerfile.replace('FROM ${NODE_BUILDER_IMAGE}', 'FROM node:22').replace('FROM ${NODE_RUNTIME_IMAGE}', 'FROM node:22-slim'); }],
     ['missing image resources', (x: any) => { delete x.images.images[0].resources; }],
     ['missing image hash bindings', (x: any) => { delete x.images.images[0].hashBindings; }],
     ['image host PID enabled', (x: any) => { x.images.images[0].security.hostPid = true; }],

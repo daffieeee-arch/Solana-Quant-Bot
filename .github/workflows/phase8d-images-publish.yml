@@ -1,0 +1,208 @@
+name: Phase 8D images publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact main commit SHA to rebuild and publish
+        required: true
+        type: string
+      confirmation:
+        description: Type PUBLISH_SYNTHETIC_PHASE8D_IMAGES exactly
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase8d-images-publish
+  cancel-in-progress: false
+
+jobs:
+  normal-ci-gate:
+    name: normal-ci-on-source
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+  image-verify-gate:
+    name: image-verify-on-source
+    uses: ./.github/workflows/phase8d-images-verify.yml
+    permissions:
+      contents: read
+  publish:
+    name: manual-private-ghcr-publish
+    needs: [normal-ci-gate, image-verify-gate]
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'PUBLISH_SYNTHETIC_PHASE8D_IMAGES' && inputs.source_sha == github.sha
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out exact main source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fail closed on source, branch, confirmation and live main
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = PUBLISH_SYNTHETIC_PHASE8D_IMAGES
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          test "$SOURCE_SHA" = "$(git rev-parse HEAD)"
+          test -z "$(git status --porcelain)"
+          LIVE_MAIN_SHA="$(gh api --method GET "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          test "$SOURCE_SHA" = "$LIVE_MAIN_SHA"
+      - name: Set up isolated Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          driver: docker-container
+          install: true
+      - name: Resolve exact base digests
+        id: bases
+        run: node scripts/phase8d1/resolve-base-images.mjs resolve phase8d1-release-evidence/base-images.json
+      - name: Prebuild exact hashes
+        id: hashes
+        run: scripts/phase8d1/prebuild-hashes.sh phase8d1-release-evidence/base-images.json phase8d1-release-evidence/prebuild-hashes.json
+      - name: Build cockpit local pre-publish candidate
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: containers/Dockerfile.cockpit
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: local/phase8a-research-cockpit:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.cockpit_entrypoint_short }}-${{ steps.hashes.outputs.frontend_build_short }}
+          build-args: |
+            NODE_BUILDER_IMAGE=${{ steps.bases.outputs.node_builder_ref }}
+            NODE_RUNTIME_IMAGE=${{ steps.bases.outputs.node_runtime_ref }}
+            SOURCE_GIT_SHA=${{ steps.hashes.outputs.source_sha }}
+            PACKAGE_LOCK_SHA256=${{ steps.hashes.outputs.package_lock_sha }}
+            COCKPIT_ENTRYPOINT_SHA256=${{ steps.hashes.outputs.cockpit_entrypoint_sha }}
+            COCKPIT_RUNTIME_TREE_SHA256=${{ steps.hashes.outputs.cockpit_runtime_tree_sha }}
+            FRONTEND_BUILD_SHA256=${{ steps.hashes.outputs.frontend_build_sha }}
+            COCKPIT_UID=${{ steps.hashes.outputs.cockpit_uid }}
+            COCKPIT_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Build runner local pre-publish candidate
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: containers/Dockerfile.phase8a-runner
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: local/phase8a-bronze-runner:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.runner_binary_short }}
+          build-args: |
+            RUST_BUILDER_IMAGE=${{ steps.bases.outputs.rust_ref }}
+            RUNNER_RUNTIME_IMAGE=${{ steps.bases.outputs.runtime_ref }}
+            SOURCE_GIT_SHA=${{ steps.hashes.outputs.source_sha }}
+            RUNNER_BINARY_SHA256=${{ steps.hashes.outputs.runner_binary_sha }}
+            CARGO_LOCK_SHA256=${{ steps.hashes.outputs.cargo_lock_sha }}
+            RUNNER_UID=${{ steps.hashes.outputs.runner_uid }}
+            RUNNER_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Retest local candidates before any push
+        env:
+          COCKPIT_IMAGE: local/phase8a-research-cockpit:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.cockpit_entrypoint_short }}-${{ steps.hashes.outputs.frontend_build_short }}
+          RUNNER_IMAGE: local/phase8a-bronze-runner:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.runner_binary_short }}
+          BASE_MANIFEST: phase8d1-release-evidence/base-images.json
+          PREBUILD_MANIFEST: phase8d1-release-evidence/prebuild-hashes.json
+          EVIDENCE_DIR: phase8d1-release-evidence/pre-push
+          PUBLISH_MODE: verify
+        run: scripts/phase8d1/verify-images.sh
+      - name: Log in to private GHCR with repository token only
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Compute unique private package tags
+        id: tags
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          echo "cockpit=ghcr.io/$owner/phase8a-research-cockpit:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.cockpit_entrypoint_short }}-${{ steps.hashes.outputs.frontend_build_short }}" >> "$GITHUB_OUTPUT"
+          echo "runner=ghcr.io/$owner/phase8a-bronze-runner:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.runner_binary_short }}" >> "$GITHUB_OUTPUT"
+      - name: Reject tag collision and overwrite
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          COCKPIT_TAG: ${{ steps.tags.outputs.cockpit }}
+          RUNNER_TAG: ${{ steps.tags.outputs.runner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/phase8d1/publish-gates.sh
+      - name: Push cockpit with BuildKit provenance and SPDX SBOM
+        id: push-cockpit
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: containers/Dockerfile.cockpit
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.tags.outputs.cockpit }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            NODE_BUILDER_IMAGE=${{ steps.bases.outputs.node_builder_ref }}
+            NODE_RUNTIME_IMAGE=${{ steps.bases.outputs.node_runtime_ref }}
+            SOURCE_GIT_SHA=${{ steps.hashes.outputs.source_sha }}
+            PACKAGE_LOCK_SHA256=${{ steps.hashes.outputs.package_lock_sha }}
+            COCKPIT_ENTRYPOINT_SHA256=${{ steps.hashes.outputs.cockpit_entrypoint_sha }}
+            COCKPIT_RUNTIME_TREE_SHA256=${{ steps.hashes.outputs.cockpit_runtime_tree_sha }}
+            FRONTEND_BUILD_SHA256=${{ steps.hashes.outputs.frontend_build_sha }}
+            COCKPIT_UID=${{ steps.hashes.outputs.cockpit_uid }}
+            COCKPIT_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Push runner with BuildKit provenance and SPDX SBOM
+        id: push-runner
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: containers/Dockerfile.phase8a-runner
+          platforms: linux/amd64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ${{ steps.tags.outputs.runner }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          build-args: |
+            RUST_BUILDER_IMAGE=${{ steps.bases.outputs.rust_ref }}
+            RUNNER_RUNTIME_IMAGE=${{ steps.bases.outputs.runtime_ref }}
+            SOURCE_GIT_SHA=${{ steps.hashes.outputs.source_sha }}
+            RUNNER_BINARY_SHA256=${{ steps.hashes.outputs.runner_binary_sha }}
+            CARGO_LOCK_SHA256=${{ steps.hashes.outputs.cargo_lock_sha }}
+            RUNNER_UID=${{ steps.hashes.outputs.runner_uid }}
+            RUNNER_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Pull and retest immutable registry digests
+        env:
+          COCKPIT_REF: ${{ steps.tags.outputs.cockpit }}@${{ steps.push-cockpit.outputs.digest }}
+          RUNNER_REF: ${{ steps.tags.outputs.runner }}@${{ steps.push-runner.outputs.digest }}
+          COCKPIT_DIGEST: ${{ steps.push-cockpit.outputs.digest }}
+          RUNNER_DIGEST: ${{ steps.push-runner.outputs.digest }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVIDENCE_DIR: phase8d1-release-evidence/final
+          BASE_MANIFEST: phase8d1-release-evidence/base-images.json
+          PREBUILD_MANIFEST: phase8d1-release-evidence/prebuild-hashes.json
+        run: scripts/phase8d1/verify-published-images.sh
+      - name: Re-resolve bases and reject digest drift
+        run: node scripts/phase8d1/resolve-base-images.mjs compare phase8d1-release-evidence/base-images.json
+      - name: Upload successful private release manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase8d1-private-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: phase8d1-release-evidence/final/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
+          include-hidden-files: false
+      - name: Verify tracked tree is unchanged
+        run: test -z "$(git status --porcelain --untracked-files=no)"
