@@ -35,9 +35,27 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
     const expected='image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528';
     for(const job of [input.verifyWorkflow.jobs['verify-images-no-push'],input.publishWorkflow.jobs.publish]){
       const setup=job.steps.find((step:any)=>String(step.uses??'').startsWith('docker/setup-buildx-action@'));
-      expect(setup.with['driver-opts']).toContain(expected);expect(setup.with.platforms).toBe('linux/amd64');expect(setup.with['buildkitd-flags']).toBe('--debug');
+      expect(setup.with['driver-opts']).toContain(expected);expect(setup.with.platforms).toBe('linux/amd64');expect(setup.with['buildkitd-flags']).toBe('--debug --oci-worker-net bridge');
       expect(JSON.stringify(setup)).not.toMatch(/security\.insecure|network\.host|buildx-stable-1/);
     }
+  });
+
+  it('requires BuildKit bridge mode to report its resolved cni provider and no insecure entitlement', () => {
+    const fixture=[{buildkit:'v0.32.2',platforms:'linux/amd64',"driver-opts":['image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528'],"buildkitd-flags":'--debug --oci-worker-net bridge',labels:{'org.mobyproject.buildkit.worker.network':'cni'}}];
+    expect(fixture).toHaveLength(1);expect(fixture[0]['buildkitd-flags']).not.toMatch(/security\.insecure|network\.host/);expect(fixture[0].labels['org.mobyproject.buildkit.worker.network']).toBe('cni');
+    for(const job of [candidate().verifyWorkflow.jobs['verify-images-no-push'],candidate().publishWorkflow.jobs.publish]){
+      const runtime=job.steps.find((step:any)=>step.name==='Verify exact sandboxed BuildKit server');expect(runtime.run).toContain('org.mobyproject.buildkit.worker.network');expect(runtime.run).toContain('"cni"');
+    }
+  });
+
+  it('rejects a host-label runtime proof even when a comment preserves the cni marker', () => {
+    const input:any=structuredClone(candidate());
+    for(const job of [input.verifyWorkflow.jobs['verify-images-no-push'],input.publishWorkflow.jobs.publish]){
+      const runtime=job.steps.find((step:any)=>step.name==='Verify exact sandboxed BuildKit server');
+      runtime.run=runtime.run.replace('== "cni"','== "host"')+'# cni\n';
+    }
+    expect(validatePhase8D1Inputs(input)).toContain('missing runtime BuildKit proof:verify');
+    expect(validatePhase8D1Inputs(input)).toContain('missing runtime BuildKit proof:publish');
   });
 
   it('bootstraps the publish job with exact Node, locked dependencies and policy before any other Node script', () => {

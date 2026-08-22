@@ -90,7 +90,7 @@ Both verify and publish jobs use the same reviewed `deployment/phase8d1/buildkit
 - linux/amd64 platform manifest `sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528`;
 - observed at `2026-08-22T17:26:58.498692Z`.
 
-The actual docker-container driver uses the platform digest directly. `buildkitd-flags: --debug` replaces setup-buildx's default insecure flags; `security.insecure` and `network.host` are unavailable, and no build step requests an insecure entitlement. Ordinary sandboxed dependency downloads remain permitted.
+The actual docker-container driver uses the platform digest directly. `buildkitd-flags: --debug --oci-worker-net bridge` forces the bridge provider and replaces setup-buildx's default insecure flags; BuildKit v0.32.2 resolves that provider label to `org.mobyproject.buildkit.worker.network=cni`. `security.insecure` and `network.host` are unavailable, and no build step requests an insecure entitlement. The hosted `nodes` output must prove the exact flags plus the resolved `cni` label. Ordinary sandboxed dependency downloads remain permitted.
 
 ### Partial publish HOLD contract
 

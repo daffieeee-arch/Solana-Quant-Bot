@@ -28,7 +28,7 @@ Future published images require:
 
 - `linux/amd64` only;
 - exact digest-pinned base images;
-- BuildKit v0.32.2 pinned directly to linux/amd64 digest `sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528` with no `security.insecure` or `network.host` entitlement;
+- BuildKit v0.32.2 pinned directly to linux/amd64 digest `sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528`, OCI worker mode forced to `bridge` (resolved worker label `cni`), and no `security.insecure` or `network.host` entitlement;
 - `provenance: mode=max`;
 - SPDX SBOM;
 - no secret-bearing build arguments or environment;

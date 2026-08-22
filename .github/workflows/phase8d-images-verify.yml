@@ -60,7 +60,7 @@ jobs:
           driver-opts: |
             image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528
           platforms: linux/amd64
-          buildkitd-flags: --debug
+          buildkitd-flags: --debug --oci-worker-net bridge
       - name: Verify exact sandboxed BuildKit server
         env:
           BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
@@ -70,9 +70,10 @@ jobs:
             .[0].buildkit == "v0.32.2" and
             (.[0].platforms | split(",") | index("linux/amd64") != null) and
             (.[0]["driver-opts"] | index($image) != null) and
-            .[0]["buildkitd-flags"] == "--debug" and
+            .[0]["buildkitd-flags"] == "--debug --oci-worker-net bridge" and
             (.[0]["buildkitd-flags"] | contains("security.insecure") | not) and
-            (.[0]["buildkitd-flags"] | contains("network.host") | not)
+            (.[0]["buildkitd-flags"] | contains("network.host") | not) and
+            .[0].labels["org.mobyproject.buildkit.worker.network"] == "cni"
           ' <<< "$BUILDX_NODES" >/dev/null
       - name: Require GitHub-hosted Linux amd64 runner
         run: |

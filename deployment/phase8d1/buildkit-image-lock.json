@@ -9,5 +9,5 @@
   "manifestListDigest": "sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8",
   "linuxAmd64Digest": "sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528",
   "platform": "linux/amd64",
-  "selectionRationale": "Official signed stable moby/buildkit v0.32.2 release current at Phase 8D1 pre-publish hardening. The GitHub-hosted build jobs are linux/amd64 only, so the workflow pins the unique linux/amd64 platform manifest directly while retaining the repository index digest as an independent provenance anchor. Explicit buildkitd flags remove setup-buildx's default security.insecure and network.host entitlements; ordinary sandboxed dependency downloads remain available."
+  "selectionRationale": "Official signed stable moby/buildkit v0.32.2 release current at Phase 8D1 pre-publish hardening. The GitHub-hosted build jobs are linux/amd64 only, so the workflow pins the unique linux/amd64 platform manifest directly while retaining the repository index digest as an independent provenance anchor. The OCI worker is forced to bridge mode; BuildKit v0.32.2 resolves and reports that bridge provider as cni. Explicit buildkitd flags remove setup-buildx's default security.insecure and network.host entitlements while ordinary sandboxed dependency downloads remain available."
 }

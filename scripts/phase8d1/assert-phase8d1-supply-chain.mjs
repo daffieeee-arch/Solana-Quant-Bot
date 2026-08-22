@@ -15,8 +15,8 @@ const exactKeys = (obj, expected) => JSON.stringify(keys(obj)) === JSON.stringif
 const containsAll = (value, markers) => markers.every(marker => value.includes(marker));
 const stableValue=value=>Array.isArray(value)?value.map(stableValue):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stableValue(value[key])])):value;
 const semanticSha256=value=>createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
-const VERIFY_SEMANTIC_SHA256='871f4abc7455e03e07dff2a89e300a3f742a84ccd7058c4bfaabf9d0ba9e83c9';
-const PUBLISH_SEMANTIC_SHA256='470a55266a7225bf9f637853cfaab3a91dc727b36b1eb9880a78b02ccbc64024';
+const VERIFY_SEMANTIC_SHA256='1e2774564be00214da58dee3122048afeea8b9c201d79a6cc106e9723f1b3c45';
+const PUBLISH_SEMANTIC_SHA256='34abc7e34e4547ee2bb3f1bdab40b1be0df70ed5ac24c37cb428ca2b0fb9ac53';
 
 export function loadPhase8D1Inputs(root = process.cwd()) {
   const at = path => resolve(root, path);
@@ -92,18 +92,29 @@ export function validatePhase8D1Inputs(input) {
   validateActionPins(`${input.verifyText}\n${input.publishText}\n${input.ciText}`, errors);
 
   const buildKitImage='moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528';
+  const buildKitRuntimeProof=`jq -e --arg image 'image=${buildKitImage}' '
+  length == 1 and
+  .[0].buildkit == "v0.32.2" and
+  (.[0].platforms | split(",") | index("linux/amd64") != null) and
+  (.[0]["driver-opts"] | index($image) != null) and
+  .[0]["buildkitd-flags"] == "--debug --oci-worker-net bridge" and
+  (.[0]["buildkitd-flags"] | contains("security.insecure") | not) and
+  (.[0]["buildkitd-flags"] | contains("network.host") | not) and
+  .[0].labels["org.mobyproject.buildkit.worker.network"] == "cni"
+' <<< "$BUILDX_NODES" >/dev/null
+`;
   if(createHash('sha256').update(input.buildKitLockText).digest('hex')!==contract.buildKitImageLockSha256)errors.push('reviewed BuildKit lock digest mismatch');
-  if(!exactKeys(buildKitLock,['schemaVersion','observedAt','registry','repository','versionTag','buildKitVersion','releaseCommit','manifestListDigest','linuxAmd64Digest','platform','selectionRationale'])||buildKitLock?.schemaVersion!=='PHASE8D1_BUILDKIT_LOCK_1'||buildKitLock?.registry!=='docker.io'||buildKitLock?.repository!=='moby/buildkit'||buildKitLock?.versionTag!=='v0.32.2'||buildKitLock?.buildKitVersion!=='v0.32.2'||buildKitLock?.releaseCommit!=='991535e0973488b6a429096d21fa13f81f2d89d8'||buildKitLock?.manifestListDigest!=='sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8'||buildKitLock?.linuxAmd64Digest!=='sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528'||buildKitLock?.platform!=='linux/amd64'||semanticSha256(buildKitLock)!=='cec7286b76bbff6379a51c6145a08e282a7b7cfb77992a5a028e431fac33a428')errors.push('invalid exact BuildKit lock');
+  if(!exactKeys(buildKitLock,['schemaVersion','observedAt','registry','repository','versionTag','buildKitVersion','releaseCommit','manifestListDigest','linuxAmd64Digest','platform','selectionRationale'])||buildKitLock?.schemaVersion!=='PHASE8D1_BUILDKIT_LOCK_1'||buildKitLock?.registry!=='docker.io'||buildKitLock?.repository!=='moby/buildkit'||buildKitLock?.versionTag!=='v0.32.2'||buildKitLock?.buildKitVersion!=='v0.32.2'||buildKitLock?.releaseCommit!=='991535e0973488b6a429096d21fa13f81f2d89d8'||buildKitLock?.manifestListDigest!=='sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8'||buildKitLock?.linuxAmd64Digest!=='sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528'||buildKitLock?.platform!=='linux/amd64'||semanticSha256(buildKitLock)!=='c807ec15e2cc08b42c2625fc461a908e95d7022dc5c42227eb8fc394615698ff')errors.push('invalid exact BuildKit lock');
   const validateBuildKitJob=(job,label)=>{
     const steps=job?.steps??[];
     const setupSteps=steps.filter(step=>String(step.uses??'').startsWith('docker/setup-buildx-action@'));
     const setup=setupSteps[0];
     const driverOpts=String(setup?.with?.['driver-opts']??'').trim();
-    if(setupSteps.length!==1||setup?.id!=='buildx'||setup?.with?.driver!=='docker-container'||setup?.with?.install!==true||driverOpts!==`image=${buildKitImage}`||setup?.with?.platforms!=='linux/amd64'||setup?.with?.['buildkitd-flags']!=='--debug')errors.push(`invalid pinned BuildKit setup:${label}`);
+    if(setupSteps.length!==1||setup?.id!=='buildx'||setup?.with?.driver!=='docker-container'||setup?.with?.install!==true||driverOpts!==`image=${buildKitImage}`||setup?.with?.platforms!=='linux/amd64'||setup?.with?.['buildkitd-flags']!=='--debug --oci-worker-net bridge')errors.push(`invalid pinned BuildKit setup:${label}`);
     const serialized=JSON.stringify(setup??{});
     if(/security\.insecure|network\.host|buildx-stable-1/.test(serialized))errors.push(`insecure or mutable BuildKit setup:${label}`);
     const verifyStep=steps.find(step=>step.name==='Verify exact sandboxed BuildKit server');
-    if(!verifyStep||verifyStep.env?.BUILDX_NODES!=='${{ steps.buildx.outputs.nodes }}'||!containsAll(String(verifyStep.run??''),['v0.32.2',buildKitImage,'security.insecure','network.host','linux/amd64']))errors.push(`missing runtime BuildKit proof:${label}`);
+    if(!verifyStep||verifyStep.env?.BUILDX_NODES!=='${{ steps.buildx.outputs.nodes }}'||verifyStep.run!==buildKitRuntimeProof)errors.push(`missing runtime BuildKit proof:${label}`);
     if(steps.some(step=>own(step.with,'allow')&&String(step.with.allow).trim()))errors.push(`insecure BuildKit build entitlement requested:${label}`);
   };
   validateBuildKitJob(verify.jobs?.['verify-images-no-push'],'verify');
