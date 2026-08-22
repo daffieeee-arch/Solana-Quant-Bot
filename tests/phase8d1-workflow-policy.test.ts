@@ -28,14 +28,14 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
   it('pins the same exact linux-amd64 BuildKit server in verify and publish without insecure entitlements', () => {
     const input:any=candidate();
     expect(input.buildKitLock).toMatchObject({
-      schemaVersion:'PHASE8D1_BUILDKIT_LOCK_1', buildKitVersion:'v0.32.2', registry:'docker.io', repository:'moby/buildkit', versionTag:'v0.32.2', platform:'linux/amd64',
+      schemaVersion:'PHASE8D1_BUILDKIT_LOCK_1', buildxVersion:'v0.12.1', buildxReleaseCommit:'30feaa1a915b869ebc2eea6328624b49facd4bfb', buildKitVersion:'v0.32.2', registry:'docker.io', repository:'moby/buildkit', versionTag:'v0.32.2', platform:'linux/amd64',
       manifestListDigest:'sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8',
       linuxAmd64Digest:'sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528',
     });
     const expected='image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528';
     for(const job of [input.verifyWorkflow.jobs['verify-images-no-push'],input.publishWorkflow.jobs.publish]){
       const setup=job.steps.find((step:any)=>String(step.uses??'').startsWith('docker/setup-buildx-action@'));
-      expect(setup.with['driver-opts']).toContain(expected);expect(setup.with.platforms).toBe('linux/amd64');expect(setup.with['buildkitd-flags']).toBe('--debug --oci-worker-net bridge');
+      expect(setup.with.version).toBe('v0.12.1');expect(setup.with['driver-opts']).toContain(expected);expect(setup.with.platforms).toBe('linux/amd64');expect(setup.with['buildkitd-flags']).toBe('--debug --oci-worker-net bridge');
       expect(JSON.stringify(setup)).not.toMatch(/security\.insecure|network\.host|buildx-stable-1/);
     }
   });
@@ -45,6 +45,7 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
     expect(fixture).toHaveLength(1);expect(fixture[0]['buildkitd-flags']).not.toMatch(/security\.insecure|network\.host/);expect(fixture[0].labels['org.mobyproject.buildkit.worker.network']).toBe('cni');
     for(const job of [candidate().verifyWorkflow.jobs['verify-images-no-push'],candidate().publishWorkflow.jobs.publish]){
       const runtime=job.steps.find((step:any)=>step.name==='Verify exact sandboxed BuildKit server');expect(runtime.run).toContain('org.mobyproject.buildkit.worker.network');expect(runtime.run).toContain('"cni"');
+      expect(runtime.run).toContain('github.com/docker/buildx v0.12.1 30feaa1a915b869ebc2eea6328624b49facd4bfb');
     }
   });
 
@@ -117,6 +118,8 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
   rejected('missing linux amd64', x => { x.contract.platform = 'linux/arm64'; });
   rejected('missing base digest resolution', x => { x.verifyScript = x.verifyScript.replaceAll('@sha256:', '@shaXXX:'); });
   rejected('mutable BuildKit tag', x => { x.verifyWorkflow.jobs['verify-images-no-push'].steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with['driver-opts']='image=moby/buildkit:v0.32.2'; });
+  rejected('mutable Buildx client', x => { x.verifyWorkflow.jobs['verify-images-no-push'].steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with.version='latest'; });
+  rejected('wrong Buildx client version', x => { x.publishWorkflow.jobs.publish.steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with.version='v0.36.1'; });
   rejected('missing BuildKit digest', x => { x.publishWorkflow.jobs.publish.steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with['driver-opts']='image=moby/buildkit'; });
   rejected('wrong BuildKit platform digest', x => { x.buildKitLock.linuxAmd64Digest=`sha256:${'0'.repeat(64)}`; });
   rejected('insecure BuildKit entitlement', x => { x.verifyWorkflow.jobs['verify-images-no-push'].steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with['buildkitd-flags']='--allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host'; });

@@ -84,13 +84,14 @@ The publish workflow is **DESIGN_ONLY_NOT_DISPATCHED**.
 
 Both verify and publish jobs use the same reviewed `deployment/phase8d1/buildkit-image-lock.json`:
 
+- Buildx client `v0.12.1`, release commit `30feaa1a915b869ebc2eea6328624b49facd4bfb`;
 - BuildKit `v0.32.2`, official signed release commit `991535e0973488b6a429096d21fa13f81f2d89d8`;
 - repository `moby/buildkit`, version tag `v0.32.2`;
 - OCI index `sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`;
 - linux/amd64 platform manifest `sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528`;
 - observed at `2026-08-22T17:26:58.498692Z`.
 
-The actual docker-container driver uses the platform digest directly. `buildkitd-flags: --debug --oci-worker-net bridge` forces the bridge provider and replaces setup-buildx's default insecure flags; BuildKit v0.32.2 resolves that provider label to `org.mobyproject.buildkit.worker.network=cni`. `security.insecure` and `network.host` are unavailable, and no build step requests an insecure entitlement. The hosted `nodes` output must prove the exact flags plus the resolved `cni` label. Ordinary sandboxed dependency downloads remain permitted.
+The actual docker-container driver uses the platform digest directly. Buildx `v0.12.1` is pinned because later Buildx versions auto-add `network.host` to docker-container builders. `buildkitd-flags: --debug --oci-worker-net bridge` forces the bridge provider; BuildKit v0.32.2 resolves that provider label to `org.mobyproject.buildkit.worker.network=cni`. `security.insecure` and `network.host` are unavailable, and no build step requests an insecure entitlement. The hosted runtime proof requires the exact Buildx version/commit, daemon flags and resolved `cni` label. Ordinary sandboxed dependency downloads remain permitted.
 
 ### Partial publish HOLD contract
 

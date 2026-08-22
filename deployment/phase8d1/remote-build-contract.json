@@ -7,12 +7,12 @@
   "baseImageLock": "deployment/phase8d1/base-image-lock.json",
   "baseImageLockSha256": "153f5992d0a08001a016a64c95e0ea76a5db9dab1ee9016a8c5a1b4d1ba075d1",
   "buildKitImageLock": "deployment/phase8d1/buildkit-image-lock.json",
-  "buildKitImageLockSha256": "2c87341b447072f57eee4a7f63f35f0940332c01f0a59779d2f9bc67b7fb97a4",
+  "buildKitImageLockSha256": "1ccd23b3fe61080616c6bb4d3cb51bec7fbed50f5a3eb70a6bb9ef450f9b49bc",
   "partialPublishContract": "deployment/phase8d1/partial-publish-contract.json",
   "partialPublishContractSha256": "7405f9a84f1ec3b6b295b801c07f194da6d23dd0fa9404e4b6c2c25bf488e899",
   "workflowSha256": {
-    "verify": "aa8bb6c20e8e59c3c24c9bb6ef38893bda68305db2dc0e99aa613231b517e4cb",
-    "publish": "790bc56219331851ad1b91ec43f553ad61b7467c59124c2c06a67361357c9c96"
+    "verify": "2b48e8406211ba509f1d19681f45d6cdd36eaaebbc639f40942b7c6b1068d5fe",
+    "publish": "8595b17dcb2cbab8dc71b47750e4858a5483ce55b55c84276a4d84387919cb0b"
   },
   "supplyChainFileSha256": {
     "containers/Dockerfile.cockpit": "fd43c2b105ebf2c40678e2d644d6a2bf58f6a3d72970d9ae33423021d43471a8",
@@ -22,7 +22,7 @@
     "deployment/phase8d1/runtime-identity-drift-55-to-59.json": "8721cad73098cab2c7fc7680c1b0faf8d8246a25066dd0c8db3daa76cac699f2",
     "deployment/phase8d1/expected-fixture-files.sha256": "aa18a485c53caeb99098e366bce57d3f15d922bf8d60db60205d9c38d2aca258",
     "deployment/phase8d1/release-manifest.schema.json": "8586f821b7b3fb2504de3a50e4704be7cc51c5f01c4b49b65b7db35f1e0791ae",
-    "deployment/phase8d1/buildkit-image-lock.json": "2c87341b447072f57eee4a7f63f35f0940332c01f0a59779d2f9bc67b7fb97a4",
+    "deployment/phase8d1/buildkit-image-lock.json": "1ccd23b3fe61080616c6bb4d3cb51bec7fbed50f5a3eb70a6bb9ef450f9b49bc",
     "deployment/phase8d1/partial-publish-contract.json": "7405f9a84f1ec3b6b295b801c07f194da6d23dd0fa9404e4b6c2c25bf488e899",
     "scripts/phase8d1/resolve-base-images.mjs": "9e8b1006712522c5bb5d06ed587ebf521aba353465a2c3fa97785918910bddc2",
     "scripts/phase8d1/prebuild-hashes.sh": "833fa16ba7e7604954cd5ebf1636a79feadc7f77ab959ab5809b9c669e7d9f1e",
