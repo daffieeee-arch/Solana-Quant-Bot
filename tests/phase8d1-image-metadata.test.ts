@@ -35,7 +35,12 @@ describe('Phase 8D1 image metadata credential boundary', () => {
     };
     const begin=['-----BEGIN','PRIVATE KEY-----'].join(' '),end=['-----END','PRIVATE KEY-----'].join(' ');
     expect(run('marker',`Documentation mentions ${begin} only.`).status).toBe(0);
-    const body='A'.repeat(96),canary=`${begin}\n${body}\n${end}\n`;
+    const invalidBody='A'.repeat(96),invalid=`${begin}\n${invalidBody}\n${end}\n`;
+    expect(run('invalid-block',invalid).status).toBe(0);
+    const der=Buffer.concat([Buffer.from([0x30,0x2e,0x02,0x01,0x00,0x30,0x05,0x06,0x03,0x2b,0x65,0x70,0x04,0x22,0x04,0x20]),Buffer.alloc(32)]),body=der.toString('base64'),canary=`${begin}\n${body}\n${end}\n`;
     const result=run('block',canary);expect(result.status).not.toBe(0);expect(`${result.stdout}${result.stderr}`).not.toContain(body);expect(result.stderr).toContain('private_key');
+    for(const [name,decoy] of [['nonstructural',invalid],['invalid-base64',`${begin}\n${'!'.repeat(96)}\n${end}\n`]]){
+      const afterDecoy=run(name,`${decoy}${canary}`);expect(afterDecoy.status).not.toBe(0);expect(`${afterDecoy.stdout}${afterDecoy.stderr}`).not.toContain(body);expect(afterDecoy.stderr).toContain('private_key');
+    }
   });
 });

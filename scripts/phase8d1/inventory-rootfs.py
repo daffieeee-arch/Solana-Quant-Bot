@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, hashlib, json, math, re, tarfile
+import argparse, base64, binascii, hashlib, json, math, re, tarfile
 
 parser=argparse.ArgumentParser()
 parser.add_argument('archive')
@@ -11,11 +11,30 @@ rows=[]
 total=0
 credential_findings=[]
 credential_patterns=[
-    ('private_key',re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[ \t\r\n]+[A-Za-z0-9+/=\r\n]{64,131072}-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),None),
+    ('private_key',re.compile(rb'-----BEGIN (?P<label>(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY)-----[ \t\r\n]+(?P<body>[A-Za-z0-9+/=\r\n]{64,131072})-----END (?P=label)-----'),None),
     ('github_token',re.compile(rb'\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b'),None),
     ('basic_auth_url',re.compile(rb'https?://[^\s/@:]+:[^\s/@]+@'),None),
     ('credential_assignment',re.compile(rb'\b(TRITON_TOKEN|GITHUB_TOKEN|API_TOKEN|PASSWORD|SECRET|API_KEY)=([^\s\x00]{8,})',re.I),2),
 ]
+def der_sequence_content(value):
+    if len(value)<3 or value[0]!=0x30: return None
+    first=value[1]
+    if first<0x80: header,length=2,first
+    else:
+        width=first&0x7f
+        if width<1 or width>4 or len(value)<2+width: return None
+        length=int.from_bytes(value[2:2+width],'big');header=2+width
+        if length<0x80: return None
+    return value[header:] if header+length==len(value) else None
+def is_structural_private_key(match):
+    encoded=re.sub(rb'[\r\n]',b'',match.group('body'))
+    try: decoded=base64.b64decode(encoded,validate=True)
+    except (binascii.Error,ValueError): return False
+    label=match.group('label')
+    if label==b'OPENSSH PRIVATE KEY': return decoded.startswith(b'openssh-key-v1\x00')
+    content=der_sequence_content(decoded)
+    if content is None: return False
+    return content.startswith(b'\x30') if label==b'ENCRYPTED PRIVATE KEY' else content.startswith(b'\x02')
 def shape(value):
     counts={byte:value.count(byte) for byte in set(value)}
     length=len(value)
@@ -38,7 +57,9 @@ with tarfile.open(args.archive,'r:*') as archive:
                 sample=overlap+chunk
                 for pattern_name,pattern,value_group in credential_patterns:
                     if pattern_name in seen: continue
-                    match=pattern.search(sample)
+                    if pattern_name=='private_key':
+                        match=next((candidate for candidate in pattern.finditer(sample) if is_structural_private_key(candidate)),None)
+                    else: match=pattern.search(sample)
                     if match:
                         value=match.group(value_group) if value_group else match.group(0)
                         finding={'path':member.name,'pattern':pattern_name,**shape(value)}
