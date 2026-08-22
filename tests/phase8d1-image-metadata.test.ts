@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { validateImageMetadata } from '../scripts/phase8d1/validate-image-metadata.mjs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 describe('Phase 8D1 image metadata credential boundary', () => {
   it('accepts ordinary runtime environment and history metadata', () => {
@@ -12,5 +16,16 @@ describe('Phase 8D1 image metadata credential boundary', () => {
     [[], ['{"CreatedBy":"RUN printf API_TOKEN=supersecretvalue"}']],
   ])('rejects credential-bearing Config.Env or history values', (env, history) => {
     expect(validateImageMetadata(env as string[], history as string[]).join('\n')).toMatch(/credential/i);
+  });
+  it('reports rootfs candidates with bounded redacted metadata and never prints the value', () => {
+    const root=mkdtempSync(join(tmpdir(),'phase8d1-rootfs-redaction-'));
+    try{
+      const content=join(root,'content'),archive=join(root,'rootfs.tar'),output=join(root,'inventory.ndjson');mkdirSync(join(content,'app'),{recursive:true});
+      const canary='CANARY_DO_NOT_PRINT_123456789';writeFileSync(join(content,'app','config.txt'),`API_TOKEN=${canary}\n`);
+      expect(spawnSync('tar',['-cf',archive,'-C',content,'.']).status).toBe(0);
+      const result=spawnSync('python3',['scripts/phase8d1/inventory-rootfs.py',archive,output],{encoding:'utf8'});
+      expect(result.status).not.toBe(0);expect(`${result.stdout}${result.stderr}`).not.toContain(canary);
+      expect(result.stderr).toContain('app/config.txt');expect(result.stderr).toContain('credential_assignment');expect(result.stderr).toMatch(/"length":\d+/);
+    } finally { rmSync(root,{recursive:true,force:true}); }
   });
 });
