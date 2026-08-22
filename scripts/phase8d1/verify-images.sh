@@ -122,7 +122,8 @@ start_cockpit(){
   NAMES+=("$name")
   docker run -d --name "$name" --platform linux/amd64 --network "$network" --read-only --cap-drop ALL --security-opt no-new-privileges --security-opt "seccomp=$seccomp_profile" --no-healthcheck --pids-limit 64 --cpus 1 --memory 512m --user "$COCKPIT_UID:$SHARED_GID" --tmpfs /tmp:rw,noexec,nosuid,size=16m -e COCKPIT_BIND_HOST=0.0.0.0 -e COCKPIT_PORT=3000 -p 127.0.0.1::3000 "${mounts[@]}" "$COCKPIT_IMAGE" >/dev/null
   local port
-  for _ in $(seq 1 60); do port="$(docker port "$name" 3000/tcp | sed -E 's/.*:([0-9]+)$/\1/')"; [[ -n "$port" ]] && curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null && break; sleep 1; done
+  for _ in $(seq 1 60); do port="$(docker port "$name" 3000/tcp 2>/dev/null | sed -nE 's#^127\.0\.0\.1:([0-9]+)$#\1#p' || true)"; [[ -n "$port" ]] && curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null && break; sleep 1; done
+  test -n "$port"
   curl -fsS "http://127.0.0.1:$port/healthz" >/dev/null
   docker exec "$name" node -e 'console.log(JSON.stringify({uid:process.getuid(),gid:process.getgid(),groups:process.getgroups()}))' > "$EVIDENCE_DIR/cockpit-$mode-identity.json"
   jq -e --argjson uid "$COCKPIT_UID" --argjson gid "$SHARED_GID" '.uid==$uid and .gid==$gid and (.groups|all(.==$gid))' "$EVIDENCE_DIR/cockpit-$mode-identity.json" >/dev/null

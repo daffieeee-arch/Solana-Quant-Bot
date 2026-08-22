@@ -63,4 +63,10 @@ describe('Phase 8D1 verification shell initialization', () => {
     const lines=readFileSync('scripts/phase8d1/verify-images.sh','utf8').split(/\r?\n/);
     for(const line of lines){const declared=/^\s*local\s+([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1];if(declared)expect(line).not.toMatch(new RegExp(`\\$(?:${declared}(?:[^A-Za-z0-9_]|$)|\\{${declared}\\})`));}
   });
+  it('tolerates only transient unpublished-port probes and still requires a loopback binding', () => {
+    const script=readFileSync('scripts/phase8d1/verify-images.sh','utf8');
+    expect(script).toContain("docker port \"$name\" 3000/tcp 2>/dev/null | sed -nE 's#^127\\.0\\.0\\.1:([0-9]+)$#\\1#p' || true");
+    expect(script).toContain('test -n "$port"\n  curl -fsS "http://127.0.0.1:$port/healthz"');
+    expect(script).toContain('-p 127.0.0.1::3000');
+  });
 });
