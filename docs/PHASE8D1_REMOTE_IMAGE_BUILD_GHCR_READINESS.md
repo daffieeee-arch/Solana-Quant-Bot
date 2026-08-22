@@ -47,7 +47,7 @@ The production identity gate independently anchors the base source SHA, both evi
 - inspects config/history/layers/rootfs and performs real runner/cockpit container checks;
 - uploads only bounded JSON/text verification evidence for seven days.
 
-Rootfs credential inspection allows exactly one public cryptographic test vector: GnuTLS 3.7.9 `gost12_512_privkey` from `lib/crypto-selftests-pk.c` at source commit `ca61668d7764fc29fb4cc2aa396cb035e176636d`, candidate SHA-256 `a4d138d7ef9748464117b44fb9c0a4b5b85a1599a127d02690abaa96d03c16e6`, only at `usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3` in the locked Node-runtime amd64 base. The allowlist is exact path+hash+source+base-digest evidence, not a filename or package wildcard; every additional or changed key remains blocking.
+Rootfs credential inspection allows exactly ten public cryptographic test vectors from GnuTLS 3.7.9 `lib/crypto-selftests-pk.c` at source commit `ca61668d7764fc29fb4cc2aa396cb035e176636d`: RSA-2048, DSA-2048, five ECDSA curves, GOST01, GOST12-256 and GOST12-512. Every entry is bound to its exact candidate SHA-256, source symbol, `usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3`, and the locked Node-runtime amd64 base. The allowlist is a closed canonical-hash set, not a filename or package wildcard; every additional or changed key remains blocking.
 
 Expected post-delivery PR status: `BUILT_AND_TESTED_REMOTE_ONLY`; current unpushed candidate status: `NOT_EXECUTED_PENDING_DELIVERY`.
 

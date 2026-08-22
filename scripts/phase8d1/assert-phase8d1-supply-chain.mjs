@@ -13,6 +13,8 @@ const own = (obj, key) => Object.prototype.hasOwnProperty.call(obj ?? {}, key);
 const keys = obj => Object.keys(obj ?? {}).sort();
 const exactKeys = (obj, expected) => JSON.stringify(keys(obj)) === JSON.stringify([...expected].sort());
 const containsAll = (value, markers) => markers.every(marker => value.includes(marker));
+const stableValue=value=>Array.isArray(value)?value.map(stableValue):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stableValue(value[key])])):value;
+const semanticSha256=value=>createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
 const VERIFY_SEMANTIC_SHA256='5330ddff763fa11962579c43906f063b56f697bd2814659de0cbe0b27f9abbdd';
 const PUBLISH_SEMANTIC_SHA256='4dba62f9cf15748fc4e2066a6086da2e4b6902159e94fef892fe03c4198a220d';
 
@@ -125,9 +127,9 @@ export function validatePhase8D1Inputs(input) {
   }
   const allowlist=input.publicKeyAllowlist;
   const allowEntries=allowlist?.entries;
-  const expectedPublicVector={path:'usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3',candidateSha256:'a4d138d7ef9748464117b44fb9c0a4b5b85a1599a127d02690abaa96d03c16e6',classification:'PUBLIC_GNUTLS_KAT_NOT_CREDENTIAL',sourceCommit:'ca61668d7764fc29fb4cc2aa396cb035e176636d',sourceUrl:'https://github.com/gnutls/gnutls/blob/ca61668d7764fc29fb4cc2aa396cb035e176636d/lib/crypto-selftests-pk.c',symbol:'gost12_512_privkey',package:'libgnutls30',packageVersionFamily:'3.7.9',baseImageName:'nodeRuntime',baseLinuxAmd64Digest:'sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066'};
-  if(!exactKeys(allowlist,['schemaVersion','entries'])||allowlist?.schemaVersion!=='PHASE8D1_PUBLIC_KEY_TEST_VECTOR_ALLOWLIST_1'||!Array.isArray(allowEntries)||allowEntries.length!==1||!exactKeys(allowEntries[0],Object.keys(expectedPublicVector))||Object.entries(expectedPublicVector).some(([key,value])=>allowEntries[0]?.[key]!==value))errors.push('invalid public GnuTLS KAT allowlist');
-  if(baseLock.images?.find(image=>image.name==='nodeRuntime')?.linuxAmd64Digest!==expectedPublicVector.baseLinuxAmd64Digest)errors.push('public GnuTLS KAT base digest mismatch');
+  const publicBaseDigest='sha256:a17d50af28002a160548bd4225b3cfcb12c5efcb171f79e68758f2885fb1b066';
+  if(!exactKeys(allowlist,['schemaVersion','entries'])||allowlist?.schemaVersion!=='PHASE8D1_PUBLIC_KEY_TEST_VECTOR_ALLOWLIST_1'||!Array.isArray(allowEntries)||allowEntries.length!==10||semanticSha256(allowlist)!=='5980184ad7bd5aa1872f82ca34a1e8d2c7e87e39c04614709fc696086b050ec8')errors.push('invalid public GnuTLS KAT allowlist');
+  if(baseLock.images?.find(image=>image.name==='nodeRuntime')?.linuxAmd64Digest!==publicBaseDigest||allowEntries?.some(entry=>entry.baseLinuxAmd64Digest!==publicBaseDigest))errors.push('public GnuTLS KAT base digest mismatch');
   const ids=contract.runtimeIdentities;
   if (ids?.runnerUid!==61000 || ids?.cockpitUid!==61001 || ids?.fixtureReadGid!==61000 || ids?.status!=='SELECTED_READ_ONLY_NOT_APPLIED') errors.push('invalid runtime identities');
   errors.push(...validateRuntimeIdentityEvidence(identities));

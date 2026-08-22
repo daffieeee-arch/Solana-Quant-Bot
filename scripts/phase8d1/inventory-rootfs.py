@@ -17,7 +17,7 @@ total=0
 credential_findings=[]
 public_test_vector_allowances=set()
 credential_patterns=[
-    ('private_key',re.compile(rb'-----BEGIN (?P<label>(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY)-----[ \t\r\n]+(?P<body>[A-Za-z0-9+/=\r\n]{64,131072})-----END (?P=label)-----'),None),
+    ('private_key',re.compile(rb'-----BEGIN (?P<label>(?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY)-----[ \t\r\n]*(?P<body>[A-Za-z0-9+/=\r\n]{64,131072})-----END (?P=label)-----'),None),
     ('github_token',re.compile(rb'\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b'),None),
     ('basic_auth_url',re.compile(rb'https?://[^\s/@:]+:[^\s/@]+@'),None),
     ('credential_assignment',re.compile(rb'\b(TRITON_TOKEN|GITHUB_TOKEN|API_TOKEN|PASSWORD|SECRET|API_KEY)=([^\s\x00]{8,})',re.I),2),
