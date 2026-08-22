@@ -15,7 +15,7 @@ const exactKeys = (obj, expected) => JSON.stringify(keys(obj)) === JSON.stringif
 const containsAll = (value, markers) => markers.every(marker => value.includes(marker));
 const stableValue=value=>Array.isArray(value)?value.map(stableValue):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stableValue(value[key])])):value;
 const semanticSha256=value=>createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
-const VERIFY_SEMANTIC_SHA256='5330ddff763fa11962579c43906f063b56f697bd2814659de0cbe0b27f9abbdd';
+const VERIFY_SEMANTIC_SHA256='28af20fe8c45750fb148cef24b2649780730b68f2bf236170d557e1638f4a85e';
 const PUBLISH_SEMANTIC_SHA256='4dba62f9cf15748fc4e2066a6086da2e4b6902159e94fef892fe03c4198a220d';
 
 export function loadPhase8D1Inputs(root = process.cwd()) {
@@ -93,7 +93,11 @@ export function validatePhase8D1Inputs(input) {
   if (/push:\s*true/.test(input.verifyText)) errors.push('forbidden PR image publish');
   if (!containsAll(input.verifyText,['persist-credentials: false','github.event.pull_request.head.sha || github.sha','platforms: linux/amd64','push: false','provenance: false','sbom: false','remote-images-no-push'])) errors.push('missing no-push PR isolation');
   if (!containsAll(input.verifyText,['networkless synthetic verification','phase8d1-evidence/release-manifest.json','retention-days: 7'])) errors.push('missing bounded verify artifact');
-  const verifySteps=verify.jobs?.['verify-images-no-push']?.steps ?? [];
+  const verifyJob=verify.jobs?.['verify-images-no-push'];
+  const verifySteps=verifyJob?.steps ?? [];
+  const uploadSteps=verifySteps.filter(step=>String(step.uses??'').startsWith('actions/upload-artifact@'));
+  if(verifyJob?.env?.DOCKER_BUILD_RECORD_UPLOAD!=='false')errors.push('automatic Buildx record artifact upload forbidden');
+  if(uploadSteps.length!==1||uploadSteps[0]?.with?.['retention-days']!==7||uploadSteps[0]?.with?.path!=='phase8d1-evidence/*.json\nphase8d1-evidence/*.sha256\n'||/\.dockerbuild|\.tar|layer/i.test(uploadSteps[0]?.with?.path??''))errors.push('invalid bounded seven-day verify artifact');
   const nodeSetupIndex=verifySteps.findIndex(step=>String(step.uses??'').startsWith('actions/setup-node@')&&step.with?.['node-version']==='22.23.2');
   const npmCiIndex=verifySteps.findIndex(step=>step.run==='npm ci');
   const policyIndex=verifySteps.findIndex(step=>step.run==='node scripts/phase8d1/assert-phase8d1-supply-chain.mjs');

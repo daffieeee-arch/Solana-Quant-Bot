@@ -25,6 +25,13 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
     expect(setup).toBeGreaterThan(-1);expect(install).toBeGreaterThan(setup);expect(policy).toBeGreaterThan(install);
   });
 
+  it('disables automatic Buildx record artifacts and retains one bounded seven-day evidence upload', () => {
+    const job=candidate().verifyWorkflow.jobs['verify-images-no-push'];
+    expect(job.env?.DOCKER_BUILD_RECORD_UPLOAD).toBe('false');
+    const uploads=job.steps.filter((step:any)=>String(step.uses??'').startsWith('actions/upload-artifact@'));
+    expect(uploads).toHaveLength(1);expect(uploads[0].with['retention-days']).toBe(7);expect(uploads[0].with.path).toBe('phase8d1-evidence/*.json\nphase8d1-evidence/*.sha256\n');expect(uploads[0].with.path).not.toMatch(/\.dockerbuild|\.tar|layer/i);
+  });
+
   it('keeps every directly invoked Phase 8D1 shell script executable in Git', () => {
     for(const path of ['prebuild-hashes.sh','publish-gates.sh','verify-images.sh','verify-published-images.sh']){
       const mode=execFileSync('git',['ls-files','--stage','--',`scripts/phase8d1/${path}`],{encoding:'utf8'}).trim().split(/\s+/)[0];
@@ -47,6 +54,7 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
   rejected('PR packages write', x => { x.verifyWorkflow.permissions.packages = 'write'; });
   rejected('PR registry login', x => { x.verifyText += '\nuses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1'; });
   rejected('PR image push', x => { x.verifyText = x.verifyText.replace('push: false', 'push: true'); });
+  rejected('PR Buildx record artifact upload', x => { x.verifyWorkflow.jobs['verify-images-no-push'].env ??={};x.verifyWorkflow.jobs['verify-images-no-push'].env.DOCKER_BUILD_RECORD_UPLOAD='true'; });
   rejected('PR secret use', x => { x.verifyText += '\nrun: echo ${{ secrets.GITHUB_TOKEN }}'; });
   rejected('untrusted action ref', x => { x.verifyText = x.verifyText.replace(/actions\/checkout@[0-9a-f]{40}/, 'actions/checkout@v7'); });
   rejected('uncommented action release', x => { x.verifyText = x.verifyText.replace(/ # v7\.0\.1/, ''); });

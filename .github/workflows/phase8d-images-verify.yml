@@ -36,6 +36,8 @@ jobs:
     name: remote-images-no-push
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     steps:
       - name: Check out exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
