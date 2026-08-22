@@ -77,7 +77,8 @@ expected_file_manifest_sha="$(jq -er '.runnerTests.expectedFileManifestSha256' d
 test "$fixture_sha" = "$expected_fixture_sha"
 test "$(sha256sum deployment/phase8d1/expected-fixture-files.sha256 | cut -d' ' -f1)" = "$expected_file_manifest_sha"
 run_once(){
-  local index="$1" out="$TMP/output-$index" name="phase8d1-runner-$index-${GITHUB_RUN_ID:-local}"
+  local index="$1"
+  local out="$TMP/output-$index" name="phase8d1-runner-$index-${GITHUB_RUN_ID:-local}"
   mkdir -p "$out"; sudo chown "$RUNNER_UID:$SHARED_GID" "$out"; sudo chmod 0750 "$out"
   NAMES+=("$name")
   set +e

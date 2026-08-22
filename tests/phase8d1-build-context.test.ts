@@ -47,3 +47,11 @@ describe('Phase 8D1 prebuild cleanup ownership', () => {
     expect(script).toContain('trap "chown -R \\"$HOST_UID:$HOST_GID\\" /src" EXIT');
   });
 });
+
+describe('Phase 8D1 verification shell initialization', () => {
+  it('initializes the runner replay index before deriving paths under set -u', () => {
+    const script=readFileSync('scripts/phase8d1/verify-images.sh','utf8');
+    expect(script).toContain('local index="$1"\n  local out="$TMP/output-$index" name="phase8d1-runner-$index-${GITHUB_RUN_ID:-local}"');
+    expect(script).not.toContain('local index="$1" out="$TMP/output-$index"');
+  });
+});
