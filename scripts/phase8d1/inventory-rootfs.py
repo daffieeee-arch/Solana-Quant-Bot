@@ -11,7 +11,7 @@ rows=[]
 total=0
 credential_findings=[]
 credential_patterns=[
-    ('private_key',re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),None),
+    ('private_key',re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[ \t\r\n]+[A-Za-z0-9+/=\r\n]{64,131072}-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),None),
     ('github_token',re.compile(rb'\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b'),None),
     ('basic_auth_url',re.compile(rb'https?://[^\s/@:]+:[^\s/@]+@'),None),
     ('credential_assignment',re.compile(rb'\b(TRITON_TOKEN|GITHUB_TOKEN|API_TOKEN|PASSWORD|SECRET|API_KEY)=([^\s\x00]{8,})',re.I),2),
@@ -44,7 +44,7 @@ with tarfile.open(args.archive,'r:*') as archive:
                         finding={'path':member.name,'pattern':pattern_name,**shape(value)}
                         if pattern_name=='credential_assignment': finding['key']=match.group(1).decode('ascii').upper()
                         credential_findings.append(finding);seen.add(pattern_name)
-                overlap=sample[-512:]
+                overlap=sample[-131584:]
             digest=h.hexdigest()
         rows.append({'path':member.name,'type':kind,'mode':format(member.mode,'04o'),'uid':member.uid,'gid':member.gid,'size':member.size,'sha256':digest,'linkTarget':member.linkname or None})
 rows.sort(key=lambda row:row['path'])

@@ -21,7 +21,7 @@
     "scripts/phase8d1/resolve-base-images.mjs": "9e8b1006712522c5bb5d06ed587ebf521aba353465a2c3fa97785918910bddc2",
     "scripts/phase8d1/prebuild-hashes.sh": "833fa16ba7e7604954cd5ebf1636a79feadc7f77ab959ab5809b9c669e7d9f1e",
     "scripts/phase8d1/verify-images.sh": "2f54a0b2395a8b12ec62d702c3099655cf1fd7046cbda0c4fcea6d34aaca6687",
-    "scripts/phase8d1/inventory-rootfs.py": "37cba0e5d00703106ef503b6439147c19f7d544c41fec6fd24d7d75ed53f8915",
+    "scripts/phase8d1/inventory-rootfs.py": "4c697ef40ea6f9214017ebb3f7d69f05c9bbc1a762b96d98f174ec912973f666",
     "scripts/phase8d1/validate-image-metadata.mjs": "f495b124c4b7a51280e904a77ed8ba89975066f0d7525730af4f98cb9b715884",
     "scripts/phase8d1/publish-gates.sh": "75d28d5cb8f66f15c1aeab44f4c7084c2c057b22af9655cd0377c2ed1ca44ce7",
     "scripts/phase8d1/verify-published-images.sh": "a70c82709ef15e8a1140763bb67e116f31aac1de46c4e0050d927321a16c1190",

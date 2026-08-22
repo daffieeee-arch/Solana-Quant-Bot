@@ -28,4 +28,14 @@ describe('Phase 8D1 image metadata credential boundary', () => {
       expect(result.stderr).toContain('app/config.txt');expect(result.stderr).toContain('credential_assignment');expect(result.stderr).toMatch(/"length":\d+/);
     } finally { rmSync(root,{recursive:true,force:true}); }
   });
+  it('allows private-key marker text but rejects a complete PEM private-key block', () => {
+    const run=(name:string,value:string)=>{
+      const root=mkdtempSync(join(tmpdir(),`phase8d1-pem-${name}-`));
+      try{const content=join(root,'content'),archive=join(root,'rootfs.tar'),output=join(root,'inventory.ndjson');mkdirSync(join(content,'app'),{recursive:true});writeFileSync(join(content,'app','sample.txt'),value);expect(spawnSync('tar',['-cf',archive,'-C',content,'.']).status).toBe(0);return spawnSync('python3',['scripts/phase8d1/inventory-rootfs.py',archive,output],{encoding:'utf8'});}finally{rmSync(root,{recursive:true,force:true});}
+    };
+    const begin=['-----BEGIN','PRIVATE KEY-----'].join(' '),end=['-----END','PRIVATE KEY-----'].join(' ');
+    expect(run('marker',`Documentation mentions ${begin} only.`).status).toBe(0);
+    const body='A'.repeat(96),canary=`${begin}\n${body}\n${end}\n`;
+    const result=run('block',canary);expect(result.status).not.toBe(0);expect(`${result.stdout}${result.stderr}`).not.toContain(body);expect(result.stderr).toContain('private_key');
+  });
 });
