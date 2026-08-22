@@ -80,4 +80,10 @@ describe('Phase 8D1 verification shell initialization', () => {
     expect(script).toContain("grep -F '<title>Solana Research Cockpit</title>'");
     expect(script).not.toContain("grep -F 'Phase-8A Research Cockpit'");
   });
+  it('binds the expected retained-file manifest hash into the final jq release manifest', () => {
+    const script=readFileSync('scripts/phase8d1/verify-images.sh','utf8');
+    expect(script).toContain('--arg expectedFileManifestSha "$expected_file_manifest_sha"');
+    expect(script).toContain('perFileManifestSha256:$expectedFileManifestSha');
+    expect(script).not.toContain('perFileManifestSha256:$expected_file_manifest_sha');
+  });
 });
