@@ -59,4 +59,8 @@ describe('Phase 8D1 verification shell initialization', () => {
     expect(script).toContain('sudo chown "$(id -u):$(id -g)" "$out"; sudo chmod 0750 "$out"\n  local run="$out/run"');
     expect(script).not.toContain('chown -R "$(id -u):$(id -g)" "$out"');
   });
+  it('never derives a local value from a variable first declared on the same line under set -u', () => {
+    const lines=readFileSync('scripts/phase8d1/verify-images.sh','utf8').split(/\r?\n/);
+    for(const line of lines){const declared=/^\s*local\s+([A-Za-z_][A-Za-z0-9_]*)=/.exec(line)?.[1];if(declared)expect(line).not.toMatch(new RegExp(`\\$(?:${declared}(?:[^A-Za-z0-9_]|$)|\\{${declared}\\})`));}
+  });
 });

@@ -113,7 +113,8 @@ diff -r "$TMP/output-1/run" "$TMP/output-2/run"
 network="phase8d1-internal-${GITHUB_RUN_ID:-local}-${RANDOM}"
 docker network create --internal "$network" >/dev/null; NETWORKS+=("$network")
 start_cockpit(){
-  local mode="$1" name="phase8d1-cockpit-${mode}-${GITHUB_RUN_ID:-local}"
+  local mode="$1"
+  local name="phase8d1-cockpit-${mode}-${GITHUB_RUN_ID:-local}"
   local seccomp_profile
   seccomp_profile="$(realpath deployment/phase8d1/cockpit-egress-deny-seccomp.json)"
   local mounts=()
