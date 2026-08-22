@@ -38,3 +38,12 @@ describe('Phase 8D1 Buildx manifest digest contract', () => {
     expect(resolver).not.toContain("runRegistry('docker', ['pull'");
   });
 });
+
+describe('Phase 8D1 prebuild cleanup ownership', () => {
+  it('returns both root-created temporary build trees to the invoking runner even on container exit', () => {
+    const script=readFileSync('scripts/phase8d1/prebuild-hashes.sh','utf8');
+    expect(script).toContain('-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)"');
+    expect(script).toContain('trap "chown -R \\"$HOST_UID:$HOST_GID\\" /app" EXIT');
+    expect(script).toContain('trap "chown -R \\"$HOST_UID:$HOST_GID\\" /src" EXIT');
+  });
+});

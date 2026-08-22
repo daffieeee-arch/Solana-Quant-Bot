@@ -19,7 +19,7 @@
     "deployment/phase8d1/expected-fixture-files.sha256": "aa18a485c53caeb99098e366bce57d3f15d922bf8d60db60205d9c38d2aca258",
     "deployment/phase8d1/release-manifest.schema.json": "8586f821b7b3fb2504de3a50e4704be7cc51c5f01c4b49b65b7db35f1e0791ae",
     "scripts/phase8d1/resolve-base-images.mjs": "9e8b1006712522c5bb5d06ed587ebf521aba353465a2c3fa97785918910bddc2",
-    "scripts/phase8d1/prebuild-hashes.sh": "bd9dcbf3f6e466d1686ce30823442f55c0fe71563526613de6165432c743b389",
+    "scripts/phase8d1/prebuild-hashes.sh": "833fa16ba7e7604954cd5ebf1636a79feadc7f77ab959ab5809b9c669e7d9f1e",
     "scripts/phase8d1/verify-images.sh": "2f54a0b2395a8b12ec62d702c3099655cf1fd7046cbda0c4fcea6d34aaca6687",
     "scripts/phase8d1/inventory-rootfs.py": "687e1208cadb29bcaa008bd4e4987bdca5462df4245789ba17628d30568cbbcc",
     "scripts/phase8d1/validate-image-metadata.mjs": "f495b124c4b7a51280e904a77ed8ba89975066f0d7525730af4f98cb9b715884",

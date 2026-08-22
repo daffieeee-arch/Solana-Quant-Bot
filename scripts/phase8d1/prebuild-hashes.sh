@@ -20,14 +20,16 @@ mkdir -p "$TMP/cockpit" "$TMP/runner" "$(dirname "$OUTPUT")"
 git archive --format=tar HEAD | tar -C "$TMP/cockpit" -xf -
 git archive --format=tar HEAD | tar -C "$TMP/runner" -xf -
 
-docker run --rm --platform linux/amd64 --network bridge -v "$TMP/cockpit:/app" -w /app "$NODE_REF" bash -euo pipefail -c '
+docker run --rm --platform linux/amd64 --network bridge -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -v "$TMP/cockpit:/app" -w /app "$NODE_REF" bash -euo pipefail -c '
+  trap "chown -R \"$HOST_UID:$HOST_GID\" /app" EXIT
   test "$(node --version)" = v22.23.2
   npm ci
   node ./node_modules/typescript/bin/tsc -p tsconfig.json
   npm run build:cockpit
 '
 
-docker run --rm --platform linux/amd64 --network bridge -v "$TMP/runner:/src" -w /src "$RUST_REF" bash -euo pipefail -c '
+docker run --rm --platform linux/amd64 --network bridge -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -v "$TMP/runner:/src" -w /src "$RUST_REF" bash -euo pipefail -c '
+  trap "chown -R \"$HOST_UID:$HOST_GID\" /src" EXIT
   test "$(rustc --version)" = "rustc 1.97.1 (3f02b8fa7 2026-08-04)" || rustc --version | grep -Eq "^rustc 1\.97\.1 "
   cargo --version | grep -Eq "^cargo 1\.97\.1 "
   cargo +1.97.1 build --locked --release --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --bin phase8a-bronze-runner
