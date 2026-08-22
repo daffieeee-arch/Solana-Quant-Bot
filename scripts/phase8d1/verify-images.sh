@@ -126,7 +126,7 @@ start_cockpit(){
   sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/healthz" >/dev/null
   docker exec "$name" node -e 'console.log(JSON.stringify({uid:process.getuid(),gid:process.getgid(),groups:process.getgroups()}))' > "$EVIDENCE_DIR/cockpit-$mode-identity.json"
   jq -e --argjson uid "$COCKPIT_UID" --argjson gid "$SHARED_GID" '.uid==$uid and .gid==$gid and (.groups|all(.==$gid))' "$EVIDENCE_DIR/cockpit-$mode-identity.json" >/dev/null
-  sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/" | grep -F 'Phase-8A Research Cockpit' >/dev/null
+  sudo nsenter --target "$pid" --net curl -fsS "http://127.0.0.1:3000/" | grep -F '<title>Solana Research Cockpit</title>' >/dev/null
   for method in POST PUT PATCH DELETE; do test "$(sudo nsenter --target "$pid" --net curl -sS -o /dev/null -w '%{http_code}' -X "$method" "http://127.0.0.1:3000/")" = 405; done
   for route in /api/dashboard-data /api/controls /api/debug /api/replay /api/start /api/stop; do test "$(sudo nsenter --target "$pid" --net curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000$route")" = 404; done
   if [[ "$mode" == unavailable ]]; then

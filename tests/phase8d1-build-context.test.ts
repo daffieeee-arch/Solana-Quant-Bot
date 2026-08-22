@@ -73,4 +73,11 @@ describe('Phase 8D1 verification shell initialization', () => {
     expect(script).toContain('sudo nsenter --target "$pid" --net curl');
     expect(script).toContain("connect({host:\"1.1.1.1\",port:443");
   });
+  it('checks the exact static cockpit HTML marker rather than client-rendered text', () => {
+    const html=readFileSync('frontend/cockpit.html','utf8');
+    const script=readFileSync('scripts/phase8d1/verify-images.sh','utf8');
+    expect(html).toContain('<title>Solana Research Cockpit</title>');
+    expect(script).toContain("grep -F '<title>Solana Research Cockpit</title>'");
+    expect(script).not.toContain("grep -F 'Phase-8A Research Cockpit'");
+  });
 });
