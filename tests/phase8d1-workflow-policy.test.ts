@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadPhase8D1Inputs, validatePhase8D1Inputs } from '../scripts/phase8d1/assert-phase8d1-supply-chain.mjs';
+import { execFileSync } from 'node:child_process';
 
 function candidate() { return loadPhase8D1Inputs(process.cwd()); }
 
@@ -22,6 +23,13 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
     const install=steps.findIndex((step:any)=>step.run==='npm ci');
     const policy=steps.findIndex((step:any)=>step.run==='node scripts/phase8d1/assert-phase8d1-supply-chain.mjs');
     expect(setup).toBeGreaterThan(-1);expect(install).toBeGreaterThan(setup);expect(policy).toBeGreaterThan(install);
+  });
+
+  it('keeps every directly invoked Phase 8D1 shell script executable in Git', () => {
+    for(const path of ['prebuild-hashes.sh','publish-gates.sh','verify-images.sh','verify-published-images.sh']){
+      const mode=execFileSync('git',['ls-files','--stage','--',`scripts/phase8d1/${path}`],{encoding:'utf8'}).trim().split(/\s+/)[0];
+      expect(mode).toBe('100755');
+    }
   });
 
   it('requires real GITHUB_TOKEN API authentication, Docker seccomp EPERM, and env/rootfs content secret scans', () => {

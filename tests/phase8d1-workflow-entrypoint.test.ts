@@ -16,6 +16,10 @@ async function clonePolicyFiles() {
     'containers/Dockerfile.cockpit', 'containers/Dockerfile.phase8a-runner',
     'scripts/phase8d1/resolve-base-images.mjs', 'scripts/phase8d1/prebuild-hashes.sh', 'scripts/phase8d1/verify-images.sh', 'scripts/phase8d1/inventory-rootfs.py', 'scripts/phase8d1/validate-image-metadata.mjs', 'scripts/phase8d1/publish-gates.sh', 'scripts/phase8d1/verify-published-images.sh', 'scripts/phase8d1/json-schema-subset.mjs', 'scripts/phase8d1/validate-release-manifest.mjs', 'scripts/phase8d1/validate-runtime-identities.mjs',
   ]) { const target=join(root,path); await cp(path,target,{recursive:true}); }
+  for(const args of [['init','-q'],['add','--all']]){
+    const result=spawnSync('git',args,{cwd:root,encoding:'utf8'});
+    if(result.status!==0)throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+  }
   return root;
 }
 async function rejected(path: string, mutate: (text: string) => string) {

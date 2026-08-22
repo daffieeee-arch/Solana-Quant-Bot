@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
@@ -22,6 +23,8 @@ export function loadPhase8D1Inputs(root = process.cwd()) {
   const ciText = text(at('.github/workflows/ci.yml'));
   const contract = json(at('deployment/phase8d1/remote-build-contract.json'));
   const supplyChainFileText=Object.fromEntries(Object.keys(contract.supplyChainFileSha256 ?? {}).map(path=>[path,text(at(path))]));
+  const directShellScripts=['prebuild-hashes.sh','publish-gates.sh','verify-images.sh','verify-published-images.sh'].map(name=>`scripts/phase8d1/${name}`);
+  const shellScriptModes=Object.fromEntries(directShellScripts.map(path=>[path,execFileSync('git',['ls-files','--stage','--',path],{cwd:root,encoding:'utf8'}).trim().split(/\s+/)[0]]));
   const verifyScript = [
     text(at('scripts/phase8d1/resolve-base-images.mjs')),
     text(at('scripts/phase8d1/prebuild-hashes.sh')),
@@ -36,6 +39,7 @@ export function loadPhase8D1Inputs(root = process.cwd()) {
     identities: json(at('deployment/phase8d1/runtime-identities.json')),
     identityDriftText: text(at('deployment/phase8d1/runtime-identity-drift-55-to-59.json')),
     contract,
+    shellScriptModes,
     supplyChainFileText,
     baseLockText: text(at('deployment/phase8d1/base-image-lock.json')),
     baseLock: json(at('deployment/phase8d1/base-image-lock.json')),
@@ -91,6 +95,7 @@ export function validatePhase8D1Inputs(input) {
   const npmCiIndex=verifySteps.findIndex(step=>step.run==='npm ci');
   const policyIndex=verifySteps.findIndex(step=>step.run==='node scripts/phase8d1/assert-phase8d1-supply-chain.mjs');
   if(nodeSetupIndex<0||npmCiIndex<=nodeSetupIndex||policyIndex<=npmCiIndex)errors.push('missing locked Node policy dependency bootstrap');
+  if(Object.values(input.shellScriptModes??{}).length!==4||Object.values(input.shellScriptModes??{}).some(mode=>mode!=='100755'))errors.push('direct Phase 8D1 shell script not executable in Git index');
 
   if (!exactKeys(publish.on,['workflow_dispatch'])) errors.push('invalid publish trigger');
   const inputs=publish.on?.workflow_dispatch?.inputs;
