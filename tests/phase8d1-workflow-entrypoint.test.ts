@@ -12,9 +12,9 @@ async function clonePolicyFiles() {
   const root = await mkdtemp(join(tmpdir(), 'phase8d1-policy-entrypoint-')); roots.push(root);
   for (const path of [
     '.github/workflows/ci.yml', '.github/workflows/phase8d-images-verify.yml', '.github/workflows/phase8d-images-publish.yml',
-    'deployment/phase8d1/runtime-identities.json', 'deployment/phase8d1/runtime-identity-drift-55-to-59.json', 'deployment/phase8d1/remote-build-contract.json', 'deployment/phase8d1/base-image-lock.json', 'deployment/phase8d1/release-manifest.schema.json', 'deployment/phase8d1/cockpit-egress-deny-seccomp.json', 'deployment/phase8d1/expected-fixture-files.sha256', 'deployment/phase8d1/rootfs-public-key-test-vectors.json',
+    'deployment/phase8d1/runtime-identities.json', 'deployment/phase8d1/runtime-identity-drift-55-to-59.json', 'deployment/phase8d1/remote-build-contract.json', 'deployment/phase8d1/base-image-lock.json', 'deployment/phase8d1/buildkit-image-lock.json', 'deployment/phase8d1/partial-publish-contract.json', 'deployment/phase8d1/release-manifest.schema.json', 'deployment/phase8d1/cockpit-egress-deny-seccomp.json', 'deployment/phase8d1/expected-fixture-files.sha256', 'deployment/phase8d1/rootfs-public-key-test-vectors.json',
     'containers/Dockerfile.cockpit', 'containers/Dockerfile.phase8a-runner',
-    'scripts/phase8d1/resolve-base-images.mjs', 'scripts/phase8d1/prebuild-hashes.sh', 'scripts/phase8d1/verify-images.sh', 'scripts/phase8d1/inventory-rootfs.py', 'scripts/phase8d1/validate-image-metadata.mjs', 'scripts/phase8d1/publish-gates.sh', 'scripts/phase8d1/verify-published-images.sh', 'scripts/phase8d1/json-schema-subset.mjs', 'scripts/phase8d1/validate-release-manifest.mjs', 'scripts/phase8d1/validate-runtime-identities.mjs',
+    'scripts/phase8d1/resolve-base-images.mjs', 'scripts/phase8d1/prebuild-hashes.sh', 'scripts/phase8d1/verify-images.sh', 'scripts/phase8d1/inventory-rootfs.py', 'scripts/phase8d1/validate-image-metadata.mjs', 'scripts/phase8d1/publish-gates.sh', 'scripts/phase8d1/partial-publish-state.mjs', 'scripts/phase8d1/verify-published-images.sh', 'scripts/phase8d1/json-schema-subset.mjs', 'scripts/phase8d1/validate-release-manifest.mjs', 'scripts/phase8d1/validate-runtime-identities.mjs',
   ]) { const target=join(root,path); await cp(path,target,{recursive:true}); }
   for(const args of [['init','-q'],['add','--all']]){
     const result=spawnSync('git',args,{cwd:root,encoding:'utf8'});
@@ -57,6 +57,22 @@ describe('Phase 8D1 production policy rejects real workflow file bypasses', () =
   it('rejects any additional publish job with write/identity/secret/unpinned/push capability', async () => {
     const injected = '\n  bypass:\n    runs-on: ubuntu-latest\n    permissions:\n      packages: write\n      id-token: write\n    steps:\n      - { uses: actions/checkout@v4 }\n      - run: echo "${{ secrets.DEPLOY_TOKEN }}" && docker push ghcr.io/example/x:y\n';
     await rejected('.github/workflows/phase8d-images-publish.yml', text=>text+injected);
+  });
+  it('rejects rebound BuildKit, publish bootstrap, and partial-state workflow bypasses', async () => {
+    const verifyCases: Array<(text:string)=>string>=[
+      text=>text.replace(/image=moby\/buildkit@sha256:[0-9a-f]{64}/,'image=moby/buildkit:v0.32.2'),
+      text=>text.replace('          buildkitd-flags: --debug','          buildkitd-flags: --allow-insecure-entitlement security.insecure'),
+    ];
+    for(const mutate of verifyCases)await rejected('.github/workflows/phase8d-images-verify.yml',mutate);
+    const publishCases: Array<(text:string)=>string>=[
+      text=>text.replace(/      - name: Set up exact Node runtime for publish policy[\s\S]*?      - name: Install locked publish policy dependencies\n/,'      - name: Install locked publish policy dependencies\n'),
+      text=>text.replace("          node-version: '22.23.2'","          node-version: '22'"),
+      text=>text.replace('        run: npm ci','        run: npm --version'),
+      text=>text.replace('          node scripts/phase8d1/assert-phase8d1-supply-chain.mjs','          node --version'),
+      text=>text.replace('        continue-on-error: true\n        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0','        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0'),
+      text=>text.replace('      - name: Upload cockpit push state','      - name: Missing cockpit durable state'),
+    ];
+    for(const mutate of publishCases)await rejected('.github/workflows/phase8d-images-publish.yml',mutate);
   });
   it('rejects credential-bearing image ENV and history mutations', async () => {
     await rejected('containers/Dockerfile.cockpit', text=>text.replace('ENV NODE_ENV=production','ENV NODE_ENV=production\nENV API_TOKEN=supersecretvalue'));

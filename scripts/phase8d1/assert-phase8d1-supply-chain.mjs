@@ -15,8 +15,8 @@ const exactKeys = (obj, expected) => JSON.stringify(keys(obj)) === JSON.stringif
 const containsAll = (value, markers) => markers.every(marker => value.includes(marker));
 const stableValue=value=>Array.isArray(value)?value.map(stableValue):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stableValue(value[key])])):value;
 const semanticSha256=value=>createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
-const VERIFY_SEMANTIC_SHA256='28af20fe8c45750fb148cef24b2649780730b68f2bf236170d557e1638f4a85e';
-const PUBLISH_SEMANTIC_SHA256='4dba62f9cf15748fc4e2066a6086da2e4b6902159e94fef892fe03c4198a220d';
+const VERIFY_SEMANTIC_SHA256='871f4abc7455e03e07dff2a89e300a3f742a84ccd7058c4bfaabf9d0ba9e83c9';
+const PUBLISH_SEMANTIC_SHA256='470a55266a7225bf9f637853cfaab3a91dc727b36b1eb9880a78b02ccbc64024';
 
 export function loadPhase8D1Inputs(root = process.cwd()) {
   const at = path => resolve(root, path);
@@ -34,7 +34,7 @@ export function loadPhase8D1Inputs(root = process.cwd()) {
     text(at('scripts/phase8d1/inventory-rootfs.py')),
     text(at('scripts/phase8d1/validate-image-metadata.mjs')),
   ].join('\n');
-  const publishScript = [text(at('scripts/phase8d1/publish-gates.sh')), text(at('scripts/phase8d1/verify-published-images.sh'))].join('\n');
+  const publishScript = [text(at('scripts/phase8d1/publish-gates.sh')), text(at('scripts/phase8d1/partial-publish-state.mjs')), text(at('scripts/phase8d1/verify-published-images.sh'))].join('\n');
   return {
     verifyWorkflow: YAML.parse(verifyText), publishWorkflow: YAML.parse(publishText), ciWorkflow: YAML.parse(ciText),
     verifyText, publishText, ciText, verifyScript, publishScript,
@@ -45,7 +45,11 @@ export function loadPhase8D1Inputs(root = process.cwd()) {
     supplyChainFileText,
     baseLockText: text(at('deployment/phase8d1/base-image-lock.json')),
     baseLock: json(at('deployment/phase8d1/base-image-lock.json')),
+    buildKitLockText: text(at('deployment/phase8d1/buildkit-image-lock.json')),
+    buildKitLock: json(at('deployment/phase8d1/buildkit-image-lock.json')),
     publicKeyAllowlist: json(at('deployment/phase8d1/rootfs-public-key-test-vectors.json')),
+    partialPublishContractText: text(at('deployment/phase8d1/partial-publish-contract.json')),
+    partialPublishContract: json(at('deployment/phase8d1/partial-publish-contract.json')),
     releaseSchema: json(at('deployment/phase8d1/release-manifest.schema.json')),
     cockpitDockerfile: text(at('containers/Dockerfile.cockpit')),
     runnerDockerfile: text(at('containers/Dockerfile.phase8a-runner')),
@@ -70,7 +74,7 @@ function rejectGlobalProhibitions(combined, errors) {
 
 export function validatePhase8D1Inputs(input) {
   const errors=[];
-  const { verifyWorkflow: verify, publishWorkflow: publish, ciWorkflow: ci, contract, identities, baseLock, releaseSchema } = input;
+  const { verifyWorkflow: verify, publishWorkflow: publish, ciWorkflow: ci, contract, identities, baseLock, buildKitLock, partialPublishContract, releaseSchema } = input;
   const combined = [input.verifyText,input.publishText,input.ciText,input.verifyScript,input.publishScript,input.cockpitDockerfile,input.runnerDockerfile,JSON.stringify(contract)].join('\n');
   if (createHash('sha256').update(input.verifyText).digest('hex')!==contract.workflowSha256?.verify) errors.push('reviewed verify workflow digest mismatch');
   if (createHash('sha256').update(input.publishText).digest('hex')!==contract.workflowSha256?.publish) errors.push('reviewed publish workflow digest mismatch');
@@ -86,6 +90,24 @@ export function validatePhase8D1Inputs(input) {
       || /^\s*RUN\s+[^\n]*(?:TOKEN|PASSWORD|SECRET|API_KEY|COOKIE|CREDENTIAL)=[^\s$]{8,}/gimu.test(source))) errors.push(`credential-bearing Dockerfile forbidden:${path}`);
   }
   validateActionPins(`${input.verifyText}\n${input.publishText}\n${input.ciText}`, errors);
+
+  const buildKitImage='moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528';
+  if(createHash('sha256').update(input.buildKitLockText).digest('hex')!==contract.buildKitImageLockSha256)errors.push('reviewed BuildKit lock digest mismatch');
+  if(!exactKeys(buildKitLock,['schemaVersion','observedAt','registry','repository','versionTag','buildKitVersion','releaseCommit','manifestListDigest','linuxAmd64Digest','platform','selectionRationale'])||buildKitLock?.schemaVersion!=='PHASE8D1_BUILDKIT_LOCK_1'||buildKitLock?.registry!=='docker.io'||buildKitLock?.repository!=='moby/buildkit'||buildKitLock?.versionTag!=='v0.32.2'||buildKitLock?.buildKitVersion!=='v0.32.2'||buildKitLock?.releaseCommit!=='991535e0973488b6a429096d21fa13f81f2d89d8'||buildKitLock?.manifestListDigest!=='sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8'||buildKitLock?.linuxAmd64Digest!=='sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528'||buildKitLock?.platform!=='linux/amd64'||semanticSha256(buildKitLock)!=='cec7286b76bbff6379a51c6145a08e282a7b7cfb77992a5a028e431fac33a428')errors.push('invalid exact BuildKit lock');
+  const validateBuildKitJob=(job,label)=>{
+    const steps=job?.steps??[];
+    const setupSteps=steps.filter(step=>String(step.uses??'').startsWith('docker/setup-buildx-action@'));
+    const setup=setupSteps[0];
+    const driverOpts=String(setup?.with?.['driver-opts']??'').trim();
+    if(setupSteps.length!==1||setup?.id!=='buildx'||setup?.with?.driver!=='docker-container'||setup?.with?.install!==true||driverOpts!==`image=${buildKitImage}`||setup?.with?.platforms!=='linux/amd64'||setup?.with?.['buildkitd-flags']!=='--debug')errors.push(`invalid pinned BuildKit setup:${label}`);
+    const serialized=JSON.stringify(setup??{});
+    if(/security\.insecure|network\.host|buildx-stable-1/.test(serialized))errors.push(`insecure or mutable BuildKit setup:${label}`);
+    const verifyStep=steps.find(step=>step.name==='Verify exact sandboxed BuildKit server');
+    if(!verifyStep||verifyStep.env?.BUILDX_NODES!=='${{ steps.buildx.outputs.nodes }}'||!containsAll(String(verifyStep.run??''),['v0.32.2',buildKitImage,'security.insecure','network.host','linux/amd64']))errors.push(`missing runtime BuildKit proof:${label}`);
+    if(steps.some(step=>own(step.with,'allow')&&String(step.with.allow).trim()))errors.push(`insecure BuildKit build entitlement requested:${label}`);
+  };
+  validateBuildKitJob(verify.jobs?.['verify-images-no-push'],'verify');
+  validateBuildKitJob(publish.jobs?.publish,'publish');
 
   if (!own(verify.on,'pull_request') || own(verify.on,'pull_request_target') || !own(verify.on,'workflow_call')) errors.push('invalid verify triggers');
   if (!exactKeys(verify.permissions,['contents']) || verify.permissions.contents !== 'read') errors.push('invalid PR permissions');
@@ -109,16 +131,30 @@ export function validatePhase8D1Inputs(input) {
   if (!inputs?.source_sha?.required || !inputs?.confirmation?.required) errors.push('missing publish inputs');
   const publishJob=publish.jobs?.publish;
   if (!publishJob || !exactKeys(publishJob.permissions,['contents','packages']) || publishJob.permissions.contents!=='read' || publishJob.permissions.packages!=='write') errors.push('invalid publish permissions');
+  if(publishJob?.env?.DOCKER_BUILD_RECORD_UPLOAD!=='false')errors.push('automatic publish Buildx record artifact upload forbidden');
   if (publishJob?.if !== "github.ref == 'refs/heads/main' && inputs.confirmation == 'PUBLISH_SYNTHETIC_PHASE8D_IMAGES' && inputs.source_sha == github.sha") errors.push('missing pre-run main confirmation and source gate');
   if (own(publishJob?.permissions,'id-token') || own(publishJob?.permissions,'attestations')) errors.push('forbidden publish identity permissions');
   if (!exactKeys(publish.permissions,['contents']) || publish.permissions.contents!=='read') errors.push('invalid workflow default permissions');
   if (!publish.jobs?.['normal-ci-gate']?.uses?.endsWith('/ci.yml') || !publish.jobs?.['image-verify-gate']?.uses?.endsWith('/phase8d-images-verify.yml')) errors.push('missing successful CI and image verify gates');
+  const publishSteps=publishJob?.steps??[];
+  const publishNodeSetup=publishSteps.findIndex(step=>String(step.uses??'').startsWith('actions/setup-node@')&&step.with?.['node-version']==='22.23.2');
+  const publishNpmCi=publishSteps.findIndex(step=>step.run==='npm ci');
+  const publishPolicy=publishSteps.findIndex(step=>String(step.run??'').includes('node scripts/phase8d1/assert-phase8d1-supply-chain.mjs'));
+  const publishFirstProductNode=publishSteps.findIndex(step=>String(step.run??'').includes('node scripts/phase8d1/resolve-base-images.mjs'));
+  const publishPolicyRun=String(publishSteps[publishPolicy]?.run??'');
+  if(publishNodeSetup<0||publishNpmCi<=publishNodeSetup||publishPolicy<=publishNpmCi||publishFirstProductNode<=publishPolicy||!containsAll(publishPolicyRun,['test "$(node --version)" = v22.23.2','node scripts/phase8d1/assert-phase8d1-supply-chain.mjs','test "$SOURCE_SHA" = "$(git rev-parse HEAD)"','git status --porcelain --untracked-files=no']))errors.push('missing exact publish-job Node dependency and policy bootstrap');
+  if(createHash('sha256').update(input.partialPublishContractText).digest('hex')!==contract.partialPublishContractSha256||semanticSha256(partialPublishContract)!=='a549421d2f08ba9da45eae415d4c7b41d7b1590060b72d5ea858152c6a064779')errors.push('invalid partial publish contract binding');
+  if(!exactKeys(partialPublishContract,['schemaVersion','releaseId','prePushBothTagsAbsentRequired','sharedImmutableReleaseIdRequired','stateFile','durableArtifactStages','partialVerdict','partialCollisionVerdict','successVerdict','deploymentEligibleBeforeCompleteRetest','automaticRetryAllowed','tagOverwriteAllowed','packageVersionDeletionAllowed','explicitRecoveryAuthorizationRequiredAfterPartial','perImageSuccessRequires','successfulReleaseRequiresBothImages','packages'])||partialPublishContract?.schemaVersion!=='PHASE8D1_PARTIAL_PUBLISH_CONTRACT_1'||partialPublishContract?.releaseId!=='SOURCE_GIT_SHA'||partialPublishContract?.partialVerdict!=='PARTIAL_PUBLISH_HOLD'||partialPublishContract?.successVerdict!=='PUBLISH_SUCCEEDED'||partialPublishContract?.deploymentEligibleBeforeCompleteRetest!==false||partialPublishContract?.automaticRetryAllowed!==false||partialPublishContract?.tagOverwriteAllowed!==false||partialPublishContract?.packageVersionDeletionAllowed!==false||partialPublishContract?.explicitRecoveryAuthorizationRequiredAfterPartial!==true||partialPublishContract?.successfulReleaseRequiresBothImages!==true)errors.push('invalid partial publish safety semantics');
+  for(const name of ['Upload preflight publish state','Upload cockpit push state','Upload runner push state','Upload final publish state'])if(!publishSteps.some(step=>step.name===name))errors.push(`missing durable partial publish artifact:${name}`);
+  for(const id of ['push-cockpit','push-runner'])if(publishSteps.find(step=>step.id===id)?.['continue-on-error']!==true)errors.push(`push outcome cannot be durably recorded:${id}`);
+  if(!String(publishSteps.find(step=>step.id==='push-runner')?.if??'').includes('always()')||!containsAll(input.publishText,['partial-publish-state.mjs record','partial-publish-state.mjs mark-verified','partial-publish-state.mjs require-success','PARTIAL_PUBLISH_STATE']))errors.push('missing partial publish workflow state machine');
+  if(/gh api\s+--method DELETE|docker manifest rm|retry-action|tagOverwriteAllowed:\s*true/i.test(`${input.publishText}\n${input.publishScript}`))errors.push('automatic retry delete or overwrite forbidden after partial publish');
   if (!containsAll(input.publishText,['PUBLISH_SYNTHETIC_PHASE8D_IMAGES','refs/heads/main','LIVE_MAIN_SHA','secrets.GITHUB_TOKEN','packages: write','provenance: mode=max','sbom: true','Pull and retest immutable registry digests'])) errors.push('missing manual main-only publish controls');
   if (/secrets\.(?!GITHUB_TOKEN)/.test(input.publishText)) errors.push('forbidden non-repository publish credential');
   if (!containsAll(input.publishScript,['reject_merge_ref','refs/heads/main','LIVE_MAIN_SHA','TAG_COLLISION_REJECTED','manifest unknown','packageVisibility=="private"','finalDigestRetestVerdict'])) errors.push('missing tag collision, live-main, private or digest-retest gate');
   if (!input.publishScript.includes('gh api') || input.publishScript.includes('Authorization: Bearer')) errors.push('invalid GitHub API authentication boundary');
 
-  if (contract.schemaVersion!=='PHASE8D1_REMOTE_BUILD_CONTRACT_1' || contract.status!=='REMOTE_ISOLATED_GITHUB_BUILDER') errors.push('invalid remote build contract');
+  if (contract.schemaVersion!=='PHASE8D1_REMOTE_BUILD_CONTRACT_1' || contract.status!=='REMOTE_ISOLATED_GITHUB_BUILDER' || contract.sourceBaseSha!=='8b5ecb6168ac3d1ea9fa6630ab8a43ada1b686e8') errors.push('invalid remote build contract');
   if (contract.platform!=='linux/amd64' || contract.maxCompressedBaseImageBytes>3221225472) errors.push('invalid base image platform or pull budget');
   for (const spec of Object.values(contract.baseImages ?? {})) {
     if (!spec.digestRequired || spec.versionTag==='latest' || !spec.registry || !spec.repository || !spec.requiredSoftwareVersion) errors.push('base digest and exact version required');
@@ -146,6 +182,7 @@ export function validatePhase8D1Inputs(input) {
   if (contract.publish?.trigger!=='workflow_dispatch' || contract.publish?.confirmation!=='PUBLISH_SYNTHETIC_PHASE8D_IMAGES' || !contract.publish.mainOnly || !contract.publish.sourceShaEqualsGithubSha || !contract.publish.sourceShaEqualsLiveMain) errors.push('invalid publish authorization contract');
   if (contract.publish?.packageVisibility!=='private' || contract.publish?.overwriteExistingTag!==false || contract.publish?.deploymentIdentity!=='REGISTRY_DIGEST_ONLY') errors.push('invalid private immutable GHCR contract');
   if (contract.publish?.provenance!=='mode=max' || contract.publish?.sbom!=='spdx' || contract.publish?.finalDigestRetestRequired!==true) errors.push('missing supply-chain attestations or digest retest');
+  if(contract.publish?.durablePartialPublishStateRequired!==true||contract.publish?.explicitRecoveryAuthorizationRequired!==true||contract.publish?.automaticRetryAllowed!==false||contract.publish?.packageVersionDeletionAllowed!==false)errors.push('missing durable partial publish recovery contract');
   if (contract.trueNas?.mutationsAuthorized!==false || contract.trueNas?.deploymentAuthorized!==false || contract.trueNas?.privatePullCredentialCreated!==false) errors.push('forbidden TrueNAS operation');
   const allowed=(contract.allowedBuildArgs ?? []).map(x=>x.toUpperCase());
   if ((contract.forbiddenBuildArgs ?? []).some(x=>allowed.some(y=>y.includes(x)))) errors.push('forbidden secret-bearing build arg');

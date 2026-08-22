@@ -131,5 +131,5 @@ GitHub Actions is validation-only:
 | Phase 7A evidence / Phase 7B citation gate | ✅ merged via PR #16; post-merge run `32397224604` green; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, 0/10 proven, no registry/runtime/pilot authorization |
 | Phase 8A Bronze runner / Research Cockpit | 🔶 offline fixture candidate implemented; reducer reused; transport/Silver/research eligibility remain false; no real payload or pilot |
 | Phase 8C cockpit-only / Grafana-as-Code | 🔶 offline candidate implemented; compiled/runtime inertness proven locally; contracts unapplied and not deployed; legacy is `LEGACY_FORENSIC_V1` |
-| Phase 8D1 remote images / GHCR readiness | 🔶 workflow candidate implemented; remote image/container gates `NOT_EXECUTED_PENDING_DELIVERY`; no push, package, credential, dataset or deployment |
+| Phase 8D1 remote images / GHCR readiness | 🔶 remote no-push image/container gates proven on GitHub-hosted `ubuntu-24.04`; publish route remains never dispatched; no GHCR push, credential, dataset or deployment |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |

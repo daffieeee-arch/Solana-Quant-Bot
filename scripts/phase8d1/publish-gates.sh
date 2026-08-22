@@ -9,6 +9,8 @@ GITHUB_REPOSITORY="${GITHUB_REPOSITORY:?}"
 GITHUB_SHA="${GITHUB_SHA:?}"
 GITHUB_REF="${GITHUB_REF:?}"
 GITHUB_EVENT_NAME="${GITHUB_EVENT_NAME:?}"
+PARTIAL_PUBLISH_OBSERVATION="${PARTIAL_PUBLISH_OBSERVATION:?}"
+PARTIAL_PUBLISH_STATE="${PARTIAL_PUBLISH_STATE:?}"
 reject_merge_ref(){ [[ "$GITHUB_REF" != refs/pull/*/merge ]]; }
 reject_merge_ref
 [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
@@ -23,22 +25,38 @@ unexpected_untracked="$(git ls-files --others --exclude-standard | grep -Ev '^ph
 test -z "$unexpected_untracked"
 LIVE_MAIN_SHA="$(gh api --method GET "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
 [[ "$SOURCE_SHA" == "$LIVE_MAIN_SHA" ]]
-check_absent(){
-  local ref="$1" error
+inspect_tag(){
+  local ref="$1" prefix="$2" error raw status digest=''
   error="$(mktemp)"
-  if docker buildx imagetools inspect "$ref" >/dev/null 2>"$error"; then
-    rm -f "$error"
-    printf 'TAG_COLLISION_REJECTED:%s\n' "$ref" >&2
-    return 1
-  fi
-  if ! grep -Eiq 'manifest unknown|no such manifest|not found|name unknown' "$error"; then
-    cat "$error" >&2
-    rm -f "$error"
-    return 1
+  if raw="$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$ref" 2>"$error")"; then
+    status=PRESENT
+    digest="$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<<"$raw")"
+  elif grep -Eiq 'manifest unknown|no such manifest|not found|name unknown' "$error"; then
+    status=ABSENT
+  else
+    status=UNKNOWN
   fi
   rm -f "$error"
+  printf -v "${prefix}_STATUS" '%s' "$status"
+  printf -v "${prefix}_DIGEST" '%s' "$digest"
 }
 [[ "$COCKPIT_TAG" != *:latest && "$RUNNER_TAG" != *:latest ]]
-check_absent "$COCKPIT_TAG"
-check_absent "$RUNNER_TAG"
+inspect_tag "$COCKPIT_TAG" COCKPIT
+inspect_tag "$RUNNER_TAG" RUNNER
+mkdir -p "$(dirname "$PARTIAL_PUBLISH_STATE")"
+jq -n \
+  --arg sourceGitSha "$SOURCE_SHA" --arg cockpitTag "$COCKPIT_TAG" --arg runnerTag "$RUNNER_TAG" \
+  --arg cockpitStatus "$COCKPIT_STATUS" --arg runnerStatus "$RUNNER_STATUS" \
+  --arg cockpitDigest "$COCKPIT_DIGEST" --arg runnerDigest "$RUNNER_DIGEST" \
+  '{schemaVersion:"PHASE8D1_PARTIAL_PUBLISH_OBSERVATION_1",sourceGitSha:$sourceGitSha,releaseId:$sourceGitSha,images:[
+    {name:"cockpit",package:"phase8a-research-cockpit",tag:$cockpitTag,preflightStatus:$cockpitStatus,pushStatus:"NOT_ATTEMPTED",registryDigest:(if $cockpitDigest=="" then null else $cockpitDigest end),private:false,repositoryLinked:false,provenancePresent:false,spdxSbomPresent:false,digestRetestPassed:false},
+    {name:"runner",package:"phase8a-bronze-runner",tag:$runnerTag,preflightStatus:$runnerStatus,pushStatus:"NOT_ATTEMPTED",registryDigest:(if $runnerDigest=="" then null else $runnerDigest end),private:false,repositoryLinked:false,provenancePresent:false,spdxSbomPresent:false,digestRetestPassed:false}
+  ]}' > "$PARTIAL_PUBLISH_OBSERVATION"
+node scripts/phase8d1/partial-publish-state.mjs evaluate < "$PARTIAL_PUBLISH_OBSERVATION" > "$PARTIAL_PUBLISH_STATE.tmp"
+mv "$PARTIAL_PUBLISH_STATE.tmp" "$PARTIAL_PUBLISH_STATE"
+verdict="$(jq -er '.verdict' "$PARTIAL_PUBLISH_STATE")"
+if [[ "$verdict" != PRE_PUSH_READY ]]; then
+  printf 'TAG_COLLISION_REJECTED:%s\n' "$verdict" >&2
+  exit 1
+fi
 printf 'Phase 8D1 manual main-only publish gates PASS\n'

@@ -108,7 +108,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-Phase 8C is merged through PR #19 as `6c597b4c2c274583a4fdd9ba7a24db44c21df5a8`; its cockpit/image/dataset/Grafana contracts remain unapplied. Phase 8D stopped before mutation because Hermes has no safe container builder/runtime. Phase 8D1 is the current uncommitted candidate; read [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md). It defines no-push GitHub-hosted verification and a separate future manual private-GHCR publish contract. Remote image/container gates remain `NOT_EXECUTED_PENDING_DELIVERY`; no package, credential, service, dataset, live dashboard, payload, accepted Silver, strategy input or pilot is authorized.
+Phase 8C is merged through PR #19 as `6c597b4c2c274583a4fdd9ba7a24db44c21df5a8`; its cockpit/image/dataset/Grafana contracts remain unapplied. PR #20 squash-merged Phase 8D1 as `8b5ecb6168ac3d1ea9fa6630ab8a43ada1b686e8`; post-merge normal CI and verify-only main image/container gates passed. Read [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md). The private GHCR publish workflow remains never dispatched. This follow-up hardens only that route; no package, credential, service, dataset, live dashboard, payload, accepted Silver, strategy input or pilot is authorized.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
