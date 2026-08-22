@@ -90,6 +90,7 @@ run_once(){
   test "$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$name")" = 'none'
   test "$(docker inspect --format '{{.State.ExitCode}}' "$name")" = '0'
   docker rm "$name" >/dev/null; NAMES=("${NAMES[@]/$name}")
+  sudo chown "$(id -u):$(id -g)" "$out"; sudo chmod 0750 "$out"
   local run="$out/run"
   test -d "$run" && test ! -L "$run"
   test "$(find "$run" -type f | wc -l)" -eq 20

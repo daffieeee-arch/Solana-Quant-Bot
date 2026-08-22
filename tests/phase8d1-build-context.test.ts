@@ -54,4 +54,9 @@ describe('Phase 8D1 verification shell initialization', () => {
     expect(script).toContain('local index="$1"\n  local out="$TMP/output-$index" name="phase8d1-runner-$index-${GITHUB_RUN_ID:-local}"');
     expect(script).not.toContain('local index="$1" out="$TMP/output-$index"');
   });
+  it('reclaims only the temporary output parent before reading immutable runner output', () => {
+    const script=readFileSync('scripts/phase8d1/verify-images.sh','utf8');
+    expect(script).toContain('sudo chown "$(id -u):$(id -g)" "$out"; sudo chmod 0750 "$out"\n  local run="$out/run"');
+    expect(script).not.toContain('chown -R "$(id -u):$(id -g)" "$out"');
+  });
 });
