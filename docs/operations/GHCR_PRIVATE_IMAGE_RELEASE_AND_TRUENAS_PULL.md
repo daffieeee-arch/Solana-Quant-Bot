@@ -13,7 +13,7 @@ A release operator must dispatch `.github/workflows/phase8d-images-publish.yml` 
 - exact `source_sha` equal to the selected workflow SHA and live remote main;
 - confirmation `PUBLISH_SYNTHETIC_PHASE8D_IMAGES`.
 
-The workflow first reruns normal CI and no-push image verification. The publish job uses only the repository-scoped `GITHUB_TOKEN` with `contents: read` and `packages: write`. It rejects PR/merge refs, mutable/latest tags, tag collisions, dirty source or main drift.
+The workflow first reruns normal CI and no-push image verification. The publish job then independently bootstraps Node `22.23.2`, `npm ci`, the full supply-chain policy and exact-main/clean-tree checks in its own runner. It uses only the repository-scoped `GITHUB_TOKEN` with `contents: read` and `packages: write`. It rejects PR/merge refs, mutable/latest tags, tag collisions, dirty source or main drift.
 
 Packages:
 
@@ -28,6 +28,7 @@ Future published images require:
 
 - `linux/amd64` only;
 - exact digest-pinned base images;
+- Buildx client v0.12.1 pinned to release commit `30feaa1a915b869ebc2eea6328624b49facd4bfb`; BuildKit v0.32.2 pinned directly to linux/amd64 digest `sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528`, OCI worker mode forced to `bridge` (resolved worker label `cni`), and no `security.insecure` or `network.host` entitlement;
 - `provenance: mode=max`;
 - SPDX SBOM;
 - no secret-bearing build arguments or environment;
@@ -37,6 +38,10 @@ Future published images require:
 - successful release manifest only after final retest.
 
 `actions/attest` and OIDC/id-token permissions are deliberately absent. BuildKit supplies provenance/SBOM.
+
+## Partial publish recovery HOLD
+
+The two packages cannot be pushed atomically. The workflow therefore writes and uploads durable state before push, after the cockpit push, after the runner push and after final verification. A single successful push is `PARTIAL_PUBLISH_HOLD`, never deployment-eligible. No ordinary rerun, deletion, overwrite or automatic retry is authorized. A rerun that sees only one pre-existing tag emits `PARTIAL_PUBLISH_COLLISION_HOLD` before any push and requires a separate explicit recovery GO. Package versions are never deleted as rollback.
 
 ## Phase 8D2 private pull credential
 
@@ -67,4 +72,4 @@ Then and only then may the existing Phase-8C dataset/app plan be applied under a
 
 ## Rollback
 
-No rollback applies in Phase 8D1 because nothing is published or deployed. A future failed publish leaves no tag reuse authorization: existing tags must remain immutable, and a new source/hash tag plus a new release run is required. A future failed TrueNAS pull/deploy follows the Phase-8C no-app/dataset rollback contract without touching `solana-bot`, Grafana or ClickHouse.
+No rollback applies in the current Phase 8D1 state because nothing is published or deployed. A future partial publish is preserved as evidence under HOLD: existing package versions/tags remain immutable, no version is deleted, and recovery requires separate explicit authorization. A future failed TrueNAS pull/deploy follows the Phase-8C no-app/dataset rollback contract without touching `solana-bot`, Grafana or ClickHouse.

@@ -25,6 +25,62 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
     expect(setup).toBeGreaterThan(-1);expect(install).toBeGreaterThan(setup);expect(policy).toBeGreaterThan(install);
   });
 
+  it('pins the same exact linux-amd64 BuildKit server in verify and publish without insecure entitlements', () => {
+    const input:any=candidate();
+    expect(input.buildKitLock).toMatchObject({
+      schemaVersion:'PHASE8D1_BUILDKIT_LOCK_1', buildxVersion:'v0.12.1', buildxReleaseCommit:'30feaa1a915b869ebc2eea6328624b49facd4bfb', buildKitVersion:'v0.32.2', registry:'docker.io', repository:'moby/buildkit', versionTag:'v0.32.2', platform:'linux/amd64',
+      manifestListDigest:'sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8',
+      linuxAmd64Digest:'sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528',
+    });
+    const expected='image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528';
+    for(const job of [input.verifyWorkflow.jobs['verify-images-no-push'],input.publishWorkflow.jobs.publish]){
+      const setup=job.steps.find((step:any)=>String(step.uses??'').startsWith('docker/setup-buildx-action@'));
+      expect(setup.with.version).toBe('v0.12.1');expect(setup.with['driver-opts']).toContain(expected);expect(setup.with.platforms).toBe('linux/amd64');expect(setup.with['buildkitd-flags']).toBe('--debug --oci-worker-net bridge');
+      expect(JSON.stringify(setup)).not.toMatch(/security\.insecure|network\.host|buildx-stable-1/);
+    }
+  });
+
+  it('requires BuildKit bridge mode to report its resolved cni provider and no insecure entitlement', () => {
+    const fixture=[{buildkit:'v0.32.2',platforms:'linux/amd64',"driver-opts":['image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528'],"buildkitd-flags":'--debug --oci-worker-net bridge',labels:{'org.mobyproject.buildkit.worker.network':'cni'}}];
+    expect(fixture).toHaveLength(1);expect(fixture[0]['buildkitd-flags']).not.toMatch(/security\.insecure|network\.host/);expect(fixture[0].labels['org.mobyproject.buildkit.worker.network']).toBe('cni');
+    for(const job of [candidate().verifyWorkflow.jobs['verify-images-no-push'],candidate().publishWorkflow.jobs.publish]){
+      const runtime=job.steps.find((step:any)=>step.name==='Verify exact sandboxed BuildKit server');expect(runtime.run).toContain('org.mobyproject.buildkit.worker.network');expect(runtime.run).toContain('"cni"');
+      expect(runtime.run).toContain('github.com/docker/buildx v0.12.1 30feaa1a915b869ebc2eea6328624b49facd4bfb');
+    }
+  });
+
+  it('rejects a host-label runtime proof even when a comment preserves the cni marker', () => {
+    const input:any=structuredClone(candidate());
+    for(const job of [input.verifyWorkflow.jobs['verify-images-no-push'],input.publishWorkflow.jobs.publish]){
+      const runtime=job.steps.find((step:any)=>step.name==='Verify exact sandboxed BuildKit server');
+      runtime.run=runtime.run.replace('== "cni"','== "host"')+'# cni\n';
+    }
+    expect(validatePhase8D1Inputs(input)).toContain('missing runtime BuildKit proof:verify');
+    expect(validatePhase8D1Inputs(input)).toContain('missing runtime BuildKit proof:publish');
+  });
+
+  it('bootstraps the publish job with exact Node, locked dependencies and policy before any other Node script', () => {
+    const steps:any[]=candidate().publishWorkflow.jobs.publish.steps;
+    const setup=steps.findIndex(step=>String(step.uses??'').startsWith('actions/setup-node@')&&step.with?.['node-version']==='22.23.2');
+    const install=steps.findIndex(step=>step.run==='npm ci');
+    const policy=steps.findIndex(step=>String(step.run??'').includes('node scripts/phase8d1/assert-phase8d1-supply-chain.mjs'));
+    const laterNode=steps.findIndex(step=>String(step.run??'').includes('node scripts/phase8d1/resolve-base-images.mjs'));
+    expect(setup).toBeGreaterThan(-1);expect(install).toBeGreaterThan(setup);expect(policy).toBeGreaterThan(install);expect(laterNode).toBeGreaterThan(policy);
+    const run=String(steps[policy].run);expect(run).toContain('test "$(node --version)" = v22.23.2');expect(run).toContain('test "$SOURCE_SHA" = "$(git rev-parse HEAD)"');expect(run).toContain('git status --porcelain --untracked-files=no');
+  });
+
+  it('durably wires preflight and each individual push into the closed partial-publish contract', () => {
+    const input:any=candidate(),steps:any[]=input.publishWorkflow.jobs.publish.steps;
+    expect(input.partialPublishContract).toMatchObject({schemaVersion:'PHASE8D1_PARTIAL_PUBLISH_CONTRACT_1',releaseId:'SOURCE_GIT_SHA',automaticRetryAllowed:false,tagOverwriteAllowed:false,packageVersionDeletionAllowed:false,partialVerdict:'PARTIAL_PUBLISH_HOLD',successVerdict:'PUBLISH_SUCCEEDED'});
+    for(const name of ['Upload preflight publish state','Upload cockpit push state','Upload runner push state','Upload final publish state'])expect(steps.some(step=>step.name===name),name).toBe(true);
+    expect(steps.find(step=>step.name==='Upload preflight publish state').if).not.toContain("steps.preflight-gate.outcome == 'success'");
+    for(const name of ['Upload cockpit push state','Upload runner push state','Upload final publish state'])expect(steps.find(step=>step.name===name).if,name).toContain("steps.preflight-gate.outcome == 'success'");
+    for(const id of ['push-cockpit','push-runner'])expect(steps.find(step=>step.id===id)?.['continue-on-error'],id).toBe(true);
+    expect(steps.find(step=>step.id==='push-runner')?.if).toContain('always()');
+    expect(input.publishText).toContain('partial-publish-state.mjs record');expect(input.publishText).toContain('partial-publish-state.mjs require-success');
+    expect(`${input.publishText}\n${input.publishScript}`).not.toMatch(/gh api\s+--method DELETE|docker manifest rm|retry-action|tagOverwriteAllowed:\s*true/i);
+  });
+
   it('disables automatic Buildx record artifacts and retains one bounded seven-day evidence upload', () => {
     const job=candidate().verifyWorkflow.jobs['verify-images-no-push'];
     expect(job.env?.DOCKER_BUILD_RECORD_UPLOAD).toBe('false');
@@ -61,6 +117,12 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
   rejected('latest image reference', x => { x.contract.baseImages.nodeBuilder.versionTag = 'latest'; });
   rejected('missing linux amd64', x => { x.contract.platform = 'linux/arm64'; });
   rejected('missing base digest resolution', x => { x.verifyScript = x.verifyScript.replaceAll('@sha256:', '@shaXXX:'); });
+  rejected('mutable BuildKit tag', x => { x.verifyWorkflow.jobs['verify-images-no-push'].steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with['driver-opts']='image=moby/buildkit:v0.32.2'; });
+  rejected('mutable Buildx client', x => { x.verifyWorkflow.jobs['verify-images-no-push'].steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with.version='latest'; });
+  rejected('wrong Buildx client version', x => { x.publishWorkflow.jobs.publish.steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with.version='v0.36.1'; });
+  rejected('missing BuildKit digest', x => { x.publishWorkflow.jobs.publish.steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with['driver-opts']='image=moby/buildkit'; });
+  rejected('wrong BuildKit platform digest', x => { x.buildKitLock.linuxAmd64Digest=`sha256:${'0'.repeat(64)}`; });
+  rejected('insecure BuildKit entitlement', x => { x.verifyWorkflow.jobs['verify-images-no-push'].steps.find((s:any)=>String(s.uses??'').startsWith('docker/setup-buildx-action@')).with['buildkitd-flags']='--allow-insecure-entitlement security.insecure --allow-insecure-entitlement network.host'; });
   rejected('reviewed base lock drift', x => { x.baseLock.images[0].linuxAmd64Digest = `sha256:${'0'.repeat(64)}`; x.baseLockText = JSON.stringify(x.baseLock); });
   rejected('public GnuTLS KAT allowlist drift', x => { x.publicKeyAllowlist ??={entries:[{}]};x.publicKeyAllowlist.entries[0].path='usr/lib/forged.so'; });
   rejected('more than 3 GiB pull budget', x => { x.contract.maxCompressedBaseImageBytes = 4 * 1024 ** 3; });
@@ -73,6 +135,10 @@ describe('Phase 8D1 remote image supply-chain policy', () => {
   rejected('cockpit network route instead of network none', x => { x.contract.cockpitTests.networkIsolation='BRIDGE_WITH_SECCOMP'; });
   rejected('missing provider cockpit test', x => { x.contract.cockpitTests.syntheticProvider = false; });
   rejected('publish trigger other than dispatch', x => { x.publishWorkflow.on.push = { branches: ['main'] }; });
+  rejected('publish job without setup-node', x => { x.publishWorkflow.jobs.publish.steps=x.publishWorkflow.jobs.publish.steps.filter((s:any)=>!String(s.uses??'').startsWith('actions/setup-node@')); });
+  rejected('publish job wrong Node version', x => { x.publishWorkflow.jobs.publish.steps.find((s:any)=>String(s.uses??'').startsWith('actions/setup-node@')).with['node-version']='22'; });
+  rejected('publish job without npm ci', x => { x.publishWorkflow.jobs.publish.steps=x.publishWorkflow.jobs.publish.steps.filter((s:any)=>s.run!=='npm ci'); });
+  rejected('publish job without supply-chain policy', x => { x.publishWorkflow.jobs.publish.steps.find((s:any)=>String(s.run??'').includes('assert-phase8d1-supply-chain')).run='node --version'; });
   rejected('wrong confirmation', x => { x.contract.publish.confirmation = 'YES'; });
   rejected('publish id token', x => { x.publishWorkflow.jobs.publish.permissions['id-token'] = 'write'; });
   rejected('publish attestations', x => { x.publishWorkflow.jobs.publish.permissions.attestations = 'write'; });

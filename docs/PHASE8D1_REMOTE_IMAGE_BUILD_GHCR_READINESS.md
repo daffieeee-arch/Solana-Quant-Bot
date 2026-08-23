@@ -2,17 +2,17 @@
 
 ## Status
 
-**IMPLEMENTED CANDIDATE — REMOTE VERIFY NOT YET EXECUTED — NO IMAGE PUSH — NO DEPLOYMENT.**
+**REMOTE VERIFY PROVEN — PUBLISH ROUTE HARDENED BUT NEVER DISPATCHED — NO IMAGE PUSH — NO DEPLOYMENT.**
 
 Phase 8D stopped before mutation because Hermes has no container daemon/socket/builder. Phase 8D1 preserves that safety decision and switches to `REMOTE_ISOLATED_GITHUB_BUILDER`; it does not weaken Hermes with Docker/containerd sockets, privilege, Docker-in-Docker, a rootless builder, an external daemon, or a direct TrueNAS build.
 
-This feature candidate only defines GitHub-hosted verification and a separately gated future private GHCR publish path. Because this branch is not committed, pushed or opened as a PR in this phase, GitHub-hosted image/container gates are **NOT_EXECUTED_PENDING_DELIVERY** and must not be claimed green yet.
+Phase 8D1 remote verification is merged and has passed on GitHub-hosted `ubuntu-24.04`. This follow-up hardens only the never-dispatched private GHCR route. It does not authorize the publish workflow, create a package/version, or change the existing no-deployment HOLD.
 
 ## Repository isolation
 
-- Base: `6c597b4c2c274583a4fdd9ba7a24db44c21df5a8`.
-- Branch: `phase8d1/remote-image-build-ghcr-readiness`.
-- Worktree: `/opt/data/worktrees/solana-paper-scanner-phase8d1-remote-images`.
+- Hardening base: `8b5ecb6168ac3d1ea9fa6630ab8a43ada1b686e8`.
+- Branch: `phase8d1/pre-publish-hardening`.
+- Worktree: `/opt/data/worktrees/solana-paper-scanner-phase8d1-prepublish-hardening`.
 - No Docker/TrueNAS/Grafana/ClickHouse/app mutation is authorized.
 
 ## Read-only runtime identities
@@ -49,7 +49,7 @@ The production identity gate independently anchors the base source SHA, both evi
 
 Rootfs credential inspection allows exactly ten public cryptographic test vectors from GnuTLS 3.7.9 `lib/crypto-selftests-pk.c` at source commit `ca61668d7764fc29fb4cc2aa396cb035e176636d`: RSA-2048, DSA-2048, five ECDSA curves, GOST01, GOST12-256 and GOST12-512. Every entry is bound to its exact candidate SHA-256, source symbol, `usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3`, and the locked Node-runtime amd64 base. The allowlist is a closed canonical-hash set, not a filename or package wildcard; every additional or changed key remains blocking.
 
-Expected post-delivery PR status: `BUILT_AND_TESTED_REMOTE_ONLY`; current unpushed candidate status: `NOT_EXECUTED_PENDING_DELIVERY`.
+Current status: `BUILT_AND_TESTED_REMOTE_ONLY`; no publish dispatch or GHCR push has occurred.
 
 ### Manual private GHCR publish — designed, not dispatched
 
@@ -59,6 +59,8 @@ Expected post-delivery PR status: `BUILT_AND_TESTED_REMOTE_ONLY`; current unpush
 - exact confirmation `PUBLISH_SYNTHETIC_PHASE8D_IMAGES`.
 
 The caller reruns normal CI and the complete image-verify reusable workflow on the same dispatch SHA. The publish job alone receives `contents: read` plus `packages: write`; no `id-token`, attestations permission, PAT, broad Hermes token or `actions/attest` is used.
+
+The publish job does not rely on reusable-job tool state. After its own exact-main checkout it independently pins `actions/setup-node`, installs Node `22.23.2`, runs `npm ci`, executes the complete Phase-8D1 supply-chain policy, rechecks checked-out HEAD and requires a clean tracked tree before the first product Node script or builder setup.
 
 Hard gates require:
 
@@ -77,6 +79,25 @@ Hard gates require:
 GitHub API reads use `gh api` with `GH_TOKEN` sourced only from `secrets.GITHUB_TOKEN`; no literal bearer header or alternate credential is present.
 
 The publish workflow is **DESIGN_ONLY_NOT_DISPATCHED**.
+
+### BuildKit server lock and entitlements
+
+Both verify and publish jobs use the same reviewed `deployment/phase8d1/buildkit-image-lock.json`:
+
+- Buildx client `v0.12.1`, release commit `30feaa1a915b869ebc2eea6328624b49facd4bfb`;
+- BuildKit `v0.32.2`, official signed release commit `991535e0973488b6a429096d21fa13f81f2d89d8`;
+- repository `moby/buildkit`, version tag `v0.32.2`;
+- OCI index `sha256:28a898719c18a33f4e8000685287fa36fd0dd9560c6440227d3a732d79bb41d8`;
+- linux/amd64 platform manifest `sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528`;
+- observed at `2026-08-22T17:26:58.498692Z`.
+
+The actual docker-container driver uses the platform digest directly. Buildx `v0.12.1` is pinned because later Buildx versions auto-add `network.host` to docker-container builders. `buildkitd-flags: --debug --oci-worker-net bridge` forces the bridge provider; BuildKit v0.32.2 resolves that provider label to `org.mobyproject.buildkit.worker.network=cni`. `security.insecure` and `network.host` are unavailable, and no build step requests an insecure entitlement. The hosted runtime proof requires the exact Buildx version/commit, daemon flags and resolved `cni` label. Ordinary sandboxed dependency downloads remain permitted.
+
+### Partial publish HOLD contract
+
+`deployment/phase8d1/partial-publish-contract.json` and `scripts/phase8d1/partial-publish-state.mjs` make the unavoidable two-package non-atomicity explicit. Both tags must be absent before push and share the source SHA as release ID. Preflight, cockpit push, runner push and final state are uploaded as separate durable artifacts.
+
+Every successful push records package, immutable tag and digest immediately. A one-sided push or one-tag collision yields `PARTIAL_PUBLISH_HOLD` or `PARTIAL_PUBLISH_COLLISION_HOLD`, keeps `deploymentEligible: false`, forbids automatic retry/tag overwrite/package-version deletion and requires separate explicit recovery authorization. `PUBLISH_SUCCEEDED` is possible only after both packages are pushed, private, repository-linked, carry provenance and SPDX SBOM, are pulled by digest and pass the complete digest retest.
 
 ## Immutable action pins
 

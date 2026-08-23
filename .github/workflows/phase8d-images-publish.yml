@@ -36,6 +36,8 @@ jobs:
     if: github.ref == 'refs/heads/main' && inputs.confirmation == 'PUBLISH_SYNTHETIC_PHASE8D_IMAGES' && inputs.source_sha == github.sha
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     permissions:
       contents: read
       packages: write
@@ -60,11 +62,46 @@ jobs:
           test -z "$(git status --porcelain)"
           LIVE_MAIN_SHA="$(gh api --method GET "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
           test "$SOURCE_SHA" = "$LIVE_MAIN_SHA"
+      - name: Set up exact Node runtime for publish policy
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.2'
+      - name: Install locked publish policy dependencies
+        run: npm ci
+      - name: Enforce publish-job supply-chain policy
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$(node --version)" = v22.23.2
+          node scripts/phase8d1/assert-phase8d1-supply-chain.mjs
+          test "$SOURCE_SHA" = "$(git rev-parse HEAD)"
+          test -z "$(git status --porcelain --untracked-files=no)"
       - name: Set up isolated Buildx
+        id: buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
         with:
+          version: v0.12.1
           driver: docker-container
           install: true
+          driver-opts: |
+            image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528
+          platforms: linux/amd64
+          buildkitd-flags: --debug --oci-worker-net bridge
+      - name: Verify exact sandboxed BuildKit server
+        env:
+          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
+        run: |
+          test "$(docker buildx version)" = "github.com/docker/buildx v0.12.1 30feaa1a915b869ebc2eea6328624b49facd4bfb"
+          jq -e --arg image 'image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528' '
+            length == 1 and
+            .[0].buildkit == "v0.32.2" and
+            (.[0].platforms | split(",") | index("linux/amd64") != null) and
+            (.[0]["driver-opts"] | index($image) != null) and
+            .[0]["buildkitd-flags"] == "--debug --oci-worker-net bridge" and
+            (.[0]["buildkitd-flags"] | contains("security.insecure") | not) and
+            (.[0]["buildkitd-flags"] | contains("network.host") | not) and
+            .[0].labels["org.mobyproject.buildkit.worker.network"] == "cni"
+          ' <<< "$BUILDX_NODES" >/dev/null
       - name: Resolve exact base digests
         id: bases
         run: node scripts/phase8d1/resolve-base-images.mjs resolve phase8d1-release-evidence/base-images.json
@@ -132,16 +169,34 @@ jobs:
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           echo "cockpit=ghcr.io/$owner/phase8a-research-cockpit:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.cockpit_entrypoint_short }}-${{ steps.hashes.outputs.frontend_build_short }}" >> "$GITHUB_OUTPUT"
           echo "runner=ghcr.io/$owner/phase8a-bronze-runner:${{ steps.hashes.outputs.source_sha }}-${{ steps.hashes.outputs.runner_binary_short }}" >> "$GITHUB_OUTPUT"
-      - name: Reject tag collision and overwrite
+      - name: Inspect tag absence and initialize durable publish state
+        id: preflight-gate
+        continue-on-error: true
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
           COCKPIT_TAG: ${{ steps.tags.outputs.cockpit }}
           RUNNER_TAG: ${{ steps.tags.outputs.runner }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PARTIAL_PUBLISH_OBSERVATION: phase8d1-release-evidence/publish-observation.json
+          PARTIAL_PUBLISH_STATE: phase8d1-release-evidence/publish-state.json
         run: scripts/phase8d1/publish-gates.sh
+      - name: Upload preflight publish state
+        if: always() && hashFiles('phase8d1-release-evidence/publish-state.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase8d1-publish-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: phase8d1-release-evidence/publish-state.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Stop before push when preflight is not ready
+        if: always()
+        run: |
+          test "${{ steps.preflight-gate.outcome }}" = success
+          jq -e '.verdict=="PRE_PUSH_READY" and .deploymentEligible==false' phase8d1-release-evidence/publish-state.json >/dev/null
       - name: Push cockpit with BuildKit provenance and SPDX SBOM
         id: push-cockpit
+        continue-on-error: true
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
@@ -162,8 +217,24 @@ jobs:
             FRONTEND_BUILD_SHA256=${{ steps.hashes.outputs.frontend_build_sha }}
             COCKPIT_UID=${{ steps.hashes.outputs.cockpit_uid }}
             COCKPIT_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Record cockpit push state
+        if: always() && steps.preflight-gate.outcome == 'success'
+        env:
+          PUSH_OUTCOME: ${{ steps.push-cockpit.outcome }}
+          PUSH_DIGEST: ${{ steps.push-cockpit.outputs.digest }}
+        run: node scripts/phase8d1/partial-publish-state.mjs record phase8d1-release-evidence/publish-state.json cockpit "$PUSH_OUTCOME" "$PUSH_DIGEST"
+      - name: Upload cockpit push state
+        if: always() && steps.preflight-gate.outcome == 'success' && hashFiles('phase8d1-release-evidence/publish-state.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase8d1-publish-cockpit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: phase8d1-release-evidence/publish-state.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Push runner with BuildKit provenance and SPDX SBOM
         id: push-runner
+        if: always() && steps.preflight-gate.outcome == 'success'
+        continue-on-error: true
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
@@ -182,7 +253,24 @@ jobs:
             CARGO_LOCK_SHA256=${{ steps.hashes.outputs.cargo_lock_sha }}
             RUNNER_UID=${{ steps.hashes.outputs.runner_uid }}
             RUNNER_GID=${{ steps.hashes.outputs.shared_gid }}
+      - name: Record runner push state
+        if: always() && steps.preflight-gate.outcome == 'success'
+        env:
+          PUSH_OUTCOME: ${{ steps.push-runner.outcome }}
+          PUSH_DIGEST: ${{ steps.push-runner.outputs.digest }}
+        run: node scripts/phase8d1/partial-publish-state.mjs record phase8d1-release-evidence/publish-state.json runner "$PUSH_OUTCOME" "$PUSH_DIGEST"
+      - name: Upload runner push state
+        if: always() && steps.preflight-gate.outcome == 'success' && hashFiles('phase8d1-release-evidence/publish-state.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase8d1-publish-runner-${{ github.run_id }}-${{ github.run_attempt }}
+          path: phase8d1-release-evidence/publish-state.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Pull and retest immutable registry digests
+        id: digest-retest
+        if: always() && steps.push-cockpit.outcome == 'success' && steps.push-runner.outcome == 'success'
+        continue-on-error: true
         env:
           COCKPIT_REF: ${{ steps.tags.outputs.cockpit }}@${{ steps.push-cockpit.outputs.digest }}
           RUNNER_REF: ${{ steps.tags.outputs.runner }}@${{ steps.push-runner.outputs.digest }}
@@ -194,15 +282,40 @@ jobs:
           PREBUILD_MANIFEST: phase8d1-release-evidence/prebuild-hashes.json
         run: scripts/phase8d1/verify-published-images.sh
       - name: Re-resolve bases and reject digest drift
+        id: base-drift
+        if: always() && steps.push-cockpit.outcome == 'success' && steps.push-runner.outcome == 'success'
+        continue-on-error: true
         run: node scripts/phase8d1/resolve-base-images.mjs compare phase8d1-release-evidence/base-images.json
-      - name: Upload successful private release manifest
+      - name: Verify tracked tree is unchanged
+        id: clean-tree
+        if: always() && steps.preflight-gate.outcome == 'success'
+        continue-on-error: true
+        run: test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Finalize durable publish state
+        if: always() && steps.preflight-gate.outcome == 'success'
+        env:
+          RETEST_OUTCOME: ${{ steps.digest-retest.outcome }}
+          DRIFT_OUTCOME: ${{ steps.base-drift.outcome }}
+          CLEAN_OUTCOME: ${{ steps.clean-tree.outcome }}
+        run: |
+          if [[ "$RETEST_OUTCOME" == success && "$DRIFT_OUTCOME" == success && "$CLEAN_OUTCOME" == success ]]; then
+            node scripts/phase8d1/partial-publish-state.mjs mark-verified phase8d1-release-evidence/publish-state.json
+          fi
+      - name: Upload final publish state
+        if: always() && steps.preflight-gate.outcome == 'success' && hashFiles('phase8d1-release-evidence/publish-state.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: phase8d1-private-release-${{ github.run_id }}-${{ github.run_attempt }}
-          path: phase8d1-release-evidence/final/
+          name: phase8d1-publish-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            phase8d1-release-evidence/publish-state.json
+            phase8d1-release-evidence/final/*.json
+            phase8d1-release-evidence/final/*.txt
           if-no-files-found: error
           retention-days: 30
           compression-level: 9
           include-hidden-files: false
-      - name: Verify tracked tree is unchanged
-        run: test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Require complete publish success
+        if: always()
+        run: |
+          test "${{ steps.preflight-gate.outcome }}" = success
+          node scripts/phase8d1/partial-publish-state.mjs require-success phase8d1-release-evidence/publish-state.json
