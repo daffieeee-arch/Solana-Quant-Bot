@@ -9,7 +9,7 @@ import { evaluateRecoveryObservation } from '../scripts/phase8d1/recovery-state.
 const contract=JSON.parse(readFileSync('deployment/phase8d1/existing-digest-recovery-contract.json','utf8'));
 const source=contract.imageSourceSha;
 const validManifest=()=>{
-  const images=contract.images.map((image:any)=>({name:image.name,package:image.package,tag:image.tag,expectedDigest:image.digest,resolvedDigest:image.digest,metadataStatus:200,packageExists:true,packageType:'container',visibility:'private',repositoryFullName:contract.repository,unauthenticatedPullDenied:true,authenticatedPullSucceeded:true,platform:'linux/amd64',sourceGitSha:source,provenancePresent:true,spdxSbomPresent:true,digestRetestPassed:true,imageConfig:{user:image.name==='cockpit'?'61001:61000':'61000:61000'}}));
+  const images=contract.images.map((image:any)=>({name:image.name,package:image.package,tag:image.tag,expectedDigest:image.digest,resolvedDigest:image.digest,metadataStatus:200,packageExists:true,packageType:'container',visibility:'private',repositoryFullName:contract.repository,repositoryAccessVerified:true,unauthenticatedPullDenied:true,authenticatedPullSucceeded:true,platform:'linux/amd64',sourceGitSha:source,provenancePresent:true,spdxSbomPresent:true,digestRetestPassed:true,imageConfig:{user:image.name==='cockpit'?'61001:61000':'61000:61000'}}));
   const evaluated=evaluateRecoveryObservation({schemaVersion:'PHASE8D1_RECOVERY_OBSERVATION_1',recoveryWorkflowSha:'a'.repeat(40),imageSourceSha:source,imageSourceAncestor:true,originalPublishRunId:contract.originalPublishRunId,originalArtifactsVerified:true,originalHoldPreserved:true,images,baseImageDriftVerdict:'PASS',cleanTreeVerdict:'PASS',zeroMutationEvidence:true});
   return {...evaluated,rootCauseCategory:contract.rootCauseCategory,originalArtifacts:contract.originalArtifacts,packageMetadata:[],runnerVerdict:'PASS',cockpitVerdict:{unavailable:'PASS',provider:'PASS'},executionReasons:[],zeroMutationDetails:{imageBuild:false,imagePush:false,tagCreate:false,tagOverwrite:false,packageVersionDelete:false,packageSettingsChange:false}};
 };
@@ -22,6 +22,7 @@ describe('Phase 8D1-R recovery manifest CLI gate',()=>{
     try{
       write({verdict:'PUBLISH_SUCCEEDED',deploymentEligible:true,recoveryCompleted:true});let result=invoke();expect(result.status).not.toBe(0);
       write({...validManifest(),images:[]});result=invoke();expect(result.status).not.toBe(0);
+      const denied=structuredClone(validManifest());denied.images[0].repositoryAccessVerified=false;write(denied);result=invoke();expect(result.status).not.toBe(0);expect(result.stderr).toContain('RECOVERY_NOT_SUCCESSFUL');
       write(validManifest(),false);result=invoke();expect(result.status).not.toBe(0);expect(result.stderr).toContain('RECOVERY_MANIFEST_DIGEST_MISMATCH');
       write(validManifest());result=invoke();expect(result.status,result.stderr).toBe(0);expect(result.stdout).toContain('PHASE8D1_RECOVERY_SUCCESS');
     }finally{rmSync(root,{recursive:true,force:true});}

@@ -40,7 +40,7 @@
       "type": "array", "minItems": 2, "maxItems": 2,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["name","package","tag","expectedDigest","resolvedDigest","metadataStatus","packageExists","packageType","visibility","repositoryFullName","unauthenticatedPullDenied","authenticatedPullSucceeded","platform","sourceGitSha","provenancePresent","spdxSbomPresent","digestRetestPassed"],
+        "required": ["name","package","tag","expectedDigest","resolvedDigest","metadataStatus","packageExists","packageType","visibility","repositoryFullName","repositoryAccessVerified","unauthenticatedPullDenied","authenticatedPullSucceeded","platform","sourceGitSha","provenancePresent","spdxSbomPresent","digestRetestPassed"],
         "properties": {
           "name": {"enum":["cockpit","runner"]},
           "package": {"enum":["phase8a-research-cockpit","phase8a-bronze-runner"]},
@@ -52,6 +52,7 @@
           "packageType": {"type":["string","null"]},
           "visibility": {"type":["string","null"]},
           "repositoryFullName": {"type":["string","null"]},
+          "repositoryAccessVerified": {"type":"boolean"},
           "unauthenticatedPullDenied": {"type":"boolean"},
           "authenticatedPullSucceeded": {"type":"boolean"},
           "platform": {"type":["string","null"]},

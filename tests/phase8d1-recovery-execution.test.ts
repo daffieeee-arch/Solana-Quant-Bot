@@ -11,7 +11,10 @@ describe('Phase 8D1-R read-only recovery execution',()=>{
     expect(text).not.toMatch(/if\s*\(binary\)[^\n]*application\/octet-stream/);
     expect(text).toContain('downloaded.length!==expected.bytes||sha256(downloaded)!==expected.sha256');
     expect(text).toContain('safeExtract(zipPath,destination)');
-    const retest=text.indexOf("scripts/phase8d1/verify-images.sh");for(const marker of ['PACKAGE_TYPE_HOLD','PACKAGE_VISIBILITY_HOLD','PACKAGE_REPOSITORY_LINK_HOLD']){const gate=text.indexOf(marker);expect(gate,marker).toBeGreaterThan(-1);expect(gate,marker).toBeLessThan(retest);}
+    const retest=text.indexOf("scripts/phase8d1/verify-images.sh");for(const marker of ['PACKAGE_TYPE_HOLD','PACKAGE_VISIBILITY_HOLD']){const gate=text.indexOf(marker);expect(gate,marker).toBeGreaterThan(-1);expect(gate,marker).toBeLessThan(retest);}
+    expect(text).not.toContain('repositoryFullName!==contract.repository');
+    const contextGate=text.indexOf('repository!==contract.repository'),artifactRead=text.indexOf('await downloadOriginalArtifacts(contract');expect(contextGate).toBeGreaterThan(-1);expect(contextGate).toBeLessThan(artifactRead);
+    const pull=text.indexOf('dockerPullEvidence(item,actor,token)'),accessProof=text.indexOf('verifyRepositoryPackageAccess({'),digestRetest=text.indexOf("scripts/phase8d1/verify-images.sh");expect(accessProof).toBeGreaterThan(pull);expect(accessProof).toBeLessThan(digestRetest);expect(text).toContain('repositoryAccessVerified:false');
     expect(text).not.toMatch(/docker\s+(?:build|push|tag)|build-push-action|gh\s+api\s+--method\s+(?:DELETE|PATCH|POST|PUT)|packageVersionDelete\s*:\s*true|packageSettingsChange\s*:\s*true|tagOverwrite\s*:\s*true/i);
   });
 });
