@@ -9,7 +9,7 @@ import { evaluatePackageMetadataAttempts, evaluateRecoveryObservation, verifyRep
 import { validateArtifactEntries, validateOriginalArtifactMetadata, validateOriginalStateChain } from './recovery-artifacts.mjs';
 import { validateJsonSchema } from './json-schema-subset.mjs';
 import { downloadGitHubArtifactZip, fetchAllPackageVersions, fetchBytesBounded, fetchHeadBounded, fetchJsonBounded } from './recovery-http.mjs';
-import { evaluateAttestationEvidence } from './recovery-oci.mjs';
+import { buildExpectedBuilderId, evaluateAttestationEvidence, evaluateAttestationManifestBinding, verifyAttestationLayerBytes } from './recovery-oci.mjs';
 
 const CONTRACT_PATH='deployment/phase8d1/existing-digest-recovery-contract.json';
 const API='https://api.github.com';
@@ -48,27 +48,37 @@ async function registryToken(owner,packageName,actor,token){
 async function registryFetch(owner,packageName,kind,reference,bearer,{method='GET',accept=MANIFEST_ACCEPT}={}){
   const options={deadlineMs:Date.now()+30_000,timeoutMs:30_000,headers:{...(bearer?{Authorization:`Bearer ${bearer}`}:{}),Accept:accept,'User-Agent':'phase8d1-existing-digest-recovery'}};if(method==='HEAD'){const response=await fetchHeadBounded(`${REGISTRY}/v2/${owner}/${packageName}/${kind}/${reference}`,options);return {status:response.status,digest:response.digest,bytes:Buffer.alloc(0)};}const response=await fetchBytesBounded(`${REGISTRY}/v2/${owner}/${packageName}/${kind}/${reference}`,{...options,method});return {status:response.status,digest:response.digest,bytes:response.bytes};
 }
-async function inspectRegistryImage(image,owner,actor,token){
+async function inspectRegistryImage(image,owner,actor,token,expectedBuilderId,builderIdentity){
   const packageName=image.package,bearer=await registryToken(owner,packageName,actor,token);
   const unauth=await registryFetch(owner,packageName,'manifests',image.digest,null,{method:'HEAD'});
   const tagHead=await registryFetch(owner,packageName,'manifests',image.tag.split(':').at(-1),bearer,{method:'HEAD'});
   const indexResponse=await registryFetch(owner,packageName,'manifests',image.digest,bearer);
   if(indexResponse.status!==200||indexResponse.digest!==image.digest)throw new Error(`TAG_DIGEST_DRIFT:${image.name}`);
   const index=JSON.parse(indexResponse.bytes.toString('utf8')),manifests=index.manifests??[];
-  const linux=manifests.filter(row=>row.platform?.os==='linux'&&row.platform?.architecture==='amd64');if(linux.length!==1)throw new Error(`PLATFORM_HOLD:${image.name}`);
-  const attestations=manifests.filter(row=>row.platform?.os==='unknown'&&row.platform?.architecture==='unknown'),attestationRecords=[];
+  const linux=manifests.filter(row=>row.platform?.os==='linux'&&row.platform?.architecture==='amd64');if(linux.length!==1)throw new Error(`PLATFORM_HOLD:${image.name}`);const linuxDescriptor=linux[0];
+  const attestations=manifests.filter(row=>row.platform?.os==='unknown'&&row.platform?.architecture==='unknown'),attestationRecords=[],candidateSummaries=[];let acceptedManifestCount=0;
   for(const descriptor of attestations){
-    if(descriptor.annotations?.['vnd.docker.reference.digest']!==linux[0].digest)continue;
-    const manifestResponse=await registryFetch(owner,packageName,'manifests',descriptor.digest,bearer);if(manifestResponse.status!==200)continue;const manifest=JSON.parse(manifestResponse.bytes.toString('utf8'));
+    const summary={descriptor:{mediaType:descriptor.mediaType??null,digest:descriptor.digest??null,size:descriptor.size??null,platform:descriptor.platform??null,referenceType:descriptor.annotations?.['vnd.docker.reference.type']??null,referenceDigest:descriptor.annotations?.['vnd.docker.reference.digest']??null},manifestStatus:0,artifactType:null,subject:null,config:null,bindingFormat:null,bindingReason:null,layers:[]};
+    const manifestResponse=await registryFetch(owner,packageName,'manifests',descriptor.digest,bearer);summary.manifestStatus=manifestResponse.status;
+    if(manifestResponse.status!==200){summary.bindingReason='ATTESTATION_MANIFEST_UNREADABLE';candidateSummaries.push(summary);continue;}
+    let manifest;try{manifest=JSON.parse(manifestResponse.bytes.toString('utf8'));}catch{summary.bindingReason='ATTESTATION_MANIFEST_JSON_INVALID';candidateSummaries.push(summary);continue;}
+    summary.artifactType=manifest.artifactType??null;summary.subject=manifest.subject?{mediaType:manifest.subject.mediaType??null,digest:manifest.subject.digest??null,size:manifest.subject.size??null}:null;summary.config=manifest.config?{mediaType:manifest.config.mediaType??null,digest:manifest.config.digest??null,size:manifest.config.size??null}:null;
+    const binding=evaluateAttestationManifestBinding({descriptor,manifest,linuxDescriptor});summary.bindingFormat=binding.format;summary.bindingReason=binding.reason;
+    if(!binding.accepted){candidateSummaries.push(summary);continue;}
+    if((manifest.layers??[]).some(layer=>layer.mediaType!=='application/vnd.in-toto+json')){summary.bindingReason='ATTESTATION_LAYER_MEDIA_TYPE_MISMATCH';candidateSummaries.push(summary);continue;}
+    acceptedManifestCount++;
     for(const layer of manifest.layers??[]){
-      const predicate=layer.annotations?.['in-toto.io/predicate-type']??'',blob=await registryFetch(owner,packageName,'blobs',layer.digest,bearer,{accept:'application/octet-stream'});let payload=null;if(blob.status===200){try{payload=JSON.parse(blob.bytes.toString('utf8'));}catch{payload=null;}}
-      attestationRecords.push({referenceDigest:descriptor.annotations?.['vnd.docker.reference.digest']??null,predicateType:predicate,blobStatus:blob.status,payload});
+      const predicateType=layer.annotations?.['in-toto.io/predicate-type']??'',blob=await registryFetch(owner,packageName,'blobs',layer.digest,bearer,{accept:'application/octet-stream'}),layerDigestVerified=verifyAttestationLayerBytes(layer,blob.status,blob.bytes);let payload=null;
+      if(layerDigestVerified){try{payload=JSON.parse(blob.bytes.toString('utf8'));}catch{payload=null;}}
+      attestationRecords.push({referenceDigest:binding.referenceDigest,manifestFormat:binding.format,layerMediaType:layer.mediaType,layerDigest:layer.digest,layerDigestVerified,predicateType,blobStatus:blob.status,payload});
+      summary.layers.push({mediaType:layer.mediaType??null,digest:layer.digest??null,size:layer.size??null,predicateType,blobStatus:blob.status,digestVerified:layerDigestVerified,payloadSha256:layerDigestVerified?sha256(blob.bytes):null,payloadType:payload?._type??null,payloadPredicateType:payload?.predicateType??null,payloadBuilderId:payload?.predicate?.runDetails?.builder?.id??null,payloadSubjectDigests:Array.isArray(payload?.subject)?payload.subject.map(subject=>subject?.digest?.sha256??null).slice(0,8):[],sourceShaAtBuildKitPath:payload?.predicate?.buildDefinition?.externalParameters?.request?.args?.['build-arg:SOURCE_GIT_SHA']===process.env.IMAGE_SOURCE_SHA,spdxDocumentDescribesCount:Array.isArray(payload?.predicate?.documentDescribes)?payload.predicate.documentDescribes.length:0,spdxDescribesRelationshipCount:Array.isArray(payload?.predicate?.relationships)?payload.predicate.relationships.filter(row=>row?.spdxElementId==='SPDXRef-DOCUMENT'&&row?.relationshipType==='DESCRIBES').length:0});
     }
+    candidateSummaries.push(summary);
   }
-  const linuxManifestResponse=await registryFetch(owner,packageName,'manifests',linux[0].digest,bearer);if(linuxManifestResponse.status!==200)throw new Error(`IMAGE_MANIFEST_HOLD:${image.name}`);const linuxManifest=JSON.parse(linuxManifestResponse.bytes.toString('utf8'));
+  const acceptedRecords=acceptedManifestCount===1?attestationRecords:[],attestationEvidence=evaluateAttestationEvidence({linuxManifestDigest:linuxDescriptor.digest,imageSourceSha:process.env.IMAGE_SOURCE_SHA,records:acceptedRecords,expectedBuilderId,builderIdentity}),attestationSummary={rootMediaType:index.mediaType??null,linuxDescriptor:{mediaType:linuxDescriptor.mediaType,digest:linuxDescriptor.digest,size:linuxDescriptor.size},unknownDescriptorCount:attestations.length,acceptedManifestCount,candidates:candidateSummaries};
+  const linuxManifestResponse=await registryFetch(owner,packageName,'manifests',linuxDescriptor.digest,bearer);if(linuxManifestResponse.status!==200)throw new Error(`IMAGE_MANIFEST_HOLD:${image.name}`);const linuxManifest=JSON.parse(linuxManifestResponse.bytes.toString('utf8'));
   const configResponse=await registryFetch(owner,packageName,'blobs',linuxManifest.config.digest,bearer,{accept:'application/octet-stream'});if(configResponse.status!==200)throw new Error(`IMAGE_CONFIG_HOLD:${image.name}`);const config=JSON.parse(configResponse.bytes.toString('utf8'));
-  const attestationEvidence=evaluateAttestationEvidence({linuxManifestDigest:linux[0].digest,imageSourceSha:process.env.IMAGE_SOURCE_SHA,records:attestationRecords});
-  return {unauthenticatedPullDenied:[401,403,404].includes(unauth.status),tagResolvedDigest:tagHead.digest,authenticatedManifestReadable:indexResponse.status===200,platform:'linux/amd64',linuxManifestDigest:linux[0].digest,imageConfigDigest:linuxManifest.config.digest,runtimeUser:config.config?.User??null,sourceGitSha:config.config?.Labels?.['org.opencontainers.image.revision']??null,...attestationEvidence,bearer};
+  return {unauthenticatedPullDenied:[401,403,404].includes(unauth.status),tagResolvedDigest:tagHead.digest,authenticatedManifestReadable:indexResponse.status===200,platform:'linux/amd64',linuxManifestDigest:linuxDescriptor.digest,imageConfigDigest:linuxManifest.config.digest,runtimeUser:config.config?.User??null,sourceGitSha:config.config?.Labels?.['org.opencontainers.image.revision']??null,attestationSummary,...attestationEvidence,bearer};
 }
 function safeExtract(zipPath,destination){
   const inspection=run('python3',['scripts/phase8d1/inspect-artifact-zip.py',zipPath,destination]),declared=JSON.parse(inspection.stdout);if(declared.schemaVersion!=='PHASE8D1_ARTIFACT_ZIP_INSPECTION_1')throw new Error('ARTIFACT_ZIP_INSPECTION_INVALID');
@@ -115,8 +125,10 @@ function dockerPullEvidence(image,actor,token){
 }
 async function main(){
   const contract=JSON.parse(readFileSync(CONTRACT_PATH,'utf8')),evidenceDir=resolve(required('RECOVERY_EVIDENCE_DIR')),repository=required('GITHUB_REPOSITORY'),owner=required('GITHUB_REPOSITORY_OWNER'),actor=required('GITHUB_ACTOR'),token=required('GH_TOKEN'),workflowSha=required('RECOVERY_WORKFLOW_SHA'),imageSourceSha=required('IMAGE_SOURCE_SHA'),sourceDir=resolve(required('IMAGE_SOURCE_DIR'));
+  const builderIdentity={repository:contract.repository,originalPublishRunId:contract.originalPublishRunId,originalPublishRunAttempt:contract.originalPublishRunAttempt},expectedBuilderId=buildExpectedBuilderId(builderIdentity);
   mkdirSync(evidenceDir,{recursive:true});const images=contract.images.map(image=>({name:image.name,package:image.package,tag:image.tag,expectedDigest:image.digest,resolvedDigest:null,metadataStatus:0,packageExists:false,packageType:null,visibility:null,repositoryFullName:null,repositoryAccessVerified:false,unauthenticatedPullDenied:false,authenticatedPullSucceeded:false,platform:null,sourceGitSha:null,provenancePresent:false,spdxSbomPresent:false,digestRetestPassed:false}));let originalArtifactsVerified=false,originalHoldPreserved=false,imageSourceAncestor=false,baseImageDriftVerdict='HOLD',cleanTreeVerdict='HOLD',zeroMutationEvidence=false,runnerVerdict=null,cockpitVerdict=null;const boundedReasons=[],packageEvidence=[];
   try{
+    if(!expectedBuilderId)throw new Error('RECOVERY_BUILDER_IDENTITY_HOLD');
     if(repository!==contract.repository)throw new Error('RECOVERY_REPOSITORY_CONTEXT_HOLD');
     if(imageSourceSha!==contract.imageSourceSha||required('COCKPIT_TAG')!==contract.images[0].tag||required('COCKPIT_DIGEST')!==contract.images[0].digest||required('RUNNER_TAG')!==contract.images[1].tag||required('RUNNER_DIGEST')!==contract.images[1].digest||Number(required('ORIGINAL_PUBLISH_RUN_ID'))!==contract.originalPublishRunId)throw new Error('RECOVERY_INPUT_MISMATCH');
     if(required('GITHUB_EVENT_NAME')!=='workflow_dispatch'||required('GITHUB_REF')!=='refs/heads/main'||required('GITHUB_SHA')!==workflowSha)throw new Error('RECOVERY_WORKFLOW_IDENTITY_HOLD');
@@ -129,10 +141,10 @@ async function main(){
     const authConfigs=[];
     try{
       for(const item of contract.images){
-        const target=images.find(image=>image.name===item.name),packageProof=packageEvidence.find(entry=>entry.name===item.name),registry=await inspectRegistryImage(item,owner,actor,token),pull=dockerPullEvidence(item,actor,token);authConfigs.push(pull.authConfig);
+        const target=images.find(image=>image.name===item.name),packageProof=packageEvidence.find(entry=>entry.name===item.name),registry=await inspectRegistryImage(item,owner,actor,token,expectedBuilderId,builderIdentity),pull=dockerPullEvidence(item,actor,token);authConfigs.push(pull.authConfig);
         Object.assign(target,{resolvedDigest:registry.tagResolvedDigest,unauthenticatedPullDenied:pull.unauthenticatedPullDenied,authenticatedPullSucceeded:pull.authenticatedPullSucceeded,platform:registry.platform,sourceGitSha:registry.sourceGitSha,provenancePresent:registry.provenancePresent&&registry.provenanceSourceShaPresent,spdxSbomPresent:registry.spdxSbomPresent,imageConfig:{digest:registry.imageConfigDigest,user:registry.runtimeUser,linuxManifestDigest:registry.linuxManifestDigest}});
         target.repositoryAccessVerified=verifyRepositoryPackageAccess({runtimeRepository:repository,expectedPackage:item.package,observedPackage:packageProof?.metadata?.name,metadataStatus:target.metadataStatus,packageExists:target.packageExists,packageType:target.packageType,visibility:target.visibility,versionInventoryComplete:packageProof?.decision?.verdict==='PACKAGE_METADATA_READY'&&packageProof.versionPages>=1,matchingVersionCount:packageProof?.matchingVersions?.length,unauthenticatedManifestDenied:registry.unauthenticatedPullDenied,unauthenticatedPullDenied:pull.unauthenticatedPullDenied,authenticatedManifestReadable:registry.authenticatedManifestReadable,authenticatedPullSucceeded:pull.authenticatedPullSucceeded,expectedDigest:item.digest,resolvedDigest:registry.tagResolvedDigest});
-        writeJson(join(evidenceDir,`${item.name}-registry-evidence.json`),{schemaVersion:'PHASE8D1_RECOVERY_REGISTRY_EVIDENCE_1',name:item.name,tag:item.tag,expectedDigest:item.digest,resolvedDigest:registry.tagResolvedDigest,platform:registry.platform,imageConfigDigest:registry.imageConfigDigest,runtimeUser:registry.runtimeUser,sourceGitSha:registry.sourceGitSha,repositoryFullName:target.repositoryFullName,repositoryAccessVerified:target.repositoryAccessVerified,provenancePresent:target.provenancePresent,spdxSbomPresent:target.spdxSbomPresent,unauthenticatedPullDenied:pull.unauthenticatedPullDenied,authenticatedPullSucceeded:pull.authenticatedPullSucceeded});
+        writeJson(join(evidenceDir,`${item.name}-registry-evidence.json`),{schemaVersion:'PHASE8D1_RECOVERY_REGISTRY_EVIDENCE_1',name:item.name,tag:item.tag,expectedDigest:item.digest,resolvedDigest:registry.tagResolvedDigest,platform:registry.platform,imageConfigDigest:registry.imageConfigDigest,runtimeUser:registry.runtimeUser,sourceGitSha:registry.sourceGitSha,repositoryFullName:target.repositoryFullName,repositoryAccessVerified:target.repositoryAccessVerified,attestationSummary:registry.attestationSummary,provenancePresent:target.provenancePresent,spdxSbomPresent:target.spdxSbomPresent,unauthenticatedPullDenied:pull.unauthenticatedPullDenied,authenticatedPullSucceeded:pull.authenticatedPullSucceeded});
       }
       if(images.some(image=>image.resolvedDigest!==image.expectedDigest||!image.repositoryAccessVerified||!image.unauthenticatedPullDenied||!image.authenticatedPullSucceeded||!image.provenancePresent||!image.spdxSbomPresent))throw new Error('REGISTRY_EVIDENCE_HOLD');
       const verifySupport=artifacts.extracted['verify-support'].destination,finalDir=join(evidenceDir,'digest-retest');mkdirSync(finalDir,{recursive:true});

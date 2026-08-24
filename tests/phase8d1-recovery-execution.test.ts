@@ -11,6 +11,7 @@ describe('Phase 8D1-R read-only recovery execution',()=>{
     expect(text).not.toMatch(/if\s*\(binary\)[^\n]*application\/octet-stream/);
     expect(text).toContain('downloaded.length!==expected.bytes||sha256(downloaded)!==expected.sha256');
     expect(text).toContain('safeExtract(zipPath,destination)');
+    expect(text).toContain('evaluateAttestationManifestBinding');expect(text).toContain('buildExpectedBuilderId');expect(text).toContain('originalPublishRunAttempt');expect(text).toContain('expectedBuilderId');expect(text).toContain('payloadBuilderId');expect(text).toContain("layer.mediaType!=='application/vnd.in-toto+json'");expect(text).toContain('verifyAttestationLayerBytes(layer,blob.status,blob.bytes)');expect(text).toContain('attestationSummary');expect(text).not.toMatch(/writeJson\([^\n]+payload/);
     const retest=text.indexOf("scripts/phase8d1/verify-images.sh");for(const marker of ['PACKAGE_TYPE_HOLD','PACKAGE_VISIBILITY_HOLD']){const gate=text.indexOf(marker);expect(gate,marker).toBeGreaterThan(-1);expect(gate,marker).toBeLessThan(retest);}
     expect(text).not.toContain('repositoryFullName!==contract.repository');
     const contextGate=text.indexOf('repository!==contract.repository'),artifactRead=text.indexOf('await downloadOriginalArtifacts(contract');expect(contextGate).toBeGreaterThan(-1);expect(contextGate).toBeLessThan(artifactRead);
