@@ -3,6 +3,9 @@ const MAX_PAGES=100;
 const MAX_ITEMS=10_000;
 const ARTIFACT_ROLES=Object.freeze({preflight:'PREFLIGHT','cockpit-push':'COCKPIT_PUSH','runner-push':'RUNNER_PUSH','final-hold':'FINAL_HOLD','verify-support':'VERIFY_SUPPORT'});
 const RECOVERY_USER_AGENT='phase8d1-existing-digest-recovery';
+const REGISTRY_ORIGIN='https://ghcr.io';
+const REGISTRY_MANIFEST_ACCEPT='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json';
+const DENIED_STATUSES=Object.freeze(new Set([401,403,404]));
 
 function reasonForStatus(status){
   if(status===401||status===403)return 'PACKAGE_API_PERMISSION_HOLD';
@@ -27,6 +30,15 @@ export async function fetchBytesBounded(url,{deadlineMs,timeoutMs=30_000,fetchIm
 }
 export async function fetchHeadBounded(url,{deadlineMs,timeoutMs=30_000,fetchImpl=fetch,...options}){
   return bounded(deadlineMs,timeoutMs,async signal=>{const response=await fetchImpl(url,{...options,method:'HEAD',signal});return {status:response.status,location:response.headers.get('location'),digest:response.headers.get('docker-content-digest')};});
+}
+
+export async function fetchUnauthenticatedRegistryManifestStatuses({url,deadlineMs,fetchImpl=fetch}){
+  let parsed;try{parsed=new URL(url);}catch{throw new Error('FINAL_REGISTRY_URL_HOLD');}
+  if(parsed.origin!==REGISTRY_ORIGIN||parsed.protocol!=='https:'||parsed.username||parsed.password||parsed.hash||!/^\/v2\/[^/]+\/[^/]+\/manifests\/sha256:[0-9a-f]{64}$/.test(parsed.pathname))throw new Error('FINAL_REGISTRY_URL_HOLD');
+  const headers={Accept:REGISTRY_MANIFEST_ACCEPT,'User-Agent':RECOVERY_USER_AGENT};let unauthenticatedHeadStatus=0,unauthenticatedGetStatus=0;
+  try{unauthenticatedHeadStatus=(await fetchHeadBounded(url,{deadlineMs,timeoutMs:30_000,fetchImpl,headers})).status;}catch{}
+  try{unauthenticatedGetStatus=(await fetchBytesBounded(url,{deadlineMs,timeoutMs:30_000,fetchImpl,method:'GET',headers})).status;}catch{}
+  return Object.freeze({unauthenticatedHeadStatus,unauthenticatedGetStatus,headDenied:DENIED_STATUSES.has(unauthenticatedHeadStatus),getDenied:DENIED_STATUSES.has(unauthenticatedGetStatus)});
 }
 
 function artifactRole(role){const value=ARTIFACT_ROLES[role];if(!value)throw new Error('ARTIFACT_DOWNLOAD_ROLE_INVALID');return value;}
