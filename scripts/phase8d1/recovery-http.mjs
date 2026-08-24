@@ -1,6 +1,8 @@
 const API_ORIGIN='https://api.github.com';
 const MAX_PAGES=100;
 const MAX_ITEMS=10_000;
+const ARTIFACT_ROLES=Object.freeze({preflight:'PREFLIGHT','cockpit-push':'COCKPIT_PUSH','runner-push':'RUNNER_PUSH','final-hold':'FINAL_HOLD','verify-support':'VERIFY_SUPPORT'});
+const RECOVERY_USER_AGENT='phase8d1-existing-digest-recovery';
 
 function reasonForStatus(status){
   if(status===401||status===403)return 'PACKAGE_API_PERMISSION_HOLD';
@@ -25,6 +27,20 @@ export async function fetchBytesBounded(url,{deadlineMs,timeoutMs=30_000,fetchIm
 }
 export async function fetchHeadBounded(url,{deadlineMs,timeoutMs=30_000,fetchImpl=fetch,...options}){
   return bounded(deadlineMs,timeoutMs,async signal=>{const response=await fetchImpl(url,{...options,method:'HEAD',signal});return {status:response.status,location:response.headers.get('location'),digest:response.headers.get('docker-content-digest')};});
+}
+
+function artifactRole(role){const value=ARTIFACT_ROLES[role];if(!value)throw new Error('ARTIFACT_DOWNLOAD_ROLE_INVALID');return value;}
+function signedArtifactUrl(value,roleCode){if(typeof value!=='string'||value.includes('#'))throw new Error(`ARTIFACT_DOWNLOAD_LOCATION_INVALID_${roleCode}`);let url;try{url=new URL(value);}catch{throw new Error(`ARTIFACT_DOWNLOAD_LOCATION_INVALID_${roleCode}`);}if(url.protocol!=='https:'||url.username||url.password)throw new Error(`ARTIFACT_DOWNLOAD_LOCATION_INVALID_${roleCode}`);return value;}
+function redirectExhausted(error){let value=error;for(let depth=0;depth<4&&value;depth++){if(value?.message==='redirect count exceeded'||value?.code==='ERR_FR_TOO_MANY_REDIRECTS')return true;value=value.cause;}return false;}
+export async function downloadGitHubArtifactZip({repository,artifactId,role,token,deadlineMs,fetchImpl=fetch}){
+  const roleCode=artifactRole(role),apiUrl=`${API_ORIGIN}/repos/${repository}/actions/artifacts/${artifactId}/zip`;
+  const first=await bounded(deadlineMs,30_000,async signal=>{const response=await fetchImpl(apiUrl,{method:'GET',redirect:'manual',signal,headers:{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':RECOVERY_USER_AGENT}});return {status:response.status,location:response.headers.get('location')};});
+  if(first.status!==302)throw new Error(`ARTIFACT_DOWNLOAD_HTTP_${roleCode}_${first.status}`);
+  if(!first.location)throw new Error(`ARTIFACT_DOWNLOAD_LOCATION_MISSING_${roleCode}`);
+  const location=signedArtifactUrl(first.location,roleCode);
+  let signed;try{signed=await fetchBytesBounded(location,{deadlineMs,timeoutMs:30_000,fetchImpl,method:'GET',redirect:'follow',headers:{'User-Agent':RECOVERY_USER_AGENT}});}catch(error){if(redirectExhausted(error))throw new Error(`ARTIFACT_DOWNLOAD_SIGNED_REDIRECT_HOLD_${roleCode}`);throw error;}
+  if(signed.status!==200)throw new Error(`ARTIFACT_DOWNLOAD_SIGNED_HTTP_${roleCode}_${signed.status}`);
+  return signed.bytes;
 }
 
 function splitLinkHeader(value){

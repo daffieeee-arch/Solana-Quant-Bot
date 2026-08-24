@@ -8,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { evaluatePackageMetadataAttempts, evaluateRecoveryObservation } from './recovery-state.mjs';
 import { validateArtifactEntries, validateOriginalArtifactMetadata, validateOriginalStateChain } from './recovery-artifacts.mjs';
 import { validateJsonSchema } from './json-schema-subset.mjs';
-import { fetchAllPackageVersions, fetchBytesBounded, fetchHeadBounded, fetchJsonBounded } from './recovery-http.mjs';
+import { downloadGitHubArtifactZip, fetchAllPackageVersions, fetchBytesBounded, fetchHeadBounded, fetchJsonBounded } from './recovery-http.mjs';
 import { evaluateAttestationEvidence } from './recovery-oci.mjs';
 
 const CONTRACT_PATH='deployment/phase8d1/existing-digest-recovery-contract.json';
@@ -35,8 +35,7 @@ function walkFiles(root){
   return rows;
 }
 function writeJson(path,value){const bytes=`${JSON.stringify(value,null,2)}\n`;if(Buffer.byteLength(bytes)>MAX_EVIDENCE_BYTES)throw new Error('RECOVERY_EVIDENCE_TOO_LARGE');writeFileSync(path,bytes,{mode:0o600});}
-async function githubGet(repository,path,token,{binary=false}={}){
-  if(binary){const response=await fetchBytesBounded(`${API}/repos/${repository}${path}`,{deadlineMs:Date.now()+30_000,timeoutMs:30_000,method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/octet-stream','X-GitHub-Api-Version':'2022-11-28','User-Agent':'phase8d1-existing-digest-recovery'},redirect:'manual'});if(response.status>=300&&response.status<400){if(!response.location)throw new Error('ARTIFACT_REDIRECT_MISSING');const signed=await fetchBytesBounded(response.location,{deadlineMs:Date.now()+30_000,timeoutMs:30_000,method:'GET',redirect:'follow',headers:{'User-Agent':'phase8d1-existing-digest-recovery'}});return {status:signed.status,bytes:signed.bytes};}return {status:response.status,bytes:response.bytes};}
+async function githubGet(repository,path,token){
   const response=await fetchJsonBounded(`${API}/repos/${repository}${path}`,{deadlineMs:Date.now()+30_000,timeoutMs:30_000,method:'GET',headers:{Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','User-Agent':'phase8d1-existing-digest-recovery'}});return {status:response.status,body:response.body};
 }
 async function packageGet(owner,packageName,token,suffix='',deadlineMs=Date.now()+15_000){
@@ -78,8 +77,8 @@ function safeExtract(zipPath,destination){
 async function downloadOriginalArtifacts(contract,repository,token,evidenceDir){
   const response=await githubGet(repository,`/actions/runs/${contract.originalPublishRunId}/artifacts?per_page=100`,token);if(response.status!==200)throw new Error(`ARTIFACT_API_HTTP_${response.status}`);const metadataErrors=validateOriginalArtifactMetadata(response.body.artifacts,contract);if(metadataErrors.length)throw new Error(metadataErrors[0]);const root=join(evidenceDir,'original');mkdirSync(root,{recursive:true});const extracted={};const evidence=[];
   for(const expected of contract.originalArtifacts){
-    const downloaded=await githubGet(repository,`/actions/artifacts/${expected.id}/zip`,token,{binary:true});if(downloaded.status!==200)throw new Error(`ARTIFACT_DOWNLOAD_HTTP_${expected.role}_${downloaded.status}`);if(downloaded.bytes.length!==expected.bytes||sha256(downloaded.bytes)!==expected.sha256)throw new Error(`ARTIFACT_ZIP_MISMATCH:${expected.role}`);
-    const zipPath=join(root,`${expected.role}.zip`),destination=join(root,expected.role);writeFileSync(zipPath,downloaded.bytes,{mode:0o600});const entries=safeExtract(zipPath,destination);extracted[expected.role]={destination,entries};evidence.push({role:expected.role,id:expected.id,name:expected.name,bytes:expected.bytes,sha256:expected.sha256,entryCount:entries.length});
+    const downloaded=await downloadGitHubArtifactZip({repository,artifactId:expected.id,role:expected.role,token,deadlineMs:Date.now()+30_000});if(downloaded.length!==expected.bytes||sha256(downloaded)!==expected.sha256)throw new Error(`ARTIFACT_ZIP_MISMATCH:${expected.role}`);
+    const zipPath=join(root,`${expected.role}.zip`),destination=join(root,expected.role);writeFileSync(zipPath,downloaded,{mode:0o600});const entries=safeExtract(zipPath,destination);extracted[expected.role]={destination,entries};evidence.push({role:expected.role,id:expected.id,name:expected.name,bytes:expected.bytes,sha256:expected.sha256,entryCount:entries.length});
   }
   const readJson=(role,path)=>JSON.parse(readFileSync(join(extracted[role].destination,path),'utf8'));
   const states={preflight:readJson('preflight','publish-state.json'),cockpit:readJson('cockpit-push','publish-state.json'),runner:readJson('runner-push','publish-state.json'),final:readJson('final-hold','publish-state.json'),verify:readJson('verify-support','release-manifest.json')};const chainErrors=validateOriginalStateChain(states,contract);if(chainErrors.length)throw new Error(chainErrors[0]);writeJson(join(evidenceDir,'original-artifact-chain.json'),{schemaVersion:'PHASE8D1_RECOVERY_ARTIFACT_CHAIN_1',originalPublishRunId:contract.originalPublishRunId,imageSourceSha:contract.imageSourceSha,artifacts:evidence,verdict:'PASS',originalHoldPreserved:true});return {extracted,states,evidence};
