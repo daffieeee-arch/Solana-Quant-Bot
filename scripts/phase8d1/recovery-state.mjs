@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { validateJsonSchema } from './json-schema-subset.mjs';
 
 const SHA=/^[0-9a-f]{40}$/;
+const DIGEST=/^sha256:[0-9a-f]{64}$/;
 const EXPECTED_IMAGE_SOURCE_SHA='9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180';
 const EXPECTED_PUBLISH_RUN=32641496527;
 const EXPECTED_REPOSITORY='daffieeee-arch/solana-paper-scanner';
@@ -23,6 +24,22 @@ export function evaluatePackageMetadataAttempts(attempts) {
   }
   if(attempts.length>=6)return Object.freeze({verdict:'PACKAGE_METADATA_NOT_VISIBLE_HOLD',terminal:true,attemptsUsed:attempts.length,nextDelaySeconds:0});
   return Object.freeze({verdict:'PACKAGE_METADATA_RETRY',terminal:false,attemptsUsed:attempts.length,nextDelaySeconds:15});
+}
+
+export function verifyRepositoryPackageAccess(value){
+  return Boolean(value&&typeof value==='object'&&!Array.isArray(value)
+    &&value.runtimeRepository===EXPECTED_REPOSITORY
+    &&Object.values(EXPECTED_IMAGES).some(image=>image.package===value.expectedPackage)
+    &&value.observedPackage===value.expectedPackage
+    &&value.metadataStatus===200&&value.packageExists===true
+    &&value.packageType==='container'&&value.visibility==='private'
+    &&value.versionInventoryComplete===true&&value.matchingVersionCount===1
+    &&value.unauthenticatedManifestDenied===true
+    &&value.unauthenticatedPullDenied===true
+    &&value.authenticatedManifestReadable===true
+    &&value.authenticatedPullSucceeded===true
+    &&DIGEST.test(value.expectedDigest??'')
+    &&value.resolvedDigest===value.expectedDigest);
 }
 
 export function evaluateRecoveryObservation(value) {
@@ -50,7 +67,7 @@ export function evaluateRecoveryObservation(value) {
     else if(image.metadataStatus!==200)reasons.push(`PACKAGE_METADATA_HTTP_HOLD:${name}`);
     if(image.packageType!=='container')reasons.push(`PACKAGE_TYPE_HOLD:${name}`);
     if(image.visibility!=='private')reasons.push(`PACKAGE_VISIBILITY_HOLD:${name}`);
-    if(image.repositoryFullName!==EXPECTED_REPOSITORY)reasons.push(`PACKAGE_REPOSITORY_LINK_HOLD:${name}`);
+    if(image.repositoryAccessVerified!==true)reasons.push(`PACKAGE_REPOSITORY_ACCESS_HOLD:${name}`);
     if(image.unauthenticatedPullDenied!==true)reasons.push(`UNAUTHENTICATED_PULL_SUCCEEDED_HOLD:${name}`);
     if(image.authenticatedPullSucceeded!==true)reasons.push(`AUTHENTICATED_PULL_FAILED_HOLD:${name}`);
     if(image.platform!=='linux/amd64')reasons.push(`PLATFORM_HOLD:${name}`);

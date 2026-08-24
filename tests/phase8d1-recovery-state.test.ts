@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync } from 'node:fs';
-import { evaluatePackageMetadataAttempts, evaluateRecoveryObservation } from '../scripts/phase8d1/recovery-state.mjs';
+import { evaluatePackageMetadataAttempts, evaluateRecoveryObservation, verifyRepositoryPackageAccess } from '../scripts/phase8d1/recovery-state.mjs';
 
 const imageSourceSha='9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180';
 const recoveryWorkflowSha='a'.repeat(40);
 const images={
-  cockpit:{name:'cockpit',package:'phase8a-research-cockpit',tag:`ghcr.io/daffieeee-arch/phase8a-research-cockpit:${imageSourceSha}-dec80aec28fd-b6799c7bb168`,expectedDigest:'sha256:6963e72814a3c26c6454f3de670cb92ec78e6dc3258fe7a0e2869075788e32fd',resolvedDigest:'sha256:6963e72814a3c26c6454f3de670cb92ec78e6dc3258fe7a0e2869075788e32fd',metadataStatus:200,packageExists:true,packageType:'container',visibility:'private',repositoryFullName:'daffieeee-arch/solana-paper-scanner',unauthenticatedPullDenied:true,authenticatedPullSucceeded:true,platform:'linux/amd64',sourceGitSha:imageSourceSha,provenancePresent:true,spdxSbomPresent:true,digestRetestPassed:true,imageConfig:{user:'61001:61000'}},
-  runner:{name:'runner',package:'phase8a-bronze-runner',tag:`ghcr.io/daffieeee-arch/phase8a-bronze-runner:${imageSourceSha}-0e93202ac05c`,expectedDigest:'sha256:76af7eac2bd1b04045ba570f8bec26033c503ded6d78b6e30d1eabfa590b429a',resolvedDigest:'sha256:76af7eac2bd1b04045ba570f8bec26033c503ded6d78b6e30d1eabfa590b429a',metadataStatus:200,packageExists:true,packageType:'container',visibility:'private',repositoryFullName:'daffieeee-arch/solana-paper-scanner',unauthenticatedPullDenied:true,authenticatedPullSucceeded:true,platform:'linux/amd64',sourceGitSha:imageSourceSha,provenancePresent:true,spdxSbomPresent:true,digestRetestPassed:true,imageConfig:{user:'61000:61000'}},
+  cockpit:{name:'cockpit',package:'phase8a-research-cockpit',tag:`ghcr.io/daffieeee-arch/phase8a-research-cockpit:${imageSourceSha}-dec80aec28fd-b6799c7bb168`,expectedDigest:'sha256:6963e72814a3c26c6454f3de670cb92ec78e6dc3258fe7a0e2869075788e32fd',resolvedDigest:'sha256:6963e72814a3c26c6454f3de670cb92ec78e6dc3258fe7a0e2869075788e32fd',metadataStatus:200,packageExists:true,packageType:'container',visibility:'private',repositoryFullName:'daffieeee-arch/solana-paper-scanner',repositoryAccessVerified:true,unauthenticatedPullDenied:true,authenticatedPullSucceeded:true,platform:'linux/amd64',sourceGitSha:imageSourceSha,provenancePresent:true,spdxSbomPresent:true,digestRetestPassed:true,imageConfig:{user:'61001:61000'}},
+  runner:{name:'runner',package:'phase8a-bronze-runner',tag:`ghcr.io/daffieeee-arch/phase8a-bronze-runner:${imageSourceSha}-0e93202ac05c`,expectedDigest:'sha256:76af7eac2bd1b04045ba570f8bec26033c503ded6d78b6e30d1eabfa590b429a',resolvedDigest:'sha256:76af7eac2bd1b04045ba570f8bec26033c503ded6d78b6e30d1eabfa590b429a',metadataStatus:200,packageExists:true,packageType:'container',visibility:'private',repositoryFullName:'daffieeee-arch/solana-paper-scanner',repositoryAccessVerified:true,unauthenticatedPullDenied:true,authenticatedPullSucceeded:true,platform:'linux/amd64',sourceGitSha:imageSourceSha,provenancePresent:true,spdxSbomPresent:true,digestRetestPassed:true,imageConfig:{user:'61000:61000'}},
 };
 const observation=(overrides:any={})=>({schemaVersion:'PHASE8D1_RECOVERY_OBSERVATION_1',recoveryWorkflowSha,imageSourceSha,imageSourceAncestor:true,originalPublishRunId:32641496527,originalArtifactsVerified:true,originalHoldPreserved:true,images:[structuredClone(images.cockpit),structuredClone(images.runner)],baseImageDriftVerdict:'PASS',cleanTreeVerdict:'PASS',zeroMutationEvidence:true,...overrides});
 
@@ -56,9 +56,16 @@ describe('Phase 8D1-R recovery state evaluator',()=>{
     const permission=observation();permission.images[0].metadataStatus=403;expect(evaluateRecoveryObservation(permission).reasons).toContain('PACKAGE_API_PERMISSION_HOLD:cockpit');
     const missing=observation();missing.images[1].metadataStatus=404;missing.images[1].packageExists=false;expect(evaluateRecoveryObservation(missing).reasons).toContain('PACKAGE_METADATA_NOT_VISIBLE_HOLD:runner');
   });
-  it('holds public or unlinked packages',()=>{
+  it('requires package access proof without treating a nullable repository projection as denial',()=>{
     const publicPackage=observation();publicPackage.images[0].visibility='public';expect(evaluateRecoveryObservation(publicPackage).reasons).toContain('PACKAGE_VISIBILITY_HOLD:cockpit');
-    const unlinked=observation();unlinked.images[1].repositoryFullName=null;expect(evaluateRecoveryObservation(unlinked).reasons).toContain('PACKAGE_REPOSITORY_LINK_HOLD:runner');
+    const nullable=observation();nullable.images[1].repositoryFullName=null;expect(evaluateRecoveryObservation(nullable).reasons).not.toContain('PACKAGE_REPOSITORY_LINK_HOLD:runner');expect(evaluateRecoveryObservation(nullable).verdict).toBe('PUBLISH_SUCCEEDED');
+    const denied=observation();denied.images[1].repositoryFullName=null;denied.images[1].repositoryAccessVerified=false;expect(evaluateRecoveryObservation(denied).reasons).toContain('PACKAGE_REPOSITORY_ACCESS_HOLD:runner');
+  });
+  it('verifies repository package access only from the complete repository-bound proof chain',()=>{
+    const proof:any={runtimeRepository:'daffieeee-arch/solana-paper-scanner',expectedPackage:'phase8a-research-cockpit',observedPackage:'phase8a-research-cockpit',metadataStatus:200,packageExists:true,packageType:'container',visibility:'private',versionInventoryComplete:true,matchingVersionCount:1,unauthenticatedManifestDenied:true,unauthenticatedPullDenied:true,authenticatedManifestReadable:true,authenticatedPullSucceeded:true,expectedDigest:'sha256:'+'a'.repeat(64),resolvedDigest:'sha256:'+'a'.repeat(64)};
+    expect(verifyRepositoryPackageAccess(proof)).toBe(true);
+    const mutations:Array<(value:any)=>void>=[value=>{value.runtimeRepository='other/repo';},value=>{value.observedPackage='other-package';},value=>{value.metadataStatus=403;},value=>{value.packageExists=false;},value=>{value.packageType='npm';},value=>{value.visibility='public';},value=>{value.versionInventoryComplete=false;},value=>{value.matchingVersionCount=0;},value=>{value.unauthenticatedManifestDenied=false;},value=>{value.unauthenticatedPullDenied=false;},value=>{value.authenticatedManifestReadable=false;},value=>{value.authenticatedPullSucceeded=false;},value=>{value.resolvedDigest='sha256:'+'b'.repeat(64);}];
+    for(const mutate of mutations){const candidate=structuredClone(proof);mutate(candidate);expect(verifyRepositoryPackageAccess(candidate)).toBe(false);}
   });
   it('requires unauthenticated denial and authenticated pull success',()=>{
     const publicPull=observation();publicPull.images[0].unauthenticatedPullDenied=false;expect(evaluateRecoveryObservation(publicPull).reasons).toContain('UNAUTHENTICATED_PULL_SUCCEEDED_HOLD:cockpit');
