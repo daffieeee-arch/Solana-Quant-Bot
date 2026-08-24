@@ -2,11 +2,11 @@
 
 ## Status
 
-**REMOTE VERIFY PROVEN — PUBLISH ROUTE HARDENED BUT NEVER DISPATCHED — NO IMAGE PUSH — NO DEPLOYMENT.**
+**REMOTE VERIFY PROVEN — TWO IMMUTABLE IMAGES PUSHED — `BOTH_PUSHED_RETEST_REQUIRED_HOLD` — NO DEPLOYMENT.**
 
 Phase 8D stopped before mutation because Hermes has no container daemon/socket/builder. Phase 8D1 preserves that safety decision and switches to `REMOTE_ISOLATED_GITHUB_BUILDER`; it does not weaken Hermes with Docker/containerd sockets, privilege, Docker-in-Docker, a rootless builder, an external daemon, or a direct TrueNAS build.
 
-Phase 8D1 remote verification is merged and has passed on GitHub-hosted `ubuntu-24.04`. This follow-up hardens only the never-dispatched private GHCR route. It does not authorize the publish workflow, create a package/version, or change the existing no-deployment HOLD.
+Phase 8D1 remote verification and publish hardening are merged and passed on GitHub-hosted `ubuntu-24.04`. Authorized run `32641496527` created two immutable packageversions, then stopped fail-closed before package-metadata proof and registry-digest replay completed. The no-deployment HOLD remains.
 
 ## Repository isolation
 
@@ -49,9 +49,9 @@ The production identity gate independently anchors the base source SHA, both evi
 
 Rootfs credential inspection allows exactly ten public cryptographic test vectors from GnuTLS 3.7.9 `lib/crypto-selftests-pk.c` at source commit `ca61668d7764fc29fb4cc2aa396cb035e176636d`: RSA-2048, DSA-2048, five ECDSA curves, GOST01, GOST12-256 and GOST12-512. Every entry is bound to its exact candidate SHA-256, source symbol, `usr/lib/x86_64-linux-gnu/libgnutls.so.30.34.3`, and the locked Node-runtime amd64 base. The allowlist is a closed canonical-hash set, not a filename or package wildcard; every additional or changed key remains blocking.
 
-Current status: `BUILT_AND_TESTED_REMOTE_ONLY`; no publish dispatch or GHCR push has occurred.
+Current status: `BOTH_PUSHED_RETEST_REQUIRED_HOLD`; both source-SHA tags exist, but neither is deployment-eligible until separately authorized read-only recovery completes every metadata/privacy/attestation/digest-retest gate.
 
-### Manual private GHCR publish — designed, not dispatched
+### Manual private GHCR publish — historical run completed with durable HOLD; do not rerun
 
 `.github/workflows/phase8d-images-publish.yml` triggers only through `workflow_dispatch` with:
 
@@ -78,7 +78,7 @@ Hard gates require:
 
 GitHub API reads use `gh api` with `GH_TOKEN` sourced only from `secrets.GITHUB_TOKEN`; no literal bearer header or alternate credential is present.
 
-The publish workflow is **DESIGN_ONLY_NOT_DISPATCHED**.
+Publishrun `32641496527` pushed both immutable packages and then stopped at `BOTH_PUSHED_RETEST_REQUIRED_HOLD`. No rerun, overwrite, deletion, package-setting change or deployment is authorized. Read-only continuation is defined only by [`PHASE8D1_EXISTING_DIGEST_RECOVERY.md`](PHASE8D1_EXISTING_DIGEST_RECOVERY.md); that recovery workflow is not dispatched by this branch.
 
 ### BuildKit server lock and entitlements
 
@@ -199,8 +199,9 @@ A future private GHCR pull requires a separate package-read-only credential. It 
 ## Current nonactions and HOLD
 
 - Docker socket to Hermes: false;
-- image pushed: false;
-- publish workflow dispatched: false;
+- image pushed: true — exactly the two immutable versions from run `32641496527`;
+- publish workflow dispatched: true — exactly run-attempt 1; rerun forbidden under HOLD;
+- recovery workflow dispatched: false;
 - TrueNAS deployed: false;
 - dataset created: false;
 - Grafana modified: false;

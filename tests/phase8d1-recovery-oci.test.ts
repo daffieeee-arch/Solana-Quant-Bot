@@ -1,0 +1,20 @@
+import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
+
+describe('Phase 8D1-R OCI attestation evidence',()=>{
+  it('requires exact provenance source fields and a structurally real SPDX document',async()=>{
+    expect(existsSync('scripts/phase8d1/recovery-oci.mjs')).toBe(true);const {evaluateAttestationEvidence}:any=await import('../scripts/phase8d1/recovery-oci.mjs');const digest=`sha256:${'a'.repeat(64)}`,source='9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180',subject=[{name:'image',digest:{sha256:'a'.repeat(64)}}],statement=(predicateType:string,predicate:any)=>({_type:'https://in-toto.io/Statement/v1',predicateType,subject,predicate});
+    const unrelated={referenceDigest:digest,predicateType:'https://slsa.dev/provenance/v1',blobStatus:200,payload:statement('https://slsa.dev/provenance/v1',{buildDefinition:{externalParameters:{unrelatedNote:source}},runDetails:{builder:{id:'https://github.com/docker/buildx'}}})};
+    const minimalSpdx={referenceDigest:digest,predicateType:'https://spdx.dev/Document',blobStatus:200,payload:statement('https://spdx.dev/Document',{spdxVersion:'SPDX-2.3'})};
+    expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[unrelated,minimalSpdx]})).toEqual({provenancePresent:true,spdxSbomPresent:false,provenanceSourceShaPresent:false});
+    const provenance={...unrelated,payload:statement('https://slsa.dev/provenance/v1',{buildDefinition:{externalParameters:{'build-args':{SOURCE_GIT_SHA:source}}},runDetails:{builder:{id:'https://github.com/docker/buildx'},metadata:{invocationId:'run'}}})};
+    const spdxPredicate={spdxVersion:'SPDX-2.3',SPDXID:'SPDXRef-DOCUMENT',dataLicense:'CC0-1.0',name:'image-sbom',documentNamespace:'https://example.invalid/spdx/image',creationInfo:{created:'2026-08-23T00:00:00Z',creators:['Tool: buildkit']},documentDescribes:['SPDXRef-Package-image'],packages:[{SPDXID:'SPDXRef-Package-image',name:'image',downloadLocation:'NOASSERTION',filesAnalyzed:false}]};const spdx={referenceDigest:digest,predicateType:'https://spdx.dev/Document',blobStatus:200,payload:statement('https://spdx.dev/Document',spdxPredicate)};
+    expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[provenance,spdx]})).toEqual({provenancePresent:true,spdxSbomPresent:true,provenanceSourceShaPresent:true});
+    const unreadable={...spdx,blobStatus:404,payload:null};expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[provenance,unreadable]}).spdxSbomPresent).toBe(false);
+    const evilProvenance={...provenance,predicateType:'https://evil.invalid/not-really-provenance',payload:{...provenance.payload,predicateType:'https://evil.invalid/not-really-provenance'}};expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[evilProvenance]}).provenancePresent).toBe(false);
+    const evilSpdx={...spdx,predicateType:'https://evil.invalid/not-really-spdx',payload:{...spdx.payload,predicateType:'https://evil.invalid/not-really-spdx'}};expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[evilSpdx]}).spdxSbomPresent).toBe(false);
+    const nullIds={...spdx,payload:statement('https://spdx.dev/Document',{...spdxPredicate,documentDescribes:[null],packages:[{...spdxPredicate.packages[0],SPDXID:null}]})};expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[nullIds]}).spdxSbomPresent).toBe(false);
+    const documentCollision={...spdx,payload:statement('https://spdx.dev/Document',{...spdxPredicate,documentDescribes:['SPDXRef-DOCUMENT'],packages:[{...spdxPredicate.packages[0],SPDXID:'SPDXRef-DOCUMENT'}]})};expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[documentCollision]}).spdxSbomPresent).toBe(false);
+    const wrongSubject={...spdx,payload:{...spdx.payload,subject:[{digest:{sha256:'b'.repeat(64)}}]}};expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[provenance,wrongSubject]}).spdxSbomPresent).toBe(false);
+  });
+});

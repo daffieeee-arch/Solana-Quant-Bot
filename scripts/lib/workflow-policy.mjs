@@ -129,6 +129,7 @@ export function validateTrackedWorkflowPaths(trackedPaths) {
   const expected = [
     '.github/workflows/ci.yml',
     '.github/workflows/phase8d-images-publish.yml',
+    '.github/workflows/phase8d-images-recover.yml',
     '.github/workflows/phase8d-images-verify.yml',
   ];
   return isDeepStrictEqual(workflowPaths, expected)

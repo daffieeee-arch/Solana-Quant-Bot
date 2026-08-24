@@ -10,9 +10,14 @@
   "buildKitImageLockSha256": "1ccd23b3fe61080616c6bb4d3cb51bec7fbed50f5a3eb70a6bb9ef450f9b49bc",
   "partialPublishContract": "deployment/phase8d1/partial-publish-contract.json",
   "partialPublishContractSha256": "7405f9a84f1ec3b6b295b801c07f194da6d23dd0fa9404e4b6c2c25bf488e899",
+  "existingDigestRecoveryContract": "deployment/phase8d1/existing-digest-recovery-contract.json",
+  "existingDigestRecoveryContractSha256": "7dc3470ef6c5c00a0c3d4314047acbf2e2da0cf4d1667cd6b10293c313c72a9a",
+  "recoveryManifestSchema": "deployment/phase8d1/recovery-manifest.schema.json",
+  "recoveryManifestSchemaSha256": "5c5cd56d719ee86945303a43b2a0159af1286e3bee3084383b04af3c46b942ba",
   "workflowSha256": {
     "verify": "2b48e8406211ba509f1d19681f45d6cdd36eaaebbc639f40942b7c6b1068d5fe",
-    "publish": "8595b17dcb2cbab8dc71b47750e4858a5483ce55b55c84276a4d84387919cb0b"
+    "publish": "8595b17dcb2cbab8dc71b47750e4858a5483ce55b55c84276a4d84387919cb0b",
+    "recover": "b01b118f057e6297a71ccb7994b3dd0919885dc77c65a6c008c0948534e7cc0d"
   },
   "supplyChainFileSha256": {
     "containers/Dockerfile.cockpit": "fd43c2b105ebf2c40678e2d644d6a2bf58f6a3d72970d9ae33423021d43471a8",
@@ -24,6 +29,8 @@
     "deployment/phase8d1/release-manifest.schema.json": "8586f821b7b3fb2504de3a50e4704be7cc51c5f01c4b49b65b7db35f1e0791ae",
     "deployment/phase8d1/buildkit-image-lock.json": "1ccd23b3fe61080616c6bb4d3cb51bec7fbed50f5a3eb70a6bb9ef450f9b49bc",
     "deployment/phase8d1/partial-publish-contract.json": "7405f9a84f1ec3b6b295b801c07f194da6d23dd0fa9404e4b6c2c25bf488e899",
+    "deployment/phase8d1/existing-digest-recovery-contract.json": "7dc3470ef6c5c00a0c3d4314047acbf2e2da0cf4d1667cd6b10293c313c72a9a",
+    "deployment/phase8d1/recovery-manifest.schema.json": "5c5cd56d719ee86945303a43b2a0159af1286e3bee3084383b04af3c46b942ba",
     "scripts/phase8d1/resolve-base-images.mjs": "9e8b1006712522c5bb5d06ed587ebf521aba353465a2c3fa97785918910bddc2",
     "scripts/phase8d1/prebuild-hashes.sh": "833fa16ba7e7604954cd5ebf1636a79feadc7f77ab959ab5809b9c669e7d9f1e",
     "scripts/phase8d1/verify-images.sh": "ec7785247223ad6cec6744785ca550ebbaaaffce768f909618f477c90f2d3cbf",
@@ -33,6 +40,13 @@
     "scripts/phase8d1/publish-gates.sh": "d8347c3de504525ed62f45683eea419cdaa97879a5b84efb60cd3568d518c146",
     "scripts/phase8d1/partial-publish-state.mjs": "d28dce8a3a7f11b08b6845fface2618e4d63ed93577b67a8af4e36f5e9aa53c8",
     "scripts/phase8d1/verify-published-images.sh": "a70c82709ef15e8a1140763bb67e116f31aac1de46c4e0050d927321a16c1190",
+    "scripts/phase8d1/recover-existing-digests.sh": "eee7c7f3c46c55db913e1ef4df8444e3a4f16c1bc74ce9d5d64707c28935c800",
+    "scripts/phase8d1/recover-existing-digests.mjs": "0bf16dac503fa59ce718fb1f6e0afba2330578476b930f065e3b54d1bab85e19",
+    "scripts/phase8d1/inspect-artifact-zip.py": "f8e71887ed8a2ec4f75fc6f691263ca2f1f064dbf8a0eae8ce7c8cf075e51b9e",
+    "scripts/phase8d1/recovery-artifacts.mjs": "d78db7b86c08449335120a6e09b32deffdfb222ab902f55bcac3b881d7b74995",
+    "scripts/phase8d1/recovery-http.mjs": "70908f3c54adf4b8f6f506a6953360b70f60c8e681ed490e47434c56258659a3",
+    "scripts/phase8d1/recovery-oci.mjs": "8e42023675c295b9c6bd9c6e279aeb0c49fc6777e5e58c5b538e58465e19650b",
+    "scripts/phase8d1/recovery-state.mjs": "4810477770f7b39dc52eddb4802cfe39d45feef2a2e6cb4f12d4294a61505c0d",
     "scripts/phase8d1/json-schema-subset.mjs": "bc5a648415bd749cf034de3b35f7d5ac5956fff1fdb6f7eccf140a73368762bc",
     "scripts/phase8d1/validate-release-manifest.mjs": "316cc75312f16f1a5e0af676b1fc9828d7780de1bc27863ed8ae6b1f6158f1a4",
     "scripts/phase8d1/validate-runtime-identities.mjs": "bca0a68c761adbc884c73da1f4c160e2842bf14008ac8a6ed87edce7b49d2c99"
@@ -138,6 +152,22 @@
     "packageVersionDeletionAllowed": false,
     "packages": ["phase8a-research-cockpit", "phase8a-bronze-runner"]
   },
+  "recovery": {
+    "trigger": "workflow_dispatch",
+    "confirmation": "RECOVER_EXISTING_PHASE8D_IMAGES",
+    "mainOnly": true,
+    "imageSourceAncestorRequired": true,
+    "imageBuild": false,
+    "imagePush": false,
+    "tagMutation": false,
+    "packageSettingsMutation": false,
+    "packageVersionDeletion": false,
+    "permissions": ["contents:read", "actions:read", "packages:read"],
+    "originalPublishRunId": 32641496527,
+    "artifactMutation": false,
+    "deploymentIdentity": "REGISTRY_DIGEST_ONLY",
+    "recoveryWorkflowDispatched": false
+  },
   "trueNas": {
     "mutationsAuthorized": false,
     "deploymentAuthorized": false,
@@ -145,9 +175,11 @@
     "privatePullCredentialCreated": false
   },
   "nonClaims": {
-    "currentCandidateStatus": "REMOTE_VERIFY_SUCCEEDED_PUBLISH_NOT_DISPATCHED",
+    "currentCandidateStatus": "BOTH_PUSHED_RETEST_REQUIRED_HOLD",
     "imagesInPrAfterSuccessfulVerify": "BUILT_AND_TESTED_REMOTE_ONLY",
-    "imagesPushed": false,
+    "imagesPushed": true,
+    "deploymentEligible": false,
+    "recoveryCompleted": false,
     "trueNasDeployed": false,
     "datasetCreated": false,
     "grafanaModified": false,

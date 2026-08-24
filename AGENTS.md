@@ -111,3 +111,4 @@ GitHub CI must be green. The automatic `GITHUB_TOKEN` is restricted to `contents
 17. `docs/protocol-coverage.md`
 18. `docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`
 19. `docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`
+20. `docs/PHASE8D1_EXISTING_DIGEST_RECOVERY.md`

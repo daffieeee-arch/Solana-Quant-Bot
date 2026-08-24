@@ -2,18 +2,18 @@
 
 ## Status
 
-**RUNBOOK ONLY — publish workflow not dispatched; no package, credential, dataset or app exists.**
+**TWO IMMUTABLE PACKAGES EXIST — `BOTH_PUSHED_RETEST_REQUIRED_HOLD` — NO CREDENTIAL, DATASET OR APP.**
 
-Phase 8D1 keeps image verification on an isolated GitHub-hosted runner. Phase 8D2 will separately authorize private pull credentials and TrueNAS deployment.
+Phase 8D1 keeps image verification on an isolated GitHub-hosted runner. The original publishrun is not rerunnable under the HOLD contract. Phase 8D1-R may inspect/retest the existing digests read-only after a separately merged and authorized recovery workflow. Phase 8D2 remains the only future place for private pull credentials and TrueNAS deployment.
 
-## Future publish authorization
+## Original publish contract — historical, do not rerun
 
-A release operator must dispatch `.github/workflows/phase8d-images-publish.yml` from `main` with:
+Run `32641496527` was dispatched once from main with:
 
-- exact `source_sha` equal to the selected workflow SHA and live remote main;
+- exact `source_sha` equal to image source `9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180`;
 - confirmation `PUBLISH_SYNTHETIC_PHASE8D_IMAGES`.
 
-The workflow first reruns normal CI and no-push image verification. The publish job then independently bootstraps Node `22.23.2`, `npm ci`, the full supply-chain policy and exact-main/clean-tree checks in its own runner. It uses only the repository-scoped `GITHUB_TOKEN` with `contents: read` and `packages: write`. It rejects PR/merge refs, mutable/latest tags, tag collisions, dirty source or main drift.
+This original workflow must not be rerun under the durable HOLD. The description below records the controls that produced the existing versions; it is not a new authorization.
 
 Packages:
 
@@ -72,4 +72,4 @@ Then and only then may the existing Phase-8C dataset/app plan be applied under a
 
 ## Rollback
 
-No rollback applies in the current Phase 8D1 state because nothing is published or deployed. A future partial publish is preserved as evidence under HOLD: existing package versions/tags remain immutable, no version is deleted, and recovery requires separate explicit authorization. A future failed TrueNAS pull/deploy follows the Phase-8C no-app/dataset rollback contract without touching `solana-bot`, Grafana or ClickHouse.
+The current rollback is preservation: both existing packageversions/tags remain immutable under `BOTH_PUSHED_RETEST_REQUIRED_HOLD`; no version is deleted, overwritten or hidden and recovery requires separate explicit authorization. Nothing is deployed. A future failed TrueNAS pull/deploy follows the Phase-8C no-app/dataset rollback contract without touching `solana-bot`, Grafana or ClickHouse.

@@ -12,10 +12,10 @@ afterEach(async () => { while (roots.length) await rm(roots.pop()!, { recursive:
 async function clonePolicyFiles() {
   const root = await mkdtemp(join(tmpdir(), 'phase8d1-policy-entrypoint-')); roots.push(root);
   for (const path of [
-    '.github/workflows/ci.yml', '.github/workflows/phase8d-images-verify.yml', '.github/workflows/phase8d-images-publish.yml',
-    'deployment/phase8d1/runtime-identities.json', 'deployment/phase8d1/runtime-identity-drift-55-to-59.json', 'deployment/phase8d1/remote-build-contract.json', 'deployment/phase8d1/base-image-lock.json', 'deployment/phase8d1/buildkit-image-lock.json', 'deployment/phase8d1/partial-publish-contract.json', 'deployment/phase8d1/release-manifest.schema.json', 'deployment/phase8d1/cockpit-egress-deny-seccomp.json', 'deployment/phase8d1/expected-fixture-files.sha256', 'deployment/phase8d1/rootfs-public-key-test-vectors.json',
+    '.github/workflows/ci.yml', '.github/workflows/phase8d-images-verify.yml', '.github/workflows/phase8d-images-publish.yml', '.github/workflows/phase8d-images-recover.yml',
+    'deployment/phase8d1/runtime-identities.json', 'deployment/phase8d1/runtime-identity-drift-55-to-59.json', 'deployment/phase8d1/remote-build-contract.json', 'deployment/phase8d1/base-image-lock.json', 'deployment/phase8d1/buildkit-image-lock.json', 'deployment/phase8d1/partial-publish-contract.json', 'deployment/phase8d1/release-manifest.schema.json', 'deployment/phase8d1/existing-digest-recovery-contract.json', 'deployment/phase8d1/recovery-manifest.schema.json', 'deployment/phase8d1/cockpit-egress-deny-seccomp.json', 'deployment/phase8d1/expected-fixture-files.sha256', 'deployment/phase8d1/rootfs-public-key-test-vectors.json',
     'containers/Dockerfile.cockpit', 'containers/Dockerfile.phase8a-runner',
-    'scripts/phase8d1/assert-phase8d1-supply-chain.mjs', 'scripts/phase8d1/resolve-base-images.mjs', 'scripts/phase8d1/prebuild-hashes.sh', 'scripts/phase8d1/verify-images.sh', 'scripts/phase8d1/inventory-rootfs.py', 'scripts/phase8d1/validate-image-metadata.mjs', 'scripts/phase8d1/publish-gates.sh', 'scripts/phase8d1/partial-publish-state.mjs', 'scripts/phase8d1/verify-published-images.sh', 'scripts/phase8d1/json-schema-subset.mjs', 'scripts/phase8d1/validate-release-manifest.mjs', 'scripts/phase8d1/validate-runtime-identities.mjs',
+    'scripts/phase8d1/assert-phase8d1-supply-chain.mjs', 'scripts/phase8d1/resolve-base-images.mjs', 'scripts/phase8d1/prebuild-hashes.sh', 'scripts/phase8d1/verify-images.sh', 'scripts/phase8d1/inventory-rootfs.py', 'scripts/phase8d1/validate-image-metadata.mjs', 'scripts/phase8d1/publish-gates.sh', 'scripts/phase8d1/partial-publish-state.mjs', 'scripts/phase8d1/verify-published-images.sh', 'scripts/phase8d1/recover-existing-digests.sh', 'scripts/phase8d1/recover-existing-digests.mjs', 'scripts/phase8d1/inspect-artifact-zip.py', 'scripts/phase8d1/recovery-artifacts.mjs', 'scripts/phase8d1/recovery-http.mjs', 'scripts/phase8d1/recovery-oci.mjs', 'scripts/phase8d1/recovery-state.mjs', 'scripts/phase8d1/json-schema-subset.mjs', 'scripts/phase8d1/validate-release-manifest.mjs', 'scripts/phase8d1/validate-runtime-identities.mjs',
   ]) { const target=join(root,path); await cp(path,target,{recursive:true}); }
   for(const args of [['init','-q'],['add','--all']]){
     const result=spawnSync('git',args,{cwd:root,encoding:'utf8'});
@@ -30,6 +30,7 @@ async function rejected(path: string, mutate: (text: string) => string) {
   const digest=createHash('sha256').update(await readFile(target)).digest('hex');
   if (path.endsWith('phase8d-images-verify.yml')) contract.workflowSha256.verify=digest;
   else if (path.endsWith('phase8d-images-publish.yml')) contract.workflowSha256.publish=digest;
+  else if (path.endsWith('phase8d-images-recover.yml')) contract.workflowSha256.recover=digest;
   else if (contract.supplyChainFileSha256[path]) contract.supplyChainFileSha256[path]=digest;
   await writeFile(contractPath,`${JSON.stringify(contract,null,2)}\n`);
   const result=spawnSync(process.execPath,[resolve('scripts/phase8d1/assert-phase8d1-supply-chain.mjs')],{cwd:root,encoding:'utf8'});
@@ -88,6 +89,23 @@ describe('Phase 8D1 production policy rejects real workflow file bypasses', () =
     await symlink(resolve('node_modules'),join(root,'node_modules'),'dir');
     const result=spawnSync(process.execPath,[policyPath],{cwd:root,encoding:'utf8'});
     expect(result.status,`${result.stdout}\n${result.stderr}`).not.toBe(0);expect(result.stderr).toContain('missing runtime BuildKit proof:verify');
+  });
+  it('rejects recovery write permission after raw and semantic workflow fingerprints are rebound',async()=>{
+    const root=await clonePolicyFiles(),workflowPath=join(root,'.github/workflows/phase8d-images-recover.yml'),contractPath=join(root,'deployment/phase8d1/remote-build-contract.json'),policyPath=join(root,'scripts/phase8d1/assert-phase8d1-supply-chain.mjs');
+    const workflow=(await readFile(workflowPath,'utf8')).replace('  packages: read','  packages: write');await writeFile(workflowPath,workflow);
+    const contract=JSON.parse(await readFile(contractPath,'utf8'));contract.workflowSha256.recover=createHash('sha256').update(workflow).digest('hex');await writeFile(contractPath,`${JSON.stringify(contract,null,2)}\n`);
+    const semantic=createHash('sha256').update(JSON.stringify(YAML.parse(workflow))).digest('hex'),policy=(await readFile(policyPath,'utf8')).replace(/const RECOVERY_SEMANTIC_SHA256='[0-9a-f]{64}'/,`const RECOVERY_SEMANTIC_SHA256='${semantic}'`);await writeFile(policyPath,policy);
+    await symlink(resolve('node_modules'),join(root,'node_modules'),'dir');
+    const result=spawnSync(process.execPath,[policyPath],{cwd:root,encoding:'utf8'});expect(result.status,`${result.stdout}\n${result.stderr}`).not.toBe(0);expect(result.stderr).toContain('invalid recovery permissions');
+  });
+  it('rejects fully rebound nested recovery contract identity and artifact mutations',async()=>{
+    const mutations:Array<(value:any)=>void>=[value=>{value.images[0].package='forged-cockpit';},value=>{value.images[0].tag+='-forged';},value=>{value.images[1].digest=`sha256:${'0'.repeat(64)}`;},value=>{value.images[0].uid=0;},value=>{value.images[1].gid=0;},value=>{value.originalArtifacts[0].id++;},value=>{value.originalArtifacts[3].sha256='0'.repeat(64);}];
+    const stable=(value:any):any=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value;
+    for(const mutate of mutations){
+      const root=await clonePolicyFiles(),recoveryPath=join(root,'deployment/phase8d1/existing-digest-recovery-contract.json'),remotePath=join(root,'deployment/phase8d1/remote-build-contract.json'),policyPath=join(root,'scripts/phase8d1/assert-phase8d1-supply-chain.mjs');const value=JSON.parse(await readFile(recoveryPath,'utf8'));mutate(value);const text=`${JSON.stringify(value,null,2)}\n`;await writeFile(recoveryPath,text);
+      const raw=createHash('sha256').update(text).digest('hex'),semantic=createHash('sha256').update(JSON.stringify(stable(value))).digest('hex'),remote=JSON.parse(await readFile(remotePath,'utf8'));for(const path of Object.keys(remote.supplyChainFileSha256))remote.supplyChainFileSha256[path]=createHash('sha256').update(await readFile(join(root,path))).digest('hex');remote.existingDigestRecoveryContractSha256=raw;remote.supplyChainFileSha256['deployment/phase8d1/existing-digest-recovery-contract.json']=raw;await writeFile(remotePath,`${JSON.stringify(remote,null,2)}\n`);
+      const policy=(await readFile(policyPath,'utf8')).replace(/semanticSha256\(recoveryContract\)!=='[0-9a-f]{64}'/,`semanticSha256(recoveryContract)!=='${semantic}'`);await writeFile(policyPath,policy);await symlink(resolve('node_modules'),join(root,'node_modules'),'dir');const result=spawnSync(process.execPath,[policyPath],{cwd:root,encoding:'utf8'});expect(result.status,`${result.stdout}\n${result.stderr}`).not.toBe(0);expect(result.stderr).toContain('invalid recovery contract');
+    }
   });
   it('rejects credential-bearing image ENV and history mutations', async () => {
     await rejected('containers/Dockerfile.cockpit', text=>text.replace('ENV NODE_ENV=production','ENV NODE_ENV=production\nENV API_TOKEN=supersecretvalue'));
