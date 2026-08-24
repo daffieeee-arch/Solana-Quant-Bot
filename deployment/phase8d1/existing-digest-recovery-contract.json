@@ -4,6 +4,7 @@
   "rootCauseCategory": "PACKAGE_METADATA_API_EVIDENCE_NOT_PRODUCED_BEFORE_DIGEST_RETEST",
   "imageSourceSha": "9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180",
   "originalPublishRunId": 32641496527,
+  "originalPublishRunAttempt": 1,
   "originalFinalVerdict": "BOTH_PUSHED_RETEST_REQUIRED_HOLD",
   "confirmation": "RECOVER_EXISTING_PHASE8D_IMAGES",
   "repository": "daffieeee-arch/solana-paper-scanner",

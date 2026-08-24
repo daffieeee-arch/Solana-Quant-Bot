@@ -5,13 +5,19 @@ const SPDX_TYPE='https://spdx.dev/Document';
 const SPDX_ID=/^SPDXRef-[A-Za-z0-9.-]+$/;
 const DIGEST=/^sha256:[0-9a-f]{64}$/;
 const SHA=/^[0-9a-f]{40}$/;
-const EXPECTED_BUILDER_ID='https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/32641496527';
+const EXPECTED_REPOSITORY='daffieeee-arch/solana-paper-scanner';
 const OCI_MANIFEST='application/vnd.oci.image.manifest.v1+json';
 const IN_TOTO_LAYER='application/vnd.in-toto+json';
 const ATTESTATION_ARTIFACT='application/vnd.docker.attestation.manifest.v1+json';
 const EMPTY_CONFIG={mediaType:'application/vnd.oci.empty.v1+json',digest:'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',size:2};
 
 const rejected=reason=>Object.freeze({accepted:false,format:null,referenceDigest:null,reason});
+
+export function buildExpectedBuilderId(value){
+  const repository=value?.repository,runId=value?.originalPublishRunId,runAttempt=value?.originalPublishRunAttempt;
+  if(repository!==EXPECTED_REPOSITORY||!Number.isSafeInteger(runId)||runId<1||!Number.isSafeInteger(runAttempt)||runAttempt<1)return null;
+  return `https://github.com/${repository}/actions/runs/${runId}/attempts/${runAttempt}`;
+}
 
 export function evaluateAttestationManifestBinding(input){
   const {descriptor,manifest,linuxDescriptor}=input??{};
@@ -45,9 +51,9 @@ function bindsSubject(payload,linuxManifestDigest){
   return digests.every(value=>typeof value==='string'&&value===expected)&&new Set(digests).size===1;
 }
 function isStatement(payload,predicateType){return /^https:\/\/in-toto\.io\/Statement\/v(?:0\.1|1)$/.test(payload?._type??'')&&payload?.predicateType===predicateType&&payload?.predicate&&typeof payload.predicate==='object';}
-function exactSource(payload,imageSourceSha){
+function exactSource(payload,imageSourceSha,expectedBuilderId){
   const args=payload?.predicate?.buildDefinition?.externalParameters?.request?.args;
-  return SHA.test(imageSourceSha??'')&&payload?.predicate?.runDetails?.builder?.id===EXPECTED_BUILDER_ID&&args&&typeof args==='object'&&args['build-arg:SOURCE_GIT_SHA']===imageSourceSha;
+  return SHA.test(imageSourceSha??'')&&typeof expectedBuilderId==='string'&&payload?.predicate?.runDetails?.builder?.id===expectedBuilderId&&args&&typeof args==='object'&&args['build-arg:SOURCE_GIT_SHA']===imageSourceSha;
 }
 function describedPackages(value,packageIds){
   const direct=Array.isArray(value.documentDescribes)?value.documentDescribes:null;
@@ -77,15 +83,15 @@ function isSpdx(payload){
 }
 
 export function evaluateAttestationEvidence(value){
-  const {linuxManifestDigest,imageSourceSha,records}=value??{};
-  const recordList=Array.isArray(records)?records:[];
-  if(!DIGEST.test(linuxManifestDigest??'')||!SHA.test(imageSourceSha??'')||recordList.length!==2)return Object.freeze({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
+  const {linuxManifestDigest,imageSourceSha,records,builderIdentity,expectedBuilderId}=value??{};
+  const reconstructedBuilderId=buildExpectedBuilderId(builderIdentity),recordList=Array.isArray(records)?records:[];
+  if(!reconstructedBuilderId||expectedBuilderId!==reconstructedBuilderId||!DIGEST.test(linuxManifestDigest??'')||!SHA.test(imageSourceSha??'')||recordList.length!==2)return Object.freeze({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
   const valid=[];
   for(const record of recordList){
     if(record?.referenceDigest!==linuxManifestDigest||!['legacy','oci-artifact'].includes(record?.manifestFormat)||record?.layerMediaType!==IN_TOTO_LAYER||!DIGEST.test(record?.layerDigest??'')||record?.layerDigestVerified!==true||record?.blobStatus!==200||!record.payload||!bindsSubject(record.payload,linuxManifestDigest)||!isStatement(record.payload,record.predicateType)||![PROVENANCE_TYPE,SPDX_TYPE].includes(record.predicateType))return Object.freeze({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
     valid.push(record);
   }
   const provenance=valid.filter(record=>record.predicateType===PROVENANCE_TYPE),spdx=valid.filter(record=>record.predicateType===SPDX_TYPE);
-  if(provenance.length!==1||spdx.length!==1||!exactSource(provenance[0].payload,imageSourceSha)||!isSpdx(spdx[0].payload))return Object.freeze({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
+  if(provenance.length!==1||spdx.length!==1||!exactSource(provenance[0].payload,imageSourceSha,expectedBuilderId)||!isSpdx(spdx[0].payload))return Object.freeze({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
   return Object.freeze({provenancePresent:true,spdxSbomPresent:true,provenanceSourceShaPresent:true});
 }

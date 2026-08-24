@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { evaluateAttestationEvidence, evaluateAttestationManifestBinding, verifyAttestationLayerBytes } from '../scripts/phase8d1/recovery-oci.mjs';
+import { readFileSync } from 'node:fs';
+import { buildExpectedBuilderId, evaluateAttestationEvidence as evaluateRaw, evaluateAttestationManifestBinding, verifyAttestationLayerBytes } from '../scripts/phase8d1/recovery-oci.mjs';
 
 const digest=`sha256:${'a'.repeat(64)}`;
 const wrongDigest=`sha256:${'b'.repeat(64)}`;
 const mediaType='application/vnd.oci.image.manifest.v1+json';
 const source='9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180';
+const builderIdentity={repository:'daffieeee-arch/solana-paper-scanner',originalPublishRunId:32641496527,originalPublishRunAttempt:1};
+const expectedBuilderId='https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/32641496527/attempts/1';
+const evaluateAttestationEvidence=(value:any)=>evaluateRaw({...value,builderIdentity,expectedBuilderId});
 const root=(annotations:any={})=>({mediaType,platform:{os:'unknown',architecture:'unknown'},annotations});
 const legacyAnnotations={'vnd.docker.reference.type':'attestation-manifest','vnd.docker.reference.digest':digest};
 const emptyConfig={mediaType:'application/vnd.oci.empty.v1+json',digest:'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',size:2};
@@ -13,7 +17,7 @@ const ociManifest=(subjectDigest=digest)=>({mediaType,artifactType:'application/
 const legacyManifest={mediaType,config:{mediaType:'application/vnd.oci.image.config.v1+json',digest:`sha256:${'c'.repeat(64)}`,size:100},layers:[]};
 const statement=(predicateType:string,predicate:any,subjectDigest=digest)=>({_type:'https://in-toto.io/Statement/v1',predicateType,subject:[{name:'pkg:image',digest:{sha256:subjectDigest.slice(7)}}],predicate});
 const record=(predicateType:string,payload:any,overrides:any={})=>({referenceDigest:digest,manifestFormat:'oci-artifact',layerMediaType:'application/vnd.in-toto+json',layerDigest:`sha256:${'d'.repeat(64)}`,layerDigestVerified:true,predicateType,blobStatus:200,payload,...overrides});
-const provenance=()=>record('https://slsa.dev/provenance/v1',statement('https://slsa.dev/provenance/v1',{buildDefinition:{externalParameters:{request:{args:{'build-arg:SOURCE_GIT_SHA':source}}}},runDetails:{builder:{id:'https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/32641496527'}}}));
+const provenance=()=>record('https://slsa.dev/provenance/v1',statement('https://slsa.dev/provenance/v1',{buildDefinition:{externalParameters:{request:{args:{'build-arg:SOURCE_GIT_SHA':source}}}},runDetails:{builder:{id:expectedBuilderId}}}));
 const spdxPredicate=()=>({spdxVersion:'SPDX-2.3',SPDXID:'SPDXRef-DOCUMENT',dataLicense:'CC0-1.0',name:'image-sbom',documentNamespace:'https://example.invalid/spdx/image',creationInfo:{created:'2026-08-23T00:00:00Z',creators:['Tool: syft']},packages:[{SPDXID:'SPDXRef-Package-image',name:'image',downloadLocation:'NOASSERTION',filesAnalyzed:false}],files:[{SPDXID:'SPDXRef-File-bin',fileName:'/bin/app'}],relationships:[{spdxElementId:'SPDXRef-DOCUMENT',relationshipType:'DESCRIBES',relatedSpdxElement:'SPDXRef-Package-image'},{spdxElementId:'SPDXRef-Package-image',relationshipType:'CONTAINS',relatedSpdxElement:'SPDXRef-File-bin'}]});
 const spdx=()=>record('https://spdx.dev/Document',statement('https://spdx.dev/Document',spdxPredicate()));
 
@@ -42,6 +46,19 @@ describe('Phase 8D1-R attestation manifest target binding',()=>{
 });
 
 describe('Phase 8D1-R attestation payload validation',()=>{
+  it('constructs the exact immutable attempt-scoped builder ID from contract coordinates',()=>{
+    const contract=JSON.parse(readFileSync('deployment/phase8d1/existing-digest-recovery-contract.json','utf8'));expect({repository:contract.repository,originalPublishRunId:contract.originalPublishRunId,originalPublishRunAttempt:contract.originalPublishRunAttempt}).toEqual(builderIdentity);
+    expect(buildExpectedBuilderId(builderIdentity)).toBe(expectedBuilderId);
+    expect(buildExpectedBuilderId({...builderIdentity,repository:'other/repo'})).toBeNull();
+    expect(buildExpectedBuilderId({...builderIdentity,originalPublishRunId:0})).toBeNull();
+    expect(buildExpectedBuilderId({...builderIdentity,originalPublishRunAttempt:0})).toBeNull();
+  });
+  it('rejects every non-exact producer builder identity atomically',()=>{
+    for(const id of ['https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/32641496527','https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/32641496527/attempts/2','https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/1/attempts/1','https://github.com/other/repo/actions/runs/32641496527/attempts/1']){const bad=provenance();bad.payload.predicate.runDetails.builder.id=id;expect(evaluateAttestationEvidence({linuxManifestDigest:digest,imageSourceSha:source,records:[bad,spdx()]})).toEqual({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});}
+    const valid={linuxManifestDigest:digest,imageSourceSha:source,records:[provenance(),spdx()],builderIdentity};
+    for(const malformed of [undefined,null,'',`${expectedBuilderId}/`])expect(evaluateRaw({...valid,expectedBuilderId:malformed})).toEqual({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
+    expect(evaluateRaw({...valid,builderIdentity:{...builderIdentity,repository:'other/repo'},expectedBuilderId})).toEqual({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
+  });
   it('returns atomic all-false for null or undefined input',()=>{
     for(const value of [null,undefined])expect(evaluateAttestationEvidence(value as any)).toEqual({provenancePresent:false,spdxSbomPresent:false,provenanceSourceShaPresent:false});
   });
