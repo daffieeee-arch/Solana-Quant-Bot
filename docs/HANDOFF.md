@@ -108,7 +108,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-Phase 8C is merged through PR #19 as `6c597b4c2c274583a4fdd9ba7a24db44c21df5a8`; its cockpit/image/dataset/Grafana contracts remain unapplied. PR #20 squash-merged Phase 8D1 as `8b5ecb6168ac3d1ea9fa6630ab8a43ada1b686e8`; post-merge normal CI and verify-only main image/container gates passed. Read [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md). The private GHCR publish workflow remains never dispatched. This follow-up hardens only that route; no package, credential, service, dataset, live dashboard, payload, accepted Silver, strategy input or pilot is authorized.
+PR #21 merged Phase 8D1 publish hardening as `9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180`. Publishrun `32641496527` created the two exact immutable GHCR versions, then preserved `BOTH_PUSHED_RETEST_REQUIRED_HOLD` because package metadata visibility/repository-link evidence did not complete before digest replay. Read [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md) and [`PHASE8D1_EXISTING_DIGEST_RECOVERY.md`](PHASE8D1_EXISTING_DIGEST_RECOVERY.md). The recovery workflow is a read-only candidate and has not been dispatched. No pull credential, deployment, dataset, live dashboard, payload, accepted Silver, strategy input or pilot is authorized.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
@@ -136,7 +136,8 @@ Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state s
 14. `docs/PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`
 15. `docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`
 16. `docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`
-17. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-18. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-19. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-20. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+17. `docs/PHASE8D1_EXISTING_DIGEST_RECOVERY.md`
+18. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+19. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+20. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+21. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

@@ -15,7 +15,7 @@ Job name: `tests-build-zero-cost`.
 ## Security posture
 
 - GitHub-hosted Ubuntu runner;
-- exactly one tracked workflow file: `.github/workflows/ci.yml`;
+- exactly four tracked workflow files: canonical CI, no-push image verification, manual publish, and read-only existing-digest recovery; only `.github/workflows/ci.yml` is the canonical general quality workflow described in this section;
 - exactly one `quality` job on `ubuntu-24.04`; self-hosted runners, extra jobs, job containers, and services are forbidden;
 - top-level permissions are exactly `contents: read`;
 - job-level permission overrides are forbidden;
@@ -48,7 +48,7 @@ Duplicate keys are rejected in block and inline mappings. Unsupported YAML featu
 
 The validator checks effective structure at every relevant scope:
 
-1. the tracked workflow file set must be exactly `.github/workflows/ci.yml`;
+1. the tracked workflow file set must be exactly `.github/workflows/ci.yml`, `phase8d-images-verify.yml`, `phase8d-images-publish.yml`, and `phase8d-images-recover.yml`; the canonical structure checks below apply specifically to `ci.yml`;
 2. triggers, concurrency, permissions, environment, job, runner, ordered steps, actions, inputs, and commands must match the canonical validation-only structure exactly;
 3. top-level permissions must be exactly `{ contents: read }`;
 4. top-level safety environment values must have their exact safe values and safety keys may not appear elsewhere;
@@ -150,4 +150,4 @@ Treat workflow and policy changes as security-sensitive. Keep the parser tests a
 
 ## Phase 8D1 remote image workflows
 
-`phase8d-images-verify.yml` is no-push PR/reusable verification with only `contents: read`. `phase8d-images-publish.yml` is manual-only; it reruns normal CI and verify on exact main, then grants `packages: write` only to the publish job. Every external action is full-SHA pinned. Phase 8D1 does not dispatch publish, use a PAT, mount a Docker socket, contact TrueNAS or claim remote image gates before a later authorized delivery executes the PR workflow.
+`phase8d-images-verify.yml` is no-push PR/reusable verification with only `contents: read`. `phase8d-images-publish.yml` is manual-only and has already produced two immutable versions under a durable HOLD. `phase8d-images-recover.yml` is a separate not-yet-dispatched read-only recovery with only `contents/actions/packages: read`; it cannot build, push, delete, overwrite or alter package settings. Every external action is full-SHA pinned.

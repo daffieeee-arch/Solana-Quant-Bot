@@ -17,15 +17,17 @@ const stableValue=value=>Array.isArray(value)?value.map(stableValue):value&&type
 const semanticSha256=value=>createHash('sha256').update(JSON.stringify(stableValue(value))).digest('hex');
 const VERIFY_SEMANTIC_SHA256='82288f7c7f9c1723fb10eac5614500837fb64759dac92045af6cf57ac64b3033';
 const PUBLISH_SEMANTIC_SHA256='1263ebb46ab2e2aa41d91cf1840b904f65ebebb2ba353b916a0ded160919a21f';
+const RECOVERY_SEMANTIC_SHA256='2f7ea959df97b42b5d4c7ee3ac5da75de4f56f2c045ea57ac83b739aa9dd1464';
 
 export function loadPhase8D1Inputs(root = process.cwd()) {
   const at = path => resolve(root, path);
   const verifyText = text(at('.github/workflows/phase8d-images-verify.yml'));
   const publishText = text(at('.github/workflows/phase8d-images-publish.yml'));
+  const recoveryText = text(at('.github/workflows/phase8d-images-recover.yml'));
   const ciText = text(at('.github/workflows/ci.yml'));
   const contract = json(at('deployment/phase8d1/remote-build-contract.json'));
   const supplyChainFileText=Object.fromEntries(Object.keys(contract.supplyChainFileSha256 ?? {}).map(path=>[path,text(at(path))]));
-  const directShellScripts=['prebuild-hashes.sh','publish-gates.sh','verify-images.sh','verify-published-images.sh'].map(name=>`scripts/phase8d1/${name}`);
+  const directShellScripts=['prebuild-hashes.sh','publish-gates.sh','recover-existing-digests.sh','verify-images.sh','verify-published-images.sh'].map(name=>`scripts/phase8d1/${name}`);
   const shellScriptModes=Object.fromEntries(directShellScripts.map(path=>[path,execFileSync('git',['ls-files','--stage','--',path],{cwd:root,encoding:'utf8'}).trim().split(/\s+/)[0]]));
   const verifyScript = [
     text(at('scripts/phase8d1/resolve-base-images.mjs')),
@@ -35,9 +37,10 @@ export function loadPhase8D1Inputs(root = process.cwd()) {
     text(at('scripts/phase8d1/validate-image-metadata.mjs')),
   ].join('\n');
   const publishScript = [text(at('scripts/phase8d1/publish-gates.sh')), text(at('scripts/phase8d1/partial-publish-state.mjs')), text(at('scripts/phase8d1/verify-published-images.sh'))].join('\n');
+  const recoveryScript = [text(at('scripts/phase8d1/recover-existing-digests.sh')),text(at('scripts/phase8d1/recover-existing-digests.mjs')),text(at('scripts/phase8d1/inspect-artifact-zip.py')),text(at('scripts/phase8d1/recovery-artifacts.mjs')),text(at('scripts/phase8d1/recovery-http.mjs')),text(at('scripts/phase8d1/recovery-oci.mjs')),text(at('scripts/phase8d1/recovery-state.mjs'))].join('\n');
   return {
-    verifyWorkflow: YAML.parse(verifyText), publishWorkflow: YAML.parse(publishText), ciWorkflow: YAML.parse(ciText),
-    verifyText, publishText, ciText, verifyScript, publishScript,
+    verifyWorkflow: YAML.parse(verifyText), publishWorkflow: YAML.parse(publishText), recoveryWorkflow:YAML.parse(recoveryText), ciWorkflow: YAML.parse(ciText),
+    verifyText, publishText, recoveryText, ciText, verifyScript, publishScript, recoveryScript,
     identities: json(at('deployment/phase8d1/runtime-identities.json')),
     identityDriftText: text(at('deployment/phase8d1/runtime-identity-drift-55-to-59.json')),
     contract,
@@ -51,6 +54,9 @@ export function loadPhase8D1Inputs(root = process.cwd()) {
     partialPublishContractText: text(at('deployment/phase8d1/partial-publish-contract.json')),
     partialPublishContract: json(at('deployment/phase8d1/partial-publish-contract.json')),
     releaseSchema: json(at('deployment/phase8d1/release-manifest.schema.json')),
+    recoveryContractText:text(at('deployment/phase8d1/existing-digest-recovery-contract.json')),
+    recoveryContract:json(at('deployment/phase8d1/existing-digest-recovery-contract.json')),
+    recoverySchema:json(at('deployment/phase8d1/recovery-manifest.schema.json')),
     cockpitDockerfile: text(at('containers/Dockerfile.cockpit')),
     runnerDockerfile: text(at('containers/Dockerfile.phase8a-runner')),
   };
@@ -74,12 +80,14 @@ function rejectGlobalProhibitions(combined, errors) {
 
 export function validatePhase8D1Inputs(input) {
   const errors=[];
-  const { verifyWorkflow: verify, publishWorkflow: publish, ciWorkflow: ci, contract, identities, baseLock, buildKitLock, partialPublishContract, releaseSchema } = input;
-  const combined = [input.verifyText,input.publishText,input.ciText,input.verifyScript,input.publishScript,input.cockpitDockerfile,input.runnerDockerfile,JSON.stringify(contract)].join('\n');
+  const { verifyWorkflow: verify, publishWorkflow: publish, recoveryWorkflow:recovery, ciWorkflow: ci, contract, identities, baseLock, buildKitLock, partialPublishContract, releaseSchema, recoveryContract, recoverySchema } = input;
+  const combined = [input.verifyText,input.publishText,input.recoveryText,input.ciText,input.verifyScript,input.publishScript,input.recoveryScript,input.cockpitDockerfile,input.runnerDockerfile,JSON.stringify(contract)].join('\n');
   if (createHash('sha256').update(input.verifyText).digest('hex')!==contract.workflowSha256?.verify) errors.push('reviewed verify workflow digest mismatch');
   if (createHash('sha256').update(input.publishText).digest('hex')!==contract.workflowSha256?.publish) errors.push('reviewed publish workflow digest mismatch');
+  if (createHash('sha256').update(input.recoveryText).digest('hex')!==contract.workflowSha256?.recover) errors.push('reviewed recovery workflow digest mismatch');
   if (createHash('sha256').update(JSON.stringify(verify)).digest('hex')!==VERIFY_SEMANTIC_SHA256) errors.push('effective verify workflow semantic mismatch');
   if (createHash('sha256').update(JSON.stringify(publish)).digest('hex')!==PUBLISH_SEMANTIC_SHA256) errors.push('effective publish workflow semantic mismatch');
+  if (createHash('sha256').update(JSON.stringify(recovery)).digest('hex')!==RECOVERY_SEMANTIC_SHA256) errors.push('effective recovery workflow semantic mismatch');
   for (const [path,expected] of Object.entries(contract.supplyChainFileSha256 ?? {})) {
     if (createHash('sha256').update(input.supplyChainFileText?.[path] ?? '').digest('hex')!==expected) errors.push(`reviewed supply-chain file digest mismatch:${path}`);
   }
@@ -89,7 +97,7 @@ export function validatePhase8D1Inputs(input) {
       || /^\s*(?:ENV|ARG)\s+[^\n]*(?:TOKEN|PASSWORD|SECRET|API_KEY|COOKIE|CREDENTIAL)[^\n]*$/gimu.test(source)
       || /^\s*RUN\s+[^\n]*(?:TOKEN|PASSWORD|SECRET|API_KEY|COOKIE|CREDENTIAL)=[^\s$]{8,}/gimu.test(source))) errors.push(`credential-bearing Dockerfile forbidden:${path}`);
   }
-  validateActionPins(`${input.verifyText}\n${input.publishText}\n${input.ciText}`, errors);
+  validateActionPins(`${input.verifyText}\n${input.publishText}\n${input.recoveryText}\n${input.ciText}`, errors);
 
   const buildKitImage='moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528';
   const buildKitRuntimeProof=`test "$(docker buildx version)" = "github.com/docker/buildx v0.12.1 30feaa1a915b869ebc2eea6328624b49facd4bfb"
@@ -120,6 +128,7 @@ jq -e --arg image 'image=${buildKitImage}' '
   };
   validateBuildKitJob(verify.jobs?.['verify-images-no-push'],'verify');
   validateBuildKitJob(publish.jobs?.publish,'publish');
+  validateBuildKitJob(recovery.jobs?.recover,'recovery');
 
   if (!own(verify.on,'pull_request') || own(verify.on,'pull_request_target') || !own(verify.on,'workflow_call')) errors.push('invalid verify triggers');
   if (!exactKeys(verify.permissions,['contents']) || verify.permissions.contents !== 'read') errors.push('invalid PR permissions');
@@ -136,7 +145,7 @@ jq -e --arg image 'image=${buildKitImage}' '
   const npmCiIndex=verifySteps.findIndex(step=>step.run==='npm ci');
   const policyIndex=verifySteps.findIndex(step=>step.run==='node scripts/phase8d1/assert-phase8d1-supply-chain.mjs');
   if(nodeSetupIndex<0||npmCiIndex<=nodeSetupIndex||policyIndex<=npmCiIndex)errors.push('missing locked Node policy dependency bootstrap');
-  if(Object.values(input.shellScriptModes??{}).length!==4||Object.values(input.shellScriptModes??{}).some(mode=>mode!=='100755'))errors.push('direct Phase 8D1 shell script not executable in Git index');
+  if(Object.values(input.shellScriptModes??{}).length!==5||Object.values(input.shellScriptModes??{}).some(mode=>mode!=='100755'))errors.push('direct Phase 8D1 shell script not executable in Git index');
 
   if (!exactKeys(publish.on,['workflow_dispatch'])) errors.push('invalid publish trigger');
   const inputs=publish.on?.workflow_dispatch?.inputs;
@@ -164,7 +173,47 @@ jq -e --arg image 'image=${buildKitImage}' '
   if (!containsAll(input.publishText,['PUBLISH_SYNTHETIC_PHASE8D_IMAGES','refs/heads/main','LIVE_MAIN_SHA','secrets.GITHUB_TOKEN','packages: write','provenance: mode=max','sbom: true','Pull and retest immutable registry digests'])) errors.push('missing manual main-only publish controls');
   if (/secrets\.(?!GITHUB_TOKEN)/.test(input.publishText)) errors.push('forbidden non-repository publish credential');
   if (!containsAll(input.publishScript,['reject_merge_ref','refs/heads/main','LIVE_MAIN_SHA','TAG_COLLISION_REJECTED','manifest unknown','packageVisibility=="private"','finalDigestRetestVerdict'])) errors.push('missing tag collision, live-main, private or digest-retest gate');
-  if (!input.publishScript.includes('gh api') || input.publishScript.includes('Authorization: Bearer')) errors.push('invalid GitHub API authentication boundary');
+  if (!input.publishScript.includes('gh api') || input.publishScript.includes(['Authorization:','Bearer'].join(' '))) errors.push('invalid GitHub API authentication boundary');
+
+  if(!exactKeys(recovery?.on,['workflow_dispatch']))errors.push('invalid recovery trigger');
+  const recoveryInputs=recovery?.on?.workflow_dispatch?.inputs;
+  const recoveryInputNames=['confirmation','image_source_sha','cockpit_tag','cockpit_digest','runner_tag','runner_digest','original_publish_run_id'];
+  if(!exactKeys(recoveryInputs,recoveryInputNames)||recoveryInputNames.some(name=>recoveryInputs?.[name]?.required!==true))errors.push('missing recovery inputs');
+  if(!exactKeys(recovery?.permissions,['contents','actions','packages'])||recovery.permissions.contents!=='read'||recovery.permissions.actions!=='read'||recovery.permissions.packages!=='read')errors.push('invalid recovery permissions');
+  const recoveryJob=recovery?.jobs?.recover,recoverySteps=recoveryJob?.steps??[];
+  if(!recoveryJob||keys(recovery.jobs).length!==1||own(recoveryJob,'permissions')||recoveryJob['runs-on']!=='ubuntu-24.04'||recoveryJob.if!=="github.ref == 'refs/heads/main' && inputs.confirmation == 'RECOVER_EXISTING_PHASE8D_IMAGES'")errors.push('invalid recovery workflow job');
+  const recoveryNames=recoverySteps.map(step=>step.name);
+  for(const name of ['Check out exact recovery workflow source','Check out exact image source','Set up exact Node runtime','Install locked recovery dependencies','Enforce recovery policy and source ancestry','Set up isolated Buildx','Verify exact sandboxed BuildKit server','Run read-only existing-digest recovery','Upload bounded recovery evidence','Require recovery success'])if(!recoveryNames.includes(name))errors.push(`missing recovery workflow step:${name}`);
+  const recoveryCheckouts=recoverySteps.filter(step=>String(step.uses??'').startsWith('actions/checkout@'));
+  if(recoveryCheckouts.length!==2||recoveryCheckouts.some(step=>step.with?.['persist-credentials']!==false)||recoveryCheckouts[0]?.with?.ref!=='${{ github.sha }}'||recoveryCheckouts[1]?.with?.ref!=='${{ inputs.image_source_sha }}'||recoveryCheckouts[1]?.with?.path!=='phase8d1-image-source')errors.push('invalid recovery source separation');
+  const recoveryNode=recoverySteps.findIndex(step=>String(step.uses??'').startsWith('actions/setup-node@')&&step.with?.['node-version']==='22.23.2'),recoveryNpm=recoverySteps.findIndex(step=>step.run==='npm ci'),recoveryPolicy=recoverySteps.findIndex(step=>step.name==='Enforce recovery policy and source ancestry'),recoveryRun=recoverySteps.findIndex(step=>step.name==='Run read-only existing-digest recovery');
+  if(recoveryNode<0||recoveryNpm<=recoveryNode||recoveryPolicy<=recoveryNpm||recoveryRun<=recoveryPolicy||!containsAll(String(recoverySteps[recoveryPolicy]?.run??''),['git merge-base --is-ancestor "$IMAGE_SOURCE_SHA" "$GITHUB_SHA"','node scripts/phase8d1/assert-phase8d1-supply-chain.mjs','git status --porcelain --untracked-files=no']))errors.push('missing recovery policy and ancestor gate');
+  const recoveryUpload=recoverySteps.find(step=>step.name==='Upload bounded recovery evidence');
+  if(!recoveryUpload||recoveryUpload.with?.path!=='phase8d1-recovery-evidence/*.json\nphase8d1-recovery-evidence/*.txt\nphase8d1-recovery-evidence/*.sha256\n'||recoveryUpload.with?.['retention-days']!==30)errors.push('invalid bounded recovery artifact');
+  const recoverySerialized=`${input.recoveryText}\n${input.recoveryScript}`;
+  if(input.recoveryText.includes('inputs.image_source_sha == github.sha'))errors.push('invalid recovery source separation');
+  if(/docker\s+build(?:\s|$)|docker\s+buildx\s+build|docker\s+(?:push|tag)|docker\/build-push-action|gh\s+api\s+--method\s+(?:DELETE|PATCH|POST|PUT)|packages:\s*write|contents:\s*write|id-token:\s*write|attestations:\s*write|packageVersionDelete\s*:\s*true|packageSettingsChange\s*:\s*true|tagOverwrite\s*:\s*true/i.test(recoverySerialized))errors.push('forbidden recovery mutation capability');
+  if(/secrets\.(?!GITHUB_TOKEN)/.test(input.recoveryText)||!containsAll(input.recoveryScript,['evaluatePackageMetadataAttempts','maxAttempts','nextDelaySeconds','PACKAGE_METADATA_TOTAL_TIMEOUT_HOLD','fetchAllPackageVersions','package-version-inventory.json','final-readonly-recheck.json','inspect-artifact-zip.py','evaluateAttestationEvidence','validateOriginalArtifactMetadata','validateOriginalStateChain','unauthenticatedPullDenied','authenticatedPullSucceeded','provenancePresent','spdxSbomPresent','digestRetestPassed','zeroMutationEvidence']))errors.push('missing recovery read-only evidence gates');
+  if(!exactKeys(recoveryContract,['schemaVersion','recoveryMode','rootCauseCategory','imageSourceSha','originalPublishRunId','originalFinalVerdict','confirmation','repository','images','originalArtifacts','packageMetadataRetry','buildStack','mutations'])||recoveryContract?.schemaVersion!=='PHASE8D1_EXISTING_DIGEST_RECOVERY_CONTRACT_1'||recoveryContract?.imageSourceSha!=='9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180'||recoveryContract?.originalPublishRunId!==32641496527||recoveryContract?.confirmation!=='RECOVER_EXISTING_PHASE8D_IMAGES'||recoveryContract?.images?.length!==2||recoveryContract?.originalArtifacts?.length!==5||recoveryContract?.packageMetadataRetry?.maxAttempts!==6||recoveryContract?.packageMetadataRetry?.maxDelaySeconds!==15||recoveryContract?.packageMetadataRetry?.maxTotalWaitSeconds!==90||Object.values(recoveryContract?.mutations??{}).some(value=>value!==false))errors.push('invalid recovery contract');
+  const expectedRecoveryImages=[
+    {name:'cockpit',package:'phase8a-research-cockpit',tag:'ghcr.io/daffieeee-arch/phase8a-research-cockpit:9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180-dec80aec28fd-b6799c7bb168',digest:'sha256:6963e72814a3c26c6454f3de670cb92ec78e6dc3258fe7a0e2869075788e32fd',uid:61001,gid:61000},
+    {name:'runner',package:'phase8a-bronze-runner',tag:'ghcr.io/daffieeee-arch/phase8a-bronze-runner:9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180-0e93202ac05c',digest:'sha256:76af7eac2bd1b04045ba570f8bec26033c503ded6d78b6e30d1eabfa590b429a',uid:61000,gid:61000},
+  ];
+  const expectedRecoveryArtifacts=[
+    {role:'preflight',id:9493911850,name:'phase8d1-publish-preflight-32641496527-1',bytes:638,sha256:'659e65f6e79aa4087304e61b52fc1f10aa68290c455fe0481c3424d4db409388',expectedVerdict:'PRE_PUSH_READY'},
+    {role:'cockpit-push',id:9493915717,name:'phase8d1-publish-cockpit-32641496527-1',bytes:697,sha256:'1580b7850bd737bf690eb90374bd32927902a1569ee66e972ae08665328d219d',expectedVerdict:'PARTIAL_PUBLISH_HOLD'},
+    {role:'runner-push',id:9493917239,name:'phase8d1-publish-runner-32641496527-1',bytes:744,sha256:'adc47365ff0ec33bd524e2e29e7ca09ab1c5cee57b118fe1edcfc28c8e8d9766',expectedVerdict:'BOTH_PUSHED_RETEST_REQUIRED_HOLD'},
+    {role:'final-hold',id:9493919367,name:'phase8d1-publish-final-32641496527-1',bytes:1186,sha256:'2312c9ea3d52d9913c9567b1c4c3247fb13f787330699609afabecc51279ae4f',expectedVerdict:'BOTH_PUSHED_RETEST_REQUIRED_HOLD'},
+    {role:'verify-support',id:9493819797,name:'phase8d1-verify-32641496527-1',bytes:13698,sha256:'b8c10fa9e6aeabe6a74d5020ff1c16375143f7304c396458b114ba4593466ce4',expectedVerdict:'VERIFY_ONLY_SUCCEEDED'},
+  ];
+  const expectedRecoveryRetry={maxAttempts:6,maxDelaySeconds:15,maxTotalWaitSeconds:90},expectedRecoveryBuildStack={buildxVersion:'v0.12.1',buildxCommit:'30feaa1a915b869ebc2eea6328624b49facd4bfb',buildKitVersion:'v0.32.2',buildKitLinuxAmd64Digest:'sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528',daemonFlags:'--debug --oci-worker-net bridge',workerNetworkLabel:'cni'},expectedRecoveryMutations={imageBuild:false,imagePush:false,tagCreate:false,tagOverwrite:false,packageVersionDelete:false,packageSettingsChange:false,originalArtifactMutation:false,trueNasMutation:false,grafanaMutation:false,clickhouseMutation:false};
+  if(recoveryContract?.rootCauseCategory!=='PACKAGE_METADATA_API_EVIDENCE_NOT_PRODUCED_BEFORE_DIGEST_RETEST'||recoveryContract?.originalFinalVerdict!=='BOTH_PUSHED_RETEST_REQUIRED_HOLD'||recoveryContract?.repository!=='daffieeee-arch/solana-paper-scanner'||JSON.stringify(recoveryContract?.images)!==JSON.stringify(expectedRecoveryImages)||JSON.stringify(recoveryContract?.originalArtifacts)!==JSON.stringify(expectedRecoveryArtifacts)||JSON.stringify(recoveryContract?.packageMetadataRetry)!==JSON.stringify(expectedRecoveryRetry)||JSON.stringify(recoveryContract?.buildStack)!==JSON.stringify(expectedRecoveryBuildStack)||JSON.stringify(recoveryContract?.mutations)!==JSON.stringify(expectedRecoveryMutations))errors.push('invalid recovery contract');
+  if(createHash('sha256').update(input.recoveryContractText).digest('hex')!==contract.existingDigestRecoveryContractSha256||semanticSha256(recoveryContract)!=='4cf818bde80cb6df320dcaaeaac2fc467fdf62143e4715ed32aa17456f91b40e')errors.push('invalid recovery contract binding');
+  const recoveryProps=recoverySchema?.properties??{};
+  for(const key of ['recoveryMode','recoveryWorkflowSha','imageSourceSha','originalPublishRunId','originalArtifacts','images','packageMetadata','runnerVerdict','cockpitVerdict','baseImageDriftVerdict','cleanTreeVerdict','zeroMutationEvidence','zeroMutationDetails','verdict','deploymentEligible','recoveryCompleted'])if(!own(recoveryProps,key))errors.push(`missing recovery manifest field:${key}`);
+  const recoveryContractState=contract.recovery;
+  if(!recoveryContractState||recoveryContractState.trigger!=='workflow_dispatch'||recoveryContractState.confirmation!=='RECOVER_EXISTING_PHASE8D_IMAGES'||recoveryContractState.mainOnly!==true||recoveryContractState.imageSourceAncestorRequired!==true||recoveryContractState.imageBuild!==false||recoveryContractState.imagePush!==false||recoveryContractState.tagMutation!==false||recoveryContractState.packageSettingsMutation!==false||recoveryContractState.packageVersionDeletion!==false||recoveryContractState.originalPublishRunId!==32641496527||recoveryContractState.artifactMutation!==false||recoveryContractState.deploymentIdentity!=='REGISTRY_DIGEST_ONLY'||recoveryContractState.recoveryWorkflowDispatched!==false||JSON.stringify(recoveryContractState.permissions)!==JSON.stringify(['contents:read','actions:read','packages:read']))errors.push('invalid recovery authorization contract');
+  if(contract.nonClaims?.currentCandidateStatus!=='BOTH_PUSHED_RETEST_REQUIRED_HOLD'||contract.nonClaims?.imagesPushed!==true||contract.nonClaims?.deploymentEligible!==false||contract.nonClaims?.recoveryCompleted!==false)errors.push('invalid current partial publish HOLD status');
 
   if (contract.schemaVersion!=='PHASE8D1_REMOTE_BUILD_CONTRACT_1' || contract.status!=='REMOTE_ISOLATED_GITHUB_BUILDER' || contract.sourceBaseSha!=='8b5ecb6168ac3d1ea9fa6630ab8a43ada1b686e8') errors.push('invalid remote build contract');
   if (contract.platform!=='linux/amd64' || contract.maxCompressedBaseImageBytes>3221225472) errors.push('invalid base image platform or pull budget');

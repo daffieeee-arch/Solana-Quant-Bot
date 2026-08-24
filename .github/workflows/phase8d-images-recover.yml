@@ -1,0 +1,142 @@
+name: Phase 8D existing digest recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RECOVER_EXISTING_PHASE8D_IMAGES exactly
+        required: true
+        type: string
+      image_source_sha:
+        description: Exact source SHA embedded in the existing images
+        required: true
+        type: string
+      cockpit_tag:
+        description: Existing immutable cockpit tag
+        required: true
+        type: string
+      cockpit_digest:
+        description: Existing immutable cockpit registry digest
+        required: true
+        type: string
+      runner_tag:
+        description: Existing immutable runner tag
+        required: true
+        type: string
+      runner_digest:
+        description: Existing immutable runner registry digest
+        required: true
+        type: string
+      original_publish_run_id:
+        description: Original publish workflow run ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+concurrency:
+  group: phase8d-existing-digest-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    name: existing-published-digest-read-only-recovery
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'RECOVER_EXISTING_PHASE8D_IMAGES'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
+    steps:
+      - name: Check out exact recovery workflow source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out exact image source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.image_source_sha }}
+          path: phase8d1-image-source
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22.23.2'
+      - name: Install locked recovery dependencies
+        run: npm ci
+      - name: Enforce recovery policy and source ancestry
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+          IMAGE_SOURCE_SHA: ${{ inputs.image_source_sha }}
+          ORIGINAL_PUBLISH_RUN_ID: ${{ inputs.original_publish_run_id }}
+        run: |
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REF" = refs/heads/main
+          test "$CONFIRMATION" = RECOVER_EXISTING_PHASE8D_IMAGES
+          test "$(node --version)" = v22.23.2
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          test "$IMAGE_SOURCE_SHA" = "$(git -C phase8d1-image-source rev-parse HEAD)"
+          git merge-base --is-ancestor "$IMAGE_SOURCE_SHA" "$GITHUB_SHA"
+          test "$ORIGINAL_PUBLISH_RUN_ID" = 32641496527
+          node scripts/phase8d1/assert-phase8d1-supply-chain.mjs
+          test -z "$(git status --porcelain --untracked-files=no)"
+      - name: Set up isolated Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          version: v0.12.1
+          driver: docker-container
+          install: true
+          driver-opts: |
+            image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528
+          platforms: linux/amd64
+          buildkitd-flags: --debug --oci-worker-net bridge
+      - name: Verify exact sandboxed BuildKit server
+        env:
+          BUILDX_NODES: ${{ steps.buildx.outputs.nodes }}
+        run: |
+          test "$(docker buildx version)" = "github.com/docker/buildx v0.12.1 30feaa1a915b869ebc2eea6328624b49facd4bfb"
+          jq -e --arg image 'image=moby/buildkit@sha256:040d34121c27906c4ff9ac152a30d52bf2c5d328d3bb748916bb3d2743c02528' '
+            length == 1 and
+            .[0].buildkit == "v0.32.2" and
+            (.[0].platforms | split(",") | index("linux/amd64") != null) and
+            (.[0]["driver-opts"] | index($image) != null) and
+            .[0]["buildkitd-flags"] == "--debug --oci-worker-net bridge" and
+            (.[0]["buildkitd-flags"] | contains("security.insecure") | not) and
+            (.[0]["buildkitd-flags"] | contains("network.host") | not) and
+            .[0].labels["org.mobyproject.buildkit.worker.network"] == "cni"
+          ' <<< "$BUILDX_NODES" >/dev/null
+      - name: Run read-only existing-digest recovery
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RECOVERY_WORKFLOW_SHA: ${{ github.sha }}
+          IMAGE_SOURCE_SHA: ${{ inputs.image_source_sha }}
+          COCKPIT_TAG: ${{ inputs.cockpit_tag }}
+          COCKPIT_DIGEST: ${{ inputs.cockpit_digest }}
+          RUNNER_TAG: ${{ inputs.runner_tag }}
+          RUNNER_DIGEST: ${{ inputs.runner_digest }}
+          ORIGINAL_PUBLISH_RUN_ID: ${{ inputs.original_publish_run_id }}
+          IMAGE_SOURCE_DIR: phase8d1-image-source
+          RECOVERY_EVIDENCE_DIR: phase8d1-recovery-evidence
+        run: scripts/phase8d1/recover-existing-digests.sh
+      - name: Upload bounded recovery evidence
+        if: always() && hashFiles('phase8d1-recovery-evidence/recovery-manifest.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phase8d1-existing-digest-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            phase8d1-recovery-evidence/*.json
+            phase8d1-recovery-evidence/*.txt
+            phase8d1-recovery-evidence/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
+          include-hidden-files: false
+      - name: Require recovery success
+        if: always()
+        run: node scripts/phase8d1/recovery-state.mjs require-success phase8d1-recovery-evidence/recovery-manifest.json

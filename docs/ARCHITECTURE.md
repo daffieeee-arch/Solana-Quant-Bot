@@ -90,7 +90,7 @@ Phase 8A implements that milestone only for `SYNTHETIC_FIXTURE_ONLY`: a separate
 
 Phase 8C adds a separately built **cockpit-only** entrypoint and frontend whose compiled graph cannot reach scanner, ledger, portfolio, strategy, learning, provider or trading modules. It also defines separate unapplied cockpit/runner image contracts, a dedicated POSIX fixture-dataset plan, `LEGACY_FORENSIC_V1` archives, the new Solana Research Platform dashboard suite, and future `solana_bronze`/`silver`/`gold`/`ops`/`forensic_v1` domains. It performs no deployment or infrastructure mutation; see [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).
 
-Phase 8D1 preserves the no-Docker-socket decision and moves reproducible image build, inspection and synthetic container tests to a GitHub-hosted `linux/amd64` Buildx runner. PR verification has `contents: read`, never logs into a registry and never pushes. A separate manual-main-only workflow may later publish private GHCR images via repository `GITHUB_TOKEN`, BuildKit provenance/SPDX SBOM and mandatory registry-digest retest; it is not dispatched by Phase 8D1. See [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md).
+Phase 8D1 preserves the no-Docker-socket decision and uses GitHub-hosted `linux/amd64` Buildx runners. Run `32641496527` published both immutable source-SHA images but retained `BOTH_PUSHED_RETEST_REQUIRED_HOLD`. Phase 8D1-R adds a separately reviewed read-only recovery workflow with `contents/actions/packages: read`, exact old-artifact verification, package/privacy/attestation checks and full existing-digest retest; it performs no build, push, package mutation or deployment. See [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md) and [`PHASE8D1_EXISTING_DIGEST_RECOVERY.md`](PHASE8D1_EXISTING_DIGEST_RECOVERY.md).
 
 ## TrueNAS state
 
@@ -131,5 +131,5 @@ GitHub Actions is validation-only:
 | Phase 7A evidence / Phase 7B citation gate | ✅ merged via PR #16; post-merge run `32397224604` green; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, 0/10 proven, no registry/runtime/pilot authorization |
 | Phase 8A Bronze runner / Research Cockpit | 🔶 offline fixture candidate implemented; reducer reused; transport/Silver/research eligibility remain false; no real payload or pilot |
 | Phase 8C cockpit-only / Grafana-as-Code | 🔶 offline candidate implemented; compiled/runtime inertness proven locally; contracts unapplied and not deployed; legacy is `LEGACY_FORENSIC_V1` |
-| Phase 8D1 remote images / GHCR readiness | 🔶 remote no-push image/container gates proven on GitHub-hosted `ubuntu-24.04`; publish route remains never dispatched; no GHCR push, credential, dataset or deployment |
+| Phase 8D1 remote images / GHCR readiness | 🔶 two immutable GHCR versions published; `BOTH_PUSHED_RETEST_REQUIRED_HOLD`; read-only recovery candidate not dispatched; no credential, dataset or deployment |
 | Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |
