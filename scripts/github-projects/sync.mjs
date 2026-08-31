@@ -195,6 +195,16 @@ export function validateProjectConfig(value) {
   return value;
 }
 
+export function projectViewLayoutInput(layout) {
+  const mapped = {
+    TABLE: 'TABLE_LAYOUT',
+    BOARD: 'BOARD_LAYOUT',
+    ROADMAP: 'ROADMAP_LAYOUT',
+  }[layout];
+  assert(mapped, `unsupported project view layout ${layout}`);
+  return mapped;
+}
+
 function valuesEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -463,6 +473,7 @@ async function ensureViews(api, config, projectId, fieldsByName) {
   let existing = await listProjectViews(api, projectId);
   let reusableDefault = existing.find((view) => /^View\s+\d+$/i.test(view.name));
   for (const desired of config.views) {
+    const apiLayout = projectViewLayoutInput(desired.layout);
     const visibleFieldIds = (desired.visibleFields ?? [])
       .map((name) => fieldsByName.get(name)?.id)
       .filter(Boolean);
@@ -475,7 +486,7 @@ async function ensureViews(api, config, projectId, fieldsByName) {
       const input = {
         projectId,
         name: desired.name,
-        layout: desired.layout,
+        layout: apiLayout,
         ...(desired.layout !== 'ROADMAP' && visibleFieldIds.length > 0
           ? { configuration: { visibleFieldIds } }
           : {}),
@@ -491,7 +502,7 @@ async function ensureViews(api, config, projectId, fieldsByName) {
     const update = {
       viewId: view.id,
       name: desired.name,
-      layout: desired.layout,
+      layout: apiLayout,
       ...(desired.filter ? { filter: desired.filter } : {}),
       ...(desired.layout !== 'ROADMAP' && visibleFieldIds.length > 0
         ? { configuration: { visibleFieldIds } }
