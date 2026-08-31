@@ -55,7 +55,7 @@
       ]
     },
     {
-      "name": "Type",
+      "name": "Work Type",
       "dataType": "SINGLE_SELECT",
       "options": [
         { "name": "Program", "color": "PURPLE", "description": "Top-level program" },
@@ -127,13 +127,13 @@
       "name": "P0 Blockers",
       "layout": "TABLE",
       "filter": "Priority:P0 -Status:Done -Status:Cancelled",
-      "visibleFields": ["Title", "Status", "Area", "Type", "Phase", "Risk", "Evidence", "Assignees"]
+      "visibleFields": ["Title", "Status", "Area", "Work Type", "Phase", "Risk", "Evidence", "Assignees"]
     },
     {
       "name": "Frontend Cockpit",
       "layout": "TABLE",
       "filter": "Area:Frontend,\"Frontend Data\",UX",
-      "visibleFields": ["Title", "Status", "Priority", "Type", "Phase", "Risk", "Assignees"]
+      "visibleFields": ["Title", "Status", "Priority", "Work Type", "Phase", "Risk", "Assignees"]
     },
     {
       "name": "Data & Research",
