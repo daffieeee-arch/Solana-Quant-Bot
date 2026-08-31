@@ -1,7 +1,9 @@
 # Solana Quant Platform Roadmap
 
-Status: **program baseline**  
-Authoritative program issue: [#63](../issues/63)  
+Status: **program baseline**
+
+Authoritative program issue: [#63](../issues/63)
+
 GitHub Project definition: [`roadmap/project-config.json`](../roadmap/project-config.json)
 
 This roadmap turns the current Solana paper scanner into three deliberately connected products:
