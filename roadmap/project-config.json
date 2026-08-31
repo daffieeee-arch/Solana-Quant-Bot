@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "owner": "daffieeee-arch",
+  "repository": "daffieeee-arch/solana-paper-scanner",
+  "project": {
+    "title": "Solana Quant Platform — Roadmap & Cockpit",
+    "shortDescription": "Trusted runtime, professional Solana trader cockpit, authentic data, quant research and gated execution.",
+    "readme": "# Solana Quant Platform\n\nThis user-owned Project is reconciled from `solana-paper-scanner` issues and pull requests.\n\n- Program source of truth: issue #63\n- Roadmap metadata source of truth: the `roadmap-meta` JSON block in issue and PR bodies\n- Delivery rule: every implementation PR links or closes a roadmap issue\n- Safety: paper/research only unless a later execution approval is explicitly reviewed\n\nManual edits to synchronized fields can be overwritten by the next reconciliation."
+  },
+  "fields": [
+    {
+      "name": "Status",
+      "dataType": "SINGLE_SELECT",
+      "builtin": true,
+      "options": [
+        { "name": "Backlog", "color": "GRAY", "description": "Defined but not yet ready", "aliases": ["Todo"] },
+        { "name": "Ready", "color": "BLUE", "description": "Ready to be selected" },
+        { "name": "In Progress", "color": "YELLOW", "description": "Active implementation or research" },
+        { "name": "In Review", "color": "PURPLE", "description": "Implementation is under review" },
+        { "name": "Blocked", "color": "RED", "description": "Blocked by evidence, dependency or safety gate" },
+        { "name": "Done", "color": "GREEN", "description": "Accepted and complete" },
+        { "name": "Cancelled", "color": "GRAY", "description": "Closed without delivery" }
+      ]
+    },
+    {
+      "name": "Priority",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "P0", "color": "RED", "description": "Correctness, safety or program blocker" },
+        { "name": "P1", "color": "ORANGE", "description": "Core platform capability" },
+        { "name": "P2", "color": "YELLOW", "description": "Later gated capability" },
+        { "name": "P3", "color": "GRAY", "description": "Optional improvement" }
+      ]
+    },
+    {
+      "name": "Area",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "Program", "color": "PURPLE", "description": "Program-level coordination" },
+        { "name": "Governance", "color": "GRAY", "description": "Roadmap and repository governance" },
+        { "name": "Backend", "color": "BLUE", "description": "Runtime and domain logic" },
+        { "name": "Data Ingest", "color": "BLUE", "description": "Triton, Vixen, Geyser and replay ingestion" },
+        { "name": "Pricing", "color": "GREEN", "description": "Price, reserves, quotes and evidence" },
+        { "name": "Execution", "color": "RED", "description": "Paper and eventual transaction lifecycle" },
+        { "name": "Market Data", "color": "GREEN", "description": "Shared market context" },
+        { "name": "Frontend", "color": "PURPLE", "description": "Trader cockpit and workspaces" },
+        { "name": "Frontend Data", "color": "PURPLE", "description": "Realtime client data plane" },
+        { "name": "UX", "color": "PURPLE", "description": "Keyboard, alerts and mobile monitoring" },
+        { "name": "Data", "color": "BLUE", "description": "Historical and analytical data platform" },
+        { "name": "Research", "color": "GREEN", "description": "Research methodology and evaluation" },
+        { "name": "ML", "color": "PINK", "description": "Machine-learning research" },
+        { "name": "Live Shadow", "color": "YELLOW", "description": "Prospective quote and execution telemetry" },
+        { "name": "Platform", "color": "GRAY", "description": "Architecture, testing and maintainability" },
+        { "name": "Observability", "color": "BLUE", "description": "Tracing, SLOs and operational dashboards" }
+      ]
+    },
+    {
+      "name": "Type",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "Program", "color": "PURPLE", "description": "Top-level program" },
+        { "name": "Epic", "color": "PURPLE", "description": "Multi-deliverable objective" },
+        { "name": "Bug", "color": "RED", "description": "Incorrect behavior" },
+        { "name": "Architecture", "color": "BLUE", "description": "Architecture boundary or redesign" },
+        { "name": "Safety", "color": "RED", "description": "Safety or capability gate" },
+        { "name": "Design", "color": "PINK", "description": "Product or interaction design" },
+        { "name": "Feature", "color": "GREEN", "description": "User or platform capability" },
+        { "name": "Research", "color": "GREEN", "description": "Evidence-producing research" },
+        { "name": "Spike", "color": "YELLOW", "description": "Time-bounded technical decision" },
+        { "name": "Tech Debt", "color": "GRAY", "description": "Maintainability improvement" },
+        { "name": "Pull Request", "color": "BLUE", "description": "Implementation pull request" }
+      ]
+    },
+    {
+      "name": "Phase",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "0 Governance", "color": "GRAY", "description": "Roadmap and repository controls" },
+        { "name": "1 Correctness", "color": "RED", "description": "Runtime and paper correctness" },
+        { "name": "2 Cockpit Foundation", "color": "PURPLE", "description": "Workbench, realtime data, charts and grids" },
+        { "name": "3 Core Workspaces", "color": "PURPLE", "description": "Professional trader and research workspaces" },
+        { "name": "4 Authentic Data", "color": "BLUE", "description": "Real historical Bronze, Silver and Gold data" },
+        { "name": "5 Quant and ML", "color": "PINK", "description": "Validated strategy and model research" },
+        { "name": "6 Live Shadow", "color": "YELLOW", "description": "Prospective no-order measurement" },
+        { "name": "7 Execution", "color": "RED", "description": "Separately approved live-capable boundary" }
+      ]
+    },
+    {
+      "name": "Risk",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "Critical", "color": "RED", "description": "Can invalidate safety, evidence or accounting" },
+        { "name": "High", "color": "ORANGE", "description": "Material architecture or delivery risk" },
+        { "name": "Medium", "color": "YELLOW", "description": "Manageable implementation risk" },
+        { "name": "Low", "color": "GREEN", "description": "Limited blast radius" }
+      ]
+    },
+    {
+      "name": "Evidence",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "Unproven", "color": "GRAY", "description": "No accepted evidence yet" },
+        { "name": "Fixture", "color": "BLUE", "description": "Validated only with fixtures or synthetic data" },
+        { "name": "Shadow", "color": "YELLOW", "description": "Prospective no-order evidence" },
+        { "name": "Research Ready", "color": "PURPLE", "description": "Approved point-in-time research evidence" },
+        { "name": "Paper Proven", "color": "GREEN", "description": "Prospective executable paper evidence" },
+        { "name": "Live Proven", "color": "GREEN", "description": "Separately approved live evidence" }
+      ]
+    },
+    { "name": "Effort", "dataType": "NUMBER" },
+    { "name": "Start date", "dataType": "DATE" },
+    { "name": "Target date", "dataType": "DATE" }
+  ],
+  "views": [
+    {
+      "name": "Executive Roadmap",
+      "layout": "ROADMAP",
+      "filter": "is:open"
+    },
+    {
+      "name": "Delivery Board",
+      "layout": "BOARD",
+      "filter": "is:open",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Risk", "Assignees"]
+    },
+    {
+      "name": "P0 Blockers",
+      "layout": "TABLE",
+      "filter": "Priority:P0 -Status:Done -Status:Cancelled",
+      "visibleFields": ["Title", "Status", "Area", "Type", "Phase", "Risk", "Evidence", "Assignees"]
+    },
+    {
+      "name": "Frontend Cockpit",
+      "layout": "TABLE",
+      "filter": "Area:Frontend,\"Frontend Data\",UX",
+      "visibleFields": ["Title", "Status", "Priority", "Type", "Phase", "Risk", "Assignees"]
+    },
+    {
+      "name": "Data & Research",
+      "layout": "TABLE",
+      "filter": "Area:Data,Research,ML",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Evidence", "Risk", "Assignees"]
+    },
+    {
+      "name": "Live Shadow & Execution",
+      "layout": "TABLE",
+      "filter": "Area:\"Live Shadow\",Execution",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Evidence", "Risk", "Assignees"]
+    },
+    {
+      "name": "Recently Updated",
+      "layout": "TABLE",
+      "filter": "updated:>@today-14d",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Updated at", "Assignees"]
+    },
+    {
+      "name": "Done & Cancelled",
+      "layout": "TABLE",
+      "filter": "Status:Done,Cancelled",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Closed at", "Assignees"]
+    }
+  ]
+}
