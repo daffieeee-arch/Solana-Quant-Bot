@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   deriveMetadata,
@@ -64,7 +65,7 @@ Implements https://github.com/daffieeee-arch/solana-paper-scanner/issues/35
     expect(deriveStatus({ kind: 'PullRequest', state: 'CLOSED', merged: false })).toBe('Cancelled');
   });
 
-  it('inherits roadmap dimensions from the linked issue while PR state owns Status and Type', () => {
+  it('inherits roadmap dimensions from the linked issue while PR state owns Status and work-type metadata', () => {
     const issue = {
       kind: 'Issue',
       number: 35,
@@ -119,6 +120,15 @@ describe('GitHub Projects roadmap config', () => {
 
   it('accepts a bounded unique config', () => {
     expect(validateProjectConfig(config)).toBe(config);
+  });
+
+  it('uses Work Type rather than GitHub Projects reserved Type in the production config', () => {
+    const production = JSON.parse(readFileSync('roadmap/project-config.json', 'utf8')) as {
+      fields: Array<{ name: string }>;
+    };
+    const fieldNames = production.fields.map((field) => field.name);
+    expect(fieldNames).toContain('Work Type');
+    expect(fieldNames).not.toContain('Type');
   });
 
   it('rejects owner drift, duplicate fields and unsupported layouts', () => {

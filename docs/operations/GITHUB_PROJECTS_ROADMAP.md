@@ -67,7 +67,7 @@ Supported keys:
 | `workflow` | Status | Open issues only; GitHub state overrides closed/PR status |
 | `priority` | Priority | P0–P3 configured options |
 | `area` | Area | Must match a configured option |
-| `type` | Type | PRs are always `Pull Request` |
+| `type` | Work Type | PRs are always `Pull Request`; `Type` itself is reserved by GitHub Projects |
 | `phase` | Phase | Program phase 0–7 |
 | `risk` | Risk | Critical, High, Medium or Low |
 | `evidence` | Evidence | Unproven through Live Proven |
@@ -86,7 +86,7 @@ Closes #35
 Roadmap: #58
 ```
 
-Direct PR metadata overrides inherited values. PR Type and Status are always derived:
+Direct PR metadata overrides inherited values. PR Work Type and Status are always derived:
 
 | GitHub PR state | Project Status |
 |---|---|
@@ -109,7 +109,7 @@ The sync is intentionally repository-to-Project. Manual changes to synchronized 
 
 Configuration is declared in `roadmap/project-config.json`. The baseline creates:
 
-- Status, Priority, Area, Type, Phase, Risk and Evidence single-select fields;
+- Status, Priority, Area, Work Type, Phase, Risk and Evidence single-select fields;
 - Effort, Start date and Target date;
 - Executive Roadmap, Delivery Board, P0 Blockers, Frontend Cockpit, Data & Research, Live Shadow & Execution, Recently Updated and Done & Cancelled views.
 
