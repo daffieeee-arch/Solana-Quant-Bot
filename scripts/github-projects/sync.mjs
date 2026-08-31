@@ -365,7 +365,6 @@ async function listProjectFields(api, projectId) {
                 __typename
                 ... on ProjectV2Field { id name dataType }
                 ... on ProjectV2SingleSelectField { id name dataType options { id name color description } }
-                ... on ProjectV2MultiSelectField { id name dataType options { id name color description } }
                 ... on ProjectV2IterationField { id name dataType }
               }
               pageInfo { hasNextPage endCursor }
