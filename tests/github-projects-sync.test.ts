@@ -5,6 +5,7 @@ import {
   deriveStatus,
   linkedIssueNumbers,
   parseRoadmapMeta,
+  projectViewLayoutInput,
   validateProjectConfig,
 } from '../scripts/github-projects/sync.mjs';
 
@@ -120,6 +121,13 @@ describe('GitHub Projects roadmap config', () => {
 
   it('accepts a bounded unique config', () => {
     expect(validateProjectConfig(config)).toBe(config);
+  });
+
+  it('maps readable config layouts to the current GitHub Projects GraphQL enum values', () => {
+    expect(projectViewLayoutInput('TABLE')).toBe('TABLE_LAYOUT');
+    expect(projectViewLayoutInput('BOARD')).toBe('BOARD_LAYOUT');
+    expect(projectViewLayoutInput('ROADMAP')).toBe('ROADMAP_LAYOUT');
+    expect(() => projectViewLayoutInput('GRID')).toThrow(/unsupported project view layout/i);
   });
 
   it('uses Work Type rather than GitHub Projects reserved Type in the production config', () => {
