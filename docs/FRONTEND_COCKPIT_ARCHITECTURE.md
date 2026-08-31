@@ -1,7 +1,9 @@
 # Professional Solana Trader Cockpit Architecture
 
-Status: **target architecture; implementation not started by this document**  
-Program epic: [#58](../issues/58)  
+Status: **target architecture; implementation not started by this document**
+
+Program epic: [#58](../issues/58)
+
 Information architecture gate: [#35](../issues/35)
 
 ## 1. Product decision
