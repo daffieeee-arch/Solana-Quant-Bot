@@ -336,7 +336,7 @@ describe('semantic CI workflow policy', () => {
     }
   });
 
-  it('rejects trigger drift and any workflow outside the four reviewed files', () => {
+  it('rejects trigger drift and any workflow outside the five reviewed files', () => {
     const pullRequestTarget = SAFE_WORKFLOW.replace('  pull_request:', '  pull_request_target:');
     expect(errors(pullRequestTarget)).toMatch(/trigger|canonical workflow/i);
     const reviewed = [
@@ -344,6 +344,7 @@ describe('semantic CI workflow policy', () => {
       '.github/workflows/phase8d-images-publish.yml',
       '.github/workflows/phase8d-images-recover.yml',
       '.github/workflows/phase8d-images-verify.yml',
+      '.github/workflows/roadmap-sync.yml',
     ];
     expect(workflowFileSetErrors(reviewed)).toBe('');
     expect(workflowFileSetErrors([...reviewed, '.github/workflows/deploy.yml'])).toMatch(/workflow file set/i);
