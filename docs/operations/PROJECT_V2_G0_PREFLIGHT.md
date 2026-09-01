@@ -18,7 +18,7 @@ The export was read-only and completed before G0 existed. Issue [#70](https://gi
 | [Succeeding issue-event Roadmap Sync run](https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/33548642312) | `success` for the same SHA; this was the ordinary reconciliation that superseded the cancelled instance |
 | [G0 creation Roadmap Sync run](https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/33551185481) | `success` under the current schema after the snapshot |
 
-The cancelled main-push instance is not described as green. The successful successor run is the verified post-merge ordinary reconciliation. Its triggering issue event was the automated transition of issue #63 described below.
+The cancelled main-push instance is not described as green. The successful successor run is the verified post-merge ordinary reconciliation. Its triggering issue event was temporally associated with PR #69's merge and the issue #63 transition captured below; the exact initiating mechanism is unproven.
 
 ## Immutable private snapshot identity
 
@@ -50,17 +50,17 @@ The cancelled main-push instance is not described as green. The successful succe
 
 The 69-item snapshot predates G0 issue #70. These are baseline counts, not expected post-migration counts. Reconciliation must compute and report deterministic planned/applied/skipped counts and stop on unexplained drift.
 
-## Observed stop condition: issue #63
+## Captured issue #63 state and post-snapshot delta
 
 The accepted plan expected issue #63 to remain open during initial migration. The preflight instead observed:
 
 - state `CLOSED`;
 - state reason / Project status `COMPLETED` / `Done`;
 - transition time `2026-09-01T19:17:25Z`;
-- GitHub attribution to the merged PR #69 closing phrase;
+- PR #69's squash commit references issue #63 and contains `Roadmap: #62 #63`; `Roadmap:` is not a documented closing keyword, and the exact initiating mechanism is unproven;
 - preflight action `NONE`.
 
-G0 does not reopen, relabel or otherwise repair this state. Before any live V2 migration, governance must choose and record one of two explicit paths: preserve the current state as an audited historical exception, or separately authorize a state correction and audit the reconciliation consequences. The sync/config implementation must not infer that decision. Until it is resolved, the discrepancy remains a migration stop condition.
+The immutable snapshot correctly records that captured state and remains unchanged. After capture, governance explicitly authorized and performed a reopen of issue #63. The correction is recorded in [issue #63](https://github.com/daffieeee-arch/solana-paper-scanner/issues/63#issuecomment-5500016645) and [G0 issue #70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70#issuecomment-5500023997); current-schema [Roadmap Sync run `33555734237`](https://github.com/daffieeee-arch/solana-paper-scanner/actions/runs/33555734237) passed with 38 issues, 33 pull requests, zero additions, zero unarchives and one normal field update. This reopen is a documented post-snapshot delta, not a reason to replace the snapshot or alter its hashes. Issue #63 remains open and temporarily pinned through initial G0/E0, then is closed individually as `not planned / superseded` only after verified E0.
 
 ## Bounded G0 support PR contract
 
@@ -70,30 +70,30 @@ The support PR may change only the Project synchronizer, declarative Project con
 - all ten reviewed Evidence options while preserving IDs for semantically equal live options;
 - Now, Next, Data, Observatory, Research, Later, Retired and Migration Ledger views;
 - replacement data-first Project short description and README;
-- mandatory explicit `closed_item_retention_days`, with `30` as the review candidate and no code/config fallback;
+- mandatory explicit `closed_item_retention_days`, with the approved value `30` and no code/config fallback; the exact 30 audited pre-V2 PR items archive immediately, while the grace interval applies to later closed items;
 - deterministic eligibility and archival planning for the exact 30 captured active pre-V2 merged-PR candidates (PRs #1–#26, #64, #65, #67 and #68), with the sorted allowlist, initial active membership, root snapshot hash and candidate-set hash enforced before the first mutation;
 - closed-item non-reactivation and reactivation only after evidence of an actual reopen;
-- pinned continuing controls, including issue #56, plus a temporary audit-visibility pin for unresolved issue #63;
+- pinned continuing controls, including issue #56, plus a temporary issue #63 pin through initial G0/E0;
 - eligibility before both item addition and unarchive;
 - deterministic reconciliation counts and fail-closed drift handling;
 - the trusted-default-branch `PROJECT_TOKEN` security boundary.
 
-The PR performs no live archive or V2 migration. It creates no E0–E7/B2A–B8 issue, writes no V2 metadata or cutover note to issues #27–#63, and changes no issue state.
+The PR branch performs no live archive or V2 migration. It creates no E0–E7/B2A–B8 issue, writes no V2 metadata or cutover note to issues #27–#63, and its synchronizer changes no issue state. The separately authorized issue #63 governance correction is a documented post-snapshot action outside synchronizer behavior.
 
 ## Security boundary
 
-`PROJECT_TOKEN` remains a protected Actions secret and is never accepted from a pull-request branch, command line, config file or log. `pull_request_target` execution must use the trusted default-branch workflow, synchronizer and config; it must never check out or execute PR-head code. Pull-request validation is offline. Explicit merge approval must also authorize the automatic trusted-default-branch push reconciliation; that run is the first point at which this change may mutate the user-owned Project.
+`PROJECT_TOKEN` remains a protected Actions secret and is never accepted from a pull-request branch, command line, config file or log. `pull_request_target` execution must use the trusted default-branch workflow, synchronizer and config; it must never check out or execute PR-head code. Pull-request validation is offline. Explicit approval now covers squash merge and the automatic trusted-default-branch push reconciliation after the correction commit and full CI pass; that run is the first point at which this change may apply the V2 schema/view/retention policy to the user-owned Project.
 
 The private snapshot is a rollback/audit source, not runtime input. Its bodies are not copied into issues, PR text, prompts or MCP queries. No deletion is part of rollback: discrepancies are restored explicitly against the hashed source.
 
 ## Merge approval and post-merge procedure
 
-Merging is the activation boundary because the existing push-to-`main` trigger runs Roadmap Sync. Before merge:
+Merging is the activation boundary because the existing push-to-`main` trigger runs Roadmap Sync. Governance has completed the decision gates:
 
-1. confirm the reviewed `closed_item_retention_days` value;
-2. resolve and record the issue #63 stop condition;
-3. verify full CI and the trusted-default-branch security review;
-4. obtain explicit GO that covers both merge and the resulting live schema/view/retention reconciliation.
+1. `closed_item_retention_days: 30` is approved;
+2. issue #63 was explicitly reopened, documented as a post-snapshot delta and successfully reconciled under the current schema;
+3. squash merge plus automatic trusted-main reconciliation is explicitly authorized;
+4. the correction commit and full CI must still pass before merge.
 
 After merge:
 
