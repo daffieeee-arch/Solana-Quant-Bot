@@ -9,16 +9,16 @@ official pinned Pump source/specification
                   |
 direct official Triton Old Faithful OF1 acquisition (leased, bounded)
                   |
-        immutable source bytes + receipts                 Rust
+        immutable source bytes + receipts         Raw identity: Rust-owned
                   |
-       lossless Solana Bronze facts
+       lossless Solana Bronze facts               Rust-owned/authorized
                   |
- versioned Pump registry/decode -> canonical Silver facts
+ versioned Pump registry/decode -> canonical Silver facts Rust-owned/authorized
                   |
-      Parquet/Arrow + immutable manifests
+      Parquet/Arrow + immutable manifests          physical writer: PR 5 decision
              /                     \
- Python: DuckDB/Polars         React/TypeScript
- PIT Gold + evaluation         Research Observatory
+ Python reads approved Silver   React/TypeScript
+ PIT Gold + evaluation          Research Observatory
              \                     /
         evidence / falsification
                   |
@@ -37,8 +37,9 @@ V2 does not assume a profitable strategy. It must make “no edge”, “insuffi
 |---|---|---|
 | acquisition/replay | Rust | the only historical network-capable binary; exact host capability, bytes, ordering, coverage, resume and hard budgets |
 | Pump protocol truth | Rust | pinned official source, version registry, codegen/reference decoder, exact integers and normalized events |
-| canonical facts | Rust plus language-neutral schemas | deterministic Raw/Bronze/Silver semantics, exact ordering and normalized records |
-| immutable research datasets | Python | deterministically materialize/validate Arrow/Parquet and manifests; query with Polars/DuckDB; build PIT Gold/evaluation |
+| canonical Raw/Bronze/Silver | Rust plus language-neutral schemas | logical/canonical semantics, exact ordering/integers, evidence, coverage, quarantine and dataset-manifest identity; Rust produces or authorizes canonical Bronze/Silver records |
+| physical Bronze/Silver Parquet | explicit PR 5 decision | does not transfer semantic ownership. A Python implementation is allowed only as a generated, lossless materializer with schema and logical-hash parity |
+| Gold and research artifacts | Python | read approved Silver; build features, labels, cohorts/splits, statistics, backtests and experiment artifacts with Polars/DuckDB. No Pump wire decode or alternative Silver logic |
 | product UI | React/TypeScript | visualization and linked interaction; no protocol/trading business logic or wallet capability |
 | analytical projection | optional later ClickHouse | fully rebuildable; never the only research truth or execution state |
 
@@ -132,35 +133,42 @@ The two classes cannot be relabelled after observing results.
 
 ### Raw
 
-Immutable acquired bytes/content blocks, sidecars/indexes, request receipts, acquisition WAL/checkpoints, coverage and the approved/aborted run plan. Raw may use native CAR/range bundles; canonical JSON manifests bind identities and hashes.
+Rust owns the logical Raw contract and acquisition identity: immutable acquired bytes/content blocks, sidecars/indexes, request receipts, acquisition WAL/checkpoints, coverage and the approved/aborted run plan. Raw may use native CAR/range bundles; canonical JSON manifests bind identities and hashes.
 
 ### Bronze
 
-Lossless Solana block/transaction facts: blocks, transactions including failures, account keys, top-level/inner instructions, logs, balances, rewards, return data, coverage and transport quarantine. All raw quantities remain exact integers/binary; `uiAmount` and floating-point price are not truth.
+Rust owns and produces or authorizes lossless Solana block/transaction facts: blocks, transactions including failures, account keys, top-level/inner instructions, logs, balances, rewards, return data, coverage and transport quarantine. All raw quantities remain exact integers/binary; `uiAmount` and floating-point price are not truth.
 
 ### Silver
 
-Versioned canonical Pump instruction attempts, events, event reserves, lifecycle facts, participant actions, migrations, registry snapshot, decoder quarantine and explicit unavailable-state records. An unavailable historical account write creates no fake zero row.
+Rust owns and produces or authorizes versioned canonical Pump instruction attempts, events, event reserves, lifecycle facts, participant actions, migrations, registry snapshot, decoder quarantine and explicit unavailable-state records. An unavailable historical account write creates no fake zero row.
 
 ### Gold
 
-PIT observation snapshots, feature vectors, labels, cohort/split assignments, censoring and immutable experiment manifests. Gold records coverage, evidence class, dataset/decoder/schema/code identities and cost-model assumptions.
+Python reads approved Silver and produces PIT observation snapshots, feature vectors, labels, cohort/split assignments, censoring and immutable experiment manifests. Gold records coverage, evidence class, dataset/decoder/schema/code identities and cost-model assumptions. Python cannot wire-decode Pump or reinterpret Silver semantics.
 
-Parquet partitioning is coarse by layer/table/schema/epoch/slot bucket, never one directory per mint. Python materializes the canonical Rust records into research datasets under language-neutral schemas; writers use deterministic row order and content/logical hashes. Dataset manifests bind source identifiers, ranges/CIDs/hashes, acquisition time, decoder/schema versions, code SHA, coverage, quarantine counts and file hashes.
+Parquet partitioning is coarse by layer/table/schema/epoch/slot bucket, never one directory per mint. PR 5 selects the physical Bronze/Silver writer. If Python performs that serialization, generated schemas must make it a lossless Rust-authorized materializer with deterministic row order plus schema/content/logical-hash parity; it may not reinterpret, filter or enrich records. Dataset manifests bind source identifiers, ranges/CIDs/hashes, `acquired_at`, `processed_at`, decoder/schema versions, code SHA, coverage, quarantine counts and file hashes. Rust owns the Raw/Bronze/Silver manifest identity; Python owns Gold/experiment manifests derived from approved Silver.
 
 ## Causality and availability
 
 All instructions, CPIs, events, logs and metadata from one transaction are released to downstream logic as one atomic observation package. Partial transaction contents are never actionable.
 
-Gold defines:
+Operational provenance defines:
 
-- `effective_at`: chain occurrence/order;
-- `observed_at`: when the complete package was observed by the pipeline;
-- `actionable_at`: earliest subsequent boundary permitted by package, coverage and finality policy;
-- `decision_at`: recorded strategy decision boundary;
-- `execution_opportunity_at`: separate later opportunity supported by required execution evidence.
+- `acquired_at`: real wall-clock time at which the acquisition run received the historical bytes;
+- `processed_at`: real wall-clock time at which the local pipeline processed the bytes.
 
-A strategy cannot react to an event and fill against a price/reserve from that same already-executed transaction. Historical event price is never automatically executable. Operational acquisition time is provenance, not a historical feature.
+These operational clocks never establish historical availability and are forbidden as feature, label, cohort/split or decision inputs.
+
+Historical replay and Gold define:
+
+- `effective_at`: canonical chain location and order at which the fact occurred;
+- `observed_at`: reconstructed boundary at which the complete transaction package is released under `observation_model_id`, not local acquisition/processing time;
+- `actionable_at`: first subsequent boundary permitted by package, coverage, finality and latency policy;
+- `decision_at`: strategy decision boundary actually recorded;
+- `execution_opportunity_at`: separate later opportunity supported by an independent execution-evidence contract.
+
+Every historical observation binds `observation_model_id`; bind `latency_model_id` whenever modeled latency changes actionability or execution, and never interpret absent evidence as zero latency. `execution_opportunity_at` is nullable/`UNAVAILABLE` when no independent opportunity is proven. A strategy cannot fill against a price/reserve from the same already-executed package, treat historical event price as executable, or automatically use the following historical transaction as a fill.
 
 Historical availability is explicit:
 

@@ -11,7 +11,7 @@ Project #4 exists and is the central delivery roadmap. It is reconciled by:
 - `roadmap/project-config.json`;
 - `tests/github-projects-sync.test.ts`.
 
-The current configuration and issue `roadmap-meta` still express the historical phase/order. PR 1 deliberately does **not** change Project fields/views, issue bodies or synchronization code. After PR 1 merges, execute the reviewed V2 migration before PR 2A.
+The current configuration and issue `roadmap-meta` still express the historical phase/order. PR 1 deliberately does **not** change Project fields/views, issue bodies or synchronization code. Normal current-schema reconciliation of PR #69 on PR events is expected; it is not a V2 migration. After PR 1 merges, execute the reviewed governance issue → bounded sync/config PR → verified migration sequence before PR 2A.
 
 ## Security boundary
 
@@ -29,6 +29,8 @@ Rotate/revoke the token if exposed. Workflow changes require independent securit
 ## Current reconciliation semantics
 
 The synchronizer is full-state/idempotent and runs on relevant issue/PR events, pushes to `main`, manual dispatch and scheduled repair. It finds/links the user Project, ensures configured fields/views, adds repository issues/PRs and maps hidden `roadmap-meta` plus GitHub state into Project values.
+
+Current lifecycle behavior is not suitable for the V2 cockpit: it enumerates all open/closed issues and all open/closed/merged PRs, adds a missing historical item, and unconditionally unarchives any archived repository item. The G0 extension must apply eligibility before both add and unarchive, preserve closed archived items, and reactivate only a genuinely reopened issue/PR.
 
 Current metadata keys are:
 
@@ -53,17 +55,27 @@ The current synchronizer does not recognize `v2Phase` or `v2Disposition`. Do not
 
 The post-merge migration must:
 
-1. export and hash current issue bodies plus Project items/fields/views read-only;
-2. preserve existing `Phase`/metadata and original acceptance criteria;
-3. create V2 successor epics/issues first;
-4. add separate `V2 Phase` and `V2 Disposition` fields;
-5. extend/test sync/config before repository-driven V2 metadata, or obtain explicit approval for a temporary manual ledger;
-6. append non-destructive cutover notes in bounded batches;
-7. create/verify Now, Next, Data, Observatory, Research, Later and Retired views;
-8. reconcile and audit counts/options/states/links;
-9. only then retire obsolete views.
+1. verify merged PR #69 SHA/CI, then export/hash all current Project-linked repository issues/PRs and complete Project state read-only, retaining an exact #27–#63 migration subset;
+2. create one governance issue G0 using only metadata understood by current `main`;
+3. create and merge one bounded Roadmap Sync/config PR before creating successors or V2 metadata;
+4. in that PR, add/test `V2 Phase`, `V2 Disposition`, expanded Evidence, V2 views, replacement Project description/README and lifecycle-aware retention;
+5. preserve existing `Phase`, old metadata, option IDs for unchanged semantics and original acceptance criteria;
+6. only after that PR merges, create E0–E7/B2A–B8 and append V2 metadata/cutover notes in bounded batches;
+7. reconcile and audit all counts/options/IDs/states/links/views/Evidence/retention outcomes;
+8. record actual successor numbers and migration evidence in the repository;
+9. close fully covered `SPLIT`/`SUPERSEDED` anchors only through a later individual verified pass, then authorize PR 2A.
 
-`V2 Disposition` values are `ACTIVE NOW`, `NEXT`, `LATER`, `SPLIT`, `SUPERSEDED` and `RETIRED`. Disposition is not completion. #56 remains Done; #62 and #63 remain open. Do not bulk-close.
+`V2 Disposition` values are `ACTIVE NOW`, `NEXT`, `LATER`, `SPLIT`, `SUPERSEDED` and `RETIRED`. Disposition is not completion. #56 remains Done; #62 stays open; #63 stays open during migration and closes individually only after verified E0 cutover. Do not bulk-close.
+
+During migration G0 is the single concrete `ACTIVE NOW`. After verified migration B2A becomes `ACTIVE NOW`, B3 alone is `NEXT`, and B4–B8 remain `LATER` until their direct predecessor is accepted. Program/epic routing cannot create a second concrete delivery head.
+
+The Evidence field becomes, in order: `Not Applicable`, `Unproven`, `Fixture`, `Operationally Verified`, `Engineering Validation`, `Research Candidate`, `Research Ready`, `Shadow`, `Paper Proven`, `Live Proven`. Preserve option IDs for the six existing semantically equal values. Programs/epics use `Not Applicable`; operational governance is `Unproven` until verified then `Operationally Verified`; #56 is `Operationally Verified`; research advances only through its named evidence gates.
+
+The config PR replaces the Project short description and README with the approved E0 data-first text and a link to [`../HANDOFF_V2.md`](../HANDOFF_V2.md), explicitly naming edge discovery or falsification, Observatory before Workstation, Triton-only and no profitability assumption.
+
+Retention keeps open V2 issues/open PRs active, archives merged pre-V2 PR items #1–#68 after export/audit, and requires an explicit reviewed `closed_item_retention_days` before age-based archival of future closed/merged items. Archived closed items remain archived unless actually reopened; no item or GitHub history is deleted. #56 is a pinned continuing control. Tests must cover eligibility before add/unarchive, grace periods and reopen behavior.
+
+The initial migration does not close anchors. After all mappings/notes/fields/views pass, fully covered `SPLIT`/`SUPERSEDED` anchors close individually as `not planned / superseded`; standalone `LATER` requirements remain open. #56 stays Done, #62 stays open, and #63 closes individually only after verified E0 cutover.
 
 The exact #27–#63 ledger, successor catalog, V2 phases, filters, acceptance checks and rollback are in [`../PROJECT_V2_REBASE.md`](../PROJECT_V2_REBASE.md).
 
@@ -76,7 +88,7 @@ node scripts/github-projects/sync.mjs --dry-run
 npm test -- --run tests/github-projects-sync.test.ts
 ```
 
-Do not run a live reconciliation during PR 1. After merge, live mutation requires the reviewed export/preflight and protected Actions secret path; do not place a token on a command line.
+Do not manually dispatch a V2 reconciliation during PR 1. Ordinary PR-event reconciliation under current trusted-main configuration is expected and must be allowed to finish. After merge, V2 mutation requires the reviewed export/preflight, merged G0 sync/config support and protected Actions secret path; do not place a token on a command line.
 
 ## Migration stop conditions
 

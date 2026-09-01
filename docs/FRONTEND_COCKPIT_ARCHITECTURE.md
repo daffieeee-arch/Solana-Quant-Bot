@@ -48,7 +48,7 @@ Required visible fields:
 - quarantine reason distribution;
 - schema, registry and decoder versions;
 - source/Jetstreamer commit and code SHA;
-- acquisition start/end/elapsed time as operational provenance;
+- `acquired_at` receipt wall clock, `processed_at` local-pipeline wall clock and elapsed time as operational provenance, never as historical feature/chart time;
 - full-epoch-hash declared-versus-locally-verified distinction.
 
 Minimum panels:
@@ -91,7 +91,7 @@ The UI cannot draw a Pump CLOB/DOM, convert reference/event price to executable 
 
 ## Read-only data contracts
 
-PR 5 owns canonical static JSON schemas; PR 6 may expose them through a loopback read-only adapter. Candidate routes:
+PR 5 publishes Rust-owned/authorized canonical static JSON schemas; PR 6 may expose them through a loopback read-only adapter. Candidate routes:
 
 ```text
 GET /api/v2/datasets
@@ -112,6 +112,8 @@ dataset_id
 dataset_content_id
 manifest_hash
 code_sha
+observation_model_id
+latency_model_id: string | null
 state: READY | STALE | GAP | REPLAYING | UNAVAILABLE | UNPROVEN
 evidence_class
 slice_class
@@ -123,17 +125,29 @@ page: { cursor, next_cursor, limit, returned }
 data
 ```
 
-The server never derives trading/domain truth that belongs in Rust/Python. TypeScript types are generated from shared schemas or checked for parity; runtime input is validated before display.
+The server never derives trading/domain truth. Rust owns or authorizes canonical Raw/Bronze/Silver semantics and manifest identity; Python reads approved Silver and owns Gold/research artifacts. TypeScript types are generated from shared schemas or checked for parity; runtime input is validated before display. The browser cannot wire-decode Pump, reinterpret Silver or use acquisition/processing wall clocks as historical signal time.
 
 ### Atomic transaction package
 
-Lifecycle rows group all instructions, CPIs, events, logs and metadata for a transaction under one `transaction_key`. Expansion can show their internal canonical order, but consumers receive the package atomically. The contract exposes `effective_at`, `observed_at` and `actionable_at`; later Gold/Experiment views add `decision_at` and `execution_opportunity_at`.
+Lifecycle rows group all instructions, CPIs, events, logs and metadata for a transaction under one `transaction_key`. Expansion can show their internal canonical order, but consumers receive the package atomically.
 
-The client must never make one event actionable before the remainder of its transaction package, nor label a price/reserve from the same executed transaction as a subsequent fill.
+The historical contract distinguishes:
+
+- `acquired_at`: real wall-clock byte receipt, operational provenance only;
+- `processed_at`: real wall-clock local processing, operational provenance only;
+- `effective_at`: canonical chain location/order;
+- `observed_at`: reconstructed release boundary for the complete package under `observation_model_id`;
+- `actionable_at`: first later boundary permitted by package, coverage, finality and latency rules;
+- `decision_at`: actually recorded strategy boundary in later Gold/Experiment data;
+- `execution_opportunity_at`: independently evidenced later opportunity, nullable/`UNAVAILABLE` otherwise.
+
+Responses bind `observation_model_id` and include `latency_model_id` when modeled latency affects actionability/execution. Missing latency evidence is not zero latency. `acquired_at` and `processed_at` never drive historical charts, features, splits or decisions.
+
+The client must never make one event actionable before the remainder of its transaction package, nor label a price/reserve from the same executed transaction as a subsequent fill. It also cannot promote the following historical transaction to an executable opportunity or fill without an independent evidence contract.
 
 ## Evidence and panel states
 
-Every panel has a visible state, source and as-of boundary:
+Every panel has a visible state, source, `observation_model_id` and reconstructed as-of boundary. Acquisition/processing wall clocks remain separately labelled provenance:
 
 - `READY`: requested immutable contract passed declared gates;
 - `STALE`: client/server revision does not match the selected current manifest or refresh age policy;
@@ -226,6 +240,8 @@ payload
 ```
 
 Clients reject duplicates, detect gaps, pause application, fetch/resume/replay and show `GAP`/`REPLAYING`. They do not guess through missing deltas. High-rate parsing/buffering may move to a worker with bounded memory only after measurement.
+
+These later prospective `event_time`/`observed_time` stream fields are runtime measurements. They do not replace or redefine the historical replay boundaries above.
 
 ### Solana/Pump interaction model
 

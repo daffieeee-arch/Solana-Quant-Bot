@@ -24,8 +24,9 @@ The implementation rule is one walking skeleton: one official source, one acquis
 
 | Delivery | Scope | Required observable outcome | Explicit non-goals |
 |---|---|---|---|
-| PR 1 | V2 source of truth and roadmap rebase plan | accepted docs, status map and complete #27–#63 migration ledger | no GitHub mutation, cleanup, provider calls or product code |
-| Post-merge governance transaction | controlled Project #4 V2 rebase | successors, V2 fields and clean views verified without rewriting history | no issue bulk-close or delivery claim |
+| PR 1 | V2 source of truth and roadmap rebase plan | accepted docs, status map and complete #27–#63 migration ledger | no manual V2 Project/issue migration, cleanup, provider calls or product code; ordinary PR-item sync may run |
+| Post-merge governance issue + bounded sync/config PR | teach trusted `main` the complete V2 Project contract | tested V2 Phase/Disposition/Evidence, Project text, views and lifecycle-aware retention support | no successors, V2 issue metadata or manual migration before this PR merges |
+| Post-merge migration transaction | controlled Project #4 V2 rebase | successors, V2 metadata, clean views, retention and individual supersession verified without deleting history | no bulk-close or delivery claim |
 | PR 2A | obsolete platform removal and legacy safety quarantine | retired TrueNAS/Phase 8/Hermes paths removed after invariant salvage; reachable legacy is bounded/fail-closed | no data pipeline or new legacy features |
 | PR 3 | Pump protocol truth walking skeleton | protocol evidence matrix for one official pinned source and one needed bounded variant | no universal registry/framework claim and no activation claim without real bytes |
 | PR 4 | bounded Old Faithful acquisition | live terminal/TUI progress, verified receipts, deterministic resume and explicit coverage/gaps | no full epoch, no silent backend override and no research claim |
@@ -36,6 +37,8 @@ The implementation rule is one walking skeleton: one official source, one acquis
 
 After at most three or four engineering PRs without a new user-visible or research-measurable outcome, the next PR must produce one.
 
+During the Project rebase, its dedicated governance implementation issue is the single concrete `ACTIVE NOW` delivery. After the migration is fully verified, B2A becomes `ACTIVE NOW`, B3 alone is `NEXT`, and B4–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now view must expose one concrete delivery head.
+
 ## V2 program phases
 
 The Project rebase adds a separate `V2 Phase`; it does not destroy the historical `Phase` field.
@@ -45,7 +48,7 @@ The Project rebase adds a separate `V2 Phase`; it does not destroy the historica
 | 0 Cutover & Cleanup | establish V2 truth and remove obsolete reachability safely | fresh sessions reconstruct V2; invariant-salvaged cleanup is reviewable |
 | 1 Pump Protocol Truth | versioned official protocol source and bounded decoder truth | protocol evidence matrix for the needed real variant |
 | 2 Authentic Acquisition | direct official OF1, bounded and resumable | authentic verified bytes/blocks with receipts, coverage and progress |
-| 3 Bronze & Silver | lossless canonical facts and immutable manifests | deterministic Raw/Bronze/Silver plus static report |
+| 3 Bronze & Silver | Rust-owned/authorized lossless canonical facts and immutable manifests | deterministic Raw/Bronze/Silver plus static report; physical Parquet writer resolved explicitly in PR 5 |
 | 4 Research Observatory | make authentic evidence visible | interactive data-quality and lifecycle replay |
 | 5 Scale & Data Sufficiency | expand only through preregistered sampling | Cohort Explorer and sufficient/insufficient verdict |
 | 6 Gold & Edge Validation | PIT features/labels and simple baselines | walk-forward evidence, falsification or insufficient sample |
@@ -69,11 +72,17 @@ Start with deterministic rules and descriptive statistics, then logistic regress
 
 Initial hypotheses include early-launch ranking, flow acceleration/imbalance, participant growth, trade-size distribution, early concentration, creator/funder history where reconstructible, curve progression, momentum continuation/exhaustion, graduation, rug/exitability survival, post-graduation behavior and capacity versus signal quality.
 
-Every result records censoring, coverage, dataset/model manifest, train/validation/test boundaries, costs/evidence class and uncertainty. Historical event prices remain non-executable observations unless a separate execution-opportunity source proves otherwise.
+Every result records censoring, coverage, dataset/model manifest, train/validation/test boundaries, costs/evidence class and uncertainty. Historical event prices remain non-executable observations unless an independent execution-evidence contract proves a later opportunity. The following historical transaction is not a default fill.
 
 ## Causality gate
 
-All instructions, CPIs, events, logs and metadata from a historical transaction become available as one atomic package. A decision cannot see a partial package or execute against a fact from that same already-completed transaction. Gold therefore defines `effective_at`, `observed_at`, `actionable_at`, `decision_at` and `execution_opportunity_at`.
+All instructions, CPIs, events, logs and metadata from a historical transaction become available as one atomic package. A decision cannot see a partial package or execute against a fact from that same already-completed transaction.
+
+`acquired_at` and `processed_at` are real wall-clock operational provenance for receipt and local processing; neither may enter historical features, labels, splits or decisions. Gold separately defines canonical chain-order `effective_at`, reconstructed atomic-package `observed_at` under `observation_model_id`, first permitted `actionable_at`, actually recorded `decision_at`, and independently evidenced later `execution_opportunity_at`. Bind `latency_model_id` when latency modeling changes actionability/execution. The execution boundary is nullable/`UNAVAILABLE` without evidence, and the next historical transaction is not automatically a fill.
+
+## Language and data-ownership gate
+
+Rust owns logical/canonical Raw/Bronze/Silver semantics, decoding, ordering, exact integers, evidence, coverage, quarantine and manifest identity and produces or authorizes Bronze/Silver records. Python begins at approved Silver and owns Gold, features, labels, cohorts/splits, statistics, backtests and experiments; it contains no Pump wire decode or alternative Silver logic. PR 5 decides the physical Bronze/Silver Parquet writer. A Python-only writer must be generated, lossless and prove schema/logical-hash parity.
 
 ## Long-term epics
 
@@ -91,13 +100,15 @@ Requirements in #27–#34 remain valuable but route to the later new engine or t
 
 ## Evidence semantics
 
-- `UNPROVEN`: no accepted evidence.
-- `FIXTURE`: deterministic synthetic/fixture evidence only.
-- `ENGINEERING_VALIDATION_ONLY`: authentic but outcome-seeded and excluded from research claims.
-- `RESEARCH_CANDIDATE`: outcome-independent authentic evidence awaiting all gates.
-- `RESEARCH_READY`: accepted PIT research dataset/methodology.
-- `SHADOW`: prospective no-order evidence.
-- `PAPER_PROVEN`: prospective executable paper evidence.
-- `LIVE_PROVEN`: only a later separately approved live boundary.
+The Project-facing Evidence options are `Not Applicable`, `Unproven`, `Fixture`, `Operationally Verified`, `Engineering Validation`, `Research Candidate`, `Research Ready`, `Shadow`, `Paper Proven` and `Live Proven`. The dataset slice class `ENGINEERING_VALIDATION_ONLY` remains a stricter immutable tag and is not renamed by the Project label `Engineering Validation`.
+
+- `Not Applicable`: coordination-only program/epic container; never inherited from children.
+- `Unproven`: no accepted evidence.
+- `Fixture`: deterministic synthetic/fixture evidence only.
+- `Operationally Verified`: an operational/governance control passed its named CI and end-to-end reconciliation evidence.
+- `Engineering Validation`: authentic engineering mechanics proven, but permanently excluded from edge claims when the slice is `ENGINEERING_VALIDATION_ONLY`.
+- `Research Candidate`: outcome-independent authentic evidence awaiting all PIT/research gates.
+- `Research Ready`: accepted PIT research dataset/methodology.
+- `Shadow`, `Paper Proven`, `Live Proven`: only their named prospective gates.
 
 Unknown, stale, missing or unavailable evidence is never converted to zero, healthy, safe or successful.

@@ -19,7 +19,7 @@ pinned official Pump truth
   -> much later generic Linux VPS / separately gated live boundary
 ```
 
-Rust owns acquisition/protocol/replay, Python owns research/evaluation, and React/TypeScript owns visualization. Immutable files and manifests are canonical research truth; ClickHouse is an optional later projection.
+Rust owns or authorizes the logical/canonical Raw, Bronze and Silver facts, including protocol decode, ordering, evidence, coverage, quarantine and manifest identity. Python starts from approved Silver and owns Gold, features, labels and research/evaluation artifacts; it contains no Pump wire decoder or alternative Silver business logic. The physical Bronze/Silver Parquet writer remains a PR 5 decision and any Python-only serializer must be generated, lossless and logical-hash equivalent. React/TypeScript owns visualization. Immutable files and manifests are canonical research truth; ClickHouse is an optional later projection.
 
 The existing scanner, portfolio, dashboard and paper runtime are frozen legacy. Existing fixture tests, golden vectors and crash-safety invariants remain valuable evidence, but current decoders/fills are not universal protocol or executable-liquidity truth. TrueNAS, Hermes AI and Phase 8 deployment work are retired from the active product architecture and remain in Git only pending controlled cleanup.
 

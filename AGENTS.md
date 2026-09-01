@@ -22,8 +22,8 @@ Before mechanical cleanup, an annotated tag such as `v1-paper-platform-final` mu
 
 ## Active architecture boundaries
 
-- Rust: acquisition, protocol parsing/registry, canonical facts, ordering, deduplication, gap/finality semantics, exact integers and deterministic replay; later the new paper engine.
-- Python: immutable research datasets, Polars/DuckDB, PIT features/labels, statistics, backtests, walk-forward, marimo and MLflow.
+- Rust: acquisition plus the logical and canonical Raw/Bronze/Silver contracts; protocol decoding, ordering, exact integers, evidence, coverage, quarantine, dataset-manifest identity and deterministic replay; later the new paper engine. Rust produces or authorizes canonical Bronze/Silver records.
+- Python: reads approved Silver and produces Gold, features, labels, cohort/split assignments, statistics, backtests, walk-forward results and experiment artifacts with Polars/DuckDB, marimo and MLflow. It must not implement Pump wire decoding or alternative Silver business logic.
 - React/TypeScript: Research Observatory first; later the Professional Trading Workstation. No trading-domain or wallet logic in the browser.
 - Canonical research truth: immutable source evidence plus Parquet/Arrow and manifests. ClickHouse is optional and rebuildable later.
 - Development: Windows 11 → WSL2 Ubuntu, repository and datasets on WSL ext4; see [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md).
@@ -31,6 +31,8 @@ Before mechanical cleanup, an annotated tag such as `v1-paper-platform-final` mu
 - TrueNAS and Hermes AI are retired from the active architecture. Do not repair or deploy their historical assets.
 
 Implement a walking skeleton: one official source, one approved plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one lifecycle and one visible result. Do not build a generic framework before a second proven use case requires it.
+
+PR 5 decides the physical Bronze/Silver Parquet writer. If Python performs only that serialization, it must be a generated, lossless materializer with schema and logical-hash parity and no semantic reinterpretation.
 
 ## Triton-only rule
 
@@ -62,8 +64,10 @@ Only the existing read-only documentation MCPs `triton-docs`, `solana-mcp` and `
 - `[422506000, 422506128)` and all caps/windows/folds/holdouts remain provisional until an approved plan records them.
 - Instructions, CPIs, events, logs and metadata from one transaction form one atomic observation package.
 - A strategy may not react to one event and trade against a price/reserve from the same already-executed transaction.
-- Gold must distinguish `effective_at`, `observed_at`, `actionable_at`, `decision_at` and `execution_opportunity_at`.
-- Historical event price is never automatically an executable fill.
+- `acquired_at` and `processed_at` are real acquisition/processing wall clocks used only for operational provenance; they must never be historical feature, label, split or decision inputs.
+- Gold distinguishes `effective_at` chain order; reconstructed `observed_at` under a named `observation_model_id`; first permitted `actionable_at`; registered `decision_at`; and an independently evidenced later `execution_opportunity_at`.
+- Bind `latency_model_id` whenever modeled latency affects actionability or execution. Missing latency evidence is not zero latency.
+- `execution_opportunity_at` is nullable/`UNAVAILABLE` without independent evidence. Neither an event price nor the next historical transaction is automatically an executable fill.
 - `UNAVAILABLE`, `GAP` and `QUARANTINED` are distinct. Missing is never zero.
 - Preserve raw integer quantities and explicit mint/decimals/evidence class.
 - The current hand-written Pump decoders are bounded evidence, not universal truth; V2 uses a pinned official source and versioned registry.

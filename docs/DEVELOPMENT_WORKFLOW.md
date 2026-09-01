@@ -20,7 +20,7 @@ Never edit `main` directly. Create one bounded branch from current `origin/main`
 - Write tests before or with parser, causality, persistence, evidence and safety changes.
 - Use fresh-context review for protocol, durability, security and research-methodology work.
 - Treat WAL/checkpoint changes as crash-safety work with kill/restart/corruption seams.
-- Treat schema and feature-time changes as causality work with leakage tests.
+- Treat schema and feature-time changes as causality work with leakage tests, including proof that operational `acquired_at`/`processed_at` never become historical feature, label, split or decision inputs.
 - No “done/proven/research-ready/profitable” claim without named reproducible evidence.
 - No large refactor whose success is only smaller files or passing reachability output.
 
@@ -43,11 +43,13 @@ PR count is not a performance metric. A bounded PR may split when correctness/re
 
 Implement one official source, one approved acquisition plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one token lifecycle and one visible result. Do not create a generic plugin/framework/abstraction for a hypothetical second case.
 
+Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity and produces or authorizes their records. Python reads approved Silver and owns Gold/research; it must not decode Pump wire data or create alternative Silver rules. PR 5 decides the physical Bronze/Silver Parquet writer. If Python serializes those layers, generated schemas and logical hashes must prove a lossless, non-semantic materialization.
+
 ## Project #4 workflow
 
 [Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central roadmap. Every implementation PR links at least one active/successor roadmap issue. Historical issues retain their original acceptance criteria; disposition does not mean completion.
 
-For PR 1, do not mutate GitHub. After its merge, execute [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) as a controlled transaction before PR 2A.
+For PR 1, do not perform a manual V2 migration; normal current-schema PR-item reconciliation may still run on PR events. After merge, follow [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md): hash a read-only export, create one governance issue, merge one bounded tested sync/config PR, and only then create successors, metadata and notes. Audit reconciliation/retention and close fully superseded anchors individually before PR 2A authorization. The governance implementation is the sole concrete `ACTIVE NOW`; after verified migration B2A is `ACTIVE NOW`, B3 is `NEXT`, and B4–B8 remain `LATER` behind their direct predecessors.
 
 ## Network and acquisition changes
 
@@ -134,7 +136,8 @@ TrueNAS, Hermes, Phase 8C/8D and GHCR recovery are retired targets. Do not repai
 
 - PAPER / RESEARCH ONLY; no signing, submission, orders or live funds.
 - One transaction is one atomic observation package.
-- `effective_at`, `observed_at`, `actionable_at`, `decision_at` and `execution_opportunity_at` must pass ordering/leakage tests.
-- Historical event price is not executable fill evidence.
+- `acquired_at` and `processed_at` are real wall-clock operational provenance and must fail tests if used as historical features, labels, splits or decisions.
+- `effective_at`, reconstructed `observed_at` plus `observation_model_id`, `actionable_at`, `decision_at`, nullable `execution_opportunity_at` and conditional `latency_model_id` must pass ordering/leakage tests.
+- Historical event price and the following historical transaction are not executable fill evidence.
 - Missing/unavailable evidence is not zero; quarantine remains counted and visible.
 - No automatic strategy/model promotion and no desired-answer optimization.

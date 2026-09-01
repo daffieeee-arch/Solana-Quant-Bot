@@ -27,7 +27,7 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 - **Current phase:** V2 cutover and governance.
 - **Latest accepted milestone:** the factual repository reconstruction and V2 product direction are accepted; the existing fixture baseline remains evidence, not the target architecture.
 - **Current delivery:** PR 1 records this source of truth and a non-destructive Project #4 rebase plan.
-- **Next delivery after merge:** execute the reviewed Project #4 migration, then PR 2A removes obsolete platform surfaces and adds only the minimum legacy safety quarantine.
+- **Next delivery after merge:** create one dedicated Project-rebase governance issue, then land one bounded Roadmap Sync/config PR before creating successors or V2 metadata. After the verified migration, B2A becomes the single concrete `ACTIVE NOW` delivery and B3 is `NEXT`.
 - **Current execution posture:** PAPER / RESEARCH ONLY. No profitability, research-readiness, paper-realism or live-readiness claim is established.
 
 ## Development and runtime boundary
@@ -45,13 +45,15 @@ Immediately before mechanical cleanup, resolve the last pre-cleanup `main` commi
 
 | Boundary | Responsibility |
 |---|---|
-| Rust | Old Faithful acquisition, Solana/Pump parsing, versioned protocol registry, canonical events, ordering, deduplication, gaps/finality, exact integers, replay; later the new paper/execution state machine |
-| Python | Arrow/Parquet datasets, Polars/DuckDB research, point-in-time features and labels, statistics, backtests, walk-forward evaluation, marimo and MLflow |
+| Rust | Old Faithful acquisition and the logical/canonical Raw/Bronze/Silver contracts; Solana/Pump parsing, ordering, exact integers, evidence, coverage, quarantine, dataset-manifest identity and replay; later the new paper/execution state machine. Rust produces or authorizes canonical Bronze/Silver records |
+| Python | Reads approved Silver and produces Gold, features, labels, cohort/split assignments, statistics, backtests, walk-forward results and experiment artifacts with Polars/DuckDB, marimo and MLflow. No Pump wire decode or alternative Silver business logic |
 | React + TypeScript | Research Observatory first; later the professional trading workstation. Visualization and interaction only—no duplicated trading-domain or wallet logic |
 | Immutable files | Canonical research truth: source bytes/receipts where applicable, Parquet/Arrow layers and content-bound manifests |
 | ClickHouse | Optional later rebuildable analytical projection, never the sole research truth or canonical execution state |
 
 Implement a **walking skeleton**, not a speculative framework: one official source, one approved acquisition plan, one small authentic range, one required Pump variant, one Bronze path, one Silver path, one token lifecycle and one visible result. Generalize only after a second proven use case requires it.
+
+PR 5 makes the explicit physical Bronze/Silver Parquet-writer decision. A Python implementation is permitted only as a generated, lossless materializer of Rust-authorized records with schema and logical-hash parity; it may not reinterpret semantics.
 
 ## Triton-only network boundary
 
@@ -105,15 +107,22 @@ The candidate range `[422506000, 422506128)` is **PROVISIONAL** until its source
 
 All instructions, CPIs, events, logs and metadata from one historical transaction become available to downstream consumers as **one atomic observation package**. A strategy may not react to an event and then trade against a price or reserve from that same already-executed transaction.
 
-Gold observations must define at least:
+Acquisition and local processing record two real wall clocks as operational provenance:
+
+- `acquired_at`: when the acquisition run actually received the historical bytes;
+- `processed_at`: when the local pipeline actually processed those bytes.
+
+Neither field represents historical information availability. They must never enter historical features, labels, cohort/split assignment or strategy decisions.
+
+Historical replay and Gold use separate causal boundaries:
 
 - `effective_at`: canonical chain location/order at which the fact occurred;
-- `observed_at`: when the complete atomic package became observable to this pipeline;
-- `actionable_at`: earliest later decision boundary at which required package, coverage and finality rules permit use;
-- `decision_at`: the recorded strategy decision boundary;
-- `execution_opportunity_at`: a distinct later market opportunity supported by the required execution evidence.
+- `observed_at`: the reconstructed observation boundary at which the complete atomic transaction package is released under an explicit `observation_model_id`; it is not `acquired_at` or `processed_at`;
+- `actionable_at`: the first subsequent decision boundary allowed by package, coverage, finality and latency rules;
+- `decision_at`: the strategy decision boundary actually recorded;
+- `execution_opportunity_at`: a distinct later execution opportunity supported by the applicable independent evidence contract.
 
-`actionable_at` can never expose a partial transaction package. `decision_at` may not precede it, and `execution_opportunity_at` may not reuse the already-executed transaction as a fill opportunity. Historical event price is never automatically an executable fill.
+Every historical observation contract binds `observation_model_id`. It also binds `latency_model_id` whenever modeled latency affects `actionable_at` or `execution_opportunity_at`; absent latency evidence is not zero latency. `actionable_at` can never expose a partial transaction package, and `decision_at` may not precede it. `execution_opportunity_at` is nullable and explicitly `UNAVAILABLE` when independent evidence cannot prove such an opportunity. Neither the already-executed package, a historical event price nor the following historical transaction is automatically an executable fill.
 
 Evidence classes remain explicit:
 

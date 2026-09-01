@@ -38,7 +38,7 @@ Slot/range/epoch, byte/request/disk/runtime caps and later windows/folds/holdout
 
 ### D8 — Transaction-atomic causal availability
 
-All instructions, CPIs, events, logs and metadata in a transaction become visible as one atomic package. Gold records `effective_at`, `observed_at`, `actionable_at`, `decision_at` and `execution_opportunity_at`. A strategy cannot react to an event and fill against the same already-executed transaction; event price is not automatically executable.
+All instructions, CPIs, events, logs and metadata in a transaction become visible as one atomic package. `acquired_at` and `processed_at` are real wall-clock operational provenance and never historical feature, label, split or decision inputs. Gold records canonical-chain `effective_at`, reconstructed package-release `observed_at` under `observation_model_id`, first permitted `actionable_at`, actually registered `decision_at` and an independently evidenced later `execution_opportunity_at`. `latency_model_id` is required when modeled latency changes actionability/execution; missing evidence is not zero latency. `execution_opportunity_at` is nullable/`UNAVAILABLE`. A strategy cannot fill against the same already-executed transaction, an event price or automatically against the following historical transaction.
 
 ### D9 — Versioned Pump protocol registry
 
@@ -46,11 +46,11 @@ V2 pins official source/IDL commits/hashes, explicit program/activation evidence
 
 ### D10 — Immutable research truth
 
-Raw evidence plus Arrow/Parquet and manifests are canonical. DuckDB and Polars are the first local query path. ClickHouse can later be a rebuildable projection, not the only truth or canonical execution state.
+Raw evidence plus Arrow/Parquet and manifests are canonical. Rust owns the logical/canonical Raw/Bronze/Silver semantics and manifest identity and produces or authorizes Bronze/Silver records. DuckDB and Polars are the first local query path. ClickHouse can later be a rebuildable projection, not the only truth or canonical execution state.
 
 ### D11 — Language responsibilities
 
-Rust owns acquisition/protocol/canonical replay and later paper state. Python owns research/features/evaluation. React/TypeScript owns visualization. Business logic is not duplicated into the browser.
+Rust owns acquisition/protocol/canonical Raw/Bronze/Silver semantics, evidence/coverage/quarantine and replay; later it owns paper state. Python reads approved Silver and produces Gold, features, labels, cohort/split assignments, statistics, backtests and experiment artifacts. It cannot contain Pump wire decoding or alternative Silver business logic. PR 5 selects the physical Bronze/Silver Parquet writer; a Python-only writer must be generated, lossless and prove schema/logical-hash parity. React/TypeScript owns visualization. Business logic is not duplicated into the browser.
 
 ### D12 — Research Observatory before workstation
 
@@ -70,7 +70,7 @@ There is no permanent legacy directory. Before mechanical cleanup, identify the 
 
 ### D16 — Non-destructive Project #4 rebase
 
-Project #4 remains central. Preserve original issue acceptance criteria and states, add separate V2 dispositions/phases, create successor issues first and do not bulk-close. The reviewed repository plan is [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md).
+Project #4 remains central. Preserve original issue bodies, acceptance criteria, comments and GitHub history. After a hashed export, create one governance issue and land tested default-branch sync/config support—including V2 fields, Evidence, Project text and lifecycle-aware retention—before creating successors or V2 metadata. Successors precede migration notes and any closure. The initial migration never bulk-closes; after full verification, fully covered `SPLIT`/`SUPERSEDED` anchors are closed individually as superseded while standalone `LATER` requirements remain open. The reviewed repository plan is [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md).
 
 ### D17 — Restricted documentation MCPs
 

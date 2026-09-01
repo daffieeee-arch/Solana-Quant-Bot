@@ -6,17 +6,17 @@
 
 Project #4 remains the central delivery roadmap. The repository keeps this reviewable ledger so a Project mutation cannot silently reinterpret history.
 
-The migration is non-destructive:
+The migration preserves GitHub history. “Non-destructive” does not require obsolete Project items or fully superseded anchor issues to remain active forever:
 
-- preserve every original issue body, acceptance criterion, comment, state and close reason;
+- preserve every original issue body, acceptance criterion and comment, plus the pre-migration state/close reason in the hashed export and migration evidence;
 - create successors before adding migration notes to old issues;
 - do not use `Closes`, `Fixes` or equivalent links during migration;
 - treat V2 disposition as delivery routing, never as proof of completion;
-- keep #56 `Done`; keep #62 and #63 open;
+- keep #56 `Done` and #62 open; keep #63 open through the initial migration and close it individually only after verified E0 cutover;
 - retain the existing `Phase` field and its values as historical metadata;
 - add a separate `V2 Phase` field rather than repurposing `Phase`;
-- do not bulk-close any issue;
-- export current issue bodies and Project fields/views before mutation.
+- do not bulk-close any issue. A later verified closeout pass may close fully covered anchors individually as `not planned / superseded`;
+- export all current Project-linked repository issue/PR bodies and lifecycle state plus complete Project fields/views before mutation; retain a separate exact #27–#63 migration snapshot.
 
 The actual rebase occurs only after PR 1 is merged and verified, and before PR 2A starts.
 
@@ -44,8 +44,8 @@ Add a single-select field named `V2 Disposition` without changing GitHub `Status
 
 | Option | Meaning |
 |---|---|
-| `ACTIVE NOW` | current V2 delivery or a delivered control that remains operational |
-| `NEXT` | accepted ordered near-term V2 pipeline behind current work; not necessarily the single next PR |
+| `ACTIVE NOW` | the one concrete current V2 delivery; programs/epics may carry broader routing but do not select another delivery head |
+| `NEXT` | the one explicitly accepted direct successor behind the concrete current delivery |
 | `LATER` | valid requirement gated by later evidence/dependencies |
 | `SPLIT` | original requirements route to two or more named V2 successors |
 | `SUPERSEDED` | one named V2 delivery contract replaces execution as written; history remains |
@@ -53,18 +53,28 @@ Add a single-select field named `V2 Disposition` without changing GitHub `Status
 
 Suggested colors are red, orange, yellow, purple, gray and gray respectively. No #27–#63 issue is classified `RETIRED`; retirement applies to obsolete TrueNAS/Phase 8/Hermes project items outside this range.
 
+Exactly one concrete non-program/non-epic delivery is `ACTIVE NOW`. Completed operational controls such as #56 retain their verified Evidence without receiving a second active-delivery disposition. Cross-cutting programs/epics may be broader without obscuring the delivery head.
+
 ## Successor catalog
 
-The identifiers below are migration keys, not GitHub issue numbers. During the post-merge migration, create the issue first, record its actual number in the migration evidence, then replace keys in issue notes with links.
+The identifiers below are migration keys, not GitHub issue numbers. Do not create E0–E7 or B2A–B8 until the bounded sync/config PR is green and merged. Then create each issue, record its actual number in migration evidence, and use only actual links in issue notes.
+
+### Governance implementation
+
+| Key | Proposed issue | V2 phase | Disposition during migration | Observable purpose |
+|---|---|---|---|---|
+| G0 | Implement and verify the Project #4 V2 rebase | 0 | `ACTIVE NOW` | own the export, bounded Roadmap Sync/config PR, successor migration, reconciliation, retention audit and repository evidence |
+
+G0 is created before V2 metadata support exists, so its initial body uses only metadata accepted by current `main`. After the sync/config PR merges, reconciliation adds its V2 fields. G0 remains the single concrete `ACTIVE NOW` delivery until every migration gate passes.
 
 ### Program and epics
 
 | Key | Proposed issue | V2 phase | Initial disposition | Observable purpose |
 |---|---|---|---|---|
 | E0 | Data-first Solana Quant Platform — edge discovery or falsification | 0 | `ACTIVE NOW` | one program contract whose valid outcome includes falsification |
-| E1 | Versioned Pump truth and authentic research datasets | 1 | `ACTIVE NOW` | parent for protocol, acquisition and immutable datasets |
-| E2 | Research Observatory | 4 | `NEXT` | authentic data quality/lifecycle/cohort evidence visible early |
-| E3 | Edge discovery, data sufficiency and falsification | 5 | `NEXT` | PIT research with explicit sufficiency and failure criteria |
+| E1 | Versioned Pump truth and authentic research datasets | 1 | `NEXT` | parent for protocol, acquisition and immutable datasets |
+| E2 | Research Observatory | 4 | `LATER` | authentic data quality/lifecycle/cohort evidence visible before the workstation |
+| E3 | Edge discovery, data sufficiency and falsification | 5 | `LATER` | PIT research with explicit sufficiency and failure criteria |
 | E4 | Prospective Triton-only shadow | 7 | `LATER` | no-order live parity/quote/latency/capacity evidence |
 | E5 | New Rust paper engine | 8 | `LATER` | replacement for frozen scanner/portfolio/paper semantics |
 | E6 | Professional Trading Workstation | 9 | `LATER` | full linked/dockable cockpit after evidence/runtime contracts |
@@ -74,17 +84,19 @@ E2 and E6 are deliberately separate frontend epics. E4 and E5 are deliberately s
 
 ### First bounded deliveries
 
-| Key | Proposed issue | Parent | V2 phase | Initial disposition | Visible/research-measurable outcome |
+| Key | Proposed issue | Parent | V2 phase | Disposition after verified migration | Visible/research-measurable outcome |
 |---|---|---|---|---|---|
-| B2A | Remove obsolete platform paths and quarantine frozen legacy runtime | E0 | 0 | `NEXT` | obsolete target removed without losing invariants; reachable legacy fail-closed |
+| B2A | Remove obsolete platform paths and quarantine frozen legacy runtime | E0 | 0 | `ACTIVE NOW` | obsolete target removed without losing invariants; reachable legacy fail-closed |
 | B3 | Prove one Pump protocol truth walking skeleton | E1 | 1 | `NEXT` | protocol evidence matrix |
-| B4 | Acquire bounded official OF1 slices with live progress and deterministic resume | E1 | 2 | `NEXT` | terminal/TUI progress and verified run receipt |
-| B5 | Produce authentic Raw → Bronze → Silver with static evidence report | E1 | 3 | `NEXT` | static HTML/JSON data-quality and token-lifecycle report |
-| B6 | Deliver interactive Research Observatory MVP | E2 | 4 | `NEXT` | browser lifecycle replay and data-quality panels |
-| B7 | Scale bounded sampling and deliver Cohort Explorer/data-sufficiency report | E1, E2, E3 | 5 | `NEXT` | cohort distributions plus sufficient/insufficient verdict |
-| B8 | Produce PIT Gold v0 and first falsifiable baseline | E3 | 6 | `NEXT` | baseline with untouched evaluation, or valid `INSUFFICIENT_SAMPLE`/falsification |
+| B4 | Acquire bounded official OF1 slices with live progress and deterministic resume | E1 | 2 | `LATER` | terminal/TUI progress and verified run receipt |
+| B5 | Produce Rust-owned/authorized authentic Raw → Bronze → Silver with static evidence report | E1 | 3 | `LATER` | static HTML/JSON data-quality and token-lifecycle report; physical Parquet writer decided here |
+| B6 | Deliver interactive Research Observatory MVP | E2 | 4 | `LATER` | browser lifecycle replay and data-quality panels |
+| B7 | Scale bounded sampling and deliver Cohort Explorer/data-sufficiency report | E1, E2, E3 | 5 | `LATER` | cohort distributions plus sufficient/insufficient verdict |
+| B8 | Produce PIT Gold v0 and first falsifiable baseline | E3 | 6 | `LATER` | baseline with untouched evaluation, or valid `INSUFFICIENT_SAMPLE`/falsification |
 
 B3–B5 must distinguish `ENGINEERING_VALIDATION_ONLY` from outcome-independent `RESEARCH_SAMPLING`; the former never enters strategy evidence.
+
+During migration G0 alone is concrete `ACTIVE NOW`; when successors are created, B2A starts as `NEXT` and B3–B8 as `LATER`. After verified migration G0 becomes Done, B2A becomes `ACTIVE NOW`, B3 alone becomes `NEXT`, and B4–B8 stay `LATER`. Thereafter a later delivery cannot leave `LATER` until its direct predecessor is accepted; each promotion is an explicit governance update, not automatic queue inflation.
 
 ## Complete #27–#63 disposition and successor mapping
 
@@ -112,29 +124,84 @@ B3–B5 must distinguish `ENGINEERING_VALIDATION_ONLY` from outcome-independent 
 | [#46](https://github.com/daffieeee-arch/solana-paper-scanner/issues/46) | command palette, alerts and mobile | `LATER` | 9 | E6 |
 | [#47](https://github.com/daffieeee-arch/solana-paper-scanner/issues/47) | design system, accessibility, performance and quality | `SPLIT` | 4 | B6 owns MVP quality; E6 owns workstation design system/scale |
 | [#48](https://github.com/daffieeee-arch/solana-paper-scanner/issues/48) | authentic Old Faithful vertical slice | `SPLIT` | 2 | B4 acquisition, B5 Bronze/Silver/static report, B6 interactive visibility; two slice classes required |
-| [#49](https://github.com/daffieeee-arch/solana-paper-scanner/issues/49) | immutable Parquet/Arrow and analytical projections | `SPLIT` | 3 | B5 Python-materialized immutable layers; B7 scaled Polars/DuckDB research; ClickHouse is a later adoption gate under E1 |
+| [#49](https://github.com/daffieeee-arch/solana-paper-scanner/issues/49) | immutable Parquet/Arrow and analytical projections | `SPLIT` | 3 | B5 carries Rust-owned/authorized canonical layers and the explicit physical-writer decision; any Python writer is generated/lossless with schema/logical-hash parity. B7 carries scaled Polars/DuckDB research; ClickHouse is a later adoption gate under E1 |
 | [#50](https://github.com/daffieeee-arch/solana-paper-scanner/issues/50) | PIT features, labels and walk-forward | `SPLIT` | 6 | B8 PIT/censoring/baseline; E3 later scaled evaluation |
 | [#51](https://github.com/daffieeee-arch/solana-paper-scanner/issues/51) | ML/ranking/survival research | `LATER` | 6 | E3 after stable sufficient Gold; no automatic promotion |
 | [#52](https://github.com/daffieeee-arch/solana-paper-scanner/issues/52) | prospective shadow and engine boundary | `SPLIT` | 7 | E4 owns Triton-only shadow; E5 owns a later explicit adopt/reject engine decision |
 | [#53](https://github.com/daffieeee-arch/solana-paper-scanner/issues/53) | execution, signing and reconciliation boundary | `SPLIT` | 8 | E5 owns paper/transaction semantics; E7 owns isolated signing/VPS/live gating |
 | [#54](https://github.com/daffieeee-arch/solana-paper-scanner/issues/54) | modularization/property/mutation/fuzz/state-machine tests | `SPLIT` | 0 | B2A/B3/B4/B5/B6/B8 own scoped tests; #62 retains cross-cutting governance |
 | [#55](https://github.com/daffieeee-arch/solana-paper-scanner/issues/55) | OpenTelemetry/SLO/evidence-aware observability | `SPLIT` | 2 | B4/B5/B6 own bounded run/evidence telemetry; E4/E7 own later runtime SLOs |
-| [#56](https://github.com/daffieeee-arch/solana-paper-scanner/issues/56) | Roadmap Sync | `ACTIVE NOW` | 0 | delivered automation remains an active control; GitHub state remains `Done` |
+| [#56](https://github.com/daffieeee-arch/solana-paper-scanner/issues/56) | Roadmap Sync | `SUPERSEDED` | 0 | G0 replaces/extends its V1 sync/config contract; #56 remains `Done`, pinned as a visible operational control and Evidence `Operationally Verified` |
 | [#57](https://github.com/daffieeee-arch/solana-paper-scanner/issues/57) | trusted legacy-runtime correctness epic | `SUPERSEDED` | 8 | E5 replaces execution target; #27–#34 requirements remain evidence |
 | [#58](https://github.com/daffieeee-arch/solana-paper-scanner/issues/58) | combined professional cockpit epic | `SPLIT` | 4 | E2 Research Observatory and E6 Professional Trading Workstation |
 | [#59](https://github.com/daffieeee-arch/solana-paper-scanner/issues/59) | authentic data/research epic | `SUPERSEDED` | 1 | E1 removes ClickHouse/TrueNAS assumptions and supplies visible bounded gates |
 | [#60](https://github.com/daffieeee-arch/solana-paper-scanner/issues/60) | quant/ML validation epic | `SUPERSEDED` | 5 | E3 accepts edge discovery, falsification or insufficient sample |
 | [#61](https://github.com/daffieeee-arch/solana-paper-scanner/issues/61) | combined shadow/execution epic | `SPLIT` | 7 | E4 prospective shadow, E5 new paper engine and E7 gated live/VPS |
 | [#62](https://github.com/daffieeee-arch/solana-paper-scanner/issues/62) | engineering/observability/governance epic | `ACTIVE NOW` | 0 | PR 1 and B2A; keep open and continue as cross-cutting control |
-| [#63](https://github.com/daffieeee-arch/solana-paper-scanner/issues/63) | paper-first program baseline | `SUPERSEDED` | 0 | E0 is the data-first program contract; keep #63 open during migration |
+| [#63](https://github.com/daffieeee-arch/solana-paper-scanner/issues/63) | paper-first program baseline | `SUPERSEDED` | 0 | E0 is the data-first program contract; keep #63 open during migration, then close it individually as `not planned / superseded` only after verified E0 cutover |
 
 All 37 legacy rows are mapped exactly once. Every `SPLIT` row has at least two named successor destinations; every `SUPERSEDED` row has exactly one.
 
 ## Project schema delta
 
-Add `V2 Disposition` and `V2 Phase` as separate single-select fields. Preserve `Status`, legacy `Phase`, existing item state and dates.
+The bounded G0 Roadmap Sync/config PR must add and test, as one reviewable default-branch contract:
 
-The current synchronizer does **not** parse or write `v2Disposition`/`v2Phase`. It preserves unconfigured extra fields/views, but manual values would not be repository-driven. Before issue metadata receives V2 keys, land a separately reviewed bounded Roadmap Sync/config extension with tests, or explicitly approve a temporary manual migration ledger. The recommended route is the tested sync extension. Do not edit old `phase` metadata.
+- `V2 Disposition` and `V2 Phase` as separate single-select fields while preserving `Status` and historical `Phase`;
+- `v2Disposition`/`v2Phase` metadata parsing, validation and idempotent writes;
+- the expanded Evidence options and option-ID retention;
+- all V2 views and their exact tested filters/visible fields;
+- replacement Project short description and README;
+- item eligibility, retention, archive and reopen behavior.
+
+The current synchronizer does **not** parse/write V2 keys and currently scans all historical issues/PRs, adds missing items and unconditionally unarchives archived items. No manual V2-field workaround is allowed. The tested sync/config PR must merge before any issue receives V2 metadata or any E0–E7/B2A–B8 successor is created. Do not edit old `phase` metadata.
+
+### Evidence field
+
+The final ordered option set is:
+
+| Evidence option | Assignment rule |
+|---|---|
+| `Not Applicable` | coordination-only program/epic container; parents never inherit child evidence |
+| `Unproven` | no accepted named evidence yet; default for concrete work |
+| `Fixture` | deterministic synthetic/fixture evidence only |
+| `Operationally Verified` | operational/governance control passed its named CI and live reconciliation/audit contract |
+| `Engineering Validation` | authentic engineering mechanics passed, but not eligible for edge claims |
+| `Research Candidate` | outcome-independent authentic sample passed acquisition/basic evidence gates but not full PIT research gates |
+| `Research Ready` | accepted PIT dataset and methodology evidence |
+| `Shadow` | accepted prospective no-order evidence |
+| `Paper Proven` | accepted prospective executable paper evidence |
+| `Live Proven` | separately approved live evidence |
+
+Preserve the existing Project option IDs for semantically unchanged `Unproven`, `Fixture`, `Research Ready`, `Shadow`, `Paper Proven` and `Live Proven`; update descriptions in place rather than delete/recreate. Add IDs only for `Not Applicable`, `Operationally Verified`, `Engineering Validation` and `Research Candidate`. Tests must fail on option-ID churn.
+
+Program/epic containers E0–E7 receive `Not Applicable`. G0 starts `Unproven` and becomes `Operationally Verified` only after the end-to-end audit. #56 remains `Done` and receives `Operationally Verified` because Roadmap Sync operation was actually verified. Concrete research items begin `Unproven` and advance only through their named evidence gates; `Done` alone never upgrades Evidence. The immutable slice class `ENGINEERING_VALIDATION_ONLY` maps at most to Project Evidence `Engineering Validation` and can never reach `Research Candidate` or `Research Ready`.
+
+### Project description and README
+
+The G0 config PR replaces—not appends to—the old paper/runtime-first Project short description and README. Proposed synchronized text:
+
+```text
+Short description:
+Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence,
+Research Observatory before Professional Workstation, and edge discovery or
+falsification. Profitability is not assumed.
+```
+
+```markdown
+# Solana Quant Platform V2
+
+Project #4 is the active delivery cockpit for program E0: build authentic,
+point-in-time Solana/Pump evidence and discover a defensible edge or falsify
+the hypothesis. Profitability is not assumed.
+
+- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/solana-paper-scanner/blob/main/docs/HANDOFF_V2.md)
+- Network boundary: Triton One only.
+- Product order: authentic data and Research Observatory before the
+  Professional Trading Workstation, prospective shadow and new paper engine.
+- Project status is delivery metadata, never research evidence by itself.
+```
+
+Tests verify removal of the old #63/runtime-first Project copy and exact presence of E0, the handoff link, edge discovery or falsification, Observatory-before-Workstation, Triton-only and no-profitability-assumption language.
 
 ## Views
 
@@ -142,8 +209,8 @@ Create and verify new views before archiving any old view. Exact GitHub filter g
 
 | View | Layout | Intended filter |
 |---|---|---|
-| Now | Board | `V2 Disposition:"ACTIVE NOW" -Status:Done -Status:Cancelled` |
-| Next | Table | `V2 Disposition:NEXT -Status:Done -Status:Cancelled` |
+| Now | Board | `V2 Disposition:"ACTIVE NOW" -Status:Done -Status:Cancelled -Work Type:Program -Work Type:Epic` |
+| Next | Table | `V2 Disposition:NEXT -Status:Done -Status:Cancelled -Work Type:Program -Work Type:Epic` |
 | Data | Table | V2 phases 1, 2, 3 and 5; active/next/later only |
 | Observatory | Table | V2 phase 4; active/next/later only |
 | Research | Table | V2 phases 5 and 6; active/next/later only |
@@ -151,7 +218,21 @@ Create and verify new views before archiving any old view. Exact GitHub filter g
 | Retired | Table | `V2 Disposition:SUPERSEDED,RETIRED` |
 | Migration Ledger | Table | `V2 Disposition:SPLIT,SUPERSEDED,RETIRED` |
 
-Show at least Title, Status, V2 Disposition, V2 Phase, Priority, Area, Evidence, Risk and Assignees. Active delivery views exclude `SPLIT` and `SUPERSEDED` anchors so historical issues do not masquerade as current tasks.
+Show at least Title, Status, V2 Disposition, V2 Phase, Priority, Area, Evidence, Risk and Assignees. Active delivery views exclude `SPLIT` and `SUPERSEDED` anchors. Now/Next also separate Program/Epic containers so exactly one concrete delivery head remains obvious. Exact GitHub filter grammar is an acceptance test, not assumed from this proposed spelling.
+
+## Project-item retention and archive policy
+
+Project #4 is an active delivery cockpit, not a permanent duplicate of GitHub history.
+
+- Open V2 roadmap issues and open PRs remain active Project items.
+- After the hashed export/audit, merged pre-V2 PR items #1–#68 are archived; they are not deleted.
+- The G0 config PR must select an explicit, reviewed `closed_item_retention_days` with no implicit default. Future merged/closed PR items—and closed issue items unless explicitly pinned as continuing controls—stay active for that interval and are then archived by reconciliation.
+- #56 is an explicitly pinned continuing operational control: it remains visible as `Done` / `Operationally Verified` until a later reviewed governance decision replaces it.
+- An archived item is unarchived only when its underlying issue or PR is actually reopened. Ordinary scheduled/event reconciliation, metadata drift or discovery of a still-closed item must not reactivate it.
+- Eligibility is checked before both add and unarchive, so archived/absent historical items are not re-added through full-history enumeration.
+- GitHub issue/PR bodies, comments, close reasons and event history remain the permanent archive. The synchronizer never deletes items or GitHub history.
+
+The Roadmap Sync extension tests open retention, #1–#68 archival, the configured grace interval, pinned-control behavior, closed-item non-reactivation, true reopen reactivation, no-delete behavior and deterministic counts. Until `closed_item_retention_days` is explicitly selected and tested in G0, no new age-based archive policy is activated.
 
 ## Issue-note template
 
@@ -172,31 +253,52 @@ Retain existing `roadmap-meta`. Add V2 metadata keys only after the synchronizer
 
 ## Post-merge migration transaction
 
-1. Verify merged PR 1 SHA and green CI.
-2. Export issue #27–#63 bodies/state and Project #4 items, fields, options, values and views read-only; hash the export.
-3. Create E0–E7 and B2A–B8, recording actual numbers and parent relationships without closing old issues.
-4. Extend and test Roadmap Sync/config for `V2 Disposition`, `V2 Phase` and the new views, or stop for explicit approval of the documented temporary-manual alternative.
-5. Run offline config dry-run and tests.
-6. Append notes and V2 metadata in bounded, reviewable batches; preserve old metadata/content.
-7. Reconcile Project #4 and compare item/field/update counts with the migration ledger.
-8. Verify all 37 mappings, successors, states, evidence values and view filters.
-9. Only after new views work, archive or rename obsolete views deliberately; do not delete historical issue data.
-10. Record migration evidence and then authorize PR 2A.
+1. Merge PR #69 and verify the exact merged SHA and green CI logs.
+2. Export all current Project-linked repository issues/PRs with bodies and lifecycle state/history plus Project #4 description/README, items, archive state, fields, option IDs/values and views read-only; content-hash the export and retain an exact #27–#63 migration subset.
+3. Create exactly one dedicated governance issue G0 for implementation and verification of the Project rebase, using only metadata understood by current `main`.
+4. Create one bounded PR that extends Roadmap Sync, its tests and `roadmap/project-config.json`; make no successor/issue metadata mutation in that PR.
+5. Require that PR to support and test `V2 Phase`, `V2 Disposition`, the complete Evidence taxonomy/ID retention, V2 views, replacement Project description/README, and item eligibility/retention/archive/reopen semantics. Merge only with green CI and trusted-default-branch security review.
+6. Only after that sync/config PR is merged, create E0–E7 and B2A–B8, record their actual numbers/parents, add V2 metadata, and append bounded cutover notes to existing issues without closing them.
+7. Run reconciliation through the protected trusted-main workflow.
+8. Audit all item/issue counts, successor links, option IDs/names, field values, states, views/filters, Evidence assignments, Project text and archive outcomes against the hashed ledger.
+9. Record actual successor issue numbers, reconciled counts/hashes and the migration outcome in repository evidence. Complete the separate individual closeout gate below and append its final results to that evidence.
+10. Only after the repository evidence and closeout audit are accepted may PR 2A be authorized.
 
-Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
+Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift, retention error, description/README drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
+
+## Verified superseded-anchor closeout
+
+The initial migration performs no bulk closure. After successors exist and mappings, notes, fields, views and Evidence are verified:
+
+1. review each non-active `SPLIT` or `SUPERSEDED` anchor independently;
+2. add a final successor-linked comment while preserving the body, acceptance criteria and existing comments;
+3. close only fully covered anchors individually as `not planned / superseded`;
+4. leave every standalone `LATER` requirement open;
+5. keep #56 `Done` and keep #62 open as the cross-cutting control;
+6. keep #63 open until E0 is verified, then close #63 individually as `not planned / superseded`;
+7. record each decision/close reason and post-close Project archive state in repository evidence.
+
+Expected individual closure candidates, subject to the per-issue verification, are #29–#31, #33–#35, #38–#40, #42–#45, #47–#50, #52–#55, #57–#61 and finally #63. Standalone `LATER` requirements #27, #28, #32, #36, #37, #41, #46 and #51 remain open. No item, issue, PR, comment or historical acceptance criterion is deleted.
 
 ## Acceptance checks for the migration
 
 - exactly 37 old issues mapped once;
-- #56 remains `Done`; #62 and #63 remain open;
+- the exact merged #69 SHA/CI and hashed preflight export are recorded;
+- G0 exists; its one bounded sync/config PR merged before any successor/V2 metadata creation;
+- #56 remains `Done` with `Operationally Verified`; #62 remains open; #63 stayed open during migration and closes only after verified E0 cutover;
 - original acceptance criteria remain byte-for-byte present;
 - every `SPLIT` has at least two valid successor links;
 - every `SUPERSEDED` has one valid successor link;
 - no orphan successor and no unintended `Closes` relationship;
 - `Phase` remains unchanged and `V2 Phase` uses the same order as [`ROADMAP.md`](ROADMAP.md);
+- all ten Evidence options exist; semantically unchanged option IDs are retained and assignment rules pass;
+- the Project description/README contains the approved E0/handoff/falsification/Observatory-first/Triton-only/no-profit-assumption text;
+- exactly one concrete delivery is `ACTIVE NOW`; after migration it is B2A, with only B3 `NEXT` and B4–B8 `LATER`;
 - Now, Next, Data, Observatory, Research, Later and Retired views return the intended sets;
+- open/closed/archive/reopen retention tests and live audit pass without unconditional reactivation;
+- actual E0–E7/B2A–B8 issue numbers and post-close results are committed as repository evidence;
 - Roadmap Sync dry-run/tests and a post-reconcile audit are green.
 
 ## PR 1 non-goals
 
-No GitHub mutation, issue creation/edit/close, Project field/view change, Project sync run, provider call, PR 2A cleanup or code removal occurs in PR 1.
+No manual V2 migration, issue creation/edit/close, Project field/view/config change, provider call, PR 2A cleanup or code removal occurs in PR 1. Ordinary existing-schema Roadmap Sync triggered by PR #69 events may reconcile only the #69 Project item and normal PR-status fields; it is not the V2 migration.

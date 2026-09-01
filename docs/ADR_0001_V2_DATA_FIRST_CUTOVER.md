@@ -18,17 +18,19 @@ Repairing the legacy paper bot issue-by-issue would optimize an architecture who
 4. TrueNAS and Hermes AI are retired from active product/deployment architecture. A generic Linux VPS is considered only after evidence and prospective stability gates.
 5. Triton One is the only network-provider truth boundary. Direct official OF1 through a pinned Jetstreamer/OF1 path is the selected initial historical route. Runtime and acquisition hosts are explicit capabilities, not arbitrary URLs.
 6. Canonical research storage is immutable source evidence plus Parquet/Arrow datasets and manifests. DuckDB/Polars are first local query tools; ClickHouse is a later rebuildable projection.
-7. Rust owns acquisition, protocol truth, canonical facts and deterministic replay. Python owns research datasets/features/evaluation. React/TypeScript owns visualization and interaction.
+7. Rust owns acquisition and the logical/canonical Raw/Bronze/Silver semantics, including protocol decode, ordering, exact integers, evidence, coverage, quarantine and dataset-manifest identity; Rust produces or authorizes canonical Bronze/Silver records. Python reads approved Silver and owns Gold, features, labels, cohort/split assignment, statistics, backtests and experiment artifacts. Python contains no Pump wire decoder or alternative Silver business logic. React/TypeScript owns visualization and interaction.
 8. The first implementation is a walking skeleton: one source, plan, authentic range, needed protocol variant, Bronze path, Silver path, lifecycle and visible result.
 9. The first visible V2 product is the Research Observatory. The professional trading workstation remains a separate later epic.
-10. Project #4 remains the central delivery roadmap. Historical issue bodies and acceptance criteria are preserved; V2 status is layered through dispositions, successors and child issues.
+10. Project #4 remains the central delivery roadmap. Historical issue bodies and acceptance criteria are preserved; V2 status is layered through dispositions, successors and child issues. Main must first gain tested V2 sync/config, Project-text and retention support; successor creation, metadata and individually verified supersession follow that merge.
 11. No subsystem is deleted until its unique invariants and evidence are migrated or explicitly retired. There is no legacy directory; history and an approved annotated pre-cleanup tag are the archive.
 
 ## Binding causality rule
 
 Instructions, CPIs, events, logs and metadata from one transaction are released as one atomic observation package. No strategy may react to part of that package and simulate execution against another fact from the same already-executed transaction.
 
-Gold schemas must distinguish `effective_at`, `observed_at`, `actionable_at`, `decision_at` and `execution_opportunity_at`. A historical event price is observational evidence, not an executable quote or fill.
+`acquired_at` is the real wall-clock time when the acquisition run received historical bytes; `processed_at` is the real wall-clock time when the local pipeline processed them. Both are operational provenance and are forbidden as historical feature, label, split or decision inputs.
+
+Gold schemas distinguish `effective_at` (canonical chain location/order), reconstructed `observed_at` (release of the complete atomic package under `observation_model_id`), first permitted `actionable_at`, actually recorded `decision_at`, and the separately evidenced later `execution_opportunity_at`. Bind `latency_model_id` whenever latency modeling affects actionability or execution; missing latency evidence is not zero latency. `execution_opportunity_at` is nullable/`UNAVAILABLE` without independent evidence. Neither a historical event price nor the following historical transaction is automatically an executable quote or fill.
 
 ## Slice policy
 
@@ -52,7 +54,7 @@ Jetstreamer HTTP/S3/backend overrides are default-deny. Future Titan quote traff
 - Class C historical state stays `UNAVAILABLE`; event fields are not promoted to account-state evidence.
 - Research can validly end in `INSUFFICIENT_SAMPLE` or falsification.
 - Phase 8/TrueNAS/GHCR failures are not repaired unless a salvage or safe-retirement step requires it.
-- Project #4 must be rebased non-destructively after this ADR merges and before PR 2A begins.
+- Project #4 must be rebased through the ordered governance issue → tested sync/config PR → successor/metadata migration → audit/evidence sequence after this ADR merges and before PR 2A begins. GitHub history remains intact while obsolete Project items and fully superseded anchors can be archived/closed only under the reviewed retention and individual-verification rules.
 
 ## Rejected alternatives
 
@@ -70,7 +72,7 @@ Jetstreamer HTTP/S3/backend overrides are default-deny. Future Titan quote traff
 2. Exact Jetstreamer/OF1 source commit, index files, acquisition host/redirect allowlist and raw-byte capture hook.
 3. Exact first engineering-validation and research-sampling plans, including ranges and budgets.
 4. The evidence threshold that promotes an observed-compatible Pump variant to a bounded activation range.
-5. The canonical Arrow/Parquet writer and deterministic encoding profile per layer.
+5. The physical Bronze/Silver Parquet writer and deterministic encoding profile in PR 5. Logical semantics and manifest identity remain Rust-owned; if Python performs physical serialization it must be a generated, lossless materializer with schema/logical-hash parity and no semantic reinterpretation.
 6. Exact later Gold windows, folds, embargoes and holdout period after data sufficiency is measured.
 
 ## Supersession

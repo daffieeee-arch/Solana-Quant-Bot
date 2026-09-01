@@ -51,6 +51,8 @@ The current `npm run build` still invokes Phase 8A/8C/8D contract and supply-cha
 
 Roadmap Sync is a separate privileged boundary. It always uses trusted default-branch code under `pull_request_target`; never change it to execute PR-head code or PR-produced artifacts. See [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md).
 
+For PR #69, ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected. Under current `main` it may reconcile only the existing #69 item and normal PR-status fields; do not cancel that normal run. This does not authorize a manual dispatch, V2 fields/views, successor creation or bulk issue mutation.
+
 ## Local checks
 
 The exact active list is maintained in [`AGENTS.md`](../AGENTS.md) and [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md). Run focused checks during editing and every executable full gate before review.
@@ -74,4 +76,6 @@ CI never turns fixture evidence into real evidence.
 
 ## PR 1 verification
 
-PR 1 should run all locally executable offline/documentation checks, link validation and `git diff --check`, then rely on the pull-request run for gates blocked by the unmodified local toolchain. It must not dispatch Roadmap Sync or any retired Phase 8 workflow.
+PR 1 should run all locally executable offline/documentation checks, link validation and `git diff --check`, then rely on the pull-request run for gates blocked by the unmodified local toolchain. It must not manually dispatch Roadmap Sync or any retired Phase 8 workflow.
+
+Keep execution environments explicit. On the initial PR #69 commit, local `npm test` reached 100/110 test files and 1,411/1,423 tests; the remaining failures were missing local native/Rust prerequisites. GitHub CI run `33542154130` in its clean pinned environment passed 110/110 test files and 1,524/1,524 tests. These are separate observations, not interchangeable totals.
