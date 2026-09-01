@@ -1,6 +1,6 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) is the approved-plan candidate for its non-destructive V2 migration.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) is the accepted controlled V2 migration ledger; G0 implementation is tracked by issue #70.
 
 ## Program outcome
 
@@ -25,7 +25,7 @@ The implementation rule is one walking skeleton: one official source, one acquis
 | Delivery | Scope | Required observable outcome | Explicit non-goals |
 |---|---|---|---|
 | PR 1 | V2 source of truth and roadmap rebase plan | accepted docs, status map and complete #27–#63 migration ledger | no manual V2 Project/issue migration, cleanup, provider calls or product code; ordinary PR-item sync may run |
-| Post-merge governance issue + bounded sync/config PR | teach trusted `main` the complete V2 Project contract | tested V2 Phase/Disposition/Evidence, Project text, views and lifecycle-aware retention support | no successors, V2 issue metadata or manual migration before this PR merges |
+| G0 issue #70 + bounded sync/config PR | teach trusted `main` the complete V2 Project contract | tested V2 Phase/Disposition/Evidence, Project text, views and lifecycle-aware retention support | no successors, V2 issue metadata or live migration from the branch; authorized merge/reconciliation proceeds only after the correction commit and full CI pass |
 | Post-merge migration transaction | controlled Project #4 V2 rebase | successors, V2 metadata, clean views, retention and individual supersession verified without deleting history | no bulk-close or delivery claim |
 | PR 2A | obsolete platform removal and legacy safety quarantine | retired TrueNAS/Phase 8/Hermes paths removed after invariant salvage; reachable legacy is bounded/fail-closed | no data pipeline or new legacy features |
 | PR 3 | Pump protocol truth walking skeleton | protocol evidence matrix for one official pinned source and one needed bounded variant | no universal registry/framework claim and no activation claim without real bytes |

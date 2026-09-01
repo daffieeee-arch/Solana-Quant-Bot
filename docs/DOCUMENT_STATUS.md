@@ -29,6 +29,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`FRONTEND_COCKPIT_ARCHITECTURE.md`](FRONTEND_COCKPIT_ARCHITECTURE.md)
 - [`triton-cost-safety.md`](triton-cost-safety.md)
 - [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md)
+- [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md)
 
 ## Superseded documents
 
