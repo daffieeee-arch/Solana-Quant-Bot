@@ -820,6 +820,25 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     expect(result.reason).toBe('CONTENT_IDENTITY_DRIFT');
   });
 
+  it('hard-fails immediately when a pre-existing Project item disappears', () => {
+    const target = issue(72);
+    const targetItem = projectItem(target);
+    const result = evaluateItemLifecycleProjection({
+      items: [],
+      targetItemId: targetItem.id,
+      content: target,
+      repository: REPOSITORY,
+      expectedArchived: false,
+      knownItemsById: new Map([
+        [targetItem.id, { contentId: target.id, kind: 'Issue', number: 72, repository: REPOSITORY }],
+      ]),
+      projectionLagEligibleItemIds: new Set(),
+    });
+
+    expect(result.outcome).toBe(PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT);
+    expect(result.reason).toBe('ITEM_DELETED');
+  });
+
   it('rejects duplicate Project field identities before a Project mutation can begin', () => {
     const duplicateFields = [
       { id: 'FIELD_STATUS', name: 'Status', dataType: 'SINGLE_SELECT', options: [] },
