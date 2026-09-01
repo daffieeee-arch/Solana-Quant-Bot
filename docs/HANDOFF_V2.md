@@ -25,9 +25,9 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 ## Current phase
 
 - **Current phase:** V2 cutover and governance.
-- **Latest accepted milestone:** the factual repository reconstruction and V2 product direction are accepted; the existing fixture baseline remains evidence, not the target architecture.
-- **Current delivery:** PR 1 records this source of truth and a non-destructive Project #4 rebase plan.
-- **Next delivery after merge:** create one dedicated Project-rebase governance issue, then land one bounded Roadmap Sync/config PR before creating successors or V2 metadata. After the verified migration, B2A becomes the single concrete `ACTIVE NOW` delivery and B3 is `NEXT`.
+- **Latest accepted milestone:** PR #69 landed the accepted reconstruction and V2 source of truth at `05c3d885943c2319d6317b43546daca4b5918074`; the old fixture baseline remains evidence, not the target architecture, and the pre-G0 Project export is hashed in [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md).
+- **Current delivery:** governance issue #70 (G0) owns one bounded Roadmap Sync/config PR and is the single concrete migration delivery.
+- **Next delivery:** after that PR is green, resolve its explicit retention value and the issue #63 preflight discrepancy before authorizing merge and automatic trusted-main reconciliation. Only after the reconciliation audit may successors or V2 metadata be created. After the verified migration, B2A becomes the single concrete `ACTIVE NOW` delivery and B3 is `NEXT`.
 - **Current execution posture:** PAPER / RESEARCH ONLY. No profitability, research-readiness, paper-realism or live-readiness claim is established.
 
 ## Development and runtime boundary

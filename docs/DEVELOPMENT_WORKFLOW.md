@@ -49,7 +49,7 @@ Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity an
 
 [Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central roadmap. Every implementation PR links at least one active/successor roadmap issue. Historical issues retain their original acceptance criteria; disposition does not mean completion.
 
-For PR 1, do not perform a manual V2 migration; normal current-schema PR-item reconciliation may still run on PR events. After merge, follow [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md): hash a read-only export, create one governance issue, merge one bounded tested sync/config PR, and only then create successors, metadata and notes. Audit reconciliation/retention and close fully superseded anchors individually before PR 2A authorization. The governance implementation is the sole concrete `ACTIVE NOW`; after verified migration B2A is `ACTIVE NOW`, B3 is `NEXT`, and B4–B8 remain `LATER` behind their direct predecessors.
+PR #69, the read-only hashed export and governance issue #70 are complete. Follow [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md): keep the G0 sync/config work bounded, resolve the explicit retention value and every preflight stop condition, then obtain a GO that covers both merge and its automatic trusted-main reconciliation. Audit that reconciliation before creating successors, metadata or notes. Retire fully superseded anchors only in a later individual pass before PR 2A authorization. G0 is the sole concrete migration delivery; after verified migration B2A is `ACTIVE NOW`, B3 is `NEXT`, and B4–B8 remain `LATER` behind their direct predecessors.
 
 ## Network and acquisition changes
 

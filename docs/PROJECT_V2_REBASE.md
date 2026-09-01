@@ -1,6 +1,6 @@
 # PROJECT_V2_REBASE.md — controlled Project #4 migration plan
 
-> **Document status: ACTIVE migration plan.** This document proposes the post-merge migration. It does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
+> **Document status: ACTIVE migration plan.** G0 implementation is in progress under governance issue [#70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70). This document does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
 
 ## Authority and migration rules
 
@@ -12,13 +12,30 @@ The migration preserves GitHub history. “Non-destructive” does not require o
 - create successors before adding migration notes to old issues;
 - do not use `Closes`, `Fixes` or equivalent links during migration;
 - treat V2 disposition as delivery routing, never as proof of completion;
-- keep #56 `Done` and #62 open; keep #63 open through the initial migration and close it individually only after verified E0 cutover;
+- keep issue #56 `Done` and issue #62 open; the accepted plan expected issue #63 to remain open through initial migration and change individually to `not planned / superseded` only after verified E0 cutover;
 - retain the existing `Phase` field and its values as historical metadata;
 - add a separate `V2 Phase` field rather than repurposing `Phase`;
 - do not bulk-close any issue. A later verified closeout pass may close fully covered anchors individually as `not planned / superseded`;
 - export all current Project-linked repository issue/PR bodies and lifecycle state plus complete Project fields/views before mutation; retain a separate exact #27–#63 migration snapshot.
 
-The actual rebase occurs only after PR 1 is merged and verified, and before PR 2A starts.
+PR #69 is merged and verified. The actual Project rebase remains blocked while the bounded G0 sync/config PR is under review. Because an approved merge triggers push-to-main Roadmap Sync, the explicit merge GO must cover that live reconciliation and may occur only after all pre-merge decisions and stop conditions are resolved. PR 2A cannot start before the verified rebase completes.
+
+## G0 preflight checkpoint
+
+The read-only pre-G0 export and governance-issue creation are complete. [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md) is the public receipt; raw issue/PR bodies and Project JSON remain outside Git under the `LOCAL_PRIVATE_WSL_EXT4` storage class.
+
+| Fact | Verified value |
+|---|---|
+| PR #69 squash-merge | `05c3d885943c2319d6317b43546daca4b5918074` |
+| Snapshot ID | `project4-pre-v2-g0-20260901T193839Z-05c3d885943c` |
+| Snapshot root SHA-256 | `98a97b7bfb74d194898d0aa1d65c0a9caf8c4015f09ae6a93c76fd8289ee3585` |
+| Exact issues #27–#63 SHA-256 | `a4181fff5009797e720f82f92f26df61f2973c532e1f25dc1a14e312b8730769` |
+| Pre-V2 merged-PR candidates SHA-256 | `0211a16af1a18006bfa1005f12e4b57c9373508d655884f59a2a3f18656d9e67` |
+| Captured Project items | 69 total: 37 linked issues, 32 linked PRs, 0 archived |
+| Pre-V2 PR archive candidates | 30 linked merged PR items through PR #68 |
+| G0 owner | issue #70, open and `In Progress` under the current schema |
+
+The export found issue #63 already `CLOSED` / `COMPLETED` at `2026-09-01T19:17:25Z`, linked to PR #69, rather than open as the accepted migration plan required. No G0 preflight action changed that state. This is an unresolved stop condition: before any live V2 migration, governance must explicitly approve whether to preserve the present state as a documented exception or perform a separate state correction with its resulting reconciliation effects. The sync/config PR must not make that choice implicitly.
 
 ## V2 phases
 
@@ -63,9 +80,9 @@ The identifiers below are migration keys, not GitHub issue numbers. Do not creat
 
 | Key | Proposed issue | V2 phase | Disposition during migration | Observable purpose |
 |---|---|---|---|---|
-| G0 | Implement and verify the Project #4 V2 rebase | 0 | `ACTIVE NOW` | own the export, bounded Roadmap Sync/config PR, successor migration, reconciliation, retention audit and repository evidence |
+| [G0 / #70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `ACTIVE NOW` | own the export, bounded Roadmap Sync/config PR, successor migration, reconciliation, retention audit and repository evidence |
 
-G0 is created before V2 metadata support exists, so its initial body uses only metadata accepted by current `main`. After the sync/config PR merges, reconciliation adds its V2 fields. G0 remains the single concrete `ACTIVE NOW` delivery until every migration gate passes.
+G0 was created before V2 metadata support existed, so its initial body uses only metadata accepted by current `main`; its current-schema status is `In Progress`. After an explicit merge/migration GO and trusted-main reconciliation, G0 may receive its V2 fields. G0 remains the single concrete `ACTIVE NOW` delivery until every migration gate passes.
 
 ### Program and epics
 
@@ -138,7 +155,7 @@ During migration G0 alone is concrete `ACTIVE NOW`; when successors are created,
 | [#60](https://github.com/daffieeee-arch/solana-paper-scanner/issues/60) | quant/ML validation epic | `SUPERSEDED` | 5 | E3 accepts edge discovery, falsification or insufficient sample |
 | [#61](https://github.com/daffieeee-arch/solana-paper-scanner/issues/61) | combined shadow/execution epic | `SPLIT` | 7 | E4 prospective shadow, E5 new paper engine and E7 gated live/VPS |
 | [#62](https://github.com/daffieeee-arch/solana-paper-scanner/issues/62) | engineering/observability/governance epic | `ACTIVE NOW` | 0 | PR 1 and B2A; keep open and continue as cross-cutting control |
-| [#63](https://github.com/daffieeee-arch/solana-paper-scanner/issues/63) | paper-first program baseline | `SUPERSEDED` | 0 | E0 is the data-first program contract; keep #63 open during migration, then close it individually as `not planned / superseded` only after verified E0 cutover |
+| [#63](https://github.com/daffieeee-arch/solana-paper-scanner/issues/63) | paper-first program baseline | `SUPERSEDED` | 0 | E0 is the data-first program contract; preflight found this issue already `CLOSED` / `COMPLETED` from PR #69, so its state is a stop condition pending an explicit governance decision |
 
 All 37 legacy rows are mapped exactly once. Every `SPLIT` row has at least two named successor destinations; every `SUPERSEDED` row has exactly one.
 
@@ -153,7 +170,7 @@ The bounded G0 Roadmap Sync/config PR must add and test, as one reviewable defau
 - replacement Project short description and README;
 - item eligibility, retention, archive and reopen behavior.
 
-The current synchronizer does **not** parse/write V2 keys and currently scans all historical issues/PRs, adds missing items and unconditionally unarchives archived items. No manual V2-field workaround is allowed. The tested sync/config PR must merge before any issue receives V2 metadata or any E0–E7/B2A–B8 successor is created. Do not edit old `phase` metadata.
+The pre-G0 `main` synchronizer does **not** parse/write V2 keys; it scans all historical issues/PRs, adds missing items and unconditionally unarchives archived items. The G0 branch adds the tested replacement contract, but no manual V2-field workaround is allowed. The sync/config PR must merge before any issue receives V2 metadata or any E0–E7/B2A–B8 successor is created. Do not edit old `phase` metadata.
 
 ### Evidence field
 
@@ -205,18 +222,18 @@ Tests verify removal of the old #63/runtime-first Project copy and exact presenc
 
 ## Views
 
-Create and verify new views before archiving any old view. Exact GitHub filter grammar must be dry-run/live validated because a view-update warning is not equivalent to success.
+Reuse each named legacy view in place through its configured alias, then verify the renamed V2 view. No view is archived or deleted by G0. Exact GitHub filter grammar must be dry-run/live validated because a view-update warning is not equivalent to success.
 
 | View | Layout | Intended filter |
 |---|---|---|
-| Now | Board | `V2 Disposition:"ACTIVE NOW" -Status:Done -Status:Cancelled -Work Type:Program -Work Type:Epic` |
-| Next | Table | `V2 Disposition:NEXT -Status:Done -Status:Cancelled -Work Type:Program -Work Type:Epic` |
-| Data | Table | V2 phases 1, 2, 3 and 5; active/next/later only |
-| Observatory | Table | V2 phase 4; active/next/later only |
-| Research | Table | V2 phases 5 and 6; active/next/later only |
-| Later | Roadmap or table | `V2 Disposition:LATER` |
-| Retired | Table | `V2 Disposition:SUPERSEDED,RETIRED` |
-| Migration Ledger | Table | `V2 Disposition:SPLIT,SUPERSEDED,RETIRED` |
+| Now | Board | `v2-disposition:"ACTIVE NOW" -status:Done,Cancelled -work-type:Program,Epic` |
+| Next | Table | `v2-disposition:NEXT -status:Done,Cancelled -work-type:Program,Epic` |
+| Data | Table | `v2-phase:"1 Pump Protocol Truth","2 Authentic Acquisition","3 Bronze & Silver","5 Scale & Data Sufficiency" v2-disposition:"ACTIVE NOW",NEXT,LATER` |
+| Observatory | Table | `v2-phase:"4 Research Observatory" v2-disposition:"ACTIVE NOW",NEXT,LATER` |
+| Research | Table | `v2-phase:"5 Scale & Data Sufficiency","6 Gold & Edge Validation" v2-disposition:"ACTIVE NOW",NEXT,LATER` |
+| Later | Table | `v2-disposition:LATER` |
+| Retired | Table | `v2-disposition:SUPERSEDED,RETIRED` |
+| Migration Ledger | Table | `v2-disposition:SPLIT,SUPERSEDED,RETIRED` |
 
 Show at least Title, Status, V2 Disposition, V2 Phase, Priority, Area, Evidence, Risk and Assignees. Active delivery views exclude `SPLIT` and `SUPERSEDED` anchors. Now/Next also separate Program/Epic containers so exactly one concrete delivery head remains obvious. Exact GitHub filter grammar is an acceptance test, not assumed from this proposed spelling.
 
@@ -225,14 +242,15 @@ Show at least Title, Status, V2 Disposition, V2 Phase, Priority, Area, Evidence,
 Project #4 is an active delivery cockpit, not a permanent duplicate of GitHub history.
 
 - Open V2 roadmap issues and open PRs remain active Project items.
-- After the hashed export/audit, merged pre-V2 PR items #1–#68 are archived; they are not deleted.
-- The G0 config PR must select an explicit, reviewed `closed_item_retention_days` with no implicit default. Future merged/closed PR items—and closed issue items unless explicitly pinned as continuing controls—stay active for that interval and are then archived by reconciliation.
+- The hashed export identified exactly 30 active linked merged pre-V2 PR items through PR #68 as archive candidates: PRs #1–#26, #64, #65, #67 and #68. The config binds that sorted allowlist, its separate set hash and the root snapshot hash. Initial reconciliation rereads the live repository and Project and fails before its first mutation if the observed merged set differs or any audited candidate is absent/already archived. The items are not deleted, and the G0 branch performs no live archival.
+- The G0 config PR proposes the explicit reviewed value `closed_item_retention_days: 30`. The key is mandatory: validation fails when it is absent or invalid, and code supplies no implicit fallback. Future merged/closed PR items—and closed issue items unless explicitly pinned as continuing controls—stay active for that interval and are then eligible for archival by an authorized reconciliation.
 - #56 is an explicitly pinned continuing operational control: it remains visible as `Done` / `Operationally Verified` until a later reviewed governance decision replaces it.
+- Issue #63 is temporarily pinned against archival while its preflight state discrepancy is unresolved. That pin preserves audit visibility; it does not approve or infer a state correction.
 - An archived item is unarchived only when its underlying issue or PR is actually reopened. Ordinary scheduled/event reconciliation, metadata drift or discovery of a still-closed item must not reactivate it.
 - Eligibility is checked before both add and unarchive, so archived/absent historical items are not re-added through full-history enumeration.
 - GitHub issue/PR bodies, comments, close reasons and event history remain the permanent archive. The synchronizer never deletes items or GitHub history.
 
-The Roadmap Sync extension tests open retention, #1–#68 archival, the configured grace interval, pinned-control behavior, closed-item non-reactivation, true reopen reactivation, no-delete behavior and deterministic counts. Until `closed_item_retention_days` is explicitly selected and tested in G0, no new age-based archive policy is activated.
+The Roadmap Sync extension tests open retention, the exact pre-V2 candidate rule, the configured grace interval, pinned-control behavior, closed-item non-reactivation, evidence-backed actual-reopen reactivation, no-delete behavior and deterministic counts. Thirty days remains a reviewable candidate until the G0 PR is accepted. No policy is applied from the PR branch. An explicit GO to merge also authorizes the automatic trusted-main reconciliation, so the value and stop conditions must be decided before merge.
 
 ## Issue-note template
 
@@ -251,18 +269,20 @@ engineering evidence. This note neither marks them delivered nor changes GitHub 
 
 Retain existing `roadmap-meta`. Add V2 metadata keys only after the synchronizer on `main` validates them.
 
-## Post-merge migration transaction
+## G0 and post-merge migration transaction
 
-1. Merge PR #69 and verify the exact merged SHA and green CI logs.
-2. Export all current Project-linked repository issues/PRs with bodies and lifecycle state/history plus Project #4 description/README, items, archive state, fields, option IDs/values and views read-only; content-hash the export and retain an exact #27–#63 migration subset.
-3. Create exactly one dedicated governance issue G0 for implementation and verification of the Project rebase, using only metadata understood by current `main`.
-4. Create one bounded PR that extends Roadmap Sync, its tests and `roadmap/project-config.json`; make no successor/issue metadata mutation in that PR.
-5. Require that PR to support and test `V2 Phase`, `V2 Disposition`, the complete Evidence taxonomy/ID retention, V2 views, replacement Project description/README, and item eligibility/retention/archive/reopen semantics. Merge only with green CI and trusted-default-branch security review.
-6. Only after that sync/config PR is merged, create E0–E7 and B2A–B8, record their actual numbers/parents, add V2 metadata, and append bounded cutover notes to existing issues without closing them.
-7. Run reconciliation through the protected trusted-main workflow.
-8. Audit all item/issue counts, successor links, option IDs/names, field values, states, views/filters, Evidence assignments, Project text and archive outcomes against the hashed ledger.
-9. Record actual successor issue numbers, reconciled counts/hashes and the migration outcome in repository evidence. Complete the separate individual closeout gate below and append its final results to that evidence.
-10. Only after the repository evidence and closeout audit are accepted may PR 2A be authorized.
+1. **Complete:** PR #69 merged at `05c3d885943c2319d6317b43546daca4b5918074`; post-merge CI and the succeeding ordinary Roadmap reconciliation passed.
+2. **Complete:** the read-only Project/repository export was captured and hashed, including exact #27–#63 and pre-V2 merged-PR candidate subsets. See [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md).
+3. **Complete:** governance issue G0 exists as issue #70, created with only current-main metadata.
+4. **Current bounded delivery:** create, review and make green one PR that extends Roadmap Sync, its directly required tests, `roadmap/project-config.json` and directly required operations/migration documentation. It performs no successor/issue metadata mutation and no live Project migration from the branch.
+5. Require that PR to support and test `V2 Phase`, `V2 Disposition`, the complete Evidence taxonomy/ID retention, V2 views, replacement Project description/README, mandatory explicit retention, item eligibility/archive/reopen semantics, deterministic counts and the trusted-default-branch `PROJECT_TOKEN` boundary.
+6. **Pre-merge stop and decide:** approve the retention value, resolve the documented issue #63 state discrepancy and clear every remaining review/security decision. The explicit GO must cover both merge and the automatic trusted-main reconciliation.
+7. Merge, verify the exact SHA and audit the resulting schema/view/retention reconciliation against the hashed baseline.
+8. Only after step 7 passes, create E0–E7 and B2A–B8, record their actual numbers/parents, add V2 metadata, and append bounded cutover notes to existing issues without changing their state in the initial batch.
+9. Run subsequent reconciliation only through the protected trusted-default-branch workflow.
+10. Audit all item/issue counts, successor links, option IDs/names, field values, states, views/filters, Evidence assignments, Project text and archive outcomes against the hashed ledger.
+11. Record actual successor issue numbers, reconciled counts/hashes and the migration outcome in repository evidence. Complete the separate individual retirement gate below and append its final results to that evidence.
+12. Only after repository evidence and retirement audit are accepted may PR 2A be authorized.
 
 Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift, retention error, description/README drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
 
@@ -275,7 +295,7 @@ The initial migration performs no bulk closure. After successors exist and mappi
 3. close only fully covered anchors individually as `not planned / superseded`;
 4. leave every standalone `LATER` requirement open;
 5. keep #56 `Done` and keep #62 open as the cross-cutting control;
-6. keep #63 open until E0 is verified, then close #63 individually as `not planned / superseded`;
+6. apply the separately approved resolution for issue #63; the original plan was to retain it open until E0 verification and then mark it individually `not planned / superseded`, but preflight found it already `CLOSED` / `COMPLETED`;
 7. record each decision/close reason and post-close Project archive state in repository evidence.
 
 Expected individual closure candidates, subject to the per-issue verification, are #29–#31, #33–#35, #38–#40, #42–#45, #47–#50, #52–#55, #57–#61 and finally #63. Standalone `LATER` requirements #27, #28, #32, #36, #37, #41, #46 and #51 remain open. No item, issue, PR, comment or historical acceptance criterion is deleted.
@@ -284,8 +304,8 @@ Expected individual closure candidates, subject to the per-issue verification, a
 
 - exactly 37 old issues mapped once;
 - the exact merged #69 SHA/CI and hashed preflight export are recorded;
-- G0 exists; its one bounded sync/config PR merged before any successor/V2 metadata creation;
-- #56 remains `Done` with `Operationally Verified`; #62 remains open; #63 stayed open during migration and closes only after verified E0 cutover;
+- G0 exists as issue #70; its one bounded sync/config PR merged before any successor/V2 metadata creation;
+- issue #56 remains `Done` with `Operationally Verified`; issue #62 remains open; the issue #63 discrepancy has an explicit, audited resolution before migration proceeds;
 - original acceptance criteria remain byte-for-byte present;
 - every `SPLIT` has at least two valid successor links;
 - every `SUPERSEDED` has one valid successor link;
@@ -299,6 +319,6 @@ Expected individual closure candidates, subject to the per-issue verification, a
 - actual E0–E7/B2A–B8 issue numbers and post-close results are committed as repository evidence;
 - Roadmap Sync dry-run/tests and a post-reconcile audit are green.
 
-## PR 1 non-goals
+## G0 support PR non-goals
 
-No manual V2 migration, issue creation/edit/close, Project field/view/config change, provider call, PR 2A cleanup or code removal occurs in PR 1. Ordinary existing-schema Roadmap Sync triggered by PR #69 events may reconcile only the #69 Project item and normal PR-status fields; it is not the V2 migration.
+No E0–E7/B2A–B8 creation, V2 note/metadata mutation, issue-state repair, live Project migration/archive, provider call, PR 2A cleanup, tag or product/code removal occurs in the G0 support PR. Ordinary current-schema Roadmap Sync triggered by its PR events may reconcile only normal PR and G0 fields; it is not the V2 migration.

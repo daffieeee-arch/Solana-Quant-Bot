@@ -7,6 +7,7 @@ import {
   parseRoadmapMeta,
   projectViewLayoutInput,
   validateProjectConfig,
+  validateViewPreconditions,
 } from '../scripts/github-projects/sync.mjs';
 
 const marker = (value: unknown) => `<!-- roadmap-meta\n${JSON.stringify(value)}\n-->`;
@@ -26,11 +27,15 @@ describe('GitHub Projects roadmap metadata', () => {
   it('parses one bounded typed metadata block and preserves optional planning values', () => {
     expect(parseRoadmapMeta(marker({
       ...baseMeta,
+      v2Phase: '0 Cutover & Cleanup',
+      v2Disposition: 'ACTIVE NOW',
       effort: 8,
       startDate: '2026-09-01',
       targetDate: '2026-09-30',
     }))).toEqual({
       ...baseMeta,
+      v2Phase: '0 Cutover & Cleanup',
+      v2Disposition: 'ACTIVE NOW',
       effort: 8,
       startDate: '2026-09-01',
       targetDate: '2026-09-30',
@@ -116,6 +121,14 @@ describe('GitHub Projects roadmap config', () => {
       { name: 'Effort', dataType: 'NUMBER' },
       { name: 'Target date', dataType: 'DATE' },
     ],
+    itemRetention: {
+      closed_item_retention_days: 30,
+      pre_v2_merged_pr_max_number: 68,
+      pre_v2_merged_pr_numbers: [68],
+      pre_v2_snapshot_sha256: 'a'.repeat(64),
+      pre_v2_merged_pr_set_sha256: 'b'.repeat(64),
+      pinned_items: [],
+    },
     views: [{ name: 'Board', layout: 'BOARD', filter: 'is:open', visibleFields: ['Title', 'Status'] }],
   };
 
@@ -139,9 +152,118 @@ describe('GitHub Projects roadmap config', () => {
     expect(fieldNames).not.toContain('Type');
   });
 
+  it('pins the reviewed V2 fields, Project copy, and eight migration-safe views', () => {
+    const production = JSON.parse(readFileSync('roadmap/project-config.json', 'utf8')) as {
+      project: { shortDescription: string; readme: string };
+      fields: Array<{ name: string; options?: Array<{ name: string }> }>;
+      views: Array<{
+        name: string;
+        layout: string;
+        filter: string;
+        visibleFields: string[];
+        aliases?: string[];
+      }>;
+    };
+    const optionNames = (fieldName: string) => production.fields
+      .find((field) => field.name === fieldName)?.options?.map(({ name }) => name);
+
+    expect(optionNames('V2 Phase')).toEqual([
+      '0 Cutover & Cleanup',
+      '1 Pump Protocol Truth',
+      '2 Authentic Acquisition',
+      '3 Bronze & Silver',
+      '4 Research Observatory',
+      '5 Scale & Data Sufficiency',
+      '6 Gold & Edge Validation',
+      '7 Prospective Shadow',
+      '8 New Rust Paper Engine',
+      '9 Professional Workstation',
+      '10 VPS & Gated Live',
+    ]);
+    expect(optionNames('V2 Disposition')).toEqual([
+      'ACTIVE NOW', 'NEXT', 'LATER', 'SPLIT', 'SUPERSEDED', 'RETIRED',
+    ]);
+    expect(production.project.shortDescription).toBe('Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence, Research Observatory before Professional Workstation, and edge discovery or falsification. Profitability is not assumed.');
+    expect(production.project.readme).toBe('# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/solana-paper-scanner/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation.');
+
+    const visibleFields = [
+      'Title', 'Status', 'V2 Disposition', 'V2 Phase', 'Priority', 'Area',
+      'Work Type', 'Evidence', 'Risk', 'Assignees',
+    ];
+    expect(production.views).toEqual([
+      {
+        name: 'Now', layout: 'BOARD',
+        filter: 'v2-disposition:"ACTIVE NOW" -status:Done,Cancelled -work-type:Program,Epic',
+        visibleFields, aliases: ['Delivery Board'],
+      },
+      {
+        name: 'Next', layout: 'TABLE',
+        filter: 'v2-disposition:NEXT -status:Done,Cancelled -work-type:Program,Epic',
+        visibleFields, aliases: ['P0 Blockers'],
+      },
+      {
+        name: 'Data', layout: 'TABLE',
+        filter: 'v2-phase:"1 Pump Protocol Truth","2 Authentic Acquisition","3 Bronze & Silver","5 Scale & Data Sufficiency" v2-disposition:"ACTIVE NOW",NEXT,LATER',
+        visibleFields, aliases: ['Data & Research'],
+      },
+      {
+        name: 'Observatory', layout: 'TABLE',
+        filter: 'v2-phase:"4 Research Observatory" v2-disposition:"ACTIVE NOW",NEXT,LATER',
+        visibleFields, aliases: ['Frontend Cockpit'],
+      },
+      {
+        name: 'Research', layout: 'TABLE',
+        filter: 'v2-phase:"5 Scale & Data Sufficiency","6 Gold & Edge Validation" v2-disposition:"ACTIVE NOW",NEXT,LATER',
+        visibleFields, aliases: ['Recently Updated'],
+      },
+      {
+        name: 'Later', layout: 'TABLE', filter: 'v2-disposition:LATER',
+        visibleFields, aliases: ['Executive Roadmap'],
+      },
+      {
+        name: 'Retired', layout: 'TABLE', filter: 'v2-disposition:SUPERSEDED,RETIRED',
+        visibleFields, aliases: ['Done & Cancelled'],
+      },
+      {
+        name: 'Migration Ledger', layout: 'TABLE', filter: 'v2-disposition:SPLIT,SUPERSEDED,RETIRED',
+        visibleFields, aliases: ['Live Shadow & Execution'],
+      },
+    ]);
+  });
+
   it('rejects owner drift, duplicate fields and unsupported layouts', () => {
     expect(() => validateProjectConfig({ ...config, repository: 'someone/else' })).toThrow(/owner/i);
     expect(() => validateProjectConfig({ ...config, fields: [...config.fields, config.fields[0]] })).toThrow(/duplicate/i);
     expect(() => validateProjectConfig({ ...config, views: [{ name: 'Bad', layout: 'GRID' }] })).toThrow(/layout/i);
+  });
+
+  it('requires an explicit bounded retention policy and snapshot binding', () => {
+    const { itemRetention: _removed, ...withoutRetention } = config;
+    expect(() => validateProjectConfig(withoutRetention)).toThrow(/itemRetention must be an object/i);
+    expect(() => validateProjectConfig({
+      ...config,
+      itemRetention: { ...config.itemRetention, closed_item_retention_days: undefined },
+    })).toThrow(/explicit integer/i);
+    expect(() => validateProjectConfig({
+      ...config,
+      itemRetention: { ...config.itemRetention, pre_v2_snapshot_sha256: 'unbound' },
+    })).toThrow(/reviewed pre-migration export/i);
+  });
+
+  it('fails closed when the audited legacy/current view set drifts', () => {
+    const migrationConfig = {
+      views: [{ name: 'Now', aliases: ['Delivery Board'] }],
+    };
+    expect(validateViewPreconditions(migrationConfig, [
+      { id: 'VIEW_1', name: 'Delivery Board' },
+    ])).toEqual({ matched: 1, creates: 0 });
+    expect(validateViewPreconditions(migrationConfig, [
+      { id: 'VIEW_1', name: 'Now' },
+    ])).toEqual({ matched: 1, creates: 0 });
+    expect(() => validateViewPreconditions(migrationConfig, [])).toThrow(/view for Now is missing/i);
+    expect(() => validateViewPreconditions(migrationConfig, [
+      { id: 'VIEW_1', name: 'Delivery Board' },
+      { id: 'VIEW_2', name: 'Unreviewed' },
+    ])).toThrow(/unexpected Project views.*Unreviewed/i);
   });
 });

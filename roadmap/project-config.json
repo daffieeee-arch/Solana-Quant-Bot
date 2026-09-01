@@ -4,8 +4,8 @@
   "repository": "daffieeee-arch/solana-paper-scanner",
   "project": {
     "title": "Solana Quant Platform — Roadmap & Cockpit",
-    "shortDescription": "Trusted runtime, professional Solana trader cockpit, authentic data, quant research and gated execution.",
-    "readme": "# Solana Quant Platform\n\nThis user-owned Project is reconciled from `solana-paper-scanner` issues and pull requests.\n\n- Program source of truth: issue #63\n- Roadmap metadata source of truth: the `roadmap-meta` JSON block in issue and PR bodies\n- Delivery rule: every implementation PR links or closes a roadmap issue\n- Safety: paper/research only unless a later execution approval is explicitly reviewed\n\nManual edits to synchronized fields can be overwritten by the next reconciliation."
+    "shortDescription": "Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence, Research Observatory before Professional Workstation, and edge discovery or falsification. Profitability is not assumed.",
+    "readme": "# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/solana-paper-scanner/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation."
   },
   "fields": [
     {
@@ -86,6 +86,35 @@
       ]
     },
     {
+      "name": "V2 Phase",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "0 Cutover & Cleanup", "color": "GRAY", "description": "V2 governance and obsolete-platform cleanup" },
+        { "name": "1 Pump Protocol Truth", "color": "RED", "description": "Version-bounded official Pump protocol evidence" },
+        { "name": "2 Authentic Acquisition", "color": "BLUE", "description": "Bounded official Triton Old Faithful acquisition" },
+        { "name": "3 Bronze & Silver", "color": "BLUE", "description": "Canonical immutable Raw, Bronze and Silver evidence" },
+        { "name": "4 Research Observatory", "color": "PURPLE", "description": "Authentic lifecycle and data-quality visualization" },
+        { "name": "5 Scale & Data Sufficiency", "color": "YELLOW", "description": "Outcome-independent bounded sampling and sufficiency" },
+        { "name": "6 Gold & Edge Validation", "color": "PINK", "description": "Point-in-time Gold and falsifiable evaluation" },
+        { "name": "7 Prospective Shadow", "color": "YELLOW", "description": "Triton-only no-order prospective evidence" },
+        { "name": "8 New Rust Paper Engine", "color": "RED", "description": "Replacement paper execution state machine" },
+        { "name": "9 Professional Workstation", "color": "PURPLE", "description": "Later linked professional trading workflows" },
+        { "name": "10 VPS & Gated Live", "color": "RED", "description": "Separately approved Linux and live-capable boundary" }
+      ]
+    },
+    {
+      "name": "V2 Disposition",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        { "name": "ACTIVE NOW", "color": "RED", "description": "The one concrete current V2 delivery" },
+        { "name": "NEXT", "color": "ORANGE", "description": "The accepted direct successor" },
+        { "name": "LATER", "color": "YELLOW", "description": "Valid work gated by predecessor evidence" },
+        { "name": "SPLIT", "color": "PURPLE", "description": "Requirements route to multiple named successors" },
+        { "name": "SUPERSEDED", "color": "GRAY", "description": "A named V2 contract replaces execution as written" },
+        { "name": "RETIRED", "color": "GRAY", "description": "No longer active product scope" }
+      ]
+    },
+    {
       "name": "Risk",
       "dataType": "SINGLE_SELECT",
       "options": [
@@ -99,65 +128,93 @@
       "name": "Evidence",
       "dataType": "SINGLE_SELECT",
       "options": [
-        { "name": "Unproven", "color": "GRAY", "description": "No accepted evidence yet" },
-        { "name": "Fixture", "color": "BLUE", "description": "Validated only with fixtures or synthetic data" },
-        { "name": "Shadow", "color": "YELLOW", "description": "Prospective no-order evidence" },
-        { "name": "Research Ready", "color": "PURPLE", "description": "Approved point-in-time research evidence" },
-        { "name": "Paper Proven", "color": "GREEN", "description": "Prospective executable paper evidence" },
-        { "name": "Live Proven", "color": "GREEN", "description": "Separately approved live evidence" }
+        { "name": "Not Applicable", "color": "GRAY", "description": "Coordination-only program or epic; child evidence is never inherited" },
+        { "name": "Unproven", "color": "GRAY", "description": "No accepted named evidence yet", "preserveId": "2dec7514" },
+        { "name": "Fixture", "color": "BLUE", "description": "Deterministic fixture or synthetic evidence only", "preserveId": "0aab3ca8" },
+        { "name": "Operationally Verified", "color": "GREEN", "description": "Operational control passed its named CI and reconciliation audit" },
+        { "name": "Engineering Validation", "color": "BLUE", "description": "Authentic mechanics validated but excluded from edge claims" },
+        { "name": "Research Candidate", "color": "YELLOW", "description": "Outcome-independent authentic sample awaiting full PIT gates" },
+        { "name": "Research Ready", "color": "PURPLE", "description": "Accepted point-in-time dataset and methodology evidence", "preserveId": "fd58ad10" },
+        { "name": "Shadow", "color": "YELLOW", "description": "Accepted prospective no-order evidence", "preserveId": "37941e3f" },
+        { "name": "Paper Proven", "color": "GREEN", "description": "Accepted prospective executable paper evidence", "preserveId": "1325597e" },
+        { "name": "Live Proven", "color": "GREEN", "description": "Separately approved live evidence", "preserveId": "83718c1f" }
       ]
     },
     { "name": "Effort", "dataType": "NUMBER" },
     { "name": "Start date", "dataType": "DATE" },
     { "name": "Target date", "dataType": "DATE" }
   ],
+  "itemRetention": {
+    "closed_item_retention_days": 30,
+    "pre_v2_merged_pr_max_number": 68,
+    "pre_v2_merged_pr_numbers": [
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+      14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
+      64, 65, 67, 68
+    ],
+    "pre_v2_snapshot_sha256": "98a97b7bfb74d194898d0aa1d65c0a9caf8c4015f09ae6a93c76fd8289ee3585",
+    "pre_v2_merged_pr_set_sha256": "0211a16af1a18006bfa1005f12e4b57c9373508d655884f59a2a3f18656d9e67",
+    "pinned_items": [
+      { "kind": "Issue", "number": 56 },
+      { "kind": "Issue", "number": 63 }
+    ]
+  },
   "views": [
     {
-      "name": "Executive Roadmap",
-      "layout": "ROADMAP",
-      "filter": "is:open"
-    },
-    {
-      "name": "Delivery Board",
+      "name": "Now",
       "layout": "BOARD",
-      "filter": "is:open",
-      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Risk", "Assignees"]
+      "filter": "v2-disposition:\"ACTIVE NOW\" -status:Done,Cancelled -work-type:Program,Epic",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["Delivery Board"]
     },
     {
-      "name": "P0 Blockers",
+      "name": "Next",
       "layout": "TABLE",
-      "filter": "Priority:P0 -Status:Done -Status:Cancelled",
-      "visibleFields": ["Title", "Status", "Area", "Work Type", "Phase", "Risk", "Evidence", "Assignees"]
+      "filter": "v2-disposition:NEXT -status:Done,Cancelled -work-type:Program,Epic",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["P0 Blockers"]
     },
     {
-      "name": "Frontend Cockpit",
+      "name": "Data",
       "layout": "TABLE",
-      "filter": "Area:Frontend,\"Frontend Data\",UX",
-      "visibleFields": ["Title", "Status", "Priority", "Work Type", "Phase", "Risk", "Assignees"]
+      "filter": "v2-phase:\"1 Pump Protocol Truth\",\"2 Authentic Acquisition\",\"3 Bronze & Silver\",\"5 Scale & Data Sufficiency\" v2-disposition:\"ACTIVE NOW\",NEXT,LATER",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["Data & Research"]
     },
     {
-      "name": "Data & Research",
+      "name": "Observatory",
       "layout": "TABLE",
-      "filter": "Area:Data,Research,ML",
-      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Evidence", "Risk", "Assignees"]
+      "filter": "v2-phase:\"4 Research Observatory\" v2-disposition:\"ACTIVE NOW\",NEXT,LATER",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["Frontend Cockpit"]
     },
     {
-      "name": "Live Shadow & Execution",
+      "name": "Research",
       "layout": "TABLE",
-      "filter": "Area:\"Live Shadow\",Execution",
-      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Evidence", "Risk", "Assignees"]
+      "filter": "v2-phase:\"5 Scale & Data Sufficiency\",\"6 Gold & Edge Validation\" v2-disposition:\"ACTIVE NOW\",NEXT,LATER",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["Recently Updated"]
     },
     {
-      "name": "Recently Updated",
+      "name": "Later",
       "layout": "TABLE",
-      "filter": "updated:>@today-14d",
-      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Updated at", "Assignees"]
+      "filter": "v2-disposition:LATER",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["Executive Roadmap"]
     },
     {
-      "name": "Done & Cancelled",
+      "name": "Retired",
       "layout": "TABLE",
-      "filter": "Status:Done,Cancelled",
-      "visibleFields": ["Title", "Status", "Priority", "Area", "Phase", "Closed at", "Assignees"]
+      "filter": "v2-disposition:SUPERSEDED,RETIRED",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["Done & Cancelled"]
+    },
+    {
+      "name": "Migration Ledger",
+      "layout": "TABLE",
+      "filter": "v2-disposition:SPLIT,SUPERSEDED,RETIRED",
+      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
+      "aliases": ["Live Shadow & Execution"]
     }
   ]
 }
