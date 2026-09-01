@@ -22,6 +22,49 @@ const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const RETENTION_ITEM_KINDS = new Set(['Issue', 'PullRequest']);
 const DAY_MS = 24 * 60 * 60 * 1_000;
+export const PROJECT_VERIFICATION_DELAYS_MS = Object.freeze([0, 500, 1_000, 2_000, 4_000]);
+export const PROJECT_VERIFICATION_OUTCOMES = Object.freeze({
+  CONVERGED: 'CONVERGED',
+  NOT_YET_CONVERGED: 'NOT_YET_CONVERGED',
+  HARD_DRIFT: 'HARD_DRIFT',
+});
+const PROJECT_VERIFICATION_REASONS = new Set([
+  'EXACT_STATE_VISIBLE',
+  'ITEM_NOT_VISIBLE',
+  'FIELD_NOT_VISIBLE',
+  'ARCHIVE_STATE_NOT_VISIBLE',
+  'PROJECT_METADATA_NOT_VISIBLE',
+  'FIELD_SCHEMA_NOT_VISIBLE',
+  'VIEW_NOT_VISIBLE',
+  'DUPLICATE_CONTENT',
+  'CONTENT_IDENTITY_DRIFT',
+  'ITEM_DELETED',
+  'UNEXPECTED_ITEM',
+  'UNEXPECTED_FIELD_VALUE',
+  'UNEXPECTED_LIFECYCLE_STATE',
+  'PROJECT_SCHEMA_DRIFT',
+  'FIELD_SCHEMA_DRIFT',
+  'VIEW_SCHEMA_DRIFT',
+]);
+const RETRYABLE_PROJECT_VERIFICATION_REASONS = new Set([
+  'ITEM_NOT_VISIBLE',
+  'FIELD_NOT_VISIBLE',
+  'ARCHIVE_STATE_NOT_VISIBLE',
+  'PROJECT_METADATA_NOT_VISIBLE',
+  'FIELD_SCHEMA_NOT_VISIBLE',
+  'VIEW_NOT_VISIBLE',
+]);
+const HARD_PROJECT_VERIFICATION_REASONS = new Set([
+  'DUPLICATE_CONTENT',
+  'CONTENT_IDENTITY_DRIFT',
+  'ITEM_DELETED',
+  'UNEXPECTED_ITEM',
+  'UNEXPECTED_FIELD_VALUE',
+  'UNEXPECTED_LIFECYCLE_STATE',
+  'PROJECT_SCHEMA_DRIFT',
+  'FIELD_SCHEMA_DRIFT',
+  'VIEW_SCHEMA_DRIFT',
+]);
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -29,6 +72,92 @@ function isObject(value) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function verificationResult(outcome, reason, expected, observed, details = undefined) {
+  assert(Object.values(PROJECT_VERIFICATION_OUTCOMES).includes(outcome), `unsupported verification outcome ${outcome}`);
+  assert(PROJECT_VERIFICATION_REASONS.has(reason), `unsupported verification reason ${reason}`);
+  assert((outcome === PROJECT_VERIFICATION_OUTCOMES.CONVERGED && reason === 'EXACT_STATE_VISIBLE')
+    || (outcome === PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED
+      && RETRYABLE_PROJECT_VERIFICATION_REASONS.has(reason))
+    || (outcome === PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT
+      && HARD_PROJECT_VERIFICATION_REASONS.has(reason)),
+  `verification outcome ${outcome} is incompatible with reason ${reason}`);
+  return {
+    outcome,
+    reason,
+    expected: boundedString(expected, 'verification expected summary', 512),
+    observed: boundedString(observed, 'verification observed summary', 512),
+    ...(details === undefined ? {} : { details }),
+  };
+}
+
+const projectVerificationSleep = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+
+/**
+ * Read-only GitHub Projects projection convergence. Mutations deliberately are
+ * not accepted by this function, so a retry cannot replay one.
+ */
+export async function verifyProjectProjection({
+  operationType,
+  identity,
+  read,
+  classify,
+  sleep = projectVerificationSleep,
+  log = (entry) => console.log(JSON.stringify(entry)),
+}) {
+  const operation = boundedString(operationType, 'verification operation type', 64);
+  const target = boundedString(identity, 'verification identity', 128);
+  assert(typeof read === 'function', 'verification read function is required');
+  assert(typeof classify === 'function', 'verification classifier is required');
+  assert(typeof sleep === 'function', 'verification sleep function is required');
+  assert(typeof log === 'function', 'verification log function is required');
+
+  let finalResult;
+  for (let attempt = 0; attempt < PROJECT_VERIFICATION_DELAYS_MS.length; attempt += 1) {
+    const waitMilliseconds = PROJECT_VERIFICATION_DELAYS_MS[attempt];
+    if (waitMilliseconds > 0) await sleep(waitMilliseconds);
+    const snapshot = await read();
+    const result = classify(snapshot);
+    assert(isObject(result), 'verification classifier must return an object');
+    assert(Object.values(PROJECT_VERIFICATION_OUTCOMES).includes(result.outcome),
+      `verification classifier returned unsupported outcome ${result.outcome}`);
+    assert(PROJECT_VERIFICATION_REASONS.has(result.reason),
+      `verification classifier returned unsupported reason ${result.reason}`);
+    assert((result.outcome === PROJECT_VERIFICATION_OUTCOMES.CONVERGED && result.reason === 'EXACT_STATE_VISIBLE')
+      || (result.outcome === PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED
+        && RETRYABLE_PROJECT_VERIFICATION_REASONS.has(result.reason))
+      || (result.outcome === PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT
+        && HARD_PROJECT_VERIFICATION_REASONS.has(result.reason)),
+    `verification classifier returned incompatible outcome/reason ${result.outcome}/${result.reason}`);
+    boundedString(result.expected, 'verification expected summary', 512);
+    boundedString(result.observed, 'verification observed summary', 512);
+    finalResult = result;
+
+    if (result.outcome === PROJECT_VERIFICATION_OUTCOMES.CONVERGED) {
+      if (attempt > 0) {
+        log({
+          event: 'project_verification_converged',
+          operationType: operation,
+          identity: target,
+          verificationAttempt: attempt,
+        });
+      }
+      return { snapshot, attempts: attempt + 1, result };
+    }
+    if (result.outcome === PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT) {
+      throw new Error(`PROJECT_HARD_DRIFT operation=${operation} identity=${target} attempts=${attempt + 1} reason=${result.reason} expected=${result.expected} observed=${result.observed}`);
+    }
+    log({
+      event: 'project_verification_delayed',
+      operationType: operation,
+      identity: target,
+      verificationAttempt: attempt,
+      reason: result.reason,
+    });
+  }
+
+  throw new Error(`PROJECT_VERIFICATION_EXHAUSTED operation=${operation} identity=${target} attempts=${PROJECT_VERIFICATION_DELAYS_MS.length} reason=${finalResult.reason} expected=${finalResult.expected} finalObserved=${finalResult.observed}`);
 }
 
 function assertExactKeys(value, allowed, name) {
@@ -489,11 +618,12 @@ export function validateMigrationBaseline({ existingFields, plan, retention }) {
   return { mode: 'INITIAL', expectedInitialArchives: candidateOperations.length };
 }
 
-function currentValueMap(fieldValues) {
+function inspectCurrentValueMap(fieldValues) {
   const map = new Map();
   for (const node of fieldValues ?? []) {
     const name = node?.field?.name;
     if (!name) continue;
+    if (map.has(name)) return { error: `duplicate field value for ${name}` };
     if (node.__typename === 'ProjectV2ItemFieldSingleSelectValue') {
       map.set(name, { kind: 'SINGLE_SELECT', optionId: node.optionId ?? null, name: node.name ?? null });
     } else if (node.__typename === 'ProjectV2ItemFieldNumberValue') {
@@ -502,7 +632,390 @@ function currentValueMap(fieldValues) {
       map.set(name, { kind: 'DATE', date: node.date ?? null });
     }
   }
-  return map;
+  return { map };
+}
+
+function currentValueMap(fieldValues) {
+  const inspected = inspectCurrentValueMap(fieldValues);
+  assert(!inspected.error, inspected.error);
+  return inspected.map;
+}
+
+function expectedProjectFieldValue(field, value) {
+  if (field.dataType === 'SINGLE_SELECT') {
+    const option = field.options?.find((candidate) => candidate.name === value);
+    assert(option?.id, `option ${value} not found for ${field.name}`);
+    return { kind: 'SINGLE_SELECT', optionId: option.id, name: option.name };
+  }
+  if (field.dataType === 'NUMBER') return { kind: 'NUMBER', number: value };
+  if (field.dataType === 'DATE') return { kind: 'DATE', date: value };
+  throw new Error(`unsupported project field type ${field.dataType}`);
+}
+
+function projectFieldValuesEqual(left, right) {
+  if (left?.kind !== right?.kind) return false;
+  if (left?.kind === 'SINGLE_SELECT') return left.optionId === right.optionId && left.name === right.name;
+  if (left?.kind === 'NUMBER') return left.number === right.number;
+  if (left?.kind === 'DATE') return left.date === right.date;
+  return false;
+}
+
+function projectFieldValueStillProjecting(left, before, expected) {
+  if (left === undefined || projectFieldValuesEqual(left, before)) return true;
+  if (left?.kind !== 'SINGLE_SELECT' || (left.name !== null && left.name !== undefined)) return false;
+  return (before?.kind === 'SINGLE_SELECT' && left.optionId === before.optionId)
+    || (expected?.kind === 'SINGLE_SELECT' && left.optionId === expected.optionId);
+}
+
+function itemProjectionIndex(items) {
+  if (!Array.isArray(items)) {
+    return { error: 'Project item projection is not an array', reason: 'CONTENT_IDENTITY_DRIFT' };
+  }
+  const byItemId = new Map();
+  const byContentId = new Map();
+  for (const item of items) {
+    if (!item?.id) return { error: 'Project item without identity', reason: 'CONTENT_IDENTITY_DRIFT' };
+    if (byItemId.has(item.id)) {
+      return { error: `duplicate Project item identity ${item.id}`, reason: 'DUPLICATE_CONTENT' };
+    }
+    byItemId.set(item.id, item);
+    const contentId = item.content?.id;
+    if (!contentId) continue;
+    if (byContentId.has(contentId)) {
+      return { error: `duplicate Project item content ${contentId}`, reason: 'DUPLICATE_CONTENT' };
+    }
+    byContentId.set(contentId, item);
+  }
+  return { byItemId, byContentId };
+}
+
+export function validateProjectItemPreconditions({ items, contents, repository }) {
+  assert(Array.isArray(contents), 'repository contents must be an array');
+  const indexed = itemProjectionIndex(items);
+  assert(!indexed.error, indexed.error);
+  const contentsById = new Map(contents.map((content) => [content.id, content]));
+  assert(contentsById.size === contents.length, 'repository content identities must be unique');
+  for (const item of items) {
+    const projected = item.content;
+    assert(projected?.id && projected?.__typename && projected?.number
+      && projected?.repository?.nameWithOwner,
+    `Project item ${item.id} has incomplete repository content identity`);
+    assert(projected.repository.nameWithOwner === repository,
+      `Project item ${item.id} belongs to unexpected repository ${projected.repository.nameWithOwner}`);
+    const expected = contentsById.get(projected.id);
+    assert(expected, `Project item ${item.id} references unplanned repository content ${projected.id}`);
+    assert(projected.__typename === expected.kind && projected.number === expected.number,
+      `Project item ${item.id} content identity does not match ${expected.kind} #${expected.number}`);
+  }
+  return { projectItems: items.length, repositoryContents: contents.length };
+}
+
+function expectedItemSummary(content, archived, fieldCount = undefined) {
+  return `${content.kind} #${content.number} item=${archived ? 'archived' : 'active'}${fieldCount === undefined ? '' : ` managedFields=${fieldCount}`}`;
+}
+
+function observedItemSummary(item) {
+  if (!item) return 'item=absent';
+  const content = item.content;
+  const identity = content?.__typename && content?.number
+    ? `${content.__typename} #${content.number}`
+    : 'content=partial';
+  const archive = typeof item.isArchived === 'boolean' ? (item.isArchived ? 'archived' : 'active') : 'archive=partial';
+  const fieldCount = Array.isArray(item.fieldValues?.nodes) ? item.fieldValues.nodes.length : 0;
+  return `${identity} item=${archive} projectedFields=${fieldCount}`;
+}
+
+function inspectTargetItemIdentity({
+  items,
+  targetItemId,
+  content,
+  repository,
+  allowMissing,
+  knownItemsById,
+  projectionLagEligibleItemIds,
+}) {
+  const indexed = itemProjectionIndex(items);
+  if (indexed.error) {
+    return {
+      result: verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        indexed.reason,
+        expectedItemSummary(content, false),
+        indexed.error,
+      ),
+    };
+  }
+  let relatedProjectionDelay;
+  if (knownItemsById) {
+    for (const item of items) {
+      const expectedIdentity = knownItemsById.get(item.id);
+      if (!expectedIdentity) {
+        return {
+          result: verificationResult(
+            PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+            'UNEXPECTED_ITEM',
+            'only captured or mutation-returned Project item identities',
+            `unexpected Project item=${item.id}`,
+          ),
+        };
+      }
+      if (item.id === targetItemId) continue;
+      const projectedRepository = item.content?.repository?.nameWithOwner;
+      if ((item.content?.id !== undefined && item.content.id !== expectedIdentity.contentId)
+        || (item.content?.__typename !== undefined && item.content.__typename !== expectedIdentity.kind)
+        || (item.content?.number !== undefined && item.content.number !== expectedIdentity.number)
+        || (projectedRepository !== undefined && projectedRepository !== expectedIdentity.repository)) {
+        return {
+          result: verificationResult(
+            PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+            'CONTENT_IDENTITY_DRIFT',
+            `Project item=${item.id} captured repository identity`,
+            `Project item=${item.id} identity contradicts the captured content`,
+          ),
+        };
+      }
+      if (!item.content?.id || !item.content?.__typename || !item.content?.number || !projectedRepository) {
+        if (!projectionLagEligibleItemIds?.has(item.id)) {
+          return {
+            result: verificationResult(
+              PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+              'CONTENT_IDENTITY_DRIFT',
+              `Project item=${item.id} captured repository identity`,
+              `Project item=${item.id} identity is partial`,
+            ),
+          };
+        }
+        relatedProjectionDelay ??= verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+          'ITEM_NOT_VISIBLE',
+          `Project item=${item.id} complete mutation-created identity`,
+          `Project item=${item.id} identity is partially projected`,
+        );
+      }
+    }
+    for (const itemId of knownItemsById.keys()) {
+      if (indexed.byItemId.has(itemId) || (allowMissing && itemId === targetItemId)) continue;
+      if (projectionLagEligibleItemIds?.has(itemId)) {
+        relatedProjectionDelay ??= verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+          'ITEM_NOT_VISIBLE',
+          `Project item=${itemId} mutation-created identity remains visible`,
+          `Project item=${itemId} is temporarily absent`,
+        );
+        continue;
+      }
+      return {
+        result: verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'ITEM_DELETED',
+          `Project item=${itemId} remains present`,
+          `Project item=${itemId} is absent`,
+        ),
+      };
+    }
+  }
+  const target = indexed.byItemId.get(targetItemId);
+  const byContent = indexed.byContentId.get(content.id);
+  const targetMayLag = allowMissing || projectionLagEligibleItemIds?.has(targetItemId);
+  if (!target) {
+    if (byContent) {
+      return {
+        result: verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'CONTENT_IDENTITY_DRIFT',
+          `${content.kind} #${content.number} Project item=${targetItemId}`,
+          `${content.kind} #${content.number} projected under a different item identity`,
+        ),
+      };
+    }
+    return {
+      result: verificationResult(
+        targetMayLag ? PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED : PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        targetMayLag ? 'ITEM_NOT_VISIBLE' : 'ITEM_DELETED',
+        `${content.kind} #${content.number} Project item=${targetItemId}`,
+        'item=absent',
+      ),
+    };
+  }
+  if (byContent && byContent.id !== target.id) {
+    return {
+      result: verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'DUPLICATE_CONTENT',
+        `${content.kind} #${content.number} exactly one Project item`,
+        `${content.kind} #${content.number} has conflicting item identities`,
+      ),
+    };
+  }
+  const projectedContent = target.content;
+  const projectedRepository = projectedContent?.repository?.nameWithOwner;
+  if ((projectedContent?.id !== undefined && projectedContent.id !== content.id)
+    || (projectedContent?.__typename !== undefined && projectedContent.__typename !== content.kind)
+    || (projectedContent?.number !== undefined && projectedContent.number !== content.number)
+    || (projectedRepository !== undefined && projectedRepository !== repository)) {
+    return {
+      result: verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'CONTENT_IDENTITY_DRIFT',
+        `${content.kind} #${content.number} repository=${repository}`,
+        observedItemSummary(target),
+      ),
+    };
+  }
+  if (!projectedContent?.id || !projectedContent?.__typename || !projectedContent?.number
+    || !projectedRepository) {
+    return {
+      result: verificationResult(
+        targetMayLag ? PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED : PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        targetMayLag ? 'ITEM_NOT_VISIBLE' : 'CONTENT_IDENTITY_DRIFT',
+        `${content.kind} #${content.number} complete repository identity`,
+        observedItemSummary(target),
+      ),
+    };
+  }
+  return { target, relatedProjectionDelay };
+}
+
+export function evaluateItemLifecycleProjection({
+  items,
+  targetItemId,
+  content,
+  repository,
+  expectedArchived,
+  beforeArchived,
+  allowMissing = false,
+  knownItemsById,
+  projectionLagEligibleItemIds,
+}) {
+  const inspected = inspectTargetItemIdentity({
+    items,
+    targetItemId,
+    content,
+    repository,
+    allowMissing,
+    knownItemsById,
+    projectionLagEligibleItemIds,
+  });
+  if (inspected.result) return inspected.result;
+  const target = inspected.target;
+  const expected = expectedItemSummary(content, expectedArchived);
+  if (target.isArchived === expectedArchived) {
+    if (inspected.relatedProjectionDelay) return inspected.relatedProjectionDelay;
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.CONVERGED,
+      'EXACT_STATE_VISIBLE',
+      expected,
+      observedItemSummary(target),
+      { itemId: target.id },
+    );
+  }
+  if (target.isArchived === undefined || target.isArchived === null
+    || (typeof beforeArchived === 'boolean' && target.isArchived === beforeArchived)) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      'ARCHIVE_STATE_NOT_VISIBLE',
+      expected,
+      observedItemSummary(target),
+    );
+  }
+  return verificationResult(
+    PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+    'UNEXPECTED_LIFECYCLE_STATE',
+    expected,
+    observedItemSummary(target),
+  );
+}
+
+export function evaluateItemFieldProjection({
+  items,
+  targetItemId,
+  content,
+  repository,
+  beforeValues,
+  expectedValues,
+  allowMissing = false,
+  knownItemsById,
+  projectionLagEligibleItemIds,
+}) {
+  const inspected = inspectTargetItemIdentity({
+    items,
+    targetItemId,
+    content,
+    repository,
+    allowMissing,
+    knownItemsById,
+    projectionLagEligibleItemIds,
+  });
+  if (inspected.result) return inspected.result;
+  const target = inspected.target;
+  if (target.isArchived === undefined || target.isArchived === null) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      'ARCHIVE_STATE_NOT_VISIBLE',
+      expectedItemSummary(content, false, expectedValues.size),
+      observedItemSummary(target),
+    );
+  }
+  if (target.isArchived !== false) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'UNEXPECTED_LIFECYCLE_STATE',
+      expectedItemSummary(content, false, expectedValues.size),
+      observedItemSummary(target),
+    );
+  }
+  const inspectedValues = inspectCurrentValueMap(target.fieldValues?.nodes);
+  if (inspectedValues.error) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'UNEXPECTED_FIELD_VALUE',
+      expectedItemSummary(content, false, expectedValues.size),
+      inspectedValues.error,
+    );
+  }
+  const actualValues = inspectedValues.map;
+  for (const fieldName of actualValues.keys()) {
+    if (!expectedValues.has(fieldName)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_FIELD_VALUE',
+        `${content.kind} #${content.number} unchanged unrelated fields`,
+        `unexpected field=${fieldName}`,
+      );
+    }
+  }
+  let delayedField;
+  for (const [fieldName, expectedValue] of expectedValues) {
+    const actualValue = actualValues.get(fieldName);
+    if (projectFieldValuesEqual(actualValue, expectedValue)) continue;
+    const beforeValue = beforeValues.get(fieldName);
+    if (projectFieldValueStillProjecting(actualValue, beforeValue, expectedValue)) {
+      delayedField ??= fieldName;
+      continue;
+    }
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'UNEXPECTED_FIELD_VALUE',
+      `${content.kind} #${content.number} field=${fieldName} expected configured value`,
+      `${content.kind} #${content.number} field=${fieldName} has contradictory value`,
+    );
+  }
+  if (delayedField) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      'FIELD_NOT_VISIBLE',
+      expectedItemSummary(content, false, expectedValues.size),
+      `${observedItemSummary(target)} delayedField=${delayedField}`,
+    );
+  }
+  if (inspected.relatedProjectionDelay) return inspected.relatedProjectionDelay;
+  return verificationResult(
+    PROJECT_VERIFICATION_OUTCOMES.CONVERGED,
+    'EXACT_STATE_VISIBLE',
+    expectedItemSummary(content, false, expectedValues.size),
+    observedItemSummary(target),
+    { itemId: target.id },
+  );
 }
 
 class GitHubGraphQL {
@@ -584,11 +1097,134 @@ async function bootstrapContext(api, config) {
   return { owner: data.user, repository: data.repository, project: exact[0] };
 }
 
-async function ensureProject(api, config, context) {
+async function readProjectProjection(api, projectId) {
+  const verification = await api.request(`
+    query VerifyRoadmapProject($projectId: ID!) {
+      node(id: $projectId) {
+        ... on ProjectV2 {
+          id number title closed public shortDescription readme
+          repositories(first: 100) { nodes { id nameWithOwner } }
+        }
+      }
+    }
+  `, { projectId }, 'verify project');
+  return verification.node;
+}
+
+function evaluateProjectProjection({
+  observed,
+  before,
+  config,
+  repository,
+  projectMutated,
+  linkMutated,
+  repositoryLinkExpected,
+}) {
+  const expectedSummary = `Project #${before.number} configured metadata and repository link`;
+  if (!observed || observed.id !== before.id || observed.number !== before.number) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'PROJECT_SCHEMA_DRIFT',
+      expectedSummary,
+      observed ? 'Project identity changed' : 'Project missing',
+    );
+  }
+  const expectedProperties = {
+    title: config.project.title,
+    shortDescription: config.project.shortDescription,
+    readme: config.project.readme,
+    closed: false,
+    public: false,
+  };
+  let delayed = false;
+  for (const [name, expected] of Object.entries(expectedProperties)) {
+    const actual = observed[name];
+    if (actual === expected) continue;
+    if ((projectMutated && (actual === before[name] || actual === undefined || actual === null))
+      || (linkMutated && (actual === undefined || actual === null))) {
+      delayed = true;
+      continue;
+    }
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'PROJECT_SCHEMA_DRIFT',
+      expectedSummary,
+      `Project property ${name} has contradictory value`,
+    );
+  }
+
+  const expectedRepositories = new Map((before.repositories?.nodes ?? []).map((node) => [node.id, node.nameWithOwner]));
+  if (repositoryLinkExpected) expectedRepositories.set(repository.id, repository.nameWithOwner);
+  const observedRepositories = observed.repositories?.nodes;
+  if (!Array.isArray(observedRepositories)) {
+    if (projectMutated || linkMutated) delayed = true;
+    else {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'PROJECT_SCHEMA_DRIFT',
+        expectedSummary,
+        'Project repository links missing',
+      );
+    }
+  } else {
+    const seen = new Set();
+    for (const node of observedRepositories) {
+      if (!node?.id || seen.has(node.id)) {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'PROJECT_SCHEMA_DRIFT',
+          expectedSummary,
+          'Project repository links are duplicate or incomplete',
+        );
+      }
+      seen.add(node.id);
+      const expectedName = expectedRepositories.get(node.id);
+      if (!expectedName || node.nameWithOwner !== expectedName) {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'PROJECT_SCHEMA_DRIFT',
+          expectedSummary,
+          'Project repository identity drifted',
+        );
+      }
+    }
+    for (const expectedId of expectedRepositories.keys()) {
+      if (seen.has(expectedId)) continue;
+      if (linkMutated && expectedId === repository.id) delayed = true;
+      else {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'PROJECT_SCHEMA_DRIFT',
+          expectedSummary,
+          'Expected repository link disappeared',
+        );
+      }
+    }
+  }
+  if (delayed) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      'PROJECT_METADATA_NOT_VISIBLE',
+      expectedSummary,
+      'Project still exposes captured pre-mutation or partial metadata',
+    );
+  }
+  return verificationResult(
+    PROJECT_VERIFICATION_OUTCOMES.CONVERGED,
+    'EXACT_STATE_VISIBLE',
+    expectedSummary,
+    'Project metadata and repository link converged',
+  );
+}
+
+export async function ensureProject(api, config, context, verificationOptions = {}) {
   const project = context.project;
   assert(project, `reviewed Project ${config.project.title} is unavailable`);
   let updated = 0;
   let repositoryLinks = 0;
+  let reconciled = project;
+  assert(Array.isArray(project.repositories?.nodes), 'Project repository links were unavailable before reconciliation');
+  const alreadyLinked = project.repositories.nodes.some((repo) => repo.id === context.repository.id);
 
   const projectDrift = project.title !== config.project.title
     || project.shortDescription !== config.project.shortDescription
@@ -611,9 +1247,24 @@ async function ensureProject(api, config, context) {
       },
     }, 'update project');
     updated += 1;
+    const metadataProjection = await verifyProjectProjection({
+      ...verificationOptions,
+      operationType: 'PROJECT_METADATA',
+      identity: `Project #${project.number}`,
+      read: () => readProjectProjection(api, project.id),
+      classify: (observed) => evaluateProjectProjection({
+        observed,
+        before: project,
+        config,
+        repository: context.repository,
+        projectMutated: true,
+        linkMutated: false,
+        repositoryLinkExpected: alreadyLinked,
+      }),
+    });
+    reconciled = metadataProjection.snapshot;
   }
 
-  const alreadyLinked = context.project?.repositories?.nodes?.some((repo) => repo.id === context.repository.id) ?? true;
   if (!alreadyLinked) {
     await api.request(`
       mutation LinkRoadmapProject($input: LinkProjectV2ToRepositoryInput!) {
@@ -621,27 +1272,41 @@ async function ensureProject(api, config, context) {
       }
     `, { input: { projectId: project.id, repositoryId: context.repository.id } }, 'link project to repository');
     repositoryLinks += 1;
+    const linkProjection = await verifyProjectProjection({
+      ...verificationOptions,
+      operationType: 'LINK_PROJECT_REPOSITORY',
+      identity: `Project #${project.number}`,
+      read: () => readProjectProjection(api, project.id),
+      classify: (observed) => evaluateProjectProjection({
+        observed,
+        before: reconciled,
+        config,
+        repository: context.repository,
+        projectMutated: false,
+        linkMutated: true,
+        repositoryLinkExpected: true,
+      }),
+    });
+    reconciled = linkProjection.snapshot;
   }
-  const verification = await api.request(`
-    query VerifyRoadmapProject($projectId: ID!) {
-      node(id: $projectId) {
-        ... on ProjectV2 {
-          id number title closed public shortDescription readme
-          repositories(first: 100) { nodes { id nameWithOwner } }
-        }
-      }
-    }
-  `, { projectId: project.id }, 'verify project');
-  const reconciled = verification.node;
-  assert(reconciled?.id === project.id, 'reviewed Project was unavailable after reconciliation');
-  assert(reconciled.title === config.project.title, 'Project title did not reconcile');
-  assert(reconciled.shortDescription === config.project.shortDescription,
-    'Project short description did not reconcile');
-  assert(reconciled.readme === config.project.readme, 'Project README did not reconcile');
-  assert(reconciled.closed === false && reconciled.public === false,
-    'Project visibility/state did not reconcile');
-  assert(reconciled.repositories?.nodes?.some((repository) => repository.id === context.repository.id),
-    `Project did not remain linked to ${config.repository}`);
+  if (!projectDrift && alreadyLinked) {
+    const unchangedProjection = await verifyProjectProjection({
+      ...verificationOptions,
+      operationType: 'VERIFY_PROJECT',
+      identity: `Project #${project.number}`,
+      read: () => readProjectProjection(api, project.id),
+      classify: (observed) => evaluateProjectProjection({
+        observed,
+        before: project,
+        config,
+        repository: context.repository,
+        projectMutated: false,
+        linkMutated: false,
+        repositoryLinkExpected: true,
+      }),
+    });
+    reconciled = unchangedProjection.snapshot;
+  }
   return { project: reconciled, counts: { updated, repositoryLinks } };
 }
 
@@ -674,7 +1339,9 @@ async function listProjectFields(api, projectId) {
   return fields;
 }
 
-function validateFieldPreconditions(config, existing) {
+export function validateFieldPreconditions(config, existing) {
+  const inspected = inspectFieldDefinitions(existing);
+  assert(!inspected.error, inspected.error);
   for (const desired of config.fields) {
     const field = existing.find((candidate) => candidate.name === desired.name);
     if (!field) {
@@ -689,7 +1356,154 @@ function validateFieldPreconditions(config, existing) {
   }
 }
 
-async function ensureFields(api, config, projectId, initialExisting) {
+function inspectFieldDefinitions(fields) {
+  if (!Array.isArray(fields)) return { error: 'Project field projection is not an array' };
+  const byId = new Map();
+  const byName = new Map();
+  for (const field of fields) {
+    if (!field?.id || !field?.name) return { error: 'Project field identity is incomplete' };
+    if (byId.has(field.id) || byName.has(field.name)) return { error: 'Project field identity is duplicated' };
+    byId.set(field.id, field);
+    byName.set(field.name, field);
+  }
+  return { byId, byName };
+}
+
+function fieldOptionExact(desired, expectedOption, observed) {
+  if (!observed?.id || observed.name !== desired.name
+    || observed.color !== desired.color || observed.description !== desired.description) return false;
+  const expectedId = expectedOption?.id ?? desired.preserveId;
+  return expectedId === undefined || observed.id === expectedId;
+}
+
+function fieldOptionsExact(desired, expectedOptions, observedOptions) {
+  return Array.isArray(observedOptions)
+    && observedOptions.length === desired.options.length
+    && desired.options.every((option, index) => fieldOptionExact(option, expectedOptions?.[index], observedOptions[index]));
+}
+
+function fieldOptionsCompatible(desired, expectedOptions, before, observedOptions) {
+  if (!Array.isArray(observedOptions)) return true;
+  const beforeOptions = before?.options ?? [];
+  const seenIds = new Set();
+  const seenNames = new Set();
+  const claimedDesiredIndexes = new Set();
+  for (const observed of observedOptions) {
+    if (!observed?.id || !observed?.name || seenIds.has(observed.id) || seenNames.has(observed.name)) return false;
+    seenIds.add(observed.id);
+    seenNames.add(observed.name);
+    const desiredIndex = desired.options.findIndex((option, index) => {
+      if (claimedDesiredIndexes.has(index)) return false;
+      const acceptedNames = [option.name, ...(option.aliases ?? [])];
+      const expectedId = expectedOptions?.[index]?.id ?? option.preserveId;
+      return acceptedNames.includes(observed.name)
+        && (expectedId === undefined || expectedId === observed.id)
+        && [option.color, beforeOptions.find((candidate) => candidate.id === observed.id)?.color].includes(observed.color)
+        && [option.description, beforeOptions.find((candidate) => candidate.id === observed.id)?.description]
+          .includes(observed.description);
+    });
+    const beforeMatch = beforeOptions.some((option) => valuesEqual(option, observed));
+    if (desiredIndex >= 0) claimedDesiredIndexes.add(desiredIndex);
+    else if (!beforeMatch) return false;
+  }
+  return true;
+}
+
+function evaluateFieldProjection({
+  fields,
+  beforeFields,
+  desired,
+  expectedOptions,
+  expectedFieldId,
+  beforeField,
+  created,
+}) {
+  const expectedSummary = `field=${desired.name} schema=configured`;
+  const inspected = inspectFieldDefinitions(fields);
+  if (inspected.error) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'FIELD_SCHEMA_DRIFT',
+      expectedSummary,
+      inspected.error,
+    );
+  }
+  const beforeInspected = inspectFieldDefinitions(beforeFields);
+  assert(!beforeInspected.error, beforeInspected.error);
+  for (const [fieldId, beforeDefinition] of beforeInspected.byId) {
+    const projected = inspected.byId.get(fieldId);
+    if (!projected || projected.name !== beforeDefinition.name) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'FIELD_SCHEMA_DRIFT',
+        expectedSummary,
+        `existing field=${beforeDefinition.name} disappeared or changed identity`,
+      );
+    }
+    if (fieldId !== beforeField?.id && !valuesEqual(projected, beforeDefinition)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'FIELD_SCHEMA_DRIFT',
+        expectedSummary,
+        `unrelated field=${beforeDefinition.name} changed`,
+      );
+    }
+  }
+  for (const [fieldId, projected] of inspected.byId) {
+    if (beforeInspected.byId.has(fieldId)) continue;
+    if (!created || fieldId !== expectedFieldId || projected.name !== desired.name) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'FIELD_SCHEMA_DRIFT',
+        expectedSummary,
+        `unexpected field=${projected.name}`,
+      );
+    }
+  }
+
+  const observed = inspected.byName.get(desired.name);
+  if (!observed) {
+    return verificationResult(
+      created ? PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED : PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      created ? 'FIELD_SCHEMA_NOT_VISIBLE' : 'FIELD_SCHEMA_DRIFT',
+      expectedSummary,
+      'field=absent',
+    );
+  }
+  if (observed.dataType !== desired.dataType) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'FIELD_SCHEMA_DRIFT',
+      expectedSummary,
+      `field=${desired.name} has contradictory data type`,
+    );
+  }
+  if (desired.dataType !== 'SINGLE_SELECT' || fieldOptionsExact(desired, expectedOptions, observed.options)) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.CONVERGED,
+      'EXACT_STATE_VISIBLE',
+      expectedSummary,
+      `field=${desired.name} schema converged`,
+    );
+  }
+  if ((beforeField && valuesEqual(observed.options ?? [], beforeField.options ?? []))
+    || fieldOptionsCompatible(desired, expectedOptions, beforeField, observed.options)) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      'FIELD_SCHEMA_NOT_VISIBLE',
+      expectedSummary,
+      `field=${desired.name} exposes captured or partial options`,
+    );
+  }
+  return verificationResult(
+    PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+    'FIELD_SCHEMA_DRIFT',
+    expectedSummary,
+    `field=${desired.name} option identity drifted`,
+  );
+}
+
+export async function ensureFields(api, config, projectId, initialExisting, verificationOptions = {}) {
   let existing = initialExisting;
   let created = 0;
   let optionsUpdated = 0;
@@ -705,14 +1519,31 @@ async function ensureFields(api, config, projectId, initialExisting) {
           ? { singleSelectOptions: selectInputOptions(desired) }
           : {}),
       };
-      await api.request(`
+      const data = await api.request(`
         mutation CreateRoadmapField($input: CreateProjectV2FieldInput!) {
           createProjectV2Field(input: $input) { projectV2Field { ... on ProjectV2FieldCommon { id name dataType } } }
         }
       `, { input }, `create field ${desired.name}`);
+      const createdFieldId = data.createProjectV2Field?.projectV2Field?.id;
+      assert(createdFieldId, `create field ${desired.name} returned no Project field identity`);
       created += 1;
       console.log(JSON.stringify({ event: 'field_created', name: desired.name }));
-      existing = await listProjectFields(api, projectId);
+      const projection = await verifyProjectProjection({
+        ...verificationOptions,
+        operationType: 'CREATE_FIELD',
+        identity: `Field ${desired.name}`,
+        read: () => listProjectFields(api, projectId),
+        classify: (fields) => evaluateFieldProjection({
+          fields,
+          beforeFields: existing,
+          desired,
+          expectedOptions: input.singleSelectOptions,
+          expectedFieldId: createdFieldId,
+          beforeField: undefined,
+          created: true,
+        }),
+      });
+      existing = projection.snapshot;
       continue;
     }
     assert(field.dataType === desired.dataType,
@@ -730,7 +1561,22 @@ async function ensureFields(api, config, projectId, initialExisting) {
         `, { input: { fieldId: field.id, singleSelectOptions: options } }, `update field ${desired.name}`);
         optionsUpdated += 1;
         console.log(JSON.stringify({ event: 'field_options_reconciled', name: desired.name }));
-        existing = await listProjectFields(api, projectId);
+        const projection = await verifyProjectProjection({
+          ...verificationOptions,
+          operationType: 'UPDATE_FIELD_OPTIONS',
+          identity: `Field ${desired.name}`,
+          read: () => listProjectFields(api, projectId),
+          classify: (fields) => evaluateFieldProjection({
+            fields,
+            beforeFields: existing,
+            desired,
+            expectedOptions: options,
+            expectedFieldId: field.id,
+            beforeField: field,
+            created: false,
+          }),
+        });
+        existing = projection.snapshot;
       }
       const reconciledField = existing.find((candidate) => candidate.name === desired.name);
       for (const option of desired.options.filter((candidate) => candidate.preserveId)) {
@@ -806,7 +1652,171 @@ export function validateViewPreconditions(config, existingViews) {
   return { matched: claimedIds.size, creates };
 }
 
-async function ensureViews(api, config, projectId, fieldsByName, initialExisting) {
+function inspectViewDefinitions(views) {
+  if (!Array.isArray(views)) return { error: 'Project view projection is not an array' };
+  const byId = new Map();
+  const byName = new Map();
+  for (const view of views) {
+    if (!view?.id || !view?.name) return { error: 'Project view identity is incomplete' };
+    if (byId.has(view.id) || byName.has(view.name)) return { error: 'Project view identity is duplicated' };
+    byId.set(view.id, view);
+    byName.set(view.name, view);
+  }
+  return { byId, byName };
+}
+
+function evaluateViewProjection({
+  views,
+  beforeViews,
+  targetViewId,
+  desired,
+  apiLayout,
+  visibleFieldIds,
+  beforeView,
+  created,
+  visibilityOnly,
+}) {
+  const expectedSummary = `view=${desired.name} ${visibilityOnly ? 'visible' : 'configured'}`;
+  const inspected = inspectViewDefinitions(views);
+  if (inspected.error) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'VIEW_SCHEMA_DRIFT',
+      expectedSummary,
+      inspected.error,
+    );
+  }
+  const beforeInspected = inspectViewDefinitions(beforeViews);
+  assert(!beforeInspected.error, beforeInspected.error);
+  for (const [viewId, prior] of beforeInspected.byId) {
+    const projected = inspected.byId.get(viewId);
+    if (!projected) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'VIEW_SCHEMA_DRIFT',
+        expectedSummary,
+        `existing view=${prior.name} disappeared`,
+      );
+    }
+    if (viewId !== targetViewId && !valuesEqual(projected, prior)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'VIEW_SCHEMA_DRIFT',
+        expectedSummary,
+        `unrelated view=${prior.name} changed`,
+      );
+    }
+  }
+  for (const [viewId, projected] of inspected.byId) {
+    if (beforeInspected.byId.has(viewId)) continue;
+    if (!created || viewId !== targetViewId) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'VIEW_SCHEMA_DRIFT',
+        expectedSummary,
+        `unexpected view=${projected.name}`,
+      );
+    }
+  }
+  const observed = inspected.byId.get(targetViewId);
+  if (!observed) {
+    return verificationResult(
+      created ? PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED : PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      created ? 'VIEW_NOT_VISIBLE' : 'VIEW_SCHEMA_DRIFT',
+      expectedSummary,
+      'view=absent',
+    );
+  }
+  const identityValues = [
+    ['name', desired.name],
+    ['layout', apiLayout],
+  ];
+  let delayed = false;
+  for (const [name, expected] of identityValues) {
+    const actual = observed[name];
+    if (actual === expected) continue;
+    if (actual === undefined || actual === null || actual === beforeView?.[name]) {
+      delayed = true;
+      continue;
+    }
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'VIEW_SCHEMA_DRIFT',
+      expectedSummary,
+      `view=${desired.name} ${name} drifted`,
+    );
+  }
+  if (visibilityOnly) {
+    const actualVisibleFieldIds = (observed.configuration?.visibleFields?.nodes ?? []).map((field) => field?.id);
+    if (!valuesEqual(actualVisibleFieldIds, visibleFieldIds)) {
+      const compatiblePartial = actualVisibleFieldIds.length < visibleFieldIds.length
+        && actualVisibleFieldIds.every((id) => id && visibleFieldIds.includes(id))
+        && new Set(actualVisibleFieldIds).size === actualVisibleFieldIds.length;
+      if (compatiblePartial) delayed = true;
+      else {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'VIEW_SCHEMA_DRIFT',
+          expectedSummary,
+          `view=${desired.name} create configuration drifted`,
+        );
+      }
+    }
+  } else {
+    const expectedFilter = desired.filter ?? '';
+    const actualFilter = observed.filter ?? '';
+    if (actualFilter !== expectedFilter) {
+      if (actualFilter === (beforeView?.filter ?? '') || observed.filter === undefined) delayed = true;
+      else {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'VIEW_SCHEMA_DRIFT',
+          expectedSummary,
+          `view=${desired.name} filter drifted`,
+        );
+      }
+    }
+    const actualVisibleFieldIds = (observed.configuration?.visibleFields?.nodes ?? []).map((field) => field?.id);
+    const beforeVisibleFieldIds = (beforeView?.configuration?.visibleFields?.nodes ?? []).map((field) => field?.id);
+    if (!valuesEqual(actualVisibleFieldIds, visibleFieldIds)) {
+      const compatible = actualVisibleFieldIds.every((id) => id
+        && (visibleFieldIds.includes(id) || beforeVisibleFieldIds.includes(id)))
+        && new Set(actualVisibleFieldIds).size === actualVisibleFieldIds.length;
+      if (valuesEqual(actualVisibleFieldIds, beforeVisibleFieldIds) || compatible) delayed = true;
+      else {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'VIEW_SCHEMA_DRIFT',
+          expectedSummary,
+          `view=${desired.name} visible-field identity drifted`,
+        );
+      }
+    }
+  }
+  if (delayed) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      visibilityOnly ? 'VIEW_NOT_VISIBLE' : 'PROJECT_METADATA_NOT_VISIBLE',
+      expectedSummary,
+      `view=${desired.name} exposes captured or partial projection`,
+    );
+  }
+  return verificationResult(
+    PROJECT_VERIFICATION_OUTCOMES.CONVERGED,
+    'EXACT_STATE_VISIBLE',
+    expectedSummary,
+    `view=${desired.name} converged`,
+  );
+}
+
+export async function ensureViews(
+  api,
+  config,
+  projectId,
+  fieldsByName,
+  initialExisting,
+  verificationOptions = {},
+) {
   let existing = initialExisting;
   let created = 0;
   let updated = 0;
@@ -839,8 +1849,29 @@ async function ensureViews(api, config, projectId, fieldsByName, initialExisting
         }
       `, { input }, `create view ${desired.name}`);
       view = data.createProjectV2View.projectV2View;
+      assert(view?.id, `create view ${desired.name} returned no Project view identity`);
       created += 1;
       console.log(JSON.stringify({ event: 'view_created', name: desired.name, layout: desired.layout }));
+      const creationProjection = await verifyProjectProjection({
+        ...verificationOptions,
+        operationType: 'CREATE_VIEW',
+        identity: `View ${desired.name}`,
+        read: () => listProjectViews(api, projectId),
+        classify: (views) => evaluateViewProjection({
+          views,
+          beforeViews: existing,
+          targetViewId: view.id,
+          desired,
+          apiLayout,
+          visibleFieldIds,
+          beforeView: undefined,
+          created: true,
+          visibilityOnly: true,
+        }),
+      });
+      existing = creationProjection.snapshot;
+      view = existing.find((candidate) => candidate.id === view.id);
+      assert(view, `created view ${desired.name} was unavailable after verified projection`);
     }
     const update = {
       viewId: view.id,
@@ -857,14 +1888,33 @@ async function ensureViews(api, config, projectId, fieldsByName, initialExisting
       || (view.filter ?? '') !== (desired.filter ?? '')
       || !valuesEqual(currentVisibleFieldIds, visibleFieldIds);
     if (viewDrift) {
+      const beforeUpdateViews = existing;
+      const beforeUpdateView = view;
       await api.request(`
         mutation UpdateRoadmapView($input: UpdateProjectV2ViewInput!) {
           updateProjectV2View(input: $input) { projectV2View { id name layout filter } }
         }
       `, { input: update }, `update view ${desired.name}`);
       updated += 1;
+      const updateProjection = await verifyProjectProjection({
+        ...verificationOptions,
+        operationType: 'UPDATE_VIEW',
+        identity: `View ${desired.name}`,
+        read: () => listProjectViews(api, projectId),
+        classify: (views) => evaluateViewProjection({
+          views,
+          beforeViews: beforeUpdateViews,
+          targetViewId: view.id,
+          desired,
+          apiLayout,
+          visibleFieldIds,
+          beforeView: beforeUpdateView,
+          created: false,
+          visibilityOnly: false,
+        }),
+      });
+      existing = updateProjection.snapshot;
     }
-    existing = await listProjectViews(api, projectId);
     const reconciled = existing.find((candidate) => candidate.name === desired.name);
     assert(reconciled, `view ${desired.name} was not present after reconciliation`);
     const reconciledVisibleFieldIds = (reconciled.configuration?.visibleFields?.nodes ?? []).map((field) => field.id);
@@ -1064,13 +2114,18 @@ async function setProjectField(api, projectId, itemId, field, value, current) {
   throw new Error(`unsupported project field type ${field.dataType}`);
 }
 
-async function planRepositoryItems(api, config, project, reconciledAt) {
+export async function planRepositoryItems(api, config, project, reconciledAt) {
   const [owner, name] = config.repository.split('/');
   const [issues, pullRequests, existingItems] = await Promise.all([
     listRepositoryIssues(api, owner, name),
     listRepositoryPullRequests(api, owner, name),
     listProjectItems(api, project.id),
   ]);
+  validateProjectItemPreconditions({
+    items: existingItems,
+    contents: [...issues, ...pullRequests],
+    repository: config.repository,
+  });
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
   const repositoryItems = existingItems.filter((item) => item.content?.repository?.nameWithOwner === config.repository);
   const plan = buildItemReconciliationPlan({
@@ -1089,22 +2144,231 @@ async function planRepositoryItems(api, config, project, reconciledAt) {
   return {
     issues,
     pullRequests,
+    projectItems: existingItems,
     repositoryItems,
     metadataByContentId,
     plan,
   };
 }
 
-async function reconcileItems(api, config, project, fieldsByName, itemState) {
+function evaluateFinalItemProjection({
+  items,
+  config,
+  beforeValuesByContentId,
+  expectedValuesByContentId,
+  itemIdByContentId,
+  plan,
+}) {
+  const expectedTotal = plan.operations.length;
+  const indexed = itemProjectionIndex(items);
+  if (indexed.error) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'DUPLICATE_CONTENT',
+      `plannedItems=${expectedTotal} exact repository projection`,
+      indexed.error,
+    );
+  }
+  const plannedContentIds = new Set(plan.operations.map((operation) => operation.content.id));
+  const contentIdByItemId = new Map([...itemIdByContentId].map(([contentId, itemId]) => [itemId, contentId]));
+  const operationByContentId = new Map(plan.operations.map((operation) => [operation.content.id, operation]));
+  const expectedProjectItemCount = plan.operations.filter((operation) => operation.action !== 'SKIP').length;
+  if (items.length > expectedProjectItemCount) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'UNEXPECTED_ITEM',
+      `projectItems=${expectedProjectItemCount}`,
+      `projectItems=${items.length}`,
+    );
+  }
+  let delayedReason;
+  let delayedObserved;
+  const markDelayed = (reason, observed) => {
+    delayedReason ??= reason;
+    delayedObserved ??= observed;
+  };
+  for (const item of items) {
+    if (!item.content?.id || !item.content?.repository?.nameWithOwner) {
+      const expectedContentId = contentIdByItemId.get(item.id);
+      if (expectedContentId && operationByContentId.get(expectedContentId)?.action === 'ADD') {
+        markDelayed('ITEM_NOT_VISIBLE', `new Project item=${item.id} content identity is partial`);
+        continue;
+      }
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'CONTENT_IDENTITY_DRIFT',
+        `plannedItems=${expectedTotal} complete content identities`,
+        'Project contains an incompletely hydrated content identity',
+      );
+    }
+    if (item.content.repository.nameWithOwner !== config.repository || !plannedContentIds.has(item.content.id)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_ITEM',
+        `plannedItems=${expectedTotal} only configured repository content`,
+        `unexpected repository item=${item.id}`,
+      );
+    }
+  }
+
+  const verified = { active: 0, archived: 0, absent: 0 };
+  for (const operation of plan.operations) {
+    const actual = indexed.byContentId.get(operation.content.id);
+    if (operation.action === 'SKIP') {
+      if (actual) {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'UNEXPECTED_ITEM',
+          `${operation.content.kind} #${operation.content.number} absent`,
+          observedItemSummary(actual),
+        );
+      }
+      verified.absent += 1;
+      continue;
+    }
+    if (!actual && operation.action === 'ADD') {
+      markDelayed('ITEM_NOT_VISIBLE', `${operation.content.kind} #${operation.content.number} item=absent`);
+      continue;
+    }
+    if (!actual
+      || actual.content.__typename !== operation.content.kind
+      || actual.content.number !== operation.content.number
+      || actual.content.repository.nameWithOwner !== config.repository) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        actual ? 'CONTENT_IDENTITY_DRIFT' : 'ITEM_DELETED',
+        `${operation.content.kind} #${operation.content.number} exact identity`,
+        observedItemSummary(actual),
+      );
+    }
+    if (actual.id !== itemIdByContentId.get(operation.content.id)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'CONTENT_IDENTITY_DRIFT',
+        `${operation.content.kind} #${operation.content.number} stable Project item identity`,
+        `${operation.content.kind} #${operation.content.number} item identity was replaced`,
+      );
+    }
+    const expectedArchived = operation.action === 'ARCHIVE' || operation.action === 'KEEP_ARCHIVED';
+    if (actual.isArchived !== expectedArchived) {
+      if (typeof operation.item?.isArchived === 'boolean'
+        && actual.isArchived === operation.item.isArchived
+        && actual.isArchived !== expectedArchived) {
+        markDelayed('ARCHIVE_STATE_NOT_VISIBLE', observedItemSummary(actual));
+        continue;
+      }
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_LIFECYCLE_STATE',
+        expectedItemSummary(operation.content, expectedArchived),
+        observedItemSummary(actual),
+      );
+    }
+    if (expectedArchived) {
+      verified.archived += 1;
+      continue;
+    }
+    const inspectedValues = inspectCurrentValueMap(actual.fieldValues?.nodes);
+    if (inspectedValues.error) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_FIELD_VALUE',
+        `${operation.content.kind} #${operation.content.number} exact managed fields`,
+        inspectedValues.error,
+      );
+    }
+    const expectedValues = expectedValuesByContentId.get(operation.content.id);
+    const beforeValues = beforeValuesByContentId.get(operation.content.id);
+    if (!expectedValues || !beforeValues) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_FIELD_VALUE',
+        `${operation.content.kind} #${operation.content.number} captured field contract`,
+        `${operation.content.kind} #${operation.content.number} field contract missing`,
+      );
+    }
+    for (const fieldName of inspectedValues.map.keys()) {
+      if (!expectedValues.has(fieldName)) {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'UNEXPECTED_FIELD_VALUE',
+          `${operation.content.kind} #${operation.content.number} exact managed-field set`,
+          `${operation.content.kind} #${operation.content.number} unexpected field=${fieldName}`,
+        );
+      }
+    }
+    for (const [fieldName, expectedValue] of expectedValues) {
+      const actualValue = inspectedValues.map.get(fieldName);
+      if (projectFieldValuesEqual(actualValue, expectedValue)) continue;
+      if (projectFieldValueStillProjecting(actualValue, beforeValues.get(fieldName), expectedValue)) {
+        markDelayed('FIELD_NOT_VISIBLE', `${operation.content.kind} #${operation.content.number} field=${fieldName} not visible`);
+        continue;
+      }
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_FIELD_VALUE',
+        `${operation.content.kind} #${operation.content.number} field=${fieldName} configured value`,
+        `${operation.content.kind} #${operation.content.number} field=${fieldName} missing or contradictory`,
+      );
+    }
+    verified.active += 1;
+  }
+  if (delayedReason) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      delayedReason,
+      `plannedItems=${expectedTotal} exact repository projection`,
+      delayedObserved,
+    );
+  }
+  if (items.length !== expectedProjectItemCount) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'ITEM_DELETED',
+      `projectItems=${expectedProjectItemCount}`,
+      `projectItems=${items.length}`,
+    );
+  }
+  return verificationResult(
+    PROJECT_VERIFICATION_OUTCOMES.CONVERGED,
+    'EXACT_STATE_VISIBLE',
+    `plannedItems=${expectedTotal} exact repository projection`,
+    `active=${verified.active} archived=${verified.archived} absent=${verified.absent}`,
+    { verified },
+  );
+}
+
+export async function reconcileItems(
+  api,
+  config,
+  project,
+  fieldsByName,
+  itemState,
+  verificationOptions = {},
+) {
   const {
     issues,
     pullRequests,
+    projectItems,
     repositoryItems,
     metadataByContentId,
     plan,
   } = itemState;
   const executed = { added: 0, archived: 0, unarchived: 0 };
   let fieldUpdates = 0;
+  let lastObservedItems = projectItems ?? repositoryItems;
+  const knownItemsById = new Map(lastObservedItems.map((item) => [item.id, {
+    contentId: item.content.id,
+    kind: item.content.__typename,
+    number: item.content.number,
+    repository: item.content.repository.nameWithOwner,
+  }]));
+  const projectionLagEligibleItemIds = new Set();
+  const itemIdByContentId = new Map(plan.operations
+    .filter((operation) => operation.item?.id)
+    .map((operation) => [operation.content.id, operation.item.id]));
+  const beforeValuesByContentId = new Map();
+  const expectedValuesByContentId = new Map();
   for (const operation of plan.operations) {
     const { content } = operation;
     const metadata = metadataByContentId.get(content.id);
@@ -1117,54 +2381,162 @@ async function reconcileItems(api, config, project, fieldsByName, itemState) {
           addProjectV2ItemById(input: $input) { item { id } }
         }
       `, { input: { projectId: project.id, contentId: content.id } }, `add ${content.kind} #${content.number}`);
-      item = { id: data.addProjectV2ItemById.item.id, isArchived: false, fieldValues: { nodes: [] }, content };
+      const itemId = data.addProjectV2ItemById.item?.id;
+      assert(itemId, `add ${content.kind} #${content.number} returned no Project item identity`);
+      assert(!knownItemsById.has(itemId), `add ${content.kind} #${content.number} reused Project item identity ${itemId}`);
+      knownItemsById.set(itemId, {
+        contentId: content.id,
+        kind: content.kind,
+        number: content.number,
+        repository: config.repository,
+      });
+      projectionLagEligibleItemIds.add(itemId);
       executed.added += 1;
+      const projection = await verifyProjectProjection({
+        ...verificationOptions,
+        operationType: 'ADD_ITEM',
+        identity: `${content.kind} #${content.number}`,
+        read: () => listProjectItems(api, project.id),
+        classify: (items) => evaluateItemLifecycleProjection({
+          items,
+          targetItemId: itemId,
+          content,
+          repository: config.repository,
+          expectedArchived: false,
+          beforeArchived: undefined,
+          allowMissing: true,
+          knownItemsById,
+          projectionLagEligibleItemIds,
+        }),
+      });
+      lastObservedItems = projection.snapshot;
+      item = projection.snapshot.find((candidate) => candidate.id === itemId);
+      itemIdByContentId.set(content.id, itemId);
     } else if (operation.action === 'UNARCHIVE') {
+      const beforeArchived = item.isArchived;
       await api.request(`
         mutation UnarchiveRoadmapItem($input: UnarchiveProjectV2ItemInput!) {
           unarchiveProjectV2Item(input: $input) { item { id } }
         }
       `, { input: { projectId: project.id, itemId: item.id } }, `unarchive ${content.kind} #${content.number}`);
       executed.unarchived += 1;
+      const projection = await verifyProjectProjection({
+        ...verificationOptions,
+        operationType: 'UNARCHIVE_ITEM',
+        identity: `${content.kind} #${content.number}`,
+        read: () => listProjectItems(api, project.id),
+        classify: (items) => evaluateItemLifecycleProjection({
+          items,
+          targetItemId: item.id,
+          content,
+          repository: config.repository,
+          expectedArchived: false,
+          beforeArchived,
+          allowMissing: false,
+          knownItemsById,
+          projectionLagEligibleItemIds,
+        }),
+      });
+      lastObservedItems = projection.snapshot;
+      item = projection.snapshot.find((candidate) => candidate.id === item.id);
     } else if (operation.action === 'ARCHIVE') {
+      const beforeArchived = item.isArchived;
       await api.request(`
         mutation ArchiveRoadmapItem($input: ArchiveProjectV2ItemInput!) {
           archiveProjectV2Item(input: $input) { item { id } }
         }
       `, { input: { projectId: project.id, itemId: item.id } }, `archive ${content.kind} #${content.number}`);
       executed.archived += 1;
+      const projection = await verifyProjectProjection({
+        ...verificationOptions,
+        operationType: 'ARCHIVE_ITEM',
+        identity: `${content.kind} #${content.number}`,
+        read: () => listProjectItems(api, project.id),
+        classify: (items) => evaluateItemLifecycleProjection({
+          items,
+          targetItemId: item.id,
+          content,
+          repository: config.repository,
+          expectedArchived: true,
+          beforeArchived,
+          allowMissing: false,
+          knownItemsById,
+          projectionLagEligibleItemIds,
+        }),
+      });
+      lastObservedItems = projection.snapshot;
       continue;
     } else if (operation.action === 'KEEP_ARCHIVED' || operation.action === 'SKIP') {
       continue;
     }
 
     assert(item?.id, `${operation.action} ${content.kind} #${content.number} did not produce an active Project item`);
-    const current = currentValueMap(item.fieldValues?.nodes);
+    let current = currentValueMap(item.fieldValues?.nodes);
+    beforeValuesByContentId.set(content.id, new Map(current));
     for (const [fieldName, value] of desiredFieldValues(metadata)) {
       const field = fieldsByName.get(fieldName);
       assert(field, `project field ${fieldName} is missing`);
-      if (await setProjectField(api, project.id, item.id, field, value, current.get(fieldName))) fieldUpdates += 1;
+      const expectedValue = expectedProjectFieldValue(field, value);
+      const beforeValues = new Map(current);
+      const fieldWasMutated = await setProjectField(api, project.id, item.id, field, value, current.get(fieldName));
+      if (!fieldWasMutated && projectFieldValuesEqual(current.get(fieldName), expectedValue)) continue;
+      if (!fieldWasMutated) {
+        const currentValue = current.get(fieldName);
+        assert(currentValue?.kind === 'SINGLE_SELECT'
+          && expectedValue.kind === 'SINGLE_SELECT'
+          && currentValue.optionId === expectedValue.optionId,
+        `${content.kind} #${content.number} field ${fieldName} has contradictory non-mutated value`);
+      } else {
+        fieldUpdates += 1;
+      }
+      const expectedValues = new Map(current);
+      expectedValues.set(fieldName, expectedValue);
+      const projection = await verifyProjectProjection({
+        ...verificationOptions,
+        operationType: fieldWasMutated ? 'UPDATE_ITEM_FIELD' : 'VERIFY_ITEM_FIELD',
+        identity: `${content.kind} #${content.number}`,
+        read: () => listProjectItems(api, project.id),
+        classify: (items) => evaluateItemFieldProjection({
+          items,
+          targetItemId: item.id,
+          content,
+          repository: config.repository,
+          beforeValues: current,
+          expectedValues,
+          allowMissing: operation.action === 'ADD',
+          knownItemsById,
+          projectionLagEligibleItemIds,
+        }),
+      });
+      lastObservedItems = projection.snapshot;
+      item = projection.snapshot.find((candidate) => candidate.id === item.id);
+      current = currentValueMap(item.fieldValues?.nodes);
     }
+    expectedValuesByContentId.set(content.id, new Map(current));
   }
-  const verifiedItems = (await listProjectItems(api, project.id))
-    .filter((item) => item.content?.repository?.nameWithOwner === config.repository);
-  const verifiedByContentId = new Map(verifiedItems.map((item) => [item.content?.id, item]));
-  const verified = { active: 0, archived: 0, absent: 0 };
-  for (const operation of plan.operations) {
-    const actual = verifiedByContentId.get(operation.content.id);
-    if (operation.action === 'SKIP') {
-      assert(!actual, `SKIP ${operation.content.kind} #${operation.content.number} unexpectedly has a Project item`);
-      verified.absent += 1;
-    } else if (operation.action === 'ARCHIVE' || operation.action === 'KEEP_ARCHIVED') {
-      assert(actual?.isArchived === true,
-        `${operation.action} ${operation.content.kind} #${operation.content.number} was not verified archived`);
-      verified.archived += 1;
-    } else {
-      assert(actual && actual.isArchived === false,
-        `${operation.action} ${operation.content.kind} #${operation.content.number} was not verified active`);
-      verified.active += 1;
-    }
-  }
+  let useCapturedSnapshot = true;
+  const finalProjection = await verifyProjectProjection({
+    ...verificationOptions,
+    operationType: 'FINAL_ITEM_AUDIT',
+    identity: `Project #${project.number}`,
+    read: async () => {
+      if (useCapturedSnapshot) {
+        useCapturedSnapshot = false;
+        return lastObservedItems;
+      }
+      return listProjectItems(api, project.id);
+    },
+    classify: (items) => evaluateFinalItemProjection({
+      items,
+      config,
+      beforeValuesByContentId,
+      expectedValuesByContentId,
+      itemIdByContentId,
+      plan,
+    }),
+  });
+  const finalVerification = finalProjection.result;
+  const verified = finalVerification.details.verified;
   return {
     observed: {
       issues: issues.length,

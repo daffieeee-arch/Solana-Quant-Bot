@@ -19,6 +19,31 @@ Merging is an activation boundary: the existing push-to-`main` trigger runs trus
 
 The immutable preflight recorded issue #63 as `CLOSED` / `COMPLETED`, contrary to the accepted migration plan. Its close was temporally associated with PR #69's merge, but the exact initiating mechanism remains unproven. A separately authorized governance correction reopened it after the snapshot; current-schema Roadmap Sync run `33555734237` passed, the snapshot and hashes remain unchanged, and issue #63 remains open and temporarily pinned through initial G0/E0.
 
+## Post-mutation projection convergence
+
+Roadmap Sync run `33560315744` created and fully populated the Project item for issue #72, but its immediate read-back did not yet expose that item as active. This is treated as bounded GitHub Projects read-after-write projection lag, not as permission to replay the successful mutation or resume the paused content migration.
+
+Every changed Project surface follows one rule:
+
+```text
+mutate once
+→ verify read-only
+→ retry only read-only verification when the captured pre-state or a compatible partial projection remains visible
+→ accept only exact convergence; otherwise fail closed
+```
+
+The fixed verification reads occur immediately and then after `500`, `1,000`, `2,000` and `4,000` milliseconds: five reads with at most `7,500` milliseconds total waiting per changed logical operation. The schedule has no jitter, environment override or unbounded fallback. Mutation errors and GraphQL/read errors are not retried because their commit state can be ambiguous.
+
+Verifier outcomes are:
+
+- `CONVERGED`: the exact expected identity and state are visible;
+- `NOT_YET_CONVERGED`: only a newly added item is absent, a projected value is missing, or the exact captured pre-mutation value remains visible;
+- `HARD_DRIFT`: duplicate/unexpected content, wrong repository or option identity, unrelated field change, existing-item deletion, schema drift or any contradictory third state.
+
+Each lifecycle, item-field, Project metadata, field-definition and view mutation is outside the retry loop and runs at most once per reconciliation attempt. The next mutation is gated on convergence of the prior logical operation. A later read may temporarily omit or partially expose an item created earlier in the same reconciliation; only mutation-returned item identities are eligible for that bounded lag treatment, while disappearance or identity drift of a pre-existing item remains a hard failure. Retry exhaustion reports a compact expected/final state and attempt count, then stops before later mutations. Logs contain only the operation type, bounded issue/PR/field/view identity, attempt and reason code; they never contain `PROJECT_TOKEN`, issue bodies or GraphQL payloads.
+
+The final item counts and exact-state audit first use the most recent snapshot that passed an operation-level convergence gate (or the immutable pre-mutation planning snapshot when there were no item mutations). If that combined snapshot is compatibly stale for an earlier mutation, the same bounded read-only verifier obtains later snapshots; it never replays a mutation. This protects the aggregate count boundary against a non-monotonic Project projection while retaining hard failure for contradictory or unrelated drift.
+
 ## Security boundary
 
 The user-owned Project requires a protected `PROJECT_TOKEN`; GitHub's repository-scoped `GITHUB_TOKEN` is insufficient. Never place the token in Git, `.env`, shell history, YAML, issue/PR text, logs, prompts or MCP queries.
