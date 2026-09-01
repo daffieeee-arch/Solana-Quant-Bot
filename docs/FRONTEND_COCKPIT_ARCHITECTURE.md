@@ -1,513 +1,259 @@
-# Professional Solana Trader Cockpit Architecture
+# Frontend architecture — Research Observatory first, workstation later
 
-Status: **target architecture; implementation not started by this document**
+> **Document status: ACTIVE target architecture.** No UI described here is claimed implemented unless the current-state section says so. The Research Observatory and Professional Trading Workstation are separate Project #4 epics.
 
-Program epic: [#58](../issues/58)
+## Product order
 
-Information architecture gate: [#35](../issues/35)
+The first visible V2 product is an evidence browser over authentic immutable data—not a simulated professional terminal.
 
-## 1. Product decision
+1. PR 3: protocol evidence matrix.
+2. PR 4: live terminal/TUI acquisition progress.
+3. PR 5: static HTML/JSON data-quality and lifecycle report.
+4. PR 6: interactive browser Research Observatory MVP.
+5. PR 7: Cohort Explorer and explicit data-sufficiency result.
+6. PR 8: PIT Gold baseline report/result, falsification or `INSUFFICIENT_SAMPLE`.
+7. Later: interactive Experiment view and full Professional Trading Workstation after their data/runtime contracts exist.
 
-The current frontend is a useful paper-monitoring page, not yet a professional trader workstation. It has a coherent dark visual style, but its architecture is dominated by one large `App.tsx`, fixed CSS grids, broad five-second polling, static summary cards and one main equity chart. The isolated Research Cockpit is intentionally read-only and fixture-driven.
+The number of PRs is not the goal. After three or four engineering PRs without a visible/research-measurable result, the next PR must produce one.
 
-The target is not a literal Bloomberg or TradingView skin. The target is the operating model professional terminals share:
+## Current frontend at cutover
 
-- high information density without ambiguity;
-- keyboard-first navigation;
-- multiple linked panels and saved workspaces;
-- fast instrument and time-context switching;
-- realtime incremental data rather than page refresh behavior;
-- drill-down from aggregate signal to raw evidence;
-- explicit source, freshness, finality and execution state;
-- layouts suitable for 1440p, ultrawide and multiple monitors;
-- a separate compact mobile monitoring surface.
+The existing frontend is a coherent paper-monitoring prototype with a fixture-only read-only Research Cockpit. It is not the V2 Observatory or professional workstation:
 
-A polished interface may never make weak data look certain. `UNKNOWN`, `STALE`, `GAP`, `SYNTHETIC`, `UNPROVEN`, `NO_FILL` and `UNEXITABLE` are first-class states.
+- large `App.tsx`, fixed CSS grids and broad polling;
+- Recharts rather than the selected time-series/analytical split;
+- no sequenced snapshot/resume/gap data plane;
+- no dockable layouts, saved workspaces, virtualization or global linked context;
+- some legacy missing values become fallback price/zero/OK;
+- paper controls conflict with read-only presentation and are not a V2 target.
 
-## 2. Solana-specific interaction model
+Do not extend this surface. Salvage useful accessibility, bounded-read API, evidence badge and fixture-test invariants; replace/retire it through bounded work.
 
-A Solana launch/swap system is not automatically a central-limit-order-book terminal. Unless a supported venue provides a real order book, the UI must not invent a DOM ladder, bid/ask depth or resting liquidity.
+## Research Observatory MVP
 
-The professional equivalent for Pump.fun and AMM flow is:
+PR 6 consumes only immutable, manifest-bound output from PR 5. No network-provider client, scanner, wallet, signing, paper control or dataset mutation is reachable from the browser/server graph.
 
-- chronological transaction/event tape;
-- buy/sell imbalance and cumulative flow;
-- unique-participant breadth and flow acceleration;
-- bonding-curve progress and reserve transitions;
-- executable route availability;
-- position-size-conditioned quote, impact and capacity surfaces;
-- graduation/migration lifecycle;
-- priority-fee, compute and landing context when observed;
-- actor/creator/funder relationships with evidence confidence.
+### Workspace A — Ingestion & Data Quality
 
-Reference-only trade prices and synthetic depth may be visualized only with a visible evidence badge. They cannot be presented as executable liquidity.
+Required visible fields:
 
-## 3. Workspace information architecture
+- dataset/run ID and slice class;
+- selected epoch and half-open slot range;
+- source ID, exact host/path reference, CIDs and content/manifest hashes;
+- acquisition status and explicit abort reason;
+- wire/raw bytes processed;
+- expected/observed blocks and missing/gapped slots;
+- transactions, failed transactions and Pump candidate/event counts;
+- decoder accepted/quarantined/unavailable counts and success rate with denominator;
+- quarantine reason distribution;
+- schema, registry and decoder versions;
+- source/Jetstreamer commit and code SHA;
+- acquisition start/end/elapsed time as operational provenance;
+- full-epoch-hash declared-versus-locally-verified distinction.
 
-The shell exposes named workspaces rather than one ever-growing page.
+Minimum panels:
 
-### 3.1 Markets / Launch Explorer — issue [#40](../issues/40)
+1. dataset/run selector with evidence and slice-class badges;
+2. acquisition/transform stage timeline;
+3. coverage strip by slot with gap/quarantine drill-down;
+4. counts/denominators table;
+5. quarantine reason chart and bounded record table;
+6. provenance/manifest inspector with copyable hashes.
 
-Purpose: scan and rank the current or historical launch universe.
+### Workspace B — Token Lifecycle Replay
 
-Primary panels:
+Required visible fields:
 
-- virtualized launch grid with saved screeners;
-- selected-token price and volume chart;
-- launch and graduation lifecycle timeline;
-- flow velocity, acceleration and participant breadth;
-- liquidity/impact and route availability;
-- risk/evidence/data-quality strip;
-- event tape and related launches.
+- mint and versioned asset identity;
+- create event and creator where emitted;
+- slot/transaction/instruction/CPI/event order;
+- successful and failed transaction packages;
+- buys/sells with raw token/native amounts, explicit quote mint/decimals and evidence class;
+- price/reserve series only where supported, labelled `EVENT_FIELD`/reference rather than executable;
+- volume, cumulative signed flow and unique participants;
+- transaction tape with atomic-package expansion;
+- bonding-curve progression from supported event fields;
+- completion/graduation/migration event and censoring;
+- gaps, quarantine and unavailable historical state;
+- source/registry/decoder/schema/code provenance.
 
-### 3.2 Paper Trading — issue [#41](../issues/41)
+Minimum panels:
 
-Purpose: inspect open paper positions and the exact evidence behind entries, marks, no-fills and exits.
+1. token selector and lifecycle/evidence summary;
+2. lifecycle timeline with create, trades, completion/migration and gaps;
+3. supported price/reserve chart with evidence chrome;
+4. cumulative flow/volume/participant chart;
+5. virtualized or bounded atomic transaction tape;
+6. selected transaction package inspector;
+7. provenance/availability panel.
 
-Primary panels:
+The UI cannot draw a Pump CLOB/DOM, convert reference/event price to executable liquidity, or treat a gap/unavailable account write as zero.
 
-- selected-position price/volume chart with entry, stop, trailing, take-profit and exit markers;
-- position grid;
-- position-versus-liquidation-route inspector;
-- quote, fees, impact, capacity and freshness;
-- migration/graduation lifecycle;
-- intent/no-fill/exit event journal;
-- compact portfolio and risk strip.
+## Read-only data contracts
 
-### 3.3 Flow & Microstructure — issue [#42](../issues/42)
-
-Purpose: understand on-chain trading pressure and executability.
-
-Primary panels:
-
-- virtualized trade/event tape;
-- buy/sell imbalance and cumulative volume delta;
-- trade-size distribution and whale share;
-- unique trader and repeat-wallet behavior;
-- curve/reserve state;
-- impact by trade size;
-- finality, gaps and decoder provenance.
-
-### 3.4 Risk & Actor Intelligence — issue [#43](../issues/43)
-
-Purpose: combine token, route and actor risk without overstating identity claims.
-
-Primary panels:
-
-- mint/freeze/mutable authority and token-program extensions;
-- holder/early-buyer concentration as-of an explicit timestamp;
-- creator/funder/early-buyer graph;
-- related launch clusters and prior outcomes;
-- route freshness and exitability scenarios;
-- explainable gate verdict timeline.
-
-### 3.5 Portfolio & Journal — issue [#44](../issues/44)
-
-Purpose: analyze equity, drawdown, exposure and decision attribution.
-
-Primary panels:
-
-- equity, drawdown and deployed/available capital;
-- open exposure grid;
-- realized/unrealized P&L attribution;
-- MFE/MAE and hold-time analysis;
-- execution/no-fill quality;
-- decision and trade journal with replay links.
-
-### 3.6 Strategy Lab / Research — issue [#45](../issues/45)
-
-Purpose: compare approved runs and reproduce every result.
-
-Primary panels:
-
-- strategy/run leaderboard;
-- parameter and ablation comparison;
-- split/cohort/regime equity and drawdown;
-- calibration, feature importance and prediction distributions;
-- walk-forward stability;
-- replay controls and linked event/feature inspector;
-- optional Arrow/ClickHouse pivot exploration.
-
-Synthetic, real-unapproved and research-ready runs are visually and structurally separated.
-
-### 3.7 Data Quality / System — issues [#45](../issues/45) and [#55](../issues/55)
-
-Purpose: operate the data and runtime platform without confusing operational telemetry with research truth.
-
-Primary panels:
-
-- Bronze/Silver/Gold coverage and quarantine;
-- stream watermarks, queue depth, gaps and finality;
-- parser/schema/config/build hashes;
-- provider latency, Triton/Titan usage and cost budget;
-- ledger durability and projector lag;
-- frontend stream sequence/freshness;
-- alert history and runbook links.
-
-## 4. Global linked context
-
-Every panel consumes a typed global context. Panels do not invent local interpretations of the selected token or time range.
-
-```ts
-type WorkbenchContext = {
-  mode: 'LIVE_PAPER' | 'HISTORICAL_REPLAY' | 'RESEARCH_RUN' | 'FIXTURE';
-  workspaceId: string;
-  instrument?: {
-    mint: string;
-    symbol?: string;
-  };
-  marketRoute?: {
-    protocol: string;
-    marketId: string;
-    routeVersion: string;
-  };
-  positionId?: string;
-  actorId?: string;
-  datasetId?: string;
-  runId?: string;
-  timeRange: {
-    from: string;
-    to: string;
-    resolution: string;
-  };
-  cursor?: {
-    eventTime: string;
-    sequence?: string;
-    slot?: string;
-  };
-  evidenceFilter?: string[];
-};
-```
-
-Interaction rules:
-
-- selecting a grid row updates the global instrument/route context;
-- chart crosshairs update the shared cursor without recursively feeding themselves;
-- opening another workspace preserves compatible instrument/time/run context;
-- a user can pin a panel to opt out of global selection;
-- every context change is undoable through navigation history;
-- URL-deep links encode safe, bounded context for reproducibility;
-- replay context can never mutate live/paper runtime state.
-
-## 5. Recommended frontend stack
-
-The existing React/TypeScript/Vite foundation remains appropriate. The professional cockpit adds specialized components rather than rewriting into another web framework.
-
-| Capability | Preferred tool | Boundary |
-|---|---|---|
-| Workbench shell | FlexLayout for React | Docking, tabs, resize, maximize, pop-out and versioned JSON layouts |
-| Market/equity time series | TradingView Lightweight Charts 5.x | Price, volume, equity, drawdown and trade annotations |
-| Analytical visualizations | Apache ECharts 6.x | Heatmaps, scatter, distributions, graphs, calibration and cohort analysis |
-| High-density tables | AG Grid Community | Virtualized launch, position, event and journal grids; Enterprise only after a license decision |
-| Server state | TanStack Query 5 | REST snapshots, history windows, cache and invalidation |
-| Workbench/UI state | Zustand | Selection, workspace, panel and command state; no duplicate server-state cache |
-| Research exploration | Perspective, isolated | Approved Arrow/ClickHouse pivot and streaming exploration; not the execution UI |
-| Realtime buffering | Web Worker + typed ring buffers | High-frequency parsing/batching outside React rendering |
-| Interaction testing | Playwright | Keyboard, docking, linked context, responsive and screenshot regression |
-| Component fixtures | Storybook or a lightweight fixture harness | Deterministic state and visual testing without provider traffic |
-
-The open-source Lightweight Charts library is the default. TradingView Advanced Charts/Trading Platform components require a separate licensing and architecture decision and are not assumed.
-
-Grafana remains an operational and aggregate research observability surface. It does not replace the interactive trader workbench and does not become canonical research storage.
-
-## 6. Realtime client data plane — issue [#37](../issues/37)
-
-The existing broad polling model is replaced by bounded REST snapshots plus one sequenced delta connection.
-
-### 6.1 Bootstrap
-
-1. Load a schema-versioned REST snapshot.
-2. Record its `streamSequence`/watermark.
-3. Open the WebSocket with a resume cursor.
-4. Apply only contiguous, schema-compatible deltas.
-5. On a gap, stop optimistic application, show `GAP`, request a fresh snapshot and enter `REPLAYING` until contiguous again.
-
-### 6.2 Envelope
-
-```ts
-type StreamEnvelope<T> = {
-  schemaVersion: 1;
-  stream: 'market' | 'position' | 'portfolio' | 'decision' | 'system';
-  sequence: string;
-  eventId: string;
-  eventTime: string;
-  observedAt: string;
-  effectiveAt?: string;
-  finality?: 'PROCESSED' | 'CONFIRMED' | 'FINALIZED' | 'REVERTED';
-  source: string;
-  evidence: EvidenceDescriptor;
-  payload: T;
-};
-```
-
-Client invariants:
-
-- duplicates are idempotent;
-- out-of-order messages are buffered only within a hard bound;
-- unrepairable gaps force resnapshot;
-- stale state is based on source/effective time, not browser receipt alone;
-- every panel receives the same normalized entity version;
-- pop-outs share one data connection through BroadcastChannel/SharedWorker or a controlled host bridge;
-- no component starts its own high-frequency polling loop;
-- raw arrays and event histories are bounded/windowed.
-
-## 7. Panel contract
-
-Each panel has explicit inputs and declares what it can prove.
-
-```ts
-type PanelDataState<T> =
-  | { status: 'READY'; data: T; asOf: string; evidence: EvidenceDescriptor }
-  | { status: 'STALE'; data?: T; asOf?: string; reason: string }
-  | { status: 'GAP'; lastSequence?: string; reason: string }
-  | { status: 'REPLAYING'; progress?: number }
-  | { status: 'UNAVAILABLE'; reason: string }
-  | { status: 'UNPROVEN'; data?: T; reason: string };
-```
-
-No panel converts `undefined`, `UNKNOWN` or missing rows to zero. Charts do not connect lines across unmarked source gaps. Tooltips show source, observed/effective time, finality, evidence class and unit.
-
-## 8. Charting system — issue [#38](../issues/38)
-
-### Lightweight Charts panels
-
-- token price and volume;
-- paper entry/exit/no-fill markers;
-- stop, trailing and take-profit lines;
-- equity and drawdown;
-- synchronized time range/crosshair;
-- incremental `update` rather than full-series replacement;
-- explicit gaps and stale bands;
-- source/evidence badge in panel chrome.
-
-### ECharts panels
-
-- liquidity/impact surface by position size and route;
-- launch cohort heatmaps;
-- trade-size and hold-time distributions;
-- MFE versus MAE scatter;
-- calibration/reliability curves;
-- feature importance and stability;
-- actor/funder graph;
-- provider latency and gap timelines.
-
-Analytical charts use canvas by default for high point counts. SVG is reserved for small interaction-heavy diagrams. Historical series are downsampled or queried at an appropriate resolution; the browser never receives the full raw archive.
-
-## 9. Grid system — issue [#39](../issues/39)
-
-Professional grids require:
-
-- row and column virtualization;
-- pinned identity/state columns;
-- saved column and filter presets;
-- keyboard navigation and copy/export;
-- typed sorting and filtering;
-- streaming row updates without rebuilding the whole model;
-- server-side windowing/pagination for retained history;
-- compact cell renderers for evidence, freshness, finality, risk and route state;
-- context linking to charts and inspectors;
-- no hidden distinction between zero and unknown.
-
-Start with AG Grid Community. A paid Enterprise decision must be justified by a concrete need such as server-side row models, advanced pivoting or integrated charting, not by aesthetics.
-
-## 10. Workbench shell — issue [#36](../issues/36)
-
-Required behavior:
-
-- dock, resize, tab, maximize, close and reopen panels;
-- named layout profiles for 1440p, ultrawide and dual-monitor;
-- versioned layout JSON with migrations and reset;
-- controlled pop-out windows;
-- panel-level error boundaries;
-- focus management and ARIA semantics;
-- lazy loading by workspace/panel;
-- command palette actions for layout, workspace, instrument and panel search.
-
-A panel crash must not crash the terminal. A layout from an older schema must migrate or fall back to a safe default rather than leaving a blank screen.
-
-## 11. Visual design system — issue [#47](../issues/47)
-
-The current dark terminal direction is retained but made denser and more systematic.
-
-### Semantic color
-
-- green/red: positive/negative direction and P&L only;
-- amber: stale, degraded, caution or risk;
-- red: critical gap, blocked or unsafe state;
-- blue: provenance, source and selected context;
-- purple: research/model/run context;
-- neutral gray: unavailable, unproven and inactive.
-
-Color is never the sole carrier of meaning. Every critical state also has text/icon/shape.
-
-### Density
-
-- replace oversized decorative cards with compact status strips;
-- use tabular numerals for prices, quantities and P&L;
-- align units and precision by column/panel;
-- reserve large typography for instrument identity or exceptional risk only;
-- keep borders subtle and use spacing hierarchy rather than card-on-card decoration;
-- support density presets without changing semantics.
-
-### Status header
-
-Every workspace has one persistent strip showing:
+PR 5 owns canonical static JSON schemas; PR 6 may expose them through a loopback read-only adapter. Candidate routes:
 
 ```text
-MODE · DATASET/RUN · STREAM · FINALITY · LAST UPDATE · GAP/STALE · BUILD SHA · PROVIDER COST
+GET /api/v2/datasets
+GET /api/v2/datasets/:datasetId/quality
+GET /api/v2/datasets/:datasetId/tokens?cursor=&limit=
+GET /api/v2/datasets/:datasetId/tokens/:mint/lifecycle?cursor=&limit=
+GET /api/v2/datasets/:datasetId/transactions/:transactionKey
+GET /api/v2/datasets/:datasetId/manifests/:manifestId
 ```
 
-This is more valuable than a decorative market ticker because it tells the operator whether the evidence is usable.
+No POST/PUT/PATCH/DELETE, provider proxy, file-path parameter or paper/debug control exists in the MVP. Inputs are bounded IDs/cursors validated against an approved immutable root. Default bind is loopback; non-loopback exposure requires a later threat model and explicit approval.
 
-## 12. Keyboard and alert model — issue [#46](../issues/46)
-
-Core commands:
-
-- open command palette;
-- switch workspace;
-- search/select instrument, actor, position, dataset or run;
-- focus next/previous panel;
-- maximize/restore panel;
-- change time range/resolution;
-- pin/unpin context;
-- open evidence/transaction inspector;
-- acknowledge or filter alerts;
-- restore named layout.
-
-Shortcuts never fire while editing an input unless explicitly scoped. Conflicts are detected and remappable.
-
-Alerts are typed as:
-
-- data quality/gap/finality;
-- provider/latency/cost;
-- pricing/route/no-fill;
-- position/portfolio/risk;
-- projection/ledger/system.
-
-Every alert links to the exact time, entity, source and runbook. Acknowledgement does not delete evidence.
-
-## 13. Mobile boundary
-
-Mobile is not a compressed desktop terminal. It is a separate monitoring experience optimized for:
-
-- system and stream health;
-- critical alerts;
-- open paper positions and route state;
-- portfolio P&L/drawdown;
-- stale/gap/unexitability state;
-- later separately approved pause/kill controls.
-
-Dense research, multi-chart analysis and actor graphs remain desktop workflows.
-
-## 14. Component and directory boundaries
-
-Target direction:
+Every response uses a generated versioned contract similar to:
 
 ```text
-frontend/src/
-  app/
-    Workbench.tsx
-    routes.ts
-    providers/
-  data/
-    api/
-    stream/
-    workers/
-    entities/
-  context/
-    workbench-context.ts
-    navigation-history.ts
-  workspaces/
-    markets/
-    paper-trading/
-    microstructure/
-    risk/
-    portfolio/
-    strategy-lab/
-    system/
-  panels/
-    charts/
-    grids/
-    inspectors/
-    status/
-  design-system/
-    tokens/
-    primitives/
-    formatters/
-    evidence/
-  testing/
-    fixtures/
-    stories/
+schema_version
+dataset_id
+dataset_content_id
+manifest_hash
+code_sha
+state: READY | STALE | GAP | REPLAYING | UNAVAILABLE | UNPROVEN
+evidence_class
+slice_class
+coverage_summary
+gap_refs[]
+quarantine_summary
+provenance_refs[]
+page: { cursor, next_cursor, limit, returned }
+data
 ```
 
-`App.tsx` becomes composition/bootstrap rather than the implementation of every panel and business rule. Domain formatting and evidence logic are reusable and tested outside JSX.
+The server never derives trading/domain truth that belongs in Rust/Python. TypeScript types are generated from shared schemas or checked for parity; runtime input is validated before display.
 
-## 15. Performance budgets
+### Atomic transaction package
 
-Budgets are acceptance targets to benchmark on the user's Windows 11/WSL development machine and TrueNAS-hosted runtime, not claims about the current UI.
+Lifecycle rows group all instructions, CPIs, events, logs and metadata for a transaction under one `transaction_key`. Expansion can show their internal canonical order, but consumers receive the package atomically. The contract exposes `effective_at`, `observed_at` and `actionable_at`; later Gold/Experiment views add `decision_at` and `execution_opportunity_at`.
 
-- initial shell renders without loading every workspace vendor bundle;
-- workspaces and advanced charting are lazy loaded;
-- normal streaming updates do not cause full-page React rerenders;
-- event-to-visible-update p95 target: under 150 ms for the bounded paper stream;
-- no recurring main-thread task over 50 ms under the standard load fixture;
-- tape/grid updates are batched to a controlled presentation cadence;
-- chart data is updated incrementally;
-- browser memory remains bounded during an eight-hour fixture soak;
-- 100,000-row retained-grid fixtures remain navigable through virtualization/server windowing;
-- all budgets are measured in CI or a reproducible benchmark harness before acceptance.
+The client must never make one event actionable before the remainder of its transaction package, nor label a price/reserve from the same executed transaction as a subsequent fill.
 
-## 16. Testing strategy
+## Evidence and panel states
 
-- unit tests for formatters, evidence states and context reducers;
-- contract tests for REST snapshot and WebSocket envelopes;
-- state-machine tests for duplicate/out-of-order/gap/replay behavior;
-- component fixtures for every READY/STALE/GAP/UNAVAILABLE/UNPROVEN state;
-- Playwright keyboard and linked-context flows;
-- visual regression at 1440p, ultrawide and mobile breakpoints;
-- accessibility checks and reduced-motion mode;
-- performance and memory soak fixtures;
-- no live provider dependency in frontend CI.
+Every panel has a visible state, source and as-of boundary:
 
-Screenshots are evidence only when accompanied by interaction and data-state tests.
+- `READY`: requested immutable contract passed declared gates;
+- `STALE`: client/server revision does not match the selected current manifest or refresh age policy;
+- `GAP`: expected coverage is incomplete; display affected range and denominator;
+- `REPLAYING`: bounded transform/replay is in progress; partial output is not research-ready;
+- `UNAVAILABLE`: the source cannot provide the requested evidence, for example arbitrary historical account writes;
+- `UNPROVEN`: data/decoder/method has not passed its evidence gate.
 
-## 17. Incremental migration
+`ENGINEERING_VALIDATION_ONLY` remains prominent on every page and export; it cannot be hidden by filters. `RESEARCH_SAMPLING` is not equivalent to `RESEARCH_READY`.
 
-### Slice A — contract and shell
+Failures retain the last compatible snapshot only with a visible stale/error overlay. A later response cannot overwrite a newer dataset revision. Unknown numeric values render as unavailable—not `0`, `OK` or a plausible fallback.
 
-Issues [#35](../issues/35), [#36](../issues/36) and [#47](../issues/47). Establish information architecture, design tokens, layout model, panel registry and compatibility with the existing app.
+## MVP frontend tools
 
-### Slice B — realtime data plane
+No dependency is installed in PR 1. The owning PR adopts only what the authentic contract requires:
 
-Issue [#37](../issues/37). Add snapshot/resume/gap semantics behind adapters while the existing panels continue to function.
+- retain React, TypeScript and Vite;
+- use Lightweight Charts for lifecycle price/reserve/volume time series when the data contract supports them;
+- use ECharts for coverage, quarantine and distribution/cohort visualizations;
+- use a small query/cache layer such as TanStack Query only if it demonstrably prevents duplicate/racy snapshot fetches;
+- add list/grid virtualization only when authentic bounded tape/cohort size proves it necessary;
+- use ordinary accessible CSS layout for MVP—no docking/multi-monitor framework yet.
 
-### Slice C — charts, grids and global context
+No Recharts migration, dock library, global state framework, chart abstraction or generic panel registry is justified before the first authentic lifecycle is visible.
 
-Issues [#38](../issues/38) and [#39](../issues/39). Introduce linked selection and reusable primitives before duplicating visualizations.
+## Cohort Explorer — PR 7
 
-### Slice D — Markets and Paper Trading
+After outcome-independent `RESEARCH_SAMPLING` scale-up, add:
 
-Issues [#40](../issues/40) and [#41](../issues/41). These produce the first end-to-end professional workflow and validate the backend pricing/lifecycle contracts.
+- launch/cohort filters bound to dataset/sampling manifest;
+- distributions of supported returns/proxies, MFE/MAE and time-to-threshold;
+- graduation/time-to-graduation and survival/censoring views;
+- flow imbalance/acceleration and participant-breadth distributions;
+- trade-size/early-concentration views where evidence permits;
+- actor/creator clusters only with Class-B coverage/evidence badges;
+- explicit sample counts, missingness, quarantine and sufficiency verdict.
 
-### Slice E — Microstructure, Risk and Portfolio
+An engineering-validation slice is excluded from cohort/strategy selectors at the data contract, not merely hidden in UI.
 
-Issues [#42–#44](../issues/58). Add Solana-specific flow, actor intelligence and attribution.
+## Experiment / Strategy evidence — report in PR 8, interactive view later
 
-### Slice F — Strategy, Research, System and mobile
+PR 8 must report these fields in bounded evidence output. An interactive Experiment/Strategy view is a separate later scope unless PR 8 can add it without weakening the Gold/methodology gate:
 
-Issues [#45](../issues/45) and [#46](../issues/46). Migrate only after authentic data and realtime evidence contracts support the claims.
+- dataset/feature/label/model manifest IDs;
+- train/validation/test and walk-forward windows;
+- parameters and decision rules;
+- entries/exits as research decisions, not assumed fills;
+- gross result plus separately labelled fee/impact/no-fill/capacity assumptions;
+- drawdown, uncertainty/confidence intervals and censoring;
+- untouched evaluation and baseline comparison;
+- `INSUFFICIENT_SAMPLE` or falsification with the same prominence as a positive result.
 
-The existing Research Cockpit remains isolated and read-only until a reviewed migration proves that network, provenance and synthetic-data boundaries are preserved.
+No automatic promotion control or autonomous LLM signal belongs in this view.
 
-## 18. Non-goals
+## Later Professional Trading Workstation
 
-This architecture does not:
+The long-term target remains React/TypeScript with:
 
-- enable live trading;
-- add wallet or private-key handling to the browser;
-- treat an LLM as a direct trade-signal generator;
-- reproduce Bloomberg branding;
-- assume proprietary TradingView components are licensed;
-- replace ClickHouse or immutable research artifacts with client state;
-- present a fake order book for AMM/Pump.fun data;
-- convert absent evidence into reassuring dashboard zeros.
+- dockable/resizable saved layouts and multi-monitor support;
+- global linked token/asset/route/position/time/evidence context;
+- REST snapshot plus sequenced WebSocket deltas with resume/gap/replay;
+- Lightweight Charts and ECharts;
+- virtualized high-density grids;
+- keyboard-first command palette, alerts and compact monitoring;
+- Markets / Launch Explorer;
+- Paper Trading;
+- Flow & Microstructure;
+- Risk & Actor Intelligence;
+- Portfolio & Journal;
+- Strategy Lab / Research;
+- Data Quality / System.
+
+This is epic E6 in [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md), separate from Observatory epic E2. Its current issue evidence is preserved in [#35](https://github.com/daffieeee-arch/solana-paper-scanner/issues/35) through [#47](https://github.com/daffieeee-arch/solana-paper-scanner/issues/47).
+
+### Workstation data plane
+
+Only later prospective/runtime data needs a sequenced WebSocket contract:
+
+```text
+snapshot_id
+sequence
+prev_sequence
+stream_epoch
+event_time
+observed_time
+finality
+evidence_class
+payload_type
+payload
+```
+
+Clients reject duplicates, detect gaps, pause application, fetch/resume/replay and show `GAP`/`REPLAYING`. They do not guess through missing deltas. High-rate parsing/buffering may move to a worker with bounded memory only after measurement.
+
+### Solana/Pump interaction model
+
+Professional Pump/AMM equivalents are an atomic transaction/event tape, imbalance/CVD, participant breadth, flow acceleration, trade-size distributions, whale concentration, curve/reserve evidence, dynamic route availability, executable quote/impact/capacity surfaces, migration timeline and observed fee/compute/landing context.
+
+No venue-independent fake DOM or resting-liquidity display is allowed. Observed market evidence, reference context and executable quotes remain distinct.
+
+## Accessibility, security and quality
+
+For each delivered surface:
+
+- semantic landmarks, keyboard reachability, focus management and reduced-motion support;
+- tested evidence-state fixtures, including unknown/missing values;
+- runtime schema validation and bounded pagination/response sizes;
+- no raw HTML from source metadata and no credential-bearing URLs;
+- restrictive CSP and no provider/wallet imports;
+- tests for stale/out-of-order response handling and transaction atomicity;
+- browser interaction/a11y tests when interaction complexity warrants them;
+- measured performance budgets based on authentic fixtures, not invented constants.
+
+Screenshots demonstrate appearance only; they do not replace interaction, contract or evidence tests.
+
+## Non-goals
+
+- live trading, wallet/private-key handling or transaction submission;
+- Bloomberg/TradingView branding imitation;
+- fake professional density before authentic data;
+- client-side protocol/feature/business logic;
+- ClickHouse/Grafana as required MVP dependencies;
+- mutable dashboards that hide provenance, gaps, quarantine or insufficiency;
+- treating a historical event price as an executable fill.

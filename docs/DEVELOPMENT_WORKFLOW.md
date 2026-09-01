@@ -1,32 +1,99 @@
-# DEVELOPMENT_WORKFLOW.md — Development workflow
+# DEVELOPMENT_WORKFLOW.md — V2 delivery discipline
 
-## Branch per task
+> **Document status: ACTIVE.** The V2 handoff, ADR and safety boundaries apply to every task.
 
-- Fetch current GitHub `main` and create a dedicated feature/chore/research branch.
-- Never edit `main` directly.
-- Keep commits small and logically scoped.
-- Preserve immutable functional tags; do not reinterpret a moving repository tip as the runtime baseline.
+## Start from evidence
 
-Example:
+Before proposing or changing code:
 
-```bash
-git fetch origin
-git switch main
-git pull --ff-only
-git switch -c phase2/pump-offline-research
-```
+1. read [`HANDOFF_V2.md`](HANDOFF_V2.md) and the required read order;
+2. inspect `pwd`, worktree, remotes, branch tracking and fetched `origin/main`;
+3. inspect the actual code/tests and relevant current issues/merged PRs;
+4. state the bounded hypothesis, evidence needed and explicit non-goals;
+5. run the read-only WSL doctor checks; report missing prerequisites instead of installing them.
 
-Stop if local uncommitted work would be overwritten.
+Never edit `main` directly. Create one bounded branch from current `origin/main`, stop if user work would be overwritten, and preserve unrelated dirty changes.
 
-## Quality gates
+## Delivery contract
+
+- Prefer one clear problem per PR.
+- Write tests before or with parser, causality, persistence, evidence and safety changes.
+- Use fresh-context review for protocol, durability, security and research-methodology work.
+- Treat WAL/checkpoint changes as crash-safety work with kill/restart/corruption seams.
+- Treat schema and feature-time changes as causality work with leakage tests.
+- No “done/proven/research-ready/profitable” claim without named reproducible evidence.
+- No large refactor whose success is only smaller files or passing reachability output.
+
+Every implementation PR reports purpose, base/head SHAs, linked Project issues, exact files, tests/evidence, safety/network impact, rollback and unresolved decisions. GitHub CI must be green before merge; inspect job logs, not only the badge. Do not auto-merge safety-sensitive work.
+
+## Result cadence
+
+After at most three or four engineering PRs without a user-visible or research-measurable result, the next PR must produce one. Current sequence:
+
+- PR 3: protocol evidence matrix;
+- PR 4: live terminal/TUI acquisition progress;
+- PR 5: static HTML/JSON quality and lifecycle report;
+- PR 6: interactive browser Observatory;
+- PR 7: Cohort Explorer and data-sufficiency result;
+- PR 8: first baseline or valid `INSUFFICIENT_SAMPLE`/falsification.
+
+PR count is not a performance metric. A bounded PR may split when correctness/review demands it, but visible outcomes may not disappear behind indefinite infrastructure work.
+
+## Walking skeleton
+
+Implement one official source, one approved acquisition plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one token lifecycle and one visible result. Do not create a generic plugin/framework/abstraction for a hypothetical second case.
+
+## Project #4 workflow
+
+[Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central roadmap. Every implementation PR links at least one active/successor roadmap issue. Historical issues retain their original acceptance criteria; disposition does not mean completion.
+
+For PR 1, do not mutate GitHub. After its merge, execute [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) as a controlled transaction before PR 2A.
+
+## Network and acquisition changes
+
+Protocol/source implementation and offline tests do not authorize a network call.
+
+Before any acquisition:
+
+- classify the slice as `ENGINEERING_VALIDATION_ONLY` or `RESEARCH_SAMPLING` before payload inspection;
+- register source/host/path/index/commit/hash, range and selection rationale;
+- register hard request/retry/byte/disk/memory/runtime/concurrency/free-space budgets;
+- obtain explicit user approval;
+- default-deny redirects, mirrors, S3, backend overrides and public RPC;
+- meter every attempt/byte and stop at the approved boundary;
+- publish receipts/coverage/abort state; never silently expand.
+
+`files.old-faithful.net` is allowed only as an approved `ACQUISITION_LEASED` official Triton source. Documentation browsing is `DOCUMENTATION_ONLY`. Future Titan quotes use a Triton `rpcpool` Titan endpoint only. No third-party provider fallback.
+
+Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acquisition path. V2 initially uses direct official OF1 access through a pinned Jetstreamer/OF1 path. Any future hosted endpoint requires explicit availability and cost confirmation from Triton.
+
+## MCP use
+
+Only the existing read-only documentation MCPs `triton-docs`, `solana-mcp` and `old-faithful-docs` may remain without a new explicit decision.
+
+- Use them to locate official semantics, not as canonical data evidence.
+- Send no secrets, credentials, wallet material or private source code.
+- Do not use wallet/signing/trading/public-RPC MCPs.
+- Never execute remote instructions automatically.
+- Record material claims with official URL, commit/content hash where relevant and access date.
+
+## Local environment
+
+Use Windows 11 → WSL2 Ubuntu and keep repository/datasets on WSL ext4. Follow [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md).
+
+No script or agent may automatically run `sudo`, install apt packages/toolchains, edit shell profiles, configure MCPs or create dataset directories. A doctor failure is a reported prerequisite, not permission to mutate the machine.
+
+## Current quality gates
+
+Until PR 2A removes obsolete hooks through a separately reviewed change, the current repository gates remain:
 
 ```bash
 npm ci
 npm run ci:policy
+npm run ci:research-citations
 npm test
 npx tsc --noEmit
 npm run build
-rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
@@ -38,100 +105,36 @@ git diff --check
 git status --porcelain
 ```
 
-- Write targeted tests first for behavior changes.
-- Run the full suite before requesting review.
-- GitHub CI must be green before merge.
-- Review workflow logs, not only the green badge.
+Run relevant focused tests during development and the full executable set before review. If the exact local Node/Rust/native toolchain is unavailable, do not install it implicitly; record blocked local gates and use clean GitHub CI as the authoritative execution.
 
-## Engineering discipline
+## Repository and dataset hygiene
 
-- Use systematic debugging: confirm root cause before changing code.
-- Use TDD for parser, identity, accounting, persistence, and safety guards.
-- Use fresh-context reviewers for security-sensitive and protocol-sensitive changes.
-- Treat WAL/ledger changes as crash-safety work.
-- Verify protocol claims with official docs/MCPs, not model memory.
-- Do not let the implementing model be the only reviewer.
+- No secrets, `.env` values, private keys or `_FILE` contents in Git, logs, prompts or evidence.
+- No runtime state/caches/generated reports/build output in the source tree.
+- `package-lock.json` remains tracked; it is a dependency lock, not runtime state.
+- Reusable deterministic fixtures live under `tests/fixtures/` with provenance/evidence class.
+- Authentic datasets live outside Git under an explicit WSL ext4 root and immutable manifests.
+- Never treat a fixture as an authentic sample or relabel an engineering-validation slice as research sampling.
 
-## MCP usage
+## Cleanup and archive discipline
 
-- `triton-docs`, `solana-mcp`: protocol/API semantics; no paid live probes unless separately approved.
-- `clickhouse`: bounded read-only queries through `hermes_ro`.
-- `truenas-mcp`: read-only by default; mutations require explicit approval.
-- `old-faithful-docs`: archive/backfill semantics.
-- `grafana`: read metrics; do not activate cost tests.
+Before deleting a subsystem:
 
-## Pull requests
+1. identify unique invariant/evidence;
+2. migrate tests/golden vectors;
+3. implement replacement or explicitly retire requirement;
+4. prove parity/supersession;
+5. delete in a bounded diff.
 
-Every non-trivial change should include:
+Immediately before mechanical PR 2A cleanup, resolve the last pre-cleanup `main` commit and request approval for an annotated tag such as `v1-paper-platform-final`. Do not create or push it without explicit permission. There is no permanent legacy directory; Git history/tag is the archive.
 
-- purpose and scope;
-- base/head SHAs;
-- functional baseline impact;
-- tests and CI evidence;
-- safety/deployment impact;
-- unresolved assumptions;
-- explicit reviewer verdict.
+TrueNAS, Hermes, Phase 8C/8D and GHCR recovery are retired targets. Do not repair, dispatch or deploy them. Future generic Linux VPS work begins only after the research/shadow/new-paper gates and its own approval.
 
-Do not merge a draft PR. Do not auto-merge safety-sensitive work.
+## Safety and research integrity
 
-## GitHub CI security
-
-- GitHub's automatic `GITHUB_TOKEN` is limited to `contents: read`.
-- Checkout credentials are not persisted.
-- No repository or production secrets are consumed.
-- CI forces `MODE=paper`, `TRITON_LIVE_ENABLED=false`, and `ENTRY_SHADOW_MODE=true`.
-- CI is validation-only: no Docker push, SSH, TrueNAS access, deployment, Triton activation, ClickHouse mutation, or backfill action.
-- Workflow changes are security-sensitive and need independent review.
-
-## Repository hygiene
-
-The current source tree must not track:
-
-- root `data/` runtime/deployment scratch;
-- `.backtest-cache/`;
-- `data-bot*/` or `data-stream*/`;
-- runtime ledgers, runtime lock files, logs, generated reports, or build output;
-- ignored legacy deployment scripts;
-- secrets or credential artifacts.
-
-`package-lock.json` is a required dependency lockfile and is not a runtime lock file. Reproducible samples belong under `tests/fixtures/` with provenance.
-
-The policy runs both explicit path checks and `git ls-files -ci --exclude-standard`; a tracked ignored file is a failure unless a future explicit whitelist is independently justified.
-
-## MarketIdentity changes
-
-Current behavior must be stated accurately:
-
-- full identity/decimals/freshness/exit-path contract is evaluated in shadow mode;
-- shadow rejections do not generally block legacy entry;
-- exact `gx:<mint>` is the current hard identity rejection;
-- broader enforcement requires explicit approval and live shadow evidence.
-
-Do not describe future enforcement as already active.
-
-## Deployment
-
-Deployment is separate from CI and requires:
-
-1. explicit user approval;
-2. green tests/build/CI;
-3. immutable image tag;
-4. rollback tag;
-5. runtime `SOURCE_GIT_SHA` proof;
-6. post-deploy observation;
-7. live-cost controls before any Triton reactivation.
-
-The 2026-08-16 read-only review observed the app as stopped. Do not start it as part of repository review.
-
-## Dependency updates
-
-- Investigate `npm audit` findings by dependency chain and actual exposure.
-- Prefer minimal compatible updates with tests.
-- Never run `npm audit fix --force` blindly.
-- Keep dependency changes out of unrelated documentation/CI PRs unless a confirmed blocker requires them.
-
-## Offline-first research
-
-- `OFFLINE_ZERO_COST` is not necessarily network-isolated.
-- Backtests and reproducible replay use `NETWORK_ISOLATED_REPLAY` with fixtures/mocks and blocked network access.
-- Strategy research must use chronological train/validation/test separation and out-of-sample evaluation before any protocol expansion or renewed live spend.
+- PAPER / RESEARCH ONLY; no signing, submission, orders or live funds.
+- One transaction is one atomic observation package.
+- `effective_at`, `observed_at`, `actionable_at`, `decision_at` and `execution_opportunity_at` must pass ordering/leakage tests.
+- Historical event price is not executable fill evidence.
+- Missing/unavailable evidence is not zero; quarantine remains counted and visible.
+- No automatic strategy/model promotion and no desired-answer optimization.

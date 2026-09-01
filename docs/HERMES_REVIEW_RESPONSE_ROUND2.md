@@ -1,5 +1,7 @@
 # Hermes review response — PR #1, round 2
 
+> **Document status: HISTORICAL.** Legacy review evidence only. Hermes is not part of the active V2 architecture; this is not a runbook or authorization. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 Hermes and a fresh-context reviewer returned `REQUEST_CHANGES` on head `b10f84f7070d9bbd431180ec55dccf99f989b1f5`.

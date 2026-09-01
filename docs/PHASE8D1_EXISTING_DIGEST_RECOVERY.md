@@ -1,5 +1,7 @@
 # Phase 8D1-R — Existing Published Digest Recovery
 
+> **Document status: RETIRED.** Digest-recovery deployment work is no longer an active target. Do not dispatch or execute it; retain only until controlled PR 2A cleanup. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **READ-ONLY RECOVERY CANDIDATE — NOT DISPATCHED — ORIGINAL HOLD PRESERVED — NO DEPLOYMENT.**

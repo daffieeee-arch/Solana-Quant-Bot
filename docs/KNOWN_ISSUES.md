@@ -1,57 +1,62 @@
-# KNOWN_ISSUES.md — Open issues and HOLDs
+# KNOWN_ISSUES.md — active V2 risks and open decisions
 
-Only current open items belong here. Resolved issues remain in Git history.
+> **Document status: ACTIVE.** Historical deployment incidents remain in their status-marked documents; they are not V2 backlog unless listed here.
 
-## Triton live and cost
+## Governance and transition
 
-1. **Balance $0:** live reactivation is blocked; prepaid-cutoff is likely but technically unconfirmed until a later bounded test.
-2. **Cost attribution unknown:** first $125 is not tied to a verified Billable Items breakdown.
-3. **Live Pump connectivity:** first-event/subscription health must be re-proven after any future reactivation.
-4. **Cost controls incomplete:** max duration, per-service request/byte metering, warning threshold, hard stop, and automatic disconnect are not implemented.
+1. **Project #4 is not rebased yet.** Current fields/views and issue metadata still express the paper-first roadmap. Execute [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) after PR 1 merges and before PR 2A. The current sync does not yet write `V2 Phase`/`V2 Disposition`.
+2. **Retired code remains reachable.** TrueNAS/Phase 8/Hermes assets and the frozen scanner/paper/dashboard path remain physically present in PR 1. PR 2A must migrate unique invariants, create the approved pre-cleanup tag, remove obsolete paths and add minimal fail-closed quarantine.
+3. **No pre-cleanup archive tag exists.** `v1-paper-platform-final` is an example only. Resolve the last pre-cleanup `main` commit and obtain explicit approval before creating or pushing an annotated tag.
+4. **Historical documents can still contain stale instructions.** Status banners make them non-authoritative in PR 1; mechanical removal waits for PR 2A.
 
-## MarketIdentity and parser
+Transitional evidence-contract tests still require the historical [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) markers `HOLD_UNPROVEN_ACTIVATION` and `pilotEligible: false`, plus a link to the retired [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). This retention is not Pilot or Phase 8C authorization.
 
-5. **Broader MarketIdentity enforcement is off:** full contract is shadow-only; only exact `gx:<mint>` identities are currently hard-blocked.
-6. **Observed Pump dispatchers partly experimental:** liveBuy/liveBuyV2/liveBuyExactSolIn lack primary in-repo mainnet transactions.
-7. **Deep loaded-address resolution incomplete:** tests cover versioned shapes but not complete real-world address-table resolution through every parser path.
-8. **Non-Pump completeness missing:** PumpSwap, Raydium, Meteora, Orca, Moonshot, Jupiter, and CLMM routes require protocol-specific canonical identity, decimals, price state, exit route, and evidence before being called supported.
-9. Some generic AMM/CLMM builders remain Raydium-oriented and must not be treated as universal protocol support.
+## Provider and acquisition
 
-## TrueNAS and runtime
+5. **Hosted Old Faithful availability conflict.** Public official Triton documentation and the consulted documentation MCP do not fully align. Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acquisition path. V2 initially uses direct official OF1 access through a pinned Jetstreamer/OF1 path. Any future hosted endpoint requires explicit availability and cost confirmation from Triton.
+6. **Jetstreamer/OF1 pin unresolved.** Select and review one official commit/release, exact index/sidecar identities, host/redirect allowlist and default-deny wrapper behavior before PR 4.
+7. **Raw-byte capture hook unproven.** V2 must retain exact acquired ranges/content blocks and receipts before parsing. If the pinned upstream path cannot expose them, resolve the adapter design before calling output Raw.
+8. **No acquisition run is approved.** No Triton/OF1 call, credit spend or full epoch is authorized. Every host/range/request/byte/disk/runtime/concurrency value remains a preregistered per-run parameter.
+9. **Candidate first range is provisional.** `[422506000, 422506128)` lacks approved origin/selection rationale and slice class. It cannot be treated as a V2 constant or sampled after inspecting desired outcomes.
+10. **Historical OF1 lacks assumed Geyser account-write parity.** Class C state remains `UNAVAILABLE`; event reserves cannot substitute for raw account state.
 
-10. **Bot app currently stopped:** configured image/provenance is known, but a fresh app query is required before claiming it is running.
-11. **ClickHouse autostart unresolved:** ClickHouse is a separate process and does not structurally start after NAS reboot.
-12. **ClickHouse default-user/LAN exposure:** default user lacks adequate hardening and HTTP 8123 is LAN-reachable.
+## Protocol truth
 
-## Backfill
+11. **No V2 Pump registry entry is proven for a historical activation range.** Existing IDL/layout work is structural/fixture evidence only.
+12. **Current decoder paths disagree in scope.** The live offset decoder and exact-115-byte research decoder must not be universalized. Their useful vectors need version/evidence binding before old implementations are removed.
+13. **Independent differential path is undecided.** Choose a pinned Codama/Vixen/official-parser reference path and closed disagreement policy for the walking skeleton.
+14. **Loaded-address and variant coverage remains incomplete.** Real bytes may reveal a necessary Pump/Solana shape outside current fixtures; unsupported shapes must quarantine rather than trigger framework expansion or guessing.
 
-13. **Backfill paused:** supervisors and repair cron remain stopped.
-14. **Completion logic is wrong:** row-count threshold is not a valid completion definition; use source cursor/max-slot and bounded retry state.
-15. **Stall watchdog false positives:** progress must use heartbeat/source cursor and distinguish WRITING, SEEKING, NETWORK_RETRY, STALLED, and COMPLETE.
-16. **Repair supervisor guard:** duplicate supervisor starts and stale status files remain open risks.
+## Data and causality
 
-## Historical data contract
+15. **No authentic V2 Raw/Bronze/Silver dataset exists.** Current vertical-slice/cockpit output is synthetic fixture evidence and cannot support research claims.
+16. **No canonical deterministic Parquet profile exists.** Select writer/library versions, schema fingerprints, row ordering, compression and physical/logical hash rules in the owning data PR.
+17. **Transaction-atomic availability is not implemented in Gold.** Future schemas/pipelines must prove atomic packages and `effective_at`, `observed_at`, `actionable_at`, `decision_at`, `execution_opportunity_at` ordering.
+18. **Class-B feature feasibility is unknown.** Holder/early-buyer/actor/funder reconstruction requires demonstrated prior coverage and censoring; a bounded slice may be insufficient.
+19. **Data sufficiency is unknown by design.** No fixed slot count, window, folds or holdout is approved. PR 7 must measure and report sufficiency rather than expand opportunistically.
+20. **Historical execution evidence is absent.** Event prices/reserves can support explicitly labelled non-executable research proxies, not fill, capacity or net-profit claims.
 
-17. **v1 is transaction-net only:** multi-hop, inner-CPI, pool-route, and event-level detail are not preserved.
-18. **Duplicate estimate is limited:** roughly 3.4% cross-part exact-retry overlap was observed in a biased sample. The dataset-wide ratio is unknown and normal background merges may already have consolidated some rows. Do not claim that no deduplication occurred merely because no global `OPTIMIZE FINAL` was run.
-19. **v2 real-data pipeline remains incomplete:** Bronze capture, Phase 4, the fixture-verified Phase-5 reducer, synthetic Phase 6A/6B, and the Phase-7 readiness package are merged. None has processed or proven real CAR/archive/slot/accountstate payloads; `CANDIDATE_UNAPPROVED`, `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, and `pilotEligible: false` remain mandatory. All ten Phase-7 registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`; accepted Silver for real data, Gold, OOS, execution evidence, and profitability remain unavailable.
+## Research and frontend
 
-## Repository and dependencies
+21. **Research Observatory V2 is unimplemented.** The existing fixture-only cockpit is salvage evidence, not the authentic product. PR 5 supplies static evidence and PR 6 the interactive MVP.
+22. **The current paper dashboard can overstate evidence.** Existing code maps some missing values to fallback price/zero/OK and has a read-only label alongside mutable controls. While reachable, PR 2A must quarantine safely; do not extend it.
+23. **Control-plane safety needs retirement/quarantine.** The legacy dashboard can bind beyond loopback and control authorization is optional/inconsistent with the frontend. It cannot sign or trade, but it can mutate scanner/provider state. This is a PR 2A safety requirement, not a feature-repair program.
+24. **Full workstation remains unimplemented and intentionally later.** Docking, saved layouts, sequenced WebSocket plane, professional charts/grids and linked context wait for authentic contracts and separate epic activation.
 
-20. **Dependency audit follow-up:** current lockfile reports three moderate production-chain findings through `@solana/web3.js -> jayson -> uuid@8.3.2` and one high dev-chain finding through Vite/PostCSS/nanoid. They predate PR #1; investigate root-cause-first and do not run `npm audit fix --force` blindly.
-21. **Frontend bundle warning:** production bundle remains about 585 kB and Vite reports a non-blocking chunk-size warning.
+## Development and CI
 
-## Research
+25. **Local toolchain does not match the contract.** The 2026-09-01 WSL observation found Node `24.18.1` instead of `22.23.2`, no Rust/Cargo/native build tools, and no built `fs-ext`. Do not auto-install; local full gates remain blocked until explicit approval, while GitHub CI provides the clean environment.
+26. **Python enforcement has not landed.** V2 selects uv-managed CPython `3.13.15` and uv `0.12.5`, but no Python workspace/`uv.lock` exists yet. The PR 5 dataset path must enforce rather than merely document it; PR 7 research depends on that environment.
+27. **Historical Rust metadata conflicts.** One research plan and one Phase 8 script record different commit hashes for release `1.97.1`. V2 pins the release/toolchain and records full `rustc -Vv`; neither old hash is accepted as canonical without official verification.
+28. **Current CI still contains retired Phase 8 gates/workflows.** They remain in PR 1 to keep the source-of-truth change bounded. Do not dispatch deployment/recovery workflows. PR 2A must remove/rewrite hooks with policy tests and preserve the general validation boundary.
+29. **Dependency findings remain untriaged.** Existing npm transitive audit findings and frontend bundle warnings predate V2. Do not use forced dependency upgrades inside unrelated work; reassess after obsolete reachability is removed.
 
-22. The Phase-7 readiness package is documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) and merged through PR #14 as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge CI run `32350736436` succeeded. Merge does not change its `HOLD_UNPROVEN_ACTIVATION` content status or authorize accepted Silver, preflight, or pilot execution.
-23. **Activation evidence remains insufficient for promotion:** Phase 7A corroborates one ProgramData boundary and exact official/on-chain IDL structure, but eight old loader transaction details, the candidate historical ELF/source mapping, and raw candidate-range semantic observations remain missing. Zero of ten entries are proven.
-24. **Remote citationgate is merged:** PR #16 merged as `784192a675e31d78da82852e91ceb254eccae982`; post-merge run `32397224604` executed the separate offline citation step exactly once and succeeded. This closes CI enforcement only and does not authorize preflight or Pilot A.
-25. Pilot A remains `HOLD_UNPROVEN_ACTIVATION` pending every separate readiness and authorization gate. Phase 8A implements only a synthetic fixture eligibility split, Bronze runner and Research Cockpit/observability surface. It does not close missing real activation/binary evidence, run preflight, create transport eligibility, authorize execution or produce accepted Silver. Pilot B, full epoch, multi-month research, OOS, execution-quality and profitability claims remain NO-GO.
-26. **Phase 8C deployment remains HOLD:** Phase 8D1 selected collision-free candidate IDs `61000`/`61001` with shared GID `61000` read-only, but no accounts/ownership were applied. Stable canonical inventory uses complete source reads rather than a fixed raw owner count; Phase 8D2 must repeat it immediately before application. Base-image digests are verified only in isolated GitHub runs and authorize no deployment. The POSIX dataset and both TrueNAS apps remain unapplied, and `solana-bot` remains STOPPED.
-27. **Legacy Grafana remains forensic:** `memecoin-contra` and `memecoin-contra-strategy` are archived as `LEGACY_FORENSIC_V1` and must not be restored as strategy evidence. Live removal remains a later operations gate.
-28. **Observability infrastructure absent:** Prometheus and Loki are not installed. Static fixture snapshots cannot support meaningful rate panels; bounded replay streaming remains designed but unauthorized.
-29. **Hermes has no safe local container builder:** Phase 8D stopped before mutation rather than mounting Docker/containerd sockets or weakening isolation. Phase 8D1 remote verification and publish hardening are merged and green on GitHub-hosted runners.
-30. **Private GHCR pull credential absent by design:** no package credential is created in Phase 8D1. A future Phase 8D2 credential must be package-read-only, separate from the Hermes repo PAT, and deployment must use registry digests rather than tags.
-31. **Published images remain recovery HOLD:** run `32641496527` pushed both exact source-SHA tags but ended `BOTH_PUSHED_RETEST_REQUIRED_HOLD`; package metadata visibility/repository-link evidence was not produced before registry-digest replay. No rerun/delete/overwrite/settings mutation is authorized. Phase 8D1-R is read-only and not dispatched.
+## Hard unresolved research decisions
 
-See [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).
+30. Exact evidence threshold for promoting a Pump variant from observed-compatible to a bounded proven range.
+31. Exact engineering-validation and research-sampling plans and expansion rules.
+32. Exact Gold label horizons, embargoes, folds, cost proxies and untouched holdout—only after data sufficiency is known.
+33. Whether/when ClickHouse scale or query concurrency justifies adding a rebuildable projection.
+34. Later prospective quote/finality evidence needed before the new paper engine can claim realistic `NO_FILL` and capacity semantics.
+
+None of these open decisions authorizes network traffic, a research claim, provider installation, live execution or repair of retired infrastructure.

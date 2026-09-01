@@ -1,5 +1,7 @@
 # Paper Ledger, Exit Engine, and Dashboard Implementation Plan
 
+> **Document status: RETIRED.** This Hermes/DexScreener/legacy-paper plan conflicts with the active V2 provider and product boundary. Do not execute it. See [`../../docs/HANDOFF_V2.md`](../../docs/HANDOFF_V2.md).
+
 > **For Hermes:** Implement incrementally with strict TDD. Do not add wallet, signing, transaction-submission, or live-order code.
 
 **Goal:** Make the running Solana scanner observable and restart-safe by persisting paper state/events, correctly processing exits, and exposing a LAN-only paper dashboard after the user approves its network exposure.

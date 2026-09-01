@@ -1,5 +1,7 @@
 # HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md
 
+> **Document status: HISTORICAL.** Legacy review evidence only. Hermes is not part of the active V2 architecture; this is not a runbook or authorization. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Review request
 
 Review the current head of `chore/repo-alignment-ci` against `origin/main` as a fresh senior reviewer.

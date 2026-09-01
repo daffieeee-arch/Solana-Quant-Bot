@@ -1,105 +1,103 @@
-# DECISIONS.md — Architectural decisions
+# DECISIONS.md — active V2 decision index
 
-Short rationale per current decision. Git history contains the detailed evolution.
+> **Document status: ACTIVE.** Detailed rationale is in [`ADR_0001_V2_DATA_FIRST_CUTOVER.md`](ADR_0001_V2_DATA_FIRST_CUTOVER.md). Git history retains earlier decision text.
 
-## 1. Primary live Solana backend is Triton One
+## Accepted V2 decisions
 
-**Decision:** Dragon's Mouth/geyser, Triton RPC, DAS, and Titan are the intended primary live Solana backend when explicitly enabled.
+### D1 — Data-first, edge-or-falsification mission
 
-**Rationale:** one paid infrastructure contract and one monitored integration surface. Supporting components such as ClickHouse, Old Faithful/Jetstreamer, Grafana, CoinGecko/CoinDesk context, and frontend links remain allowed.
+Authentic historical evidence, reproducible datasets and visible research precede a new execution runtime. Profitability is not assumed; a valid result may be falsification or insufficient sample.
 
-## 2. Zero-cost live default
+### D2 — Frozen legacy paper runtime
 
-**Decision:** `TRITON_LIVE_ENABLED=false` unless the user explicitly unlocks live mode.
+The existing scanner, portfolio, dashboard and paper runtime receives no new feature or strategy work. Only minimum safety quarantine and controlled retirement are allowed. Correctness requirements #27–#34 route to the later new Rust engine or their earlier data-evidence component.
 
-**Rationale:** a balance top-up must never automatically start paid consumers. Construction is blocked at the client boundary.
+### D3 — Triton One-only network-provider boundary
 
-## 3. No live reactivation without cost controls
+All active V2 Solana acquisition, future market data and future execution connectivity use Triton One only. `files.old-faithful.net` is an allowed official OF1 source under `ACQUISITION_LEASED`. Future Titan quotes use a Triton `rpcpool` Titan endpoint. Direct third-party Titan, public RPC and secondary provider fallbacks are forbidden.
 
-**Decision:** do not top up or reactivate until maximum duration, request/byte counters, warning thresholds, hard-stop budget, and automatic disconnect are implemented and tested.
+Open-source local libraries and pinned specifications remain allowed; one network provider is not one library.
 
-**Rationale:** the first $125 was consumed without reliable product-level attribution.
+### D4 — Direct OF1/Jetstreamer initial acquisition
 
-## 4. Offline terms are explicit
+Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acquisition path. V2 initially uses direct official OF1 access through a pinned Jetstreamer/OF1 path. Any future hosted endpoint requires explicit availability and cost confirmation from Triton.
 
-**Decision:** distinguish `OFFLINE_ZERO_COST` from `NETWORK_ISOLATED_REPLAY`.
+The public-doc/MCP disagreement remains open. Jetstreamer HTTP/S3/backend overrides default-deny.
 
-**Rationale:** ordinary zero-Triton runtime may still use free external context feeds; reproducible research must be completely network-isolated.
+### D5 — Explicit capability leases and zero-network replay
 
-## 5. Pump-only proven baseline
+Documentation access is `DOCUMENTATION_ONLY`, acquisition is an explicitly approved bounded `ACQUISITION_LEASED` run, later live access is `LIVE_RUNTIME_LEASED`, and downstream deterministic transformation is `NETWORK_ISOLATED_REPLAY`. No balance/top-up automatically enables traffic.
 
-**Decision:** Pump.fun is the only `SUPPORTED_AND_TESTED` protocol. Other protocol routes remain incomplete even where parsers or filters exist.
+### D6 — Two immutable slice classes
 
-**Rationale:** support requires canonical identity, decimals, price state, exit path, real-shape fixtures, and independent review.
+`ENGINEERING_VALIDATION_ONLY` may be seeded with known activity but never supports edge claims. `RESEARCH_SAMPLING` is selected deterministically and outcome-independently before inspection and only becomes eligible after evidence gates. Neither class may be relabelled after results.
 
-## 6. MarketIdentity is shadow-first, not broadly enforced yet
+### D7 — Run and methodology values are preregistered parameters
 
-**Decision:** evaluate the complete canonical identity, decimals, freshness, and bounded mark/exit contract fail-closed in shadow mode. Record `WOULD_ACCEPT`/`WOULD_REJECT`. Enforce only the current exact `gx:<mint>` hard gate until broader enforcement receives live shadow evidence and explicit approval.
+Slot/range/epoch, byte/request/disk/runtime caps and later windows/folds/holdouts are approved per plan. They are not universal architecture constants. `[422506000, 422506128)` remains provisional.
 
-**Rationale:** this preserves evidence gathering without falsely claiming that every incomplete identity is already blocked from the legacy entry flow.
+### D8 — Transaction-atomic causal availability
 
-## 7. WAL/ledger is the state authority
+All instructions, CPIs, events, logs and metadata in a transaction become visible as one atomic package. Gold records `effective_at`, `observed_at`, `actionable_at`, `decision_at` and `execution_opportunity_at`. A strategy cannot react to an event and fill against the same already-executed transaction; event price is not automatically executable.
 
-**Decision:** append-only crash-safe journal is the source of truth; quarantine is an administrative WAL event.
+### D9 — Versioned Pump protocol registry
 
-**Rationale:** deterministic restart/replay and no sidecar drift or fictitious exits.
+V2 pins official source/IDL commits/hashes, explicit program/activation evidence, discriminator/layout variants, quote mint, decimals, raw units and normalized schema. Vixen/Codama or an official parser may be an independent reference path. Current hand-written decoders remain bounded evidence only; ambiguity/disagreement quarantines.
 
-## 8. GitHub `main` is the integration branch
+### D10 — Immutable research truth
 
-**Decision:** all new work branches from current `origin/main`, uses a pull request, and never edits `main` directly.
+Raw evidence plus Arrow/Parquet and manifests are canonical. DuckDB and Polars are the first local query path. ClickHouse can later be a rebuildable projection, not the only truth or canonical execution state.
 
-**Rationale:** immutable tags preserve functional baselines while multi-agent repository work advances.
+### D11 — Language responsibilities
 
-## 9. Functional baseline and repository tip are separate
+Rust owns acquisition/protocol/canonical replay and later paper state. Python owns research/features/evaluation. React/TypeScript owns visualization. Business logic is not duplicated into the browser.
 
-**Decision:** `3e95a3c` plus `offline-pump-baseline-20260815` is the runtime recovery baseline; later docs/CI commits may advance repository HEAD without changing deployed runtime code.
+### D12 — Research Observatory before workstation
 
-**Rationale:** avoids provenance confusion for Hermes, Cursor, CI, and deployment.
+The first product view exposes authentic acquisition quality and token lifecycle. Static HTML/JSON precedes the interactive Observatory; Cohort Explorer precedes Strategy/Experiment views. The full Professional Trading Workstation is a separate later epic.
 
-## 10. Runtime and deployment scratch data is not source code
+### D13 — Walking skeleton and result cadence
 
-**Decision:** root `data/`, `.backtest-cache/`, `data-bot*/`, `data-stream*/`, runtime ledgers/locks, generated reports, and obsolete ignored deployment helpers are removed from the current tree and remain ignored.
+Implement one source/plan/range/variant/Bronze/Silver/lifecycle/visible result. Generalize only after a second proven use case. After at most three or four engineering PRs without a visible or research-measurable outcome, the next PR must produce one.
 
-**Rationale:** prevent stale state or destructive legacy tooling from confusing agents. Reusable deterministic samples belong under `tests/fixtures/`. Published history is preserved.
+### D14 — WSL-first development; generic VPS later
 
-## 11. GitHub CI is validation-only
+Development/testing/research run on Windows 11 → WSL2 Ubuntu with repository and datasets on WSL ext4. No automatic sudo/toolchain mutation. TrueNAS and Hermes AI are retired. A generic Linux VPS waits for strategy, prospective paper/shadow and runtime stability evidence.
 
-**Decision:** GitHub-hosted CI runs repository policy, negative policy tests, zero-cost/Pump tests, the full suite, TypeScript, and build. The automatic `GITHUB_TOKEN` is limited to `contents: read`, checkout credentials are not persisted, and no repository or production secrets are consumed.
+### D15 — Git history is the archive
 
-**Rationale:** independent verification without exposing TrueNAS or triggering paid/live infrastructure.
+There is no permanent legacy directory. Before mechanical cleanup, identify the last pre-cleanup `main` commit and request approval for an annotated tag such as `v1-paper-platform-final`. Migrate unique invariants/evidence before deletion; do not create or push the tag without explicit approval.
 
-## 12. ClickHouse is historical, not latency-critical state
+### D16 — Non-destructive Project #4 rebase
 
-**Decision:** ClickHouse stores historical/research data and is accessed through a bounded read-only MCP user.
+Project #4 remains central. Preserve original issue acceptance criteria and states, add separate V2 dispositions/phases, create successor issues first and do not bulk-close. The reviewed repository plan is [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md).
 
-**Rationale:** isolate research workload from scanner state and prevent database failures from controlling paper positions.
+### D17 — Restricted documentation MCPs
 
-## 13. v1 and v2 data contracts are different
+Only existing read-only `triton-docs`, `solana-mcp` and `old-faithful-docs` may remain without a new decision. MCP content is navigation rather than data evidence; no secrets/private source/wallet use, no remote instruction execution, and claims trace to official URL/commit/hash/date.
 
-**Decision:** preserve v1 as `TRANSACTION_NET_SWAP`; design v2 as Bronze/Silver/Gold event-level architecture.
+## Preserved invariants from V1
 
-**Rationale:** v1 is useful for net-flow research but cannot answer multi-hop, inner-CPI, pool-route, or exact execution questions.
+These survive even where implementation is replaced:
 
-## 14. Pump instruction provenance is tiered
+- exact integer quantities and explicit decimals/quote mint;
+- fail-closed provenance, coverage and quarantine;
+- append-only intent/evidence and deterministic restart/replay;
+- idempotent retries and conflicting-byte detection;
+- bounded resources and exactly-one-writer durability;
+- synthetic/fixture/real/unavailable evidence separation;
+- no signing, submission or real-funds capability by implication.
 
-**Decision:** classify official IDL variants separately from proven and experimental observed dispatch bytes.
+## Superseded or retired directions
 
-**Rationale:** live binary behavior is not fully represented by the pinned public IDL; experimental patterns require full structural and PDA validation.
+| Earlier direction | V2 status |
+|---|---|
+| repair the old paper runtime before data | **SUPERSEDED** by data-first order |
+| Pump fixture decoder as broad supported truth | **SUPERSEDED** by versioned official registry |
+| ClickHouse-first canonical research platform | **SUPERSEDED** by immutable Parquet/Arrow plus local DuckDB/Polars |
+| combined Research Cockpit and Professional Workstation delivery | **SUPERSEDED** by Observatory-first split |
+| TrueNAS/Hermes/Phase 8C/8D/GHCR deployment target | **RETIRED**; historical evidence pending controlled cleanup |
+| CoinGecko/CoinDesk or other provider context in active V2 | **RETIRED** from active V2 network boundary; legacy code remains frozen until cleanup |
+| Nautilus or any generic engine assumed as the target | **SUPERSEDED** by a later explicit adopt/reject boundary and new Rust paper requirements |
 
-## 15. Offline strategy validation precedes protocol expansion
-
-**Decision:** after repository alignment and CI, build a Pump-only historical research harness and test out-of-sample edge before adding another protocol.
-
-**Rationale:** technical completeness does not prove profitability; complexity and live costs must be justified by evidence.
-
-## 16. Pump historical research fails closed on source capability
-
-**Decision:** `TRANSACTION_NET_SWAP_V1` is not accepted as Pump OOS/parity evidence. The file-only harness can accept only a registry-approved `PUMP_SNAPSHOT_V2` parser/query tuple with canonical Pump PDA identity, complete event/scan-cycle ordering, causal feature windows, historical SOL/USD, explicit live-gate snapshots, purged chronological splits, and a hold-horizon embargo. The registry remains empty until the separate v2 exporter is reviewed; self-asserted manifests stay `BLOCKED`. Pool-depth replay is rejected until production 6/9-decimal conversion is corrected and reviewed.
-
-**Rationale:** a large row count cannot compensate for missing protocol semantics, wrong price units, or train/test leakage. Unsuitable data must produce `BLOCKED`, not a plausible-looking expectancy number.
-
-## 17. Preserve v1; build v2 through separately reviewed Bronze, Silver, and Gold gates
-
-**Decision:** keep `TRANSACTION_NET_SWAP_V1` as immutable forensic evidence with status `SUPERSEDED_NOT_PUMP_OOS_EVIDENCE`. Phase 3 first establishes a transport-free Bronze transaction/instruction capture boundary. A separate Old Faithful adapter, Silver event/state decoder, Gold causal feature layer, registry approval, and pilot/full-backfill approvals remain independent gates.
-
-**Rationale:** derived v1 rows cannot recover information discarded by the old parser. Preserving evidence while rebuilding from immutable source avoids destructive cleanup, prevents Bronze completeness from being mistaken for research readiness, and keeps stateful features fail-closed.
+Superseded/retired does not mean the old implementation was delivered or its evidence is false. It means the active product no longer executes that direction.

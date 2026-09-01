@@ -1,5 +1,7 @@
 # Phase 3 — Pump v2 Bronze capture pilot
 
+> **Document status: HISTORICAL.** Legacy fixture/evidence work only; not an active V2 architecture, runbook or authorization. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **IMPLEMENTATION PILOT ONLY — NOT RESEARCH READY.**

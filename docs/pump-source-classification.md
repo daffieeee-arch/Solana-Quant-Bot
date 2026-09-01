@@ -1,5 +1,7 @@
 # Pump instruction source-classificatie (OFFLINE, 2026-08-15)
 
+> **Document status: HISTORICAL.** Legacy decoder evidence only; do not interpret it as a universal or activation-bounded V2 registry. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 De Pump.fun parser herkent trade-instructies uit TWEE bronnen. Deze worden
 expliciet gescheiden — OBSERVED bytes worden NIET automatisch als officiële
 Pump-instructies behandeld.

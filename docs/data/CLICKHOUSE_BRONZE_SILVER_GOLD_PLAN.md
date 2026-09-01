@@ -1,5 +1,7 @@
 # ClickHouse Bronze / Silver / Gold domain plan
 
+> **Document status: RETIRED.** This ClickHouse-first plan is replaced by immutable Parquet/Arrow plus local DuckDB/Polars. ClickHouse may return only as a later rebuildable projection. See [`../HANDOFF_V2.md`](../HANDOFF_V2.md).
+
 **DESIGN ONLY — No DDL, DML, OPTIMIZE, mutation, service start or backfill is authorized.**
 
 Phase 8C separates future evidence and operations from the existing forensic dataset. The machine-readable contract is [`../../observability/clickhouse/domain-plan.json`](../../observability/clickhouse/domain-plan.json).

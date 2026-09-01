@@ -1,5 +1,7 @@
 # Phase 4 — Old Faithful / Jetstreamer adapter boundary
 
+> **Document status: HISTORICAL.** Legacy adapter evidence/invariants only; not the selected V2 acquisition plan or an authorization. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **MERGED CONTRACT BOUNDARY — `researchReady: false`.**

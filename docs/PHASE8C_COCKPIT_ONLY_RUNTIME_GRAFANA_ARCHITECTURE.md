@@ -1,5 +1,7 @@
 # Phase 8C — Cockpit-only Runtime, Grafana-as-Code Architecture & Deployment Readiness
 
+> **Document status: RETIRED.** The TrueNAS/Grafana deployment target is cancelled. Do not execute its run/deployment instructions; retain only until controlled PR 2A cleanup. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **IMPLEMENTED OFFLINE CANDIDATE — NOT DEPLOYED — OPERATIONS HOLD.**

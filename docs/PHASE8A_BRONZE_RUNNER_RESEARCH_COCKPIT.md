@@ -1,5 +1,7 @@
 # Phase 8A — Bronze-only Runner Core & Research Cockpit
 
+> **Document status: HISTORICAL.** Fixture-only implementation evidence. It is not the authentic V2 Research Observatory or strategy evidence. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **MERGED OFFLINE FIXTURE IMPLEMENTATION — NOT A PILOT — `HOLD_UNPROVEN_ACTIVATION`.**

@@ -1,5 +1,7 @@
 # Old Faithful Quant Data Specification
 
+> **Document status: SUPERSEDED.** Replaced by the V2 boundaries in [`../HANDOFF_V2.md`](../HANDOFF_V2.md) and [`../ARCHITECTURE.md`](../ARCHITECTURE.md). Historical ranges/caps below are not V2 constants or approvals.
+
 Status: **CANDIDATE_UNAPPROVED**. This specification is a design contract only.
 
 - `approved: false`

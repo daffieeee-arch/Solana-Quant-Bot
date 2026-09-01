@@ -1,161 +1,98 @@
-# GitHub Projects Roadmap Operations
+# GitHub Project #4 operations
 
-## Purpose
+> **Document status: ACTIVE.** This is the operations boundary for [Solana Quant Platform — Roadmap & Cockpit, Project #4](https://github.com/users/daffieeee-arch/projects/4). The V2 data/issue migration is specified separately in [`../PROJECT_V2_REBASE.md`](../PROJECT_V2_REBASE.md).
 
-The repository contains an idempotent Projects-v2 reconciler. It creates or finds the user-owned project **Solana Quant Platform — Roadmap & Cockpit**, links it to this repository, creates/reconciles the configured fields and views, adds repository issues and PRs, and synchronizes field values from issue/PR state and `roadmap-meta`.
+## Current state during PR 1
 
-The implementation consists of:
+Project #4 exists and is the central delivery roadmap. It is reconciled by:
 
-- `.github/workflows/roadmap-sync.yml`
-- `scripts/github-projects/sync.mjs`
-- `roadmap/project-config.json`
-- `tests/github-projects-sync.test.ts`
+- `.github/workflows/roadmap-sync.yml`;
+- `scripts/github-projects/sync.mjs`;
+- `roadmap/project-config.json`;
+- `tests/github-projects-sync.test.ts`.
 
-## One-time activation
-
-The repository automation cannot create its own GitHub secret. Complete these steps once after the PR is merged:
-
-1. Create a **personal access token (classic)** owned by `daffieeee-arch`.
-2. Grant scopes `project` and `repo`. The project is user-owned and the tracked repository is private.
-3. In repository settings, create the Actions secret `PROJECT_TOKEN` and store the token there.
-4. Open **Actions → Roadmap sync → Run workflow** on `main`.
-5. Read the final `roadmap_sync_complete` line. It contains the user-project number and URL.
-
-Do not store the token in `.env`, YAML, issue text, logs, an AI prompt or the repository.
+The current configuration and issue `roadmap-meta` still express the historical phase/order. PR 1 deliberately does **not** change Project fields/views, issue bodies or synchronization code. After PR 1 merges, execute the reviewed V2 migration before PR 2A.
 
 ## Security boundary
 
-`GITHUB_TOKEN` is intentionally not used for Projects because repository-scoped workflow tokens do not have access to user Projects.
+The user-owned Project requires a protected `PROJECT_TOKEN`; GitHub's repository-scoped `GITHUB_TOKEN` is insufficient. Never place the token in Git, `.env`, shell history, YAML, issue/PR text, logs, prompts or MCP queries.
 
-The workflow observes PR lifecycle via `pull_request_target`, but it always checks out the trusted repository default branch. It must never be changed to:
+The workflow receives `pull_request_target` events but must always execute trusted default-branch code. Never:
 
-- check out a PR head SHA;
-- run scripts from a PR branch;
-- download and execute PR-produced artifacts;
-- interpolate untrusted PR body/title text into a shell command.
+- check out a PR head;
+- run scripts or artifacts from a PR branch;
+- interpolate untrusted title/body into a shell command;
+- print request headers/token/API dumps.
 
-Those changes would expose the high-privilege `PROJECT_TOKEN` to unreviewed code. Any future workflow modification must preserve this boundary.
+Rotate/revoke the token if exposed. Workflow changes require independent security review.
 
-Rotate or revoke the token if it is ever exposed. The script never prints request headers, token contents or complete API responses.
+## Current reconciliation semantics
 
-## Synchronization cadence
+The synchronizer is full-state/idempotent and runs on relevant issue/PR events, pushes to `main`, manual dispatch and scheduled repair. It finds/links the user Project, ensures configured fields/views, adds repository issues/PRs and maps hidden `roadmap-meta` plus GitHub state into Project values.
 
-A full reconciliation runs on:
+Current metadata keys are:
 
-- issue create/edit/reopen/close and planning metadata changes;
-- PR open/edit/synchronize/reopen/ready/draft/close;
-- pushes to `main`;
-- manual dispatch;
-- a daily repair run at 04:17 UTC.
-
-The scheduled run repairs missed events and Project drift. The synchronizer is deliberately full-state and idempotent rather than event-payload dependent.
-
-## Source-of-truth metadata
-
-A roadmap issue can include one hidden metadata block:
-
-```html
-<!-- roadmap-meta
-{"schemaVersion":1,"type":"Feature","area":"Frontend","priority":"P1","phase":"3 Core Workspaces","risk":"Medium","evidence":"Unproven","workflow":"Ready","effort":8,"startDate":"2026-09-01","targetDate":"2026-09-30"}
--->
-```
-
-Supported keys:
-
-| Key | Project field | Notes |
-|---|---|---|
-| `workflow` | Status | Open issues only; GitHub state overrides closed/PR status |
-| `priority` | Priority | P0–P3 configured options |
-| `area` | Area | Must match a configured option |
-| `type` | Work Type | PRs are always `Pull Request`; `Type` itself is reserved by GitHub Projects |
-| `phase` | Phase | Program phase 0–7 |
-| `risk` | Risk | Critical, High, Medium or Low |
-| `evidence` | Evidence | Unproven through Live Proven |
-| `effort` | Effort | Integer 0–100 |
-| `startDate` | Start date | `YYYY-MM-DD` |
-| `targetDate` | Target date | `YYYY-MM-DD` |
-
-Unknown keys, duplicate metadata blocks, invalid dates and values not present in Project configuration fail the reconciliation. This makes metadata typos visible instead of silently creating inconsistent fields.
-
-## PR inheritance
-
-A PR inherits Area, Priority, Phase, Risk and Evidence from the first linked issue when its body/title contains a delivery line such as:
-
-```markdown
-Closes #35
-Roadmap: #58
-```
-
-Direct PR metadata overrides inherited values. PR Work Type and Status are always derived:
-
-| GitHub PR state | Project Status |
+| Key | Field |
 |---|---|
-| Draft/open | In Progress |
-| Ready/open | In Review |
-| Merged | Done |
-| Closed unmerged | Cancelled |
+| `workflow` | Status |
+| `priority` | Priority |
+| `area` | Area |
+| `type` | Work Type |
+| `phase` | historical Phase |
+| `risk` | Risk |
+| `evidence` | Evidence |
+| `effort` | Effort |
+| `startDate` | Start date |
+| `targetDate` | Target date |
 
-Issue state mapping:
+Unknown keys and invalid options fail closed. GitHub issue/PR state still determines Done/Cancelled/In Review semantics. Manual edits to synchronized fields may be overwritten.
 
-| GitHub issue state | Project Status |
-|---|---|
-| Open | `workflow` metadata, default Backlog |
-| Closed/completed | Done |
-| Closed/not planned | Cancelled |
+The current synchronizer does not recognize `v2Phase` or `v2Disposition`. Do not put those keys into issue metadata until a tested default-branch extension accepts them.
 
-The sync is intentionally repository-to-Project. Manual changes to synchronized fields may be overwritten. Change the issue metadata or PR state instead.
+## V2 migration boundary
 
-## Fields and views
+The post-merge migration must:
 
-Configuration is declared in `roadmap/project-config.json`. The baseline creates:
+1. export and hash current issue bodies plus Project items/fields/views read-only;
+2. preserve existing `Phase`/metadata and original acceptance criteria;
+3. create V2 successor epics/issues first;
+4. add separate `V2 Phase` and `V2 Disposition` fields;
+5. extend/test sync/config before repository-driven V2 metadata, or obtain explicit approval for a temporary manual ledger;
+6. append non-destructive cutover notes in bounded batches;
+7. create/verify Now, Next, Data, Observatory, Research, Later and Retired views;
+8. reconcile and audit counts/options/states/links;
+9. only then retire obsolete views.
 
-- Status, Priority, Area, Work Type, Phase, Risk and Evidence single-select fields;
-- Effort, Start date and Target date;
-- Executive Roadmap, Delivery Board, P0 Blockers, Frontend Cockpit, Data & Research, Live Shadow & Execution, Recently Updated and Done & Cancelled views.
+`V2 Disposition` values are `ACTIVE NOW`, `NEXT`, `LATER`, `SPLIT`, `SUPERSEDED` and `RETIRED`. Disposition is not completion. #56 remains Done; #62 and #63 remain open. Do not bulk-close.
 
-The script preserves matching single-select option IDs, including mapping a new project's default `Todo` Status to `Backlog`, so existing item values are not needlessly destroyed.
+The exact #27–#63 ledger, successor catalog, V2 phases, filters, acceptance checks and rollback are in [`../PROJECT_V2_REBASE.md`](../PROJECT_V2_REBASE.md).
 
-## Local validation
+## Offline validation
 
-No token or network is used for configuration validation:
+Configuration validation uses no token/network:
 
 ```bash
 node scripts/github-projects/sync.mjs --dry-run
 npm test -- --run tests/github-projects-sync.test.ts
 ```
 
-A live local run is possible only with a protected shell environment:
+Do not run a live reconciliation during PR 1. After merge, live mutation requires the reviewed export/preflight and protected Actions secret path; do not place a token on a command line.
 
-```bash
-PROJECT_TOKEN='<protected value>' \
-GITHUB_REPOSITORY='daffieeee-arch/solana-paper-scanner' \
-node scripts/github-projects/sync.mjs
-```
+## Migration stop conditions
 
-Do not place the token in shell history. Prefer the Actions secret path.
+Stop without continuing batches on:
 
-## Troubleshooting
+- issue/item count mismatch;
+- missing/duplicate successor;
+- unexpected issue state or close change;
+- original acceptance-criteria loss;
+- single-select option-ID/value drift;
+- unsupported metadata key;
+- view filter warning or unintended result set;
+- workflow/security-boundary drift.
 
-### `PROJECT_TOKEN is required`
+Use the hashed preflight export and original issue bodies for explicit rollback. Never “repair” mismatches by overwriting history.
 
-The Actions secret is missing or not available to the workflow. Verify the exact secret name and rerun manually.
+## Project truth boundary
 
-### `PROJECT_TOKEN must belong to daffieeee-arch`
-
-The token belongs to another account. A user-owned Project must be managed by its owner token in this configuration.
-
-### `metadata value ... is not a configured ... option`
-
-The issue metadata and `roadmap/project-config.json` disagree. Correct the typo or review and add the new controlled option.
-
-### View update warning
-
-Item synchronization continues when GitHub changes or rejects a view filter grammar. The named view remains present. Review the warning and adjust only the declarative filter string.
-
-### Duplicate project title
-
-The synchronizer refuses to guess between multiple exact-title projects. Rename or archive the unintended duplicate and rerun.
-
-## Project bootstrap limitation
-
-Before the one-time secret and workflow dispatch, the repository issues and epics exist but the Projects-v2 board itself is not yet instantiated. This is an intentional credential boundary, not background work.
+Project #4 is the delivery cockpit, not evidence by itself. Tests, code, manifests, source hashes, issue/PR history and accepted review determine whether a field such as Research Ready or Paper Proven is justified. A Project status cannot turn fixture/synthetic data into authentic research evidence.

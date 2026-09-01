@@ -1,5 +1,7 @@
 # GHCR private image release and later TrueNAS pull
 
+> **Document status: RETIRED.** The TrueNAS/GHCR deployment target is cancelled. Do not execute this runbook; retain only until controlled PR 2A cleanup. See [`../HANDOFF_V2.md`](../HANDOFF_V2.md).
+
 ## Status
 
 **TWO IMMUTABLE PACKAGES EXIST — `BOTH_PUSHED_RETEST_REQUIRED_HOLD` — NO CREDENTIAL, DATASET OR APP.**

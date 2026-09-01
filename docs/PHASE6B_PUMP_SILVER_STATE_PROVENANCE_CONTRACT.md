@@ -1,5 +1,7 @@
 # Phase 6B — Pump Silver State & Provenance Contract
 
+> **Document status: HISTORICAL.** Legacy fixture/provenance evidence only; not universal Pump state truth or V2 research evidence. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 Status: squash-merged through PR #12 as `71ab573c6c23080881022a8ee28ed2e24f94bbff`; post-merge main CI run `32301299856` succeeded. The contract remains fully offline, synthetic and fixture-only.
 
 This phase does **not** make the historical pipeline research-ready. Every accepted and quarantined output has:

@@ -1,5 +1,7 @@
 # Grafana legacy archive and Research Platform migration
 
+> **Document status: RETIRED.** This TrueNAS/Grafana migration target is cancelled. Do not execute this runbook; retain only until controlled PR 2A cleanup. See [`../HANDOFF_V2.md`](../HANDOFF_V2.md).
+
 ## Status
 
 **RUNBOOK ONLY — no Grafana, ClickHouse, datasource, plugin, dashboard or service mutation was performed.**

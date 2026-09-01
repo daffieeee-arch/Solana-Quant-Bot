@@ -1,5 +1,7 @@
 # HANDOFF.md — Read this first
 
+> **Document status: SUPERSEDED.** Replaced by [`HANDOFF_V2.md`](HANDOFF_V2.md). Retained for historical traceability; it is not an active instruction set.
+
 This file lets a fresh Hermes, Cursor, Codex, or other coding agent reconstruct the project without the long Telegram history.
 
 ## What are we building?
