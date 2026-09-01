@@ -1,5 +1,7 @@
 # Protocol coverage matrix — MarketIdentity (OFFLINE, 2026-08-15)
 
+> **Document status: HISTORICAL.** Legacy fixture coverage only; not active V2 protocol truth. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 Status-classificatie: SUPPORTED_AND_TESTED / PARSER_EXISTS_NOT_WIRED /
 IDENTITY_INCOMPLETE / FIXTURE_MISSING / NOT_YET_SUPPORTED
 

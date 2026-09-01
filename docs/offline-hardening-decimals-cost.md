@@ -1,5 +1,7 @@
 # Decimals-source matrix + cost-safety matrix (OFFLINE hardening, 2026-08-15)
 
+> **Document status: HISTORICAL.** Legacy offline evidence only; current provider/cost rules are in [`triton-cost-safety.md`](triton-cost-safety.md).
+
 ## 1. Decimals source matrix
 
 Classificatie: EVENT_DECODED / LOCAL_CACHE / STREAM_STATE / RPC_RESOLVED /

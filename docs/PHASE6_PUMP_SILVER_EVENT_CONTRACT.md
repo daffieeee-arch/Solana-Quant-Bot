@@ -1,5 +1,7 @@
 # Phase 6A — Pump Silver event contract
 
+> **Document status: HISTORICAL.** Legacy fixture/golden-vector evidence only; not universal Pump protocol truth or V2 research evidence. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **MERGED OFFLINE, FIXTURE-ONLY CONTRACT — `researchReady: false`.**

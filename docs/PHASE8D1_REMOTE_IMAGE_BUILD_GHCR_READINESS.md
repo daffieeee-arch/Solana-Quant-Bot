@@ -1,5 +1,7 @@
 # Phase 8D1 — Remote Reproducible Image Build & GHCR Release Readiness
 
+> **Document status: RETIRED.** GHCR/TrueNAS deployment work is no longer an active target. Do not dispatch or execute it; retain only until controlled PR 2A cleanup. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **REMOTE VERIFY PROVEN — TWO IMMUTABLE IMAGES PUSHED — `BOTH_PUSHED_RETEST_REQUIRED_HOLD` — NO DEPLOYMENT.**

@@ -1,5 +1,7 @@
 # Phase 7 — Old Faithful Pilot A Readiness Package
 
+> **Document status: HISTORICAL.** Legacy readiness evidence only. All ranges, caps and host-shaping values below are non-authoritative for V2 and authorize no call. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Status
 
 **CANDIDATE_UNAPPROVED — HOLD_UNPROVEN_ACTIVATION**

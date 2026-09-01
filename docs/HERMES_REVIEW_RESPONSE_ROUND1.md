@@ -1,5 +1,7 @@
 # HERMES_REVIEW_RESPONSE_ROUND1.md
 
+> **Document status: HISTORICAL.** Legacy review evidence only. Hermes is not part of the active V2 architecture; this is not a runbook or authorization. See [`HANDOFF_V2.md`](HANDOFF_V2.md).
+
 ## Context
 
 Hermes and fresh-context reviewer returned `REQUEST_CHANGES` on PR #1. This document maps every blocking and documentation finding to the follow-up change. Review the latest `chore/repo-alignment-ci` head, not the original `7d1f82f` head.

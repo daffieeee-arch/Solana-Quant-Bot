@@ -1,135 +1,246 @@
-# ARCHITECTURE.md — End-to-end architecture
+# ARCHITECTURE.md — Solana Quant Platform V2
 
-Status markers: ✅ proven offline/tested · 🔶 implemented or partially available but HOLD · ⛔ future/design.
+> **Document status: ACTIVE target and transition architecture.** “Target” describes a reviewed boundary, not implemented proof. Current evidence status is stated separately.
 
-## Live path when explicitly enabled
-
-```text
-Triton Dragon's Mouth / geyser
-  -> Vixen/raw program updates
-  -> protocol-specific decode and normalization
-  -> MarketSnapshot
-  -> MarketIdentity shadow evaluator
-  -> legacy scanner gates plus currently enforced gx:<mint> hard block
-  -> paper portfolio / risk / exits
-  -> append-only WAL ledger
-  -> administrative quarantine/accounting events
-```
-
-Program subscriptions/parsers for PumpSwap, Raydium, Meteora, Orca, Moonshot, Jupiter, and others do **not** by themselves establish full protocol support. Canonical pool/market identity, decimals, price state, exit path, fixtures, and independent review are still required.
-
-## MarketIdentity status
-
-The complete identity contract checks canonical identity, decimals, freshness, and bounded mark/exit sources. It is currently evaluated fail-closed in **shadow mode** and emits `WOULD_ACCEPT` or `WOULD_REJECT`.
-
-Current enforcement is narrower:
-
-- exact `gx:<mint>` identity is hard-blocked;
-- broader shadow rejection does not generally stop the legacy entry flow;
-- broader enforcement remains off pending live shadow evidence and explicit approval.
-
-## Zero-cost modes
-
-### `OFFLINE_ZERO_COST` ✅
-
-When `TRITON_LIVE_ENABLED` is not exactly `true`:
-
-- no Vixen/Geyser factory is constructed;
-- no Triton provider, Titan provider, reserve reader, RPC, or DAS client is constructed;
-- no paid Triton subscription/reconnect loop starts;
-- status reports `OFFLINE_ZERO_COST` and `DISABLED_OFFLINE_ZERO_COST`.
-
-The ordinary runtime may still use free CoinGecko/CoinDesk context. This mode is therefore not necessarily air-gapped.
-
-### `NETWORK_ISOLATED_REPLAY` ✅
-
-Deterministic tests use fixtures/mocks and block all external fetches. This is the appropriate mode for reproducible strategy research.
-
-## Pump baseline ✅
-
-- structural instruction discriminators;
-- narrow local transport-free PDA derivation, byte-checked against official `@solana/web3.js` in tests;
-- exact mint/curve cross-match;
-- official IDL variants plus tiered observed dispatchers;
-- offline identity/shadow evaluation;
-- deterministic TP/SL, fee/slippage, accounting, WAL replay, and quarantine tests.
-
-Deep real-world loaded-address resolution for versioned transactions remains a HOLD item.
-
-## State and accounting ✅
-
-- WAL/ledger is authoritative;
-- entries/exits are append-only paper events;
-- quarantine is an administrative ledger event, not a fictitious trade exit;
-- replay must reconstruct the same portfolio and capital state;
-- automatic strategy promotion is disabled until deterministic quote-path research exists.
-
-## Historical data
+## System boundary
 
 ```text
-Old Faithful public archive (paused ingestion)
-  -> Jetstreamer / v1 parser
-  -> local ClickHouse TRANSACTION_NET_SWAP dataset
-  -> bounded read-only suitability audit / Grafana
-  -> v1 BLOCKED for Pump OOS/parity
-
-Future reviewed PUMP_SNAPSHOT_V2 export
-  -> manifest + content hashes + canonical Pump identity/snapshots
-  -> file-only fail-closed harness
-  -> mint-disjoint chronological train / validation / test
-  -> production gate, score, sizing, fee/slippage, and exit lifecycle
+official pinned Pump source/specification
+                  |
+direct official Triton Old Faithful OF1 acquisition (leased, bounded)
+                  |
+        immutable source bytes + receipts         Raw identity: Rust-owned
+                  |
+       lossless Solana Bronze facts               Rust-owned/authorized
+                  |
+ versioned Pump registry/decode -> canonical Silver facts Rust-owned/authorized
+                  |
+      Parquet/Arrow + immutable manifests          physical writer: PR 5 decision
+             /                     \
+ Python reads approved Silver   React/TypeScript
+ PIT Gold + evaluation          Research Observatory
+             \                     /
+        evidence / falsification
+                  |
+       later Triton-only prospective shadow
+                  |
+          later new Rust paper engine
+                  |
+ later Professional Workstation / generic Linux VPS gates
 ```
 
-v1 stores at most one dominant/net swap per transaction. It is not an event-level tape and is explicitly rejected as Pump OOS/parity evidence. The harness is implemented, but credible results remain HOLD until an independently reviewed v2 export provides native-SOL deltas, inner instructions, loaded addresses, canonical launch/curve identity, exact units, historical SOL/USD, and live-gate snapshots.
+V2 does not assume a profitable strategy. It must make “no edge”, “insufficient sample” and unavailable evidence visible and reproducible.
 
-The offline Phase-7 readiness boundary is documented in [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) and merged through PR #14 as `a5f2edf1cba51cc350e4809b66a8b018debbf6f2`; post-merge CI run `32350736436` succeeded. It validates a machine-readable epoch-978 source candidate and event/transport plan but has no production runtime caller. Activation remains `HOLD_UNPROVEN_ACTIVATION`; `approved: false`, `researchReady: false`, and `pilotEligible: false` are invariant. All ten registry entries remain `STRUCTURALLY_SUPPORTED_UNPROVEN_ACTIVATION`, so accepted Silver for real data is unavailable.
+## Responsibility split
 
-Phase 7A completed the bounded read-only activation investigation: ProgramData boundaries and official/on-chain IDL structures are corroborated, but 0/10 entries meet the strict promotion norm. Phase 7B was merged through PR #16 as `784192a675e31d78da82852e91ceb254eccae982`; post-merge CI run `32397224604` proved the separate offline citationgate active and green on `main`. It changes no runtime or registry semantics. Bandwidth preflight and Pilot A remain separately gated and unauthorized.
+| Layer | Owner | Boundary |
+|---|---|---|
+| acquisition/replay | Rust | the only historical network-capable binary; exact host capability, bytes, ordering, coverage, resume and hard budgets |
+| Pump protocol truth | Rust | pinned official source, version registry, codegen/reference decoder, exact integers and normalized events |
+| canonical Raw/Bronze/Silver | Rust plus language-neutral schemas | logical/canonical semantics, exact ordering/integers, evidence, coverage, quarantine and dataset-manifest identity; Rust produces or authorizes canonical Bronze/Silver records |
+| physical Bronze/Silver Parquet | explicit PR 5 decision | does not transfer semantic ownership. A Python implementation is allowed only as a generated, lossless materializer with schema and logical-hash parity |
+| Gold and research artifacts | Python | read approved Silver; build features, labels, cohorts/splits, statistics, backtests and experiment artifacts with Polars/DuckDB. No Pump wire decode or alternative Silver logic |
+| product UI | React/TypeScript | visualization and linked interaction; no protocol/trading business logic or wallet capability |
+| analytical projection | optional later ClickHouse | fully rebuildable; never the only research truth or execution state |
 
-Phase 8A implements that milestone only for `SYNTHETIC_FIXTURE_ONLY`: a separate fail-closed eligibility contract, a Rust file adapter that calls the existing Phase-5 reducer, a bounded optional dashboard provider, a lazy Research Cockpit and a pure metrics/Grafana contract. The reducer remains authoritative for WAL/checkpoints/coverage/deduplication. This is an offline product surface, not transport eligibility, accepted Silver, research readiness or pilot authorization; see [`PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`](PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md).
+Development and local visualization run on Windows 11 → WSL2 Ubuntu with repository and dataset roots on WSL ext4. The only later deployment target is a generic Linux VPS after research, prospective shadow/paper and stability gates.
 
-Phase 8C adds a separately built **cockpit-only** entrypoint and frontend whose compiled graph cannot reach scanner, ledger, portfolio, strategy, learning, provider or trading modules. It also defines separate unapplied cockpit/runner image contracts, a dedicated POSIX fixture-dataset plan, `LEGACY_FORENSIC_V1` archives, the new Solana Research Platform dashboard suite, and future `solana_bronze`/`silver`/`gold`/`ops`/`forensic_v1` domains. It performs no deployment or infrastructure mutation; see [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).
+## Network-provider capability model
 
-Phase 8D1 preserves the no-Docker-socket decision and uses GitHub-hosted `linux/amd64` Buildx runners. Run `32641496527` published both immutable source-SHA images but retained `BOTH_PUSHED_RETEST_REQUIRED_HOLD`. Phase 8D1-R adds a separately reviewed read-only recovery workflow with `contents/actions/packages: read`, exact old-artifact verification, package/privacy/attestation checks and full existing-digest retest; it performs no build, push, package mutation or deployment. See [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md) and [`PHASE8D1_EXISTING_DIGEST_RECOVERY.md`](PHASE8D1_EXISTING_DIGEST_RECOVERY.md).
+Triton One is the sole active V2 Solana network-provider boundary.
 
-## TrueNAS state
-
-- Configured app image: `solana-bot:contra-audit16-offline-pump-3e95a3c`.
-- Configured live flag: false.
-- Last read-only observation on 2026-08-16: app **STOPPED**, `active_containers=0`.
-- ClickHouse runs as a separate host-network process and lacks structural autostart.
-- Backfill supervisors and repair cron are paused.
-
-## CI architecture
-
-GitHub Actions is validation-only:
-
-- GitHub-hosted Ubuntu runner;
-- automatic `GITHUB_TOKEN` limited to `contents: read`;
-- checkout credentials not persisted;
-- no repository or production secrets consumed;
-- `MODE=paper`, `TRITON_LIVE_ENABLED=false`, `ENTRY_SHADOW_MODE=true`;
-- repository policy, negative policy tests, Pump/zero-cost tests, full suite, typecheck, and build;
-- no deployment, TrueNAS access, Triton activation, backfill action, or ClickHouse mutation.
-
-## Status summary
-
-| Component | Status |
+| Capability | Allowed use |
 |---|---|
-| Zero-cost Triton construction guard | ✅ |
-| Network-isolated replay | ✅ |
-| Pump parser/PDA/offline lifecycle | ✅ |
-| Pump historical harness | ✅ engine; 🔶 data HOLD (`PUMP_SNAPSHOT_V2` absent) |
-| WAL/quarantine/accounting | ✅ |
-| Full MarketIdentity shadow contract | ✅ shadow only |
-| Broader MarketIdentity enforcement | 🔶 HOLD |
-| Live Dragon's Mouth connectivity | 🔶 HOLD, balance $0 |
-| Non-Pump protocol completeness | ⛔ incomplete |
-| ClickHouse/backfill operational hardening | 🔶 HOLD |
-| Phase 6B synthetic state/provenance contract | ✅ merged via PR #12; fixture-only; `approved: false`, `researchReady: false`, `pilotEligible: false` |
-| Pilot A Readiness Package | ✅ package merged via PR #14; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, `approved: false`, `researchReady: false`, `pilotEligible: false`; no preflight or pilot authorized |
-| Phase 7A evidence / Phase 7B citation gate | ✅ merged via PR #16; post-merge run `32397224604` green; 🔶 content remains `HOLD_UNPROVEN_ACTIVATION`, 0/10 proven, no registry/runtime/pilot authorization |
-| Phase 8A Bronze runner / Research Cockpit | 🔶 offline fixture candidate implemented; reducer reused; transport/Silver/research eligibility remain false; no real payload or pilot |
-| Phase 8C cockpit-only / Grafana-as-Code | 🔶 offline candidate implemented; compiled/runtime inertness proven locally; contracts unapplied and not deployed; legacy is `LEGACY_FORENSIC_V1` |
-| Phase 8D1 remote images / GHCR readiness | 🔶 two immutable GHCR versions published; `BOTH_PUSHED_RETEST_REQUIRED_HOLD`; read-only recovery candidate not dispatched; no credential, dataset or deployment |
-| Pilot B state-enriched pipeline | ⛔ NO-GO pending reliable raw account state, causal binding and real activation/layout boundaries |
+| `DOCUMENTATION_ONLY` | official documentation/source navigation; never canonical dataset evidence |
+| `ACQUISITION_LEASED` | one explicitly approved immutable historical run plan and exact host allowlist |
+| `LIVE_RUNTIME_LEASED` | later explicitly approved Triton live endpoints with cost/metering/hard-stop controls |
+| `NETWORK_ISOLATED_REPLAY` | all transformations after acquisition and all deterministic tests; no network |
+
+- `files.old-faithful.net` is an allowed official Triton OF1 acquisition source.
+- The V2 Jetstreamer wrapper denies HTTP/S3/backend overrides by default. Arbitrary base URLs, mirrors, redirects and public-RPC fallbacks are not configuration conveniences.
+- Future Titan quotes use a Triton `rpcpool` Titan endpoint. Direct third-party Titan traffic is prohibited.
+- Helius, QuickNode, Alchemy, public Solana RPC, Birdeye, DexScreener, GeckoTerminal, public Jupiter APIs and other secondary providers do not enter active V2.
+- Local open-source libraries and pinned official protocol sources are allowed.
+
+Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acquisition path. V2 initially uses direct official OF1 access through a pinned Jetstreamer/OF1 path. Any future hosted endpoint requires explicit availability and cost confirmation from Triton.
+
+Official public documentation and the read-only documentation MCP currently appear inconsistent on hosted availability. That contradiction is an open decision, not evidence for either a call or retirement claim.
+
+## Walking-skeleton constraint
+
+The first implementation supports exactly what the first authentic visible path needs:
+
+1. one official source;
+2. one approved acquisition plan;
+3. one small authentic range;
+4. one required Pump variant;
+5. one Bronze path;
+6. one Silver path;
+7. one token lifecycle;
+8. one visible result.
+
+A second proven use case must justify generalization. The architecture permits versioning; it does not require a universal framework in PR 3.
+
+## Pump protocol truth
+
+Current TypeScript live offsets and the exact-115-byte research decoder are frozen bounded evidence, not universal truth.
+
+The V2 registry binds each supported candidate/version to:
+
+- official repository URL, pinned commit, path and content hash;
+- program/deployment identity and activation slot range where proven;
+- instruction, event and account discriminators;
+- explicit layout variants and bounded compatibility rules;
+- quote mint, token/native decimals and raw integer units;
+- generated decoder/tool version and normalized schema;
+- evidence status such as structural candidate, observed-compatible, proven range, disputed or unknown.
+
+IDL/source structure does not prove historical activation. No match, multiple matches or differential disagreement keeps Raw/Bronze and produces closed quarantine; it does not select “latest”. Vixen/Codama or an official pinned parser may provide an independent reference path. There is no third hand-written universal offset decoder and no majority-vote truth.
+
+Event-reported reserves retain evidence class `EVENT_FIELD`; they never become `RAW_ACCOUNT_STATE`.
+
+## Bounded Old Faithful acquisition
+
+The acquisition unit is the complete content-addressed block-DAG closure required to reconstruct the selected inventory slots, plus the exact source/index sidecars and request receipts used. It is not a full epoch and not an arbitrary decoded callback stream.
+
+An immutable run plan records at least:
+
+- slice class and outcome-independent selection rationale where required;
+- source/epoch/half-open slot range and exact allowlisted host/path/index identities;
+- pinned Jetstreamer/OF1 commit and code SHA;
+- request, retry, byte, single-response, disk, memory, runtime and concurrency limits;
+- content/hash/CID verification policy;
+- redirect and backend policy;
+- resume/checkpoint identity and abort statuses;
+- required free space and user approval.
+
+No exact value is a universal architecture constant. `[422506000, 422506128)` remains provisional until its provenance and selection reason are approved. No full-epoch download is permitted for the first slice.
+
+Raw capture retains exact acquired range/content bytes and receipts before decode where the pinned path permits it. A published source-side full-epoch hash is recorded as declared evidence; a partial local retrieval must never claim it reverified the whole epoch.
+
+Resume revalidates plan/source/index/code identity and all completed hashes. It retrieves only missing content; source drift or conflicting bytes fail closed. Raw → Bronze → Silver then runs network-isolated.
+
+## Slice classes
+
+| Class | Selection | Permitted claim |
+|---|---|---|
+| `ENGINEERING_VALIDATION_ONLY` | may deliberately contain known Pump activity | acquisition/decode/data/Observatory mechanics only; never strategy/edge |
+| `RESEARCH_SAMPLING` | deterministic and preregistered before outcome inspection | research candidate only after provenance, coverage, decoder, PIT and quarantine gates |
+
+The two classes cannot be relabelled after observing results.
+
+## Raw, Bronze, Silver and Gold
+
+### Raw
+
+Rust owns the logical Raw contract and acquisition identity: immutable acquired bytes/content blocks, sidecars/indexes, request receipts, acquisition WAL/checkpoints, coverage and the approved/aborted run plan. Raw may use native CAR/range bundles; canonical JSON manifests bind identities and hashes.
+
+### Bronze
+
+Rust owns and produces or authorizes lossless Solana block/transaction facts: blocks, transactions including failures, account keys, top-level/inner instructions, logs, balances, rewards, return data, coverage and transport quarantine. All raw quantities remain exact integers/binary; `uiAmount` and floating-point price are not truth.
+
+### Silver
+
+Rust owns and produces or authorizes versioned canonical Pump instruction attempts, events, event reserves, lifecycle facts, participant actions, migrations, registry snapshot, decoder quarantine and explicit unavailable-state records. An unavailable historical account write creates no fake zero row.
+
+### Gold
+
+Python reads approved Silver and produces PIT observation snapshots, feature vectors, labels, cohort/split assignments, censoring and immutable experiment manifests. Gold records coverage, evidence class, dataset/decoder/schema/code identities and cost-model assumptions. Python cannot wire-decode Pump or reinterpret Silver semantics.
+
+Parquet partitioning is coarse by layer/table/schema/epoch/slot bucket, never one directory per mint. PR 5 selects the physical Bronze/Silver writer. If Python performs that serialization, generated schemas must make it a lossless Rust-authorized materializer with deterministic row order plus schema/content/logical-hash parity; it may not reinterpret, filter or enrich records. Dataset manifests bind source identifiers, ranges/CIDs/hashes, `acquired_at`, `processed_at`, decoder/schema versions, code SHA, coverage, quarantine counts and file hashes. Rust owns the Raw/Bronze/Silver manifest identity; Python owns Gold/experiment manifests derived from approved Silver.
+
+## Causality and availability
+
+All instructions, CPIs, events, logs and metadata from one transaction are released to downstream logic as one atomic observation package. Partial transaction contents are never actionable.
+
+Operational provenance defines:
+
+- `acquired_at`: real wall-clock time at which the acquisition run received the historical bytes;
+- `processed_at`: real wall-clock time at which the local pipeline processed the bytes.
+
+These operational clocks never establish historical availability and are forbidden as feature, label, cohort/split or decision inputs.
+
+Historical replay and Gold define:
+
+- `effective_at`: canonical chain location and order at which the fact occurred;
+- `observed_at`: reconstructed boundary at which the complete transaction package is released under `observation_model_id`, not local acquisition/processing time;
+- `actionable_at`: first subsequent boundary permitted by package, coverage, finality and latency policy;
+- `decision_at`: strategy decision boundary actually recorded;
+- `execution_opportunity_at`: separate later opportunity supported by an independent execution-evidence contract.
+
+Every historical observation binds `observation_model_id`; bind `latency_model_id` whenever modeled latency changes actionability or execution, and never interpret absent evidence as zero latency. `execution_opportunity_at` is nullable/`UNAVAILABLE` when no independent opportunity is proven. A strategy cannot fill against a price/reserve from the same already-executed package, treat historical event price as executable, or automatically use the following historical transaction as a fill.
+
+Historical availability is explicit:
+
+- Class A: reconstructible from blocks, transactions, metadata, instructions/CPIs, logs and version-correct events;
+- Class B: potentially derivable only through additional transaction reconstruction and demonstrated prior coverage;
+- Class C: unavailable unless separately proven, including complete historical account-write/Geyser parity.
+
+`UNAVAILABLE` means the source cannot supply the evidence. `GAP` means expected declared coverage is missing. `QUARANTINED` means bytes exist but cannot be promoted safely. These states remain distinct from zero and from failed transactions.
+
+## Durability and deterministic replay
+
+The proven principles retained from the current reducer are:
+
+- source/registry/schema/config/code identities in checkpoints and WAL;
+- idempotent exact retries and conflict detection for different bytes;
+- canonical chain-order publication despite callback order;
+- immutable per-slot output and append-only coverage/quarantine ledgers;
+- validate → WAL/fsync → immutable output/atomic publish → coverage/fsync → checkpoint/atomic publish;
+- startup validation before recovery mutation;
+- deterministic output across callback permutations;
+- bounded resources and exactly one writer;
+- crash/corruption/restart tests at each durable seam.
+
+The current implementation is not automatically the V2 module boundary. Invariants/golden vectors migrate before obsolete code is removed.
+
+## Research Observatory first
+
+The first visible interface reads bounded immutable evidence and provides:
+
+- Ingestion & Data Quality: plan/range, source/CID/hash, bytes, blocks, transactions, Pump events, decoder success, quarantine, missing slots, versions, code SHA and elapsed time;
+- Token Lifecycle Replay: create, supported price/reserve evidence, buys/sells, volume/flow, participants, transaction tape, curve progress, completion/migration, provenance and gaps.
+
+PR 5 first emits static HTML/JSON. PR 6 makes the same contracts interactive. PR 7 adds Cohort Explorer and data sufficiency. Strategy/Experiment views wait for Gold. The full dockable/resizable workstation is a later separate epic.
+
+## Frozen and retired architecture
+
+```text
+current scanner -> portfolio -> dashboard -> paper WAL
+```
+
+This path remains physically present until controlled cleanup/retirement but is frozen, non-target and unsuitable for new strategy logic. Its useful golden vectors and ledger/replay invariants are salvage inputs only.
+
+TrueNAS, Hermes AI, Phase 8C/8D deployment, GHCR recovery and TrueNAS/Grafana deployment topology are retired from the active architecture. They remain historical files in PR 1 and must not be executed or repaired. Existing ClickHouse v1 data is forensic/noncanonical. A future VPS is designed from V2 requirements rather than migrated from TrueNAS.
+
+The historical [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) package remains `HOLD_UNPROVEN_ACTIVATION` and `pilotEligible: false`; the retired [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md) records a never-deployed Phase 8C target. These exact markers are retained for transitional evidence-contract tests, not as V2 approval.
+
+## Later new paper-engine boundary
+
+The new Rust engine, not implemented now, will separate:
+
+- stable asset identity from dynamic route identity;
+- observed market facts/reference context from executable quotes;
+- quote absence/staleness/capacity from explicit `NO_FILL`;
+- position lifecycle from route migration/graduation;
+- decision/intent/quote/submission/landing/finality states;
+- authoritative append-only ledger/outbox from replayable projections;
+- startup replay from external-state reconciliation.
+
+Signing/submission remains outside the paper engine and behind a later separately approved boundary.
+
+## Current evidence status at V2 cutover
+
+| Claim | Status |
+|---|---|
+| zero-cost client construction and network-isolated fixtures | proven by existing tests |
+| selected fixture Pump parsing/golden vectors | fixture evidence only |
+| current WAL/quarantine/restart invariants | proven for current implementation; must be migrated deliberately |
+| authentic OF1 Raw/Bronze/Silver | unavailable/not yet run |
+| universal or activation-bounded Pump registry | unproven |
+| Research Observatory over authentic data | unimplemented |
+| PIT Gold, walk-forward edge or profitability | unproven |
+| prospective Triton shadow and executable paper fills | unproven |
+| VPS/live execution | not authorized |
+
+Repository contents that contradict this table are historical status, not current product truth.

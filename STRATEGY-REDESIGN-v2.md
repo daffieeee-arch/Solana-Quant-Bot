@@ -1,4 +1,6 @@
 # TRITON-FIRST PAPER TRADING STRATEGY — REDESIGN v2
+
+> **Document status: RETIRED.** This legacy paper-strategy target conflicts with the active data-first/Triton-only V2 boundary. Do not implement or execute it. See [`docs/HANDOFF_V2.md`](docs/HANDOFF_V2.md).
 *Design-document (niet-uitgevoerd plan) — voor review door gebruiker voordat we bouwen*
 
 **Datum:** 2026-08-07

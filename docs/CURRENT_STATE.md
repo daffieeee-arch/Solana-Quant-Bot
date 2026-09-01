@@ -1,5 +1,7 @@
 # CURRENT_STATE.md — Current project state
 
+> **Document status: SUPERSEDED.** Replaced by [`HANDOFF_V2.md`](HANDOFF_V2.md), [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md). The state below is a historical snapshot.
+
 *Source of truth is Git plus fresh read-only runtime queries. Last reconciled: 2026-08-21.*
 
 ## Git and GitHub

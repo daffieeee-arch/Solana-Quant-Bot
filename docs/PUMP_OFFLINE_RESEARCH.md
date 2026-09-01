@@ -1,5 +1,7 @@
 # Pump offline historical research harness
 
+> **Document status: SUPERSEDED.** Its fixture evidence remains useful, but the active data-first design is in [`HANDOFF_V2.md`](HANDOFF_V2.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md). Do not use this as a V2 research authorization.
+
 ## Status
 
 `NETWORK_ISOLATED_REPLAY` research is implemented as a pure TypeScript engine plus a file-only CLI. It does not connect to Triton, Old Faithful, ClickHouse, RPC, DAS, Titan, CoinGecko, or any other network service.
