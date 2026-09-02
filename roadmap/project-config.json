@@ -155,8 +155,7 @@
     "pre_v2_snapshot_sha256": "98a97b7bfb74d194898d0aa1d65c0a9caf8c4015f09ae6a93c76fd8289ee3585",
     "pre_v2_merged_pr_set_sha256": "0211a16af1a18006bfa1005f12e4b57c9373508d655884f59a2a3f18656d9e67",
     "pinned_items": [
-      { "kind": "Issue", "number": 56 },
-      { "kind": "Issue", "number": 63 }
+      { "kind": "Issue", "number": 56 }
     ]
   },
   "views": [

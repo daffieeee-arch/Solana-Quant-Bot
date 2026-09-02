@@ -63,7 +63,7 @@ const actionFor = (
 });
 
 describe('GitHub Project item lifecycle', () => {
-  it('requires the production policy to select 30 days, cutoff #68, a snapshot, and pinned #56 explicitly', () => {
+  it('requires the production policy to retain pinned #56 after the reviewed #63 pin removal', () => {
     const production = JSON.parse(readFileSync('roadmap/project-config.json', 'utf8')) as {
       itemRetention?: {
         closed_item_retention_days?: number;
@@ -80,6 +80,8 @@ describe('GitHub Project item lifecycle', () => {
       pre_v2_merged_pr_max_number: 68,
     });
     expect(production.itemRetention?.pinned_items).toContainEqual({ kind: 'Issue', number: 56 });
+    expect(production.itemRetention?.pinned_items).not.toContainEqual({ kind: 'Issue', number: 63 });
+    expect(production.itemRetention?.pinned_items).toHaveLength(1);
     expect(production.itemRetention?.pre_v2_merged_pr_numbers).toEqual([
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
       14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
