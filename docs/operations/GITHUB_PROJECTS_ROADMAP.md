@@ -37,7 +37,7 @@ The fixed verification reads occur immediately and then after `500`, `1,000`, `2
 Verifier outcomes are:
 
 - `CONVERGED`: the exact expected identity and state are visible;
-- `NOT_YET_CONVERGED`: only a newly added item is absent, a projected value is missing, or the exact captured pre-mutation value remains visible;
+- `NOT_YET_CONVERGED`: only a newly added item is absent, a SET/create projection is still missing or partial, or the exact captured pre-mutation value remains visible. For a CLEAR, true target-field absence is `CONVERGED`; only the exact captured value or a compatible partial/null target projection is retryable;
 - `HARD_DRIFT`: duplicate/unexpected content, wrong repository or option identity, unrelated field change, existing-item deletion, schema drift or any contradictory third state.
 
 Each lifecycle, item-field, Project metadata, field-definition and view mutation is outside the retry loop and runs at most once per reconciliation attempt. The next mutation is gated on convergence of the prior logical operation. A later read may temporarily omit or partially expose an item created earlier in the same reconciliation; only mutation-returned item identities are eligible for that bounded lag treatment, while disappearance or identity drift of a pre-existing item remains a hard failure. Retry exhaustion reports a compact expected/final state and attempt count, then stops before later mutations. Logs contain only the operation type, bounded issue/PR/field/view identity, attempt and reason code; they never contain `PROJECT_TOKEN`, issue bodies or GraphQL payloads.
@@ -55,7 +55,7 @@ Project metadata inheritance uses an explicit, body-only PR route. The generic i
 
 References retain line and token order and are deduplicated by first occurrence. A reference is either `#N` or an `https://github.com/daffieeee-arch/solana-paper-scanner/issues/N` URL. Every reference selected by the winning route must resolve to an existing Issue in this repository. A missing issue, PR-only number, foreign-repository URL, malformed explicit `Roadmap:` payload or multiple `Roadmap:` lines fails during full-state planning, before the first Project mutation. A Markdown heading such as `## Roadmap`, fenced example, HTML comment, title reference or prose mention is not a route.
 
-The selected primary Issue supplies inherited roadmap dimensions. A valid PR-local `roadmap-meta` block then overrides only the fields it explicitly contains; it neither changes the route nor excuses an invalid explicit route. PR state continues to own Status and PR kind continues to own Work Type. The synchronizer does not guess an owner from arbitrary issue links and does not introduce generic field-clearing behavior when a newly selected owner omits a field.
+The selected primary Issue supplies inherited roadmap dimensions. A valid PR-local `roadmap-meta` block then overrides only the fields it explicitly contains; it neither changes the route nor excuses an invalid explicit route. PR state continues to own Status and PR kind continues to own Work Type. The synchronizer does not guess an owner from arbitrary issue links. After complete derivation, omission of a configured managed field means true field absence; a direct PR value prevents that field from being cleared. This does not add an explicit-null metadata syntax.
 
 The reviewed compatibility set is:
 
@@ -70,6 +70,18 @@ The reviewed compatibility set is:
 | #73 | `DIRECT_ROADMAP` | #70 | #70 | unchanged |
 
 Among the active Project PR items audited for this change, #66 remains unrouted, #71 and #73 remain routed to #70, and only #69 changes owner: its explicit `Roadmap: #62 #63` can no longer be displaced by a later incidental #56 reference. Routing changes never authorize unarchive or bypass item-retention eligibility.
+
+## Managed item-field exact-state reconciliation
+
+Roadmap Sync owns exactly the configured item fields, in `roadmap/project-config.json` order: Status, Priority, Area, Work Type, Phase, V2 Phase, V2 Disposition, Risk, Evidence, Effort, Start date and Target date. Once title inference, primary-owner inheritance, direct PR overrides, PR Status and PR Work Type have produced complete metadata, the synchronizer deterministically plans one action per managed field:
+
+- `SET` when a derived value differs from the current value;
+- `CLEAR` when no value is derived but a current managed value exists;
+- `NO_OP` when the exact desired value is already visible or both states are absent.
+
+Absence remains actual Project-field absence; no placeholder option is created. A clear uses GitHub's `clearProjectV2ItemFieldValue` mutation with the exact project, item and field IDs, requires the returned item identity to match, and executes at most once. The existing fixed `0 / 500 / 1,000 / 2,000 / 4,000 ms` read-only verifier then gates the next mutation. Exact absence converges; the captured pre-clear value or a compatible partial/null value is temporarily retryable; a third value, item/field identity change, duplicate, unrelated supported-field change or schema drift is a hard failure. Exhaustion fails closed without replay. Run output reports SET mutations as `fieldUpdates` and CLEAR mutations as `fieldClears`.
+
+The final expected field state consists of captured supported unmanaged fields unchanged, every configured managed field with a derived value set exactly, and every configured managed field without a derived value absent. Unsupported field-value types are outside this audit. Title, Assignees, Labels, Milestone, Iteration and user-created fields not declared in the config are never mutated; supported unmanaged values are nevertheless captured and verified unchanged. Archived and skipped items receive no managed-field mutation. Manual values inside configured fields are non-authoritative and may be set or cleared on reconciliation.
 
 ## Security boundary
 
@@ -147,6 +159,7 @@ Configuration validation uses no token/network:
 node scripts/github-projects/sync.mjs --dry-run
 npm test -- --run tests/github-projects-sync.test.ts
 npm test -- --run tests/github-projects-lifecycle.test.ts
+npm test -- --run tests/github-projects-routing.test.ts tests/github-projects-verification.test.ts tests/github-projects-managed-field-clearing.test.ts
 ```
 
 Do not manually dispatch a V2 reconciliation from the G0 PR branch. Ordinary PR-event reconciliation under current trusted-main configuration is expected and must be allowed to finish. The authorized merge and automatic push-to-main reconciliation may proceed only after the correction commit and full CI pass; do not place a token on a command line.

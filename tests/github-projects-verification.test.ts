@@ -31,6 +31,11 @@ const fieldValue = (fieldName: string, optionId: string, name: string) => ({
   field: { id: `FIELD_${fieldName}`, name: fieldName },
 });
 
+const fieldProjection = (nodes: unknown[]) => ({
+  nodes,
+  pageInfo: { hasNextPage: false, endCursor: null },
+});
+
 const projectItem = (
   content: ReturnType<typeof issue>,
   overrides: Record<string, unknown> = {},
@@ -45,7 +50,7 @@ const projectItem = (
     url: `https://github.test/issues/${content.number}`,
     repository: { nameWithOwner: REPOSITORY },
   },
-  fieldValues: { nodes: [] },
+  fieldValues: fieldProjection([]),
   ...overrides,
 });
 
@@ -287,11 +292,11 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       ['Evidence', 'EVIDENCE_NA', 'Not Applicable'],
     ] as const;
     const withProjectedFieldCount = (count: number) => [...existing, projectItem(issue72, {
-      fieldValues: {
-        nodes: fieldDefinitions.slice(0, count).map(([name, optionId, optionName]) => (
+      fieldValues: fieldProjection(
+        fieldDefinitions.slice(0, count).map(([name, optionId, optionName]) => (
           fieldValue(name, optionId, optionName)
         )),
-      },
+      ),
     })];
     const reads = [
       existing,
@@ -349,7 +354,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
 
     const summary = await reconcileItems(
       api,
-      { repository: REPOSITORY },
+      { repository: REPOSITORY, fields: [...fieldsByName.values()] },
       { id: 'PROJECT_4', number: 4 },
       fieldsByName,
       {
@@ -392,7 +397,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       KEEP_ARCHIVED: 30,
       SKIP: 0,
     });
-    expect(summary.executed).toEqual({ added: 1, archived: 0, unarchived: 0, fieldUpdates: 8 });
+    expect(summary.executed).toEqual({ added: 1, archived: 0, unarchived: 0, fieldUpdates: 8, fieldClears: 0 });
     expect(summary.verified).toEqual({ active: 42, archived: 30, absent: 0 });
     expect(verifier.logs).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -415,10 +420,10 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const first = issue(90);
     const second = issue(91);
     const firstBacklog = projectItem(first, {
-      fieldValues: { nodes: [fieldValue('Status', 'BACKLOG', 'Backlog')] },
+      fieldValues: fieldProjection([fieldValue('Status', 'BACKLOG', 'Backlog')]),
     });
     const firstReady = projectItem(first, {
-      fieldValues: { nodes: [fieldValue('Status', 'READY', 'Ready')] },
+      fieldValues: fieldProjection([fieldValue('Status', 'READY', 'Ready')]),
     });
     const secondActive = projectItem(second);
     const snapshots = [
@@ -447,7 +452,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const verifier = verificationOptions();
 
-    const summary = await reconcileItems(api, { repository: REPOSITORY }, { id: 'PROJECT_4', number: 4 }, new Map([
+    const summary = await reconcileItems(api, { repository: REPOSITORY, fields: [statusField] }, { id: 'PROJECT_4', number: 4 }, new Map([
       ['Status', statusField],
     ]), {
       issues: [first, second],
@@ -467,7 +472,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     }, verifier.options);
 
     expect(mutations).toEqual(['set Status', 'add Issue #91']);
-    expect(summary.executed).toEqual({ added: 1, archived: 0, unarchived: 0, fieldUpdates: 1 });
+    expect(summary.executed).toEqual({ added: 1, archived: 0, unarchived: 0, fieldUpdates: 1, fieldClears: 0 });
     expect(summary.verified).toEqual({ active: 2, archived: 0, absent: 0 });
     expect(verifier.sleeps).toEqual([500]);
     expect(verifier.logs).toEqual(expect.arrayContaining([
@@ -487,23 +492,29 @@ describe('Roadmap Sync bounded Project projection verification', () => {
   it('waits for partially hydrated item fields and accepts only the exact final option IDs', async () => {
     const target = issue(72);
     const beforeValues = new Map([
-      ['Status', { kind: 'SINGLE_SELECT', optionId: 'BACKLOG', name: 'Backlog' }],
-      ['Evidence', { kind: 'SINGLE_SELECT', optionId: 'UNPROVEN', name: 'Unproven' }],
+      ['Status', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Status', optionId: 'BACKLOG', name: 'Backlog',
+      }],
+      ['Evidence', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Evidence', optionId: 'UNPROVEN', name: 'Unproven',
+      }],
     ]);
     const expectedValues = new Map([
-      ['Status', { kind: 'SINGLE_SELECT', optionId: 'READY', name: 'Ready' }],
-      ['Evidence', { kind: 'SINGLE_SELECT', optionId: 'UNPROVEN', name: 'Unproven' }],
+      ['Status', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Status', optionId: 'READY', name: 'Ready',
+      }],
+      ['Evidence', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Evidence', optionId: 'UNPROVEN', name: 'Unproven',
+      }],
     ]);
     const partial = projectItem(target, {
-      fieldValues: { nodes: [fieldValue('Evidence', 'UNPROVEN', 'Unproven')] },
+      fieldValues: fieldProjection([fieldValue('Evidence', 'UNPROVEN', 'Unproven')]),
     });
     const complete = projectItem(target, {
-      fieldValues: {
-        nodes: [
+      fieldValues: fieldProjection([
           fieldValue('Status', 'READY', 'Ready'),
           fieldValue('Evidence', 'UNPROVEN', 'Unproven'),
-        ],
-      },
+      ]),
     });
     const reads = [[partial], [complete]];
     const verifier = verificationOptions();
@@ -532,7 +543,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const target = issue(73);
     const visibleWithoutFields = projectItem(target);
     const visibleWithField = projectItem(target, {
-      fieldValues: { nodes: [fieldValue('Status', 'READY', 'Ready')] },
+      fieldValues: fieldProjection([fieldValue('Status', 'READY', 'Ready')]),
     });
     const snapshots = [[visibleWithoutFields], [], [visibleWithField]];
     const mutations: string[] = [];
@@ -552,9 +563,12 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const verifier = verificationOptions();
 
-    const summary = await reconcileItems(api, { repository: REPOSITORY }, { id: 'PROJECT_4', number: 4 }, new Map([
+    const summary = await reconcileItems(api, {
+      repository: REPOSITORY,
+      fields: [{ name: 'Status', dataType: 'SINGLE_SELECT' }],
+    }, { id: 'PROJECT_4', number: 4 }, new Map([
       ['Status', {
-        id: 'FIELD_STATUS', name: 'Status', dataType: 'SINGLE_SELECT',
+        id: 'FIELD_Status', name: 'Status', dataType: 'SINGLE_SELECT',
         options: [{ id: 'READY', name: 'Ready' }],
       }],
     ]), {
@@ -572,7 +586,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     }, verifier.options);
 
     expect(mutations).toEqual(['add Issue #73', 'set Status']);
-    expect(summary.executed).toEqual({ added: 1, archived: 0, unarchived: 0, fieldUpdates: 1 });
+    expect(summary.executed).toEqual({ added: 1, archived: 0, unarchived: 0, fieldUpdates: 1, fieldClears: 0 });
     expect(verifier.sleeps).toEqual([500]);
     expect(verifier.logs[0]).toMatchObject({
       operationType: 'UPDATE_ITEM_FIELD',
@@ -607,7 +621,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const verifier = verificationOptions();
 
-    const summary = await reconcileItems(api, { repository: REPOSITORY }, { id: 'PROJECT_4', number: 4 }, new Map(), {
+    const summary = await reconcileItems(api, { repository: REPOSITORY, fields: [] }, { id: 'PROJECT_4', number: 4 }, new Map(), {
       issues: [first, second],
       pullRequests: [],
       projectItems: [],
@@ -625,7 +639,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     }, verifier.options);
 
     expect(mutations).toEqual(['add Issue #73', 'add Issue #74']);
-    expect(summary.executed).toEqual({ added: 2, archived: 0, unarchived: 0, fieldUpdates: 0 });
+    expect(summary.executed).toEqual({ added: 2, archived: 0, unarchived: 0, fieldUpdates: 0, fieldClears: 0 });
     expect(summary.verified).toEqual({ active: 2, archived: 0, absent: 0 });
     expect(verifier.sleeps).toEqual([500]);
     expect(verifier.logs).toEqual(expect.arrayContaining([
@@ -640,10 +654,10 @@ describe('Roadmap Sync bounded Project projection verification', () => {
   it('waits read-only for a preserved option name while performing no item-field mutation', async () => {
     const target = issue(74);
     const stale = projectItem(target, {
-      fieldValues: { nodes: [fieldValue('Status', 'READY', 'Legacy Ready')] },
+      fieldValues: fieldProjection([fieldValue('Status', 'READY', 'Legacy Ready')]),
     });
     const exact = projectItem(target, {
-      fieldValues: { nodes: [fieldValue('Status', 'READY', 'Ready')] },
+      fieldValues: fieldProjection([fieldValue('Status', 'READY', 'Ready')]),
     });
     const snapshots = [[stale], [exact]];
     const mutations: string[] = [];
@@ -656,9 +670,12 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const verifier = verificationOptions();
 
-    const summary = await reconcileItems(api, { repository: REPOSITORY }, { id: 'PROJECT_4', number: 4 }, new Map([
+    const summary = await reconcileItems(api, {
+      repository: REPOSITORY,
+      fields: [{ name: 'Status', dataType: 'SINGLE_SELECT' }],
+    }, { id: 'PROJECT_4', number: 4 }, new Map([
       ['Status', {
-        id: 'FIELD_STATUS', name: 'Status', dataType: 'SINGLE_SELECT',
+        id: 'FIELD_Status', name: 'Status', dataType: 'SINGLE_SELECT',
         options: [{ id: 'READY', name: 'Ready' }],
       }],
     ]), {
@@ -716,7 +733,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const verifier = verificationOptions();
 
-    const result = await reconcileItems(api, { repository: REPOSITORY }, { id: 'PROJECT_4', number: 4 }, new Map(), {
+    const result = await reconcileItems(api, { repository: REPOSITORY, fields: [] }, { id: 'PROJECT_4', number: 4 }, new Map(), {
       issues: [target],
       pullRequests: [],
       projectItems: [targetItem],
@@ -781,17 +798,20 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const fieldsByName = new Map([
       ['Status', {
-        id: 'FIELD_STATUS', name: 'Status', dataType: 'SINGLE_SELECT',
+        id: 'FIELD_Status', name: 'Status', dataType: 'SINGLE_SELECT',
         options: [{ id: 'READY', name: 'Ready' }],
       }],
       ['Priority', {
-        id: 'FIELD_PRIORITY', name: 'Priority', dataType: 'SINGLE_SELECT',
+        id: 'FIELD_Priority', name: 'Priority', dataType: 'SINGLE_SELECT',
         options: [{ id: 'P0', name: 'P0' }],
       }],
     ]);
     const verifier = verificationOptions();
 
-    await expect(reconcileItems(api, { repository: REPOSITORY }, { id: 'PROJECT_4', number: 4 }, fieldsByName, {
+    await expect(reconcileItems(api, {
+      repository: REPOSITORY,
+      fields: [...fieldsByName.values()],
+    }, { id: 'PROJECT_4', number: 4 }, fieldsByName, {
       issues: [target],
       pullRequests: [],
       projectItems: [targetItem],
@@ -812,20 +832,26 @@ describe('Roadmap Sync bounded Project projection verification', () => {
   it('fails immediately on a third field value or unrelated managed-field drift', async () => {
     const target = issue(72);
     const beforeValues = new Map([
-      ['Status', { kind: 'SINGLE_SELECT', optionId: 'BACKLOG', name: 'Backlog' }],
-      ['Evidence', { kind: 'SINGLE_SELECT', optionId: 'UNPROVEN', name: 'Unproven' }],
+      ['Status', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Status', optionId: 'BACKLOG', name: 'Backlog',
+      }],
+      ['Evidence', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Evidence', optionId: 'UNPROVEN', name: 'Unproven',
+      }],
     ]);
     const expectedValues = new Map([
-      ['Status', { kind: 'SINGLE_SELECT', optionId: 'READY', name: 'Ready' }],
-      ['Evidence', { kind: 'SINGLE_SELECT', optionId: 'UNPROVEN', name: 'Unproven' }],
+      ['Status', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Status', optionId: 'READY', name: 'Ready',
+      }],
+      ['Evidence', {
+        kind: 'SINGLE_SELECT', fieldId: 'FIELD_Evidence', optionId: 'UNPROVEN', name: 'Unproven',
+      }],
     ]);
     const contradictory = projectItem(target, {
-      fieldValues: {
-        nodes: [
+      fieldValues: fieldProjection([
           fieldValue('Status', 'THIRD_OPTION', 'Third'),
           fieldValue('Evidence', 'FIXTURE', 'Fixture'),
-        ],
-      },
+      ]),
     });
     const verifier = verificationOptions();
 
@@ -972,7 +998,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
 
     await expect(reconcileItems(
       { request: vi.fn() },
-      { repository: REPOSITORY },
+      { repository: REPOSITORY, fields: [] },
       { id: 'PROJECT_4', number: 4 },
       new Map(),
       {
