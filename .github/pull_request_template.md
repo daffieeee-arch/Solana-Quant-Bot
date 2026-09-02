@@ -1,7 +1,13 @@
-## Roadmap
+## Roadmap routing
 
-Closes #
 Roadmap: #
+
+<!--
+Keep exactly one non-empty Roadmap: line. Put the concrete bounded delivery
+issue first; later issues are secondary context. If Roadmap: is removed,
+an exact Closes/Fixes/Resolves line may provide the fallback route. Free issue
+references never determine Project metadata inheritance.
+-->
 
 - [ ] The PR links or closes the concrete delivery issue.
 - [ ] Project metadata/evidence is updated when the implementation changes scope or proof level.
