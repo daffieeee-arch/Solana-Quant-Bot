@@ -238,7 +238,7 @@ Signing/submission remains outside the paper engine and behind a later separatel
 | zero-cost client construction and network-isolated fixtures | proven by existing tests |
 | selected fixture Pump parsing/golden vectors | fixture evidence only |
 | current WAL/quarantine/restart invariants | proven for current implementation; must be migrated deliberately |
-| B2A legacy launch/control quarantine | implementation under review; no product or runtime-evidence claim until CI and merge |
+| B2A legacy launch/control quarantine | Operationally Verified by merged PR #91; this is safety/retirement evidence, not protocol, data or runtime-product evidence |
 | authentic OF1 Raw/Bronze/Silver | unavailable/not yet run |
 | universal or activation-bounded Pump registry | unproven |
 | Research Observatory over authentic data | unimplemented |

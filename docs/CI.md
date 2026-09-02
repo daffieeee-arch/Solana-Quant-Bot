@@ -1,6 +1,6 @@
 # CI.md — current validation boundary after retired-platform cleanup
 
-> **Document status: ACTIVE.** B2A removes the retired Phase 8 image/deployment workflows and their build-only assertions while preserving ordinary CI and trusted-main Roadmap Sync.
+> **Document status: ACTIVE.** B2A removed the retired Phase 8 image/deployment workflows and their build-only assertions while preserving ordinary CI and trusted-main Roadmap Sync. B3 adds only a separately locked, offline-verified protocol crate.
 
 ## Tracked workflow inventory
 
@@ -28,17 +28,16 @@ It triggers for pull requests targeting `main`, pushes to the branch patterns cu
 ## Current ordered gates
 
 1. install the pinned Rust toolchain;
-2. `npm ci` from `package-lock.json`;
-3. repository/zero-cost policy;
-4. offline research citation gate;
-5. focused policy/zero-cost/Pump tests;
-6. complete Vitest suite;
-7. TypeScript typecheck;
-8. TypeScript plus retained Research Cockpit/cockpit-inertness build;
-9. Rust reducer and supporting snapshot format checks;
-10. locked all-target clippy/test/build;
-11. committed-diff whitespace validation;
-12. clean tracked-worktree validation.
+2. statically validate every B3 dependency section, exact direct declaration, locked package/source and crate-owned Rust input before any Cargo fetch;
+3. fetch the separately locked B3 crate dependencies;
+4. `npm ci` from `package-lock.json`;
+5. repository/zero-cost and offline research citation policies;
+6. focused policy/zero-cost/Pump tests and the complete Vitest suite;
+7. TypeScript typecheck and retained Research Cockpit/cockpit-inertness build;
+8. Rust reducer, supporting snapshots and B3 crate format checks;
+9. run the complete all-edge B3 graph audit, clippy, tests, build scripts and matrix check under the network-deny launcher;
+10. locked reducer all-target clippy/test/build;
+11. committed-diff whitespace and clean tracked-worktree validation.
 
 The B2A `npm run build` retains research-transport, Phase 8A offline and cockpit-inertness checks, but no longer builds the frozen paper dashboard or invokes Phase 8C/8D deployment/supply-chain validation. This narrows retired reachability; it does not prove authentic data or the future Observatory.
 
@@ -48,13 +47,13 @@ The B2A `npm run build` retains research-transport, Phase 8A offline and cockpit
 
 Roadmap Sync is a separate privileged boundary. It always uses trusted default-branch code under `pull_request_target`; never change it to execute PR-head code or PR-produced artifacts. See [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md).
 
-Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for B2A. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls or another content migration.
+Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for B3. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls or another content migration.
 
 ## Local checks
 
 The exact active list is maintained in [`AGENTS.md`](../AGENTS.md) and [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md). Run focused checks during editing and every executable full gate before review.
 
-The observed local WSL environment at PR 1 lacks the pinned Rust/native toolchain and has the wrong Node major. Do not install or modify it automatically. Record blocked local commands and use the clean GitHub CI run as authoritative execution evidence.
+The approved 2026-09-02 development host has the exact Node/Rust toolchains through an untracked user-owned wrapper; that local receipt does not authorize installation or profile changes on another host. Run the doctor first, record blocked commands, and use clean GitHub CI as the authoritative complete gate.
 
 ## What CI does not prove
 

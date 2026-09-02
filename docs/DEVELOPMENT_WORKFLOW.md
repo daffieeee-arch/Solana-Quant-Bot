@@ -49,7 +49,7 @@ Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity an
 
 [Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central roadmap. Every implementation PR links at least one active/successor roadmap issue. Historical issues retain their original acceptance criteria; disposition does not mean completion.
 
-G0 is complete. PR #90 records the immutable content-migration ledger; issue #63 was unpinned and closed individually as superseded, and issue #70 was completed after its audit. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is now the single concrete `In Progress`/`ACTIVE NOW` delivery. B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) remains `Backlog`/`NEXT`; B4–B8 stay `LATER` behind their direct predecessors. Follow [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) for preserved migration evidence, not as permission to replay the migration.
+G0 is complete. PR #90 records the immutable content-migration ledger; issue #63 was unpinned and closed individually as superseded, and issue #70 was completed after its audit. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is completed and Operationally Verified. B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is now the single concrete `In Progress`/`ACTIVE NOW` delivery; B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is `Backlog`/`NEXT`, and B5–B8 stay `LATER` behind their direct predecessors. Follow [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) for preserved migration evidence, not as permission to replay the migration.
 
 ## Network and acquisition changes
 
@@ -94,12 +94,15 @@ npm ci
 npm run ci:policy
 npm run ci:research-citations
 npm test
-npx tsc --noEmit
+npx --no-install tsc --noEmit
 npm run build
+node scripts/assert-pump-protocol-v2-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
+cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check
+node scripts/assert-pump-protocol-v2-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked

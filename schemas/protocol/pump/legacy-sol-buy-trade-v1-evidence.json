@@ -1,0 +1,390 @@
+{
+  "schemaVersion": "PUMP_PROTOCOL_EVIDENCE_MATRIX_V1",
+  "generatedBy": "pump-protocol-v2/0.1.0",
+  "source": {
+    "repository": "https://github.com/pump-fun/pump-public-docs",
+    "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+    "committedAt": "2026-07-15T18:22:27Z",
+    "path": "idl/pump.json",
+    "gitBlobSha1": "062e66f032bb9f295353b573be3400070bd55e5b",
+    "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+    "retrievedAt": "2026-09-02T21:09:20Z",
+    "officialUrl": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/idl/pump.json",
+    "licenseStatus": "NO_LICENSE_FILE_AT_PIN",
+    "supportingReadmeSha256": "7609341176750cd2c78a74e8b3eab052053d71cecabd0252ef9c4d8e356e8cca",
+    "sourceManifestPath": "schemas/protocol/pump/pump-public-docs-9c82f61-source-manifest.json"
+  },
+  "registry": {
+    "registryEntryId": "pump-mainnet-legacy-sol-buy-trade-9c82f61-v1",
+    "decoderVersion": "pump-protocol-v2/0.1.0",
+    "network": "solana-mainnet-beta",
+    "programId": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "sourceManifestId": "pump-public-docs-9c82f61-pump-idl",
+    "sourceCommit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+    "sourcePath": "idl/pump.json",
+    "sourceSha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+    "instructionName": "buy",
+    "instructionSchema": "amount:u64,max_sol_cost:u64,track_volume:OptionBool(bool)",
+    "instructionDiscriminatorHex": "66063d1201daebea",
+    "instructionAccounts": [
+      {
+        "index": 0,
+        "name": "global",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 1,
+        "name": "fee_recipient",
+        "writable": true,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 2,
+        "name": "mint",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 3,
+        "name": "bonding_curve",
+        "writable": true,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 4,
+        "name": "associated_bonding_curve",
+        "writable": true,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 5,
+        "name": "associated_user",
+        "writable": true,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 6,
+        "name": "user",
+        "writable": true,
+        "signer": true,
+        "fixedAddress": null
+      },
+      {
+        "index": 7,
+        "name": "system_program",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": "11111111111111111111111111111111"
+      },
+      {
+        "index": 8,
+        "name": "token_program",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 9,
+        "name": "creator_vault",
+        "writable": true,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 10,
+        "name": "event_authority",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 11,
+        "name": "program",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+      },
+      {
+        "index": 12,
+        "name": "global_volume_accumulator",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 13,
+        "name": "user_volume_accumulator",
+        "writable": true,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 14,
+        "name": "fee_config",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": null
+      },
+      {
+        "index": 15,
+        "name": "fee_program",
+        "writable": false,
+        "signer": false,
+        "fixedAddress": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ"
+      }
+    ],
+    "eventName": "TradeEvent[is_buy=true,ix_name=buy]",
+    "eventSchema": "pump-public-docs.TradeEvent@9c82f61",
+    "eventIxTagLeHex": "e445a52e51cb9a1d",
+    "eventDiscriminatorHex": "bddb7fd34ee661ee",
+    "quoteAssetKind": {
+      "value": "NATIVE_SOL_ACCOUNTING",
+      "status": "STRUCTURAL_CANDIDATE",
+      "basis": "same-revision official README describes legacy buy in SOL; event quote_mint remains unconstrained"
+    },
+    "quoteMint": {
+      "value": null,
+      "status": "UNKNOWN",
+      "basis": "selected official IDL does not constrain TradeEvent.quote_mint"
+    },
+    "quoteDecimals": {
+      "value": null,
+      "status": "UNKNOWN",
+      "basis": "selected official source does not prove a quote-decimal constant"
+    },
+    "baseDecimals": {
+      "value": null,
+      "status": "UNKNOWN",
+      "basis": "selected official source does not prove a base-decimal constant"
+    },
+    "integerPolicy": "all wire u64/i64 values remain exact Rust integers; no floating-point wire values",
+    "reserveAuthority": "EVENT_REPORTED_RESERVES_NOT_ACCOUNT_STATE",
+    "accountLayoutAssumptions": [
+      "only the official buy account order is identified; no account-state layout is decoded",
+      "CPI envelope discriminator is fixture-compatible framing evidence, not an IDL event discriminator",
+      "event-reported reserves never substitute for observed account state",
+      "4096 event bytes, 32 ix_name bytes, 128 shareholders and unique addresses are conservative implementation bounds, not official IDL facts"
+    ],
+    "activationStatus": "STRUCTURAL_CANDIDATE",
+    "historicalSlotRange": null,
+    "evidenceStatus": "FIXTURE_COMPATIBLE",
+    "quarantineRules": [
+      "TRUNCATED_DISCRIMINATOR",
+      "WRONG_DISCRIMINATOR",
+      "TRUNCATED_PAYLOAD",
+      "UNEXPECTED_TRAILING_BYTES",
+      "UNSUPPORTED_SCHEMA",
+      "UNSUPPORTED_VARIANT",
+      "REFERENCE_DISAGREEMENT",
+      "DUPLICATE_SHAREHOLDER",
+      "UNKNOWN_QUOTE_MINT_EVIDENCE",
+      "UNKNOWN_DECIMAL_EVIDENCE"
+    ],
+    "registryRejectionRules": [
+      "MISSING_SOURCE_IDENTITY",
+      "SOURCE_IDENTITY_MISMATCH",
+      "SOURCE_HASH_MISMATCH",
+      "UNSUPPORTED_VERSION",
+      "AMBIGUOUS_VERSION_MATCH"
+    ]
+  },
+  "selectedSurface": {
+    "instruction": "buy",
+    "instructionDiscriminatorHex": "66063d1201daebea",
+    "instructionRawFields": [
+      "amount:u64",
+      "max_sol_cost:u64",
+      "track_volume:bool"
+    ],
+    "event": "TradeEvent[is_buy=true,ix_name=buy]",
+    "eventDiscriminatorHex": "bddb7fd34ee661ee",
+    "eventCpiEnvelopeHex": "e445a52e51cb9a1d",
+    "eventRawFields": [
+      "mint:pubkey",
+      "sol_amount:u64",
+      "token_amount:u64",
+      "is_buy:bool",
+      "user:pubkey",
+      "timestamp:i64",
+      "virtual_sol_reserves:u64",
+      "virtual_token_reserves:u64",
+      "real_sol_reserves:u64",
+      "real_token_reserves:u64",
+      "fee_recipient:pubkey",
+      "fee_basis_points:u64",
+      "fee:u64",
+      "creator:pubkey",
+      "creator_fee_basis_points:u64",
+      "creator_fee:u64",
+      "track_volume:bool",
+      "total_unclaimed_tokens:u64",
+      "total_claimed_tokens:u64",
+      "current_sol_volume:u64",
+      "last_update_timestamp:i64",
+      "ix_name:string",
+      "mayhem_mode:bool",
+      "cashback_fee_basis_points:u64",
+      "cashback:u64",
+      "buyback_fee_basis_points:u64",
+      "buyback_fee:u64",
+      "shareholders:vec<Shareholder>",
+      "quote_mint:pubkey",
+      "quote_amount:u64",
+      "virtual_quote_reserves:u64",
+      "real_quote_reserves:u64"
+    ],
+    "unitPolicy": "RAW_INTEGER_ONLY",
+    "reservePolicy": "EVENT_REPORTED_RESERVES_NOT_ACCOUNT_STATE",
+    "associationPolicy": "DATA_ONLY_NO_TRANSACTION_ACCOUNT_OR_PROGRAM_ASSOCIATION_VALIDATION",
+    "implementationSafetyBounds": [
+      "TradeEvent CPI bytes <= 4096",
+      "ix_name UTF-8 bytes <= 32",
+      "shareholder count <= 128 (the byte cap may bind first)",
+      "shareholder addresses unique"
+    ]
+  },
+  "vectors": {
+    "manifestPath": "rust/pump-protocol-v2/tests/fixtures/legacy-sol-buy-trade.json",
+    "manifestSha256": "f365805ae117069bd5aff81fd24d9e0cdead5f055f141369073ae5bd652d9ca3",
+    "accepted": 2,
+    "acceptedByKind": [
+      {
+        "key": "BUY_INSTRUCTION",
+        "count": 1
+      },
+      {
+        "key": "TRADE_EVENT_CPI",
+        "count": 1
+      }
+    ],
+    "acceptedVectors": [
+      {
+        "name": "buy-selected-schema-u64-values",
+        "kind": "BUY_INSTRUCTION",
+        "origin": "SYNTHETIC_FROM_PINNED_OFFICIAL_SCHEMA",
+        "rawSha256": "c4c16e3627555b799443dc7d2eaad89b3a5d55217b1ce0da55fcef2ae84647ad",
+        "evidence": "STRUCTURAL_FIXTURE_ONLY"
+      },
+      {
+        "name": "trade-buy-current-official",
+        "kind": "TRADE_EVENT_CPI",
+        "origin": "RETAINED_SYNTHETIC_FIXTURE_REFERENCE:tests/fixtures/pump-silver/event-vectors.json@1d98b6fa69fc5c482389c37518709a55e7512ab0599f533682def581b6dbf4f9",
+        "rawSha256": "9c0bfb4a8374b259bdbf22820dd174c156d2630f408d18cb51163d2ff8cb7c06",
+        "evidence": "STRUCTURAL_FIXTURE_ONLY"
+      }
+    ],
+    "typedQuarantines": 10,
+    "typedQuarantinesByReason": [
+      {
+        "key": "TRUNCATED_DISCRIMINATOR",
+        "count": 1
+      },
+      {
+        "key": "WRONG_DISCRIMINATOR",
+        "count": 1
+      },
+      {
+        "key": "TRUNCATED_PAYLOAD",
+        "count": 1
+      },
+      {
+        "key": "UNEXPECTED_TRAILING_BYTES",
+        "count": 1
+      },
+      {
+        "key": "UNSUPPORTED_SCHEMA",
+        "count": 1
+      },
+      {
+        "key": "UNSUPPORTED_VARIANT",
+        "count": 1
+      },
+      {
+        "key": "REFERENCE_DISAGREEMENT",
+        "count": 1
+      },
+      {
+        "key": "DUPLICATE_SHAREHOLDER",
+        "count": 1
+      },
+      {
+        "key": "UNKNOWN_QUOTE_MINT_EVIDENCE",
+        "count": 1
+      },
+      {
+        "key": "UNKNOWN_DECIMAL_EVIDENCE",
+        "count": 1
+      }
+    ],
+    "registryRejections": 5,
+    "registryRejectionsByReason": [
+      {
+        "key": "MISSING_SOURCE_IDENTITY",
+        "count": 1
+      },
+      {
+        "key": "SOURCE_IDENTITY_MISMATCH",
+        "count": 1
+      },
+      {
+        "key": "SOURCE_HASH_MISMATCH",
+        "count": 1
+      },
+      {
+        "key": "UNSUPPORTED_VERSION",
+        "count": 1
+      },
+      {
+        "key": "AMBIGUOUS_VERSION_MATCH",
+        "count": 1
+      }
+    ]
+  },
+  "implementationLanes": {
+    "primary": {
+      "status": "AVAILABLE",
+      "implementation": "source-bound bounded Rust/Borsh decoder in rust/pump-protocol-v2",
+      "limitation": "one selected buy/TradeEvent candidate only"
+    },
+    "structuralReference": {
+      "status": "STRUCTURAL_REFERENCE_ONLY",
+      "implementation": "sealed expected values plus retained TypeScript/Rust fixture oracles",
+      "limitation": "not an independent protocol authority and not authentic chain evidence"
+    },
+    "independentProtocolAuthority": {
+      "status": "UNAVAILABLE",
+      "implementation": "none admitted in bounded B3 dependency graph",
+      "limitation": "pump-rust-client 0.1.7 was not a second activation authority; pump-fun/carbon at bcc206b4715a2f02025d398e865b0d2036e0419b was rejected as a broad SDK/network graph"
+    }
+  },
+  "compatibility": {
+    "structural": "STRUCTURAL_CANDIDATE",
+    "fixture": "FIXTURE_COMPATIBLE",
+    "observed": "UNKNOWN_NO_AUTHENTIC_CHAIN_BYTES",
+    "historicalActivation": "UNKNOWN_NO_SLOT_RANGE_EVIDENCE",
+    "researchReadiness": "UNPROVEN"
+  },
+  "unresolvedQuestions": [
+    "Which deployment or slot range used this exact schema?",
+    "What exact quote-mint semantics apply to each historical observation?",
+    "Which source proves base and quote decimal domains for each observation?",
+    "Does authentic OF1 evidence agree with the primary decoder and structural-reference lane?",
+    "Which event-envelope variants occur in the approved historical slice?",
+    "Can an independently version-pinned generated parser be admitted without broad SDK/runtime dependencies?",
+    "Are the implementation safety bounds and unique-shareholder rule valid for authentic observations?"
+  ],
+  "prohibitedClaims": [
+    "historical Pump support proven",
+    "live support proven",
+    "Research Ready",
+    "executable price or liquidity proven",
+    "profitability established"
+  ]
+}
