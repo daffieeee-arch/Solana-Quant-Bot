@@ -17,6 +17,26 @@ const ALLOWED_METADATA_KEYS = new Set([
   'v2Phase', 'v2Disposition', 'effort', 'startDate', 'targetDate',
 ]);
 const ALLOWED_FIELD_TYPES = new Set(['SINGLE_SELECT', 'NUMBER', 'DATE']);
+const MANAGED_FIELD_METADATA_KEYS = new Map([
+  ['Status', 'workflow'],
+  ['Priority', 'priority'],
+  ['Area', 'area'],
+  ['Work Type', 'type'],
+  ['Phase', 'phase'],
+  ['V2 Phase', 'v2Phase'],
+  ['V2 Disposition', 'v2Disposition'],
+  ['Risk', 'risk'],
+  ['Evidence', 'evidence'],
+  ['Effort', 'effort'],
+  ['Start date', 'startDate'],
+  ['Target date', 'targetDate'],
+]);
+export const MANAGED_FIELD_ACTIONS = Object.freeze({
+  SET: 'SET',
+  CLEAR: 'CLEAR',
+  NO_OP: 'NO_OP',
+});
+export const PROJECT_FIELD_UNSET = Object.freeze({ kind: 'UNSET' });
 const ALLOWED_VIEW_LAYOUTS = new Set(['TABLE', 'BOARD', 'ROADMAP']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -810,17 +830,39 @@ export function validateMigrationBaseline({ existingFields, plan, retention }) {
 }
 
 function inspectCurrentValueMap(fieldValues) {
+  if (fieldValues === undefined || fieldValues === null) {
+    return { error: 'Project item field-value projection is missing' };
+  }
+  const connection = Array.isArray(fieldValues) ? { nodes: fieldValues } : fieldValues;
+  if (!Array.isArray(connection.nodes)) return { error: 'Project item field-value nodes are missing' };
+  if (!Array.isArray(fieldValues) && connection.pageInfo?.hasNextPage !== false) {
+    return { error: 'Project item field-value pagination state is missing or incomplete' };
+  }
+  if (connection.pageInfo?.hasNextPage === true) {
+    return { error: 'Project item field values exceed the verified projection page' };
+  }
   const map = new Map();
-  for (const node of fieldValues ?? []) {
+  const fieldIds = new Set();
+  for (const node of connection.nodes ?? []) {
+    if (![
+      'ProjectV2ItemFieldSingleSelectValue',
+      'ProjectV2ItemFieldNumberValue',
+      'ProjectV2ItemFieldDateValue',
+    ].includes(node?.__typename)) continue;
     const name = node?.field?.name;
-    if (!name) continue;
+    const fieldId = node?.field?.id;
+    if (!name || !fieldId) return { error: 'supported field value has incomplete field identity' };
     if (map.has(name)) return { error: `duplicate field value for ${name}` };
+    if (fieldIds.has(fieldId)) return { error: `duplicate field identity ${fieldId}` };
+    fieldIds.add(fieldId);
     if (node.__typename === 'ProjectV2ItemFieldSingleSelectValue') {
-      map.set(name, { kind: 'SINGLE_SELECT', optionId: node.optionId ?? null, name: node.name ?? null });
+      map.set(name, {
+        kind: 'SINGLE_SELECT', fieldId, optionId: node.optionId ?? null, name: node.name ?? null,
+      });
     } else if (node.__typename === 'ProjectV2ItemFieldNumberValue') {
-      map.set(name, { kind: 'NUMBER', number: node.number ?? null });
+      map.set(name, { kind: 'NUMBER', fieldId, number: node.number ?? null });
     } else if (node.__typename === 'ProjectV2ItemFieldDateValue') {
-      map.set(name, { kind: 'DATE', date: node.date ?? null });
+      map.set(name, { kind: 'DATE', fieldId, date: node.date ?? null });
     }
   }
   return { map };
@@ -836,15 +878,17 @@ function expectedProjectFieldValue(field, value) {
   if (field.dataType === 'SINGLE_SELECT') {
     const option = field.options?.find((candidate) => candidate.name === value);
     assert(option?.id, `option ${value} not found for ${field.name}`);
-    return { kind: 'SINGLE_SELECT', optionId: option.id, name: option.name };
+    return {
+      kind: 'SINGLE_SELECT', fieldId: field.id, optionId: option.id, name: option.name,
+    };
   }
-  if (field.dataType === 'NUMBER') return { kind: 'NUMBER', number: value };
-  if (field.dataType === 'DATE') return { kind: 'DATE', date: value };
+  if (field.dataType === 'NUMBER') return { kind: 'NUMBER', fieldId: field.id, number: value };
+  if (field.dataType === 'DATE') return { kind: 'DATE', fieldId: field.id, date: value };
   throw new Error(`unsupported project field type ${field.dataType}`);
 }
 
 function projectFieldValuesEqual(left, right) {
-  if (left?.kind !== right?.kind) return false;
+  if (left?.kind !== right?.kind || left?.fieldId !== right?.fieldId) return false;
   if (left?.kind === 'SINGLE_SELECT') return left.optionId === right.optionId && left.name === right.name;
   if (left?.kind === 'NUMBER') return left.number === right.number;
   if (left?.kind === 'DATE') return left.date === right.date;
@@ -853,9 +897,50 @@ function projectFieldValuesEqual(left, right) {
 
 function projectFieldValueStillProjecting(left, before, expected) {
   if (left === undefined || projectFieldValuesEqual(left, before)) return true;
-  if (left?.kind !== 'SINGLE_SELECT' || (left.name !== null && left.name !== undefined)) return false;
+  if (left?.kind !== 'SINGLE_SELECT'
+    || left.fieldId !== expected?.fieldId
+    || (left.name !== null && left.name !== undefined)) return false;
   return (before?.kind === 'SINGLE_SELECT' && left.optionId === before.optionId)
     || (expected?.kind === 'SINGLE_SELECT' && left.optionId === expected.optionId);
+}
+
+function projectFieldValueStillClearing(actual, before) {
+  if (!actual || !before || actual.kind !== before.kind || actual.fieldId !== before.fieldId) return false;
+  if (projectFieldValuesEqual(actual, before)) return true;
+  if (actual.kind === 'SINGLE_SELECT') {
+    const optionCompatible = actual.optionId === null || actual.optionId === undefined
+      || actual.optionId === before.optionId;
+    const nameCompatible = actual.name === null || actual.name === undefined || actual.name === before.name;
+    const isPartial = actual.optionId === null || actual.optionId === undefined
+      || actual.name === null || actual.name === undefined;
+    return optionCompatible && nameCompatible && isPartial;
+  }
+  if (actual.kind === 'NUMBER') return actual.number === null || actual.number === undefined;
+  if (actual.kind === 'DATE') return actual.date === null || actual.date === undefined;
+  return false;
+}
+
+function projectFieldValueSummary(value) {
+  if (value === undefined) return 'UNSET';
+  if (value?.kind === 'SINGLE_SELECT') {
+    return `SINGLE_SELECT(fieldId=${value.fieldId},optionId=${value.optionId ?? 'null'},name=${value.name ?? 'null'})`;
+  }
+  if (value?.kind === 'NUMBER') return `NUMBER(fieldId=${value.fieldId},number=${value.number ?? 'null'})`;
+  if (value?.kind === 'DATE') return `DATE(fieldId=${value.fieldId},date=${value.date ?? 'null'})`;
+  return 'UNSUPPORTED';
+}
+
+function projectFieldValueIsComplete(value) {
+  if (value?.kind === 'SINGLE_SELECT') {
+    return typeof value.optionId === 'string' && value.optionId.length > 0
+      && typeof value.name === 'string' && value.name.length > 0;
+  }
+  if (value?.kind === 'NUMBER') return Number.isFinite(value.number);
+  if (value?.kind === 'DATE' && typeof value.date === 'string' && DATE_PATTERN.test(value.date)) {
+    const timestamp = Date.parse(`${value.date}T00:00:00.000Z`);
+    return Number.isFinite(timestamp) && new Date(timestamp).toISOString().startsWith(value.date);
+  }
+  return false;
 }
 
 function itemProjectionIndex(items) {
@@ -1155,7 +1240,7 @@ export function evaluateItemFieldProjection({
       observedItemSummary(target),
     );
   }
-  const inspectedValues = inspectCurrentValueMap(target.fieldValues?.nodes);
+  const inspectedValues = inspectCurrentValueMap(target.fieldValues);
   if (inspectedValues.error) {
     return verificationResult(
       PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
@@ -1205,6 +1290,117 @@ export function evaluateItemFieldProjection({
     'EXACT_STATE_VISIBLE',
     expectedItemSummary(content, false, expectedValues.size),
     observedItemSummary(target),
+    { itemId: target.id },
+  );
+}
+
+export function evaluateItemFieldClearProjection({
+  items,
+  targetItemId,
+  content,
+  repository,
+  beforeValues,
+  field,
+  knownItemsById,
+  projectionLagEligibleItemIds,
+}) {
+  const clearProjectionLagEligibleItemIds = projectionLagEligibleItemIds === undefined
+    ? undefined
+    : new Set(projectionLagEligibleItemIds);
+  clearProjectionLagEligibleItemIds?.delete(targetItemId);
+  const inspected = inspectTargetItemIdentity({
+    items,
+    targetItemId,
+    content,
+    repository,
+    allowMissing: false,
+    knownItemsById,
+    projectionLagEligibleItemIds: clearProjectionLagEligibleItemIds,
+  });
+  if (inspected.result) return inspected.result;
+  const target = inspected.target;
+  const expected = `${content.kind} #${content.number} field=${field.name} UNSET`;
+  if (target.isArchived === undefined || target.isArchived === null) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'UNEXPECTED_LIFECYCLE_STATE',
+      expected,
+      observedItemSummary(target),
+    );
+  }
+  if (target.isArchived !== false) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'UNEXPECTED_LIFECYCLE_STATE',
+      expected,
+      observedItemSummary(target),
+    );
+  }
+  const beforeTarget = beforeValues.get(field.name);
+  if (!beforeTarget || beforeTarget.fieldId !== field.id) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'FIELD_SCHEMA_DRIFT',
+      expected,
+      `${content.kind} #${content.number} clear contract lacks the captured target field identity`,
+    );
+  }
+  const inspectedValues = inspectCurrentValueMap(target.fieldValues);
+  if (inspectedValues.error) {
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+      'UNEXPECTED_FIELD_VALUE',
+      expected,
+      inspectedValues.error,
+    );
+  }
+  const actualValues = inspectedValues.map;
+  for (const [fieldName, actualValue] of actualValues) {
+    if (fieldName === field.name) continue;
+    const capturedValue = beforeValues.get(fieldName);
+    if (!capturedValue || !projectFieldValuesEqual(actualValue, capturedValue)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_FIELD_VALUE',
+        `${content.kind} #${content.number} unrelated supported fields unchanged`,
+        `${content.kind} #${content.number} field=${fieldName} appeared or changed during clear`,
+      );
+    }
+  }
+  for (const [fieldName, capturedValue] of beforeValues) {
+    if (fieldName === field.name) continue;
+    if (!projectFieldValuesEqual(actualValues.get(fieldName), capturedValue)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_FIELD_VALUE',
+        `${content.kind} #${content.number} unrelated supported fields unchanged`,
+        `${content.kind} #${content.number} field=${fieldName} disappeared or changed during clear`,
+      );
+    }
+  }
+  const actualTarget = actualValues.get(field.name);
+  if (actualTarget !== undefined) {
+    if (actualTarget.fieldId !== field.id || !projectFieldValueStillClearing(actualTarget, beforeTarget)) {
+      return verificationResult(
+        PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+        'UNEXPECTED_FIELD_VALUE',
+        expected,
+        `${content.kind} #${content.number} field=${field.name} actual=${projectFieldValueSummary(actualTarget)}`,
+      );
+    }
+    return verificationResult(
+      PROJECT_VERIFICATION_OUTCOMES.NOT_YET_CONVERGED,
+      'FIELD_NOT_VISIBLE',
+      expected,
+      `${observedItemSummary(target)} field=${field.name} actual=${projectFieldValueSummary(actualTarget)}`,
+    );
+  }
+  if (inspected.relatedProjectionDelay) return inspected.relatedProjectionDelay;
+  return verificationResult(
+    PROJECT_VERIFICATION_OUTCOMES.CONVERGED,
+    'EXACT_STATE_VISIBLE',
+    expected,
+    `${observedItemSummary(target)} field=${field.name} absent`,
     { itemId: target.id },
   );
 }
@@ -2216,6 +2412,7 @@ async function listProjectItems(api, projectId) {
                       field { ... on ProjectV2FieldCommon { id name } }
                     }
                   }
+                  pageInfo { hasNextPage endCursor }
                 }
               }
               pageInfo { hasNextPage endCursor }
@@ -2254,21 +2451,91 @@ function validateMetadataAgainstConfig(metadata, fieldsByName) {
   }
 }
 
-function desiredFieldValues(metadata) {
-  return new Map(Object.entries({
-    Status: metadata.workflow,
-    Priority: metadata.priority,
-    Area: metadata.area,
-    'Work Type': metadata.type,
-    Phase: metadata.phase,
-    'V2 Phase': metadata.v2Phase,
-    'V2 Disposition': metadata.v2Disposition,
-    Risk: metadata.risk,
-    Evidence: metadata.evidence,
-    Effort: metadata.effort,
-    'Start date': metadata.startDate,
-    'Target date': metadata.targetDate,
-  }).filter(([, value]) => value !== undefined));
+function managedMetadataValue(metadata, fieldName) {
+  const metadataKey = MANAGED_FIELD_METADATA_KEYS.get(fieldName);
+  assert(metadataKey, `configured project field ${fieldName} has no managed metadata mapping`);
+  return metadata[metadataKey];
+}
+
+export function planManagedFieldReconciliation({
+  configuredFields,
+  fieldsByName,
+  metadata,
+  currentValues,
+}) {
+  assert(Array.isArray(configuredFields), 'configuredFields must be an array');
+  assert(fieldsByName instanceof Map, 'fieldsByName must be a Map');
+  assert(isObject(metadata), 'metadata must be an object');
+  assert(currentValues instanceof Map, 'currentValues must be a Map');
+  return configuredFields.map((configuredField) => {
+    const fieldName = configuredField?.name;
+    assert(typeof fieldName === 'string' && fieldName.length > 0, 'configured field name is required');
+    const field = fieldsByName.get(fieldName);
+    assert(field?.id, `project field ${fieldName} is missing`);
+    assert(ALLOWED_FIELD_TYPES.has(field.dataType), `unsupported project field type ${field.dataType}`);
+    assert(field.dataType === configuredField.dataType,
+      `configured project field ${fieldName} type does not match the Project schema`);
+    const currentValue = currentValues.get(fieldName);
+    if (currentValue !== undefined) {
+      assert(currentValue.fieldId === field.id,
+        `project field ${fieldName} value belongs to unexpected field identity ${currentValue.fieldId}`);
+      assert(currentValue.kind === field.dataType,
+        `project field ${fieldName} value has unexpected type ${currentValue.kind}`);
+      assert(projectFieldValueIsComplete(currentValue),
+        `project field ${fieldName} has an incomplete pre-mutation value projection`);
+      if (currentValue.kind === 'SINGLE_SELECT') {
+        assert(field.options?.some((option) => option.id === currentValue.optionId),
+          `project field ${fieldName} has an unknown option identity`);
+      }
+    }
+    const desiredValue = managedMetadataValue(metadata, fieldName);
+    if (desiredValue === undefined) {
+      return Object.freeze({
+        fieldName,
+        fieldId: field.id,
+        field,
+        action: currentValue === undefined ? MANAGED_FIELD_ACTIONS.NO_OP : MANAGED_FIELD_ACTIONS.CLEAR,
+        currentValue: currentValue ?? PROJECT_FIELD_UNSET,
+        expectedValue: PROJECT_FIELD_UNSET,
+        desiredValue: undefined,
+        reason: currentValue === undefined ? 'ALREADY_UNSET' : 'STALE_MANAGED_VALUE',
+      });
+    }
+    const expectedValue = expectedProjectFieldValue(field, desiredValue);
+    const exact = projectFieldValuesEqual(currentValue, expectedValue);
+    return Object.freeze({
+      fieldName,
+      fieldId: field.id,
+      field,
+      action: exact ? MANAGED_FIELD_ACTIONS.NO_OP : MANAGED_FIELD_ACTIONS.SET,
+      currentValue: currentValue ?? PROJECT_FIELD_UNSET,
+      expectedValue,
+      desiredValue,
+      reason: exact ? 'ALREADY_EXACT' : 'DESIRED_VALUE_DIFFERS',
+    });
+  });
+}
+
+export function buildExpectedFinalFieldValues({ currentValues, actions }) {
+  assert(currentValues instanceof Map, 'currentValues must be a Map');
+  assert(Array.isArray(actions), 'managed field actions must be an array');
+  const managedNames = new Set(actions.map((action) => action.fieldName));
+  assert(managedNames.size === actions.length, 'managed field actions must have unique field names');
+  const expected = new Map([...currentValues].filter(([fieldName]) => !managedNames.has(fieldName)));
+  for (const action of actions) {
+    if (action.expectedValue.kind !== 'UNSET') expected.set(action.fieldName, action.expectedValue);
+  }
+  return expected;
+}
+
+function countManagedFieldActions(actions) {
+  const counts = { SET: 0, CLEAR: 0, NO_OP: 0 };
+  for (const action of actions) {
+    assert(Object.values(MANAGED_FIELD_ACTIONS).includes(action.action),
+      `unsupported managed field action ${action.action}`);
+    counts[action.action] += 1;
+  }
+  return counts;
 }
 
 async function setProjectField(api, projectId, itemId, field, value, current) {
@@ -2303,6 +2570,19 @@ async function setProjectField(api, projectId, itemId, field, value, current) {
     return true;
   }
   throw new Error(`unsupported project field type ${field.dataType}`);
+}
+
+export async function clearProjectField(api, projectId, itemId, field) {
+  assert(field?.id && field?.name, 'clear Project field identity is required');
+  assert(ALLOWED_FIELD_TYPES.has(field.dataType), `unsupported project field type ${field.dataType}`);
+  const data = await api.request(`
+    mutation ClearRoadmapItemField($input: ClearProjectV2ItemFieldValueInput!) {
+      clearProjectV2ItemFieldValue(input: $input) { projectV2Item { id } }
+    }
+  `, { input: { projectId, itemId, fieldId: field.id } }, `clear ${field.name}`);
+  const returnedItemId = data.clearProjectV2ItemFieldValue?.projectV2Item?.id;
+  assert(returnedItemId === itemId,
+    `clear ${field.name} returned unexpected Project item identity ${returnedItemId ?? 'missing'}`);
 }
 
 export async function planRepositoryItems(api, config, project, reconciledAt) {
@@ -2342,11 +2622,31 @@ export async function planRepositoryItems(api, config, project, reconciledAt) {
   };
 }
 
-function evaluateFinalItemProjection({
+function rebindItemFromLatestProjection({ item, content, items, repository }) {
+  if (!item?.id) return item;
+  const indexed = itemProjectionIndex(items);
+  assert(!indexed.error, indexed.error);
+  const latest = indexed.byItemId.get(item.id);
+  if (!latest) {
+    const replacement = indexed.byContentId.get(content.id);
+    const reason = replacement ? 'CONTENT_IDENTITY_DRIFT' : 'ITEM_DELETED';
+    throw new Error(`PROJECT_HARD_DRIFT operation=PRE_MUTATION_ITEM_BINDING identity=${content.kind} #${content.number} reason=${reason} expected=Project item ${item.id} observed=${replacement ? `replacement Project item ${replacement.id}` : 'item absent'}`);
+  }
+  if (latest.content?.id !== content.id
+    || latest.content?.__typename !== content.kind
+    || latest.content?.number !== content.number
+    || latest.content?.repository?.nameWithOwner !== repository) {
+    throw new Error(`PROJECT_HARD_DRIFT operation=PRE_MUTATION_ITEM_BINDING identity=${content.kind} #${content.number} reason=CONTENT_IDENTITY_DRIFT expected=captured repository content observed=Project item ${item.id} identity changed`);
+  }
+  return latest;
+}
+
+export function evaluateFinalItemProjection({
   items,
   config,
   beforeValuesByContentId,
   expectedValuesByContentId,
+  fieldActionsByContentId,
   itemIdByContentId,
   plan,
 }) {
@@ -2459,7 +2759,7 @@ function evaluateFinalItemProjection({
       verified.archived += 1;
       continue;
     }
-    const inspectedValues = inspectCurrentValueMap(actual.fieldValues?.nodes);
+    const inspectedValues = inspectCurrentValueMap(actual.fieldValues);
     if (inspectedValues.error) {
       return verificationResult(
         PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
@@ -2470,7 +2770,8 @@ function evaluateFinalItemProjection({
     }
     const expectedValues = expectedValuesByContentId.get(operation.content.id);
     const beforeValues = beforeValuesByContentId.get(operation.content.id);
-    if (!expectedValues || !beforeValues) {
+    const fieldActions = fieldActionsByContentId.get(operation.content.id);
+    if (!expectedValues || !beforeValues || !fieldActions) {
       return verificationResult(
         PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
         'UNEXPECTED_FIELD_VALUE',
@@ -2478,12 +2779,18 @@ function evaluateFinalItemProjection({
         `${operation.content.kind} #${operation.content.number} field contract missing`,
       );
     }
-    for (const fieldName of inspectedValues.map.keys()) {
-      if (!expectedValues.has(fieldName)) {
+    const actionByFieldName = new Map(fieldActions.map((action) => [action.fieldName, action]));
+    for (const [fieldName, actualValue] of inspectedValues.map) {
+      if (expectedValues.has(fieldName)) continue;
+      const action = actionByFieldName.get(fieldName);
+      if (action?.action === MANAGED_FIELD_ACTIONS.CLEAR
+        && projectFieldValueStillClearing(actualValue, beforeValues.get(fieldName))) {
+        markDelayed('FIELD_NOT_VISIBLE', `${operation.content.kind} #${operation.content.number} field=${fieldName} clear not visible`);
+      } else {
         return verificationResult(
           PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
           'UNEXPECTED_FIELD_VALUE',
-          `${operation.content.kind} #${operation.content.number} exact managed-field set`,
+          `${operation.content.kind} #${operation.content.number} exact supported-field set`,
           `${operation.content.kind} #${operation.content.number} unexpected field=${fieldName}`,
         );
       }
@@ -2491,7 +2798,9 @@ function evaluateFinalItemProjection({
     for (const [fieldName, expectedValue] of expectedValues) {
       const actualValue = inspectedValues.map.get(fieldName);
       if (projectFieldValuesEqual(actualValue, expectedValue)) continue;
-      if (projectFieldValueStillProjecting(actualValue, beforeValues.get(fieldName), expectedValue)) {
+      const action = actionByFieldName.get(fieldName);
+      if (action?.action === MANAGED_FIELD_ACTIONS.SET
+        && projectFieldValueStillProjecting(actualValue, beforeValues.get(fieldName), expectedValue)) {
         markDelayed('FIELD_NOT_VISIBLE', `${operation.content.kind} #${operation.content.number} field=${fieldName} not visible`);
         continue;
       }
@@ -2545,8 +2854,11 @@ export async function reconcileItems(
     metadataByContentId,
     plan,
   } = itemState;
+  assert(Array.isArray(config.fields), 'configured Project fields are required for item reconciliation');
   const executed = { added: 0, archived: 0, unarchived: 0 };
   let fieldUpdates = 0;
+  let fieldClears = 0;
+  const plannedFieldActions = { SET: 0, CLEAR: 0, NO_OP: 0 };
   let lastObservedItems = projectItems ?? repositoryItems;
   const knownItemsById = new Map(lastObservedItems.map((item) => [item.id, {
     contentId: item.content.id,
@@ -2560,12 +2872,19 @@ export async function reconcileItems(
     .map((operation) => [operation.content.id, operation.item.id]));
   const beforeValuesByContentId = new Map();
   const expectedValuesByContentId = new Map();
+  const fieldActionsByContentId = new Map();
   for (const operation of plan.operations) {
     const { content } = operation;
     const metadata = metadataByContentId.get(content.id);
     assert(metadata, `prevalidated metadata is missing for ${content.kind} #${content.number}`);
     validateMetadataAgainstConfig(metadata, fieldsByName);
     let { item } = operation;
+    item = rebindItemFromLatestProjection({
+      item,
+      content,
+      items: lastObservedItems,
+      repository: config.repository,
+    });
     if (operation.action === 'ADD') {
       const data = await api.request(`
         mutation AddRoadmapItem($input: AddProjectV2ItemByIdInput!) {
@@ -2662,48 +2981,101 @@ export async function reconcileItems(
     }
 
     assert(item?.id, `${operation.action} ${content.kind} #${content.number} did not produce an active Project item`);
-    let current = currentValueMap(item.fieldValues?.nodes);
-    beforeValuesByContentId.set(content.id, new Map(current));
-    for (const [fieldName, value] of desiredFieldValues(metadata)) {
-      const field = fieldsByName.get(fieldName);
-      assert(field, `project field ${fieldName} is missing`);
-      const expectedValue = expectedProjectFieldValue(field, value);
-      const beforeValues = new Map(current);
-      const fieldWasMutated = await setProjectField(api, project.id, item.id, field, value, current.get(fieldName));
-      if (!fieldWasMutated && projectFieldValuesEqual(current.get(fieldName), expectedValue)) continue;
-      if (!fieldWasMutated) {
-        const currentValue = current.get(fieldName);
-        assert(currentValue?.kind === 'SINGLE_SELECT'
-          && expectedValue.kind === 'SINGLE_SELECT'
-          && currentValue.optionId === expectedValue.optionId,
-        `${content.kind} #${content.number} field ${fieldName} has contradictory non-mutated value`);
+    let current = currentValueMap(item.fieldValues);
+    const capturedValues = new Map(current);
+    const fieldActions = planManagedFieldReconciliation({
+      configuredFields: config.fields,
+      fieldsByName,
+      metadata,
+      currentValues: capturedValues,
+    });
+    const actionCounts = countManagedFieldActions(fieldActions);
+    for (const action of Object.keys(plannedFieldActions)) plannedFieldActions[action] += actionCounts[action];
+    beforeValuesByContentId.set(content.id, capturedValues);
+    fieldActionsByContentId.set(content.id, fieldActions);
+    expectedValuesByContentId.set(content.id, buildExpectedFinalFieldValues({
+      currentValues: capturedValues,
+      actions: fieldActions,
+    }));
+
+    for (const action of fieldActions) {
+      if (action.action === MANAGED_FIELD_ACTIONS.NO_OP) continue;
+      const currentValue = current.get(action.fieldName);
+      if (action.currentValue.kind === 'UNSET') {
+        assert(currentValue === undefined,
+          `${content.kind} #${content.number} field ${action.fieldName} changed before its planned mutation`);
       } else {
-        fieldUpdates += 1;
+        assert(projectFieldValuesEqual(currentValue, action.currentValue),
+          `${content.kind} #${content.number} field ${action.fieldName} changed before its planned mutation`);
       }
-      const expectedValues = new Map(current);
-      expectedValues.set(fieldName, expectedValue);
+
+      if (action.action === MANAGED_FIELD_ACTIONS.SET) {
+        const fieldWasMutated = await setProjectField(
+          api,
+          project.id,
+          item.id,
+          action.field,
+          action.desiredValue,
+          currentValue,
+        );
+        if (!fieldWasMutated) {
+          assert(currentValue?.kind === 'SINGLE_SELECT'
+            && action.expectedValue.kind === 'SINGLE_SELECT'
+            && currentValue.fieldId === action.expectedValue.fieldId
+            && currentValue.optionId === action.expectedValue.optionId,
+          `${content.kind} #${content.number} field ${action.fieldName} has contradictory non-mutated value`);
+        } else {
+          fieldUpdates += 1;
+        }
+        const expectedValues = new Map(current);
+        expectedValues.set(action.fieldName, action.expectedValue);
+        const projection = await verifyProjectProjection({
+          ...verificationOptions,
+          operationType: fieldWasMutated ? 'UPDATE_ITEM_FIELD' : 'VERIFY_ITEM_FIELD',
+          identity: `${content.kind} #${content.number} field=${action.fieldName}`,
+          read: () => listProjectItems(api, project.id),
+          classify: (items) => evaluateItemFieldProjection({
+            items,
+            targetItemId: item.id,
+            content,
+            repository: config.repository,
+            beforeValues: current,
+            expectedValues,
+            allowMissing: operation.action === 'ADD',
+            knownItemsById,
+            projectionLagEligibleItemIds,
+          }),
+        });
+        lastObservedItems = projection.snapshot;
+        item = projection.snapshot.find((candidate) => candidate.id === item.id);
+        current = currentValueMap(item.fieldValues);
+        continue;
+      }
+
+      assert(action.action === MANAGED_FIELD_ACTIONS.CLEAR,
+        `unsupported managed field action ${action.action}`);
+      await clearProjectField(api, project.id, item.id, action.field);
+      fieldClears += 1;
       const projection = await verifyProjectProjection({
         ...verificationOptions,
-        operationType: fieldWasMutated ? 'UPDATE_ITEM_FIELD' : 'VERIFY_ITEM_FIELD',
-        identity: `${content.kind} #${content.number}`,
+        operationType: 'CLEAR_ITEM_FIELD',
+        identity: `${content.kind} #${content.number} field=${action.fieldName}`,
         read: () => listProjectItems(api, project.id),
-        classify: (items) => evaluateItemFieldProjection({
+        classify: (items) => evaluateItemFieldClearProjection({
           items,
           targetItemId: item.id,
           content,
           repository: config.repository,
           beforeValues: current,
-          expectedValues,
-          allowMissing: operation.action === 'ADD',
+          field: action.field,
           knownItemsById,
           projectionLagEligibleItemIds,
         }),
       });
       lastObservedItems = projection.snapshot;
       item = projection.snapshot.find((candidate) => candidate.id === item.id);
-      current = currentValueMap(item.fieldValues?.nodes);
+      current = currentValueMap(item.fieldValues);
     }
-    expectedValuesByContentId.set(content.id, new Map(current));
   }
   let useCapturedSnapshot = true;
   const finalProjection = await verifyProjectProjection({
@@ -2722,6 +3094,7 @@ export async function reconcileItems(
       config,
       beforeValuesByContentId,
       expectedValuesByContentId,
+      fieldActionsByContentId,
       itemIdByContentId,
       plan,
     }),
@@ -2737,7 +3110,11 @@ export async function reconcileItems(
     planned: plan.counts,
     reasonCounts: plan.reasonCounts,
     baselines: plan.baselines,
-    executed: { ...executed, fieldUpdates },
+    managedFieldActions: {
+      planned: plannedFieldActions,
+      verified: { ...plannedFieldActions },
+    },
+    executed: { ...executed, fieldUpdates, fieldClears },
     verified,
   };
 }

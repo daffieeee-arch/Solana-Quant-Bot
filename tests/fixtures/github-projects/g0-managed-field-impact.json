@@ -1,0 +1,1999 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "description": "Sanitized read-only Project #4 impact snapshot retained before branch creation",
+    "capturedAt": "2026-09-02T03:34:45.824446868+02:00",
+    "repositoryMainSha": "51d49fcbab52068f7ac59b4aced3040a30a6c9d4",
+    "sourceSnapshotSha256": "64ceca7db84138375ed2aef632fa580fa330a0e295af40f8f1ca33cf23b29039",
+    "projectNumber": 4,
+    "totalItems": 88,
+    "activeItems": 58,
+    "archivedItems": 30
+  },
+  "managedFields": [
+    {
+      "name": "Status",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhg8pj0",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "f75ad846",
+          "name": "Backlog"
+        },
+        {
+          "id": "c2409a29",
+          "name": "Ready"
+        },
+        {
+          "id": "47fc9ee4",
+          "name": "In Progress"
+        },
+        {
+          "id": "eed81730",
+          "name": "In Review"
+        },
+        {
+          "id": "17ff3a5d",
+          "name": "Blocked"
+        },
+        {
+          "id": "98236657",
+          "name": "Done"
+        },
+        {
+          "id": "b1e6ec39",
+          "name": "Cancelled"
+        }
+      ]
+    },
+    {
+      "name": "Priority",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhg8ufI",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "aeb4e107",
+          "name": "P0"
+        },
+        {
+          "id": "922f7cb6",
+          "name": "P1"
+        },
+        {
+          "id": "65564386",
+          "name": "P2"
+        },
+        {
+          "id": "9e4de6d4",
+          "name": "P3"
+        }
+      ]
+    },
+    {
+      "name": "Area",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhg8ufM",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "cb569c95",
+          "name": "Program"
+        },
+        {
+          "id": "2925984f",
+          "name": "Governance"
+        },
+        {
+          "id": "3b2368f3",
+          "name": "Backend"
+        },
+        {
+          "id": "a9e21140",
+          "name": "Data Ingest"
+        },
+        {
+          "id": "49f8ac12",
+          "name": "Pricing"
+        },
+        {
+          "id": "b3988f20",
+          "name": "Execution"
+        },
+        {
+          "id": "ae6bcaed",
+          "name": "Market Data"
+        },
+        {
+          "id": "c428df9d",
+          "name": "Frontend"
+        },
+        {
+          "id": "5c4f64b8",
+          "name": "Frontend Data"
+        },
+        {
+          "id": "d5ba165e",
+          "name": "UX"
+        },
+        {
+          "id": "bde1f434",
+          "name": "Data"
+        },
+        {
+          "id": "e89c8c49",
+          "name": "Research"
+        },
+        {
+          "id": "cfd8b439",
+          "name": "ML"
+        },
+        {
+          "id": "88c66b82",
+          "name": "Live Shadow"
+        },
+        {
+          "id": "a7eac3eb",
+          "name": "Platform"
+        },
+        {
+          "id": "4cb25a4f",
+          "name": "Observability"
+        }
+      ]
+    },
+    {
+      "name": "Work Type",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhg8zgQ",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "5650af81",
+          "name": "Program"
+        },
+        {
+          "id": "0b35fb93",
+          "name": "Epic"
+        },
+        {
+          "id": "99614715",
+          "name": "Bug"
+        },
+        {
+          "id": "5be54735",
+          "name": "Architecture"
+        },
+        {
+          "id": "1bb69c8e",
+          "name": "Safety"
+        },
+        {
+          "id": "7375bdcc",
+          "name": "Design"
+        },
+        {
+          "id": "87d056b0",
+          "name": "Feature"
+        },
+        {
+          "id": "61e55791",
+          "name": "Research"
+        },
+        {
+          "id": "41baad4b",
+          "name": "Spike"
+        },
+        {
+          "id": "84f00671",
+          "name": "Tech Debt"
+        },
+        {
+          "id": "d77c44fe",
+          "name": "Pull Request"
+        }
+      ]
+    },
+    {
+      "name": "Phase",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhg8zgU",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "cf8ecec0",
+          "name": "0 Governance"
+        },
+        {
+          "id": "de4a32c2",
+          "name": "1 Correctness"
+        },
+        {
+          "id": "c86aba77",
+          "name": "2 Cockpit Foundation"
+        },
+        {
+          "id": "b58e878a",
+          "name": "3 Core Workspaces"
+        },
+        {
+          "id": "81e672d8",
+          "name": "4 Authentic Data"
+        },
+        {
+          "id": "fab6456e",
+          "name": "5 Quant and ML"
+        },
+        {
+          "id": "037dde57",
+          "name": "6 Live Shadow"
+        },
+        {
+          "id": "a50f55a5",
+          "name": "7 Execution"
+        }
+      ]
+    },
+    {
+      "name": "V2 Phase",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhhDQrI",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "04d59f11",
+          "name": "0 Cutover & Cleanup"
+        },
+        {
+          "id": "2988e9d7",
+          "name": "1 Pump Protocol Truth"
+        },
+        {
+          "id": "36251498",
+          "name": "2 Authentic Acquisition"
+        },
+        {
+          "id": "5f8e83fe",
+          "name": "3 Bronze & Silver"
+        },
+        {
+          "id": "6912d99b",
+          "name": "4 Research Observatory"
+        },
+        {
+          "id": "04e0247b",
+          "name": "5 Scale & Data Sufficiency"
+        },
+        {
+          "id": "abbadbbb",
+          "name": "6 Gold & Edge Validation"
+        },
+        {
+          "id": "abb6e2a3",
+          "name": "7 Prospective Shadow"
+        },
+        {
+          "id": "0add7d43",
+          "name": "8 New Rust Paper Engine"
+        },
+        {
+          "id": "62286d99",
+          "name": "9 Professional Workstation"
+        },
+        {
+          "id": "3c9224c6",
+          "name": "10 VPS & Gated Live"
+        }
+      ]
+    },
+    {
+      "name": "V2 Disposition",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhhDQrM",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "36e20abb",
+          "name": "ACTIVE NOW"
+        },
+        {
+          "id": "52cd00cc",
+          "name": "NEXT"
+        },
+        {
+          "id": "7999168c",
+          "name": "LATER"
+        },
+        {
+          "id": "78069749",
+          "name": "SPLIT"
+        },
+        {
+          "id": "45b161c5",
+          "name": "SUPERSEDED"
+        },
+        {
+          "id": "76a1a0d2",
+          "name": "RETIRED"
+        }
+      ]
+    },
+    {
+      "name": "Risk",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhg8zgY",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "bc629139",
+          "name": "Critical"
+        },
+        {
+          "id": "976a92c1",
+          "name": "High"
+        },
+        {
+          "id": "ae3e28fc",
+          "name": "Medium"
+        },
+        {
+          "id": "811669fe",
+          "name": "Low"
+        }
+      ]
+    },
+    {
+      "name": "Evidence",
+      "id": "PVTSSF_lAHOD38U784BiDPOzhg8zgc",
+      "dataType": "SINGLE_SELECT",
+      "options": [
+        {
+          "id": "64b13d5e",
+          "name": "Not Applicable"
+        },
+        {
+          "id": "2dec7514",
+          "name": "Unproven"
+        },
+        {
+          "id": "0aab3ca8",
+          "name": "Fixture"
+        },
+        {
+          "id": "69c60b15",
+          "name": "Operationally Verified"
+        },
+        {
+          "id": "b24f5487",
+          "name": "Engineering Validation"
+        },
+        {
+          "id": "fab02d32",
+          "name": "Research Candidate"
+        },
+        {
+          "id": "fd58ad10",
+          "name": "Research Ready"
+        },
+        {
+          "id": "37941e3f",
+          "name": "Shadow"
+        },
+        {
+          "id": "1325597e",
+          "name": "Paper Proven"
+        },
+        {
+          "id": "83718c1f",
+          "name": "Live Proven"
+        }
+      ]
+    },
+    {
+      "name": "Effort",
+      "id": "PVTF_lAHOD38U784BiDPOzhg8zgg",
+      "dataType": "NUMBER"
+    },
+    {
+      "name": "Start date",
+      "id": "PVTF_lAHOD38U784BiDPOzhg8zgk",
+      "dataType": "DATE"
+    },
+    {
+      "name": "Target date",
+      "id": "PVTF_lAHOD38U784BiDPOzhg8zgo",
+      "dataType": "DATE"
+    }
+  ],
+  "active": [
+    {
+      "kind": "Issue",
+      "number": 27,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Backend",
+        "type": "Bug",
+        "phase": "1 Correctness",
+        "v2Phase": "8 New Rust Paper Engine",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Backend",
+        "Work Type": "Bug",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "8 New Rust Paper Engine",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 28,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Backend",
+        "type": "Architecture",
+        "phase": "1 Correctness",
+        "v2Phase": "8 New Rust Paper Engine",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Backend",
+        "Work Type": "Architecture",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "8 New Rust Paper Engine",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 29,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Backend",
+        "type": "Architecture",
+        "phase": "1 Correctness",
+        "v2Phase": "3 Bronze & Silver",
+        "v2Disposition": "SPLIT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Backend",
+        "Work Type": "Architecture",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "3 Bronze & Silver",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 30,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Data Ingest",
+        "type": "Architecture",
+        "phase": "1 Correctness",
+        "v2Phase": "2 Authentic Acquisition",
+        "v2Disposition": "SPLIT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Data Ingest",
+        "Work Type": "Architecture",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "2 Authentic Acquisition",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 31,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Pricing",
+        "type": "Architecture",
+        "phase": "1 Correctness",
+        "v2Phase": "1 Pump Protocol Truth",
+        "v2Disposition": "SPLIT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Pricing",
+        "Work Type": "Architecture",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "1 Pump Protocol Truth",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 32,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Execution",
+        "type": "Bug",
+        "phase": "1 Correctness",
+        "v2Phase": "8 New Rust Paper Engine",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Execution",
+        "Work Type": "Bug",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "8 New Rust Paper Engine",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 33,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Market Data",
+        "type": "Architecture",
+        "phase": "1 Correctness",
+        "v2Phase": "6 Gold & Edge Validation",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Market Data",
+        "Work Type": "Architecture",
+        "Phase": "1 Correctness",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "6 Gold & Edge Validation",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 34,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Backend",
+        "type": "Safety",
+        "phase": "1 Correctness",
+        "v2Phase": "1 Pump Protocol Truth",
+        "v2Disposition": "SPLIT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Backend",
+        "Work Type": "Safety",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "1 Pump Protocol Truth",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 35,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Frontend",
+        "type": "Design",
+        "phase": "2 Cockpit Foundation",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Frontend",
+        "Work Type": "Design",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 36,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "2 Cockpit Foundation",
+        "v2Phase": "9 Professional Workstation",
+        "v2Disposition": "LATER",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "9 Professional Workstation",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 37,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Frontend Data",
+        "type": "Architecture",
+        "phase": "2 Cockpit Foundation",
+        "v2Phase": "9 Professional Workstation",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Frontend Data",
+        "Work Type": "Architecture",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "9 Professional Workstation",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 38,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "2 Cockpit Foundation",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 39,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "2 Cockpit Foundation",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 40,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "3 Core Workspaces",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "SPLIT",
+        "risk": "Medium",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "3 Core Workspaces",
+        "Risk": "Medium",
+        "Evidence": "Unproven",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 41,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "3 Core Workspaces",
+        "v2Phase": "9 Professional Workstation",
+        "v2Disposition": "LATER",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "3 Core Workspaces",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "9 Professional Workstation",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 42,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "3 Core Workspaces",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "3 Core Workspaces",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 43,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "3 Core Workspaces",
+        "v2Phase": "5 Scale & Data Sufficiency",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "3 Core Workspaces",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "5 Scale & Data Sufficiency",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 44,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "3 Core Workspaces",
+        "v2Phase": "5 Scale & Data Sufficiency",
+        "v2Disposition": "SPLIT",
+        "risk": "Medium",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "3 Core Workspaces",
+        "Risk": "Medium",
+        "Evidence": "Unproven",
+        "V2 Phase": "5 Scale & Data Sufficiency",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 45,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Feature",
+        "phase": "3 Core Workspaces",
+        "v2Phase": "3 Bronze & Silver",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "Phase": "3 Core Workspaces",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "3 Bronze & Silver",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 46,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "UX",
+        "type": "Feature",
+        "phase": "3 Core Workspaces",
+        "v2Phase": "9 Professional Workstation",
+        "v2Disposition": "LATER",
+        "risk": "Medium",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "UX",
+        "Work Type": "Feature",
+        "Phase": "3 Core Workspaces",
+        "Risk": "Medium",
+        "Evidence": "Unproven",
+        "V2 Phase": "9 Professional Workstation",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 47,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Tech Debt",
+        "phase": "2 Cockpit Foundation",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "SPLIT",
+        "risk": "Medium",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Tech Debt",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "Medium",
+        "Evidence": "Unproven",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 48,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Data",
+        "type": "Research",
+        "phase": "4 Authentic Data",
+        "v2Phase": "2 Authentic Acquisition",
+        "v2Disposition": "SPLIT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Data",
+        "Work Type": "Research",
+        "Phase": "4 Authentic Data",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "2 Authentic Acquisition",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 49,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Data",
+        "type": "Architecture",
+        "phase": "4 Authentic Data",
+        "v2Phase": "3 Bronze & Silver",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Data",
+        "Work Type": "Architecture",
+        "Phase": "4 Authentic Data",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "3 Bronze & Silver",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 50,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Research",
+        "type": "Research",
+        "phase": "5 Quant and ML",
+        "v2Phase": "6 Gold & Edge Validation",
+        "v2Disposition": "SPLIT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Research",
+        "Work Type": "Research",
+        "Phase": "5 Quant and ML",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "6 Gold & Edge Validation",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 51,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "ML",
+        "type": "Research",
+        "phase": "5 Quant and ML",
+        "v2Phase": "6 Gold & Edge Validation",
+        "v2Disposition": "LATER",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "ML",
+        "Work Type": "Research",
+        "Phase": "5 Quant and ML",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "6 Gold & Edge Validation",
+        "V2 Disposition": "LATER"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 52,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "Live Shadow",
+        "type": "Spike",
+        "phase": "6 Live Shadow",
+        "v2Phase": "7 Prospective Shadow",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "Live Shadow",
+        "Work Type": "Spike",
+        "Phase": "6 Live Shadow",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "7 Prospective Shadow",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 53,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "Execution",
+        "type": "Architecture",
+        "phase": "7 Execution",
+        "v2Phase": "8 New Rust Paper Engine",
+        "v2Disposition": "SPLIT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "Execution",
+        "Work Type": "Architecture",
+        "Phase": "7 Execution",
+        "Risk": "Critical",
+        "Evidence": "Unproven",
+        "V2 Phase": "8 New Rust Paper Engine",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 54,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Platform",
+        "type": "Tech Debt",
+        "phase": "1 Correctness",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "SPLIT",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Platform",
+        "Work Type": "Tech Debt",
+        "Phase": "1 Correctness",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 55,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Observability",
+        "type": "Feature",
+        "phase": "2 Cockpit Foundation",
+        "v2Phase": "2 Authentic Acquisition",
+        "v2Disposition": "SPLIT",
+        "risk": "Medium",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Observability",
+        "Work Type": "Feature",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "Medium",
+        "Evidence": "Unproven",
+        "V2 Phase": "2 Authentic Acquisition",
+        "V2 Disposition": "SPLIT"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 56,
+      "metadata": {
+        "workflow": "Done",
+        "priority": "P0",
+        "area": "Governance",
+        "type": "Feature",
+        "phase": "0 Governance",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "SUPERSEDED",
+        "risk": "High",
+        "evidence": "Operationally Verified"
+      },
+      "current": {
+        "Status": "Done",
+        "Priority": "P0",
+        "Area": "Governance",
+        "Work Type": "Feature",
+        "Phase": "0 Governance",
+        "Risk": "High",
+        "Evidence": "Operationally Verified",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "SUPERSEDED"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 57,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Backend",
+        "type": "Epic",
+        "phase": "1 Correctness",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Backend",
+        "Work Type": "Epic",
+        "Phase": "1 Correctness",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 58,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Frontend",
+        "type": "Epic",
+        "phase": "2 Cockpit Foundation",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Frontend",
+        "Work Type": "Epic",
+        "Phase": "2 Cockpit Foundation",
+        "Risk": "High",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 59,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Data",
+        "type": "Epic",
+        "phase": "4 Authentic Data",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Data",
+        "Work Type": "Epic",
+        "Phase": "4 Authentic Data",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 60,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "ML",
+        "type": "Epic",
+        "phase": "5 Quant and ML",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "ML",
+        "Work Type": "Epic",
+        "Phase": "5 Quant and ML",
+        "Risk": "High",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 61,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "Execution",
+        "type": "Epic",
+        "phase": "6 Live Shadow",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "Execution",
+        "Work Type": "Epic",
+        "Phase": "6 Live Shadow",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 62,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P1",
+        "area": "Platform",
+        "type": "Epic",
+        "phase": "0 Governance",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P1",
+        "Area": "Platform",
+        "Work Type": "Epic",
+        "Phase": "0 Governance",
+        "Risk": "High",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 63,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Program",
+        "type": "Program",
+        "phase": "0 Governance",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Program",
+        "Work Type": "Program",
+        "Phase": "0 Governance",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 70,
+      "metadata": {
+        "workflow": "In Progress",
+        "priority": "P0",
+        "area": "Governance",
+        "type": "Architecture",
+        "phase": "0 Governance",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "ACTIVE NOW",
+        "risk": "Critical",
+        "evidence": "Operationally Verified"
+      },
+      "current": {
+        "Status": "In Progress",
+        "Priority": "P0",
+        "Area": "Governance",
+        "Work Type": "Architecture",
+        "Phase": "0 Governance",
+        "Risk": "Critical",
+        "Evidence": "Operationally Verified",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "ACTIVE NOW"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 72,
+      "metadata": {
+        "workflow": "In Progress",
+        "priority": "P0",
+        "area": "Program",
+        "type": "Program",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "ACTIVE NOW",
+        "risk": "Critical",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "In Progress",
+        "Priority": "P0",
+        "Area": "Program",
+        "Work Type": "Program",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "ACTIVE NOW",
+        "Risk": "Critical",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 74,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Data",
+        "type": "Epic",
+        "v2Phase": "1 Pump Protocol Truth",
+        "v2Disposition": "NEXT",
+        "risk": "Critical",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Data",
+        "Work Type": "Epic",
+        "V2 Phase": "1 Pump Protocol Truth",
+        "V2 Disposition": "NEXT",
+        "Risk": "Critical",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 75,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Frontend",
+        "type": "Epic",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "LATER",
+        "risk": "High",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Frontend",
+        "Work Type": "Epic",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "LATER",
+        "Risk": "High",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 76,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Research",
+        "type": "Epic",
+        "v2Phase": "5 Scale & Data Sufficiency",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Research",
+        "Work Type": "Epic",
+        "V2 Phase": "5 Scale & Data Sufficiency",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 77,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "Live Shadow",
+        "type": "Epic",
+        "v2Phase": "7 Prospective Shadow",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "Live Shadow",
+        "Work Type": "Epic",
+        "V2 Phase": "7 Prospective Shadow",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 78,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "Execution",
+        "type": "Epic",
+        "v2Phase": "8 New Rust Paper Engine",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "Execution",
+        "Work Type": "Epic",
+        "V2 Phase": "8 New Rust Paper Engine",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 79,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "Frontend",
+        "type": "Epic",
+        "v2Phase": "9 Professional Workstation",
+        "v2Disposition": "LATER",
+        "risk": "High",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "Frontend",
+        "Work Type": "Epic",
+        "V2 Phase": "9 Professional Workstation",
+        "V2 Disposition": "LATER",
+        "Risk": "High",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 80,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P2",
+        "area": "Execution",
+        "type": "Epic",
+        "v2Phase": "10 VPS & Gated Live",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Not Applicable"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P2",
+        "Area": "Execution",
+        "Work Type": "Epic",
+        "V2 Phase": "10 VPS & Gated Live",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Not Applicable"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 81,
+      "metadata": {
+        "workflow": "Ready",
+        "priority": "P0",
+        "area": "Platform",
+        "type": "Architecture",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "NEXT",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Ready",
+        "Priority": "P0",
+        "Area": "Platform",
+        "Work Type": "Architecture",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "NEXT",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 82,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Backend",
+        "type": "Architecture",
+        "v2Phase": "1 Pump Protocol Truth",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Backend",
+        "Work Type": "Architecture",
+        "V2 Phase": "1 Pump Protocol Truth",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 83,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Data Ingest",
+        "type": "Research",
+        "v2Phase": "2 Authentic Acquisition",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Data Ingest",
+        "Work Type": "Research",
+        "V2 Phase": "2 Authentic Acquisition",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 84,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Data",
+        "type": "Architecture",
+        "v2Phase": "3 Bronze & Silver",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Data",
+        "Work Type": "Architecture",
+        "V2 Phase": "3 Bronze & Silver",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 85,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P0",
+        "area": "Frontend",
+        "type": "Feature",
+        "v2Phase": "4 Research Observatory",
+        "v2Disposition": "LATER",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P0",
+        "Area": "Frontend",
+        "Work Type": "Feature",
+        "V2 Phase": "4 Research Observatory",
+        "V2 Disposition": "LATER",
+        "Risk": "High",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 86,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Research",
+        "type": "Research",
+        "v2Phase": "5 Scale & Data Sufficiency",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Research",
+        "Work Type": "Research",
+        "V2 Phase": "5 Scale & Data Sufficiency",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "Issue",
+      "number": 87,
+      "metadata": {
+        "workflow": "Backlog",
+        "priority": "P1",
+        "area": "Research",
+        "type": "Research",
+        "v2Phase": "6 Gold & Edge Validation",
+        "v2Disposition": "LATER",
+        "risk": "Critical",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Backlog",
+        "Priority": "P1",
+        "Area": "Research",
+        "Work Type": "Research",
+        "V2 Phase": "6 Gold & Edge Validation",
+        "V2 Disposition": "LATER",
+        "Risk": "Critical",
+        "Evidence": "Unproven"
+      }
+    },
+    {
+      "kind": "PullRequest",
+      "number": 66,
+      "route": {
+        "source": "NONE",
+        "secondaryIssueNumbers": [],
+        "orderedIssueNumbers": []
+      },
+      "metadata": {
+        "workflow": "Cancelled",
+        "type": "Pull Request"
+      },
+      "current": {
+        "Status": "Cancelled",
+        "Work Type": "Pull Request"
+      }
+    },
+    {
+      "kind": "PullRequest",
+      "number": 69,
+      "route": {
+        "source": "DIRECT_ROADMAP",
+        "primaryIssueNumber": 62,
+        "secondaryIssueNumbers": [
+          63
+        ],
+        "orderedIssueNumbers": [
+          62,
+          63
+        ]
+      },
+      "metadata": {
+        "workflow": "Done",
+        "priority": "P1",
+        "area": "Platform",
+        "type": "Pull Request",
+        "phase": "0 Governance",
+        "risk": "High",
+        "evidence": "Unproven"
+      },
+      "current": {
+        "Status": "Done",
+        "Priority": "P1",
+        "Area": "Platform",
+        "Work Type": "Pull Request",
+        "Phase": "0 Governance",
+        "Risk": "High",
+        "Evidence": "Unproven",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "SUPERSEDED"
+      }
+    },
+    {
+      "kind": "PullRequest",
+      "number": 71,
+      "route": {
+        "source": "DIRECT_ROADMAP",
+        "primaryIssueNumber": 70,
+        "secondaryIssueNumbers": [],
+        "orderedIssueNumbers": [
+          70
+        ]
+      },
+      "metadata": {
+        "workflow": "Done",
+        "priority": "P0",
+        "area": "Governance",
+        "type": "Pull Request",
+        "phase": "0 Governance",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "ACTIVE NOW",
+        "risk": "Critical",
+        "evidence": "Operationally Verified"
+      },
+      "current": {
+        "Status": "Done",
+        "Priority": "P0",
+        "Area": "Governance",
+        "Work Type": "Pull Request",
+        "Phase": "0 Governance",
+        "Risk": "Critical",
+        "Evidence": "Operationally Verified",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "ACTIVE NOW"
+      }
+    },
+    {
+      "kind": "PullRequest",
+      "number": 73,
+      "route": {
+        "source": "DIRECT_ROADMAP",
+        "primaryIssueNumber": 70,
+        "secondaryIssueNumbers": [],
+        "orderedIssueNumbers": [
+          70
+        ]
+      },
+      "metadata": {
+        "workflow": "Done",
+        "priority": "P0",
+        "area": "Governance",
+        "type": "Pull Request",
+        "phase": "0 Governance",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "ACTIVE NOW",
+        "risk": "Critical",
+        "evidence": "Operationally Verified"
+      },
+      "current": {
+        "Status": "Done",
+        "Priority": "P0",
+        "Area": "Governance",
+        "Work Type": "Pull Request",
+        "Phase": "0 Governance",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "ACTIVE NOW",
+        "Risk": "Critical",
+        "Evidence": "Operationally Verified"
+      }
+    },
+    {
+      "kind": "PullRequest",
+      "number": 88,
+      "route": {
+        "source": "DIRECT_ROADMAP",
+        "primaryIssueNumber": 70,
+        "secondaryIssueNumbers": [],
+        "orderedIssueNumbers": [
+          70
+        ]
+      },
+      "metadata": {
+        "workflow": "Done",
+        "priority": "P0",
+        "area": "Governance",
+        "type": "Pull Request",
+        "phase": "0 Governance",
+        "v2Phase": "0 Cutover & Cleanup",
+        "v2Disposition": "ACTIVE NOW",
+        "risk": "Critical",
+        "evidence": "Operationally Verified"
+      },
+      "current": {
+        "Status": "Done",
+        "Priority": "P0",
+        "Area": "Governance",
+        "Work Type": "Pull Request",
+        "Phase": "0 Governance",
+        "V2 Phase": "0 Cutover & Cleanup",
+        "V2 Disposition": "ACTIVE NOW",
+        "Risk": "Critical",
+        "Evidence": "Operationally Verified"
+      }
+    }
+  ],
+  "archived": [
+    {
+      "kind": "PullRequest",
+      "number": 1
+    },
+    {
+      "kind": "PullRequest",
+      "number": 2
+    },
+    {
+      "kind": "PullRequest",
+      "number": 3
+    },
+    {
+      "kind": "PullRequest",
+      "number": 4
+    },
+    {
+      "kind": "PullRequest",
+      "number": 5
+    },
+    {
+      "kind": "PullRequest",
+      "number": 6
+    },
+    {
+      "kind": "PullRequest",
+      "number": 7
+    },
+    {
+      "kind": "PullRequest",
+      "number": 8
+    },
+    {
+      "kind": "PullRequest",
+      "number": 9
+    },
+    {
+      "kind": "PullRequest",
+      "number": 10
+    },
+    {
+      "kind": "PullRequest",
+      "number": 11
+    },
+    {
+      "kind": "PullRequest",
+      "number": 12
+    },
+    {
+      "kind": "PullRequest",
+      "number": 13
+    },
+    {
+      "kind": "PullRequest",
+      "number": 14
+    },
+    {
+      "kind": "PullRequest",
+      "number": 15
+    },
+    {
+      "kind": "PullRequest",
+      "number": 16
+    },
+    {
+      "kind": "PullRequest",
+      "number": 17
+    },
+    {
+      "kind": "PullRequest",
+      "number": 18
+    },
+    {
+      "kind": "PullRequest",
+      "number": 19
+    },
+    {
+      "kind": "PullRequest",
+      "number": 20
+    },
+    {
+      "kind": "PullRequest",
+      "number": 21
+    },
+    {
+      "kind": "PullRequest",
+      "number": 22
+    },
+    {
+      "kind": "PullRequest",
+      "number": 23
+    },
+    {
+      "kind": "PullRequest",
+      "number": 24
+    },
+    {
+      "kind": "PullRequest",
+      "number": 25
+    },
+    {
+      "kind": "PullRequest",
+      "number": 26
+    },
+    {
+      "kind": "PullRequest",
+      "number": 64
+    },
+    {
+      "kind": "PullRequest",
+      "number": 65
+    },
+    {
+      "kind": "PullRequest",
+      "number": 67
+    },
+    {
+      "kind": "PullRequest",
+      "number": 68
+    }
+  ]
+}
