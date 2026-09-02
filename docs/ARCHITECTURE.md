@@ -43,7 +43,7 @@ V2 does not assume a profitable strategy. It must make “no edge”, “insuffi
 | product UI | React/TypeScript | visualization and linked interaction; no protocol/trading business logic or wallet capability |
 | analytical projection | optional later ClickHouse | fully rebuildable; never the only research truth or execution state |
 
-Development and local visualization run on Windows 11 → WSL2 Ubuntu with repository and dataset roots on WSL ext4. The only later deployment target is a generic Linux VPS after research, prospective shadow/paper and stability gates.
+Development and local visualization run on Windows 11 → WSL2 Ubuntu with repository and dataset roots on WSL ext4. The only later deployment target is a generic Linux VPS after research, prospective shadow/paper and stability gates. That target is designed anew: it does not inherit the retired TrueNAS/Phase 8 deployment topology.
 
 ## Network-provider capability model
 
@@ -209,11 +209,13 @@ PR 5 first emits static HTML/JSON. PR 6 makes the same contracts interactive. PR
 current scanner -> portfolio -> dashboard -> paper WAL
 ```
 
-This path remains physically present until controlled cleanup/retirement but is frozen, non-target and unsuitable for new strategy logic. Its useful golden vectors and ledger/replay invariants are salvage inputs only.
+The domain implementation remains frozen, non-target and unsuitable for new strategy logic. B2A removes the default package entrypoints that launched it and removes its mutation controls. The only retained explicit evidence monitor is loopback-only and GET/HEAD-only; isolated tests may still instantiate domain code without opening network listeners. Useful golden vectors and ledger/replay invariants remain salvage inputs only.
 
-TrueNAS, Hermes AI, Phase 8C/8D deployment, GHCR recovery and TrueNAS/Grafana deployment topology are retired from the active architecture. They remain historical files in PR 1 and must not be executed or repaired. Existing ClickHouse v1 data is forensic/noncanonical. A future VPS is designed from V2 requirements rather than migrated from TrueNAS.
+TrueNAS, Hermes AI, Phase 8C/8D deployment, GHCR recovery and the TrueNAS/Grafana/ClickHouse placeholder topology are retired from the active architecture. B2A removes their confirmed active-tree paths; [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) records every removal group and retained invariant. The complete pre-cleanup tree remains available at annotated tag `v1-paper-platform-final` (tag object `de5b3850e0527afe8271c54abfdb95098d55e395`, peeled commit `f870621f5df76b935ce828fa9205fb9ff7504f67`). Existing ClickHouse v1 data is forensic/noncanonical. A future VPS is designed from V2 requirements rather than migrated from TrueNAS.
 
-The historical [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) package remains `HOLD_UNPROVEN_ACTIVATION` and `pilotEligible: false`; the retired [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md) records a never-deployed Phase 8C target. These exact markers are retained for transitional evidence-contract tests, not as V2 approval.
+The historical [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) package remains `HOLD_UNPROVEN_ACTIVATION` and `pilotEligible: false`. The retired [never-deployed Phase 8C target survives only in the immutable archive tag](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). These markers are historical evidence, not V2 approval.
+
+Any later VPS design must re-prove target-neutral invariants salvaged from the removed deployment contracts: immutable source/image identity, pinned digests, non-root execution, read-only filesystems, dropped capabilities, `no-new-privileges`, no host socket, bounded resources, explicit ingress, secret exclusion, rollback and fail-closed partial publication. B2A records these requirements but builds no container, VPS or release replacement.
 
 ## Later new paper-engine boundary
 
@@ -236,6 +238,7 @@ Signing/submission remains outside the paper engine and behind a later separatel
 | zero-cost client construction and network-isolated fixtures | proven by existing tests |
 | selected fixture Pump parsing/golden vectors | fixture evidence only |
 | current WAL/quarantine/restart invariants | proven for current implementation; must be migrated deliberately |
+| B2A legacy launch/control quarantine | implementation under review; no product or runtime-evidence claim until CI and merge |
 | authentic OF1 Raw/Bronze/Silver | unavailable/not yet run |
 | universal or activation-bounded Pump registry | unproven |
 | Research Observatory over authentic data | unimplemented |

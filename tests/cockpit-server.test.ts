@@ -26,6 +26,11 @@ async function staticRoot(): Promise<string> {
 }
 
 describe('cockpit-only HTTP server', () => {
+  it('rejects a non-loopback bind at the listener boundary', async () => {
+    await expect(createCockpitServer({ bindHost: '0.0.0.0', port: 0, staticDir: await staticRoot() }))
+      .rejects.toThrow('COCKPIT_LOOPBACK_ONLY');
+  });
+
   it('serves only GET and HEAD health/readiness/static routes', async () => {
     server = await createCockpitServer({ bindHost: '127.0.0.1', port: 0, staticDir: await staticRoot() });
     expect(await (await fetch(url('/healthz'))).text()).toBe('ok');

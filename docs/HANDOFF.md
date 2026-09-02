@@ -110,7 +110,7 @@ Do not deploy, start the app, enable Triton, restart the backfill, mutate ClickH
 
 ## Next product task
 
-PR #21 merged Phase 8D1 publish hardening as `9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180`. Publishrun `32641496527` created the two exact immutable GHCR versions, then preserved `BOTH_PUSHED_RETEST_REQUIRED_HOLD` because package metadata visibility/repository-link evidence did not complete before digest replay. Read [`PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`](PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md) and [`PHASE8D1_EXISTING_DIGEST_RECOVERY.md`](PHASE8D1_EXISTING_DIGEST_RECOVERY.md). The recovery workflow is a read-only candidate and has not been dispatched. No pull credential, deployment, dataset, live dashboard, payload, accepted Silver, strategy input or pilot is authorized.
+PR #21 merged Phase 8D1 publish hardening as `9ed8d5b8d8b67284c8fc20c164f6816bbfc0c180`. Publishrun `32641496527` created the two exact immutable GHCR versions, then preserved `BOTH_PUSHED_RETEST_REQUIRED_HOLD` because package metadata visibility/repository-link evidence did not complete before digest replay. The retired [readiness](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md) and [recovery](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8D1_EXISTING_DIGEST_RECOVERY.md) documents remain in the immutable archive. The recovery workflow is a read-only candidate and has not been dispatched. No pull credential, deployment, dataset, live dashboard, payload, accepted Silver, strategy input or pilot is authorized.
 
 Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state source, causal binding and real activation/layout boundaries are proven. No CAR download, archive stream, real slot processing, registry approval or chronological research is authorized. The separate Old Faithful thread remains paused and performs no work; `researchReady` remains false.
 
@@ -136,10 +136,10 @@ Pilot B is state-enriched and remains NO-GO until a reliable raw-account-state s
 12. `docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`
 13. `docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md`
 14. `docs/PHASE8A_BRONZE_RUNNER_RESEARCH_COCKPIT.md`
-15. `docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`
-16. `docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`
-17. `docs/PHASE8D1_EXISTING_DIGEST_RECOVERY.md`
-18. `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
-19. `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
-20. `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
-21. `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
+15. archived tag path `docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`
+16. archived tag path `docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`
+17. archived tag path `docs/PHASE8D1_EXISTING_DIGEST_RECOVERY.md`
+18. archived tag path `docs/HERMES_REVIEW_RESPONSE_ROUND1.md`
+19. archived tag path `docs/HERMES_REVIEW_RESPONSE_ROUND2.md`
+20. archived tag path `docs/HERMES_REVIEW_RESPONSE_ROUND3.md`
+21. archived tag path `docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`

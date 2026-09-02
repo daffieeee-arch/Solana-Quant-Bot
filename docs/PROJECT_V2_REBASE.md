@@ -1,6 +1,6 @@
 # PROJECT_V2_REBASE.md — controlled Project #4 migration plan
 
-> **Document status: ACTIVE migration contract and execution ledger.** The live content migration and ordinary-anchor closeout are complete; repository evidence and removal of issue #63's temporary retention pin are under review through governance issue [#70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70). This document does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
+> **Document status: ACTIVE completed migration contract and execution ledger.** PR #90, issue #63's individual closeout and G0/#70 completion are verified. B2A/#81 is now the concrete `ACTIVE NOW` delivery. This document does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
 
 ## Authority and migration rules
 
@@ -12,13 +12,13 @@ The migration preserves GitHub history. “Non-destructive” does not require o
 - create successors before adding migration notes to old issues;
 - do not use `Closes`, `Fixes` or equivalent links during migration;
 - treat V2 disposition as delivery routing, never as proof of completion;
-- keep issue #56 `Done` and issue #62 open; issue #63 was explicitly reopened and stayed pinned through the initial G0/E0 audit. The evidence PR removes only that temporary pin; #63 remains open until its later individual `not planned / superseded` closeout;
+- keep issue #56 `Done` and issue #62 open; issue #63 was explicitly reopened, stayed pinned through the complete G0/E0 audit, was unpinned only after PR #90 merged, and was then closed individually as `not planned / superseded`;
 - retain the existing `Phase` field and its values as historical metadata;
 - add a separate `V2 Phase` field rather than repurposing `Phase`;
 - do not bulk-close any issue. A later verified closeout pass may close fully covered anchors individually as `not planned / superseded`;
 - export all current Project-linked repository issue/PR bodies and lifecycle state plus complete Project fields/views before mutation; retain a separate exact #27–#63 migration snapshot.
 
-PR #69 and the bounded G0 sync/config hardening sequence are merged and verified. E0–E7 exist as issues #72/#74–#80; B2A–B8 exist as #81–#87. All 37 legacy issues have one verified V2 mapping, and the 26 approved ordinary anchors were closed individually as `not planned` while retained by the 30-day Project policy. The exact execution record is [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json). Issue #63 remains open; its pin removal and later individual closure are separate gates. PR 2A cannot start before those gates and G0 closeout complete.
+PR #69 and the bounded G0 sync/config hardening sequence are merged and verified. E0–E7 exist as issues #72/#74–#80; B2A–B8 exist as #81–#87. All 37 legacy issues have one verified V2 mapping, and the 26 approved ordinary anchors were closed individually as `not planned` while retained by the 30-day Project policy. The exact content-migration record is [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json). PR #90 merged at `f870621f5df76b935ce828fa9205fb9ff7504f67`; #63 was subsequently unpinned and closed individually, #70 completed, B2A/#81 became `ACTIVE NOW`, and B3/#82 became `NEXT`. The pre-cleanup tree is archived by annotated tag `v1-paper-platform-final`; B2A's bounded path dispositions live in [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json).
 
 ## G0 preflight checkpoint
 
@@ -35,7 +35,7 @@ The read-only pre-G0 export and governance-issue creation are complete. [`operat
 | Pre-V2 PR archive candidates | 30 linked merged PR items through PR #68 |
 | G0 owner | issue #70, open and `In Progress` under the current schema |
 
-The immutable export found issue #63 `CLOSED` / `COMPLETED` at `2026-09-01T19:17:25Z`, rather than open as the accepted migration plan required. The close was temporally associated with PR #69's merge; the exact initiating mechanism is unproven. No G0 preflight action changed that captured state. Governance subsequently authorized and performed an explicit reopen, documented it on issues #63 and #70, and verified current-schema Roadmap Sync run `33555734237` as successful. This is a post-snapshot delta: the snapshot files and hashes remain unchanged. Issue #63 stayed open and pinned through the completed initial G0/E0 audit; this evidence PR removes only the pin and defers closure.
+The immutable export found issue #63 `CLOSED` / `COMPLETED` at `2026-09-01T19:17:25Z`, rather than open as the accepted migration plan required. The close was temporally associated with PR #69's merge; the exact initiating mechanism is unproven. No G0 preflight action changed that captured state. Governance subsequently authorized and performed an explicit reopen, documented it on issues #63 and #70, and verified current-schema Roadmap Sync run `33555734237` as successful. This is a post-snapshot delta: the snapshot files and hashes remain unchanged. Issue #63 then stayed open and pinned through the complete G0/E0 audit, was unpinned after PR #90 reconciliation, and was closed individually as `not planned / superseded`. Those live deltas do not rewrite the immutable snapshot.
 
 ## V2 phases
 
@@ -74,15 +74,15 @@ Exactly one concrete non-program/non-epic delivery is `ACTIVE NOW`. Completed op
 
 ## Successor catalog
 
-The identifiers below are migration keys, not GitHub issue numbers. Do not create E0–E7 or B2A–B8 until the bounded sync/config PR is green and merged. Then create each issue, record its actual number in migration evidence, and use only actual links in issue notes.
+The identifiers below remain stable migration keys rather than substitutes for GitHub issue numbers. Creation is complete: E0–E7 are #72/#74–#80 and B2A–B8 are #81–#87, as recorded with actual links in the immutable migration ledger. Do not recreate or renumber them.
 
 ### Governance implementation
 
 | Key | Proposed issue | V2 phase | Disposition during migration | Observable purpose |
 |---|---|---|---|---|
-| [G0 / #70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `ACTIVE NOW` | own the export, bounded Roadmap Sync/config PR, successor migration, reconciliation, retention audit and repository evidence |
+| [G0 / #70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `SUPERSEDED` (completed) | completed export, bounded Roadmap Sync/config hardening, successor migration, reconciliation, retention audit and repository evidence; steady-state controls remain #56/#62 |
 
-G0 was created before V2 metadata support existed, so its initial body uses only metadata accepted by current `main`; its current-schema status is `In Progress`. After an explicit merge/migration GO and trusted-main reconciliation, G0 may receive its V2 fields. G0 remains the single concrete `ACTIVE NOW` delivery until every migration gate passes.
+G0 was created before V2 metadata support existed, so its original body used only metadata accepted by that `main`. It is now closed `COMPLETED` with Project Status `Done`, V2 Phase `0 Cutover & Cleanup`, V2 Disposition `SUPERSEDED` and Evidence `Operationally Verified`. B2A/#81 owns current delivery; #56 and #62 retain steady-state governance control.
 
 ### Program and epics
 
@@ -245,12 +245,12 @@ Project #4 is an active delivery cockpit, not a permanent duplicate of GitHub hi
 - The hashed export identified exactly 30 active linked merged pre-V2 PR items through PR #68 as archive candidates: PRs #1–#26, #64, #65, #67 and #68. The config binds that sorted allowlist, its separate set hash and the root snapshot hash. Initial reconciliation rereads the live repository and Project and fails before its first mutation if the observed merged set differs or any audited candidate is absent/already archived. The items are not deleted, and the G0 branch performs no live archival.
 - The approved value is `closed_item_retention_days: 30`. The key is mandatory: validation fails when it is absent or invalid, and code supplies no implicit fallback. The exact 30 audited pre-V2 PR items are archived immediately during initial reconciliation; the 30-day grace interval applies to later merged/closed PR items and closed issue items unless explicitly pinned as continuing controls.
 - #56 is an explicitly pinned continuing operational control: it remains visible as `Done` / `Operationally Verified` until a later reviewed governance decision replaces it.
-- Issue #63 is open after an explicit governance correction and remained temporarily pinned through the completed initial G0/E0 audit. This evidence PR removes the pin; it does not close #63 or make closure part of the same reconciliation.
+- Issue #63 was open after an explicit governance correction and remained temporarily pinned through the completed initial G0/E0 audit. PR #90 removed only the pin; after that exact reconciliation, #63 was closed separately as `not planned / superseded`. It remains unpinned and temporarily active under the ordinary 30-day retention policy.
 - An archived item is unarchived only when its underlying issue or PR is actually reopened. Ordinary scheduled/event reconciliation, metadata drift or discovery of a still-closed item must not reactivate it.
 - Eligibility is checked before both add and unarchive, so archived/absent historical items are not re-added through full-history enumeration.
 - GitHub issue/PR bodies, comments, close reasons and event history remain the permanent archive. The synchronizer never deletes items or GitHub history.
 
-The Roadmap Sync extension tests open retention, the exact pre-V2 candidate rule, the configured grace interval, pinned-control behavior, closed-item non-reactivation, evidence-backed actual-reopen reactivation, no-delete behavior and deterministic counts. Thirty days is approved. No V2 policy is applied from the PR branch. The explicit GO authorizes squash merge and the automatic trusted-main reconciliation after the correction commit and full CI pass.
+The Roadmap Sync extension tests open retention, the exact pre-V2 candidate rule, the configured grace interval, pinned-control behavior, closed-item non-reactivation, evidence-backed actual-reopen reactivation, no-delete behavior and deterministic counts. Thirty days is approved. V2 policy is applied only by trusted-main reconciliation, never from a PR branch.
 
 ## Issue-note template
 
@@ -281,8 +281,9 @@ Retain existing `roadmap-meta`. Add V2 metadata keys only after the synchronizer
 8. **Complete:** the #62/PR #69 gate proved `DIRECT_ROADMAP` inheritance from #62 with no #56 leakage and exact SET/CLEAR convergence.
 9. **Complete:** all mappings, actual successor links, option IDs, fields, views, Project text, archive state and retention behavior passed the full audit.
 10. **Complete:** the 26 ordinary closeout candidates were commented and closed individually as `not planned`; the standalone LATER set, #62 and #63 remain open, and #56 remains completed/pinned.
-11. **In review:** commit the machine-readable execution ledger and remove only #63's temporary retention pin while retaining #56's pin. The live Project remains unchanged until that PR merges.
-12. **Still gated:** after the pin-removal reconciliation, close #63 individually, complete #70, promote B2A/#81 to `ACTIVE NOW` and B3/#82 to `NEXT`, then seek separate authorization for PR 2A.
+11. **Complete:** PR #90 committed the machine-readable execution ledger and removed only #63's temporary retention pin while retaining #56's pin.
+12. **Complete:** the pin-removal gate reconciled exactly; #63 was closed individually as `not planned / superseded`; #70 completed; B2A/#81 became `ACTIVE NOW`; and B3/#82 became `NEXT`.
+13. **Current:** B2A/#81 is `In Progress`. Its cleanup is bounded by [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) and archived by `v1-paper-platform-final`.
 
 Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift, retention error, description/README drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
 
@@ -295,17 +296,17 @@ The initial migration performs no bulk closure. After successors exist and mappi
 3. close only fully covered anchors individually as `not planned / superseded`;
 4. leave every standalone `LATER` requirement open;
 5. keep #56 `Done` and keep #62 open as the cross-cutting control;
-6. keep issue #63 open and temporarily pinned through initial G0/E0; after E0/mapping evidence is committed, remove the pin in a reviewed config PR and reconcile before closing it individually as `not planned / superseded`; its preflight closed state and later explicit reopen remain separate immutable-snapshot and post-snapshot evidence;
+6. keep issue #63 open and temporarily pinned through initial G0/E0; after E0/mapping evidence is committed, remove the pin in a reviewed config PR and reconcile before closing it individually as `not planned / superseded`; this sequence is complete, while its preflight closed state and later explicit reopen/close remain separate immutable-snapshot and post-snapshot evidence;
 7. record each decision/close reason and post-close Project archive state in repository evidence.
 
-Verified ordinary closures are #29–#31, #33–#35, #38–#40, #42–#45, #47–#50, #52–#55 and #57–#61. Standalone `LATER` requirements #27, #28, #32, #36, #37, #41, #46 and #51 remain open; #62 remains the cross-cutting control; #63 remains open pending its separate pin-removal and individual-close gates. No item, issue, PR, comment or historical acceptance criterion was deleted. Exact run identities, hashes and states are recorded in [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json).
+Verified ordinary closures are #29–#31, #33–#35, #38–#40, #42–#45, #47–#50, #52–#55 and #57–#61. Standalone `LATER` requirements #27, #28, #32, #36, #37, #41, #46 and #51 remain open; #62 remains the cross-cutting control. After the separate pin-removal gate, #63 was also closed individually as `not planned / superseded`. No item, issue, PR, comment or historical acceptance criterion was deleted. Exact content-migration run identities, hashes and states are recorded in [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json).
 
 ## Acceptance checks for the migration
 
 - exactly 37 old issues mapped once;
 - the exact merged #69 SHA/CI and hashed preflight export are recorded;
-- G0 exists as issue #70; its one bounded sync/config PR merged before any successor/V2 metadata creation;
-- issue #56 remains `Done`, pinned and `Operationally Verified`; issue #62 remains open; issue #63 remains open through the evidence PR, and its reviewed pin removal must reconcile before its separate close;
+- G0 exists as issue #70 and is completed; its bounded sync/config work merged before any successor/V2 metadata creation;
+- issue #56 remains `Done`, pinned and `Operationally Verified`; issue #62 remains open; issue #63 is unpinned and individually closed `not planned / superseded` after the evidence PR reconciled;
 - original acceptance criteria remain byte-for-byte present;
 - every `SPLIT` has at least two valid successor links;
 - every `SUPERSEDED` has one valid successor link;
@@ -319,6 +320,6 @@ Verified ordinary closures are #29–#31, #33–#35, #38–#40, #42–#45, #47�
 - actual E0–E7/B2A–B8 issue numbers and post-close results are committed as repository evidence;
 - Roadmap Sync dry-run/tests and a post-reconcile audit are green.
 
-## G0 support PR non-goals
+## Historical G0 support-PR non-goals
 
 No E0–E7/B2A–B8 creation, V2 note/metadata mutation, synchronizer-driven issue-state mutation, live Project migration/archive, provider call, PR 2A cleanup, tag or product/code removal occurs from the G0 support branch. The separately authorized issue #63 governance correction is complete and is not synchronizer behavior. Ordinary current-schema Roadmap Sync triggered by PR events may reconcile only normal PR and G0 fields; it is not the V2 migration.

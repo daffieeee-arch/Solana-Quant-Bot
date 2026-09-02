@@ -19,6 +19,61 @@ export {
   validateWorkflowConfiguration,
 } from './lib/workflow-policy.mjs';
 
+const SAFE_DEFAULT_BUILD = [
+  'tsc -p tsconfig.json',
+  'npm run verify:research-transport',
+  'npm run verify:phase8a-runner-offline',
+  'npm run build:cockpit',
+  'npm run verify:cockpit-runtime',
+].join(' && ');
+
+export function validateTrackedRepositoryPaths(trackedPaths) {
+  const errors = [];
+  for (const path of trackedPaths) {
+    if (/^\.hermes(?:\/|$)/.test(path)) {
+      errors.push(`retired Hermes path must not be tracked: ${path}`);
+    }
+    if (/^legacy(?:\/|$)/.test(path)) {
+      errors.push(`permanent root legacy directory must not be tracked: ${path}`);
+    }
+  }
+  return errors;
+}
+
+export function validatePackageScripts(scripts) {
+  const errors = [];
+  if (scripts === null || typeof scripts !== 'object' || Array.isArray(scripts)) {
+    return ['package.json scripts must be an object'];
+  }
+
+  for (const name of ['dev', 'start']) {
+    if (Object.prototype.hasOwnProperty.call(scripts, name)) {
+      errors.push(`package.json must not expose the frozen legacy ${name} entrypoint`);
+    }
+  }
+
+  for (const [name, value] of Object.entries(scripts)) {
+    const command = String(value).replaceAll('\\', '/');
+    if (/(?:^|[^A-Za-z0-9_.-])(?:\.\/)*(?:src\/main\.ts|dist\/main\.js)(?=$|[^A-Za-z0-9_.-])/.test(command)) {
+      errors.push(`package script ${name} must not launch the frozen legacy runtime`);
+    }
+  }
+
+  if (scripts['start:cockpit'] !== 'node dist/cockpit-main.js') {
+    errors.push('package.json must expose only the reviewed explicit cockpit monitor start command');
+  }
+  if (scripts.build !== SAFE_DEFAULT_BUILD) {
+    errors.push('package.json build must match the reviewed B2A offline command graph exactly');
+  }
+  for (const name of ['verify:phase8c-contracts', 'verify:phase8d1-supply-chain']) {
+    if (Object.prototype.hasOwnProperty.call(scripts, name)) {
+      errors.push(`retired package script must be absent: ${name}`);
+    }
+  }
+
+  return errors;
+}
+
 function runPolicy() {
   const root = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
   process.chdir(root);
@@ -33,8 +88,8 @@ function runPolicy() {
     .sort();
 
   const errors = [];
-  const warnings = [];
   errors.push(...validateTrackedWorkflowPaths(tracked));
+  errors.push(...validateTrackedRepositoryPaths(tracked));
   errors.push(...validateTrackedResearchPaths(tracked));
   errors.push(...validateCitationModuleGraph({ root }));
   for (const path of trackedIgnored) {
@@ -69,8 +124,8 @@ function runPolicy() {
     'docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md',
     'docs/research/PUMP_ACTIVATION_EVIDENCE_EPOCH_978.json',
     'docs/research/PUMP_ACTIVATION_SCRATCH_MANIFEST.json',
-    'docs/HERMES_REVIEW_RESPONSE_ROUND3.md',
     'package-lock.json',
+    'roadmap/b2a-invariant-salvage-manifest.json',
     'scripts/ci-research-citations.mjs',
     'scripts/lib/strict-yaml.mjs',
     'scripts/lib/workflow-policy.mjs',
@@ -94,6 +149,7 @@ function runPolicy() {
 
   const packageJson = JSON.parse(text('package.json'));
   if (packageJson.private !== true) errors.push('package.json must keep private=true');
+  errors.push(...validatePackageScripts(packageJson.scripts));
   if (packageJson.scripts?.['ci:policy'] !== 'node scripts/ci-repository-policy.mjs') {
     errors.push('package.json must expose the expected ci:policy script');
   }
@@ -148,19 +204,13 @@ function runPolicy() {
     }
   }
 
-  if (tracked.some((path) => path.startsWith('.hermes/') && !path.startsWith('.hermes/plans/'))) {
-    warnings.push('unexpected .hermes content is tracked; review whether it belongs in source control');
-  }
-
   if (errors.length > 0) {
     console.error('Repository policy FAILED');
     for (const error of [...new Set(errors)]) console.error(`- ${error}`);
-    for (const warning of warnings) console.error(`- warning: ${warning}`);
     process.exit(1);
   }
 
   console.log(`Repository policy PASS (${tracked.length} tracked files checked; no tracked ignored files; workflow parsed semantically)`);
-  for (const warning of warnings) console.warn(`warning: ${warning}`);
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : '';

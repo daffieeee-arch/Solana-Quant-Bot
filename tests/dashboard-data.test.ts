@@ -138,16 +138,22 @@ describe('dashboard data API', () => {
     await expect(response.text()).resolves.toContain('Paper Monitor');
   });
 
-  it('keeps dashboard routes read-only', async () => {
+  it('keeps the retained legacy monitor GET-only and exposes no control plane', async () => {
     dashboard = await createDashboardServer({
       port: 0,
       getStatus: () => ({ mode: 'paper' as const, updatedAt: '2026-07-25T00:00:00.000Z', availableLamports: 1, openPositions: [], realizedPnlLamports: 0 }),
     });
-    const response = await fetch(`http://127.0.0.1:${dashboard.port}/api/dashboard-data`, {
-      method: 'POST', headers: { authorization: 'Bearer test-token' },
-    });
-
-    expect(response.status).toBe(404);
+    for (const path of ['/api/control', '/api/controls', '/api/start', '/api/stop']) {
+      expect((await fetch(`http://127.0.0.1:${dashboard.port}${path}`)).status).toBe(404);
+      const response = await fetch(`http://127.0.0.1:${dashboard.port}${path}`, { method: 'POST' });
+      expect(response.status).toBe(405);
+      expect(response.headers.get('allow')).toBe('GET');
+    }
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+      const response = await fetch(`http://127.0.0.1:${dashboard.port}/api/dashboard-data`, { method });
+      expect(response.status).toBe(405);
+      expect(response.headers.get('allow')).toBe('GET');
+    }
   });
 
   it('summarizes provider health: all ok when no errors', () => {

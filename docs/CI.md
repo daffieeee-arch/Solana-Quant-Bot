@@ -1,18 +1,15 @@
-# CI.md — current validation boundary during V2 cutover
+# CI.md — current validation boundary after retired-platform cleanup
 
-> **Document status: ACTIVE transitional description.** This records the workflows that actually exist before PR 2A. Phase 8 image/deployment workflows are retired product paths but remain in the tree during PR 1; do not dispatch them.
+> **Document status: ACTIVE.** B2A removes the retired Phase 8 image/deployment workflows and their build-only assertions while preserving ordinary CI and trusted-main Roadmap Sync.
 
 ## Tracked workflow inventory
 
 | Workflow | Current role | V2 disposition |
 |---|---|---|
-| `.github/workflows/ci.yml` | canonical general validation | **ACTIVE**; preserve/rebase in PR 2A |
-| `.github/workflows/roadmap-sync.yml` | Project #4 reconciliation | **ACTIVE**; extend only through reviewed Project migration work |
-| `.github/workflows/phase8d-images-verify.yml` | historical no-push image verification | **RETIRED**, pending PR 2A removal |
-| `.github/workflows/phase8d-images-publish.yml` | historical manual image publication | **RETIRED**; do not dispatch |
-| `.github/workflows/phase8d-images-recover.yml` | historical digest recovery | **RETIRED**; do not dispatch |
+| `.github/workflows/ci.yml` | canonical general validation | **ACTIVE** |
+| `.github/workflows/roadmap-sync.yml` | Project #4 reconciliation | **ACTIVE**; modify only through reviewed governance work |
 
-The repository currently has exactly five workflow files. “General CI has no secret/write access” applies to `ci.yml`, not to every workflow: Roadmap Sync requires the separate protected `PROJECT_TOKEN`, and the retired publication workflow has package-write capability. Never collapse those boundaries into one broad safety claim.
+The repository has exactly these two workflow files after B2A. “General CI has no secret/write access” applies to `ci.yml`; Roadmap Sync is a distinct trusted-default-branch boundary using the protected `PROJECT_TOKEN`. Never collapse those boundaries into one broad safety claim.
 
 ## Canonical general CI
 
@@ -37,21 +34,21 @@ It triggers for pull requests targeting `main`, pushes to the branch patterns cu
 5. focused policy/zero-cost/Pump tests;
 6. complete Vitest suite;
 7. TypeScript typecheck;
-8. backend/frontend build;
+8. TypeScript plus retained Research Cockpit/cockpit-inertness build;
 9. Rust reducer and supporting snapshot format checks;
 10. locked all-target clippy/test/build;
 11. committed-diff whitespace validation;
 12. clean tracked-worktree validation.
 
-The current `npm run build` still invokes Phase 8A/8C/8D contract and supply-chain checks. That is a truthful description of pre-cleanup code, not an active product endorsement. PR 2A must update build scripts, workflow inventory, repository-policy expectations and adversarial tests atomically; PR 1 intentionally does not.
+The B2A `npm run build` retains research-transport, Phase 8A offline and cockpit-inertness checks, but no longer builds the frozen paper dashboard or invokes Phase 8C/8D deployment/supply-chain validation. This narrows retired reachability; it does not prove authentic data or the future Observatory.
 
 ## Policy boundary
 
-`scripts/ci-repository-policy.mjs` parses the canonical workflow and fails closed on unauthorized structure, permissions, actions, commands, secret references, safety-variable drift and missing Rust/citation gates. Adversarial tests remain important evidence. PR 2A must preserve equivalent protection while removing retired workflow expectations.
+`scripts/ci-repository-policy.mjs` parses the canonical workflow and fails closed on unauthorized structure, permissions, actions, commands, secret references, safety-variable drift and missing Rust/citation gates. Adversarial tests preserve that protection while the exact workflow allowlist shrinks from five to two. Tracked `.hermes/**` material is forbidden after B2A.
 
 Roadmap Sync is a separate privileged boundary. It always uses trusted default-branch code under `pull_request_target`; never change it to execute PR-head code or PR-produced artifacts. See [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md).
 
-For PR #69, ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected. Under current `main` it may reconcile only the existing #69 item and normal PR-status fields; do not cancel that normal run. This does not authorize a manual dispatch, V2 fields/views, successor creation or bulk issue mutation.
+Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for B2A. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls or another content migration.
 
 ## Local checks
 
@@ -74,8 +71,8 @@ Green CI does not prove:
 
 CI never turns fixture evidence into real evidence.
 
-## PR 1 verification
+## Historical PR 1 verification
 
-PR 1 should run all locally executable offline/documentation checks, link validation and `git diff --check`, then rely on the pull-request run for gates blocked by the unmodified local toolchain. It must not manually dispatch Roadmap Sync or any retired Phase 8 workflow.
+PR 1 ran locally executable offline/documentation checks, link validation and `git diff --check`, then relied on the pull-request run for gates blocked by the unmodified local toolchain. Its counts below remain historical and are not B2A results.
 
 Keep execution environments explicit. On the initial PR #69 commit, local `npm test` reached 100/110 test files and 1,411/1,423 tests; the remaining failures were missing local native/Rust prerequisites. GitHub CI run `33542154130` in its clean pinned environment passed 110/110 test files and 1,524/1,524 tests. These are separate observations, not interchangeable totals.

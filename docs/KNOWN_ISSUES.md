@@ -4,12 +4,12 @@
 
 ## Governance and transition
 
-1. **G0 closeout is not complete.** Project #4's V2 schema, successors, #27–#63 metadata migration and reviewed ordinary-anchor closeout are complete and audited. Issue #70 remains the single concrete `ACTIVE NOW` delivery while PR #90 records the machine-readable evidence and proposes removal of issue #63's temporary retention pin. The immutable pre-V2 snapshot remains unchanged; issue #63's explicit reopen is still a documented post-snapshot delta, and the exact initiating mechanism behind its earlier close remains unproven. After the evidence PR merges, its reconciliation must prove #56 remains pinned and open #63 is unpinned before #63 is closed individually. Only after that closeout may #70 complete, B2A become `ACTIVE NOW`, B3 become `NEXT`, or PR 2A begin.
-2. **Retired code remains reachable.** TrueNAS/Phase 8/Hermes assets and the frozen scanner/paper/dashboard path remain physically present in PR 1. PR 2A must migrate unique invariants, create the approved pre-cleanup tag, remove obsolete paths and add minimal fail-closed quarantine.
-3. **No pre-cleanup archive tag exists.** `v1-paper-platform-final` is an example only. Resolve the last pre-cleanup `main` commit and obtain explicit approval before creating or pushing an annotated tag.
-4. **Historical documents can still contain stale instructions.** Status banners make them non-authoritative in PR 1; mechanical removal waits for PR 2A.
+1. **B2A remains under review.** G0 is complete: issue #63 is closed individually as `not planned / superseded`, issue #70 is completed, #81 is the `In Progress`/`ACTIVE NOW` delivery and #82 is the `Backlog`/`NEXT` delivery. B2A's removal and quarantine claims remain unaccepted until its full CI and review pass.
+2. **Frozen semantics still exist in retained source.** B2A removes default scanner/provider launch commands and dashboard mutation controls, but it does not repair or redesign legacy paper semantics. Retained isolated domain code and fixture tests are not V2 product evidence and must not become strategy inputs.
+3. **Removed history is intentionally outside the active tree.** Confirmed TrueNAS/Phase 8C/8D/GHCR/Hermes and placeholder observability assets remain available at immutable annotated tag `v1-paper-platform-final`; [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) records their dispositions and retained invariants. Do not restore them as active targets.
+4. **Archive references are historical, not executable.** Retained documents may link to removed files through the immutable tag. Those links preserve evidence and never authorize an old runbook.
 
-Transitional evidence-contract tests still require the historical [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) markers `HOLD_UNPROVEN_ACTIVATION` and `pilotEligible: false`, plus a link to the retired [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). This retention is not Pilot or Phase 8C authorization.
+The historical [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) markers `HOLD_UNPROVEN_ACTIVATION` and `pilotEligible: false` remain explicit. Its retired [Phase 8C successor context is preserved at the immutable tag](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). This is not Pilot or Phase 8C authorization.
 
 ## Provider and acquisition
 
@@ -39,8 +39,8 @@ Transitional evidence-contract tests still require the historical [`PHASE7_OLD_F
 ## Research and frontend
 
 21. **Research Observatory V2 is unimplemented.** The existing fixture-only cockpit is salvage evidence, not the authentic product. PR 5 supplies static evidence and PR 6 the interactive MVP.
-22. **The current paper dashboard can overstate evidence.** Existing code maps some missing values to fallback price/zero/OK and has a read-only label alongside mutable controls. While reachable, PR 2A must quarantine safely; do not extend it.
-23. **Control-plane safety needs retirement/quarantine.** The legacy dashboard can bind beyond loopback and control authorization is optional/inconsistent with the frontend. It cannot sign or trade, but it can mutate scanner/provider state. This is a PR 2A safety requirement, not a feature-repair program.
+22. **The frozen paper data model can overstate evidence.** Retained legacy code maps some missing values to fallback price/zero/OK. B2A makes the monitor loopback-only/read-only and removes its default runtime launch, but does not repair those semantics; do not extend or use them as V2 evidence.
+23. **Legacy quarantine is intentionally minimal.** B2A removes dashboard mutation routes/controls and non-loopback binding rather than creating a feature-flag framework. Full legacy-source deletion waits for replacement/parity evidence; isolated tests remain allowed without listeners.
 24. **Full workstation remains unimplemented and intentionally later.** Docking, saved layouts, sequenced WebSocket plane, professional charts/grids and linked context wait for authentic contracts and separate epic activation.
 
 ## Development and CI
@@ -48,16 +48,16 @@ Transitional evidence-contract tests still require the historical [`PHASE7_OLD_F
 25. **Local toolchain does not match the contract.** The 2026-09-01 WSL observation found Node `24.18.1` instead of `22.23.2`, no Rust/Cargo/native build tools, and no built `fs-ext`. Do not auto-install; local full gates remain blocked until explicit approval, while GitHub CI provides the clean environment.
 26. **Definitive Python/uv pins have not landed.** uv-managed CPython `3.13.15` and uv `0.12.5` are candidate local versions, not V2 contracts. The PR that introduces the real Python workspace, `pyproject.toml` and `uv.lock` must select final pins only after testing the chosen Polars, DuckDB, PyArrow, API, marimo and MLflow versions. No local installation is implied.
 27. **Historical Rust metadata conflicts.** One research plan and one Phase 8 script record different commit hashes for release `1.97.1`. V2 pins the release/toolchain and records full `rustc -Vv`; neither old hash is accepted as canonical without official verification.
-28. **Current CI still contains retired Phase 8 gates/workflows.** They remain in PR 1 to keep the source-of-truth change bounded. Do not dispatch deployment/recovery workflows. PR 2A must remove/rewrite hooks with policy tests and preserve the general validation boundary.
+28. **B2A changes the CI surface.** The branch removes retired Phase 8 image workflows/build hooks and narrows the exact workflow allowlist to ordinary CI plus Roadmap Sync. This remains unproven until GitHub CI passes; target-neutral repository, research, durability, provenance and security gates must not weaken.
 29. **Dependency findings remain untriaged.** Existing npm transitive audit findings and frontend bundle warnings predate V2. Do not use forced dependency upgrades inside unrelated work; reassess after obsolete reachability is removed.
 30. **GitHub does not expose an explicit Project-item archive timestamp.** Closed-item non-reactivation is deterministic, but genuine reopen eligibility currently compares the latest GitHub `ReopenedEvent.createdAt` with generic `ProjectV2Item.updatedAt`. The controlled migration audit proved zero historical reactivations and retained every ambiguous closed item, but did not exercise a genuine post-archive reopen. The timestamp relationship therefore remains unproven as an archive-time contract. Continue to fail closed and do not manufacture a reopen solely for testing without separate approval.
 
 ## Hard unresolved research decisions
 
-30. Exact evidence threshold for promoting a Pump variant from observed-compatible to a bounded proven range.
-31. Exact engineering-validation and research-sampling plans and expansion rules.
-32. Exact Gold label horizons, embargoes, folds, cost proxies and untouched holdout—only after data sufficiency is known.
-33. Whether/when ClickHouse scale or query concurrency justifies adding a rebuildable projection.
-34. Later prospective quote/finality evidence needed before the new paper engine can claim realistic `NO_FILL` and capacity semantics.
+31. Exact evidence threshold for promoting a Pump variant from observed-compatible to a bounded proven range.
+32. Exact engineering-validation and research-sampling plans and expansion rules.
+33. Exact Gold label horizons, embargoes, folds, cost proxies and untouched holdout—only after data sufficiency is known.
+34. Whether/when ClickHouse scale or query concurrency justifies adding a rebuildable projection.
+35. Later prospective quote/finality evidence needed before the new paper engine can claim realistic `NO_FILL` and capacity semantics.
 
 None of these open decisions authorizes network traffic, a research claim, provider installation, live execution or repair of retired infrastructure.

@@ -18,7 +18,7 @@ The current scanner/portfolio/dashboard/paper runtime is **FROZEN LEGACY**. Do n
 - Verify documents against code, tests, Git history and current issues/PRs; do not treat prose as proof.
 - One clear problem per PR where practical. Use tests with changes and fresh-context review for protocol, durability, security and causality work.
 
-Before mechanical cleanup, an annotated tag such as `v1-paper-platform-final` must be proposed at the last pre-cleanup `main` commit. Do not create or push it without explicit approval. There is no permanent legacy directory; Git is the archive.
+The approved annotated archive tag `v1-paper-platform-final` exists at the last pre-cleanup `main` commit `f870621f5df76b935ce828fa9205fb9ff7504f67` (tag object `de5b3850e0527afe8271c54abfdb95098d55e395`). The content-migration ledger bound to that tag has SHA-256 `54eca8ad9239b9921cd1b0da50d5948f08c6113188fd5c5ed73d66719ab407e5`. There is no permanent legacy directory; Git and this immutable tag are the archive. B2A removals and retained invariants are enumerated in [`roadmap/b2a-invariant-salvage-manifest.json`](roadmap/b2a-invariant-salvage-manifest.json).
 
 ## Active architecture boundaries
 
@@ -28,7 +28,7 @@ Before mechanical cleanup, an annotated tag such as `v1-paper-platform-final` mu
 - Canonical research truth: immutable source evidence plus Parquet/Arrow and manifests. ClickHouse is optional and rebuildable later.
 - Development: Windows 11 → WSL2 Ubuntu, repository and datasets on WSL ext4; see [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md).
 - Future runtime: generic Linux VPS only after strategy, shadow/paper and stability gates.
-- TrueNAS and Hermes AI are retired from the active architecture. Do not repair or deploy their historical assets.
+- TrueNAS and Hermes AI are retired from the active architecture. Their removed historical assets remain available at `v1-paper-platform-final`; do not restore, repair or deploy them as V2 targets.
 
 Implement a walking skeleton: one official source, one approved plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one lifecycle and one visible result. Do not build a generic framework before a second proven use case requires it.
 
@@ -83,7 +83,7 @@ Only the existing read-only documentation MCPs `triton-docs`, `solana-mcp` and `
 
 ## Engineering gates
 
-Run the read-only doctor checks first. Never auto-install with `sudo`, mutate the user toolchain or change shell configuration. Existing full gates remain authoritative until PR 2A deliberately rewrites obsolete hooks:
+Run the read-only doctor checks first. Never auto-install with `sudo`, mutate the user toolchain or change shell configuration. The post-B2A full gates are:
 
 ```bash
 npm ci

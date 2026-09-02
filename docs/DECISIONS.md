@@ -10,7 +10,7 @@ Authentic historical evidence, reproducible datasets and visible research preced
 
 ### D2 — Frozen legacy paper runtime
 
-The existing scanner, portfolio, dashboard and paper runtime receives no new feature or strategy work. Only minimum safety quarantine and controlled retirement are allowed. Correctness requirements #27–#34 route to the later new Rust engine or their earlier data-evidence component.
+The existing scanner, portfolio, dashboard and paper runtime receives no new feature or strategy work. B2A removes its default launch commands and mutation controls; the retained explicit evidence monitor is loopback-only and read-only. Isolated domain tests may remain without opening listeners. Correctness requirements #27–#34 route to the later new Rust engine or their earlier data-evidence component.
 
 ### D3 — Triton One-only network-provider boundary
 
@@ -66,7 +66,7 @@ Development/testing/research run on Windows 11 → WSL2 Ubuntu with repository a
 
 ### D15 — Git history is the archive
 
-There is no permanent legacy directory. Before mechanical cleanup, identify the last pre-cleanup `main` commit and request approval for an annotated tag such as `v1-paper-platform-final`. Migrate unique invariants/evidence before deletion; do not create or push the tag without explicit approval.
+There is no permanent legacy directory. With explicit approval, annotated tag `v1-paper-platform-final` was created before mechanical cleanup. Tag object `de5b3850e0527afe8271c54abfdb95098d55e395` peels to last pre-cleanup `main` commit `f870621f5df76b935ce828fa9205fb9ff7504f67` and binds migration-ledger SHA-256 `54eca8ad9239b9921cd1b0da50d5948f08c6113188fd5c5ed73d66719ab407e5`. Every removal must still have a resolved disposition in [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json). Git and this tag are the archive; do not move or overwrite it.
 
 ### D16 — Non-destructive Project #4 rebase
 
@@ -96,8 +96,8 @@ These survive even where implementation is replaced:
 | Pump fixture decoder as broad supported truth | **SUPERSEDED** by versioned official registry |
 | ClickHouse-first canonical research platform | **SUPERSEDED** by immutable Parquet/Arrow plus local DuckDB/Polars |
 | combined Research Cockpit and Professional Workstation delivery | **SUPERSEDED** by Observatory-first split |
-| TrueNAS/Hermes/Phase 8C/8D/GHCR deployment target | **RETIRED**; historical evidence pending controlled cleanup |
-| CoinGecko/CoinDesk or other provider context in active V2 | **RETIRED** from active V2 network boundary; legacy code remains frozen until cleanup |
+| TrueNAS/Hermes/Phase 8C/8D/GHCR deployment target | **RETIRED**; confirmed paths removed by B2A and archived at `v1-paper-platform-final` |
+| CoinGecko/CoinDesk or other provider context in active V2 | **RETIRED** from active V2 network boundary; no default command starts the frozen provider runtime |
 | Nautilus or any generic engine assumed as the target | **SUPERSEDED** by a later explicit adopt/reject boundary and new Rust paper requirements |
 
 Superseded/retired does not mean the old implementation was delivered or its evidence is false. It means the active product no longer executes that direction.

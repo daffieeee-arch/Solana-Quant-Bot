@@ -25,7 +25,8 @@ The existing frontend is a coherent paper-monitoring prototype with a fixture-on
 - no sequenced snapshot/resume/gap data plane;
 - no dockable layouts, saved workspaces, virtualization or global linked context;
 - some legacy missing values become fallback price/zero/OK;
-- paper controls conflict with read-only presentation and are not a V2 target.
+- B2A removes the paper-control UI/API; the retained frozen monitor is
+  loopback-only and read-only, and is not a V2 target.
 
 Do not extend this surface. Salvage useful accessibility, bounded-read API, evidence badge and fixture-test invariants; replace/retire it through bounded work.
 

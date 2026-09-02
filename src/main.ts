@@ -3,7 +3,6 @@ import { fileURLToPath } from 'node:url';
 import { join, resolve } from 'node:path';
 import { loadConfig } from './config.js';
 import { createDashboardServer, summarizeProviderHealth } from './dashboard.js';
-import { EngineControl } from './engine-control.js';
 import { loadScannerHistory } from './history.js';
 import { PaperLedgerPersistenceError, PaperLedgerStore, type PaperLedger } from './ledger.js';
 import { QuarantineStore } from './quarantine-store.js';
@@ -93,7 +92,6 @@ async function run(): Promise<void> {
     let equityHistory = history.equityHistory;
     let markPricesByMint: Record<string, number> = {};
     let lastProviderErrors: string[] = [];
-    const engine = new EngineControl();
     const marketContextProvider = new MarketContextProvider();
     let marketContext: MarketContext | undefined;
     try {
@@ -163,13 +161,6 @@ async function run(): Promise<void> {
       titan,
     });
     resources.provider = provider;
-    const applyProviderToggles = () => {
-      const state = engine.state().providers;
-      for (const name of Object.keys(state)) provider.setProviderEnabled(name, state[name]);
-    };
-    // TRITON-ONLY: synchroniseer de zichtbare providers met de werkelijke set.
-    engine.syncProviders(provider.getProviderEnabled());
-    applyProviderToggles();
     runtimeConfig = withFreshSolPrice(runtimeConfig, marketContext);
     // Fase-W: bij startup de position-watches reconstruct uit de open-positie
     // WAL-state (authoritatief) — zodat open posities direct verse stream-marks
@@ -196,14 +187,7 @@ async function run(): Promise<void> {
       const dashboard = await createDashboardServer({
         port: config.dashboardPort,
         staticDir: resolve(fileURLToPath(new URL('../', import.meta.url)), 'frontend', 'dist'),
-        controlToken: process.env.DASHBOARD_CONTROL_TOKEN || undefined,
         getStatus: () => ({ mode: 'paper', offline: tritonLiveEnabled ? undefined : 'OFFLINE_ZERO_COST', updatedAt: ledger.updatedAt, availableLamports: ledger.portfolio.availableLamports, openPositions: quarantine.active(ledger.portfolio.positions), realizedPnlLamports: ledger.realizedPnlLamports, recentDecisions, duplicateSuppressed, closedTrades, equityHistory, markPricesByMint, marketContext, whaleInterestMints: Array.from(provider.whaleActivity.keys()), providerHealth: tritonLiveEnabled ? summarizeProviderHealth(lastProviderErrors) : [{ provider: 'TRITON', status: 'DISABLED_OFFLINE_ZERO_COST' as const }], build: provenance, quarantine: quarantine.getAll() }),
-        controls: {
-          getEngineState: () => engine.state(),
-          setScannerRunning: (running: boolean) => engine.setScannerRunning(running),
-          setProviderEnabled: (name: string, enabled: boolean) => { engine.setProviderEnabled(name, enabled); applyProviderToggles(); },
-          getProviderLatency: () => provider.getProviderLatency(),
-        },
         getDebug: () => ({ ...((provider as unknown as { debugInfo?: () => Record<string, unknown> }).debugInfo?.() ?? {}), shadowMetrics: scanner.shadowMetricsSnapshot() }),
         researchProvider: createOptionalPhase8AResearchProvider(process.env),
       });
@@ -220,16 +204,8 @@ async function run(): Promise<void> {
       console.error(JSON.stringify({ event: 'learn_cycle_startup_error', mode: 'paper', message: error instanceof Error ? error.message : String(error) }));
     });
     while (config.maxCycles === 0 || cycle < config.maxCycles) {
-      // Pause support: while the scanner is stopped (dashboard control), idle
-      // instead of scanning — keeps market/ledger state intact.
-      if (!engine.isScannerRunning()) {
-        await delay(1_000);
-        continue;
-      }
       const cycleStartedAt = Date.now();
       cycle += 1;
-      applyProviderToggles();
-      engine.setScannerState('scanning');
       try {
         marketContext = await marketContextProvider.get();
         runtimeConfig = withFreshSolPrice(runtimeConfig, marketContext);
@@ -270,17 +246,12 @@ async function run(): Promise<void> {
         // TRITON elke scan door de eigen status-string). Alleen echte providerErrors
         // (Triton/Titan RPC/diagnostic-fouten) voeden de provider-health.
         lastProviderErrors = result.providerErrors; // voor dashboard provider-health
-        engine.setScannerState('idle');
-        engine.noteScan(result.checkedAt);
       } catch (error) {
         if (error instanceof PaperLedgerPersistenceError) throw error;
         const message = error instanceof Error ? error.message : String(error);
         scanner.restorePortfolio(ledger.portfolio);
         await ledgerStore.save(ledger, { type: 'scan_error', at: new Date().toISOString(), cycle, message });
         console.error(JSON.stringify({ event: 'scan_error', cycle, mode: 'paper', message }));
-        // T3-B6: ook na een scan-error terug naar 'idle' — anders toont het
-        // dashboard 'scanning' terwijl er niets draait (tot de volgende cyclus).
-        engine.setScannerState('idle');
       }
       if (config.maxCycles === 0 || cycle < config.maxCycles) {
         await delay(Math.max(0, config.scanIntervalSeconds * 1000 - (Date.now() - cycleStartedAt)));

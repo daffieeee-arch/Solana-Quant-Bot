@@ -24,10 +24,10 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Current phase
 
-- **Current phase:** V2 cutover and governance.
-- **Latest accepted milestone:** PRs #71, #73, #88 and #89 activated and hardened the V2 Project schema, bounded projection verification, explicit PR routing and exact managed-field reconciliation. The controlled content migration then created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87, migrated all #27–#63 metadata without changing original body prefixes, and individually closed the 26 reviewed ordinary anchors. The machine-readable result is [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json).
-- **Current delivery:** governance issue #70 (G0) remains the single concrete `ACTIVE NOW` migration delivery while the content-migration evidence and temporary #63-pin removal are reviewed.
-- **Next gate:** merge the bounded evidence/pin-removal PR only after review and green CI, reconcile with #56 still pinned and #63 unpinned, then close #63 separately as `not planned / superseded`. Only after that verified closeout may #70 complete, B2A/#81 become the single concrete `ACTIVE NOW` delivery and B3/#82 become `NEXT`. On `main` before that evidence PR merges, #63 remains open and temporarily pinned.
+- **Current phase:** `0 Cutover & Cleanup`, bounded delivery B2A.
+- **Latest accepted milestone:** PR #90 merged the immutable content-migration evidence. Issue #63 was then unpinned and closed individually as `not planned / superseded`; G0/#70 was completed as `Done` / `SUPERSEDED` / `Operationally Verified`. Steady-state governance remains with pinned #56 and open cross-cutting control #62. The machine-readable migration result is [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json).
+- **Current delivery:** B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is `In Progress`, `ACTIVE NOW`, Phase `0 Cutover & Cleanup`, Evidence `Unproven`.
+- **Next delivery:** B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is `Backlog`, `NEXT`, Phase `1 Pump Protocol Truth`, Evidence `Unproven`. It does not start before B2A is accepted.
 - **Current execution posture:** PAPER / RESEARCH ONLY. No profitability, research-readiness, paper-realism or live-readiness claim is established.
 
 ## Development and runtime boundary
@@ -35,11 +35,11 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 - Development, tests, research and local visualization run on Windows 11 → WSL2 Ubuntu, with the repository on the WSL ext4 filesystem.
 - Large datasets live outside Git under an explicitly configured dataset root on the WSL filesystem.
 - The local prerequisite and doctor contract is [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md). Setup never runs `sudo` or changes a toolchain automatically.
-- TrueNAS and Hermes AI are **retired from the active product architecture**. Historical assets remain in Git until the controlled PR 2A cleanup; they are not deployment targets.
+- TrueNAS and Hermes AI are **retired from the active product architecture**. B2A removes their confirmed active-tree assets; the immutable tag and Git history retain the old tree. They are not deployment targets.
 - A generic Linux VPS is a later runtime target only after strategy evidence, prospective paper/shadow results and a stable new runtime exist.
-- There is no permanent `legacy/` directory. Git history and an approved annotated tag are the archive.
+- There is no permanent `legacy/` directory. Git history and the approved annotated tag are the archive.
 
-Immediately before mechanical cleanup, resolve the last pre-cleanup `main` commit and propose an annotated tag such as `v1-paper-platform-final`. Do not create or push that tag without explicit user approval.
+The annotated tag `v1-paper-platform-final` was created with explicit approval before B2A. Tag object `de5b3850e0527afe8271c54abfdb95098d55e395` peels to the last pre-cleanup `main` commit `f870621f5df76b935ce828fa9205fb9ff7504f67`; its annotation binds content-migration ledger SHA-256 `54eca8ad9239b9921cd1b0da50d5948f08c6113188fd5c5ed73d66719ab407e5`, E0/#72 and B2A/#81. Do not move or overwrite it.
 
 ## Active V2 responsibilities
 
@@ -134,11 +134,13 @@ Evidence classes remain explicit:
 
 ## Frozen and retired surfaces
 
-- The current scanner, portfolio, dashboard and paper runtime are **FROZEN LEGACY**: no new features and no new strategy logic. Roadmap requirements #27–#34 move to the later new Rust paper engine, except a minimal safety quarantine while legacy remains reachable.
+- The current scanner, portfolio, dashboard and paper runtime are **FROZEN LEGACY**: no new features and no new strategy logic. B2A removes its default `dev`/`start` launch path and mutation controls. The retained explicit evidence monitor is loopback-only and read-only; isolated tests may still instantiate domain code without opening listeners. Roadmap requirements #27–#34 move to the later new Rust paper engine.
 - Current Pump decoders are bounded fixture/version evidence, not universal protocol truth. V2 uses a pinned official source and a versioned registry; disagreement fails to quarantine.
-- Existing TrueNAS, Phase 8C/8D, GHCR recovery and Hermes material is historical/retired. Do not repair it simply because it is broken.
+- Confirmed TrueNAS, Phase 8C/8D, GHCR recovery and Hermes paths are removed by B2A and remain available through `v1-paper-platform-final`. Do not restore or repair them as active product paths.
 - Existing synthetic Phase 8A research surfaces remain fixture evidence until replaced; they cannot support strategy claims.
 - Existing ClickHouse v1 data remains forensic evidence and is not accepted as canonical Pump event-level research data.
+
+The exact path-level disposition, test classification, invariant destination and retained groups are machine-readable in [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json). In summary, B2A removes retired Phase 8C/8D workflows/deployment/GHCR assets, TrueNAS-only helpers, Hermes artifacts and placeholder ClickHouse/Grafana deployment surfaces. It retains the Rust reducer/support crates, Pump golden vectors, durability/provenance/quarantine evidence, Phase 8A read-only Research Cockpit evidence, ordinary CI/Roadmap Sync, the V2 migration ledger and offline V1 forensic manifest evidence.
 
 Before deleting a subsystem: identify its invariant → migrate useful tests/golden vectors → implement a replacement or explicitly retire the requirement → prove parity/supersession → delete. Do not delete solely because one reachability tool reports a file unused.
 
@@ -147,7 +149,7 @@ Before deleting a subsystem: identify its invariant → migrate useful tests/gol
 | Delivery | Observable outcome |
 |---|---|
 | PR 1 | V2 source of truth and complete, reviewable Project #4 rebase plan |
-| PR 2A | Obsolete platform removed and reachable legacy safely quarantined; no future product capability added |
+| PR 2A / B2A | **In progress:** obsolete platform removal and reachable-legacy quarantine; no future product capability or evidence claim added |
 | PR 3 | Pump protocol walking skeleton plus protocol evidence matrix |
 | PR 4 | Bounded authentic Old Faithful acquisition with live terminal/TUI progress |
 | PR 5 | Authentic Raw → Bronze → Silver plus static HTML/JSON data-quality and lifecycle report |

@@ -49,7 +49,7 @@ Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity an
 
 [Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central roadmap. Every implementation PR links at least one active/successor roadmap issue. Historical issues retain their original acceptance criteria; disposition does not mean completion.
 
-PR #69, the read-only hashed export and G0 issue creation are complete. Governance issue #70 remains open and owns bounded PR #71. Follow [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md): the 30-day retention value is approved, issue #63 has been explicitly reopened and reconciled as a documented post-snapshot correction, and squash merge plus automatic trusted-main reconciliation is authorized after the correction commit and full CI pass. Audit that reconciliation before creating successors, metadata or notes. Retire fully superseded anchors only in a later individual pass before PR 2A authorization. G0 is the sole concrete migration delivery; after verified migration B2A is `ACTIVE NOW`, B3 is `NEXT`, and B4–B8 remain `LATER` behind their direct predecessors.
+G0 is complete. PR #90 records the immutable content-migration ledger; issue #63 was unpinned and closed individually as superseded, and issue #70 was completed after its audit. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is now the single concrete `In Progress`/`ACTIVE NOW` delivery. B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) remains `Backlog`/`NEXT`; B4–B8 stay `LATER` behind their direct predecessors. Follow [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) for preserved migration evidence, not as permission to replay the migration.
 
 ## Network and acquisition changes
 
@@ -87,7 +87,7 @@ No script or agent may automatically run `sudo`, install apt packages/toolchains
 
 ## Current quality gates
 
-Until PR 2A removes obsolete hooks through a separately reviewed change, the current repository gates remain:
+After B2A removes the retired deployment-only hooks, the repository gates remain:
 
 ```bash
 npm ci
@@ -128,9 +128,9 @@ Before deleting a subsystem:
 4. prove parity/supersession;
 5. delete in a bounded diff.
 
-Immediately before mechanical PR 2A cleanup, resolve the last pre-cleanup `main` commit and request approval for an annotated tag such as `v1-paper-platform-final`. Do not create or push it without explicit permission. There is no permanent legacy directory; Git history/tag is the archive.
+The explicitly approved annotated tag `v1-paper-platform-final` is the pre-cleanup archive. Tag object `de5b3850e0527afe8271c54abfdb95098d55e395` peels to commit `f870621f5df76b935ce828fa9205fb9ff7504f67`; do not move or overwrite it. Every removed path and retained invariant must appear in [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json). There is no permanent legacy directory.
 
-TrueNAS, Hermes, Phase 8C/8D and GHCR recovery are retired targets. Do not repair, dispatch or deploy them. Future generic Linux VPS work begins only after the research/shadow/new-paper gates and its own approval.
+TrueNAS, Hermes, Phase 8C/8D and GHCR recovery are retired targets and their confirmed paths are removed by B2A. Do not restore, repair, dispatch or deploy them. Future generic Linux VPS work begins only after the research/shadow/new-paper gates and its own approval.
 
 ## Safety and research integrity
 
