@@ -57,10 +57,16 @@ describe('Phase 8A pure observability adapter', () => {
     expect(dashboard.title).toBe('Pilot A — Event Transport & Data Quality');
     expect(JSON.stringify(dashboard)).not.toMatch(/datasourceUid|"uid"\s*:\s*"[^$]/i);
     expect(JSON.stringify(dashboard)).not.toMatch(/mint|signature|wallet|pubkey|transaction_id|run_id/i);
+    const observationMode = dashboard.templating.list.find((row: any) => row.name === 'observation_mode');
+    expect(observationMode?.current?.value).toBe('STATIC_FIXTURE_SNAPSHOT');
     const titles = dashboard.panels.map((panel: any) => panel.title);
     for (const panel of dashboard.panels) {
       expect(panel.datasource).toEqual({ type: 'prometheus', uid: '${DS_PROMETHEUS}' });
       for (const target of panel.targets) expect(target.datasource).toEqual({ type: 'prometheus', uid: '${DS_PROMETHEUS}' });
+      if (/\b(?:rate|irate|increase|delta)\s*\(/i.test(JSON.stringify(panel.targets ?? []))) {
+        expect(panel.xObservationMode).toBe('BOUNDED_REPLAY_STREAM');
+        expect(panel.xVisibleWhen).toBe('BOUNDED_REPLAY_STREAM');
+      }
     }
     expect(titles).toEqual(expect.arrayContaining([
       'Requested vs reconciled slots', '[REPLAY ONLY] Slots / sec', '[REPLAY ONLY] Transactions / sec', '[REPLAY ONLY] Pump candidates / sec',

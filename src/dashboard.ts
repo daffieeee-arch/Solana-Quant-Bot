@@ -84,29 +84,8 @@ const MAX_RESEARCH_API_BYTES = 256 * 1024;
 const MAX_RESEARCH_PAGE_LIMIT = 100;
 const MAX_RESEARCH_CURSOR = 1_000_000;
 
-export type DashboardControls = {
-  getEngineState(): { scannerRunning: boolean; scannerState: string; providers: Record<string, boolean>; lastScanAt?: string; cycles: number };
-  setScannerRunning(running: boolean): void;
-  setProviderEnabled(name: string, enabled: boolean): void;
-  getProviderLatency(): Record<string, number>;
-};
-
-function readJsonBody(request: import('node:http').IncomingMessage): Promise<unknown> {
-  return new Promise((resolve) => {
-    let body = '';
-    request.on('data', (chunk: Buffer) => { body += chunk.toString('utf8'); });
-    request.on('end', () => {
-      try { resolve(body ? JSON.parse(body) : {}); } catch { resolve({}); }
-    });
-  });
-}
-
-function corsHeaders(): Record<string, string> {
-  return {
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type',
-  };
+function requireLoopbackHost(host: string): void {
+  if (host !== '127.0.0.1' && host !== '::1') throw new Error('LEGACY_DASHBOARD_LOOPBACK_ONLY');
 }
 
 function researchError(response: import('node:http').ServerResponse, status: number, value: 'UNAVAILABLE' | 'INVALID_REQUEST' | 'INTERNAL_ERROR'): void {
@@ -175,8 +154,16 @@ async function handleResearchRequest(
   }
 }
 
-export async function createDashboardServer(options: { port: number; bindHost?: string; staticDir?: string; getStatus(): DashboardStatus; controls?: DashboardControls; getDebug?(): Record<string, unknown>; controlToken?: string; researchProvider?: ResearchDashboardProvider }): Promise<DashboardServer> {
+export async function createDashboardServer(options: { port: number; bindHost?: string; staticDir?: string; getStatus(): DashboardStatus; getDebug?(): Record<string, unknown>; researchProvider?: ResearchDashboardProvider }): Promise<DashboardServer> {
+  const bindHost = options.bindHost ?? '127.0.0.1';
+  requireLoopbackHost(bindHost);
   const handleRequest = async (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): Promise<void> => {
+    if (request.method !== 'GET') {
+      response.setHeader('allow', 'GET');
+      response.writeHead(405);
+      response.end('Method not allowed');
+      return;
+    }
     let requestUrl: URL;
     try {
       requestUrl = new URL(request.url ?? '/', 'http://localhost');
@@ -184,37 +171,10 @@ export async function createDashboardServer(options: { port: number; bindHost?: 
       requestUrl = new URL('http://localhost/');
     }
     const path = requestUrl.pathname;
-    if (request.method === 'OPTIONS') {
-      response.writeHead(204, corsHeaders()); response.end(); return;
-    }
     if (path === '/healthz') { response.end('ok'); return; }
     if (path.startsWith(RESEARCH_API_PREFIX)) {
       await handleResearchRequest(request, response, requestUrl, options.researchProvider);
       return;
-    }
-    if (path === '/api/control' && request.method === 'POST' && options.controls) {
-      // Auth voor mutaties: als een controlToken is geconfigureerd, eisen we
-      // `Authorization: Bearer <token>` — anders kan élke netwerkclient de
-      // scanner stoppen / providers uitschakelen (remote DoS op controle-vlak).
-      if (options.controlToken) {
-        const header = (request.headers.authorization ?? '').trim();
-        const expected = `Bearer ${options.controlToken}`;
-        if (header !== expected) {
-          response.writeHead(401, corsHeaders());
-          response.end(JSON.stringify({ ok: false, error: 'unauthorized' }));
-          return;
-        }
-      }
-      const body = await readJsonBody(request) as { scannerRunning?: boolean; provider?: string; enabled?: boolean };
-      if (typeof body.scannerRunning === 'boolean') options.controls.setScannerRunning(body.scannerRunning);
-      if (typeof body.provider === 'string' && typeof body.enabled === 'boolean') options.controls.setProviderEnabled(body.provider, body.enabled);
-      json(response, { ok: true, engine: options.controls.getEngineState() }, corsHeaders()); return;
-    }
-    if (path === '/api/controls' && options.controls) {
-      json(response, { engine: options.controls.getEngineState(), providerLatency: options.controls.getProviderLatency() }, corsHeaders()); return;
-    }
-    if (request.method !== 'GET') {
-      response.writeHead(404); response.end('Not found'); return;
     }
     const status = options.getStatus();
     if (path === '/api/status') { json(response, status); return; }
@@ -238,7 +198,7 @@ export async function createDashboardServer(options: { port: number; bindHost?: 
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       try {
-        response.writeHead(500, corsHeaders());
+        response.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
         response.end(JSON.stringify({ ok: false, error: 'internal_error', message: message.slice(0, 120) }));
       } catch {
         /* response al verzonden */
@@ -247,7 +207,7 @@ export async function createDashboardServer(options: { port: number; bindHost?: 
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.port, options.bindHost ?? '0.0.0.0', () => resolve());
+    server.listen(options.port, bindHost, () => resolve());
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Dashboard did not bind a TCP port');

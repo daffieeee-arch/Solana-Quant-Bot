@@ -7,11 +7,11 @@ export default defineConfig({
   plugins: [react()],
   build: { outDir: 'dist', emptyOutDir: true },
   preview: {
-    host: '192.168.1.234',
+    host: '127.0.0.1',
     port: 3100,
     strictPort: true,
     proxy: {
-      '/api': { target: 'http://192.168.1.234:3000', changeOrigin: true },
+      '/api': { target: 'http://127.0.0.1:3000', changeOrigin: false },
     },
   },
 });

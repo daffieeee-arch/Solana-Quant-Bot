@@ -61,7 +61,7 @@ export class CompositeProvider implements MarketProvider {
   private discoveryInFlight?: Promise<MarketSnapshot[]>;
   /** Laatst gemeten round-trip (ms) per provider voor de discovery/enrichment-calls. */
   private lastProviderLatency: Record<string, number> = {};
-  /** Providers die de gebruiker via de dashboard-controls tijdelijk uitschakelde. */
+  /** Legacy internal provider-disable state; no dashboard mutation route owns it. */
   private disabledProviders = new Set<string>();
   private readonly solPriceUsd: number | undefined;
   /** Laatste geprijsde discovery-merge; bron voor positie-quotes (Triton-first). */
@@ -158,7 +158,7 @@ export class CompositeProvider implements MarketProvider {
     return this.lastProviderLatency;
   }
 
-  /** Schakel een provider aan/uit via de dashboard-controls ('TRITON','SOLANA_WS'). */
+  /** Legacy internal provider toggle retained for isolated domain tests. */
   setProviderEnabled(name: string, enabled: boolean): void {
     if (enabled) this.disabledProviders.delete(name.toUpperCase());
     else this.disabledProviders.add(name.toUpperCase());

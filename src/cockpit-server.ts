@@ -116,6 +116,7 @@ function createBoundedClose(server: import('node:http').Server): () => Promise<v
 }
 
 export async function createCockpitServer(options: CockpitServerOptions): Promise<CockpitServer> {
+  if (options.bindHost !== '127.0.0.1' && options.bindHost !== '::1') throw new Error('COCKPIT_LOOPBACK_ONLY');
   const server = createServer(async (request, response) => {
     const method = request.method ?? '';
     if (method !== 'GET' && method !== 'HEAD') {

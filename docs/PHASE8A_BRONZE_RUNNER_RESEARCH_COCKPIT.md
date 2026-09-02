@@ -242,4 +242,4 @@ Phase 8A performs and authorizes no:
 
 The next real-data gate remains a separately authorized bandwidth-cap preflight and later explicit real transport authorization. A green fixture runner and cockpit do not satisfy either gate.
 
-Phase 8C adds an unapplied cockpit-only production entrypoint, separate cockpit/runner image contracts, a dedicated POSIX dataset plan, `LEGACY_FORENSIC_V1` archives and a new Grafana-as-Code suite. Static fixture snapshots are separated from unauthorized bounded replay rates. See [`PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).
+Phase 8C added an unapplied cockpit-only production entrypoint, separate cockpit/runner image contracts, a dedicated POSIX dataset plan, `LEGACY_FORENSIC_V1` archives and a Grafana-as-Code suite. Static fixture snapshots were separated from unauthorized bounded replay rates. Its [retired architecture document is preserved at the immutable pre-cleanup tag](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md).

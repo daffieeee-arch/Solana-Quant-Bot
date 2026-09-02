@@ -1,4 +1,0 @@
-# Disabled stale deployment artifact.
-disabled: true
-reason: "Superseded by the immutable, independently reviewed truenas-custom-app.yaml."
-requires: "Generate an exact payload only inside a separately approved Gate B."

@@ -23,15 +23,9 @@ function parsePort(value: string | undefined): number {
   return port;
 }
 
-function validIpv4(value: string): boolean {
-  const parts = value.split('.');
-  return parts.length === 4 && parts.every((part) => /^(?:0|[1-9]\d{0,2})$/.test(part)
-    && Number(part) >= 0 && Number(part) <= 255);
-}
-
 function parseHost(value: string | undefined): string {
   const host = value === undefined ? '127.0.0.1' : value;
-  if (host !== '::1' && !validIpv4(host)) throw new Error('INVALID_COCKPIT_BIND_HOST');
+  if (host !== '127.0.0.1' && host !== '::1') throw new Error('COCKPIT_LOOPBACK_ONLY');
   return host;
 }
 

@@ -18,11 +18,6 @@ export type DashboardData = {
   offline?: 'OFFLINE_ZERO_COST';
 };
 
-type ControlsData = {
-  engine: { scannerRunning: boolean; scannerState: string; providers: Record<string, boolean>; lastScanAt?: string; cycles: number };
-  providerLatency: Record<string, number>;
-};
-
 type Position = { mint: string; symbol: string; openedAt: string; entryPriceUsd: number; markPriceUsd: number; highPriceUsd: number; allocatedSol: number; entryCostSol: number; unrealizedPnlSol: number; unrealizedPnlPercent: number };
 type FeedItem = { id: string; pairId: string; at: string; type: 'scan_complete' | 'paper_entry' | 'paper_exit' | 'rejected' | 'duplicate_suppressed'; symbol: string; detail: string };
 type Candidate = { pairId: string; mint: string; symbol: string; score: number; source: string; at: string; whaleInterest?: boolean };
@@ -105,7 +100,7 @@ export function App({ pollMs = 5_000 }: AppProps) {
         <div className="brand"><span className="brand-mark">◢</span><div><strong>PAPER // MONITOR</strong><small>SOLANA SCANNER · READ ONLY</small></div></div>
         <div className="system-state"><span className="live-dot" /> SCANNER {data.scanner.status.toUpperCase()} <span className="separator">/</span> <time dateTime={now.toISOString()} aria-label="Current Netherlands time">{formatNlTime(now)}</time> <span className="separator">/</span> <time dateTime={data.updatedAt}>SCAN AGE {formatAge(now, data.updatedAt)}</time></div>
         <div className="monitor-controls" aria-label="Dashboard controls"><button type="button" className={refreshing ? 'refreshing' : ''} onClick={() => void refresh()}>{refreshing ? '↻ LOADING…' : '↻ REFRESH'}</button><button type="button" className="theme-toggle" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? '☀ LIGHT' : '☾ DARK'}</button><span className="currency-controls" role="group" aria-label="Portfolio currency">{(['SOL', 'USD', 'EUR'] as const).map((unit) => <button type="button" className={activeCurrency === unit ? 'active' : ''} aria-pressed={activeCurrency === unit} disabled={unit === 'USD' && !solUsd || unit === 'EUR' && !data.marketContext?.solEur} onClick={() => setCurrency(unit)} key={unit}>{unit}</button>)}</span></div>
-        <div className="paper-flag">SIMULATION · NO WALLET · NO ORDERS · LAN http://192.168.1.234:3000 · 5G/TK http://100.79.221.55:3000</div>
+        <div className="paper-flag">FROZEN LEGACY · READ ONLY · LOOPBACK ONLY · NO WALLET · NO ORDERS</div>
       </header>
 
       {error && <div className="data-warning" role="status"><strong>DATA FEED WARNING</strong><span>{error}</span><small>Last valid snapshot remains on screen.</small></div>}
@@ -191,7 +186,6 @@ export function App({ pollMs = 5_000 }: AppProps) {
 
       <section className="secondary-context" aria-label="Secondary monitoring context">
         <SystemStatus apiLatencyMs={apiLatencyMs} scanner={data.scanner} updatedAt={data.updatedAt} now={now} providerHealth={data.providerHealth} />
-        <EngineControlSection />
         <NewsPanel context={data.marketContext} />
       </section>
     </main></>
@@ -278,53 +272,6 @@ function ClosedTrades({ trades, onSelect, selected }: { trades: ClosedTrade[]; o
         </article>
       )) : <Empty label="No closed paper trades yet" />}
     </div>
-  </section>;
-}
-function EngineControlSection() {
-  const [controls, setControls] = useState<ControlsData | null>(null);
-  const refresh = useCallback(async () => {
-    try {
-      const response = await fetch('/api/controls', { headers: { accept: 'application/json' } });
-      if (response.ok) setControls(await response.json() as ControlsData);
-    } catch { /* dashboard-poll baséret op de hoofdloop */ }
-  }, []);
-  useEffect(() => { refresh(); const id = setInterval(refresh, 5_000); return () => clearInterval(id); }, [refresh]);
-  const act = useCallback(async (body: Record<string, unknown>) => {
-    try {
-      const response = await fetch('/api/control', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      if (response.ok) setControls(await response.json() as ControlsData);
-    } catch { /* read-only fallback; toggles blijven lokaal */ }
-  }, []);
-  if (!controls) return <div />; // controls nog niet geladen of endpoint onbeschikbaar
-  const providers = Object.entries(controls.engine?.providers ?? {});
-  return <section className="surface engine-control-surface" aria-labelledby="engine-control-title">
-    <SurfaceTitle id="engine-control-title" eyebrow="DASHBOARD CONTROL" title="ENGINE CONTROL" right={<span>{controls.engine?.cycles ?? 0} CYCLES</span>} />
-    <div className="engine-control-row">
-      <span className="control-label">SCANNER</span>
-      <button
-        type="button"
-        className={controls.engine?.scannerRunning ? 'control-toggle is-on' : 'control-toggle'}
-        aria-pressed={!!controls.engine?.scannerRunning}
-        disabled={!controls.engine}
-        onClick={() => act({ scannerRunning: !controls.engine?.scannerRunning })}
-      >{controls.engine?.scannerRunning ? 'STOP' : 'START'}</button>
-      <span className="control-state">{controls.engine ? (controls.engine.scannerRunning ? 'RUNNING' : 'PAUSED') : '…'}</span>
-      {controls.engine?.lastScanAt ? <time>· LAST SCAN {formatTime(controls.engine.lastScanAt)}</time> : null}
-    </div>
-    {providers.map(([name, enabled]) => (
-      <div className="engine-provider-row" key={name}>
-        <span className="control-label">{name}</span>
-        <button
-          type="button"
-          className={enabled ? 'control-toggle is-on' : 'control-toggle'}
-          aria-pressed={enabled}
-          disabled={!controls.engine}
-          onClick={() => act({ provider: name, enabled: !enabled })}
-        >{enabled ? 'ON' : 'OFF'}</button>
-        <span className="latency-value">{controls.providerLatency?.[name] != null ? `${controls.providerLatency[name]} ms` : '—'}</span>
-      </div>
-    ))}
-    <p className="control-note">Controls pause the in-process paper scanner and toggle providers. No live orders or wallet actions are exposed.</p>
   </section>;
 }
 function CandidatesPanel({ items }: { items: Candidate[] }) {

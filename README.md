@@ -21,9 +21,9 @@ pinned official Pump truth
 
 Rust owns or authorizes the logical/canonical Raw, Bronze and Silver facts, including protocol decode, ordering, evidence, coverage, quarantine and manifest identity. Python starts from approved Silver and owns Gold, features, labels and research/evaluation artifacts; it contains no Pump wire decoder or alternative Silver business logic. The physical Bronze/Silver Parquet writer remains a PR 5 decision and any Python-only serializer must be generated, lossless and logical-hash equivalent. React/TypeScript owns visualization. Immutable files and manifests are canonical research truth; ClickHouse is an optional later projection.
 
-The existing scanner, portfolio, dashboard and paper runtime are frozen legacy. Existing fixture tests, golden vectors and crash-safety invariants remain valuable evidence, but current decoders/fills are not universal protocol or executable-liquidity truth. TrueNAS, Hermes AI and Phase 8 deployment work are retired from the active product architecture and remain in Git only pending controlled cleanup.
+The existing scanner, portfolio, dashboard and paper runtime are frozen legacy. Existing fixture tests, golden vectors and crash-safety invariants remain valuable evidence, but current decoders/fills are not universal protocol or executable-liquidity truth. B2A removes the confirmed TrueNAS, Hermes AI and Phase 8C/8D deployment targets and quarantines the retained monitor as explicit loopback-only/read-only evidence. No default package command starts the legacy scanner or provider runtime. The exact removal/retention record is [`roadmap/b2a-invariant-salvage-manifest.json`](roadmap/b2a-invariant-salvage-manifest.json); the pre-cleanup tree is archived at annotated tag `v1-paper-platform-final`.
 
-For transitional test/evidence traceability only: [`docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) remains `HOLD_UNPROVEN_ACTIVATION` with `pilotEligible: false`, and [`docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`](docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md) is a retired, never-deployed Phase 8C target. Neither is an active runbook or authorization.
+For transitional test/evidence traceability only, [`docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) remains `HOLD_UNPROVEN_ACTIVATION` with `pilotEligible: false`. The retired, never-deployed [Phase 8C target is available only in the immutable archive tag](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). Neither is an active runbook or authorization.
 
 ## Provider and safety boundary
 
@@ -45,6 +45,8 @@ Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acq
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for system boundaries;
 - [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md) for the read-only setup/doctor contract;
 - [`AGENTS.md`](AGENTS.md) for coding-agent rules.
+
+G0 is complete: issues #63 and #70 are closed under their reviewed final states. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is the single concrete `ACTIVE NOW` delivery and is `In Progress`; B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is `Backlog` and the single concrete `NEXT` delivery.
 
 Development happens on Windows 11 → WSL2 Ubuntu with repository and datasets on WSL ext4. Do not install dependencies or change a user toolchain automatically.
 

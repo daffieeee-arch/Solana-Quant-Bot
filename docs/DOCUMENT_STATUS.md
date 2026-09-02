@@ -7,7 +7,7 @@
 - **ACTIVE:** current authoritative product, architecture, workflow or operations boundary. It still must be verified against code/current GitHub state.
 - **SUPERSEDED:** replaced and non-authoritative; retained for traceability or useful evidence.
 - **HISTORICAL:** records earlier evidence/invariants only; not an active architecture, runbook, authorization or future target.
-- **RETIRED:** target is cancelled; do not execute its instructions. Retained only until controlled cleanup.
+- **RETIRED:** target is cancelled; do not execute its instructions. Removed material remains available through the immutable pre-cleanup tag.
 
 An embedded historical `approved`, `ready` or similar field never overrides this document status.
 
@@ -40,10 +40,6 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 
 ## Historical documents
 
-- `HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md`
-- `HERMES_REVIEW_RESPONSE_ROUND1.md`
-- `HERMES_REVIEW_RESPONSE_ROUND2.md`
-- `HERMES_REVIEW_RESPONSE_ROUND3.md`
 - `PHASE3_PUMP_V2_PILOT.md`
 - `PHASE4_OLD_FAITHFUL_ADAPTER.md`
 - `PHASE6_PUMP_SILVER_EVENT_CONTRACT.md`
@@ -54,7 +50,6 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - `offline-hardening-decimals-cost.md`
 - `protocol-coverage.md`
 - `pump-source-classification.md`
-- `../observability/grafana/legacy-v1/README.md`
 
 The JSON manifests under `docs/research/` are historical evidence artifacts unless a future V2 dataset manifest explicitly supersedes them. Their old ranges, caps, eligibility fields and source claims are not active V2 approval.
 
@@ -63,13 +58,15 @@ The JSON manifests under `docs/research/` are historical evidence artifacts unle
 ## Retired documents
 
 - [`../STRATEGY-REDESIGN-v2.md`](../STRATEGY-REDESIGN-v2.md)
-- [`../.hermes/plans/2026-07-25_221221-paper-ledger-dashboard.md`](../.hermes/plans/2026-07-25_221221-paper-ledger-dashboard.md)
-- `PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md`
-- `PHASE8D1_EXISTING_DIGEST_RECOVERY.md`
-- `PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md`
-- `data/CLICKHOUSE_BRONZE_SILVER_GOLD_PLAN.md`
-- `operations/GHCR_PRIVATE_IMAGE_RELEASE_AND_TRUENAS_PULL.md`
-- `operations/GRAFANA_LEGACY_ARCHIVE_AND_RESEARCH_PLATFORM_MIGRATION.md`
-- `../observability/grafana/provisioning/README.md`
 
-Retired documents remain in PR 1 for archive-safe review. PR 2A may remove them only after invariant/evidence salvage and the separately approved annotated pre-cleanup tag.
+## Removed historical and retired documents
+
+B2A removes the following paths from the active tree after invariant review. Their exact bytes remain available at immutable annotated tag `v1-paper-platform-final` (tag object `de5b3850e0527afe8271c54abfdb95098d55e395`, peeled commit `f870621f5df76b935ce828fa9205fb9ff7504f67`):
+
+- [Hermes plan](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/.hermes/plans/2026-07-25_221221-paper-ledger-dashboard.md) and [review request](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md), [round 1](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/HERMES_REVIEW_RESPONSE_ROUND1.md), [round 2](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/HERMES_REVIEW_RESPONSE_ROUND2.md) and [round 3](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/HERMES_REVIEW_RESPONSE_ROUND3.md);
+- [Phase 8C cockpit/deployment architecture](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md);
+- [Phase 8D existing-digest recovery](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8D1_EXISTING_DIGEST_RECOVERY.md) and [remote image/GHCR readiness](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md);
+- [ClickHouse Bronze/Silver/Gold plan](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/data/CLICKHOUSE_BRONZE_SILVER_GOLD_PLAN.md), [GHCR/TrueNAS runbook](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/operations/GHCR_PRIVATE_IMAGE_RELEASE_AND_TRUENAS_PULL.md) and [Grafana migration runbook](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/operations/GRAFANA_LEGACY_ARCHIVE_AND_RESEARCH_PLATFORM_MIGRATION.md);
+- [legacy Grafana archive](https://github.com/daffieeee-arch/solana-paper-scanner/tree/v1-paper-platform-final/observability/grafana/legacy-v1) and [provisioning README](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/observability/grafana/provisioning/README.md).
+
+[`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) is the active machine-readable disposition and retained-invariant record. An archived document is evidence, never an active runbook or authorization.

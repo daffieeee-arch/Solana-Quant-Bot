@@ -1,0 +1,508 @@
+{
+  "schemaVersion": "B2A_INVARIANT_SALVAGE_MANIFEST_1",
+  "deliveryIssue": 81,
+  "sourceCommit": "f870621f5df76b935ce828fa9205fb9ff7504f67",
+  "rollback": {
+    "tag": "v1-paper-platform-final",
+    "tagObject": "de5b3850e0527afe8271c54abfdb95098d55e395",
+    "peeledCommit": "f870621f5df76b935ce828fa9205fb9ff7504f67",
+    "archivePolicy": "Git history and this annotated tag are the archive; no legacy directory is created."
+  },
+  "scope": {
+    "purpose": "Remove only confirmed retired platform paths and quarantine the reachable frozen legacy monitor.",
+    "providerCallsPerformed": false,
+    "historicalDataCallsPerformed": false,
+    "dependenciesInstalled": false,
+    "productEvidenceClaimed": false
+  },
+  "inventory": {
+    "trackedFilesBefore": 454,
+    "trackedFilesAfter": 323,
+    "removedTrackedPaths": 133,
+    "addedTrackedPaths": 2,
+    "deletionListSha256": "ca6bb2f26e4b4c52a2f05e4693bac81991b4929885c23907861506c0fab83aa3",
+    "deletionListCanonicalization": "Lexicographically sorted repository-relative paths, UTF-8, one LF-terminated path per line."
+  },
+  "defaultCommandGraph": {
+    "before": {
+      "dev": "tsx src/main.ts (frozen legacy scanner/provider runtime)",
+      "start": "node dist/main.js (frozen legacy scanner/provider runtime)",
+      "start:cockpit": "node dist/cockpit-main.js (retained evidence viewer)",
+      "build": "TypeScript, research transport, Phase 8A, both frontends, Phase 8C, cockpit inertness and Phase 8D1 supply-chain checks"
+    },
+    "after": {
+      "dev": "absent",
+      "start": "absent",
+      "start:cockpit": "node dist/cockpit-main.js (explicit loopback-only, read-only Phase 8A evidence viewer)",
+      "build": "TypeScript, research transport, Phase 8A, Research Cockpit and cockpit inertness checks; no frozen paper dashboard or retired deployment verification"
+    }
+  },
+  "removalGroups": [
+    {
+      "paths": [
+        ".github/workflows/phase8d-images-verify.yml",
+        ".github/workflows/phase8d-images-publish.yml",
+        ".github/workflows/phase8d-images-recover.yml"
+      ],
+      "subsystem": "retired Phase 8D image workflows",
+      "reachabilityBeforeRemoval": "Tracked GitHub workflows; verify ran on selected pushes and publish/recovery were manually dispatchable.",
+      "uniqueInvariantOrEvidence": "Exact workflow allowlisting, least privilege and fail-closed validation remain in the ordinary CI policy; target-specific image publication/recovery evidence is archived by the rollback tag.",
+      "destination": [
+        "scripts/lib/workflow-policy.mjs",
+        "tests/ci-policy.test.ts",
+        "docs/CI.md",
+        "docs/ARCHITECTURE.md"
+      ],
+      "disposition": "MIGRATED",
+      "reviewEvidence": "The workflows exclusively validate, publish or recover cancelled Phase 8D/GHCR images; ordinary CI and Roadmap Sync remain unchanged.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "deployment/phase8c/**",
+        "deployment/phase8d1/**",
+        "scripts/phase8d1/**",
+        "containers/Dockerfile.cockpit",
+        "containers/Dockerfile.phase8a-runner"
+      ],
+      "subsystem": "Phase 8C/8D deployment and GHCR supply chain",
+      "reachabilityBeforeRemoval": "Reached only by retired workflows, retired package verification scripts and implementation-coupled tests.",
+      "uniqueInvariantOrEvidence": "Future deployment must retain immutable identity, pinned digests, non-root/read-only/cap-drop/no-new-privileges/no-host-socket isolation, bounded resources, explicit ingress, secret exclusion, rollback and fail-closed partial publication.",
+      "destination": [
+        "docs/ARCHITECTURE.md",
+        "docs/DECISIONS.md",
+        "roadmap/b2a-invariant-salvage-manifest.json"
+      ],
+      "disposition": "MIGRATED",
+      "reviewEvidence": "All code and contracts are coupled to the cancelled TrueNAS/GHCR image target; no V2 deployment is built in B2A.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "Dockerfile",
+        ".dockerignore",
+        "truenas-custom-app.yaml",
+        "truenas-minimal.yaml",
+        "src/deploy.sh",
+        "scripts/reinstall-compose.yaml"
+      ],
+      "subsystem": "root V1 runtime and TrueNAS packaging",
+      "reachabilityBeforeRemoval": "The root image starts dist/main.js and the YAML/shell assets deploy or reinstall the frozen TrueNAS runtime.",
+      "uniqueInvariantOrEvidence": "Source identity, default-deny runtime configuration and rollback requirements are preserved as V2 requirements; no reusable target implementation is selected.",
+      "destination": [
+        "docs/ARCHITECTURE.md",
+        "docs/DEVELOPMENT_WORKFLOW.md",
+        "roadmap/b2a-invariant-salvage-manifest.json"
+      ],
+      "disposition": "MIGRATED",
+      "reviewEvidence": "Each asset is exclusively tied to the frozen scanner image or retired TrueNAS topology; its target-specific implementation is retired and its target-neutral safeguards are migrated to the named active records.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "scripts/bot-check-10min.py",
+        "scripts/check-freeze.py",
+        "scripts/create-structured.py",
+        "scripts/deploy-geyser.mjs.py",
+        "scripts/deploy-geyser.py",
+        "scripts/find-grafana.py",
+        "scripts/fix-freeze.py",
+        "scripts/getlog.mjs",
+        "scripts/night-monitor.py",
+        "scripts/night-watchdog.py",
+        "scripts/observe-bot.py",
+        "scripts/observe-bot.sh",
+        "scripts/observe-bot2.sh",
+        "scripts/observe-bot3.sh",
+        "scripts/observe-bot4.sh",
+        "scripts/pinned-https-download.mjs",
+        "scripts/query-catalog.py",
+        "scripts/show-env.py",
+        "scripts/show-env2.py",
+        "scripts/trade-monitor.py",
+        "scripts/truenas-wss-readonly-check.mjs",
+        "scripts/update-bot-audit1.py",
+        "scripts/update-bot-audit4.py",
+        "scripts/update-bot-audit11.py",
+        "scripts/update-bot-audit12.py",
+        "scripts/update-bot-audit13.py",
+        "scripts/update-bot-image.py"
+      ],
+      "subsystem": "TrueNAS deployment, monitoring and mutation helpers",
+      "reachabilityBeforeRemoval": "Not called by retained code; directly address the retired host, app, secret path, container log or V1 deployment state.",
+      "uniqueInvariantOrEvidence": "Host/route/method allowlisting before credential access and content-integrity checks remain requirements. The pinned HTTPS helper is TrueNAS-specific and lacks the content hash and run-budget contract needed for OF1, so it is not reused.",
+      "destination": [
+        "docs/HANDOFF_V2.md",
+        "docs/ARCHITECTURE.md",
+        "docs/triton-cost-safety.md"
+      ],
+      "disposition": "MIGRATED",
+      "reviewEvidence": "Read-only reachability inspection found hard-coded TrueNAS/LAN paths or direct V1 runtime operations in every listed helper; their target-neutral allowlist/integrity requirements are migrated to the named active records.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        ".hermes/plans/2026-07-25_221221-paper-ledger-dashboard.md",
+        "docs/HERMES_REVIEW_REQUEST_REPO_ALIGNMENT_CI.md",
+        "docs/HERMES_REVIEW_RESPONSE_ROUND1.md",
+        "docs/HERMES_REVIEW_RESPONSE_ROUND2.md",
+        "docs/HERMES_REVIEW_RESPONSE_ROUND3.md"
+      ],
+      "subsystem": "Hermes planning and review artifacts",
+      "reachabilityBeforeRemoval": "Documentation and repository-policy requirement only; Hermes is not an active development or deployment boundary.",
+      "uniqueInvariantOrEvidence": "Strict YAML parsing, exact workflow structure, read-only permissions, source review and safe-default checks already live in neutral active policy code and tests.",
+      "destination": [
+        "scripts/ci-repository-policy.mjs",
+        "scripts/lib/workflow-policy.mjs",
+        "tests/ci-policy.test.ts",
+        "docs/CI.md"
+      ],
+      "disposition": "DUPLICATE_PROVEN",
+      "reviewEvidence": "The original review trail remains immutable under the rollback tag; no unique active requirement depends on a Hermes-branded path.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md",
+        "docs/PHASE8D1_EXISTING_DIGEST_RECOVERY.md",
+        "docs/PHASE8D1_REMOTE_IMAGE_BUILD_GHCR_READINESS.md",
+        "docs/data/CLICKHOUSE_BRONZE_SILVER_GOLD_PLAN.md",
+        "docs/operations/GHCR_PRIVATE_IMAGE_RELEASE_AND_TRUENAS_PULL.md",
+        "docs/operations/GRAFANA_LEGACY_ARCHIVE_AND_RESEARCH_PLATFORM_MIGRATION.md"
+      ],
+      "subsystem": "retired deployment and placeholder analytics documentation",
+      "reachabilityBeforeRemoval": "Retired documents remained linked for transition history but were not V2 authority.",
+      "uniqueInvariantOrEvidence": "Canonical/rebuildable analytics, provenance, evidence, coverage, quarantine and deployment isolation requirements are present in active V2 documents; obsolete available_at terminology is not migrated.",
+      "destination": [
+        "docs/HANDOFF_V2.md",
+        "docs/ARCHITECTURE.md",
+        "docs/DECISIONS.md",
+        "docs/DOCUMENT_STATUS.md"
+      ],
+      "disposition": "MIGRATED",
+      "reviewEvidence": "The documents define cancelled TrueNAS/GHCR/Grafana/ClickHouse-first targets and are preserved under the rollback tag.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "observability/clickhouse/**",
+        "observability/grafana/contracts/**",
+        "observability/grafana/dashboards/**",
+        "observability/grafana/legacy-v1/**",
+        "observability/grafana/provisioning/**"
+      ],
+      "subsystem": "Phase 8C placeholder ClickHouse/Grafana and V1 forensic dashboards",
+      "reachabilityBeforeRemoval": "Reached only by retired tests/docs and inactive provisioning; no authentic V2 dataset feeds these assets.",
+      "uniqueInvariantOrEvidence": "Evidence, source, decoder/schema/code identities, coverage, quarantine and causal timestamps remain active requirements. Phase 8A event-transport evidence is retained separately.",
+      "destination": [
+        "docs/ARCHITECTURE.md",
+        "docs/FRONTEND_COCKPIT_ARCHITECTURE.md",
+        "observability/grafana/pilot-a-event-transport-data-quality.json"
+      ],
+      "disposition": "MIGRATED",
+      "reviewEvidence": "The removed assets are design-only or V1 forensic projections; ClickHouse is not canonical and no permanent server is introduced.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "src/engine-control.ts"
+      ],
+      "subsystem": "unreachable frozen-runtime mutation control bus",
+      "reachabilityBeforeRemoval": "Previously wired to dashboard POST controls; after the control routes are removed it has no external owner and only maintains always-on local toggles.",
+      "uniqueInvariantOrEvidence": "None; scan accounting remains in the ledger/scan cycle and provider-specific isolated tests remain available.",
+      "destination": [
+        "src/dashboard.ts",
+        "tests/dashboard-data.test.ts",
+        "tests/dashboard.test.ts"
+      ],
+      "disposition": "REQUIREMENT_RETIRED",
+      "reviewEvidence": "The dashboard mutation route and frontend controls are removed; keeping an unreachable mutable bus would be misleading dead code.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "scripts/assert-phase8c-contracts.mjs"
+      ],
+      "subsystem": "retired package build hook",
+      "reachabilityBeforeRemoval": "Invoked by the default build solely to validate Phase 8C deployment contracts.",
+      "uniqueInvariantOrEvidence": "Research transport, Phase 8A offline, cockpit inertness and ordinary CI gates remain independently enforced.",
+      "destination": [
+        "package.json",
+        "docs/CI.md"
+      ],
+      "disposition": "REQUIREMENT_RETIRED",
+      "reviewEvidence": "The hook has no responsibility outside the cancelled Phase 8C deployment target.",
+      "rollbackTag": "v1-paper-platform-final"
+    }
+  ],
+  "testClassifications": [
+    {
+      "paths": [
+        "tests/phase8d1-*.test.ts"
+      ],
+      "subsystem": "Phase 8D1 image publication and recovery tests",
+      "reachabilityBeforeRemoval": "Ordinary Vitest discovered these tests; they imported Phase 8D1 scripts/contracts or asserted retired image and recovery workflows.",
+      "classification": "IMPLEMENTATION_COUPLED",
+      "disposition": "REQUIREMENT_RETIRED",
+      "uniqueInvariantOrEvidence": "Target-neutral deployment isolation and publication integrity requirements migrate to active architecture documentation; target-specific fixtures are not V2 golden oracles.",
+      "destination": [
+        "docs/ARCHITECTURE.md",
+        "docs/DECISIONS.md"
+      ],
+      "reviewEvidence": "All nineteen tests import Phase 8D1 scripts/contracts or assert retired image/recovery workflows.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "tests/phase8c-contract-policy.test.ts",
+        "tests/phase8c-deployment-contracts.test.ts"
+      ],
+      "subsystem": "Phase 8C deployment contract tests",
+      "reachabilityBeforeRemoval": "Ordinary Vitest discovered these tests; they required the cancelled Phase 8C image/deployment contracts.",
+      "classification": "IMPLEMENTATION_COUPLED",
+      "disposition": "REQUIREMENT_RETIRED",
+      "uniqueInvariantOrEvidence": "No unique target-neutral invariant beyond retained safety and provenance rules.",
+      "destination": [
+        "tests/ci-policy.test.ts",
+        "docs/ARCHITECTURE.md"
+      ],
+      "reviewEvidence": "The tests assert only cancelled Phase 8C deployment contracts.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "tests/phase8c-docs.test.ts"
+      ],
+      "subsystem": "Phase 8C documentation-presence test",
+      "reachabilityBeforeRemoval": "Ordinary Vitest discovered this test; it required retired Phase 8C documents to remain in the active tree.",
+      "classification": "OBSOLETE",
+      "disposition": "REQUIREMENT_RETIRED",
+      "uniqueInvariantOrEvidence": "None; it requires retired document references to remain active.",
+      "destination": [],
+      "reviewEvidence": "The test contradicts the approved removal outcome.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "tests/phase8c-clickhouse-plan.test.ts",
+        "tests/deployment-provenance.test.ts"
+      ],
+      "subsystem": "Phase 8C ClickHouse-first and TrueNAS packaging tests",
+      "reachabilityBeforeRemoval": "Ordinary Vitest discovered these tests; their assertions selected a cancelled canonical-storage or deployment target.",
+      "classification": "INVALID_BEHAVIOR",
+      "disposition": "MIGRATED",
+      "uniqueInvariantOrEvidence": "ClickHouse must be rebuildable and noncanonical; provenance/evidence remains explicit. The old tests instead require ClickHouse-first or TrueNAS/root-Docker target behavior.",
+      "destination": [
+        "docs/HANDOFF_V2.md",
+        "docs/ARCHITECTURE.md",
+        "roadmap/b2a-invariant-salvage-manifest.json"
+      ],
+      "reviewEvidence": "Their expected target or timestamp model is incompatible with the accepted V2 contract.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "tests/truenas-readonly-helper.test.ts"
+      ],
+      "subsystem": "TrueNAS helper and disabled-image tests",
+      "reachabilityBeforeRemoval": "Ordinary Vitest discovered this test; it spawned a TrueNAS-specific helper and asserted the retired TrueNAS/root-image packaging contract.",
+      "classification": "IMPLEMENTATION_COUPLED",
+      "disposition": "MIGRATED",
+      "uniqueInvariantOrEvidence": "Network host/route/method allowlisting must occur before credential access; default provider paths remain disabled.",
+      "destination": [
+        "docs/triton-cost-safety.md",
+        "docs/ARCHITECTURE.md"
+      ],
+      "reviewEvidence": "The executable helper and test are bound to a retired TrueNAS address and credential path.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "tests/grafana-legacy-archive.test.ts"
+      ],
+      "subsystem": "in-tree Grafana legacy archive test",
+      "reachabilityBeforeRemoval": "Ordinary Vitest discovered this test; it required a permanent in-tree V1 dashboard archive.",
+      "classification": "OBSOLETE",
+      "disposition": "REQUIREMENT_RETIRED",
+      "uniqueInvariantOrEvidence": "Git history and the annotated tag replace an in-tree V1 dashboard archive.",
+      "destination": [
+        "v1-paper-platform-final"
+      ],
+      "reviewEvidence": "The test asserts the presence of the in-tree archive that B2A deliberately removes.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "tests/grafana-suite.test.ts"
+      ],
+      "subsystem": "Phase 8C placeholder Grafana suite test",
+      "reachabilityBeforeRemoval": "Ordinary Vitest discovered this test; it validated inactive Grafana contracts and dashboards that had no authentic V2 data source.",
+      "classification": "IMPLEMENTATION_COUPLED",
+      "disposition": "MIGRATED",
+      "uniqueInvariantOrEvidence": "Static snapshots must not claim rates/deltas; replay-only rate panels require explicit bounded replay evidence.",
+      "destination": [
+        "tests/phase8a-observability.test.ts",
+        "observability/grafana/pilot-a-event-transport-data-quality.json"
+      ],
+      "reviewEvidence": "The full Grafana suite is placeholder infrastructure; two evidence-mode invariants remain useful and are moved to the retained Phase 8A test.",
+      "rollbackTag": "v1-paper-platform-final"
+    }
+  ],
+  "retainedGroups": [
+    {
+      "paths": [
+        "src/main.ts",
+        "src/dashboard.ts",
+        "frontend/src/App.tsx",
+        "frontend/vite.config.ts"
+      ],
+      "subsystem": "frozen V1 domain source and quarantined optional monitor",
+      "reachabilityBeforeRemoval": "The frozen runtime was a default package launch target and its dashboard exposed unauthenticated mutation controls on a non-loopback default bind.",
+      "uniqueInvariantOrEvidence": "B2A retains the domain source for later invariant-by-invariant replacement, removes default launch commands and mutation controls, and forces any direct monitor construction/preview to loopback read-only operation.",
+      "destination": [
+        "tests/dashboard.test.ts",
+        "tests/dashboard-data.test.ts",
+        "frontend/src/App.test.tsx",
+        "tests/b2a-retired-platform-policy.test.ts"
+      ],
+      "disposition": "RETAINED",
+      "reviewEvidence": "The retained source is frozen evidence, not the V2 product; no package-manager default starts it and no HTTP mutation route remains.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "src/cockpit-config.ts",
+        "src/cockpit-main.ts",
+        "src/cockpit-server.ts",
+        "frontend/cockpit.html",
+        "frontend/vite.cockpit.config.ts",
+        "frontend/src/cockpit-entry.tsx",
+        "scripts/assert-cockpit-runtime-inert.mjs",
+        "scripts/build-research-seccomp-launcher.mjs",
+        "scripts/write-cockpit-seccomp-filter.mjs",
+        "scripts/write-research-seccomp-filter.mjs",
+        "scripts/research-seccomp-launcher.c",
+        "scripts/research-transport-loader.mjs",
+        "scripts/research-transport-preload.cjs",
+        "scripts/research-transport-register.mjs"
+      ],
+      "subsystem": "explicit Phase 8A evidence monitor and transport-inert build boundary",
+      "reachabilityBeforeRemoval": "The explicit start:cockpit command and retained offline CI/build gates use these paths.",
+      "uniqueInvariantOrEvidence": "Loopback-only GET/HEAD serving, bounded immutable input reads, transport denial, source-side non-influence and graceful bounded shutdown remain required until authentic Observatory parity exists.",
+      "destination": [
+        "B6 authentic Research Observatory parity gate"
+      ],
+      "disposition": "RETAINED",
+      "reviewEvidence": "This is the one explicit monitor retained by B2A; it imports no scanner/provider/wallet path and remains fixture-only evidence.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "docs/PHASE3_PUMP_V2_PILOT.md",
+        "docs/PHASE4_OLD_FAITHFUL_ADAPTER.md",
+        "docs/PHASE6_PUMP_SILVER_EVENT_CONTRACT.md",
+        "docs/PHASE6B_PUMP_SILVER_STATE_PROVENANCE_CONTRACT.md",
+        "docs/PHASE7A_PUMP_ACTIVATION_EVIDENCE.md",
+        "docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md",
+        "docs/PUMP_OFFLINE_RESEARCH.md",
+        "docs/research/**",
+        "tests/fixtures/old-faithful-pilot-a/**",
+        "tests/old-faithful-*.test.ts"
+      ],
+      "subsystem": "Old Faithful/Pump research specifications and source/activation evidence",
+      "reachabilityBeforeRemoval": "Historical contract tests, offline citation policy and B3–B5 evidence reconstruction depend on these bounded records.",
+      "uniqueInvariantOrEvidence": "Pinned source identities, explicit activation uncertainty, fixture-only status, coverage semantics and transport-free adapter constraints remain inputs to the versioned V2 walking skeleton.",
+      "destination": [
+        "B3 through B5"
+      ],
+      "disposition": "RETAINED",
+      "reviewEvidence": "Explicit retention contract; these files are evidence/specification, not provider-call authorization or authentic V2 data.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "scripts/live-*.mjs",
+        "scripts/debug-*.mjs",
+        "scripts/*profile*.mjs",
+        "scripts/test-*.mjs",
+        "scripts/old-faithful-backtest.mjs"
+      ],
+      "subsystem": "non-default legacy live/debug/profile diagnostics outside B2A's bounded retirement set",
+      "reachabilityBeforeRemoval": "No retained package script or workflow launches these files; some are network-capable and therefore remain non-authorized legacy artifacts pending a dedicated reachability review.",
+      "uniqueInvariantOrEvidence": "None accepted as V2 evidence; retention prevents an unreviewed broad deletion and does not authorize execution.",
+      "destination": [],
+      "disposition": "RETAINED",
+      "reviewEvidence": "The B2A scope explicitly forbids broad deletion of live/debug/profile scripts unless a file is proven exclusively tied to the retired target.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "rust/old-faithful-pump-reducer/**",
+        "rust/linux-kernel-namespace-lock/**",
+        "rust/jetstreamer-v0-7-callback-types/**",
+        "rust/solana-runtime-v3.1.12-bank-types/**",
+        "tests/fixtures/pump-silver/**"
+      ],
+      "subsystem": "protocol, exact-integer, WAL/checkpoint and deterministic replay evidence",
+      "reachabilityBeforeRemoval": "Ordinary CI and research policy gates.",
+      "uniqueInvariantOrEvidence": "Golden vectors, ordering, exact integers, provenance, quarantine, WAL, checkpoint, crash recovery and deterministic replay.",
+      "destination": [
+        "B3 through B5"
+      ],
+      "disposition": "RETAINED",
+      "reviewEvidence": "Explicit retention contract; no parity replacement exists yet.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "src/research/**",
+        "frontend/src/research/**",
+        "tests/phase8a-*.test.ts",
+        "tests/cockpit-*.test.ts",
+        "observability/grafana/pilot-a-event-transport-data-quality.json",
+        "scripts/assert-cockpit-runtime-inert.mjs",
+        "scripts/assert-phase8a-runner-offline.mjs",
+        "scripts/assert-research-transport-free.mjs"
+      ],
+      "subsystem": "Phase 8A fixture-only Research Cockpit evidence",
+      "reachabilityBeforeRemoval": "Retained explicit loopback-only evidence viewer and offline CI.",
+      "uniqueInvariantOrEvidence": "Read-only bounded APIs, explicit UNAVAILABLE/fixture status, no provider/scanner/wallet imports and source-side non-influence.",
+      "destination": [
+        "B6 authentic Research Observatory parity gate"
+      ],
+      "disposition": "RETAINED",
+      "reviewEvidence": "Explicit B2A retention; authentic replacement has not yet proven parity.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/roadmap-sync.yml",
+        "scripts/github-projects/**",
+        "roadmap/project-config.json",
+        "roadmap/project-v2-content-migration-ledger.json"
+      ],
+      "subsystem": "ordinary CI and GitHub Project governance",
+      "reachabilityBeforeRemoval": "Active delivery controls.",
+      "uniqueInvariantOrEvidence": "Trusted-main exact reconciliation, lifecycle retention, migration evidence and build gates.",
+      "destination": [],
+      "disposition": "RETAINED",
+      "reviewEvidence": "Explicit retention contract and active Project #4 control.",
+      "rollbackTag": "v1-paper-platform-final"
+    },
+    {
+      "paths": [
+        "scripts/build-v1-forensic-manifest.py",
+        "tests/v1-forensic-generator.test.ts",
+        "docs/research/V1_FORENSIC_MANIFEST.json"
+      ],
+      "subsystem": "offline immutable V1 forensic manifest evidence",
+      "reachabilityBeforeRemoval": "Offline test only; no deployment or network entrypoint.",
+      "uniqueInvariantOrEvidence": "Stable file reads, no-symlink inputs and immutable forensic evidence classification.",
+      "destination": [],
+      "disposition": "RETAINED",
+      "reviewEvidence": "Not part of the retired active platform target and explicitly bounded to forensic evidence.",
+      "rollbackTag": "v1-paper-platform-final"
+    }
+  ]
+}

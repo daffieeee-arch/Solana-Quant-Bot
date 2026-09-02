@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import * as policyModule from '../scripts/ci-repository-policy.mjs';
 
-const { parseWorkflowYaml, validateWorkflowConfiguration } = policyModule;
+const {
+  parseWorkflowYaml,
+  validatePackageScripts,
+  validateTrackedRepositoryPaths,
+  validateWorkflowConfiguration,
+} = policyModule as typeof policyModule & {
+  validatePackageScripts: (scripts: Record<string, string>) => string[];
+  validateTrackedRepositoryPaths: (paths: string[]) => string[];
+};
 const workflowFileSetErrors = (paths: string[]) => {
   const validator = (policyModule as unknown as {
     validateTrackedWorkflowPaths?: (trackedPaths: string[]) => string[];
@@ -336,17 +344,44 @@ describe('semantic CI workflow policy', () => {
     }
   });
 
-  it('rejects trigger drift and any workflow outside the five reviewed files', () => {
+  it('rejects trigger drift and any workflow outside ordinary CI and Roadmap Sync', () => {
     const pullRequestTarget = SAFE_WORKFLOW.replace('  pull_request:', '  pull_request_target:');
     expect(errors(pullRequestTarget)).toMatch(/trigger|canonical workflow/i);
     const reviewed = [
       '.github/workflows/ci.yml',
-      '.github/workflows/phase8d-images-publish.yml',
-      '.github/workflows/phase8d-images-recover.yml',
-      '.github/workflows/phase8d-images-verify.yml',
       '.github/workflows/roadmap-sync.yml',
     ];
     expect(workflowFileSetErrors(reviewed)).toBe('');
     expect(workflowFileSetErrors([...reviewed, '.github/workflows/deploy.yml'])).toMatch(/workflow file set/i);
+  });
+
+  it('rejects every tracked Hermes path and a permanent root legacy archive', () => {
+    expect(validateTrackedRepositoryPaths(['src/main.ts', 'docs/HANDOFF_V2.md'])).toEqual([]);
+    expect(validateTrackedRepositoryPaths(['.hermes/plans/retired.md'])).toEqual([
+      'retired Hermes path must not be tracked: .hermes/plans/retired.md',
+    ]);
+    expect(validateTrackedRepositoryPaths(['legacy/v1/runtime.ts'])).toEqual([
+      'permanent root legacy directory must not be tracked: legacy/v1/runtime.ts',
+    ]);
+  });
+
+  it('locks the B2A package command graph and rejects a legacy runtime launcher under any script name', () => {
+    const safe = {
+      'start:cockpit': 'node dist/cockpit-main.js',
+      build: 'tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:cockpit && npm run verify:cockpit-runtime',
+      'build:frontend': 'vite build --config frontend/vite.config.ts',
+    };
+    expect(validatePackageScripts(safe)).toEqual([]);
+
+    for (const scripts of [
+      { ...safe, dev: 'tsx src/main.ts' },
+      { ...safe, start: 'node dist/main.js' },
+      { ...safe, scanner: 'node ./dist/main.js --paper' },
+      { ...safe, scanner: 'tsx ./src/main.ts' },
+    ]) {
+      expect(validatePackageScripts(scripts).join('\n')).toMatch(/frozen legacy/);
+    }
+    expect(validatePackageScripts({ ...safe, build: `${safe.build} && npm run build:frontend` }).join('\n')).toMatch(/offline command graph/);
+    expect(validatePackageScripts({ ...safe, 'verify:phase8c-contracts': 'node retired.mjs' }).join('\n')).toMatch(/retired package script/);
   });
 });

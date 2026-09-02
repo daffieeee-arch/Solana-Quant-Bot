@@ -57,7 +57,7 @@ describe('loadConfig', () => {
     expect(() => validatePaperConfig({ ...base, liquidityPositionFraction: 1.01 })).toThrow(/liquidityPositionFraction/i);
   });
 
-  it('keeps the LAN-only dashboard disabled unless explicitly enabled', () => {
+  it('keeps the quarantined loopback monitor disabled unless explicitly enabled', () => {
     expect(loadConfig(validEnv)).toMatchObject({ dashboardEnabled: false });
     const config = loadConfig({ ...validEnv, DASHBOARD_ENABLED: 'true', DASHBOARD_PORT: '3000' });
     expect(config).toMatchObject({ dashboardEnabled: true, dashboardPort: 3000 });

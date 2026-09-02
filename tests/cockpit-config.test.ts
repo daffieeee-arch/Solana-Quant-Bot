@@ -33,11 +33,11 @@ describe('cockpit-only configuration', () => {
     }
   });
 
-  it('requires an explicit valid literal host for non-loopback binding', () => {
-    expect(loadCockpitConfig({ COCKPIT_PORT: '3000', COCKPIT_BIND_HOST: '0.0.0.0' }).bindHost).toBe('0.0.0.0');
-    expect(loadCockpitConfig({ COCKPIT_PORT: '3000', COCKPIT_BIND_HOST: '192.168.1.234' }).bindHost).toBe('192.168.1.234');
-    for (const value of ['', 'localhost', 'example.com', '999.1.1.1', '127.0.0.1 ']) {
-      expect(() => loadCockpitConfig({ COCKPIT_PORT: '3000', COCKPIT_BIND_HOST: value })).toThrow(/COCKPIT_BIND_HOST/);
+  it('accepts only explicit IP loopback literals', () => {
+    expect(loadCockpitConfig({ COCKPIT_PORT: '3000', COCKPIT_BIND_HOST: '127.0.0.1' }).bindHost).toBe('127.0.0.1');
+    expect(loadCockpitConfig({ COCKPIT_PORT: '3000', COCKPIT_BIND_HOST: '::1' }).bindHost).toBe('::1');
+    for (const value of ['', 'localhost', '0.0.0.0', '192.168.1.234', '999.1.1.1', '127.0.0.1 ']) {
+      expect(() => loadCockpitConfig({ COCKPIT_PORT: '3000', COCKPIT_BIND_HOST: value })).toThrow(/COCKPIT.*LOOPBACK/);
     }
   });
 

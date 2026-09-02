@@ -72,7 +72,7 @@ describe('CompositeProvider', () => {
     expect(provider.getProviderEnabled()).toMatchObject({ TRITON: true });
   });
 
-  it('provider toggles via dashboard-controls affect only active providers (TRITON/SOLANA_WS als solana-lane aan)', async () => {
+  it('legacy internal provider toggles affect only instantiated providers', async () => {
     const provider = providerWith(async () => [{ ...snapshot, priceUsd: 0 }]);
     provider.setProviderEnabled('SOLANA_WS', false);
     await provider.fetchSnapshots();

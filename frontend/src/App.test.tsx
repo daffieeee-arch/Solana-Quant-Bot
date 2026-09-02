@@ -69,7 +69,7 @@ describe('App', () => {
     expect(screen.getByRole('link', { name: 'WIN' })).toHaveAttribute('href', 'https://dexscreener.com/solana/pair-win');
     expect(screen.getByRole('button', { name: /REFRESH/ })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /REFRESH/ }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
     expect(screen.queryByText('LIVE POLL · 5S')).not.toBeInTheDocument();
     expect(screen.getByText('TOTAL EQUITY · USD')).toBeInTheDocument();
     expect(screen.getByText('UNREALIZED P&L · USD')).toBeInTheDocument();
@@ -106,12 +106,8 @@ describe('App', () => {
     expect(all).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('supports the engine control fetch shape and keeps the last valid dashboard visible', async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('/api/controls')) return Promise.resolve({ ok: true, json: async () => ({ engine: { scannerRunning: true, scannerState: 'idle', providers: {}, cycles: 0 }, providerLatency: {} }) });
-      return Promise.resolve({ ok: true, json: async () => dashboardData });
-    });
+  it('keeps the last valid dashboard visible without querying a mutation control plane', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve({ ok: true, json: async () => dashboardData }));
     vi.stubGlobal('fetch', fetchMock);
     render(<App pollMs={60_000} />);
 
@@ -119,6 +115,8 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: /REFRESH/ }));
 
     expect(screen.getByText('TOTAL EQUITY · USD')).toBeInTheDocument();
+    expect(fetchMock.mock.calls.every(([input]) => !String(input).startsWith('/api/control'))).toBe(true);
+    expect(screen.queryByRole('heading', { name: 'ENGINE CONTROL' })).not.toBeInTheDocument();
   });
 
   it('does not render an inert asset-detail panel when no positions are open', async () => {
@@ -290,7 +288,6 @@ describe('App', () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url === '/api/dashboard-data') return Promise.resolve({ ok: true, json: async () => dashboardData });
-      if (url === '/api/controls') return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
       const key = url.includes('/events') ? 'events' : url.includes('/quarantines') ? 'quarantines' : url.includes('/provenance') ? 'provenance' : url.includes('/metrics') ? 'metrics' : 'summary';
       return Promise.resolve({ ok: true, json: async () => researchBodies[key] });
     }));

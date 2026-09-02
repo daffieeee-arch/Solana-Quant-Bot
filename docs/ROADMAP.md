@@ -1,6 +1,6 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) is the accepted controlled V2 migration contract; actual issue numbers, reconciliation evidence and closeout state are bound by [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json). G0 remains tracked by issue #70 until its final evidence and #63 closeout gates pass.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is the concrete current delivery.
 
 ## Program outcome
 
@@ -25,9 +25,9 @@ The implementation rule is one walking skeleton: one official source, one acquis
 | Delivery | Scope | Required observable outcome | Explicit non-goals |
 |---|---|---|---|
 | PR 1 | V2 source of truth and roadmap rebase plan | accepted docs, status map and complete #27–#63 migration ledger | no manual V2 Project/issue migration, cleanup, provider calls or product code; ordinary PR-item sync may run |
-| G0 issue #70 + bounded sync/config PR | teach trusted `main` the complete V2 Project contract | tested V2 Phase/Disposition/Evidence, Project text, views and lifecycle-aware retention support | no successors, V2 issue metadata or live migration from the branch; authorized merge/reconciliation proceeds only after the correction commit and full CI pass |
-| Post-merge migration transaction | controlled Project #4 V2 rebase | successors, V2 metadata, clean views, retention and individual supersession verified without deleting history | no bulk-close or delivery claim |
-| PR 2A | obsolete platform removal and legacy safety quarantine | retired TrueNAS/Phase 8/Hermes paths removed after invariant salvage; reachable legacy is bounded/fail-closed | no data pipeline or new legacy features |
+| G0 issue #70 + bounded sync/config PRs | **Complete:** teach trusted `main` the complete V2 Project contract | tested exact-state reconciliation, V2 fields/Evidence, Project text, views and lifecycle-aware retention | no product work or provider calls |
+| G0 content migration | **Complete:** controlled Project #4 V2 rebase | successors, V2 metadata, clean views, retention and individual supersession verified without deleting history | no bulk-close or delivery claim |
+| PR 2A / B2A #81 | **In progress:** obsolete platform removal and legacy safety quarantine | retired TrueNAS/Phase 8/Hermes paths removed after manifest-backed invariant salvage; reachable legacy is bounded/fail-closed | no data pipeline, new legacy features, VPS replacement or provider call |
 | PR 3 | Pump protocol truth walking skeleton | protocol evidence matrix for one official pinned source and one needed bounded variant | no universal registry/framework claim and no activation claim without real bytes |
 | PR 4 | bounded Old Faithful acquisition | live terminal/TUI progress, verified receipts, deterministic resume and explicit coverage/gaps | no full epoch, no silent backend override and no research claim |
 | PR 5 | authentic Raw → Bronze → Silver | static HTML/JSON data-quality and one token-lifecycle report with provenance/quarantine | no Gold, strategy result or interactive workstation |
@@ -37,7 +37,9 @@ The implementation rule is one walking skeleton: one official source, one acquis
 
 After at most three or four engineering PRs without a new user-visible or research-measurable outcome, the next PR must produce one.
 
-The content migration has created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87. G0/#70 remains the single concrete `ACTIVE NOW` delivery until the evidence/pin-removal PR, separate #63 closure and G0 audit finish. B2A/#81 remains the one concrete `NEXT` item during that gate. After verified G0 closeout, B2A becomes `ACTIVE NOW`, B3/#82 alone becomes `NEXT`, and B4–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now view must expose one concrete delivery head.
+The content migration created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87. PR #90, the separate #63 closeout and G0/#70 completion are verified. B2A/#81 is now `In Progress` and the one concrete `ACTIVE NOW` delivery; B3/#82 remains `Backlog` and the one concrete `NEXT` item. B4–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now and Next views each expose exactly one concrete delivery head.
+
+The last pre-B2A main commit is archived by annotated tag `v1-paper-platform-final`: tag object `de5b3850e0527afe8271c54abfdb95098d55e395`, peeled commit `f870621f5df76b935ce828fa9205fb9ff7504f67`. B2A's exact removal, test-classification and retained-invariant inventory is [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json).
 
 ## V2 program phases
 
