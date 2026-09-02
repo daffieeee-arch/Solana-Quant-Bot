@@ -1,0 +1,2399 @@
+{
+  "schemaVersion": 1,
+  "ledgerId": "project4-v2-content-migration-20260902",
+  "capturedAt": "2026-09-02T10:30:39.950Z",
+  "captureBoundary": "After #27–#63 metadata migration and ordinary-anchor closeout; before opening the G0 evidence PR.",
+  "repository": {
+    "nameWithOwner": "daffieeee-arch/solana-paper-scanner",
+    "baseMainSha": "3586b26081eec8c736817d9da4b977ad11e8f6b5"
+  },
+  "project": {
+    "owner": "daffieeee-arch",
+    "number": 4,
+    "id": "PVT_kwHOD38U784BiDPO",
+    "title": "Solana Quant Platform — Roadmap & Cockpit",
+    "shortDescriptionSha256": "289441360b8f4f22802b034e767b2a5f3aa82aeaf3a584392f3d0a9bec0a09b2",
+    "readmeSha256": "9122f1fba4111da2c96932a7b30e16ac42a10594640d9509bf535f95cd095ba3",
+    "counts": {
+      "total": 89,
+      "active": 59,
+      "archived": 30
+    },
+    "fields": 24,
+    "views": 8,
+    "evidenceOptions": [
+      {
+        "id": "64b13d5e",
+        "name": "Not Applicable"
+      },
+      {
+        "id": "2dec7514",
+        "name": "Unproven"
+      },
+      {
+        "id": "0aab3ca8",
+        "name": "Fixture"
+      },
+      {
+        "id": "69c60b15",
+        "name": "Operationally Verified"
+      },
+      {
+        "id": "b24f5487",
+        "name": "Engineering Validation"
+      },
+      {
+        "id": "fab02d32",
+        "name": "Research Candidate"
+      },
+      {
+        "id": "fd58ad10",
+        "name": "Research Ready"
+      },
+      {
+        "id": "37941e3f",
+        "name": "Shadow"
+      },
+      {
+        "id": "1325597e",
+        "name": "Paper Proven"
+      },
+      {
+        "id": "83718c1f",
+        "name": "Live Proven"
+      }
+    ],
+    "activeDistributions": {
+      "status": {
+        "Backlog": 17,
+        "Cancelled": 27,
+        "Done": 6,
+        "In Progress": 2,
+        "Ready": 7
+      },
+      "evidence": {
+        "<UNSET>": 1,
+        "Not Applicable": 8,
+        "Operationally Verified": 6,
+        "Unproven": 44
+      },
+      "v2Phase": {
+        "<UNSET>": 1,
+        "0 Cutover & Cleanup": 12,
+        "1 Pump Protocol Truth": 5,
+        "10 VPS & Gated Live": 1,
+        "2 Authentic Acquisition": 4,
+        "3 Bronze & Silver": 4,
+        "4 Research Observatory": 9,
+        "5 Scale & Data Sufficiency": 5,
+        "6 Gold & Edge Validation": 4,
+        "7 Prospective Shadow": 3,
+        "8 New Rust Paper Engine": 6,
+        "9 Professional Workstation": 5
+      },
+      "v2Disposition": {
+        "<UNSET>": 1,
+        "ACTIVE NOW": 8,
+        "LATER": 20,
+        "NEXT": 2,
+        "SPLIT": 23,
+        "SUPERSEDED": 5
+      }
+    },
+    "allItemDistributions": {
+      "status": {
+        "Backlog": 17,
+        "Cancelled": 27,
+        "Done": 36,
+        "In Progress": 2,
+        "Ready": 7
+      },
+      "evidence": {
+        "<UNSET>": 27,
+        "Not Applicable": 8,
+        "Operationally Verified": 6,
+        "Unproven": 48
+      },
+      "v2Phase": {
+        "<UNSET>": 31,
+        "0 Cutover & Cleanup": 12,
+        "1 Pump Protocol Truth": 5,
+        "10 VPS & Gated Live": 1,
+        "2 Authentic Acquisition": 4,
+        "3 Bronze & Silver": 4,
+        "4 Research Observatory": 9,
+        "5 Scale & Data Sufficiency": 5,
+        "6 Gold & Edge Validation": 4,
+        "7 Prospective Shadow": 3,
+        "8 New Rust Paper Engine": 6,
+        "9 Professional Workstation": 5
+      },
+      "v2Disposition": {
+        "<UNSET>": 31,
+        "ACTIVE NOW": 8,
+        "LATER": 20,
+        "NEXT": 2,
+        "SPLIT": 23,
+        "SUPERSEDED": 5
+      }
+    },
+    "viewMembership": {
+      "Now": {
+        "count": 1,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 70
+          }
+        ]
+      },
+      "Next": {
+        "count": 1,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 81
+          }
+        ]
+      },
+      "Data": {
+        "count": 6,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 74
+          },
+          {
+            "kind": "Issue",
+            "number": 76
+          },
+          {
+            "kind": "Issue",
+            "number": 82
+          },
+          {
+            "kind": "Issue",
+            "number": 83
+          },
+          {
+            "kind": "Issue",
+            "number": 84
+          },
+          {
+            "kind": "Issue",
+            "number": 86
+          }
+        ]
+      },
+      "Observatory": {
+        "count": 2,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 75
+          },
+          {
+            "kind": "Issue",
+            "number": 85
+          }
+        ]
+      },
+      "Research": {
+        "count": 4,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 51
+          },
+          {
+            "kind": "Issue",
+            "number": 76
+          },
+          {
+            "kind": "Issue",
+            "number": 86
+          },
+          {
+            "kind": "Issue",
+            "number": 87
+          }
+        ]
+      },
+      "Later": {
+        "count": 20,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 27
+          },
+          {
+            "kind": "Issue",
+            "number": 28
+          },
+          {
+            "kind": "Issue",
+            "number": 32
+          },
+          {
+            "kind": "Issue",
+            "number": 36
+          },
+          {
+            "kind": "Issue",
+            "number": 37
+          },
+          {
+            "kind": "Issue",
+            "number": 41
+          },
+          {
+            "kind": "Issue",
+            "number": 46
+          },
+          {
+            "kind": "Issue",
+            "number": 51
+          },
+          {
+            "kind": "Issue",
+            "number": 75
+          },
+          {
+            "kind": "Issue",
+            "number": 76
+          },
+          {
+            "kind": "Issue",
+            "number": 77
+          },
+          {
+            "kind": "Issue",
+            "number": 78
+          },
+          {
+            "kind": "Issue",
+            "number": 79
+          },
+          {
+            "kind": "Issue",
+            "number": 80
+          },
+          {
+            "kind": "Issue",
+            "number": 82
+          },
+          {
+            "kind": "Issue",
+            "number": 83
+          },
+          {
+            "kind": "Issue",
+            "number": 84
+          },
+          {
+            "kind": "Issue",
+            "number": 85
+          },
+          {
+            "kind": "Issue",
+            "number": 86
+          },
+          {
+            "kind": "Issue",
+            "number": 87
+          }
+        ]
+      },
+      "Retired": {
+        "count": 5,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 56
+          },
+          {
+            "kind": "Issue",
+            "number": 57
+          },
+          {
+            "kind": "Issue",
+            "number": 59
+          },
+          {
+            "kind": "Issue",
+            "number": 60
+          },
+          {
+            "kind": "Issue",
+            "number": 63
+          }
+        ]
+      },
+      "Migration Ledger": {
+        "count": 28,
+        "items": [
+          {
+            "kind": "Issue",
+            "number": 29
+          },
+          {
+            "kind": "Issue",
+            "number": 30
+          },
+          {
+            "kind": "Issue",
+            "number": 31
+          },
+          {
+            "kind": "Issue",
+            "number": 33
+          },
+          {
+            "kind": "Issue",
+            "number": 34
+          },
+          {
+            "kind": "Issue",
+            "number": 35
+          },
+          {
+            "kind": "Issue",
+            "number": 38
+          },
+          {
+            "kind": "Issue",
+            "number": 39
+          },
+          {
+            "kind": "Issue",
+            "number": 40
+          },
+          {
+            "kind": "Issue",
+            "number": 42
+          },
+          {
+            "kind": "Issue",
+            "number": 43
+          },
+          {
+            "kind": "Issue",
+            "number": 44
+          },
+          {
+            "kind": "Issue",
+            "number": 45
+          },
+          {
+            "kind": "Issue",
+            "number": 47
+          },
+          {
+            "kind": "Issue",
+            "number": 48
+          },
+          {
+            "kind": "Issue",
+            "number": 49
+          },
+          {
+            "kind": "Issue",
+            "number": 50
+          },
+          {
+            "kind": "Issue",
+            "number": 52
+          },
+          {
+            "kind": "Issue",
+            "number": 53
+          },
+          {
+            "kind": "Issue",
+            "number": 54
+          },
+          {
+            "kind": "Issue",
+            "number": 55
+          },
+          {
+            "kind": "Issue",
+            "number": 56
+          },
+          {
+            "kind": "Issue",
+            "number": 57
+          },
+          {
+            "kind": "Issue",
+            "number": 58
+          },
+          {
+            "kind": "Issue",
+            "number": 59
+          },
+          {
+            "kind": "Issue",
+            "number": 60
+          },
+          {
+            "kind": "Issue",
+            "number": 61
+          },
+          {
+            "kind": "Issue",
+            "number": 63
+          }
+        ]
+      }
+    },
+    "archivedItems": [
+      {
+        "kind": "PullRequest",
+        "number": 1
+      },
+      {
+        "kind": "PullRequest",
+        "number": 2
+      },
+      {
+        "kind": "PullRequest",
+        "number": 3
+      },
+      {
+        "kind": "PullRequest",
+        "number": 4
+      },
+      {
+        "kind": "PullRequest",
+        "number": 5
+      },
+      {
+        "kind": "PullRequest",
+        "number": 6
+      },
+      {
+        "kind": "PullRequest",
+        "number": 7
+      },
+      {
+        "kind": "PullRequest",
+        "number": 8
+      },
+      {
+        "kind": "PullRequest",
+        "number": 9
+      },
+      {
+        "kind": "PullRequest",
+        "number": 10
+      },
+      {
+        "kind": "PullRequest",
+        "number": 11
+      },
+      {
+        "kind": "PullRequest",
+        "number": 12
+      },
+      {
+        "kind": "PullRequest",
+        "number": 13
+      },
+      {
+        "kind": "PullRequest",
+        "number": 14
+      },
+      {
+        "kind": "PullRequest",
+        "number": 15
+      },
+      {
+        "kind": "PullRequest",
+        "number": 16
+      },
+      {
+        "kind": "PullRequest",
+        "number": 17
+      },
+      {
+        "kind": "PullRequest",
+        "number": 18
+      },
+      {
+        "kind": "PullRequest",
+        "number": 19
+      },
+      {
+        "kind": "PullRequest",
+        "number": 20
+      },
+      {
+        "kind": "PullRequest",
+        "number": 21
+      },
+      {
+        "kind": "PullRequest",
+        "number": 22
+      },
+      {
+        "kind": "PullRequest",
+        "number": 23
+      },
+      {
+        "kind": "PullRequest",
+        "number": 24
+      },
+      {
+        "kind": "PullRequest",
+        "number": 25
+      },
+      {
+        "kind": "PullRequest",
+        "number": 26
+      },
+      {
+        "kind": "PullRequest",
+        "number": 64
+      },
+      {
+        "kind": "PullRequest",
+        "number": 65
+      },
+      {
+        "kind": "PullRequest",
+        "number": 67
+      },
+      {
+        "kind": "PullRequest",
+        "number": 68
+      }
+    ]
+  },
+  "immutablePreV2Snapshot": {
+    "id": "project4-pre-v2-g0-20260901T193839Z-05c3d885943c",
+    "storageClass": "LOCAL_PRIVATE_WSL_EXT4",
+    "rootSha256": "98a97b7bfb74d194898d0aa1d65c0a9caf8c4015f09ae6a93c76fd8289ee3585",
+    "issues27Through63Sha256": "a4181fff5009797e720f82f92f26df61f2973c532e1f25dc1a14e312b8730769",
+    "preV2MergedPrSetSha256": "0211a16af1a18006bfa1005f12e4b57c9373508d655884f59a2a3f18656d9e67",
+    "checksumVerification": "PASS"
+  },
+  "successorCreation": [
+    {
+      "key": "E0",
+      "number": 72,
+      "runId": 33560315744,
+      "conclusion": "failure",
+      "settlementRunId": 33566294409,
+      "settlementConclusion": "success",
+      "note": "Mutation succeeded; immediate active-item verification lagged. Later trusted-main exact reconciliation verified it without replay."
+    },
+    {
+      "key": "E1",
+      "number": 74,
+      "runId": 33566834847,
+      "conclusion": "success"
+    },
+    {
+      "key": "E2",
+      "number": 75,
+      "runId": 33567097989,
+      "conclusion": "success"
+    },
+    {
+      "key": "E3",
+      "number": 76,
+      "runId": 33567186923,
+      "conclusion": "success"
+    },
+    {
+      "key": "E4",
+      "number": 77,
+      "runId": 33567264474,
+      "conclusion": "success"
+    },
+    {
+      "key": "E5",
+      "number": 78,
+      "runId": 33567344090,
+      "conclusion": "success"
+    },
+    {
+      "key": "E6",
+      "number": 79,
+      "runId": 33567417937,
+      "conclusion": "success"
+    },
+    {
+      "key": "E7",
+      "number": 80,
+      "runId": 33567497575,
+      "conclusion": "success"
+    },
+    {
+      "key": "B2A",
+      "number": 81,
+      "runId": 33567595707,
+      "conclusion": "success"
+    },
+    {
+      "key": "B3",
+      "number": 82,
+      "runId": 33567674540,
+      "conclusion": "success"
+    },
+    {
+      "key": "B4",
+      "number": 83,
+      "runId": 33567751536,
+      "conclusion": "success"
+    },
+    {
+      "key": "B5",
+      "number": 84,
+      "runId": 33567831102,
+      "conclusion": "success"
+    },
+    {
+      "key": "B6",
+      "number": 85,
+      "runId": 33567917920,
+      "conclusion": "success"
+    },
+    {
+      "key": "B7",
+      "number": 86,
+      "runId": 33568012511,
+      "conclusion": "success"
+    },
+    {
+      "key": "B8",
+      "number": 87,
+      "runId": 33568100853,
+      "conclusion": "success"
+    }
+  ],
+  "legacyIssues": [
+    {
+      "number": 27,
+      "v2Phase": "8 New Rust Paper Engine",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33568845313,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Ready",
+      "closeout": null,
+      "originalPrefixSha256": "e3c2deb68cdfa847d9d2a278dc259a12eaba778ae09bebbdf9b327ba6a31e3b9",
+      "migratedBodySha256": "d2fdfcab5cf93d0cd887263ffcfb66c0e706a337be6a3d3d05fbd4cb49449a99"
+    },
+    {
+      "number": 28,
+      "v2Phase": "8 New Rust Paper Engine",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33568892246,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Ready",
+      "closeout": null,
+      "originalPrefixSha256": "6efa588ec36b2846432f3397b734889174ef0f817975eaa3ff1734003c304375",
+      "migratedBodySha256": "e5b384763632470dae17c656d2442b873886c50ccddc842330819276b55b9af3"
+    },
+    {
+      "number": 29,
+      "v2Phase": "3 Bronze & Silver",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33568940395,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617483455,
+        "settlementRunId": 33617483455,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "f275b8f86dfbd53159ca9095e9af26d9d5caa4ac3117d543f90bffecdda92cdc",
+      "migratedBodySha256": "bb203b904ce67a2603f4699746e78187998d58e080433304362ae5613ca705b8"
+    },
+    {
+      "number": 30,
+      "v2Phase": "2 Authentic Acquisition",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B4",
+          "kind": "Issue",
+          "number": 83
+        },
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "E4",
+          "kind": "Issue",
+          "number": 77
+        }
+      ],
+      "metadataRunId": 33568996909,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617488813,
+        "settlementRunId": 33617483455,
+        "triggerConclusion": "cancelled"
+      },
+      "originalPrefixSha256": "485a1b4800f56c01e711040ac41dd151de79ce863477f501c15b9e9111d257b6",
+      "migratedBodySha256": "f972bff68639bc1634d3077c95ef4b9ee6e2d4b9aee9701063b1e260522d3df7"
+    },
+    {
+      "number": 31,
+      "v2Phase": "1 Pump Protocol Truth",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B3",
+          "kind": "Issue",
+          "number": 82
+        },
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "B8",
+          "kind": "Issue",
+          "number": 87
+        },
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33569061021,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617494468,
+        "settlementRunId": 33617483455,
+        "triggerConclusion": "cancelled"
+      },
+      "originalPrefixSha256": "c760f77186889e406a1b800805f6d2854de87678bbd20289ea263ad903f580f7",
+      "migratedBodySha256": "4cdb1fd6b2c3976c5e7899b1881fa243b3068267d2c2e1f8daf00f6a0506e4ed"
+    },
+    {
+      "number": 32,
+      "v2Phase": "8 New Rust Paper Engine",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33570015126,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Ready",
+      "closeout": null,
+      "originalPrefixSha256": "0b673527d38983d1a507056423081d021e51720ded3cc859ee6c4c3f77f69a40",
+      "migratedBodySha256": "4672df1179e6931f8ec5735c2662a320fdda3e172548ee7d882b46449918d5c5"
+    },
+    {
+      "number": 33,
+      "v2Phase": "6 Gold & Edge Validation",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B8",
+          "kind": "Issue",
+          "number": 87
+        },
+        {
+          "key": "E4",
+          "kind": "Issue",
+          "number": 77
+        },
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33570065933,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617500679,
+        "settlementRunId": 33617507760,
+        "triggerConclusion": "cancelled"
+      },
+      "originalPrefixSha256": "bb6f4eda27e13576045e8598e0dec4f43c5754b3628785b06d10190922296955",
+      "migratedBodySha256": "d0c841d6bbf353eda1acb575db0c68766850bebe5c014732318f73eeff4a23cf"
+    },
+    {
+      "number": 34,
+      "v2Phase": "1 Pump Protocol Truth",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B3",
+          "kind": "Issue",
+          "number": 82
+        },
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33570170963,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617507760,
+        "settlementRunId": 33617507760,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "689dcd3db231f2dd29290f20e4685f5705181bd22819ade34e092d4cf36f6d5d",
+      "migratedBodySha256": "4af5d7d8a1fef42f0cb67ac3d7eb48b1249c822c2ac0bcad20c539b0a05953cd"
+    },
+    {
+      "number": 35,
+      "v2Phase": "4 Research Observatory",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E2",
+          "kind": "Issue",
+          "number": 75
+        },
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33570225478,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617669813,
+        "settlementRunId": 33617669813,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "2c1f732d1e26401039f7457cdf40bc65fc431bccb7450cf9f8c2a96e1c3bae8c",
+      "migratedBodySha256": "c0d41c090d00828f458b78ad6231e5fdda8513da5e88bb2083befa93349bceba"
+    },
+    {
+      "number": 36,
+      "v2Phase": "9 Professional Workstation",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33570758186,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Backlog",
+      "closeout": null,
+      "originalPrefixSha256": "ccbf061413576480254c63def25f45e6d1c4e4f86bbf24401dcb44aba8d5ed99",
+      "migratedBodySha256": "dbad7728c6d38a4e7fd1ea97360c6a9b4f49ff6ffbcb32dd3b008251ff96d25f"
+    },
+    {
+      "number": 37,
+      "v2Phase": "9 Professional Workstation",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33570811835,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Backlog",
+      "closeout": null,
+      "originalPrefixSha256": "de6e3d7213d5ff1023a1b361b6ccfd96defbdd44cd25b4ccddd29e686c223b4e",
+      "migratedBodySha256": "1433d06784bdb44b833794b730c817a6b3d4e62f0af5ab785efa9df02a0074a3"
+    },
+    {
+      "number": 38,
+      "v2Phase": "4 Research Observatory",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33570856401,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617716779,
+        "settlementRunId": 33617716779,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "90a7614d68d9745b320790addeb4acd4a1fed888980068ad22e01cc2d60e5f3d",
+      "migratedBodySha256": "88fbb9e7fab1dee403f89d0ccc2999dbd05b9932ea4b493a827603d40bf46147"
+    },
+    {
+      "number": 39,
+      "v2Phase": "4 Research Observatory",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "B7",
+          "kind": "Issue",
+          "number": 86
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33570899675,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617772737,
+        "settlementRunId": 33617772737,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "676b10ef93075df465a61c3613aa6e5478ae3bcfdc3e624914f7dce78d227930",
+      "migratedBodySha256": "16a07cfb929796bc4f10ed1110afd12946682fb46db91489176cf418d675e58f"
+    },
+    {
+      "number": 40,
+      "v2Phase": "4 Research Observatory",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "B7",
+          "kind": "Issue",
+          "number": 86
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33570944208,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617825909,
+        "settlementRunId": 33617825909,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "7a03a91d6266e69588bd3700ce31075c7ff6176fd95741bcdaf54a587c6d66f0",
+      "migratedBodySha256": "0e9694ef44ee799ffa2cb495353e6289580dda8bd8524be7bef9e0e70b916e1e"
+    },
+    {
+      "number": 41,
+      "v2Phase": "9 Professional Workstation",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33570990311,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Backlog",
+      "closeout": null,
+      "originalPrefixSha256": "4356d63310873bec858540d5473daaa704c1c0628e4df7d7a57f936f8d6c738f",
+      "migratedBodySha256": "9d162fe51ed330eb499b84c997e4120a6c4c8f25512331556d7398de020d9be3"
+    },
+    {
+      "number": 42,
+      "v2Phase": "4 Research Observatory",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "B7",
+          "kind": "Issue",
+          "number": 86
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33571042963,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617880976,
+        "settlementRunId": 33617880976,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "c338e455c5d1d47e5bc6b5e9c5b1c30a95536227d79316c0e128086c26b53b6e",
+      "migratedBodySha256": "c62c87b7336e522e217a3dda58a94ff684248e35b19fdb3e27dbf67552dcbfa9"
+    },
+    {
+      "number": 43,
+      "v2Phase": "5 Scale & Data Sufficiency",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B7",
+          "kind": "Issue",
+          "number": 86
+        },
+        {
+          "key": "E3",
+          "kind": "Issue",
+          "number": 76
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33571085536,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33617960620,
+        "settlementRunId": 33617960620,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "b3a440d4f741768221a4c3083322207ebf2d84e56a4b223dbf47592abfaa4c87",
+      "migratedBodySha256": "ae844885bf3c3d1904a8e72e9fb7d7c1efb47ecde40f4359e14c53639bcb4851"
+    },
+    {
+      "number": 44,
+      "v2Phase": "5 Scale & Data Sufficiency",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B7",
+          "kind": "Issue",
+          "number": 86
+        },
+        {
+          "key": "B8",
+          "kind": "Issue",
+          "number": 87
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33571128655,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618007350,
+        "settlementRunId": 33618007350,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "19ce5c34e3261aa7894159f6c3ca91d7e9a7900e63c6776053607938b7e012c3",
+      "migratedBodySha256": "65595190dcc0e53ec5690b7349d5fac373dbc17978de32eeb4a034f5a905a1d1"
+    },
+    {
+      "number": 45,
+      "v2Phase": "3 Bronze & Silver",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "B7",
+          "kind": "Issue",
+          "number": 86
+        },
+        {
+          "key": "B8",
+          "kind": "Issue",
+          "number": 87
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33571169547,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618057667,
+        "settlementRunId": 33618057667,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "b666c5797eb8e5487a7ed974f97c20f6f004befa803bbbe5b6a6da47116393a2",
+      "migratedBodySha256": "3d8173f950d81a7f6666293a7b2d696e31134bf95d11253f29eb21faf3a4af11"
+    },
+    {
+      "number": 46,
+      "v2Phase": "9 Professional Workstation",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33571214242,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Backlog",
+      "closeout": null,
+      "originalPrefixSha256": "6c215b0a014ebd0deced723be69c5f502a2948fc844fdaaf2eef7e7cb241f700",
+      "migratedBodySha256": "d7c26e4ec05ecf97f196ab7ddf4e0aabba3de0464066de8e70b4eb5d067e7666"
+    },
+    {
+      "number": 47,
+      "v2Phase": "4 Research Observatory",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33571263843,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618106842,
+        "settlementRunId": 33618106842,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "4c63988ae8b85b9371310dd7210100d3b100f1fbbeac6f47e2abf7e9d55d5aa9",
+      "migratedBodySha256": "9a810da2ce1b33b258ad38d8dee8ead14463ba6cad42721810b171ccf01a051b"
+    },
+    {
+      "number": 48,
+      "v2Phase": "2 Authentic Acquisition",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B4",
+          "kind": "Issue",
+          "number": 83
+        },
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        }
+      ],
+      "metadataRunId": 33571312688,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618158250,
+        "settlementRunId": 33618158250,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "3be595b672f2fb2e1fc201dc0b6cfde496b7bf086b554e2b0cb6f4da02f07e0d",
+      "migratedBodySha256": "b5f3ee97fabc2b3b71fc8db9d28488f13251ded836d3d0c6253f152dd6d7d138"
+    },
+    {
+      "number": 49,
+      "v2Phase": "3 Bronze & Silver",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "B7",
+          "kind": "Issue",
+          "number": 86
+        },
+        {
+          "key": "E1",
+          "kind": "Issue",
+          "number": 74
+        }
+      ],
+      "metadataRunId": 33571362012,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618248632,
+        "settlementRunId": 33618248632,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "e03e2d35e5e5fa643b26020835d10ef23edeeeee16c9f5db1b78575c5736e453",
+      "migratedBodySha256": "c6c34fa813ba88294272c3bb261acf634cdef69ba706a582cece342bff8b39e1"
+    },
+    {
+      "number": 50,
+      "v2Phase": "6 Gold & Edge Validation",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B8",
+          "kind": "Issue",
+          "number": 87
+        },
+        {
+          "key": "E3",
+          "kind": "Issue",
+          "number": 76
+        }
+      ],
+      "metadataRunId": 33571412426,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618295067,
+        "settlementRunId": 33618295067,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "63536af2db4405e52a14af395468444cce55336a8ec75db06cc2f1737eafc8b0",
+      "migratedBodySha256": "e1830fbd20917828ec1cf377b23c6c4a9b107eacbe4a93a0251cf0a369cfb719"
+    },
+    {
+      "number": 51,
+      "v2Phase": "6 Gold & Edge Validation",
+      "v2Disposition": "LATER",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E3",
+          "kind": "Issue",
+          "number": 76
+        }
+      ],
+      "metadataRunId": 33571458344,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Backlog",
+      "closeout": null,
+      "originalPrefixSha256": "eae2061abfc75130bb27321d885d944f605bbe70da7730508c95fe00ebc7dc36",
+      "migratedBodySha256": "a719a3642ffbf82502387d7ec89bf365318f727bbaff174478a912779e624afa"
+    },
+    {
+      "number": 52,
+      "v2Phase": "7 Prospective Shadow",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E4",
+          "kind": "Issue",
+          "number": 77
+        },
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33571510373,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618342330,
+        "settlementRunId": 33618342330,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "b097b1a791d3c14d3eafc0a0b660420b431778d9b96c2ecdfb792eb2c65c1649",
+      "migratedBodySha256": "4b7322e33bc380a52c0fcd54773940b13b1720460e63cd3790e81162fd4d210e"
+    },
+    {
+      "number": 53,
+      "v2Phase": "8 New Rust Paper Engine",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        },
+        {
+          "key": "E7",
+          "kind": "Issue",
+          "number": 80
+        }
+      ],
+      "metadataRunId": 33571553433,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618395193,
+        "settlementRunId": 33618395193,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "1c3537ca2057b8a5696680fce27aa09ba61319400d39f37807c428fd7a2b84ce",
+      "migratedBodySha256": "a27ba05de4fc0c8e34fa57764b5081df174feda9325124fb2eaae8dbf5546ff3"
+    },
+    {
+      "number": 54,
+      "v2Phase": "0 Cutover & Cleanup",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B2A",
+          "kind": "Issue",
+          "number": 81
+        },
+        {
+          "key": "B3",
+          "kind": "Issue",
+          "number": 82
+        },
+        {
+          "key": "B4",
+          "kind": "Issue",
+          "number": 83
+        },
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "B8",
+          "kind": "Issue",
+          "number": 87
+        },
+        {
+          "key": "CONTROL",
+          "kind": "Issue",
+          "number": 62
+        }
+      ],
+      "metadataRunId": 33571598606,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618452143,
+        "settlementRunId": 33618452143,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "ddb733eb7e1a32f0646e42f80180e6b43651cf5f033ced09617fe7b5fc4b2dba",
+      "migratedBodySha256": "e955e26065f1baf3a926310612220f4cc8ec10cd410e5949fe7f9e175a0ed2d0"
+    },
+    {
+      "number": 55,
+      "v2Phase": "2 Authentic Acquisition",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "B4",
+          "kind": "Issue",
+          "number": 83
+        },
+        {
+          "key": "B5",
+          "kind": "Issue",
+          "number": 84
+        },
+        {
+          "key": "B6",
+          "kind": "Issue",
+          "number": 85
+        },
+        {
+          "key": "E4",
+          "kind": "Issue",
+          "number": 77
+        },
+        {
+          "key": "E7",
+          "kind": "Issue",
+          "number": 80
+        }
+      ],
+      "metadataRunId": 33571635769,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618527551,
+        "settlementRunId": 33618527551,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "35730b2cad1e090d96c5460f331a1ec63d99843d8cf054911c11c8af826f3b31",
+      "migratedBodySha256": "98fd9413fbfea0efcd0c5abdb0909eba77529c0553bb2effe337641280489556"
+    },
+    {
+      "number": 56,
+      "v2Phase": "0 Cutover & Cleanup",
+      "v2Disposition": "SUPERSEDED",
+      "evidence": "Operationally Verified",
+      "successorRouting": [
+        {
+          "key": "G0",
+          "kind": "Issue",
+          "number": 70
+        }
+      ],
+      "metadataRunId": 33571686250,
+      "finalIssueState": "CLOSED",
+      "stateReason": "completed",
+      "finalProjectStatus": "Done",
+      "closeout": null,
+      "originalPrefixSha256": "991750429fc2484451238d6cd3caa94fe189a7b07b2bb4451882f1eba1b03784",
+      "migratedBodySha256": "dd5d0c7946e6ffd7266ee55cc9e6ac90eed16afbb17fba7c037401f1899a5660"
+    },
+    {
+      "number": 57,
+      "v2Phase": "8 New Rust Paper Engine",
+      "v2Disposition": "SUPERSEDED",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        }
+      ],
+      "metadataRunId": 33616387358,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618580266,
+        "settlementRunId": 33618580266,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "f692599bc01b652d0fe609d3882b8a0399f90ed360146e81278233c788363f0f",
+      "migratedBodySha256": "a3d3cfa362c1f80c743be5fd5a8d8fec1085dba57ad62a8f2e66a9780a20cdd0"
+    },
+    {
+      "number": 58,
+      "v2Phase": "4 Research Observatory",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E2",
+          "kind": "Issue",
+          "number": 75
+        },
+        {
+          "key": "E6",
+          "kind": "Issue",
+          "number": 79
+        }
+      ],
+      "metadataRunId": 33616524813,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618631205,
+        "settlementRunId": 33618631205,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "6f07e84698ae27f2f9d30303ccc6bda1f85bbdfce9e708c08b6728d88a365a16",
+      "migratedBodySha256": "273f5ed878bbf88590614e0fafb3a8990f8b184fb3de666be8a3bdb6afe479f0"
+    },
+    {
+      "number": 59,
+      "v2Phase": "1 Pump Protocol Truth",
+      "v2Disposition": "SUPERSEDED",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E1",
+          "kind": "Issue",
+          "number": 74
+        }
+      ],
+      "metadataRunId": 33616606663,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618675904,
+        "settlementRunId": 33618675904,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "b7f73f7e0f61eb0c6fa7eb178b8b239f14ce6be6b641c882f43d2a538302bfd5",
+      "migratedBodySha256": "bb2d448a4890f69e20954c340951bee255cd891965783f62c199ac90d26ec68c"
+    },
+    {
+      "number": 60,
+      "v2Phase": "5 Scale & Data Sufficiency",
+      "v2Disposition": "SUPERSEDED",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E3",
+          "kind": "Issue",
+          "number": 76
+        }
+      ],
+      "metadataRunId": 33616756204,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618718719,
+        "settlementRunId": 33618718719,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "91c9cce4a606c8d6500f0499df579d95067f3aac9285fd0a4d125cff1137fcb6",
+      "migratedBodySha256": "9581b88d2474b59ea76a12bb349b07c646e1858be4e119e64a1da8db056040a0"
+    },
+    {
+      "number": 61,
+      "v2Phase": "7 Prospective Shadow",
+      "v2Disposition": "SPLIT",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E4",
+          "kind": "Issue",
+          "number": 77
+        },
+        {
+          "key": "E5",
+          "kind": "Issue",
+          "number": 78
+        },
+        {
+          "key": "E7",
+          "kind": "Issue",
+          "number": 80
+        }
+      ],
+      "metadataRunId": 33616836287,
+      "finalIssueState": "CLOSED",
+      "stateReason": "not_planned",
+      "finalProjectStatus": "Cancelled",
+      "closeout": {
+        "triggerRunId": 33618795651,
+        "settlementRunId": 33618795651,
+        "triggerConclusion": "success"
+      },
+      "originalPrefixSha256": "e51873ebd5ddcad0f5c4300d37d03d171a2db3dc68005541670f19b308044d19",
+      "migratedBodySha256": "04604c68c178b10e29033ef429d2ef442007329cd9718d820dd9ebde02a289ea"
+    },
+    {
+      "number": 62,
+      "v2Phase": "0 Cutover & Cleanup",
+      "v2Disposition": "ACTIVE NOW",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "PR1",
+          "kind": "PullRequest",
+          "number": 69
+        },
+        {
+          "key": "B2A",
+          "kind": "Issue",
+          "number": 81
+        },
+        {
+          "key": "CONTROL",
+          "kind": "Issue",
+          "number": 56
+        }
+      ],
+      "metadataRunId": 33616975069,
+      "finalIssueState": "OPEN",
+      "stateReason": null,
+      "finalProjectStatus": "Ready",
+      "closeout": null,
+      "originalPrefixSha256": "61988c6d116e9b4dcb0feec0c1f6fdf72f295307baab2f5d02545a707e500e4b",
+      "migratedBodySha256": "0556984c960b45e185c993c2e7609f19d8738bd80bafcb4fa1ec553c25fc0972"
+    },
+    {
+      "number": 63,
+      "v2Phase": "0 Cutover & Cleanup",
+      "v2Disposition": "SUPERSEDED",
+      "evidence": "Unproven",
+      "successorRouting": [
+        {
+          "key": "E0",
+          "kind": "Issue",
+          "number": 72
+        }
+      ],
+      "metadataRunId": 33617104224,
+      "finalIssueState": "OPEN",
+      "stateReason": "reopened",
+      "finalProjectStatus": "Ready",
+      "closeout": null,
+      "originalPrefixSha256": "5fdb1f63833a57ced0dd5af50035c97995a5cc78953ebb9c999e3ff2f4883ef2",
+      "migratedBodySha256": "192b4056a05e0f71df33f90b66fc4b780d6b7df7c9025596376ee2ddd8466153"
+    }
+  ],
+  "controls": {
+    "issue56": {
+      "state": "CLOSED",
+      "stateReason": "completed",
+      "pinned": true,
+      "evidence": "Operationally Verified"
+    },
+    "issue62": {
+      "state": "OPEN",
+      "role": "cross-cutting continuing control"
+    },
+    "issue63": {
+      "state": "OPEN",
+      "stateReason": "reopened",
+      "pinnedOnBase": true,
+      "pinRemovalProposedByThisPr": true,
+      "closureDeferred": true
+    },
+    "issue70": {
+      "state": "OPEN",
+      "status": "In Progress",
+      "v2Disposition": "ACTIVE NOW",
+      "evidence": "Operationally Verified"
+    },
+    "concreteNow": {
+      "kind": "Issue",
+      "number": 70
+    },
+    "concreteNext": {
+      "kind": "Issue",
+      "number": 81
+    }
+  },
+  "routingCanary": {
+    "pullRequest": 69,
+    "source": "DIRECT_ROADMAP",
+    "primaryIssue": 62,
+    "secondaryIssues": [
+      63
+    ],
+    "beforeIssue62Migration": {
+      "v2Phase": null,
+      "v2Disposition": null
+    },
+    "afterIssue62Migration": {
+      "v2Phase": "0 Cutover & Cleanup",
+      "v2Disposition": "ACTIVE NOW"
+    },
+    "status": "Done",
+    "workType": "Pull Request",
+    "issue56Leak": false,
+    "pr89ClearMutationRunId": 33615747356,
+    "clearedFields": [
+      "V2 Phase",
+      "V2 Disposition"
+    ],
+    "clearMutations": 2,
+    "clearMutationReplay": false
+  },
+  "roadmapRuns": {
+    "infrastructureControls": [
+      {
+        "id": 33557155791,
+        "conclusion": "success",
+        "purpose": "G0 schema/view/retention activation"
+      },
+      {
+        "id": 33566294409,
+        "conclusion": "success",
+        "purpose": "bounded projection-convergence activation and E0 settlement"
+      },
+      {
+        "id": 33579871411,
+        "conclusion": "success",
+        "purpose": "explicit PR inheritance routing activation"
+      },
+      {
+        "id": 33615747356,
+        "conclusion": "success",
+        "purpose": "managed-field exact-state activation; two PR #69 clears"
+      },
+      {
+        "id": 33615748467,
+        "conclusion": "success",
+        "purpose": "post-merge PR lifecycle no-op reconciliation"
+      }
+    ],
+    "successorCreation": [
+      {
+        "key": "E0",
+        "number": 72,
+        "runId": 33560315744,
+        "conclusion": "failure",
+        "settlementRunId": 33566294409,
+        "settlementConclusion": "success",
+        "note": "Mutation succeeded; immediate active-item verification lagged. Later trusted-main exact reconciliation verified it without replay."
+      },
+      {
+        "key": "E1",
+        "number": 74,
+        "runId": 33566834847,
+        "conclusion": "success"
+      },
+      {
+        "key": "E2",
+        "number": 75,
+        "runId": 33567097989,
+        "conclusion": "success"
+      },
+      {
+        "key": "E3",
+        "number": 76,
+        "runId": 33567186923,
+        "conclusion": "success"
+      },
+      {
+        "key": "E4",
+        "number": 77,
+        "runId": 33567264474,
+        "conclusion": "success"
+      },
+      {
+        "key": "E5",
+        "number": 78,
+        "runId": 33567344090,
+        "conclusion": "success"
+      },
+      {
+        "key": "E6",
+        "number": 79,
+        "runId": 33567417937,
+        "conclusion": "success"
+      },
+      {
+        "key": "E7",
+        "number": 80,
+        "runId": 33567497575,
+        "conclusion": "success"
+      },
+      {
+        "key": "B2A",
+        "number": 81,
+        "runId": 33567595707,
+        "conclusion": "success"
+      },
+      {
+        "key": "B3",
+        "number": 82,
+        "runId": 33567674540,
+        "conclusion": "success"
+      },
+      {
+        "key": "B4",
+        "number": 83,
+        "runId": 33567751536,
+        "conclusion": "success"
+      },
+      {
+        "key": "B5",
+        "number": 84,
+        "runId": 33567831102,
+        "conclusion": "success"
+      },
+      {
+        "key": "B6",
+        "number": 85,
+        "runId": 33567917920,
+        "conclusion": "success"
+      },
+      {
+        "key": "B7",
+        "number": 86,
+        "runId": 33568012511,
+        "conclusion": "success"
+      },
+      {
+        "key": "B8",
+        "number": 87,
+        "runId": 33568100853,
+        "conclusion": "success"
+      }
+    ],
+    "legacyMetadata": [
+      {
+        "issue": 27,
+        "id": 33568845313,
+        "conclusion": "success"
+      },
+      {
+        "issue": 28,
+        "id": 33568892246,
+        "conclusion": "success"
+      },
+      {
+        "issue": 29,
+        "id": 33568940395,
+        "conclusion": "success"
+      },
+      {
+        "issue": 30,
+        "id": 33568996909,
+        "conclusion": "success"
+      },
+      {
+        "issue": 31,
+        "id": 33569061021,
+        "conclusion": "success"
+      },
+      {
+        "issue": 32,
+        "id": 33570015126,
+        "conclusion": "success"
+      },
+      {
+        "issue": 33,
+        "id": 33570065933,
+        "conclusion": "success"
+      },
+      {
+        "issue": 34,
+        "id": 33570170963,
+        "conclusion": "success"
+      },
+      {
+        "issue": 35,
+        "id": 33570225478,
+        "conclusion": "success"
+      },
+      {
+        "issue": 36,
+        "id": 33570758186,
+        "conclusion": "success"
+      },
+      {
+        "issue": 37,
+        "id": 33570811835,
+        "conclusion": "success"
+      },
+      {
+        "issue": 38,
+        "id": 33570856401,
+        "conclusion": "success"
+      },
+      {
+        "issue": 39,
+        "id": 33570899675,
+        "conclusion": "success"
+      },
+      {
+        "issue": 40,
+        "id": 33570944208,
+        "conclusion": "success"
+      },
+      {
+        "issue": 41,
+        "id": 33570990311,
+        "conclusion": "success"
+      },
+      {
+        "issue": 42,
+        "id": 33571042963,
+        "conclusion": "success"
+      },
+      {
+        "issue": 43,
+        "id": 33571085536,
+        "conclusion": "success"
+      },
+      {
+        "issue": 44,
+        "id": 33571128655,
+        "conclusion": "success"
+      },
+      {
+        "issue": 45,
+        "id": 33571169547,
+        "conclusion": "success"
+      },
+      {
+        "issue": 46,
+        "id": 33571214242,
+        "conclusion": "success"
+      },
+      {
+        "issue": 47,
+        "id": 33571263843,
+        "conclusion": "success"
+      },
+      {
+        "issue": 48,
+        "id": 33571312688,
+        "conclusion": "success"
+      },
+      {
+        "issue": 49,
+        "id": 33571362012,
+        "conclusion": "success"
+      },
+      {
+        "issue": 50,
+        "id": 33571412426,
+        "conclusion": "success"
+      },
+      {
+        "issue": 51,
+        "id": 33571458344,
+        "conclusion": "success"
+      },
+      {
+        "issue": 52,
+        "id": 33571510373,
+        "conclusion": "success"
+      },
+      {
+        "issue": 53,
+        "id": 33571553433,
+        "conclusion": "success"
+      },
+      {
+        "issue": 54,
+        "id": 33571598606,
+        "conclusion": "success"
+      },
+      {
+        "issue": 55,
+        "id": 33571635769,
+        "conclusion": "success"
+      },
+      {
+        "issue": 56,
+        "id": 33571686250,
+        "conclusion": "success"
+      },
+      {
+        "issue": 57,
+        "id": 33616387358,
+        "conclusion": "success"
+      },
+      {
+        "issue": 58,
+        "id": 33616524813,
+        "conclusion": "success"
+      },
+      {
+        "issue": 59,
+        "id": 33616606663,
+        "conclusion": "success"
+      },
+      {
+        "issue": 60,
+        "id": 33616756204,
+        "conclusion": "success"
+      },
+      {
+        "issue": 61,
+        "id": 33616836287,
+        "conclusion": "success"
+      },
+      {
+        "issue": 62,
+        "id": 33616975069,
+        "conclusion": "success"
+      },
+      {
+        "issue": 63,
+        "id": 33617104224,
+        "conclusion": "success"
+      }
+    ],
+    "ordinaryAnchorCloseout": [
+      {
+        "issue": 29,
+        "triggerRunId": 33617483455,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617483455,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 30,
+        "triggerRunId": 33617488813,
+        "triggerConclusion": "cancelled",
+        "settlementRunId": 33617483455,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 31,
+        "triggerRunId": 33617494468,
+        "triggerConclusion": "cancelled",
+        "settlementRunId": 33617483455,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 33,
+        "triggerRunId": 33617500679,
+        "triggerConclusion": "cancelled",
+        "settlementRunId": 33617507760,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 34,
+        "triggerRunId": 33617507760,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617507760,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 35,
+        "triggerRunId": 33617669813,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617669813,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 38,
+        "triggerRunId": 33617716779,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617716779,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 39,
+        "triggerRunId": 33617772737,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617772737,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 40,
+        "triggerRunId": 33617825909,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617825909,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 42,
+        "triggerRunId": 33617880976,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617880976,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 43,
+        "triggerRunId": 33617960620,
+        "triggerConclusion": "success",
+        "settlementRunId": 33617960620,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 44,
+        "triggerRunId": 33618007350,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618007350,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 45,
+        "triggerRunId": 33618057667,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618057667,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 47,
+        "triggerRunId": 33618106842,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618106842,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 48,
+        "triggerRunId": 33618158250,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618158250,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 49,
+        "triggerRunId": 33618248632,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618248632,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 50,
+        "triggerRunId": 33618295067,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618295067,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 52,
+        "triggerRunId": 33618342330,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618342330,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 53,
+        "triggerRunId": 33618395193,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618395193,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 54,
+        "triggerRunId": 33618452143,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618452143,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 55,
+        "triggerRunId": 33618527551,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618527551,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 57,
+        "triggerRunId": 33618580266,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618580266,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 58,
+        "triggerRunId": 33618631205,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618631205,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 59,
+        "triggerRunId": 33618675904,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618675904,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 60,
+        "triggerRunId": 33618718719,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618718719,
+        "settlementConclusion": "success"
+      },
+      {
+        "issue": 61,
+        "triggerRunId": 33618795651,
+        "triggerConclusion": "success",
+        "settlementRunId": 33618795651,
+        "settlementConclusion": "success"
+      }
+    ]
+  },
+  "verification": {
+    "mappingRows": 37,
+    "uniqueMappings": 37,
+    "originalBodyPrefixesCompared": 37,
+    "originalBodyPrefixesPreserved": 37,
+    "successorGraph": "PASS",
+    "projectSchemaIdentity": "PASS",
+    "projectTextIdentity": "PASS",
+    "viewIdentity": "PASS",
+    "evidenceOptionIdIdentity": "PASS",
+    "historicalPrReactivationCount": 0,
+    "mutationReplayDetected": false,
+    "delayedConvergenceEvents": [],
+    "warning": {
+      "code": "GITHUB_CONCURRENCY_PENDING_REPLACEMENT",
+      "runs": [
+        33617488813,
+        33617494468,
+        33617500679
+      ],
+      "jobsExecuted": 0,
+      "resolution": "The running and final pending reconciliations converged exactly. All later closures were serialized one issue per successful reconciliation."
+    }
+  },
+  "closedLegacyIssues": [
+    29,
+    30,
+    31,
+    33,
+    34,
+    35,
+    38,
+    39,
+    40,
+    42,
+    43,
+    44,
+    45,
+    47,
+    48,
+    49,
+    50,
+    52,
+    53,
+    54,
+    55,
+    57,
+    58,
+    59,
+    60,
+    61
+  ],
+  "intentionallyOpenLegacyIssues": [
+    27,
+    28,
+    32,
+    36,
+    37,
+    41,
+    46,
+    51,
+    62,
+    63
+  ],
+  "completedPinnedLegacyIssues": [
+    56
+  ],
+  "nextGovernanceGates": [
+    "Review and merge this evidence/pin-removal PR.",
+    "Reconcile successfully with #56 still pinned and #63 no longer pinned.",
+    "Close #63 individually as not planned / superseded without reactivation.",
+    "Complete #70 and promote B2A/#81 to ACTIVE NOW; promote B3/#82 to NEXT."
+  ]
+}

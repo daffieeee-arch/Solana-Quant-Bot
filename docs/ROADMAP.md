@@ -1,6 +1,6 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) is the accepted controlled V2 migration ledger; G0 implementation is tracked by issue #70.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) is the accepted controlled V2 migration contract; actual issue numbers, reconciliation evidence and closeout state are bound by [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json). G0 remains tracked by issue #70 until its final evidence and #63 closeout gates pass.
 
 ## Program outcome
 
@@ -37,7 +37,7 @@ The implementation rule is one walking skeleton: one official source, one acquis
 
 After at most three or four engineering PRs without a new user-visible or research-measurable outcome, the next PR must produce one.
 
-During the Project rebase, its dedicated governance implementation issue is the single concrete `ACTIVE NOW` delivery. After the migration is fully verified, B2A becomes `ACTIVE NOW`, B3 alone is `NEXT`, and B4–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now view must expose one concrete delivery head.
+The content migration has created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87. G0/#70 remains the single concrete `ACTIVE NOW` delivery until the evidence/pin-removal PR, separate #63 closure and G0 audit finish. B2A/#81 remains the one concrete `NEXT` item during that gate. After verified G0 closeout, B2A becomes `ACTIVE NOW`, B3/#82 alone becomes `NEXT`, and B4–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now view must expose one concrete delivery head.
 
 ## V2 program phases
 
