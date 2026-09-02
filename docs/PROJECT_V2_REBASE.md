@@ -1,6 +1,6 @@
 # PROJECT_V2_REBASE.md — controlled Project #4 migration plan
 
-> **Document status: ACTIVE completed migration contract and execution ledger.** PR #90, issue #63's individual closeout and G0/#70 completion are verified. B2A/#81 is now the concrete `ACTIVE NOW` delivery. This document does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
+> **Document status: ACTIVE completed migration contract and execution ledger.** PR #90, issue #63's individual closeout, G0/#70 completion and B2A/#81 completion are verified. B3/#82 is now the concrete `In Progress` / `ACTIVE NOW` delivery and B4/#83 is `Backlog` / `NEXT`. This document does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
 
 ## Authority and migration rules
 
@@ -33,7 +33,7 @@ The read-only pre-G0 export and governance-issue creation are complete. [`operat
 | Pre-V2 merged-PR candidates SHA-256 | `0211a16af1a18006bfa1005f12e4b57c9373508d655884f59a2a3f18656d9e67` |
 | Captured Project items | 69 total: 37 linked issues, 32 linked PRs, 0 archived |
 | Pre-V2 PR archive candidates | 30 linked merged PR items through PR #68 |
-| G0 owner | issue #70, open and `In Progress` under the current schema |
+| G0 owner | issue #70, closed `COMPLETED` with `Done` / `SUPERSEDED` / `Operationally Verified` |
 
 The immutable export found issue #63 `CLOSED` / `COMPLETED` at `2026-09-01T19:17:25Z`, rather than open as the accepted migration plan required. The close was temporally associated with PR #69's merge; the exact initiating mechanism is unproven. No G0 preflight action changed that captured state. Governance subsequently authorized and performed an explicit reopen, documented it on issues #63 and #70, and verified current-schema Roadmap Sync run `33555734237` as successful. This is a post-snapshot delta: the snapshot files and hashes remain unchanged. Issue #63 then stayed open and pinned through the complete G0/E0 audit, was unpinned after PR #90 reconciliation, and was closed individually as `not planned / superseded`. Those live deltas do not rewrite the immutable snapshot.
 
@@ -82,7 +82,7 @@ The identifiers below remain stable migration keys rather than substitutes for G
 |---|---|---|---|---|
 | [G0 / #70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `SUPERSEDED` (completed) | completed export, bounded Roadmap Sync/config hardening, successor migration, reconciliation, retention audit and repository evidence; steady-state controls remain #56/#62 |
 
-G0 was created before V2 metadata support existed, so its original body used only metadata accepted by that `main`. It is now closed `COMPLETED` with Project Status `Done`, V2 Phase `0 Cutover & Cleanup`, V2 Disposition `SUPERSEDED` and Evidence `Operationally Verified`. B2A/#81 owns current delivery; #56 and #62 retain steady-state governance control.
+G0 was created before V2 metadata support existed, so its original body used only metadata accepted by that `main`. It is now closed `COMPLETED` with Project Status `Done`, V2 Phase `0 Cutover & Cleanup`, V2 Disposition `SUPERSEDED` and Evidence `Operationally Verified`. B2A/#81 completed the first post-G0 delivery; B3/#82 now owns current delivery, while #56 and #62 retain steady-state governance control.
 
 ### Program and epics
 
@@ -283,7 +283,8 @@ Retain existing `roadmap-meta`. Add V2 metadata keys only after the synchronizer
 10. **Complete:** the 26 ordinary closeout candidates were commented and closed individually as `not planned`; the standalone LATER set, #62 and #63 remain open, and #56 remains completed/pinned.
 11. **Complete:** PR #90 committed the machine-readable execution ledger and removed only #63's temporary retention pin while retaining #56's pin.
 12. **Complete:** the pin-removal gate reconciled exactly; #63 was closed individually as `not planned / superseded`; #70 completed; B2A/#81 became `ACTIVE NOW`; and B3/#82 became `NEXT`.
-13. **Current:** B2A/#81 is `In Progress`. Its cleanup is bounded by [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) and archived by `v1-paper-platform-final`.
+13. **Complete:** B2A/#81 removed the bounded retired paths and quarantined the retained legacy surface. Its cleanup is recorded by [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) and archived by `v1-paper-platform-final`.
+14. **Current:** B3/#82 is `In Progress` / `ACTIVE NOW`; B4/#83 remains `Backlog` / `NEXT` pending accepted B3 evidence.
 
 Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift, retention error, description/README drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
 

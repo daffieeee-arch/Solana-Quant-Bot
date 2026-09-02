@@ -1,0 +1,25 @@
+{
+  "schemaVersion": "PUMP_OFFICIAL_SOURCE_MANIFEST_V1",
+  "sourceManifestId": "pump-public-docs-9c82f61-pump-idl",
+  "repository": "https://github.com/pump-fun/pump-public-docs",
+  "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+  "committedAt": "2026-07-15T18:22:27Z",
+  "path": "idl/pump.json",
+  "gitBlobSha1": "062e66f032bb9f295353b573be3400070bd55e5b",
+  "byteLength": 169632,
+  "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+  "retrievedAt": "2026-09-02T21:09:20Z",
+  "officialUrl": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/idl/pump.json",
+  "rawUrl": "https://raw.githubusercontent.com/pump-fun/pump-public-docs/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/idl/pump.json",
+  "licenseStatus": "NO_LICENSE_FILE_AT_PIN",
+  "evidenceClassification": "OFFICIAL_STRUCTURAL_SOURCE",
+  "supportingArtifacts": [
+    {
+      "path": "README.md",
+      "gitBlobSha1": "ec4a68b2aef349f9c5819dd3cf805117003cc56c",
+      "byteLength": 5541,
+      "sha256": "7609341176750cd2c78a74e8b3eab052053d71cecabd0252ef9c4d8e356e8cca",
+      "purpose": "legacy buy SOL-accounting context; not quote-mint or decimal evidence"
+    }
+  ]
+}

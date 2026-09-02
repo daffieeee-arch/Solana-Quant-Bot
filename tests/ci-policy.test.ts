@@ -67,6 +67,10 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: Validate Pump protocol dependencies before fetch
+        run: node scripts/assert-pump-protocol-v2-offline.mjs --static
+      - name: Fetch locked Pump protocol dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Install locked dependencies
         run: npm ci
       - name: Enforce repository and zero-cost policy
@@ -74,11 +78,11 @@ jobs:
       - name: Enforce offline research citation gate
         run: npm run ci:research-citations
       - name: Run policy bypass and critical zero-cost/Pump tests
-        run: npx vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts
+        run: npx --no-install vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/pump-protocol-v2-policy.test.ts tests/pump-silver-event.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts
       - name: Run complete test suite
         run: npm test
       - name: Type-check
-        run: npx tsc --noEmit
+        run: npx --no-install tsc --noEmit
       - name: Build backend and frontend
         run: npm run build
       - name: Check Rust reducer formatting
@@ -89,6 +93,10 @@ jobs:
         run: cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
       - name: Check Solana runtime snapshot formatting
         run: cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
+      - name: Check Pump protocol v2 formatting
+        run: cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check
+      - name: Verify Pump protocol v2 isolated graph, clippy, tests and evidence
+        run: node scripts/assert-pump-protocol-v2-offline.mjs --all
       - name: Lint Rust reducer
         run: cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
       - name: Test Rust reducer
@@ -114,7 +122,7 @@ const addStep = (body: string) => SAFE_WORKFLOW.replace(
 describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
-    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(20);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(24);
   });
 
   it('requires the real citation step and rejects comments, renaming, or formatting drift as substitutes', () => {
@@ -143,28 +151,23 @@ describe('semantic CI workflow policy', () => {
 
   it('requires every exact pinned Rust gate and rejects silent removal or replacement', () => {
     const requiredRustCommands = [
-      'rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt',
-      'cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check',
-      'cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check',
-      'cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check',
-      'cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check',
-      'cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings',
-      'cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets',
-      'cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked',
+      ['Install pinned Rust toolchain', 'rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt'],
+      ['Validate Pump protocol dependencies before fetch', 'node scripts/assert-pump-protocol-v2-offline.mjs --static'],
+      ['Fetch locked Pump protocol dependencies', 'cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked'],
+      ['Check Rust reducer formatting', 'cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check'],
+      ['Check Linux namespace-lock formatting', 'cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check'],
+      ['Check Jetstreamer callback snapshot formatting', 'cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check'],
+      ['Check Solana runtime snapshot formatting', 'cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check'],
+      ['Check Pump protocol v2 formatting', 'cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check'],
+      ['Verify Pump protocol v2 isolated graph, clippy, tests and evidence', 'node scripts/assert-pump-protocol-v2-offline.mjs --all'],
+      ['Lint Rust reducer', 'cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings'],
+      ['Test Rust reducer', 'cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets'],
+      ['Build Rust reducer', 'cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked'],
     ];
-    for (const command of requiredRustCommands) {
+    for (const [name, command] of requiredRustCommands) {
       const removed = SAFE_WORKFLOW
         .split('\n')
-        .filter((line) => !line.includes(command) && !line.includes(`name: ${
-          command.includes('toolchain') ? 'Install pinned Rust toolchain'
-            : command.includes('namespace-lock') ? 'Check Linux namespace-lock formatting'
-              : command.includes('jetstreamer') ? 'Check Jetstreamer callback snapshot formatting'
-                : command.includes('solana-runtime') ? 'Check Solana runtime snapshot formatting'
-                  : command.includes(' fmt ') ? 'Check Rust reducer formatting'
-                    : command.includes(' clippy ') ? 'Lint Rust reducer'
-                      : command.includes(' test ') ? 'Test Rust reducer'
-                        : 'Build Rust reducer'
-        }`))
+        .filter((line) => !line.includes(command) && !line.includes(`name: ${name}`))
         .join('\n');
       expect(errors(removed)).toMatch(/canonical steps|canonical workflow/i);
       expect(errors(SAFE_WORKFLOW.replace(command, 'npm test'))).toMatch(/unapproved run command|canonical workflow/i);

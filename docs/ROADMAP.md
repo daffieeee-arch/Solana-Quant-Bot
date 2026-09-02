@@ -1,6 +1,6 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is the concrete current delivery.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is the concrete current delivery.
 
 ## Program outcome
 
@@ -27,8 +27,8 @@ The implementation rule is one walking skeleton: one official source, one acquis
 | PR 1 | V2 source of truth and roadmap rebase plan | accepted docs, status map and complete #27–#63 migration ledger | no manual V2 Project/issue migration, cleanup, provider calls or product code; ordinary PR-item sync may run |
 | G0 issue #70 + bounded sync/config PRs | **Complete:** teach trusted `main` the complete V2 Project contract | tested exact-state reconciliation, V2 fields/Evidence, Project text, views and lifecycle-aware retention | no product work or provider calls |
 | G0 content migration | **Complete:** controlled Project #4 V2 rebase | successors, V2 metadata, clean views, retention and individual supersession verified without deleting history | no bulk-close or delivery claim |
-| PR 2A / B2A #81 | **In progress:** obsolete platform removal and legacy safety quarantine | retired TrueNAS/Phase 8/Hermes paths removed after manifest-backed invariant salvage; reachable legacy is bounded/fail-closed | no data pipeline, new legacy features, VPS replacement or provider call |
-| PR 3 | Pump protocol truth walking skeleton | protocol evidence matrix for one official pinned source and one needed bounded variant | no universal registry/framework claim and no activation claim without real bytes |
+| PR 2A / B2A #81 | **Complete / Operationally Verified:** obsolete platform removal and legacy safety quarantine | retired TrueNAS/Phase 8/Hermes paths removed after manifest-backed invariant salvage; reachable legacy is bounded/fail-closed | no data pipeline, new legacy features, VPS replacement or provider call |
+| PR 3 / B3 #82 | **In progress:** Pump protocol truth walking skeleton | generated [protocol evidence matrix](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md) for one official pinned source and one selected bounded candidate | no universal registry/framework claim and no activation claim without real bytes |
 | PR 4 | bounded Old Faithful acquisition | live terminal/TUI progress, verified receipts, deterministic resume and explicit coverage/gaps | no full epoch, no silent backend override and no research claim |
 | PR 5 | authentic Raw → Bronze → Silver | static HTML/JSON data-quality and one token-lifecycle report with provenance/quarantine | no Gold, strategy result or interactive workstation |
 | PR 6 | interactive Research Observatory MVP | browser-visible Ingestion/Data Quality and Token Lifecycle Replay for authentic data | no fake panels, paper controls or full workbench |
@@ -37,7 +37,7 @@ The implementation rule is one walking skeleton: one official source, one acquis
 
 After at most three or four engineering PRs without a new user-visible or research-measurable outcome, the next PR must produce one.
 
-The content migration created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87. PR #90, the separate #63 closeout and G0/#70 completion are verified. B2A/#81 is now `In Progress` and the one concrete `ACTIVE NOW` delivery; B3/#82 remains `Backlog` and the one concrete `NEXT` item. B4–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now and Next views each expose exactly one concrete delivery head.
+The content migration created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87. PR #90, the separate #63 closeout and G0/#70 completion are verified. B2A/#81 is completed and Operationally Verified. B3/#82 is now `In Progress` and the one concrete `ACTIVE NOW` delivery; B4/#83 is `Backlog` and the one concrete `NEXT` item. B5–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now and Next views each expose exactly one concrete delivery head.
 
 The last pre-B2A main commit is archived by annotated tag `v1-paper-platform-final`: tag object `de5b3850e0527afe8271c54abfdb95098d55e395`, peeled commit `f870621f5df76b935ce828fa9205fb9ff7504f67`. B2A's exact removal, test-classification and retained-invariant inventory is [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json).
 
@@ -48,7 +48,7 @@ The Project rebase adds a separate `V2 Phase`; it does not destroy the historica
 | Phase | Objective | Exit evidence |
 |---|---|---|
 | 0 Cutover & Cleanup | establish V2 truth and remove obsolete reachability safely | fresh sessions reconstruct V2; invariant-salvaged cleanup is reviewable |
-| 1 Pump Protocol Truth | versioned official protocol source and bounded decoder truth | protocol evidence matrix for the needed real variant |
+| 1 Pump Protocol Truth | versioned official protocol source and bounded decoder truth | protocol evidence matrix for one selected bounded candidate; authentic bytes remain required for observed/activation evidence |
 | 2 Authentic Acquisition | direct official OF1, bounded and resumable | authentic verified bytes/blocks with receipts, coverage and progress |
 | 3 Bronze & Silver | Rust-owned/authorized lossless canonical facts and immutable manifests | deterministic Raw/Bronze/Silver plus static report; physical Parquet writer resolved explicitly in PR 5 |
 | 4 Research Observatory | make authentic evidence visible | interactive data-quality and lifecycle replay |

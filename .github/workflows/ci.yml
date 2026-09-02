@@ -47,6 +47,10 @@ jobs:
           cache-dependency-path: package-lock.json
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: Validate Pump protocol dependencies before fetch
+        run: node scripts/assert-pump-protocol-v2-offline.mjs --static
+      - name: Fetch locked Pump protocol dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Install locked dependencies
         run: npm ci
       - name: Enforce repository and zero-cost policy
@@ -54,11 +58,11 @@ jobs:
       - name: Enforce offline research citation gate
         run: npm run ci:research-citations
       - name: Run policy bypass and critical zero-cost/Pump tests
-        run: npx vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts
+        run: npx --no-install vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/pump-protocol-v2-policy.test.ts tests/pump-silver-event.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts
       - name: Run complete test suite
         run: npm test
       - name: Type-check
-        run: npx tsc --noEmit
+        run: npx --no-install tsc --noEmit
       - name: Build backend and frontend
         run: npm run build
       - name: Check Rust reducer formatting
@@ -69,6 +73,10 @@ jobs:
         run: cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
       - name: Check Solana runtime snapshot formatting
         run: cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
+      - name: Check Pump protocol v2 formatting
+        run: cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check
+      - name: Verify Pump protocol v2 isolated graph, clippy, tests and evidence
+        run: node scripts/assert-pump-protocol-v2-offline.mjs --all
       - name: Lint Rust reducer
         run: cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
       - name: Test Rust reducer

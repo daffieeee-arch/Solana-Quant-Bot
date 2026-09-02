@@ -1,0 +1,181 @@
+{
+  "acceptedVectors": [
+    {
+      "dataHex": "66063d1201daebea80841e000000000040420f000000000001",
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expected": {
+        "amount": "2000000",
+        "maxSolCost": "1000000",
+        "trackVolume": true
+      },
+      "kind": "BUY_INSTRUCTION",
+      "name": "buy-selected-schema-u64-values",
+      "origin": "SYNTHETIC_FROM_PINNED_OFFICIAL_SCHEMA",
+      "rawSha256": "c4c16e3627555b799443dc7d2eaad89b3a5d55217b1ce0da55fcef2ae84647ad"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expected": {
+        "isBuy": true,
+        "ixName": "buy",
+        "quoteAmount": "1000000",
+        "realSolReserves": "1000000000",
+        "realTokenReserves": "791100000000000",
+        "solAmount": "1000000",
+        "timestamp": "1725000000",
+        "tokenAmount": "2000000",
+        "virtualSolReserves": "31000000000",
+        "virtualTokenReserves": "1071000000000000"
+      },
+      "kind": "TRADE_EVENT_CPI",
+      "name": "trade-buy-current-official",
+      "origin": "RETAINED_SYNTHETIC_FIXTURE_REFERENCE",
+      "rawSha256": "9c0bfb4a8374b259bdbf22820dd174c156d2630f408d18cb51163d2ff8cb7c06",
+      "sourcePath": "tests/fixtures/pump-silver/event-vectors.json",
+      "sourceSha256": "1d98b6fa69fc5c482389c37518709a55e7512ab0599f533682def581b6dbf4f9",
+      "sourceVectorName": "trade-buy-current-official"
+    }
+  ],
+  "candidateId": "pump-mainnet-legacy-sol-buy-trade-9c82f61-v1",
+  "quarantineVectors": [
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "TRUNCATED_DISCRIMINATOR",
+      "inputOrMutation": "take first 7 bytes of accepted buy vector",
+      "kind": "BUY_INSTRUCTION",
+      "name": "buy-truncated-discriminator",
+      "origin": "SYNTHETIC_ADVERSARIAL_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "WRONG_DISCRIMINATOR",
+      "inputOrMutation": "xor accepted buy byte 0 with 0xff",
+      "kind": "BUY_INSTRUCTION",
+      "name": "buy-wrong-discriminator",
+      "origin": "SYNTHETIC_ADVERSARIAL_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "TRUNCATED_PAYLOAD",
+      "inputOrMutation": "take first 24 bytes of accepted 25-byte buy vector",
+      "kind": "BUY_INSTRUCTION",
+      "name": "buy-truncated-payload",
+      "origin": "SYNTHETIC_ADVERSARIAL_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "UNEXPECTED_TRAILING_BYTES",
+      "inputOrMutation": "append one zero byte to accepted buy vector",
+      "kind": "BUY_INSTRUCTION",
+      "name": "buy-trailing-payload",
+      "origin": "SYNTHETIC_ADVERSARIAL_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "UNSUPPORTED_SCHEMA",
+      "inputOrMutation": "replace accepted buy byte 24 with 0x02",
+      "kind": "BUY_INSTRUCTION",
+      "name": "buy-invalid-bool",
+      "origin": "SYNTHETIC_ADVERSARIAL_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "UNSUPPORTED_VARIANT",
+      "inputOrMutation": "replace retained TradeEvent ix_name buy with suy",
+      "kind": "TRADE_EVENT_CPI",
+      "name": "trade-unsupported-variant",
+      "origin": "RETAINED_SYNTHETIC_FIXTURE_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_REFERENCE_ONLY",
+      "expectedOutcome": "REFERENCE_DISAGREEMENT",
+      "inputOrMutation": "increment decoded buy amount in structural reference by one",
+      "kind": "REFERENCE_COMPARISON",
+      "name": "buy-reference-disagreement",
+      "origin": "SYNTHETIC_EXPECTED_VALUE_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "DUPLICATE_SHAREHOLDER",
+      "inputOrMutation": "set shareholder count to two and repeat first address",
+      "kind": "TRADE_EVENT_CPI",
+      "name": "trade-duplicate-shareholder",
+      "origin": "RETAINED_SYNTHETIC_FIXTURE_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "UNKNOWN_QUOTE_MINT_EVIDENCE",
+      "inputOrMutation": "canonical candidate has no observed exact quote mint",
+      "kind": "ECONOMIC_PROMOTION_GATE",
+      "name": "economics-unknown-quote-mint",
+      "origin": "CANONICAL_REGISTRY_CANDIDATE",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "UNKNOWN_DECIMAL_EVIDENCE",
+      "inputOrMutation": "mark quote asset and mint observed while both decimals remain unknown",
+      "kind": "ECONOMIC_PROMOTION_GATE",
+      "name": "economics-unknown-decimals",
+      "origin": "SYNTHETIC_REGISTRY_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    }
+  ],
+  "registryRejectionVectors": [
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "MISSING_SOURCE_IDENTITY",
+      "inputOrMutation": "omit source manifest before candidate selection",
+      "kind": "REGISTRY_SELECTION",
+      "name": "registry-missing-source",
+      "origin": "SYNTHETIC_SOURCE_IDENTITY_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "SOURCE_IDENTITY_MISMATCH",
+      "inputOrMutation": "replace pinned source path with idl/other.json",
+      "kind": "REGISTRY_SELECTION",
+      "name": "registry-source-identity-mismatch",
+      "origin": "SYNTHETIC_SOURCE_IDENTITY_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "SOURCE_HASH_MISMATCH",
+      "inputOrMutation": "replace source manifest sha256 with 32 zero bytes",
+      "kind": "REGISTRY_SELECTION",
+      "name": "registry-source-hash-mismatch",
+      "origin": "SYNTHETIC_SOURCE_IDENTITY_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "UNSUPPORTED_VERSION",
+      "inputOrMutation": "resolve exact source receipt against zero compatible candidates",
+      "kind": "REGISTRY_SELECTION",
+      "name": "registry-unsupported-version",
+      "origin": "SYNTHETIC_CANDIDATE_COUNT_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    },
+    {
+      "evidence": "STRUCTURAL_FIXTURE_ONLY",
+      "expectedOutcome": "AMBIGUOUS_VERSION_MATCH",
+      "inputOrMutation": "resolve exact source receipt against two compatible candidates",
+      "kind": "REGISTRY_SELECTION",
+      "name": "registry-ambiguous-match",
+      "origin": "SYNTHETIC_CANDIDATE_COUNT_MUTATION",
+      "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+    }
+  ],
+  "schemaVersion": "PUMP_PROTOCOL_V2_VECTOR_SET_V1",
+  "sourceManifestId": "pump-public-docs-9c82f61-pump-idl"
+}

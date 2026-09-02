@@ -90,12 +90,15 @@ npm ci
 npm run ci:policy
 npm run ci:research-citations
 npm test
-npx tsc --noEmit
+npx --no-install tsc --noEmit
 npm run build
+node scripts/assert-pump-protocol-v2-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
+cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check
+node scripts/assert-pump-protocol-v2-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked

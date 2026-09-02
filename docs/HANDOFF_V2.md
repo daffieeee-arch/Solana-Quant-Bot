@@ -24,11 +24,11 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Current phase
 
-- **Current phase:** `0 Cutover & Cleanup`, bounded delivery B2A.
-- **Latest accepted milestone:** PR #90 merged the immutable content-migration evidence. Issue #63 was then unpinned and closed individually as `not planned / superseded`; G0/#70 was completed as `Done` / `SUPERSEDED` / `Operationally Verified`. Steady-state governance remains with pinned #56 and open cross-cutting control #62. The machine-readable migration result is [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json).
-- **Current delivery:** B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is `In Progress`, `ACTIVE NOW`, Phase `0 Cutover & Cleanup`, Evidence `Unproven`.
-- **Next delivery:** B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is `Backlog`, `NEXT`, Phase `1 Pump Protocol Truth`, Evidence `Unproven`. It does not start before B2A is accepted.
-- **Current execution posture:** PAPER / RESEARCH ONLY. No profitability, research-readiness, paper-realism or live-readiness claim is established.
+- **Current phase:** `1 Pump Protocol Truth`, bounded delivery B3.
+- **Latest accepted milestone:** B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) was completed as `Done` / `SUPERSEDED` / `Operationally Verified` by PR #91 at `main` commit `146252dd6c393e351164eb80544bac3044e51dfa`. Its manifest-backed removal and quarantine evidence remains in [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json).
+- **Current delivery:** B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is `In Progress`, `ACTIVE NOW`, Phase `1 Pump Protocol Truth`, Evidence `Unproven`. Its review surface is the generated [bounded protocol evidence matrix](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md); the matrix is not acceptance or activation proof.
+- **Next delivery:** B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is `Backlog`, `NEXT`, Phase `2 Authentic Acquisition`, Evidence `Unproven`. It does not start before B3 is accepted and no acquisition run is authorized.
+- **Current execution posture:** PAPER / RESEARCH ONLY. B3 canonical protocol/source evidence is bound only to pinned official Pump GitHub bytes. Approved toolchain, package-registry and source-review traffic is not protocol evidence; no Solana provider, RPC, Triton, Old Faithful or historical-chain-data call occurred. No profitability, research-readiness, paper-realism or live-readiness claim is established.
 
 ## Development and runtime boundary
 
@@ -135,7 +135,7 @@ Evidence classes remain explicit:
 ## Frozen and retired surfaces
 
 - The current scanner, portfolio, dashboard and paper runtime are **FROZEN LEGACY**: no new features and no new strategy logic. B2A removes its default `dev`/`start` launch path and mutation controls. The retained explicit evidence monitor is loopback-only and read-only; isolated tests may still instantiate domain code without opening listeners. Roadmap requirements #27–#34 move to the later new Rust paper engine.
-- Current Pump decoders are bounded fixture/version evidence, not universal protocol truth. V2 uses a pinned official source and a versioned registry; disagreement fails to quarantine.
+- Current Pump decoders are bounded fixture/version evidence, not universal protocol truth. V2 uses a pinned official source and a versioned registry; disagreement fails closed into quarantine.
 - Confirmed TrueNAS, Phase 8C/8D, GHCR recovery and Hermes paths are removed by B2A and remain available through `v1-paper-platform-final`. Do not restore or repair them as active product paths.
 - Existing synthetic Phase 8A research surfaces remain fixture evidence until replaced; they cannot support strategy claims.
 - Existing ClickHouse v1 data remains forensic evidence and is not accepted as canonical Pump event-level research data.
@@ -149,8 +149,8 @@ Before deleting a subsystem: identify its invariant → migrate useful tests/gol
 | Delivery | Observable outcome |
 |---|---|
 | PR 1 | V2 source of truth and complete, reviewable Project #4 rebase plan |
-| PR 2A / B2A | **In progress:** obsolete platform removal and reachable-legacy quarantine; no future product capability or evidence claim added |
-| PR 3 | Pump protocol walking skeleton plus protocol evidence matrix |
+| PR 2A / B2A | **Complete and Operationally Verified:** obsolete platform removal and reachable-legacy quarantine; no future product capability or data-evidence claim added |
+| PR 3 / B3 | **In progress:** one bounded Pump protocol walking skeleton plus a structural/fixture-only protocol evidence matrix |
 | PR 4 | Bounded authentic Old Faithful acquisition with live terminal/TUI progress |
 | PR 5 | Authentic Raw → Bronze → Silver plus static HTML/JSON data-quality and lifecycle report |
 | PR 6 | Interactive browser Research Observatory MVP |

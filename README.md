@@ -46,7 +46,7 @@ Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acq
 - [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md) for the read-only setup/doctor contract;
 - [`AGENTS.md`](AGENTS.md) for coding-agent rules.
 
-G0 is complete: issues #63 and #70 are closed under their reviewed final states. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is the single concrete `ACTIVE NOW` delivery and is `In Progress`; B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is `Backlog` and the single concrete `NEXT` delivery.
+G0 is complete: issues #63 and #70 are closed under their reviewed final states. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is completed and `Operationally Verified`; B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is the single concrete `In Progress` / `ACTIVE NOW` delivery, and B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is `Backlog` / `NEXT`.
 
 Development happens on Windows 11 → WSL2 Ubuntu with repository and datasets on WSL ext4. Do not install dependencies or change a user toolchain automatically.
 
