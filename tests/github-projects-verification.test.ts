@@ -168,6 +168,106 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     expect(labels.some((label) => /^(?:add|archive|unarchive|set|update|create|link)\b/i.test(label))).toBe(false);
   });
 
+  it('rejects an invalid explicit PR route during planning before any Project mutation can run', async () => {
+    const repositoryIssue = issue(62);
+    const repositoryPullRequest = {
+      id: 'PR_90',
+      kind: 'PullRequest',
+      number: 90,
+      title: 'fix: roadmap routing',
+      body: 'Roadmap: #999',
+      state: 'OPEN',
+      isDraft: false,
+      merged: false,
+      createdAt: '2026-09-02T00:00:00.000Z',
+      updatedAt: '2026-09-02T00:00:00.000Z',
+      closedAt: null,
+      mergedAt: null,
+    };
+    const auditedPreV2PullRequest = {
+      id: 'PR_1',
+      kind: 'PullRequest',
+      number: 1,
+      title: 'chore: historical merged pull request',
+      body: '',
+      state: 'MERGED',
+      isDraft: false,
+      merged: true,
+      createdAt: '2026-08-01T00:00:00.000Z',
+      updatedAt: '2026-08-02T00:00:00.000Z',
+      closedAt: '2026-08-02T00:00:00.000Z',
+      mergedAt: '2026-08-02T00:00:00.000Z',
+    };
+    const labels: string[] = [];
+    const api = {
+      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+        labels.push(label);
+        if (label === 'list repository issues') {
+          return {
+            repository: {
+              issues: {
+                nodes: [{
+                  ...repositoryIssue,
+                  url: `https://github.com/${REPOSITORY}/issues/62`,
+                  stateReason: null,
+                  createdAt: '2026-09-01T00:00:00.000Z',
+                  updatedAt: '2026-09-01T00:00:00.000Z',
+                  closedAt: null,
+                  reopened: { nodes: [] },
+                }],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          };
+        }
+        if (label === 'list repository pull requests') {
+          return {
+            repository: {
+              pullRequests: {
+                nodes: [
+                  { ...auditedPreV2PullRequest, reopened: { nodes: [] } },
+                  { ...repositoryPullRequest, reopened: { nodes: [] } },
+                ],
+                pageInfo: { hasNextPage: false, endCursor: null },
+              },
+            },
+          };
+        }
+        if (label === 'list project items') return projectItemsResponse([]);
+        throw new Error(`unexpected GraphQL operation ${label}`);
+      }),
+    };
+    const config = {
+      repository: REPOSITORY,
+      fields: [
+        {
+          name: 'Status',
+          dataType: 'SINGLE_SELECT',
+          options: [{ name: 'Backlog' }, { name: 'Done' }],
+        },
+        {
+          name: 'Work Type',
+          dataType: 'SINGLE_SELECT',
+          options: [{ name: 'Pull Request' }],
+        },
+      ],
+      itemRetention: {
+        closed_item_retention_days: 30,
+        pre_v2_merged_pr_max_number: 68,
+        pre_v2_merged_pr_numbers: [1],
+        pinned_items: [],
+      },
+    };
+
+    await expect(planRepositoryItems(api, config, { id: 'PROJECT_4' }, '2026-09-02T12:00:00.000Z'))
+      .rejects.toThrow(/unavailable same-repository issue #999/i);
+
+    expect(labels).toEqual(expect.arrayContaining([
+      'list repository issues', 'list repository pull requests', 'list project items',
+    ]));
+    expect(labels.some((label) => /^(?:add|archive|unarchive|set|update|create|link)\b/i.test(label))).toBe(false);
+  });
+
   it('represents run 33560315744: ADD #72 is missing once, then converges without mutation replay', async () => {
     const issue72 = issue(72);
     const existingActive = Array.from({ length: 41 }, (_, index) => projectItem(issue(index + 1)));

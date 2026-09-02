@@ -213,6 +213,8 @@ export function parseRoadmapMeta(body) {
   return Object.freeze(result);
 }
 
+// Generic reporting helper only. Metadata inheritance must use the explicit,
+// order-preserving resolver below and must never consume this sorted set.
 export function linkedIssueNumbers(body, title = '') {
   const numbers = new Set();
   const inspect = `${title}\n${typeof body === 'string' ? body : ''}`;
@@ -223,6 +225,192 @@ export function linkedIssueNumbers(body, title = '') {
     for (const match of line.matchAll(/\/issues\/(\d{1,10})\b/g)) numbers.add(Number(match[1]));
   }
   return [...numbers].filter((number) => Number.isSafeInteger(number) && number > 0).sort((a, b) => a - b);
+}
+
+export const PULL_REQUEST_ROUTE_SOURCES = Object.freeze({
+  DIRECT_ROADMAP: 'DIRECT_ROADMAP',
+  CLOSING_DIRECTIVE: 'CLOSING_DIRECTIVE',
+  IMPLEMENTATION_DIRECTIVE: 'IMPLEMENTATION_DIRECTIVE',
+  NONE: 'NONE',
+});
+
+function markdownFenceOpening(line) {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match) return undefined;
+  if (match[1][0] === '`' && match[2].includes('`')) return undefined;
+  return { marker: match[1][0], length: match[1].length };
+}
+
+function markdownFenceCloses(line, fence) {
+  const match = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line);
+  return Boolean(match && match[1][0] === fence.marker && match[1].length >= fence.length);
+}
+
+function stripHtmlComments(line, initiallyInComment) {
+  let visible = '';
+  let cursor = 0;
+  let inComment = initiallyInComment;
+  while (cursor < line.length) {
+    if (inComment) {
+      const end = line.indexOf('-->', cursor);
+      if (end === -1) return { line: visible, inComment };
+      inComment = false;
+      cursor = end + 3;
+      continue;
+    }
+    const start = line.indexOf('<!--', cursor);
+    if (start === -1) return { line: visible + line.slice(cursor), inComment };
+    visible += line.slice(cursor, start);
+    inComment = true;
+    cursor = start + 4;
+  }
+  return { line: visible, inComment };
+}
+
+function visibleMarkdownLines(body) {
+  const lines = (typeof body === 'string' ? body : '').split(/\r?\n/);
+  const visible = [];
+  let fence;
+  let inComment = false;
+
+  for (const rawLine of lines) {
+    if (fence) {
+      if (markdownFenceCloses(rawLine, fence)) fence = undefined;
+      continue;
+    }
+
+    if (!inComment) {
+      const rawOpening = markdownFenceOpening(rawLine);
+      if (rawOpening) {
+        fence = rawOpening;
+        continue;
+      }
+    }
+
+    const stripped = stripHtmlComments(rawLine, inComment);
+    inComment = stripped.inComment;
+    const visibleOpening = markdownFenceOpening(stripped.line);
+    if (visibleOpening) {
+      fence = visibleOpening;
+      continue;
+    }
+    visible.push(stripped.line);
+  }
+  return visible;
+}
+
+function parseRouteReferenceToken(token, repository, directiveName) {
+  const shorthand = /^#([1-9]\d{0,9})$/.exec(token);
+  if (shorthand) return Number(shorthand[1]);
+
+  let parsed;
+  try {
+    parsed = new URL(token);
+  } catch {
+    throw new Error(`${directiveName} contains an invalid issue reference`);
+  }
+  assert(parsed.protocol === 'https:' && parsed.hostname.toLowerCase() === 'github.com',
+    `${directiveName} contains a non-GitHub issue URL`);
+  assert(parsed.username === '' && parsed.password === '' && parsed.port === ''
+    && parsed.search === '' && parsed.hash === '', `${directiveName} contains an ambiguous issue URL`);
+  const path = /^\/([-A-Za-z0-9_.]+)\/([-A-Za-z0-9_.]+)\/issues\/([1-9]\d{0,9})\/?$/.exec(parsed.pathname);
+  assert(path, `${directiveName} URL must identify a GitHub issue`);
+  assert(typeof repository === 'string' && repository.trim().length > 0,
+    `${directiveName} URL cannot be checked without repository identity`);
+  const referencedRepository = `${path[1]}/${path[2]}`;
+  assert(referencedRepository.toLowerCase() === repository.trim().toLowerCase(),
+    `${directiveName} references foreign repository ${referencedRepository}`);
+  return Number(path[3]);
+}
+
+function parseRouteReferences(payload, { repository, issuesByNumber, directiveName }) {
+  const raw = typeof payload === 'string' ? payload.trim() : '';
+  assert(raw.length > 0, `${directiveName} must contain at least one issue reference`);
+  const tokens = raw.split(/[\s,]+/).filter(Boolean);
+  assert(tokens.length > 0, `${directiveName} must contain at least one issue reference`);
+  return tokens.map((token) => {
+    const number = parseRouteReferenceToken(token, repository, directiveName);
+    const issue = issuesByNumber.get(number);
+    assert(issue?.kind === 'Issue' && issue.number === number,
+      `${directiveName} references unavailable same-repository issue #${number}`);
+    return number;
+  });
+}
+
+function routeResult(source, issueNumbers) {
+  const seen = new Set();
+  const orderedIssueNumbers = [];
+  for (const issueNumber of issueNumbers) {
+    if (seen.has(issueNumber)) continue;
+    seen.add(issueNumber);
+    orderedIssueNumbers.push(issueNumber);
+  }
+  const frozenOrdered = Object.freeze(orderedIssueNumbers);
+  return Object.freeze({
+    source,
+    primaryIssueNumber: frozenOrdered[0],
+    secondaryIssueNumbers: Object.freeze(frozenOrdered.slice(1)),
+    orderedIssueNumbers: frozenOrdered,
+  });
+}
+
+function looksLikeReferenceOnlyPayload(payload) {
+  const tokens = String(payload ?? '').trim().split(/[\s,]+/).filter(Boolean);
+  return tokens.length > 0
+    && tokens.every((token) => token.startsWith('#') || /^https?:\/\//i.test(token));
+}
+
+/**
+ * Resolve the one issue whose roadmap metadata a pull request may inherit.
+ * This function is deliberately pure: selected directives are validated
+ * against the already-read repository issue map and no GitHub mutation is
+ * available from this boundary.
+ */
+export function resolvePullRequestInheritanceRoute({
+  body,
+  issuesByNumber = new Map(),
+  repository,
+}) {
+  assert(issuesByNumber instanceof Map, 'issuesByNumber must be a Map');
+  const lines = visibleMarkdownLines(body);
+  const roadmapDirectives = lines
+    .map((line) => /^ {0,3}Roadmap:\s*(.*?)\s*$/i.exec(line))
+    .filter(Boolean);
+  assert(roadmapDirectives.length <= 1, 'pull request must contain at most one Roadmap: directive');
+  if (roadmapDirectives.length === 1) {
+    const issueNumbers = parseRouteReferences(roadmapDirectives[0][1], {
+      repository,
+      issuesByNumber,
+      directiveName: 'Roadmap: directive',
+    });
+    return routeResult(PULL_REQUEST_ROUTE_SOURCES.DIRECT_ROADMAP, issueNumbers);
+  }
+
+  const closingDirectives = lines
+    .map((line) => /^ {0,3}(?:Closes|Close|Fixes|Fix|Resolves|Resolve)(?:\s*:\s*|\s+)(.*?)\s*$/i.exec(line))
+    .filter((directive) => directive && looksLikeReferenceOnlyPayload(directive[1]));
+  if (closingDirectives.length > 0) {
+    const issueNumbers = closingDirectives.flatMap((directive) => parseRouteReferences(directive[1], {
+      repository,
+      issuesByNumber,
+      directiveName: 'closing directive',
+    }));
+    return routeResult(PULL_REQUEST_ROUTE_SOURCES.CLOSING_DIRECTIVE, issueNumbers);
+  }
+
+  const implementationDirectives = lines
+    .map((line) => /^ {0,3}(?:Implements|Tracks):\s*(.*?)\s*$/i.exec(line))
+    .filter((directive) => directive && looksLikeReferenceOnlyPayload(directive[1]));
+  if (implementationDirectives.length > 0) {
+    const issueNumbers = implementationDirectives.flatMap((directive) => parseRouteReferences(directive[1], {
+      repository,
+      issuesByNumber,
+      directiveName: 'implementation directive',
+    }));
+    return routeResult(PULL_REQUEST_ROUTE_SOURCES.IMPLEMENTATION_DIRECTIVE, issueNumbers);
+  }
+
+  return routeResult(PULL_REQUEST_ROUTE_SOURCES.NONE, []);
 }
 
 function inferFromTitle(title) {
@@ -254,16 +442,19 @@ export function deriveStatus(content, metadata = {}) {
   return metadata.workflow ?? 'Backlog';
 }
 
-export function deriveMetadata(content, issuesByNumber = new Map()) {
+export function deriveMetadata(content, issuesByNumber = new Map(), repository = undefined) {
   const direct = parseRoadmapMeta(content.body) ?? { schemaVersion: 1 };
   const inferred = inferFromTitle(content.title);
   let inherited = {};
   if (content.kind === 'PullRequest') {
-    for (const issueNumber of linkedIssueNumbers(content.body, content.title)) {
-      const issue = issuesByNumber.get(issueNumber);
-      if (!issue) continue;
+    const route = resolvePullRequestInheritanceRoute({
+      body: content.body,
+      issuesByNumber,
+      repository,
+    });
+    if (route.primaryIssueNumber !== undefined) {
+      const issue = issuesByNumber.get(route.primaryIssueNumber);
       inherited = { ...inferFromTitle(issue.title), ...(parseRoadmapMeta(issue.body) ?? {}) };
-      break;
     }
   }
   const metadata = { ...inferred, ...inherited, ...direct };
@@ -2137,7 +2328,7 @@ export async function planRepositoryItems(api, config, project, reconciledAt) {
   const configuredFieldsByName = new Map(config.fields.map((field) => [field.name, field]));
   const metadataByContentId = new Map();
   for (const content of [...issues, ...pullRequests]) {
-    const metadata = deriveMetadata(content, issuesByNumber);
+    const metadata = deriveMetadata(content, issuesByNumber, config.repository);
     validateMetadataAgainstConfig(metadata, configuredFieldsByName);
     metadataByContentId.set(content.id, metadata);
   }

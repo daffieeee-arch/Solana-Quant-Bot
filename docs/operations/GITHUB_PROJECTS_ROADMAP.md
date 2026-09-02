@@ -44,6 +44,33 @@ Each lifecycle, item-field, Project metadata, field-definition and view mutation
 
 The final item counts and exact-state audit first use the most recent snapshot that passed an operation-level convergence gate (or the immutable pre-mutation planning snapshot when there were no item mutations). If that combined snapshot is compatibly stale for an earlier mutation, the same bounded read-only verifier obtains later snapshots; it never replays a mutation. This protects the aggregate count boundary against a non-monotonic Project projection while retaining hard failure for contradictory or unrelated drift.
 
+## Pull-request metadata inheritance routing
+
+Project metadata inheritance uses an explicit, body-only PR route. The generic issue-link collector may still support reporting, but its numerically sorted references and incidental prose are never an inheritance source. The routing precedence is:
+
+1. one exact `Roadmap:` line, with the first issue as primary owner and later issues as secondary context;
+2. only when `Roadmap:` is absent, exact line-leading `Close`, `Closes`, `Fix`, `Fixes`, `Resolve` or `Resolves` directives;
+3. only when both higher routes are absent, exact `Implements:` or `Tracks:` directives;
+4. otherwise no inherited issue metadata.
+
+References retain line and token order and are deduplicated by first occurrence. A reference is either `#N` or an `https://github.com/daffieeee-arch/solana-paper-scanner/issues/N` URL. Every reference selected by the winning route must resolve to an existing Issue in this repository. A missing issue, PR-only number, foreign-repository URL, malformed explicit `Roadmap:` payload or multiple `Roadmap:` lines fails during full-state planning, before the first Project mutation. A Markdown heading such as `## Roadmap`, fenced example, HTML comment, title reference or prose mention is not a route.
+
+The selected primary Issue supplies inherited roadmap dimensions. A valid PR-local `roadmap-meta` block then overrides only the fields it explicitly contains; it neither changes the route nor excuses an invalid explicit route. PR state continues to own Status and PR kind continues to own Work Type. The synchronizer does not guess an owner from arbitrary issue links and does not introduce generic field-clearing behavior when a newly selected owner omits a field.
+
+The reviewed compatibility set is:
+
+| PR | Route source | Ordered issue route | Primary owner | Lifecycle note |
+|---|---|---|---|---|
+| #64 | `DIRECT_ROADMAP` | #58, #63 | #58 | archived; remains archived |
+| #65 | `DIRECT_ROADMAP` | #56, #63 | #56 | archived; remains archived |
+| #67 | `DIRECT_ROADMAP` | #56, #63 | #56 | archived; remains archived |
+| #68 | `DIRECT_ROADMAP` | #56, #63 | #56 | archived; remains archived |
+| #69 | `DIRECT_ROADMAP` | #62, #63 | #62 | only active semantic owner correction |
+| #71 | `DIRECT_ROADMAP` | #70 | #70 | unchanged |
+| #73 | `DIRECT_ROADMAP` | #70 | #70 | unchanged |
+
+Among the active Project PR items audited for this change, #66 remains unrouted, #71 and #73 remain routed to #70, and only #69 changes owner: its explicit `Roadmap: #62 #63` can no longer be displaced by a later incidental #56 reference. Routing changes never authorize unarchive or bypass item-retention eligibility.
+
 ## Security boundary
 
 The user-owned Project requires a protected `PROJECT_TOKEN`; GitHub's repository-scoped `GITHUB_TOKEN` is insufficient. Never place the token in Git, `.env`, shell history, YAML, issue/PR text, logs, prompts or MCP queries.
