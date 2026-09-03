@@ -1,6 +1,6 @@
 # CI.md — current validation boundary after retired-platform cleanup
 
-> **Document status: ACTIVE.** B2A removed the retired Phase 8 image/deployment workflows and their build-only assertions while preserving ordinary CI and trusted-main Roadmap Sync. B3 adds only a separately locked, offline-verified protocol crate.
+> **Document status: ACTIVE.** B2A removed the retired Phase 8 image/deployment workflows and their build-only assertions while preserving ordinary CI and trusted-main Roadmap Sync. B3 added only a separately locked, offline-verified protocol crate and completed at `Fixture` evidence.
 
 ## Tracked workflow inventory
 
@@ -47,7 +47,7 @@ The B2A `npm run build` retains research-transport, Phase 8A offline and cockpit
 
 Roadmap Sync is a separate privileged boundary. It always uses trusted default-branch code under `pull_request_target`; never change it to execute PR-head code or PR-produced artifacts. See [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md).
 
-Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for B3. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls or another content migration.
+Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for eligible roadmap-linked pull requests. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls, an acquisition run or another content migration.
 
 ## Local checks
 

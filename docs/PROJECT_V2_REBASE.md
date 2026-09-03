@@ -1,6 +1,6 @@
 # PROJECT_V2_REBASE.md — controlled Project #4 migration plan
 
-> **Document status: ACTIVE completed migration contract and execution ledger.** PR #90, issue #63's individual closeout, G0/#70 completion and B2A/#81 completion are verified. B3/#82 is now the concrete `In Progress` / `ACTIVE NOW` delivery and B4/#83 is `Backlog` / `NEXT`. This document does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
+> **Document status: ACTIVE completed migration contract and execution ledger.** PR #90, issue #63's individual closeout, G0/#70 completion, B2A/#81 completion and B3/#82 completion at `Fixture` evidence are verified. B4/#83 is now the concrete `In Progress` / `ACTIVE NOW` delivery and B5/#84 is `Backlog` / `NEXT`; no B4 acquisition run is authorized. This document does not itself mutate [Project #4](https://github.com/users/daffieeee-arch/projects/4), any issue, or any pull request.
 
 ## Authority and migration rules
 
@@ -82,7 +82,7 @@ The identifiers below remain stable migration keys rather than substitutes for G
 |---|---|---|---|---|
 | [G0 / #70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `SUPERSEDED` (completed) | completed export, bounded Roadmap Sync/config hardening, successor migration, reconciliation, retention audit and repository evidence; steady-state controls remain #56/#62 |
 
-G0 was created before V2 metadata support existed, so its original body used only metadata accepted by that `main`. It is now closed `COMPLETED` with Project Status `Done`, V2 Phase `0 Cutover & Cleanup`, V2 Disposition `SUPERSEDED` and Evidence `Operationally Verified`. B2A/#81 completed the first post-G0 delivery; B3/#82 now owns current delivery, while #56 and #62 retain steady-state governance control.
+G0 was created before V2 metadata support existed, so its original body used only metadata accepted by that `main`. It is now closed `COMPLETED` with Project Status `Done`, V2 Phase `0 Cutover & Cleanup`, V2 Disposition `SUPERSEDED` and Evidence `Operationally Verified`. B2A/#81 completed the first post-G0 delivery; B3/#82 subsequently completed at `Fixture` evidence; B4/#83 now owns current delivery, while #56 and #62 retain steady-state governance control.
 
 ### Program and epics
 
@@ -284,7 +284,8 @@ Retain existing `roadmap-meta`. Add V2 metadata keys only after the synchronizer
 11. **Complete:** PR #90 committed the machine-readable execution ledger and removed only #63's temporary retention pin while retaining #56's pin.
 12. **Complete:** the pin-removal gate reconciled exactly; #63 was closed individually as `not planned / superseded`; #70 completed; B2A/#81 became `ACTIVE NOW`; and B3/#82 became `NEXT`.
 13. **Complete:** B2A/#81 removed the bounded retired paths and quarantined the retained legacy surface. Its cleanup is recorded by [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) and archived by `v1-paper-platform-final`.
-14. **Current:** B3/#82 is `In Progress` / `ACTIVE NOW`; B4/#83 remains `Backlog` / `NEXT` pending accepted B3 evidence.
+14. **Complete:** B3/#82 completed as `Done` / `SUPERSEDED` / `Fixture`; its accepted evidence remains structural and fixture-compatible only.
+15. **Current:** B3/#82 is `Done` / `SUPERSEDED` / `Fixture`; B4/#83 is `In Progress` / `ACTIVE NOW` / `Unproven`; and B5/#84 is `Backlog` / `NEXT` / `Unproven`. No B4 acquisition run is authorized.
 
 Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift, retention error, description/README drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
 
