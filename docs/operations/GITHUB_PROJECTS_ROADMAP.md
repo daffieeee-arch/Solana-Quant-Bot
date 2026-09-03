@@ -138,7 +138,8 @@ The controlled migration sequence is:
 8. **Complete:** PR #90 committed [`../../roadmap/project-v2-content-migration-ledger.json`](../../roadmap/project-v2-content-migration-ledger.json) and removed only #63's temporary pin while retaining #56's continuing-control pin.
 9. **Complete:** the pin reconciliation passed; #63 was closed individually as `not planned / superseded`; #70 completed; B2A/#81 became `ACTIVE NOW`; B3/#82 became `NEXT`.
 10. **Complete:** B2A/#81 removed the bounded retired paths and quarantined the retained legacy surface. Its removals are recorded by [`../../roadmap/b2a-invariant-salvage-manifest.json`](../../roadmap/b2a-invariant-salvage-manifest.json), and the pre-cleanup tree is archived at `v1-paper-platform-final`.
-11. **Current:** B3/#82 is `In Progress` / `ACTIVE NOW`; B4/#83 remains `Backlog` / `NEXT` until B3 is accepted.
+11. **Complete:** B3/#82 completed as `Done` / `SUPERSEDED` / `Fixture`; its accepted evidence remains structural and fixture-compatible only.
+12. **Current:** B3/#82 is `Done` / `SUPERSEDED` / `Fixture`; B4/#83 is `In Progress` / `ACTIVE NOW` / `Unproven`; and B5/#84 is `Backlog` / `NEXT` / `Unproven`. No B4 acquisition run is authorized.
 
 `V2 Disposition` values are `ACTIVE NOW`, `NEXT`, `LATER`, `SPLIT`, `SUPERSEDED` and `RETIRED`. Disposition is not completion. Issue #56 remains Done and pinned; issue #62 stays open. Issue #63's separately gated unpin and individual `not planned / superseded` close are complete. Do not bulk-retire anchors.
 

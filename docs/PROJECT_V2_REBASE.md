@@ -284,7 +284,8 @@ Retain existing `roadmap-meta`. Add V2 metadata keys only after the synchronizer
 11. **Complete:** PR #90 committed the machine-readable execution ledger and removed only #63's temporary retention pin while retaining #56's pin.
 12. **Complete:** the pin-removal gate reconciled exactly; #63 was closed individually as `not planned / superseded`; #70 completed; B2A/#81 became `ACTIVE NOW`; and B3/#82 became `NEXT`.
 13. **Complete:** B2A/#81 removed the bounded retired paths and quarantined the retained legacy surface. Its cleanup is recorded by [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) and archived by `v1-paper-platform-final`.
-14. **Current:** B3/#82 is `In Progress` / `ACTIVE NOW`; B4/#83 remains `Backlog` / `NEXT` pending accepted B3 evidence.
+14. **Complete:** B3/#82 completed as `Done` / `SUPERSEDED` / `Fixture`; its accepted evidence remains structural and fixture-compatible only.
+15. **Current:** B3/#82 is `Done` / `SUPERSEDED` / `Fixture`; B4/#83 is `In Progress` / `ACTIVE NOW` / `Unproven`; and B5/#84 is `Backlog` / `NEXT` / `Unproven`. No B4 acquisition run is authorized.
 
 Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift, retention error, description/README drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
 

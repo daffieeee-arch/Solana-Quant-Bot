@@ -47,7 +47,7 @@ The B2A `npm run build` retains research-transport, Phase 8A offline and cockpit
 
 Roadmap Sync is a separate privileged boundary. It always uses trusted default-branch code under `pull_request_target`; never change it to execute PR-head code or PR-produced artifacts. See [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md).
 
-Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for the current B4 delivery. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls, an acquisition run or another content migration.
+Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for eligible roadmap-linked pull requests. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls, an acquisition run or another content migration.
 
 ## Local checks
 
