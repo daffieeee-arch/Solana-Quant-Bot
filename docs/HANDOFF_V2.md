@@ -24,11 +24,11 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Current phase
 
-- **Current phase:** `1 Pump Protocol Truth`, bounded delivery B3.
-- **Latest accepted milestone:** B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) was completed as `Done` / `SUPERSEDED` / `Operationally Verified` by PR #91 at `main` commit `146252dd6c393e351164eb80544bac3044e51dfa`. Its manifest-backed removal and quarantine evidence remains in [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json).
-- **Current delivery:** B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is `In Progress`, `ACTIVE NOW`, Phase `1 Pump Protocol Truth`, Evidence `Unproven`. Its review surface is the generated [bounded protocol evidence matrix](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md); the matrix is not acceptance or activation proof.
-- **Next delivery:** B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is `Backlog`, `NEXT`, Phase `2 Authentic Acquisition`, Evidence `Unproven`. It does not start before B3 is accepted and no acquisition run is authorized.
-- **Current execution posture:** PAPER / RESEARCH ONLY. B3 canonical protocol/source evidence is bound only to pinned official Pump GitHub bytes. Approved toolchain, package-registry and source-review traffic is not protocol evidence; no Solana provider, RPC, Triton, Old Faithful or historical-chain-data call occurred. No profitability, research-readiness, paper-realism or live-readiness claim is established.
+- **Current phase:** `2 Authentic Acquisition`, bounded delivery B4.
+- **Latest accepted milestone:** B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) was completed as `Done` / `SUPERSEDED` / `Fixture` by PR #92 at `main` commit `404418ac5ae239e5d4f518b2d03c20778f42a9a7`. It establishes one `STRUCTURAL_CANDIDATE` and `FIXTURE_COMPATIBLE` decoder only; observed compatibility, historical activation, independent protocol authority, economic identity, Research Ready status and profitability remain unproven. Its generated [bounded protocol evidence matrix](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md) remains the review surface.
+- **Current delivery:** B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is `In Progress`, `ACTIVE NOW`, Phase `2 Authentic Acquisition`, Evidence `Unproven`. No B4 acquisition run is authorized.
+- **Next delivery:** B5/[#84](https://github.com/daffieeee-arch/solana-paper-scanner/issues/84) is `Backlog`, `NEXT`, Phase `3 Bronze & Silver`, Evidence `Unproven`.
+- **Current execution posture:** PAPER / RESEARCH ONLY. B3 canonical protocol/source evidence is bound only to pinned official Pump GitHub bytes. Approved toolchain, package-registry and source-review traffic is not protocol evidence; no Solana provider, RPC, Triton, Old Faithful or historical-chain-data call occurred. B4's active status does not authorize an acquisition run. No profitability, research-readiness, paper-realism or live-readiness claim is established.
 
 ## Development and runtime boundary
 
@@ -150,9 +150,9 @@ Before deleting a subsystem: identify its invariant → migrate useful tests/gol
 |---|---|
 | PR 1 | V2 source of truth and complete, reviewable Project #4 rebase plan |
 | PR 2A / B2A | **Complete and Operationally Verified:** obsolete platform removal and reachable-legacy quarantine; no future product capability or data-evidence claim added |
-| PR 3 / B3 | **In progress:** one bounded Pump protocol walking skeleton plus a structural/fixture-only protocol evidence matrix |
-| PR 4 | Bounded authentic Old Faithful acquisition with live terminal/TUI progress |
-| PR 5 | Authentic Raw → Bronze → Silver plus static HTML/JSON data-quality and lifecycle report |
+| PR 3 / B3 | **Complete at Fixture evidence:** one bounded Pump protocol walking skeleton plus a structural/fixture-only protocol evidence matrix; observed compatibility and historical activation remain unknown |
+| PR 4 / B4 | **In progress, no acquisition run authorized:** bounded authentic Old Faithful acquisition with live terminal/TUI progress |
+| PR 5 / B5 | **Next:** authentic Raw → Bronze → Silver plus static HTML/JSON data-quality and lifecycle report |
 | PR 6 | Interactive browser Research Observatory MVP |
 | PR 7 | Bounded scale-up, Cohort Explorer and explicit data-sufficiency result |
 | PR 8 | PIT Gold v0 and first falsifiable baseline, or a valid `INSUFFICIENT_SAMPLE`/falsification result |

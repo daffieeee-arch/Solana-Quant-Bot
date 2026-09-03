@@ -1,6 +1,6 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is the concrete current delivery.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is the concrete current delivery; no acquisition run is authorized.
 
 ## Program outcome
 
@@ -28,16 +28,16 @@ The implementation rule is one walking skeleton: one official source, one acquis
 | G0 issue #70 + bounded sync/config PRs | **Complete:** teach trusted `main` the complete V2 Project contract | tested exact-state reconciliation, V2 fields/Evidence, Project text, views and lifecycle-aware retention | no product work or provider calls |
 | G0 content migration | **Complete:** controlled Project #4 V2 rebase | successors, V2 metadata, clean views, retention and individual supersession verified without deleting history | no bulk-close or delivery claim |
 | PR 2A / B2A #81 | **Complete / Operationally Verified:** obsolete platform removal and legacy safety quarantine | retired TrueNAS/Phase 8/Hermes paths removed after manifest-backed invariant salvage; reachable legacy is bounded/fail-closed | no data pipeline, new legacy features, VPS replacement or provider call |
-| PR 3 / B3 #82 | **In progress:** Pump protocol truth walking skeleton | generated [protocol evidence matrix](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md) for one official pinned source and one selected bounded candidate | no universal registry/framework claim and no activation claim without real bytes |
-| PR 4 | bounded Old Faithful acquisition | live terminal/TUI progress, verified receipts, deterministic resume and explicit coverage/gaps | no full epoch, no silent backend override and no research claim |
-| PR 5 | authentic Raw → Bronze → Silver | static HTML/JSON data-quality and one token-lifecycle report with provenance/quarantine | no Gold, strategy result or interactive workstation |
+| PR 3 / B3 #82 | **Complete / Fixture:** Pump protocol truth walking skeleton | generated [protocol evidence matrix](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md) for one official pinned source and one selected bounded candidate | no universal registry/framework claim; observed compatibility, historical activation, independent protocol authority, economic identity, Research Ready status and profitability remain unproven |
+| PR 4 / B4 #83 | **In progress / ACTIVE NOW:** bounded Old Faithful acquisition | live terminal/TUI progress, verified receipts, deterministic resume and explicit coverage/gaps | no acquisition run is currently authorized; no full epoch, silent backend override or research claim |
+| PR 5 / B5 #84 | **Backlog / NEXT:** authentic Raw → Bronze → Silver | static HTML/JSON data-quality and one token-lifecycle report with provenance/quarantine | no Gold, strategy result or interactive workstation |
 | PR 6 | interactive Research Observatory MVP | browser-visible Ingestion/Data Quality and Token Lifecycle Replay for authentic data | no fake panels, paper controls or full workbench |
 | PR 7 | bounded scale-up and Cohort Explorer | cohort distributions plus explicit data-sufficiency result | no arbitrary full-history expansion or model fishing |
 | PR 8 | PIT Gold v0 and first baseline | falsifiable baseline on untouched evidence, or valid `INSUFFICIENT_SAMPLE`/falsification | no deep learning, auto-promotion or executable-profit claim without execution evidence |
 
 After at most three or four engineering PRs without a new user-visible or research-measurable outcome, the next PR must produce one.
 
-The content migration created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87. PR #90, the separate #63 closeout and G0/#70 completion are verified. B2A/#81 is completed and Operationally Verified. B3/#82 is now `In Progress` and the one concrete `ACTIVE NOW` delivery; B4/#83 is `Backlog` and the one concrete `NEXT` item. B5–B8 remain `LATER` until their direct predecessor is accepted. Programs and epics may retain broader routing, but the Now and Next views each expose exactly one concrete delivery head.
+The content migration created E0–E7 as #72/#74–#80 and B2A–B8 as #81–#87. PR #90, the separate #63 closeout and G0/#70 completion are verified. B2A/#81 is completed and Operationally Verified. B3/#82 is `Done` / `SUPERSEDED` / `Fixture`; its evidence is structural and fixture-compatible only. B4/#83 is `In Progress` and the one concrete `ACTIVE NOW` delivery; B5/#84 is `Backlog` and the one concrete `NEXT` item. B6–B8 remain `LATER`. Programs and epics may retain broader routing, but the Now and Next views each expose exactly one concrete delivery head. No B4 acquisition run is authorized.
 
 The last pre-B2A main commit is archived by annotated tag `v1-paper-platform-final`: tag object `de5b3850e0527afe8271c54abfdb95098d55e395`, peeled commit `f870621f5df76b935ce828fa9205fb9ff7504f67`. B2A's exact removal, test-classification and retained-invariant inventory is [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json).
 
