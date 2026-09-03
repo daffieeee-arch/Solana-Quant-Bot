@@ -215,7 +215,6 @@ export async function validateResumeState(
   assert(plannedHash === observedPlanHash, 'RESUME_PLAN_MISMATCH', 'plan hash changed');
 
   const compare = (name, expected, observed) => {
-    if (expected == null || observed == null) return;
     assert(expected === observed, `RESUME_${name.toUpperCase()}_MISMATCH`, `${name} changed during resume`, { expected, observed });
   };
 
@@ -294,9 +293,21 @@ export class B4AOfflineRangeRecorder {
 
     this._receipts = checkpoint.receipts ?? [];
     this._attemptCount = checkpoint.requestsAttempted ?? this._receipts.length;
+    assert(this._attemptCount >= this._receipts.length, 'CHECKPOINT_ATTEMPTS_INVALID', 'checkpoint attempt count is below captured receipts');
+    assert(this._attemptCount <= this.plan.budget.maxRequests, 'CHECKPOINT_ATTEMPTS_INVALID', 'checkpoint attempt count exceeds request budget');
+    assert(checkpoint.planId === this.plan.planId, 'CHECKPOINT_PLAN_ID_MISMATCH', 'checkpoint plan identity changed');
     const segmentIds = new Set(this._receipts.map((entry) => entry.segmentId));
     assert(segmentIds.size === this._receipts.length, 'CHECKPOINT_DUPLICATE_RECEIPTS', 'checkpoint contains duplicate segment receipts');
+    const completedSegments = checkpoint.completedSegments ?? [];
+    assert(Array.isArray(completedSegments), 'CHECKPOINT_COMPLETED_INVALID', 'checkpoint completedSegments must be an array');
+    assert(
+      completedSegments.length === segmentIds.size && completedSegments.every((segmentId) => segmentIds.has(segmentId)),
+      'CHECKPOINT_COMPLETED_MISMATCH',
+      'checkpoint completed segment set does not match receipts',
+    );
     for (const receipt of this._receipts) {
+      assert(receipt.receiptVersion === B4A_RECEIPT_VERSION, 'CHECKPOINT_RECEIPT_VERSION_MISMATCH', 'checkpoint receipt schema mismatch', { segmentId: receipt.segmentId });
+      assert(receipt.runId === checkpoint.runId, 'CHECKPOINT_RECEIPT_RUN_MISMATCH', 'checkpoint receipt run identity changed', { segmentId: receipt.segmentId });
       this._completed.add(receipt.segmentId);
     }
 
@@ -436,6 +447,9 @@ export class B4AOfflineRangeRecorder {
       const segment = this.segments.find((candidate) => candidate.segmentId === receipt.segmentId);
       assert(segment, 'CHECKPOINT_RECEIPT_UNKNOWN_SEGMENT', 'checkpoint contains unknown segment receipt', { segmentId: receipt.segmentId });
       assert(receipt.requestStart === segment.start && receipt.requestEnd === segment.end, 'CHECKPOINT_RECEIPT_RANGE_MISMATCH', 'checkpoint receipt range changed', { segmentId: receipt.segmentId });
+      assert(receipt.responseEntityBytes === segment.expectedEntityBytes, 'CHECKPOINT_RECEIPT_LENGTH_MISMATCH', 'checkpoint receipt length changed', { segmentId: receipt.segmentId });
+      assert(receipt.responseTotalBytes === this.plan.source.carSizeBytes, 'CHECKPOINT_RECEIPT_TOTAL_MISMATCH', 'checkpoint receipt total changed', { segmentId: receipt.segmentId });
+      assert(receipt.responseStatus === 200 || receipt.responseStatus === 206, 'CHECKPOINT_RECEIPT_STATUS_MISMATCH', 'checkpoint receipt status changed', { segmentId: receipt.segmentId });
       const payload = raw.subarray(segment.start, segment.end + 1);
       assert(payload.byteLength === segment.expectedEntityBytes, 'RESUME_RAW_INCOMPLETE', 'captured raw bytes are incomplete', { segmentId: receipt.segmentId });
       assert(sha256Utf8(payload) === receipt.responseEntitySha256, 'RESUME_RAW_HASH_MISMATCH', 'captured raw bytes changed', { segmentId: receipt.segmentId });

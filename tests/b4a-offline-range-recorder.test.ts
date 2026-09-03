@@ -235,6 +235,12 @@ describe('B4A offline range recorder', () => {
 
       const corrupted = new B4AOfflineRangeRecorder({ plan, workingDir: root });
       await expect(corrupted.hydrateFromCheckpoint()).rejects.toThrow(/plan hash changed/);
+
+      mutatedCheckpoint.planHash = planHash(plan);
+      mutatedCheckpoint.provenance = { ...plan.provenance, codeFingerprint: null };
+      await writeFile(checkpointPath, JSON.stringify(mutatedCheckpoint), 'utf8');
+      const missingProvenance = new B4AOfflineRangeRecorder({ plan, workingDir: root });
+      await expect(missingProvenance.hydrateFromCheckpoint()).rejects.toThrow(/codeFingerprint changed during resume/);
     } finally {
       await cleanup();
     }
