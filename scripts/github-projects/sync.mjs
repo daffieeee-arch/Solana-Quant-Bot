@@ -190,6 +190,24 @@ function boundedString(value, name, maximum = 256) {
   return value.trim();
 }
 
+const REPOSITORY_IDENTITY = /^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/;
+
+export function normalizeRepositoryIdentity(value) {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+export function configuredRepositoryAliases(configOrAliases = []) {
+  if (Array.isArray(configOrAliases)) return configOrAliases;
+  return Array.isArray(configOrAliases?.repositoryAliases) ? configOrAliases.repositoryAliases : [];
+}
+
+export function isConfiguredRepository(candidate, canonical, aliases = []) {
+  const needle = normalizeRepositoryIdentity(candidate);
+  if (!needle || typeof canonical !== 'string') return false;
+  if (needle === normalizeRepositoryIdentity(canonical)) return true;
+  return aliases.some((alias) => needle === normalizeRepositoryIdentity(alias));
+}
+
 function canonicalDate(value, name) {
   if (value === undefined) return undefined;
   assert(typeof value === 'string' && DATE_PATTERN.test(value), `${name} must use YYYY-MM-DD`);
@@ -319,7 +337,7 @@ function visibleMarkdownLines(body) {
   return visible;
 }
 
-function parseRouteReferenceToken(token, repository, directiveName) {
+function parseRouteReferenceToken(token, repository, directiveName, repositoryAliases = []) {
   const shorthand = /^#([1-9]\d{0,9})$/.exec(token);
   if (shorthand) return Number(shorthand[1]);
 
@@ -338,18 +356,18 @@ function parseRouteReferenceToken(token, repository, directiveName) {
   assert(typeof repository === 'string' && repository.trim().length > 0,
     `${directiveName} URL cannot be checked without repository identity`);
   const referencedRepository = `${path[1]}/${path[2]}`;
-  assert(referencedRepository.toLowerCase() === repository.trim().toLowerCase(),
+  assert(isConfiguredRepository(referencedRepository, repository, repositoryAliases),
     `${directiveName} references foreign repository ${referencedRepository}`);
   return Number(path[3]);
 }
 
-function parseRouteReferences(payload, { repository, issuesByNumber, directiveName }) {
+function parseRouteReferences(payload, { repository, issuesByNumber, directiveName, repositoryAliases = [] }) {
   const raw = typeof payload === 'string' ? payload.trim() : '';
   assert(raw.length > 0, `${directiveName} must contain at least one issue reference`);
   const tokens = raw.split(/[\s,]+/).filter(Boolean);
   assert(tokens.length > 0, `${directiveName} must contain at least one issue reference`);
   return tokens.map((token) => {
-    const number = parseRouteReferenceToken(token, repository, directiveName);
+    const number = parseRouteReferenceToken(token, repository, directiveName, repositoryAliases);
     const issue = issuesByNumber.get(number);
     assert(issue?.kind === 'Issue' && issue.number === number,
       `${directiveName} references unavailable same-repository issue #${number}`);
@@ -390,6 +408,7 @@ export function resolvePullRequestInheritanceRoute({
   body,
   issuesByNumber = new Map(),
   repository,
+  repositoryAliases = [],
 }) {
   assert(issuesByNumber instanceof Map, 'issuesByNumber must be a Map');
   const lines = visibleMarkdownLines(body);
@@ -400,6 +419,7 @@ export function resolvePullRequestInheritanceRoute({
   if (roadmapDirectives.length === 1) {
     const issueNumbers = parseRouteReferences(roadmapDirectives[0][1], {
       repository,
+      repositoryAliases,
       issuesByNumber,
       directiveName: 'Roadmap: directive',
     });
@@ -412,6 +432,7 @@ export function resolvePullRequestInheritanceRoute({
   if (closingDirectives.length > 0) {
     const issueNumbers = closingDirectives.flatMap((directive) => parseRouteReferences(directive[1], {
       repository,
+      repositoryAliases,
       issuesByNumber,
       directiveName: 'closing directive',
     }));
@@ -424,6 +445,7 @@ export function resolvePullRequestInheritanceRoute({
   if (implementationDirectives.length > 0) {
     const issueNumbers = implementationDirectives.flatMap((directive) => parseRouteReferences(directive[1], {
       repository,
+      repositoryAliases,
       issuesByNumber,
       directiveName: 'implementation directive',
     }));
@@ -462,7 +484,7 @@ export function deriveStatus(content, metadata = {}) {
   return metadata.workflow ?? 'Backlog';
 }
 
-export function deriveMetadata(content, issuesByNumber = new Map(), repository = undefined) {
+export function deriveMetadata(content, issuesByNumber = new Map(), repository = undefined, repositoryAliases = []) {
   const direct = parseRoadmapMeta(content.body) ?? { schemaVersion: 1 };
   const inferred = inferFromTitle(content.title);
   let inherited = {};
@@ -471,6 +493,7 @@ export function deriveMetadata(content, issuesByNumber = new Map(), repository =
       body: content.body,
       issuesByNumber,
       repository,
+      repositoryAliases,
     });
     if (route.primaryIssueNumber !== undefined) {
       const issue = issuesByNumber.get(route.primaryIssueNumber);
@@ -486,13 +509,29 @@ export function deriveMetadata(content, issuesByNumber = new Map(), repository =
 export function validateProjectConfig(value) {
   assert(isObject(value), 'project config must be an object');
   assertExactKeys(value, new Set([
-    'schemaVersion', 'owner', 'repository', 'project', 'fields', 'views', 'itemRetention',
+    'schemaVersion', 'owner', 'repository', 'repositoryAliases', 'project', 'fields', 'views', 'itemRetention',
   ]), 'project config');
   assert(value.schemaVersion === 1, 'project config schemaVersion must equal 1');
   const owner = boundedString(value.owner, 'owner', 100);
   const repository = boundedString(value.repository, 'repository', 200);
-  assert(/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(repository), 'repository must use owner/name');
+  assert(REPOSITORY_IDENTITY.test(repository), 'repository must use owner/name');
   assert(repository.split('/')[0].toLowerCase() === owner.toLowerCase(), 'repository owner must match project owner');
+  let repositoryAliases = [];
+  if (value.repositoryAliases !== undefined) {
+    assert(Array.isArray(value.repositoryAliases) && value.repositoryAliases.length <= 8,
+      'repositoryAliases must be an array of at most 8 former repository names');
+    const seen = new Set([normalizeRepositoryIdentity(repository)]);
+    for (const alias of value.repositoryAliases) {
+      const normalizedAlias = boundedString(alias, 'repositoryAliases entry', 200);
+      assert(REPOSITORY_IDENTITY.test(normalizedAlias), 'repositoryAliases entries must use owner/name');
+      assert(normalizedAlias.split('/')[0].toLowerCase() === owner.toLowerCase(),
+        'repositoryAliases owner must match project owner');
+      const identity = normalizeRepositoryIdentity(normalizedAlias);
+      assert(!seen.has(identity), `duplicate repository identity ${normalizedAlias}`);
+      seen.add(identity);
+      repositoryAliases.push(normalizedAlias);
+    }
+  }
   assert(isObject(value.project), 'project must be an object');
   assertExactKeys(value.project, new Set(['title', 'shortDescription', 'readme']), 'project');
   boundedString(value.project.title, 'project.title', 256);
@@ -965,7 +1004,7 @@ function itemProjectionIndex(items) {
   return { byItemId, byContentId };
 }
 
-export function validateProjectItemPreconditions({ items, contents, repository }) {
+export function validateProjectItemPreconditions({ items, contents, repository, repositoryAliases = [] }) {
   assert(Array.isArray(contents), 'repository contents must be an array');
   const indexed = itemProjectionIndex(items);
   assert(!indexed.error, indexed.error);
@@ -976,7 +1015,7 @@ export function validateProjectItemPreconditions({ items, contents, repository }
     assert(projected?.id && projected?.__typename && projected?.number
       && projected?.repository?.nameWithOwner,
     `Project item ${item.id} has incomplete repository content identity`);
-    assert(projected.repository.nameWithOwner === repository,
+    assert(isConfiguredRepository(projected.repository.nameWithOwner, repository, repositoryAliases),
       `Project item ${item.id} belongs to unexpected repository ${projected.repository.nameWithOwner}`);
     const expected = contentsById.get(projected.id);
     assert(expected, `Project item ${item.id} references unplanned repository content ${projected.id}`);
@@ -1006,6 +1045,7 @@ function inspectTargetItemIdentity({
   targetItemId,
   content,
   repository,
+  repositoryAliases = [],
   allowMissing,
   knownItemsById,
   projectionLagEligibleItemIds,
@@ -1040,7 +1080,9 @@ function inspectTargetItemIdentity({
       if ((item.content?.id !== undefined && item.content.id !== expectedIdentity.contentId)
         || (item.content?.__typename !== undefined && item.content.__typename !== expectedIdentity.kind)
         || (item.content?.number !== undefined && item.content.number !== expectedIdentity.number)
-        || (projectedRepository !== undefined && projectedRepository !== expectedIdentity.repository)) {
+        || (projectedRepository !== undefined
+          && !isConfiguredRepository(projectedRepository, repository, repositoryAliases)
+          && projectedRepository !== expectedIdentity.repository)) {
         return {
           result: verificationResult(
             PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
@@ -1128,7 +1170,8 @@ function inspectTargetItemIdentity({
   if ((projectedContent?.id !== undefined && projectedContent.id !== content.id)
     || (projectedContent?.__typename !== undefined && projectedContent.__typename !== content.kind)
     || (projectedContent?.number !== undefined && projectedContent.number !== content.number)
-    || (projectedRepository !== undefined && projectedRepository !== repository)) {
+    || (projectedRepository !== undefined
+      && !isConfiguredRepository(projectedRepository, repository, repositoryAliases))) {
     return {
       result: verificationResult(
         PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
@@ -1157,6 +1200,7 @@ export function evaluateItemLifecycleProjection({
   targetItemId,
   content,
   repository,
+  repositoryAliases = [],
   expectedArchived,
   beforeArchived,
   allowMissing = false,
@@ -1168,6 +1212,7 @@ export function evaluateItemLifecycleProjection({
     targetItemId,
     content,
     repository,
+    repositoryAliases,
     allowMissing,
     knownItemsById,
     projectionLagEligibleItemIds,
@@ -1207,6 +1252,7 @@ export function evaluateItemFieldProjection({
   targetItemId,
   content,
   repository,
+  repositoryAliases = [],
   beforeValues,
   expectedValues,
   allowMissing = false,
@@ -1218,6 +1264,7 @@ export function evaluateItemFieldProjection({
     targetItemId,
     content,
     repository,
+    repositoryAliases,
     allowMissing,
     knownItemsById,
     projectionLagEligibleItemIds,
@@ -1299,6 +1346,7 @@ export function evaluateItemFieldClearProjection({
   targetItemId,
   content,
   repository,
+  repositoryAliases = [],
   beforeValues,
   field,
   knownItemsById,
@@ -1313,6 +1361,7 @@ export function evaluateItemFieldClearProjection({
     targetItemId,
     content,
     repository,
+    repositoryAliases,
     allowMissing: false,
     knownItemsById,
     projectionLagEligibleItemIds: clearProjectionLagEligibleItemIds,
@@ -2592,13 +2641,17 @@ export async function planRepositoryItems(api, config, project, reconciledAt) {
     listRepositoryPullRequests(api, owner, name),
     listProjectItems(api, project.id),
   ]);
+  const repositoryAliases = configuredRepositoryAliases(config);
   validateProjectItemPreconditions({
     items: existingItems,
     contents: [...issues, ...pullRequests],
     repository: config.repository,
+    repositoryAliases,
   });
   const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
-  const repositoryItems = existingItems.filter((item) => item.content?.repository?.nameWithOwner === config.repository);
+  const repositoryItems = existingItems.filter((item) => (
+    isConfiguredRepository(item.content?.repository?.nameWithOwner, config.repository, repositoryAliases)
+  ));
   const plan = buildItemReconciliationPlan({
     contents: [...issues, ...pullRequests],
     existingItems: repositoryItems,
@@ -2608,7 +2661,7 @@ export async function planRepositoryItems(api, config, project, reconciledAt) {
   const configuredFieldsByName = new Map(config.fields.map((field) => [field.name, field]));
   const metadataByContentId = new Map();
   for (const content of [...issues, ...pullRequests]) {
-    const metadata = deriveMetadata(content, issuesByNumber, config.repository);
+    const metadata = deriveMetadata(content, issuesByNumber, config.repository, repositoryAliases);
     validateMetadataAgainstConfig(metadata, configuredFieldsByName);
     metadataByContentId.set(content.id, metadata);
   }
@@ -2622,7 +2675,7 @@ export async function planRepositoryItems(api, config, project, reconciledAt) {
   };
 }
 
-function rebindItemFromLatestProjection({ item, content, items, repository }) {
+function rebindItemFromLatestProjection({ item, content, items, repository, repositoryAliases = [] }) {
   if (!item?.id) return item;
   const indexed = itemProjectionIndex(items);
   assert(!indexed.error, indexed.error);
@@ -2635,7 +2688,7 @@ function rebindItemFromLatestProjection({ item, content, items, repository }) {
   if (latest.content?.id !== content.id
     || latest.content?.__typename !== content.kind
     || latest.content?.number !== content.number
-    || latest.content?.repository?.nameWithOwner !== repository) {
+    || !isConfiguredRepository(latest.content?.repository?.nameWithOwner, repository, repositoryAliases)) {
     throw new Error(`PROJECT_HARD_DRIFT operation=PRE_MUTATION_ITEM_BINDING identity=${content.kind} #${content.number} reason=CONTENT_IDENTITY_DRIFT expected=captured repository content observed=Project item ${item.id} identity changed`);
   }
   return latest;
@@ -2692,7 +2745,8 @@ export function evaluateFinalItemProjection({
         'Project contains an incompletely hydrated content identity',
       );
     }
-    if (item.content.repository.nameWithOwner !== config.repository || !plannedContentIds.has(item.content.id)) {
+    if (!isConfiguredRepository(item.content.repository.nameWithOwner, config.repository, configuredRepositoryAliases(config))
+      || !plannedContentIds.has(item.content.id)) {
       return verificationResult(
         PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
         'UNEXPECTED_ITEM',
@@ -2724,7 +2778,7 @@ export function evaluateFinalItemProjection({
     if (!actual
       || actual.content.__typename !== operation.content.kind
       || actual.content.number !== operation.content.number
-      || actual.content.repository.nameWithOwner !== config.repository) {
+      || !isConfiguredRepository(actual.content.repository.nameWithOwner, config.repository, configuredRepositoryAliases(config))) {
       return verificationResult(
         PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
         actual ? 'CONTENT_IDENTITY_DRIFT' : 'ITEM_DELETED',
@@ -2884,6 +2938,7 @@ export async function reconcileItems(
       content,
       items: lastObservedItems,
       repository: config.repository,
+      repositoryAliases: configuredRepositoryAliases(config),
     });
     if (operation.action === 'ADD') {
       const data = await api.request(`
@@ -2912,6 +2967,7 @@ export async function reconcileItems(
           targetItemId: itemId,
           content,
           repository: config.repository,
+          repositoryAliases: configuredRepositoryAliases(config),
           expectedArchived: false,
           beforeArchived: undefined,
           allowMissing: true,
@@ -2940,6 +2996,7 @@ export async function reconcileItems(
           targetItemId: item.id,
           content,
           repository: config.repository,
+          repositoryAliases: configuredRepositoryAliases(config),
           expectedArchived: false,
           beforeArchived,
           allowMissing: false,
@@ -2967,6 +3024,7 @@ export async function reconcileItems(
           targetItemId: item.id,
           content,
           repository: config.repository,
+          repositoryAliases: configuredRepositoryAliases(config),
           expectedArchived: true,
           beforeArchived,
           allowMissing: false,
@@ -3039,6 +3097,7 @@ export async function reconcileItems(
             targetItemId: item.id,
             content,
             repository: config.repository,
+            repositoryAliases: configuredRepositoryAliases(config),
             beforeValues: current,
             expectedValues,
             allowMissing: operation.action === 'ADD',
@@ -3066,6 +3125,7 @@ export async function reconcileItems(
           targetItemId: item.id,
           content,
           repository: config.repository,
+          repositoryAliases: configuredRepositoryAliases(config),
           beforeValues: current,
           field: action.field,
           knownItemsById,
@@ -3181,6 +3241,7 @@ async function main() {
     console.log(JSON.stringify({
       event: 'roadmap_sync_dry_run_ok',
       repository: config.repository,
+      repositoryAliases: configuredRepositoryAliases(config),
       project: config.project.title,
       fields: config.fields.length,
       views: config.views.length,

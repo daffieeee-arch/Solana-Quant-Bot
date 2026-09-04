@@ -221,7 +221,7 @@ The long-term target remains React/TypeScript with:
 - Strategy Lab / Research;
 - Data Quality / System.
 
-This is epic E6 in [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md), separate from Observatory epic E2. Its current issue evidence is preserved in [#35](https://github.com/daffieeee-arch/solana-paper-scanner/issues/35) through [#47](https://github.com/daffieeee-arch/solana-paper-scanner/issues/47).
+This is epic E6 in [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md), separate from Observatory epic E2. Its current issue evidence is preserved in [#35](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/35) through [#47](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/47).
 
 ### Workstation data plane
 
