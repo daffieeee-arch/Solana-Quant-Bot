@@ -4,7 +4,8 @@ import {
   resolvePullRequestInheritanceRoute,
 } from '../scripts/github-projects/sync.mjs';
 
-const REPOSITORY = 'daffieeee-arch/solana-paper-scanner';
+const REPOSITORY = 'daffieeee-arch/Solana-Quant-Bot';
+const REPOSITORY_ALIASES = ['daffieeee-arch/solana-paper-scanner'];
 
 const marker = (value: unknown) => `<!-- roadmap-meta\n${JSON.stringify(value)}\n-->`;
 
@@ -36,6 +37,7 @@ const resolve = (body: string, issueMap = issues) => resolvePullRequestInheritan
   body,
   issuesByNumber: issueMap,
   repository: REPOSITORY,
+  repositoryAliases: REPOSITORY_ALIASES,
 });
 
 describe('pull-request roadmap inheritance routing', () => {
@@ -203,16 +205,26 @@ Roadmap: #56
     });
   });
 
-  it('accepts an exact same-repository issue URL', () => {
+  it('accepts the current repository issue URL and the former-name alias', () => {
+    expect(resolve('Roadmap: https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/62 #63'))
+      .toMatchObject({ primaryIssueNumber: 62, secondaryIssueNumbers: [63] });
     expect(resolve('Roadmap: https://github.com/daffieeee-arch/solana-paper-scanner/issues/62 #63'))
       .toMatchObject({ primaryIssueNumber: 62, secondaryIssueNumbers: [63] });
+  });
+
+  it('rejects a former-name URL when no alias is configured', () => {
+    expect(() => resolvePullRequestInheritanceRoute({
+      body: 'Roadmap: https://github.com/daffieeee-arch/solana-paper-scanner/issues/62',
+      issuesByNumber: issues,
+      repository: REPOSITORY,
+    })).toThrow(/foreign repository/i);
   });
 
   it.each([
     ['nonexistent issue', 'Roadmap: #999'],
     ['PR-only number', 'Roadmap: #69'],
     ['foreign repository URL', 'Roadmap: https://github.com/other/repository/issues/62'],
-    ['pull-request URL', 'Roadmap: https://github.com/daffieeee-arch/solana-paper-scanner/pull/69'],
+    ['pull-request URL', 'Roadmap: https://github.com/daffieeee-arch/Solana-Quant-Bot/pull/69'],
     ['no numeric reference', 'Roadmap: not-an-issue'],
     ['empty directive', 'Roadmap:'],
     ['mixed valid and invalid references', 'Roadmap: #62 not-an-issue'],

@@ -13,7 +13,7 @@ import {
   verifyProjectProjection,
 } from '../scripts/github-projects/sync.mjs';
 
-const REPOSITORY = 'daffieeee-arch/solana-paper-scanner';
+const REPOSITORY = 'daffieeee-arch/Solana-Quant-Bot';
 
 const issue = (number: number) => ({
   id: `ISSUE_${number}`,

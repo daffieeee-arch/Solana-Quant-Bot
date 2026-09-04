@@ -1,11 +1,14 @@
 {
   "schemaVersion": 1,
   "owner": "daffieeee-arch",
-  "repository": "daffieeee-arch/solana-paper-scanner",
+  "repository": "daffieeee-arch/Solana-Quant-Bot",
+  "repositoryAliases": [
+    "daffieeee-arch/solana-paper-scanner"
+  ],
   "project": {
     "title": "Solana Quant Platform — Roadmap & Cockpit",
     "shortDescription": "Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence, Research Observatory before Professional Workstation, and edge discovery or falsification. Profitability is not assumed.",
-    "readme": "# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/solana-paper-scanner/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation."
+    "readme": "# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/Solana-Quant-Bot/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation."
   },
   "fields": [
     {
