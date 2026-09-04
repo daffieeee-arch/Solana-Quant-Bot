@@ -305,6 +305,8 @@ export class B4AOfflineRangeRecorder {
       'CHECKPOINT_COMPLETED_MISMATCH',
       'checkpoint completed segment set does not match receipts',
     );
+    assert(typeof checkpoint.runId === 'string' && checkpoint.runId.length > 0,
+      'CHECKPOINT_RUN_ID_MISSING', 'checkpoint run identity is required');
     for (const receipt of this._receipts) {
       assert(receipt.receiptVersion === B4A_RECEIPT_VERSION, 'CHECKPOINT_RECEIPT_VERSION_MISMATCH', 'checkpoint receipt schema mismatch', { segmentId: receipt.segmentId });
       assert(receipt.runId === checkpoint.runId, 'CHECKPOINT_RECEIPT_RUN_MISMATCH', 'checkpoint receipt run identity changed', { segmentId: receipt.segmentId });
@@ -318,6 +320,7 @@ export class B4AOfflineRangeRecorder {
     );
 
     await this._verifyPersistedReceipts();
+    this.runId = checkpoint.runId;
 
     this._nextIndex = 0;
     while (this._nextIndex < this.segments.length && this._completed.has(this.segments[this._nextIndex].segmentId)) {

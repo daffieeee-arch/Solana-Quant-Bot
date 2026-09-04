@@ -102,6 +102,13 @@ describe('B4A offline range recorder plan', () => {
         maxResponseEntityBytes: MAX_RESPONSE_ENTITY_BYTES + 1,
       },
     }))).toThrowError(/maxResponseEntityBytes exceeds B4A cap/);
+
+    expect(() => validatePlan(basePlan({
+      policy: {
+        ...basePlan().policy,
+        networkEnabled: true,
+      },
+    }))).toThrowError(/networkEnabled=false/);
   });
 
   it('derives contiguous byte segments from plan budget and file size', () => {
@@ -241,6 +248,47 @@ describe('B4A offline range recorder', () => {
       await writeFile(checkpointPath, JSON.stringify(mutatedCheckpoint), 'utf8');
       const missingProvenance = new B4AOfflineRangeRecorder({ plan, workingDir: root });
       await expect(missingProvenance.hydrateFromCheckpoint()).rejects.toThrow(/codeFingerprint changed during resume/);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('continues capture after resume using the checkpoint run identity', async () => {
+    const { root, cleanup } = await makeWorkingDirectory();
+    try {
+      const plan = basePlan();
+      const recorder = new B4AOfflineRangeRecorder({ plan, workingDir: root, runId: 'run-offline-resume' });
+      const first = recorder.nextRequest();
+      await recorder.applyObservedSegment({
+        segmentId: first!.segmentId,
+        status: 206,
+        headers: new Headers({ 'Content-Range': 'bytes 0-3/9' }),
+        body: new TextEncoder().encode('abcd'),
+      });
+
+      const recovered = new B4AOfflineRangeRecorder({
+        plan,
+        workingDir: root,
+        runId: 'run-should-be-replaced',
+      });
+      await recovered.hydrateFromCheckpoint();
+      expect(recovered.runId).toBe('run-offline-resume');
+
+      const second = recovered.nextRequest();
+      await recovered.applyObservedSegment({
+        segmentId: second!.segmentId,
+        status: 206,
+        headers: new Headers({ 'Content-Range': 'bytes 4-7/9' }),
+        body: new TextEncoder().encode('efgh'),
+      });
+
+      const resumed = new B4AOfflineRangeRecorder({ plan, workingDir: root });
+      await resumed.hydrateFromCheckpoint();
+      const summary = await resumed.publishSummary();
+      expect(resumed.runId).toBe('run-offline-resume');
+      expect(summary.completedSegments).toBe(2);
+      expect(resumed.nextRequest()?.segmentId).toBe('b4a-offline-plan-01-seg-2');
+      expect(summary.receipts.every((receipt) => receipt.runId === 'run-offline-resume')).toBe(true);
     } finally {
       await cleanup();
     }
