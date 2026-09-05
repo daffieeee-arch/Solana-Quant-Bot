@@ -57,7 +57,7 @@ describe('GitHub Projects roadmap metadata', () => {
 Random mention #999
 Closes #27, #31
 Roadmap: #58
-Implements https://github.com/daffieeee-arch/solana-paper-scanner/issues/35
+Implements https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/35
 `)).toEqual([27, 31, 35, 58]);
   });
 
@@ -105,7 +105,7 @@ describe('GitHub Projects roadmap config', () => {
   const config = {
     schemaVersion: 1,
     owner: 'daffieeee-arch',
-    repository: 'daffieeee-arch/solana-paper-scanner',
+    repository: 'daffieeee-arch/Solana-Quant-Bot',
     project: {
       title: 'Project',
       shortDescription: 'Description',
@@ -152,6 +152,16 @@ describe('GitHub Projects roadmap config', () => {
     expect(fieldNames).not.toContain('Type');
   });
 
+  it('pins the current GitHub repository identity and former-name routing alias', () => {
+    const production = JSON.parse(readFileSync('roadmap/project-config.json', 'utf8')) as {
+      repository: string;
+      repositoryAliases: string[];
+    };
+    expect(production.repository).toBe('daffieeee-arch/Solana-Quant-Bot');
+    expect(production.repositoryAliases).toEqual(['daffieeee-arch/solana-paper-scanner']);
+    expect(validateProjectConfig(production).repository).toBe(production.repository);
+  });
+
   it('pins the reviewed V2 fields, Project copy, and eight migration-safe views', () => {
     const production = JSON.parse(readFileSync('roadmap/project-config.json', 'utf8')) as {
       project: { shortDescription: string; readme: string };
@@ -184,7 +194,7 @@ describe('GitHub Projects roadmap config', () => {
       'ACTIVE NOW', 'NEXT', 'LATER', 'SPLIT', 'SUPERSEDED', 'RETIRED',
     ]);
     expect(production.project.shortDescription).toBe('Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence, Research Observatory before Professional Workstation, and edge discovery or falsification. Profitability is not assumed.');
-    expect(production.project.readme).toBe('# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/solana-paper-scanner/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation.');
+    expect(production.project.readme).toBe('# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/Solana-Quant-Bot/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation.');
 
     const visibleFields = [
       'Title', 'Status', 'V2 Disposition', 'V2 Phase', 'Priority', 'Area',
@@ -235,6 +245,21 @@ describe('GitHub Projects roadmap config', () => {
     expect(() => validateProjectConfig({ ...config, repository: 'someone/else' })).toThrow(/owner/i);
     expect(() => validateProjectConfig({ ...config, fields: [...config.fields, config.fields[0]] })).toThrow(/duplicate/i);
     expect(() => validateProjectConfig({ ...config, views: [{ name: 'Bad', layout: 'GRID' }] })).toThrow(/layout/i);
+  });
+
+  it('rejects alias owner drift, canonical duplicates and duplicate aliases', () => {
+    expect(() => validateProjectConfig({
+      ...config,
+      repositoryAliases: ['other-owner/former-name'],
+    })).toThrow(/owner/i);
+    expect(() => validateProjectConfig({
+      ...config,
+      repositoryAliases: ['daffieeee-arch/Solana-Quant-Bot'],
+    })).toThrow(/duplicate repository identity/i);
+    expect(() => validateProjectConfig({
+      ...config,
+      repositoryAliases: ['daffieeee-arch/former-name', 'daffieeee-arch/former-name'],
+    })).toThrow(/duplicate repository identity/i);
   });
 
   it('requires an explicit bounded retention policy and snapshot binding', () => {

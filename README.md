@@ -23,7 +23,7 @@ Rust owns or authorizes the logical/canonical Raw, Bronze and Silver facts, incl
 
 The existing scanner, portfolio, dashboard and paper runtime are frozen legacy. Existing fixture tests, golden vectors and crash-safety invariants remain valuable evidence, but current decoders/fills are not universal protocol or executable-liquidity truth. B2A removes the confirmed TrueNAS, Hermes AI and Phase 8C/8D deployment targets and quarantines the retained monitor as explicit loopback-only/read-only evidence. No default package command starts the legacy scanner or provider runtime. The exact removal/retention record is [`roadmap/b2a-invariant-salvage-manifest.json`](roadmap/b2a-invariant-salvage-manifest.json); the pre-cleanup tree is archived at annotated tag `v1-paper-platform-final`.
 
-For transitional test/evidence traceability only, [`docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) remains `HOLD_UNPROVEN_ACTIVATION` with `pilotEligible: false`. The retired, never-deployed [Phase 8C target is available only in the immutable archive tag](https://github.com/daffieeee-arch/solana-paper-scanner/blob/v1-paper-platform-final/docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). Neither is an active runbook or authorization.
+For transitional test/evidence traceability only, [`docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](docs/PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md) remains `HOLD_UNPROVEN_ACTIVATION` with `pilotEligible: false`. The retired, never-deployed [Phase 8C target is available only in the immutable archive tag](https://github.com/daffieeee-arch/Solana-Quant-Bot/blob/v1-paper-platform-final/docs/PHASE8C_COCKPIT_ONLY_RUNTIME_GRAFANA_ARCHITECTURE.md). Neither is an active runbook or authorization.
 
 ## Provider and safety boundary
 
@@ -46,7 +46,7 @@ Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acq
 - [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md) for the read-only setup/doctor contract;
 - [`AGENTS.md`](AGENTS.md) for coding-agent rules.
 
-G0 is complete: issues #63 and #70 are closed under their reviewed final states. B2A/[#81](https://github.com/daffieeee-arch/solana-paper-scanner/issues/81) is completed and `Operationally Verified`; B3/[#82](https://github.com/daffieeee-arch/solana-paper-scanner/issues/82) is `Done` / `SUPERSEDED` / `Fixture`; B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is the single concrete `In Progress` / `ACTIVE NOW` delivery; and B5/[#84](https://github.com/daffieeee-arch/solana-paper-scanner/issues/84) is `Backlog` / `NEXT`. No B4 acquisition run is authorized.
+G0 is complete: issues #63 and #70 are closed under their reviewed final states. B2A/[#81](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/81) is completed and `Operationally Verified`; B3/[#82](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/82) is `Done` / `SUPERSEDED` / `Fixture`; B4/[#83](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/83) is the single concrete `In Progress` / `ACTIVE NOW` delivery; and B5/[#84](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/84) is `Backlog` / `NEXT`. No B4 acquisition run is authorized.
 
 Development happens on Windows 11 → WSL2 Ubuntu with repository and datasets on WSL ext4. Do not install dependencies or change a user toolchain automatically.
 

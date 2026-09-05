@@ -80,7 +80,7 @@ The identifiers below remain stable migration keys rather than substitutes for G
 
 | Key | Proposed issue | V2 phase | Disposition during migration | Observable purpose |
 |---|---|---|---|---|
-| [G0 / #70](https://github.com/daffieeee-arch/solana-paper-scanner/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `SUPERSEDED` (completed) | completed export, bounded Roadmap Sync/config hardening, successor migration, reconciliation, retention audit and repository evidence; steady-state controls remain #56/#62 |
+| [G0 / #70](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `SUPERSEDED` (completed) | completed export, bounded Roadmap Sync/config hardening, successor migration, reconciliation, retention audit and repository evidence; steady-state controls remain #56/#62 |
 
 G0 was created before V2 metadata support existed, so its original body used only metadata accepted by that `main`. It is now closed `COMPLETED` with Project Status `Done`, V2 Phase `0 Cutover & Cleanup`, V2 Disposition `SUPERSEDED` and Evidence `Operationally Verified`. B2A/#81 completed the first post-G0 delivery; B3/#82 subsequently completed at `Fixture` evidence; B4/#83 now owns current delivery, while #56 and #62 retain steady-state governance control.
 
@@ -119,43 +119,43 @@ During migration G0 alone is concrete `ACTIVE NOW`; when successors are created,
 
 | Issue | Preserved requirement | V2 disposition | Earliest V2 phase | Successor/child mapping and rationale |
 |---|---|---|---|---|
-| [#27](https://github.com/daffieeee-arch/solana-paper-scanner/issues/27) | canonical pool/asset birth | `LATER` | 8 | E5; retain canonical birth evidence for the new engine, not legacy patching |
-| [#28](https://github.com/daffieeee-arch/solana-paper-scanner/issues/28) | asset identity versus dynamic routes/graduation | `LATER` | 8 | E5; asset owns the position while routes evolve |
-| [#29](https://github.com/daffieeee-arch/solana-paper-scanner/issues/29) | transactional outbox/replayable projections | `SPLIT` | 3 | B5 carries atomic immutable dataset publication/replay; E5 carries ledger/outbox/projectors |
-| [#30](https://github.com/daffieeee-arch/solana-paper-scanner/issues/30) | bounded state machine, backpressure, resume, gaps/finality | `SPLIT` | 2 | B4/B5 carry historical ordering, coverage, gaps and resume; E4 carries live stream semantics |
-| [#31](https://github.com/daffieeee-arch/solana-paper-scanner/issues/31) | observed state versus executable quotes/reference price | `SPLIT` | 1 | B3/B5/B8 carry evidence taxonomy; E5 carries executable-quote boundary |
-| [#32](https://github.com/daffieeee-arch/solana-paper-scanner/issues/32) | quote-required paper fill and explicit no-fill | `LATER` | 8 | E5; no new strategy uses legacy fill semantics |
-| [#33](https://github.com/daffieeee-arch/solana-paper-scanner/issues/33) | versioned shared SOL/USD context | `SPLIT` | 6 | B8 carries PIT context or explicit `UNAVAILABLE`; E4/E5 carry prospective/runtime context |
-| [#34](https://github.com/daffieeee-arch/solana-paper-scanner/issues/34) | Pump capability, flow and finality semantics | `SPLIT` | 1 | B3/B5 carry registry/normalized flow; E5 carries entry capability gate |
-| [#35](https://github.com/daffieeee-arch/solana-paper-scanner/issues/35) | professional information architecture | `SPLIT` | 4 | E2/B6 define Observatory IA; E6 defines later workstation IA |
-| [#36](https://github.com/daffieeee-arch/solana-paper-scanner/issues/36) | dockable/resizable multi-monitor shell | `LATER` | 9 | E6; not required for the first authentic visible result |
-| [#37](https://github.com/daffieeee-arch/solana-paper-scanner/issues/37) | sequenced snapshot/resume/gap WebSocket plane | `LATER` | 9 | E6, dependent on E4; early Observatory remains bounded/read-only |
-| [#38](https://github.com/daffieeee-arch/solana-paper-scanner/issues/38) | professional charting | `SPLIT` | 4 | B6 supplies lifecycle charts; E6 supplies full chart foundation |
-| [#39](https://github.com/daffieeee-arch/solana-paper-scanner/issues/39) | virtualized grids and linked context | `SPLIT` | 4 | B6/B7 supply bounded tape/cohort linking; E6 supplies workstation-scale grids |
-| [#40](https://github.com/daffieeee-arch/solana-paper-scanner/issues/40) | Markets/Launch Explorer | `SPLIT` | 4 | B6/B7 supply historical token/cohort exploration; E6 supplies prospective Markets workspace |
-| [#41](https://github.com/daffieeee-arch/solana-paper-scanner/issues/41) | Paper Trading workspace | `LATER` | 9 | E6, blocked on E5 |
-| [#42](https://github.com/daffieeee-arch/solana-paper-scanner/issues/42) | Flow & Microstructure | `SPLIT` | 4 | B6/B7 supply historical lifecycle/flow; E6 supplies prospective/executable microstructure |
-| [#43](https://github.com/daffieeee-arch/solana-paper-scanner/issues/43) | Risk & Actor Intelligence | `SPLIT` | 5 | B7/E3 carry evidence-gated Class-B actor work; E6 supplies later risk workspace |
-| [#44](https://github.com/daffieeee-arch/solana-paper-scanner/issues/44) | Portfolio & Journal | `SPLIT` | 5 | B7/B8 supply experiment/cohort attribution; E6 supplies later portfolio/journal |
-| [#45](https://github.com/daffieeee-arch/solana-paper-scanner/issues/45) | Strategy Lab, Research and Data Quality | `SPLIT` | 3 | B5/B6/B7/B8 produce data quality, cohort and strategy outcomes; E6 supplies full workspace |
-| [#46](https://github.com/daffieeee-arch/solana-paper-scanner/issues/46) | command palette, alerts and mobile | `LATER` | 9 | E6 |
-| [#47](https://github.com/daffieeee-arch/solana-paper-scanner/issues/47) | design system, accessibility, performance and quality | `SPLIT` | 4 | B6 owns MVP quality; E6 owns workstation design system/scale |
-| [#48](https://github.com/daffieeee-arch/solana-paper-scanner/issues/48) | authentic Old Faithful vertical slice | `SPLIT` | 2 | B4 acquisition, B5 Bronze/Silver/static report, B6 interactive visibility; two slice classes required |
-| [#49](https://github.com/daffieeee-arch/solana-paper-scanner/issues/49) | immutable Parquet/Arrow and analytical projections | `SPLIT` | 3 | B5 carries Rust-owned/authorized canonical layers and the explicit physical-writer decision; any Python writer is generated/lossless with schema/logical-hash parity. B7 carries scaled Polars/DuckDB research; ClickHouse is a later adoption gate under E1 |
-| [#50](https://github.com/daffieeee-arch/solana-paper-scanner/issues/50) | PIT features, labels and walk-forward | `SPLIT` | 6 | B8 PIT/censoring/baseline; E3 later scaled evaluation |
-| [#51](https://github.com/daffieeee-arch/solana-paper-scanner/issues/51) | ML/ranking/survival research | `LATER` | 6 | E3 after stable sufficient Gold; no automatic promotion |
-| [#52](https://github.com/daffieeee-arch/solana-paper-scanner/issues/52) | prospective shadow and engine boundary | `SPLIT` | 7 | E4 owns Triton-only shadow; E5 owns a later explicit adopt/reject engine decision |
-| [#53](https://github.com/daffieeee-arch/solana-paper-scanner/issues/53) | execution, signing and reconciliation boundary | `SPLIT` | 8 | E5 owns paper/transaction semantics; E7 owns isolated signing/VPS/live gating |
-| [#54](https://github.com/daffieeee-arch/solana-paper-scanner/issues/54) | modularization/property/mutation/fuzz/state-machine tests | `SPLIT` | 0 | B2A/B3/B4/B5/B6/B8 own scoped tests; #62 retains cross-cutting governance |
-| [#55](https://github.com/daffieeee-arch/solana-paper-scanner/issues/55) | OpenTelemetry/SLO/evidence-aware observability | `SPLIT` | 2 | B4/B5/B6 own bounded run/evidence telemetry; E4/E7 own later runtime SLOs |
-| [#56](https://github.com/daffieeee-arch/solana-paper-scanner/issues/56) | Roadmap Sync | `SUPERSEDED` | 0 | G0 replaces/extends its V1 sync/config contract; #56 remains `Done`, pinned as a visible operational control and Evidence `Operationally Verified` |
-| [#57](https://github.com/daffieeee-arch/solana-paper-scanner/issues/57) | trusted legacy-runtime correctness epic | `SUPERSEDED` | 8 | E5 replaces execution target; #27–#34 requirements remain evidence |
-| [#58](https://github.com/daffieeee-arch/solana-paper-scanner/issues/58) | combined professional cockpit epic | `SPLIT` | 4 | E2 Research Observatory and E6 Professional Trading Workstation |
-| [#59](https://github.com/daffieeee-arch/solana-paper-scanner/issues/59) | authentic data/research epic | `SUPERSEDED` | 1 | E1 removes ClickHouse/TrueNAS assumptions and supplies visible bounded gates |
-| [#60](https://github.com/daffieeee-arch/solana-paper-scanner/issues/60) | quant/ML validation epic | `SUPERSEDED` | 5 | E3 accepts edge discovery, falsification or insufficient sample |
-| [#61](https://github.com/daffieeee-arch/solana-paper-scanner/issues/61) | combined shadow/execution epic | `SPLIT` | 7 | E4 prospective shadow, E5 new paper engine and E7 gated live/VPS |
-| [#62](https://github.com/daffieeee-arch/solana-paper-scanner/issues/62) | engineering/observability/governance epic | `ACTIVE NOW` | 0 | PR 1 and B2A; keep open and continue as cross-cutting control |
-| [#63](https://github.com/daffieeee-arch/solana-paper-scanner/issues/63) | paper-first program baseline | `SUPERSEDED` | 0 | E0 is the data-first program contract; explicitly reopened after the immutable preflight snapshot, kept open and pinned through the initial G0/E0 audit, unpinned by the reviewed evidence change, then closed individually as `not planned / superseded` only after successful reconciliation |
+| [#27](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/27) | canonical pool/asset birth | `LATER` | 8 | E5; retain canonical birth evidence for the new engine, not legacy patching |
+| [#28](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/28) | asset identity versus dynamic routes/graduation | `LATER` | 8 | E5; asset owns the position while routes evolve |
+| [#29](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/29) | transactional outbox/replayable projections | `SPLIT` | 3 | B5 carries atomic immutable dataset publication/replay; E5 carries ledger/outbox/projectors |
+| [#30](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/30) | bounded state machine, backpressure, resume, gaps/finality | `SPLIT` | 2 | B4/B5 carry historical ordering, coverage, gaps and resume; E4 carries live stream semantics |
+| [#31](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/31) | observed state versus executable quotes/reference price | `SPLIT` | 1 | B3/B5/B8 carry evidence taxonomy; E5 carries executable-quote boundary |
+| [#32](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/32) | quote-required paper fill and explicit no-fill | `LATER` | 8 | E5; no new strategy uses legacy fill semantics |
+| [#33](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/33) | versioned shared SOL/USD context | `SPLIT` | 6 | B8 carries PIT context or explicit `UNAVAILABLE`; E4/E5 carry prospective/runtime context |
+| [#34](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/34) | Pump capability, flow and finality semantics | `SPLIT` | 1 | B3/B5 carry registry/normalized flow; E5 carries entry capability gate |
+| [#35](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/35) | professional information architecture | `SPLIT` | 4 | E2/B6 define Observatory IA; E6 defines later workstation IA |
+| [#36](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/36) | dockable/resizable multi-monitor shell | `LATER` | 9 | E6; not required for the first authentic visible result |
+| [#37](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/37) | sequenced snapshot/resume/gap WebSocket plane | `LATER` | 9 | E6, dependent on E4; early Observatory remains bounded/read-only |
+| [#38](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/38) | professional charting | `SPLIT` | 4 | B6 supplies lifecycle charts; E6 supplies full chart foundation |
+| [#39](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/39) | virtualized grids and linked context | `SPLIT` | 4 | B6/B7 supply bounded tape/cohort linking; E6 supplies workstation-scale grids |
+| [#40](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/40) | Markets/Launch Explorer | `SPLIT` | 4 | B6/B7 supply historical token/cohort exploration; E6 supplies prospective Markets workspace |
+| [#41](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/41) | Paper Trading workspace | `LATER` | 9 | E6, blocked on E5 |
+| [#42](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/42) | Flow & Microstructure | `SPLIT` | 4 | B6/B7 supply historical lifecycle/flow; E6 supplies prospective/executable microstructure |
+| [#43](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/43) | Risk & Actor Intelligence | `SPLIT` | 5 | B7/E3 carry evidence-gated Class-B actor work; E6 supplies later risk workspace |
+| [#44](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/44) | Portfolio & Journal | `SPLIT` | 5 | B7/B8 supply experiment/cohort attribution; E6 supplies later portfolio/journal |
+| [#45](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/45) | Strategy Lab, Research and Data Quality | `SPLIT` | 3 | B5/B6/B7/B8 produce data quality, cohort and strategy outcomes; E6 supplies full workspace |
+| [#46](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/46) | command palette, alerts and mobile | `LATER` | 9 | E6 |
+| [#47](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/47) | design system, accessibility, performance and quality | `SPLIT` | 4 | B6 owns MVP quality; E6 owns workstation design system/scale |
+| [#48](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/48) | authentic Old Faithful vertical slice | `SPLIT` | 2 | B4 acquisition, B5 Bronze/Silver/static report, B6 interactive visibility; two slice classes required |
+| [#49](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/49) | immutable Parquet/Arrow and analytical projections | `SPLIT` | 3 | B5 carries Rust-owned/authorized canonical layers and the explicit physical-writer decision; any Python writer is generated/lossless with schema/logical-hash parity. B7 carries scaled Polars/DuckDB research; ClickHouse is a later adoption gate under E1 |
+| [#50](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/50) | PIT features, labels and walk-forward | `SPLIT` | 6 | B8 PIT/censoring/baseline; E3 later scaled evaluation |
+| [#51](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/51) | ML/ranking/survival research | `LATER` | 6 | E3 after stable sufficient Gold; no automatic promotion |
+| [#52](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/52) | prospective shadow and engine boundary | `SPLIT` | 7 | E4 owns Triton-only shadow; E5 owns a later explicit adopt/reject engine decision |
+| [#53](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/53) | execution, signing and reconciliation boundary | `SPLIT` | 8 | E5 owns paper/transaction semantics; E7 owns isolated signing/VPS/live gating |
+| [#54](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/54) | modularization/property/mutation/fuzz/state-machine tests | `SPLIT` | 0 | B2A/B3/B4/B5/B6/B8 own scoped tests; #62 retains cross-cutting governance |
+| [#55](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/55) | OpenTelemetry/SLO/evidence-aware observability | `SPLIT` | 2 | B4/B5/B6 own bounded run/evidence telemetry; E4/E7 own later runtime SLOs |
+| [#56](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/56) | Roadmap Sync | `SUPERSEDED` | 0 | G0 replaces/extends its V1 sync/config contract; #56 remains `Done`, pinned as a visible operational control and Evidence `Operationally Verified` |
+| [#57](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/57) | trusted legacy-runtime correctness epic | `SUPERSEDED` | 8 | E5 replaces execution target; #27–#34 requirements remain evidence |
+| [#58](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/58) | combined professional cockpit epic | `SPLIT` | 4 | E2 Research Observatory and E6 Professional Trading Workstation |
+| [#59](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/59) | authentic data/research epic | `SUPERSEDED` | 1 | E1 removes ClickHouse/TrueNAS assumptions and supplies visible bounded gates |
+| [#60](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/60) | quant/ML validation epic | `SUPERSEDED` | 5 | E3 accepts edge discovery, falsification or insufficient sample |
+| [#61](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/61) | combined shadow/execution epic | `SPLIT` | 7 | E4 prospective shadow, E5 new paper engine and E7 gated live/VPS |
+| [#62](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/62) | engineering/observability/governance epic | `ACTIVE NOW` | 0 | PR 1 and B2A; keep open and continue as cross-cutting control |
+| [#63](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/63) | paper-first program baseline | `SUPERSEDED` | 0 | E0 is the data-first program contract; explicitly reopened after the immutable preflight snapshot, kept open and pinned through the initial G0/E0 audit, unpinned by the reviewed evidence change, then closed individually as `not planned / superseded` only after successful reconciliation |
 
 All 37 legacy rows are mapped exactly once. Every `SPLIT` row has at least two named successor destinations; every `SUPERSEDED` row has exactly one.
 
@@ -211,7 +211,7 @@ Project #4 is the active delivery cockpit for program E0: build authentic,
 point-in-time Solana/Pump evidence and discover a defensible edge or falsify
 the hypothesis. Profitability is not assumed.
 
-- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/solana-paper-scanner/blob/main/docs/HANDOFF_V2.md)
+- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/Solana-Quant-Bot/blob/main/docs/HANDOFF_V2.md)
 - Network boundary: Triton One only.
 - Product order: authentic data and Research Observatory before the
   Professional Trading Workstation, prospective shadow and new paper engine.

@@ -1,6 +1,6 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B4/[#83](https://github.com/daffieeee-arch/solana-paper-scanner/issues/83) is the concrete current delivery; no acquisition run is authorized.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B4/[#83](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/83) is the concrete current delivery; no acquisition run is authorized.
 
 ## Program outcome
 

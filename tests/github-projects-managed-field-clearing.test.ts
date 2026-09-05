@@ -15,7 +15,7 @@ import {
   verifyProjectProjection,
 } from '../scripts/github-projects/sync.mjs';
 
-const REPOSITORY = 'daffieeee-arch/solana-paper-scanner';
+const REPOSITORY = 'daffieeee-arch/Solana-Quant-Bot';
 const PROJECT = { id: 'PROJECT_4', number: 4 };
 const fullConfig = JSON.parse(readFileSync('roadmap/project-config.json', 'utf8'));
 const impactFixture = JSON.parse(readFileSync(
