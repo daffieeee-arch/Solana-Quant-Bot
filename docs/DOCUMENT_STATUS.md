@@ -35,6 +35,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`research/OF1_QUANT_RESEARCH_MEMO_V2.md`](research/OF1_QUANT_RESEARCH_MEMO_V2.md)
 - [`research/B4_OFFLINE_REMAINDER.md`](research/B4_OFFLINE_REMAINDER.md)
 - [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json)
+- [`research/JETSTREAMER_V0_7_0_PIN_REVIEW.md`](research/JETSTREAMER_V0_7_0_PIN_REVIEW.md)
 
 ## Superseded documents
 
