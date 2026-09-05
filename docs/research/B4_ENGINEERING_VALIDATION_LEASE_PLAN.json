@@ -1,0 +1,92 @@
+{
+  "schemaVersion": "B4_ENGINEERING_VALIDATION_LEASE_PLAN_1",
+  "plan_id": "b4-eng-validation-lease-epoch978-first-128",
+  "document_status": "ACTIVE",
+  "issue": "#83",
+  "approved": false,
+  "networkEnabled": false,
+  "intendedNetworkEnabledAfterApproval": true,
+  "lease_intent": "ACQUISITION_LEASED",
+  "purpose": "ENGINEERING_VALIDATION_ONLY",
+  "package_name": "B4 engineering-validation lease",
+  "not": "B4B live client, RESEARCH_SAMPLING, or an approved download",
+  "operator": null,
+  "approved_at": null,
+  "approved_by": null,
+  "cost_confirmation": "NOT_CONFIRMED",
+  "creditSpendAuthorized": false,
+  "host": "files.old-faithful.net",
+  "hostAllowlist": ["files.old-faithful.net"],
+  "redirectsAllowed": false,
+  "mirrorsAllowed": false,
+  "fallbackHostAllowed": false,
+  "alternateProtocolAllowed": false,
+  "proxyAllowed": false,
+  "s3Allowed": false,
+  "hostedGrpcAllowed": false,
+  "jetstreamerCandidateSha": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+  "objectIdentities": {
+    "epochCarSha256": "UNAVAILABLE",
+    "epochCarCid": "UNAVAILABLE",
+    "slotsTxtSha256": "UNAVAILABLE",
+    "indexSha256": "UNAVAILABLE"
+  },
+  "epoch": 978,
+  "slot_range": {
+    "startInclusive": 422496000,
+    "endExclusive": 422496128,
+    "requestedSlots": 128,
+    "objectKind": "SLOT_WINDOW",
+    "selectionPolicy": "SOURCE_AND_ENGINEERING_PROPERTIES_ONLY",
+    "selectionRationale": "First 128 slots of epoch 978 (978 * 432000). Epoch chosen for documented coverage/CU properties, not payload inspection. Not the old provisional example window.",
+    "selectionNonClaims": [
+      "NO_PROFIT_SELECTION",
+      "NO_TOKEN_PERFORMANCE_SELECTION",
+      "NO_KNOWN_WINNER_SELECTION",
+      "NO_PAYLOAD_INSPECTION",
+      "NO_CLAIM_WINDOW_CONTAINS_PUMP_BUY_TRADE_EVENT"
+    ],
+    "rejectedProvisionalExample": {
+      "startInclusive": 422506000,
+      "endExclusive": 422506128,
+      "reason": "Must not be fetched because it appeared in earlier docs without origin/class."
+    }
+  },
+  "budget": {
+    "maxRequests": 16,
+    "warningRequests": 13,
+    "requestRetries": 2,
+    "concurrency": 1,
+    "maxResponseEntityBytes": 16777216,
+    "warningResponseEntityBytes": 12582912,
+    "maxResponseBytesTotal": 134217728,
+    "warningResponseBytesTotal": 104857600,
+    "maxDiskBytes": 268435456,
+    "warningDiskBytes": 209715200,
+    "requiredFreeDiskBytes": 536870912,
+    "maxMemoryBytes": 536870912,
+    "warningMemoryBytes": 419430400,
+    "maxRuntimeMs": 1800000,
+    "warningRuntimeMs": 1440000,
+    "responseTimeoutMs": 30000
+  },
+  "hard_stop": [
+    "Stop on any hard budget, deny-list, override, full-epoch CAR, identity failure, or approved/networkEnabled not both true.",
+    "Persist abort receipts. Do not auto-expand range or budgets.",
+    "A failed first slice does not authorize a larger download."
+  ],
+  "resumePolicy": "Identity-bound resume only after plan hash, source/index fingerprints and completed raw hashes revalidate.",
+  "coveragePolicy": "UNAVAILABLE, GAP and QUARANTINED stay distinct. Missing is never zero.",
+  "expectedTerminalStates": [
+    "PASS",
+    "FALSIFIED",
+    "INSUFFICIENT_SAMPLE",
+    "ABORTED_BUDGET",
+    "QUARANTINED"
+  ],
+  "notes": [
+    "This JSON is a draft lease. approved=false and networkEnabled=false.",
+    "See docs/research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md",
+    "Do not construct a network client from this file."
+  ]
+}

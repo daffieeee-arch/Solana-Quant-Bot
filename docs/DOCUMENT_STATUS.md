@@ -36,6 +36,8 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`research/B4_OFFLINE_REMAINDER.md`](research/B4_OFFLINE_REMAINDER.md)
 - [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json)
 - [`research/JETSTREAMER_V0_7_0_PIN_REVIEW.md`](research/JETSTREAMER_V0_7_0_PIN_REVIEW.md)
+- [`research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md`](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md)
+- [`research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.json`](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.json)
 
 ## Superseded documents
 
@@ -57,7 +59,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - `protocol-coverage.md`
 - `pump-source-classification.md`
 
-The JSON manifests under `docs/research/` are historical evidence artifacts unless a listed Active document or a future V2 dataset manifest explicitly supersedes them. Their old ranges, caps, eligibility fields and source claims are not active V2 approval. [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json) is an ACTIVE draft template with `approved: false` and `networkEnabled: false`. Filling its host or range fields is not an `ACQUISITION_LEASED` plan.
+The JSON manifests under `docs/research/` are historical evidence artifacts unless a listed Active document or a future V2 dataset manifest explicitly supersedes them. Their old ranges, caps, eligibility fields and source claims are not active V2 approval. [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json) is an ACTIVE draft template with `approved: false` and `networkEnabled: false`. Filling its host or range fields is not an `ACQUISITION_LEASED` plan. [`research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.json`](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.json) is an ACTIVE draft lease with `approved: false` and `networkEnabled: false`. It is not permission to download.
 
 `PHASE7A_PUMP_ACTIVATION_EVIDENCE.md` is intentionally classified here without an inline banner because the offline citation gate content-hashes that evidence document. PR 1 preserves those evidence bytes rather than rewriting the trusted digest.
 

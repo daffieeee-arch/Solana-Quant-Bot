@@ -144,7 +144,7 @@ client under a "test helper" name.
 
 ## After this package
 
-Only then may a **separate** immutable `ACQUISITION_LEASED` plan be
-written for a later live B4B attempt. That plan needs an explicit
-host / range / request / byte / disk / runtime budget and a hard stop.
-This document is not that plan.
+The separate draft lease is
+[`B4_ENGINEERING_VALIDATION_LEASE_PLAN.md`](B4_ENGINEERING_VALIDATION_LEASE_PLAN.md).
+It is still `approved: false` and is not live B4B. This remainder
+document is not that approval.
