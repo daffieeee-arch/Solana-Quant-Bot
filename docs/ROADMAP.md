@@ -1,6 +1,6 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B4/[#83](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/83) is the concrete current delivery. PR #94 recorded B4A as a `Fixture` partial result only; no acquisition run is authorized. The next honest B4 package is the offline remainder in [`research/B4_OFFLINE_REMAINDER.md`](research/B4_OFFLINE_REMAINDER.md), not live B4B.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. [`PROJECT_V2_REBASE.md`](PROJECT_V2_REBASE.md) and [`../roadmap/project-v2-content-migration-ledger.json`](../roadmap/project-v2-content-migration-ledger.json) preserve the completed G0 migration contract and evidence. B4/[#83](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/83) is the concrete current delivery. PR #94 recorded B4A as a `Fixture` partial result only; no acquisition run is authorized. A draft `ENGINEERING_VALIDATION_ONLY` lease exists in [`research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md`](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md) with `approved: false`; it is not live B4B.
 
 ## Program outcome
 
