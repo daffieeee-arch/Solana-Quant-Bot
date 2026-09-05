@@ -10,6 +10,7 @@ The current scanner/portfolio/dashboard/paper runtime is **FROZEN LEGACY**. Do n
 
 ## Source of truth and workflow
 
+- GitHub repository identity: `daffieeee-arch/Solana-Quant-Bot` (Solana Quant Bot). The former GitHub name `daffieeee-arch/solana-paper-scanner` / “Solana Paper Scanner” is a historical alias only; it is not a second live repository. Do not open, restore or treat that old name as the current project folder.
 - Integration branch: `main`; create a bounded task branch from current `origin/main` and never edit `main` directly.
 - Central delivery roadmap: [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4).
 - V2 decision: [`docs/ADR_0001_V2_DATA_FIRST_CUTOVER.md`](docs/ADR_0001_V2_DATA_FIRST_CUTOVER.md).
