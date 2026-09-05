@@ -1,0 +1,20 @@
+{
+  "plan_id": "b4-offline-remainder-draft",
+  "document_status": "ACTIVE",
+  "approved": false,
+  "networkEnabled": false,
+  "purpose": "ENGINEERING_VALIDATION_ONLY",
+  "package_name": "B4-offline remainder",
+  "not": "B4B live leased acquisition",
+  "host": null,
+  "slot_range": null,
+  "request_budget": null,
+  "byte_budget": null,
+  "disk_budget": null,
+  "runtime_budget": null,
+  "hard_stop": "Do not download. Do not set approved true in this template.",
+  "notes": [
+    "Filling host or range fields here is not ACQUISITION_LEASED approval.",
+    "See docs/research/B4_OFFLINE_REMAINDER.md"
+  ]
+}

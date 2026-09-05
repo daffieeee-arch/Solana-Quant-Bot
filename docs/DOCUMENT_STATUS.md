@@ -32,6 +32,9 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md)
 - [`research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md`](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md)
 - [`research/B4A_OFFLINE_RANGE_RECORDER.md`](research/B4A_OFFLINE_RANGE_RECORDER.md)
+- [`research/OF1_QUANT_RESEARCH_MEMO_V2.md`](research/OF1_QUANT_RESEARCH_MEMO_V2.md)
+- [`research/B4_OFFLINE_REMAINDER.md`](research/B4_OFFLINE_REMAINDER.md)
+- [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json)
 
 ## Superseded documents
 
@@ -53,7 +56,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - `protocol-coverage.md`
 - `pump-source-classification.md`
 
-The JSON manifests under `docs/research/` are historical evidence artifacts unless a future V2 dataset manifest explicitly supersedes them. Their old ranges, caps, eligibility fields and source claims are not active V2 approval.
+The JSON manifests under `docs/research/` are historical evidence artifacts unless a listed Active document or a future V2 dataset manifest explicitly supersedes them. Their old ranges, caps, eligibility fields and source claims are not active V2 approval. [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json) is an ACTIVE draft template with `approved: false` and `networkEnabled: false`. Filling its host or range fields is not an `ACQUISITION_LEASED` plan.
 
 `PHASE7A_PUMP_ACTIVATION_EVIDENCE.md` is intentionally classified here without an inline banner because the offline citation gate content-hashes that evidence document. PR 1 preserves those evidence bytes rather than rewriting the trusted digest.
 
