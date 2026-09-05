@@ -53,7 +53,7 @@ Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expecte
 
 The exact active list is maintained in [`AGENTS.md`](../AGENTS.md) and [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md). Run focused checks during editing and every executable full gate before review.
 
-The approved 2026-09-02 development host has the exact Node/Rust toolchains through an untracked user-owned wrapper; that local receipt does not authorize installation or profile changes on another host. Run the doctor first, record blocked commands, and use clean GitHub CI as the authoritative complete gate.
+GitHub CI remains the authoritative complete gate. The 2026-09-05 WSL host measurement in [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) item 25 is not a local Node `22.23.2` / `rustup` receipt and does not authorize installation, native rebuilds or profile changes. Run the doctor first and record blocked commands.
 
 ## What CI does not prove
 

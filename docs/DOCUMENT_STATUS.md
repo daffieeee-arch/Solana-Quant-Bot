@@ -31,6 +31,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md)
 - [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md)
 - [`research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md`](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md)
+- [`research/B4A_OFFLINE_RANGE_RECORDER.md`](research/B4A_OFFLINE_RANGE_RECORDER.md)
 
 ## Superseded documents
 
