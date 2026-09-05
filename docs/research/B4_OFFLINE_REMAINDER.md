@@ -138,9 +138,8 @@ following are true. It still does **not** make B4 `Proven` and still does
 Concrete paths may move during implementation. Do not create a network
 client under a "test helper" name.
 
-- pin review note under `docs/research/`
-- default-deny tests next to the existing B4A tests
-- receipt schema / writer beside the current recorder, still offline
+- pin review note: [`JETSTREAMER_V0_7_0_PIN_REVIEW.md`](JETSTREAMER_V0_7_0_PIN_REVIEW.md)
+- offline implementation: `scripts/b4-offline-remainder.mjs` plus `tests/b4-offline-remainder.test.ts`
 - this document stays the contract; do not silently widen it
 
 ## After this package
