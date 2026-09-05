@@ -187,4 +187,4 @@ On any hard failure before B4B approval:
 
 ## Project boundaries
 
-This is B4A and remains **Fixture** evidence. B4B will be the separately approved live acquisition phase and must pass explicit lease/governance checks.
+This is B4A and remains **Fixture** evidence. The offline B4 remainder specified in [`B4_OFFLINE_REMAINDER.md`](B4_OFFLINE_REMAINDER.md) sits between this recorder and any later live lease. That remainder is **not** B4B. B4B stays reserved for the separately approved live acquisition phase and must pass explicit lease/governance checks.
