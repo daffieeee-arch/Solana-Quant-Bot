@@ -1,7 +1,7 @@
 {
-  "schema": "OF1_PLANNER_DEPENDENCY_REVIEW_1",
+  "schema": "OF1_ACQUISITION_DEPENDENCY_REVIEW_2",
   "reviewedAt": "2026-09-06",
-  "scope": "Offline planner and fixture durability store. Cargo.lock pins all edges unchanged. Build scripts run under syscall network denial. The Rust 1.97.1 standard-library file lock avoids any fs2 dependency.",
+  "scope": "Default offline planner/store; optional fixed-host HTTPS; separate ephemeral loopback TLS fixtures. Package/lock metadata inventory and actually enabled Linux package trees are distinguished. No HTTP/RPC client, Solana runtime, S3, OpenSSL or aws-lc stack.",
   "packages": [
     {
       "name": "bitflags",
@@ -219,5 +219,1700 @@
       "license": "MIT",
       "buildScript": true
     }
+  ],
+  "lockedGraphPackages": [
+    {
+      "name": "asn1-rs",
+      "version": "0.7.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "asn1-rs-derive",
+      "version": "0.6.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "asn1-rs-impl",
+      "version": "0.2.0",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "autocfg",
+      "version": "1.5.1",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "bit-vec",
+      "version": "0.9.1",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "bitflags",
+      "version": "2.13.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cc",
+      "version": "1.4.5",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "data-encoding",
+      "version": "2.11.1",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "der-parser",
+      "version": "10.0.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "deranged",
+      "version": "0.5.8",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "displaydoc",
+      "version": "0.2.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "errno",
+      "version": "0.3.14",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "fastrand",
+      "version": "2.5.0",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.12",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7",
+      "license": "MIT",
+      "buildScript": true
+    },
+    {
+      "name": "getrandom",
+      "version": "0.2.17",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "getrandom",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "hex",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "itoa",
+      "version": "1.0.18",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "lazy_static",
+      "version": "1.5.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "libc",
+      "version": "0.2.189",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "linux-raw-sys",
+      "version": "0.12.1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "memchr",
+      "version": "2.8.3",
+      "license": "Unlicense OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "minimal-lexical",
+      "version": "0.2.1",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "nom",
+      "version": "7.1.3",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "num-bigint",
+      "version": "0.4.8",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "num-conv",
+      "version": "0.2.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "num-integer",
+      "version": "0.1.47",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "num-traits",
+      "version": "0.2.19",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "of1-range-recorder",
+      "version": "0.1.0",
+      "license": "UNLICENSED",
+      "buildScript": false
+    },
+    {
+      "name": "oid-registry",
+      "version": "0.8.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "once_cell",
+      "version": "1.21.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "powerfmt",
+      "version": "0.2.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "r-efi",
+      "version": "6.0.0",
+      "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+      "buildScript": false
+    },
+    {
+      "name": "rcgen",
+      "version": "0.14.10",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "ring",
+      "version": "0.17.14",
+      "license": "Apache-2.0 AND ISC",
+      "buildScript": true
+    },
+    {
+      "name": "rusticata-macros",
+      "version": "4.1.0",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.4",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": true
+    },
+    {
+      "name": "rustls",
+      "version": "0.23.43",
+      "license": "Apache-2.0 OR ISC OR MIT",
+      "buildScript": true
+    },
+    {
+      "name": "rustls-pki-types",
+      "version": "1.15.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "rustls-webpki",
+      "version": "0.103.15",
+      "license": "ISC",
+      "buildScript": false
+    },
+    {
+      "name": "serde",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "serde_core",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.151",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "subtle",
+      "version": "2.6.1",
+      "license": "BSD-3-Clause",
+      "buildScript": false
+    },
+    {
+      "name": "syn",
+      "version": "2.0.119",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "syn",
+      "version": "3.0.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "synstructure",
+      "version": "0.13.2",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "tempfile",
+      "version": "3.27.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "thiserror",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "time",
+      "version": "0.3.55",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "time-core",
+      "version": "0.1.9",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "time-macros",
+      "version": "0.2.32",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.24",
+      "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "buildScript": false
+    },
+    {
+      "name": "untrusted",
+      "version": "0.9.0",
+      "license": "ISC",
+      "buildScript": false
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "wasi",
+      "version": "0.11.1+wasi-snapshot-preview1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "webpki-roots",
+      "version": "1.0.9",
+      "license": "CDLA-Permissive-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows_aarch64_gnullvm",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows_aarch64_msvc",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows_i686_gnu",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows_i686_gnullvm",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows_i686_msvc",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows_x86_64_gnu",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows_x86_64_gnullvm",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows_x86_64_msvc",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows-link",
+      "version": "0.2.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.52.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.61.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-targets",
+      "version": "0.52.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "x509-parser",
+      "version": "0.18.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "yasna",
+      "version": "0.6.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "zeroize",
+      "version": "1.9.0",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "zmij",
+      "version": "1.0.23",
+      "license": "MIT",
+      "buildScript": true
+    }
+  ],
+  "featureProfiles": [
+    {
+      "name": "default",
+      "features": [],
+      "allFeatures": false,
+      "target": "x86_64-unknown-linux-gnu",
+      "packages": [
+        {
+          "name": "bitflags",
+          "version": "2.13.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "block-buffer",
+          "version": "0.10.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cfg-if",
+          "version": "1.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cpufeatures",
+          "version": "0.2.17",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "crypto-common",
+          "version": "0.1.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "digest",
+          "version": "0.10.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "fastrand",
+          "version": "2.5.0",
+          "license": "Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "generic-array",
+          "version": "0.14.7",
+          "license": "MIT",
+          "buildScript": true
+        },
+        {
+          "name": "getrandom",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "hex",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "itoa",
+          "version": "1.0.18",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "libc",
+          "version": "0.2.189",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "linux-raw-sys",
+          "version": "0.12.1",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "memchr",
+          "version": "2.8.3",
+          "license": "Unlicense OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "of1-range-recorder",
+          "version": "0.1.0",
+          "license": "UNLICENSED",
+          "buildScript": false
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "proc-macro2",
+          "version": "1.0.107",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "quote",
+          "version": "1.0.47",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "rustix",
+          "version": "1.1.4",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": true
+        },
+        {
+          "name": "serde",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_core",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_derive",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0.151",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "sha2",
+          "version": "0.10.9",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "syn",
+          "version": "3.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "tempfile",
+          "version": "3.27.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "thiserror",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "thiserror-impl",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "typenum",
+          "version": "1.20.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "unicode-ident",
+          "version": "1.0.24",
+          "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+          "buildScript": false
+        },
+        {
+          "name": "version_check",
+          "version": "0.9.5",
+          "license": "MIT/Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "zmij",
+          "version": "1.0.23",
+          "license": "MIT",
+          "buildScript": true
+        }
+      ]
+    },
+    {
+      "name": "network-of1",
+      "features": [
+        "network-of1"
+      ],
+      "allFeatures": false,
+      "target": "x86_64-unknown-linux-gnu",
+      "packages": [
+        {
+          "name": "bitflags",
+          "version": "2.13.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "block-buffer",
+          "version": "0.10.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cc",
+          "version": "1.4.5",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cfg-if",
+          "version": "1.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cpufeatures",
+          "version": "0.2.17",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "crypto-common",
+          "version": "0.1.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "digest",
+          "version": "0.10.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "fastrand",
+          "version": "2.5.0",
+          "license": "Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "find-msvc-tools",
+          "version": "0.1.12",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "generic-array",
+          "version": "0.14.7",
+          "license": "MIT",
+          "buildScript": true
+        },
+        {
+          "name": "getrandom",
+          "version": "0.2.17",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "getrandom",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "hex",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "itoa",
+          "version": "1.0.18",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "libc",
+          "version": "0.2.189",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "linux-raw-sys",
+          "version": "0.12.1",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "memchr",
+          "version": "2.8.3",
+          "license": "Unlicense OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "of1-range-recorder",
+          "version": "0.1.0",
+          "license": "UNLICENSED",
+          "buildScript": false
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "proc-macro2",
+          "version": "1.0.107",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "quote",
+          "version": "1.0.47",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "ring",
+          "version": "0.17.14",
+          "license": "Apache-2.0 AND ISC",
+          "buildScript": true
+        },
+        {
+          "name": "rustix",
+          "version": "1.1.4",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": true
+        },
+        {
+          "name": "rustls",
+          "version": "0.23.43",
+          "license": "Apache-2.0 OR ISC OR MIT",
+          "buildScript": true
+        },
+        {
+          "name": "rustls-pki-types",
+          "version": "1.15.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "rustls-webpki",
+          "version": "0.103.15",
+          "license": "ISC",
+          "buildScript": false
+        },
+        {
+          "name": "serde",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_core",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_derive",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0.151",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "sha2",
+          "version": "0.10.9",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "shlex",
+          "version": "2.0.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "subtle",
+          "version": "2.6.1",
+          "license": "BSD-3-Clause",
+          "buildScript": false
+        },
+        {
+          "name": "syn",
+          "version": "3.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "tempfile",
+          "version": "3.27.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "thiserror",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "thiserror-impl",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "typenum",
+          "version": "1.20.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "unicode-ident",
+          "version": "1.0.24",
+          "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+          "buildScript": false
+        },
+        {
+          "name": "untrusted",
+          "version": "0.9.0",
+          "license": "ISC",
+          "buildScript": false
+        },
+        {
+          "name": "version_check",
+          "version": "0.9.5",
+          "license": "MIT/Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "webpki-roots",
+          "version": "1.0.9",
+          "license": "CDLA-Permissive-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "zeroize",
+          "version": "1.9.0",
+          "license": "Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "zmij",
+          "version": "1.0.23",
+          "license": "MIT",
+          "buildScript": true
+        }
+      ]
+    },
+    {
+      "name": "tls-fixture",
+      "features": [
+        "tls-fixture"
+      ],
+      "allFeatures": false,
+      "target": "x86_64-unknown-linux-gnu",
+      "packages": [
+        {
+          "name": "bitflags",
+          "version": "2.13.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "block-buffer",
+          "version": "0.10.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cc",
+          "version": "1.4.5",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cfg-if",
+          "version": "1.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cpufeatures",
+          "version": "0.2.17",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "crypto-common",
+          "version": "0.1.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "deranged",
+          "version": "0.5.8",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "digest",
+          "version": "0.10.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "fastrand",
+          "version": "2.5.0",
+          "license": "Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "find-msvc-tools",
+          "version": "0.1.12",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "generic-array",
+          "version": "0.14.7",
+          "license": "MIT",
+          "buildScript": true
+        },
+        {
+          "name": "getrandom",
+          "version": "0.2.17",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "getrandom",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "hex",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "itoa",
+          "version": "1.0.18",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "libc",
+          "version": "0.2.189",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "linux-raw-sys",
+          "version": "0.12.1",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "memchr",
+          "version": "2.8.3",
+          "license": "Unlicense OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "num-conv",
+          "version": "0.2.2",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "of1-range-recorder",
+          "version": "0.1.0",
+          "license": "UNLICENSED",
+          "buildScript": false
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "powerfmt",
+          "version": "0.2.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "proc-macro2",
+          "version": "1.0.107",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "quote",
+          "version": "1.0.47",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "rcgen",
+          "version": "0.14.10",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "ring",
+          "version": "0.17.14",
+          "license": "Apache-2.0 AND ISC",
+          "buildScript": true
+        },
+        {
+          "name": "rustix",
+          "version": "1.1.4",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": true
+        },
+        {
+          "name": "rustls",
+          "version": "0.23.43",
+          "license": "Apache-2.0 OR ISC OR MIT",
+          "buildScript": true
+        },
+        {
+          "name": "rustls-pki-types",
+          "version": "1.15.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "rustls-webpki",
+          "version": "0.103.15",
+          "license": "ISC",
+          "buildScript": false
+        },
+        {
+          "name": "serde",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_core",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_derive",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0.151",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "sha2",
+          "version": "0.10.9",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "shlex",
+          "version": "2.0.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "subtle",
+          "version": "2.6.1",
+          "license": "BSD-3-Clause",
+          "buildScript": false
+        },
+        {
+          "name": "syn",
+          "version": "3.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "tempfile",
+          "version": "3.27.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "thiserror",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "thiserror-impl",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "time",
+          "version": "0.3.55",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "time-core",
+          "version": "0.1.9",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "typenum",
+          "version": "1.20.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "unicode-ident",
+          "version": "1.0.24",
+          "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+          "buildScript": false
+        },
+        {
+          "name": "untrusted",
+          "version": "0.9.0",
+          "license": "ISC",
+          "buildScript": false
+        },
+        {
+          "name": "version_check",
+          "version": "0.9.5",
+          "license": "MIT/Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "yasna",
+          "version": "0.6.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "zeroize",
+          "version": "1.9.0",
+          "license": "Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "zmij",
+          "version": "1.0.23",
+          "license": "MIT",
+          "buildScript": true
+        }
+      ]
+    },
+    {
+      "name": "all",
+      "features": [],
+      "allFeatures": true,
+      "target": "x86_64-unknown-linux-gnu",
+      "packages": [
+        {
+          "name": "bitflags",
+          "version": "2.13.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "block-buffer",
+          "version": "0.10.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cc",
+          "version": "1.4.5",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cfg-if",
+          "version": "1.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "cpufeatures",
+          "version": "0.2.17",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "crypto-common",
+          "version": "0.1.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "deranged",
+          "version": "0.5.8",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "digest",
+          "version": "0.10.7",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "fastrand",
+          "version": "2.5.0",
+          "license": "Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "find-msvc-tools",
+          "version": "0.1.12",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "generic-array",
+          "version": "0.14.7",
+          "license": "MIT",
+          "buildScript": true
+        },
+        {
+          "name": "getrandom",
+          "version": "0.2.17",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "getrandom",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "hex",
+          "version": "0.4.3",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "itoa",
+          "version": "1.0.18",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "libc",
+          "version": "0.2.189",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "linux-raw-sys",
+          "version": "0.12.1",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "memchr",
+          "version": "2.8.3",
+          "license": "Unlicense OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "num-conv",
+          "version": "0.2.2",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "of1-range-recorder",
+          "version": "0.1.0",
+          "license": "UNLICENSED",
+          "buildScript": false
+        },
+        {
+          "name": "once_cell",
+          "version": "1.21.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "powerfmt",
+          "version": "0.2.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "proc-macro2",
+          "version": "1.0.107",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "quote",
+          "version": "1.0.47",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "rcgen",
+          "version": "0.14.10",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "ring",
+          "version": "0.17.14",
+          "license": "Apache-2.0 AND ISC",
+          "buildScript": true
+        },
+        {
+          "name": "rustix",
+          "version": "1.1.4",
+          "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+          "buildScript": true
+        },
+        {
+          "name": "rustls",
+          "version": "0.23.43",
+          "license": "Apache-2.0 OR ISC OR MIT",
+          "buildScript": true
+        },
+        {
+          "name": "rustls-pki-types",
+          "version": "1.15.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "rustls-webpki",
+          "version": "0.103.15",
+          "license": "ISC",
+          "buildScript": false
+        },
+        {
+          "name": "serde",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_core",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "serde_derive",
+          "version": "1.0.229",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "serde_json",
+          "version": "1.0.151",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "sha2",
+          "version": "0.10.9",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "shlex",
+          "version": "2.0.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "subtle",
+          "version": "2.6.1",
+          "license": "BSD-3-Clause",
+          "buildScript": false
+        },
+        {
+          "name": "syn",
+          "version": "3.0.4",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "tempfile",
+          "version": "3.27.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "thiserror",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": true
+        },
+        {
+          "name": "thiserror-impl",
+          "version": "2.0.20",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "time",
+          "version": "0.3.55",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "time-core",
+          "version": "0.1.9",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "typenum",
+          "version": "1.20.1",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "unicode-ident",
+          "version": "1.0.24",
+          "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+          "buildScript": false
+        },
+        {
+          "name": "untrusted",
+          "version": "0.9.0",
+          "license": "ISC",
+          "buildScript": false
+        },
+        {
+          "name": "version_check",
+          "version": "0.9.5",
+          "license": "MIT/Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "webpki-roots",
+          "version": "1.0.9",
+          "license": "CDLA-Permissive-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "yasna",
+          "version": "0.6.0",
+          "license": "MIT OR Apache-2.0",
+          "buildScript": false
+        },
+        {
+          "name": "zeroize",
+          "version": "1.9.0",
+          "license": "Apache-2.0 OR MIT",
+          "buildScript": false
+        },
+        {
+          "name": "zmij",
+          "version": "1.0.23",
+          "license": "MIT",
+          "buildScript": true
+        }
+      ]
+    }
+  ],
+  "directAdditions": [
+    {
+      "name": "rustix",
+      "version": "1.1.4",
+      "optional": false,
+      "defaultFeatures": false,
+      "features": [
+        "fs",
+        "std"
+      ],
+      "purpose": "Safe statvfs resource admission; already retained transitively.",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+    },
+    {
+      "name": "rustls",
+      "version": "0.23.43",
+      "optional": true,
+      "defaultFeatures": false,
+      "features": [
+        "std",
+        "ring",
+        "tls12"
+      ],
+      "purpose": "TLS certificate/hostname verification over our bounded fixed-host socket. No HTTP client or retry layer.",
+      "license": "Apache-2.0 OR ISC OR MIT"
+    },
+    {
+      "name": "webpki-roots",
+      "version": "1.0.9",
+      "optional": true,
+      "defaultFeatures": false,
+      "features": [],
+      "purpose": "Static Mozilla trust roots only in network-of1; no caller/runtime trust override.",
+      "license": "CDLA-Permissive-2.0"
+    },
+    {
+      "name": "rcgen",
+      "version": "0.14.10",
+      "optional": true,
+      "defaultFeatures": false,
+      "features": [
+        "ring"
+      ],
+      "purpose": "tls-fixture only; ephemeral local test certificate/private key never persisted or logged.",
+      "license": "MIT OR Apache-2.0"
+    }
+  ],
+  "buildScriptReview": [
+    {
+      "name": "ring",
+      "version": "0.17.14",
+      "status": "REVIEWED_NEW_NATIVE_BUILD",
+      "behavior": "Published crate uses pregenerated assembly and local cc/C/assembler/archive tools. Existing build-essential suffices on x86_64 Linux. No download, endpoint, CMake, OpenSSL, Perl/nasm regeneration or new tool installation.",
+      "sha256": "9d1928ffb1d8e15766c1c1b9ead73e4b81a21703dd25f7c27b87842a2e6e9cee"
+    },
+    {
+      "name": "rustls",
+      "version": "0.23.43",
+      "status": "REVIEWED_NEW_BUILD",
+      "behavior": "build.rs is no-op because read_buf is disabled; no subprocess or network.",
+      "sha256": "380b9a051325baa7d4957bd9a4f1a637c27a663610b1b502f9524530f6995f4d"
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.4",
+      "status": "REVIEWED_EXISTING_BUILD_NEW_DIRECT_FEATURES",
+      "behavior": "Local rustc feature probes and target cfg selection only; no download or provider access.",
+      "sha256": "74cb32e64aa6fe99c2496a425b016e22f4e43c438a8237966b8acae04a98eaf9"
+    }
+  ],
+  "limitations": [
+    "Cargo metadata and Cargo.lock include optional/target-specific resolution packages not compiled by selected features. featureProfiles are from cargo tree for x86_64-unknown-linux-gnu, including normal/build/dev edges.",
+    "rcgen weak optional x509-parser feature metadata expands lock resolution, but x509-parser/ASN1 parser packages are absent from every enabled package tree and were not built or executed.",
+    "Dependency licenses are per exact Cargo package metadata; webpki-roots adds CDLA-Permissive-2.0 static root data. ring includes bundled license notices.",
+    "Production network-of1 is disabled by default; fixture trust cannot authorize production acquisition. TLS compilation/tests do not prove official server compatibility.",
+    "Libc/NSS may perform internal resolver work within one bounded getent process. HTTP request and response_entity_bytes counters do not measure physical DNS/TCP/TLS traffic."
   ]
 }

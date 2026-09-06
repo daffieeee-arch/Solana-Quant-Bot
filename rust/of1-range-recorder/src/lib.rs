@@ -1,9 +1,14 @@
-//! Offline, source-bound slot/index planning with durable fixture Raw/receipt publication,
-//! restart-bound budgets and deadlines. The default build has no socket transport.
-//! The optional loopback-fixture transport is local simulation, never OF1 acquisition authority.
+//! Source-bound index planning, durable Raw/receipts, staged admission and offline CAR checks.
+//! Default builds have no socket transport. `network-of1` exposes only fixed-host HTTPS
+//! after separate metadata/payload approval; fixture connectors never confer that authority.
 
+pub mod acquisition;
+pub mod acquisition_http;
+pub mod car;
 pub mod durable;
 pub mod fixture;
+#[cfg(any(feature = "network-of1", feature = "tls-fixture"))]
+pub mod https;
 #[cfg(feature = "loopback-fixture")]
 pub mod transport;
 
@@ -273,6 +278,74 @@ pub fn plan_ranges(plan: &ValidatedPlan, index: &PersistedIndex) -> Result<Range
     if index.sha256 != p.index_sha256 {
         return Err(Error::IndexHash);
     }
+    let IndexRanges {
+        requests,
+        absent,
+        total,
+    } = plan_index_requests(
+        &index.bytes,
+        &IndexSelection {
+            epoch_first_slot: p.epoch_first_slot,
+            start_slot: p.start_slot,
+            end_slot: p.end_slot,
+            object_size: p.object_size,
+            budget: &p.budget,
+        },
+    )?;
+    Ok(RangePlan {
+        schema: "OF1_OFFLINE_RANGE_PLAN_1".into(),
+        format_source: p.format_source.clone(),
+        plan_sha256: sha256(&serde_json::to_vec(p)?),
+        index_sha256: index.sha256.clone(),
+        source_host: HOST.into(),
+        source_path: plan.source_path(),
+        index_path: plan.index_path(),
+        requests,
+        index_reported_absent: absent,
+        planned_response_entity_bytes: total,
+        evidence: "Fixture".into(),
+        slot_semantic_membership: "UNAVAILABLE_NOT_DECODED_IN_B4".into(),
+        root_membership: "UNAVAILABLE".into(),
+        cid_verification: "UNAVAILABLE".into(),
+    })
+}
+
+/// Shared index arithmetic only: this grants no transport or evidence authority.
+/// Fixture validation and receipt-bound acquisition admission remain separate.
+pub(crate) struct IndexSelection<'a> {
+    pub epoch_first_slot: u64,
+    pub start_slot: u64,
+    pub end_slot: u64,
+    pub object_size: u64,
+    pub budget: &'a Budget,
+}
+
+pub(crate) struct IndexRanges {
+    pub requests: Vec<ByteRequest>,
+    pub absent: Vec<u64>,
+    pub total: u64,
+}
+
+pub(crate) fn plan_index_requests(index: &[u8], p: &IndexSelection<'_>) -> Result<IndexRanges> {
+    let epoch_end = p
+        .epoch_first_slot
+        .checked_add(SLOTS_PER_EPOCH)
+        .ok_or(Error::Overflow)?;
+    if index.len() as u64 != SLOTS_PER_EPOCH * RECORD_BYTES {
+        return Err(Error::IndexSize);
+    }
+    if p.start_slot < p.epoch_first_slot || p.start_slot >= p.end_slot || p.end_slot > epoch_end {
+        return Err(Error::SlotRange);
+    }
+    if p.end_slot - p.start_slot == SLOTS_PER_EPOCH {
+        return Err(Error::FullEpoch);
+    }
+    if p.object_size == 0
+        || p.budget.max_response_entity_bytes == 0
+        || p.end_slot - p.start_slot > p.budget.max_slots
+    {
+        return Err(Error::Budget);
+    }
     let mut requests = Vec::new();
     let mut absent = Vec::new();
     let mut previous_end = 0;
@@ -280,7 +353,7 @@ pub fn plan_ranges(plan: &ValidatedPlan, index: &PersistedIndex) -> Result<Range
     for slot in p.start_slot..p.end_slot {
         let record_number = slot - p.epoch_first_slot;
         let pos = usize::try_from(record_number * RECORD_BYTES).map_err(|_| Error::Overflow)?;
-        let record = &index.bytes[pos..pos + 12];
+        let record = &index[pos..pos + 12];
         let offset = u64::from_le_bytes(record[..8].try_into().map_err(|_| Error::IndexSize)?);
         let length = u64::from(u32::from_le_bytes(
             record[8..].try_into().map_err(|_| Error::IndexSize)?,
@@ -347,21 +420,10 @@ pub fn plan_ranges(plan: &ValidatedPlan, index: &PersistedIndex) -> Result<Range
     {
         return Err(Error::Budget);
     }
-    Ok(RangePlan {
-        schema: "OF1_OFFLINE_RANGE_PLAN_1".into(),
-        format_source: p.format_source.clone(),
-        plan_sha256: sha256(&serde_json::to_vec(p)?),
-        index_sha256: index.sha256.clone(),
-        source_host: HOST.into(),
-        source_path: plan.source_path(),
-        index_path: plan.index_path(),
+    Ok(IndexRanges {
         requests,
-        index_reported_absent: absent,
-        planned_response_entity_bytes: total,
-        evidence: "Fixture".into(),
-        slot_semantic_membership: "UNAVAILABLE_NOT_DECODED_IN_B4".into(),
-        root_membership: "UNAVAILABLE".into(),
-        cid_verification: "UNAVAILABLE".into(),
+        absent,
+        total,
     })
 }
 

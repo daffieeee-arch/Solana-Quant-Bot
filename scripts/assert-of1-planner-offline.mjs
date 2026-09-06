@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Default-feature planner/store: syscall network deny. Separately reviewed, default-off
-// fixture lane: fixed numeric loopback only; never a production acquisition capability.
+// Default-feature planner/store: syscall network deny. Source-pinned loopback TLS
+// tests exercise framing/durability; the official connector is compiled, never dispatched.
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -13,8 +13,8 @@ import { writeResearchNetworkDenyFilter } from './write-research-seccomp-filter.
 const root = resolve(import.meta.dirname, '..');
 const crate = join(root, 'rust/of1-range-recorder');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const MANIFEST_HASH = '6bb1c22d453a3f972be54b6a4882b534751a2e91216a00e75858fc5814450475';
-const LOCK_HASH = 'e2db3294a95adeb6c1078cb8ff6834a1fea41ed4d3e00e9fd324a3279e1daf3b';
+const MANIFEST_HASH = '12fd65989da0f2d560b344a51bc003dbb1772934328075c0f066bd0f12dbb799';
+const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
 // No blanket network/process exception for a directory or Cargo feature. Exact reviewed
@@ -24,6 +24,15 @@ const LOOPBACK_SOURCE_HASHES = {
   'tests/transport.rs': '69de382c46b79118fca8f3e4c7d75b5a63c08cfe6cb6a725847b4f67a52e3610',
   'src/bin/of1-transport-evidence.rs': 'ade072ca0f9941d494cb95cac6ded78d47a4647a815c60a7abf59e12ec52b059',
 };
+// These files alone contain the reviewed production capability / fixture orchestration.
+// An exact source pin is not a network lease; no official request runs in this gate.
+const ACQUISITION_SOURCE_HASHES = {
+  'src/https.rs': '96408bb7856b732a7b666e907b2b7ec71ff17032d59fe02dad576c021b3c84b4',
+  'src/https/fixture.rs': 'c1ece52385350e303718e02c439fc5b946466dd3c6544ceca9e64cb72d9e5f8e',
+  'tests/acquisition_https.rs': '53e25acec538a1f0d394720c076f953e53eda0be508c514782056047e8f77fd8',
+  'tests/acquisition_e2e.rs': 'f535c35a39a7a3069c847017ead8bfe4a347493854deec56a7628a405ca5358e',
+  'src/bin/of1-acquisition-fixture-evidence.rs': '181c32d8d379e23284bf18c1f4081e19a5ddfdb9070c9fcdaa252bd1cfce6ea2',
+};
 
 export function validateOf1PlannerInputs(manifest, lock, sources) {
   const errors = [];
@@ -32,11 +41,13 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
   for (const [path, source] of Object.entries(sources)) {
     const crashHarness = path === 'tests/durability_process.rs';
     const fixtureSource = Object.hasOwn(LOOPBACK_SOURCE_HASHES, path);
+    const acquisitionSource = Object.hasOwn(ACQUISITION_SOURCE_HASHES, path);
     if (crashHarness && hash(source) !== PROCESS_TEST_HASH) errors.push('unreviewed OF1 process-crash harness');
     if (fixtureSource && hash(source) !== LOOPBACK_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 loopback source: ${path}`);
+    if (acquisitionSource && hash(source) !== ACQUISITION_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 acquisition source: ${path}`);
     if (path === 'build.rs' || /\bunsafe\s*\{|#\s*\[\s*path\s*=/u.test(source)
-      || (!fixtureSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
-      || (!crashHarness && !fixtureSource && /\bCommand\b|std::process::Command/u.test(source))) {
+      || (!fixtureSource && !acquisitionSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
+      || (!crashHarness && !fixtureSource && !acquisitionSource && /\bCommand\b|std::process::Command/u.test(source))) {
       errors.push(`unexpected runtime capability in ${path}`);
     }
   }
@@ -103,14 +114,39 @@ async function run(mode) {
       "import net from 'node:net';const s=net.createConnection({host:'127.0.0.1',port:9});s.on('connect',()=>process.exit(2));s.on('error',e=>{if(e.code==='EPERM'){console.log('NETWORK_DENIED');}else process.exit(3);});"]);
     if (probe.stdout !== 'NETWORK_DENIED\n') throw new Error('OF1 isolation probe failed');
     const manifest = ['--manifest-path', join(crate, 'Cargo.toml')];
-    const metadata = JSON.parse(isolated('cargo', ['+1.97.1', 'metadata', '--locked', '--offline', '--format-version', '1', ...manifest]).stdout);
+    const metadata = JSON.parse(isolated('cargo', ['+1.97.1', 'metadata', '--locked', '--offline', '--all-features', '--format-version', '1', ...manifest]).stdout);
     const review = JSON.parse(readFileSync(join(crate, 'dependency-review.json'), 'utf8'));
     const actual = metadata.packages.map(p => ({ name: p.name, version: p.version, license: p.license,
       buildScript: p.targets.some(t => t.kind.includes('custom-build')) })).sort((a,b) => a.name.localeCompare(b.name));
-    if (JSON.stringify(actual) !== JSON.stringify(review.packages)) throw new Error('OF1 dependency/license/build-script graph drift');
+    if (JSON.stringify(actual) !== JSON.stringify(review.lockedGraphPackages)) throw new Error('OF1 dependency/license/build-script graph drift');
+    for (const script of review.buildScriptReview.filter(s => s.sha256)) {
+      const pkg = metadata.packages.find(p => p.name === script.name && p.version === script.version);
+      const target = pkg?.targets.find(t => t.kind.includes('custom-build'));
+      if (!target || hash(readFileSync(target.src_path)) !== script.sha256) {
+        throw new Error(`OF1 reviewed build-script bytes drift: ${script.name}`);
+      }
+    }
+    for (const profile of review.featureProfiles) {
+      const featureArgs = profile.allFeatures ? ['--all-features']
+        : profile.features.length ? ['--features', profile.features.join(',')] : [];
+      const tree = isolated('cargo', ['+1.97.1', 'tree', ...manifest, '--locked', '--offline',
+        '--target', profile.target, '--prefix', 'none', '--edges', 'normal,build,dev',
+        '--format', '{p}', ...featureArgs]).stdout;
+      const identities = new Set(tree.trim().split('\n').map(line => {
+        const match = /^(\S+) v(\S+)/u.exec(line);
+        if (!match) throw new Error(`unrecognized Cargo tree record: ${profile.name}`);
+        return `${match[1]}@${match[2]}`;
+      }));
+      const selected = actual.filter(p => identities.has(`${p.name}@${p.version}`));
+      if (selected.length !== identities.size || JSON.stringify(selected) !== JSON.stringify(profile.packages)) {
+        throw new Error(`OF1 enabled feature/license/build-script drift: ${profile.name}`);
+      }
+    }
     isolated('cargo', ['+1.97.1', 'fmt', ...manifest, '--all', '--', '--check']);
     isolated('cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--', '-D', 'warnings']);
     isolated('cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--features', 'loopback-fixture', '--', '-D', 'warnings']);
+    isolated('cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--all-features', '--', '-D', 'warnings']);
+    process.stdout.write(isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-features', '--lib']).stdout);
     const tests = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-targets']);
     process.stdout.write(tests.stdout);
     const build = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
@@ -177,7 +213,38 @@ async function run(mode) {
       if (mode === '--print') process.stdout.write(`${path}\n${outputs[0]}`);
       else if (outputs[0] !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 report drift: ${path}`);
     }
-    process.stdout.write('OF1 default network-denied planner/store and fixed-loopback fixture graph/fmt/clippy/tests/evidence PASS\n');
+    // Source-reviewed numeric-loopback TLS tests only. Use the proposed runner's
+    // release profile for these new large-index fixture lanes: repeated debug hashing
+    // exhausted the unchanged 25-minute job budget despite passing every test.
+    // Existing debug/default tests and all assertions/cases remain. Compilation/build
+    // scripts still execute under socket denial; no official dispatch is run.
+    for (const target of ['acquisition_https', 'acquisition_e2e']) {
+      const built = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--release',
+        '--all-features', '--test', target, '--no-run', '--message-format=json-render-diagnostics']);
+      const executable = built.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
+        .find(v => v.reason === 'compiler-artifact' && v.target.name === target && v.executable)?.executable;
+      if (!executable) throw new Error(`TLS acquisition fixture missing: ${target}`);
+      process.stdout.write(loopback(executable, ['--test-threads=1']).stdout);
+    }
+    const acquisitionBuild = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
+      '--features', 'tls-fixture', '--bin', 'of1-acquisition-fixture-evidence', '--message-format=json-render-diagnostics']);
+    const acquisitionBinary = acquisitionBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
+      .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-acquisition-fixture-evidence' && v.executable)?.executable;
+    if (!acquisitionBinary) throw new Error('TLS acquisition evidence binary missing');
+    for (const [format, path] of [
+      ['--json', 'schemas/acquisition/of1/acquisition-evidence.json'],
+      ['--markdown', 'docs/research/OF1_ACQUISITION_EVIDENCE.md'],
+    ]) {
+      const outputs = [0, 1].map(iteration => {
+        const directory = join(scratch, `acquisition-${format}-${iteration}`);
+        mkdirSync(directory);
+        return loopback(acquisitionBinary, [format, directory]).stdout;
+      });
+      if (outputs[0] !== outputs[1]) throw new Error('OF1 acquisition evidence is nondeterministic');
+      if (mode === '--print') process.stdout.write(`${path}\n${outputs[0]}`);
+      else if (outputs[0] !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 report drift: ${path}`);
+    }
+    process.stdout.write('OF1 socket-denied default/build and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

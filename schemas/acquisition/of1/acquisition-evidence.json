@@ -1,0 +1,119 @@
+{
+  "after_metadata": {
+    "attempts_reserved": 5,
+    "charged_entity_bytes": 5196288,
+    "deadline_boot_ms": 70000,
+    "deadline_wall_ms": 160000,
+    "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "evidence": "Fixture",
+    "published_requests": 4,
+    "published_response_entity_bytes": 5184140,
+    "stage": "METADATA",
+    "unpublished_attempts": 1,
+    "unreceipted_response_entity_bytes": null
+  },
+  "after_payload": {
+    "attempts_reserved": 6,
+    "charged_entity_bytes": 5196756,
+    "deadline_boot_ms": 70100,
+    "deadline_wall_ms": 160100,
+    "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "evidence": "Fixture",
+    "published_requests": 5,
+    "published_response_entity_bytes": 5184608,
+    "stage": "PAYLOAD",
+    "unpublished_attempts": 1,
+    "unreceipted_response_entity_bytes": null
+  },
+  "approved": false,
+  "authority": "FIXTURE",
+  "b4_complete": false,
+  "before_retry_after_restart": {
+    "attempts_reserved": 3,
+    "charged_entity_bytes": 5192192,
+    "deadline_boot_ms": 70000,
+    "deadline_wall_ms": 160000,
+    "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "evidence": "Fixture",
+    "published_requests": 2,
+    "published_response_entity_bytes": 5184080,
+    "stage": "METADATA",
+    "unpublished_attempts": 1,
+    "unreceipted_response_entity_bytes": null
+  },
+  "budget_metric": "response_entity_bytes",
+  "clock_evidence": "DETERMINISTIC_FIXTURE_CLOCK_NOT_WALL_PERFORMANCE_PROOF",
+  "code_toolchain_claim": "DECLARED_FIXTURE_CONTEXT_NOT_INDEPENDENT_BUILD_ATTESTATION",
+  "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+  "edge_evaluation": "NOT_EVALUATED_ENGINEERING_FIXTURE",
+  "evidence": "Fixture",
+  "executed_checks": {
+    "all_attempts_charged": true,
+    "correct_tls_range_and_if_match": true,
+    "failed_short_read_not_published": true,
+    "one_complete_synthetic_index": true,
+    "original_metadata_deadlines_preserved": true,
+    "original_raw_receipt_preserved": true,
+    "payload_receipt_survives_reopen": true,
+    "payload_unavailable_before_separate_admission": true,
+    "receipt_bound_index_planning": true,
+    "retained_retry_prefix_matched": true
+  },
+  "fixture_car_section_bytes": 468,
+  "fixture_car_sections_sha256": "1a7391bb60f6676b62607bb71d385871600c03b79809bcb82630db736c7bc452",
+  "fixture_index_bytes": 5184000,
+  "fixture_index_sha256": "9ef7b9b2cf298c1a0fbcad8d6deaf01369d12e4359d58651f26db0c0a06c3a28",
+  "integrity_slots": [
+    {
+      "captured_section_bytes": 468,
+      "dataframe_payload_and_checksum": "NOT_EVALUATED",
+      "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+      "node_cid_integrity": "RECOMPUTED_SHA2_256_MATCHED",
+      "root_to_slot_membership": "UNAVAILABLE",
+      "selected_slot": 422496000,
+      "selected_slot_envelope": "STRUCTURAL_LINK_CLOSURE_MATCHED",
+      "source_commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "source_observation": "NOT_ATTESTED_BY_VERIFIER",
+      "terminal_block_cid_hex": "01711220ad62845397486d1f4807790e84d72c18799775db34d8e461ceb7b72adfa124d3",
+      "verified_links": 4,
+      "verified_nodes": 5
+    }
+  ],
+  "interrupted_actual_total": "UNAVAILABLE_AFTER_PROCESS_LOSS",
+  "live_network_enabled": false,
+  "measured_resources": "EXCLUDED_FROM_LOGICAL_ARTIFACT; saved in scratch measurements.json",
+  "metadata_inventory": [
+    {
+      "method": "GET",
+      "path": "/978/epoch-978-slot-ranges.raw"
+    },
+    {
+      "method": "GET",
+      "path": "/978/epoch-978.sha256"
+    },
+    {
+      "method": "GET",
+      "path": "/978/epoch-978.cid"
+    },
+    {
+      "method": "HEAD",
+      "path": "/978/epoch-978.car"
+    }
+  ],
+  "physical_wire_cap": false,
+  "process_exit": {
+    "code": 86,
+    "physical_power_loss_proven": false,
+    "rust_destructors_ran": false
+  },
+  "retained_failed_prefix_bytes": 11,
+  "root_to_slot_membership": "UNAVAILABLE",
+  "same_executable_hash_verified_across_restart": true,
+  "scenario": "FULL_INDEX_TLS_RAW_METADATA_SHORT_READ_PROCESS_EXIT_RESTART_RETRY_HEAD_EXPLICIT_PAYLOAD_ADMISSION_RANGE_TLS_RAW_CID_SLOT_VERIFY",
+  "schema": "OF1_ACQUISITION_FIXTURE_EVIDENCE_1",
+  "source_baseline": "aa21a5a3e5517741b4ae541d157dc6e7cd9a76a8",
+  "source_receipt": "schemas/acquisition/of1/car-source-receipt.json",
+  "structural_fixture": "schemas/acquisition/of1/car-structural-fixture.json",
+  "transport": "FEATURE_GATED_NUMERIC_LOOPBACK_TLS_HTTP_1_1",
+  "whole_car_sha256_verified": false
+}

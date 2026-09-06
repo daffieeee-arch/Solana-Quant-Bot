@@ -1,0 +1,111 @@
+{
+  "schema": "OF1_LOCAL_RESOURCE_MEASUREMENT_RECEIPT_1",
+  "measured_at": "2026-09-06T13:13:23.161Z",
+  "evidence": "Fixture",
+  "mode": "RELEASE_LOCAL_LOOPBACK_TLS",
+  "source_baseline": "aa21a5a3e5517741b4ae541d157dc6e7cd9a76a8",
+  "implementation_inputs_sha256": "9ac469bd1685423758111bf227c8e60eadeb6940a802a536efe1ebadef546ae9",
+  "implementation_inputs_rule": "SHA256(JSON.stringify(sorted [relative crate .rs/Cargo.toml/Cargo.lock path, file SHA256] pairs)); target excluded",
+  "rust_toolchain": "1.97.1",
+  "original_measurements_sha256": "a9c4b9d5d166b7987ffe7309eba713c954db9b3f6e72fed2821c20ce56bc277a",
+  "executable_sha256": "d2c2fa40bb106613edee23b3d5b8c25e3e3aca22ec05ca20bdab3ba95829a287",
+  "logical_evidence_sha256": "eb9c5da9c94d04ef4f23f841b41c0d4e7c913e8b84eed035ebb2c83b540f3764",
+  "elapsed_ms": 1416,
+  "child_peak_rss_bytes": 30081024,
+  "parent_peak_rss_bytes": 26288128,
+  "metadata_disk_charge_bytes": 11235328,
+  "final_disk_charge_bytes": 11288576,
+  "operation_measurements": [
+    {
+      "capture_elapsed_ms": 327,
+      "includes_fixture_setup_reservation_and_publication": true,
+      "method": "GET",
+      "path": "/978/epoch-978-slot-ranges.raw",
+      "published": true,
+      "sequence": 0
+    },
+    {
+      "capture_elapsed_ms": 126,
+      "includes_fixture_setup_reservation_and_publication": true,
+      "method": "GET",
+      "path": "/978/epoch-978.sha256",
+      "published": true,
+      "sequence": 1
+    },
+    {
+      "capture_elapsed_ms": 70,
+      "includes_fixture_setup_reservation_and_publication": true,
+      "method": "GET",
+      "path": "/978/epoch-978.cid",
+      "published": false,
+      "sequence": 2
+    },
+    {
+      "capture_elapsed_ms": 127,
+      "includes_fixture_setup_reservation_and_publication": true,
+      "method": "GET",
+      "path": "/978/epoch-978.cid",
+      "published": true,
+      "sequence": 2
+    },
+    {
+      "capture_elapsed_ms": 118,
+      "includes_fixture_setup_reservation_and_publication": true,
+      "method": "HEAD",
+      "path": "/978/epoch-978.car",
+      "published": true,
+      "sequence": 3
+    },
+    {
+      "capture_elapsed_ms": 163,
+      "includes_fixture_setup_reservation_and_publication": true,
+      "method": "GET",
+      "path": "/978/epoch-978.car",
+      "published": true,
+      "sequence": 4
+    }
+  ],
+  "receipt_hashes": [
+    {
+      "raw_sha256": "9ef7b9b2cf298c1a0fbcad8d6deaf01369d12e4359d58651f26db0c0a06c3a28",
+      "receipt_sha256": "fcda16a7e1c03759ab43071ea8ea6e80735f42e53ec300c68104d02efc502b0f",
+      "response_entity_bytes": 5184000,
+      "response_headers_sha256": "1be92db3d50e13fa9a6f501af0a49d07d6cf9df4d726a6586b5c9c53821b5780",
+      "sequence": 0
+    },
+    {
+      "raw_sha256": "9d180bc44b52c13d562e9810bd240f5f81e2001fd1b60a8da265e38711b0e0be",
+      "receipt_sha256": "fe11c834f5c5d5c71214053cda4a78907b42e3944fdadce5d26192b1786f57a8",
+      "response_entity_bytes": 80,
+      "response_headers_sha256": "2975a6ef4ce3f2314618c5f535e79bc0a5d345ed47115b4be0919bd6d1dccbd2",
+      "sequence": 1
+    },
+    {
+      "raw_sha256": "7a2caacd442fcb2af5a0fce847578226ee08151c85a9ea57a21199ffd264a0ba",
+      "receipt_sha256": "3f13fc624d29149707680a56f7babdda17bdcfb955522957dad96d2afe649f0d",
+      "response_entity_bytes": 60,
+      "response_headers_sha256": "ad097e251c805fd19b68338dc4fb52b8b0313b6d14419e203cdef8e8d4975351",
+      "sequence": 2
+    },
+    {
+      "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "receipt_sha256": "9429066cbcbccd00f03229ed21d217382a518eb3278e416cc2be75c65b6f5c04",
+      "response_entity_bytes": 0,
+      "response_headers_sha256": "f2677cee817e50b324f3bb6296ce08d6b0e31f70dbbf5efbff5d01ddb0b1919f",
+      "sequence": 3
+    },
+    {
+      "raw_sha256": "1a7391bb60f6676b62607bb71d385871600c03b79809bcb82630db736c7bc452",
+      "receipt_sha256": "eeac256c4ace7751887a1b46396f95183be3c66752d19d41b2c32231a539a31a",
+      "response_entity_bytes": 468,
+      "response_headers_sha256": "2f25ee677a7a2a3142bf330bb921e13cf12131ef672e47213265a809d2a2bb48",
+      "sequence": 4
+    }
+  ],
+  "limits": [
+    "One local release-build observation, not a universal cap or remote throughput guarantee.",
+    "Deterministic fixture wall/boot clock; real TLS Instant deadline enforced separately.",
+    "No official DNS/TLS/source request; no authentic data, cost or source availability evidence.",
+    "Disk charge is conservative retained run-tree accounting, not exact filesystem physical use."
+  ]
+}

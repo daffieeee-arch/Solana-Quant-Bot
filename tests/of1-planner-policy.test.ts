@@ -37,4 +37,14 @@ describe('OF1 default-off transport dependency boundary', () => {
       expect(validateOf1PlannerInputs(manifest, lock, { 'src/provider.rs': source })).not.toEqual([]);
     }
   });
+  it('pins official TLS and local fixture capabilities without permitting an arbitrary provider', () => {
+    for (const path of ['src/https.rs', 'src/https/fixture.rs', 'tests/acquisition_https.rs',
+      'tests/acquisition_e2e.rs', 'src/bin/of1-acquisition-fixture-evidence.rs']) {
+      const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\n' }))
+        .toContain(`unreviewed OF1 acquisition source: ${path}`);
+      expect(validateOf1PlannerInputs(manifest, lock, { 'src/arbitrary-provider.rs': source + '\nstd::net::TcpStream' })).not.toEqual([]);
+    }
+  });
 });

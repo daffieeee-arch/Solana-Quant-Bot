@@ -4,6 +4,11 @@
 
 ## Implemented boundary
 
+This document describes the retained PR101 fixture planner contract. The later
+[staged acquisition path](OF1_STAGED_ACQUISITION.md) reuses its index arithmetic
+without reusing fixture admission as a live lease; its default-off HTTPS and
+metadata/payload contracts are documented separately. Earlier report bytes remain unchanged.
+
 `rust/of1-range-recorder` owns the bounded **planning** path. The [fixture durability module](OF1_DURABLE_RAW_STORE.md) and separately enabled [loopback-only transport](OF1_OFFLINE_TRANSPORT.md) integrate it with immutable Raw/receipt publication and restart. Default builds have no transport capability. The [26-case parity inventory](../../schemas/acquisition/of1/transport-parity.json) maps the replaced JS implementations; neither historical tests nor current fixture integration establish authentic acquisition.
 
 The [generated plan evidence](OF1_OFFLINE_PLAN_EVIDENCE.md) and [JSON twin](../../schemas/acquisition/of1/offline-plan-evidence.json) expose six requests over three fixture-index-present slots and one index-reported absent slot. No CAR or historical chain bytes were obtained. Planned payload bytes are 160, not a received-byte count. The expanded synthetic index is 5,184,000 bytes and lives only in temporary test directories before Rust reads it.

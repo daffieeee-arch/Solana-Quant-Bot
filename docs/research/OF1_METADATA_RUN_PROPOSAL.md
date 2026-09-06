@@ -1,0 +1,174 @@
+# Next OF1 metadata run — review proposal, not authorization
+
+> **Document status: ACTIVE — UNAPPROVED.** No official host has been contacted.
+> B4 remains Unproven; the [implementation](OF1_STAGED_ACQUISITION.md) is Fixture.
+> Metadata GO must name the exact generated plan hash, binary, operator and times.
+
+## Proposed scope and unchanged caps
+
+Purpose: `ENGINEERING_VALIDATION_ONLY`, epoch 978. Acquire only the fixed modern
+index and source declarations needed to propose a feasible payload slice. Do not
+inspect token outcomes, select a successful token or infer Pump availability.
+
+| Operation, in this order | Entity contract | Per-operation retry envelope |
+|---|---|---|
+| GET `/978/epoch-978-slot-ranges.raw` | 200; exactly 5,184,000 bytes | 3 attempts, 15,552,000 bytes |
+| GET `/978/epoch-978.sha256` | 200; 1–4096 bytes | 3 attempts, 12,288 bytes |
+| GET `/978/epoch-978.cid` | 200; 1–4096 bytes | 3 attempts, 12,288 bytes |
+| HEAD `/978/epoch-978.car` | 200; positive Content-Length, zero entity | 3 attempts, zero entity bytes |
+
+Host is internally fixed to `files.old-faithful.net:443`. This is four logical
+operations, at most **12 attempts / 15,576,576 response_entity_bytes**. One
+successful inventory charges 5,192,192 bytes because sidecars reserve their full
+caps, even when shorter. The expected index size is source-format arithmetic
+`432000 × 12`, not an observed file. Sidecar sizes, HEAD/range support, validators,
+availability and cost still have no authentic measurement.
+
+No old budget is increased:
+
+| Shared aggregate cap | Value |
+|---|---|
+| Attempts / retry policy / concurrency | 16 / 2 retries per logical operation / 1 |
+| Single / aggregate response entity allowance | 16,777,216 / 134,217,728 bytes |
+| Retained run-tree disk / required available disk | 268,435,456 / 536,870,912 bytes |
+| Memory hard cap | 536,870,912 bytes |
+| Aggregate allocated runtime / attempt deadline | 1,800,000 / 30,000 ms |
+
+**New proposed allocation within those caps:** metadata gets 600,000 ms (10
+minutes), not a second 30-minute lease. Payload may receive at most the remaining
+1,200,000 ms after separate review. Twelve 30-second attempt timeouts allocate 360
+seconds; the remaining 240 seconds are local inspection/dispatch headroom.
+These are deadline gates, not preemption of a blocked filesystem syscall: an
+overrun cannot authorize another dispatch/publication. This is scheduling headroom, not a measured OF1
+throughput claim. Restart preserves the original stage expiry.
+
+After worst-case metadata, at most 4 attempts / 118,641,152 entity bytes remain.
+After four successful first attempts, 12 attempts / 129,025,536 bytes remain;
+unused metadata retry permission expires at payload admission, while every actual
+reservation remains spent. Full two-retry payload admission requires `3Q` attempts
+and `3S` bytes. The old 128-slot candidate cannot fit when all slots are nonempty.
+No range reduction, cap increase or additional proof request occurs automatically.
+
+Disk/RSS are measured in the new [local evidence](OF1_ACQUISITION_EVIDENCE.md),
+including a full-size synthetic index, partial retry, restart and one tiny CAR
+envelope. This supports the tested case only, not every 128 MiB payload or real
+OF1 performance. The old PR104 8 KiB per-read storage illustration is preserved
+as an old-implementation lower bound; the staged path coalesces 64 KiB segments.
+All retained attempts, metadata, staging and final copies share the 256 MiB cap.
+Before dispatch, the runner checks a conservative reservation disk allowance and
+RSS/free-space guards; failure stops rather than claiming the slice must fit.
+Physical wire/TLS/DNS bytes, billing and remote throughput remain unmeasured.
+
+One retained [release-build measurement receipt](../../schemas/acquisition/of1/acquisition-resource-measurement.json)
+binds the exact implementation-input digest, executable, fixture and Raw/receipt
+hashes: **1,416 ms** end-to-end; **327 ms** full-index capture; maximum observed
+process peak RSS **30,081,024 bytes**; final conservative disk charge
+**11,288,576 bytes**. The six per-operation elapsed observations are 70–327 ms,
+including local reservation/publication; they are not a remote latency estimate.
+The debug observation was 74,526 ms overall and 5,615 ms for the index, showing why
+build profile and host must accompany resource claims. Both observations include
+a real child exit/restart and failed CID retry, not physical power-loss testing.
+
+## Executable preparation, still offline
+
+After review/merge, use the exact reviewed commit and existing pinned toolchain.
+These preparation commands perform no provider request. Choose the dataset root
+on WSL ext4 **outside Git**; do not place datasets under the checkout.
+
+```bash
+TOOLCHAIN_RUN="${HOME}/.local/share/solana-quant/run-with-toolchain"
+"${TOOLCHAIN_RUN}" cargo +1.97.1 build --locked --offline --release \
+  --manifest-path rust/of1-range-recorder/Cargo.toml --features network-of1 \
+  --bin of1-acquire
+git rev-parse HEAD
+"${TOOLCHAIN_RUN}" rustc -Vv
+"${TOOLCHAIN_RUN}" cargo -Vv
+OF1_ACQUIRE_BIN="$(pwd)/rust/of1-range-recorder/target/release/of1-acquire"
+sha256sum "${OF1_ACQUIRE_BIN}"
+findmnt -T /path/to/existing/dataset-parent
+df -B1 /path/to/existing/dataset-parent
+```
+
+Record the exact code SHA and SHA-256 of the retained rustc/Cargo identity receipt.
+If `CARGO_TARGET_DIR` is set, use the actual emitted binary location, not a guessed
+different executable. Generate (and retain outside Git) the unapproved proposal:
+
+```text
+of1-acquire metadata-proposal CODE_SHA TOOLCHAIN_RECEIPT_SHA256
+```
+
+In the command signatures below, `of1-acquire` means the exact full path in
+`OF1_ACQUIRE_BIN` (invoke `"${OF1_ACQUIRE_BIN}"`), not an installed/global command.
+Use the same release binary throughout the approved run and all restarts.
+
+The JSON contains the complete aggregate plan, metadata allocation and
+`approval_target_sha256`. Its approval flags remain false. Save the `aggregate`
+object as `aggregate.json`. The eventual metadata lease has exactly:
+
+```json
+{
+  "schema": "OF1_METADATA_LEASE_1",
+  "authority": {
+    "mode": "APPROVED",
+    "approval_id": "EXPLICIT_OPERATOR_GO_ID",
+    "operator": "APPROVED_OPERATOR",
+    "approved_at_ms": 0,
+    "not_after_ms": 0,
+    "approved_plan_sha256": "EXACT_GENERATED_APPROVAL_TARGET_SHA256",
+    "cost_confirmation": "NOT_CONFIRMED"
+  },
+  "budget": {
+    "max_requests": 12,
+    "max_response_entity_bytes_total": 15576576,
+    "max_runtime_ms": 600000
+  }
+}
+```
+
+This displayed template is intentionally **invalid/non-executable**. Only a
+separate explicit user GO may supply real approval times/hash/operator and
+confirmed no-credit-spend status. No credential is required or recorded. Do not
+change cost text merely to pass validation: verify current terms first. The
+approved window must encompass the proposed stage deadline; it is capped at that
+expiry even if initialization occurs late.
+
+## Commands only after metadata GO
+
+```text
+of1-acquire metadata-init ROOT aggregate.json metadata-lease.json
+of1-acquire capture-stage ROOT aggregate.json CURRENT_LEASE_SHA256
+of1-acquire progress ROOT aggregate.json CURRENT_LEASE_SHA256
+```
+
+Initialization reports the exact current lease hash and original deadlines.
+`capture-stage` makes at most one attempt per missing logical request and stops
+on the first failure. Any retry is another explicit invocation under the same
+lease/hash/deadlines and remaining retry budget. Do not delete/reinitialize a run
+to reset charges. A complete publication is never downloaded again. Keep the
+binary unchanged between proposal/init/restart; rebuilds are not resume identity.
+
+Stop after four verified metadata publications. Retain all attempts, original
+bytes/headers, receipts, source/index hashes and resource/terminal report. A
+metadata success is not payload authority or complete B4 engineering validation.
+
+## Separate payload gate
+
+Offline `prepare-payload ROOT aggregate.json LEASE_SHA FIRST END` derives and
+prints the exact range plan from accepted metadata. It does not grant authority.
+The proposed interval must be explicitly reviewed; the existing 128-slot draft
+is not an approved command argument. Unknown/missing modern index fails closed.
+
+Use `payload-proposal ROOT aggregate.json LEASE_SHA prepared.json budget.json`
+to hash the reviewed stage allocation, exact prepared ranges and aggregate.
+Payload admission requires a separate `OF1_PAYLOAD_LEASE_1` receipt with that
+approval target plus `prepared_payload_sha256` and `metadata_receipt_sha256`.
+`payload-admit` rederives every range and checks shared retry/byte/runtime bounds
+before storing the lease. `capture-stage` then captures only that inventory.
+Finally `verify-payload` performs offline integrity checks and reports achieved
+levels, not a research-ready dataset.
+
+No header-prefix or root-proof acquisition is implemented as an implicit request.
+Root-to-slot membership remains UNAVAILABLE; this accepted limitation is not a
+fallback to a full CAR download. B5, protocol promotion, strategy and paper
+execution require later deliveries. Engineering failure, insufficient data and
+edge falsification remain distinct as defined in the [lease draft](B4_ENGINEERING_VALIDATION_LEASE_PLAN.md).
