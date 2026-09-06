@@ -29,7 +29,7 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 - **Current delivery:** B4/[#83](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/83) is `In Progress`, `ACTIVE NOW`, Phase `2 Authentic Acquisition`, Evidence `Unproven`. No B4 acquisition run is authorized.
 - **B4 fixture partial result:** PR [#94](https://github.com/daffieeee-arch/Solana-Quant-Bot/pull/94) recorded the B4A offline range recorder as a `Fixture` partial result of B4/#83. It does not complete B4, authorize an acquisition run, or establish observed compatibility, historical activation, Research Ready status or profitability. Its [original JS contract](research/B4A_OFFLINE_RANGE_RECORDER.md) is superseded by the [Rust offline transport contract](research/OF1_OFFLINE_TRANSPORT.md); historical evidence remains preserved.
 - **B4 offline remainder (not live B4B):** The [OF1 memo](research/OF1_QUANT_RESEARCH_MEMO_V2.md), [superseded JS remainder contract](research/B4_OFFLINE_REMAINDER.md) and [candidate pin review](research/JETSTREAMER_V0_7_0_PIN_REVIEW.md) retain their evidence limits. The current [Rust fixture integration](research/OF1_OFFLINE_TRANSPORT.md) combines index planning, durable reservations, local HTTP, Raw/receipt publication and restart. It does not authorize a download or complete B4. The Jetstreamer SHA is a candidate pin only. Live B4B stays reserved for a later separately approved lease.
-- **B4 lease draft (not approved):** [`research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md`](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md) proposes one `ENGINEERING_VALIDATION_ONLY` window `[422496000, 422496128)` on `files.old-faithful.net` with named budgets. `approved` and `networkEnabled` remain `false`. Cost confirmation is `NOT_CONFIRMED`. This is not permission to download.
+- **B4 lease draft (not executable or approved):** [`research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md`](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md) separates metadata/index GO from payload GO. The original `[422496000, 422496128)` window and caps remain unvalidated proposals: 16 attempts cannot cover 128 nonempty slots with the current planner. Official HTTPS, metadata bootstrap and CAR/CID/slot verification still require implementation. `approved`, `networkEnabled` and `readyToRun` remain `false`; cost confirmation is `NOT_CONFIRMED`. Neither merging documentation nor flipping flags authorizes a download.
 - **Next delivery:** B5/[#84](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/84) is `Backlog`, `NEXT`, Phase `3 Bronze & Silver`, Evidence `Unproven`.
 - **Current execution posture:** PAPER / RESEARCH ONLY. B3 canonical protocol/source evidence is bound only to pinned official Pump GitHub bytes. Approved toolchain, package-registry and source-review traffic is not protocol evidence; no Solana provider, RPC, Triton, Old Faithful or historical-chain-data call occurred. B4's active status does not authorize an acquisition run. No profitability, research-readiness, paper-realism or live-readiness claim is established.
 
@@ -97,7 +97,7 @@ Every first-slice plan declares exactly one class before payload inspection:
 ### `ENGINEERING_VALIDATION_ONLY`
 
 - May deliberately select a range known to contain Pump activity.
-- Proves acquisition, decoding, Bronze, Silver and Observatory mechanics.
+- May be used to validate acquisition, decoding, Bronze, Silver and Observatory mechanics; each stage requires its own executed evidence. The slice class alone proves nothing.
 - Is permanently excluded from strategy selection, effect-size, model, edge and profitability claims.
 
 ### `RESEARCH_SAMPLING`
@@ -109,6 +109,8 @@ Every first-slice plan declares exactly one class before payload inspection:
 The candidate range `[422506000, 422506128)` is **PROVISIONAL** until its source, selection reason and slice class are documented and approved. Slot count, epoch/range, byte/request/disk/runtime caps and later fold/holdout/window values are also preregistered run-plan or methodology parameters—not universal constants.
 
 ## Causality and evidence
+
+Engineering failure (including integrity/budget failure), insufficient admissible data and edge falsification are separate outcomes. Undecoded B4 counts are `UNAVAILABLE_NOT_DECODED_IN_B4`, not zero. A missing Pump pair after valid decode is insufficient for that engineering goal, not evidence of no edge. Falsification requires a preregistered hypothesis on sufficient valid outcome-independent PIT research evidence with appropriate costs/execution evidence and uncertainty; an engineering slice is permanently excluded. See the [lease outcome table](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md#three-different-questions).
 
 All instructions, CPIs, events, logs and metadata from one historical transaction become available to downstream consumers as **one atomic observation package**. A strategy may not react to an event and then trade against a price or reserve from that same already-executed transaction.
 

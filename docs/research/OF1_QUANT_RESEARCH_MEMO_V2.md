@@ -4,7 +4,8 @@
 > quant-research agent. This is not an acquisition authorization, not a
 > `RESEARCH_READY` claim, and not proof of a tradable edge.
 >
-> Access date for official documentation cited here: **2026-09-05**.
+> Initial documentation review: **2026-09-05**; active lease/evidence
+> correction and source-path recheck: **2026-09-06**.
 > Docs-MCP servers (`old-faithful-docs`, `triton-docs`, `solana-mcp`) were
 > unavailable during that run; claims below are traced to official
 > documentation hosts as `DOCUMENTATION_ONLY`. Their content is not
@@ -18,10 +19,12 @@ layer can use to test — or falsify — a Pump.fun microstructure edge, without
 violating the Triton-only rule, point-in-time integrity, or execution
 semantics?
 
-**Answer now:** OF1 can later yield that tape. A winning edge is not
-provable from current evidence. The next honest package is the offline B4
-remainder, then a separately approved `ENGINEERING_VALIDATION_ONLY` lease.
-See [`B4_OFFLINE_REMAINDER.md`](B4_OFFLINE_REMAINDER.md).
+**Answer now:** the pinned format is a plausible route, not proof that the
+selected window can yield the required tape. The [Rust integration](OF1_OFFLINE_TRANSPORT.md)
+proves loopback fixtures only. Official HTTPS, index acquisition and CAR/CID
+verification remain unimplemented. The [corrected lease contract](B4_ENGINEERING_VALIDATION_LEASE_PLAN.md)
+defines separate metadata and payload approvals and the shortest bounded path.
+No authentic data, tradable edge or acquisition authority follows from this memo.
 
 ## 2. Option map
 
@@ -31,13 +34,16 @@ public Jupiter, or any secondary provider fallback) are out.
 
 | Option | What it is | V2 status | Official docs |
 | --- | --- | --- | --- |
-| Direct official OF1 CARs | Epoch objects at `https://files.old-faithful.net/{EPOCH}/` with `epoch-{EPOCH}.car`, `.car.sha256`, `.car.cid`, `epoch-{EPOCH}-slots.txt`, recap, and indexes | Allowed host **only** under an explicit immutable `ACQUISITION_LEASED` run plan. First slice is not a full epoch. | [of1-files](https://docs.old-faithful.net/references/of1-files.md), [of1-indexes](https://docs.old-faithful.net/references/of1-indexes.md) |
+| Direct official OF1 CARs | Epoch objects at `https://files.old-faithful.net/{EPOCH}/`; documented sidecars are `epoch-{EPOCH}.sha256`, `epoch-{EPOCH}.cid`, `{EPOCH}.slots.txt`, `{EPOCH}.recap.yaml` | Exact inventory and live existence remain unverified. Only separately approved metadata and payload leases permit requests; no full epoch CAR. | [OF1 files](https://docs.old-faithful.net/references/of1-files.md); modern slot-range format: [pinned index source](https://github.com/anza-xyz/jetstreamer/blob/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/index.rs) |
 | Pinned Jetstreamer 0.7.x over official OF1 | Selected *initial* V2 acquisition route **iff** HTTP/S3/backend overrides remain default-deny | Repo pin is a **candidate**, not a reviewed live path. `JETSTREAMER_V0_7_0_GIT_SHA` = `cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24` is recorded in `rust/old-faithful-pump-reducer/src/lib.rs` as a callback-type snapshot, not as a blessed live acquisition crate. KNOWN_ISSUES #6 remains open. | [docs.rs/jetstreamer](https://docs.rs/jetstreamer/latest/jetstreamer/) |
-| Hosted Old Faithful gRPC / RPC | `docs.old-faithful.net` still describes RPC/gRPC; Triton docs currently say Old Faithful gRPC is retired | **Not selected.** Do not probe availability or spend credits. | [old-faithful RPC](https://docs.old-faithful.net/old-faithful/rpc.md); contrast Triton [old-faithful](https://docs.triton.one/chains/solana/old-faithful) |
+| Hosted Old Faithful gRPC / RPC | Prior public-documentation/MCP availability claims conflict | **Not assumed available and not selected.** Any future hosted endpoint requires explicit availability/cost confirmation from Triton; do not probe. | [old-faithful RPC](https://docs.old-faithful.net/old-faithful/rpc.md); Triton [old-faithful](https://docs.triton.one/chains/solana/old-faithful) |
 
-**Not an option:** flipping B4A `networkEnabled` to `true`, adding an HTTP
-client to `scripts/b4a-offline-range-recorder.mjs`, or treating the frozen
-V1 paper scanner as research truth.
+**Not an option:** flipping fixture `networkEnabled`, restoring the removed
+JS recorder, importing Jetstreamer's broad runtime/alternate backends, or using
+the frozen V1 paper scanner as research truth. Source pins specify format facts;
+they do not require importing the full upstream crate. The formerly cited
+`references/of1-indexes.md` returned Page Not Found on recheck; use the pinned
+source for the modern index, never a guessed legacy fallback.
 
 ## 3. Class A vs later-layer fields
 
@@ -80,10 +86,12 @@ When a later approved plan exists, the first slice should be:
 
 - host: `files.old-faithful.net` only
 - purpose: `ENGINEERING_VALIDATION_ONLY` (never a strategy or edge claim)
-- unit: the smallest closed slot window that still contains at least one
-  authentic Pump `buy` + `TradeEvent`, **not** a full epoch CAR
+- unit: one preregistered bounded slot window, **not** a full epoch CAR;
+  the current unapproved draft is `[422496000, 422496128)` and has no proven
+  Pump activity or budget feasibility
 - hard stop: named request / byte / disk / runtime budget in the plan
-- expected outcome: `PASS`, `FALSIFIED`, or `INSUFFICIENT_SAMPLE`
+- result dimensions: engineering outcome, data sufficiency, and research
+  admissibility separately; no B4 `FALSIFIED` market-edge result
 
 `[422506000, 422506128)` is still a **provisional example**. It sits in
 epoch 978 by Old Faithful's documented `floor(slot / 432000)` rule
@@ -94,25 +102,23 @@ Epochs 0–156 are a poor first-slice choice: Old Faithful documents
 incomplete or low-quality coverage there. Compute-unit fields being `0`
 before epoch 450 means "field not populated", not "no compute was used".
 
-## 5. Falsifiers
+## 5. Engineering failure is not edge falsification
 
-The later research question is falsified, or at best
-`INSUFFICIENT_SAMPLE`, if any of these hold:
+| Observation | Correct interpretation |
+|---|---|
+| HTTP failure, invalid index, non-replayable SHA/CID, conflicting bytes | Engineering failure or quarantine with a named reason; no market conclusion |
+| Budget/deadline reached | `ABORTED_BUDGET`; retain partial evidence, no expansion |
+| Payload not decoded | `UNAVAILABLE_NOT_DECODED_IN_B4`, not zero Pump events |
+| Valid later decode contains no required Pump pair | `INSUFFICIENT_DATA_FOR_PUMP_MECHANICS`; no claim that an edge is absent |
+| Required atomic transaction package incomplete | Inadmissible observation; quarantine/gap or insufficient data according to evidence, never a strategy negative sample |
+| Event price exists but executable opportunity/cost evidence is missing | Economics unproven; filling at that price would violate the contract, but observing the price is not itself a causality violation |
+| A preregistered hypothesis fails its specified threshold on valid sufficient outcome-independent PIT evidence after appropriate costs and uncertainty | Later research may report `FALSIFIED`; this engineering slice is permanently excluded |
 
-1. The leased window has no authentic Pump `buy` + `TradeEvent` after
-   decoder agreement.
-2. Required instruction, CPI, log, or balance pieces from the same
-   transaction are missing, so the atomic observation package cannot be
-   closed.
-3. Jetstreamer or the CAR reader cannot reconstruct a slot-contiguous
-   window without silent holes. `UNAVAILABLE`, `GAP`, and `QUARANTINED`
-   stay distinct; missing is never zero.
-4. The only "price" is an event field or a same-transaction reserve, and
-   no later independent `execution_opportunity_at` exists. That is not an
-   edge. It is a causality violation.
-5. Coverage, CID, or SHA-256 identity does not replay.
-
-A failed first slice does not authorize a larger download.
+`UNAVAILABLE`, `GAP` and `QUARANTINED` stay distinct. An index zero record
+means index-reported absence, not proven skipped-slot or chain-gap evidence.
+Poor data does not falsify a market hypothesis. Even later research may return
+`INSUFFICIENT_SAMPLE` rather than reject a hypothesis it cannot validly test.
+A failed or empty first slice authorizes neither larger budgets nor outcome-hunting.
 
 ## 6. What this memo does not authorize
 
@@ -129,18 +135,26 @@ unauthorized.
 
 ## 7. Next package
 
-Implement the offline B4 remainder specified in
-[`B4_OFFLINE_REMAINDER.md`](B4_OFFLINE_REMAINDER.md). That package is
-**not** live B4B. Live leased acquisition stays reserved for a later
-approved plan after this remainder exists.
+The [lease contract](B4_ENGINEERING_VALIDATION_LEASE_PLAN.md) now separates:
+bounded implementation and local verification → metadata/index GO → measured
+offline feasibility → separate payload GO → immutable Raw and exact integrity
+report. Neither approval currently exists. A full epoch index is metadata,
+not permission for an epoch CAR. Node CID agreement, selected slot-envelope
+consistency and root-to-slot membership require distinct checks; a declared
+root and local partial hash are not an inclusion proof.
+
+Authentic engineering mechanics may later earn Engineering Validation only
+after review. B4 stays open until its actual acceptance criteria pass; B5 owns
+Bronze/Silver and the first token lifecycle. No new infrastructure phase is added.
 
 ## Citations
 
-Official documentation hosts, accessed **2026-09-05**,
-`DOCUMENTATION_ONLY`:
+Official documentation/source hosts, initially accessed **2026-09-05**;
+OF1 file names and the pinned modern index source rechecked **2026-09-06**,
+`DOCUMENTATION_ONLY` (no acquisition-host request):
 
 - https://docs.old-faithful.net/references/of1-files.md
-- https://docs.old-faithful.net/references/of1-indexes.md
+- https://github.com/anza-xyz/jetstreamer/blob/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/index.rs
 - https://docs.old-faithful.net/references/epochs.md
 - https://docs.old-faithful.net/old-faithful/rpc.md
 - https://docs.triton.one/chains/solana/old-faithful

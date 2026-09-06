@@ -1,6 +1,6 @@
 # Triton-only network and cost-safety boundary
 
-> **Document status: ACTIVE design; no network run is authorized.** PR 1 performs no Triton/Old Faithful call and spends no provider credit.
+> **Document status: ACTIVE design; no network run is authorized.** B4's current transport is loopback-only Fixture evidence, not an implemented official HTTPS downloader.
 
 ## Provider boundary
 
@@ -32,15 +32,20 @@ The V2 wrapper must:
 
 - pin the official Jetstreamer/OF1 source commit and exact host/path/index identities;
 - deny caller-supplied base URLs, S3 endpoints and backend overrides;
-- deny mirrors/public RPC and unpinned redirects;
+- deny mirrors/public RPC, proxies, redirects and endpoint environment overrides;
 - use one immutable half-open range and slice class per approved plan;
-- meter all requests, retries, headers/body bytes, disk high-water, runtime and concurrency;
+- count all attempts/retries, conservatively reserve `response_entity_bytes` before dispatch, and separately bound headers, reads, disk high-water, memory, runtime and concurrency;
 - stop on any hard limit without auto-expansion;
 - retain exact receipts/content hashes/CIDs and explicit incomplete/abort state;
 - resume only after source/plan/code/completed-content identity is revalidated;
 - run Raw → Bronze → Silver in `NETWORK_ISOLATED_REPLAY`.
 
-No full epoch is downloaded for the first slice.
+No full epoch CAR is downloaded for the first slice. A complete bounded modern
+epoch index is metadata, not an exception for CAR payload. Entity-byte accounting
+does not measure TCP/TLS overhead or physical wire usage. Interrupted actual byte
+totals without complete receipts remain unavailable; reservations are not refunds.
+The fixture store proves parts of this contract only: live TLS, metadata
+bootstrap, RSS/free-space enforcement and CAR/CID verification are still required.
 
 ## Approval contract
 
@@ -48,7 +53,7 @@ Before any `ACQUISITION_LEASED` or `LIVE_RUNTIME_LEASED` process construction, r
 
 1. purpose and evidence class;
 2. exact service/host/path/endpoint and redirect policy;
-3. source commit/index/sidecar/content identities;
+3. pinned source/format/code/toolchain identities and acquisition stage: metadata approval names expected paths/formats/exact or capped sizes; payload approval additionally binds the acquired metadata/index/sidecar receipts and hashes;
 4. epoch/range and selection rationale;
 5. maximum requests/retries/bytes/single response;
 6. maximum disk/memory/runtime/concurrency and required free space;
@@ -58,6 +63,26 @@ Before any `ACQUISITION_LEASED` or `LIVE_RUNTIME_LEASED` process construction, r
 10. operator and approval timestamp.
 
 Every numeric value is a provisional per-run parameter until that plan is approved. The architecture does not contain a universal slot count, byte/request/disk/runtime cap, range or epoch.
+
+For B4, use the [two-stage draft and budget derivation](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md).
+Metadata/index GO permits only its explicitly enumerated GET/HEAD operations;
+it stops before CAR entity bytes. Missing/incompatible modern index means stop,
+not legacy-index fallback. Payload GO follows accepted metadata and an offline
+feasibility report with exact ranges, retries and any proof-node requests.
+Neither GO exists today. Authentication of TLS does not itself verify CIDs or
+root-to-slot membership, and a partial local hash never verifies the full CAR.
+
+Approvals bind immutable plan hashes and implementation readiness, not merely
+five editable fields. Preserve aggregate spending and retained disk across both
+stages; a second approval cannot duplicate budgets. Runtime allocations must be
+explicit; each stage's original deadline and attempt history survive restart.
+Renewal or changed scope needs new explicit authority, never an automatic retry.
+Required measurements that are still unavailable block a ready-to-run claim.
+
+Budget exhaustion or integrity/transport failure is engineering failure/stop,
+not evidence against a trading edge. Data sufficiency and later preregistered
+research falsification are separate decisions; engineering slices never support
+an economic hypothesis test.
 
 ## Slice separation
 
