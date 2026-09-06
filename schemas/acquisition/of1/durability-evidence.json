@@ -1,0 +1,43 @@
+{
+  "approved": false,
+  "b4_complete": false,
+  "budget_metric": "response_entity_bytes",
+  "checks": {
+    "abandoned_reservation_remains_charged": true,
+    "changed_raw_rejected_against_original_receipt": true,
+    "cross_run_receipt_rejected": true,
+    "original_deadline_unchanged": true,
+    "published_raw_matches_receipt": true,
+    "restart_at_original_deadline_rejected": true
+  },
+  "cid_verification": "UNAVAILABLE",
+  "crash_scope": "STORE_REOPEN_SEAM_NOT_PROCESS_KILL_OR_POWER_LOSS",
+  "declared_code_and_toolchain_fingerprints": "FIXTURE_CONTEXT_NOT_RUNTIME_ATTESTATIONS",
+  "evidence": "Fixture",
+  "fixture_index_sha256": "3919f15479264300e451c53ce7b276cf90391488b9cbbd7f4c9c1ea70f41c60c",
+  "fixture_payload_sha256": "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+  "historical_source_bytes": "UNAVAILABLE",
+  "identity_proves_source_authenticity": false,
+  "interrupted_actual_bytes": "UNAVAILABLE",
+  "interrupted_allowance_is_refunded": false,
+  "network_enabled": false,
+  "plan_sha256": "b8e549c1c971038530cdfda8c21b4cf627cb609abd5ce92cc27fa7b795da0778",
+  "research_outcome": "NOT_EVALUATED_ENGINEERING_FIXTURE_ONLY",
+  "root_membership": "UNAVAILABLE",
+  "runtime_executable_identity": "VERIFIED_DURING_RESUME",
+  "scenario": "RESERVE_DROP_REOPEN_RETRY_PUBLISH",
+  "schema": "OF1_DURABILITY_FIXTURE_EVIDENCE_1",
+  "slot_semantic_membership": "UNAVAILABLE_NOT_DECODED_IN_B4",
+  "summary": {
+    "attempts_reserved": 2,
+    "charged_entity_bytes": 64,
+    "deadline_boot_ms": 70000,
+    "deadline_wall_ms": 160000,
+    "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "evidence": "Fixture",
+    "published_requests": 1,
+    "unpublished_attempts": 1,
+    "unreceipted_response_entity_bytes": null,
+    "verified_response_entity_bytes": 32
+  }
+}
