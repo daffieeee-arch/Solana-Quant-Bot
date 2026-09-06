@@ -1,6 +1,7 @@
 //! Offline, source-bound slot/index planning. No transport or acquisition authority.
 //! Durable capture and resumable budget accounting are separate, not yet implemented gates.
 
+pub mod durable;
 pub mod fixture;
 
 use serde::{Deserialize, Serialize};

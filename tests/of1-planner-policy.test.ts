@@ -21,4 +21,11 @@ describe('OF1 planning-only dependency boundary', () => {
     }
     expect(validateOf1PlannerInputs(manifest, lock, { 'build.rs': '' })).not.toEqual([]);
   });
+  it('allows only the reviewed same-binary crash harness, never a generic command exception', () => {
+    const source = readFileSync('rust/of1-range-recorder/tests/durability_process.rs', 'utf8');
+    expect(validateOf1PlannerInputs(manifest, lock, { 'tests/durability_process.rs': source })).toEqual([]);
+    expect(validateOf1PlannerInputs(manifest, lock, { 'tests/durability_process.rs': source + '\n' })).toContain('unreviewed OF1 process-crash harness');
+    expect(validateOf1PlannerInputs(manifest, lock, { 'src/worker.rs': source })).not.toEqual([]);
+    expect(validateOf1PlannerInputs(manifest, lock, { 'tests/durability_process.rs': source + ' std::net::TcpStream' })).not.toEqual([]);
+  });
 });

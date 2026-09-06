@@ -1,7 +1,7 @@
 {
   "schema": "OF1_PLANNER_DEPENDENCY_REVIEW_1",
   "reviewedAt": "2026-09-06",
-  "scope": "PR1 offline planner only. Cargo.lock pins all edges. Build scripts run under syscall network denial. fs2 is deferred until durable writer implementation.",
+  "scope": "Offline planner and fixture durability store. Cargo.lock pins all edges unchanged. Build scripts run under syscall network denial. The Rust 1.97.1 standard-library file lock avoids any fs2 dependency.",
   "packages": [
     {
       "name": "bitflags",
