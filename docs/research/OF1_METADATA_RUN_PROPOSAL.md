@@ -1,6 +1,8 @@
 # Next OF1 metadata run — review proposal, not authorization
 
-> **Document status: ACTIVE — UNAPPROVED.** No official host has been contacted.
+> **Document status: ACTIVE — UNAPPROVED TEMPLATE.** The separately approved
+> 2026-09-06 [metadata run](OF1_STAGED_ACQUISITION.md#observed-checksum-compatibility-offline-correction)
+> completed; its expired approval is not this template and authorizes no new run.
 > B4 remains Unproven; the [implementation](OF1_STAGED_ACQUISITION.md) is Fixture.
 > Metadata GO must name the exact generated plan hash, binary, operator and times.
 
@@ -20,9 +22,12 @@ inspect token outcomes, select a successful token or infer Pump availability.
 Host is internally fixed to `files.old-faithful.net:443`. This is four logical
 operations, at most **12 attempts / 15,576,576 response_entity_bytes**. One
 successful inventory charges 5,192,192 bytes because sidecars reserve their full
-caps, even when shorter. The expected index size is source-format arithmetic
-`432000 × 12`, not an observed file. Sidecar sizes, HEAD/range support, validators,
-availability and cost still have no authentic measurement.
+caps, even when shorter. Source-format arithmetic `432000 × 12` was confirmed by
+the retained 5,184,000-byte index. The two sidecars measured 101 and 60 bytes;
+HEAD declared a 709,264,399,796-byte CAR, with no strong ETag. These are observations
+of that one run, not a future availability, range-support or throughput guarantee.
+Its approved cost basis was documented free public OF1 access, not paid query
+credits; byte/runtime caps are resource bounds, not billing measurements.
 
 No old budget is increased:
 
@@ -115,10 +120,13 @@ the check; preflight is not a guarantee against later filesystem changes.
 The first metadata initialization stopped before store creation or network dispatch
 because the previous marker-existence check rejected an empty home `.git` directory.
 Preserve the original `initialization-failure.json` and its original plan/GO/lease;
-do not rewrite that stop as acquisition or retry evidence. After acceptance of the
-location fix, prepare a new executable/plan identity and obtain a fresh metadata GO
-for the same dataset location, four operations and caps. No old approval or deadline
-is reset or reused by this correction.
+do not rewrite that stop as acquisition or retry evidence. The accepted location
+fix was followed by a fresh executable/plan and GO for the same dataset location,
+four operations and caps; that metadata run succeeded. Its bytes, receipts and
+old/new plan/GO/lease/stop evidence remain unchanged. The checksum correction and
+later telemetry work change the binary: finish them before preparing the next
+decision packet. Do not resume the old store with a rebuilt executable, rewrite
+its manifest or reuse/reset an expired approval/deadline.
 
 The JSON contains the complete aggregate plan, metadata allocation and
 `approval_target_sha256`. Its approval flags remain false. Save the `aggregate`

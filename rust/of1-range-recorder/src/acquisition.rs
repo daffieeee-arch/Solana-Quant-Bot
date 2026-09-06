@@ -76,13 +76,17 @@ pub fn metadata_receipt_sha256(metadata: &[Published]) -> StoreResult<String> {
 
 fn declared_sha256(bytes: &[u8], epoch: u64) -> StoreResult<String> {
     let text = std::str::from_utf8(bytes).map_err(|_| StoreError::Corrupt)?;
-    // Accept only a bare digest or standard sha256sum for this exact CAR basename.
+    // Bare digest, exact CAR basename, or the observed OF1 source annotation.
+    // The annotation is compared as text only: never resolve/open it or use it
+    // as a destination or endpoint. Other source notations still fail closed.
     let fields: Vec<_> = text.split_whitespace().collect();
     let digest = fields.first().ok_or(StoreError::Corrupt)?;
     if !crate::is_hash(digest)
         || fields.len() > 2
         || fields.get(1).is_some_and(|name| {
-            name.strip_prefix('*').unwrap_or(name) != format!("epoch-{epoch}.car")
+            let annotation = name.strip_prefix('*').unwrap_or(name);
+            annotation != format!("epoch-{epoch}.car")
+                && annotation != format!("/tank/solana/car/{epoch}/epoch-{epoch}.car")
         })
     {
         return Err(StoreError::Corrupt);
@@ -95,6 +99,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn observed_checksum_source_annotation_is_not_a_local_path() {
+        let bytes = include_bytes!("../../../schemas/acquisition/of1/epoch-978-observed.sha256");
+        assert_eq!(bytes.len(), 101);
+        assert_eq!(
+            sha256(bytes),
+            "a7b6e38f47efd59831641cccf4eaf24870c9176c876d7bd5ccf21163bceb95f0"
+        );
+        let provenance: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../schemas/acquisition/of1/epoch-978-observed.provenance.json"
+        ))
+        .unwrap();
+        assert_eq!(provenance["sha256"], sha256(bytes));
+        assert_eq!(provenance["bytes"], bytes.len());
+        assert_eq!(provenance["whole_car_sha256_verified"], false);
+        assert_eq!(
+            declared_sha256(bytes, 978).unwrap(),
+            "4ceef2830882036491f2f5a0fbc9ba5ccb94e7783a6723c42336969a50cb212c"
+        );
+        assert_eq!(
+            provenance["declared_car_sha256"],
+            declared_sha256(bytes, 978).unwrap()
+        );
+        assert!(declared_sha256(bytes, 979).is_err());
+    }
+
+    #[test]
     fn declared_hash_is_not_whole_object_verification_or_a_foreign_filename() {
         let digest = "a".repeat(64);
         for text in [
@@ -102,6 +132,8 @@ mod tests {
             format!("{digest}\n"),
             format!("{digest}  epoch-978.car\n"),
             format!("{digest} *epoch-978.car"),
+            format!("{digest}  /tank/solana/car/978/epoch-978.car\n"),
+            format!("{digest} */tank/solana/car/978/epoch-978.car\n"),
         ] {
             assert_eq!(declared_sha256(text.as_bytes(), 978).unwrap(), digest);
         }
@@ -112,6 +144,16 @@ mod tests {
             format!("{digest} **epoch-978.car"),
             format!("{digest} ../epoch-978.car"),
             format!("{digest} epoch-978.car extra"),
+            format!("{digest} /tank/solana/car/978/epoch-979.car"),
+            format!("{digest} /tank/solana/car/979/epoch-978.car"),
+            format!("{digest} /tank/solana/car/978/../978/epoch-978.car"),
+            format!("{digest} /tank/solana/car/978/./epoch-978.car"),
+            format!("{digest} /tank/solana/car/978//epoch-978.car"),
+            format!("{digest} **/tank/solana/car/978/epoch-978.car"),
+            format!("{digest} /other/epoch-978.car"),
+            format!("{digest} https://files.old-faithful.net/978/epoch-978.car"),
+            format!("{digest} /tank/solana/car/978/epoch-978.car\0"),
+            format!("{digest} epoch-978.car\n{digest} epoch-978.car\n"),
         ] {
             assert!(declared_sha256(text.as_bytes(), 978).is_err());
         }

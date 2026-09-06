@@ -1,0 +1,23 @@
+{
+  "schema": "OF1_OBSERVED_CHECKSUM_REGRESSION_1",
+  "purpose": "REGRESSION_FIXTURE_FROM_AUTHENTIC_METADATA_NOT_PAYLOAD_EVIDENCE",
+  "fixture": "epoch-978-observed.sha256",
+  "bytes": 101,
+  "sha256": "a7b6e38f47efd59831641cccf4eaf24870c9176c876d7bd5ccf21163bceb95f0",
+  "source_url": "https://files.old-faithful.net/978/epoch-978.sha256",
+  "method": "GET",
+  "status": 200,
+  "acquired_at_utc": "2026-09-06T18:56:33.459Z",
+  "receipt_evidence": "UNREVIEWED_AUTHENTIC_RAW",
+  "source_run_id": "8a350ea0c149f9c49e0615a9460ed3695eec64af21a778b0f8d7786adbae336f",
+  "source_publication": "published/0000000001",
+  "source_receipt_sha256": "e2d837fa3447b84ca2476e8dbe45f5074b64116849c81b5e911f18f96bf30076",
+  "source_run_manifest_sha256": "9387d4678ca4e590cfadd440349572e584677557245eb7801d18998c811a15ad",
+  "source_code_sha": "184e32eb03b6dfd681ed5dcb479678a3ae60da05",
+  "source_executable_sha256": "50a3f87703c7a95fc1bf13d3dc6e27176ecc517a8f3e818e4aa91681013e9b0d",
+  "declared_car_sha256": "4ceef2830882036491f2f5a0fbc9ba5ccb94e7783a6723c42336969a50cb212c",
+  "annotation_semantics": "SOURCE_TEXT_ONLY_NEVER_A_LOCAL_PATH_OR_ENDPOINT",
+  "whole_car_sha256_verified": false,
+  "root_to_slot_membership": "UNAVAILABLE",
+  "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4"
+}

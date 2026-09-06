@@ -2,7 +2,45 @@
 
 > **Document status: ACTIVE. Evidence: Fixture.** This implementation PR is not a
 > metadata or payload lease. B4/#83 remains open / In Progress / ACTIVE NOW /
-> Unproven; B5 does not start here. No official data request has been executed.
+> Unproven; B5 does not start here. A separately approved four-operation metadata
+> run completed on 2026-09-06; no CAR payload or further acquisition is authorized.
+
+## Observed checksum compatibility (offline correction)
+
+The preserved run `8a350ea0c149f9c49e0615a9460ed3695eec64af21a778b0f8d7786adbae336f`
+published the index, SHA sidecar, CID sidecar and CAR HEAD: four HTTP 200 results,
+four attempts, zero retries, **5,184,161 received entity bytes** versus
+**5,192,192 reserved entity bytes**. These are authentic metadata observations,
+not a decoded coin dataset, payload-integrity proof or completed B4. The full
+result remains outside Git in
+`/home/dmesdary/solana-quant-data/run-plans/of1-e978-metadata-184e32eb-02/metadata-run-result.json`
+(SHA-256 `8c77b3f6d7a1daec92835284bdc81ba4e18cb0a0166abcec5135252da5c81b21`).
+
+The exact [101-byte observed checksum](../../schemas/acquisition/of1/epoch-978-observed.sha256)
+and its [provenance](../../schemas/acquisition/of1/epoch-978-observed.provenance.json)
+are the regression fixture. Besides the existing bare digest and exact basename,
+the parser accepts precisely the observed source notation
+`/tank/solana/car/{epoch}/epoch-{epoch}.car`, with the existing optional single
+`*` filename marker. Both epoch occurrences must match. This is an opaque text
+annotation: never opened, canonicalized, used as a local destination or turned
+into a URL. It does not restore a TrueNAS target. Other path forms still reject;
+Raw bytes and receipt identities are never normalized or rewritten. The declared
+CAR checksum is not verified by downloading its sidecar.
+
+| Offline check | Observed result / limitation |
+|---|---|
+| Original parser with exact fixture | `Corrupt`, reproduced before the fix |
+| Corrected parser and fixture planning | Same derived requests/source fingerprint as basename notation; distinct metadata-receipt identity preserved |
+| Read-only derivation from all four original publications | First epoch slot `[422496000, 422496001)` maps to CAR range `[59, 45110)`, **45,051 bytes**; no request dispatched |
+| Original evidence audit | All 190 run files hash-identical before/after; original aggregate/executable/lease unchanged; no store resume |
+| Integrity and research | Whole-CAR hash not verified; root-to-slot membership `UNAVAILABLE`; domain counts `UNAVAILABLE_NOT_DECODED_IN_B4`; no activation/edge claim |
+
+The single-slot derivation is a compatibility check, **not a chosen or approved
+payload run plan**. It calls the pure metadata planner, not `AcquisitionStore::resume`
+with a different binary. The old executable and expired lease remain immutable.
+Finish the separately scoped monitor/telemetry work before preparing a final
+binary and a new, separately approved metadata/payload decision packet; do not
+rewrite old manifests to make a new binary fit. No new run is authorized here.
 
 ## One path, two approvals
 
