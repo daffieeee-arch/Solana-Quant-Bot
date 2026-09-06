@@ -6,6 +6,8 @@
 
 Build authentic, reproducible Solana/Pump research evidence and determine whether a statistically and economically defensible edge exists. `FALSIFIED` and `INSUFFICIENT_SAMPLE` are valid outcomes. Profitability is never an assumption or a milestone label.
 
+These are research outcomes, not synonyms for an acquisition failure. Engineering errors/budget stops remain engineering outcomes; undecoded or insufficient evidence cannot falsify an edge. The [B4 lease contract](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md) separates metadata/index GO from payload GO, exposes unvalidated budgets and the remaining HTTPS/CAR/CID implementation. No live run or B4 completion follows from the existing loopback fixtures.
+
 No phase authorizes signing, real orders, transaction submission or live funds.
 
 ## Ordering principles

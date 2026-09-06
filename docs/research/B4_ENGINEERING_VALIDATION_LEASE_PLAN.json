@@ -1,11 +1,13 @@
 {
-  "schemaVersion": "B4_ENGINEERING_VALIDATION_LEASE_PLAN_1",
+  "schemaVersion": "B4_ENGINEERING_VALIDATION_LEASE_PLAN_2",
   "plan_id": "b4-eng-validation-lease-epoch978-first-128",
   "document_status": "ACTIVE",
   "issue": "#83",
   "approved": false,
   "networkEnabled": false,
-  "intendedNetworkEnabledAfterApproval": true,
+  "readyToRun": false,
+  "executablePlan": false,
+  "approvalModel": "SEPARATE_METADATA_GO_AND_PAYLOAD_GO_AFTER_IMPLEMENTATION_REVIEW",
   "lease_intent": "ACQUISITION_LEASED",
   "purpose": "ENGINEERING_VALIDATION_ONLY",
   "package_name": "B4 engineering-validation lease",
@@ -16,6 +18,7 @@
   "cost_confirmation": "NOT_CONFIRMED",
   "creditSpendAuthorized": false,
   "host": "files.old-faithful.net",
+  "port": 443,
   "hostAllowlist": ["files.old-faithful.net"],
   "redirectsAllowed": false,
   "mirrorsAllowed": false,
@@ -24,12 +27,17 @@
   "proxyAllowed": false,
   "s3Allowed": false,
   "hostedGrpcAllowed": false,
+  "callerSuppliedUrlAllowed": false,
+  "endpointEnvironmentAllowed": false,
+  "legacyIndexFallbackAllowed": false,
   "jetstreamerCandidateSha": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
   "objectIdentities": {
     "epochCarSha256": "UNAVAILABLE",
     "epochCarCid": "UNAVAILABLE",
-    "slotsTxtSha256": "UNAVAILABLE",
-    "indexSha256": "UNAVAILABLE"
+    "indexSha256": "UNAVAILABLE",
+    "epochCarSizeBytes": null,
+    "status": "UNAVAILABLE_BEFORE_METADATA_GO",
+    "sidecarMeaning": "Reported full-object hash/root only; a bounded slice cannot recompute the entire epoch CAR SHA-256."
   },
   "epoch": 978,
   "slot_range": {
@@ -38,7 +46,7 @@
     "requestedSlots": 128,
     "objectKind": "SLOT_WINDOW",
     "selectionPolicy": "SOURCE_AND_ENGINEERING_PROPERTIES_ONLY",
-    "selectionRationale": "First 128 slots of epoch 978 (978 * 432000). Epoch chosen for documented coverage/CU properties, not payload inspection. Not the old provisional example window.",
+    "selectionRationale": "Retained unapproved first-128-slot candidate under the pinned OF1 epoch convention (978 * 432000), not payload inspection, measured coverage, known Pump activity or a proven minimum useful window.",
     "selectionNonClaims": [
       "NO_PROFIT_SELECTION",
       "NO_TOKEN_PERFORMANCE_SELECTION",
@@ -52,6 +60,10 @@
       "reason": "Must not be fetched because it appeared in earlier docs without origin/class."
     }
   },
+  "budgetStatus": "UNVALIDATED_NOT_ALLOCATED",
+  "budgetMetric": "response_entity_bytes",
+  "budgetScope": "AGGREGATE_CANDIDATE_METADATA_PLUS_PAYLOAD_PLUS_RETRIES_AND_ANY_APPROVED_PROOF_REQUESTS",
+  "budgetMeaning": "Retained original proposed caps, not approved allocations or evidence that this window fits. No separate reuse of these totals in each stage.",
   "budget": {
     "maxRequests": 16,
     "warningRequests": 13,
@@ -70,23 +82,186 @@
     "warningRuntimeMs": 1440000,
     "responseTimeoutMs": 30000
   },
+  "stages": {
+    "metadata": {
+      "approved": false,
+      "networkEnabled": false,
+      "approvalId": null,
+      "approvedPlanSha256": null,
+      "operator": null,
+      "approvedAt": null,
+      "allocatedCaps": null,
+      "deadline": null,
+      "receiptSha256": null,
+      "purpose": "Acquire bounded modern index and source-reported object metadata before payload planning; no CAR entity body.",
+      "inventoryStatus": "PROPOSED_NOT_AUTHORIZED",
+      "inventory": [
+        {
+          "kind": "MODERN_SLOT_RANGE_INDEX",
+          "method": "GET",
+          "path": "/978/epoch-978-slot-ranges.raw",
+          "expectedStatus": 200,
+          "maxResponseEntityBytes": 5184000,
+          "expectedResponseEntityBytes": 5184000,
+          "sizeEvidence": "STRUCTURAL_SOURCE_ONLY_432000_RECORDS_TIMES_12_BYTES"
+        },
+        {
+          "kind": "REPORTED_CAR_SHA256",
+          "method": "GET",
+          "path": "/978/epoch-978.sha256",
+          "expectedStatus": 200,
+          "maxResponseEntityBytes": 4096,
+          "expectedResponseEntityBytes": null,
+          "sizeEvidence": "UNMEASURED_PROPOSED_CAP"
+        },
+        {
+          "kind": "REPORTED_CAR_ROOT_CID",
+          "method": "GET",
+          "path": "/978/epoch-978.cid",
+          "expectedStatus": 200,
+          "maxResponseEntityBytes": 4096,
+          "expectedResponseEntityBytes": null,
+          "sizeEvidence": "UNMEASURED_PROPOSED_CAP"
+        },
+        {
+          "kind": "CAR_OBJECT_SIZE_AND_VALIDATOR",
+          "method": "HEAD",
+          "path": "/978/epoch-978.car",
+          "expectedStatus": 200,
+          "maxResponseEntityBytes": 0,
+          "expectedResponseEntityBytes": 0,
+          "sizeEvidence": "HEAD_SEMANTICS_NOT_MEASURED_SERVER_SUPPORT"
+        }
+      ],
+      "headRule": "HEAD costs one durable attempt and time; Content-Length is CAR object size, not transferred entity bytes. Unexpected body or unsupported behavior fails closed.",
+      "requiredOutputsBeforePayloadGo": [
+        "EXACT_METADATA_RAW_AND_REQUEST_RECEIPTS",
+        "MODERN_INDEX_EXACT_LENGTH_AND_RECORDED_SHA256",
+        "REPORTED_CAR_SIZE_VALIDATOR_SHA256_AND_ROOT_CID_WITH_EVIDENCE_LIMITS",
+        "SOURCE_AND_IMPLEMENTATION_IDENTITIES",
+        "DURABLE_ATTEMPT_BYTE_DISK_AND_DEADLINE_ACCOUNTING",
+        "EXACT_OFFLINE_PAYLOAD_RANGE_PLAN_AND_FEASIBILITY_REPORT"
+      ],
+      "failurePolicy": "Missing/incompatible modern index, missing/oversized/malformed sidecar, unsupported HEAD or inconsistent identity stops. No legacy index, alternate provider or implicit larger cap."
+    },
+    "payload": {
+      "approved": false,
+      "networkEnabled": false,
+      "approvalId": null,
+      "approvedPlanSha256": null,
+      "operator": null,
+      "approvedAt": null,
+      "allocatedCaps": null,
+      "deadline": null,
+      "boundMetadataReceiptSha256": null,
+      "rangePlanSha256": null,
+      "actualPlannedRequests": null,
+      "actualPlannedResponseEntityBytes": null,
+      "actualAbsentIndexRecords": null,
+      "additionalProofRequests": null,
+      "measurementStatus": "UNAVAILABLE_BEFORE_METADATA_GO",
+      "purpose": "Only separately approved exact CAR ranges, derived offline from accepted metadata; no full epoch CAR or automatic expansion.",
+      "requiredBeforeGo": [
+        "REVIEWED_OFFICIAL_HTTPS_METADATA_AND_RANGE_IMPLEMENTATION",
+        "ACCEPTED_METADATA_RECEIPT_AND_EXACT_SOURCE_INDEX_OBJECT_IDENTITIES",
+        "APPROVED_EXACT_RANGE_PLAN_AND_ADDITIONAL_PROOF_REQUEST_INVENTORY_IF_ANY",
+        "PROVEN_AGGREGATE_REQUEST_BYTE_DISK_RUNTIME_FEASIBILITY",
+        "REVIEWED_CAR_CID_VERIFICATION_AND_EXPLICIT_MEMBERSHIP_LIMITS",
+        "EXPLICIT_OPERATOR_COST_AND_AVAILABILITY_CONFIRMATION"
+      ]
+    }
+  },
+  "budgetBasis": {
+    "sourceReceipt": "schemas/acquisition/of1/source-receipt.json",
+    "indexRecords": 432000,
+    "indexRecordBytes": 12,
+    "indexBytes": 5184000,
+    "metadataInitialRequests": 4,
+    "metadataInitialEntityAllowance": 5192192,
+    "metadataMaximumAttemptsPerOperation": 3,
+    "metadataRetryEnvelopeRequests": 12,
+    "metadataRetryEnvelopeEntityAllowance": 15576576,
+    "remainingAggregateRequestsAfterMetadataEnvelope": 4,
+    "remainingAggregateEntityAllowanceAfterMetadataEnvelope": 118641152,
+    "payloadRequestFormula": "Q = sum_i ceil(L_i / C); current planner does not coalesce slots.",
+    "payloadEntityFormula": "S = sum_i L_i; with two retries the full payload envelope is 3*Q attempts and 3*S charged entity bytes.",
+    "aggregateRule": "Metadata spent plus still-reserved allowances + payload retry envelope + any approved additional proof requests must fit one aggregate cap; no stage reset or refund.",
+    "all128SlotsNonemptyIllustration": {
+      "status": "CONDITIONAL_ARITHMETIC_NOT_OBSERVED_COVERAGE",
+      "minimumPayloadInitialRequests": 128,
+      "minimumFullRetryEnvelopeRequests": 384,
+      "fitsRetained16RequestCandidate": false
+    },
+    "full16MiBAttemptsWithin128MiBAggregateIgnoringMetadata": 8,
+    "diskIllustration": {
+      "status": "LOWER_BOUND_ILLUSTRATION_NOT_A_SAFE_UPPER_BOUND",
+      "payloadBytes": 134217728,
+      "fullChunkBytes": 8192,
+      "minimumReceiptChargeBytes": 4096,
+      "minimumChunkDirectoryChargeBytes": 4096,
+      "minimumPendingChunkChargeBytes": 268435456,
+      "finalRawCopyBytes": 134217728,
+      "minimumCombinedBytesBeforeOtherMetadata": 402653184,
+      "fitsRetained256MiBDiskCandidate": false,
+      "limits": "Short reads, retries, retained partials, metadata/index receipts and publication temporaries increase charge. This is not a measured footprint or a completion guarantee."
+    },
+    "runtimeRule": "The original 30-minute aggregate proposal is not allocated twice. Each stage needs an explicitly approved deadline and aggregate allocation; restart cannot renew it. Runtime allocation remains null.",
+    "unmeasured": [
+      "AUTHENTIC_INDEX_AVAILABILITY_AND_HASH",
+      "ACTUAL_SIDECAR_LENGTHS_AND_FORMATS",
+      "CAR_OBJECT_SIZE_AND_VALIDATOR",
+      "PAYLOAD_RANGE_COUNT_AND_ENTITY_BYTES",
+      "HTTP_TLS_FRAMING_AND_RANGE_COMPATIBILITY",
+      "ADDITIONAL_CAR_HEADER_OR_MEMBERSHIP_PROOF_REQUESTS",
+      "DISK_HIGH_WATER_WITH_STREAM_FRAGMENTATION_AND_RETRIES",
+      "RSS_PEAK",
+      "SOURCE_THROUGHPUT_AND_LOCAL_FSYNC_RUNTIME",
+      "CURRENT_COST_AND_AVAILABILITY"
+    ],
+    "enforcementLimits": [
+      "Current Rust code accepts OFFLINE_FIXTURE only and rejects live authority flags; changing this JSON cannot authorize execution.",
+      "Fixture store enforces durable attempt/entity allowances, conservative run-tree disk charge and original wall/boot deadlines; official HTTPS and metadata acquisition do not exist.",
+      "Memory cap, free-space prerequisite and warning thresholds are proposed requirements, not currently enforced live guarantees.",
+      "response_entity_bytes excludes headers, framing probes and TCP/TLS overhead; a future live path requires separate bounded header/framing/deadline policies.",
+      "Disk scope must include metadata artifacts outside the payload run directory as well as retained attempts and publication copies."
+    ]
+  },
   "hard_stop": [
-    "Stop on any hard budget, deny-list, override, full-epoch CAR, identity failure, or approved/networkEnabled not both true.",
+    "This draft is not executable. Missing implementation/evidence gates or missing exact stage approval deny all acquisition.",
+    "Stop on any approved hard budget, deny-list, override, full-epoch CAR, identity failure or unsupported source/index contract.",
     "Persist abort receipts. Do not auto-expand range or budgets.",
-    "A failed first slice does not authorize a larger download."
+    "A failed first slice does not authorize a larger download or establish market-edge falsification."
   ],
-  "resumePolicy": "Identity-bound resume only after plan hash, source/index fingerprints and completed raw hashes revalidate.",
-  "coveragePolicy": "UNAVAILABLE, GAP and QUARANTINED stay distinct. Missing is never zero.",
-  "expectedTerminalStates": [
-    "PASS",
-    "FALSIFIED",
-    "INSUFFICIENT_SAMPLE",
-    "ABORTED_BUDGET",
-    "QUARANTINED"
-  ],
+  "resumePolicy": "Revalidate exact stage and aggregate plan, accepted source/index/metadata identities, code/toolchain/executable, original wall/boot deadlines and all retained content hashes. Preserve prior-stage receipts and spent/reserved budgets. No restart refund, deadline reset, automatic lease renewal or repair of ambiguous state.",
+  "coveragePolicy": "UNAVAILABLE, GAP and QUARANTINED stay distinct. Index-reported absence is not proven skipped-slot or chain coverage. Missing is never zero.",
+  "outcomes": {
+    "engineeringTerminalStates": [
+      "ENGINEERING_PASS",
+      "ENGINEERING_FAILURE",
+      "ABORTED_BUDGET",
+      "QUARANTINED"
+    ],
+    "engineeringPassMeaning": "Only the named acquired-byte, receipt, integrity and replay checks passed; not universal source completeness, domain sufficiency or research readiness.",
+    "dataSufficiency": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "laterValidDecodeWithoutRequiredPumpEvidence": "INSUFFICIENT_DATA_FOR_PUMP_MECHANICS",
+    "edgeEvaluation": "NOT_EVALUATED_ENGINEERING_SLICE",
+    "edgeFalsificationRequires": "A preregistered hypothesis evaluated on valid, sufficient, outcome-independent, point-in-time and appropriately costed research evidence. An engineering slice cannot support this result."
+  },
+  "evidenceLimits": {
+    "currentImplementation": "Fixture",
+    "b4ProjectEvidence": "Unproven",
+    "authenticSourceObservation": "UNAVAILABLE",
+    "carCidVerification": "UNAVAILABLE",
+    "rootToSlotMembership": "UNAVAILABLE",
+    "domainCounts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "historicalActivation": "UNAVAILABLE",
+    "engineeringValidationPromotion": "REQUIRES_SEPARATE_AUTHENTIC_RUN_GO_AND_ACCEPTED_RECEIPTS"
+  },
   "notes": [
     "This JSON is a draft lease. approved=false and networkEnabled=false.",
     "See docs/research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md",
-    "Do not construct a network client from this file."
+    "Do not construct a network client from this file. Five completed metadata fields are not sufficient authority.",
+    "The earlier version remains in Git history; historical fixture reports and source receipts are unchanged.",
+    "No runnable metadata or payload stage exists. The shortest route is bounded implementation, metadata GO, offline feasibility review, separate payload GO, then exact acquired-byte evidence."
   ]
 }
