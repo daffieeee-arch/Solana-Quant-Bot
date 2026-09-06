@@ -1,5 +1,7 @@
 # B4A Offline Range Recorder (Fixture-only delivery)
 
+> **Document status: SUPERSEDED.** The original JS contract below is preserved as historical fixture context, not active acquisition instructions. The [Rust offline transport contract](OF1_OFFLINE_TRANSPORT.md) and [26-case parity inventory](../../schemas/acquisition/of1/transport-parity.json) replace its implementation. In particular, full-CAR segmentation and single-range HTTP200 acceptance below are not current requirements. No live lease is authorized.
+
 Scope: this contract is the bounded fixture/evidence stage for B4 acquisition under
 issue #83. It captures only deterministic raw-byte handling and crash/replay semantics.
 

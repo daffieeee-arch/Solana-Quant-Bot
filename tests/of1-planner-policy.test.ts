@@ -5,7 +5,7 @@ import { validateOf1PlannerInputs } from '../scripts/assert-of1-planner-offline.
 const manifest = readFileSync('rust/of1-range-recorder/Cargo.toml');
 const lock = readFileSync('rust/of1-range-recorder/Cargo.lock');
 
-describe('OF1 planning-only dependency boundary', () => {
+describe('OF1 default-off transport dependency boundary', () => {
   it('accepts the reviewed manifest and lock', () => {
     expect(validateOf1PlannerInputs(manifest, lock, {})).toEqual([]);
   });
@@ -27,5 +27,14 @@ describe('OF1 planning-only dependency boundary', () => {
     expect(validateOf1PlannerInputs(manifest, lock, { 'tests/durability_process.rs': source + '\n' })).toContain('unreviewed OF1 process-crash harness');
     expect(validateOf1PlannerInputs(manifest, lock, { 'src/worker.rs': source })).not.toEqual([]);
     expect(validateOf1PlannerInputs(manifest, lock, { 'tests/durability_process.rs': source + ' std::net::TcpStream' })).not.toEqual([]);
+  });
+  it('allows only exact reviewed loopback sources, never a filename or feature blanket exception', () => {
+    for (const path of ['src/transport.rs', 'tests/transport.rs', 'src/bin/of1-transport-evidence.rs']) {
+      const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\n' }))
+        .toContain(`unreviewed OF1 loopback source: ${path}`);
+      expect(validateOf1PlannerInputs(manifest, lock, { 'src/provider.rs': source })).not.toEqual([]);
+    }
   });
 });

@@ -1,6 +1,6 @@
 # B4 Offline Remainder
 
-> **Document status: ACTIVE.** Contract for the next offline B4 package.
+> **Document status: SUPERSEDED.** Original JS remainder contract preserved as historical fixture context. The [Rust offline transport contract](OF1_OFFLINE_TRANSPORT.md) and [26-case parity inventory](../../schemas/acquisition/of1/transport-parity.json) replace its implementation; references to old JS paths and future repair stages below describe that earlier state, not current instructions.
 > This is **not** live B4B and **not** an `ACQUISITION_LEASED` plan.
 >
 > Live leased acquisition stays reserved. See

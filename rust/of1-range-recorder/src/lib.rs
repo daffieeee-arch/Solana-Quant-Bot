@@ -1,8 +1,11 @@
-//! Offline, source-bound slot/index planning. No transport or acquisition authority.
-//! Durable capture and resumable budget accounting are separate, not yet implemented gates.
+//! Offline, source-bound slot/index planning with durable fixture Raw/receipt publication,
+//! restart-bound budgets and deadlines. The default build has no socket transport.
+//! The optional loopback-fixture transport is local simulation, never OF1 acquisition authority.
 
 pub mod durable;
 pub mod fixture;
+#[cfg(feature = "loopback-fixture")]
+pub mod transport;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -117,7 +120,7 @@ impl ValidatedPlan {
         &self.0
     }
 
-    /// Fixed-host identity only; no network client exists in this crate.
+    /// Fixed production source identity only; the optional fixture transport cannot contact it.
     #[must_use]
     pub fn source_path(&self) -> String {
         format!("/{0}/epoch-{0}.car", self.0.epoch)

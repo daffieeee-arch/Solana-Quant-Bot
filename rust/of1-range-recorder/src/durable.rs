@@ -19,6 +19,7 @@ use thiserror::Error;
 
 const JSON_LIMIT: u64 = 16_384;
 const BLOCK: u64 = 4096;
+pub const MAX_STREAM_CHUNK_BYTES: usize = 8192;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultPoint {
@@ -52,6 +53,10 @@ pub enum StoreError {
     Poisoned,
     #[error("request already published")]
     AlreadyPublished,
+    #[error("SOURCE_DRIFT: response total or source validator changed")]
+    SourceDrift,
+    #[error("CONFLICTING_BYTES: retained same-range overlap disagrees")]
+    ConflictingBytes,
     #[error("injected crash seam: {0:?}")]
     Injected(FaultPoint),
 }
@@ -121,6 +126,61 @@ pub struct Response {
     pub total: u64,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct StreamHead {
+    pub response: Response,
+    pub strong_etag: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RetryComparison {
+    NoPriorBytes,
+    RetainedOverlapMatched,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StreamIdentity {
+    reservation: Reservation,
+    head: StreamHead,
+    at: ClockSample,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChunkReceipt {
+    run_id: String,
+    attempt_id: u64,
+    offset: u64,
+    length: u64,
+    sha256: String,
+    at: ClockSample,
+}
+
+struct StreamRecord {
+    identity: StreamIdentity,
+    bytes: Vec<u8>,
+    chunks: u64,
+    latest_at: ClockSample,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum QuarantineReason {
+    SourceDrift,
+    ConflictingBytes,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Quarantine {
+    schema: String,
+    reservation: Reservation,
+    reason: QuarantineReason,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
@@ -163,6 +223,10 @@ pub struct Receipt {
     pub acquired_at: ClockSample,
     pub evidence: String,
     pub domain_counts: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_head: Option<StreamHead>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_comparison: Option<RetryComparison>,
 }
 
 pub struct VerifiedObject {
@@ -188,6 +252,7 @@ struct Audit {
     attempts: Vec<Reservation>,
     published: BTreeMap<u64, VerifiedObject>,
     high_water: ClockSample,
+    streams: BTreeMap<u64, StreamRecord>,
 }
 
 pub struct Store<C: Clock> {
@@ -429,6 +494,207 @@ impl<C: Clock> Store<C> {
         Ok(Permit(reservation))
     }
 
+    /// Bound the next blocking I/O operation by both original and attempt deadlines.
+    /// # Errors
+    /// Invalid/outdated permits, corrupt state or expired clocks fail closed.
+    pub fn remaining_ms(&mut self, permit: &Permit) -> StoreResult<u64> {
+        let result = self.remaining_ms_inner(permit);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    fn remaining_ms_inner(&mut self, permit: &Permit) -> StoreResult<u64> {
+        // Called before each blocking I/O: do not re-read the epoch index per header byte.
+        // Durable artifact audits remain at reserve/begin/prepare/append/finish/resume.
+        self.permit_identity(permit)?;
+        let at = self.attempt_now(&permit.0)?;
+        let timeout = self.manifest.plan.budget.response_timeout_ms;
+        [
+            self.manifest.deadline_wall_ms - at.wall_ms,
+            self.manifest.deadline_boot_ms - at.boot_ms,
+            timeout - (at.wall_ms - permit.0.at.wall_ms),
+            timeout - (at.boot_ms - permit.0.at.boot_ms),
+        ]
+        .into_iter()
+        .min()
+        .ok_or(StoreError::Deadline)
+    }
+
+    /// Store the exact validated fixture response head before retaining any entity bytes.
+    /// # Errors
+    /// Wrong framing, source drift, clock/budget failure and duplicate starts poison the writer.
+    pub fn begin_stream(&mut self, permit: &Permit, head: StreamHead) -> StoreResult<()> {
+        let result = self.begin_stream_inner(permit, head);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    fn begin_stream_inner(&mut self, permit: &Permit, head: StreamHead) -> StoreResult<()> {
+        let audit = self.checked_permit(permit)?;
+        if head.response.total != self.manifest.plan.object_size {
+            return self.quarantine(&permit.0, QuarantineReason::SourceDrift);
+        }
+        if !response_matches(
+            &head.response,
+            self.request(permit.0.request_sequence)?,
+            self.manifest.plan.object_size,
+        ) || !valid_etag(head.strong_etag.as_deref())
+        {
+            return Err(StoreError::Corrupt);
+        }
+        self.compare_prior(&permit.0, &head, &[], &audit)?;
+        let at = self.attempt_now(&permit.0)?;
+        self.space(3 * BLOCK)?;
+        let path = self.stream_path(permit.0.attempt_id);
+        fs::create_dir(&path)?;
+        self.write_new(
+            &path.join("head.json"),
+            &encode(&StreamIdentity {
+                reservation: permit.0.clone(),
+                head,
+                at,
+            })?,
+        )?;
+        sync_dir(&path)?;
+        sync_dir(&self.root.join("pending"))?;
+        self.attempt_now(&permit.0)?;
+        Ok(())
+    }
+
+    /// Check capacity before reading a bounded next entity chunk from the local transport.
+    /// # Errors
+    /// Invalid permit, missing head, deadline, length and conservative disk caps fail closed.
+    pub fn prepare_stream_read(&mut self, permit: &Permit, max_bytes: u64) -> StoreResult<()> {
+        let result = self.prepare_stream_read_inner(permit, max_bytes);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    fn prepare_stream_read_inner(&mut self, permit: &Permit, max_bytes: u64) -> StoreResult<()> {
+        let audit = self.checked_permit(permit)?;
+        let stream = audit
+            .streams
+            .get(&permit.0.attempt_id)
+            .ok_or(StoreError::Corrupt)?;
+        if max_bytes == 0
+            || max_bytes > MAX_STREAM_CHUNK_BYTES as u64
+            || stream.bytes.len() as u64 + max_bytes > permit.0.reserved_entity_bytes
+        {
+            return Err(StoreError::Budget);
+        }
+        // Chunk directory + hash receipt, eventual full Raw copy + publication receipt,
+        // and one terminal quarantine marker. No future capacity is silently assumed.
+        self.space(
+            rounded(max_bytes)?
+                .checked_add(rounded(permit.0.reserved_entity_bytes)?)
+                .and_then(|n| n.checked_add(5 * BLOCK))
+                .ok_or(StoreError::Budget)?,
+        )?;
+        self.attempt_now(&permit.0)?;
+        Ok(())
+    }
+
+    /// Retain one hashed, fsynced prefix chunk. Chunk boundaries do not affect overlap checks.
+    /// # Errors
+    /// Changed overlap becomes durable quarantine; incomplete chunk publication is never repaired.
+    pub fn append_stream(&mut self, permit: &Permit, bytes: &[u8]) -> StoreResult<()> {
+        let result = self.append_stream_inner(permit, bytes);
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    fn append_stream_inner(&mut self, permit: &Permit, bytes: &[u8]) -> StoreResult<()> {
+        self.prepare_stream_read(permit, bytes.len() as u64)?;
+        let audit = self.checked_permit(permit)?;
+        let stream = audit
+            .streams
+            .get(&permit.0.attempt_id)
+            .ok_or(StoreError::Corrupt)?;
+        let mut prefix = stream.bytes.clone();
+        prefix.extend_from_slice(bytes);
+        self.compare_prior(&permit.0, &stream.identity.head, &prefix, &audit)?;
+        let receipt = ChunkReceipt {
+            run_id: self.manifest.run_id.clone(),
+            attempt_id: permit.0.attempt_id,
+            offset: stream.bytes.len() as u64,
+            length: bytes.len() as u64,
+            sha256: sha256(bytes),
+            at: self.attempt_now(&permit.0)?,
+        };
+        let path = self.stream_path(permit.0.attempt_id);
+        let stage = path.join(format!("incomplete-{:010}", stream.chunks));
+        fs::create_dir(&stage)?;
+        self.write_new(&stage.join("raw.bin"), bytes)?;
+        self.write_new(&stage.join("chunk.json"), &encode(&receipt)?)?;
+        sync_dir(&stage)?;
+        self.attempt_now(&permit.0)?;
+        let destination = path.join(format!("chunk-{:010}", stream.chunks));
+        if destination.exists() {
+            return Err(StoreError::Corrupt);
+        }
+        fs::rename(&stage, destination)?;
+        sync_dir(&path)?;
+        self.audit()?;
+        Ok(())
+    }
+
+    /// Publish a completed stream using the existing atomic Raw/receipt pair mechanism.
+    /// # Errors
+    /// Truncation, disagreement, late completion or corrupt persisted chunks fail closed.
+    pub fn finish_stream(&mut self, permit: Permit) -> StoreResult<Receipt> {
+        let result = (|| {
+            let audit = self.checked_permit(&permit)?;
+            let stream = audit
+                .streams
+                .get(&permit.0.attempt_id)
+                .ok_or(StoreError::Corrupt)?;
+            self.commit_inner(
+                permit,
+                stream.identity.head.response.clone(),
+                &stream.bytes,
+                Some(stream.identity.head.clone()),
+            )
+        })();
+        if result.is_err() {
+            self.poisoned = true;
+        }
+        result
+    }
+
+    /// Transport failure never refunds a reservation or deletes retained prefix evidence.
+    pub fn abort_stream(&mut self) {
+        self.poisoned = true;
+    }
+
+    fn checked_permit(&self, permit: &Permit) -> StoreResult<Audit> {
+        self.permit_identity(permit)?;
+        let audit = self.audit()?;
+        if audit
+            .attempts
+            .get(usize::try_from(permit.0.attempt_id).map_err(|_| StoreError::Corrupt)?)
+            != Some(&permit.0)
+        {
+            return Err(StoreError::Corrupt);
+        }
+        Ok(audit)
+    }
+
+    fn permit_identity(&self, permit: &Permit) -> StoreResult<()> {
+        self.usable()?;
+        if permit.0.run_id != self.manifest.run_id || self.inflight != Some(permit.0.attempt_id) {
+            return Err(StoreError::Identity);
+        }
+        Ok(())
+    }
+
     /// Publish only a complete Raw/receipt pair; errors poison the writer, never replay a mutation.
     /// Injected bytes are fixture input, not a live response or authenticity claim.
     /// # Errors
@@ -439,7 +705,7 @@ impl<C: Clock> Store<C> {
         response: Response,
         bytes: &[u8],
     ) -> StoreResult<Receipt> {
-        let result = self.commit_inner(permit, response, bytes);
+        let result = self.commit_inner(permit, response, bytes, None);
         if result.is_err() {
             self.poisoned = true;
         }
@@ -451,6 +717,7 @@ impl<C: Clock> Store<C> {
         permit: Permit,
         response: Response,
         bytes: &[u8],
+        stream_head: Option<StreamHead>,
     ) -> StoreResult<Receipt> {
         self.usable()?;
         let reservation = permit.0;
@@ -467,6 +734,18 @@ impl<C: Clock> Store<C> {
         {
             return Err(StoreError::Corrupt);
         }
+        if audit.streams.contains_key(&reservation.attempt_id) != stream_head.is_some() {
+            return Err(StoreError::Corrupt);
+        }
+        let comparison = self.compare_prior(
+            &reservation,
+            &stream_head.clone().unwrap_or(StreamHead {
+                response: response.clone(),
+                strong_etag: None,
+            }),
+            bytes,
+            &audit,
+        )?;
         let request = self.request(reservation.request_sequence)?;
         if !response_matches(&response, request, self.manifest.plan.object_size)
             || u64::try_from(bytes.len()).map_err(|_| StoreError::Budget)?
@@ -489,6 +768,8 @@ impl<C: Clock> Store<C> {
             acquired_at,
             evidence: "Fixture".into(),
             domain_counts: "UNAVAILABLE_NOT_DECODED_IN_B4".into(),
+            retry_comparison: stream_head.as_ref().map(|_| comparison),
+            stream_head,
         };
         let candidate = self
             .root
@@ -591,13 +872,82 @@ impl<C: Clock> Store<C> {
         }
     }
 
-    fn request(&self, sequence: u64) -> StoreResult<&ByteRequest> {
+    /// Exact planned range identity; never accepts a caller-supplied URL.
+    /// # Errors
+    /// Unknown sequence fails closed.
+    pub fn request(&self, sequence: u64) -> StoreResult<&ByteRequest> {
         self.manifest
             .range_plan
             .requests
             .get(usize::try_from(sequence).map_err(|_| StoreError::Corrupt)?)
             .filter(|r| r.sequence == sequence)
             .ok_or(StoreError::Corrupt)
+    }
+
+    #[must_use]
+    pub fn source_path(&self) -> String {
+        format!("/{0}/epoch-{0}.car", self.manifest.plan.epoch)
+    }
+
+    #[must_use]
+    pub fn object_size(&self) -> u64 {
+        self.manifest.plan.object_size
+    }
+
+    fn stream_path(&self, attempt_id: u64) -> PathBuf {
+        self.root
+            .join("pending")
+            .join(format!("stream-{attempt_id:010}"))
+    }
+
+    fn compare_prior(
+        &self,
+        reservation: &Reservation,
+        head: &StreamHead,
+        bytes: &[u8],
+        audit: &Audit,
+    ) -> StoreResult<RetryComparison> {
+        let mut compared = false;
+        for (id, stream) in &audit.streams {
+            if *id == reservation.attempt_id {
+                continue;
+            }
+            if head.response.total != stream.identity.head.response.total
+                || head.strong_etag != stream.identity.head.strong_etag
+            {
+                return self.quarantine(reservation, QuarantineReason::SourceDrift);
+            }
+            if stream.identity.reservation.request_sequence == reservation.request_sequence {
+                let overlap = bytes.len().min(stream.bytes.len());
+                if bytes[..overlap] != stream.bytes[..overlap] {
+                    return self.quarantine(reservation, QuarantineReason::ConflictingBytes);
+                }
+                compared |= overlap != 0;
+            }
+        }
+        Ok(if compared {
+            RetryComparison::RetainedOverlapMatched
+        } else {
+            RetryComparison::NoPriorBytes
+        })
+    }
+
+    fn quarantine<T>(&self, reservation: &Reservation, reason: QuarantineReason) -> StoreResult<T> {
+        // Creation itself is terminal evidence: a torn record fails audit too. Never overwrite
+        // a disagreement marker or permit retries to run past it after process restart.
+        self.space(BLOCK)?;
+        let path = self.root.join("pending/quarantine.json");
+        let mut marker = OpenOptions::new().write(true).create_new(true).open(path)?;
+        marker.sync_all()?;
+        sync_dir(&self.root.join("pending"))?;
+        marker.write_all(&encode(&Quarantine {
+            schema: "OF1_FIXTURE_QUARANTINE_1".into(),
+            reservation: reservation.clone(),
+            reason,
+        })?)?;
+        marker.sync_all()?;
+        sync_dir(&self.root.join("pending"))?;
+        Err(quarantine_error(reason))
     }
 
     fn now(&mut self) -> StoreResult<ClockSample> {
@@ -654,11 +1004,12 @@ impl<C: Clock> Store<C> {
         self.space(0)?;
         let (attempts, mut high_water) = self.read_attempts()?;
         let published = self.read_published(&attempts, &mut high_water)?;
-        self.check_pending(&attempts, &published)?;
+        let streams = self.check_pending(&attempts, &published, &mut high_water)?;
         Ok(Audit {
             attempts,
             published,
             high_water,
+            streams,
         })
     }
 
@@ -729,6 +1080,19 @@ impl<C: Clock> Store<C> {
             {
                 return Err(StoreError::Corrupt);
             }
+            if let Some(head) = &receipt.stream_head {
+                let stream = self.read_stream(reservation)?;
+                if &stream.identity.head != head
+                    || head.response != receipt.response
+                    || stream.bytes.len() as u64 != receipt.response_entity_bytes
+                    || sha256(&stream.bytes) != receipt.sha256
+                    || receipt.retry_comparison.is_none()
+                {
+                    return Err(StoreError::Corrupt);
+                }
+            } else if receipt.retry_comparison.is_some() {
+                return Err(StoreError::Corrupt);
+            }
             clock_follows(&reservation.at, &receipt.acquired_at)?;
             // A later permit cannot predate a previously completed receipt.
             for later in attempts
@@ -767,7 +1131,9 @@ impl<C: Clock> Store<C> {
         &self,
         attempts: &[Reservation],
         published: &BTreeMap<u64, VerifiedObject>,
-    ) -> StoreResult<()> {
+        high_water: &mut ClockSample,
+    ) -> StoreResult<BTreeMap<u64, StreamRecord>> {
+        let mut streams = BTreeMap::new();
         // Unpublished staging is retained and charged, never promoted during recovery.
         for path in children(
             &self.root.join("pending"),
@@ -778,7 +1144,33 @@ impl<C: Clock> Store<C> {
                 .and_then(|s| s.to_str())
                 .ok_or(StoreError::Corrupt)?;
             let meta = fs::symlink_metadata(&path)?;
-            if meta.is_dir() {
+            if name == "quarantine.json" {
+                let marker: Quarantine = decode(&read_bounded(&path, JSON_LIMIT)?)?;
+                if marker.schema != "OF1_FIXTURE_QUARANTINE_1"
+                    || attempts.get(
+                        usize::try_from(marker.reservation.attempt_id)
+                            .map_err(|_| StoreError::Corrupt)?,
+                    ) != Some(&marker.reservation)
+                {
+                    return Err(StoreError::Corrupt);
+                }
+                return Err(quarantine_error(marker.reason));
+            } else if name.starts_with("stream-") && meta.is_dir() {
+                let id = name[7..]
+                    .parse::<usize>()
+                    .map_err(|_| StoreError::Corrupt)?;
+                let reservation = attempts.get(id).ok_or(StoreError::Corrupt)?;
+                if name != format!("stream-{id:010}") {
+                    return Err(StoreError::Corrupt);
+                }
+                let stream = self.read_stream(reservation)?;
+                for later in attempts.iter().skip(id + 1) {
+                    clock_follows(&stream.latest_at, &later.at)?;
+                }
+                high_water.wall_ms = high_water.wall_ms.max(stream.latest_at.wall_ms);
+                high_water.boot_ms = high_water.boot_ms.max(stream.latest_at.boot_ms);
+                streams.insert(id as u64, stream);
+            } else if meta.is_dir() {
                 let id = name.parse::<usize>().map_err(|_| StoreError::Corrupt)?;
                 let reservation = attempts.get(id).ok_or(StoreError::Corrupt)?;
                 if name != format!("{id:010}")
@@ -819,6 +1211,79 @@ impl<C: Clock> Store<C> {
                 return Err(StoreError::Corrupt);
             }
         }
+        verify_comparison_labels(published, &streams)?;
+        Ok(streams)
+    }
+
+    fn read_stream(&self, reservation: &Reservation) -> StoreResult<StreamRecord> {
+        let path = self.stream_path(reservation.attempt_id);
+        let identity: StreamIdentity = decode(&read_bounded(&path.join("head.json"), JSON_LIMIT)?)?;
+        if &identity.reservation != reservation
+            || !response_matches(
+                &identity.head.response,
+                self.request(reservation.request_sequence)?,
+                self.manifest.plan.object_size,
+            )
+            || !valid_etag(identity.head.strong_etag.as_deref())
+        {
+            return Err(StoreError::Corrupt);
+        }
+        self.stream_clock(reservation, &reservation.at, &identity.at)?;
+        let mut latest_at = identity.at.clone();
+        let mut bytes = Vec::new();
+        let mut chunks = 0;
+        for child in children(&path, self.manifest.plan.budget.max_disk_bytes / BLOCK)? {
+            if child.file_name().and_then(|n| n.to_str()) == Some("head.json") {
+                continue;
+            }
+            if child.file_name().and_then(|n| n.to_str())
+                != Some(format!("chunk-{chunks:010}").as_str())
+            {
+                return Err(StoreError::Corrupt);
+            }
+            exact_names(&child, &["raw.bin", "chunk.json"])?;
+            let receipt: ChunkReceipt =
+                decode(&read_bounded(&child.join("chunk.json"), JSON_LIMIT)?)?;
+            let raw = read_bounded(&child.join("raw.bin"), MAX_STREAM_CHUNK_BYTES as u64)?;
+            if receipt.run_id != self.manifest.run_id
+                || receipt.attempt_id != reservation.attempt_id
+                || receipt.offset != bytes.len() as u64
+                || receipt.length != raw.len() as u64
+                || raw.is_empty()
+                || receipt.sha256 != sha256(&raw)
+                || (bytes.len() as u64)
+                    .checked_add(receipt.length)
+                    .ok_or(StoreError::Corrupt)?
+                    > reservation.reserved_entity_bytes
+            {
+                return Err(StoreError::Corrupt);
+            }
+            self.stream_clock(reservation, &latest_at, &receipt.at)?;
+            latest_at = receipt.at;
+            bytes.extend(raw);
+            chunks += 1;
+        }
+        Ok(StreamRecord {
+            identity,
+            bytes,
+            chunks,
+            latest_at,
+        })
+    }
+
+    fn stream_clock(
+        &self,
+        reservation: &Reservation,
+        previous: &ClockSample,
+        at: &ClockSample,
+    ) -> StoreResult<()> {
+        clock_follows(previous, at)?;
+        self.within_run(at)?;
+        if at.wall_ms - reservation.at.wall_ms >= self.manifest.plan.budget.response_timeout_ms
+            || at.boot_ms - reservation.at.boot_ms >= self.manifest.plan.budget.response_timeout_ms
+        {
+            return Err(StoreError::Corrupt);
+        }
         Ok(())
     }
 
@@ -852,10 +1317,69 @@ impl<C: Clock> Store<C> {
     }
 }
 
+fn verify_comparison_labels(
+    published: &BTreeMap<u64, VerifiedObject>,
+    streams: &BTreeMap<u64, StreamRecord>,
+) -> StoreResult<()> {
+    // Recompute comparison labels from immutable history, not caller assertions.
+    for object in published.values() {
+        if streams.contains_key(&object.receipt.attempt_id) != object.receipt.stream_head.is_some()
+        {
+            return Err(StoreError::Corrupt);
+        }
+        if let Some(head) = &object.receipt.stream_head {
+            let mut overlap = false;
+            for (id, prior) in streams {
+                if *id >= object.receipt.attempt_id {
+                    continue;
+                }
+                if prior.identity.head.strong_etag != head.strong_etag
+                    || prior.identity.head.response.total != head.response.total
+                {
+                    return Err(StoreError::Corrupt);
+                }
+                if prior.identity.reservation.request_sequence == object.receipt.request.sequence {
+                    let length = prior.bytes.len().min(object.bytes.len());
+                    if prior.bytes[..length] != object.bytes[..length] {
+                        return Err(StoreError::Corrupt);
+                    }
+                    overlap |= length != 0;
+                }
+            }
+            if object.receipt.retry_comparison
+                != Some(if overlap {
+                    RetryComparison::RetainedOverlapMatched
+                } else {
+                    RetryComparison::NoPriorBytes
+                })
+            {
+                return Err(StoreError::Corrupt);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn sum_charged(attempts: &[Reservation]) -> StoreResult<u64> {
     attempts.iter().try_fold(0u64, |sum, a| {
         sum.checked_add(a.reserved_entity_bytes)
             .ok_or(StoreError::Budget)
+    })
+}
+fn quarantine_error(reason: QuarantineReason) -> StoreError {
+    match reason {
+        QuarantineReason::SourceDrift => StoreError::SourceDrift,
+        QuarantineReason::ConflictingBytes => StoreError::ConflictingBytes,
+    }
+}
+fn valid_etag(value: Option<&str>) -> bool {
+    value.is_none_or(|tag| {
+        (2..=256).contains(&tag.len())
+            && tag.starts_with('"')
+            && tag.ends_with('"')
+            && tag.as_bytes()[1..tag.len() - 1]
+                .iter()
+                .all(|b| (33..=126).contains(b) && *b != b'"')
     })
 }
 fn response_matches(r: &Response, request: &ByteRequest, total: u64) -> bool {

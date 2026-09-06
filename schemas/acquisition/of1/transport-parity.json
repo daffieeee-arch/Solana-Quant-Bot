@@ -1,0 +1,72 @@
+{
+  "schema": "OF1_B4_TRANSPORT_PARITY_1",
+  "baseline_commit": "afc5a80c6f12a38b6e699a2e72384fb8b1124f66",
+  "predecessor_manifest": "schemas/acquisition/of1/test-salvage.json",
+  "evidence": "Fixture",
+  "removal_gate": "Execute all replacement regressions before removing the four bounded paths. This manifest does not authorize live acquisition, old-checkpoint import or deletion of user artifacts.",
+  "rollback": "Revert the integration commit; exact original tracked bytes remain at baseline_commit. Do not convert or overwrite user run directories.",
+  "removed_paths": [
+    {"path":"scripts/b4a-offline-range-recorder.mjs","sha256":"efc9b35b456613f303c9384c40efc6fd886d8505082c1032e84968db9e7d4ff5","reachability":"Imported only by its corresponding Vitest file; no package/default build entrypoint","disposition":"REPLACED_PARITY_VERIFIED"},
+    {"path":"scripts/b4-offline-remainder.mjs","sha256":"99b37180f2567dd77c213cd5938a0b594bce7010904db8417d61233eaf7dc0e9","reachability":"Imported only by its corresponding Vitest file; direct standalone fixture CLI","disposition":"REPLACED_PARITY_VERIFIED"},
+    {"path":"tests/b4a-offline-range-recorder.test.ts","sha256":"833155545e4fe7ca59a0b71f9003bb616edaec1703f1aef56b1915c82694c69b","reachability":"Vitest discovery: 10 cases","disposition":"REPLACED_PARITY_VERIFIED"},
+    {"path":"tests/b4-offline-remainder.test.ts","sha256":"abedec12249ce784ee04cf7b634882b2fda94f50f84c10910a5c7379d728d593","reachability":"Vitest discovery: 10 ordinary cases plus 6 parameterized cases","disposition":"REPLACED_PARITY_VERIFIED"}
+  ],
+  "replacement_files": {
+    "planner":"rust/of1-range-recorder/tests/planner.rs",
+    "durability":"rust/of1-range-recorder/tests/durability.rs",
+    "process":"rust/of1-range-recorder/tests/durability_process.rs",
+    "transport":"rust/of1-range-recorder/tests/transport.rs",
+    "policy":"tests/of1-transport-parity.test.ts"
+  },
+  "old_test_cases": [
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"rejects an unexpected plan schema instead of normalising it away","classification":"INVARIANT","replacement":[["planner","acquisition_authority_and_unsupported_schema_fail"]],"reason":"Unknown schema remains rejected, never normalized into authority."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"accepts official host-only and offline policy constraints","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["planner","acquisition_authority_and_unsupported_schema_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"The source identity is internally constructed and production endpoint inputs do not exist. The explicit test capability accepts only a numeric local port."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"derives contiguous byte segments from plan budget and file size","classification":"IMPLEMENTATION_COUPLED","replacement":[["planner","exact_slot_index_requests_not_a_full_car"],["planner","deterministic_chunking_properties"]],"reason":"Full-CAR-from-zero segmentation is replaced by index-derived requested ranges. Determinism and bounded chunking survive."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"writes all segments in order, validates receipts, and publishes complete summary","classification":"INVARIANT","replacement":[["durability","publication_is_a_verified_immutable_raw_receipt_pair"],["transport","transport_restart_progress_is_ordered_and_domain_counts_unavailable"]],"reason":"Complete means verified planned request publications, not a complete CAR or proven chain coverage."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"rejects mismatched Content-Range and unexpected entity length","classification":"INVARIANT","replacement":[["transport","incorrect_ranges_status_redirect_and_encoding_never_publish"],["transport","strict_stream_length_rejects_truncation_and_extra_bytes"]],"reason":"Exact range and streamed entity size are validated before publication."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"supports restart through checkpoint hydration only when provenance and plan hash align","classification":"INVARIANT","replacement":[["durability","resume_rejects_changed_plan_source_index_code_and_toolchain_identity"]],"reason":"Resume revalidates durable plan/source/index/code/toolchain and executable identity, not caller-supplied checkpoint claims."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"continues capture after resume using the checkpoint run identity","classification":"INVARIANT","replacement":[["durability","permit_from_another_run_is_not_authority_to_publish"],["transport","interrupted_prefix_retry_matches_across_restart"]],"reason":"The immutable run identity persists; partial transport evidence cannot be transferred to another run."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"requires the request budget and verifies the complete raw hash explicitly","classification":"INVARIANT_WITH_INVALID_EXPECTATION","replacement":[["durability","charged_entity_cap_counts_interrupted_attempts_not_only_verified_bytes"],["durability","new_bytes_with_old_receipt_never_pass_published_or_resume_verification"],["transport","failed_attempts_do_not_refund_requests_or_bytes"]],"reason":"Preserve request accounting and exact content hashes. Retire HTTP200 success and whole-CAR hash claims for partial ranges; per-range hash is not whole-source/CID verification."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"rejects duplicate segment observations and supports single-segment 200 responses","classification":"INVARIANT_WITH_INVALID_EXPECTATION","replacement":[["durability","publication_is_a_verified_immutable_raw_receipt_pair"],["transport","incorrect_ranges_status_redirect_and_encoding_never_publish"]],"reason":"Duplicate publication is forbidden. HTTP200 is rejected even for one range; an unexpected full response is never accepted."},
+    {"file":"tests/b4a-offline-range-recorder.test.ts","name":"rejects checkpoint files with duplicate receipts","classification":"INVARIANT","replacement":[["durability","receipt_from_another_range_cannot_authorize_correctly_hashed_bytes"],["durability","incomplete_or_unknown_receipt_fields_fail_closed"]],"reason":"Exact request/receipt/directory identity replaces an editable completed-segment list."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"accepts an empty override environment","classification":"IMPLEMENTATION_COUPLED","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"No environment/URL/backend consumer exists in the replacement transport; absence of retarget capability replaces parsing empty override dictionaries."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"fails closed when JETSTREAMER_HTTP_BASE_URL is non-empty","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"Retargeting remains impossible: no Jetstreamer/env client is constructed; the local endpoint accepts no host or URL."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"fails closed when ARCHIVE_BASE is non-empty","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"Retargeting remains impossible; no archive-base or environment input exists."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"fails closed when ARCHIVE_BACKEND is non-empty","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"No backend selection or environment input exists."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"fails closed when JETSTREAMER_S3_BUCKET is non-empty","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"No S3 client, feature or environment input exists."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"fails closed when ARCHIVE_S3_ENDPOINT is non-empty","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"No S3 endpoint or environment input exists."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"fails closed when AWS_ENDPOINT_URL is non-empty","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"No AWS endpoint or environment input exists."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"closes a half-open slot window and refuses a full-epoch CAR","classification":"INVARIANT_WITH_INVALID_EXPECTATION","replacement":[["planner","complete_epoch_and_inconsistent_epoch_bounds_fail"],["planner","all_zero_records_are_index_absence_not_chain_coverage"]],"reason":"Preserve bounded window/full-epoch rejection. A caller-labelled window does not establish semantic slot membership or coverage."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"refuses a requested window that equals the full epoch span","classification":"INVARIANT","replacement":[["planner","complete_epoch_and_inconsistent_epoch_bounds_fail"]],"reason":"The epoch is mandatory and exact; optional-epoch bypass is rejected."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"marks the documented provisional example without approving it","classification":"INVARIANT","replacement":[["planner","acquisition_authority_and_unsupported_schema_fail"],["policy","keeps the inherited draft unapproved and offline"]],"reason":"Preserve the no-approval invariant without making any proposed authentic range an operational constant."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"distinguishes UNAVAILABLE, GAP and QUARANTINED and never zero-fills","classification":"INVARIANT_WITH_INVALID_EXPECTATION","replacement":[["planner","all_zero_records_are_index_absence_not_chain_coverage"],["transport","transport_restart_progress_is_ordered_and_domain_counts_unavailable"]],"reason":"Missing never becomes zero. Caller observedSlots asserting CLOSED/GAP chain coverage is retired; index absence, transport failure and unavailable domain counts remain distinct."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"writes raw bytes, identity and receipt before any parse","classification":"INVARIANT_WITH_INVALID_EXPECTATION","replacement":[["durability","publication_is_a_verified_immutable_raw_receipt_pair"],["transport","exact_206_range_request_publishes_original_entity_bytes"]],"reason":"Preserve original pre-decode Raw/receipt identity. Arbitrary caller-supplied nonempty CID is not verification; CID and root membership remain unavailable."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"refuses parse when persist artifacts are missing","classification":"INVARIANT","replacement":[["durability","missing_published_raw_or_receipt_is_corruption_not_unavailable"]],"reason":"No partial/missing pair is exposed as a verified published object. No domain decoder is introduced."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"renders deterministic progress only through an injected writer","classification":"INVARIANT","replacement":[["transport","transport_restart_progress_is_ordered_and_domain_counts_unavailable"]],"reason":"Progress is derived from fixture/durable state, with unavailable counts explicit; deterministic JSON/Markdown is the visible output."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"does not run the demo when an override is present","classification":"INVARIANT","replacement":[["planner","missing_epoch_negative_fractional_and_unknown_fields_fail"],["transport","loopback_endpoint_is_numeric_local_only"]],"reason":"No caller host, URL, proxy, backend, S3 or environment source selection exists; local fixture transport cannot retarget an archive."},
+    {"file":"tests/b4-offline-remainder.test.ts","name":"keeps the committed draft plan unapproved and offline","classification":"INVARIANT","replacement":[["policy","keeps the inherited draft unapproved and offline"]],"reason":"The exact old draft remains preserved and explicitly unapproved; no budget or lease decision is changed."}
+  ],
+  "retained_out_of_scope": [
+    "schemas/acquisition/of1/test-salvage.json",
+    "schemas/acquisition/of1/source-receipt.json",
+    "schemas/acquisition/of1/offline-plan-evidence.json",
+    "schemas/acquisition/of1/durability-evidence.json",
+    "docs/research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json",
+    "docs/research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.json",
+    "tests/b4-engineering-validation-lease-plan.test.ts",
+    "rust/pump-protocol-v2",
+    "rust/old-faithful-pump-reducer",
+    "roadmap/project-v2-content-migration-ledger.json"
+  ],
+  "new_regressions": [
+    ["transport","response_framing_rejects_missing_duplicate_or_ambiguous_headers"],
+    ["transport","bounded_headers_reject_unterminated_or_oversized_input"],
+    ["transport","changed_etag_is_source_drift"],
+    ["transport","differing_retry_prefix_is_conflicting_bytes"],
+    ["transport","retry_limit_survives_restart"],
+    ["transport","deadline_stop_prevents_dispatch_after_restart"],
+    ["transport","response_timeout_is_not_reset_by_slow_drip"],
+    ["transport","publication_crash_reopens_without_repeating_http"]
+  ],
+  "not_claimed": ["authentic source bytes", "historical activation", "root-to-slot membership", "verified CID", "Research Ready", "complete B4", "live lease authorization"]
+}
