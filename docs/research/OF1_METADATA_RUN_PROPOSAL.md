@@ -72,8 +72,10 @@ a real child exit/restart and failed CID retry, not physical power-loss testing.
 ## Executable preparation, still offline
 
 After review/merge, use the exact reviewed commit and existing pinned toolchain.
-These preparation commands perform no provider request. Choose the dataset root
-on WSL ext4 **outside Git**; do not place datasets under the checkout.
+These preparation commands perform no provider request. Keep the reviewed dataset
+location on WSL ext4 **outside Git**; do not place datasets under the checkout.
+Run the read-only location preflight with the exact binary before preparing a new
+plan. Proposal generation and initialization use that same validator again.
 
 ```bash
 TOOLCHAIN_RUN="${HOME}/.local/share/solana-quant/run-with-toolchain"
@@ -85,6 +87,7 @@ git rev-parse HEAD
 "${TOOLCHAIN_RUN}" cargo -Vv
 OF1_ACQUIRE_BIN="$(pwd)/rust/of1-range-recorder/target/release/of1-acquire"
 sha256sum "${OF1_ACQUIRE_BIN}"
+"${OF1_ACQUIRE_BIN}" dataset-preflight /absolute/path/to/dataset-run
 findmnt -T /path/to/existing/dataset-parent
 df -B1 /path/to/existing/dataset-parent
 ```
@@ -94,12 +97,28 @@ If `CARGO_TARGET_DIR` is set, use the actual emitted binary location, not a gues
 different executable. Generate (and retain outside Git) the unapproved proposal:
 
 ```text
-of1-acquire metadata-proposal CODE_SHA TOOLCHAIN_RECEIPT_SHA256
+of1-acquire metadata-proposal ROOT CODE_SHA TOOLCHAIN_RECEIPT_SHA256
 ```
 
 In the command signatures below, `of1-acquire` means the exact full path in
 `OF1_ACQUIRE_BIN` (invoke `"${OF1_ACQUIRE_BIN}"`), not an installed/global command.
 Use the same release binary throughout the approved run and all restarts.
+
+Location admission resolves canonical paths and checks the root and its ancestors.
+Only a demonstrably empty ordinary `.git` directory is ignored. Nonempty markers,
+gitfiles (including linked worktrees), symlinks and inspection errors still reject
+the location. No marker is removed or renamed, and preflight creates no directory,
+lease, reservation or request. `OUTSIDE_GIT` is location evidence only, not approval,
+free-space/toolchain verification or store/resume readiness. Initialization repeats
+the check; preflight is not a guarantee against later filesystem changes.
+
+The first metadata initialization stopped before store creation or network dispatch
+because the previous marker-existence check rejected an empty home `.git` directory.
+Preserve the original `initialization-failure.json` and its original plan/GO/lease;
+do not rewrite that stop as acquisition or retry evidence. After acceptance of the
+location fix, prepare a new executable/plan identity and obtain a fresh metadata GO
+for the same dataset location, four operations and caps. No old approval or deadline
+is reset or reused by this correction.
 
 The JSON contains the complete aggregate plan, metadata allocation and
 `approval_target_sha256`. Its approval flags remain false. Save the `aggregate`

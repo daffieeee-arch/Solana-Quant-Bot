@@ -3,6 +3,7 @@ use of1_range_recorder::{
     FormatSource,
     acquisition::{derive_payload_from_metadata, read_limited, verify_payload},
     car::VerificationLimits,
+    dataset_location::validate_dataset_location,
     durable::{
         SystemClock,
         acquisition::{
@@ -38,17 +39,6 @@ fn open(root: &str, plan: &str, lease_hash: &str) -> Result<AcquisitionStore<Sys
     )?)
 }
 
-fn outside_git(root: &Path) -> Result<()> {
-    let parent = root
-        .parent()
-        .ok_or("dataset root needs an existing parent")?
-        .canonicalize()?;
-    if parent.ancestors().any(|p| p.join(".git").exists()) {
-        return Err("dataset root must be outside Git".into());
-    }
-    Ok(())
-}
-
 fn main() {
     if let Err(error) = run(&std::env::args().skip(1).collect::<Vec<_>>()) {
         // Bounded errors only: never dump headers, environment, credentials or full inputs.
@@ -60,7 +50,19 @@ fn main() {
 #[allow(clippy::too_many_lines)]
 fn run(args: &[String]) -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["metadata-proposal", code_sha, toolchain_fingerprint] => {
+        ["dataset-preflight", root] => {
+            let canonical_root = validate_dataset_location(Path::new(root))?;
+            print(&serde_json::json!({
+                "schema":"OF1_DATASET_LOCATION_PREFLIGHT_1",
+                "canonical_root":canonical_root,
+                "location_status":"OUTSIDE_GIT", "read_only":true,
+                "networkEnabled":false, "readyToRun":false
+            }))
+        }
+        ["metadata-proposal", root, code_sha, toolchain_fingerprint] => {
+            // Fail before generating approval material; initialization repeats
+            // this same read-only admission check against the current filesystem.
+            validate_dataset_location(Path::new(root))?;
             for (value, length) in [(*code_sha, 40), (*toolchain_fingerprint, 64)] {
                 if value.len() != length || !value.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
                     return Err("code/toolchain identity must be exact lowercase hexadecimal".into());
@@ -94,7 +96,7 @@ fn run(args: &[String]) -> Result<()> {
             }))
         }
         ["metadata-init", root, plan, lease] => {
-            outside_git(Path::new(root))?;
+            validate_dataset_location(Path::new(root))?;
             let plan: AggregatePlan = read(plan)?;
             let lease: MetadataLease = read(lease)?;
             if !matches!(lease.authority, Authority::Approved { .. }) {
@@ -149,7 +151,8 @@ fn run(args: &[String]) -> Result<()> {
         }
         ["capture-stage", root, plan, lease_hash] => capture_stage(root, plan, lease_hash),
         _ => Err(concat!(
-            "usage: of1-acquire metadata-proposal CODE_SHA TOOLCHAIN_SHA256 | ",
+            "usage: of1-acquire dataset-preflight ROOT | ",
+            "metadata-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-init ROOT AGGREGATE_JSON METADATA_LEASE_JSON | ",
             "progress ROOT AGGREGATE_JSON LEASE_SHA256 | ",
             "capture-stage ROOT AGGREGATE_JSON LEASE_SHA256 | ",

@@ -24,7 +24,12 @@ operator, approval identity, approval/expiry times, exact proposed-plan hash and
 automatic authorization service. This PR supplies no approved receipt. New cost
 terms require review, not a different endpoint or implicit spending permission.
 
-1. Create one aggregate plan and separate metadata lease. Its internally fixed
+1. Run offline `dataset-preflight ROOT` before plan preparation. The shared
+   canonical location validator also gates `metadata-proposal ROOT ...` and
+   `metadata-init`: only a demonstrably empty ordinary `.git` directory is ignored;
+   real checkout/worktree markers remain excluded. This is read-only location
+   admission, not a lease or a run-directory creation.
+   Create one aggregate plan and separate metadata lease. Its internally fixed
    inventory is index GET, SHA sidecar GET, CID sidecar GET, CAR HEAD.
 2. Reserve each attempt durably before DNS/TCP/TLS. Capture metadata entity bytes
    and original bounded headers without domain parsing. Stop after metadata.
