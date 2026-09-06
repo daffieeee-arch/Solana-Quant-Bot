@@ -4,6 +4,11 @@
 
 ## Storage contract (PR #102 baseline)
 
+This retained fixture contract/report is unchanged evidence. The later
+[staged acquisition store](OF1_STAGED_ACQUISITION.md) adds separate metadata and
+payload admission in the same crate using these durability principles; its
+coalesced segments and measured resources are not retroactive PR102 claims.
+
 `rust/of1-range-recorder/src/durable.rs` accepts the validated offline plan, the exact persisted index and injected response bytes. It has no HTTP client, provider configuration or decoder. It creates a new run directory, never imports or overwrites an old JS capture. The [executed fixture report](OF1_DURABILITY_EVIDENCE.md) and [JSON twin](../../schemas/acquisition/of1/durability-evidence.json) show durable attempts, immutable publication, unchanged deadlines and corruption rejection.
 
 The separate [offline transport integration](OF1_OFFLINE_TRANSPORT.md) drives this store from a local fixture response, with attempt-level streaming evidence and retry comparison. Its [end-to-end report](OF1_TRANSPORT_EVIDENCE.md) does not change the evidence level or authorize external acquisition.

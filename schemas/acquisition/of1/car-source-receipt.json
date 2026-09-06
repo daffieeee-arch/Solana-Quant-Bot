@@ -1,0 +1,28 @@
+{
+  "schema": "OF1_CAR_STRUCTURAL_SOURCE_RECEIPT_1",
+  "capability": "DOCUMENTATION_ONLY",
+  "retrieved_at": "2026-09-06T12:35:19Z",
+  "repository": "anza-xyz/jetstreamer",
+  "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+  "source_url_prefix": "https://github.com/anza-xyz/jetstreamer/blob/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/",
+  "files": [
+    {"path":"jetstreamer-firehose/src/node_reader.rs","sha256":"4bcbf8eef2ecd7106ce02dcc016dca73dbe914bcddc5aea8430d1395fa26458e","bytes":15900},
+    {"path":"jetstreamer-firehose/src/node.rs","sha256":"1dbcf655d4b79469f95454de6b13f64ee5479498598e783ed201f4c164633fee","bytes":19843},
+    {"path":"jetstreamer-firehose/src/entry.rs","sha256":"5a9ff6dc7d299dae971751eb8ced1e391dfc049fc5f7458161b6172191e08622","bytes":8549},
+    {"path":"jetstreamer-firehose/src/transaction.rs","sha256":"46e162e00b2c64eeeeae81747124196d522aa0a69da299be4e6f547c41e715f8","bytes":30978},
+    {"path":"jetstreamer-firehose/src/dataframe.rs","sha256":"c0889d86360f071d68e1af72195e23a5c780282281ec5ddc554815640c55474b","bytes":9152},
+    {"path":"jetstreamer-firehose/src/rewards.rs","sha256":"fc15511388b02da0e65e5b849c6ee9972d34218144546f3a4dab054a7e6b572d","bytes":5617},
+    {"path":"jetstreamer-firehose/src/block.rs","sha256":"835727aa3d4dea938a967ae9394bb682ba0065475d7fc10566a4631c8c6a368c","bytes":134494}
+  ],
+  "license": "Pinned upstream LICENSE-MIT provides MIT option. Schema facts and one explicitly labelled upstream synthetic DataFrame vector used; no upstream runtime/parser vendored.",
+  "evidence": "STRUCTURAL_SOURCE_ONLY",
+  "authentic_chain_bytes": false,
+  "selected_profile": "CARv1 sections; CIDv1 / DAG-CBOR 0x71 / SHA2-256 0x12 / 32-byte digest; bounded definite archival CBOR arrays and tag-42 links.",
+  "selected_node_kinds": {"Transaction":0,"Entry":1,"Block":2,"Rewards":5,"DataFrame":6},
+  "local_stricter_policy": "Recompute CID content digests, require exact shape/exhaustion, reject duplicates/unreachable nodes/missing or mistyped links, require one terminal planned Block and matching Transaction/Rewards slots. No permissive default fields or upstream casts.",
+  "signed_hash_evidence": "First dataframe.rs test_decoding vector encodes its opaque checksum as a negative CBOR integer (0x3b). Accepted as source-shaped representation only; CRC/FNV or payload reassembly is not verified.",
+  "root_to_slot_membership": "UNAVAILABLE",
+  "whole_epoch_hash_verification": "UNAVAILABLE_FOR_PARTIAL_CAPTURE",
+  "source_observation": "NOT_ATTESTED_BY_VERIFIER",
+  "domain_decoding": "UNAVAILABLE_NOT_DECODED_IN_B4"
+}

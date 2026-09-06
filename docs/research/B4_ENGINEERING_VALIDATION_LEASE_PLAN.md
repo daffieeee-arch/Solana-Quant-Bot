@@ -2,7 +2,7 @@
 
 > **Document status: ACTIVE — UNAPPROVED, NOT EXECUTABLE.**
 > `approved: false`, `networkEnabled: false`, `readyToRun: false`.
-> This correction authorizes no metadata, index, CAR, Triton or provider request.
+> This draft authorizes no metadata, index, CAR, Triton or provider request.
 
 The [JSON twin](B4_ENGINEERING_VALIDATION_LEASE_PLAN.json) is a reviewable
 planning document, **not** the Rust runner's input schema. Its revised schema
@@ -16,7 +16,12 @@ PRs #101–#103 establish the [planner](OF1_RUST_PLANNER.md),
 [loopback transport](OF1_OFFLINE_TRANSPORT.md) at **Fixture** evidence.
 The [executed report](OF1_TRANSPORT_EVIDENCE.md) is synthetic local HTTP,
 not a completed live downloader. Default builds have no transport, and
-`validate_plan()` accepts only offline fixture authority.
+`validate_plan()` still accepts only offline fixture authority. The new
+[staged acquisition path](OF1_STAGED_ACQUISITION.md) adds a separate typed lease
+contract, optional official HTTPS and local CAR/slot checks; its
+[executed evidence](OF1_ACQUISITION_EVIDENCE.md) remains Fixture only. The
+[concrete metadata proposal](OF1_METADATA_RUN_PROPOSAL.md) is the next review
+surface, not an approved run.
 
 B4/#83 remains open, In Progress / ACTIVE NOW / Unproven; B5/#84 remains
 Backlog / NEXT / Unproven. The next authentic result is one small immutable
@@ -123,7 +128,8 @@ payload feasibility check. Each stage needs an explicitly allocated runtime
 and original absolute wall/boot deadline; allocations must fit the aggregate
 proposal. Payload GO may establish its own approved deadline, but cannot renew
 the metadata lease or refund its history. Restart never grants a new deadline.
-No stage allocation or live approval currently exists.
+No stage allocation is approved. The concrete proposal allocates 10 minutes to
+metadata within the unchanged 30-minute aggregate; payload needs its own GO.
 
 ## Budget evidence — retained proposals, not feasibility approval
 
@@ -141,13 +147,13 @@ Unreceipted actual received totals remain unavailable.
 | Single entity | 16 MiB / 12 MiB | Proposed payload cap, not measured slot size |
 | Total entity allowance | 128 MiB / 100 MiB | Only eight full-size 16 MiB attempts, before metadata |
 | Disk high-water | 256 MiB / 200 MiB | Insufficient for the illustrative 128 MiB successful stream below |
-| Free disk prerequisite | 512 MiB | Proposed, not currently enforced by a live preflight |
-| Memory | 512 MiB / 400 MiB | Peak RSS not measured; current planner allocation bound is not an RSS guard |
+| Free disk prerequisite | 512 MiB | Enforced at staged-store admission/read boundaries; no real acquisition measured |
+| Memory | 512 MiB / 400 MiB | Staged path bounds allocations and samples RSS; measured local fixture is not authentic throughput evidence |
 | Runtime | 30 minutes / 24 minutes | Proposed aggregate stage allocation, not measured throughput; no renewal on restart |
-| Attempt timeout | 30 seconds | Persisted fixture semantics exist; DNS/TLS and realistic sizes are unmeasured |
+| Attempt timeout | 30 seconds | Persisted deadlines and full-size local TLS fixture measured; official DNS/TLS/remote performance remain unmeasured |
 
-Warnings, free-space and RSS limits in the draft are not implemented live
-guarantees. Headers, framing probes, TCP/TLS overhead and physical wire bytes
+Draft warnings are not separate implemented guarantees; the staged path enforces
+hard free-space/RSS and other resource caps. Headers, framing probes, TCP/TLS overhead and physical wire bytes
 are not included in the entity metric; header/read/deadline limits must bound
 them separately. Physical wire usage and provider cost remain unmeasured.
 
@@ -173,45 +179,54 @@ epoch-978 object exists or has that size.
   retries**, because the planner does not coalesce slots. Neither actual
   nonempty count nor Q/S is known. Thus the candidate is not ready to run.
 
-The store retains a Raw chunk, receipt and directory per read, then a final
+The **PR104 baseline fixture store** retains a Raw chunk, receipt and directory per read, then a final
 Raw copy. At full 8 KiB reads with minimum 4 KiB receipt/directory charges,
 128 MiB successfully published needs **at least 384 MiB**, before index,
 run/attempt metadata, retries or staging. This is an illustrative **lower
 bound**, not a safe 3× upper bound: short reads and failed attempts amplify
-storage further. The cap stops execution; it does not guarantee completion.
+storage further. This old illustration is preserved, not applied as the new
+staged store's measured factor: it coalesces 64 KiB segments. The cap stops
+execution; it does not guarantee completion.
 
 Still **UNAVAILABLE**: authentic object length/index hash, selected lengths/
 Q/S, sidecar sizes, validator behavior, header compatibility, real fragmentation,
-disk high-water, RSS, fsync/verification throughput, DNS/TLS duration and cost.
-Measure bounded offline size/fragmentation cases before live admission.
+authentic disk high-water, RSS, fsync/verification throughput, DNS/TLS duration and cost.
+The new local report measures a full-size synthetic index, fragmentation, restart
+and a small CAR envelope; its results do not establish official-source behavior.
 If safe resource bounds do not fit, stop for a smaller reviewed plan or a
 specific measured implementation fix—not an automatic budget increase.
 
-## Precisely missing implementation
+## Implementation acceptance boundaries
+
+The following PR104 requirements are now implemented in the
+[staged path](OF1_STAGED_ACQUISITION.md) and exercised locally, **not** against OF1.
+The table preserves their scope; no requirement is satisfied by an authentic run
+yet. Root-proof acquisition and draft warning notifications remain outside the
+minimal executable path. Only hard resource stops are implemented.
 
 | Boundary | Required bounded work / acceptance gate |
 |---|---|
 | Live admission | Separate metadata/payload lease validation tied to explicit approval, code/toolchain/executable and immutable receipts. Current fixture-only schema must not be weakened or activated by flipping booleans |
 | Official HTTPS | Minimal fixed-host Rust TLS path; certificate/hostname verification; default-disabled production capability; reviewed locked dependencies/features/licenses/build scripts; no proxy/redirect/backend/autoretry/decompression. Original deadline covers DNS/connect/TLS/headers/entity reads |
 | Metadata bootstrap | Durable bounded small-object GET200 and headers-only HEAD, preserving bytes before parse; index/source manifest publication without circular prerequisite of an already-known index hash. Reuse existing reservation/publication invariants, not the loopback API as a live client |
-| Live budget enforcement | Include metadata plus payload charges, retained copies, warnings, explicit free-space and bounded memory policy. Exercise large/short-read fixtures and time spent in hashing/fsync; test live-adapter paths only against sealed local fixtures until GO |
+| Live budget enforcement | Include metadata plus payload charges, retained copies, explicit free-space and bounded memory policy; draft warning notifications are deferred, hard stops are implemented. Exercise large/short-read fixtures and time spent in hashing/fsync; test live-adapter paths only against sealed local fixtures until GO |
 | CAR framing and node integrity | Bounded CAR header/section/uvarint/CID parsing, exact exhaustion and cross-request section assembly from already captured bytes. Pin supported codecs/multihashes, recompute node digests and reject mismatch/truncation/unsupported forms. Merely parsing a CID is not verification |
 | Selected slot envelope | Minimal archival Block.slot and intra-slot link/closure checks against the planned index slots; missing/out-of-range/duplicate or unresolved links cannot become complete coverage. No Pump decode, Bronze or Silver in this acquisition work |
 | Visible receipt | Show stage, attempts, reserved/published entity bytes, deadline, range completeness, local hashes, verification level and reasons. Block/transaction/Pump counts stay `UNAVAILABLE_NOT_DECODED_IN_B4` until an owning decoder actually establishes them |
 
 Use the existing isolated Rust crate and durable store seams. No full
 Jetstreamer runtime, RocksDB, ClickHouse, generic transport framework or new
-infrastructure stage is needed. Exact HTTPS/CAR dependencies remain a reviewed
-implementation choice, not permission to install a broad stack now.
+infrastructure stage is needed. The [locked dependency review](../../rust/of1-range-recorder/dependency-review.json)
+records the selected minimal TLS/resource graph; CAR parsing adds no dependency.
 
 ## Integrity ladder and root-membership limitation
 
 | Evidence | What it proves | Current state |
 |---|---|---|
 | Local SHA-256 of received bytes | local artifact integrity | Fixture only |
-| Recomputed complete node multihash equals CID | content/CID agreement for that node | Unimplemented |
-| Block.slot and complete selected intra-slot links | archival slot-envelope consistency | Unimplemented |
-| Captured CAR-header root equals sidecar root | agreement between source declarations | Unimplemented; not inclusion proof |
+| Recomputed complete node multihash equals CID | content/CID agreement for that node | Fixture-tested; no authentic observation |
+| Block.slot and complete selected intra-slot links | archival slot-envelope consistency | Fixture-tested; no authentic observation |
+| Captured CAR-header root equals sidecar root | agreement between source declarations | Offline primitive fixture-tested; no header acquisition in minimal runner; not inclusion proof |
 | Verified epoch → subset → block links from captured nodes | root-to-slot inclusion in that archive | `UNAVAILABLE` until all required proof nodes are obtained and checked |
 
 The modern index contains offsets/lengths, not authenticated root links.
@@ -232,7 +247,7 @@ warns that different ledger/node versions can produce different logs.
 
 ## Shortest executable path and GO gates
 
-1. **Implement and review one bounded fixed-host acquisition path** in the
+1. **Review the implemented bounded fixed-host acquisition path** in the
    existing crate: separate metadata admission/publication, HTTPS adapter,
    payload admission and offline CAR/CID/slot checks above. Keep production
    capability disabled by default; prove it using local fixtures, including

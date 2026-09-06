@@ -2,6 +2,8 @@
 //! A durable reservation precedes every permit. Unknown interrupted bytes stay unknown;
 //! their full reserved allowance remains spent. No mutable checkpoint or automatic repair.
 
+pub mod acquisition;
+
 use crate::{
     ByteRequest, OfflinePlan, PersistedIndex, RangePlan, plan_ranges, sha256, validate_plan,
 };
@@ -23,6 +25,8 @@ pub const MAX_STREAM_CHUNK_BYTES: usize = 8192;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultPoint {
+    BeforeStagePublish,
+    AfterStagePublish,
     BeforeReservationPublish,
     AfterReservationPublish,
     AfterRawWrite,
@@ -41,6 +45,8 @@ pub enum StoreError {
     Identity,
     #[error("corrupt or incompatible store/response")]
     Corrupt,
+    #[error("offline integrity quarantine: {0}")]
+    Integrity(String),
     #[error("hard budget exhausted")]
     Budget,
     #[error("original deadline or attempt timeout reached")]

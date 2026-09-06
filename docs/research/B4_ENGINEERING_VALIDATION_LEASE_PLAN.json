@@ -195,6 +195,7 @@
     "full16MiBAttemptsWithin128MiBAggregateIgnoringMetadata": 8,
     "diskIllustration": {
       "status": "LOWER_BOUND_ILLUSTRATION_NOT_A_SAFE_UPPER_BOUND",
+      "implementationScope": "PR104_FIXTURE_STORE_NOT_NEW_STAGED_STORE_MEASUREMENT",
       "payloadBytes": 134217728,
       "fullChunkBytes": 8192,
       "minimumReceiptChargeBytes": 4096,
@@ -213,16 +214,16 @@
       "PAYLOAD_RANGE_COUNT_AND_ENTITY_BYTES",
       "HTTP_TLS_FRAMING_AND_RANGE_COMPATIBILITY",
       "ADDITIONAL_CAR_HEADER_OR_MEMBERSHIP_PROOF_REQUESTS",
-      "DISK_HIGH_WATER_WITH_STREAM_FRAGMENTATION_AND_RETRIES",
-      "RSS_PEAK",
-      "SOURCE_THROUGHPUT_AND_LOCAL_FSYNC_RUNTIME",
+      "AUTHENTIC_RUN_DISK_HIGH_WATER_WITH_FRAGMENTATION_AND_RETRIES",
+      "AUTHENTIC_RUN_RSS_PEAK",
+      "SOURCE_THROUGHPUT_AND_AUTHENTIC_RUN_FSYNC_RUNTIME",
       "CURRENT_COST_AND_AVAILABILITY"
     ],
     "enforcementLimits": [
-      "Current Rust code accepts OFFLINE_FIXTURE only and rejects live authority flags; changing this JSON cannot authorize execution.",
-      "Fixture store enforces durable attempt/entity allowances, conservative run-tree disk charge and original wall/boot deadlines; official HTTPS and metadata acquisition do not exist.",
-      "Memory cap, free-space prerequisite and warning thresholds are proposed requirements, not currently enforced live guarantees.",
-      "response_entity_bytes excludes headers, framing probes and TCP/TLS overhead; a future live path requires separate bounded header/framing/deadline policies.",
+      "The retained fixture schema still accepts OFFLINE_FIXTURE only. The new staged Rust path uses separate typed approvals; changing this JSON cannot authorize execution.",
+      "Staged store/optional fixed-host HTTPS enforce shared durable attempts/entity charges, conservative retained disk charge and original per-stage wall/boot deadlines. Only local fixtures have executed.",
+      "Staged code bounds allocation and samples RSS/free space at admission/I/O boundaries; local measurements are not authentic-run guarantees. Draft warning thresholds are not implemented stop guarantees.",
+      "response_entity_bytes excludes headers, framing probes and TCP/TLS overhead; implemented headers are bounded to 16 KiB and I/O shares the original deadline.",
       "Disk scope must include metadata artifacts outside the payload run directory as well as retained attempts and publication copies."
     ]
   },
@@ -251,7 +252,7 @@
     "currentImplementation": "Fixture",
     "b4ProjectEvidence": "Unproven",
     "authenticSourceObservation": "UNAVAILABLE",
-    "carCidVerification": "UNAVAILABLE",
+    "carCidVerification": "FIXTURE_ONLY_NO_AUTHENTIC_OBSERVATION",
     "rootToSlotMembership": "UNAVAILABLE",
     "domainCounts": "UNAVAILABLE_NOT_DECODED_IN_B4",
     "historicalActivation": "UNAVAILABLE",
@@ -262,6 +263,6 @@
     "See docs/research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md",
     "Do not construct a network client from this file. Five completed metadata fields are not sufficient authority.",
     "The earlier version remains in Git history; historical fixture reports and source receipts are unchanged.",
-    "No runnable metadata or payload stage exists. The shortest route is bounded implementation, metadata GO, offline feasibility review, separate payload GO, then exact acquired-byte evidence."
+    "The new staged implementation is Fixture only. Review docs/research/OF1_METADATA_RUN_PROPOSAL.md, then metadata GO, offline feasibility review, separate payload GO and exact acquired-byte evidence; no run is currently authorized."
   ]
 }

@@ -27,7 +27,7 @@ describe('B4 engineering-validation lease plan draft', () => {
       currentImplementation: 'Fixture',
       b4ProjectEvidence: 'Unproven',
       authenticSourceObservation: 'UNAVAILABLE',
-      carCidVerification: 'UNAVAILABLE',
+      carCidVerification: 'FIXTURE_ONLY_NO_AUTHENTIC_OBSERVATION',
       rootToSlotMembership: 'UNAVAILABLE',
     });
   });
@@ -194,20 +194,22 @@ describe('B4 engineering-validation lease plan draft', () => {
     expect(example.minimumCombinedBytesBeforeOtherMetadata).toBeGreaterThan(plan.budget.maxDiskBytes);
     expect(example.fitsRetained256MiBDiskCandidate).toBe(false);
     expect(example.status).toBe('LOWER_BOUND_ILLUSTRATION_NOT_A_SAFE_UPPER_BOUND');
+    expect(example.implementationScope).toBe('PR104_FIXTURE_STORE_NOT_NEW_STAGED_STORE_MEASUREMENT');
     expect(example.limits).toContain('Short reads');
     expect(plan.budgetBasis.enforcementLimits.join(' ')).toContain('metadata artifacts outside the payload run directory');
   });
 
-  it('keeps unmeasured memory, free-space, warning, throughput and runtime guarantees explicit', () => {
+  it('separates authentic resource unknowns from implemented local hard guards and unimplemented warnings', () => {
     expect(plan.budgetBasis.unmeasured).toEqual(expect.arrayContaining([
       'ACTUAL_SIDECAR_LENGTHS_AND_FORMATS',
       'PAYLOAD_RANGE_COUNT_AND_ENTITY_BYTES',
-      'DISK_HIGH_WATER_WITH_STREAM_FRAGMENTATION_AND_RETRIES',
-      'RSS_PEAK',
-      'SOURCE_THROUGHPUT_AND_LOCAL_FSYNC_RUNTIME',
+      'AUTHENTIC_RUN_DISK_HIGH_WATER_WITH_FRAGMENTATION_AND_RETRIES',
+      'AUTHENTIC_RUN_RSS_PEAK',
+      'SOURCE_THROUGHPUT_AND_AUTHENTIC_RUN_FSYNC_RUNTIME',
       'CURRENT_COST_AND_AVAILABILITY',
     ]));
-    expect(plan.budgetBasis.enforcementLimits.join(' ')).toContain('Memory cap, free-space prerequisite and warning thresholds');
+    expect(plan.budgetBasis.enforcementLimits.join(' ')).toContain('bounds allocation and samples RSS/free space');
+    expect(plan.budgetBasis.enforcementLimits.join(' ')).toContain('warning thresholds are not implemented stop guarantees');
     expect(plan.budgetBasis.enforcementLimits.join(' ')).toContain('excludes headers, framing probes and TCP/TLS overhead');
     expect(plan.budgetBasis.runtimeRule).toContain('not allocated twice');
     expect(plan.budgetBasis.runtimeRule).toContain('Runtime allocation remains null');
