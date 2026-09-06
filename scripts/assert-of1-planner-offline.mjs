@@ -213,17 +213,20 @@ async function run(mode) {
       if (mode === '--print') process.stdout.write(`${path}\n${outputs[0]}`);
       else if (outputs[0] !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 report drift: ${path}`);
     }
-    // Source-reviewed numeric-loopback TLS tests only. Compilation/build scripts still
-    // execute under socket denial. No `capture-stage` or official DNS dispatch is run.
+    // Source-reviewed numeric-loopback TLS tests only. Use the proposed runner's
+    // release profile for these new large-index fixture lanes: repeated debug hashing
+    // exhausted the unchanged 25-minute job budget despite passing every test.
+    // Existing debug/default tests and all assertions/cases remain. Compilation/build
+    // scripts still execute under socket denial; no official dispatch is run.
     for (const target of ['acquisition_https', 'acquisition_e2e']) {
-      const built = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline',
+      const built = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--release',
         '--all-features', '--test', target, '--no-run', '--message-format=json-render-diagnostics']);
       const executable = built.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
         .find(v => v.reason === 'compiler-artifact' && v.target.name === target && v.executable)?.executable;
       if (!executable) throw new Error(`TLS acquisition fixture missing: ${target}`);
       process.stdout.write(loopback(executable, ['--test-threads=1']).stdout);
     }
-    const acquisitionBuild = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline',
+    const acquisitionBuild = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
       '--features', 'tls-fixture', '--bin', 'of1-acquisition-fixture-evidence', '--message-format=json-render-diagnostics']);
     const acquisitionBinary = acquisitionBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-acquisition-fixture-evidence' && v.executable)?.executable;
