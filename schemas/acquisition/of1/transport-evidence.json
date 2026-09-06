@@ -1,0 +1,65 @@
+{
+  "after_restart_completion": {
+    "attempts_reserved": 3,
+    "charged_entity_bytes": 96,
+    "deadline_boot_ms": 70000,
+    "deadline_wall_ms": 160000,
+    "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "evidence": "Fixture",
+    "published_requests": 2,
+    "unpublished_attempts": 1,
+    "unreceipted_response_entity_bytes": null,
+    "verified_response_entity_bytes": 64
+  },
+  "approved": false,
+  "b4_complete": false,
+  "before_restart_completion": {
+    "attempts_reserved": 2,
+    "charged_entity_bytes": 64,
+    "deadline_boot_ms": 70000,
+    "deadline_wall_ms": 160000,
+    "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+    "evidence": "Fixture",
+    "published_requests": 1,
+    "unpublished_attempts": 1,
+    "unreceipted_response_entity_bytes": null,
+    "verified_response_entity_bytes": 32
+  },
+  "budget_is_physical_wire_cap": false,
+  "budget_metric": "response_entity_bytes",
+  "cid_verification": "UNAVAILABLE",
+  "controlled_fixture_entity_supply_bytes": 71,
+  "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+  "evidence": "Fixture",
+  "executed_checks": {
+    "all_published_raw_receipts_revalidated": true,
+    "every_dispatched_attempt_durably_charged": true,
+    "exact_requested_ranges_sent": true,
+    "first_raw_receipt_survived_process_exit": true,
+    "original_deadlines_preserved": true,
+    "published_request_not_refetched": true,
+    "retry_retained_matching_prefix": true,
+    "truncated_attempt_not_published": true
+  },
+  "fixture_index_sha256": "3919f15479264300e451c53ce7b276cf90391488b9cbbd7f4c9c1ea70f41c60c",
+  "historical_source_bytes": "UNAVAILABLE",
+  "interrupted_actual_total": "UNAVAILABLE_AFTER_PROCESS_LOSS",
+  "live_network_enabled": false,
+  "payload_sha256": [
+    "425ed4e4a36b30ea21b90e21c712c649e8214c29b7eaf68089d1039c6e55384c",
+    "4113d54b0b611294b7f595b691c9db541fc0fc719848d6c5c34522eacc0b3a24"
+  ],
+  "plan_sha256": "79cd0dd8bf954caaed969d55bc46a06ea7c52cb75d835fd029821d232f1cc222",
+  "process_exit": {
+    "code": 86,
+    "physical_power_loss_proven": false,
+    "rust_destructors_ran": false
+  },
+  "research_outcome": "NOT_EVALUATED_ENGINEERING_FIXTURE_ONLY",
+  "retained_truncated_prefix_bytes": 7,
+  "root_membership": "UNAVAILABLE",
+  "scenario": "INDEX_PLAN_RESERVE_HTTP_PUBLISH_TRUNCATE_PROCESS_EXIT_RESTART_RETRY_PROGRESS",
+  "schema": "OF1_TRANSPORT_FIXTURE_EVIDENCE_1",
+  "slot_semantic_membership": "UNAVAILABLE_NOT_DECODED_IN_B4",
+  "transport": "FEATURE_GATED_NUMERIC_LOOPBACK_HTTP_1_1_SUBSET"
+}

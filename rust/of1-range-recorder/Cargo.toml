@@ -5,6 +5,15 @@ edition = "2024"
 publish = false
 license = "UNLICENSED"
 
+[features]
+default = []
+loopback-fixture = []
+
+[[bin]]
+name = "of1-transport-evidence"
+path = "src/bin/of1-transport-evidence.rs"
+required-features = ["loopback-fixture"]
+
 [dependencies]
 hex = "=0.4.3"
 serde = { version = "=1.0.229", features = ["derive"] }

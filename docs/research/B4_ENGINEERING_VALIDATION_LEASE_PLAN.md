@@ -64,8 +64,8 @@ Non-claims for this selection:
 - **Redirects / mirrors / public RPC / S3 / backend overrides:** deny.
 - **Jetstreamer knobs:** default-deny
   (`JETSTREAMER_HTTP_BASE_URL`, `ARCHIVE_BASE`, `ARCHIVE_BACKEND`,
-  S3-shaped overrides) as implemented in
-  `scripts/b4-offline-remainder.mjs`.
+  S3-shaped overrides). The [current offline transport](OF1_OFFLINE_TRANSPORT.md)
+  has no such override consumer; a future live wrapper remains separately gated.
 - **Hosted Old Faithful gRPC / RPC:** not selected; do not probe.
 - **Candidate crate pin:** `cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24`
   (candidate only; see

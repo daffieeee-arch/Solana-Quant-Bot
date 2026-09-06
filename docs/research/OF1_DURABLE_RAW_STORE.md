@@ -2,9 +2,11 @@
 
 > **Document status: ACTIVE — FIXTURE ONLY.** Second bounded B4 repair after [the index planner](OF1_RUST_PLANNER.md). B4 remains open, `In Progress / ACTIVE NOW / Unproven`; B5 remains `Backlog / NEXT / Unproven`. No acquisition run is authorized.
 
-## What this PR implements
+## Storage contract (PR #102 baseline)
 
 `rust/of1-range-recorder/src/durable.rs` accepts the validated offline plan, the exact persisted index and injected response bytes. It has no HTTP client, provider configuration or decoder. It creates a new run directory, never imports or overwrites an old JS capture. The [executed fixture report](OF1_DURABILITY_EVIDENCE.md) and [JSON twin](../../schemas/acquisition/of1/durability-evidence.json) show durable attempts, immutable publication, unchanged deadlines and corruption rejection.
+
+The separate [offline transport integration](OF1_OFFLINE_TRANSPORT.md) drives this store from a local fixture response, with attempt-level streaming evidence and retry comparison. Its [end-to-end report](OF1_TRANSPORT_EVIDENCE.md) does not change the evidence level or authorize external acquisition.
 
 The run contains immutable `run.json` and `index.raw`, a retained OS writer lock, numbered immutable reservation files in `attempts/`, non-authoritative `pending/` artifacts, and complete Raw/receipt pairs in `published/`. There is no mutable checkpoint and no auto-repair or cleanup of ambiguous evidence.
 
@@ -27,13 +29,13 @@ Pending files remain forensic material, count toward disk usage and never become
 - One original wall deadline and boot-elapsed deadline are persisted at creation. Linux `/proc/uptime` includes process downtime; boot identity must remain unchanged. Reboot, detected wall/boot rollback, expiration (including equality) and response timeout fail closed. There is no automatic lease renewal. `Store::inspect` returns only an integrity-checked forensic summary after expiration, never a writer/permit; evidence is not hidden by a budget/deadline stop.
 - The executable hash is measured locally on create/resume. The planner's synthetic source/code/toolchain labels remain declared fixture context, not authentic provenance or a remote attestation. A rebuild may require a fresh fixture run; resume never silently accepts a different executable.
 
-This storage-only step does not yet meter a streaming network transport. Byte receipt timestamps are injected operational fixture clocks here; they are never historical feature/decision timestamps. Time is rechecked after reservation fsync before returning a permit, and after the pre-publication integrity audit immediately before rename. These are deadline gates, not real-time interruption of a stalled synchronous filesystem call. Filesystem `fsync` semantics and a non-adversarial local kernel are prerequisites. In-process crash seams and real child-process exits test ordering, not physical power-loss behavior or coordinated rollback of the entire store. The small-fixture audit re-reads captured content; scale/concurrent-reader performance is not claimed.
+The PR #102 storage-only report does not meter a streaming network transport; the separate integration report exercises that seam on loopback fixtures. Byte receipt timestamps remain operational fixture clocks, never historical feature/decision timestamps. Time is rechecked after reservation fsync before returning a permit, and after the pre-publication integrity audit immediately before rename. These are deadline gates, not real-time interruption of a stalled synchronous filesystem call. Filesystem `fsync` semantics and a non-adversarial local kernel are prerequisites. In-process crash seams and real child-process exits test ordering, not physical power-loss behavior or coordinated rollback of the entire store. The small-fixture audit re-reads captured content; scale/concurrent-reader performance is not claimed.
 
 ## Verification and unchanged boundaries
 
-Regression tests cover mixed generations/minimal receipts, no overwrite, interrupted attempts across multiple restarts, retry/byte/disk caps, original deadlines/timeouts/boot changes, exact source/index/executable context, every publication seam and process-released locking. The deterministic report executes its scenarios; it is not a hand-authored success checklist. The existing syscall-deny gate runs crate builds, tests and both report generators offline, including the local same-test-binary crash children.
+Regression tests cover mixed generations/minimal receipts, no overwrite, interrupted attempts across multiple restarts, retry/byte/disk caps, original deadlines/timeouts/boot changes, exact source/index/executable context, every publication seam and process-released locking. The deterministic report executes its scenarios; it is not a hand-authored success checklist. The existing syscall-deny gate retains default crate builds/tests and both planner/storage report generators, including the local same-test-binary crash children. The feature-enabled loopback integration is verified separately.
 
-No dependencies or toolchains are added. Both old JS recorders/tests remain provisional until the separate offline integration and invariant-parity PR. No B3 code/evidence, historical migration ledger, Project schema or ordinary Roadmap Sync is changed. Rollback is a normal Git revert; retain run artifacts and do not silently import them into an older store schema.
+No dependencies or toolchains are added. The [integration parity inventory](../../schemas/acquisition/of1/transport-parity.json) records the test-backed replacement of both old JS recorders/tests; this storage report's earlier evidence remains unchanged. No B3 code/evidence, historical migration ledger, Project schema or ordinary Roadmap Sync is changed. Rollback is a normal Git revert; retain run artifacts and do not silently import them into an older store schema.
 
 ## Required later lease/evidence step
 

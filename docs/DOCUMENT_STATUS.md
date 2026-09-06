@@ -31,13 +31,13 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md)
 - [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md)
 - [`research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md`](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md)
-- [`research/B4A_OFFLINE_RANGE_RECORDER.md`](research/B4A_OFFLINE_RANGE_RECORDER.md)
 - [`research/OF1_RUST_PLANNER.md`](research/OF1_RUST_PLANNER.md)
 - [`research/OF1_DURABLE_RAW_STORE.md`](research/OF1_DURABLE_RAW_STORE.md)
 - [`research/OF1_DURABILITY_EVIDENCE.md`](research/OF1_DURABILITY_EVIDENCE.md)
+- [`research/OF1_OFFLINE_TRANSPORT.md`](research/OF1_OFFLINE_TRANSPORT.md)
+- [`research/OF1_TRANSPORT_EVIDENCE.md`](research/OF1_TRANSPORT_EVIDENCE.md)
 - [`research/OF1_OFFLINE_PLAN_EVIDENCE.md`](research/OF1_OFFLINE_PLAN_EVIDENCE.md)
 - [`research/OF1_QUANT_RESEARCH_MEMO_V2.md`](research/OF1_QUANT_RESEARCH_MEMO_V2.md)
-- [`research/B4_OFFLINE_REMAINDER.md`](research/B4_OFFLINE_REMAINDER.md)
 - [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json)
 - [`research/JETSTREAMER_V0_7_0_PIN_REVIEW.md`](research/JETSTREAMER_V0_7_0_PIN_REVIEW.md)
 - [`research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md`](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md)
@@ -49,6 +49,8 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`CURRENT_STATE.md`](CURRENT_STATE.md)
 - [`PUMP_OFFLINE_RESEARCH.md`](PUMP_OFFLINE_RESEARCH.md)
 - [`research/OLD_FAITHFUL_QUANT_DATA_SPEC.md`](research/OLD_FAITHFUL_QUANT_DATA_SPEC.md)
+- [`research/B4A_OFFLINE_RANGE_RECORDER.md`](research/B4A_OFFLINE_RANGE_RECORDER.md)
+- [`research/B4_OFFLINE_REMAINDER.md`](research/B4_OFFLINE_REMAINDER.md)
 
 ## Historical documents
 
