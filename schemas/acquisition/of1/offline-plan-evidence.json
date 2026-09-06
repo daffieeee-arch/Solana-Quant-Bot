@@ -1,0 +1,67 @@
+{
+  "schema": "OF1_OFFLINE_RANGE_PLAN_1",
+  "format_source": {
+    "repository": "anza-xyz/jetstreamer",
+    "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+    "path": "jetstreamer-firehose/src/index.rs",
+    "blob": "bb9096d56f609b29e3ff063dc49ff4b1b4ef6ea2",
+    "sha256": "c963bc80e8daeb94b75aac802bd96b1a6cf78defbb29e0fac431b8c150c9f83b"
+  },
+  "plan_sha256": "60c492ac460c880ef4e8fe9cde9a189b5b8deef95e8cc6408db97b16601f35d5",
+  "index_sha256": "3919f15479264300e451c53ce7b276cf90391488b9cbbd7f4c9c1ea70f41c60c",
+  "source_host": "files.old-faithful.net:443",
+  "source_path": "/978/epoch-978.car",
+  "index_path": "/978/epoch-978-slot-ranges.raw",
+  "requests": [
+    {
+      "sequence": 0,
+      "slot": 422496010,
+      "index_record": 10,
+      "start": 128,
+      "end_exclusive": 160
+    },
+    {
+      "sequence": 1,
+      "slot": 422496010,
+      "index_record": 10,
+      "start": 160,
+      "end_exclusive": 192
+    },
+    {
+      "sequence": 2,
+      "slot": 422496011,
+      "index_record": 11,
+      "start": 192,
+      "end_exclusive": 224
+    },
+    {
+      "sequence": 3,
+      "slot": 422496011,
+      "index_record": 11,
+      "start": 224,
+      "end_exclusive": 256
+    },
+    {
+      "sequence": 4,
+      "slot": 422496011,
+      "index_record": 11,
+      "start": 256,
+      "end_exclusive": 272
+    },
+    {
+      "sequence": 5,
+      "slot": 422496013,
+      "index_record": 13,
+      "start": 400,
+      "end_exclusive": 416
+    }
+  ],
+  "index_reported_absent": [
+    422496012
+  ],
+  "planned_response_entity_bytes": 160,
+  "evidence": "Fixture",
+  "slot_semantic_membership": "UNAVAILABLE_NOT_DECODED_IN_B4",
+  "root_membership": "UNAVAILABLE",
+  "cid_verification": "UNAVAILABLE"
+}

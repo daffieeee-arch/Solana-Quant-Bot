@@ -9,6 +9,8 @@
 
 ## Why this package exists
 
+**Current correctness qualification:** the JS package implements a fixture demo, not proven immutable capture or index-derived coverage. Review found mixed-generation receipts, overwrite and optional-epoch bypasses; PR94 additionally has failed-attempt restart-budget debt. The [Rust replacement sequence](OF1_RUST_PLANNER.md) first implements source-bound index/range planning, then durability and offline integration. Existing tests/scripts are retained until parity; no live B4B gate is satisfied by this document.
+
 B4A (`scripts/b4a-offline-range-recorder.mjs`) records injected bytes with
 `networkEnabled: false` and no HTTP client. That is a Fixture partial of
 B4 / GitHub #83. It does **not** close B4.

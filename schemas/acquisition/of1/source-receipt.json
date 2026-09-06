@@ -1,0 +1,28 @@
+{
+  "schema": "OF1_FORMAT_SOURCE_RECEIPT_1",
+  "capability": "DOCUMENTATION_ONLY",
+  "retrieved_at": "2026-09-06T00:56:13Z",
+  "repository": "anza-xyz/jetstreamer",
+  "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+  "files": [
+    {
+      "path": "jetstreamer-firehose/src/index.rs",
+      "blob": "bb9096d56f609b29e3ff063dc49ff4b1b4ef6ea2",
+      "sha256": "c963bc80e8daeb94b75aac802bd96b1a6cf78defbb29e0fac431b8c150c9f83b",
+      "url": "https://github.com/anza-xyz/jetstreamer/blob/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/index.rs"
+    },
+    {
+      "path": "jetstreamer-firehose/src/epochs.rs",
+      "sha256": "d400cb517808548fd830d16453f7647fb1185db3fc9dcbb5b4286634bab470c3",
+      "url": "https://github.com/anza-xyz/jetstreamer/blob/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/epochs.rs"
+    }
+  ],
+  "license": "MIT option available at pinned LICENSE-MIT; no upstream runtime/code vendored",
+  "format": "12-byte little-endian offset:u64,length:u32; exact epoch record count; zero record denotes index-reported absence",
+  "epoch_convention": "Pinned OF1 source uses epoch*432000; not an independent historical chain-epoch proof",
+  "local_stricter_policy": "Nonzero-offset/zero-length, zero-offset/nonzero-length and overlapping requested records quarantine rather than inheriting permissive upstream behavior",
+  "rejected_upstream_capabilities": ["legacy-index fallback", "HTTP/base URL overrides", "S3", "public RPC helper", "upstream network tests"],
+  "evidence": "STRUCTURAL_SOURCE_ONLY",
+  "authentic_chain_bytes": false,
+  "root_to_slot_membership": "UNAVAILABLE"
+}

@@ -1,0 +1,24 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { validateOf1PlannerInputs } from '../scripts/assert-of1-planner-offline.mjs';
+
+const manifest = readFileSync('rust/of1-range-recorder/Cargo.toml');
+const lock = readFileSync('rust/of1-range-recorder/Cargo.lock');
+
+describe('OF1 planning-only dependency boundary', () => {
+  it('accepts the reviewed manifest and lock', () => {
+    expect(validateOf1PlannerInputs(manifest, lock, {})).toEqual([]);
+  });
+  it('rejects manifest, feature, dependency and lock drift before fetch', () => {
+    for (const suffix of ['\n[features]\nnetwork-of1 = []\n', '\n[build-dependencies]\nreqwest="1"\n', '\n[patch.crates-io]\n']) {
+      expect(validateOf1PlannerInputs(manifest + suffix, lock, {})).toContain('unreviewed OF1 manifest');
+    }
+    expect(validateOf1PlannerInputs(manifest, lock + '\n', {})).toContain('unreviewed OF1 dependency lock');
+  });
+  it('rejects crate-owned network, command and build capabilities', () => {
+    for (const input of ['std::net::TcpStream', 'Command::new("curl")', 'unsafe { something(); }', '#[path="external.rs"]']) {
+      expect(validateOf1PlannerInputs(manifest, lock, { 'src/lib.rs': input })).not.toEqual([]);
+    }
+    expect(validateOf1PlannerInputs(manifest, lock, { 'build.rs': '' })).not.toEqual([]);
+  });
+});
