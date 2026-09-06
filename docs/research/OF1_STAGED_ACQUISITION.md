@@ -160,7 +160,10 @@ available filesystem bytes (`statvfs`), current RSS (`/proc`) and the original
 deadline. Allocation bounds precede reads. Progress exposes current/peak RSS,
 available disk, retained disk charge, attempts, charged/published entity bytes,
 stage, lease and deadlines. These measurements are not physical network billing.
-CLI progress is request-level (and on terminal failure), not a per-chunk TUI.
+The original CLI JSON progress remains request-level (and on terminal failure).
+The separately enabled [B4 monitor](B4_DOWNLOAD_MONITOR.md) observes actual
+intra-request entity reads through bounded, nonblocking local telemetry; it does
+not alter reservations, durable publication or acquisition authority.
 Draft warning thresholds are not separate implemented stop guarantees; hard caps
 are authoritative. No full epoch CAR or completion guarantee is implied by a cap.
 

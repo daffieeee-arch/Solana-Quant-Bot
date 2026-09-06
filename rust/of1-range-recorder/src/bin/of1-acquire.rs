@@ -150,12 +150,15 @@ fn run(args: &[String]) -> Result<()> {
             })?)
         }
         ["capture-stage", root, plan, lease_hash] => capture_stage(root, plan, lease_hash),
+        ["capture-stage", root, plan, lease_hash, "--monitor-socket", socket] => {
+            capture_stage_monitored(root, plan, lease_hash, socket)
+        }
         _ => Err(concat!(
             "usage: of1-acquire dataset-preflight ROOT | ",
             "metadata-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-init ROOT AGGREGATE_JSON METADATA_LEASE_JSON | ",
             "progress ROOT AGGREGATE_JSON LEASE_SHA256 | ",
-            "capture-stage ROOT AGGREGATE_JSON LEASE_SHA256 | ",
+            "capture-stage ROOT AGGREGATE_JSON LEASE_SHA256 [--monitor-socket LOCAL_SOCKET] | ",
             "prepare-payload ROOT AGGREGATE_JSON LEASE_SHA256 FIRST_SLOT END_SLOT | ",
             "payload-admit ROOT AGGREGATE_JSON CURRENT_LEASE_SHA256 PAYLOAD_LEASE_JSON PREPARED_JSON | ",
             "payload-proposal ROOT AGGREGATE_JSON LEASE_SHA256 PREPARED_JSON STAGE_BUDGET_JSON | ",
@@ -172,7 +175,46 @@ fn capture_stage(_: &str, _: &str, _: &str) -> Result<()> {
 
 #[cfg(feature = "network-of1")]
 fn capture_stage(root: &str, plan: &str, lease_hash: &str) -> Result<()> {
+    capture_stage_inner(root, plan, lease_hash, None)
+}
+
+#[cfg(not(all(feature = "monitor", feature = "network-of1")))]
+fn capture_stage_monitored(_: &str, _: &str, _: &str, _: &str) -> Result<()> {
+    Err(
+        "network-of1 and monitor capabilities required; no connection or store mutation attempted"
+            .into(),
+    )
+}
+
+#[cfg(all(feature = "monitor", feature = "network-of1"))]
+fn capture_stage_monitored(root: &str, plan: &str, lease_hash: &str, socket: &str) -> Result<()> {
+    capture_stage_inner(root, plan, lease_hash, Some(Path::new(socket)))
+}
+
+#[cfg(feature = "network-of1")]
+fn capture_stage_inner(
+    root: &str,
+    plan: &str,
+    lease_hash: &str,
+    socket: Option<&Path>,
+) -> Result<()> {
     let mut store = open(root, plan, lease_hash)?;
+    #[cfg(not(feature = "monitor"))]
+    let _ = socket;
+    #[cfg(feature = "monitor")]
+    let mut monitor = socket.and_then(|socket| {
+        if let Ok(context) = of1_range_recorder::monitor::read_run_context(Path::new(root)) {
+            Some(of1_range_recorder::monitor::Monitor::new(
+                context.snapshot,
+                socket,
+            ))
+        } else {
+            eprintln!(
+                "MONITOR_UNAVAILABLE: read-only snapshot failed; capture authority unchanged"
+            );
+            None
+        }
+    });
     let sequences: Vec<_> = if let Some(prepared) = store.prepared_payload() {
         prepared.requests().iter().map(|r| r.sequence).collect()
     } else {
@@ -184,14 +226,38 @@ fn capture_stage(root: &str, plan: &str, lease_hash: &str) -> Result<()> {
         }
         // Exactly one attempt. An error stops this command; a later explicit invocation
         // resumes with spent budgets and original deadlines, never a hidden retry/refund.
-        if let Err(error) = of1_range_recorder::https::OfficialHttps::capture(&mut store, sequence)
-        {
+        #[cfg(feature = "monitor")]
+        let result = if let Some(observer) = monitor.as_mut() {
+            of1_range_recorder::https::OfficialHttps::capture_observed(
+                &mut store, sequence, observer,
+            )
+        } else {
+            of1_range_recorder::https::OfficialHttps::capture(&mut store, sequence)
+        };
+        #[cfg(not(feature = "monitor"))]
+        let result = of1_range_recorder::https::OfficialHttps::capture(&mut store, sequence);
+        if let Err(error) = result {
+            #[cfg(feature = "monitor")]
+            if let Some(observer) = monitor.as_mut()
+                && observer.snapshot.stage != "STOPPED"
+            {
+                observer.failed(sequence, &error.to_string());
+            }
             print(
                 &serde_json::json!({"stage_capture":"STOPPED", "reason":error.to_string(), "progress":store.progress().ok(), "domain_counts":"UNAVAILABLE_NOT_DECODED_IN_B4", "edge_evaluation":"NOT_EVALUATED_ENGINEERING_SLICE"}),
             )?;
             return Err(error.into());
         }
         print(&store.progress()?)?;
+    }
+    #[cfg(feature = "monitor")]
+    if let Some(observer) = monitor.as_mut() {
+        if let Ok(recorded) = of1_range_recorder::monitor::read_run_context(Path::new(root)) {
+            observer.snapshot.storage = recorded.snapshot.storage;
+            observer.snapshot.budgets = recorded.snapshot.budgets;
+            observer.snapshot.artifacts = recorded.snapshot.artifacts;
+        }
+        observer.complete();
     }
     print(
         &serde_json::json!({"stage_capture":"COMPLETE", "next":"STOP_FOR_REVIEW_NO_AUTOMATIC_NEXT_STAGE", "progress":store.progress()?}),

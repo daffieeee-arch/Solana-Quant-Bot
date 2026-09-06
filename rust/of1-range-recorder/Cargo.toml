@@ -7,9 +7,20 @@ license = "UNLICENSED"
 
 [features]
 default = []
+monitor = []
 loopback-fixture = []
 network-of1 = ["dep:rustls", "dep:webpki-roots"]
 tls-fixture = ["dep:rustls", "dep:rcgen"]
+
+[[bin]]
+name = "of1-monitor"
+path = "src/bin/of1-monitor.rs"
+required-features = ["monitor"]
+
+[[bin]]
+name = "of1-monitor-simulation"
+path = "src/bin/of1-monitor-simulation.rs"
+required-features = ["monitor", "tls-fixture"]
 
 [[bin]]
 name = "of1-transport-evidence"

@@ -1,0 +1,93 @@
+{
+  "schema_version": "OF1_MONITOR_BROWSER_EVIDENCE_1",
+  "evidence": "FIXTURE",
+  "purpose": "Executed browser presentation and response-to-measurement evidence; not an acquisition approval or research-readiness claim.",
+  "browser": {
+    "product": "Chrome/152.0.7977.76",
+    "revision": "@0d89dfa2dd7c1ec4b8a14b9f303f887bb63b6174",
+    "platform": "Windows 11 on the operator Terra PC",
+    "driver": "Existing Windows Node v24.14.1, built-in WebSocket/CDP; screenshot tooling only",
+    "repository_toolchain": "Node 22.23.2 / Rust 1.97.1; not changed for browser capture",
+    "viewport_width": 1440,
+    "isolation": "Temporary dedicated headless profile, background networking/sync/component updates disabled, DNS denied except localhost/127.0.0.1",
+    "new_dependencies_installed": false,
+    "base_url": "http://localhost:4173/"
+  },
+  "retained_trace_directory": "/home/dmesdary/solana-quant-data/governance/b4-download-monitor-20260906",
+  "authentic_metadata": {
+    "run_id": "8a350ea0c149f9c49e0615a9460ed3695eec64af21a778b0f8d7786adbae336f",
+    "dataset_root": "/home/dmesdary/solana-quant-data/runs/of1-e978-metadata-29d04959-01",
+    "mode": "RECORDED",
+    "captured_at": "2026-09-06T21:15:01.270Z",
+    "received_basis": "RECEIPTS_ONLY",
+    "received_bytes": 5184161,
+    "published_bytes": 5184161,
+    "reserved_bytes": 5192192,
+    "published_operations": 4,
+    "attempts": 4,
+    "retries": 0,
+    "speed_and_eta_display": "Nog onbekend",
+    "domain_counts_display": "nog onbekend — niet gedecodeerd in B4",
+    "trace_file": "authentic-reviewed-browser-evidence.json",
+    "trace_sha256": "31972e4ecd8873102b791f8442bec5e77b042c3bfc5be664ca7baf5777281877",
+    "screenshot": "docs/research/assets/b4-monitor/authentic-metadata.png",
+    "screenshot_sha256": "03f3f88234cc28d704738b2aac8cbbeabefed851c81320f5ccb8f4bf0a65e4d5",
+    "new_authentic_acquisition": false
+  },
+  "local_simulation": {
+    "run_id": "19a71c110d96030cca2dd712e53dbd48f26d5002a3f775a7af5c8a3dd787c23b",
+    "dataset_root": "/home/dmesdary/solana-quant-data/runs/of1-monitor-fixture-20260906-02",
+    "source": "LOCAL_LOOPBACK_TLS",
+    "live_trace_file": "simulation-live-browser-evidence.json",
+    "live_trace_sha256": "eea31e92dd519e770296311ce628b465a00475cda5ae5ce4dfee944e54698f07",
+    "live_frames": [
+      {"captured_at":"2026-09-06T21:12:14.000Z","received_display":"720 KiB","published_display":"0 B","speed_display":"398 KiB/s","download_eta_display":"10 s","eta_scope":"CURRENT_OPERATION","operation_0_aria_progress_percent":"14.222222222222221"},
+      {"captured_at":"2026-09-06T21:12:15.608Z","received_display":"1,3 MiB","published_display":"0 B","speed_display":"396 KiB/s","download_eta_display":"9 s","eta_scope":"CURRENT_OPERATION","operation_0_aria_progress_percent":"25.283950617283953"},
+      {"captured_at":"2026-09-06T21:12:17.231Z","received_display":"1,8 MiB","published_display":"0 B","speed_display":"398 KiB/s","download_eta_display":"8 s","eta_scope":"CURRENT_OPERATION","operation_0_aria_progress_percent":"36.34567901234568"}
+    ],
+    "live_integration_assertion": "The same browser page received later Rust snapshots during one real local TLS index response: received bytes and operation progress rose, speed and current-operation ETA changed, while publication stayed at zero. Whole-selection byte denominator remained unknown; no budget or full-epoch denominator was substituted.",
+    "live_screenshot": "docs/research/assets/b4-monitor/simulation-live.png",
+    "live_screenshot_sha256": "c72d8e1764af81b297b86e0ff5f57a354e5823a5f71a7c044b069a10b3915303",
+    "stopped": {
+      "captured_at": "2026-09-06T21:12:43.793Z",
+      "reason_display": "HTTP_ENTITY_TRUNCATED",
+      "published_operations": 2,
+      "attempts": 3,
+      "retries": 0,
+      "stale_visible": true,
+      "trace_file": "simulation-stopped-browser-evidence.json",
+      "trace_sha256": "8d7dd0d8bff255248cae92e460fd301cd73df764883131ac0587949a7b67872e",
+      "retained_pre_correction_screenshot": "simulation-stopped-1.png",
+      "retained_pre_correction_screenshot_sha256": "1a0ab5bc12e739fe019400202cadae432de3d2583989ae20623f26a5a312f4d9",
+      "display_finding": "The first captured UI rounded 99.99884262384889% to 100% although only 2/4 operations were published. That unchanged historical screenshot is retained outside Git, not used as the review screenshot. The final formatter now displays <100% for incomplete near-completion values, with a regression test; the actual Rust counters were not changed."
+    },
+    "after_restart": {
+      "captured_at": "2026-09-06T21:13:49.197Z",
+      "stage": "COMPLETE",
+      "received_basis": "DURABLE_LOWER_BOUND",
+      "published_bytes": 5184140,
+      "published_operations": 4,
+      "attempts": 5,
+      "retries": 1,
+      "all_selected_byte_progress_percent": 100,
+      "trace_file": "simulation-complete-browser-evidence.json",
+      "trace_sha256": "2274d35fa9d720b39aeefeef25746e5944d6384f73c00ec83893847c36892653",
+      "screenshot": "docs/research/assets/b4-monitor/simulation-complete.png",
+      "screenshot_sha256": "f27ba336fc160ea4359407d640d0b36f515109f2994155b0aa1f72856e79036e"
+    }
+  },
+  "observed_page_network": {
+    "allowed_origin": "http://localhost:4173",
+    "paths": ["/", "/assets/monitor-CphmzmJL.js", "/assets/monitor-CacmQPbI.js", "/assets/monitor-CQ-eg5Jo.css", "/api/acquisition/runs", "/favicon.ico"],
+    "non_loopback_page_requests": 0,
+    "note": "CDP records page requests, not arbitrary operating-system traffic. The favicon 404 is a harmless local browser request. No provider capability or acquisition control is present in the UI."
+  },
+  "limitations": [
+    "Screenshots are original browser captures, not generated mockups or edited images. Full DOM/network traces remain outside Git with the listed hashes.",
+    "Captured figures are formatted presentation values; canonical exact byte counters remain Rust-owned. Screenshot appearance does not prove integrity, historical activation or research readiness.",
+    "Live/stop/complete captures precede the final request-cycle caption and near-100% formatting correction; their exact asset request identities are preserved rather than rewriting evidence.",
+    "Historical metadata speed and ETA are unavailable. Recorded elapsed time is initialization-to-last-receipt, not a reconstructed downloader-process duration.",
+    "After restart, unobserved interrupted traffic is not invented: the received basis is a durable lower bound. Retry bytes are not extra unique publication.",
+    "The root-to-slot membership lane remains UNAVAILABLE. B4 has not decoded transactions or coins. No metadata/payload run, lease extension, provider call or B5 promotion was authorized by this monitor work."
+  ]
+}

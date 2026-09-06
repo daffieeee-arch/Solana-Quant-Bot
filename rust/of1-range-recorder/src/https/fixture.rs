@@ -35,7 +35,19 @@ impl FixtureServer {
     /// # Errors
     /// Rejects unbounded scripts or certificate/server setup errors.
     pub fn start(certificate_name: &str, scripts: Vec<ResponseScript>) -> HttpsResult<Self> {
+        Self::start_paced(certificate_name, scripts, 0)
+    }
+
+    /// Paced local fragments demonstrate actual intra-request observations, not an animated counter.
+    /// # Errors
+    /// Rejects the usual script bounds or a fragment delay above 500 ms.
+    pub fn start_paced(
+        certificate_name: &str,
+        scripts: Vec<ResponseScript>,
+        fragment_delay_ms: u64,
+    ) -> HttpsResult<Self> {
         if scripts.is_empty()
+            || fragment_delay_ms > 500
             || scripts.len() > 16
             || certificate_name.len() > 128
             || scripts.iter().any(|script| {
@@ -68,7 +80,15 @@ impl FixtureServer {
         listener.set_nonblocking(true)?;
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = stopped.clone();
-        let worker = thread::spawn(move || serve(&listener, &Arc::new(config), scripts, &stop));
+        let worker = thread::spawn(move || {
+            serve(
+                &listener,
+                &Arc::new(config),
+                scripts,
+                &stop,
+                fragment_delay_ms,
+            )
+        });
         Ok(Self {
             port,
             root_der,
@@ -113,6 +133,7 @@ fn serve(
     config: &Arc<ServerConfig>,
     scripts: Vec<ResponseScript>,
     stop: &AtomicBool,
+    fragment_delay_ms: u64,
 ) -> HttpsResult<Vec<String>> {
     let mut requests = Vec::new();
     for script in scripts {
@@ -154,6 +175,9 @@ fn serve(
         thread::sleep(Duration::from_millis(script.delay_ms));
         stream.write_all(&script.header)?;
         for fragment in script.body.chunks(script.fragment_bytes) {
+            if fragment_delay_ms != 0 {
+                thread::sleep(Duration::from_millis(fragment_delay_ms));
+            }
             stream.write_all(fragment)?;
             stream.flush()?;
         }

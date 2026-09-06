@@ -25,6 +25,7 @@ const SAFE_DEFAULT_BUILD = [
   'npm run verify:phase8a-runner-offline',
   'npm run build:cockpit',
   'npm run verify:cockpit-runtime',
+  'npm run build:monitor',
 ].join(' && ');
 
 export function validateTrackedRepositoryPaths(trackedPaths) {
@@ -60,7 +61,11 @@ export function validatePackageScripts(scripts) {
   }
 
   if (scripts['start:cockpit'] !== 'node dist/cockpit-main.js') {
-    errors.push('package.json must expose only the reviewed explicit cockpit monitor start command');
+    errors.push('package.json must retain the reviewed explicit cockpit monitor start command');
+  }
+  if (scripts['start:acquisition-monitor'] !== 'node dist/acquisition-monitor/main.js'
+      || scripts['build:monitor'] !== 'tsc -p frontend/tsconfig.monitor.json && vite build --config frontend/vite.monitor.config.ts') {
+    errors.push('package.json must use the reviewed independent read-only acquisition monitor commands');
   }
   if (scripts.build !== SAFE_DEFAULT_BUILD) {
     errors.push('package.json build must match the reviewed B2A offline command graph exactly');
