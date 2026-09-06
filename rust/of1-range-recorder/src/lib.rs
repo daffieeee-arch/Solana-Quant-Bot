@@ -5,6 +5,7 @@
 pub mod acquisition;
 pub mod acquisition_http;
 pub mod car;
+pub mod dataset_location;
 pub mod durable;
 pub mod fixture;
 #[cfg(any(feature = "network-of1", feature = "tls-fixture"))]
