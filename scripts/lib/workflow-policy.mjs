@@ -45,6 +45,14 @@ const CANONICAL_STEPS = [
     name: 'Fetch locked Pump protocol dependencies',
     run: 'cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked',
   },
+  {
+    name: 'Validate OF1 planner dependencies before fetch',
+    run: 'node scripts/assert-of1-planner-offline.mjs --static',
+  },
+  {
+    name: 'Fetch locked OF1 planner dependencies',
+    run: 'cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked',
+  },
   { name: 'Install locked dependencies', run: 'npm ci' },
   { name: 'Enforce repository and zero-cost policy', run: 'npm run ci:policy' },
   { name: 'Enforce offline research citation gate', run: 'npm run ci:research-citations' },
@@ -78,6 +86,10 @@ const CANONICAL_STEPS = [
   {
     name: 'Verify Pump protocol v2 isolated graph, clippy, tests and evidence',
     run: 'node scripts/assert-pump-protocol-v2-offline.mjs --all',
+  },
+  {
+    name: 'Verify OF1 planner isolated graph, formatting, tests and evidence',
+    run: 'node scripts/assert-of1-planner-offline.mjs --all',
   },
   {
     name: 'Lint Rust reducer',

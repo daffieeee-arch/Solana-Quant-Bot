@@ -43,6 +43,8 @@ The B2A `npm run build` retains research-transport, Phase 8A offline and cockpit
 
 ## Policy boundary
 
+B4's isolated Rust planner adds a separate pre-fetch manifest/lock check, locked fetch, and syscall-isolated formatting/clippy/tests/build/deterministic-report gate. Its [contract](research/OF1_RUST_PLANNER.md) is Fixture planning only; these checks do not authorize acquisition. No B3 gate or Roadmap Sync workflow is replaced.
+
 `scripts/ci-repository-policy.mjs` parses the canonical workflow and fails closed on unauthorized structure, permissions, actions, commands, secret references, safety-variable drift and missing Rust/citation gates. Adversarial tests preserve that protection while the exact workflow allowlist shrinks from five to two. Tracked `.hermes/**` material is forbidden after B2A.
 
 Roadmap Sync is a separate privileged boundary. It always uses trusted default-branch code under `pull_request_target`; never change it to execute PR-head code or PR-produced artifacts. See [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md).

@@ -35,6 +35,8 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The [Rust index planner](research/OF1_RUST_PLANNER.md) is the first B4 correctness-replacement step. Its [visible report](research/OF1_OFFLINE_PLAN_EVIDENCE.md) proves fixture-only index-to-byte planning, not acquisition. The JS paths remain provisional: mixed Raw/receipt generations, overwrite and restart-budget defects still require the separate durability/integration PRs. No live lease is implied.
+
 - Development, tests, research and local visualization run on Windows 11 → WSL2 Ubuntu, with the repository on the WSL ext4 filesystem.
 - Large datasets live outside Git under an explicitly configured dataset root on the WSL filesystem.
 - The local prerequisite and doctor contract is [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md). Setup never runs `sudo` or changes a toolchain automatically.

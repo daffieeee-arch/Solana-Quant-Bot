@@ -32,6 +32,8 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md)
 - [`research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md`](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md)
 - [`research/B4A_OFFLINE_RANGE_RECORDER.md`](research/B4A_OFFLINE_RANGE_RECORDER.md)
+- [`research/OF1_RUST_PLANNER.md`](research/OF1_RUST_PLANNER.md)
+- [`research/OF1_OFFLINE_PLAN_EVIDENCE.md`](research/OF1_OFFLINE_PLAN_EVIDENCE.md)
 - [`research/OF1_QUANT_RESEARCH_MEMO_V2.md`](research/OF1_QUANT_RESEARCH_MEMO_V2.md)
 - [`research/B4_OFFLINE_REMAINDER.md`](research/B4_OFFLINE_REMAINDER.md)
 - [`research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json`](research/B4_OFFLINE_REMAINDER_DRAFT_PLAN.json)

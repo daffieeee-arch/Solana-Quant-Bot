@@ -1,0 +1,26 @@
+{
+  "schema": "OF1_B4_TEST_SALVAGE_1",
+  "baseline": "2b5e704e0d5ef90e7a7f47ecfaf4bf4eceb608ee",
+  "stage": "PR1 planning only; no deletion authorized by this manifest yet",
+  "retained_files": [
+    {"path":"scripts/b4a-offline-range-recorder.mjs","sha256":"efc9b35b456613f303c9384c40efc6fd886d8505082c1032e84968db9e7d4ff5"},
+    {"path":"scripts/b4-offline-remainder.mjs","sha256":"99b37180f2567dd77c213cd5938a0b594bce7010904db8417d61233eaf7dc0e9"},
+    {"path":"tests/b4a-offline-range-recorder.test.ts","sha256":"833155545e4fe7ca59a0b71f9003bb616edaec1703f1aef56b1915c82694c69b"},
+    {"path":"tests/b4-offline-remainder.test.ts","sha256":"abedec12249ce784ee04cf7b634882b2fda94f50f84c10910a5c7379d728d593"}
+  ],
+  "groups": [
+    {"classification":"INVARIANT","requirement":"exact schema, fixed source, explicit offline posture, identity hashes","destination":"rust/of1-range-recorder/tests/planner.rs: source_fields_and_hashes_are_exact; acquisition_authority_and_unsupported_schema_fail","status":"MIGRATED_FOR_PLANNING"},
+    {"classification":"INVARIANT","requirement":"bounded half-open slot window; no full epoch; missing not zero","destination":"rust/of1-range-recorder/tests/planner.rs: complete_epoch_and_inconsistent_epoch_bounds_fail; all_zero_records_are_index_absence_not_chain_coverage","status":"MIGRATED_FOR_PLANNING"},
+    {"classification":"IMPLEMENTATION_COUPLED","requirement":"deriveSegments splits complete CAR from offset zero","destination":"exact_slot_index_requests_not_a_full_car","status":"SUPERSEDED_FOR_PLANNING_NOT_REMOVED"},
+    {"classification":"INVALID_BEHAVIOR","requirement":"200 response accepted for one planned range; optional epoch guard; caller slot list proves closure","destination":"strict Rust planner now; HTTP206-only contract in PR3","status":"MUST_NOT_PRESERVE_AS_ACCEPTANCE"},
+    {"classification":"INVARIANT","requirement":"receipt/raw binding, duplicate/conflict checks, content hash, provenance, checkpoint identity, request accounting","destination":"PR2 durable engine crash/resume tests","status":"RETAINED_PENDING_REPLACEMENT"},
+    {"classification":"INVARIANT","requirement":"injected progress, override rejection, Content-Range/size rejection, draft stays unapproved","destination":"PR3 loopback/integration tests and PR4 lease tests","status":"RETAINED_PENDING_REPLACEMENT"},
+    {"classification":"GOLDEN_ORACLE","requirement":"Existing Pump/event/reducer and B3 matrices","destination":"unchanged existing files and tests","status":"RETAINED_OUT_OF_SCOPE"}
+  ],
+  "confirmed_regressions_to_close": [
+    {"origin":"PR99","case":"new bytes with old/minimal receipt accepted; overwrite and mixed-generation publication","owner":"PR2","status":"OPEN"},
+    {"origin":"PR99","case":"full epoch or negative slots accepted without epoch argument","owner":"PR1","status":"CLOSED_IN_NEW_PLANNER_ONLY"},
+    {"origin":"PR94","case":"failed attempt forgotten on restart; runtime origin resets","owner":"PR2","status":"OPEN_NOT_A_CURSOR_REGRESSION"}
+  ],
+  "removal_gate": "PR3 must inventory every remaining import/CLI/test, execute replacement regressions and parity before removing either JS implementation. Do not delete user-owned run artifacts or silently import old checkpoints."
+}
