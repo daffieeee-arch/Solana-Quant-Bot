@@ -172,6 +172,19 @@ All 190 files in the authentic run were rehashed against its existing inventory
 (`5ff4a8b909608c37b1ca3a5b95b36d1084cb598ad975a4007a93867ecef1cafd`)
 and remain identical. No new provider call or historical payload occurred.
 
+## CI / roadmap-sync triage (2026-09-11)
+
+PR [#108](https://github.com/daffieeee-arch/Solana-Quant-Bot/pull/108) product CI
+`tests-build-zero-cost` passed. The failing `projects-v2-reconcile` check is the
+trusted-main `roadmap-sync` workflow on `pull_request_target`, not monitor
+product code. A later identical event failed in ~3s; local
+`node scripts/github-projects/sync.mjs --dry-run` passes config validation, while
+a live reconcile without `PROJECT_TOKEN` fails closed with
+`PROJECT_TOKEN is required`. This PR does not change Project schema, tokens, or
+roadmap sync code. Re-running the trusted workflow with the configured secret is
+the remediation; do not weaken the token gate or mark B4 complete from this
+monitor.
+
 ## Next bounded results, not implemented here
 
 1. Accept this monitor and finish the acquisition binary before generating a
