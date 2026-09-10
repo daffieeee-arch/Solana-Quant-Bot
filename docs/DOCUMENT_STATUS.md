@@ -30,6 +30,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`triton-cost-safety.md`](triton-cost-safety.md)
 - [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md)
 - [`operations/PROJECT_V2_G0_PREFLIGHT.md`](operations/PROJECT_V2_G0_PREFLIGHT.md)
+- [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md)
 - [`research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md`](research/PUMP_PROTOCOL_EVIDENCE_MATRIX_V2.md)
 - [`research/OF1_RUST_PLANNER.md`](research/OF1_RUST_PLANNER.md)
 - [`research/OF1_DURABLE_RAW_STORE.md`](research/OF1_DURABLE_RAW_STORE.md)
