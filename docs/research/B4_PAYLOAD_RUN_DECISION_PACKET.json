@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "B4_PAYLOAD_RUN_DECISION_PACKET_1",
+  "documentStatus": "ACTIVE",
+  "packetId": "b4-payload-decision-epoch978-post-metadata-184e32eb-02",
+  "issue": "#83",
+  "approved": false,
+  "networkEnabled": false,
+  "readyToRun": false,
+  "executablePlan": false,
+  "creditSpendAuthorized": false,
+  "costConfirmation": "NOT_CONFIRMED",
+  "operator": null,
+  "approvedAt": null,
+  "approvedBy": null,
+  "approvalId": null,
+  "purpose": "ENGINEERING_VALIDATION_ONLY",
+  "sliceClass": "ENGINEERING_VALIDATION_ONLY",
+  "host": "files.old-faithful.net",
+  "hostAllowlist": [
+    "files.old-faithful.net"
+  ],
+  "redirectsAllowed": false,
+  "mirrorsAllowed": false,
+  "callerSuppliedUrlAllowed": false,
+  "bindsToAuthenticMetadata": {
+    "runPlanDir": "/home/dmesdary/solana-quant-data/run-plans/of1-e978-metadata-184e32eb-02/",
+    "metadataRunResultSha256": "8c77b3f6d7a1daec92835284bdc81ba4e18cb0a0166abcec5135252da5c81b21",
+    "runId": "8a350ea0c149f9c49e0615a9460ed3695eec64af21a778b0f8d7786adbae336f",
+    "codeSha": "184e32eb03b6dfd681ed5dcb479678a3ae60da05",
+    "executableSha256": "50a3f87703c7a95fc1bf13d3dc6e27176ecc517a8f3e818e4aa91681013e9b0d",
+    "approvalTargetSha256": "a122233efe40204fdc4a3363f1f3723aaf3b04a3ffc8ad609ab89df7b5f5d757",
+    "metadataGoExpired": true,
+    "metadataGoReusable": false,
+    "publications": 4,
+    "retries": 0,
+    "receivedEntityBytes": 5184161,
+    "reservedEntityBytes": 5192192
+  },
+  "candidatePayload": {
+    "status": "UNAPPROVED_CANDIDATE_ONLY",
+    "selectionPolicy": "OFFLINE_INDEX_DERIVATION_FROM_RETAINED_METADATA_ONLY",
+    "epoch": 978,
+    "slotRange": {
+      "startInclusive": 422496000,
+      "endExclusive": 422496001,
+      "requestedSlots": 1
+    },
+    "derivedCarByteRange": {
+      "startInclusive": 59,
+      "endExclusive": 45110,
+      "entityBytes": 45051
+    },
+    "rejectedAlternate": {
+      "slotRange": [
+        422506000,
+        422506128
+      ],
+      "reason": "Provisional doc example; must not be fetched because it appeared without approved origin/class."
+    },
+    "rejectedLargeWindow": {
+      "slotRange": [
+        422496000,
+        422496128
+      ],
+      "reason": "Original 128-slot candidate remains unapproved; 16 attempts cannot cover 128 nonempty slots under retained aggregate caps."
+    }
+  },
+  "remainingAggregateCapsAfterMetadata": {
+    "remainderIsNotPayloadAuthorization": true,
+    "remainingAggregateAttempts": 12,
+    "remainingAggregateReservedEntityAllowance": 129025536,
+    "remainingAggregateAllocatedRuntimeMs": 1200000,
+    "remainingRunTreeDiskChargeAllowance": 257232896,
+    "memoryCapBytes": 536870912,
+    "source": "metadata-run-result.json budgets object"
+  },
+  "hardStops": [
+    "No OF1/Triton network call until approved=true, networkEnabled=true, readyToRun=true, executablePlan=true, and creditSpendAuthorized under an explicit operator GO.",
+    "Do not reuse expired metadata approval_id or approval_target_sha256 as payload authority.",
+    "Do not resume the retained metadata store with a different executable without a new reviewed packet.",
+    "Stop on budget, hash mismatch, redirect, mirror, or unexpected host.",
+    "Publish Raw + receipts before any decode; decode failure quarantines and does not invent fills."
+  ],
+  "requiredBeforeGo": [
+    "Finish required binary/monitor readiness review (see PR #108).",
+    "Name exact payload plan hash, executable SHA-256, operator, approval window and stop conditions.",
+    "Confirm cost/availability basis for the named host and byte caps.",
+    "Bind payload lease to the four retained metadata receipt identities.",
+    "Keep sliceClass ENGINEERING_VALIDATION_ONLY permanently excluded from edge claims."
+  ],
+  "explicitNonGoals": [
+    "Bronze/Silver/Gold production",
+    "Research Observatory promotion",
+    "Strategy, paper fill, or live order",
+    "Full-epoch download",
+    "Public RPC / secondary-provider fallback"
+  ]
+}
