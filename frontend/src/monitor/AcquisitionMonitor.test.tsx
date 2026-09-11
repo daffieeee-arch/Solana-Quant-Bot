@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcquisitionMonitor, MAX_MONITOR_RESPONSE_CHARS, bytes } from './AcquisitionMonitor';
-import { parseMonitorResponse, type MonitorResponse, type MonitorSnapshot } from './contract';
+import { parseMonitorResponse, parseOfflineVerification, type MonitorResponse, type MonitorSnapshot, type OfflineVerificationReport } from './contract';
 
 const wall = 1_788_800_000_000;
 const id = 'a'.repeat(64);
@@ -44,9 +44,24 @@ function recorded(): MonitorSnapshot {
   });
 }
 function respond(body: unknown, ok = true, status = 200) { return { ok, status, text: async () => JSON.stringify(body) }; }
-async function mount(body: unknown) {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(respond(body)));
+async function mount(body: unknown, verification: unknown = { state: 'UNAVAILABLE', reason: 'FILE_UNAVAILABLE' }) {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => respond(url.endsWith('/verification') ? verification : body)));
   await act(async () => { render(<AcquisitionMonitor />); });
+}
+
+function verificationReport(s: MonitorSnapshot): OfflineVerificationReport {
+  return {
+    schema: 'OF1_OFFLINE_VERIFICATION_1', run_id: s.id, dataset_root: s.dataset_root,
+    verifier: { name: 'of1-verify-recorded', version: '1', binary_sha256: '1'.repeat(64), source_sha256: '2'.repeat(64) },
+    bindings: { manifest_sha256: '3'.repeat(64), payload_manifest_sha256: '4'.repeat(64), aggregate_sha256: '5'.repeat(64), prepared_payload_sha256: '6'.repeat(64), metadata_receipt_sha256: '7'.repeat(64),
+      receipts: [{ sequence: 4, path: 'published/0000000004/receipt.json', sha256: '8'.repeat(64), raw_sha256: '9'.repeat(64), raw_bytes: 45051 }] },
+    stages: { capture: 'COMPLETE', raw_receipts: 'VERIFIED', car_slot: 'VERIFIED', domain_decoding: 'NOT_PERFORMED' },
+    integrity: { error: null, root_to_slot_membership: 'UNAVAILABLE', whole_car_sha256_verified: false,
+      slots: [{ slot: 422496000, report: { selected_slot: 422496000, captured_section_bytes: 45051, verified_nodes: 66, verified_links: 65, root_to_slot_membership: 'UNAVAILABLE', domain_counts: 'UNAVAILABLE_NOT_DECODED_IN_B4' },
+        archival_node_counts: { transaction: 0, entry: 64, block: 1, rewards: 1, dataframe: 0 } }] },
+    prior_failure: { error: 'CAR_CBOR_OR_ARCHIVAL_SCHEMA_INVALID', binary_sha256: 'a'.repeat(64), artifact_sha256: 'b'.repeat(64), run_result_sha256: 'c'.repeat(64), raw_sha256: '9'.repeat(64), status: 'HISTORICAL_FAILURE_PRESERVED' },
+    evidence: 'RAW_ENGINEERING_CHECK_ONLY', research_ready: false,
+  };
 }
 
 describe('separate V2 acquisition monitor', () => {
@@ -58,6 +73,9 @@ describe('separate V2 acquisition monitor', () => {
     expect(screen.getByRole('heading', { name: 'OF1 epoch 978 · metadata' })).toBeInTheDocument();
     expect(screen.getByText('ENGINEERING_VALIDATION_ONLY')).toBeInTheDocument();
     expect(screen.getByText('Vastgelegd resultaat')).toBeInTheDocument();
+    expect(screen.getByText(/Snapshot vastgelegd/)).toBeInTheDocument();
+    expect(screen.getByText('Deadline-resttijd bij vastlegging')).toBeInTheDocument();
+    expect(screen.queryByText('Resterende deadline-toelating')).not.toBeInTheDocument();
     expect(screen.getByText('4 / 4 operaties')).toBeInTheDocument();
     expect(screen.getByText('Ontvangen volgens receipts')).toBeInTheDocument();
     expect(screen.getByText(/Initialisatie → laatste receipt/)).toBeInTheDocument();
@@ -135,7 +153,7 @@ describe('separate V2 acquisition monitor', () => {
     expect(screen.getByRole('heading', { name: 'Begrensde loopbackdemo' })).toBeInTheDocument();
     expect(screen.getByText('STALE · metingen verouderd')).toBeInTheDocument();
     for (const [url, init] of vi.mocked(fetch).mock.calls) {
-      expect(url).toBe('/api/acquisition/runs'); expect(init?.method).toBe('GET');
+      expect(String(url)).toMatch(/^\/api\/acquisition\/runs(?:\/[a-f0-9]{64}\/verification)?$/); expect(init?.method).toBe('GET');
     }
   });
 
@@ -155,7 +173,7 @@ describe('separate V2 acquisition monitor', () => {
     expect(screen.getByRole('heading', { name: 'Begrensde loopbackdemo' })).toBeInTheDocument();
     expect(screen.getAllByRole('button')).toHaveLength(2);
     expect(within(screen.getByRole('navigation', { name: 'Run kiezen' })).getAllByRole('button')).toHaveLength(2);
-    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => url === '/api/acquisition/runs')).toHaveLength(1);
   });
 
   it('shows bounded concrete stop reasons and unavailable runs without fabricated counters', async () => {
@@ -209,6 +227,71 @@ describe('separate V2 acquisition monitor', () => {
     expect(css).toContain(':focus-visible');
     expect(css).toContain('overflow-wrap: anywhere');
     expect(css).toContain('@media (max-width: 520px)');
+  });
+
+  it('does not convert five published operations into CAR or domain success without an attached report', async () => {
+    const s = recorded(); s.kind = 'AUTHENTIC_PAYLOAD'; s.selection.operations_total = 5; s.selection.operations_published = 5;
+    await mount(envelope(s));
+    expect(screen.getByText('5 / 5 operaties')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Capture gepubliceerd' })).toBeInTheDocument();
+    const panel = within(screen.getByRole('region', { name: 'Integriteitsstatus' }));
+    expect(panel.getByText('3 · CAR / CID / slot').parentElement).toHaveTextContent('UNAVAILABLE');
+    expect(panel.getByText('4 · Domeindecoding').parentElement).toHaveTextContent('NOT_PERFORMED');
+    expect(screen.queryByRole('region', { name: 'Gebonden offline verificatie' })).not.toBeInTheDocument();
+  });
+
+  it('shows source-bound offline success, structure counts, identities and preserved failure as separate outcomes', async () => {
+    const s = recorded(); s.kind = 'AUTHENTIC_PAYLOAD'; const report = verificationReport(s);
+    await mount(envelope(s), { state: 'READY', report_sha256: 'd'.repeat(64), report });
+    const panel = within(screen.getByRole('region', { name: 'Integriteitsstatus' }));
+    expect(panel.getByText('1 · Capture / publicatie').parentElement).toHaveTextContent('COMPLETE');
+    expect(panel.getByText('2 · Raw / receipt-controle').parentElement).toHaveTextContent('VERIFIED');
+    expect(panel.getByText('3 · CAR / CID / slot').parentElement).toHaveTextContent('VERIFIED');
+    expect(panel.getByText('4 · Domeindecoding').parentElement).toHaveTextContent('NOT_PERFORMED');
+    expect(screen.getByText('CAR_CBOR_OR_ARCHIVAL_SCHEMA_INVALID')).toBeInTheDocument();
+    expect(screen.getByText(/66 CID-gecontroleerde archival nodes/)).toBeInTheDocument();
+    expect(screen.getByText(/geen domeindecoding of Pump-observaties/)).toBeInTheDocument();
+    expect(screen.getByText('9'.repeat(64))).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Gebonden verificatierapport JSON ↗' })).toHaveAttribute('href', `/api/acquisition/runs/${s.id}/verification`);
+    expect(screen.getByText(/HISTORICAL_FAILURE_PRESERVED/)).toBeInTheDocument();
+  });
+
+  it('keeps an offline CAR quarantine visible despite 5/5 publication and clears stale attached success after a read failure', async () => {
+    const s = recorded(); s.selection.operations_total = 5; s.selection.operations_published = 5;
+    const report = verificationReport(s); report.stages.car_slot = 'QUARANTINED'; report.integrity.error = 'CAR_MISSING_LINK'; report.integrity.slots = [];
+    await mount(envelope(s), { state: 'READY', report_sha256: 'd'.repeat(64), report });
+    expect(screen.getByText('5 / 5 operaties')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('CAR_MISSING_LINK');
+    expect(screen.getByText('3 · CAR / CID / slot').parentElement).toHaveTextContent('QUARANTINED');
+    vi.mocked(fetch).mockImplementation(async (url) => respond(String(url).endsWith('/verification') ? { state: 'UNAVAILABLE', reason: 'ARTIFACT_HASH_MISMATCH' } : envelope(s)) as Response);
+    await act(async () => { await vi.advanceTimersByTimeAsync(2001); });
+    expect(screen.getByText('3 · CAR / CID / slot').parentElement).toHaveTextContent('UNAVAILABLE');
+    expect(screen.queryByRole('region', { name: 'Gebonden offline verificatie' })).not.toBeInTheDocument();
+    expect(screen.getByText(/ARTIFACT_HASH_MISMATCH/)).toBeInTheDocument();
+  });
+
+  it('rejects wrong-run, unbound, research-promoting and contradictory external report envelopes', () => {
+    const report = verificationReport(recorded());
+    const ready = { state: 'READY', report_sha256: 'd'.repeat(64), report };
+    expect(parseOfflineVerification(ready, recorded().id)).toBe(ready);
+    expect(() => parseOfflineVerification(ready, id)).toThrow();
+    for (const mutate of [
+      (r: any) => { r.report.verifier.binary_sha256 = 'missing'; },
+      (r: any) => { r.report.research_ready = true; },
+      (r: any) => { r.report.integrity.error = 'CAR_MISSING_LINK'; },
+      (r: any) => { r.report.integrity.root_to_slot_membership = 'VERIFIED'; },
+      (r: any) => { r.report.bindings.receipts[0].raw_bytes = Number.MAX_SAFE_INTEGER + 1; },
+      (r: any) => { r.report.integrity.slots[0].archival_node_counts.transaction = 999; },
+      (r: any) => { r.report.integrity.slots[0].archival_node_counts.block = 2; r.report.integrity.slots[0].report.verified_nodes += 1; },
+      (r: any) => { r.report.stages.capture = 'INCOMPLETE'; },
+      (r: any) => { r.report.stages.car_slot = 'QUARANTINED'; r.report.integrity.error = 'CAR_MISSING_LINK'; },
+      (r: any) => { r.report.stages.car_slot = 'NOT_ACQUIRED'; },
+      (r: any) => { r.report.stages.car_slot = 'NOT_ACQUIRED'; r.report.integrity.slots = []; },
+      (r: any) => { r.report.integrity.slots.push(r.report.integrity.slots[0]); },
+    ]) {
+      const invalid = JSON.parse(JSON.stringify(ready)); mutate(invalid);
+      expect(() => parseOfflineVerification(invalid, recorded().id)).toThrow();
+    }
   });
 });
 

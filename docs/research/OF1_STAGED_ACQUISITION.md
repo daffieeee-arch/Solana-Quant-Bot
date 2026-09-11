@@ -3,7 +3,9 @@
 > **Document status: ACTIVE. Evidence: Fixture.** This implementation PR is not a
 > metadata or payload lease. B4/#83 remains open / In Progress / ACTIVE NOW /
 > Unproven; B5 does not start here. A separately approved four-operation metadata
-> run completed on 2026-09-06; no CAR payload or further acquisition is authorized.
+> run completed on 2026-09-06. A later separately approved retained CAR range is
+> covered by the [offline verification repair](OF1_RECORDED_CAR_VERIFICATION.md);
+> no further acquisition is authorized. Historical run descriptions below remain unchanged.
 
 ## Observed checksum compatibility (offline correction)
 

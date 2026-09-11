@@ -52,6 +52,37 @@ export interface MonitorResponse {
   schema_version: 'OF1_MONITOR_HTTP_1'; read_at_unix_ms: number; runs: MonitorRun[];
 }
 
+/** External offline Rust outcome; never inferred from the publication counter. */
+export interface OfflineVerificationReport {
+  schema: 'OF1_OFFLINE_VERIFICATION_1';
+  run_id: string;
+  dataset_root: string;
+  verifier: { name: 'of1-verify-recorded'; version: '1'; binary_sha256: string; source_sha256: string };
+  bindings: {
+    manifest_sha256: string; payload_manifest_sha256: string | null; aggregate_sha256: string;
+    prepared_payload_sha256: string | null; metadata_receipt_sha256: string | null;
+    receipts: Array<{ sequence: number; path: string; sha256: string; raw_sha256: string; raw_bytes: number }>;
+  };
+  stages: {
+    capture: 'COMPLETE' | 'INCOMPLETE'; raw_receipts: 'VERIFIED';
+    car_slot: 'VERIFIED' | 'QUARANTINED' | 'NOT_ACQUIRED' | 'INCOMPLETE'; domain_decoding: 'NOT_PERFORMED';
+  };
+  integrity: {
+    error: string | null; root_to_slot_membership: 'UNAVAILABLE'; whole_car_sha256_verified: false;
+    slots: Array<{
+      slot: number;
+      report: { selected_slot: number; captured_section_bytes: number; verified_nodes: number; verified_links: number;
+        root_to_slot_membership: 'UNAVAILABLE'; domain_counts: 'UNAVAILABLE_NOT_DECODED_IN_B4' };
+      archival_node_counts: { transaction: number; entry: number; block: number; rewards: number; dataframe: number };
+    }>;
+  };
+  prior_failure: null | { error: string; binary_sha256: string; artifact_sha256: string;
+    run_result_sha256: string; raw_sha256: string; status: 'HISTORICAL_FAILURE_PRESERVED' };
+  evidence: 'RAW_ENGINEERING_CHECK_ONLY'; research_ready: false;
+}
+export type OfflineVerificationResponse = { state: 'READY'; report_sha256: string; report: OfflineVerificationReport }
+  | { state: 'UNAVAILABLE'; reason: string };
+
 const fail = (): never => { throw new Error('Ongeldig Rust-monitorcontract; waarden worden niet aangevuld.'); };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return fail();
@@ -133,4 +164,57 @@ export function parseMonitorResponse(value: unknown): MonitorResponse {
     else text(row.reason);
   });
   return value as MonitorResponse;
+}
+
+export function parseOfflineVerification(value: unknown, runId: string): OfflineVerificationResponse {
+  const response = object(value); choice(response.state, ['READY', 'UNAVAILABLE']);
+  if (response.state === 'UNAVAILABLE') { text(response.reason); return value as OfflineVerificationResponse; }
+  safeId(response.report_sha256);
+  const report = object(response.report);
+  choice(report.schema, ['OF1_OFFLINE_VERIFICATION_1']); safeId(report.run_id);
+  if (report.run_id !== runId) fail();
+  text(report.dataset_root);
+  const verifier = object(report.verifier);
+  choice(verifier.name, ['of1-verify-recorded']); choice(verifier.version, ['1']);
+  safeId(verifier.binary_sha256); safeId(verifier.source_sha256);
+  const binding = object(report.bindings);
+  safeId(binding.manifest_sha256); safeId(binding.aggregate_sha256);
+  ['payload_manifest_sha256', 'prepared_payload_sha256', 'metadata_receipt_sha256'].forEach(key => nullable(binding[key], safeId));
+  let previous = -1;
+  array(binding.receipts, 32, value => {
+    const receipt = numbers(value, ['sequence', 'raw_bytes']);
+    text(receipt.path); safeId(receipt.sha256); safeId(receipt.raw_sha256);
+    if (Number(receipt.sequence) <= previous || receipt.path !== `published/${String(receipt.sequence).padStart(10, '0')}/receipt.json`) fail();
+    previous = Number(receipt.sequence);
+  });
+  const stages = object(report.stages);
+  choice(stages.capture, ['COMPLETE', 'INCOMPLETE']); choice(stages.raw_receipts, ['VERIFIED']);
+  choice(stages.car_slot, ['VERIFIED', 'QUARANTINED', 'NOT_ACQUIRED', 'INCOMPLETE']); choice(stages.domain_decoding, ['NOT_PERFORMED']);
+  const integrity = object(report.integrity); nullable(integrity.error, text);
+  choice(integrity.root_to_slot_membership, ['UNAVAILABLE']);
+  if (integrity.whole_car_sha256_verified !== false || report.research_ready !== false) fail();
+  let previousSlot = -1;
+  array(integrity.slots, 32, value => {
+    const slot = numbers(value, ['slot']);
+    const inner = numbers(slot.report, ['selected_slot', 'captured_section_bytes', 'verified_nodes', 'verified_links']);
+    if (slot.slot !== inner.selected_slot || Number(slot.slot) <= previousSlot) fail();
+    previousSlot = Number(slot.slot);
+    choice(inner.root_to_slot_membership, ['UNAVAILABLE']); choice(inner.domain_counts, ['UNAVAILABLE_NOT_DECODED_IN_B4']);
+    const counts = numbers(slot.archival_node_counts, ['transaction', 'entry', 'block', 'rewards', 'dataframe']);
+    const total = ['transaction', 'entry', 'block', 'rewards', 'dataframe'].reduce((sum, key) => sum + Number(counts[key]), 0);
+    integer(total);
+    if (total !== inner.verified_nodes || counts.block !== 1) fail();
+  });
+  if (stages.car_slot === 'VERIFIED' && (stages.capture !== 'COMPLETE' || integrity.error !== null
+      || (integrity.slots as unknown[]).length === 0 || binding.payload_manifest_sha256 === null)
+    || stages.car_slot === 'QUARANTINED' && (typeof integrity.error !== 'string' || integrity.error.length === 0
+      || (integrity.slots as unknown[]).length !== 0 || binding.payload_manifest_sha256 === null)
+    || stages.car_slot === 'NOT_ACQUIRED' && ((integrity.slots as unknown[]).length !== 0 || integrity.error !== null
+      || binding.payload_manifest_sha256 !== null || binding.prepared_payload_sha256 !== null || binding.metadata_receipt_sha256 !== null)) fail();
+  nullable(report.prior_failure, value => {
+    const prior = object(value); text(prior.error); choice(prior.status, ['HISTORICAL_FAILURE_PRESERVED']);
+    ['binary_sha256', 'artifact_sha256', 'run_result_sha256', 'raw_sha256'].forEach(key => safeId(prior[key]));
+  });
+  choice(report.evidence, ['RAW_ENGINEERING_CHECK_ONLY']);
+  return value as OfflineVerificationResponse;
 }

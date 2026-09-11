@@ -44,6 +44,11 @@ export async function createAcquisitionMonitor(options: AcquisitionMonitorOption
         json(response, 200, { schema_version: 'OF1_MONITOR_HTTP_1', read_at_unix_ms: Date.now(), runs: await reader.runs() });
         return;
       }
+      const verification = /^\/api\/acquisition\/runs\/([a-f0-9]{64})\/verification$/.exec(url.pathname);
+      if (verification) {
+        json(response, 200, await reader.verification(verification[1]));
+        return;
+      }
       const artifact = /^\/api\/acquisition\/runs\/([a-f0-9]{64})\/artifacts\/([a-z0-9-]{1,80})$/.exec(url.pathname);
       if (artifact) {
         send(response, 200, await reader.artifact(artifact[1], artifact[2]), 'application/json; charset=utf-8');

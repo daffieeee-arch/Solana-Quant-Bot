@@ -59,6 +59,17 @@ pub enum CarError {
 
 pub type CarResult<T> = Result<T, CarError>;
 
+/// Counts of source-shaped archival envelopes after the complete CID/slot/link gate.
+/// These are not decoded Solana transactions, Pump observations or research metrics.
+#[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
+pub struct ArchivalNodeCounts {
+    pub transaction: usize,
+    pub entry: usize,
+    pub block: usize,
+    pub rewards: usize,
+    pub dataframe: usize,
+}
+
 #[derive(Debug, Serialize, PartialEq, Eq)]
 pub struct SlotIntegrityReport {
     pub source_commit: &'static str,
@@ -66,6 +77,10 @@ pub struct SlotIntegrityReport {
     pub captured_section_bytes: usize,
     pub verified_nodes: usize,
     pub verified_links: usize,
+    // Preserve the historical serialized fixture-report contract. The separate
+    // read-only verification report explicitly serializes these new diagnostics.
+    #[serde(skip)]
+    pub archival_node_counts: ArchivalNodeCounts,
     pub terminal_block_cid_hex: String,
     pub node_cid_integrity: &'static str,
     pub selected_slot_envelope: &'static str,
@@ -211,12 +226,23 @@ pub fn verify_slot_sections(
         .iter()
         .find_map(|(identity, index)| (*index == block_index).then_some(identity))
         .ok_or(CarError::Block)?;
+    let mut archival_node_counts = ArchivalNodeCounts::default();
+    for node in &nodes {
+        match node.kind {
+            Kind::Transaction => archival_node_counts.transaction += 1,
+            Kind::Entry => archival_node_counts.entry += 1,
+            Kind::Block => archival_node_counts.block += 1,
+            Kind::Rewards => archival_node_counts.rewards += 1,
+            Kind::DataFrame => archival_node_counts.dataframe += 1,
+        }
+    }
     Ok(SlotIntegrityReport {
         source_commit: CAR_SOURCE_COMMIT,
         selected_slot: expected_slot,
         captured_section_bytes: sections.len(),
         verified_nodes: nodes.len(),
         verified_links: links_used,
+        archival_node_counts,
         terminal_block_cid_hex: hex::encode(block_cid),
         node_cid_integrity: "RECOMPUTED_SHA2_256_MATCHED",
         selected_slot_envelope: "STRUCTURAL_LINK_CLOSURE_MATCHED",
@@ -308,8 +334,8 @@ fn parse_node(
             }
             for _ in 0..shredding {
                 input.expect(4, 2)?;
-                input.uint()?;
-                input.uint()?;
+                input.shredding_index_i64()?;
+                input.shredding_index_i64()?;
             }
             read_links(&mut input, Kind::Entry, &mut links, limits, used)?;
             let metadata = input.array()?;
@@ -527,6 +553,18 @@ impl<'a> Cursor<'a> {
         }
         Ok(())
     }
+    /// Only `Block.shredding.{entry_end_idx,shred_end_idx}`: pinned `block.rs`
+    /// declares both i64. Preserve signed values; do not import upstream's
+    /// unchecked casts, default values or invent meaning for negative indexes.
+    fn shredding_index_i64(&mut self) -> CarResult<i64> {
+        let (major, magnitude) = self.head()?;
+        let magnitude = i64::try_from(magnitude).map_err(|_| CarError::Schema)?;
+        match major {
+            0 => Ok(magnitude),
+            1 => Ok(-1 - magnitude),
+            _ => Err(CarError::Schema),
+        }
+    }
     fn null(&mut self) -> CarResult<bool> {
         if self.bytes.get(self.position) == Some(&0xf6) {
             self.take(1)?;
@@ -581,6 +619,71 @@ impl<'a> Cursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn authentic_range() -> Vec<u8> {
+        let encoded = include_str!(
+            "../../../schemas/acquisition/of1/epoch-978-slot-422496000.observed.car.hex"
+        );
+        hex::decode(encoded.split_whitespace().collect::<String>()).unwrap()
+    }
+
+    #[test]
+    fn signed_shredding_values_are_i64_without_sentinel_normalization() {
+        for (bytes, expected) in [
+            (vec![0x20], -1),
+            (vec![0x00], 0),
+            (
+                vec![0x1b, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+                i64::MAX,
+            ),
+            (
+                vec![0x3b, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+                i64::MIN,
+            ),
+        ] {
+            let mut input = Cursor::new(&bytes);
+            assert_eq!(input.shredding_index_i64(), Ok(expected));
+            assert_eq!(input.finish(), Ok(()));
+        }
+    }
+
+    #[test]
+    fn authentic_shredding_reproduces_the_old_unsigned_call_failure() {
+        let raw = authentic_range();
+        let mut input = Cursor::new(&raw);
+        let mut terminal = &[][..];
+        while input.position < raw.len() {
+            let length = usize::try_from(input.varint().unwrap()).unwrap();
+            let section = input.take(length).unwrap();
+            terminal = &section[36..];
+        }
+        let mut block = Cursor::new(terminal);
+        block.expect(4, 6).unwrap();
+        block.expect(0, 2).unwrap();
+        assert_eq!(block.uint(), Ok(422_496_000));
+        let pairs = block.array().unwrap();
+        assert_eq!(pairs, 64);
+        let mut negative_values = Vec::new();
+        for pair in 0..pairs {
+            block.expect(4, 2).unwrap();
+            for position in 0..2 {
+                // Exact former call at the same authentic byte position. No
+                // expected byte or CID is rewritten to manufacture acceptance.
+                let old_result = Cursor::new(&terminal[block.position..]).uint();
+                let corrected_value = block.shredding_index_i64().unwrap();
+                if corrected_value < 0 {
+                    assert_eq!(old_result, Err(CarError::Schema));
+                    negative_values.push((pair, position, corrected_value));
+                } else {
+                    assert_eq!(old_result, Ok(u64::try_from(corrected_value).unwrap()));
+                }
+            }
+        }
+        assert_eq!(
+            negative_values,
+            (0..63).map(|pair| (pair, 1, -1)).collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn semantic_cycle_guard_is_exercised_without_claiming_a_cryptographic_fixed_point() {

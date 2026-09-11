@@ -1,0 +1,27 @@
+{
+  "schema": "OF1_RECORDED_VERIFICATION_BROWSER_1",
+  "source_capture_path": "/home/dmesdary/solana-quant-data/governance/b4-car-signed-repair-20260911/browser/verified-final-browser-evidence.json",
+  "source_capture_sha256": "cbb12807b0630fab9742b20dba44a2a764a9b5efde24ca51c09f113f878aeb17",
+  "browser": "Chrome/152.0.7977.83 on Windows; existing isolated headless browser",
+  "url": "http://localhost:4173/#run=e0e5314c9d73c237eb6794a153cd75111cd8c3cb996b51abe3a2a5aac2cc1d79",
+  "run_id": "e0e5314c9d73c237eb6794a153cd75111cd8c3cb996b51abe3a2a5aac2cc1d79",
+  "captured_at": "2026-09-11T11:18:13.036Z",
+  "screenshot": "docs/research/assets/b4-monitor/authentic-car-reverified.png",
+  "screenshot_sha256": "f6b9fac32d7ebcebb47c9a0741a1eca8cb5fd15fbfff3acfad4e3ec205b789be",
+  "report_sha256": "5a8cd3d573dc963a32b44ac9bce0b1bd16eb63b59754aa263ec2ecdef79f24f2",
+  "stages": {
+    "capture": "COMPLETE",
+    "car_slot": "VERIFIED",
+    "domain_decoding": "NOT_PERFORMED",
+    "raw_receipts": "VERIFIED"
+  },
+  "node_counts": {"block":1,"dataframe":0,"entry":64,"rewards":1,"transaction":0},
+  "visible_history": true,
+  "captured_deadline_label": true,
+  "request_methods": ["GET"],
+  "request_origins": ["http://localhost:4173"],
+  "denied": 0,
+  "warnings": 0,
+  "acquisition_performed": false,
+  "capture_limit": "Browser page request log, not an operating-system packet capture. No historical speed or ETA reconstructed."
+}
