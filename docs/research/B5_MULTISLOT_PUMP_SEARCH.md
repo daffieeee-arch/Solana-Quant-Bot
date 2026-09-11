@@ -31,6 +31,33 @@ and no continuation DataFrame node. Root-to-slot membership remains UNAVAILABLE.
 The earlier [725-transaction result](B5_AUTHENTIC_RAW_BRONZE.md) is separate
 historical evidence and remains a regression input, not overwritten evidence.
 
+![Actual Windows-browser rendering of the Rust multi-slot report](assets/b5-bronze/multislot.png)
+
+The [machine-readable execution receipt](B5_MULTISLOT_PUMP_SEARCH_RESULT.json)
+binds the actual artifacts, all Raw hashes, preserved acquisition binary,
+archival-reader result, toolchain, both executions and browser capture. Its
+SHA-256 is `8c23f13772d43567fe63cdf7a65f785de198a405629f0e7c71b2d68e31cf965f`.
+Full output remains outside Git at
+`/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW`.
+
+The frozen decoder build uses source commit
+`ee033a6a63909ba1092f0e7a24d2c7e60b111a1e`, executable SHA-256
+`4778d7cac58922f1cdafafe32b14922064951e408ae9b76e439ba5417d746711`, and compiled
+source fingerprint `d97f49c4a56e077cb762c250be24df9b3db953ba96e158178bf9b1dcd5080104`.
+Both socket-denied release executions took 0.78 seconds wall time, with maximum
+resident memory 243,728 / 243,852 KiB. JSON, JSONL and HTML are byte-identical:
+
+| Artifact | SHA-256 |
+|---|---|
+| quality.json | `5ed4dbaf70e0d13b7983ac304c9a961f7d1e8801abc27515eba7c609f67adca2` |
+| bronze.jsonl | `571c7d82c37a26b5348c2d8bbbe4cf3e22d8651c6725365047ff08b736203981` |
+| quality.html | `333fb6acc39e1a65d5596dd9b6326e08310d21cf2eb9b80ca8cbeeac94f56b16` |
+
+The old slot independently reproduces 725 decoded packages / 723 vote-program
+packages / zero Pump-program references with the same new decoder; all 218 old
+input files also retain their hashes. These are local offline measurements,
+not acquisition throughput or general epoch-scale guarantees.
+
 ## Actual Pump result: five packages, no forced Silver match
 
 Five packages reference the exact Pump program; all are in slot 422496004 and
@@ -119,6 +146,19 @@ an original run. Require `COMPLETE` and verify `execution.json` artifact hashes.
 The JSON, JSONL and standalone HTML contain all envelopes, per-slot summaries,
 signatures, status/fees, program frequencies and the five bound Pump cases.
 Operational processing clocks are separate from deterministic data artifacts.
+
+For the already executed result, open **http://localhost:4174/quality.html** in
+the Windows browser. Restart that read-only file server if needed:
+
+```bash
+python3 -m http.server 4174 --bind 127.0.0.1 \
+  --directory /home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01
+```
+
+The browser capture checked HTTP response bytes against the Rust HTML hash,
+3,137 rendered transaction rows, all three slots, five Pump-case panels and the
+no-Silver warning. It recorded no page request outside loopback and no warning;
+this is a page-level check, not a claim about all operating-system traffic.
 
 Acceptance executes two socket-denied release decodes and compares JSON/JSONL/
 HTML byte-for-byte. Small authentic sections have exact Raw/CID/span receipts;

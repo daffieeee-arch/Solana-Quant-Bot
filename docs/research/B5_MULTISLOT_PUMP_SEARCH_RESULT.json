@@ -1,0 +1,663 @@
+{
+  "schema": "OF1_B5_MULTISLOT_RESULT_1",
+  "recorded_at_utc": "2026-09-11T19:31:58.484Z",
+  "evidence_scope": "AUTHENTIC_ENGINEERING_OBSERVATIONS; regression harnesses and PR pin remain Fixture; no issue promotion",
+  "implementation_commit": "ee033a6a63909ba1092f0e7a24d2c7e60b111a1e",
+  "executable": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/bin/of1-bronze-decoder-4778d7cac58922f1cdafafe32b14922064951e408ae9b76e439ba5417d746711",
+    "bytes": 2610768,
+    "sha256": "4778d7cac58922f1cdafafe32b14922064951e408ae9b76e439ba5417d746711"
+  },
+  "decoder_source_sha256": "d97f49c4a56e077cb762c250be24df9b3db953ba96e158178bf9b1dcd5080104",
+  "lock_sha256": "41819922ae2fa134addfc97ad56435826472acf4f33481a58e4c9f36c609885a",
+  "toolchain": {
+    "node": "v22.23.2",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)\nrelease: 1.97.1\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.20.0-DEV (sys:0.4.88+curl-8.20.0 vendored ssl:OpenSSL/3.6.2)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Ubuntu 26.4.0 (resolute) [64-bit]"
+  },
+  "socket_denied_execution": true,
+  "build_filter": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/build-network-deny.bpf",
+    "bytes": 168,
+    "sha256": "ed1f7151e7e083fb8b5a4af3364506d5c02be16f06a8de737d78e45c388cff85"
+  },
+  "execution_filter": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b4-car-signed-repair-20260911/final/network-deny.bpf",
+    "bytes": 264,
+    "sha256": "f89dbb89daaadd9aff5e0ad70453dee229b81bc9c11c274890ba8f85f2042081"
+  },
+  "run_root": "/home/dmesdary/solana-quant-data/runs/of1-e978-pump-search-09379cff-01",
+  "run_id": "14801633436734945be09910c113e5399613dc7cb68df81aebc95f45c9358401",
+  "input_inventory": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/input-before.json",
+    "bytes": 51946,
+    "sha256": "a585c81d9ba027afa0876795d2696285d50e675985894e021edcdcdda774d6f3"
+  },
+  "all_302_original_files_unchanged": true,
+  "original_acquisition_executable": {
+    "path": "/home/dmesdary/solana-quant-data/run-plans/of1-e978-metadata-09379cff-04/bin/of1-acquire",
+    "bytes": 3868784,
+    "sha256": "6189491afb7bbfe09da3cc73763c7f07c750c39bf466023be570ade2da62de05"
+  },
+  "archival_execution": {
+    "at_utc": "2026-09-11T19:01:58.065Z",
+    "binary": "/home/dmesdary/solana-quant-data/governance/b4-car-signed-repair-20260911/final/bin/of1-verify-recorded-85fcaee0947e3ea5017e8e30f49380e2208a9c2227d24d16b0c7be4365480e92",
+    "binary_sha256": "85fcaee0947e3ea5017e8e30f49380e2208a9c2227d24d16b0c7be4365480e92",
+    "report_sha256": "41167d96be03a22997d16b53a0d6c22fbae038bb7e1b9ef33c927718fb98e6fe",
+    "socket_denied": true,
+    "source_run_files": 302
+  },
+  "archival_report": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/archival-verification.json",
+    "bytes": 6283,
+    "sha256": "41167d96be03a22997d16b53a0d6c22fbae038bb7e1b9ef33c927718fb98e6fe"
+  },
+  "archival_slot_counts": [
+    {
+      "slot": 422496002,
+      "block": 1,
+      "dataframe": 0,
+      "entry": 831,
+      "rewards": 1,
+      "transaction": 1092
+    },
+    {
+      "slot": 422496003,
+      "block": 1,
+      "dataframe": 0,
+      "entry": 587,
+      "rewards": 1,
+      "transaction": 977
+    },
+    {
+      "slot": 422496004,
+      "block": 1,
+      "dataframe": 0,
+      "entry": 177,
+      "rewards": 1,
+      "transaction": 1068
+    }
+  ],
+  "dispositions": {
+    "DECODED": 3137,
+    "MISSING": 0,
+    "QUARANTINED": 0,
+    "UNSUPPORTED": 0
+  },
+  "transaction_envelopes": 3137,
+  "raw_bytes": 2931906,
+  "root_to_slot_membership": "UNAVAILABLE",
+  "signature_crypto_verification": "NOT_PERFORMED",
+  "slots": [
+    {
+      "slot": "422496002",
+      "raw_sha256": "5a609ed91292eb0e22157dd965301c150ff2e585d87cebaf22f6a7c71c05f49b",
+      "raw_bytes": 894187,
+      "car_range": [
+        650512,
+        1544699
+      ],
+      "transaction_envelopes": 1092,
+      "dispositions": {
+        "DECODED": 1092,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      },
+      "status": {
+        "OK": 1092
+      },
+      "vote_program_transactions": 1092,
+      "pump_program_known_positive": 0,
+      "pump_program_unknown": 0,
+      "resources": {
+        "decoded_metadata_bytes": 180582,
+        "max_decoded_metadata_bytes": 16777216,
+        "max_record_json_bytes": 16777216,
+        "record_json_bytes": 8406225
+      }
+    },
+    {
+      "slot": "422496003",
+      "raw_sha256": "15988c29c7e04a5a53c9cf8242bb20f284b3b8ba047ae7659b64a1441c5f185a",
+      "raw_bytes": 808748,
+      "car_range": [
+        1544699,
+        2353447
+      ],
+      "transaction_envelopes": 977,
+      "dispositions": {
+        "DECODED": 977,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      },
+      "status": {
+        "OK": 977
+      },
+      "vote_program_transactions": 977,
+      "pump_program_known_positive": 0,
+      "pump_program_unknown": 0,
+      "resources": {
+        "decoded_metadata_bytes": 161340,
+        "max_decoded_metadata_bytes": 16777216,
+        "max_record_json_bytes": 16777216,
+        "record_json_bytes": 7519104
+      }
+    },
+    {
+      "slot": "422496004",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "raw_bytes": 1228971,
+      "car_range": [
+        2353447,
+        3582418
+      ],
+      "transaction_envelopes": 1068,
+      "dispositions": {
+        "DECODED": 1068,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      },
+      "status": {
+        "ERROR": 87,
+        "OK": 981
+      },
+      "vote_program_transactions": 776,
+      "pump_program_known_positive": 5,
+      "pump_program_unknown": 0,
+      "resources": {
+        "decoded_metadata_bytes": 1141744,
+        "max_decoded_metadata_bytes": 16777216,
+        "max_record_json_bytes": 16777216,
+        "record_json_bytes": 13167053
+      }
+    }
+  ],
+  "status_counts": {
+    "ERROR": 87,
+    "OK": 3050
+  },
+  "vote_program_transactions": 2845,
+  "pump_layout_outcomes": {
+    "BUY_INSTRUCTION_LAYOUT:UNEXPECTED_TRAILING_BYTES": 1,
+    "BUY_INSTRUCTION_LAYOUT:WRONG_DISCRIMINATOR": 4,
+    "TRADE_EVENT_CPI_LAYOUT:LAYOUT_COMPATIBLE_ONLY": 1,
+    "TRADE_EVENT_CPI_LAYOUT:UNSUPPORTED_VARIANT": 4
+  },
+  "pump_cases": [
+    {
+      "effective_at": {
+        "entry_index": 81,
+        "slot": "422496004",
+        "source_transaction_index": "142",
+        "transaction_index_in_entry": 1,
+        "transaction_index_in_slot": 142
+      },
+      "signature": "KCQJf7C4SJYkKCeUichXe6t3s7qGUkfoSjSVUPP69cJ3de9tFrGH2qLrEPeLUhqXwe2X6EF6kMPH3ED79xvmh92",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "transaction_node_cid_hex": "0171122029212101ca7fbdf142810c8ae58c40b2fe4798b3bec358bfd8141e8193c40748",
+      "official_source": {
+        "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+        "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "path": "idl/pump.json",
+        "repository": "https://github.com/pump-fun/pump-public-docs",
+        "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49"
+      },
+      "observations": [
+        {
+          "kind": "BUY_INSTRUCTION_LAYOUT",
+          "bytes": 26,
+          "sha256": "8fb2c1427bf529c080cd5882b2bc1c48f523f3173cf6ea52a705071084216874",
+          "context": {
+            "executed": "NOT_ESTABLISHED_BY_DECLARATION",
+            "kind": "DECLARED_TOP_LEVEL",
+            "outer_index": 3
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "buy payload contains bytes outside the selected schema",
+            "reason": "UNEXPECTED_TRAILING_BYTES"
+          },
+          "structural_fields": null
+        },
+        {
+          "kind": "TRADE_EVENT_CPI_LAYOUT",
+          "bytes": 366,
+          "sha256": "b42b7ea3175d3b53e8c71e1f158f35629be8b79f064b25a1eae96c71fab019f6",
+          "context": {
+            "inner_order": 7,
+            "kind": "RECORDED_CPI",
+            "outer_index": 3,
+            "parent": {
+              "inner_order": null,
+              "outer_index": 3,
+              "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+            },
+            "parent_basis": "RECORDED_STACK_HEIGHTS_NOT_ACCOUNT_STATE",
+            "stack_height": 2
+          },
+          "layout_outcome": "LAYOUT_COMPATIBLE_ONLY",
+          "layout_error": null,
+          "structural_fields": {
+            "base_decimals": null,
+            "classification": "STRUCTURAL_EVENT_FIELDS_NOT_SILVER",
+            "event_real_sol_reserves_raw_u64": "26132911",
+            "event_real_token_reserves_raw_u64": "792166127945977",
+            "event_virtual_sol_reserves_raw_u64": "30026132911",
+            "event_virtual_token_reserves_raw_u64": "1072066127945977",
+            "executable_price": null,
+            "is_buy": true,
+            "ix_name": "buy",
+            "mint_bytes_base58": "2Z3sVKWQyw7Qh9eUfj3nnqx6zmWmYS4kiyggFuCJVGHH",
+            "quote_amount_raw_u64": "26132868",
+            "quote_decimals": null,
+            "quote_mint_bytes_base58": "11111111111111111111111111111111",
+            "quote_mint_identity": "UNKNOWN",
+            "reserve_role": "EVENT_REPORTED_NOT_ACCOUNT_STATE",
+            "sol_amount_raw_u64": "26132868",
+            "timestamp_raw_i64": "1779882445",
+            "token_amount_raw_u64": "933872054023",
+            "user_bytes_base58": "8ujgZvyTV6bZbvS5gbwdcvNWjb1RNQnmtvmB34E5gdx4"
+          }
+        }
+      ]
+    },
+    {
+      "effective_at": {
+        "entry_index": 85,
+        "slot": "422496004",
+        "source_transaction_index": "153",
+        "transaction_index_in_entry": 2,
+        "transaction_index_in_slot": 153
+      },
+      "signature": "4vDV2fgMjYyKGHWhEjV3SnKnGxo7eEcQ65thksPiK7Eb5QTQM2LM2Lf9B31nZyNHsQiknriRp8tFVhCRaXDyqEtg",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "transaction_node_cid_hex": "017112200f018abd2cd73837ca23202798901e59a7ecb44af796b043fff667e4e6ad6b89",
+      "official_source": {
+        "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+        "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "path": "idl/pump.json",
+        "repository": "https://github.com/pump-fun/pump-public-docs",
+        "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49"
+      },
+      "observations": [
+        {
+          "kind": "BUY_INSTRUCTION_LAYOUT",
+          "bytes": 24,
+          "sha256": "bee483bc1525bb1cfa55b25f94a2c3848ad41ba2d5c0a21b1d5b24ce997d8da7",
+          "context": {
+            "executed": "NOT_ESTABLISHED_BY_DECLARATION",
+            "kind": "DECLARED_TOP_LEVEL",
+            "outer_index": 2
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "buy instruction discriminator does not match the selected candidate",
+            "reason": "WRONG_DISCRIMINATOR"
+          },
+          "structural_fields": null
+        },
+        {
+          "kind": "TRADE_EVENT_CPI_LAYOUT",
+          "bytes": 367,
+          "sha256": "d26a7bd6420252a2ba13e5f17d0d2a3ad5d0f36c1509d2d85289f1532bead3bb",
+          "context": {
+            "inner_order": 2,
+            "kind": "RECORDED_CPI",
+            "outer_index": 2,
+            "parent": {
+              "inner_order": null,
+              "outer_index": 2,
+              "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+            },
+            "parent_basis": "RECORDED_STACK_HEIGHTS_NOT_ACCOUNT_STATE",
+            "stack_height": 2
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "selected candidate accepts only is_buy=true and ix_name=buy",
+            "reason": "UNSUPPORTED_VARIANT"
+          },
+          "structural_fields": null
+        }
+      ]
+    },
+    {
+      "effective_at": {
+        "entry_index": 157,
+        "slot": "422496004",
+        "source_transaction_index": "996",
+        "transaction_index_in_entry": 1,
+        "transaction_index_in_slot": 996
+      },
+      "signature": "2x9d8zwUdQ9uUiA9MKDY4MQUhT3jpVX8gsURY6xpvNNxRbyKqsDBRrcH4akhDjUCMXvRLZbLEy8ZFGHgXmboi6Hg",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "transaction_node_cid_hex": "01711220f14144b20612cea3872326660a3efaaaf01be21052b631c020c33ffade07d4fb",
+      "official_source": {
+        "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+        "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "path": "idl/pump.json",
+        "repository": "https://github.com/pump-fun/pump-public-docs",
+        "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49"
+      },
+      "observations": [
+        {
+          "kind": "BUY_INSTRUCTION_LAYOUT",
+          "bytes": 24,
+          "sha256": "49bdeb0cd051b67b995d556e16339dc4228683a897ba8b9889b8bb1b5eba071a",
+          "context": {
+            "executed": "NOT_ESTABLISHED_BY_DECLARATION",
+            "kind": "DECLARED_TOP_LEVEL",
+            "outer_index": 2
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "buy instruction discriminator does not match the selected candidate",
+            "reason": "WRONG_DISCRIMINATOR"
+          },
+          "structural_fields": null
+        },
+        {
+          "kind": "TRADE_EVENT_CPI_LAYOUT",
+          "bytes": 367,
+          "sha256": "1cd195a93f97a7aa847a89bca22c47b92495c97b4d80d692a295b5d57b22a1b6",
+          "context": {
+            "inner_order": 2,
+            "kind": "RECORDED_CPI",
+            "outer_index": 2,
+            "parent": {
+              "inner_order": null,
+              "outer_index": 2,
+              "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+            },
+            "parent_basis": "RECORDED_STACK_HEIGHTS_NOT_ACCOUNT_STATE",
+            "stack_height": 2
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "selected candidate accepts only is_buy=true and ix_name=buy",
+            "reason": "UNSUPPORTED_VARIANT"
+          },
+          "structural_fields": null
+        }
+      ]
+    },
+    {
+      "effective_at": {
+        "entry_index": 157,
+        "slot": "422496004",
+        "source_transaction_index": "1002",
+        "transaction_index_in_entry": 7,
+        "transaction_index_in_slot": 1002
+      },
+      "signature": "36vtGZbEXoM1DMCEZs4YUCxckvtyPvhxtZsGTbjCv9SRXRYB3UbBHnVpG8GFUw1zJ5kEUMiiiwgx6wek1fNcRwJ7",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "transaction_node_cid_hex": "01711220a2e375183a0f199ed5f295901b3015e891b17ab097cf9e58b326b5fa01379cf2",
+      "official_source": {
+        "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+        "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "path": "idl/pump.json",
+        "repository": "https://github.com/pump-fun/pump-public-docs",
+        "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49"
+      },
+      "observations": [
+        {
+          "kind": "BUY_INSTRUCTION_LAYOUT",
+          "bytes": 24,
+          "sha256": "0a60c596d5fd8c6bdde92ea18638414dab14fdef1fc4be751b5c2dddb1172e5d",
+          "context": {
+            "inner_order": 0,
+            "kind": "RECORDED_CPI",
+            "outer_index": 2,
+            "parent": {
+              "inner_order": null,
+              "outer_index": 2,
+              "program_id": "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9"
+            },
+            "parent_basis": "RECORDED_STACK_HEIGHTS_NOT_ACCOUNT_STATE",
+            "stack_height": 2
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "buy instruction discriminator does not match the selected candidate",
+            "reason": "WRONG_DISCRIMINATOR"
+          },
+          "structural_fields": null
+        },
+        {
+          "kind": "TRADE_EVENT_CPI_LAYOUT",
+          "bytes": 367,
+          "sha256": "244228a947ba866c1b6b76ddc0627b8311ae5c621b84c07dfbd5c0a0562f881a",
+          "context": {
+            "inner_order": 3,
+            "kind": "RECORDED_CPI",
+            "outer_index": 2,
+            "parent": {
+              "inner_order": 0,
+              "outer_index": 2,
+              "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+            },
+            "parent_basis": "RECORDED_STACK_HEIGHTS_NOT_ACCOUNT_STATE",
+            "stack_height": 3
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "selected candidate accepts only is_buy=true and ix_name=buy",
+            "reason": "UNSUPPORTED_VARIANT"
+          },
+          "structural_fields": null
+        }
+      ]
+    },
+    {
+      "effective_at": {
+        "entry_index": 160,
+        "slot": "422496004",
+        "source_transaction_index": "1016",
+        "transaction_index_in_entry": 12,
+        "transaction_index_in_slot": 1016
+      },
+      "signature": "3t9L6erztMjZp9SS3VqQM1gBNgt3SU2u4moBnQLchhSs95pwpMXrrWVs2Hci5XRtbSeFaJwqLEMfJpJLzqFowRYR",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "transaction_node_cid_hex": "01711220abfcba03ae93878d742adb50d5299bbea2bab246c0e4b1446a058165c6cd7117",
+      "official_source": {
+        "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+        "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+        "path": "idl/pump.json",
+        "repository": "https://github.com/pump-fun/pump-public-docs",
+        "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49"
+      },
+      "observations": [
+        {
+          "kind": "BUY_INSTRUCTION_LAYOUT",
+          "bytes": 24,
+          "sha256": "203635b5b6fed6391c66cf9f7e1f07a5e46a196d2d87a928bddb97bc6b91d831",
+          "context": {
+            "inner_order": 0,
+            "kind": "RECORDED_CPI",
+            "outer_index": 2,
+            "parent": {
+              "inner_order": null,
+              "outer_index": 2,
+              "program_id": "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9"
+            },
+            "parent_basis": "RECORDED_STACK_HEIGHTS_NOT_ACCOUNT_STATE",
+            "stack_height": 2
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "buy instruction discriminator does not match the selected candidate",
+            "reason": "WRONG_DISCRIMINATOR"
+          },
+          "structural_fields": null
+        },
+        {
+          "kind": "TRADE_EVENT_CPI_LAYOUT",
+          "bytes": 367,
+          "sha256": "2f1d41e703727c6696d9b465b3776ae743790793d660f5ef4ee687cbcc4ce4df",
+          "context": {
+            "inner_order": 3,
+            "kind": "RECORDED_CPI",
+            "outer_index": 2,
+            "parent": {
+              "inner_order": 0,
+              "outer_index": 2,
+              "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+            },
+            "parent_basis": "RECORDED_STACK_HEIGHTS_NOT_ACCOUNT_STATE",
+            "stack_height": 3
+          },
+          "layout_outcome": "LAYOUT_REJECTED",
+          "layout_error": {
+            "detail": "selected candidate accepts only is_buy=true and ix_name=buy",
+            "reason": "UNSUPPORTED_VARIANT"
+          },
+          "structural_fields": null
+        }
+      ]
+    }
+  ],
+  "silver": "NOT_PRODUCED",
+  "candidate_selection": "NOT_PERFORMED_NO_CALLER_SUPPLIED_COUNT",
+  "committed_pump_state": "NOT_ESTABLISHED",
+  "two_executions": [
+    {
+      "name": "quality.json",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01/quality.json",
+        "bytes": 35922123,
+        "sha256": "5ed4dbaf70e0d13b7983ac304c9a961f7d1e8801abc27515eba7c609f67adca2"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-02/quality.json",
+        "bytes": 35922123,
+        "sha256": "5ed4dbaf70e0d13b7983ac304c9a961f7d1e8801abc27515eba7c609f67adca2"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "bronze.jsonl",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01/bronze.jsonl",
+        "bytes": 29095519,
+        "sha256": "571c7d82c37a26b5348c2d8bbbe4cf3e22d8651c6725365047ff08b736203981"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-02/bronze.jsonl",
+        "bytes": 29095519,
+        "sha256": "571c7d82c37a26b5348c2d8bbbe4cf3e22d8651c6725365047ff08b736203981"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "quality.html",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01/quality.html",
+        "bytes": 1024809,
+        "sha256": "333fb6acc39e1a65d5596dd9b6326e08310d21cf2eb9b80ca8cbeeac94f56b16"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-02/quality.html",
+        "bytes": 1024809,
+        "sha256": "333fb6acc39e1a65d5596dd9b6326e08310d21cf2eb9b80ca8cbeeac94f56b16"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "COMPLETE",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01/COMPLETE",
+        "bytes": 64,
+        "sha256": "fcd7171cee84a5903b19bcad5a657c5b229f2a95bbd2e896801f05ebe96da3f5"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-02/COMPLETE",
+        "bytes": 64,
+        "sha256": "fcd7171cee84a5903b19bcad5a657c5b229f2a95bbd2e896801f05ebe96da3f5"
+      },
+      "byte_identical": true
+    }
+  ],
+  "execution_receipts": [
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01/execution.json",
+      "bytes": 844,
+      "sha256": "198ae4ba993c63a47d00b1ace6ac22d159c3cceb661c0420a354cb9a8062cd11"
+    },
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-02/execution.json",
+      "bytes": 844,
+      "sha256": "aa935d526176fe29e441aa4de0d5ee4fe6b3e35b2eb716c9818c3f01a641a084"
+    }
+  ],
+  "resource_measurements": [
+    {
+      "name": "release-01",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01.resource.txt",
+        "bytes": 1232,
+        "sha256": "c04b7e7c2c2418c8f7cb4fe179f4766f55f64e285d1c64e66f612baa2e953839"
+      },
+      "elapsed": "0:00.78",
+      "peak_rss_kib": 243728
+    },
+    {
+      "name": "release-02",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-02.resource.txt",
+        "bytes": 1232,
+        "sha256": "0e8e8976a8d15912675c61ac6d2db04b6d8dfc3f2b29e3cb25fa5fb51447b574"
+      },
+      "elapsed": "0:00.78",
+      "peak_rss_kib": 243852
+    },
+    {
+      "name": "regression-725",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/regression-725.resource.txt",
+        "bytes": 1231,
+        "sha256": "d9f8cd6ad941da53d9f5f395bc95fa17232c46d2d7604d4aad7a5932aae52d5a"
+      },
+      "elapsed": "0:00.18",
+      "peak_rss_kib": 51408
+    }
+  ],
+  "regression_725": {
+    "quality": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/regression-725/quality.json",
+      "bytes": 6513073,
+      "sha256": "904259d863146c1a9b6f944815735c5e924a1f4aa182671b4bdae1fb06d75737"
+    },
+    "dispositions": {
+      "DECODED": 725,
+      "MISSING": 0,
+      "QUARANTINED": 0,
+      "UNSUPPORTED": 0
+    },
+    "votes": 723,
+    "pump_program_known_positive": 0,
+    "all_218_original_files_unchanged": true
+  },
+  "browser": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/browser/b5-browser-evidence-success.json",
+    "bytes": 6048,
+    "sha256": "60022f4d07dc050cd302d159774f7b3b0d7d2437e0c260e130a78605dde68e4b"
+  },
+  "screenshot": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/browser/b5-quality.png",
+    "bytes": 117221,
+    "sha256": "70afe31c5ec5e2c02a35569354704a523fbe0c72423c3ab8d58978c2856c2a4b"
+  },
+  "browser_url": "http://localhost:4174/quality.html",
+  "limitations": [
+    "No token names, tickers, launch dates or lifecycle inference",
+    "Pinned Pump structural probes are not candidate admission, Silver or historical activation",
+    "Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained",
+    "No outcome-independent sample, economic/executable price, strategy or edge claim",
+    "No reconstructed observation/actionability model"
+  ],
+  "no_new_acquisition": true,
+  "no_lease_or_issue_mutation": true
+}
