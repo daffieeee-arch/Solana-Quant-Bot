@@ -12,7 +12,7 @@ use crate::{
         ClockSample,
         acquisition::{
             AggregateBudget, AggregatePlan, Authority, MetadataLease, PayloadLease,
-            PreparedPayload, Receipt, Request, StageBudget, metadata_proposal_sha256,
+            PreparedPayload, Published, Receipt, Request, StageBudget, metadata_proposal_sha256,
             metadata_requests, payload_proposal_sha256, resource_sample,
         },
     },
@@ -81,6 +81,16 @@ pub struct RecordedRun {
     pub stage_budget: StageBudget,
     pub stage_attempts_used: u64,
     pub stage_reserved_bytes: u64,
+    /// Immutable, audited source context for offline readers; never acquisition authority.
+    pub source: RecordedSource,
+}
+
+pub struct RecordedSource {
+    pub manifest_sha256: String,
+    pub payload_manifest_sha256: Option<String>,
+    pub aggregate_plan: AggregatePlan,
+    pub prepared_payload: Option<PreparedPayload>,
+    pub publications: Vec<Published>,
 }
 
 /// # Errors
@@ -262,8 +272,10 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
         "run.json".into(),
         &manifest_bytes,
     )];
+    let mut payload_manifest_sha256 = None;
     let payload: Option<Payload> = if root.join("payload.json").try_exists()? {
         let (payload, bytes): (Payload, _) = decode(&root.join("payload.json"))?;
+        payload_manifest_sha256 = Some(sha256(&bytes));
         check_stage(
             &payload.stage,
             &payload.lease.authority,
@@ -581,5 +593,18 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
         stage_budget: stage.budget.clone(),
         stage_attempts_used: stage_attempts,
         stage_reserved_bytes: stage_reserved,
+        source: RecordedSource {
+            manifest_sha256: sha256(&manifest_bytes),
+            payload_manifest_sha256,
+            aggregate_plan: manifest.plan,
+            prepared_payload: payload.map(|p| p.prepared),
+            publications: published_receipts
+                .into_iter()
+                .map(|(sequence, receipt)| Published {
+                    receipt,
+                    raw_path: root.join(format!("published/{sequence:010}/raw.bin")),
+                })
+                .collect(),
+        },
     })
 }

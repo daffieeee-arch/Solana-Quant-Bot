@@ -13,7 +13,7 @@ import { writeResearchNetworkDenyFilter } from './write-research-seccomp-filter.
 const root = resolve(import.meta.dirname, '..');
 const crate = join(root, 'rust/of1-range-recorder');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const MANIFEST_HASH = 'dfd72a9c45e3c1d20f1c50830933711fb953e1d402019ca873c16bc7049d8bbf';
+const MANIFEST_HASH = 'b770b24d2660303742a8053988d21697749a634335cd4b74e3872afbf96f77de';
 const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
@@ -159,6 +159,11 @@ async function run(mode) {
     process.stdout.write(isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-features', '--lib']).stdout);
     const tests = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-targets']);
     process.stdout.write(tests.stdout);
+    // The read-only B5 preparation shares the audited recorded-Run reader. It
+    // needs no monitor socket or fixture transport: run the complete Raw-report
+    // lane under the same socket-denied contract, not the loopback exception.
+    process.stdout.write(isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline',
+      '--release', '--features', 'monitor', '--test', 'bronze_raw']).stdout);
     const build = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
     const artifacts = build.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s));
     const binary = artifacts
@@ -292,6 +297,59 @@ async function run(mode) {
       throw new Error('monitor staged payload/receipt/CID fixture drift');
     }
     process.stdout.write('OF1 monitor metadata restart -> separate Fixture payload admission -> paced 206 -> published Raw -> CID/slot check PASS\n');
+    const bronzeBuild = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
+      '--features', 'monitor', '--bin', 'of1-bronze-evidence', '--message-format=json-render-diagnostics']);
+    const bronzeBinary = bronzeBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
+      .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-bronze-evidence' && v.executable)?.executable;
+    if (!bronzeBinary) throw new Error('offline Raw quality reader missing');
+    const inventory = directory => readdirSync(directory, { withFileTypes: true }).sort((a,b) => a.name.localeCompare(b.name))
+      .flatMap(entry => {
+        const path = join(directory, entry.name);
+        if (entry.isSymbolicLink()) throw new Error('unexpected fixture symlink');
+        return entry.isDirectory() ? inventory(path) : [[path, hash(readFileSync(path))]];
+      });
+    for (const [name, hasPayload] of [['monitored-run', false], ['monitored-payload-run', true]]) {
+      const directory = join(scratch, name);
+      const before = JSON.stringify(inventory(directory));
+      const json = isolated(bronzeBinary, [directory]).stdout;
+      if (json !== isolated(bronzeBinary, [directory]).stdout) throw new Error('Raw JSON inspection nondeterministic');
+      const report = JSON.parse(json);
+      if (report.schema !== 'OF1_BRONZE_PREPARATION_1' || report.delivery_evidence !== 'Fixture'
+        || report.source_evidence !== 'Fixture' || report.research_ready !== false
+        || report.decoded_transaction_count !== null || report.decoded_pump_event_count !== null
+        || report.root_to_slot_membership !== 'UNAVAILABLE'
+        || report.input_kind !== (hasPayload ? 'RECEIPT_BOUND_PAYLOAD_SELECTION' : 'METADATA_ONLY')
+        || report.publications.length !== (hasPayload ? 5 : 4)
+        || report.selected_slots.length !== (hasPayload ? 1 : 0)) {
+        throw new Error(`Raw quality evidence boundary drift: ${name}`);
+      }
+      if (hasPayload && (report.selected_slots[0].state !== 'ARCHIVAL_ENVELOPES_ONLY'
+        || report.selected_slots[0].inspection.archival_nodes.length !== 5
+        || report.selected_slots[0].inspection.transaction_envelopes.length !== 1
+        || report.selected_slots[0].inspection.transaction_envelopes[0].atomic_package !== 'OPAQUE_DATA_AND_METADATA_TOGETHER')) {
+        throw new Error('Raw fixture lost its atomic opaque envelope');
+      }
+      const html = isolated(bronzeBinary, [directory, '--html']).stdout;
+      if (html !== isolated(bronzeBinary, [directory, '--html']).stdout || !html.includes('<!doctype html>')) {
+        throw new Error('Raw HTML inspection nondeterministic or absent');
+      }
+      if (before !== JSON.stringify(inventory(directory))) throw new Error('read-only quality report changed Raw evidence');
+    }
+    // Deliberately corrupt only this gate's disposable fixture after preservation
+    // assertions. The CLI must reject it without printing a partial quality report.
+    const corruptRaw = join(scratch, 'monitored-payload-run/published/0000000004/raw.bin');
+    const corruptBytes = readFileSync(corruptRaw);
+    corruptBytes[10] ^= 1;
+    writeFileSync(corruptRaw, corruptBytes);
+    const rejected = spawnSync(launcher, [filter, bronzeBinary, join(scratch, 'monitored-payload-run')], {
+      cwd: root, encoding: 'utf8', maxBuffer: 1024 * 1024, timeout: 30_000,
+      env: { ...process.env, CARGO_NET_OFFLINE: 'true' },
+    });
+    if (rejected.error || rejected.status === null || rejected.status === 0
+      || rejected.stdout !== '' || !rejected.stderr.includes('hash')) {
+      throw new Error('corrupt Raw CLI must fail with hash error and no partial report');
+    }
+    process.stdout.write('B5 socket-denied Raw -> metadata-only / atomic opaque archival envelope -> deterministic JSON/HTML, original bytes unchanged PASS; no Solana/Pump decode\n');
     process.stdout.write('OF1 socket-denied default/build, local IPC and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');
   } finally {
     rmSync(scratch, { recursive: true, force: true });

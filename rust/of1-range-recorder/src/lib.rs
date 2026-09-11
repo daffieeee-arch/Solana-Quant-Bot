@@ -4,6 +4,8 @@
 
 pub mod acquisition;
 pub mod acquisition_http;
+#[cfg(feature = "monitor")]
+pub mod bronze_preparation;
 pub mod car;
 pub mod dataset_location;
 pub mod durable;

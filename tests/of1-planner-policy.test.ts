@@ -59,4 +59,14 @@ describe('OF1 default-off transport dependency boundary', () => {
     expect(validateOf1PlannerInputs(manifest, lock, { 'src/other.rs': 'std::os::unix::net::UnixDatagram' }))
       .toContain('unexpected runtime capability in src/other.rs');
   });
+  it('grants no transport/process exception to the read-only Bronze-preparation lane', () => {
+    for (const path of ['src/bronze_preparation.rs', 'src/bin/of1-bronze-evidence.rs', 'tests/bronze_raw.rs']) {
+      const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+      for (const capability of ['std::net::TcpStream', 'std::process::Command', 'std::os::unix::net::UnixDatagram']) {
+        expect(validateOf1PlannerInputs(manifest, lock, { [path]: `${source}\n${capability}` }))
+          .toContain(`unexpected runtime capability in ${path}`);
+      }
+    }
+  });
 });

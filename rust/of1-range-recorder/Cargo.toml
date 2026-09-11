@@ -13,6 +13,11 @@ network-of1 = ["dep:rustls", "dep:webpki-roots"]
 tls-fixture = ["dep:rustls", "dep:rcgen"]
 
 [[bin]]
+name = "of1-bronze-evidence"
+path = "src/bin/of1-bronze-evidence.rs"
+required-features = ["monitor"]
+
+[[bin]]
 name = "of1-monitor"
 path = "src/bin/of1-monitor.rs"
 required-features = ["monitor"]

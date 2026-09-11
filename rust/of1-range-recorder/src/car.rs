@@ -55,6 +55,8 @@ pub enum CarError {
     Unreachable,
     #[error("CAR_DECLARED_ROOT_MISMATCH")]
     Root,
+    #[error("CAR_ARCHIVAL_ORDER_AMBIGUOUS")]
+    AmbiguousOrder,
 }
 
 pub type CarResult<T> = Result<T, CarError>;
@@ -83,6 +85,78 @@ pub struct HeaderReport {
     pub trailing_prefix_bytes_unverified: usize,
     pub declared_root_agreement: &'static str,
     pub root_to_slot_membership: &'static str,
+}
+
+/// Byte offsets are relative to the supplied section buffer, not to the complete CAR.
+/// The owning Raw receipt supplies its file/range identity. Lengths include exactly
+/// the encoded bytes: section spans include their varint, CBOR spans do not include CID.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ByteSpan {
+    pub offset: usize,
+    pub length: usize,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ArchivalKind {
+    Transaction,
+    Entry,
+    Block,
+    Rewards,
+    DataFrame,
+}
+
+/// Lossless archival fields only. A checksum value is retained, never verified here.
+/// CBOR integers are decimal strings, including negative checksums and full u64 values.
+/// Neither payload concatenation/decompression nor Solana/Pump decoding is implied.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct DataFrameFact {
+    pub raw_cbor_span: ByteSpan,
+    pub checksum: Option<String>,
+    pub frame_index: Option<String>,
+    pub total: Option<String>,
+    pub data_span: ByteSpan,
+    pub next_cid_hex: Vec<String>,
+    pub payload_and_checksum: &'static str,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct ArchivalNodeFact {
+    pub cid_hex: String,
+    pub kind: ArchivalKind,
+    pub physical_ordinal: usize,
+    pub section_span: ByteSpan,
+    pub raw_cbor_span: ByteSpan,
+    pub slot: Option<String>,
+    pub dataframe: Option<DataFrameFact>,
+}
+
+/// One atomic opaque data+metadata package in source block/entry link order.
+/// Its ordinal is archival link order, not a proven Solana execution position.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct TransactionEnvelopeFact {
+    pub transaction_cid_hex: String,
+    pub entry_cid_hex: String,
+    pub block_cid_hex: String,
+    pub block_entry_ordinal: usize,
+    pub entry_transaction_ordinal: usize,
+    pub archival_ordinal: usize,
+    pub slot: String,
+    pub transaction_position: Option<String>,
+    pub data: DataFrameFact,
+    pub metadata: DataFrameFact,
+    pub atomic_package: &'static str,
+    pub solana_transaction_decode: &'static str,
+}
+
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct SlotArchivalInspection {
+    pub integrity: SlotIntegrityReport,
+    pub archival_nodes: Vec<ArchivalNodeFact>,
+    pub transaction_envelopes: Vec<TransactionEnvelopeFact>,
+    pub ordering: &'static str,
+    pub solana_transaction_decode: &'static str,
+    pub pump_decode: &'static str,
 }
 
 /// Decode one canonical lowercase base32 CIDv1/DAG-CBOR/SHA2-256 sidecar value.
@@ -172,15 +246,92 @@ pub fn verify_slot_sections(
     sections: &[u8],
     limits: VerificationLimits,
 ) -> CarResult<SlotIntegrityReport> {
+    Ok(parse_slot_sections(expected_slot, sections, limits)?.integrity)
+}
+
+/// Inspect the same verified archival grammar without introducing a second decoder.
+/// No fact is returned until the complete selected-slot graph passes the existing
+/// verifier. This is preparation for Bronze, not decoded Solana or Pump evidence.
+/// # Errors
+/// Rejects all verifier errors and repeated entry/transaction references whose
+/// archival position would otherwise be silently inferred or deduplicated.
+pub fn inspect_slot_sections(
+    expected_slot: u64,
+    sections: &[u8],
+    limits: VerificationLimits,
+) -> CarResult<SlotArchivalInspection> {
+    let parsed = parse_slot_sections(expected_slot, sections, limits)?;
+    let block = &parsed.nodes[parsed.block_index];
+    let mut transaction_envelopes = Vec::new();
+    let mut seen_entries = std::collections::BTreeSet::new();
+    let mut seen_transactions = std::collections::BTreeSet::new();
+    for (block_entry_ordinal, entry_link) in block
+        .links
+        .iter()
+        .filter(|link| link.kind == Kind::Entry)
+        .enumerate()
+    {
+        if !seen_entries.insert(entry_link.identity) {
+            return Err(CarError::AmbiguousOrder);
+        }
+        let entry = &parsed.nodes[parsed.by_cid[&entry_link.identity]];
+        for (entry_transaction_ordinal, transaction_link) in entry.links.iter().enumerate() {
+            if !seen_transactions.insert(transaction_link.identity) {
+                return Err(CarError::AmbiguousOrder);
+            }
+            let transaction = &parsed.nodes[parsed.by_cid[&transaction_link.identity]];
+            let data = transaction.frames.first().ok_or(CarError::Schema)?.clone();
+            let metadata = transaction.frames.get(1).ok_or(CarError::Schema)?.clone();
+            transaction_envelopes.push(TransactionEnvelopeFact {
+                transaction_cid_hex: hex::encode(transaction_link.identity),
+                entry_cid_hex: hex::encode(entry_link.identity),
+                block_cid_hex: parsed.integrity.terminal_block_cid_hex.clone(),
+                block_entry_ordinal,
+                entry_transaction_ordinal,
+                archival_ordinal: transaction_envelopes.len(),
+                slot: expected_slot.to_string(),
+                transaction_position: transaction.transaction_position.clone(),
+                data,
+                metadata,
+                atomic_package: "OPAQUE_DATA_AND_METADATA_TOGETHER",
+                solana_transaction_decode: "UNAVAILABLE_OPAQUE_DATAFRAME",
+            });
+        }
+    }
+    Ok(SlotArchivalInspection {
+        integrity: parsed.integrity,
+        archival_nodes: parsed.facts,
+        transaction_envelopes,
+        ordering: "BLOCK_ENTRY_TRANSACTION_LINK_ORDER_NOT_EXECUTION_ORDER",
+        solana_transaction_decode: "UNAVAILABLE_OPAQUE_DATAFRAME",
+        pump_decode: "UNAVAILABLE_WITHOUT_SOLANA_DECODE",
+    })
+}
+
+struct ParsedSlot {
+    integrity: SlotIntegrityReport,
+    nodes: Vec<Node>,
+    by_cid: BTreeMap<Cid, usize>,
+    block_index: usize,
+    facts: Vec<ArchivalNodeFact>,
+}
+
+fn parse_slot_sections(
+    expected_slot: u64,
+    sections: &[u8],
+    limits: VerificationLimits,
+) -> CarResult<ParsedSlot> {
     check_limits(sections, limits)?;
     let mut input = Cursor::new(sections);
     let mut nodes = Vec::new();
+    let mut facts = Vec::new();
     let mut by_cid = BTreeMap::new();
     let mut links_used = 0;
     while input.position < sections.len() {
         if nodes.len() >= limits.max_nodes {
             return Err(CarError::Limit);
         }
+        let section_offset = input.position;
         let size = usize::try_from(input.varint()?).map_err(|_| CarError::Limit)?;
         if size > limits.max_section_bytes {
             return Err(CarError::Limit);
@@ -188,6 +339,7 @@ pub fn verify_slot_sections(
         if size <= 36 {
             return Err(CarError::Schema);
         }
+        let raw_offset = input.position.checked_add(36).ok_or(CarError::Limit)?;
         let section = input.take(size)?;
         let identity = cid(&section[..36])?;
         let raw = &section[36..];
@@ -197,7 +349,26 @@ pub fn verify_slot_sections(
         if by_cid.insert(identity, nodes.len()).is_some() {
             return Err(CarError::DuplicateCid);
         }
-        let node = parse_node(raw, expected_slot, limits, &mut links_used)?;
+        let node = parse_node(raw, raw_offset, expected_slot, limits, &mut links_used)?;
+        facts.push(ArchivalNodeFact {
+            cid_hex: hex::encode(identity),
+            kind: node.kind,
+            physical_ordinal: nodes.len(),
+            section_span: ByteSpan {
+                offset: section_offset,
+                length: input.position - section_offset,
+            },
+            raw_cbor_span: ByteSpan {
+                offset: raw_offset,
+                length: raw.len(),
+            },
+            slot: node.slot.map(|slot| slot.to_string()),
+            dataframe: if node.kind == Kind::DataFrame {
+                node.frames.first().cloned()
+            } else {
+                None
+            },
+        });
         nodes.push(node);
     }
     let block_index = nodes.len().checked_sub(1).ok_or(CarError::Block)?;
@@ -211,7 +382,7 @@ pub fn verify_slot_sections(
         .iter()
         .find_map(|(identity, index)| (*index == block_index).then_some(identity))
         .ok_or(CarError::Block)?;
-    Ok(SlotIntegrityReport {
+    let integrity = SlotIntegrityReport {
         source_commit: CAR_SOURCE_COMMIT,
         selected_slot: expected_slot,
         captured_section_bytes: sections.len(),
@@ -224,6 +395,13 @@ pub fn verify_slot_sections(
         source_observation: "NOT_ATTESTED_BY_VERIFIER",
         dataframe_payload_and_checksum: "NOT_EVALUATED",
         domain_counts: "UNAVAILABLE_NOT_DECODED_IN_B4",
+    };
+    Ok(ParsedSlot {
+        integrity,
+        nodes,
+        by_cid,
+        block_index,
+        facts,
     })
 }
 
@@ -247,14 +425,7 @@ fn cid(bytes: &[u8]) -> CarResult<Cid> {
     Ok(value)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind {
-    Transaction,
-    Entry,
-    Block,
-    Rewards,
-    DataFrame,
-}
+type Kind = ArchivalKind;
 struct Link {
     identity: Cid,
     kind: Kind,
@@ -262,10 +433,14 @@ struct Link {
 struct Node {
     kind: Kind,
     links: Vec<Link>,
+    slot: Option<u64>,
+    transaction_position: Option<String>,
+    frames: Vec<DataFrameFact>,
 }
 
 fn parse_node(
     raw: &[u8],
+    raw_offset: usize,
     expected_slot: u64,
     limits: VerificationLimits,
     used: &mut usize,
@@ -273,16 +448,20 @@ fn parse_node(
     let mut input = Cursor::new(raw);
     let length = input.array()?;
     let mut links = Vec::new();
+    let mut frames = Vec::new();
+    let mut node_slot = None;
+    let mut transaction_position = None;
     let kind = match input.uint()? {
         0 => {
             if !(4..=5).contains(&length) {
                 return Err(CarError::Schema);
             }
-            dataframe(&mut input, &mut links, limits, used)?;
-            dataframe(&mut input, &mut links, limits, used)?;
+            frames.push(dataframe(&mut input, raw_offset, &mut links, limits, used)?);
+            frames.push(dataframe(&mut input, raw_offset, &mut links, limits, used)?);
             slot(&mut input, expected_slot)?;
+            node_slot = Some(expected_slot);
             if length == 5 {
-                input.optional_uint()?;
+                transaction_position = input.optional_uint_value()?.map(|v| v.to_string());
             }
             Kind::Transaction
         }
@@ -302,6 +481,7 @@ fn parse_node(
                 return Err(CarError::Schema);
             }
             slot(&mut input, expected_slot)?;
+            node_slot = Some(expected_slot);
             let shredding = input.array()?;
             if shredding > limits.max_links {
                 return Err(CarError::Limit);
@@ -329,17 +509,26 @@ fn parse_node(
                 return Err(CarError::Schema);
             }
             slot(&mut input, expected_slot)?;
-            dataframe(&mut input, &mut links, limits, used)?;
+            node_slot = Some(expected_slot);
+            frames.push(dataframe(&mut input, raw_offset, &mut links, limits, used)?);
             Kind::Rewards
         }
         6 => {
-            dataframe_fields(&mut input, length, &mut links, limits, used)?;
+            frames.push(dataframe_fields(
+                &mut input, raw_offset, 0, length, &mut links, limits, used,
+            )?);
             Kind::DataFrame
         }
         _ => return Err(CarError::UnsupportedNode),
     };
     input.finish()?;
-    Ok(Node { kind, links })
+    Ok(Node {
+        kind,
+        links,
+        slot: node_slot,
+        transaction_position,
+        frames,
+    })
 }
 
 fn slot(input: &mut Cursor<'_>, expected: u64) -> CarResult<()> {
@@ -351,35 +540,60 @@ fn slot(input: &mut Cursor<'_>, expected: u64) -> CarResult<()> {
 
 fn dataframe(
     input: &mut Cursor<'_>,
+    raw_offset: usize,
     links: &mut Vec<Link>,
     limits: VerificationLimits,
     used: &mut usize,
-) -> CarResult<()> {
+) -> CarResult<DataFrameFact> {
+    let start = input.position;
     let length = input.array()?;
     input.expect(0, 6)?;
-    dataframe_fields(input, length, links, limits, used)
+    dataframe_fields(input, raw_offset, start, length, links, limits, used)
 }
 
 fn dataframe_fields(
     input: &mut Cursor<'_>,
+    raw_offset: usize,
+    start: usize,
     length: usize,
     links: &mut Vec<Link>,
     limits: VerificationLimits,
     used: &mut usize,
-) -> CarResult<()> {
+) -> CarResult<DataFrameFact> {
     if !(5..=6).contains(&length) {
         return Err(CarError::Schema);
     }
-    if !input.null()? {
-        input.integer()?;
-    } // Signed checksum source vectors exist; opaque.
-    input.optional_uint()?;
-    input.optional_uint()?;
-    input.bytes()?; // No decompression, CRC, transaction or metadata decoding here.
+    let checksum = if input.null()? {
+        None
+    } else {
+        Some(input.integer_text()?)
+    };
+    let frame_index = input.optional_uint_value()?.map(|v| v.to_string());
+    let total = input.optional_uint_value()?.map(|v| v.to_string());
+    let data_length = input.bytes()?.len(); // No decompression, CRC or wire decode.
+    let data_offset = input.position - data_length;
+    let link_start = links.len();
     if length == 6 && !input.null()? {
         read_links(input, Kind::DataFrame, links, limits, used)?;
     }
-    Ok(())
+    Ok(DataFrameFact {
+        raw_cbor_span: ByteSpan {
+            offset: raw_offset.checked_add(start).ok_or(CarError::Limit)?,
+            length: input.position - start,
+        },
+        checksum,
+        frame_index,
+        total,
+        data_span: ByteSpan {
+            offset: raw_offset.checked_add(data_offset).ok_or(CarError::Limit)?,
+            length: data_length,
+        },
+        next_cid_hex: links[link_start..]
+            .iter()
+            .map(|link| hex::encode(link.identity))
+            .collect(),
+        payload_and_checksum: "NOT_EVALUATED",
+    })
 }
 
 fn read_links(
@@ -527,6 +741,15 @@ impl<'a> Cursor<'a> {
         }
         Ok(())
     }
+    fn integer_text(&mut self) -> CarResult<String> {
+        let (major, value) = self.head()?;
+        match major {
+            0 => Ok(value.to_string()),
+            // CBOR negative integer is -1 - value; i128 retains the entire CBOR range.
+            1 => Ok((-1_i128 - i128::from(value)).to_string()),
+            _ => Err(CarError::Schema),
+        }
+    }
     fn null(&mut self) -> CarResult<bool> {
         if self.bytes.get(self.position) == Some(&0xf6) {
             self.take(1)?;
@@ -535,10 +758,15 @@ impl<'a> Cursor<'a> {
         Ok(false)
     }
     fn optional_uint(&mut self) -> CarResult<()> {
-        if !self.null()? {
-            self.uint()?;
-        }
+        self.optional_uint_value()?;
         Ok(())
+    }
+    fn optional_uint_value(&mut self) -> CarResult<Option<u64>> {
+        if self.null()? {
+            Ok(None)
+        } else {
+            self.uint().map(Some)
+        }
     }
     fn array(&mut self) -> CarResult<usize> {
         let (major, length) = self.head()?;
@@ -591,6 +819,9 @@ mod tests {
                 identity,
                 kind: Kind::DataFrame,
             }],
+            slot: None,
+            transaction_position: None,
+            frames: vec![],
         }];
         let by_cid = BTreeMap::from([(identity, 0)]);
         assert_eq!(verify_graph(&nodes, &by_cid, 0), Err(CarError::Cycle));

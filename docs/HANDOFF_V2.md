@@ -35,10 +35,16 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
-The separate [B4 download monitor](research/B4_DOWNLOAD_MONITOR.md) observes
+The separate [B4 download monitor](research/B4_DOWNLOAD_MONITOR.md), merged in
+PR #108 at `0725dd2f405ded08578e79c7b9b47ae8070a7bdf`, observes
 Rust-owned intra-request telemetry and preserved authentic metadata. Its browser
 and local simulation are Fixture delivery evidence, not a new acquisition,
 decoded coin dataset or B4 completion. It does not extend the frozen dashboard.
+
+The separately authorized [B5 offline preparation](research/B5_OFFLINE_RAW_PREPARATION.md)
+reads existing Raw evidence into a bounded archival quality report. Its synthetic
+envelope is not a decoded Solana/Pump transaction. B4 remains current and B5
+remains NEXT; no authentic payload or canonical Bronze/Silver dataset is claimed.
 
 The [Rust index planner](research/OF1_RUST_PLANNER.md), [Raw/receipt store](research/OF1_DURABLE_RAW_STORE.md) and [loopback-only transport](research/OF1_OFFLINE_TRANSPORT.md) form one fixture integration. The [durability report](research/OF1_DURABILITY_EVIDENCE.md) and [end-to-end transport report](research/OF1_TRANSPORT_EVIDENCE.md) expose immutable publication, charged retries and restart-surviving deadlines. The [parity inventory](../schemas/acquisition/of1/transport-parity.json) maps all 26 old JS test cases before replacement. These are not acquisition evidence; no live lease is implied.
 
