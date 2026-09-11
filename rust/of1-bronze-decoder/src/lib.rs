@@ -1,7 +1,9 @@
-//! Offline Solana decoding; no transport, acquisition resume, signer or Pump decoder.
+//! Offline Solana decoding and pinned Pump structural inspection; no transport,
+//! acquisition resume, signer or independently promoted Pump candidate.
 pub mod archive;
 pub mod codec;
 pub mod proto;
+pub mod pump;
 pub mod report;
 
 /// Actual compiled source/lock identity, independent of uncommitted Git claims.
@@ -14,6 +16,7 @@ pub fn source_sha256() -> String {
         include_bytes!("codec.rs"),
         include_bytes!("proto.rs"),
         include_bytes!("report.rs"),
+        include_bytes!("pump.rs"),
         include_bytes!("main.rs"),
         include_bytes!("../Cargo.toml"),
         include_bytes!("../Cargo.lock"),
@@ -25,6 +28,15 @@ pub fn source_sha256() -> String {
     }
     // The reused CAR/receipt gate is part of this decoder's identity too.
     framed.extend_from_slice(of1_range_recorder::recorded_verification::source_sha256().as_bytes());
+    for bytes in [
+        include_bytes!("../../pump-protocol-v2/src/decode.rs").as_slice(),
+        include_bytes!("../../pump-protocol-v2/src/registry.rs"),
+        include_bytes!("../../pump-protocol-v2/src/lib.rs"),
+        pump::SOURCE,
+    ] {
+        framed.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        framed.extend_from_slice(bytes);
+    }
     of1_range_recorder::sha256(&framed)
 }
 

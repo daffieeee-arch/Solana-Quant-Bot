@@ -8,6 +8,7 @@ description = "Bounded offline receipt-bound Solana Raw to Bronze JSON decoder"
 
 [dependencies]
 of1-range-recorder = { path = "../of1-range-recorder", default-features = false }
+pump-protocol-v2 = { path = "../pump-protocol-v2", default-features = false }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 serde_cbor = { version = "=0.11.2", features = ["tags"] }

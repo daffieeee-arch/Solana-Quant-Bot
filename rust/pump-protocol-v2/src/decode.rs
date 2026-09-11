@@ -211,6 +211,15 @@ pub fn decode_buy_instruction(
     data: &[u8],
 ) -> Result<BuyInstruction, Quarantine> {
     validate_selected_candidate(candidate, "buy")?;
+    probe_buy_instruction_layout(data)
+}
+
+/// Inspect the single pinned layout without manufacturing candidate selection.
+/// This is `STRUCTURAL_LAYOUT_ONLY`: no program/invocation, account, activation,
+/// economic or Silver admission is established by a successful parse.
+/// # Errors
+/// Preserves the exact bounded parser's discriminator, layout and exhaustion errors.
+pub fn probe_buy_instruction_layout(data: &[u8]) -> Result<BuyInstruction, Quarantine> {
     validate_discriminator(data, BUY_DISCRIMINATOR, "buy instruction")?;
     if data.len() < BUY_INSTRUCTION_BYTES {
         return Err(Quarantine::new(
@@ -244,6 +253,14 @@ pub fn decode_trade_event_cpi(
     data: &[u8],
 ) -> Result<TradeEvent, Quarantine> {
     validate_selected_candidate(candidate, "TradeEvent[is_buy=true,ix_name=buy]")?;
+    probe_trade_event_cpi_layout(data)
+}
+
+/// Structural inspection of the pinned buy-event CPI layout only; not an
+/// independently selected/observed-compatible candidate or committed state.
+/// # Errors
+/// Preserves the existing discriminator, Borsh, variant and exhaustion checks.
+pub fn probe_trade_event_cpi_layout(data: &[u8]) -> Result<TradeEvent, Quarantine> {
     validate_discriminator(data, EVENT_IX_TAG_LE, "Anchor event instruction tag")?;
     let event = data.get(8..).ok_or_else(|| {
         Quarantine::new(

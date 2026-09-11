@@ -86,8 +86,9 @@ Official source receipts, URLs and hashes are in
 - `solana-transaction = 3.0.2`, `solana-message = 3.0.1`,
   `solana-transaction-error = 3.2.0`: serde only; no signer/RPC feature.
 
-The CLI is deliberately restricted to the epoch-978 modern protobuf lane and one
-complete published slot range. Historical bincode status codecs, missing linked
+The CLI is deliberately restricted to the epoch-978 modern protobuf lane and at
+most three complete native published slot ranges; the [multi-slot increment](B5_MULTISLOT_PUMP_SEARCH.md)
+retains the per-slot gates and adds selection budgets. Historical bincode status codecs, missing linked
 frames, branching continuation layouts and future transaction/error variants are
 not silently generalized. V0/address lookup resolution has synthetic tests; this
 particular authentic slot proves only legacy-format observations.
@@ -120,9 +121,10 @@ There is no Silver, physical Parquet-writer decision or lifecycle output here.
 
 ## Bounds, publication and checks
 
-Offline reader bounds are 16 MiB selected CAR, 4,096 nodes, 16,384 links, 2 MiB per
+Offline reader bounds are 16 MiB total selected CAR, 4,096 nodes and 16,384 links per slot, 2 MiB per
 assembled frame/decompressed status, an 8 MiB zstd window, and 16 MiB each for
-aggregate decompressed metadata and serialized records. These are local decoder
+per-slot decompressed metadata and serialized records, plus explicit 48 MiB
+selection budgets for each across at most three slots. These are local decoder
 resource limits, **not acquisition-cap increases**. Outer input/graph bounds and
 aggregate-budget exhaustion stop publication. An individual package exceeding its
 assembly or decompression bound is `QUARANTINED`; the report may still publish,
@@ -192,8 +194,9 @@ physical offsets and link-derived source order is retained. Its synthetic
 `hello/world` archival payload is not a transaction codec; its wider node/link
 limits are not adopted. The current signed-Shredding CAR gate is unchanged.
 
-Review this actual decode/report first. A later separately approved engineering
-selection must supply evidence of Pump participation before applying the bounded
-B3 instruction/event candidate and producing supported Silver facts. Do not guess
-Pump presence from byte size, skip votes to manufacture a dataset, or turn this
-single engineering slot into an outcome-independent research sample.
+The later separately approved three-slot engineering selection now has an
+[offline multi-slot/Pump search result](B5_MULTISLOT_PUMP_SEARCH.md): five Pump
+packages and one structural event-layout match, but no fully admitted candidate
+or Silver. This does not rewrite the earlier zero-Pump slot result. Do not guess
+Pump presence from byte size, skip votes to manufacture a dataset, or turn these
+engineering slots into an outcome-independent research sample.

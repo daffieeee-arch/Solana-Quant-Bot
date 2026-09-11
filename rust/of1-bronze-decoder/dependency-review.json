@@ -1,7 +1,7 @@
 {
   "schema": "OF1_BRONZE_DEPENDENCY_REVIEW_1",
-  "manifest_sha256": "80b41bfb5fbfed89920396997addaf9b4d50c8ec874a60a208da80d745497fb4",
-  "lock_sha256": "43520c701dd8b101480847fbacb05f1050187433f3a3652619632bfe457aeb0f",
+  "manifest_sha256": "29c38c301243e4fc5c3fd76cb121c9d832fb21842df4f727c587e89e38759b8d",
+  "lock_sha256": "41819922ae2fa134addfc97ad56435826472acf4f33481a58e4c9f36c609885a",
   "packages": [
     {
       "name": "anyhow",
@@ -34,6 +34,18 @@
       "buildScript": false
     },
     {
+      "name": "borsh-derive",
+      "version": "1.8.1",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "borsh",
+      "version": "1.8.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
       "name": "bs58",
       "version": "0.5.1",
       "license": "MIT/Apache-2.0",
@@ -49,6 +61,12 @@
       "name": "cc",
       "version": "1.4.5",
       "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cfg_aliases",
+      "version": "0.2.2",
+      "license": "MIT",
       "buildScript": false
     },
     {
@@ -91,6 +109,12 @@
       "name": "either",
       "version": "1.18.0",
       "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "equivalent",
+      "version": "1.0.2",
+      "license": "Apache-2.0 OR MIT",
       "buildScript": false
     },
     {
@@ -154,9 +178,21 @@
       "buildScript": false
     },
     {
+      "name": "hashbrown",
+      "version": "0.17.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
       "name": "hex",
       "version": "0.4.3",
       "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "indexmap",
+      "version": "2.14.1",
+      "license": "Apache-2.0 OR MIT",
       "buildScript": false
     },
     {
@@ -250,6 +286,12 @@
       "buildScript": false
     },
     {
+      "name": "proc-macro-crate",
+      "version": "3.5.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
       "name": "proc-macro2",
       "version": "1.0.107",
       "license": "MIT OR Apache-2.0",
@@ -265,6 +307,12 @@
       "name": "prost",
       "version": "0.11.9",
       "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "pump-protocol-v2",
+      "version": "0.1.0",
+      "license": "UNLICENSED",
       "buildScript": false
     },
     {
@@ -502,6 +550,24 @@
       "buildScript": false
     },
     {
+      "name": "toml_datetime",
+      "version": "1.1.1+spec-1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "toml_edit",
+      "version": "0.25.13+spec-1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "toml_parser",
+      "version": "1.1.3+spec-1.1.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
       "name": "typenum",
       "version": "1.20.1",
       "license": "MIT OR Apache-2.0",
@@ -529,6 +595,12 @@
       "name": "windows-sys",
       "version": "0.61.2",
       "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "winnow",
+      "version": "1.0.4",
+      "license": "MIT",
       "buildScript": false
     },
     {
@@ -583,6 +655,21 @@
       "features": []
     },
     {
+      "package": "borsh-derive@1.8.1",
+      "features": [
+        "default"
+      ]
+    },
+    {
+      "package": "borsh@1.8.0",
+      "features": [
+        "borsh-derive",
+        "default",
+        "derive",
+        "std"
+      ]
+    },
+    {
       "package": "bs58@0.5.1",
       "features": [
         "alloc",
@@ -592,13 +679,19 @@
     },
     {
       "package": "bytes@1.12.1",
-      "features": []
+      "features": [
+        "std"
+      ]
     },
     {
       "package": "cc@1.4.5",
       "features": [
         "parallel"
       ]
+    },
+    {
+      "package": "cfg_aliases@0.2.2",
+      "features": []
     },
     {
       "package": "cfg-if@1.0.4",
@@ -634,6 +727,10 @@
     },
     {
       "package": "either@1.18.0",
+      "features": []
+    },
+    {
+      "package": "equivalent@1.0.2",
       "features": []
     },
     {
@@ -687,9 +784,20 @@
       "features": []
     },
     {
+      "package": "hashbrown@0.17.1",
+      "features": []
+    },
+    {
       "package": "hex@0.4.3",
       "features": [
         "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "indexmap@2.14.1",
+      "features": [
         "default",
         "std"
       ]
@@ -760,6 +868,7 @@
       "package": "once_cell@1.21.4",
       "features": [
         "alloc",
+        "default",
         "race",
         "std"
       ]
@@ -776,6 +885,10 @@
     },
     {
       "package": "pkg-config@0.3.34",
+      "features": []
+    },
+    {
+      "package": "proc-macro-crate@3.5.0",
       "features": []
     },
     {
@@ -796,6 +909,10 @@
         "prost-derive",
         "std"
       ]
+    },
+    {
+      "package": "pump-protocol-v2@0.1.0",
+      "features": []
     },
     {
       "package": "quote@1.0.47",
@@ -839,6 +956,7 @@
     {
       "package": "serde_core@1.0.229",
       "features": [
+        "alloc",
         "result",
         "std"
       ]
@@ -1015,6 +1133,8 @@
         "clone-impls",
         "default",
         "derive",
+        "fold",
+        "full",
         "parsing",
         "printing",
         "proc-macro"
@@ -1052,6 +1172,28 @@
       ]
     },
     {
+      "package": "toml_datetime@1.1.1+spec-1.1.0",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "toml_edit@0.25.13+spec-1.1.0",
+      "features": [
+        "parse"
+      ]
+    },
+    {
+      "package": "toml_parser@1.1.3+spec-1.1.0",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
       "package": "typenum@1.20.1",
       "features": []
     },
@@ -1083,6 +1225,17 @@
       ]
     },
     {
+      "package": "winnow@1.0.4",
+      "features": [
+        "alloc",
+        "ascii",
+        "binary",
+        "default",
+        "parser",
+        "std"
+      ]
+    },
+    {
       "package": "zmij@1.0.23",
       "features": []
     },
@@ -1108,6 +1261,11 @@
       "package": "anyhow@1.0.104",
       "sha256": "89d1baedcff59822ed692d3a33f131c211a213bdec33c83f68b54110d9c64223",
       "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "borsh@1.8.0",
+      "sha256": "82fe063f8195129b109c988c0d33165a472d579b53dfe3342d7d78c71579b361",
+      "review": "B3 Borsh local cfg_aliases selection only (hash_collections from std/hashbrown feature); no new native or network build capability."
     },
     {
       "package": "generic-array@0.14.7",
@@ -1150,11 +1308,6 @@
       "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
     },
     {
-      "package": "serde@1.0.229",
-      "sha256": "e2ea6a7a82f5404c3e28cb055883c737ee7903367a10206fbb47b75c009f0eb3",
-      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
-    },
-    {
       "package": "serde_core@1.0.229",
       "sha256": "7bc6b1eec8913ff4cd8e4b9b92cd04a82a4f38beb30a0b73a64c1e6e49f07b5f",
       "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
@@ -1162,6 +1315,11 @@
     {
       "package": "serde_json@1.0.151",
       "sha256": "a681e754be844c7dbef957f5d2d00b01f37c5dca160ef1055a8d8f975697a881",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "serde@1.0.229",
+      "sha256": "e2ea6a7a82f5404c3e28cb055883c737ee7903367a10206fbb47b75c009f0eb3",
       "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
     },
     {
@@ -1195,6 +1353,7 @@
     "No signer/RPC/client/ledger/runtime transport/HTTP/TLS dependency.",
     "Reused of1-range-recorder has zero enabled features; source/lock unchanged.",
     "Zstd uses bundled C with existing native compiler; no dynamic libzstd, CMake or protobuf compiler required.",
-    "Manually declared prost projection pins official proto bytes; not a second Pump decoder."
+    "Manually declared prost projection pins official proto bytes; not a second Pump decoder.",
+    "One local pump-protocol-v2 path dependency reuses exact B3 layout parsers. Borsh/derive and TOML proc-macro dependencies are locked, pure build-time/Rust support; no candidate-count override or network source added. Existing B3 source evidence matrices remain unchanged."
   ]
 }
