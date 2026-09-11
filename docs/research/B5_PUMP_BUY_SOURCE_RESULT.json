@@ -1,0 +1,804 @@
+{
+  "schema": "OF1_B5_PUMP_BUY_DIAGNOSIS_RESULT_1",
+  "recorded_at_utc": "2026-09-11T22:29:08.905Z",
+  "evidence_scope": "AUTHENTIC_ENGINEERING_DIAGNOSTICS_NOT_SILVER; synthetic negative tests and PR Evidence pin remain Fixture; no issue promotion",
+  "implementation_commit": "5733b623aaf12dd6596ee2e450d55abcd1b4611d",
+  "base_merge_commit": "bfd23125a332dc1eca69b1c63fca1280e8ec897f",
+  "merge_gates": [
+    {
+      "run": 34650384375,
+      "workflow": "CI",
+      "conclusion": "SUCCESS"
+    },
+    {
+      "run": 34650384384,
+      "workflow": "Roadmap sync",
+      "conclusion": "SUCCESS",
+      "mutation_count": 0
+    },
+    {
+      "run": 34650384856,
+      "workflow": "Roadmap sync",
+      "conclusion": "SUCCESS",
+      "mutation_count": 0
+    }
+  ],
+  "executable": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/bin/of1-bronze-decoder-db3120678ae41c4af371890f87f7fe4c87b61be9220b579966f3b93e3b4f0069",
+    "bytes": 2772136,
+    "sha256": "db3120678ae41c4af371890f87f7fe4c87b61be9220b579966f3b93e3b4f0069"
+  },
+  "decoder_source_sha256": "e34ad96a2599c154c34f79a7176a8aa68d0ce296ed85d02589bb229608b9cf29",
+  "lock_sha256": "e2dabd836f1158d7e17f4216cc9c3639495483c9c59a928c9643081c8d4f775d",
+  "source_evidence": {
+    "path": "/home/dmesdary/code/Solana-Quant-Bot/rust/of1-bronze-decoder/sources/pump-buy-evidence.json",
+    "bytes": 19988,
+    "sha256": "b338dddb2cf03e84481ac97bd567377a14dfcdf090abc2d1fe8cc02f9fa42be4"
+  },
+  "full_source_research": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/source-research.json",
+    "bytes": 15324,
+    "sha256": "9c7eea0ddc4c48ad4888aa64ec1a3acce120a0609431d848a93a5b46d327b8f0"
+  },
+  "toolchain": {
+    "node": "v22.23.2",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)\nrelease: 1.97.1\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.20.0-DEV (sys:0.4.88+curl-8.20.0 vendored ssl:OpenSSL/3.6.2)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Ubuntu 26.4.0 (resolute) [64-bit]"
+  },
+  "socket_denied_execution": true,
+  "build_filter": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/build-network-deny.bpf",
+    "bytes": 168,
+    "sha256": "ed1f7151e7e083fb8b5a4af3364506d5c02be16f06a8de737d78e45c388cff85"
+  },
+  "execution_filter": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b4-car-signed-repair-20260911/final/network-deny.bpf",
+    "bytes": 264,
+    "sha256": "f89dbb89daaadd9aff5e0ad70453dee229b81bc9c11c274890ba8f85f2042081"
+  },
+  "input_inventory": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/inputs-before.json",
+    "bytes": 107376,
+    "sha256": "8f9391bdab46adb87dd0f4d330edcc82287a583295843a62dc3cdb301105292e"
+  },
+  "inventories": [
+    {
+      "root": "/home/dmesdary/solana-quant-data/runs/of1-e978-pump-search-09379cff-01",
+      "files": 302,
+      "all_original_file_bytes_unchanged": true
+    },
+    {
+      "root": "/home/dmesdary/solana-quant-data/runs/of1-e978-metadata-09379cff-04",
+      "files": 218,
+      "all_original_file_bytes_unchanged": true
+    }
+  ],
+  "original_acquisition_executable": {
+    "path": "/home/dmesdary/solana-quant-data/run-plans/of1-e978-metadata-09379cff-04/bin/of1-acquire",
+    "bytes": 3868784,
+    "sha256": "6189491afb7bbfe09da3cc73763c7f07c750c39bf466023be570ade2da62de05"
+  },
+  "original_record_preservation": [
+    {
+      "baseline": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/release-01/quality.json",
+        "bytes": 35922123,
+        "sha256": "5ed4dbaf70e0d13b7983ac304c9a961f7d1e8801abc27515eba7c609f67adca2"
+      },
+      "records": 3137,
+      "original_record_fields_unchanged": true,
+      "only_new_fields": [
+        "decoder_source_sha256 (changed identity)",
+        "transaction.message_account_layout",
+        "transaction.pump_structural_analysis.buy_source_diagnostics"
+      ]
+    },
+    {
+      "baseline": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-multislot-20260911.ZaTeMW/regression-725/quality.json",
+        "bytes": 6513073,
+        "sha256": "904259d863146c1a9b6f944815735c5e924a1f4aa182671b4bdae1fb06d75737"
+      },
+      "records": 725,
+      "original_record_fields_unchanged": true,
+      "only_new_fields": [
+        "decoder_source_sha256 (changed identity)",
+        "transaction.message_account_layout",
+        "transaction.pump_structural_analysis.buy_source_diagnostics"
+      ]
+    }
+  ],
+  "raw_bytes": 2931906,
+  "transaction_envelopes": 3137,
+  "dispositions": {
+    "DECODED": 3137,
+    "MISSING": 0,
+    "QUARANTINED": 0,
+    "UNSUPPORTED": 0
+  },
+  "status_counts": {
+    "ERROR": 87,
+    "OK": 3050
+  },
+  "vote_program_transactions": 2845,
+  "slots": [
+    {
+      "slot": "422496002",
+      "raw_sha256": "5a609ed91292eb0e22157dd965301c150ff2e585d87cebaf22f6a7c71c05f49b",
+      "raw_bytes": 894187,
+      "transaction_envelopes": 1092,
+      "dispositions": {
+        "DECODED": 1092,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      },
+      "resources": {
+        "decoded_metadata_bytes": 180582,
+        "max_decoded_metadata_bytes": 16777216,
+        "max_record_json_bytes": 16777216,
+        "record_json_bytes": 8656293
+      }
+    },
+    {
+      "slot": "422496003",
+      "raw_sha256": "15988c29c7e04a5a53c9cf8242bb20f284b3b8ba047ae7659b64a1441c5f185a",
+      "raw_bytes": 808748,
+      "transaction_envelopes": 977,
+      "dispositions": {
+        "DECODED": 977,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      },
+      "resources": {
+        "decoded_metadata_bytes": 161340,
+        "max_decoded_metadata_bytes": 16777216,
+        "max_record_json_bytes": 16777216,
+        "record_json_bytes": 7742837
+      }
+    },
+    {
+      "slot": "422496004",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "raw_bytes": 1228971,
+      "transaction_envelopes": 1068,
+      "dispositions": {
+        "DECODED": 1068,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      },
+      "resources": {
+        "decoded_metadata_bytes": 1141744,
+        "max_decoded_metadata_bytes": 16777216,
+        "max_record_json_bytes": 16777216,
+        "record_json_bytes": 13422515
+      }
+    }
+  ],
+  "target": {
+    "effective_at": {
+      "entry_index": 81,
+      "slot": "422496004",
+      "source_transaction_index": "142",
+      "transaction_index_in_entry": 1,
+      "transaction_index_in_slot": 142
+    },
+    "signature": "KCQJf7C4SJYkKCeUichXe6t3s7qGUkfoSjSVUPP69cJ3de9tFrGH2qLrEPeLUhqXwe2X6EF6kMPH3ED79xvmh92",
+    "status": "OK",
+    "fee_lamports": "6838",
+    "run_id": "14801633436734945be09910c113e5399613dc7cb68df81aebc95f45c9358401",
+    "raw_path": "/home/dmesdary/solana-quant-data/runs/of1-e978-pump-search-09379cff-01/published/0000000006/raw.bin",
+    "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+    "section_offset": 212257,
+    "section_bytes": 2889,
+    "transaction_node_cid_hex": "0171122029212101ca7fbdf142810c8ae58c40b2fe4798b3bec358bfd8141e8193c40748",
+    "receipt_sequence": 6,
+    "bindings": {
+      "aggregate_sha256": "9d02a571ecbb8b3dc0bf091339d4056040bb1187ebb31986f85d2251ca5bf6aa",
+      "manifest_sha256": "3e0e514647f07accb18caba17582e46c9273038674a67654e2437982f3d2b526",
+      "metadata_receipt_sha256": "84589de13d67a2a95dce2f445b4ee738ffb85ed9ab9f75f5a88c07af63e5fe40",
+      "payload_manifest_sha256": "20d161dc9fd182baa2c4b93311ce97d261ce990f7e4e878f30305c28ddc38af5",
+      "prepared_payload_sha256": "f748df18d1057344d102b85f90fffce5be7c23e92b3a7624b598f590b4faa81d",
+      "receipts": [
+        {
+          "path": "published/0000000000/receipt.json",
+          "raw_bytes": 5184000,
+          "raw_sha256": "649754195dd6182846a9754ffd7fa26a487e0b65bea66794e7d8bf180321a59b",
+          "sequence": 0,
+          "sha256": "a3241c2192de478d332799d63f990d1c08dc6e040b1579920498c5932e7f8182"
+        },
+        {
+          "path": "published/0000000001/receipt.json",
+          "raw_bytes": 101,
+          "raw_sha256": "a7b6e38f47efd59831641cccf4eaf24870c9176c876d7bd5ccf21163bceb95f0",
+          "sequence": 1,
+          "sha256": "2b8daf5c16f7c02ad2b72ed6aa7fc68a1993c996bf96d932458218c40b8359a7"
+        },
+        {
+          "path": "published/0000000002/receipt.json",
+          "raw_bytes": 60,
+          "raw_sha256": "8db9cecc883c7b759a9975230b09c34b2a4e6b349e445b5d92d96b02b9408ba2",
+          "sequence": 2,
+          "sha256": "cbc2de2ac80aee1249314689306db806d2491dd8c429f953fa7ae520d5cc127a"
+        },
+        {
+          "path": "published/0000000003/receipt.json",
+          "raw_bytes": 0,
+          "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "sequence": 3,
+          "sha256": "e14e53f93bb29488395a0bcb956df2a57afafdeabd204d711962e3f6a96cd752"
+        },
+        {
+          "path": "published/0000000004/receipt.json",
+          "raw_bytes": 894187,
+          "raw_sha256": "5a609ed91292eb0e22157dd965301c150ff2e585d87cebaf22f6a7c71c05f49b",
+          "sequence": 4,
+          "sha256": "bd7aaf911bd28801540b20924d2dda6d69ba1a74c0ae0c95c0a46e82a3974618"
+        },
+        {
+          "path": "published/0000000005/receipt.json",
+          "raw_bytes": 808748,
+          "raw_sha256": "15988c29c7e04a5a53c9cf8242bb20f284b3b8ba047ae7659b64a1441c5f185a",
+          "sequence": 5,
+          "sha256": "ad891e75d99f50258d6b4cd0a5bab161c49e631198d912a21b86ce6140d4a853"
+        },
+        {
+          "path": "published/0000000006/receipt.json",
+          "raw_bytes": 1228971,
+          "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+          "sequence": 6,
+          "sha256": "bca6dab796ffaa2af3acb6fbf0edca7aad33eacc1023179defe1d386e9b38ff9"
+        }
+      ]
+    },
+    "diagnostic": {
+      "account_address_correspondence": true,
+      "account_contents_verified": false,
+      "account_count": 18,
+      "account_pattern": "PINNED_IDL_16_PLUS_DOCUMENTED_2_REMAINING_ACCOUNTS",
+      "accounts": [
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 17,
+          "documented_fee_recipient": null,
+          "expected": "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+          "pda_bump": 255,
+          "position": 0,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "global",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "EVENT_BYTES_CORRESPONDENCE",
+          "address_match": true,
+          "compiled_key_index": 3,
+          "documented_fee_recipient": true,
+          "expected": "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+          "pda_bump": null,
+          "position": 1,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": true,
+          "role": "fee_recipient",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "EVENT_BYTES_CORRESPONDENCE",
+          "address_match": true,
+          "compiled_key_index": 15,
+          "documented_fee_recipient": null,
+          "expected": "2Z3sVKWQyw7Qh9eUfj3nnqx6zmWmYS4kiyggFuCJVGHH",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "2Z3sVKWQyw7Qh9eUfj3nnqx6zmWmYS4kiyggFuCJVGHH",
+          "pda_bump": null,
+          "position": 2,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "mint",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 2,
+          "documented_fee_recipient": null,
+          "expected": "7Avq5SfSpbycTYKa22aUdRDNyYn7etmD3e2EVpVMtnFA",
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "7Avq5SfSpbycTYKa22aUdRDNyYn7etmD3e2EVpVMtnFA",
+          "pda_bump": 252,
+          "position": 3,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": true,
+          "role": "bonding_curve",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 5,
+          "documented_fee_recipient": null,
+          "expected": "AdVxC5J9iVMzG2zKfsuoNaYyX3WZSq6QfgeyhEKLrg5Q",
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "AdVxC5J9iVMzG2zKfsuoNaYyX3WZSq6QfgeyhEKLrg5Q",
+          "pda_bump": 255,
+          "position": 4,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": true,
+          "role": "associated_bonding_curve",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "SDK_ATA_ADDRESS_CORRESPONDENCE_NOT_ACCOUNT_CONTENT",
+          "address_match": true,
+          "compiled_key_index": 4,
+          "documented_fee_recipient": null,
+          "expected": "9pCVVwLSd38NUawxmxkyN1XBpCDJypiKiqAgGicJGjdM",
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "9pCVVwLSd38NUawxmxkyN1XBpCDJypiKiqAgGicJGjdM",
+          "pda_bump": 253,
+          "position": 5,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": true,
+          "role": "associated_user",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "EVENT_BYTES_CORRESPONDENCE",
+          "address_match": true,
+          "compiled_key_index": 0,
+          "documented_fee_recipient": null,
+          "expected": "8ujgZvyTV6bZbvS5gbwdcvNWjb1RNQnmtvmB34E5gdx4",
+          "message_signer": true,
+          "message_writable": true,
+          "observed": "8ujgZvyTV6bZbvS5gbwdcvNWjb1RNQnmtvmB34E5gdx4",
+          "pda_bump": null,
+          "position": 6,
+          "required_privileges_match": true,
+          "required_signer": true,
+          "required_writable": true,
+          "role": "user",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 9,
+          "documented_fee_recipient": null,
+          "expected": "11111111111111111111111111111111",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "11111111111111111111111111111111",
+          "pda_bump": null,
+          "position": 7,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "system_program",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "SELECTED_LEGACY_TOKEN_PROGRAM",
+          "address_match": true,
+          "compiled_key_index": 12,
+          "documented_fee_recipient": null,
+          "expected": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+          "pda_bump": null,
+          "position": 8,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "token_program",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "PDA_FROM_EVENT_CREATOR_NOT_CURVE_ACCOUNT_CREATOR",
+          "address_match": true,
+          "compiled_key_index": 7,
+          "documented_fee_recipient": null,
+          "expected": "HJTUTTb6KC53XJmfzw2z9fsQ66WEUfYQsQgkhh2wpcjE",
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "HJTUTTb6KC53XJmfzw2z9fsQ66WEUfYQsQgkhh2wpcjE",
+          "pda_bump": 252,
+          "position": 9,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": true,
+          "role": "creator_vault",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 20,
+          "documented_fee_recipient": null,
+          "expected": "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+          "pda_bump": 255,
+          "position": 10,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "event_authority",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 10,
+          "documented_fee_recipient": null,
+          "expected": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "pda_bump": null,
+          "position": 11,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "program",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 8,
+          "documented_fee_recipient": null,
+          "expected": "Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y",
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y",
+          "pda_bump": 255,
+          "position": 12,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "global_volume_accumulator",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 6,
+          "documented_fee_recipient": null,
+          "expected": "Ef2TfPiCxgDiu2kW9xo5z7WBDGFcrjxMMnzGX8cTqL1G",
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "Ef2TfPiCxgDiu2kW9xo5z7WBDGFcrjxMMnzGX8cTqL1G",
+          "pda_bump": 255,
+          "position": 13,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": true,
+          "role": "user_volume_accumulator",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 18,
+          "documented_fee_recipient": null,
+          "expected": "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
+          "pda_bump": 253,
+          "position": 14,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "fee_config",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "IDL_ADDRESS_OR_PDA",
+          "address_match": true,
+          "compiled_key_index": 14,
+          "documented_fee_recipient": null,
+          "expected": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+          "pda_bump": null,
+          "position": 15,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "fee_program",
+          "source": "PINNED_IDL"
+        },
+        {
+          "address_basis": "SDK_BONDING_CURVE_V2_PDA",
+          "address_match": true,
+          "compiled_key_index": 16,
+          "documented_fee_recipient": null,
+          "expected": "3TyCQwnfXAgns8nUWT2v9o1JV9LkJSDZjnDUA5jrV8Ja",
+          "message_signer": false,
+          "message_writable": false,
+          "observed": "3TyCQwnfXAgns8nUWT2v9o1JV9LkJSDZjnDUA5jrV8Ja",
+          "pda_bump": 255,
+          "position": 16,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": false,
+          "role": "bonding_curve_v2",
+          "source": "OFFICIAL_REMAINING_ACCOUNTS_DOC_AND_SDK"
+        },
+        {
+          "address_basis": "DOCUMENTED_BUYBACK_RECIPIENT_LIST",
+          "address_match": true,
+          "compiled_key_index": 1,
+          "documented_fee_recipient": null,
+          "expected": null,
+          "message_signer": false,
+          "message_writable": true,
+          "observed": "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
+          "pda_bump": null,
+          "position": 17,
+          "required_privileges_match": true,
+          "required_signer": false,
+          "required_writable": true,
+          "role": "buyback_fee_recipient",
+          "source": "OFFICIAL_REMAINING_ACCOUNTS_DOC_AND_SDK"
+        }
+      ],
+      "admission": "NOT_ADMITTED_DIAGNOSTIC_ONLY",
+      "base_decimals": null,
+      "committed_state": "NOT_ESTABLISHED",
+      "compatibility_rule_for_extra_bytes": "UNAVAILABLE",
+      "deployed_handler_identity": "UNAVAILABLE",
+      "event_association_failure": null,
+      "event_context": {
+        "basis": "RECORDED_DIRECT_CPI_PLUS_EXACT_EVENT_LAYOUT_NOT_COMMITTED_STATE",
+        "creator_bytes_base58": "CLEeskqFQjRzPhjHH7k2Ns5GFqPbj1Rk1e2ZKgbEhdAu",
+        "event_authority": "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+        "event_bytes": 366,
+        "event_sha256": "b42b7ea3175d3b53e8c71e1f158f35629be8b79f064b25a1eae96c71fab019f6",
+        "fee_recipient_bytes_base58": "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+        "inner_order": 7,
+        "outer_index": 3,
+        "parent": {
+          "inner_order": null,
+          "outer_index": 3,
+          "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        },
+        "reserve_role": "EVENT_REPORTED_NOT_ACCOUNT_STATE",
+        "stack_height": 2
+      },
+      "event_correlation": {
+        "buy_representation": true,
+        "limit": "Correlation does not resolve extra bytes, account contents, historical activation or committed economic state",
+        "mint_matches": true,
+        "token_amount_matches_prefix": true,
+        "track_volume_matches_prefix": true,
+        "transaction_status_ok": true,
+        "user_matches": true
+      },
+      "executable_price": null,
+      "full_bytes": 26,
+      "full_data_hex": "66063d1201daebea07af1c6fd9000000c0fc9b01000000000101",
+      "full_data_sha256": "8fb2c1427bf529c080cd5882b2bc1c48f523f3173cf6ea52a705071084216874",
+      "full_instruction_error": {
+        "detail": "buy payload contains bytes outside the selected schema",
+        "reason": "UNEXPECTED_TRAILING_BYTES"
+      },
+      "full_instruction_layout_match": false,
+      "historical_activation": "UNKNOWN",
+      "observation_predicates": {
+        "documented_account_pattern": true,
+        "full_instruction_exhaustion": false,
+        "single_direct_event_context": true
+      },
+      "outer_index": 3,
+      "prefix_diagnostic": {
+        "amount_raw_u64": "933872054023",
+        "bytes_examined": 25,
+        "classification": "PREFIX_DIAGNOSTIC_NOT_FULL_INSTRUCTION_DECODE",
+        "max_sol_cost_raw_u64": "27000000",
+        "track_volume": true
+      },
+      "quote_decimals": null,
+      "quote_mint_identity": "UNKNOWN",
+      "remaining_proof": "Pump-authoritative deployed decoding/compatibility rule explaining every byte; account-content and economic evidence remain separate gates",
+      "schema": "PUMP_BUY_DIAGNOSTIC_1",
+      "selected_pattern_addresses_distinct": true,
+      "silver": "NOT_PRODUCED",
+      "source_evidence_sha256": "b338dddb2cf03e84481ac97bd567377a14dfcdf090abc2d1fe8cc02f9fa42be4",
+      "transaction_status": "OK",
+      "unexplained_suffix": {
+        "discarded": false,
+        "hex": "01",
+        "offset": 25,
+        "semantics": "UNKNOWN"
+      }
+    }
+  },
+  "pump_cases": 5,
+  "pump_layout_outcomes": {
+    "BUY_INSTRUCTION_LAYOUT:UNEXPECTED_TRAILING_BYTES": 1,
+    "BUY_INSTRUCTION_LAYOUT:WRONG_DISCRIMINATOR": 4,
+    "TRADE_EVENT_CPI_LAYOUT:LAYOUT_COMPATIBLE_ONLY": 1,
+    "TRADE_EVENT_CPI_LAYOUT:UNSUPPORTED_VARIANT": 4
+  },
+  "silver": "NOT_PRODUCED",
+  "root_to_slot_membership": "UNAVAILABLE",
+  "two_executions": [
+    {
+      "name": "quality.json",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-01/quality.json",
+        "bytes": 37019520,
+        "sha256": "a1ef170aecf65cb7182772f8622f11e27682ed8d716a2460322bd570f7170400"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-02/quality.json",
+        "bytes": 37019520,
+        "sha256": "a1ef170aecf65cb7182772f8622f11e27682ed8d716a2460322bd570f7170400"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "bronze.jsonl",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-01/bronze.jsonl",
+        "bytes": 29824782,
+        "sha256": "4d237a02040d96feb11a2aa2cefc9a4ea4a1ffbf2d0c4083ebf643af115e0cd6"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-02/bronze.jsonl",
+        "bytes": 29824782,
+        "sha256": "4d237a02040d96feb11a2aa2cefc9a4ea4a1ffbf2d0c4083ebf643af115e0cd6"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "quality.html",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-01/quality.html",
+        "bytes": 1098383,
+        "sha256": "116171c5de84f9e98be6c70761a2fbd6f2a6fd909400ab8d9eed87d7b477f232"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-02/quality.html",
+        "bytes": 1098383,
+        "sha256": "116171c5de84f9e98be6c70761a2fbd6f2a6fd909400ab8d9eed87d7b477f232"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "COMPLETE",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-01/COMPLETE",
+        "bytes": 64,
+        "sha256": "a90b25e717d275a3e3351cbd3ba8ed67031e4a0aea74188904e7173c7f8a4462"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-02/COMPLETE",
+        "bytes": 64,
+        "sha256": "a90b25e717d275a3e3351cbd3ba8ed67031e4a0aea74188904e7173c7f8a4462"
+      },
+      "byte_identical": true
+    }
+  ],
+  "execution_receipts": [
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-01/execution.json",
+      "bytes": 844,
+      "sha256": "d788d262f9c8141e248e1da9e166a8702993950584e133f2fb01a791f0d43f70"
+    },
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-02/execution.json",
+      "bytes": 844,
+      "sha256": "71ee9bc1ec82ed2ba71e5dc463382e49b85efe775266af3fcc54ff56b7238045"
+    },
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/regression-725/execution.json",
+      "bytes": 841,
+      "sha256": "a4bb3461b34180ddf46b586841918007dd99d0652f81faadbe879a568a150dd4"
+    }
+  ],
+  "resource_measurements": [
+    {
+      "name": "release-01",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-01.resource.txt",
+        "bytes": 1235,
+        "sha256": "c9ad042358be19ece98f488bae00799b43857748a9ac80cc6748de0a46ca7d0c"
+      },
+      "elapsed": "0:00.80",
+      "peak_rss_kib": 251976
+    },
+    {
+      "name": "release-02",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-02.resource.txt",
+        "bytes": 1230,
+        "sha256": "c550d288a4412ae01c8452f2af7b789d794ca622621b690dfd1ad5033b0f0a1a"
+      },
+      "elapsed": "0:00.78",
+      "peak_rss_kib": 252052
+    },
+    {
+      "name": "regression-725",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/regression-725.resource.txt",
+        "bytes": 1234,
+        "sha256": "030c249d75c1ed12ad588b01928f05679dc88879893db61f267592f255de8182"
+      },
+      "elapsed": "0:00.20",
+      "peak_rss_kib": 46836
+    }
+  ],
+  "regression_725": {
+    "quality": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/regression-725/quality.json",
+      "bytes": 6753774,
+      "sha256": "febcefff30b66f8ab5bef8926a0a99e3038a7e27105e0359c341b30368474398"
+    },
+    "dispositions": {
+      "DECODED": 725,
+      "MISSING": 0,
+      "QUARANTINED": 0,
+      "UNSUPPORTED": 0
+    },
+    "votes": 723,
+    "pump_program_known_positive": 0
+  },
+  "browser": [
+    {
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/browser/b5-browser-evidence-success.json",
+        "bytes": 10816,
+        "sha256": "e0d48101d76ec088960c7e510e9723cdeee408358ee4270bc6fa31456b160b2b"
+      },
+      "screenshot": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/browser/b5-buy-quality.png",
+        "bytes": 118391,
+        "sha256": "8f9c15f5c514591625934496f69955765994f942fcb765e223b497206a15a5fb"
+      },
+      "only_local_page_requests": true
+    },
+    {
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/browser-accounts/b5-browser-evidence-success.json",
+        "bytes": 10818,
+        "sha256": "2ba5e0529cb8949040e939ccdcc488442d0196ce666fb57e9ae760618344ab15"
+      },
+      "screenshot": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/browser-accounts/b5-buy-accounts.png",
+        "bytes": 125953,
+        "sha256": "084b0c4ca2ce6b998753a49be84cf398484885bc41a1cc63d495bb7ef5da7893"
+      },
+      "only_local_page_requests": true
+    }
+  ],
+  "browser_url": "http://localhost:4175/quality.html",
+  "no_new_acquisition": true,
+  "no_lease_or_issue_mutation": true,
+  "no_b3_source_change": true,
+  "missing_proof": "Pump-authoritative deployed decoding/compatibility rule for instruction byte offset25; no automatic Silver, quote/decimals, historical activation or committed-state inference"
+}

@@ -106,6 +106,58 @@ membership remains UNAVAILABLE.
 
 ## Reproduce and review
 
+### Executed authentic regressions
+
+The [new machine-readable receipt](B5_PUMP_BUY_SOURCE_RESULT.json), SHA-256
+`de621f2f1315d891074da46a5dd12cbfdae71a690e239985e5c8bf2165efed5c`,
+binds code commit `5733b623aaf12dd6596ee2e450d55abcd1b4611d`, the socket-denied
+release build and both executions, all original input hashes and browser checks.
+Executable SHA-256:
+`db3120678ae41c4af371890f87f7fe4c87b61be9220b579966f3b93e3b4f0069`.
+Compiled decoder-source SHA-256:
+`e34ad96a2599c154c34f79a7176a8aa68d0ce296ed85d02589bb229608b9cf29`.
+
+Both executions reproduce **3,137 decoded transaction/status packages**
+(1,092 / 977 / 1,068), 3,050 OK / 87 ERROR, 2,845 vote-program packages and five
+Pump-referencing packages. The separate earlier run still decodes **725**.
+No missing/unsupported/quarantined Solana envelope appears in these particular
+inputs; the incompatible Pump-instruction outcomes remain separate and visible.
+All original record fields match their previous outputs after removing only the
+new message-header/diagnostic fields and changed decoder identity. All **302 +
+218 input files** and the original acquisition executable retain their hashes.
+
+| Deterministic output (identical across both new executions) | SHA-256 |
+|---|---|
+| `quality.json` | `a1ef170aecf65cb7182772f8622f11e27682ed8d716a2460322bd570f7170400` |
+| `bronze.jsonl` | `4d237a02040d96feb11a2aa2cefc9a4ea4a1ffbf2d0c4083ebf643af115e0cd6` |
+| `quality.html` | `116171c5de84f9e98be6c70761a2fbd6f2a6fd909400ab8d9eed87d7b477f232` |
+
+The three-slot runs took 0.80 / 0.78 seconds and peaked at 251,976 / 252,052 KiB
+RSS; the 725 run took 0.20 seconds / 46,836 KiB. These are local measurements,
+not throughput guarantees. No reader/acquisition resource cap was raised.
+
+![Actual Chrome rendering: original rejection and account diagnosis](assets/b5-bronze/pump-buy-diagnosis.png)
+
+![Actual Chrome rendering: all eighteen account positions](assets/b5-bronze/pump-buy-accounts.png)
+
+The existing Windows Chrome/Node were used with an isolated temporary browser
+profile, loopback-only page traffic and no installation. Both browser receipts
+verify 3,137 rows, five Pump cases, 18 account rows and exact served HTML bytes;
+zero denied page requests or warnings. The receipts do not claim operating-system
+packet capture.
+
+Full immutable outputs and the independent decoder binary remain under
+`/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2`.
+The live local view is **http://localhost:4175/quality.html**. To serve it again
+when that port is free, with the existing Python standard library only:
+
+```bash
+python3 -m http.server 4175 --bind 127.0.0.1 \
+  --directory /home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/release-01
+```
+
+### Build/test boundary
+
 Use the existing pinned toolchain and the same offline reader command documented
 in [the native three-slot report](B5_MULTISLOT_PUMP_SEARCH.md), with a **new** output
 directory. The command verifies original Raw/receipts/plans without the writer,
