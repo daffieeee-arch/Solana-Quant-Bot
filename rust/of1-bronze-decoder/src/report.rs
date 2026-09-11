@@ -1,6 +1,6 @@
 //! Deterministic Bronze JSON and self-contained quality HTML; operational
 //! processing time and executable identity belong in a separate execution receipt.
-use crate::{archive, codec, invalid};
+use crate::{archive, codec, invalid, pump};
 use of1_range_recorder::{
     acquisition::read_limited,
     durable::acquisition::{Published, RequestKind},
@@ -14,6 +14,10 @@ use std::{collections::BTreeMap, fmt::Write as _, io, path::Path};
 pub const SCHEMA: &str = "OF1_BRONZE_TRANSACTION_1";
 pub const MAX_RECORD_JSON_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_DECODED_METADATA_BYTES: usize = 16 * 1024 * 1024;
+pub const MAX_SELECTION_SLOTS: usize = 3;
+pub const MAX_SELECTION_RAW_BYTES: usize = archive::MAX_SLOT_BYTES;
+pub const MAX_SELECTION_RECORD_BYTES: usize = MAX_SELECTION_SLOTS * MAX_RECORD_JSON_BYTES;
+pub const MAX_SELECTION_METADATA_BYTES: usize = MAX_SELECTION_SLOTS * MAX_DECODED_METADATA_BYTES;
 
 /// Explicit aggregate resident-output budget, in addition to per-frame bounds.
 /// # Errors
@@ -29,30 +33,30 @@ pub fn charge(total: &mut usize, bytes: usize, limit: usize) -> io::Result<()> {
     Ok(())
 }
 
-/// Full run/receipt/plan gate followed by one complete slot's atomic transactions.
+/// Full original run/receipt/plan gate followed by at most three native slots.
 /// # Errors
 /// Fails before publication on run, receipt, CID, graph or input identity changes.
 pub fn decode_run(root: &Path) -> io::Result<Value> {
-    let verification = verify_recorded(root, None)?;
-    if verification["stages"]["raw_receipts"] != "VERIFIED" {
-        return Err(invalid("RAW_RECEIPTS_UNVERIFIED"));
-    }
     let run = read_run_context(root)?;
     if run.aggregate_plan.epoch != 978 {
         return Err(invalid("UNSUPPORTED_EPOCH_OUTSIDE_BOUNDED_978_LANE"));
     }
-    let payloads = run
+    let mut payloads = run
         .published
         .iter()
         .filter(|p| matches!(p.receipt.request.kind, RequestKind::CarRange { .. }))
         .collect::<Vec<_>>();
+    // Plan order is authoritative; never infer ordering from directory enumeration.
+    payloads.sort_by_key(|p| p.receipt.request.sequence);
+    check_selection(&payloads)?;
+    let verification = verify_recorded(root, None)?;
+    if verification["stages"]["raw_receipts"] != "VERIFIED" {
+        return Err(invalid("RAW_RECEIPTS_UNVERIFIED"));
+    }
     if payloads.is_empty() {
         return Ok(
             json!({"schema":SCHEMA,"run_id":run.snapshot.id,"bindings":verification["bindings"],"input_kind":"METADATA_ONLY","records":[],"domain_decoding":"UNAVAILABLE_NO_PAYLOAD","decoded_transactions":null,"research_ready":false}),
         );
-    }
-    if payloads.len() != 1 {
-        return Err(invalid("UNSUPPORTED_MULTI_RANGE_INPUT"));
     }
     if verification["stages"]["car_slot"] != "VERIFIED" {
         return Err(invalid(format!(
@@ -60,12 +64,156 @@ pub fn decode_run(root: &Path) -> io::Result<Value> {
             verification["integrity"]["error"]
         )));
     }
-    let projected = project_slot(&run, payloads[0], &verification)?;
+    let mut slots = Vec::new();
+    let mut record_bytes = 0;
+    let mut metadata_bytes = 0;
+    for published in payloads {
+        let slot = project_slot(&run, published, &verification)?;
+        for (total, key, limit) in [
+            (
+                &mut record_bytes,
+                "record_json_bytes",
+                MAX_SELECTION_RECORD_BYTES,
+            ),
+            (
+                &mut metadata_bytes,
+                "decoded_metadata_bytes",
+                MAX_SELECTION_METADATA_BYTES,
+            ),
+        ] {
+            charge(
+                total,
+                usize::try_from(
+                    slot["resource_accounting"][key]
+                        .as_u64()
+                        .ok_or_else(|| invalid("SLOT_ACCOUNTING"))?,
+                )
+                .map_err(invalid)?,
+                limit,
+            )?;
+        }
+        slots.push(slot);
+    }
+    let projected = combine_slots(slots, record_bytes, metadata_bytes)?;
     let after = verify_recorded(root, None)?;
     if after["bindings"] != verification["bindings"] || after["run_id"] != verification["run_id"] {
         return Err(invalid("INPUT_CHANGED_DURING_DECODE"));
     }
     Ok(projected)
+}
+
+/// One complete native range per slot; no reshaped run, split-range stitching or
+/// unbounded all-epoch report. The existing verifier proves the actual graph.
+fn check_selection(payloads: &[&Published]) -> io::Result<()> {
+    if payloads.len() > MAX_SELECTION_SLOTS {
+        return Err(invalid("BRONZE_SELECTION_SLOT_LIMIT"));
+    }
+    let mut total = 0;
+    let mut previous = None;
+    for p in payloads {
+        let RequestKind::CarRange {
+            slot,
+            start,
+            end_exclusive,
+            ..
+        } = p.receipt.request.kind
+        else {
+            return Err(invalid("PAYLOAD_KIND"));
+        };
+        if previous.is_some_and(|s| s >= slot) {
+            return Err(invalid("UNSUPPORTED_DUPLICATE_OR_NONORDERED_SLOT_RANGE"));
+        }
+        previous = Some(slot);
+        charge(
+            &mut total,
+            usize::try_from(
+                end_exclusive
+                    .checked_sub(start)
+                    .ok_or_else(|| invalid("RANGE_LENGTH"))?,
+            )
+            .map_err(invalid)?,
+            MAX_SELECTION_RAW_BYTES,
+        )?;
+    }
+    Ok(())
+}
+
+fn combine_slots(
+    mut slots: Vec<Value>,
+    record_bytes: usize,
+    metadata_bytes: usize,
+) -> io::Result<Value> {
+    if slots.len() == 1 {
+        return Ok(slots.remove(0));
+    }
+    let first = slots.first().ok_or_else(|| invalid("NO_SLOTS"))?;
+    let evidence = first["receipt_evidence"].clone();
+    let mut result = json!({"schema":SCHEMA,"run_id":first["run_id"],"input_kind":if evidence=="Fixture"{"FIXTURE_RECORDED_CAR_SELECTION"}else{"AUTHENTIC_RECORDED_CAR_SELECTION"},"receipt_evidence":evidence,
+        "bindings":first["bindings"],"stages":first["stages"],"slice_class":"ENGINEERING_VALIDATION_ONLY","root_to_slot_membership":"UNAVAILABLE","research_ready":false,
+        "silver":"NOT_PRODUCED","physical_parquet_writer":"NOT_SELECTED","signature_crypto_verification":"NOT_PERFORMED","pump_event_decode":"NOT_PERFORMED","limitations":first["limitations"]});
+    let mut records = Vec::new();
+    let mut counts = BTreeMap::<String, u64>::new();
+    let mut reasons = BTreeMap::<String, u64>::new();
+    for key in [
+        "raw_bytes",
+        "verified_nodes",
+        "verified_links",
+        "entry_nodes",
+        "transaction_envelopes",
+        "pump_program_known_positive",
+        "pump_program_unknown",
+    ] {
+        result[key] = json!(slots.iter().try_fold(0_u64, |sum, s| {
+            sum.checked_add(
+                s[key]
+                    .as_u64()
+                    .ok_or_else(|| invalid("SLOT_COUNT_MISSING"))?,
+            )
+            .ok_or_else(|| invalid("SLOT_COUNT_OVERFLOW"))
+        })?);
+    }
+    for slot in &mut slots {
+        if slot["receipt_evidence"] != evidence || slot["bindings"] != result["bindings"] {
+            return Err(invalid("SELECTION_BINDING_OR_EVIDENCE_MISMATCH"));
+        }
+        for (field, total) in [("dispositions", &mut counts), ("reasons", &mut reasons)] {
+            for (reason, n) in slot[field]
+                .as_object()
+                .ok_or_else(|| invalid("SLOT_COUNTS"))?
+            {
+                *total.entry(reason.clone()).or_default() +=
+                    n.as_u64().ok_or_else(|| invalid("SLOT_COUNTS"))?;
+            }
+        }
+        let rows = slot
+            .as_object_mut()
+            .ok_or_else(|| invalid("SLOT_REPORT"))?
+            .remove("records")
+            .ok_or_else(|| invalid("SLOT_RECORDS"))?;
+        let Value::Array(mut rows) = rows else {
+            return Err(invalid("SLOT_RECORDS"));
+        };
+        records.append(&mut rows);
+    }
+    if counts.values().sum::<u64>() != records.len() as u64
+        || result["transaction_envelopes"] != records.len()
+    {
+        return Err(invalid("SELECTION_ENVELOPE_COVERAGE"));
+    }
+    result["pump_program_involvement_transactions"] = if result["pump_program_unknown"] == 0 {
+        result["pump_program_known_positive"].clone()
+    } else {
+        Value::Null
+    };
+    result["resource_accounting"] = json!({"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_SELECTION_RECORD_BYTES,"max_decoded_metadata_bytes":MAX_SELECTION_METADATA_BYTES,"max_selection_raw_bytes":MAX_SELECTION_RAW_BYTES,"max_slots":MAX_SELECTION_SLOTS,"per_slot_limits_unchanged":true});
+    result["dispositions"] = json!(counts);
+    result["reasons"] = json!(reasons);
+    result["records_sha256"] = json!(sha256(&serde_json::to_vec(&records).map_err(invalid)?));
+    result["analysis"] = pump::summary(&records);
+    result["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");
+    result["records"] = json!(records);
+    result["slots"] = json!(slots);
+    Ok(result)
 }
 
 fn project_slot(
@@ -108,7 +256,11 @@ fn project_slot(
     for envelope in &archive.envelopes {
         let result = codec::decode(envelope, &archive.continuations);
         let (disposition, error, transaction) = match result {
-            Ok(tx) => {
+            Ok(mut tx) => {
+                if tx["pump_program_involvement"] == true {
+                    tx["pump_structural_analysis"] = pump::inspect(&tx)?;
+                }
+                tx["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");
                 charge(
                     &mut metadata_bytes,
                     usize::try_from(
@@ -163,11 +315,11 @@ fn project_slot(
         json!({"schema":SCHEMA,"run_id":run.snapshot.id,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"slot":slot.to_string(),"raw_sha256":published.receipt.sha256,"raw_bytes":raw.len(),"car_range_start":start,"car_range_end_exclusive":end_exclusive,
         "bindings":verification["bindings"],"stages":{"capture":"PUBLISHED","raw_receipts":"VERIFIED","car_slot":"VERIFIED","domain_decoding":"BOUNDED_ATOMIC_TRANSACTION_STATUS"},
         "verified_nodes":archive.verified_nodes,"verified_links":archive.verified_links,"entry_nodes":archive.entries,"transaction_envelopes":archive.envelopes.len(),"dispositions":counts,"reasons":reasons,
-        "pump_program_involvement_transactions":if pump_unknown==0{Some(pump_count)}else{None},"pump_program_known_positive":pump_count,"pump_program_unknown":pump_unknown,"pump_event_decode":"NOT_PERFORMED","root_to_slot_membership":"UNAVAILABLE","signature_crypto_verification":"NOT_PERFORMED",
+        "pump_program_involvement_transactions":if pump_unknown==0{Some(pump_count)}else{None},"pump_program_known_positive":pump_count,"pump_program_unknown":pump_unknown,"pump_event_decode":"PINNED_STRUCTURAL_PROBES_ONLY","root_to_slot_membership":"UNAVAILABLE","signature_crypto_verification":"NOT_PERFORMED",
         "resource_accounting":{"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_RECORD_JSON_BYTES,"max_decoded_metadata_bytes":MAX_DECODED_METADATA_BYTES},
         "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":"NOT_PRODUCED","physical_parquet_writer":"NOT_SELECTED",
-        "records_sha256":records_sha256,"records":records,
-        "limitations":["No token names, tickers, launch dates or lifecycle inference","No Pump event decoding or universal historical schema claim","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]}),
+        "records_sha256":records_sha256,"analysis":pump::summary(&records),"records":records,
+        "limitations":["No token names, tickers, launch dates or lifecycle inference","Pinned Pump structural probes are not candidate admission, Silver or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]}),
     )
 }
 
@@ -179,14 +331,7 @@ fn escape(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-/// A standalone browser report, deliberately without remote resources or scripts.
-#[must_use]
-pub fn html(report: &Value) -> String {
-    let input_label = escape(
-        report["input_kind"]
-            .as_str()
-            .unwrap_or("UNAVAILABLE_INPUT_KIND"),
-    );
+fn overview_html(report: &Value) -> String {
     let count = |v: &Value| {
         v.as_u64()
             .map_or_else(|| "UNAVAILABLE".to_owned(), |n| n.to_string())
@@ -202,8 +347,11 @@ pub fn html(report: &Value) -> String {
         }
     }
     let mut overview = format!(
-        "<section><h2>Slot {} · dekking</h2><p><strong>{}</strong> enveloppen · <strong>{}</strong> volledig gedecodeerd · missing {} · unsupported {} · quarantined {}</p><p>Pump-programmaverwijzing: {} bekend positief, {} onbekend. Geen Pump-eventdecode.</p><p class=mono>Raw SHA-256: {}</p><h3>Programma's in de gedecodeerde pakketten</h3><p>Gedeclareerde top-level instructies + vastgelegde CPI; geen zelfstandig uitvoeringsbewijs. Vote-transacties zijn behouden.</p><ul>",
-        escape(report["slot"].as_str().unwrap_or("UNAVAILABLE")),
+        "<section><h2>{} · dekking</h2><p><strong>{}</strong> enveloppen · <strong>{}</strong> volledig gedecodeerd · missing {} · unsupported {} · quarantined {}</p><p>Pump-programmaverwijzing: {} bekend positief, {} onbekend. Layoutonderzoek is apart van candidate-admission en gecommitteerde toestand.</p><p>Raw-bytes: {}</p>",
+        report["slot"].as_str().map_or_else(
+            || "Meervoudige selectie".into(),
+            |s| format!("Slot {}", escape(s))
+        ),
         count(&report["transaction_envelopes"]),
         count(&report["dispositions"]["DECODED"]),
         count(&report["dispositions"]["MISSING"]),
@@ -211,8 +359,57 @@ pub fn html(report: &Value) -> String {
         count(&report["dispositions"]["QUARANTINED"]),
         count(&report["pump_program_known_positive"]),
         count(&report["pump_program_unknown"]),
-        escape(report["raw_sha256"].as_str().unwrap_or("UNAVAILABLE"))
+        count(&report["raw_bytes"])
     );
+    overview.push_str("<table><tr><th>Slot</th><th>Raw-bytes</th><th>Enveloppen</th><th>Decoded</th><th>Missing / unsupported / quarantined</th><th>Pump + / onbekend</th><th>Raw SHA-256</th></tr>");
+    let slots: Vec<&Value> = report["slots"]
+        .as_array()
+        .map_or_else(|| vec![report], |s| s.iter().collect());
+    for slot in slots {
+        let _ = write!(
+            overview,
+            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{} / {} / {}</td><td>{} / {}</td><td class=mono>{}</td></tr>",
+            escape(slot["slot"].as_str().unwrap_or("UNAVAILABLE")),
+            count(&slot["raw_bytes"]),
+            count(&slot["transaction_envelopes"]),
+            count(&slot["dispositions"]["DECODED"]),
+            count(&slot["dispositions"]["MISSING"]),
+            count(&slot["dispositions"]["UNSUPPORTED"]),
+            count(&slot["dispositions"]["QUARANTINED"]),
+            count(&slot["pump_program_known_positive"]),
+            count(&slot["pump_program_unknown"]),
+            escape(slot["raw_sha256"].as_str().unwrap_or("UNAVAILABLE"))
+        );
+    }
+    overview.push_str("</table><h3>Behouden transactiestatus en votes</h3><pre>");
+    overview.push_str(&escape(&format!(
+        "Status: {} · vote-program-transacties: {}",
+        report["analysis"]["transaction_status_counts"],
+        report["analysis"]["vote_program_transactions_retained"]
+    )));
+    overview.push_str("</pre><h2>Pump: brongebonden layoutonderzoek</h2><p>Geen Silver geproduceerd. Programmaverwijzing ≠ ondersteunde instructie/event ≠ gecommitteerde toestand. Root-to-slot membership en economische identiteit blijven UNAVAILABLE.</p><pre>");
+    overview.push_str(&escape(
+        &serde_json::to_string_pretty(&report["analysis"]["pump_layout_outcomes"])
+            .unwrap_or_default(),
+    ));
+    overview.push_str("</pre>");
+    if let Some(cases) = report["analysis"]["pump_cases"].as_array() {
+        for case in cases {
+            let _ = write!(
+                overview,
+                "<details><summary>Slot {} · transactie {} · {}</summary><pre>{}</pre></details>",
+                escape(
+                    case["effective_at"]["slot"]
+                        .as_str()
+                        .unwrap_or("UNAVAILABLE")
+                ),
+                case["effective_at"]["transaction_index_in_slot"],
+                escape(case["signature"].as_str().unwrap_or("UNAVAILABLE")),
+                escape(&serde_json::to_string_pretty(case).unwrap_or_default())
+            );
+        }
+    }
+    overview.push_str("<details><summary>Programmafrequenties</summary><p>Unieke transactiepakketten per programma; gedeclareerde top-level + vastgelegde CPI, geen succesvol uitgevoerde toestandsveranderingen. Exacte afzonderlijke referentietellingen staan in JSON.</p><ul>");
     for (program, number) in program_counts {
         let _ = write!(
             overview,
@@ -220,7 +417,19 @@ pub fn html(report: &Value) -> String {
             escape(&program)
         );
     }
-    overview.push_str("</ul></section>");
+    overview.push_str("</ul></details></section>");
+    overview
+}
+
+/// A standalone browser report, deliberately without remote resources or scripts.
+#[must_use]
+pub fn html(report: &Value) -> String {
+    let input_label = escape(
+        report["input_kind"]
+            .as_str()
+            .unwrap_or("UNAVAILABLE_INPUT_KIND"),
+    );
+    let overview = overview_html(report);
     let summary = report
         .as_object()
         .map(|m| {
@@ -246,7 +455,8 @@ pub fn html(report: &Value) -> String {
                 .unwrap_or_default();
             let _ = write!(
                 rows,
-                "<tr><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td><td><pre>{}</pre></td><td>{}</td></tr>",
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td><td><pre>{}</pre></td><td>{}</td></tr>",
+                escape(r["effective_at"]["slot"].as_str().unwrap_or("UNAVAILABLE")),
                 r["effective_at"]["transaction_index_in_slot"],
                 escape(r["disposition"].as_str().unwrap_or("UNKNOWN")),
                 escape(signature),
@@ -258,7 +468,7 @@ pub fn html(report: &Value) -> String {
         }
     }
     format!(
-        "<!doctype html><html lang=nl><meta charset=utf-8><meta name=viewport content='width=device-width, initial-scale=1'><title>Raw → Bronze — kwaliteitsrapport</title><style>body{{font:16px system-ui;background:#111827;color:#e5e7eb;margin:32px}}h1{{color:#67e8f9}}a{{color:#67e8f9}}.notice{{padding:16px;background:#253047;border-left:4px solid #fbbf24}}pre,.mono{{font:12px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}}table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border:1px solid #374151;padding:8px;text-align:left;vertical-align:top}}th{{background:#253047;position:sticky;top:0}}summary{{cursor:pointer}}article{{overflow:auto}}</style><h1>Raw → Bronze</h1><p class=notice><strong>{input_label}</strong><br>ENGINEERING_VALIDATION_ONLY · transaction-wire + statusmetadata, geen Pump-eventdecode, Silver, research-ready dataset of edgeclaim. Root-to-slot membership: UNAVAILABLE. Ontbrekend is nooit nul.</p><p><a href=quality.json>Volledig JSON-rapport + records</a> · <a href=bronze.jsonl>Bronze JSONL</a> · <a href=execution.json>Uitvoeringsidentiteit</a></p>{overview}<details><summary>Bronbinding, dekking en beperkingen</summary><pre>{}</pre></details><h2>Alle transactie-enveloppen in bronvolgorde</h2><article><table><thead><tr><th>Volgorde</th><th>Decode</th><th>Eerste signature</th><th>Status</th><th>Fee (lamports)</th><th>Programma's (top-level/CPI)</th><th>Reden</th></tr></thead><tbody>{rows}</tbody></table></article></html>",
+        "<!doctype html><html lang=nl><meta charset=utf-8><meta name=viewport content='width=device-width, initial-scale=1'><title>Raw → Bronze — kwaliteitsrapport</title><style>body{{font:16px system-ui;background:#111827;color:#e5e7eb;margin:32px}}h1{{color:#67e8f9}}a{{color:#67e8f9}}.notice{{padding:16px;background:#253047;border-left:4px solid #fbbf24}}pre,.mono{{font:12px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}}table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border:1px solid #374151;padding:8px;text-align:left;vertical-align:top}}th{{background:#253047;position:sticky;top:0}}summary{{cursor:pointer}}article{{overflow:auto}}</style><h1>Raw → Bronze</h1><p class=notice><strong>{input_label}</strong><br>ENGINEERING_VALIDATION_ONLY · transaction-wire + statusmetadata en beperkte Pump-layoutprobes; geen Silver, research-ready dataset of edgeclaim. Root-to-slot membership: UNAVAILABLE. Ontbrekend is nooit nul.</p><p><a href=quality.json>Volledig JSON-rapport + records</a> · <a href=bronze.jsonl>Bronze JSONL</a> · <a href=execution.json>Uitvoeringsidentiteit</a></p>{overview}<details><summary>Bronbinding, dekking en beperkingen</summary><pre>{}</pre></details><details><summary>Alle transactie-enveloppen in bronvolgorde</summary><article><table><thead><tr><th>Slot</th><th>Volgorde</th><th>Decode</th><th>Eerste signature</th><th>Status</th><th>Fee (lamports)</th><th>Programma's (top-level/CPI)</th><th>Reden</th></tr></thead><tbody>{rows}</tbody></table></article></details></html>",
         escape(&serde_json::to_string_pretty(&summary).unwrap_or_default())
     )
 }

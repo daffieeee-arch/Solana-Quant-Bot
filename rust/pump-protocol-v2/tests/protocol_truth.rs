@@ -18,6 +18,36 @@ use sha2::{Digest, Sha256};
 
 const BUY_VECTOR_HEX: &str = "66063d1201daebea80841e000000000040420f000000000001";
 
+#[test]
+fn structural_probes_share_exact_parsers_without_constructing_validated_candidates() {
+    use pump_protocol_v2::decode::{probe_buy_instruction_layout, probe_trade_event_cpi_layout};
+    let candidate = validated_candidate();
+    let mut buy = hex::decode(BUY_VECTOR_HEX).unwrap();
+    assert_eq!(
+        probe_buy_instruction_layout(&buy),
+        decode_buy_instruction(&candidate, &buy)
+    );
+    buy.push(0);
+    assert_eq!(
+        probe_buy_instruction_layout(&buy),
+        decode_buy_instruction(&candidate, &buy)
+    );
+    assert_eq!(
+        reason(probe_buy_instruction_layout(&buy)),
+        QuarantineReason::UnexpectedTrailingBytes
+    );
+    let mut event = trade_vector_bytes();
+    assert_eq!(
+        probe_trade_event_cpi_layout(&event),
+        decode_trade_event_cpi(&candidate, &event)
+    );
+    event.pop();
+    assert_eq!(
+        probe_trade_event_cpi_layout(&event),
+        decode_trade_event_cpi(&candidate, &event)
+    );
+}
+
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

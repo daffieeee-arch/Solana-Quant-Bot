@@ -17,7 +17,7 @@ use std::{
     io::{self, Read},
 };
 
-pub const PUMP_PROGRAM: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+pub const PUMP_PROGRAM: &str = pump_protocol_v2::registry::PUMP_PROGRAM_ID;
 
 /// Verify the assembled (still compressed, if applicable) source bytes.
 /// # Errors

@@ -68,9 +68,9 @@ impl Harness {
             toolchain_fingerprint: "b".repeat(64),
             executable_sha256: current_executable_sha256().unwrap(),
             budget: AggregateBudget {
-                max_slots: 2,
+                max_slots: 4,
                 max_plan_bytes: 131_072,
-                max_requests: 8,
+                max_requests: 14,
                 max_response_entity_bytes: SLOTS_PER_EPOCH * RECORD_BYTES,
                 max_total_response_entity_bytes: 16_000_000,
                 max_disk_bytes: 64 * 1024 * 1024,
@@ -136,9 +136,19 @@ impl Harness {
     }
 
     fn metadata(&mut self) {
+        self.metadata_slots(&[payload()]);
+    }
+
+    fn metadata_slots(&mut self, payloads: &[Vec<u8>]) {
         let mut index = vec![0; usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap()];
-        index[12..20].copy_from_slice(&OFFSET.to_le_bytes());
-        index[20..24].copy_from_slice(&u32::try_from(payload().len()).unwrap().to_le_bytes());
+        let mut offset = OFFSET;
+        for (i, bytes) in payloads.iter().enumerate() {
+            let at = (i + 1) * 12;
+            index[at..at + 8].copy_from_slice(&offset.to_le_bytes());
+            index[at + 8..at + 12]
+                .copy_from_slice(&u32::try_from(bytes.len()).unwrap().to_le_bytes());
+            offset += u64::try_from(bytes.len()).unwrap();
+        }
         self.publish(0, &index);
         self.publish(1, format!("{} epoch-978.car\n", "0".repeat(64)).as_bytes());
         self.publish(
@@ -149,16 +159,21 @@ impl Harness {
     }
 
     fn admit(&mut self) {
+        self.admit_slots(1);
+    }
+
+    fn admit_slots(&mut self, count: u64) {
         let metadata = (0..4)
             .map(|n| self.store.published(n).unwrap().unwrap())
             .collect::<Vec<_>>();
-        let prepared = derive_payload_from_metadata(&self.plan, &metadata, SLOT, SLOT + 1).unwrap();
+        let prepared =
+            derive_payload_from_metadata(&self.plan, &metadata, SLOT, SLOT + count).unwrap();
         let lease = PayloadLease {
             schema: "OF1_PAYLOAD_LEASE_1".into(),
             authority: Authority::Fixture,
             budget: StageBudget {
-                max_requests: 2,
-                max_response_entity_bytes_total: 4096,
+                max_requests: count * 2,
+                max_response_entity_bytes_total: 16384,
                 max_runtime_ms: 60_000,
             },
             prepared_payload_sha256: prepared.sha256().unwrap(),
@@ -217,6 +232,10 @@ fn n(value: u64) -> C {
     C::Integer(i128::from(value))
 }
 fn fixture_payload(change: Option<&str>) -> Vec<u8> {
+    fixture_payload_at(SLOT, change)
+}
+
+fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
     let fixtures: Value =
         serde_json::from_str(include_str!("fixtures/authentic-sections.json")).unwrap();
     let raw = hex::decode(fixtures["fixtures"][0]["section_hex"].as_str().unwrap()).unwrap();
@@ -224,6 +243,9 @@ fn fixture_payload(change: Option<&str>) -> Vec<u8> {
     let C::Array(mut tx) = serde_cbor::from_slice(&raw[prefix + 36..]).unwrap() else {
         panic!("tx")
     };
+    // This graph is explicitly synthetic: native slot field, receipts and index
+    // are constructed together, never masquerading as a copied authentic run.
+    tx[3] = n(slot);
     if let Some(change) = change {
         let which = if change == "wire" { 1 } else { 2 };
         let C::Array(f) = &mut tx[which] else {
@@ -244,15 +266,15 @@ fn fixture_payload(change: Option<&str>) -> Vec<u8> {
     ]));
     let (rewards_raw, rewards_link) = section(&a(vec![
         n(5),
-        n(SLOT),
+        n(slot),
         a(vec![n(6), C::Null, C::Null, C::Null, C::Bytes(vec![])]),
     ]));
     let (block_raw, _) = section(&a(vec![
         n(2),
-        n(SLOT),
+        n(slot),
         a(vec![a(vec![C::Integer(-1), n(0)])]),
         a(vec![entry_link]),
-        a(vec![n(SLOT - 1), n(0)]),
+        a(vec![n(slot - 1), n(0)]),
         rewards_link,
     ]));
     [tx_raw, entry_raw, rewards_raw, block_raw].concat()
@@ -343,4 +365,119 @@ fn each_valid_archival_envelope_can_be_missing_or_quarantined_without_silent_los
                 .to_string();
         assert!(error.starts_with(reason), "{error}");
     }
+}
+
+fn multi(count: u64) -> Harness {
+    let mut h = Harness::new();
+    let payloads = (0..count)
+        .map(|i| fixture_payload_at(SLOT + i, None))
+        .collect::<Vec<_>>();
+    h.metadata_slots(&payloads);
+    h.admit_slots(count);
+    for (i, p) in payloads.iter().enumerate() {
+        h.publish(4 + u64::try_from(i).unwrap(), p);
+    }
+    h
+}
+
+#[test]
+fn three_native_slots_keep_receipt_binding_source_order_and_determinism() {
+    let h = multi(3);
+    let before = inventory(&h.root);
+    let first = report::decode_run(&h.root).unwrap();
+    assert_eq!(first, report::decode_run(&h.root).unwrap());
+    assert_eq!(first["input_kind"], "FIXTURE_RECORDED_CAR_SELECTION");
+    assert_eq!(first["transaction_envelopes"], 3);
+    assert_eq!(first["dispositions"]["DECODED"], 3);
+    assert_eq!(first["slots"].as_array().unwrap().len(), 3);
+    for i in 0..3 {
+        assert_eq!(
+            first["records"][i]["effective_at"]["slot"],
+            (SLOT + u64::try_from(i).unwrap()).to_string()
+        );
+        assert_eq!(
+            first["records"][i]["effective_at"]["transaction_index_in_slot"],
+            0
+        );
+        assert_eq!(first["records"][i]["source"]["receipt_sequence"], i + 4);
+        assert_eq!(first["records"][i]["source"]["bindings"], first["bindings"]);
+        assert_eq!(first["slots"][i]["dispositions"]["DECODED"], 1);
+        assert_eq!(
+            first["slots"][i]["resource_accounting"]["max_record_json_bytes"],
+            report::MAX_RECORD_JSON_BYTES
+        );
+    }
+    assert_eq!(first["analysis"]["vote_program_transactions_retained"], 3);
+    assert_eq!(before, inventory(&h.root));
+    let html = report::html(&first);
+    for i in 0..3 {
+        assert!(html.contains(&(SLOT + i).to_string()));
+    }
+    assert!(html.contains("Geen Silver geproduceerd"));
+}
+
+#[test]
+fn native_selection_missing_middle_corrupt_middle_or_changed_index_fails_closed() {
+    for target in ["missing", "raw", "receipt", "index"] {
+        let h = multi(3);
+        match target {
+            "missing" => fs::remove_dir_all(h.root.join("published/0000000005")).unwrap(),
+            "raw" => fs::write(h.root.join("published/0000000005/raw.bin"), b"corrupt").unwrap(),
+            "receipt" => rewrite_json(&h.root.join("published/0000000005/receipt.json"), |v| {
+                v["sha256"] = json!("f".repeat(64));
+            }),
+            _ => fs::write(
+                h.root.join("published/0000000000/raw.bin"),
+                b"corrupt index",
+            )
+            .unwrap(),
+        }
+        let before = inventory(&h.root);
+        assert!(report::decode_run(&h.root).is_err(), "{target}");
+        assert_eq!(before, inventory(&h.root));
+    }
+}
+
+#[test]
+fn selection_does_not_silently_expand_beyond_three_slots() {
+    let h = multi(4);
+    assert_eq!(
+        report::decode_run(&h.root).unwrap_err().to_string(),
+        "BRONZE_SELECTION_SLOT_LIMIT"
+    );
+    let mut bytes = report::MAX_SELECTION_RECORD_BYTES;
+    assert!(report::charge(&mut bytes, 1, report::MAX_SELECTION_RECORD_BYTES).is_err());
+    assert_eq!(bytes, report::MAX_SELECTION_RECORD_BYTES);
+}
+
+#[test]
+fn multi_slot_reports_missing_and_quarantined_envelopes_without_dropping_order() {
+    let mut h = Harness::new();
+    let payloads = vec![
+        fixture_payload_at(SLOT, None),
+        fixture_payload_at(SLOT + 1, Some("missing")),
+        fixture_payload_at(SLOT + 2, Some("wire")),
+    ];
+    h.metadata_slots(&payloads);
+    h.admit_slots(3);
+    for (i, bytes) in payloads.iter().enumerate() {
+        h.publish(4 + u64::try_from(i).unwrap(), bytes);
+    }
+    let before = inventory(&h.root);
+    let r = report::decode_run(&h.root).unwrap();
+    assert_eq!(r["transaction_envelopes"], 3);
+    assert_eq!(
+        r["dispositions"],
+        json!({"DECODED":1,"MISSING":1,"QUARANTINED":1,"UNSUPPORTED":0})
+    );
+    for (i, outcome) in ["DECODED", "MISSING", "QUARANTINED"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(r["records"][i]["disposition"], outcome);
+    }
+    assert_eq!(r["pump_program_unknown"], 2);
+    assert!(r["pump_program_involvement_transactions"].is_null());
+    assert_eq!(r["reasons"]["MISSING_STATUS_METADATA"], 1);
+    assert_eq!(before, inventory(&h.root));
 }
