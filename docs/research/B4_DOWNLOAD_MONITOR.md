@@ -55,6 +55,16 @@ shape and formats the result. A browser refresh does not mutate any run.
 
 ## Authentic and simulated views
 
+The later 2026-09-11 authentic payload has a separate
+[receipt-bound offline verification result](OF1_RECORDED_CAR_VERIFICATION.md).
+The UI distinguishes capture/publication, Raw/receipts, CAR/slot verification
+and domain decoding. It reads an external `verification-RUN_ID.json` from the
+snapshot directory, never the immutable run. The GET-only attachment validates
+manifest/receipt/Raw references and stage/count/selection consistency; it does
+not rerun the Rust verifier or continuously rehash Raw. No report means
+`UNAVAILABLE`, even at 5/5 publications. Original failures remain separate history.
+The following older metadata and simulation results retain their original scope.
+
 The existing authentic metadata run is
 `8a350ea0c149f9c49e0615a9460ed3695eec64af21a778b0f8d7786adbae336f`:
 four HTTP 200 publications, zero retries, 5,184,161 published entity bytes and

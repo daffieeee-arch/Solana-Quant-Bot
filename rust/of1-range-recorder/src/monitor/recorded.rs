@@ -12,7 +12,7 @@ use crate::{
         ClockSample,
         acquisition::{
             AggregateBudget, AggregatePlan, Authority, MetadataLease, PayloadLease,
-            PreparedPayload, Receipt, Request, StageBudget, metadata_proposal_sha256,
+            PreparedPayload, Published, Receipt, Request, StageBudget, metadata_proposal_sha256,
             metadata_requests, payload_proposal_sha256, resource_sample,
         },
     },
@@ -81,6 +81,10 @@ pub struct RecordedRun {
     pub stage_budget: StageBudget,
     pub stage_attempts_used: u64,
     pub stage_reserved_bytes: u64,
+    /// Historical inputs, not permission to resume the old writer.
+    pub aggregate_plan: AggregatePlan,
+    pub prepared: Option<PreparedPayload>,
+    pub published: Vec<Published>,
 }
 
 /// # Errors
@@ -581,5 +585,17 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
         stage_budget: stage.budget.clone(),
         stage_attempts_used: stage_attempts,
         stage_reserved_bytes: stage_reserved,
+        aggregate_plan: manifest.plan,
+        prepared: payload.map(|p| p.prepared),
+        published: published_receipts
+            .into_values()
+            .map(|receipt| Published {
+                raw_path: root.join(format!(
+                    "published/{:010}/raw.bin",
+                    receipt.request.sequence
+                )),
+                receipt,
+            })
+            .collect(),
     })
 }

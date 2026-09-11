@@ -48,6 +48,8 @@ const integer = (value: unknown): boolean => Number.isSafeInteger(value) && Numb
 const integers = (value: unknown, keys: string[]): value is Record<string, unknown> => object(value) && keys.every((key) => integer(value[key]));
 const nullableInteger = (value: unknown): boolean => value === null || integer(value);
 const nullableText = (value: unknown): boolean => value === null || text(value);
+const sha256 = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+const nullableHash = (value: unknown): boolean => value === null || sha256(value);
 
 function boundedTree(value: unknown, depth = 0): boolean {
   if (depth > 8) return false;
@@ -110,6 +112,64 @@ export function validateSnapshot(value: unknown, id: string): Record<string, unk
   return value;
 }
 
+/** Validate an external Rust report's envelope. This does not decode CAR or run a verifier. */
+function validateVerification(value: unknown, id: string): Record<string, unknown> {
+  if (!object(value) || !boundedTree(value) || value.schema !== 'OF1_OFFLINE_VERIFICATION_1'
+    || value.run_id !== id || !text(value.dataset_root)
+    || !object(value.verifier) || value.verifier.name !== 'of1-verify-recorded' || value.verifier.version !== '1'
+    || !sha256(value.verifier.binary_sha256) || !sha256(value.verifier.source_sha256)
+    || !object(value.bindings) || !sha256(value.bindings.manifest_sha256) || !sha256(value.bindings.aggregate_sha256)
+    || !nullableHash(value.bindings.payload_manifest_sha256) || !nullableHash(value.bindings.prepared_payload_sha256)
+    || !nullableHash(value.bindings.metadata_receipt_sha256) || !Array.isArray(value.bindings.receipts) || value.bindings.receipts.length > 32
+    || !object(value.stages) || !['COMPLETE', 'INCOMPLETE'].includes(String(value.stages.capture))
+    || value.stages.raw_receipts !== 'VERIFIED'
+    || !['VERIFIED', 'QUARANTINED', 'NOT_ACQUIRED', 'INCOMPLETE'].includes(String(value.stages.car_slot))
+    || value.stages.domain_decoding !== 'NOT_PERFORMED'
+    || !object(value.integrity) || !nullableText(value.integrity.error)
+    || value.integrity.root_to_slot_membership !== 'UNAVAILABLE' || value.integrity.whole_car_sha256_verified !== false
+    || !Array.isArray(value.integrity.slots) || value.integrity.slots.length > 32
+    || value.evidence !== 'RAW_ENGINEERING_CHECK_ONLY' || value.research_ready !== false) {
+    throw new MonitorReadError('INVALID_OFFLINE_VERIFICATION');
+  }
+  let previousSequence = -1;
+  for (const receipt of value.bindings.receipts) {
+    if (!integers(receipt, ['sequence', 'raw_bytes']) || Number(receipt.sequence) <= previousSequence
+      || receipt.path !== `published/${String(receipt.sequence).padStart(10, '0')}/receipt.json`
+      || !sha256(receipt.sha256) || !sha256(receipt.raw_sha256)) throw new MonitorReadError('INVALID_OFFLINE_VERIFICATION');
+    previousSequence = Number(receipt.sequence);
+  }
+  let previousSlot = -1;
+  for (const slot of value.integrity.slots) {
+    if (!integers(slot, ['slot']) || Number(slot.slot) <= previousSlot
+      || !integers(slot.archival_node_counts, ['transaction', 'entry', 'block', 'rewards', 'dataframe'])
+      || !object(slot.report) || slot.report.selected_slot !== slot.slot
+      || !integers(slot.report, ['captured_section_bytes', 'verified_nodes', 'verified_links'])
+      || slot.report.root_to_slot_membership !== 'UNAVAILABLE'
+      || slot.report.domain_counts !== 'UNAVAILABLE_NOT_DECODED_IN_B4') throw new MonitorReadError('INVALID_OFFLINE_VERIFICATION');
+    const counts = slot.archival_node_counts as Record<string, number>;
+    const countTotal = ['transaction', 'entry', 'block', 'rewards', 'dataframe'].reduce((sum, key) => sum + counts[key], 0);
+    if (!integer(countTotal) || countTotal !== slot.report.verified_nodes || counts.block !== 1) throw new MonitorReadError('INVALID_OFFLINE_VERIFICATION');
+    previousSlot = Number(slot.slot);
+  }
+  const unacquired = value.stages.car_slot === 'NOT_ACQUIRED';
+  if (value.stages.car_slot === 'VERIFIED' && (value.stages.capture !== 'COMPLETE' || value.integrity.error !== null
+      || value.integrity.slots.length === 0 || value.bindings.payload_manifest_sha256 === null)
+    || value.stages.car_slot === 'QUARANTINED' && (!text(value.integrity.error) || value.integrity.error.length === 0
+      || value.integrity.slots.length !== 0 || value.bindings.payload_manifest_sha256 === null)
+    || unacquired && (value.integrity.slots.length !== 0 || value.integrity.error !== null
+      || value.bindings.payload_manifest_sha256 !== null || value.bindings.prepared_payload_sha256 !== null
+      || value.bindings.metadata_receipt_sha256 !== null)) throw new MonitorReadError('INVALID_OFFLINE_VERIFICATION');
+  if (value.prior_failure !== null) {
+    const prior = value.prior_failure;
+    if (!object(prior) || !text(prior.error) || prior.status !== 'HISTORICAL_FAILURE_PRESERVED'
+      || !['binary_sha256', 'artifact_sha256', 'run_result_sha256', 'raw_sha256'].every(key => sha256(prior[key]))
+      || !value.bindings.receipts.some(receipt => object(receipt) && receipt.raw_sha256 === prior.raw_sha256)) {
+      throw new MonitorReadError('INVALID_OFFLINE_VERIFICATION');
+    }
+  }
+  return value;
+}
+
 export function createSnapshotReader(directory: string) {
   if (!isAbsolute(directory) || normalize(directory) !== directory) throw new MonitorReadError('ABSOLUTE_SNAPSHOT_DIRECTORY_REQUIRED');
 
@@ -123,6 +183,16 @@ export function createSnapshotReader(directory: string) {
     } catch (error) {
       return { id, state: 'UNAVAILABLE', reason: error instanceof MonitorReadError ? error.reason : 'SNAPSHOT_UNAVAILABLE' };
     }
+  }
+
+  async function boundArtifact(root: string, path: string, expectedHash: unknown): Promise<Buffer> {
+    const absolute = resolve(root, path);
+    try {
+      if (await realpath(root) !== root || await realpath(absolute) !== absolute) throw new MonitorReadError('ARTIFACT_PATH_CHANGED');
+    } catch { throw new MonitorReadError('ARTIFACT_UNAVAILABLE'); }
+    const bytes = await readBoundedFile(absolute, MAX_ARTIFACT_BYTES);
+    if (createHash('sha256').update(bytes).digest('hex') !== expectedHash) throw new MonitorReadError('ARTIFACT_HASH_MISMATCH');
+    return bytes;
   }
 
   return Object.freeze({
@@ -144,6 +214,82 @@ export function createSnapshotReader(directory: string) {
       }
       return Promise.all(ids.sort().map(snapshot));
     },
+    async verification(id: string): Promise<Record<string, unknown>> {
+      try {
+        if (!/^[a-f0-9]{64}$/.test(id)) throw new MonitorReadError('VERIFICATION_NOT_FOUND');
+        const run = await snapshot(id);
+        if (!run.snapshot) throw new MonitorReadError(run.reason ?? 'SNAPSHOT_UNAVAILABLE');
+        const bytes = await readBoundedFile(join(directory, `verification-${id}.json`), MAX_ARTIFACT_BYTES);
+        let report: Record<string, unknown>;
+        try { report = validateVerification(JSON.parse(bytes.toString('utf8')), id); }
+        catch (error) { if (error instanceof MonitorReadError) throw error; throw new MonitorReadError('INVALID_OFFLINE_VERIFICATION'); }
+        const root = run.snapshot.dataset_root as string;
+        const binding = report.bindings as Record<string, unknown>;
+        const refs = run.snapshot.artifacts as Record<string, unknown>[];
+        const paths = refs.map(ref => ref.path);
+        if (report.dataset_root !== root || new Set(paths).size !== paths.length
+          || refs.find(ref => ref.path === 'run.json')?.sha256 !== binding.manifest_sha256
+          || (refs.find(ref => ref.path === 'payload.json')?.sha256 ?? null) !== binding.payload_manifest_sha256) {
+          throw new MonitorReadError('VERIFICATION_BINDING_MISMATCH');
+        }
+        const manifest = JSON.parse((await boundArtifact(root, 'run.json', binding.manifest_sha256)).toString('utf8'));
+        if (manifest.run_id !== id || manifest.aggregate_sha256 !== binding.aggregate_sha256) throw new MonitorReadError('VERIFICATION_BINDING_MISMATCH');
+        const payloadRequestBytes = new Map<number, number>();
+        if (binding.payload_manifest_sha256 !== null) {
+          const payload = JSON.parse((await boundArtifact(root, 'payload.json', binding.payload_manifest_sha256)).toString('utf8'));
+          if (payload.lease?.prepared_payload_sha256 !== binding.prepared_payload_sha256
+            || payload.lease?.metadata_receipt_sha256 !== binding.metadata_receipt_sha256) throw new MonitorReadError('VERIFICATION_BINDING_MISMATCH');
+          const prepared = payload.prepared;
+          const selected = run.snapshot.selected_slots as Record<string, unknown> | null;
+          if (!integers(prepared, ['start_slot', 'end_slot']) || Number(prepared.end_slot) <= Number(prepared.start_slot)
+            || !selected || selected.start !== prepared.start_slot || selected.end_exclusive !== prepared.end_slot
+            || !Array.isArray(prepared.requests) || prepared.requests.length > 32) throw new MonitorReadError('VERIFICATION_SELECTION_MISMATCH');
+          const plannedBytes = new Map<number, number>();
+          const requestSequences = new Set<number>();
+          for (const request of prepared.requests) {
+            if (!integers(request, ['sequence']) || Number(request.sequence) < 4 || requestSequences.has(Number(request.sequence))
+              || !integers(request.kind, ['slot', 'start', 'end_exclusive']) || request.kind.kind !== 'CAR_RANGE'
+              || Number(request.kind.slot) < Number(prepared.start_slot) || Number(request.kind.slot) >= Number(prepared.end_slot)
+              || Number(request.kind.end_exclusive) <= Number(request.kind.start)) throw new MonitorReadError('VERIFICATION_SELECTION_MISMATCH');
+            requestSequences.add(Number(request.sequence));
+            const slot = Number(request.kind.slot);
+            const length = Number(request.kind.end_exclusive) - Number(request.kind.start);
+            payloadRequestBytes.set(Number(request.sequence), length);
+            const total = (plannedBytes.get(slot) ?? 0) + length;
+            if (!integer(total)) throw new MonitorReadError('VERIFICATION_SELECTION_MISMATCH');
+            plannedBytes.set(slot, total);
+          }
+          const slots = (report.integrity as Record<string, unknown>).slots as Record<string, unknown>[];
+          for (const slot of slots) {
+            if (plannedBytes.get(Number(slot.slot)) !== (slot.report as Record<string, unknown>).captured_section_bytes) {
+              throw new MonitorReadError('VERIFICATION_SELECTION_MISMATCH');
+            }
+          }
+          if ((report.stages as Record<string, unknown>).car_slot === 'VERIFIED' && slots.length !== plannedBytes.size) {
+            throw new MonitorReadError('VERIFICATION_SELECTION_MISMATCH');
+          }
+        } else if (binding.prepared_payload_sha256 !== null || binding.metadata_receipt_sha256 !== null) {
+          throw new MonitorReadError('VERIFICATION_BINDING_MISMATCH');
+        }
+        const receipts = binding.receipts as Record<string, unknown>[];
+        const receiptRefs = refs.filter(ref => String(ref.path).startsWith('published/'));
+        const published = (run.snapshot.operations as Record<string, unknown>[]).filter(op => op.state === 'PUBLISHED');
+        if (receipts.length !== receiptRefs.length || receipts.length !== published.length) throw new MonitorReadError('VERIFICATION_RECEIPT_SET_MISMATCH');
+        for (const ref of receipts) {
+          if (receiptRefs.find(item => item.path === ref.path)?.sha256 !== ref.sha256
+            || !published.some(op => op.sequence === ref.sequence && op.published_bytes === ref.raw_bytes)
+            || Number(ref.sequence) >= 4 && payloadRequestBytes.get(Number(ref.sequence)) !== ref.raw_bytes) throw new MonitorReadError('VERIFICATION_RECEIPT_MISMATCH');
+          const receipt = JSON.parse((await boundArtifact(root, ref.path as string, ref.sha256)).toString('utf8'));
+          if (receipt.run_id !== id || receipt.aggregate_sha256 !== binding.aggregate_sha256
+            || receipt.request?.sequence !== ref.sequence || receipt.sha256 !== ref.raw_sha256
+            || receipt.response_entity_bytes !== ref.raw_bytes) throw new MonitorReadError('VERIFICATION_RECEIPT_MISMATCH');
+        }
+        // Raw is verified by the named Rust executable, not repeatedly decoded/read by this UI server.
+        return { state: 'READY', report_sha256: createHash('sha256').update(bytes).digest('hex'), report };
+      } catch (error) {
+        return { state: 'UNAVAILABLE', reason: error instanceof MonitorReadError ? error.reason : 'VERIFICATION_UNAVAILABLE' };
+      }
+    },
     async artifact(id: string, key: string): Promise<Buffer> {
       if (!/^[a-f0-9]{64}$/.test(id) || !/^[a-z0-9-]{1,80}$/.test(key)) throw new MonitorReadError('ARTIFACT_NOT_FOUND');
       const run = await snapshot(id);
@@ -151,12 +297,7 @@ export function createSnapshotReader(directory: string) {
       const reference = (run.snapshot.artifacts as Record<string, unknown>[]).find((item) => item.id === key);
       if (!reference) throw new MonitorReadError('ARTIFACT_NOT_FOUND');
       const root = run.snapshot.dataset_root as string;
-      const path = resolve(root, reference.path as string);
-      try {
-        if (await realpath(root) !== root || await realpath(path) !== path) throw new MonitorReadError('ARTIFACT_PATH_CHANGED');
-      } catch { throw new MonitorReadError('ARTIFACT_UNAVAILABLE'); }
-      const bytes = await readBoundedFile(path, MAX_ARTIFACT_BYTES);
-      if (createHash('sha256').update(bytes).digest('hex') !== reference.sha256) throw new MonitorReadError('ARTIFACT_HASH_MISMATCH');
+      const bytes = await boundArtifact(root, reference.path as string, reference.sha256);
       try { JSON.parse(bytes.toString('utf8')); }
       catch { throw new MonitorReadError('ARTIFACT_NOT_JSON'); }
       return bytes;

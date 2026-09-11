@@ -50,6 +50,13 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     const fixtureSource = Object.hasOwn(LOOPBACK_SOURCE_HASHES, path);
     const acquisitionSource = Object.hasOwn(ACQUISITION_SOURCE_HASHES, path);
     const monitorSource = Object.hasOwn(MONITOR_SOURCE_HASHES, path);
+    // The retained Node error has this literal prefix; its word "Command" is
+    // evidence text, not Rust process capability. Ignore only that exact quoted
+    // prefix in the two forensic-reader files. Every other token stays scanned,
+    // including process APIs added next to the literal; no file-wide exemption.
+    const processSource = ['src/recorded_verification.rs', 'tests/recorded_verification.rs'].includes(path)
+      ? String(source).replaceAll('"Error: Command failed: ', '"Error: diagnostic failed: ')
+      : source;
     if (crashHarness && hash(source) !== PROCESS_TEST_HASH) errors.push('unreviewed OF1 process-crash harness');
     if (fixtureSource && hash(source) !== LOOPBACK_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 loopback source: ${path}`);
     if (acquisitionSource && hash(source) !== ACQUISITION_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 acquisition source: ${path}`);
@@ -57,7 +64,7 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     if (path === 'build.rs' || /\bunsafe\s*\{|#\s*\[\s*path\s*=/u.test(source)
       || (!fixtureSource && !acquisitionSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
       || (!monitorSource && /\bUnixDatagram\b/u.test(source))
-      || (!crashHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(source))) {
+      || (!crashHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
       errors.push(`unexpected runtime capability in ${path}`);
     }
   }
@@ -292,6 +299,38 @@ async function run(mode) {
       throw new Error('monitor staged payload/receipt/CID fixture drift');
     }
     process.stdout.write('OF1 monitor metadata restart -> separate Fixture payload admission -> paced 206 -> published Raw -> CID/slot check PASS\n');
+    // The standalone reader needs no monitor IPC, writer, active lease or network.
+    // Reuse sealed runs above; repeat under syscall socket denial and prove that
+    // every retained input file is unchanged, including the writer lock file.
+    const reader = artifacts.find(v => v.reason === 'compiler-artifact'
+      && v.target.name === 'of1-verify-recorded' && v.executable)?.executable;
+    if (!reader) throw new Error('recorded verification binary missing');
+    const inventory = directory => Object.fromEntries(readdirSync(directory, { withFileTypes: true })
+      .sort((a, b) => a.name.localeCompare(b.name)).flatMap(entry => {
+        const path = join(directory, entry.name);
+        if (entry.isSymbolicLink()) throw new Error('symlink in sealed verification run');
+        return entry.isDirectory()
+          ? Object.entries(inventory(path)).map(([key, value]) => [`${entry.name}/${key}`, value])
+          : [[entry.name, hash(readFileSync(path))]];
+      }));
+    for (const [name, state, nodes] of [['monitored-run', 'NOT_ACQUIRED', 0], ['monitored-payload-run', 'VERIFIED', 5]]) {
+      const directory = join(scratch, name);
+      const before = JSON.stringify(inventory(directory));
+      const first = isolated(reader, [directory]).stdout;
+      const second = isolated(reader, [directory]).stdout;
+      const report = JSON.parse(first);
+      if (first !== second || before !== JSON.stringify(inventory(directory))
+        || report.schema !== 'OF1_OFFLINE_VERIFICATION_1'
+        || report.stages.raw_receipts !== 'VERIFIED' || report.stages.car_slot !== state
+        || report.stages.domain_decoding !== 'NOT_PERFORMED' || report.research_ready !== false
+        || report.verifier.binary_sha256 !== hash(readFileSync(reader))
+        || report.integrity.root_to_slot_membership !== 'UNAVAILABLE'
+        || report.integrity.whole_car_sha256_verified !== false
+        || report.integrity.slots.reduce((n, slot) => n + slot.report.verified_nodes, 0) !== nodes) {
+        throw new Error('read-only recorded verifier identity/preservation/determinism drift');
+      }
+    }
+    process.stdout.write('OF1 separate read-only verifier: metadata-only + sealed CAR, deterministic, source-preserving, socket-denied PASS\n');
     process.stdout.write('OF1 socket-denied default/build, local IPC and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');
   } finally {
     rmSync(scratch, { recursive: true, force: true });

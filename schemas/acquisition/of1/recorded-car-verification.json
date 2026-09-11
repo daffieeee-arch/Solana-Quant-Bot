@@ -1,0 +1,102 @@
+{
+  "bindings": {
+    "aggregate_sha256": "f820388fe9dd47018ca6137ed4c8b83a996ac569b73ab3069a7b29036279f631",
+    "manifest_sha256": "b173623d186e8083d2ce0805c44b9391073eafb7fdc95c3cb93dbb45205d5018",
+    "metadata_receipt_sha256": "9684f93b37c21aa3cfad74bc02d26a05206ed8dee9c06dc91672c7e5afef0a44",
+    "payload_manifest_sha256": "b8fbd5b7394060bffaf8886a6edd4d92f09165a858b8e4c929ede8cdce3066b5",
+    "prepared_payload_sha256": "cd03053e9e0b1bf257a6b97032556537cf8e39e332983c794ad93e3cba6d0bdd",
+    "receipts": [
+      {
+        "path": "published/0000000000/receipt.json",
+        "raw_bytes": 5184000,
+        "raw_sha256": "649754195dd6182846a9754ffd7fa26a487e0b65bea66794e7d8bf180321a59b",
+        "sequence": 0,
+        "sha256": "c460e62290dc9e8e29762926dacdda55dd22c6bda7e3444dec7e78f17cfcb97e"
+      },
+      {
+        "path": "published/0000000001/receipt.json",
+        "raw_bytes": 101,
+        "raw_sha256": "a7b6e38f47efd59831641cccf4eaf24870c9176c876d7bd5ccf21163bceb95f0",
+        "sequence": 1,
+        "sha256": "a6289adb7adc62fa7b9bc5967d05b27b15dbefc4110f181425507a07655b18ca"
+      },
+      {
+        "path": "published/0000000002/receipt.json",
+        "raw_bytes": 60,
+        "raw_sha256": "8db9cecc883c7b759a9975230b09c34b2a4e6b349e445b5d92d96b02b9408ba2",
+        "sequence": 2,
+        "sha256": "0d6f4bf33b88a567596dd68511268333900f367220ebd4f6a4241b3aa6d55559"
+      },
+      {
+        "path": "published/0000000003/receipt.json",
+        "raw_bytes": 0,
+        "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sequence": 3,
+        "sha256": "bf0b60d627e0514771f3da4e44de55475bd02232412f495e9965157b0d6c66da"
+      },
+      {
+        "path": "published/0000000004/receipt.json",
+        "raw_bytes": 45051,
+        "raw_sha256": "3d93337542751eaacecf039a2fb5384f700f226879616b3fb80117fb9d4a8ae6",
+        "sequence": 4,
+        "sha256": "9a158eec0cd4f5a445fa34b4b7f18e4c0d720a198cec7ceae5c3279c3245104f"
+      }
+    ]
+  },
+  "dataset_root": "/home/dmesdary/solana-quant-data/runs/of1-e978-metadata-0725dd2f-03",
+  "evidence": "RAW_ENGINEERING_CHECK_ONLY",
+  "integrity": {
+    "error": null,
+    "root_to_slot_membership": "UNAVAILABLE",
+    "slots": [
+      {
+        "archival_node_counts": {
+          "block": 1,
+          "dataframe": 0,
+          "entry": 64,
+          "rewards": 1,
+          "transaction": 0
+        },
+        "report": {
+          "captured_section_bytes": 45051,
+          "dataframe_payload_and_checksum": "NOT_EVALUATED",
+          "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+          "node_cid_integrity": "RECOMPUTED_SHA2_256_MATCHED",
+          "root_to_slot_membership": "UNAVAILABLE",
+          "selected_slot": 422496000,
+          "selected_slot_envelope": "STRUCTURAL_LINK_CLOSURE_MATCHED",
+          "source_commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+          "source_observation": "NOT_ATTESTED_BY_VERIFIER",
+          "terminal_block_cid_hex": "01711220cc09fd975270b7e5b8c3bab4d1e3fa3fc9a5a67d4c8fa897deaa8abe1f8709d1",
+          "verified_links": 65,
+          "verified_nodes": 66
+        },
+        "slot": 422496000
+      }
+    ],
+    "whole_car_sha256_verified": false
+  },
+  "prior_failure": {
+    "artifact_sha256": "3c19457c53a78b9637d300f8fe28eecd1019052ff69649e1a0165a48cec71eb6",
+    "binary_sha256": "d6774c7197468710ae07bc5770388963b9175b0c1b7d4f22e93b33a1230aeda0",
+    "error": "CAR_CBOR_OR_ARCHIVAL_SCHEMA_INVALID",
+    "raw_sha256": "3d93337542751eaacecf039a2fb5384f700f226879616b3fb80117fb9d4a8ae6",
+    "run_result_sha256": "c68287a6bd42dd113d2bffeca24b441c577ddd1c6e61bc806021210b971f96f0",
+    "status": "HISTORICAL_FAILURE_PRESERVED"
+  },
+  "research_ready": false,
+  "run_id": "e0e5314c9d73c237eb6794a153cd75111cd8c3cb996b51abe3a2a5aac2cc1d79",
+  "schema": "OF1_OFFLINE_VERIFICATION_1",
+  "stages": {
+    "capture": "COMPLETE",
+    "car_slot": "VERIFIED",
+    "domain_decoding": "NOT_PERFORMED",
+    "raw_receipts": "VERIFIED"
+  },
+  "verifier": {
+    "binary_sha256": "85fcaee0947e3ea5017e8e30f49380e2208a9c2227d24d16b0c7be4365480e92",
+    "name": "of1-verify-recorded",
+    "source_sha256": "d25e752100a8c19831f5080b8e5b481786ae161a80cfeec091676d06f8bc09b7",
+    "version": "1"
+  }
+}

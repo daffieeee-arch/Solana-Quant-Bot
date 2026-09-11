@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { parseMonitorResponse, type MonitorResponse, type MonitorSnapshot } from './contract';
+import { parseMonitorResponse, parseOfflineVerification, type MonitorResponse, type MonitorSnapshot, type OfflineVerificationResponse } from './contract';
 
 const number = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 1 });
 const count = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 });
@@ -7,11 +7,11 @@ const count = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 });
 export const MAX_MONITOR_RESPONSE_CHARS = 16 * 65_536 + 16 * 1024;
 const stages = [
   ['PREPARING', 'Voorbereiden'], ['METADATA', 'Metadata'], ['DOWNLOADING', 'Ontvangen'],
-  ['VERIFYING', 'Controleren'], ['PUBLISHING', 'Publiceren'], ['COMPLETE', 'Gereed'],
+  ['VERIFYING', 'Raw controleren'], ['PUBLISHING', 'Publiceren'], ['COMPLETE', 'Gepubliceerd'],
 ] as const;
 const stageLabels: Record<MonitorSnapshot['stage'], string> = {
   PREPARING: 'Voorbereiden', METADATA: 'Metadata ophalen', DOWNLOADING: 'Download bezig',
-  VERIFYING: 'Integriteit controleren', PUBLISHING: 'Duurzaam publiceren', COMPLETE: 'Selectie afgerond', STOPPED: 'Gestopt',
+  VERIFYING: 'Raw/receipt controleren', PUBLISHING: 'Duurzaam publiceren', COMPLETE: 'Capture gepubliceerd', STOPPED: 'Gestopt',
 };
 const operationLabels: Record<MonitorSnapshot['operations'][number]['state'], string> = {
   PENDING: 'Gepland', RESERVED: 'Gereserveerd', DOWNLOADING: 'Ontvangen', VERIFYING: 'Controleren',
@@ -79,7 +79,7 @@ function Stat({ label, value, detail, accent = false }: { label: string; value: 
   return <div className={`stat${accent ? ' accent' : ''}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
 }
 
-function RunContent({ snapshot: s, stale, now }: { snapshot: MonitorSnapshot; stale: boolean; now: number }) {
+function RunContent({ snapshot: s, stale, now, verification }: { snapshot: MonitorSnapshot; stale: boolean; now: number; verification: OfflineVerificationResponse }) {
   const recorded = s.mode === 'RECORDED';
   const simulation = s.kind === 'LOCAL_SIMULATION';
   const terminal = s.stage === 'COMPLETE' || s.stage === 'STOPPED';
@@ -88,6 +88,7 @@ function RunContent({ snapshot: s, stale, now }: { snapshot: MonitorSnapshot; st
   const operationProgress = fraction(s.selection.operations_published, s.selection.operations_total);
   const current = s.operations.find(op => ['RESERVED', 'DOWNLOADING', 'VERIFYING', 'PUBLISHING'].includes(op.state));
   const activeStep = stages.findIndex(([key]) => key === s.stage);
+  const verified = verification.state === 'READY' ? verification.report : null;
   const receivedLabel = s.traffic.received_basis === 'RECEIPTS_ONLY' ? 'Ontvangen volgens receipts'
     : s.traffic.received_basis === 'DURABLE_LOWER_BOUND' ? 'Ontvangen · duurzame ondergrens' : 'Daadwerkelijk ontvangen';
   return <>
@@ -100,14 +101,14 @@ function RunContent({ snapshot: s, stale, now }: { snapshot: MonitorSnapshot; st
       <div><p className="eyebrow">RUN / EPOCH {s.epoch}</p><h1>{s.label}</h1><p className="run-path">{s.dataset_root}</p></div>
       <div className="run-state"><span className={`state-chip ${stale ? 'warn' : s.stage === 'STOPPED' ? 'bad' : 'good'}`}>
         <span className="status-dot" />{stale ? 'STALE · metingen verouderd' : recorded ? 'Vastgelegd resultaat' : stageLabels[s.stage]}</span>
-        <small>{recorded ? 'Read-only controle' : 'Laatste Rust-meting'} · {when(s.updated_at_ms)}</small>
+        <small>{recorded ? 'Snapshot vastgelegd' : 'Laatste Rust-meting'} · {when(s.updated_at_ms)}</small>
         {!recorded && <small>{duration(Math.max(0, now - s.updated_at_ms))} geleden · reeks {s.sequence}</small>}
       </div>
     </section>
 
     <div className="metric-grid">
       <Stat label={receivedLabel} value={bytes(s.traffic.received_bytes)} detail="Response-entity-bytes; niet fysieke wire bytes" />
-      <Stat label="Duurzaam gepubliceerd" value={bytes(s.selection.published_bytes)} detail={`${bytes(s.selection.verified_bytes)} gecontroleerd · unieke selectie`} accent />
+      <Stat label="Duurzaam gepubliceerd" value={bytes(s.selection.published_bytes)} detail={`${bytes(s.selection.verified_bytes)} Raw/receipt-gecontroleerd · geen CAR-claim`} accent />
       <Stat label="Downloadsnelheid" value={recorded || stale ? 'Nog onbekend' : s.traffic.speed_bps === null ? 'Nog onbekend' : `${bytes(s.traffic.speed_bps)}/s`} detail={recorded ? 'Geen live meetreeks beschikbaar' : stale ? 'Geen actuele snelheidsclaim bij stale metingen' : 'Gemeten tijdens de HTTP-response'} />
       <Stat label={s.traffic.eta_scope === 'CURRENT_OPERATION' ? 'Downloadtijd huidige operatie' : 'Resterende downloadtijd selectie'} value={recorded || stale ? 'Nog onbekend' : duration(s.traffic.download_eta_ms)} detail="Exclusief verificatie en duurzame publicatie" />
     </div>
@@ -115,7 +116,7 @@ function RunContent({ snapshot: s, stale, now }: { snapshot: MonitorSnapshot; st
     <div className="main-grid">
       <section className="panel transfer-panel" aria-label="Downloadvoortgang">
         <div className="panel-heading"><div><p className="eyebrow">GEPLANDE SELECTIE</p><h2>{stageLabels[s.stage]}</h2></div><span className="mono">{count.format(s.selection.operations_published)} / {count.format(s.selection.operations_total)} operaties</span></div>
-        <p className="metric-note">Huidige requestcyclus; voltooiing van de selectie staat in de publicatieteller.</p>
+        <p className="metric-note">Alleen de capturecyclus. Publicatieteller en Raw-controle bewijzen geen geslaagde CAR/slot-verificatie of domeindecoding.</p>
         <ol className="stage-list">{stages.map(([key, label], index) => <li key={key} className={index < activeStep ? 'complete' : index === activeStep ? 'current' : ''}><span>{index < activeStep ? '✓' : index + 1}</span>{label}</li>)}</ol>
         <div className="progress-caption"><span>Ontvangen selectie <b>{bytes(s.selection.received_selection_bytes)}</b>{s.selection.planned_bytes !== null && <> / {bytes(s.selection.planned_bytes)}</>}</span><strong>{percent(progress)}</strong></div>
         <Progress value={progress} label="Ontvangen geselecteerde bytes" />
@@ -129,16 +130,43 @@ function RunContent({ snapshot: s, stale, now }: { snapshot: MonitorSnapshot; st
       </section>
 
       <aside className="right-panels">
-        <section className="panel" aria-label="Integriteitsstatus"><div className="panel-heading"><h2>Integriteit & publicatie</h2><span className="tiny-tag">RAW</span></div>
-          <dl className="key-values"><div><dt>Receipts</dt><dd>{s.integrity.receipts}</dd></div><div><dt>CAR / CID</dt><dd>{s.integrity.car}</dd></div><div><dt>Root → slot membership</dt><dd className="unknown">UNAVAILABLE</dd></div></dl>
+        <section className="panel" aria-label="Integriteitsstatus"><div className="panel-heading"><h2>Vier afzonderlijke uitkomsten</h2><span className="tiny-tag">RAW</span></div>
+          <dl className="key-values outcome-values">
+            <div><dt>1 · Capture / publicatie</dt><dd>{verified?.stages.capture ?? (s.stage === 'COMPLETE' ? 'COMPLETE' : 'INCOMPLETE')}<small>{s.selection.operations_published}/{s.selection.operations_total} publicaties</small></dd></div>
+            <div><dt>2 · Raw / receipt-controle</dt><dd>{verified?.stages.raw_receipts ?? s.integrity.receipts}<small>{verified ? 'Extern Rust-verificatierapport' : 'Rust-monitorprojectie'}</small></dd></div>
+            <div><dt>3 · CAR / CID / slot</dt><dd className={verified?.stages.car_slot === 'VERIFIED' ? 'good' : verified?.stages.car_slot === 'QUARANTINED' ? 'bad' : 'unknown'}>{verified?.stages.car_slot ?? 'UNAVAILABLE'}<small>{verified ? 'Afzonderlijk gecontroleerd' : 'Geen gebonden extern rapport'}</small></dd></div>
+            <div><dt>4 · Domeindecoding</dt><dd className="unknown">NOT_PERFORMED<small>Geen Pump- of coinfeiten</small></dd></div>
+            <div><dt>Root → slot membership</dt><dd className="unknown">UNAVAILABLE</dd></div>
+          </dl>
+          {verification.state === 'UNAVAILABLE' && <p className="metric-note">Rapportkoppeling: {verification.reason}. Publicatie is geen vervangend verificatiebewijs.</p>}
+          {verified?.integrity.error && <p className="inline-error" role="alert">CAR/slot-controle gestopt: {verified.integrity.error}</p>}
           <p className="integrity-note">Publicatie en integriteitscontrole zijn geen Research Ready-status.</p>
         </section>
         <section className="panel" aria-label="Opslag en budgetten"><div className="panel-heading"><h2>Opslag & budgetruimte</h2></div>
-          <dl className="key-values"><div><dt>Gebruikte datasetopslag</dt><dd>{bytes(s.storage.used_bytes)}</dd></div><div><dt>Vrij op bestandssysteem</dt><dd>{bytes(s.storage.available_bytes)}</dd></div><div><dt>Run-opslagcap</dt><dd>{bytes(s.storage.cap_bytes)}</dd></div><div className="separated"><dt>Bytes gereserveerd</dt><dd>{bytes(s.traffic.reserved_bytes)}</dd></div><div><dt>Aggregate bytes over</dt><dd>{bytes(s.budgets.entity_bytes_remaining)}</dd></div><div><dt>Stage bytes over</dt><dd>{bytes(s.budgets.stage_entity_bytes_remaining)}</dd></div><div><dt>Pogingen over · stage / totaal</dt><dd>{s.budgets.stage_attempts_remaining} / {s.budgets.attempts_remaining}</dd></div><div><dt>Resterende deadline-toelating</dt><dd>{duration(s.budgets.runtime_remaining_ms)}</dd></div></dl>
+          <dl className="key-values"><div><dt>Gebruikte datasetopslag</dt><dd>{bytes(s.storage.used_bytes)}</dd></div><div><dt>Vrij op bestandssysteem</dt><dd>{bytes(s.storage.available_bytes)}</dd></div><div><dt>Run-opslagcap</dt><dd>{bytes(s.storage.cap_bytes)}</dd></div><div className="separated"><dt>Bytes gereserveerd</dt><dd>{bytes(s.traffic.reserved_bytes)}</dd></div><div><dt>Aggregate bytes over</dt><dd>{bytes(s.budgets.entity_bytes_remaining)}</dd></div><div><dt>Stage bytes over</dt><dd>{bytes(s.budgets.stage_entity_bytes_remaining)}</dd></div><div><dt>Pogingen over · stage / totaal</dt><dd>{s.budgets.stage_attempts_remaining} / {s.budgets.attempts_remaining}</dd></div><div><dt>{recorded ? 'Deadline-resttijd bij vastlegging' : 'Resterende deadline-toelating'}</dt><dd>{duration(s.budgets.runtime_remaining_ms)}</dd></div></dl>
           <p className="metric-note">Opslag en vrije ruimte gemeten bij import of operatiegrens, niet per netwerkfragment. Reserveringen zijn budgetverbruik, geen downloadvoortgang of betaalde querykosten. Geen nieuwe run geautoriseerd.</p>
         </section>
       </aside>
     </div>
+
+    {verification.state === 'READY' && <section className="panel verification-panel" aria-label="Gebonden offline verificatie">
+      <div className="panel-heading"><div><p className="eyebrow">AFZONDERLIJKE READ-ONLY RUST-VERIFIER</p><h2>Offline controle van bewaarde Raw</h2></div><span className={`tiny-tag ${verified!.stages.car_slot === 'VERIFIED' ? 'good' : 'warn'}`}>{verified!.stages.car_slot}</span></div>
+      <p className="metric-note">Dit rapport is gekoppeld aan huidige manifest- en receipthashes. De browser start geen verifier en herleest geen Raw. Geen writer-resume, nieuwe acquisitie of Research Ready-status.</p>
+      {verified!.integrity.slots.map(slot => <div className="verified-slot" key={slot.slot}>
+        <h3>Geselecteerd slot {slot.slot} · {slot.report.verified_nodes} CID-gecontroleerde archival nodes · {slot.report.verified_links} gecontroleerde links</h3>
+        <p><b>{slot.archival_node_counts.entry}</b> Entry · <b>{slot.archival_node_counts.rewards}</b> Rewards · <b>{slot.archival_node_counts.block}</b> Block · <b>{slot.archival_node_counts.transaction}</b> Transaction · <b>{slot.archival_node_counts.dataframe}</b> DataFrame</p>
+        <small>Archival structuurtellingen, geen domeindecoding of Pump-observaties. Nul Transaction-nodes is geen uitspraak over een trading-edge.</small>
+      </div>)}
+      {verified!.prior_failure && <div className="verification-history"><h3>Oorspronkelijke mislukking behouden</h3><code>{verified!.prior_failure.error}</code><p>HISTORICAL_FAILURE_PRESERVED · dezelfde Raw, andere verifieridentiteit. De oorspronkelijke acquisitie-binary en failure-evidence zijn niet vervangen.</p><small>Failure-artifact SHA-256 {verified!.prior_failure.artifact_sha256}</small></div>}
+      <dl className="provenance-grid verification-identities">
+        <div><dt>Rapport SHA-256</dt><dd className="mono">{verification.report_sha256}</dd></div>
+        <div><dt>Verifier binary SHA-256</dt><dd className="mono">{verified!.verifier.binary_sha256}</dd></div>
+        <div><dt>Verifier bronidentiteit SHA-256</dt><dd className="mono">{verified!.verifier.source_sha256}</dd></div>
+        <div><dt>Run-manifest SHA-256</dt><dd className="mono">{verified!.bindings.manifest_sha256}</dd></div>
+      </dl>
+      <details className="verification-raw"><summary>Raw-identiteiten en oorspronkelijke verifier</summary><ul>{verified!.bindings.receipts.map(receipt => <li key={receipt.sequence}>Operatie {receipt.sequence} · {bytes(receipt.raw_bytes)}<code>{receipt.raw_sha256}</code></li>)}</ul>{verified!.prior_failure && <p>Oorspronkelijke binary SHA-256 <code>{verified!.prior_failure.binary_sha256}</code></p>}</details>
+      <a className="verification-download" href={`/api/acquisition/runs/${s.id}/verification`} target="_blank" rel="noreferrer">Gebonden verificatierapport JSON ↗</a>
+    </section>}
 
     <section className="panel operation-panel"><div className="panel-heading"><div><p className="eyebrow">REQUESTS & PUBLICATIES</p><h2>Operaties</h2></div><span className="muted">{s.operations.length} vastgelegde operaties</span></div>
       <div className="table-scroll"><table><thead><tr><th>Operatie / bronpad</th><th>Status</th><th>Ontvangen / gepland</th><th>Gepubliceerd</th><th>Pogingen</th><th>HTTP</th></tr></thead><tbody>
@@ -162,6 +190,7 @@ export function AcquisitionMonitor() {
   const [selected, setSelected] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('run') ?? '');
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
+  const [verification, setVerification] = useState<{ id: string; bindings: string | undefined; value: OfflineVerificationResponse } | null>(null);
   const previous = useRef(new Map<string, MonitorSnapshot>());
 
   useEffect(() => {
@@ -198,6 +227,29 @@ export function AcquisitionMonitor() {
   const run = response?.runs.find(item => item.id === selected) ?? response?.runs[0];
   const snapshot = run?.state === 'READY' ? run.snapshot : undefined;
   const stale = Boolean(error) || Boolean(snapshot && snapshot.mode === 'LIVE' && now - snapshot.updated_at_ms > 3000);
+  const verificationRunId = snapshot?.id;
+  const verificationBindings = snapshot ? JSON.stringify([snapshot.dataset_root, snapshot.artifacts.map(artifact => [artifact.path, artifact.sha256])]) : undefined;
+  useEffect(() => {
+    if (!verificationRunId) return;
+    let active = true; let timer: ReturnType<typeof setTimeout>; let controller: AbortController;
+    setVerification(null);
+    async function refreshVerification() {
+      controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2500);
+      try {
+        const result = await fetch(`/api/acquisition/runs/${verificationRunId}/verification`, { method: 'GET', cache: 'no-store', signal: controller.signal });
+        if (!result.ok) throw new Error(`HTTP_${result.status}`);
+        const body = await result.text();
+        if (body.length > 1024 * 1024 + 1024) throw new Error('VERIFICATION_RESPONSE_TOO_LARGE');
+        const value = parseOfflineVerification(JSON.parse(body), verificationRunId!);
+        if (active) setVerification({ id: verificationRunId!, bindings: verificationBindings, value });
+      } catch {
+        if (active) setVerification({ id: verificationRunId!, bindings: verificationBindings, value: { state: 'UNAVAILABLE', reason: 'VERIFICATION_UNAVAILABLE' } });
+      } finally { clearTimeout(timeout); if (active) timer = setTimeout(refreshVerification, 2000); }
+    }
+    void refreshVerification();
+    return () => { active = false; clearTimeout(timer); controller?.abort(); };
+  }, [verificationRunId, verificationBindings]);
 
   return <div className="acquisition-monitor">
     <header className="topbar"><a className="brand" href="/" aria-label="Solana Quant acquisitiemonitor"><span className="brand-mark" aria-hidden="true">≋</span><strong>SOLANA <span>QUANT</span></strong><span className="brand-divider" />Acquisitie</a><span className="topbar-note">V2 · LOKAAL ONDERZOEK · ALLEEN LEZEN</span></header>
@@ -205,7 +257,7 @@ export function AcquisitionMonitor() {
       <div className="workspace-heading"><div><p className="eyebrow">DATA-FIRST RESEARCH PLATFORM</p><h2>Acquisitiemonitor</h2><p>Van bronbytes naar controleerbaar bewijs.</p></div><span className={`connection ${error ? 'warn' : ''}`}><span className="status-dot" />{error ? 'Verbinding onderbroken' : response ? 'Lokale monitor verbonden' : 'Verbinden met lokale monitor…'}</span></div>
       {error && <div className="connection-error" role="alert"><strong>{error}</strong>{snapshot && <span>Laatst bekende snapshot — STALE; geen actuele voortgangsclaim.</span>}</div>}
       {response && <nav className="run-selector" aria-label="Run kiezen">{response.runs.map(item => <button type="button" key={item.id} onClick={() => setSelected(item.id)} aria-pressed={item.id === run?.id} className={item.id === run?.id ? 'selected' : ''}><span>{item.state === 'READY' ? kindLabels[item.snapshot.kind] : 'Niet beschikbaar'}</span><strong>{item.state === 'READY' ? item.snapshot.label : item.id}</strong><small>{item.state === 'READY' ? `Epoch ${item.snapshot.epoch} · ${item.snapshot.mode === 'RECORDED' ? 'vastgelegd resultaat' : stageLabels[item.snapshot.stage]}` : item.reason}</small></button>)}</nav>}
-      {snapshot ? <RunContent snapshot={snapshot} stale={stale} now={now} /> : <section className="empty-state"><h1>{run?.state === 'UNAVAILABLE' ? 'Rungegevens niet beschikbaar' : response ? 'Nog geen Rust-snapshots' : 'Rust-metingen laden'}</h1><p>{run?.state === 'UNAVAILABLE' ? run.reason : 'Start de read-only import of de expliciete lokale simulatie volgens de startinstructies. De browser start geen downloader.'}</p></section>}
+      {snapshot ? <RunContent snapshot={snapshot} stale={stale} now={now} verification={verification?.id === snapshot.id && verification.bindings === verificationBindings ? verification.value : { state: 'UNAVAILABLE', reason: 'REPORT_NOT_LOADED' }} /> : <section className="empty-state"><h1>{run?.state === 'UNAVAILABLE' ? 'Rungegevens niet beschikbaar' : response ? 'Nog geen Rust-snapshots' : 'Rust-metingen laden'}</h1><p>{run?.state === 'UNAVAILABLE' ? run.reason : 'Start de read-only import of de expliciete lokale simulatie volgens de startinstructies. De browser start geen downloader.'}</p></section>}
       <footer className="site-footer"><span>Rust meet en bepaalt · de browser observeert</span><span>Geen providerknoppen · geen wallet · geen acquisitietoestemming</span></footer>
     </main>
   </div>;

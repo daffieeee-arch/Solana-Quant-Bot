@@ -21,6 +21,20 @@ describe('OF1 default-off transport dependency boundary', () => {
     }
     expect(validateOf1PlannerInputs(manifest, lock, { 'build.rs': '' })).not.toEqual([]);
   });
+  it('distinguishes the exact preserved failure literal from actual process capability', () => {
+    for (const path of ['src/recorded_verification.rs', 'tests/recorded_verification.rs']) {
+      const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+      expect(source).toContain('"Error: Command failed: ');
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+      for (const capability of ['Command::new("curl")', 'use std::process::Command;', 'std::net::TcpStream', 'unsafe { action(); }']) {
+        expect(validateOf1PlannerInputs(manifest, lock, { [path]: `${source}\n${capability}` }))
+          .toContain(`unexpected runtime capability in ${path}`);
+      }
+      // Even the same word elsewhere in the file is not blanket-exempted.
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\nCommand' })).not.toEqual([]);
+      expect(validateOf1PlannerInputs(manifest, lock, { 'src/arbitrary.rs': source })).not.toEqual([]);
+    }
+  });
   it('allows only the reviewed same-binary crash harness, never a generic command exception', () => {
     const source = readFileSync('rust/of1-range-recorder/tests/durability_process.rs', 'utf8');
     expect(validateOf1PlannerInputs(manifest, lock, { 'tests/durability_process.rs': source })).toEqual([]);

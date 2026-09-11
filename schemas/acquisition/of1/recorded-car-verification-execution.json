@@ -1,0 +1,70 @@
+{
+  "schema": "OF1_READ_ONLY_VERIFIER_EXECUTION_1",
+  "started_at": "2026-09-11T11:12:14.688Z",
+  "finished_at": "2026-09-11T11:12:14.820Z",
+  "git_head_at_execution": "0725dd2f405ded08578e79c7b9b47ae8070a7bdf",
+  "tracked_diff_sha256": "098ec5f122dd496e1c78daa40e143cd2e1bd8d57947f78956fb45274e9608026",
+  "source_identity_note": "Compiled verifier source fingerprint and executable hash are authoritative; Git head may precede this uncommitted implementation.",
+  "binary": "/home/dmesdary/solana-quant-data/governance/b4-car-signed-repair-20260911/final/bin/of1-verify-recorded-85fcaee0947e3ea5017e8e30f49380e2208a9c2227d24d16b0c7be4365480e92",
+  "binary_sha256": "85fcaee0947e3ea5017e8e30f49380e2208a9c2227d24d16b0c7be4365480e92",
+  "source_sha256": "d25e752100a8c19831f5080b8e5b481786ae161a80cfeec091676d06f8bc09b7",
+  "report": "/home/dmesdary/solana-quant-data/governance/b4-car-signed-repair-20260911/final/verification-e0e5314c9d73c237eb6794a153cd75111cd8c3cb996b51abe3a2a5aac2cc1d79.json",
+  "report_sha256": "5a8cd3d573dc963a32b44ac9bce0b1bd16eb63b59754aa263ec2ecdef79f24f2",
+  "argv": [
+    "/home/dmesdary/solana-quant-data/runs/of1-e978-metadata-0725dd2f-03",
+    "--prior-failure",
+    "/home/dmesdary/solana-quant-data/run-executions/of1-e978-payload-0725dd2f-01/offline-integrity-failure.json",
+    "--prior-run-result",
+    "/home/dmesdary/solana-quant-data/run-executions/of1-e978-payload-0725dd2f-01/payload-result.json"
+  ],
+  "exit_codes": [
+    0,
+    0
+  ],
+  "deterministic_repeat": true,
+  "network_syscalls_denied": true,
+  "writer_resumed": false,
+  "original_run_files_verified": 200,
+  "original_history_files_unchanged": 25,
+  "before_run_inventory_sha256": "e89dbc39f54a72c9973192ca4c04f6b80d5a989b28cf4833f6f1e415537ab6e2",
+  "after_run_inventory_sha256": "e89dbc39f54a72c9973192ca4c04f6b80d5a989b28cf4833f6f1e415537ab6e2",
+  "old_acquisition_binary_sha256": "d6774c7197468710ae07bc5770388963b9175b0c1b7d4f22e93b33a1230aeda0",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+  "stages": {
+    "capture": "COMPLETE",
+    "car_slot": "VERIFIED",
+    "domain_decoding": "NOT_PERFORMED",
+    "raw_receipts": "VERIFIED"
+  },
+  "integrity": {
+    "error": null,
+    "root_to_slot_membership": "UNAVAILABLE",
+    "slots": [
+      {
+        "archival_node_counts": {
+          "block": 1,
+          "dataframe": 0,
+          "entry": 64,
+          "rewards": 1,
+          "transaction": 0
+        },
+        "report": {
+          "captured_section_bytes": 45051,
+          "dataframe_payload_and_checksum": "NOT_EVALUATED",
+          "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4",
+          "node_cid_integrity": "RECOMPUTED_SHA2_256_MATCHED",
+          "root_to_slot_membership": "UNAVAILABLE",
+          "selected_slot": 422496000,
+          "selected_slot_envelope": "STRUCTURAL_LINK_CLOSURE_MATCHED",
+          "source_commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+          "source_observation": "NOT_ATTESTED_BY_VERIFIER",
+          "terminal_block_cid_hex": "01711220cc09fd975270b7e5b8c3bab4d1e3fa3fc9a5a67d4c8fa897deaa8abe1f8709d1",
+          "verified_links": 65,
+          "verified_nodes": 66
+        },
+        "slot": 422496000
+      }
+    ],
+    "whole_car_sha256_verified": false
+  }
+}

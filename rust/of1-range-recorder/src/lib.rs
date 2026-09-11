@@ -10,8 +10,10 @@ pub mod durable;
 pub mod fixture;
 #[cfg(any(feature = "network-of1", feature = "tls-fixture"))]
 pub mod https;
-#[cfg(feature = "monitor")]
+// Read-only recorded projections are also available without IPC or transport.
+// Unix telemetry remains gated inside this module by the `monitor` feature.
 pub mod monitor;
+pub mod recorded_verification;
 #[cfg(feature = "loopback-fixture")]
 pub mod transport;
 
