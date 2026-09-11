@@ -21,6 +21,7 @@ fnv = { version = "=1.0.7", default-features = false }
 zstd = { version = "=0.13.3", default-features = false }
 solana-transaction = { version = "=3.0.2", default-features = false, features = ["serde"] }
 solana-message = { version = "=3.0.1", default-features = false, features = ["serde"] }
+solana-pubkey = { version = "=4.3.0", default-features = false, features = ["curve25519"] }
 solana-transaction-error = { version = "=3.2.0", default-features = false, features = ["serde"] }
 
 [dev-dependencies]

@@ -395,6 +395,7 @@ fn overview_html(report: &Value) -> String {
     overview.push_str("</pre>");
     if let Some(cases) = report["analysis"]["pump_cases"].as_array() {
         for case in cases {
+            overview.push_str(&buy_diagnostic_html(case));
             let _ = write!(
                 overview,
                 "<details><summary>Slot {} · transactie {} · {}</summary><pre>{}</pre></details>",
@@ -419,6 +420,66 @@ fn overview_html(report: &Value) -> String {
     }
     overview.push_str("</ul></details></section>");
     overview
+}
+
+fn buy_diagnostic_html(case: &Value) -> String {
+    let mut out = String::new();
+    let Some(diagnostics) = case["analysis"]["buy_source_diagnostics"].as_array() else {
+        return out;
+    };
+    for d in diagnostics {
+        let _ = write!(
+            out,
+            "<section class=buy-diagnostic><h2>Pump buy: volledige bytes, accounts en bewijsgrens</h2><p>Slot {} · transactie {} · outer {}</p><p class=notice><strong>Geen Silver.</strong> De accountindeling en eventcorrelatie worden afzonderlijk gecontroleerd. Een overeenkomst bewijst geen toegestane extra instructiebyte, accountinhoud of gecommitteerde toestand.</p><h3>Volledige instructie: {} bytes</h3><pre>{}</pre><p>Volledige layoutmatch: <strong>{}</strong>. Oorspronkelijke fout: <code>{}</code>.</p><p>Onverklaarde suffix vanaf offset {}: <code>{}</code> — betekenis UNKNOWN, niet verwijderd.</p><h3>Alleen interpretatie van bekende prefixvelden</h3><pre>{}</pre><h3>18 accountposities — adres- en minimumprivilegecorrespondentie</h3><p>Patrooncorrespondentie: {}. Accountinhoud niet geverifieerd. PDA-afleiding uit event-creator is geen bewijs van de creator in de curve-account.</p><article><table><thead><tr><th>Positie</th><th>Rol</th><th>Adres</th><th>Adresmatch</th><th>Privileges</th><th>Basis</th></tr></thead><tbody>",
+            escape(
+                case["effective_at"]["slot"]
+                    .as_str()
+                    .unwrap_or("UNAVAILABLE")
+            ),
+            case["effective_at"]["transaction_index_in_slot"],
+            d["outer_index"],
+            d["full_bytes"],
+            escape(d["full_data_hex"].as_str().unwrap_or("UNAVAILABLE")),
+            d["full_instruction_layout_match"],
+            escape(&d["full_instruction_error"].to_string()),
+            d["unexplained_suffix"]["offset"],
+            escape(
+                d["unexplained_suffix"]["hex"]
+                    .as_str()
+                    .unwrap_or("UNAVAILABLE")
+            ),
+            escape(&serde_json::to_string_pretty(&d["prefix_diagnostic"]).unwrap_or_default()),
+            d["account_address_correspondence"]
+        );
+        if let Some(rows) = d["accounts"].as_array() {
+            for row in rows {
+                let _ = write!(
+                    out,
+                    "<tr><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                    row["position"],
+                    escape(row["role"].as_str().unwrap_or("UNAVAILABLE")),
+                    escape(row["observed"].as_str().unwrap_or("UNAVAILABLE")),
+                    row["address_match"],
+                    row["required_privileges_match"],
+                    escape(row["address_basis"].as_str().unwrap_or("UNAVAILABLE"))
+                );
+            }
+        }
+        let _ = write!(
+            out,
+            "</tbody></table></article><h3>Bijbehorende event-CPI en correlaties</h3><pre>{}</pre><pre>{}</pre><p>Bronontvangst SHA-256: <code>{}</code>. Volledige instructie SHA-256: <code>{}</code>. Raw SHA-256: <code>{}</code>.</p><p><strong>Kleinste ontbrekende bewijsstap:</strong> een Pump-autoritatieve decode-/compatibiliteitsregel voor alle instructiebytes. Een generieke Anchor-handler is daarvoor onvoldoende. Quote-identiteit, decimals en historische activatie blijven afzonderlijk onbekend.</p></section>",
+            escape(&serde_json::to_string_pretty(&d["event_context"]).unwrap_or_default()),
+            escape(&serde_json::to_string_pretty(&d["event_correlation"]).unwrap_or_default()),
+            escape(
+                d["source_evidence_sha256"]
+                    .as_str()
+                    .unwrap_or("UNAVAILABLE")
+            ),
+            escape(d["full_data_sha256"].as_str().unwrap_or("UNAVAILABLE")),
+            escape(case["raw_sha256"].as_str().unwrap_or("UNAVAILABLE"))
+        );
+    }
+    out
 }
 
 /// A standalone browser report, deliberately without remote resources or scripts.

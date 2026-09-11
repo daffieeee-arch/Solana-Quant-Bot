@@ -41,6 +41,8 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`research/OF1_STAGED_ACQUISITION.md`](research/OF1_STAGED_ACQUISITION.md)
 - [`research/OF1_RECORDED_CAR_VERIFICATION.md`](research/OF1_RECORDED_CAR_VERIFICATION.md)
 - [`research/B5_AUTHENTIC_RAW_BRONZE.md`](research/B5_AUTHENTIC_RAW_BRONZE.md)
+- [`research/B5_MULTISLOT_PUMP_SEARCH.md`](research/B5_MULTISLOT_PUMP_SEARCH.md)
+- [`research/B5_PUMP_BUY_SOURCE_BINDING.md`](research/B5_PUMP_BUY_SOURCE_BINDING.md)
 - [`research/B4_DOWNLOAD_MONITOR.md`](research/B4_DOWNLOAD_MONITOR.md)
 - [`research/OF1_METADATA_RUN_PROPOSAL.md`](research/OF1_METADATA_RUN_PROPOSAL.md)
 - [`research/OF1_ACQUISITION_EVIDENCE.md`](research/OF1_ACQUISITION_EVIDENCE.md)
