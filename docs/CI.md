@@ -39,15 +39,20 @@ privilege claim.
 1. fail-closed policy can deep-compare the entire workflow;
 2. no job-level secrets, containers, services or write permissions;
 3. one checkout with `persist-credentials: false`;
-4. only approved actions: pinned `actions/checkout` and `actions/setup-node`.
+4. only approved actions: pinned `actions/checkout`, `actions/setup-node` and
+   narrowly scoped `actions/cache`.
 
 ### Triggers
 
 - pull requests targeting `main`
-- pushes to `main`, `chore/**`, `feature/**`, `phase2/**`, `ci/**`, `cursor/**`, `v2/**`
+- pushes to `main` only
 - `workflow_call` and `workflow_dispatch`
 
-`v2/**` is included so delivery branches get push CI even before a PR exists.
+Open a draft PR early for delivery-branch validation, or explicitly dispatch CI
+before a PR exists. A PR update runs full validation once instead of once for its
+branch push and again for its PR event. Post-merge `main` validation is retained;
+PR and main validate different integration states. This reduces duplicate runner
+work, not necessarily the wall-clock time of one review cycle.
 
 ### Environment hard-stops
 
@@ -60,8 +65,8 @@ privilege claim.
 ### Ordered gates
 
 1. pin Rust `1.97.1` (rustfmt/clippy);
-2. static-validate then fetch locked Pump protocol dependencies;
-3. static-validate then fetch locked OF1 planner dependencies;
+2. static-validate Pump protocol and OF1 planner source/dependency contracts;
+3. restore the scoped Rust cache, then fetch both locked dependency graphs;
 4. `npm ci`;
 5. repository/zero-cost policy + offline research citation gate;
 6. focused policy/Pump/zero-cost tests, then full Vitest suite;
@@ -73,6 +78,35 @@ privilege claim.
 
 Green CI never upgrades fixture evidence into authentic acquisition, Research
 Ready, edge or live claims. See the non-claims section below.
+
+### Scoped Rust cache and measured phases
+
+`actions/cache` is pinned to official v6.1.0 commit
+`55cc8345863c7cc4c66a329aec7e433d2d1c52a9`. Its exact paths are Cargo registry
+`index`, `cache` and `src`, plus the ignored `target` directories of
+`of1-range-recorder`, `pump-protocol-v2` and `old-faithful-pump-reducer`.
+It does not cache Cargo credentials/configuration, complete home directories,
+temporary fixture runs, leases, datasets or operational evidence.
+
+The versioned key binds runner OS/architecture, Rust 1.97.1, every Rust
+Cargo.lock/Cargo.toml hash and the checked-out commit SHA. The single restore
+prefix retains the same toolchain and lock/manifest identity. Cargo still checks
+source/features and rebuilds affected artifacts. A cache hit never skips a gate,
+test, assertion or evidence regeneration; a miss is an ordinary cold build.
+Default cache branch scoping applies; the trusted-main Roadmap workflow does not
+restore this build cache. No cache quota, billing or larger-runner setting changes.
+
+The OF1 gate emits `OF1_CI_PHASE` records on stderr for compilation, test and
+fixture subprocesses, followed by `OF1_CI_TIMING` with the overall gate outcome.
+GitHub Actions also receives a compact step-summary table, including failure
+when a later validation fails after successful subprocesses. These are measured
+operational durations only: no commands, environment values or dataset contents
+are added, and deterministic evidence/stdout contracts remain unchanged.
+Unavailable summary output cannot turn a failed gate green or hide its exception.
+
+Compare a cold run and a warm run of the same revision before making a speed
+claim. Runtime-heavy tests still run in full and are not accelerated merely by
+restoring compiled artifacts. Subphase measurements guide any later parallelism.
 
 ## Roadmap Sync boundary
 
@@ -108,7 +142,7 @@ Branch inventory process: [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYG
 
 ## Future CI evolution (not in this change)
 
-Parallel Rust/Node jobs, Rust cache actions, or path filters may be added only
+Parallel Rust/Node jobs, broader caches, or path filters may be added only
 through a reviewed policy update that keeps:
 
 - `contents: read` for ordinary CI;

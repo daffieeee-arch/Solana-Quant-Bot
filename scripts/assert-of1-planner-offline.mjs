@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildResearchSeccompLauncher } from './build-research-seccomp-launcher.mjs';
 import { writeResearchNetworkDenyFilter } from './write-research-seccomp-filter.mjs';
+import { createCiPhaseTimer } from './lib/ci-phase-timing.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const crate = join(root, 'rust/of1-range-recorder');
@@ -104,7 +105,9 @@ async function run(mode) {
   const scratch = mkdtempSync(join(tmpdir(), 'of1-planner-offline-'));
   const launcher = join(scratch, 'launcher');
   const filter = join(scratch, 'network-deny.bpf');
-  const isolated = (command, args) => {
+  const timing = createCiPhaseTimer();
+  let checksPassed = false;
+  const isolated = (label, command, args) => timing.measure(label, () => {
     const result = spawnSync(launcher, [filter, command, ...args], {
       cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, CARGO_NET_OFFLINE: 'true' },
@@ -112,26 +115,26 @@ async function run(mode) {
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'isolated process failed');
     return result;
-  };
+  });
   // A loopback listener cannot run under the all-sockets-denied lane. These exact
   // source-pinned tests/binary use only fixed numeric loopback, no ambient endpoints,
   // DNS or HTTP proxy. This is not claimed to be an OS-wide external-network sandbox.
-  const loopback = (command, args) => {
+  const loopback = (label, command, args) => timing.measure(label, () => {
     const result = spawnSync(command, args, { cwd: root, encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024, timeout: 180_000,
       env: { ...process.env, CARGO_NET_OFFLINE: 'true' } });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'loopback fixture failed');
     return result;
-  };
+  });
   try {
     await writeResearchNetworkDenyFilter(filter, process.arch, { allowLocalProcessSpawn: true });
     await buildResearchSeccompLauncher(launcher);
-    const probe = isolated(process.execPath, ['--input-type=module', '-e',
+    const probe = isolated('probe.network-deny', process.execPath, ['--input-type=module', '-e',
       "import net from 'node:net';const s=net.createConnection({host:'127.0.0.1',port:9});s.on('connect',()=>process.exit(2));s.on('error',e=>{if(e.code==='EPERM'){console.log('NETWORK_DENIED');}else process.exit(3);});"]);
     if (probe.stdout !== 'NETWORK_DENIED\n') throw new Error('OF1 isolation probe failed');
     const manifest = ['--manifest-path', join(crate, 'Cargo.toml')];
-    const metadata = JSON.parse(isolated('cargo', ['+1.97.1', 'metadata', '--locked', '--offline', '--all-features', '--format-version', '1', ...manifest]).stdout);
+    const metadata = JSON.parse(isolated('dependency.metadata', 'cargo', ['+1.97.1', 'metadata', '--locked', '--offline', '--all-features', '--format-version', '1', ...manifest]).stdout);
     const review = JSON.parse(readFileSync(join(crate, 'dependency-review.json'), 'utf8'));
     const actual = metadata.packages.map(p => ({ name: p.name, version: p.version, license: p.license,
       buildScript: p.targets.some(t => t.kind.includes('custom-build')) })).sort((a,b) => a.name.localeCompare(b.name));
@@ -146,7 +149,7 @@ async function run(mode) {
     for (const profile of review.featureProfiles) {
       const featureArgs = profile.allFeatures ? ['--all-features']
         : profile.features.length ? ['--features', profile.features.join(',')] : [];
-      const tree = isolated('cargo', ['+1.97.1', 'tree', ...manifest, '--locked', '--offline',
+      const tree = isolated(`dependency.tree.${profile.name}`, 'cargo', ['+1.97.1', 'tree', ...manifest, '--locked', '--offline',
         '--target', profile.target, '--prefix', 'none', '--edges', 'normal,build,dev',
         '--format', '{p}', ...featureArgs]).stdout;
       const identities = new Set(tree.trim().split('\n').map(line => {
@@ -159,14 +162,14 @@ async function run(mode) {
         throw new Error(`OF1 enabled feature/license/build-script drift: ${profile.name}`);
       }
     }
-    isolated('cargo', ['+1.97.1', 'fmt', ...manifest, '--all', '--', '--check']);
-    isolated('cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--', '-D', 'warnings']);
-    isolated('cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--features', 'loopback-fixture', '--', '-D', 'warnings']);
-    isolated('cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--all-features', '--', '-D', 'warnings']);
-    process.stdout.write(isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-features', '--lib']).stdout);
-    const tests = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-targets']);
+    isolated('format.all', 'cargo', ['+1.97.1', 'fmt', ...manifest, '--all', '--', '--check']);
+    isolated('clippy.default', 'cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--', '-D', 'warnings']);
+    isolated('clippy.loopback', 'cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--features', 'loopback-fixture', '--', '-D', 'warnings']);
+    isolated('clippy.all-features', 'cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--all-features', '--', '-D', 'warnings']);
+    process.stdout.write(isolated('test.lib.all-features', 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-features', '--lib']).stdout);
+    const tests = isolated('test.default', 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-targets']);
     process.stdout.write(tests.stdout);
-    const build = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
+    const build = isolated('compile.default-bins', 'cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
     const artifacts = build.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s));
     const binary = artifacts
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-plan-evidence' && v.executable)?.executable;
@@ -184,8 +187,8 @@ async function run(mode) {
       ['--json', 'schemas/acquisition/of1/offline-plan-evidence.json'],
       ['--markdown', 'docs/research/OF1_OFFLINE_PLAN_EVIDENCE.md'],
     ]) {
-      const first = isolated(binary, [format, index]).stdout;
-      const second = isolated(binary, [format, index]).stdout;
+      const first = isolated(`fixture.plan.${format.slice(2)}.first`, binary, [format, index]).stdout;
+      const second = isolated(`fixture.plan.${format.slice(2)}.repeat`, binary, [format, index]).stdout;
       if (first !== second) throw new Error('OF1 report is nondeterministic');
       if (mode === '--print') process.stdout.write(`${path}\n${first}`);
       else if (first !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 report drift: ${path}`);
@@ -199,20 +202,20 @@ async function run(mode) {
       const outputs = [0, 1].map(iteration => {
         const directory = join(scratch, `durability-${format}-${iteration}`);
         mkdirSync(directory);
-        return isolated(durableBinary, [format, directory]).stdout;
+        return isolated(`fixture.durability.${format.slice(2)}.${iteration}`, durableBinary, [format, directory]).stdout;
       });
       if (outputs[0] !== outputs[1]) throw new Error('OF1 durability report is nondeterministic');
       if (mode === '--print') process.stdout.write(`${path}\n${outputs[0]}`);
       else if (outputs[0] !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 durability report drift: ${path}`);
     }
     // Compile dependencies/build scripts with sockets denied, even for the fixture lane.
-    const fixtureBuild = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline',
+    const fixtureBuild = isolated('compile.transport-test', 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline',
       '--features', 'loopback-fixture', '--test', 'transport', '--no-run', '--message-format=json-render-diagnostics']);
     const testBinary = fixtureBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'transport' && v.executable)?.executable;
     if (!testBinary) throw new Error('loopback test binary missing');
-    process.stdout.write(loopback(testBinary, ['--test-threads=1']).stdout);
-    const fixtureBins = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline',
+    process.stdout.write(loopback('test.transport', testBinary, ['--test-threads=1']).stdout);
+    const fixtureBins = isolated('compile.transport-evidence', 'cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline',
       '--features', 'loopback-fixture', '--bin', 'of1-transport-evidence', '--message-format=json-render-diagnostics']);
     const fixtureBinary = fixtureBins.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-transport-evidence' && v.executable)?.executable;
@@ -224,7 +227,7 @@ async function run(mode) {
       const outputs = [0, 1].map(iteration => {
         const directory = join(scratch, `transport-${format}-${iteration}`);
         mkdirSync(directory);
-        return loopback(fixtureBinary, [format, directory]).stdout;
+        return loopback(`fixture.transport.${format.slice(2)}.${iteration}`, fixtureBinary, [format, directory]).stdout;
       });
       if (outputs[0] !== outputs[1]) throw new Error('OF1 transport report is nondeterministic');
       if (mode === '--print') process.stdout.write(`${path}\n${outputs[0]}`);
@@ -236,14 +239,14 @@ async function run(mode) {
     // Existing debug/default tests and all assertions/cases remain. Compilation/build
     // scripts still execute under socket denial; no official dispatch is run.
     for (const target of ['acquisition_https', 'acquisition_e2e', 'monitor_ipc']) {
-      const built = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--release',
+      const built = isolated(`compile.${target}`, 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--release',
         '--all-features', '--test', target, '--no-run', '--message-format=json-render-diagnostics']);
       const executable = built.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
         .find(v => v.reason === 'compiler-artifact' && v.target.name === target && v.executable)?.executable;
       if (!executable) throw new Error(`TLS acquisition fixture missing: ${target}`);
-      process.stdout.write(loopback(executable, ['--test-threads=1']).stdout);
+      process.stdout.write(loopback(`test.${target}`, executable, ['--test-threads=1']).stdout);
     }
-    const acquisitionBuild = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
+    const acquisitionBuild = isolated('compile.acquisition-evidence', 'cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
       '--features', 'tls-fixture', '--bin', 'of1-acquisition-fixture-evidence', '--message-format=json-render-diagnostics']);
     const acquisitionBinary = acquisitionBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-acquisition-fixture-evidence' && v.executable)?.executable;
@@ -255,18 +258,18 @@ async function run(mode) {
       const outputs = [0, 1].map(iteration => {
         const directory = join(scratch, `acquisition-${format}-${iteration}`);
         mkdirSync(directory);
-        return loopback(acquisitionBinary, [format, directory]).stdout;
+        return loopback(`fixture.acquisition.${format.slice(2)}.${iteration}`, acquisitionBinary, [format, directory]).stdout;
       });
       if (outputs[0] !== outputs[1]) throw new Error('OF1 acquisition evidence is nondeterministic');
       if (mode === '--print') process.stdout.write(`${path}\n${outputs[0]}`);
       else if (outputs[0] !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 report drift: ${path}`);
     }
-    const monitorBuild = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
+    const monitorBuild = isolated('compile.monitor', 'cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
       '--features', 'monitor,tls-fixture', '--bin', 'of1-monitor-simulation', '--message-format=json-render-diagnostics']);
     const monitorBinary = monitorBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-monitor-simulation' && v.executable)?.executable;
     if (!monitorBinary) throw new Error('monitor simulation binary missing');
-    const monitored = loopback(monitorBinary, [join(scratch, 'monitored-run'), join(scratch, 'absent-relay.sock')]).stdout;
+    const monitored = loopback('fixture.monitor.metadata', monitorBinary, [join(scratch, 'monitored-run'), join(scratch, 'absent-relay.sock')]).stdout;
     const terminal = JSON.parse(monitored.slice(monitored.indexOf('{')));
     if (terminal.kind !== 'LOCAL_SIMULATION' || terminal.stage !== 'COMPLETE'
       || terminal.selection.operations_published !== 4 || terminal.traffic.attempts !== 5
@@ -274,7 +277,7 @@ async function run(mode) {
       || terminal.dropped_samples < 1 || terminal.domain_counts !== 'UNAVAILABLE_NOT_DECODED_IN_B4') {
       throw new Error('monitor restart/absent-collector fixture drift');
     }
-    const payloadOutput = loopback(monitorBinary, ['--with-payload', join(scratch, 'monitored-payload-run'),
+    const payloadOutput = loopback('fixture.monitor.payload', monitorBinary, ['--with-payload', join(scratch, 'monitored-payload-run'),
       join(scratch, 'absent-payload-relay.sock')]).stdout;
     const resultLines = payloadOutput.split('\n').filter(line => line.startsWith('LOCAL_SIMULATION_PAYLOAD_RESULT: '));
     if (resultLines.length !== 1) throw new Error('missing unique monitor payload result');
@@ -316,8 +319,8 @@ async function run(mode) {
     for (const [name, state, nodes] of [['monitored-run', 'NOT_ACQUIRED', 0], ['monitored-payload-run', 'VERIFIED', 5]]) {
       const directory = join(scratch, name);
       const before = JSON.stringify(inventory(directory));
-      const first = isolated(reader, [directory]).stdout;
-      const second = isolated(reader, [directory]).stdout;
+      const first = isolated(`verify.${name}.first`, reader, [directory]).stdout;
+      const second = isolated(`verify.${name}.repeat`, reader, [directory]).stdout;
       const report = JSON.parse(first);
       if (first !== second || before !== JSON.stringify(inventory(directory))
         || report.schema !== 'OF1_OFFLINE_VERIFICATION_1'
@@ -332,8 +335,19 @@ async function run(mode) {
     }
     process.stdout.write('OF1 separate read-only verifier: metadata-only + sealed CAR, deterministic, source-preserving, socket-denied PASS\n');
     process.stdout.write('OF1 socket-denied default/build, local IPC and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');
+    checksPassed = true;
   } finally {
-    rmSync(scratch, { recursive: true, force: true });
+    try {
+      rmSync(scratch, { recursive: true, force: true });
+    } catch (error) {
+      checksPassed = false;
+      throw error;
+    } finally {
+      timing.finish({
+        passed: checksPassed,
+        summaryPath: process.env.GITHUB_ACTIONS === 'true' ? process.env.GITHUB_STEP_SUMMARY : undefined,
+      });
+    }
   }
 }
 

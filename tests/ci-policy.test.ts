@@ -24,12 +24,6 @@ on:
   push:
     branches:
       - main
-      - 'chore/**'
-      - 'feature/**'
-      - 'phase2/**'
-      - 'ci/**'
-      - 'cursor/**'
-      - 'v2/**'
   pull_request:
     branches:
       - main
@@ -70,10 +64,16 @@ jobs:
         run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
       - name: Validate Pump protocol dependencies before fetch
         run: node scripts/assert-pump-protocol-v2-offline.mjs --static
-      - name: Fetch locked Pump protocol dependencies
-        run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Validate OF1 planner dependencies before fetch
         run: node scripts/assert-of1-planner-offline.mjs --static
+      - name: Restore scoped Rust build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: "~/.cargo/registry/index\\n~/.cargo/registry/cache\\n~/.cargo/registry/src\\nrust/of1-range-recorder/target\\nrust/pump-protocol-v2/target\\nrust/old-faithful-pump-reducer/target"
+          key: rust-v1-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-\${{ github.sha }}
+          restore-keys: rust-v1-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
+      - name: Fetch locked Pump protocol dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Fetch locked OF1 planner dependencies
         run: cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked
       - name: Install locked dependencies
@@ -129,7 +129,55 @@ const addStep = (body: string) => SAFE_WORKFLOW.replace(
 describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
-    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(27);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(28);
+  });
+
+  it('runs PR validation and main validation without duplicate feature-branch pushes', () => {
+    const triggers = parseWorkflowYaml(SAFE_WORKFLOW).on;
+    expect(triggers.push.branches).toEqual(['main']);
+    expect(triggers.pull_request.branches).toEqual(['main']);
+    expect(triggers.workflow_dispatch).toEqual({});
+    expect(triggers.workflow_call).toEqual({});
+    for (const branch of ['v2/**', 'cursor/**', 'feature/**', '**']) {
+      expect(errors(SAFE_WORKFLOW.replace('      - main', `      - main\n      - '${branch}'`)))
+        .toMatch(/trigger|canonical workflow/i);
+    }
+  });
+
+  it('caches only registry inputs and three ignored Rust target directories', () => {
+    const steps = parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps;
+    const cache = steps.find((step: { name: string }) => step.name === 'Restore scoped Rust build cache');
+    expect(cache.uses).toBe('actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9');
+    expect(cache.with.path.split('\n')).toEqual([
+      '~/.cargo/registry/index', '~/.cargo/registry/cache', '~/.cargo/registry/src',
+      'rust/of1-range-recorder/target', 'rust/pump-protocol-v2/target',
+      'rust/old-faithful-pump-reducer/target',
+    ]);
+    expect(cache.with.key).toContain("1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}");
+    expect(cache.with['restore-keys']).toBe(cache.with.key.replace('${{ github.sha }}', ''));
+    const position = (name: string) => steps.findIndex((step: { name: string }) => step.name === name);
+    expect(position('Validate Pump protocol dependencies before fetch')).toBeLessThan(position(cache.name));
+    expect(position('Validate OF1 planner dependencies before fetch')).toBeLessThan(position(cache.name));
+    expect(position(cache.name)).toBeLessThan(position('Fetch locked Pump protocol dependencies'));
+    expect(position(cache.name)).toBeLessThan(position('Fetch locked OF1 planner dependencies'));
+  });
+
+  it('rejects broad cache paths, cross-toolchain keys, unpinned actions and hit-based gate skips', () => {
+    for (const variant of [
+      SAFE_WORKFLOW.replace('~/.cargo/registry/src', '~/.cargo'),
+      SAFE_WORKFLOW.replace('rust/of1-range-recorder/target', '/home/runner'),
+      SAFE_WORKFLOW.replace('rust/pump-protocol-v2/target', '/tmp'),
+      SAFE_WORKFLOW.replace('rust/old-faithful-pump-reducer/target', 'data'),
+      SAFE_WORKFLOW.replace('actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9', 'actions/cache@v6'),
+      SAFE_WORKFLOW.replace('1.97.1-${{ hashFiles', 'stable-${{ hashFiles'),
+      SAFE_WORKFLOW.replace(/          restore-keys: .+/, '          restore-keys: rust-'),
+      SAFE_WORKFLOW.replace('      - name: Run complete test suite',
+        "      - name: Run complete test suite\n        if: steps.cache.outputs.cache-hit != 'true'"),
+      SAFE_WORKFLOW.replace('      - name: Verify OF1 planner isolated graph, formatting, tests and evidence',
+        "      - name: Verify OF1 planner isolated graph, formatting, tests and evidence\n        if: steps.cache.outputs.cache-hit != 'true'"),
+    ]) {
+      expect(errors(variant)).toMatch(/canonical workflow|unapproved action|action input|canonical step/i);
+    }
   });
 
   it('requires the real citation step and rejects comments, renaming, or formatting drift as substitutes', () => {
