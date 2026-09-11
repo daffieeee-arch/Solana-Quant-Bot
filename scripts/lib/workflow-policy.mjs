@@ -42,12 +42,21 @@ const CANONICAL_STEPS = [
     run: 'node scripts/assert-pump-protocol-v2-offline.mjs --static',
   },
   {
-    name: 'Fetch locked Pump protocol dependencies',
-    run: 'cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked',
-  },
-  {
     name: 'Validate OF1 planner dependencies before fetch',
     run: 'node scripts/assert-of1-planner-offline.mjs --static',
+  },
+  {
+    name: 'Restore scoped Rust build cache',
+    uses: 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
+    with: {
+      path: '~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/registry/src\nrust/of1-range-recorder/target\nrust/pump-protocol-v2/target\nrust/old-faithful-pump-reducer/target',
+      key: "rust-v1-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}",
+      'restore-keys': "rust-v1-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-",
+    },
+  },
+  {
+    name: 'Fetch locked Pump protocol dependencies',
+    run: 'cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked',
   },
   {
     name: 'Fetch locked OF1 planner dependencies',
@@ -123,7 +132,7 @@ const CANONICAL_WORKFLOW = {
   name: 'CI',
   on: {
     push: {
-      branches: ['main', 'chore/**', 'feature/**', 'phase2/**', 'ci/**', 'cursor/**', 'v2/**'],
+      branches: ['main'],
     },
     pull_request: { branches: ['main'] },
     workflow_call: {},
@@ -255,6 +264,7 @@ export function validateWorkflowConfiguration(workflow) {
           const allowed = new Set([
             'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
             'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+            'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
           ]);
           if (!allowed.has(action)) {
             errors.push(`unapproved action ${JSON.stringify(action)} in job ${jobName} step ${stepIndex + 1}`);
