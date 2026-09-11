@@ -1,0 +1,1200 @@
+{
+  "schema": "OF1_BRONZE_DEPENDENCY_REVIEW_1",
+  "manifest_sha256": "80b41bfb5fbfed89920396997addaf9b4d50c8ec874a60a208da80d745497fb4",
+  "lock_sha256": "43520c701dd8b101480847fbacb05f1050187433f3a3652619632bfe457aeb0f",
+  "packages": [
+    {
+      "name": "anyhow",
+      "version": "1.0.104",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "autocfg",
+      "version": "1.5.1",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "bincode",
+      "version": "1.3.3",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "bitflags",
+      "version": "2.13.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "bs58",
+      "version": "0.5.1",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "bytes",
+      "version": "1.12.1",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "cc",
+      "version": "1.4.5",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "crc-catalog",
+      "version": "2.5.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "crc",
+      "version": "3.4.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "either",
+      "version": "1.18.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "errno",
+      "version": "0.3.14",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "fastrand",
+      "version": "2.5.0",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.12",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "five8_const",
+      "version": "1.0.0",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "five8_core",
+      "version": "1.0.0",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "five8",
+      "version": "1.0.0",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "fnv",
+      "version": "1.0.7",
+      "license": "Apache-2.0 / MIT",
+      "buildScript": false
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7",
+      "license": "MIT",
+      "buildScript": true
+    },
+    {
+      "name": "getrandom",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "half",
+      "version": "1.8.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "hex",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "itertools",
+      "version": "0.10.5",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "itoa",
+      "version": "1.0.18",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "jobserver",
+      "version": "0.1.35",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "lazy_static",
+      "version": "1.5.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "libc",
+      "version": "0.2.189",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "linux-raw-sys",
+      "version": "0.12.1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "lock_api",
+      "version": "0.4.14",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "memchr",
+      "version": "2.8.3",
+      "license": "Unlicense OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "num-traits",
+      "version": "0.2.19",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "of1-bronze-decoder",
+      "version": "0.1.0",
+      "license": "UNLICENSED",
+      "buildScript": false
+    },
+    {
+      "name": "of1-range-recorder",
+      "version": "0.1.0",
+      "license": "UNLICENSED",
+      "buildScript": false
+    },
+    {
+      "name": "once_cell",
+      "version": "1.21.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "parking_lot_core",
+      "version": "0.9.12",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "parking_lot",
+      "version": "0.12.5",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "pkg-config",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "prost-derive",
+      "version": "0.11.9",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "prost",
+      "version": "0.11.9",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "r-efi",
+      "version": "6.0.0",
+      "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+      "buildScript": false
+    },
+    {
+      "name": "redox_syscall",
+      "version": "0.5.18",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.4",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": true
+    },
+    {
+      "name": "scopeguard",
+      "version": "1.2.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "serde_cbor",
+      "version": "0.11.2",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "serde_core",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.151",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "serde-big-array",
+      "version": "0.5.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "serde",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "smallvec",
+      "version": "1.16.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-address",
+      "version": "1.1.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-address",
+      "version": "2.7.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-atomic-u64",
+      "version": "3.0.1",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-define-syscall",
+      "version": "5.2.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-hash",
+      "version": "3.1.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-hash",
+      "version": "4.6.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-instruction-error",
+      "version": "2.5.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-instruction",
+      "version": "3.5.1",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-instruction",
+      "version": "4.0.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-message",
+      "version": "3.0.1",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-program-error",
+      "version": "3.0.1",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-pubkey",
+      "version": "4.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-sanitize",
+      "version": "3.0.1",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-sdk-ids",
+      "version": "3.1.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-short-vec",
+      "version": "3.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-signature",
+      "version": "3.5.2",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-transaction-error",
+      "version": "3.2.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "solana-transaction",
+      "version": "3.0.2",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "syn",
+      "version": "1.0.109",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "syn",
+      "version": "3.0.5",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "tempfile",
+      "version": "3.27.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "thiserror",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "tinyvec_macros",
+      "version": "0.1.1",
+      "license": "MIT OR Apache-2.0 OR Zlib",
+      "buildScript": false
+    },
+    {
+      "name": "tinyvec",
+      "version": "1.13.2",
+      "license": "Zlib OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.24",
+      "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "buildScript": false
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-link",
+      "version": "0.2.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.61.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "zmij",
+      "version": "1.0.23",
+      "license": "MIT",
+      "buildScript": true
+    },
+    {
+      "name": "zstd-safe",
+      "version": "7.3.0",
+      "license": "BSD-3-Clause",
+      "buildScript": true
+    },
+    {
+      "name": "zstd-sys",
+      "version": "2.1.0+zstd.1.5.7",
+      "license": "BSD-3-Clause",
+      "buildScript": true
+    },
+    {
+      "name": "zstd",
+      "version": "0.13.3",
+      "license": "MIT",
+      "buildScript": false
+    }
+  ],
+  "features": [
+    {
+      "package": "anyhow@1.0.104",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "autocfg@1.5.1",
+      "features": []
+    },
+    {
+      "package": "bincode@1.3.3",
+      "features": []
+    },
+    {
+      "package": "bitflags@2.13.2",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "block-buffer@0.10.4",
+      "features": []
+    },
+    {
+      "package": "bs58@0.5.1",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "bytes@1.12.1",
+      "features": []
+    },
+    {
+      "package": "cc@1.4.5",
+      "features": [
+        "parallel"
+      ]
+    },
+    {
+      "package": "cfg-if@1.0.4",
+      "features": []
+    },
+    {
+      "package": "cpufeatures@0.2.17",
+      "features": []
+    },
+    {
+      "package": "crc-catalog@2.5.0",
+      "features": []
+    },
+    {
+      "package": "crc@3.4.0",
+      "features": []
+    },
+    {
+      "package": "crypto-common@0.1.7",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "digest@0.10.7",
+      "features": [
+        "alloc",
+        "block-buffer",
+        "core-api",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "either@1.18.0",
+      "features": []
+    },
+    {
+      "package": "errno@0.3.14",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "fastrand@2.5.0",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "find-msvc-tools@0.1.12",
+      "features": []
+    },
+    {
+      "package": "five8_const@1.0.0",
+      "features": []
+    },
+    {
+      "package": "five8_core@1.0.0",
+      "features": []
+    },
+    {
+      "package": "five8@1.0.0",
+      "features": []
+    },
+    {
+      "package": "fnv@1.0.7",
+      "features": []
+    },
+    {
+      "package": "generic-array@0.14.7",
+      "features": [
+        "more_lengths"
+      ]
+    },
+    {
+      "package": "getrandom@0.4.3",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "half@1.8.3",
+      "features": []
+    },
+    {
+      "package": "hex@0.4.3",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "itertools@0.10.5",
+      "features": [
+        "use_alloc"
+      ]
+    },
+    {
+      "package": "itoa@1.0.18",
+      "features": []
+    },
+    {
+      "package": "jobserver@0.1.35",
+      "features": []
+    },
+    {
+      "package": "lazy_static@1.5.0",
+      "features": []
+    },
+    {
+      "package": "libc@0.2.189",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "linux-raw-sys@0.12.1",
+      "features": [
+        "auxvec",
+        "elf",
+        "errno",
+        "general",
+        "ioctl",
+        "no_std"
+      ]
+    },
+    {
+      "package": "lock_api@0.4.14",
+      "features": [
+        "atomic_usize",
+        "default"
+      ]
+    },
+    {
+      "package": "memchr@2.8.3",
+      "features": [
+        "alloc",
+        "std"
+      ]
+    },
+    {
+      "package": "num-traits@0.2.19",
+      "features": []
+    },
+    {
+      "package": "of1-bronze-decoder@0.1.0",
+      "features": []
+    },
+    {
+      "package": "of1-range-recorder@0.1.0",
+      "features": []
+    },
+    {
+      "package": "once_cell@1.21.4",
+      "features": [
+        "alloc",
+        "race",
+        "std"
+      ]
+    },
+    {
+      "package": "parking_lot_core@0.9.12",
+      "features": []
+    },
+    {
+      "package": "parking_lot@0.12.5",
+      "features": [
+        "default"
+      ]
+    },
+    {
+      "package": "pkg-config@0.3.34",
+      "features": []
+    },
+    {
+      "package": "proc-macro2@1.0.107",
+      "features": [
+        "default",
+        "proc-macro"
+      ]
+    },
+    {
+      "package": "prost-derive@0.11.9",
+      "features": []
+    },
+    {
+      "package": "prost@0.11.9",
+      "features": [
+        "default",
+        "prost-derive",
+        "std"
+      ]
+    },
+    {
+      "package": "quote@1.0.47",
+      "features": [
+        "default",
+        "proc-macro"
+      ]
+    },
+    {
+      "package": "r-efi@6.0.0",
+      "features": []
+    },
+    {
+      "package": "redox_syscall@0.5.18",
+      "features": [
+        "default",
+        "userspace"
+      ]
+    },
+    {
+      "package": "rustix@1.1.4",
+      "features": [
+        "alloc",
+        "default",
+        "fs",
+        "std"
+      ]
+    },
+    {
+      "package": "scopeguard@1.2.0",
+      "features": []
+    },
+    {
+      "package": "serde_cbor@0.11.2",
+      "features": [
+        "default",
+        "std",
+        "tags"
+      ]
+    },
+    {
+      "package": "serde_core@1.0.229",
+      "features": [
+        "result",
+        "std"
+      ]
+    },
+    {
+      "package": "serde_derive@1.0.229",
+      "features": [
+        "default"
+      ]
+    },
+    {
+      "package": "serde_json@1.0.151",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "serde-big-array@0.5.1",
+      "features": []
+    },
+    {
+      "package": "serde@1.0.229",
+      "features": [
+        "default",
+        "derive",
+        "serde_derive",
+        "std"
+      ]
+    },
+    {
+      "package": "sha2@0.10.9",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "shlex@2.0.1",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "smallvec@1.16.1",
+      "features": []
+    },
+    {
+      "package": "solana-address@1.1.0",
+      "features": [
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-address@2.7.0",
+      "features": [
+        "copy",
+        "decode",
+        "error",
+        "sanitize",
+        "serde",
+        "syscalls"
+      ]
+    },
+    {
+      "package": "solana-atomic-u64@3.0.1",
+      "features": []
+    },
+    {
+      "package": "solana-define-syscall@5.2.0",
+      "features": []
+    },
+    {
+      "package": "solana-hash@3.1.0",
+      "features": [
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-hash@4.6.0",
+      "features": [
+        "atomic",
+        "copy",
+        "decode",
+        "default",
+        "sanitize",
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-instruction-error@2.5.0",
+      "features": [
+        "num-traits",
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-instruction@3.5.1",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "solana-instruction@4.0.0",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "solana-message@3.0.1",
+      "features": [
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-program-error@3.0.1",
+      "features": []
+    },
+    {
+      "package": "solana-pubkey@4.3.0",
+      "features": []
+    },
+    {
+      "package": "solana-sanitize@3.0.1",
+      "features": []
+    },
+    {
+      "package": "solana-sdk-ids@3.1.0",
+      "features": []
+    },
+    {
+      "package": "solana-short-vec@3.3.0",
+      "features": [
+        "default",
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-signature@3.5.2",
+      "features": [
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-transaction-error@3.2.0",
+      "features": [
+        "serde"
+      ]
+    },
+    {
+      "package": "solana-transaction@3.0.2",
+      "features": [
+        "serde"
+      ]
+    },
+    {
+      "package": "syn@1.0.109",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "extra-traits",
+        "parsing",
+        "printing",
+        "proc-macro",
+        "quote"
+      ]
+    },
+    {
+      "package": "syn@3.0.5",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ]
+    },
+    {
+      "package": "tempfile@3.27.0",
+      "features": [
+        "default",
+        "getrandom"
+      ]
+    },
+    {
+      "package": "thiserror-impl@2.0.20",
+      "features": []
+    },
+    {
+      "package": "thiserror@2.0.20",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "tinyvec_macros@0.1.1",
+      "features": []
+    },
+    {
+      "package": "tinyvec@1.13.2",
+      "features": [
+        "alloc",
+        "grab_spare_slice",
+        "std",
+        "tinyvec_macros"
+      ]
+    },
+    {
+      "package": "typenum@1.20.1",
+      "features": []
+    },
+    {
+      "package": "unicode-ident@1.0.24",
+      "features": []
+    },
+    {
+      "package": "version_check@0.9.5",
+      "features": []
+    },
+    {
+      "package": "windows-link@0.2.1",
+      "features": []
+    },
+    {
+      "package": "windows-sys@0.61.2",
+      "features": [
+        "Win32",
+        "Win32_Foundation",
+        "Win32_Networking",
+        "Win32_Networking_WinSock",
+        "Win32_Storage",
+        "Win32_Storage_FileSystem",
+        "Win32_System",
+        "Win32_System_Diagnostics",
+        "Win32_System_Diagnostics_Debug",
+        "default"
+      ]
+    },
+    {
+      "package": "zmij@1.0.23",
+      "features": []
+    },
+    {
+      "package": "zstd-safe@7.3.0",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "zstd-sys@2.1.0+zstd.1.5.7",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "zstd@0.13.3",
+      "features": []
+    }
+  ],
+  "build_scripts": [
+    {
+      "package": "anyhow@1.0.104",
+      "sha256": "89d1baedcff59822ed692d3a33f131c211a213bdec33c83f68b54110d9c64223",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "generic-array@0.14.7",
+      "sha256": "08fa30c4a2c1ad24fe5f987e721dfb20131f45ea5b5dc3e836dcf88a8e33248c",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "getrandom@0.4.3",
+      "sha256": "662faa06d7b2a9c5bea2c17a127a90e00b9f9b31105b0360da516e47cf816e95",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "libc@0.2.189",
+      "sha256": "e47f4a6762799b6e69cefc7acdb3291df828010e4de20609f7378f9c94ea29e6",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "num-traits@0.2.19",
+      "sha256": "d3969209fc1c9d201c66ed11820d0b328600d75b3971f8ceebeab04900bc0587",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "parking_lot_core@0.9.12",
+      "sha256": "3698c936b75f8332d9b6b30a8a6838ea116c1ff0a819a025c9ea9696e4d8ce72",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "proc-macro2@1.0.107",
+      "sha256": "baeb20b52f6b536be8657a566591a507bb2e34a45cf8baa42b135510a0c3c729",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "quote@1.0.47",
+      "sha256": "cd6808c02e476b09a520105e2c6f6d325cccb1ecd542cbbcc836a0ae6f6fb0f1",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "rustix@1.1.4",
+      "sha256": "74cb32e64aa6fe99c2496a425b016e22f4e43c438a8237966b8acae04a98eaf9",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "serde@1.0.229",
+      "sha256": "e2ea6a7a82f5404c3e28cb055883c737ee7903367a10206fbb47b75c009f0eb3",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "serde_core@1.0.229",
+      "sha256": "7bc6b1eec8913ff4cd8e4b9b92cd04a82a4f38beb30a0b73a64c1e6e49f07b5f",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "serde_json@1.0.151",
+      "sha256": "a681e754be844c7dbef957f5d2d00b01f37c5dca160ef1055a8d8f975697a881",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "syn@1.0.109",
+      "sha256": "b815649fd2929d3debd93a58f5da2fb8eba506047a6a5ba538347305828a87b0",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "thiserror@2.0.20",
+      "sha256": "ccc38283604f99237ad2333bbe395259e29fdf2ff4e04a60a95de9e4499c09a3",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "zmij@1.0.23",
+      "sha256": "ad320bc635887879bdbbf1b9322da4a157ec2c5a4243bd7c2cf9b6884a3b2a41",
+      "review": "Local compiler/platform/feature probing or source generation; execution additionally socket-denied in acceptance build."
+    },
+    {
+      "package": "zstd-safe@7.3.0",
+      "sha256": "2342e59833e2ebca2980884d4f242a6bf1b0143037c212e05514626ad5213505",
+      "review": "Cargo rerun metadata only."
+    },
+    {
+      "package": "zstd-sys@2.1.0+zstd.1.5.7",
+      "sha256": "2e33434c23ab69ce376fbb2c027845acff686232dc2e3d0a387f04bae4be4f68",
+      "review": "Bundled zstd C via existing cc/pkg-config; features std only, no bindgen/CMake/Clang/network."
+    }
+  ],
+  "no_new_system_dependency": true,
+  "notes": [
+    "No signer/RPC/client/ledger/runtime transport/HTTP/TLS dependency.",
+    "Reused of1-range-recorder has zero enabled features; source/lock unchanged.",
+    "Zstd uses bundled C with existing native compiler; no dynamic libzstd, CMake or protobuf compiler required.",
+    "Manually declared prost projection pins official proto bytes; not a second Pump decoder."
+  ]
+}

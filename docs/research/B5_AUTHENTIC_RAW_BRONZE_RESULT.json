@@ -1,0 +1,225 @@
+{
+  "schema": "B5_AUTHENTIC_BRONZE_OBSERVATION_1",
+  "recorded_at": "2026-09-11T16:48:07.263Z",
+  "implementation_project_evidence": "Fixture",
+  "observation_class": "AUTHENTIC_LOCAL_OFFLINE_TRANSACTION_STATUS_DECODE",
+  "slice_class": "ENGINEERING_VALIDATION_ONLY",
+  "research_ready": false,
+  "b4_completed": false,
+  "b5_completed": false,
+  "source_code_commit": "c29b9d12cbf4b088d2f305ee0af970ab0b0c2d33",
+  "decoder": {
+    "binary": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/bin/of1-bronze-decoder-3608c21b795c0efc094fd9013c3ee61d5f15c28bdcbfac5072af59d79bc45f63",
+    "binary_sha256": "3608c21b795c0efc094fd9013c3ee61d5f15c28bdcbfac5072af59d79bc45f63",
+    "source_sha256": "6a926df533d9e5df926f6817246c6c55d9497b41f8c42ee206ce231b58dfed2a",
+    "lock_sha256": "43520c701dd8b101480847fbacb05f1050187433f3a3652619632bfe457aeb0f",
+    "toolchain": {
+      "node": "v22.23.2",
+      "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+      "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)\nrelease: 1.97.1\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.20.0-DEV (sys:0.4.88+curl-8.20.0 vendored ssl:OpenSSL/3.6.2)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Ubuntu 26.4.0 (resolute) [64-bit]",
+      "cc": "cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    }
+  },
+  "input": {
+    "run_id": "c0e423ba01081560e6b76a682c70760f807272fce7c74d207167f169a24584e9",
+    "root": "/home/dmesdary/solana-quant-data/runs/of1-e978-metadata-09379cff-04",
+    "raw_path": "/home/dmesdary/solana-quant-data/runs/of1-e978-metadata-09379cff-04/published/0000000004/raw.bin",
+    "raw_bytes": 605402,
+    "raw_sha256": "f0f29edfa5d07dfc9262208659dec18610fb9365b35a988463369db3894c998e",
+    "epoch": 978,
+    "slot": "422496001",
+    "car_range_start": 45110,
+    "car_range_end_exclusive": 650512,
+    "acquisition_binary_sha256": "6189491afb7bbfe09da3cc73763c7f07c750c39bf466023be570ade2da62de05",
+    "original_files_preserved": 218,
+    "bindings": {
+      "aggregate_sha256": "9d02a571ecbb8b3dc0bf091339d4056040bb1187ebb31986f85d2251ca5bf6aa",
+      "manifest_sha256": "5d791e414fe077a94befeb094e8e9bd67603e032692efbe251b065681b2e0daf",
+      "metadata_receipt_sha256": "7ece25c1a8bae0100e08f88a33804363c86e0bef738efd9a8f9f1ff2eb31937b",
+      "payload_manifest_sha256": "66e523b6218f1fc1bfc4f9d87271b1db4dded7800ae3f19778cfdf8ea4a3ce8c",
+      "prepared_payload_sha256": "c24402919f2e9429773eff69bf882876209965f3ff9b963ce208b95bbd13f4a4",
+      "receipts": [
+        {
+          "path": "published/0000000000/receipt.json",
+          "raw_bytes": 5184000,
+          "raw_sha256": "649754195dd6182846a9754ffd7fa26a487e0b65bea66794e7d8bf180321a59b",
+          "sequence": 0,
+          "sha256": "da17f0d62a99d15aca6e605537cfb4e252a7b313c650d842fae891eacc2c7e5c"
+        },
+        {
+          "path": "published/0000000001/receipt.json",
+          "raw_bytes": 101,
+          "raw_sha256": "a7b6e38f47efd59831641cccf4eaf24870c9176c876d7bd5ccf21163bceb95f0",
+          "sequence": 1,
+          "sha256": "dedf837533c1f8740ef6ea6b33d98acf8b91f9ae3f679eaa5fe0e45698f675d4"
+        },
+        {
+          "path": "published/0000000002/receipt.json",
+          "raw_bytes": 60,
+          "raw_sha256": "8db9cecc883c7b759a9975230b09c34b2a4e6b349e445b5d92d96b02b9408ba2",
+          "sequence": 2,
+          "sha256": "572e0be32f9321bb74a0f7a8c7e92d981cfdf22081f77a0e79a69691212c418b"
+        },
+        {
+          "path": "published/0000000003/receipt.json",
+          "raw_bytes": 0,
+          "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "sequence": 3,
+          "sha256": "435f9fa7b5b14c2366bc7d3e18cb55da502aa873138f34a4c538279d5d93cc57"
+        },
+        {
+          "path": "published/0000000004/receipt.json",
+          "raw_bytes": 605402,
+          "raw_sha256": "f0f29edfa5d07dfc9262208659dec18610fb9365b35a988463369db3894c998e",
+          "sequence": 4,
+          "sha256": "711c94d306294cc1a1b49a315a2f5ebf44fb5453915d1bed953129737b15b140"
+        }
+      ]
+    }
+  },
+  "archival_verifier": {
+    "binary_sha256": "85fcaee0947e3ea5017e8e30f49380e2208a9c2227d24d16b0c7be4365480e92",
+    "source_sha256": "d25e752100a8c19831f5080b8e5b481786ae161a80cfeec091676d06f8bc09b7",
+    "stages": {
+      "capture": "COMPLETE",
+      "car_slot": "VERIFIED",
+      "domain_decoding": "NOT_PERFORMED",
+      "raw_receipts": "VERIFIED"
+    },
+    "nodes": 846,
+    "links": 845,
+    "transaction_nodes": 725,
+    "entry_nodes": 119,
+    "rewards_nodes": 1,
+    "block_nodes": 1,
+    "root_to_slot_membership": "UNAVAILABLE"
+  },
+  "decoded": {
+    "envelopes": 725,
+    "dispositions": {
+      "DECODED": 725,
+      "MISSING": 0,
+      "QUARANTINED": 0,
+      "UNSUPPORTED": 0
+    },
+    "reasons": {},
+    "wire_formats": {
+      "LEGACY": 725
+    },
+    "statuses": {
+      "OK": 725
+    },
+    "packages_referencing_vote": 723,
+    "packages_without_vote": 2,
+    "pump_program_known_positive": 0,
+    "pump_program_unknown": 0,
+    "pump_event_decode": "NOT_PERFORMED",
+    "records_sha256": "9f292221b5b5f882c1eee20cd82fa5ae21d6300d5a194503f644179acc5f21e7",
+    "first_signature": "2bDRcXrkEu53VoExAZuprWBKvuRsWcbDSZc25HwKyr8tEu9dBKkuSeHUwPFmKpZd6XvftE3QzNh753GJ11pR5N7q",
+    "first_fee_lamports": "5000",
+    "metadata_codec": {
+      "ZSTD_PROTOBUF": 725
+    },
+    "dataframe_checksums": "ABSENT_IN_THESE_AUTHENTIC_ENVELOPES; CID_HASH_CHECKS_PASSED; CRC/FNV_PATHS_HAVE_SEPARATE_SYNTHETIC_TESTS"
+  },
+  "resource_accounting": {
+    "decoded_metadata_bytes": 120877,
+    "max_decoded_metadata_bytes": 16777216,
+    "max_record_json_bytes": 16777216,
+    "record_json_bytes": 5234686,
+    "measured_wall_seconds": 0.18,
+    "measured_peak_rss_kib": 44748
+  },
+  "determinism": {
+    "executions": 2,
+    "byte_identical": [
+      "quality.json",
+      "bronze.jsonl",
+      "quality.html"
+    ],
+    "operational_execution_times_differ": true
+  },
+  "browser": {
+    "url": "http://localhost:4174/quality.html",
+    "acquisition_monitor_url": "http://localhost:4173/",
+    "observed_transactions": 725,
+    "denied_requests": 0,
+    "warnings": [],
+    "receipt_sha256": "bc3199a08eb84ea1ef6cfabdf0016dd0476d13b829382d51cbc3e1d5eb23d96e"
+  },
+  "artifacts": {
+    "final/quality.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/final/quality.json",
+      "bytes": 6500146,
+      "sha256": "4c5843e23d7d6db2990476f1ffb33dc4589b57821bc237707ea0281a4fd5b32a"
+    },
+    "final/bronze.jsonl": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/final/bronze.jsonl",
+      "bytes": 5235411,
+      "sha256": "11763bdc7ad4aaacc6c4568860fe505198e60196b2cf2ef3cd14e23dbbf4deeb"
+    },
+    "final/quality.html": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/final/quality.html",
+      "bytes": 184829,
+      "sha256": "ed055cade0e5ad7486ad78878b81852c303d6bae959509734114715d581dc30c"
+    },
+    "final/execution.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/final/execution.json",
+      "bytes": 841,
+      "sha256": "0a178597cba625263e6e4c7c48199e4ff9c2b7c56e23f10c3c84a53cfc6cfb8a"
+    },
+    "final/COMPLETE": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/final/COMPLETE",
+      "bytes": 64,
+      "sha256": "09808b471d918c159419a2b71089177b1c4b1dc7ffac496a0bf7c3ffd483b140"
+    },
+    "input-before.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/input-before.json",
+      "bytes": 37480,
+      "sha256": "dbbe2acb1b5ecc93c0e25c370a895372c322968a804b91bec56348bd45d76e50"
+    },
+    "input-after.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/input-after.json",
+      "bytes": 37480,
+      "sha256": "dbbe2acb1b5ecc93c0e25c370a895372c322968a804b91bec56348bd45d76e50"
+    },
+    "retained-verifier.stdout.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/retained-verifier.stdout.json",
+      "bytes": 3794,
+      "sha256": "1d6d8a7050b966420f94130eb7ca998f43eea893b3793b409e2e451efdf7681f"
+    },
+    "retained-verifier-execution.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/retained-verifier-execution.json",
+      "bytes": 643,
+      "sha256": "6ce51d183265def411b97f2f7b48d5b515dfd9e02465bb5b4f869b6ca4ade6ca"
+    },
+    "release-build-receipt.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/release-build-receipt.json",
+      "bytes": 2155,
+      "sha256": "2396a823ac9af4dbd3757c5a72cf319b3e19ea63291cdc606453c24931ccaa1f"
+    },
+    "final.resources.log": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/final.resources.log",
+      "bytes": 1222,
+      "sha256": "ee265e0a1bea803c306daac4e2cdf5d892db04829a1d826ea5da348df1b1ef09"
+    },
+    "browser/b5-browser-evidence-success.json": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/browser/b5-browser-evidence-success.json",
+      "bytes": 202085,
+      "sha256": "bc3199a08eb84ea1ef6cfabdf0016dd0476d13b829382d51cbc3e1d5eb23d96e"
+    },
+    "browser/b5-quality.png": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-authentic-decode-20260911/browser/b5-quality.png",
+      "bytes": 104027,
+      "sha256": "168779f613f480fbe039524d302c8b24a02c3ae6c4407facd0a7cb7583396a50"
+    }
+  },
+  "limits": [
+    "No new provider or acquisition request, writer resume, lease change, merge or Project promotion",
+    "Metadata-only input cannot become a transaction dataset",
+    "Unsupported/missing/quarantined packages remain explicit; unknown CPI involvement is not zero",
+    "No signature crypto verification, Pump events, token identity/lifecycle, Silver, Parquet decision, strategy or research-ready claim",
+    "Original empty slot/failure and acquisitions/binaries remain unchanged",
+    "PR 111 was inspected but not merged or adopted wholesale"
+  ]
+}

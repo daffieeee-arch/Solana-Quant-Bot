@@ -1,0 +1,134 @@
+{
+  "schema": "OF1_BRONZE_SOURCES_1",
+  "status": "SOURCE_BOUND_STRUCTURAL_TYPES_WITH_SEPARATE_AUTHENTIC_OBSERVATIONS",
+  "sources": [
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "jetstreamer-firehose/src/dataframe.rs",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/dataframe.rs",
+      "retrieved_at_utc": "2026-09-11T16:07:25.570Z",
+      "bytes": 9152,
+      "sha256": "c0889d86360f071d68e1af72195e23a5c780282281ec5ddc554815640c55474b"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "jetstreamer-firehose/src/transaction.rs",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/transaction.rs",
+      "retrieved_at_utc": "2026-09-11T16:07:25.780Z",
+      "bytes": 30978,
+      "sha256": "46e162e00b2c64eeeeae81747124196d522aa0a69da299be4e6f547c41e715f8"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "jetstreamer-firehose/src/lib.rs",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/lib.rs",
+      "retrieved_at_utc": "2026-09-11T16:07:25.982Z",
+      "bytes": 9744,
+      "sha256": "3959a445a8b6d0134c288a07a8cf35e7f4a2e5fe078a7a60c08f8fb65dc29eab"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "jetstreamer-firehose/Cargo.toml",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/Cargo.toml",
+      "retrieved_at_utc": "2026-09-11T16:07:26.731Z",
+      "bytes": 2143,
+      "sha256": "21603f4f71db3d0a351776f5502804ac494c635ed00a9f2d6f9880b29e53ac28"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "Cargo.toml",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/Cargo.toml",
+      "retrieved_at_utc": "2026-09-11T16:07:27.014Z",
+      "bytes": 4035,
+      "sha256": "5733252eb7f579d28d83d0951ddd16af86542cba21ad7e1f66a770696b1f345e"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "LICENSE-APACHE",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/LICENSE-APACHE",
+      "retrieved_at_utc": "2026-09-11T16:07:27.668Z",
+      "bytes": 10172,
+      "sha256": "59899c6091b540582ed617e8eeaac4919dc985ccfc35459ee9752b699be5205b"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "LICENSE-MIT",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/LICENSE-MIT",
+      "retrieved_at_utc": "2026-09-11T16:07:27.912Z",
+      "bytes": 1095,
+      "sha256": "d90f79e0b6154f7dcc36b934e93d7c807aa323fc9c29e39ff1c453c7e14f074d"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "jetstreamer-firehose/src/node.rs",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/node.rs",
+      "sha256": "1dbcf655d4b79469f95454de6b13f64ee5479498598e783ed201f4c164633fee",
+      "bytes": 19843,
+      "retrieved_at": "2026-09-11T16:08:26.375Z"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "jetstreamer-firehose/src/utils.rs",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/utils.rs",
+      "sha256": "e88bef75cf033ea453a43526895e9618968e387073da650415d9b70970d60049",
+      "bytes": 5923,
+      "retrieved_at": "2026-09-11T16:07:59.472Z"
+    },
+    {
+      "repository": "anza-xyz/jetstreamer",
+      "commit": "cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24",
+      "path": "jetstreamer-firehose/src/firehose.rs",
+      "url": "https://raw.githubusercontent.com/anza-xyz/jetstreamer/cffaf3d891b3cbe45a46dd963d6d3571b2aa1a24/jetstreamer-firehose/src/firehose.rs",
+      "sha256": "572ec56122e898f2318adc34d5998296b4fa0d31cf4bcab40950f5615a526a00",
+      "bytes": 204187,
+      "retrieved_at": "2026-09-11T16:07:59.252Z"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/proto/confirmed_block.proto",
+      "url": "https://raw.githubusercontent.com/anza-xyz/agave/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/proto/confirmed_block.proto",
+      "retrieved_at": "2026-09-11T16:15:53.313Z",
+      "sha256": "c29a6db1c76fc1361f2d3920bdbda01f6270b6743c5bdc19997a9f4720ccdcec",
+      "bytes": 3454
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/src/convert.rs",
+      "url": "https://raw.githubusercontent.com/anza-xyz/agave/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/src/convert.rs",
+      "retrieved_at": "2026-09-11T16:15:53.529Z",
+      "sha256": "5884bda534f1824b62befe70795e4250fe1302a99acbe1ad4f0ca98856163f4b",
+      "bytes": 82033
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/anza-xyz/agave/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/LICENSE",
+      "retrieved_at": "2026-09-11T16:15:53.765Z",
+      "sha256": "048838ecab23173fe6db9b3a4f5d9e2f5480b8692dfca556fed4aa039ca06bc8",
+      "bytes": 9136
+    }
+  ],
+  "registry_crates": {
+    "solana-transaction": "3.0.2",
+    "solana-message": "3.0.1",
+    "solana-transaction-error": "3.2.0"
+  },
+  "notes": [
+    "Cargo.lock binds all registry bytes by registry SHA256.",
+    "Jetstreamer assembly/checksum semantics, not upstream runtime/RPC behavior, are reused.",
+    "Agave protobuf projection is manually declared, not claimed generated.",
+    "No independent historical activation proof; no Pump decoding."
+  ]
+}
