@@ -7,7 +7,8 @@ use crate::{
     durable::{
         Clock, StoreError,
         acquisition::{
-            AcquisitionStore, Authority, Permit, Receipt, Request, RequestKind, SEGMENT_BYTES,
+            AcquisitionStore, Authority, Permit, Progress, Receipt, Request, RequestKind,
+            SEGMENT_BYTES,
         },
     },
 };
@@ -52,6 +53,52 @@ pub enum HttpsError {
 
 pub type HttpsResult<T> = Result<T, HttpsError>;
 
+/// Optional operational observations, never acquisition authority or accounting.
+/// Implementations must remain bounded/nonblocking; failures cannot affect capture.
+pub trait CaptureObserver {
+    fn active(&self) -> bool {
+        false
+    }
+    fn reserved(&mut self, _: u64, _: &Progress) {}
+    fn head(&mut self, _: u64, _: u16, _: u64) {}
+    fn received(&mut self, _: u64, _: u64) {}
+    fn verifying(&mut self, _: u64) {}
+    fn publishing(&mut self, _: u64) {}
+    fn published(&mut self, _: u64, _: &Receipt) {}
+    fn failed(&mut self, _: u64, _: &str) {}
+}
+
+struct NoObservation;
+impl CaptureObserver for NoObservation {}
+
+#[cfg(feature = "monitor")]
+impl CaptureObserver for crate::monitor::Monitor {
+    fn active(&self) -> bool {
+        true
+    }
+    fn reserved(&mut self, seq: u64, progress: &Progress) {
+        self.reserve(seq, progress);
+    }
+    fn head(&mut self, seq: u64, status: u16, length: u64) {
+        self.head(seq, status, length);
+    }
+    fn received(&mut self, seq: u64, bytes: u64) {
+        self.received(seq, bytes);
+    }
+    fn verifying(&mut self, seq: u64) {
+        self.verifying(seq);
+    }
+    fn publishing(&mut self, seq: u64) {
+        self.publishing(seq);
+    }
+    fn published(&mut self, seq: u64, receipt: &Receipt) {
+        self.published(seq, receipt);
+    }
+    fn failed(&mut self, seq: u64, reason: &str) {
+        self.failed(seq, reason);
+    }
+}
+
 /// Capture one approved operation. Its reservation is durable before DNS/TCP/TLS.
 /// This function is absent unless `network-of1` was explicitly compiled.
 /// # Errors
@@ -69,7 +116,18 @@ impl OfficialHttps {
         store: &mut AcquisitionStore<C>,
         sequence: u64,
     ) -> HttpsResult<Receipt> {
-        capture_official(store, sequence)
+        capture_official(store, sequence, &mut NoObservation)
+    }
+
+    /// Same single-attempt authority/durability contract, with optional measurements.
+    /// # Errors
+    /// Identical to `capture`; observer loss never retries or authorizes a request.
+    pub fn capture_observed<C: Clock>(
+        store: &mut AcquisitionStore<C>,
+        sequence: u64,
+        observer: &mut dyn CaptureObserver,
+    ) -> HttpsResult<Receipt> {
+        capture_official(store, sequence, observer)
     }
 }
 
@@ -77,6 +135,7 @@ impl OfficialHttps {
 fn capture_official<C: Clock>(
     store: &mut AcquisitionStore<C>,
     sequence: u64,
+    observer: &mut dyn CaptureObserver,
 ) -> HttpsResult<Receipt> {
     if !matches!(store.authority(), Authority::Approved { .. }) {
         return Err(HttpsError::Authority);
@@ -84,6 +143,7 @@ fn capture_official<C: Clock>(
     let request = store.request(sequence)?.clone();
     let path = store.source_path(sequence)?;
     let permit = store.reserve(sequence)?;
+    observe_reservation(store, sequence, observer);
     let result = (|| {
         store.network_authorized(&permit)?;
         let deadline = Deadline::new(store.remaining_ms(&permit)?)?;
@@ -93,11 +153,14 @@ fn capture_official<C: Clock>(
             .cloned()
             .collect::<RootCertStore>();
         let config = tls_config(roots)?;
-        capture_reserved(store, permit, &request, &path, address, config, deadline)
+        capture_reserved(
+            store, permit, &request, &path, address, config, deadline, observer,
+        )
     })();
     if result.is_err() {
         store.abort_stream();
     }
+    observe_result(sequence, &result, observer);
     result
 }
 
@@ -137,12 +200,25 @@ impl FixtureHttps {
         store: &mut AcquisitionStore<C>,
         sequence: u64,
     ) -> HttpsResult<Receipt> {
+        self.capture_observed(store, sequence, &mut NoObservation)
+    }
+
+    /// Numeric-loopback fixture capture with the same intra-request observer hooks.
+    /// # Errors
+    /// Same authority, framing and durable publication failures as `capture`.
+    pub fn capture_observed<C: Clock>(
+        &self,
+        store: &mut AcquisitionStore<C>,
+        sequence: u64,
+        observer: &mut dyn CaptureObserver,
+    ) -> HttpsResult<Receipt> {
         if !matches!(store.authority(), Authority::Fixture) {
             return Err(HttpsError::Authority);
         }
         let request = store.request(sequence)?.clone();
         let path = store.source_path(sequence)?;
         let permit = store.reserve(sequence)?;
+        observe_reservation(store, sequence, observer);
         let result = (|| {
             let deadline = Deadline::new(store.remaining_ms(&permit)?)?;
             let address = SocketAddr::from(([127, 0, 0, 1], self.port));
@@ -154,12 +230,37 @@ impl FixtureHttps {
                 address,
                 self.config.clone(),
                 deadline,
+                observer,
             )
         })();
         if result.is_err() {
             store.abort_stream();
         }
+        observe_result(sequence, &result, observer);
         result
+    }
+}
+
+fn observe_reservation<C: Clock>(
+    store: &AcquisitionStore<C>,
+    sequence: u64,
+    observer: &mut dyn CaptureObserver,
+) {
+    if observer.active()
+        && let Ok(progress) = store.progress()
+    {
+        observer.reserved(sequence, &progress);
+    }
+}
+
+fn observe_result(
+    sequence: u64,
+    result: &HttpsResult<Receipt>,
+    observer: &mut dyn CaptureObserver,
+) {
+    match result {
+        Ok(receipt) => observer.published(sequence, receipt),
+        Err(error) => observer.failed(sequence, &error.to_string()),
     }
 }
 
@@ -176,6 +277,7 @@ fn tls_config(roots: RootCertStore) -> HttpsResult<Arc<ClientConfig>> {
     Ok(Arc::new(config))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn capture_reserved<C: Clock>(
     store: &mut AcquisitionStore<C>,
     permit: Permit,
@@ -184,6 +286,7 @@ fn capture_reserved<C: Clock>(
     address: SocketAddr,
     config: Arc<ClientConfig>,
     deadline: Deadline,
+    observer: &mut dyn CaptureObserver,
 ) -> HttpsResult<Receipt> {
     let socket = TcpStream::connect_timeout(&address, deadline.remaining()?)?;
     let connection = ClientConnection::new(
@@ -219,6 +322,7 @@ fn capture_reserved<C: Clock>(
         }
     };
     let mut remaining = request.entity_length(&head)?;
+    observer.head(request.sequence, head.status, remaining);
     store.begin_stream(&permit, head)?;
     let mut buffer = vec![0u8; SEGMENT_BYTES].into_boxed_slice();
     while remaining > 0 {
@@ -234,7 +338,10 @@ fn capture_reserved<C: Clock>(
                     retain_partial(store, &permit, &buffer[..filled])?;
                     return Err(HttpsError::Truncated);
                 }
-                Ok(count) => filled += count,
+                Ok(count) => {
+                    observer.received(request.sequence, count as u64);
+                    filled += count;
+                }
                 Err(error) => {
                     retain_partial(store, &permit, &buffer[..filled])?;
                     return if error.kind() == io::ErrorKind::UnexpectedEof {
@@ -254,7 +361,8 @@ fn capture_reserved<C: Clock>(
     eof_after_complete_entity(&mut stream)?;
     stream.sock.deadline.remaining()?;
     store.remaining_ms(&permit)?;
-    Ok(store.finish_stream(permit)?)
+    observer.verifying(request.sequence);
+    Ok(store.finish_stream_observed(permit, || observer.publishing(request.sequence))?)
 }
 
 fn retain_partial<C: Clock>(

@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "start:cockpit": "node dist/cockpit-main.js",
-    "build": "tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:cockpit && npm run verify:cockpit-runtime",
+    "start:acquisition-monitor": "node dist/acquisition-monitor/main.js",
+    "build:monitor": "tsc -p frontend/tsconfig.monitor.json && vite build --config frontend/vite.monitor.config.ts",
+    "build": "tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:cockpit && npm run verify:cockpit-runtime && npm run build:monitor",
     "verify:research-transport": "node scripts/assert-research-transport-free.mjs",
     "verify:cockpit-runtime": "node scripts/assert-cockpit-runtime-inert.mjs",
     "build:frontend": "vite build --config frontend/vite.config.ts",

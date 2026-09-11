@@ -1028,7 +1028,19 @@ impl<C: Clock> AcquisitionStore<C> {
     /// # Errors
     /// Only exact exhaustion and a full persisted audit permit paired publication.
     pub fn finish_stream(&mut self, permit: Permit) -> StoreResult<Receipt> {
-        let result = self.finish_inner(&permit);
+        self.finish_stream_observed(permit, || {})
+    }
+
+    /// Read-only, nonblocking stage observation after validation, before publication I/O.
+    /// The callback supplies no authority or data and cannot change the durable ordering.
+    /// # Errors
+    /// Identical to `finish_stream`; consumes the permit even on failure.
+    pub fn finish_stream_observed(
+        &mut self,
+        permit: Permit,
+        publishing: impl FnOnce(),
+    ) -> StoreResult<Receipt> {
+        let result = self.finish_inner(&permit, publishing);
         // Consume the non-cloneable permit even when publication fails.
         drop(permit);
         if result.is_err() {
@@ -1037,7 +1049,7 @@ impl<C: Clock> AcquisitionStore<C> {
         result
     }
 
-    fn finish_inner(&mut self, permit: &Permit) -> StoreResult<Receipt> {
+    fn finish_inner(&mut self, permit: &Permit, publishing: impl FnOnce()) -> StoreResult<Receipt> {
         self.permit(permit)?;
         self.refresh()?;
         let stream = self
@@ -1079,6 +1091,7 @@ impl<C: Clock> AcquisitionStore<C> {
                 .checked_add(2 * RECORD_LIMIT)
                 .ok_or(StoreError::Budget)?,
         )?;
+        publishing();
         fs::create_dir(&candidate)?;
         sync_dir(&self.root.join("pending"))?;
         let mut file = OpenOptions::new()

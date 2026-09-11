@@ -13,7 +13,7 @@ import { writeResearchNetworkDenyFilter } from './write-research-seccomp-filter.
 const root = resolve(import.meta.dirname, '..');
 const crate = join(root, 'rust/of1-range-recorder');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const MANIFEST_HASH = '12fd65989da0f2d560b344a51bc003dbb1772934328075c0f066bd0f12dbb799';
+const MANIFEST_HASH = 'dfd72a9c45e3c1d20f1c50830933711fb953e1d402019ca873c16bc7049d8bbf';
 const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
@@ -27,11 +27,18 @@ const LOOPBACK_SOURCE_HASHES = {
 // These files alone contain the reviewed production capability / fixture orchestration.
 // An exact source pin is not a network lease; no official request runs in this gate.
 const ACQUISITION_SOURCE_HASHES = {
-  'src/https.rs': '96408bb7856b732a7b666e907b2b7ec71ff17032d59fe02dad576c021b3c84b4',
-  'src/https/fixture.rs': 'c1ece52385350e303718e02c439fc5b946466dd3c6544ceca9e64cb72d9e5f8e',
-  'tests/acquisition_https.rs': '53e25acec538a1f0d394720c076f953e53eda0be508c514782056047e8f77fd8',
+  'src/https.rs': 'aee8900d9cd2c4d8fa2e794df88ed9c194c25717ae2c441222479f7f8d1399ee',
+  'src/https/fixture.rs': 'ece9a8026e155be03beb5bdbc0c211adad14e486049f7d6c33c200c57f6ff1af',
+  'tests/acquisition_https.rs': '77cc08d94cbbe027b491d4461f3324b2efef5212abfaf1801a6e1a2ef6a66443',
   'tests/acquisition_e2e.rs': 'f535c35a39a7a3069c847017ead8bfe4a347493854deec56a7628a405ca5358e',
   'src/bin/of1-acquisition-fixture-evidence.rs': '181c32d8d379e23284bf18c1f4081e19a5ddfdb9070c9fcdaa252bd1cfce6ea2',
+};
+// Local-only operational telemetry is a separate, default-disabled capability.
+// Pin its Unix IPC and sealed simulator, never grant a directory-wide exception.
+const MONITOR_SOURCE_HASHES = {
+  'src/monitor/relay.rs': '38cfe4405e1a51c4d9e51a646bea3bc532d7b7517ddbc6654fc82e5dc4bf888b',
+  'tests/monitor_ipc.rs': '3693c0c8f570784743d06a4118c996302b19d688afd530afb4e6fbd4652cdb8a',
+  'src/bin/of1-monitor-simulation.rs': '45e59f9c90fcd8e2959dbd79d17aa586f2a2f7ebc888c3aaa2067be13c14923e',
 };
 
 export function validateOf1PlannerInputs(manifest, lock, sources) {
@@ -42,12 +49,15 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     const crashHarness = path === 'tests/durability_process.rs';
     const fixtureSource = Object.hasOwn(LOOPBACK_SOURCE_HASHES, path);
     const acquisitionSource = Object.hasOwn(ACQUISITION_SOURCE_HASHES, path);
+    const monitorSource = Object.hasOwn(MONITOR_SOURCE_HASHES, path);
     if (crashHarness && hash(source) !== PROCESS_TEST_HASH) errors.push('unreviewed OF1 process-crash harness');
     if (fixtureSource && hash(source) !== LOOPBACK_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 loopback source: ${path}`);
     if (acquisitionSource && hash(source) !== ACQUISITION_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 acquisition source: ${path}`);
+    if (monitorSource && hash(source) !== MONITOR_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 monitor source: ${path}`);
     if (path === 'build.rs' || /\bunsafe\s*\{|#\s*\[\s*path\s*=/u.test(source)
       || (!fixtureSource && !acquisitionSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
-      || (!crashHarness && !fixtureSource && !acquisitionSource && /\bCommand\b|std::process::Command/u.test(source))) {
+      || (!monitorSource && /\bUnixDatagram\b/u.test(source))
+      || (!crashHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(source))) {
       errors.push(`unexpected runtime capability in ${path}`);
     }
   }
@@ -218,7 +228,7 @@ async function run(mode) {
     // exhausted the unchanged 25-minute job budget despite passing every test.
     // Existing debug/default tests and all assertions/cases remain. Compilation/build
     // scripts still execute under socket denial; no official dispatch is run.
-    for (const target of ['acquisition_https', 'acquisition_e2e']) {
+    for (const target of ['acquisition_https', 'acquisition_e2e', 'monitor_ipc']) {
       const built = isolated('cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--release',
         '--all-features', '--test', target, '--no-run', '--message-format=json-render-diagnostics']);
       const executable = built.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
@@ -244,7 +254,45 @@ async function run(mode) {
       if (mode === '--print') process.stdout.write(`${path}\n${outputs[0]}`);
       else if (outputs[0] !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 report drift: ${path}`);
     }
-    process.stdout.write('OF1 socket-denied default/build and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');
+    const monitorBuild = isolated('cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--release',
+      '--features', 'monitor,tls-fixture', '--bin', 'of1-monitor-simulation', '--message-format=json-render-diagnostics']);
+    const monitorBinary = monitorBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
+      .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-monitor-simulation' && v.executable)?.executable;
+    if (!monitorBinary) throw new Error('monitor simulation binary missing');
+    const monitored = loopback(monitorBinary, [join(scratch, 'monitored-run'), join(scratch, 'absent-relay.sock')]).stdout;
+    const terminal = JSON.parse(monitored.slice(monitored.indexOf('{')));
+    if (terminal.kind !== 'LOCAL_SIMULATION' || terminal.stage !== 'COMPLETE'
+      || terminal.selection.operations_published !== 4 || terminal.traffic.attempts !== 5
+      || terminal.traffic.retries !== 1 || terminal.traffic.received_basis !== 'DURABLE_LOWER_BOUND'
+      || terminal.dropped_samples < 1 || terminal.domain_counts !== 'UNAVAILABLE_NOT_DECODED_IN_B4') {
+      throw new Error('monitor restart/absent-collector fixture drift');
+    }
+    const payloadOutput = loopback(monitorBinary, ['--with-payload', join(scratch, 'monitored-payload-run'),
+      join(scratch, 'absent-payload-relay.sock')]).stdout;
+    const resultLines = payloadOutput.split('\n').filter(line => line.startsWith('LOCAL_SIMULATION_PAYLOAD_RESULT: '));
+    if (resultLines.length !== 1) throw new Error('missing unique monitor payload result');
+    const { snapshot: payload, integrity } = JSON.parse(resultLines[0].slice('LOCAL_SIMULATION_PAYLOAD_RESULT: '.length));
+    const fixture = JSON.parse(readFileSync(join(root, 'schemas/acquisition/of1/car-structural-fixture.json'), 'utf8'));
+    const payloadLength = fixture.sections_hex.length / 2;
+    if (payload.kind !== 'LOCAL_SIMULATION' || payload.stage !== 'COMPLETE'
+      || payload.selected_slots?.start !== fixture.selected_slot || payload.selected_slots?.end_exclusive !== fixture.selected_slot + 1
+      || payload.selection.operations_total !== 5 || payload.selection.operations_published !== 5
+      || payload.selection.planned_bytes !== 5_184_140 + payloadLength
+      || payload.selection.published_bytes !== payload.selection.planned_bytes
+      || payload.traffic.attempts !== 6 || payload.traffic.retries !== 1
+      || payload.traffic.reserved_bytes !== 5_196_288 + payloadLength
+      || payload.traffic.received_basis !== 'DURABLE_LOWER_BOUND' || payload.dropped_samples < 1
+      || payload.operations[4].status_code !== 206 || payload.operations[4].published_bytes !== payloadLength
+      || payload.operations[4].range !== `bytes=4096-${4096 + payloadLength - 1}`
+      || payload.integrity.car !== 'CID_SLOT_VERIFIED_FIXTURE_ONLY'
+      || integrity.slots.length !== 1 || integrity.slots[0].verified_nodes !== 5
+      || integrity.slots[0].verified_links !== 4 || integrity.slots[0].captured_section_bytes !== payloadLength
+      || integrity.root_to_slot_membership !== 'UNAVAILABLE' || integrity.whole_car_sha256_verified !== false
+      || integrity.domain_counts !== 'UNAVAILABLE_NOT_DECODED_IN_B4') {
+      throw new Error('monitor staged payload/receipt/CID fixture drift');
+    }
+    process.stdout.write('OF1 monitor metadata restart -> separate Fixture payload admission -> paced 206 -> published Raw -> CID/slot check PASS\n');
+    process.stdout.write('OF1 socket-denied default/build, local IPC and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

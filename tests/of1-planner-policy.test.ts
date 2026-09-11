@@ -47,4 +47,16 @@ describe('OF1 default-off transport dependency boundary', () => {
       expect(validateOf1PlannerInputs(manifest, lock, { 'src/arbitrary-provider.rs': source + '\nstd::net::TcpStream' })).not.toEqual([]);
     }
   });
+  it('pins local monitor IPC and same-binary simulation without granting network capabilities', () => {
+    for (const path of ['src/monitor/relay.rs', 'tests/monitor_ipc.rs', 'src/bin/of1-monitor-simulation.rs']) {
+      const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\n' }))
+        .toContain(`unreviewed OF1 monitor source: ${path}`);
+      expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\nstd::net::TcpStream' }))
+        .toContain(`unexpected runtime capability in ${path}`);
+    }
+    expect(validateOf1PlannerInputs(manifest, lock, { 'src/other.rs': 'std::os::unix::net::UnixDatagram' }))
+      .toContain('unexpected runtime capability in src/other.rs');
+  });
 });

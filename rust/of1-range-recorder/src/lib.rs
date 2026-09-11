@@ -10,6 +10,8 @@ pub mod durable;
 pub mod fixture;
 #[cfg(any(feature = "network-of1", feature = "tls-fixture"))]
 pub mod https;
+#[cfg(feature = "monitor")]
+pub mod monitor;
 #[cfg(feature = "loopback-fixture")]
 pub mod transport;
 

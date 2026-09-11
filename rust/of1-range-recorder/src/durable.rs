@@ -1479,7 +1479,7 @@ fn rounded(size: u64) -> StoreResult<u64> {
         .checked_mul(BLOCK)
         .ok_or(StoreError::Budget)
 }
-fn disk_charge(path: &Path) -> StoreResult<u64> {
+pub(crate) fn disk_charge(path: &Path) -> StoreResult<u64> {
     let meta = fs::symlink_metadata(path)?;
     if meta.is_file() {
         return Ok(

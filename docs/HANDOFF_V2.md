@@ -35,6 +35,11 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The separate [B4 download monitor](research/B4_DOWNLOAD_MONITOR.md) observes
+Rust-owned intra-request telemetry and preserved authentic metadata. Its browser
+and local simulation are Fixture delivery evidence, not a new acquisition,
+decoded coin dataset or B4 completion. It does not extend the frozen dashboard.
+
 The [Rust index planner](research/OF1_RUST_PLANNER.md), [Raw/receipt store](research/OF1_DURABLE_RAW_STORE.md) and [loopback-only transport](research/OF1_OFFLINE_TRANSPORT.md) form one fixture integration. The [durability report](research/OF1_DURABILITY_EVIDENCE.md) and [end-to-end transport report](research/OF1_TRANSPORT_EVIDENCE.md) expose immutable publication, charged retries and restart-surviving deadlines. The [parity inventory](../schemas/acquisition/of1/transport-parity.json) maps all 26 old JS test cases before replacement. These are not acquisition evidence; no live lease is implied.
 
 - Development, tests, research and local visualization run on Windows 11 → WSL2 Ubuntu, with the repository on the WSL ext4 filesystem.

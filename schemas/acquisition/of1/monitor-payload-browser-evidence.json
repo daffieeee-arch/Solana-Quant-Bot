@@ -1,0 +1,236 @@
+{
+  "schema": "OF1_MONITOR_PAYLOAD_BROWSER_EVIDENCE_1",
+  "evidence": "Fixture",
+  "new_authentic_acquisition": false,
+  "browser": {
+    "product": "Chrome/152.0.7977.83",
+    "protocol": "1.3",
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36"
+  },
+  "trace_directory": "/home/dmesdary/solana-quant-data/governance/night-shift-20260911",
+  "trace_sha256": "8e3bb9ec90bb3bd86d8bd279f3ba1f47e6418bf5dff6ac96cf054a6fe7084f0b",
+  "simulation_log_sha256": "7814ea91383a9c54e1370c301531a3c31a985d25a5c9d7da83d79bf0518bfd68",
+  "simulator_executable_sha256": "7c3b221d271b4baf65d9b3f295ecd5eccb8314745728c437f7de5a91c1257329",
+  "simulator_source_sha256": "45e59f9c90fcd8e2959dbd79d17aa586f2a2f7ebc888c3aaa2067be13c14923e",
+  "run_id": "097896c36454cebcd4472ea96f4b6ec7f07eccaf2f70d1997d3e0df73ab59ecc",
+  "dataset_root": "/home/dmesdary/solana-quant-data/runs/of1-monitor-payload-fixture-20260911-01",
+  "scenario": "Synthetic full-size index -> short CID -> child exit 86 -> original-budget restart -> separate Fixture payload admission -> paced loopback 206 -> durable Raw pair -> offline CID/slot check",
+  "payload": {
+    "range": "[4096,4564)",
+    "bytes": 468,
+    "fixture": "schemas/acquisition/of1/car-structural-fixture.json",
+    "verified_nodes": 5,
+    "verified_links": 4,
+    "root_to_slot_membership": "UNAVAILABLE",
+    "dataframe_payload_and_checksum": "NOT_EVALUATED",
+    "domain_counts": "UNAVAILABLE_NOT_DECODED_IN_B4"
+  },
+  "final": {
+    "publications": 5,
+    "attempts": 6,
+    "retries": 1,
+    "published_bytes": 5184608,
+    "reserved_entity_bytes": 5196756,
+    "received_basis": "DURABLE_LOWER_BOUND"
+  },
+  "frames": [
+    {
+      "at": "2026-09-11T00:59:03.810Z",
+      "stage": "DOWNLOADING",
+      "sequence": 3,
+      "received": 5184172,
+      "published": 5184140,
+      "payload_received": 32,
+      "payload_published": 0,
+      "speed_bps": 66.25258799171843,
+      "download_eta_ms": null,
+      "progress": [
+        {
+          "label": "Ontvangen geselecteerde bytes",
+          "value": "99.99159049247311",
+          "text": "<100%"
+        },
+        {
+          "label": "Gepubliceerde geselecteerde bytes",
+          "value": "99.9909732809115",
+          "text": "<100%"
+        },
+        {
+          "label": "Operatie 0 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 1 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 2 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 4 ontvangen bytes",
+          "value": "6.837606837606838",
+          "text": "6,8%"
+        }
+      ],
+      "operation_row": "GET\n/978/epoch-978.car\nbytes=4096-4563\n\tOntvangen\t32 B / 468 B\n\t0 B\t1\t206"
+    },
+    {
+      "at": "2026-09-11T00:59:06.037Z",
+      "stage": "DOWNLOADING",
+      "sequence": 14,
+      "received": 5184348,
+      "published": 5184140,
+      "payload_received": 208,
+      "payload_published": 0,
+      "speed_bps": 80,
+      "download_eta_ms": 3254,
+      "progress": [
+        {
+          "label": "Ontvangen geselecteerde bytes",
+          "value": "99.99467655028114",
+          "text": "<100%"
+        },
+        {
+          "label": "Gepubliceerde geselecteerde bytes",
+          "value": "99.9909732809115",
+          "text": "<100%"
+        },
+        {
+          "label": "Operatie 0 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 1 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 2 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 4 ontvangen bytes",
+          "value": "41.02564102564102",
+          "text": "41%"
+        }
+      ],
+      "operation_row": "GET\n/978/epoch-978.car\nbytes=4096-4563\n\tOntvangen\t192 B / 468 B\n\t0 B\t1\t206"
+    },
+    {
+      "at": "2026-09-11T00:59:08.268Z",
+      "stage": "DOWNLOADING",
+      "sequence": 25,
+      "received": 5184524,
+      "published": 5184140,
+      "payload_received": 384,
+      "payload_published": 0,
+      "speed_bps": 80,
+      "download_eta_ms": 1050,
+      "progress": [
+        {
+          "label": "Ontvangen geselecteerde bytes",
+          "value": "99.99807121386998",
+          "text": "<100%"
+        },
+        {
+          "label": "Gepubliceerde geselecteerde bytes",
+          "value": "99.9909732809115",
+          "text": "<100%"
+        },
+        {
+          "label": "Operatie 0 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 1 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 2 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 4 ontvangen bytes",
+          "value": "78.63247863247864",
+          "text": "78,6%"
+        }
+      ],
+      "operation_row": "GET\n/978/epoch-978.car\nbytes=4096-4563\n\tOntvangen\t368 B / 468 B\n\t0 B\t1\t206"
+    },
+    {
+      "at": "2026-09-11T00:59:10.488Z",
+      "stage": "COMPLETE",
+      "sequence": 35,
+      "received": 5184608,
+      "published": 5184608,
+      "payload_received": 468,
+      "payload_published": 468,
+      "speed_bps": null,
+      "download_eta_ms": null,
+      "progress": [
+        {
+          "label": "Ontvangen geselecteerde bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Gepubliceerde geselecteerde bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 0 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 1 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 2 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        },
+        {
+          "label": "Operatie 4 ontvangen bytes",
+          "value": "100",
+          "text": "100%"
+        }
+      ],
+      "operation_row": "GET\n/978/epoch-978.car\nbytes=4096-4563\n\tGepubliceerd\t468 B / 468 B\n\t468 B\t1\t206"
+    }
+  ],
+  "screenshots": [
+    {
+      "path": "docs/research/assets/b4-monitor/payload-live-night.png",
+      "sha256": "95b36f1cd0864c452b271fc8c8bb82d05cd6e3c7cbee4573d798a7c84f37af83"
+    },
+    {
+      "path": "docs/research/assets/b4-monitor/payload-complete-night.png",
+      "sha256": "ab506808166c2e3cb6f4d92391e095080fcd760f2e65708e67168f527b69f600"
+    }
+  ],
+  "page_network": {
+    "non_loopback": 0,
+    "denied": 0,
+    "warnings": 0
+  },
+  "limitations": [
+    "Original real-browser screenshots; DOM polling may trail the separately captured API sample, both retained.",
+    "468 synthetic bytes are not the authentic index's 45051-byte compatibility candidate.",
+    "New simulated run only; all old authentic metadata and fixture roots preserved.",
+    "No transaction decoding, observed Pump compatibility, lifecycle, Research Ready or edge claim.",
+    "CAR proof is ephemeral live observation plus stdout report; receipt-only importer correctly leaves CAR validation unavailable."
+  ]
+}

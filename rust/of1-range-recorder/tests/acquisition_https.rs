@@ -11,12 +11,126 @@ use of1_range_recorder::{
         },
     },
     https::{
-        FixtureHttps, HttpsError, OF1_SERVER_NAME,
+        CaptureObserver, FixtureHttps, HttpsError, OF1_SERVER_NAME,
         fixture::{FixtureServer, ResponseScript},
     },
     sha256,
 };
 use std::{fs, time::Instant};
+
+struct Measurements {
+    events: Vec<&'static str>,
+    bytes: u64,
+    reads: u64,
+    published_path: std::path::PathBuf,
+}
+impl CaptureObserver for Measurements {
+    fn active(&self) -> bool {
+        true
+    }
+    fn reserved(&mut self, _: u64, p: &of1_range_recorder::durable::acquisition::Progress) {
+        assert_eq!(p.attempts_reserved, 1);
+        assert_eq!(p.charged_entity_bytes, SLOTS_PER_EPOCH * RECORD_BYTES);
+        self.events.push("RESERVED");
+    }
+    fn head(&mut self, _: u64, status: u16, _: u64) {
+        assert_eq!(status, 200);
+        self.events.push("HEAD");
+    }
+    fn received(&mut self, _: u64, bytes: u64) {
+        assert!(
+            !self.published_path.exists(),
+            "measurement must precede publication"
+        );
+        self.reads += 1;
+        self.bytes += bytes;
+        self.events.push("READ");
+    }
+    fn verifying(&mut self, _: u64) {
+        self.events.push("VERIFYING");
+    }
+    fn publishing(&mut self, _: u64) {
+        assert!(!self.published_path.exists());
+        self.events.push("PUBLISHING");
+    }
+    fn published(&mut self, _: u64, receipt: &of1_range_recorder::durable::acquisition::Receipt) {
+        assert!(self.published_path.exists());
+        assert_eq!(receipt.response_entity_bytes, self.bytes);
+        self.events.push("PUBLISHED");
+    }
+    fn failed(&mut self, _: u64, _: &str) {
+        self.events.push("FAILED");
+    }
+}
+
+#[test]
+fn paced_tls_reports_real_reads_before_verified_durable_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("run");
+    let (plan, lease) = plans(20_000);
+    let mut store = AcquisitionStore::create(&root, plan, lease, SystemClock).unwrap();
+    let bytes = vec![0; usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap()];
+    let mut script = response(200, bytes.len(), bytes.clone(), true);
+    script.fragment_bytes = 32_768;
+    let server = FixtureServer::start_paced(OF1_SERVER_NAME, vec![script], 1).unwrap();
+    let mut measured = Measurements {
+        events: vec![],
+        bytes: 0,
+        reads: 0,
+        published_path: root.join("published/0000000000/raw.bin"),
+    };
+    let receipt = FixtureHttps::new(server.port(), server.root_der())
+        .unwrap()
+        .capture_observed(&mut store, 0, &mut measured)
+        .unwrap();
+    server.finish().unwrap();
+    assert!(measured.reads > 1);
+    assert_eq!(measured.bytes, bytes.len() as u64);
+    assert_eq!(&measured.events[..2], &["RESERVED", "HEAD"]);
+    assert_eq!(
+        &measured.events[measured.events.len() - 3..],
+        &["VERIFYING", "PUBLISHING", "PUBLISHED"]
+    );
+    assert_eq!(receipt.sha256, sha256(&bytes));
+    assert_eq!(store.progress().unwrap().attempts_reserved, 1);
+}
+
+#[test]
+fn partial_response_reports_received_not_published_and_retains_charged_attempt() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("run");
+    let (plan, lease) = plans(5000);
+    let mut store = AcquisitionStore::create(&root, plan, lease, SystemClock).unwrap();
+    let server = FixtureServer::start(
+        OF1_SERVER_NAME,
+        vec![response(
+            200,
+            usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap(),
+            vec![1; 11],
+            true,
+        )],
+    )
+    .unwrap();
+    let mut measured = Measurements {
+        events: vec![],
+        bytes: 0,
+        reads: 0,
+        published_path: root.join("published/0000000000/raw.bin"),
+    };
+    let result = FixtureHttps::new(server.port(), server.root_der())
+        .unwrap()
+        .capture_observed(&mut store, 0, &mut measured);
+    server.finish().unwrap();
+    assert!(matches!(result, Err(HttpsError::Truncated)));
+    assert_eq!(measured.bytes, 11);
+    assert_eq!(measured.events.last(), Some(&"FAILED"));
+    assert!(!measured.events.contains(&"PUBLISHING"));
+    assert!(!measured.published_path.exists());
+    assert_eq!(
+        store.progress().unwrap().charged_entity_bytes,
+        SLOTS_PER_EPOCH * RECORD_BYTES
+    );
+}
 
 fn plans(timeout: u64) -> (AggregatePlan, MetadataLease) {
     let plan = AggregatePlan {

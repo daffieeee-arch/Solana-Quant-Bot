@@ -381,7 +381,9 @@ describe('semantic CI workflow policy', () => {
   it('locks the B2A package command graph and rejects a legacy runtime launcher under any script name', () => {
     const safe = {
       'start:cockpit': 'node dist/cockpit-main.js',
-      build: 'tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:cockpit && npm run verify:cockpit-runtime',
+      'start:acquisition-monitor': 'node dist/acquisition-monitor/main.js',
+      'build:monitor': 'tsc -p frontend/tsconfig.monitor.json && vite build --config frontend/vite.monitor.config.ts',
+      build: 'tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:cockpit && npm run verify:cockpit-runtime && npm run build:monitor',
       'build:frontend': 'vite build --config frontend/vite.config.ts',
     };
     expect(validatePackageScripts(safe)).toEqual([]);
