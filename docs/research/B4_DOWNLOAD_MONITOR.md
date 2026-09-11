@@ -119,11 +119,24 @@ Then terminal 3, with a new fixture root (never reuse an authentic run):
 FIXTURE_PARENT="$(mktemp -d /home/dmesdary/solana-quant-data/runs/monitor-fixture.XXXXXX)"
 FIXTURE_ROOT="$FIXTURE_PARENT/run"
 rust/of1-range-recorder/target/release/of1-monitor-simulation \
+  --with-payload \
   "$FIXTURE_ROOT" /home/dmesdary/solana-quant-data/monitor/b4-local/relay.sock
 # Optional receipt-backed terminal refresh; still read-only, no writer resume:
 rust/of1-range-recorder/target/release/of1-monitor import \
   "$FIXTURE_ROOT" /home/dmesdary/solana-quant-data/monitor/b4-local
 ```
+
+`--with-payload` additionally admits one sealed synthetic CAR range with a
+separate **Fixture** payload lease after metadata restart. Its paced 206 response
+exercises selected-slot/range progress, then the existing offline verifier checks
+five archival nodes and four links. No Solana/Pump transaction payload is decoded.
+The live snapshot labels this check `CID_SLOT_VERIFIED_FIXTURE_ONLY`; the stdout
+integrity report must be retained outside the immutable run. Historical import
+does not replay that verifier and reports CAR verification unknown. Root-to-slot
+membership and whole-CAR hash remain unverified. Without this flag the original
+metadata-only fixture scenario is unchanged; its earlier receipts/screenshots
+remain historical evidence. The synthetic range is not the authentic index's
+45,051-byte candidate and proves no Pump activity.
 
 Do not start a second relay/server on an occupied socket/port. After an abrupt
 relay exit, choose a fresh socket name for both relay and simulator; no run data
@@ -172,18 +185,41 @@ All 190 files in the authentic run were rehashed against its existing inventory
 (`5ff4a8b909608c37b1ca3a5b95b36d1084cb598ad975a4007a93867ecef1cafd`)
 and remain identical. No new provider call or historical payload occurred.
 
+### Paced payload and restart evidence (2026-09-11)
+
+The [additional browser receipt](../../schemas/acquisition/of1/monitor-payload-browser-evidence.json)
+records a new, separate **Fixture** run. Chrome on Windows observed actual Rust
+payload reads increasing 32 → 208 → 384 bytes while published payload bytes stayed
+zero; the DOM's independently polled progress also increased. ETA was initially
+unknown, then 3,254 → 1,050 ms. After receipt publication and offline verification,
+all 468 synthetic payload bytes were complete. The original deadline and charged
+failed attempt survived the metadata child restart: 5 publications, 6 attempts,
+1 retry, 5,184,608 published bytes and 5,196,756 reserved bytes. The test gate executes
+this whole scenario again without a running collector, proving telemetry is optional.
+
+- [Live payload request, before publication](assets/b4-monitor/payload-live-night.png)
+- [Completed fixture with explicit integrity limits](assets/b4-monitor/payload-complete-night.png)
+
+The new run is retained at
+`/home/dmesdary/solana-quant-data/runs/of1-monitor-payload-fixture-20260911-01`.
+Its executable, stdout integrity report and browser traces are retained under
+`/home/dmesdary/solana-quant-data/governance/night-shift-20260911` and hashed in the
+receipt. Both earlier fixture roots and the authentic metadata run remain unchanged.
+The screenshot is not authentic CAR evidence, a decoded transaction dataset or a
+claim about public OF1 performance.
+
 ## CI / roadmap-sync triage (2026-09-11)
 
 PR [#108](https://github.com/daffieeee-arch/Solana-Quant-Bot/pull/108) product CI
-`tests-build-zero-cost` passed. The failing `projects-v2-reconcile` check is the
-trusted-main `roadmap-sync` workflow on `pull_request_target`, not monitor
-product code. A later identical event failed in ~3s; local
-`node scripts/github-projects/sync.mjs --dry-run` passes config validation, while
-a live reconcile without `PROJECT_TOKEN` fails closed with
-`PROJECT_TOKEN is required`. This PR does not change Project schema, tokens, or
-roadmap sync code. Re-running the trusted workflow with the configured secret is
-the remediation; do not weaken the token gate or mark B4 complete from this
-monitor.
+`tests-build-zero-cost` passed. Failed Sync run `34543139237`, job
+`103089946817`, has no executed steps: its annotation states that the job was
+not started because of account payments or spending limits. No token check or
+Project mutation executed in that job. A local missing-token error does not
+diagnose this runner-start failure. The original job/annotation are retained in
+`/home/dmesdary/solana-quant-data/governance/night-shift-20260911/`.
+The independent workflow runs on trusted main; this PR changes no token,
+Project schema or sync code. Recheck actual final-head Actions after runner
+availability is restored; do not weaken checks or mark B4 complete from CI.
 
 ## Next bounded results, not implemented here
 

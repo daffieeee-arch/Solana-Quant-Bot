@@ -38,7 +38,7 @@ const ACQUISITION_SOURCE_HASHES = {
 const MONITOR_SOURCE_HASHES = {
   'src/monitor/relay.rs': '38cfe4405e1a51c4d9e51a646bea3bc532d7b7517ddbc6654fc82e5dc4bf888b',
   'tests/monitor_ipc.rs': '3693c0c8f570784743d06a4118c996302b19d688afd530afb4e6fbd4652cdb8a',
-  'src/bin/of1-monitor-simulation.rs': 'd08e8aaf915c601d74bdb9fddb340c3fb3c925ba74a4e0ad940dff0380f8d864',
+  'src/bin/of1-monitor-simulation.rs': '45e59f9c90fcd8e2959dbd79d17aa586f2a2f7ebc888c3aaa2067be13c14923e',
 };
 
 export function validateOf1PlannerInputs(manifest, lock, sources) {
@@ -267,6 +267,31 @@ async function run(mode) {
       || terminal.dropped_samples < 1 || terminal.domain_counts !== 'UNAVAILABLE_NOT_DECODED_IN_B4') {
       throw new Error('monitor restart/absent-collector fixture drift');
     }
+    const payloadOutput = loopback(monitorBinary, ['--with-payload', join(scratch, 'monitored-payload-run'),
+      join(scratch, 'absent-payload-relay.sock')]).stdout;
+    const resultLines = payloadOutput.split('\n').filter(line => line.startsWith('LOCAL_SIMULATION_PAYLOAD_RESULT: '));
+    if (resultLines.length !== 1) throw new Error('missing unique monitor payload result');
+    const { snapshot: payload, integrity } = JSON.parse(resultLines[0].slice('LOCAL_SIMULATION_PAYLOAD_RESULT: '.length));
+    const fixture = JSON.parse(readFileSync(join(root, 'schemas/acquisition/of1/car-structural-fixture.json'), 'utf8'));
+    const payloadLength = fixture.sections_hex.length / 2;
+    if (payload.kind !== 'LOCAL_SIMULATION' || payload.stage !== 'COMPLETE'
+      || payload.selected_slots?.start !== fixture.selected_slot || payload.selected_slots?.end_exclusive !== fixture.selected_slot + 1
+      || payload.selection.operations_total !== 5 || payload.selection.operations_published !== 5
+      || payload.selection.planned_bytes !== 5_184_140 + payloadLength
+      || payload.selection.published_bytes !== payload.selection.planned_bytes
+      || payload.traffic.attempts !== 6 || payload.traffic.retries !== 1
+      || payload.traffic.reserved_bytes !== 5_196_288 + payloadLength
+      || payload.traffic.received_basis !== 'DURABLE_LOWER_BOUND' || payload.dropped_samples < 1
+      || payload.operations[4].status_code !== 206 || payload.operations[4].published_bytes !== payloadLength
+      || payload.operations[4].range !== `bytes=4096-${4096 + payloadLength - 1}`
+      || payload.integrity.car !== 'CID_SLOT_VERIFIED_FIXTURE_ONLY'
+      || integrity.slots.length !== 1 || integrity.slots[0].verified_nodes !== 5
+      || integrity.slots[0].verified_links !== 4 || integrity.slots[0].captured_section_bytes !== payloadLength
+      || integrity.root_to_slot_membership !== 'UNAVAILABLE' || integrity.whole_car_sha256_verified !== false
+      || integrity.domain_counts !== 'UNAVAILABLE_NOT_DECODED_IN_B4') {
+      throw new Error('monitor staged payload/receipt/CID fixture drift');
+    }
+    process.stdout.write('OF1 monitor metadata restart -> separate Fixture payload admission -> paced 206 -> published Raw -> CID/slot check PASS\n');
     process.stdout.write('OF1 socket-denied default/build, local IPC and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');
   } finally {
     rmSync(scratch, { recursive: true, force: true });
