@@ -19,8 +19,11 @@ Never delete:
 - any branch that is the head of an **open** pull request
 - annotated tags (including `v1-paper-platform-final`)
 
-Prefer deleting only branches whose **exact name** is the `headRefName` of a
-**merged** pull request.
+Delete only refs whose **exact name and current commit SHA** match the head of
+a same-repository PR merged into `main`. A matching old name is not sufficient:
+branches can be reused, advanced or shared with a fork's PR. Inventory uses all
+PR pages, deduplicates branch names and verifies the fixed repository identity
+and both `origin` URLs. Unmatched, fork, moved and open-PR heads are left alone.
 
 ## Standard process
 
@@ -31,17 +34,24 @@ Prefer deleting only branches whose **exact name** is the `headRefName` of a
 node scripts/cleanup-merged-pr-branches.mjs
 ```
 
-3. Review the JSON plan. Confirm every candidate maps to a merged PR and is not
-   an open PR head.
+3. Review the JSON plan, including the exact head SHA. Confirm every candidate
+   maps to a same-repository PR merged into `main` and is not an open PR head.
 4. Execute:
 
 ```bash
 node scripts/cleanup-merged-pr-branches.mjs --execute --yes
 ```
 
-5. Re-list remotes. Leftover branches without a merged PR head name need a
+5. The script rechecks the complete inventory immediately before each deletion,
+   then uses an explicit expected-ref lease for an atomic compare-and-delete.
+   This is not a force-update of branch history. A moved ref, newly open PR,
+   mismatched origin or failed mutation stops the run without retry. It verifies
+   ref absence after each successful deletion. No script can atomically lock
+   GitHub PR creation together with Git refs; open-PR protection reflects the
+   last pre-delete read, while the ref lease protects later commit changes.
+6. Re-list remotes. Leftover branches without an exact merged PR head identity need a
    human decision (rename mismatch, abandoned draft, or still useful).
-6. For active work, open one PR per branch and delete the head on merge
+7. For active work, open one PR per branch and delete the head on merge
    (repository setting: automatically delete head branches).
 
 ## Branch naming for new work
@@ -63,3 +73,7 @@ node scripts/cleanup-merged-pr-branches.mjs --execute --yes
 - Rewriting published history to remove old branch commits
 - Deleting open PR heads
 - Treating branch deletion as evidence that work is Research Ready
+
+The focused offline tests inject Git/GitHub responses. They perform no real
+branch deletion. This process itself is not permission for a historical cleanup;
+execution still requires operator authorization for the reviewed target set.

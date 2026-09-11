@@ -15,10 +15,11 @@ Actions capacity for standard public runners. It does **not**:
 - expose dataset roots (those stay outside Git on WSL);
 - make `PROJECT_TOKEN` optional for Roadmap Sync.
 
-Before the public cutover, tracked history was scanned for committed secret
-material. Local-only files such as `secrets.txt` remain gitignored and must never
-be added. Legacy helper scripts that *read* `secrets.txt` if present are not
-authorization to commit secrets.
+The public cutover is an operator action, not a secret-scan guarantee from this
+PR: no reproducible history-scan receipt is included here. Local-only credential
+files must remain outside Git. Legacy helpers that read such files are not
+authorization to commit them. This CI change does not alter repository visibility,
+billing, credentials or access controls.
 
 ## Tracked workflow inventory
 
