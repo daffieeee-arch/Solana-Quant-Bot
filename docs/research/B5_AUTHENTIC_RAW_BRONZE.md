@@ -71,7 +71,9 @@ remain separate, unchanged evidence.
    with the official locked error type. No empty-metadata success default.
 6. Publish one ordered Bronze JSON record per envelope, plus JSONL and a standalone
    quality report. A malformed package is MISSING, UNSUPPORTED or QUARANTINED;
-   structural CAR/receipt/order/resource failure stops output publication.
+   structural CAR/receipt/order/input-bound failure or aggregate-budget exhaustion
+   stops output publication. Per-package assembly/decompression limits quarantine
+   that package rather than hiding it or discarding the report.
 
 Official source receipts, URLs and hashes are in
 [`sources.json`](../../rust/of1-bronze-decoder/sources.json):
@@ -121,8 +123,11 @@ There is no Silver, physical Parquet-writer decision or lifecycle output here.
 Offline reader bounds are 16 MiB selected CAR, 4,096 nodes, 16,384 links, 2 MiB per
 assembled frame/decompressed status, an 8 MiB zstd window, and 16 MiB each for
 aggregate decompressed metadata and serialized records. These are local decoder
-resource limits, **not acquisition-cap increases**. Hitting a limit stops before
-publishing a partial dataset. Root-to-slot membership remains `UNAVAILABLE`.
+resource limits, **not acquisition-cap increases**. Outer input/graph bounds and
+aggregate-budget exhaustion stop publication. An individual package exceeding its
+assembly or decompression bound is `QUARANTINED`; the report may still publish,
+explicitly counting that envelope as not decoded. Root-to-slot membership remains
+`UNAVAILABLE`.
 
 Output is a **new directory outside the original run**. Files are create-new and
 fsynced; artifact directory entries precede the `COMPLETE` marker, then the marker,
