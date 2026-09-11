@@ -21,6 +21,7 @@ const issue = (number: number) => ({
   number,
   title: `Issue ${number}`,
   body: '',
+  author: { login: 'daffieeee-arch' },
   state: 'OPEN',
 });
 
@@ -180,6 +181,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       kind: 'PullRequest',
       number: 90,
       title: 'fix: roadmap routing',
+      author: { login: 'daffieeee-arch' },
       body: 'Roadmap: #999',
       state: 'OPEN',
       isDraft: false,
@@ -194,6 +196,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       kind: 'PullRequest',
       number: 1,
       title: 'chore: historical merged pull request',
+      author: { login: 'daffieeee-arch' },
       body: '',
       state: 'MERGED',
       isDraft: false,
@@ -244,6 +247,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const config = {
       repository: REPOSITORY,
+      contentIntake: { trustedAuthors: ['daffieeee-arch'], reviewedExternalItems: [] },
       fields: [
         {
           name: 'Status',

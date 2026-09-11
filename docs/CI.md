@@ -81,16 +81,28 @@ checks out the **trusted default branch** and never executes PR-head code. It
 requires repository secret `PROJECT_TOKEN`. Missing token fails closed; do not
 weaken that gate to make a PR look green.
 
+Public issue/PR text is not maintainer approval. The checked-in `contentIntake`
+policy admits trusted authors and explicitly reviewed external content before
+metadata parsing or inheritance. Unreviewed external input cannot assign Project
+delivery/evidence fields or block trusted reconciliation with malformed metadata.
+Existing excluded Project items remain untouched. See the
+[public-repository controls](operations/GITHUB_PUBLIC_REPOSITORY_CONTROLS.md).
+
 ## Required GitHub settings (operator)
 
-Recommended after public cutover:
+The minimal profile was enabled and read back on 2026-09-11; reread GitHub for
+current state. No second approving account is required:
 
 1. Actions enabled for public repositories / spending limit healthy enough for
    public runners;
-2. Required status check: `tests-build-zero-cost` on `main`;
+2. PR and required status check `tests-build-zero-cost` on `main`, including admins;
 3. Automatically delete head branches on merge;
-4. Restrict who can push to `main`;
+4. No force pushes or deletion of `main`; resolve review conversations;
 5. Keep `PROJECT_TOKEN` as a repository secret with least privilege for Projects.
+
+Repository secret scanning, push protection and Dependabot alerts are enabled.
+Automatic dependency-update PRs remain disabled. This is not a clean-history
+secret-scan receipt and cannot revoke a credential exposed outside GitHub.
 
 Branch inventory process: [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md).
 

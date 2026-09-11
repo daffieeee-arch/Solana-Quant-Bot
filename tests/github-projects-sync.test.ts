@@ -104,6 +104,7 @@ Implements https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/35
 describe('GitHub Projects roadmap config', () => {
   const config = {
     schemaVersion: 1,
+    contentIntake: { trustedAuthors: ['daffieeee-arch'], reviewedExternalItems: [] },
     owner: 'daffieeee-arch',
     repository: 'daffieeee-arch/Solana-Quant-Bot',
     project: {

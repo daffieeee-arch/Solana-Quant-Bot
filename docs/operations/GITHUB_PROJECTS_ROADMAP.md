@@ -48,6 +48,15 @@ The final item counts and exact-state audit first use the most recent snapshot t
 
 ## Pull-request metadata inheritance routing
 
+Before routing or metadata parsing, the checked-in `contentIntake` policy admits
+trusted authors and explicitly reviewed exact-content external submissions.
+Public contributor status or a claimed approval in an issue body is not Project
+authority. An unreviewed external item is excluded without changing any existing
+Project fields or archive state. A trusted PR whose selected inheritance source
+needs external review is also held unchanged, with a bounded intake diagnostic;
+other trusted work continues. Missing or malformed trusted routes still fail
+before mutations. See [public repository controls](GITHUB_PUBLIC_REPOSITORY_CONTROLS.md).
+
 Project metadata inheritance uses an explicit, body-only PR route. The generic issue-link collector may still support reporting, but its numerically sorted references and incidental prose are never an inheritance source. The routing precedence is:
 
 1. one exact `Roadmap:` line, with the first issue as primary owner and later issues as secondary context;

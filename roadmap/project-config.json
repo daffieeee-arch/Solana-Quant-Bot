@@ -5,6 +5,10 @@
   "repositoryAliases": [
     "daffieeee-arch/solana-paper-scanner"
   ],
+  "contentIntake": {
+    "trustedAuthors": ["daffieeee-arch"],
+    "reviewedExternalItems": []
+  },
   "project": {
     "title": "Solana Quant Platform — Roadmap & Cockpit",
     "shortDescription": "Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence, Research Observatory before Professional Workstation, and edge discovery or falsification. Profitability is not assumed.",

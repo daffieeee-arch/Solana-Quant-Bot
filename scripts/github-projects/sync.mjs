@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -40,6 +41,7 @@ export const PROJECT_FIELD_UNSET = Object.freeze({ kind: 'UNSET' });
 const ALLOWED_VIEW_LAYOUTS = new Set(['TABLE', 'BOARD', 'ROADMAP']);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GITHUB_LOGIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38})(?:\[bot\])?$/i;
 const RETENTION_ITEM_KINDS = new Set(['Issue', 'PullRequest']);
 const DAY_MS = 24 * 60 * 60 * 1_000;
 export const PROJECT_VERIFICATION_DELAYS_MS = Object.freeze([0, 500, 1_000, 2_000, 4_000]);
@@ -506,16 +508,82 @@ export function deriveMetadata(content, issuesByNumber = new Map(), repository =
   return metadata;
 }
 
+function validateContentIntake(policy) {
+  assert(isObject(policy), 'contentIntake must be explicitly configured');
+  assertExactKeys(policy, new Set(['trustedAuthors', 'reviewedExternalItems']), 'contentIntake');
+  assert(Array.isArray(policy.trustedAuthors)
+    && policy.trustedAuthors.length > 0 && policy.trustedAuthors.length <= 100,
+  'contentIntake.trustedAuthors must contain 1..100 reviewed logins');
+  const authors = new Set();
+  for (const author of policy.trustedAuthors) {
+    assert(typeof author === 'string' && GITHUB_LOGIN_PATTERN.test(author), 'invalid trusted author login');
+    assert(!authors.has(author.toLowerCase()), 'duplicate trusted author login');
+    authors.add(author.toLowerCase());
+  }
+  assert(Array.isArray(policy.reviewedExternalItems) && policy.reviewedExternalItems.length <= 500,
+    'contentIntake.reviewedExternalItems must contain at most 500 exact-content approvals');
+  const items = new Set();
+  for (const item of policy.reviewedExternalItems) {
+    assert(isObject(item), 'reviewed external item must be an object');
+    assertExactKeys(item, new Set(['kind', 'number', 'author', 'contentSha256']), 'reviewed external item');
+    assert(RETENTION_ITEM_KINDS.has(item.kind), 'invalid reviewed external item kind');
+    assert(Number.isSafeInteger(item.number) && item.number > 0, 'invalid reviewed external item number');
+    assert(typeof item.author === 'string' && GITHUB_LOGIN_PATTERN.test(item.author),
+      'invalid reviewed external item author');
+    assert(typeof item.contentSha256 === 'string' && SHA256_PATTERN.test(item.contentSha256),
+      'reviewed external item requires contentSha256');
+    const key = `${item.kind}:${item.number}`;
+    assert(!items.has(key), 'duplicate reviewed external item');
+    items.add(key);
+  }
+}
+
+/** Exact title/body approval; state remains GitHub-owned and is not pinned. */
+export function roadmapContentFingerprint(content) {
+  assert(RETENTION_ITEM_KINDS.has(content?.kind) && Number.isSafeInteger(content.number) && content.number > 0
+    && typeof content.id === 'string' && content.id.length > 0
+    && typeof content.author?.login === 'string' && GITHUB_LOGIN_PATTERN.test(content.author.login)
+    && typeof content.title === 'string' && typeof content.body === 'string',
+  'roadmap content identity, author, title and body are required for intake');
+  return createHash('sha256').update(JSON.stringify([
+    'ROADMAP_CONTENT_INTAKE_V1', content.kind, content.id, content.number,
+    content.author.login.toLowerCase(), content.title, content.body,
+  ])).digest('hex');
+}
+
+export function classifyRoadmapIntake(content, policy) {
+  validateContentIntake(policy);
+  if (typeof content.author?.login !== 'string' || !GITHUB_LOGIN_PATTERN.test(content.author.login)) {
+    return { accepted: false, reason: 'AUTHOR_UNAVAILABLE' };
+  }
+  if (typeof content.title !== 'string' || typeof content.body !== 'string') {
+    return { accepted: false, reason: 'CONTENT_UNAVAILABLE' };
+  }
+  const author = content.author.login.toLowerCase();
+  if (policy.trustedAuthors.some((login) => login.toLowerCase() === author)) {
+    return { accepted: true, reason: 'TRUSTED_AUTHOR' };
+  }
+  const reviewed = policy.reviewedExternalItems.find((item) => (
+    item.kind === content.kind && item.number === content.number
+  ));
+  if (!reviewed) return { accepted: false, reason: 'EXTERNAL_REVIEW_REQUIRED' };
+  if (reviewed.author.toLowerCase() !== author || reviewed.contentSha256 !== roadmapContentFingerprint(content)) {
+    return { accepted: false, reason: 'REVIEWED_CONTENT_CHANGED' };
+  }
+  return { accepted: true, reason: 'REVIEWED_EXACT_CONTENT' };
+}
+
 export function validateProjectConfig(value) {
   assert(isObject(value), 'project config must be an object');
   assertExactKeys(value, new Set([
-    'schemaVersion', 'owner', 'repository', 'repositoryAliases', 'project', 'fields', 'views', 'itemRetention',
+    'schemaVersion', 'owner', 'repository', 'repositoryAliases', 'project', 'fields', 'views', 'itemRetention', 'contentIntake',
   ]), 'project config');
   assert(value.schemaVersion === 1, 'project config schemaVersion must equal 1');
   const owner = boundedString(value.owner, 'owner', 100);
   const repository = boundedString(value.repository, 'repository', 200);
   assert(REPOSITORY_IDENTITY.test(repository), 'repository must use owner/name');
   assert(repository.split('/')[0].toLowerCase() === owner.toLowerCase(), 'repository owner must match project owner');
+  validateContentIntake(value.contentIntake);
   let repositoryAliases = [];
   if (value.repositoryAliases !== undefined) {
     assert(Array.isArray(value.repositoryAliases) && value.repositoryAliases.length <= 8,
@@ -779,7 +847,7 @@ export function planItemLifecycle({ content, item, retention, reconciledAt }) {
   return { action: 'KEEP_ACTIVE', reason: 'closed_item_inside_retention', eligible: true };
 }
 
-export function buildItemReconciliationPlan({ contents, existingItems, retention, reconciledAt }) {
+export function buildItemReconciliationPlan({ contents, existingItems, retention, reconciledAt, intakeByContentId }) {
   assert(Array.isArray(contents), 'contents must be an array');
   assert(Array.isArray(existingItems), 'existingItems must be an array');
   retentionPinnedKeys(retention);
@@ -816,7 +884,17 @@ export function buildItemReconciliationPlan({ contents, existingItems, retention
   const operations = ordered.map((content) => {
     assert(typeof content.id === 'string' && content.id.length > 0, `${contentKey(content)} content ID is required`);
     const item = itemByContentId.get(content.id);
-    const decision = planItemLifecycle({ content, item, retention, reconciledAt });
+    assert(intakeByContentId === undefined || intakeByContentId.has(content.id), 'content intake decision is missing');
+    const intake = intakeByContentId?.get(content.id);
+    // Keep full lifecycle/audit inventory, but never interpret rejected public
+    // content or change an item already present in the Project.
+    const decision = intake?.accepted === false
+      ? {
+        action: item ? (item.isArchived ? 'KEEP_ARCHIVED' : 'KEEP_ACTIVE') : 'SKIP',
+        reason: `INTAKE_${intake.reason}`,
+        intakeExcluded: true,
+      }
+      : planItemLifecycle({ content, item, retention, reconciledAt });
     counts[decision.action] += 1;
     reasonMap.set(decision.reason, (reasonMap.get(decision.reason) ?? 0) + 1);
     return {
@@ -2372,6 +2450,7 @@ async function listRepositoryIssues(api, owner, name) {
           issues(first: 100, after: $after, states: [OPEN, CLOSED], orderBy: { field: UPDATED_AT, direction: DESC }) {
             nodes {
               id number title body url state stateReason createdAt updatedAt closedAt
+              author { login }
               reopened: timelineItems(last: 1, itemTypes: [REOPENED_EVENT]) {
                 nodes { ... on ReopenedEvent { createdAt } }
               }
@@ -2404,6 +2483,7 @@ async function listRepositoryPullRequests(api, owner, name) {
           pullRequests(first: 100, after: $after, states: [OPEN, CLOSED, MERGED], orderBy: { field: UPDATED_AT, direction: DESC }) {
             nodes {
               id number title body url state isDraft merged mergedAt createdAt updatedAt closedAt
+              author { login }
               reopened: timelineItems(last: 1, itemTypes: [REOPENED_EVENT]) {
                 nodes { ... on ReopenedEvent { createdAt } }
               }
@@ -2648,19 +2728,40 @@ export async function planRepositoryItems(api, config, project, reconciledAt) {
     repository: config.repository,
     repositoryAliases,
   });
-  const issuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  validateContentIntake(config.contentIntake);
+  const contents = [...issues, ...pullRequests];
+  const intakeByContentId = new Map(contents.map((content) => (
+    [content.id, classifyRoadmapIntake(content, config.contentIntake)]
+  )));
+  const allIssuesByNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  for (const pullRequest of pullRequests) {
+    if (!intakeByContentId.get(pullRequest.id).accepted) continue;
+    // Check selected route identities without parsing any target issue body.
+    // A changed external source pauses only its dependants, not every item.
+    const route = resolvePullRequestInheritanceRoute({
+      body: pullRequest.body, issuesByNumber: allIssuesByNumber,
+      repository: config.repository, repositoryAliases,
+    });
+    if (route.orderedIssueNumbers.some((number) => !intakeByContentId.get(allIssuesByNumber.get(number).id).accepted)) {
+      intakeByContentId.set(pullRequest.id, { accepted: false, reason: 'INHERITANCE_REVIEW_REQUIRED' });
+    }
+  }
+  const accepted = contents.filter((content) => intakeByContentId.get(content.id).accepted);
+  const issuesByNumber = new Map(accepted.filter((content) => content.kind === 'Issue')
+    .map((issue) => [issue.number, issue]));
   const repositoryItems = existingItems.filter((item) => (
     isConfiguredRepository(item.content?.repository?.nameWithOwner, config.repository, repositoryAliases)
   ));
   const plan = buildItemReconciliationPlan({
-    contents: [...issues, ...pullRequests],
+    contents,
     existingItems: repositoryItems,
     retention: config.itemRetention,
     reconciledAt,
+    intakeByContentId,
   });
   const configuredFieldsByName = new Map(config.fields.map((field) => [field.name, field]));
   const metadataByContentId = new Map();
-  for (const content of [...issues, ...pullRequests]) {
+  for (const content of accepted) {
     const metadata = deriveMetadata(content, issuesByNumber, config.repository, repositoryAliases);
     validateMetadataAgainstConfig(metadata, configuredFieldsByName);
     metadataByContentId.set(content.id, metadata);
@@ -2670,6 +2771,10 @@ export async function planRepositoryItems(api, config, project, reconciledAt) {
     pullRequests,
     projectItems: existingItems,
     repositoryItems,
+    contentIntake: {
+      accepted: accepted.length,
+      excluded: contents.length - accepted.length,
+    },
     metadataByContentId,
     plan,
   };
@@ -2809,6 +2914,21 @@ export function evaluateFinalItemProjection({
         observedItemSummary(actual),
       );
     }
+    if (operation.intakeExcluded) {
+      const before = inspectCurrentValueMap(operation.item.fieldValues);
+      const after = inspectCurrentValueMap(actual.fieldValues);
+      if (before.error || after.error || before.map.size !== after.map.size
+        || [...before.map].some(([name, value]) => !projectFieldValuesEqual(value, after.map.get(name)))) {
+        return verificationResult(
+          PROJECT_VERIFICATION_OUTCOMES.HARD_DRIFT,
+          'UNEXPECTED_FIELD_VALUE',
+          `${operation.content.kind} #${operation.content.number} excluded intake fields unchanged`,
+          `${operation.content.kind} #${operation.content.number} excluded intake fields changed`,
+        );
+      }
+      verified[expectedArchived ? 'archived' : 'active'] += 1;
+      continue;
+    }
     if (expectedArchived) {
       verified.archived += 1;
       continue;
@@ -2929,6 +3049,7 @@ export async function reconcileItems(
   const fieldActionsByContentId = new Map();
   for (const operation of plan.operations) {
     const { content } = operation;
+    if (operation.intakeExcluded) continue;
     const metadata = metadataByContentId.get(content.id);
     assert(metadata, `prevalidated metadata is missing for ${content.kind} #${content.number}`);
     validateMetadataAgainstConfig(metadata, fieldsByName);
@@ -3167,6 +3288,7 @@ export async function reconcileItems(
       pullRequests: pullRequests.length,
       existingRepositoryItems: repositoryItems.length,
     },
+    ...(itemState.contentIntake ? { contentIntake: itemState.contentIntake } : {}),
     planned: plan.counts,
     reasonCounts: plan.reasonCounts,
     baselines: plan.baselines,
