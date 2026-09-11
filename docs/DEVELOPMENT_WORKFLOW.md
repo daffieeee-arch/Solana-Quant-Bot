@@ -26,6 +26,12 @@ Never edit `main` directly. Create one bounded branch from current `origin/main`
 
 Every implementation PR reports purpose, base/head SHAs, linked Project issues, exact files, tests/evidence, safety/network impact, rollback and unresolved decisions. GitHub CI must be green before merge; inspect job logs, not only the badge. Do not auto-merge safety-sensitive work.
 
+The [public-repository controls](operations/GITHUB_PUBLIC_REPOSITORY_CONTROLS.md)
+enforce PR plus green CI on `main`, including administrators, without requiring
+a second approving GitHub account. Independent review still applies. Roadmap
+metadata from external public submissions requires explicit intake approval;
+unreviewed issue/PR text cannot authorize delivery or evidence status.
+
 ## Result cadence
 
 After at most three or four engineering PRs without a user-visible or research-measurable result, the next PR must produce one. Current sequence:
