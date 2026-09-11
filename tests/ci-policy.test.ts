@@ -29,6 +29,7 @@ on:
       - 'phase2/**'
       - 'ci/**'
       - 'cursor/**'
+      - 'v2/**'
   pull_request:
     branches:
       - main
@@ -52,7 +53,7 @@ jobs:
   quality:
     name: tests-build-zero-cost
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
