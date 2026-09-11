@@ -1,0 +1,346 @@
+//! Synthetic receipt/plan/graph harness adapted from retained `recorded_verification` tests.
+//! One byte-exact authentic tx section inside a SYNTHETIC slot graph/receipt is still Fixture.
+
+use of1_bronze_decoder::{archive, report};
+use of1_range_recorder::{
+    FormatSource, RECORD_BYTES, SLOTS_PER_EPOCH,
+    acquisition::derive_payload_from_metadata,
+    acquisition_http::parse_response_head,
+    durable::{
+        Clock, ClockSample, StoreResult,
+        acquisition::{
+            AGGREGATE_SCHEMA, AcquisitionStore, AggregateBudget, AggregatePlan, Authority,
+            MetadataLease, PayloadLease, RequestKind, StageBudget, current_executable_sha256,
+        },
+    },
+    sha256,
+};
+use serde_cbor::Value as C;
+use serde_json::{Value, json};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
+
+const SLOT: u64 = 422_496_001;
+const OFFSET: u64 = 4096;
+
+#[derive(Clone)]
+struct HistoricalFixtureClock;
+impl Clock for HistoricalFixtureClock {
+    fn sample(&self) -> StoreResult<ClockSample> {
+        Ok(ClockSample {
+            wall_ms: 100_000,
+            boot_ms: 10_000,
+            boot_id: "HISTORICAL_OFFLINE_FIXTURE_NOT_CURRENT_BOOT".into(),
+        })
+    }
+}
+
+fn vector() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../schemas/acquisition/of1/car-structural-fixture.json"
+    ))
+    .unwrap()
+}
+
+fn payload() -> Vec<u8> {
+    fixture_payload(None)
+}
+
+struct Harness {
+    temp: tempfile::TempDir,
+    root: PathBuf,
+    plan: AggregatePlan,
+    store: AcquisitionStore<HistoricalFixtureClock>,
+}
+
+impl Harness {
+    fn new() -> Self {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("run");
+        let plan = AggregatePlan {
+            schema: AGGREGATE_SCHEMA.into(),
+            epoch: 978,
+            format_source: FormatSource::pinned(),
+            code_sha: "a".repeat(40),
+            toolchain_fingerprint: "b".repeat(64),
+            executable_sha256: current_executable_sha256().unwrap(),
+            budget: AggregateBudget {
+                max_slots: 2,
+                max_plan_bytes: 131_072,
+                max_requests: 8,
+                max_response_entity_bytes: SLOTS_PER_EPOCH * RECORD_BYTES,
+                max_total_response_entity_bytes: 16_000_000,
+                max_disk_bytes: 64 * 1024 * 1024,
+                required_free_disk_bytes: 64 * 1024 * 1024,
+                max_memory_bytes: 512 * 1024 * 1024,
+                max_runtime_ms: 120_000,
+                response_timeout_ms: 10_000,
+                request_retries: 1,
+            },
+        };
+        let store = AcquisitionStore::create(
+            &root,
+            plan.clone(),
+            MetadataLease {
+                schema: "OF1_METADATA_LEASE_1".into(),
+                authority: Authority::Fixture,
+                budget: StageBudget {
+                    max_requests: 6,
+                    max_response_entity_bytes_total: 12_000_000,
+                    max_runtime_ms: 60_000,
+                },
+            },
+            HistoricalFixtureClock,
+        )
+        .unwrap();
+        Self {
+            temp,
+            root,
+            plan,
+            store,
+        }
+    }
+
+    fn publish(&mut self, sequence: u64, bytes: &[u8]) {
+        let request = self.store.request(sequence).unwrap().clone();
+        let headers = match request.kind {
+            RequestKind::CarRange {
+                start,
+                end_exclusive,
+                total,
+                ..
+            } => format!(
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{total}\r\nETag: \"fixture\"\r\n\r\n",
+                bytes.len(),
+                end_exclusive - 1
+            ),
+            _ => format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: \"fixture\"\r\n\r\n",
+                if sequence == 3 { 100_000 } else { bytes.len() }
+            ),
+        };
+        let permit = self.store.reserve(sequence).unwrap();
+        self.store
+            .begin_stream(
+                &permit,
+                parse_response_head(headers.as_bytes(), &request).unwrap(),
+            )
+            .unwrap();
+        for fragment in bytes.chunks(65_536) {
+            self.store.append_stream(&permit, fragment).unwrap();
+        }
+        self.store.finish_stream(permit).unwrap();
+    }
+
+    fn metadata(&mut self) {
+        let mut index = vec![0; usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap()];
+        index[12..20].copy_from_slice(&OFFSET.to_le_bytes());
+        index[20..24].copy_from_slice(&u32::try_from(payload().len()).unwrap().to_le_bytes());
+        self.publish(0, &index);
+        self.publish(1, format!("{} epoch-978.car\n", "0".repeat(64)).as_bytes());
+        self.publish(
+            2,
+            format!("{}\n", vector()["root_cid_base32"].as_str().unwrap()).as_bytes(),
+        );
+        self.publish(3, &[]);
+    }
+
+    fn admit(&mut self) {
+        let metadata = (0..4)
+            .map(|n| self.store.published(n).unwrap().unwrap())
+            .collect::<Vec<_>>();
+        let prepared = derive_payload_from_metadata(&self.plan, &metadata, SLOT, SLOT + 1).unwrap();
+        let lease = PayloadLease {
+            schema: "OF1_PAYLOAD_LEASE_1".into(),
+            authority: Authority::Fixture,
+            budget: StageBudget {
+                max_requests: 2,
+                max_response_entity_bytes_total: 4096,
+                max_runtime_ms: 60_000,
+            },
+            prepared_payload_sha256: prepared.sha256().unwrap(),
+            metadata_receipt_sha256: prepared.metadata_receipt_sha256().into(),
+        };
+        self.store.admit_payload(lease, &prepared).unwrap();
+    }
+}
+
+fn inventory(root: &Path) -> BTreeMap<String, String> {
+    fn visit(root: &Path, at: &Path, found: &mut BTreeMap<String, String>) {
+        for entry in fs::read_dir(at).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, found);
+            } else {
+                found.insert(
+                    path.strip_prefix(root).unwrap().to_str().unwrap().into(),
+                    sha256(&fs::read(path).unwrap()),
+                );
+            }
+        }
+    }
+    let mut found = BTreeMap::new();
+    visit(root, root, &mut found);
+    found
+}
+
+fn rewrite_json(path: &Path, change: impl FnOnce(&mut Value)) {
+    let mut value: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    change(&mut value);
+    fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+}
+
+fn section(v: &C) -> (Vec<u8>, C) {
+    let content = serde_cbor::to_vec(v).unwrap();
+    let mut cid = vec![1, 0x71, 0x12, 0x20];
+    cid.extend(hex::decode(sha256(&content)).unwrap());
+    let mut length = cid.len() + content.len();
+    let mut raw = Vec::new();
+    while length >= 128 {
+        raw.push(u8::try_from(length & 127).unwrap() | 128);
+        length >>= 7;
+    }
+    raw.push(u8::try_from(length).unwrap());
+    raw.extend(&cid);
+    raw.extend(content);
+    let mut identity = vec![0];
+    identity.extend(cid);
+    (raw, C::Tag(42, Box::new(C::Bytes(identity))))
+}
+fn a(values: Vec<C>) -> C {
+    C::Array(values)
+}
+fn n(value: u64) -> C {
+    C::Integer(i128::from(value))
+}
+fn fixture_payload(change: Option<&str>) -> Vec<u8> {
+    let fixtures: Value =
+        serde_json::from_str(include_str!("fixtures/authentic-sections.json")).unwrap();
+    let raw = hex::decode(fixtures["fixtures"][0]["section_hex"].as_str().unwrap()).unwrap();
+    let prefix = raw.iter().position(|b| b & 128 == 0).unwrap() + 1;
+    let C::Array(mut tx) = serde_cbor::from_slice(&raw[prefix + 36..]).unwrap() else {
+        panic!("tx")
+    };
+    if let Some(change) = change {
+        let which = if change == "wire" { 1 } else { 2 };
+        let C::Array(f) = &mut tx[which] else {
+            panic!("frame")
+        };
+        f[4] = C::Bytes(if change == "missing" {
+            vec![]
+        } else {
+            vec![255]
+        });
+    }
+    let (tx_raw, tx_link) = section(&a(tx));
+    let (entry_raw, entry_link) = section(&a(vec![
+        n(1),
+        n(0),
+        C::Bytes(vec![0; 32]),
+        a(vec![tx_link]),
+    ]));
+    let (rewards_raw, rewards_link) = section(&a(vec![
+        n(5),
+        n(SLOT),
+        a(vec![n(6), C::Null, C::Null, C::Null, C::Bytes(vec![])]),
+    ]));
+    let (block_raw, _) = section(&a(vec![
+        n(2),
+        n(SLOT),
+        a(vec![a(vec![C::Integer(-1), n(0)])]),
+        a(vec![entry_link]),
+        a(vec![n(SLOT - 1), n(0)]),
+        rewards_link,
+    ]));
+    [tx_raw, entry_raw, rewards_raw, block_raw].concat()
+}
+
+#[test]
+fn metadata_only_never_claims_zero_transactions_or_authentic_dataset() {
+    let mut h = Harness::new();
+    h.metadata();
+    let before = inventory(&h.root);
+    let report = report::decode_run(&h.root).unwrap();
+    assert_eq!(report["input_kind"], "METADATA_ONLY");
+    assert!(report["decoded_transactions"].is_null());
+    assert_eq!(before, inventory(&h.root));
+    assert!(h.temp.path().exists());
+}
+#[test]
+fn receipt_to_bronze_is_deterministic_read_only_with_expired_clock_and_held_writer_lock() {
+    let mut h = Harness::new();
+    h.metadata();
+    h.admit();
+    h.publish(4, &payload());
+    let before = inventory(&h.root);
+    let first = report::decode_run(&h.root).unwrap();
+    let second = report::decode_run(&h.root).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(first["input_kind"], "FIXTURE_RECORDED_CAR_SLOT");
+    assert_eq!(first["transaction_envelopes"], 1);
+    assert_eq!(first["dispositions"]["DECODED"], 1);
+    assert_eq!(first["records"][0]["transaction"]["fee_lamports"], "5000");
+    assert_eq!(
+        first["records"][0]["source"]["raw_sha256"],
+        sha256(&payload())
+    );
+    assert_eq!(first["root_to_slot_membership"], "UNAVAILABLE");
+    assert_eq!(before, inventory(&h.root));
+}
+#[test]
+fn receipt_raw_manifest_corruption_fails_without_source_mutation() {
+    for target in ["raw", "receipt", "manifest"] {
+        let mut h = Harness::new();
+        h.metadata();
+        h.admit();
+        h.publish(4, &payload());
+        match target {
+            "raw" => fs::write(
+                h.root.join("published/0000000004/raw.bin"),
+                vec![0; payload().len()],
+            )
+            .unwrap(),
+            "receipt" => rewrite_json(&h.root.join("published/0000000004/receipt.json"), |v| {
+                v["sha256"] = json!("f".repeat(64));
+            }),
+            _ => rewrite_json(&h.root.join("run.json"), |v| {
+                v["aggregate_sha256"] = json!("0".repeat(64));
+            }),
+        }
+        let before = inventory(&h.root);
+        assert!(report::decode_run(&h.root).is_err());
+        assert_eq!(before, inventory(&h.root));
+    }
+}
+#[test]
+fn source_signed_shredding_retained_and_graph_corruption_rejected() {
+    let raw = payload();
+    let archive = archive::inspect(SLOT, &raw).unwrap();
+    assert_eq!(archive.envelopes.len(), 1);
+    assert_eq!(archive.verified_nodes, 4);
+    assert!(archive::inspect(SLOT + 1, &raw).is_err());
+    let mut bad = raw.clone();
+    bad[80] ^= 1;
+    assert!(archive::inspect(SLOT, &bad).is_err());
+    assert!(archive::inspect(SLOT, &raw[..raw.len() - 1]).is_err());
+}
+#[test]
+fn each_valid_archival_envelope_can_be_missing_or_quarantined_without_silent_loss() {
+    for (change, reason) in [
+        ("missing", "MISSING_STATUS_METADATA"),
+        ("wire", "TRANSACTION_WIRE"),
+        ("protobuf", "STATUS_PROTOBUF"),
+    ] {
+        let bytes = fixture_payload(Some(change));
+        let archived = archive::inspect(SLOT, &bytes).unwrap();
+        assert_eq!(archived.envelopes.len(), 1);
+        let error =
+            of1_bronze_decoder::codec::decode(&archived.envelopes[0], &archived.continuations)
+                .unwrap_err()
+                .to_string();
+        assert!(error.starts_with(reason), "{error}");
+    }
+}

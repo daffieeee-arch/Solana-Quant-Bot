@@ -66,6 +66,8 @@ jobs:
         run: node scripts/assert-pump-protocol-v2-offline.mjs --static
       - name: Validate OF1 planner dependencies before fetch
         run: node scripts/assert-of1-planner-offline.mjs --static
+      - name: Validate Bronze decoder dependencies before fetch
+        run: node scripts/assert-of1-bronze-offline.mjs --static
       - name: Restore scoped Rust build cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -76,6 +78,8 @@ jobs:
         run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Fetch locked OF1 planner dependencies
         run: cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked
+      - name: Fetch locked Bronze decoder dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked
       - name: Install locked dependencies
         run: npm ci
       - name: Enforce repository and zero-cost policy
@@ -104,6 +108,8 @@ jobs:
         run: node scripts/assert-pump-protocol-v2-offline.mjs --all
       - name: Verify OF1 planner isolated graph, formatting, tests and evidence
         run: node scripts/assert-of1-planner-offline.mjs --all
+      - name: Verify Bronze decoder isolated graph, formatting, tests and evidence
+        run: node scripts/assert-of1-bronze-offline.mjs --all
       - name: Lint Rust reducer
         run: cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
       - name: Test Rust reducer
@@ -129,7 +135,7 @@ const addStep = (body: string) => SAFE_WORKFLOW.replace(
 describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
-    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(28);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(31);
   });
 
   it('runs PR validation and main validation without duplicate feature-branch pushes', () => {
@@ -210,6 +216,9 @@ describe('semantic CI workflow policy', () => {
       ['Validate Pump protocol dependencies before fetch', 'node scripts/assert-pump-protocol-v2-offline.mjs --static'],
       ['Fetch locked Pump protocol dependencies', 'cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked'],
       ['Validate OF1 planner dependencies before fetch', 'node scripts/assert-of1-planner-offline.mjs --static'],
+      ['Validate Bronze decoder dependencies before fetch', 'node scripts/assert-of1-bronze-offline.mjs --static'],
+      ['Fetch locked Bronze decoder dependencies', 'cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked'],
+      ['Verify Bronze decoder isolated graph, formatting, tests and evidence', 'node scripts/assert-of1-bronze-offline.mjs --all'],
       ['Fetch locked OF1 planner dependencies', 'cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked'],
       ['Verify OF1 planner isolated graph, formatting, tests and evidence', 'node scripts/assert-of1-planner-offline.mjs --all'],
       ['Check Rust reducer formatting', 'cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check'],
