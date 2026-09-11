@@ -12,7 +12,7 @@ Before proposing or changing code:
 4. state the bounded hypothesis, evidence needed and explicit non-goals;
 5. run the read-only WSL doctor checks; report missing prerequisites instead of installing them.
 
-Never edit `main` directly. Create one bounded branch from current `origin/main`, stop if user work would be overwritten, and preserve unrelated dirty changes.
+Never edit `main` directly. Create one bounded branch from current `origin/main`, stop if user work would be overwritten, and preserve unrelated dirty changes. After merge, delete the head branch (repository auto-delete is enabled) or run the dry-run/execute flow in [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md). Do not leave squash-merged delivery branches on the remote.
 
 ## Delivery contract
 

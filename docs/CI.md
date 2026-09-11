@@ -1,83 +1,130 @@
-# CI.md — current validation boundary after retired-platform cleanup
+# CI.md — public zero-cost validation boundary
 
-> **Document status: ACTIVE.** B2A removed the retired Phase 8 image/deployment workflows and their build-only assertions while preserving ordinary CI and trusted-main Roadmap Sync. B3 added only a separately locked, offline-verified protocol crate and completed at `Fixture` evidence.
+> **Document status: ACTIVE.** The repository is **public**. Ordinary CI remains
+> validation-only and secret-free. Roadmap Sync stays a separate trusted-main
+> boundary with `PROJECT_TOKEN`. B2A removed retired Phase 8 image/deployment
+> workflows. This document is not acquisition authorization.
+
+## Public-repository posture
+
+Making the repository public is an operational choice to restore GitHub-hosted
+Actions capacity for standard public runners. It does **not**:
+
+- authorize OF1/Triton network calls;
+- weaken zero-cost / Triton-only product boundaries;
+- expose dataset roots (those stay outside Git on WSL);
+- make `PROJECT_TOKEN` optional for Roadmap Sync.
+
+The public cutover is an operator action, not a secret-scan guarantee from this
+PR: no reproducible history-scan receipt is included here. Local-only credential
+files must remain outside Git. Legacy helpers that read such files are not
+authorization to commit them. This CI change does not alter repository visibility,
+billing, credentials or access controls.
 
 ## Tracked workflow inventory
 
 | Workflow | Current role | V2 disposition |
 |---|---|---|
-| `.github/workflows/ci.yml` | canonical general validation | **ACTIVE** |
-| `.github/workflows/roadmap-sync.yml` | Project #4 reconciliation | **ACTIVE**; modify only through reviewed governance work |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | canonical general validation | **ACTIVE** |
+| [`.github/workflows/roadmap-sync.yml`](../.github/workflows/roadmap-sync.yml) | Project #4 reconciliation | **ACTIVE**; modify only through reviewed governance work |
 
-The repository has exactly these two workflow files after B2A. “General CI has no secret/write access” applies to `ci.yml`; Roadmap Sync is a distinct trusted-default-branch boundary using the protected `PROJECT_TOKEN`. Never collapse those boundaries into one broad safety claim.
+Exactly two workflow files. Never collapse CI and Roadmap Sync into one broad
+privilege claim.
 
-## Canonical general CI
+## Canonical general CI design
 
-`ci.yml` runs one `tests-build-zero-cost` job on GitHub-hosted `ubuntu-24.04` with:
+`ci.yml` runs **one** `tests-build-zero-cost` job on `ubuntu-24.04` with a
+**35-minute** budget. The single-job shape is intentional:
 
-- top-level `contents: read` only;
-- checkout credentials not persisted;
-- exact Node `22.23.2`;
-- exact Rust toolchain `1.97.1` with rustfmt/clippy;
-- `MODE=paper`, `TRITON_LIVE_ENABLED=false`, `ENTRY_SHADOW_MODE=true`;
-- no repository/production secrets;
-- no provider call, Docker push, SSH, deployment, backfill or database mutation.
+1. fail-closed policy can deep-compare the entire workflow;
+2. no job-level secrets, containers, services or write permissions;
+3. one checkout with `persist-credentials: false`;
+4. only approved actions: pinned `actions/checkout` and `actions/setup-node`.
 
-It triggers for pull requests targeting `main`, pushes to the branch patterns currently declared in the workflow, reusable calls and manual dispatch. `v2/**` is not currently a push pattern; a V2 pull request still triggers through `pull_request`.
+### Triggers
 
-## Current ordered gates
+- pull requests targeting `main`
+- pushes to `main`, `chore/**`, `feature/**`, `phase2/**`, `ci/**`, `cursor/**`, `v2/**`
+- `workflow_call` and `workflow_dispatch`
 
-1. install the pinned Rust toolchain;
-2. statically validate every B3 dependency section, exact direct declaration, locked package/source and crate-owned Rust input before any Cargo fetch;
-3. fetch the separately locked B3 crate dependencies;
-4. `npm ci` from `package-lock.json`;
-5. repository/zero-cost and offline research citation policies;
-6. focused policy/zero-cost/Pump tests and the complete Vitest suite;
-7. TypeScript typecheck and retained Research Cockpit/cockpit-inertness build;
-8. Rust reducer, supporting snapshots and B3 crate format checks;
-9. run the complete all-edge B3 graph audit, clippy, tests, build scripts and matrix check under the network-deny launcher;
-10. locked reducer all-target clippy/test/build;
-11. committed-diff whitespace and clean tracked-worktree validation.
+`v2/**` is included so delivery branches get push CI even before a PR exists.
 
-The B2A `npm run build` retains research-transport, Phase 8A offline and cockpit-inertness checks, but no longer builds the frozen paper dashboard or invokes Phase 8C/8D deployment/supply-chain validation. This narrows retired reachability; it does not prove authentic data or the future Observatory.
+### Environment hard-stops
 
-## Policy boundary
+- `MODE=paper`
+- `TRITON_LIVE_ENABLED=false`
+- `ENTRY_SHADOW_MODE=true`
+- top-level `permissions: contents: read` only
+- concurrency cancels superseded runs on the same ref
 
-B4's isolated Rust crate adds a separate pre-fetch manifest/lock check, locked fetch, and syscall-isolated formatting/clippy/tests/build/deterministic-report gate. It covers the [planner](research/OF1_RUST_PLANNER.md) and [Raw/receipt durability store](research/OF1_DURABLE_RAW_STORE.md), including a hash-pinned same-binary child-process crash harness. Both remain Fixture evidence; these checks do not authorize acquisition. No B3 gate or Roadmap Sync workflow is replaced.
+### Ordered gates
 
-The [staged acquisition path](research/OF1_STAGED_ACQUISITION.md) extends that same gate with exact default/official/fixture dependency profiles and reviewed build-script hashes. Compilation, clippy and default/pure tests remain socket-denied. Only source-pinned numeric-loopback HTTP/TLS tests and evidence generators run with sockets available; this is not an OS-wide external-network sandbox. The default-off official connector is compiled but never dispatched. The realistic-index/process-restart/CAR report regenerates deterministically; measured resources remain distinct from authentic acquisition evidence. Neither `ci.yml` nor Roadmap Sync gains a new privilege or provider call.
+1. pin Rust `1.97.1` (rustfmt/clippy);
+2. static-validate then fetch locked Pump protocol dependencies;
+3. static-validate then fetch locked OF1 planner dependencies;
+4. `npm ci`;
+5. repository/zero-cost policy + offline research citation gate;
+6. focused policy/Pump/zero-cost tests, then full Vitest suite;
+7. TypeScript typecheck + retained Research Cockpit/inertness build;
+8. Rust format checks for reducer, namespace lock, Jetstreamer/Solana snapshots, Pump protocol;
+9. isolated Pump protocol and OF1 planner offline evidence gates;
+10. reducer clippy/test/build (`--locked`);
+11. committed-diff whitespace + clean tracked worktree.
 
-The new full-index TLS integration/E2E/report lanes use the proposed runner's release profile, with the same cases and assertions. Existing debug/default tests remain unchanged. The first acquisition implementation CI run passed all test cases but exhausted the existing 25-minute job budget during repeated debug report generation; this profile selection removes that overhead without raising the timeout, changing production budgets or skipping a gate.
+Green CI never upgrades fixture evidence into authentic acquisition, Research
+Ready, edge or live claims. See the non-claims section below.
 
-`scripts/ci-repository-policy.mjs` parses the canonical workflow and fails closed on unauthorized structure, permissions, actions, commands, secret references, safety-variable drift and missing Rust/citation gates. Adversarial tests preserve that protection while the exact workflow allowlist shrinks from five to two. Tracked `.hermes/**` material is forbidden after B2A.
+## Roadmap Sync boundary
 
-Roadmap Sync is a separate privileged boundary. It always uses trusted default-branch code under `pull_request_target`; never change it to execute PR-head code or PR-produced artifacts. See [`operations/GITHUB_PROJECTS_ROADMAP.md`](operations/GITHUB_PROJECTS_ROADMAP.md).
+Roadmap Sync observes PR/issue events via `pull_request_target` but always
+checks out the **trusted default branch** and never executes PR-head code. It
+requires repository secret `PROJECT_TOKEN`. Missing token fails closed; do not
+weaken that gate to make a PR look green.
 
-Ordinary Roadmap Sync on an `opened`, `edited` or `synchronize` event is expected for eligible roadmap-linked pull requests. It may reconcile the PR item and its explicit `Roadmap:` owner; it does not authorize manual Project edits, provider calls, an acquisition run or another content migration.
+## Required GitHub settings (operator)
+
+Recommended after public cutover:
+
+1. Actions enabled for public repositories / spending limit healthy enough for
+   public runners;
+2. Required status check: `tests-build-zero-cost` on `main`;
+3. Automatically delete head branches on merge;
+4. Restrict who can push to `main`;
+5. Keep `PROJECT_TOKEN` as a repository secret with least privilege for Projects.
+
+Branch inventory process: [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md).
+
+## Future CI evolution (not in this change)
+
+Parallel Rust/Node jobs, Rust cache actions, or path filters may be added only
+through a reviewed policy update that keeps:
+
+- `contents: read` for ordinary CI;
+- no provider/live secrets in CI;
+- Roadmap Sync privilege isolation;
+- fail-closed workflow deep comparison.
+
+Do not add deployment, GHCR push, SSH, or public-RPC jobs to ordinary CI.
 
 ## Local checks
 
-The exact active list is maintained in [`AGENTS.md`](../AGENTS.md) and [`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md). Run focused checks during editing and every executable full gate before review.
-
-GitHub CI remains the authoritative complete gate. The 2026-09-05 WSL host measurement in [`KNOWN_ISSUES.md`](KNOWN_ISSUES.md) item 25 is not a local Node `22.23.2` / `rustup` receipt and does not authorize installation, native rebuilds or profile changes. Run the doctor first and record blocked commands.
+Authoritative command list: [`AGENTS.md`](../AGENTS.md) and
+[`DEVELOPMENT_WORKFLOW.md`](DEVELOPMENT_WORKFLOW.md). Run the doctor first on a
+new host. GitHub CI remains the complete gate when local toolchains diverge.
 
 ## What CI does not prove
 
-Green CI does not prove:
-
 - authentic OF1 acquisition or dataset provenance;
-- historical Pump activation/layout truth beyond fixtures;
-- complete account-state availability;
-- point-in-time feature integrity unless covered by specific future tests;
-- strategy edge, economic capacity or profitability;
+- historical Pump activation beyond fixtures;
+- account-state completeness;
+- PIT feature integrity unless covered by specific future tests;
+- strategy edge, capacity or profitability;
 - executable quote/fill realism;
-- prospective Triton health/cost behavior;
+- Triton health/cost behavior;
 - VPS or live-execution readiness.
 
-CI never turns fixture evidence into real evidence.
+## Historical note
 
-## Historical PR 1 verification
-
-PR 1 ran locally executable offline/documentation checks, link validation and `git diff --check`, then relied on the pull-request run for gates blocked by the unmodified local toolchain. Its counts below remain historical and are not B2A results.
-
-Keep execution environments explicit. On the initial PR #69 commit, local `npm test` reached 100/110 test files and 1,411/1,423 tests; the remaining failures were missing local native/Rust prerequisites. GitHub CI run `33542154130` in its clean pinned environment passed 110/110 test files and 1,524/1,524 tests. These are separate observations, not interchangeable totals.
+Older Phase 8 image workflows and PR-1 local/CI count comparisons remain
+historical evidence only. They do not authorize restoring retired deployment
+paths.

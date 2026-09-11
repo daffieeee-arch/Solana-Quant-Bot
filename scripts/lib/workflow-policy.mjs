@@ -123,7 +123,7 @@ const CANONICAL_WORKFLOW = {
   name: 'CI',
   on: {
     push: {
-      branches: ['main', 'chore/**', 'feature/**', 'phase2/**', 'ci/**', 'cursor/**'],
+      branches: ['main', 'chore/**', 'feature/**', 'phase2/**', 'ci/**', 'cursor/**', 'v2/**'],
     },
     pull_request: { branches: ['main'] },
     workflow_call: {},
@@ -144,7 +144,7 @@ const CANONICAL_WORKFLOW = {
     quality: {
       name: 'tests-build-zero-cost',
       'runs-on': 'ubuntu-24.04',
-      'timeout-minutes': 25,
+      'timeout-minutes': 35,
       steps: CANONICAL_STEPS,
     },
   },
