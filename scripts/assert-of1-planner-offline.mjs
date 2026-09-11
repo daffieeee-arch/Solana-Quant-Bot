@@ -50,6 +50,13 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     const fixtureSource = Object.hasOwn(LOOPBACK_SOURCE_HASHES, path);
     const acquisitionSource = Object.hasOwn(ACQUISITION_SOURCE_HASHES, path);
     const monitorSource = Object.hasOwn(MONITOR_SOURCE_HASHES, path);
+    // The retained Node error has this literal prefix; its word "Command" is
+    // evidence text, not Rust process capability. Ignore only that exact quoted
+    // prefix in the two forensic-reader files. Every other token stays scanned,
+    // including process APIs added next to the literal; no file-wide exemption.
+    const processSource = ['src/recorded_verification.rs', 'tests/recorded_verification.rs'].includes(path)
+      ? String(source).replaceAll('"Error: Command failed: ', '"Error: diagnostic failed: ')
+      : source;
     if (crashHarness && hash(source) !== PROCESS_TEST_HASH) errors.push('unreviewed OF1 process-crash harness');
     if (fixtureSource && hash(source) !== LOOPBACK_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 loopback source: ${path}`);
     if (acquisitionSource && hash(source) !== ACQUISITION_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 acquisition source: ${path}`);
@@ -57,7 +64,7 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     if (path === 'build.rs' || /\bunsafe\s*\{|#\s*\[\s*path\s*=/u.test(source)
       || (!fixtureSource && !acquisitionSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
       || (!monitorSource && /\bUnixDatagram\b/u.test(source))
-      || (!crashHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(source))) {
+      || (!crashHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
       errors.push(`unexpected runtime capability in ${path}`);
     }
   }
