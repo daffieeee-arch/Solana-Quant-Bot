@@ -130,8 +130,114 @@ network client, provider, signer, system install or global toolchain change.
 The existing per-slot/selection output cap now includes derived Silver bytes;
 no acquisition or reader budget is increased.
 
-The subsequent local result receipt records full 3,137/725 regressions, two
-deterministic executions, artifact hashes, actual browser output and final gates.
+## Executed local result — 2026-09-12
+
+Code commit `79b2d9a0c7422c3d9fc648daf1d6bc9d87997a57` was built with Node
+`22.23.2` / Rust `1.97.1`; the subsequent evidence-only commit does not replace
+that executable identity. Full outputs and original logs are retained outside Git:
+
+```text
+/home/dmesdary/solana-quant-data/governance/b5-pump-sell-20260912.xNETcu/
+  bin/of1-bronze-decoder-f39dcf44ad0db0f3e516ab33fefb4f667374bdb97c7082f3814b7129c8664154
+  release-01/quality.html
+  release-01/quality.json
+  release-01/bronze.jsonl
+  release-01/silver.jsonl
+  release-01/execution.json
+  release-02/
+  regression-725/
+  browser-03/
+```
+
+| Authentic recorded selection | Transaction envelopes decoded | Sell facts |
+|---|---:|---:|
+| 422496002 | 1,092 | 0 |
+| 422496003 | 977 | 0 |
+| 422496004 | 1,068 | 2 |
+| Total | 3,137 | 2 |
+
+All transaction envelopes are accounted for: 3,050 recorded OK, 87 ERROR and
+2,845 retained vote-program transactions. There is no silent filtering. These
+transaction counts do **not** mean all Pump variants were admitted. Direct sells
+153 and 996 match the same observation-derived bounded profile; nested sells
+1002 and 1016 remain `UNSUPPORTED_INVOCATION`. Buy 142 remains the unchanged
+`UNEXPECTED_TRAILING_BYTES` diagnosis. The 725-transaction regression also passes
+with zero sell facts. All prior Bronze fields, including buy diagnostics, are
+deep-equal apart from the new decoder identity and separate sell-analysis field.
+
+Two new full-selection executions produced byte-identical quality JSON, Bronze
+JSONL, Silver JSONL, HTML and COMPLETE files. Runtime was 0.91 / 0.93 seconds;
+peak RSS was 252,976 / 252,992 KiB. These are local reader measurements, not
+general throughput guarantees. Combined serialized Bronze/Silver records occupied
+29,885,331 bytes within the unchanged 48 MiB selection cap. All 302 + 218 original
+run files, original acquisition executable and retained earlier reports are
+hash-unchanged.
+
+| Artifact | SHA-256 |
+|---|---|
+| New offline decoder executable | `f39dcf44ad0db0f3e516ab33fefb4f667374bdb97c7082f3814b7129c8664154` |
+| Compiled decoder source fingerprint | `2dc96d127d88f051f64182ad2c5af02be3f1c9a509818c0874e5fda0f4665880` |
+| Cargo.lock | `1a6e486fc422e5ee9b5e54b8d4b63b567c560cf61f96c3b0284a503c752eff08` |
+| quality.json | `abd6503151ebc2c551dc3d33ed32349c588dfb96226f97028749913ef52963c3` |
+| bronze.jsonl | `0f115a4b7e97b57266cf049005a020771f71cc04b990b70b2a794f76fadd0b47` |
+| silver.jsonl | `55fc2dc48bf0343d3753751b2a6e8bfe8615a075f3b0c3df51ae7827e903548c` |
+| quality.html | `681e7e9fdcd1bd9db7c17e3cf8bd0c72306d2d899774e9153fcfcc70320290eb` |
+
+The [machine-readable result receipt](B5_PUMP_SELL_OBSERVATION_RESULT.json) is
+byte-identical to the retained outside-Git `result.json`, SHA-256
+`d78f416ec339389fa89e14275ffb99f73904a9d699f70b23a049c2c71b939904`.
+It binds both executions, original-input inventories, source/executable identities,
+per-fact Bronze hashes, screenshots and exact local gate logs.
+
+### Local gates and review
+
+- Offline lockfile-bound npm install; policy and research-citation gates: pass.
+- Complete Vitest suite: **104 files / 1,568 tests**; critical suite: **101 tests**.
+- TypeScript no-emit and default build: pass.
+- All retained Rust formatting gates, Pump offline gates and reducer
+  clippy/tests/build: pass.
+- Bronze dependency/license/build-script parity, socket-denied fmt/clippy/tests/
+  build: pass; **59 tests**, including 15 focused sell tests and ten native-run
+  tests. Authentic 3,137 / 725 execution regressions are separately recorded.
+- The first full OF1 gate failed in the **unchanged** monitor metadata fixture:
+  `Broken pipe (os error 32)` followed by `fixture missed deliberate interruption`.
+  One complete repetition of the same gate passed, including all assertions,
+  crash/restart, payload simulation and reader checks. Both logs remain in the
+  result receipt. The precise TLS timing cause was not instrumented; retain this
+  as a separate fixture-maintenance observation, not a repaired sell-code defect.
+- Internal Markdown links and `git diff --check`: pass.
+- Fresh independent local review found no blocking source, decoder, provenance,
+  evidence or screenshot issue. It rechecked both authentic executions, old
+  records and preserved files. This is not a GitHub review or CI conclusion.
+
+### View the actual result
+
+The Windows browser was exercised against the actual Rust-generated HTML at
+`http://localhost:4792/quality.html#pump-sell`. The captured response hash equals
+the retained HTML hash. Both screenshots show actual data, not a UI mockup:
+
+![Recorded sell facts](assets/b5-bronze/sell-summary.png)
+
+![Seventeen source-bound account positions](assets/b5-bronze/sell-accounts.png)
+
+The existing Windows Node serves these read-only files directly from WSL ext4.
+If the temporary viewer has stopped, run from WSL (it prints an OS-assigned port;
+use the printed URL):
+
+```bash
+'/mnt/c/Program Files/nodejs/node.exe' \
+  '\\wsl.localhost\Ubuntu\home\dmesdary\solana-quant-data\governance\b5-pump-sell-20260912.xNETcu\serve-report-windows.mjs'
+```
+
+No Windows configuration, firewall, shell profile or installed tool was changed.
+The review helper is outside Git, loopback-only and has no acquisition controls.
+The HTML is also independently readable from disk. Browser evidence covers page
+requests, not an OS-wide packet capture. Earlier failed loopback attempts and the
+initial compiler subprocess-filter failure remain retained, not relabelled green.
+
 GitHub CI and ordinary Roadmap Sync must run only after access and publication
 are separately permitted. This local development does not contact GitHub,
-change PR #117, merge, close issues or promote Project evidence.
+change PR #117, merge, close issues or promote Project evidence. The smallest
+separate decode follow-up is a source-backed association for the two retained
+nested sells; it does not require a new download. The buy suffix needs its own
+missing authoritative compatibility evidence and remains unmodified.
