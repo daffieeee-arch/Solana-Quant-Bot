@@ -68,6 +68,8 @@ jobs:
         run: node scripts/assert-of1-planner-offline.mjs --static
       - name: Validate Bronze decoder dependencies before fetch
         run: node scripts/assert-of1-bronze-offline.mjs --static
+      - name: Validate Parquet dependencies before fetch
+        run: node scripts/assert-of1-parquet-offline.mjs --static
       - name: Restore scoped Rust build cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -80,6 +82,10 @@ jobs:
         run: cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked
       - name: Fetch locked Bronze decoder dependencies
         run: cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked
+      - name: Fetch locked Parquet dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/of1-parquet-projection/Cargo.toml --locked
+      - name: Prepare isolated locked DuckDB reader
+        run: node scripts/prepare-columnar-query-ci.mjs
       - name: Install locked dependencies
         run: npm ci
       - name: Enforce repository and zero-cost policy
@@ -110,6 +116,8 @@ jobs:
         run: node scripts/assert-of1-planner-offline.mjs --all
       - name: Verify Bronze decoder isolated graph, formatting, tests and evidence
         run: node scripts/assert-of1-bronze-offline.mjs --all
+      - name: Verify Parquet and DuckDB offline parity and coverage
+        run: node scripts/assert-of1-parquet-offline.mjs --all
       - name: Lint Rust reducer
         run: cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
       - name: Test Rust reducer
@@ -135,7 +143,7 @@ const addStep = (body: string) => SAFE_WORKFLOW.replace(
 describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
-    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(31);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(35);
   });
 
   it('runs PR validation and main validation without duplicate feature-branch pushes', () => {
@@ -219,6 +227,10 @@ describe('semantic CI workflow policy', () => {
       ['Validate Bronze decoder dependencies before fetch', 'node scripts/assert-of1-bronze-offline.mjs --static'],
       ['Fetch locked Bronze decoder dependencies', 'cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked'],
       ['Verify Bronze decoder isolated graph, formatting, tests and evidence', 'node scripts/assert-of1-bronze-offline.mjs --all'],
+      ['Validate Parquet dependencies before fetch', 'node scripts/assert-of1-parquet-offline.mjs --static'],
+      ['Fetch locked Parquet dependencies', 'cargo +1.97.1 fetch --manifest-path rust/of1-parquet-projection/Cargo.toml --locked'],
+      ['Prepare isolated locked DuckDB reader', 'node scripts/prepare-columnar-query-ci.mjs'],
+      ['Verify Parquet and DuckDB offline parity and coverage', 'node scripts/assert-of1-parquet-offline.mjs --all'],
       ['Fetch locked OF1 planner dependencies', 'cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked'],
       ['Verify OF1 planner isolated graph, formatting, tests and evidence', 'node scripts/assert-of1-planner-offline.mjs --all'],
       ['Check Rust reducer formatting', 'cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check'],

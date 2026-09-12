@@ -93,6 +93,8 @@ Run with the existing pinned Node 22.23.2 / Rust 1.97.1 wrapper:
 
 ```bash
 TOOLCHAIN_RUN=/home/dmesdary/.local/share/solana-quant/run-with-toolchain
+# Required for --all; point to the existing isolated DuckDB 1.5.5 interpreter:
+export COLUMNAR_QUERY_PYTHON=/absolute/path/to/isolated/python
 "$TOOLCHAIN_RUN" node scripts/assert-of1-parquet-offline.mjs --all
 "$TOOLCHAIN_RUN" node scripts/assert-of1-parquet-offline.mjs --release
 # Use the sealed decoder execution.json SHA, never an invented identity:
@@ -110,6 +112,11 @@ paths only inside the **record bytes read from Parquet**; no decoding occurs.
 The parent query uses EXISTS so duplicate Bronze rows never inflate Silver
 counts. Report JSON carries exact integer decimal strings and their DuckDB types
 to avoid browser rounding. `index.html` is standalone and also opens as a file.
+
+The follow-up [coverage and pilot check](B5_COVERAGE_AND_PILOT.md) connects the
+Parquet/DuckDB regression gate to local CI policy. `--all` now requires the
+explicit reader above and executes real Rust-written boundary fixtures; it
+does not silently skip DuckDB when an interpreter is unavailable.
 
 ## Acceptance and limits
 

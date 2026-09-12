@@ -1,0 +1,21 @@
+{
+  "schema": "OF1_PILOT_PROPOSAL_1",
+  "status": "DRAFT_NOT_ACQUISITION_AUTHORITY",
+  "epoch": 978,
+  "seed": "solana-quant-epoch978-pilot-v1-20260912",
+  "algorithm": "SHA256(domain || seed || epoch_u64_le || center_u64_le), minimum digest then minimum center",
+  "domain": "OF1_PILOT_CENTER_1\u0000",
+  "context_before_slots": 1,
+  "context_after_slots": 1,
+  "windows": 1,
+  "engineering_exclusions": [[422496000, 422496005]],
+  "population": "All epoch-978 center slots whose three-slot window stays inside the epoch and does not overlap the previously inspected engineering interval. Missing index entries are not excluded.",
+  "estimand": "Pilot completeness, bounded decoder coverage and field availability for one randomly selected contiguous window; no strategy or regime-generalization estimand.",
+  "selection_inputs": "Seed, epoch geometry and prior-engineering exclusions ONLY. Index bytes are read for feasibility AFTER center selection.",
+  "time_catalogue": "UNAVAILABLE: no verified epoch UTC interval or market-regime catalogue; slot is chain order, not a UTC duration.",
+  "context_limit": "One preceding and one following slot preserve local boundaries only. They do not establish token creation, a full lifecycle, observation latency or a later executable opportunity.",
+  "expansion_rule": "NONE. At most this one three-slot window. No replacement, new seed or extra window after seeing bytes, Pump presence, returns or decode outcomes. Any future larger design is a separately frozen proposal, not a replacement of missing observations.",
+  "stop_rules": ["source/index/receipt mismatch", "selected index entry absent or invalid", "any existing request/byte/slot/runtime/disk cap exceeded", "decoder or writer cap exceeded: keep all input and report incomplete, never truncate", "unknown or unsupported records remain in denominators; no resampling"],
+  "research_promotion": "BLOCKED: current Bronze and Parquet explicitly admit ENGINEERING_VALIDATION_ONLY. A reviewed sample-class propagation and completeness contract is needed; never relabel existing engineering data.",
+  "network_authorized": false
+}

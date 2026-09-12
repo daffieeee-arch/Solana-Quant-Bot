@@ -49,6 +49,7 @@ const CANONICAL_STEPS = [
     name: 'Validate Bronze decoder dependencies before fetch',
     run: 'node scripts/assert-of1-bronze-offline.mjs --static',
   },
+  { name: 'Validate Parquet dependencies before fetch', run: 'node scripts/assert-of1-parquet-offline.mjs --static' },
   {
     name: 'Restore scoped Rust build cache',
     uses: 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
@@ -70,6 +71,8 @@ const CANONICAL_STEPS = [
     name: 'Fetch locked Bronze decoder dependencies',
     run: 'cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked',
   },
+  { name: 'Fetch locked Parquet dependencies', run: 'cargo +1.97.1 fetch --manifest-path rust/of1-parquet-projection/Cargo.toml --locked' },
+  { name: 'Prepare isolated locked DuckDB reader', run: 'node scripts/prepare-columnar-query-ci.mjs' },
   { name: 'Install locked dependencies', run: 'npm ci' },
   { name: 'Enforce repository and zero-cost policy', run: 'npm run ci:policy' },
   { name: 'Enforce offline research citation gate', run: 'npm run ci:research-citations' },
@@ -112,6 +115,7 @@ const CANONICAL_STEPS = [
     name: 'Verify Bronze decoder isolated graph, formatting, tests and evidence',
     run: 'node scripts/assert-of1-bronze-offline.mjs --all',
   },
+  { name: 'Verify Parquet and DuckDB offline parity and coverage', run: 'node scripts/assert-of1-parquet-offline.mjs --all' },
   {
     name: 'Lint Rust reducer',
     run: 'cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings',

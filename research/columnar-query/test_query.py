@@ -22,3 +22,10 @@ with connect() as db:
     assert db.execute(query).fetchall() == [(1, 1)]
     assert db.execute("SELECT COUNT(*) FROM bronze").fetchone() == (2,)
     print("DuckDB duplicate Bronze parents retained without inflated Silver count PASS")
+    coverage_queries = json.loads(pathlib.Path(__file__).with_name("coverage.sql.json").read_text())
+    for sql in coverage_queries.values():
+        db.execute(sql).fetchall()
+    assert db.execute(coverage_queries['duplicate_identity']).fetchall()[0][-1] == 2
+    assert db.execute(coverage_queries['foreign_parent']).fetchall() == []
+    assert db.execute(coverage_queries['slot_counts']).fetchall()[0][1] == 2
+    print("Coverage SQL runs on Rust Parquet; duplicate packages remain detectable PASS")
