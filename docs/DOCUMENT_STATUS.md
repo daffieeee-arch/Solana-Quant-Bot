@@ -45,6 +45,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`research/B5_PUMP_BUY_SOURCE_BINDING.md`](research/B5_PUMP_BUY_SOURCE_BINDING.md)
 - [`research/B5_PUMP_SELL_OBSERVATION.md`](research/B5_PUMP_SELL_OBSERVATION.md)
 - [`research/B5_NESTED_PUMP_SELL_CONTEXT.md`](research/B5_NESTED_PUMP_SELL_CONTEXT.md)
+- [`research/B5_PARQUET_QUERYABLE_RECORDS.md`](research/B5_PARQUET_QUERYABLE_RECORDS.md)
 - [`research/B4_DOWNLOAD_MONITOR.md`](research/B4_DOWNLOAD_MONITOR.md)
 - [`research/OF1_METADATA_RUN_PROPOSAL.md`](research/OF1_METADATA_RUN_PROPOSAL.md)
 - [`research/OF1_ACQUISITION_EVIDENCE.md`](research/OF1_ACQUISITION_EVIDENCE.md)
