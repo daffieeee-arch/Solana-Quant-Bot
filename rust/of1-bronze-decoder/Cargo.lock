@@ -364,6 +364,7 @@ name = "of1-bronze-decoder"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "borsh",
  "bs58",
  "crc",
  "fnv",

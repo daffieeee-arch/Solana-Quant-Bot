@@ -1,7 +1,7 @@
 {
   "schema": "OF1_BRONZE_DEPENDENCY_REVIEW_1",
-  "manifest_sha256": "1bbe66ebd176505d5dda05e94e2c82e1f8c3bb3e0eb7bb6d576cbdbda4a801d5",
-  "lock_sha256": "e2dabd836f1158d7e17f4216cc9c3639495483c9c59a928c9643081c8d4f775d",
+  "manifest_sha256": "c599a573a22d97176aa3f1f75f16df10ebfa10ca590c5288612ee4ebe651db75",
+  "lock_sha256": "1a6e486fc422e5ee9b5e54b8d4b63b567c560cf61f96c3b0284a503c752eff08",
   "packages": [
     {
       "name": "anyhow",
@@ -1506,6 +1506,7 @@
     "Zstd uses bundled C with existing native compiler; no dynamic libzstd, CMake or protobuf compiler required.",
     "Manually declared prost projection pins official proto bytes; not a second Pump decoder.",
     "One local pump-protocol-v2 path dependency reuses exact B3 layout parsers. Borsh/derive and TOML proc-macro dependencies are locked, pure build-time/Rust support; no candidate-count override or network source added. Existing B3 source evidence matrices remain unchanged.",
-    "Pinned solana-pubkey 4.3.0 with curve25519 enables local PDA derivation only. Twelve locked support packages add pure-Rust curve/SHA/compile-time arithmetic and macros; no RPC, signer or HTTP client. solana-define-syscall is target-conditional address/hash support, not a network client. SDK is source-inspected only, not a dependency."
+    "Pinned solana-pubkey 4.3.0 with curve25519 enables local PDA derivation only. Twelve locked support packages add pure-Rust curve/SHA/compile-time arithmetic and macros; no RPC, signer or HTTP client. solana-define-syscall is target-conditional address/hash support, not a network client. SDK is source-inspected only, not a dependency.",
+    "Local sell follow-up: borsh =1.8.0 is now also a direct dependency (defaults disabled, std enabled) solely to reuse the existing bounded TradeEvent BorshDeserialize implementation. Resolved packages, features, licenses and build scripts are byte-for-byte equal to the prior reviewed graph. No package download or new runtime capability."
   ]
 }

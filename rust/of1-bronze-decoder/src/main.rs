@@ -37,12 +37,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         serde_json::to_writer(&mut bronze, record)?;
         bronze.push(b'\n');
     }
+    let mut silver = Vec::new();
+    for fact in report["silver_records"]
+        .as_array()
+        .ok_or("silver records absent")?
+    {
+        serde_json::to_writer(&mut silver, fact)?;
+        silver.push(b'\n');
+    }
     let execution = json!({"schema":"OF1_BRONZE_EXECUTION_1","decoder_source_sha256":of1_bronze_decoder::source_sha256(),"processed_at_unix_ms":start.to_string(),"finished_at_unix_ms":SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string(),"operational_timestamps_are_not_features":true,"executable_sha256":current_executable_sha256()?,"quality_sha256":sha256(&quality),"bronze_jsonl_sha256":sha256(&bronze),"html_sha256":sha256(html.as_bytes()),"lock_sha256":sha256(include_bytes!("../Cargo.lock")),"run_root":root,"no_acquisition_or_writer_resume":true});
+    let mut execution = execution;
+    execution["silver_jsonl_sha256"] = json!(sha256(&silver));
+    execution["silver_fact_count"] = json!(
+        report["silver_records"]
+            .as_array()
+            .ok_or("silver records absent")?
+            .len()
+    );
     // Fail on an existing output. Partial output after a crash is explicit: the
     // publication marker is written LAST and never interpreted as resumable input.
     fs::create_dir(&output)?;
     write_new(&output.join("quality.json"), &quality)?;
     write_new(&output.join("bronze.jsonl"), &bronze)?;
+    write_new(&output.join("silver.jsonl"), &silver)?;
     write_new(&output.join("quality.html"), html.as_bytes())?;
     write_new(
         &output.join("execution.json"),

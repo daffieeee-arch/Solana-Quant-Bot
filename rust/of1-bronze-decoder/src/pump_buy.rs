@@ -141,23 +141,23 @@ fn event_context(
     ))
 }
 
-fn key_at(tx: &Value, index: u64) -> Option<Pubkey> {
+pub(crate) fn key_at(tx: &Value, index: u64) -> Option<Pubkey> {
     let index = usize::try_from(index).ok()?;
     Pubkey::from_str(tx["account_keys"].as_array()?.get(index)?.as_str()?).ok()
 }
-fn account_key(tx: &Value, ix: &Value, position: usize) -> Option<Pubkey> {
+pub(crate) fn account_key(tx: &Value, ix: &Value, position: usize) -> Option<Pubkey> {
     key_at(
         tx,
         ix["account_indexes"].as_array()?.get(position)?.as_u64()?,
     )
 }
-fn pda(program: &str, seeds: &[&[u8]]) -> Option<(Pubkey, u8)> {
+pub(crate) fn pda(program: &str, seeds: &[&[u8]]) -> Option<(Pubkey, u8)> {
     Pubkey::try_find_program_address(seeds, &Pubkey::from_str(program).ok()?)
 }
 
 // Flags are compiled-message requirements, not inferred account ownership or
 // exact CPI privileges. An IDL readonly account may be globally writable.
-fn privileges(tx: &Value, index: usize) -> Option<(bool, bool)> {
+pub(crate) fn privileges(tx: &Value, index: usize) -> Option<(bool, bool)> {
     let h = &tx["message_account_layout"];
     let n = |key| h[key].as_u64().and_then(|v| usize::try_from(v).ok());
     let (static_n, signed, ro_signed, ro_unsigned, loaded_w, loaded_r) = (

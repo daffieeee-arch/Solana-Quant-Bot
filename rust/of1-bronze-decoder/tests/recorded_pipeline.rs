@@ -236,9 +236,18 @@ fn fixture_payload(change: Option<&str>) -> Vec<u8> {
 }
 
 fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
-    let fixtures: Value =
-        serde_json::from_str(include_str!("fixtures/authentic-sections.json")).unwrap();
-    let raw = hex::decode(fixtures["fixtures"][0]["section_hex"].as_str().unwrap()).unwrap();
+    let (file, position) = if change == Some("sell") {
+        (include_str!("fixtures/authentic-pump-sections.json"), 1)
+    } else {
+        (include_str!("fixtures/authentic-sections.json"), 0)
+    };
+    let fixtures: Value = serde_json::from_str(file).unwrap();
+    let raw = hex::decode(
+        fixtures["fixtures"][position]["section_hex"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     let prefix = raw.iter().position(|b| b & 128 == 0).unwrap() + 1;
     let C::Array(mut tx) = serde_cbor::from_slice(&raw[prefix + 36..]).unwrap() else {
         panic!("tx")
@@ -246,7 +255,10 @@ fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
     // This graph is explicitly synthetic: native slot field, receipts and index
     // are constructed together, never masquerading as a copied authentic run.
     tx[3] = n(slot);
-    if let Some(change) = change {
+    if change == Some("sell") {
+        tx[4] = n(0);
+    } // Synthetic one-tx graph; original Raw is never changed.
+    if let Some(change) = change.filter(|c| *c != "sell") {
         let which = if change == "wire" { 1 } else { 2 };
         let C::Array(f) = &mut tx[which] else {
             panic!("frame")
@@ -288,8 +300,38 @@ fn metadata_only_never_claims_zero_transactions_or_authentic_dataset() {
     let report = report::decode_run(&h.root).unwrap();
     assert_eq!(report["input_kind"], "METADATA_ONLY");
     assert!(report["decoded_transactions"].is_null());
+    assert_eq!(report["silver_records"], json!([]));
+    assert_eq!(report["silver"], "NOT_PRODUCED");
     assert_eq!(before, inventory(&h.root));
     assert!(h.temp.path().exists());
+}
+
+#[test]
+fn synthetic_native_run_with_authentic_sell_wire_keeps_fixture_provenance_and_silver_determinism() {
+    let mut h = Harness::new();
+    let bytes = fixture_payload_at(SLOT, Some("sell"));
+    h.metadata_slots(std::slice::from_ref(&bytes));
+    h.admit_slots(1);
+    h.publish(4, &bytes);
+    let before = inventory(&h.root);
+    let r = report::decode_run(&h.root).unwrap();
+    assert_eq!(r, report::decode_run(&h.root).unwrap());
+    assert_eq!(r["dispositions"]["DECODED"], 1);
+    assert_eq!(r["silver_fact_count"], 1);
+    let fact = &r["silver_records"][0];
+    assert_eq!(fact["receipt_evidence"], "Fixture");
+    assert_eq!(fact["input_kind"], "FIXTURE_RECORDED_CAR_SLOT");
+    assert_eq!(fact["source"]["raw_sha256"], sha256(&bytes));
+    assert_eq!(fact["source"]["bindings"], r["bindings"]);
+    assert_eq!(
+        fact["bronze_record_sha256"],
+        sha256(&serde_json::to_vec(&r["records"][0]).unwrap())
+    );
+    let accounted = serde_json::to_vec(&r["records"][0]).unwrap().len()
+        + serde_json::to_vec(fact).unwrap().len();
+    assert_eq!(r["resource_accounting"]["record_json_bytes"], accounted);
+    assert_eq!(before, inventory(&h.root));
+    assert!(report::html(&r).contains("1 gekoppelde instructie/event-pakketten"));
 }
 #[test]
 fn receipt_to_bronze_is_deterministic_read_only_with_expired_clock_and_held_writer_lock() {

@@ -1,6 +1,6 @@
 //! Deterministic Bronze JSON and self-contained quality HTML; operational
 //! processing time and executable identity belong in a separate execution receipt.
-use crate::{archive, codec, invalid, pump};
+use crate::{archive, codec, invalid, pump, pump_sell};
 use of1_range_recorder::{
     acquisition::read_limited,
     durable::acquisition::{Published, RequestKind},
@@ -55,7 +55,7 @@ pub fn decode_run(root: &Path) -> io::Result<Value> {
     }
     if payloads.is_empty() {
         return Ok(
-            json!({"schema":SCHEMA,"run_id":run.snapshot.id,"bindings":verification["bindings"],"input_kind":"METADATA_ONLY","records":[],"domain_decoding":"UNAVAILABLE_NO_PAYLOAD","decoded_transactions":null,"research_ready":false}),
+            json!({"schema":SCHEMA,"run_id":run.snapshot.id,"bindings":verification["bindings"],"input_kind":"METADATA_ONLY","records":[],"silver_records":[],"silver":"NOT_PRODUCED","domain_decoding":"UNAVAILABLE_NO_PAYLOAD","decoded_transactions":null,"research_ready":false}),
         );
     }
     if verification["stages"]["car_slot"] != "VERIFIED" {
@@ -152,6 +152,7 @@ fn combine_slots(
         "bindings":first["bindings"],"stages":first["stages"],"slice_class":"ENGINEERING_VALIDATION_ONLY","root_to_slot_membership":"UNAVAILABLE","research_ready":false,
         "silver":"NOT_PRODUCED","physical_parquet_writer":"NOT_SELECTED","signature_crypto_verification":"NOT_PERFORMED","pump_event_decode":"NOT_PERFORMED","limitations":first["limitations"]});
     let mut records = Vec::new();
+    let mut silver_records = Vec::new();
     let mut counts = BTreeMap::<String, u64>::new();
     let mut reasons = BTreeMap::<String, u64>::new();
     for key in [
@@ -194,6 +195,15 @@ fn combine_slots(
             return Err(invalid("SLOT_RECORDS"));
         };
         records.append(&mut rows);
+        let Value::Array(mut facts) = slot
+            .as_object_mut()
+            .ok_or_else(|| invalid("SLOT_REPORT"))?
+            .remove("silver_records")
+            .ok_or_else(|| invalid("SLOT_SILVER"))?
+        else {
+            return Err(invalid("SLOT_SILVER"));
+        };
+        silver_records.append(&mut facts);
     }
     if counts.values().sum::<u64>() != records.len() as u64
         || result["transaction_envelopes"] != records.len()
@@ -213,6 +223,13 @@ fn combine_slots(
     result["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");
     result["records"] = json!(records);
     result["slots"] = json!(slots);
+    result["silver"] = json!(if silver_records.is_empty() {
+        "NOT_PRODUCED"
+    } else {
+        "BOUNDED_RECORDED_SELL_FACTS"
+    });
+    result["silver_fact_count"] = json!(silver_records.len());
+    result["silver_records"] = json!(silver_records);
     Ok(result)
 }
 
@@ -248,6 +265,7 @@ fn project_slot(
     ]);
     let mut reasons = BTreeMap::<String, u64>::new();
     let mut records = Vec::new();
+    let mut silver_records = Vec::new();
     let decoder_source_sha256 = crate::source_sha256();
     let mut pump_count = 0;
     let mut pump_unknown = 0;
@@ -257,10 +275,7 @@ fn project_slot(
         let result = codec::decode(envelope, &archive.continuations);
         let (disposition, error, transaction) = match result {
             Ok(mut tx) => {
-                if tx["pump_program_involvement"] == true {
-                    tx["pump_structural_analysis"] = pump::inspect(&tx)?;
-                }
-                tx["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");
+                inspect_pump(&mut tx)?;
                 charge(
                     &mut metadata_bytes,
                     usize::try_from(
@@ -308,6 +323,7 @@ fn project_slot(
             serde_json::to_vec(&record).map_err(invalid)?.len(),
             MAX_RECORD_JSON_BYTES,
         )?;
+        append_sell_facts(&record, &mut record_bytes, &mut silver_records)?;
         records.push(record);
     }
     let records_sha256 = sha256(&serde_json::to_vec(&records).map_err(invalid)?);
@@ -317,10 +333,37 @@ fn project_slot(
         "verified_nodes":archive.verified_nodes,"verified_links":archive.verified_links,"entry_nodes":archive.entries,"transaction_envelopes":archive.envelopes.len(),"dispositions":counts,"reasons":reasons,
         "pump_program_involvement_transactions":if pump_unknown==0{Some(pump_count)}else{None},"pump_program_known_positive":pump_count,"pump_program_unknown":pump_unknown,"pump_event_decode":"PINNED_STRUCTURAL_PROBES_ONLY","root_to_slot_membership":"UNAVAILABLE","signature_crypto_verification":"NOT_PERFORMED",
         "resource_accounting":{"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_RECORD_JSON_BYTES,"max_decoded_metadata_bytes":MAX_DECODED_METADATA_BYTES},
-        "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":"NOT_PRODUCED","physical_parquet_writer":"NOT_SELECTED",
+        "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":if silver_records.is_empty(){"NOT_PRODUCED"}else{"BOUNDED_RECORDED_SELL_FACTS"},"silver_fact_count":silver_records.len(),"silver_records":silver_records,"physical_parquet_writer":"NOT_SELECTED",
         "records_sha256":records_sha256,"analysis":pump::summary(&records),"records":records,
-        "limitations":["No token names, tickers, launch dates or lifecycle inference","Pinned Pump structural probes are not candidate admission, Silver or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]}),
+        "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]}),
     )
+}
+
+fn inspect_pump(tx: &mut Value) -> io::Result<()> {
+    if tx["pump_program_involvement"] == true {
+        tx["pump_structural_analysis"] = pump::inspect(tx)?;
+        tx["pump_sell_analysis"] = json!(pump_sell::inspect(tx)?);
+    }
+    // Keep the prior buy-probe field; the new sell lane is explicitly separate.
+    tx["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");
+    Ok(())
+}
+
+fn append_sell_facts(
+    record: &Value,
+    record_bytes: &mut usize,
+    silver_records: &mut Vec<Value>,
+) -> io::Result<()> {
+    for fact in pump_sell::facts(record)? {
+        // Derived output uses the SAME existing per-slot/selection JSON cap.
+        charge(
+            record_bytes,
+            serde_json::to_vec(&fact).map_err(invalid)?.len(),
+            MAX_RECORD_JSON_BYTES,
+        )?;
+        silver_records.push(fact);
+    }
+    Ok(())
 }
 
 fn escape(s: &str) -> String {
@@ -387,7 +430,7 @@ fn overview_html(report: &Value) -> String {
         report["analysis"]["transaction_status_counts"],
         report["analysis"]["vote_program_transactions_retained"]
     )));
-    overview.push_str("</pre><h2>Pump: brongebonden layoutonderzoek</h2><p>Geen Silver geproduceerd. Programmaverwijzing ≠ ondersteunde instructie/event ≠ gecommitteerde toestand. Root-to-slot membership en economische identiteit blijven UNAVAILABLE.</p><pre>");
+    overview.push_str("</pre><h2>Pump: behouden buy-layoutonderzoek en aparte sell-route</h2><p>De buy-probes hieronder produceren geen Silver. De afzonderlijke sell-route toont alleen volledig brongebonden instructie/event-feiten. Programmaverwijzing ≠ ondersteunde instructie/event ≠ gecommitteerde accounttoestand. Root-to-slot membership en economische identiteit blijven UNAVAILABLE.</p><pre>");
     overview.push_str(&escape(
         &serde_json::to_string_pretty(&report["analysis"]["pump_layout_outcomes"])
             .unwrap_or_default(),
@@ -419,7 +462,84 @@ fn overview_html(report: &Value) -> String {
         );
     }
     overview.push_str("</ul></details></section>");
+    overview.push_str(&sell_html(report));
     overview
+}
+
+fn sell_html(report: &Value) -> String {
+    let facts = report["silver_records"].as_array().map_or(0, Vec::len);
+    let mut out = format!(
+        "<section id=pump-sell><h2>Pump sell — brongebonden Silver-eventfeiten</h2><p class=notice><strong>{facts} gekoppelde instructie/event-pakketten.</strong> Dit zijn vastgelegde feiten uit een succesvolle transactie, geen gelezen accounttoestand, netto-opbrengst, Research Ready dataset of edge. B4 en B5 blijven open. Quote-mintidentiteit en decimals onbekend; eventfees niet als optelbare kosten of netto-opbrengst behandelen.</p><p><a href=silver.jsonl>Silver JSONL</a> · <a href=quality.json>Volledige diagnose en bronbinding</a></p>"
+    );
+    if facts == 0 {
+        out.push_str("<p>Geen Silver geproduceerd voor deze invoer.</p>");
+    }
+    if let Some(records) = report["records"].as_array() {
+        for record in records {
+            if let Some(ds) = record["transaction"]["pump_sell_analysis"].as_array() {
+                for d in ds {
+                    let _ = write!(
+                        out,
+                        "<section class=sell-observation><h3>Slot {} · transactie {} · outer {}</h3><p>Uitkomst: <strong>{}</strong> · reden: <code>{}</code></p><p>Volledige instructie ({} bytes):</p><pre>{}</pre><pre>{}</pre><p>Kandidaat uit waarnemingspredicaten:</p><pre>{}</pre><h4>Alle {} accountposities</h4><article><table class=sell-accounts><thead><tr><th>Positie</th><th>Rol</th><th>Adres</th><th>Adresmatch</th><th>Privileges</th></tr></thead><tbody>",
+                        escape(
+                            record["effective_at"]["slot"]
+                                .as_str()
+                                .unwrap_or("UNAVAILABLE")
+                        ),
+                        record["effective_at"]["transaction_index_in_slot"],
+                        d["outer_index"],
+                        escape(d["disposition"].as_str().unwrap_or("UNAVAILABLE")),
+                        escape(&d["reason"].to_string()),
+                        d["instruction_bytes"],
+                        escape(d["instruction_data_hex"].as_str().unwrap_or("UNAVAILABLE")),
+                        escape(
+                            &serde_json::to_string_pretty(&d["instruction"]).unwrap_or_default()
+                        ),
+                        escape(
+                            &serde_json::to_string_pretty(&d["candidate_predicates"])
+                                .unwrap_or_default()
+                        ),
+                        d["account_count"]
+                    );
+                    if let Some(rows) = d["accounts"].as_array() {
+                        for r in rows {
+                            let _ = write!(
+                                out,
+                                "<tr><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td></tr>",
+                                r["position"],
+                                escape(r["role"].as_str().unwrap_or("UNAVAILABLE")),
+                                escape(r["observed"].as_str().unwrap_or("UNAVAILABLE")),
+                                r["address_match"],
+                                r["required_privileges_match"]
+                            );
+                        }
+                    }
+                    let _ = write!(
+                        out,
+                        "</tbody></table></article><details><summary>Event-CPI, exacte eventvelden en provenance</summary><pre>{}</pre><pre>{}</pre><p>Raw SHA-256: <code>{}</code> · bronontvangst SHA-256: <code>{}</code></p></details></section>",
+                        escape(
+                            &serde_json::to_string_pretty(&d["event_context"]).unwrap_or_default()
+                        ),
+                        escape(
+                            &serde_json::to_string_pretty(&d["event_reported"]).unwrap_or_default()
+                        ),
+                        escape(
+                            record["source"]["raw_sha256"]
+                                .as_str()
+                                .unwrap_or("UNAVAILABLE")
+                        ),
+                        escape(
+                            d["source_evidence_sha256"]
+                                .as_str()
+                                .unwrap_or("UNAVAILABLE")
+                        )
+                    );
+                }
+            }
+        }
+    }
+    out.push_str("</section>");
+    out
 }
 
 fn buy_diagnostic_html(case: &Value) -> String {
@@ -529,7 +649,7 @@ pub fn html(report: &Value) -> String {
         }
     }
     format!(
-        "<!doctype html><html lang=nl><meta charset=utf-8><meta name=viewport content='width=device-width, initial-scale=1'><title>Raw → Bronze — kwaliteitsrapport</title><style>body{{font:16px system-ui;background:#111827;color:#e5e7eb;margin:32px}}h1{{color:#67e8f9}}a{{color:#67e8f9}}.notice{{padding:16px;background:#253047;border-left:4px solid #fbbf24}}pre,.mono{{font:12px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}}table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border:1px solid #374151;padding:8px;text-align:left;vertical-align:top}}th{{background:#253047;position:sticky;top:0}}summary{{cursor:pointer}}article{{overflow:auto}}</style><h1>Raw → Bronze</h1><p class=notice><strong>{input_label}</strong><br>ENGINEERING_VALIDATION_ONLY · transaction-wire + statusmetadata en beperkte Pump-layoutprobes; geen Silver, research-ready dataset of edgeclaim. Root-to-slot membership: UNAVAILABLE. Ontbrekend is nooit nul.</p><p><a href=quality.json>Volledig JSON-rapport + records</a> · <a href=bronze.jsonl>Bronze JSONL</a> · <a href=execution.json>Uitvoeringsidentiteit</a></p>{overview}<details><summary>Bronbinding, dekking en beperkingen</summary><pre>{}</pre></details><details><summary>Alle transactie-enveloppen in bronvolgorde</summary><article><table><thead><tr><th>Slot</th><th>Volgorde</th><th>Decode</th><th>Eerste signature</th><th>Status</th><th>Fee (lamports)</th><th>Programma's (top-level/CPI)</th><th>Reden</th></tr></thead><tbody>{rows}</tbody></table></article></details></html>",
+        "<!doctype html><html lang=nl><meta charset=utf-8><meta name=viewport content='width=device-width, initial-scale=1'><title>Raw → Bronze — kwaliteitsrapport</title><style>body{{font:16px system-ui;background:#111827;color:#e5e7eb;margin:32px}}h1{{color:#67e8f9}}a{{color:#67e8f9}}.notice{{padding:16px;background:#253047;border-left:4px solid #fbbf24}}pre,.mono{{font:12px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}}table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border:1px solid #374151;padding:8px;text-align:left;vertical-align:top}}th{{background:#253047;position:sticky;top:0}}summary{{cursor:pointer}}article{{overflow:auto}}</style><h1>Raw → Bronze → beperkte Silver-eventfeiten</h1><p class=notice><strong>{input_label}</strong><br>ENGINEERING_VALIDATION_ONLY · transaction-wire + statusmetadata, behouden buy-diagnose en aparte brongebonden sell-feiten. Geen research-ready dataset of edgeclaim. Root-to-slot membership: UNAVAILABLE. Ontbrekend is nooit nul.</p><p><a href=quality.json>Volledig JSON-rapport + records</a> · <a href=bronze.jsonl>Bronze JSONL</a> · <a href=execution.json>Uitvoeringsidentiteit</a></p>{overview}<details><summary>Bronbinding, dekking en beperkingen</summary><pre>{}</pre></details><details><summary>Alle transactie-enveloppen in bronvolgorde</summary><article><table><thead><tr><th>Slot</th><th>Volgorde</th><th>Decode</th><th>Eerste signature</th><th>Status</th><th>Fee (lamports)</th><th>Programma's (top-level/CPI)</th><th>Reden</th></tr></thead><tbody>{rows}</tbody></table></article></details></html>",
         escape(&serde_json::to_string_pretty(&summary).unwrap_or_default())
     )
 }
