@@ -57,6 +57,7 @@ def rows(cursor):
 
 def render(result, operations):
     e = lambda v: html.escape(str(v))
+    counts = {layer: sum(int(row[-1]) for row in result["queries"]["input_evidence"]["rows"] if row[0] == layer) for layer in ["bronze", "silver"]}
     sections = []
     for name, query in result["queries"].items():
         head = "".join(f"<th>{e(c['name'])}<small>{e(c['duckdb_type'])}</small></th>" for c in query["columns"])
@@ -65,7 +66,9 @@ def render(result, operations):
     sizes = " / ".join(f"{k}: {v['bytes']:,} bytes" for k, v in result["files"].items())
     return f"""<!doctype html><html lang='nl'><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Bronze / Silver · Parquet querycontrole</title>
 <style>body{{margin:0;background:#101821;color:#e4edf5;font:15px system-ui}}main{{max-width:1450px;margin:auto;padding:32px}}h1{{font-size:30px}}h2{{font-size:20px}}p{{line-height:1.6}}section,.receipt{{background:#192531;border:1px solid #314457;border-radius:10px;padding:20px;margin:18px 0}}.tag{{color:#8ae0cf}}.warn{{color:#ffd093}}.scroll{{overflow:auto}}table{{border-collapse:collapse;white-space:nowrap;width:100%}}td,th{{padding:10px;border-bottom:1px solid #314457;text-align:left}}th{{color:#8ae0cf}}small{{display:block;color:#9eafbf}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}a{{color:#8ae0cf}}</style>
+<style>.receipt pre{{max-height:90px;overflow:auto}}.metrics{{display:flex;gap:18px}}.metric{{background:#192531;border:1px solid #314457;padding:18px;border-radius:10px;flex:1}}.metric b{{display:block;font-size:28px;color:#8ae0cf}}</style>
 <main><div class='tag'>RUST → ARROW / PARQUET → DUCKDB {e(result['duckdb_version'])}</div><h1>Bronze / Silver-records, verliesloos bevraagbaar</h1>
+<div class='metrics'><div class='metric'><b>{counts['bronze']:,}</b>Bronze-records uit Parquet</div><div class='metric'><b>{counts['silver']:,}</b>Silver-pakketten uit Parquet</div><div class='metric'><b>{operations['query_seconds']:.3f} s</b>daadwerkelijke DuckDB-querytijd</div></div>
 <p>Alle resultaten hieronder komen uit de geschreven Parquet-bestanden. Geen vooraf ingevulde totalen en geen herlezing van de oorspronkelijke JSON voor de queries.</p>
 <p class='warn'>ENGINEERING_VALIDATION_ONLY — geen representatieve steekproef, Research Ready-status of edgebewijs. Eventhoeveelheden zijn geen uitvoerbare prijzen. Onbekende coinmetadata en CPI-privileges blijven onbekend. Bestaande afwijzingen blijven behouden.</p>
 <div class='receipt'><b>Fysieke bestanden</b><p>{e(sizes)}</p><b>Querytijd</b><p>{operations['query_seconds']:.6f} seconden (operationele meting, geen historische feature)</p><b>Dataset</b><pre>{e(operations['dataset_path'])}</pre><b>Manifest SHA-256</b><pre>{e(result['manifest_sha256'])}</pre><b>Writer / bronbinding</b><pre>{e(json.dumps(result['writer'], indent=2))}</pre><a href='query-results.json'>JSON-resultaten en SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a></div>
