@@ -466,6 +466,63 @@ fn overview_html(report: &Value) -> String {
     overview
 }
 
+fn sell_outcomes_html(report: &Value) -> String {
+    let mut out = String::new();
+    out.push_str("<p>Geneste CPI-privileges: <strong>UNAVAILABLE</strong>. Message-signer/writable zijn alleen message-capaciteit, geen opgenomen CPI-vlaggen. Succes of een PDA-match vult die vlaggen niet in.</p><table class=sell-outcomes><thead><tr><th>Slot / transactie</th><th>Instructiecontext</th><th>Uitkomst</th><th>Eigen event-CPI</th></tr></thead><tbody>");
+    if let Some(records) = report["records"].as_array() {
+        for record in records {
+            for d in record["transaction"]["pump_sell_analysis"]
+                .as_array()
+                .into_iter()
+                .flatten()
+            {
+                let _ = write!(
+                    out,
+                    "<tr><td>{} / {}</td><td>outer {} · inner {}</td><td>{}</td><td>inner {} · height {}</td></tr>",
+                    escape(
+                        record["effective_at"]["slot"]
+                            .as_str()
+                            .unwrap_or("UNAVAILABLE")
+                    ),
+                    record["effective_at"]["transaction_index_in_slot"],
+                    d["outer_index"],
+                    d["instruction_inner_order"],
+                    escape(d["disposition"].as_str().unwrap_or("UNAVAILABLE")),
+                    d["event_context"]["inner_order"],
+                    d["event_context"]["stack_height"]
+                );
+            }
+        }
+    }
+    out.push_str("</tbody></table>");
+    out
+}
+
+fn sell_trace_html(d: &Value) -> String {
+    let mut out = String::new();
+    if let Some(trace) = d["event_context"]["ordered_group_trace"].as_array() {
+        let _ = write!(
+            out,
+            "<h4>Opgenomen invocation-volgorde</h4><p>Sell-subtree: [{} , {}) · eigen event inner {}. Parentidentiteit volgt uit de stack; rootprogramma niet geïnterpreteerd.</p><table class=sell-trace><thead><tr><th>Inner</th><th>Hoogte</th><th>Parent-inner (null = outer)</th><th>Programma</th></tr></thead><tbody>",
+            d["event_context"]["subtree"]["start_inner_order"],
+            d["event_context"]["subtree"]["end_inner_order_exclusive"],
+            d["event_context"]["inner_order"]
+        );
+        for call in trace {
+            let _ = write!(
+                out,
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td class=mono>{}</td></tr>",
+                call["inner_order"],
+                call["stack_height"],
+                call["parent_inner_order"],
+                escape(call["program_id"].as_str().unwrap_or("UNAVAILABLE"))
+            );
+        }
+        out.push_str("</tbody></table>");
+    }
+    out
+}
+
 fn sell_html(report: &Value) -> String {
     let facts = report["silver_records"].as_array().map_or(0, Vec::len);
     let mut out = format!(
@@ -474,13 +531,14 @@ fn sell_html(report: &Value) -> String {
     if facts == 0 {
         out.push_str("<p>Geen Silver geproduceerd voor deze invoer.</p>");
     }
+    out.push_str(&sell_outcomes_html(report));
     if let Some(records) = report["records"].as_array() {
         for record in records {
             if let Some(ds) = record["transaction"]["pump_sell_analysis"].as_array() {
                 for d in ds {
                     let _ = write!(
                         out,
-                        "<section class=sell-observation><h3>Slot {} · transactie {} · outer {}</h3><p>Uitkomst: <strong>{}</strong> · reden: <code>{}</code></p><p>Volledige instructie ({} bytes):</p><pre>{}</pre><pre>{}</pre><p>Kandidaat uit waarnemingspredicaten:</p><pre>{}</pre><h4>Alle {} accountposities</h4><article><table class=sell-accounts><thead><tr><th>Positie</th><th>Rol</th><th>Adres</th><th>Adresmatch</th><th>Privileges</th></tr></thead><tbody>",
+                        "<section class=sell-observation><h3>Slot {} · transactie {} · outer {}</h3><p>Uitkomst: <strong>{}</strong> · reden: <code>{}</code></p><p>Volledige instructie ({} bytes):</p><pre>{}</pre><pre>{}</pre><p>Kandidaat uit waarnemingspredicaten:</p><pre>{}</pre><h4>Alle {} accountposities</h4><article><table class=sell-accounts><thead><tr><th>Positie</th><th>Rol</th><th>Adres</th><th>Adresmatch</th><th>Message-minimumflags</th><th>Werkelijke CPI-flags</th></tr></thead><tbody>",
                         escape(
                             record["effective_at"]["slot"]
                                 .as_str()
@@ -505,18 +563,26 @@ fn sell_html(report: &Value) -> String {
                         for r in rows {
                             let _ = write!(
                                 out,
-                                "<tr><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td></tr>",
+                                "<tr><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                                 r["position"],
                                 escape(r["role"].as_str().unwrap_or("UNAVAILABLE")),
                                 escape(r["observed"].as_str().unwrap_or("UNAVAILABLE")),
                                 r["address_match"],
-                                r["required_privileges_match"]
+                                r.get("message_minimum_privileges_match")
+                                    .unwrap_or(&r["required_privileges_match"]),
+                                if d["instruction_inner_order"].is_null() {
+                                    "Directe instructie; geen CPI-flags"
+                                } else {
+                                    "UNAVAILABLE"
+                                }
                             );
                         }
                     }
+                    out.push_str("</tbody></table></article>");
+                    out.push_str(&sell_trace_html(d));
                     let _ = write!(
                         out,
-                        "</tbody></table></article><details><summary>Event-CPI, exacte eventvelden en provenance</summary><pre>{}</pre><pre>{}</pre><p>Raw SHA-256: <code>{}</code> · bronontvangst SHA-256: <code>{}</code></p></details></section>",
+                        "<details><summary>Event-CPI, exacte eventvelden en provenance</summary><pre>{}</pre><pre>{}</pre><p>Raw SHA-256: <code>{}</code> · bronontvangst SHA-256: <code>{}</code></p></details></section>",
                         escape(
                             &serde_json::to_string_pretty(&d["event_context"]).unwrap_or_default()
                         ),

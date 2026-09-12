@@ -329,16 +329,18 @@ fn synthetic_failed_unknown_status_or_error_metadata_cannot_admit() {
 }
 
 #[test]
-fn authentic_second_direct_sell_same_predicates_and_nested_sells_remain_explicitly_unsupported() {
+fn authentic_second_direct_and_nested_selection_does_not_use_caller_count() {
     assert_eq!(
         diagnosis(&transaction(2))["disposition"],
         "MATCHED_RECORDED_EVENT_FACTS"
     );
     for i in [3, 4] {
         let mut tx = transaction(i);
-        tx["compatible_candidate_count"] = json!(1);
+        tx["compatible_candidate_count"] = json!(0);
         let d = diagnosis(&tx);
-        assert_eq!(d["reason"], "UNSUPPORTED_INVOCATION");
+        assert_eq!(d["disposition"], "MATCHED_RECORDED_EVENT_FACTS");
+        tx["inner_instructions"][0]["stack_height"] = Value::Null;
+        tx["compatible_candidate_count"] = json!(1);
         reject(&tx);
     }
 }

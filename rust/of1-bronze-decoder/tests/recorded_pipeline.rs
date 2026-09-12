@@ -236,7 +236,9 @@ fn fixture_payload(change: Option<&str>) -> Vec<u8> {
 }
 
 fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
-    let (file, position) = if change == Some("sell") {
+    let (file, position) = if change == Some("nested_sell") {
+        (include_str!("fixtures/authentic-pump-sections.json"), 3)
+    } else if change == Some("sell") {
         (include_str!("fixtures/authentic-pump-sections.json"), 1)
     } else {
         (include_str!("fixtures/authentic-sections.json"), 0)
@@ -255,10 +257,10 @@ fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
     // This graph is explicitly synthetic: native slot field, receipts and index
     // are constructed together, never masquerading as a copied authentic run.
     tx[3] = n(slot);
-    if change == Some("sell") {
+    if matches!(change, Some("sell" | "nested_sell")) {
         tx[4] = n(0);
     } // Synthetic one-tx graph; original Raw is never changed.
-    if let Some(change) = change.filter(|c| *c != "sell") {
+    if let Some(change) = change.filter(|c| !matches!(*c, "sell" | "nested_sell")) {
         let which = if change == "wire" { 1 } else { 2 };
         let C::Array(f) = &mut tx[which] else {
             panic!("frame")
@@ -333,6 +335,44 @@ fn synthetic_native_run_with_authentic_sell_wire_keeps_fixture_provenance_and_si
     assert_eq!(before, inventory(&h.root));
     assert!(report::html(&r).contains("1 gekoppelde instructie/event-pakketten"));
 }
+#[test]
+fn native_nested_sell_preserves_receipts_context_and_determinism() {
+    let mut h = Harness::new();
+    let bytes = fixture_payload_at(SLOT, Some("nested_sell"));
+    h.metadata_slots(std::slice::from_ref(&bytes));
+    h.admit_slots(1);
+    h.publish(4, &bytes);
+    let before = inventory(&h.root);
+    let r = report::decode_run(&h.root).unwrap();
+    assert_eq!(r, report::decode_run(&h.root).unwrap());
+    assert_eq!(r["dispositions"]["DECODED"], 1);
+    assert_eq!(r["silver_fact_count"], 1);
+    let fact = &r["silver_records"][0];
+    assert_eq!(fact["receipt_evidence"], "Fixture");
+    assert_eq!(fact["source"]["raw_sha256"], sha256(&bytes));
+    assert_eq!(fact["source"]["bindings"], r["bindings"]);
+    assert_eq!(
+        fact["bronze_record_sha256"],
+        sha256(&serde_json::to_vec(&r["records"][0]).unwrap())
+    );
+    let d = &r["records"][0]["transaction"]["pump_sell_analysis"][0];
+    assert_eq!(d["event_context"]["parent"]["inner_order"], 0);
+    assert_eq!(d["event_context"]["inner_order"], 3);
+    assert_eq!(
+        d["event_context"]["subtree"]["end_inner_order_exclusive"],
+        4
+    );
+    assert!(
+        d["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|a| a["cpi_signer"].is_null() && a["cpi_privileges_verified"] == false)
+    );
+    assert!(report::html(&r).contains("class=sell-trace"));
+    assert_eq!(before, inventory(&h.root));
+}
+
 #[test]
 fn receipt_to_bronze_is_deterministic_read_only_with_expired_clock_and_held_writer_lock() {
     let mut h = Harness::new();

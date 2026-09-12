@@ -1,9 +1,10 @@
-//! One source-pinned direct sell/Token-2022/cashback account pattern.
+//! Source-pinned sell/Token-2022/cashback: direct and bounded nested contexts.
 //! Silver contains recorded instruction/event facts, NEVER account-write state,
 //! executable economics, historical activation, or a repaired buy suffix.
 use crate::{
     invalid, pump,
     pump_buy::{account_key, key_at, pda, privileges},
+    pump_sell_context,
 };
 use borsh::BorshDeserialize;
 use of1_range_recorder::sha256;
@@ -45,6 +46,10 @@ pub enum Rejection {
     EventCorrelationMismatch,
     TransactionNotSuccessful,
     UnsupportedPattern,
+    InvalidInvocationOrder,
+    MissingStackHeight,
+    InvalidStackHeight,
+    ParentAccountMismatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,12 +238,48 @@ fn event_fields(e: &TradeEvent) -> Value {
         "field_role":"EVENT_REPORTED_NOT_ACCOUNT_WRITE_STATE","fee_role":"NAMED_EVENT_FIELDS_NOT_ADDITIVE_NET_PROCEEDS_OR_RECIPIENT_BALANCE_DELTAS"})
 }
 
+fn mark_cpi_flags_unavailable(rows: &mut [Value]) {
+    for row in rows {
+        // Preserve message minimum checks; they cannot prove the CPI metas.
+        row["message_minimum_privileges_match"] = row["required_privileges_match"].clone();
+        row["required_privileges_match"] = Value::Null;
+        row["cpi_signer"] = Value::Null;
+        row["cpi_writable"] = Value::Null;
+        row["cpi_privileges_verified"] = json!(false);
+        row["privilege_evidence"] =
+            json!("MESSAGE_ENVELOPE_COMPATIBILITY_ONLY_CPI_FLAGS_UNAVAILABLE");
+    }
+}
+
+fn account_predicate(ix: &Value, rows: &[Value], direct: bool) -> bool {
+    let distinct = rows
+        .iter()
+        .filter_map(|r| r["observed"].as_str())
+        .collect::<BTreeSet<_>>()
+        .len()
+        == 17;
+    ix["account_indexes"]
+        .as_array()
+        .is_some_and(|a| a.len() == 17)
+        && rows.len() == 17
+        && distinct
+        && rows.iter().all(|r| {
+            r["address_match"] == true
+                && r[if direct {
+                    "required_privileges_match"
+                } else {
+                    "message_minimum_privileges_match"
+                }] == true
+        })
+        && rows[1]["documented_fee_recipient"] == true
+}
+
 fn diagnose(tx: &Value, ix: &Value, data: &[u8], direct: bool, source: &Value) -> Value {
     let instruction = decode_instruction(data);
     let context = if direct {
         associated_event(tx, ix)
     } else {
-        Err(Rejection::UnsupportedInvocation)
+        pump_sell_context::associated_event(tx, ix)
     };
     let mut rows = Vec::new();
     let mut predicates = serde_json::Map::new();
@@ -249,35 +290,34 @@ fn diagnose(tx: &Value, ix: &Value, data: &[u8], direct: bool, source: &Value) -
         .or_else(|| context.as_ref().err().copied());
     if let (Ok(i), Ok((_, e))) = (&instruction, &context) {
         rows = accounts(tx, ix, e, source);
-        let distinct = rows
-            .iter()
-            .filter_map(|r| r["observed"].as_str())
-            .collect::<BTreeSet<_>>()
-            .len()
-            == 17;
-        let account_match = ix["account_indexes"]
-            .as_array()
-            .is_some_and(|a| a.len() == 17)
-            && rows.len() == 17
-            && distinct
-            && rows
-                .iter()
-                .all(|r| r["address_match"] == true && r["required_privileges_match"] == true)
-            && rows[1]["documented_fee_recipient"] == true;
+        if !direct {
+            mark_cpi_flags_unavailable(&mut rows);
+        }
+        let account_match = account_predicate(ix, &rows, direct);
         let correlation = account_key(tx, ix, 2).is_some_and(|p| p.as_ref() == e.mint)
             && account_key(tx, ix, 6).is_some_and(|p| p.as_ref() == e.user)
             && i.amount == e.token_amount;
         let pattern = !e.mayhem_mode && e.shareholders.is_empty() && !e.track_volume;
-        let direct_program = ix["index"].is_u64()
-            && ix["program_id_index"]
-                .as_u64()
-                .and_then(|i| key_at(tx, i))
-                .map(|p| p.to_string())
-                .as_deref()
-                == Some(PUMP_PROGRAM_ID);
+        let direct_program = (if direct {
+            ix["index"].is_u64()
+        } else {
+            ix["inner_order"].is_u64()
+        }) && ix["program_id_index"]
+            .as_u64()
+            .and_then(|i| key_at(tx, i))
+            .map(|p| p.to_string())
+            .as_deref()
+            == Some(PUMP_PROGRAM_ID);
         for (key, passed) in [
             ("exact_instruction_and_event", true),
-            ("single_direct_cpi_context", direct_program),
+            (
+                if direct {
+                    "single_direct_cpi_context"
+                } else {
+                    "single_bounded_nested_cpi_context"
+                },
+                direct_program,
+            ),
             ("all_17_accounts", account_match),
             ("mint_user_amount_correspondence", correlation),
             ("selected_nonmayhem_cashback_pattern", pattern),
@@ -304,11 +344,21 @@ fn diagnose(tx: &Value, ix: &Value, data: &[u8], direct: bool, source: &Value) -
     }
     // Evaluate the bounded registered profile from actual observation predicates.
     // No caller count, no claim that all historical deployed versions were searched.
-    let matching: Vec<_> = [CANDIDATE]
+    let candidate = if direct {
+        CANDIDATE
+    } else {
+        pump_sell_context::CANDIDATE
+    };
+    let receipt = if direct {
+        SOURCE
+    } else {
+        pump_sell_context::SOURCE
+    };
+    let matching: Vec<_> = [candidate]
         .into_iter()
         .filter(|_| !predicates.is_empty() && predicates.values().all(|v| v == true))
         .collect();
-    json!({"schema":"PUMP_SELL_OBSERVATION_1","source_evidence_sha256":sha256(SOURCE),"outer_index":if direct{ix["index"].clone()}else{ix["outer_index"].clone()},"instruction_inner_order":ix["inner_order"],
+    json!({"schema":"PUMP_SELL_OBSERVATION_1","source_evidence_sha256":sha256(receipt),"outer_index":if direct{ix["index"].clone()}else{ix["outer_index"].clone()},"instruction_inner_order":ix["inner_order"],
         "instruction_data_hex":hex::encode(data),"instruction_sha256":sha256(data),"instruction_bytes":data.len(),
         "instruction":instruction.as_ref().ok().map(|i|json!({"amount_raw_u64":i.amount.to_string(),"min_sol_output_raw_u64":i.min_sol_output.to_string()})),
         "accounts":rows,"account_count":ix["account_indexes"].as_array().map(Vec::len),"event_context":context.as_ref().ok().map(|(v,_)|v),
@@ -366,8 +416,8 @@ pub fn facts(record: &Value) -> io::Result<Vec<Value>> {
         {
             return Err(invalid("SILVER_REQUIRES_BOUND_ATOMIC_BRONZE"));
         }
-        let mut fact = json!({"schema":"PUMP_SILVER_RECORDED_SELL_1","record_kind":"INSTRUCTION_AND_RECORDED_TRADE_EVENT","candidate_id":CANDIDATE,"candidate_evidence":"OBSERVED_LAYOUT_CONTEXT_COMPATIBLE",
-            "source_evidence_sha256":sha256(SOURCE),"decoder_source_sha256":record["decoder_source_sha256"],"bronze_record_sha256":sha256(&serde_json::to_vec(record).map_err(invalid)?),
+        let mut fact = json!({"schema":"PUMP_SILVER_RECORDED_SELL_1","record_kind":"INSTRUCTION_AND_RECORDED_TRADE_EVENT","candidate_id":d["selected_candidate"],"candidate_evidence":"OBSERVED_LAYOUT_CONTEXT_COMPATIBLE",
+            "source_evidence_sha256":d["source_evidence_sha256"],"decoder_source_sha256":record["decoder_source_sha256"],"bronze_record_sha256":sha256(&serde_json::to_vec(record).map_err(invalid)?),
             "source":record["source"],"effective_at":record["effective_at"],"signatures":tx["signatures"],"wire_sha256":tx["wire_sha256"],"metadata_sha256":tx["metadata_sha256"],
             "transaction_status":tx["status"],"transaction_fee_lamports":tx["fee_lamports"],"atomic_observation_package":true,"instruction":d["instruction"],
             "instruction_data_hex":d["instruction_data_hex"],"instruction_sha256":d["instruction_sha256"],"event_context":d["event_context"],"accounts":d["accounts"],"event_reported":d["event_reported"],

@@ -6,6 +6,7 @@ pub mod proto;
 pub mod pump;
 pub mod pump_buy;
 pub mod pump_sell;
+pub mod pump_sell_context;
 pub mod report;
 
 /// Actual compiled source/lock identity, independent of uncommitted Git claims.
@@ -21,6 +22,8 @@ pub fn source_sha256() -> String {
         include_bytes!("pump.rs"),
         include_bytes!("pump_buy.rs"),
         include_bytes!("pump_sell.rs"),
+        include_bytes!("pump_sell_context.rs"),
+        include_bytes!("../sources/pump-nested-sell-evidence.json"),
         include_bytes!("../sources/pump-sell-evidence.json"),
         include_bytes!("../sources/pump-buy-evidence.json"),
         include_bytes!("main.rs"),
