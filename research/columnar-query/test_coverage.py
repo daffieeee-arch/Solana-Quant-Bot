@@ -1,8 +1,10 @@
 """Denominators and missing-data semantics; synthetic counts, no domain decode."""
 import pathlib
+import json
 import tempfile
 import unittest
-from coverage import coverage, bound_json, sha, rust_slots, suitability
+from coverage import coverage, bound_json, sha, rust_slots, suitability, optional_pilot, render
+from query import connect
 
 
 def actual(slot, total, decoded=0, missing=0, unsupported=0, quarantined=0):
@@ -91,6 +93,60 @@ class CoverageTests(unittest.TestCase):
         self.assertFalse(row['transaction_index_extent_exact'])
         unknown=dict(extent(10,2),known_indices='1')
         self.assertFalse(coverage([10],[proof(10,2)],[actual(10,2,decoded=2)],[unknown])[0]['reconciled'])
+
+    def test_no_proposal_does_not_invent_plan_or_authority(self):
+        self.assertEqual(optional_pilot(pathlib.Path('-')), (None, None))
+        with tempfile.TemporaryDirectory() as tmp:
+            path=pathlib.Path(tmp)/'proposal.json'
+            raw=b'{"schema":"OF1_OFFLINE_PILOT_SELECTION_1","network_authorized":false}'
+            path.write_bytes(raw)
+            self.assertEqual(optional_pilot(path), (json.loads(raw), sha(raw)))
+            path.write_text('{"schema":"OF1_OFFLINE_PILOT_SELECTION_1","network_authorized":true}')
+            with self.assertRaisesRegex(ValueError,'not an offline pilot'):
+                optional_pilot(path)
+
+    def test_sample_report_without_proposal_retains_actual_identity_and_unknowns(self):
+        summary={'slots':[], 'silver':{'facts':0,'parent_packages':0}, 'buy_diagnostics':0,
+                 'integrity_errors':[], 'present_envelopes':0,'expected_envelopes':0,
+                 'pump_positive':0,'status_ok':0,'status_error':0,'status_unknown':0,
+                 'sample_class':'RESEARCH_SAMPLING'}
+        result={'summary':summary,'suitability_matrix':suitability(summary),'queries':{},
+                'evidence':{'slice_class':'RESEARCH_SAMPLING'},'inventory':{},
+                'selection':{'status':'ACCOUNTED','selected_slots':[422669516,422669517,422669518]},
+                'sample_identity':{'seed':'fixed-source-bound-seed'},'bindings':{'pilot_sha256':None},'pilot':None}
+        rendered=render(result)
+        self.assertIn('RESEARCH_SAMPLING',rendered)
+        self.assertIn('fixed-source-bound-seed',rendered)
+        self.assertIn('Brongebonden selectie — geen nieuw acquisitievoorstel',rendered)
+        self.assertIn('Ontbrekende CPI-metadata is onbekend, niet nul',rendered)
+        self.assertNotIn('De huidige decoder/writer blijft engineering-only',rendered)
+        self.assertNotIn('Transactieaantallen, Pump-aanwezigheid en UTC-context zijn onbekend',rendered)
+        self.assertNotIn('behouden payloadcap:',rendered)
+        self.assertIn('INSUFFICIENT_SUITABLE_DATA',rendered)
+        self.assertEqual(rendered,render(result))
+
+    def test_program_queries_count_rust_references_not_execution_or_unknown_as_zero(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        # Synthetic projected Rust facts. No instruction bytes or alternative decoder.
+        values=[
+            ('DECODED',True,{'status':'ERROR','program_ids':['P','Q'],
+                            'instructions':[{'program_id':'P'},{'program_id':'P'}],
+                            'inner_instructions':[{'program_id':'P'},{'program_id':'Q'}]}),
+            ('DECODED',None,{'status':'OK','program_ids':['Q'],
+                            'instructions':[{'program_id':'Q'}],'inner_instructions':None}),
+            ('DECODED',False,{'status':'OK','program_ids':['R'],
+                             'instructions':[{'program_id':'R'}],'inner_instructions':[]}),
+            ('MISSING',None,None),
+        ]
+        with connect() as db:
+            db.execute('CREATE TABLE bronze(disposition VARCHAR,pump_program_involvement BOOLEAN,record_bytes BLOB)')
+            db.executemany('INSERT INTO bronze VALUES (?,?,?)',[(d,p,json.dumps({'transaction':t}).encode()) for d,p,t in values])
+            self.assertEqual(db.execute(sql['program_frequencies']).fetchall(),[
+                ('P',1,2,1),('Q',2,1,1),('R',1,1,0)])
+            self.assertEqual(db.execute(sql['program_coverage']).fetchall(),[(4,3,1,2,1,2)])
+            db.execute('DELETE FROM bronze')
+            self.assertEqual(db.execute(sql['program_frequencies']).fetchall(),[])
+            self.assertEqual(db.execute(sql['program_coverage']).fetchall(),[(0,0,0,0,0,0)])
 
 
 if __name__=='__main__': unittest.main()

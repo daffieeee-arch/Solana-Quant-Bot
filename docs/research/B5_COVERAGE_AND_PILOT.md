@@ -195,3 +195,71 @@ The independent review receipt correctly records that the final full OF1 run
 was still pending at review time. Its later PASS is separate evidence, not a
 rewrite of that receipt. Remote CI is still **NOT EXECUTED**. This result adds
 measurement and a proposal, not acquired pilot data or research admission.
+
+## Recorded pilot offline attempt — 2026-09-14
+
+This later observation does not rewrite the proposal or prior engineering
+evidence above. The separately approved metadata and payload stages recorded
+the original fixed selection `[422669516,422669519)` in
+`of1-e978-research-pilot-422669516-clock-01`. The immutable AggregatePlan and
+receipts carry `RESEARCH_SAMPLING`, seed
+`solana-quant-epoch978-pilot-v1-20260912`, algorithm `SHA256_MIN_CENTER_1` and
+selection-plan SHA-256
+`df930707d0ece9915744aec7cf771c60e92f35298f2a6b4251aeb30d5a6d85a1`.
+This source identity is not Research Ready admission. The old verifier's
+static `NOT_EVALUATED_ENGINEERING_SLICE` wording remains unchanged as a known
+reporting limitation; it does not override the actual source-bound sample class.
+
+The new read-only archival verifier checks Raw/receipt/plan binding, CID,
+selected-slot and link integrity. The three payloads total **3,663,577 bytes**:
+
+| Slot | Archival Transaction envelopes | Nodes | Links |
+| --- | ---: | ---: | ---: |
+| 422669516 | 1,022 | 1,481 | 1,480 |
+| 422669517 | 1,048 | 1,488 | 1,487 |
+| 422669518 | 1,154 | 1,792 | 1,791 |
+| Total | 3,224 | 4,761 | 4,758 |
+
+These are input denominators, **not successful transaction or Pump decodes**.
+The unchanged decoder fails before publication in the third slot:
+
+```text
+BRONZE_AGGREGATE_LIMIT current=16756921 incoming=49607 next=16806528 limit=16777216 budget=record_json_bytes slot=422669518 transaction_index=1123 layer=bronze request_sequence=6
+```
+
+The cap measures combined serialized Bronze/Silver record bytes per slot.
+Parquet sharding cannot repair this earlier decoder stop. The 29,312-byte
+first overrun is not a measurement of the full remaining slot requirement.
+No record was truncated, no slot was omitted, and no parser, sample, deadline
+or resource cap was changed. No pilot `COMPLETE`, dataset manifest, Parquet
+files or DuckDB results exist. Full-slot decode dispositions, failed-transaction
+counts and Pump/mint/event outcomes therefore remain **unavailable**, not zero.
+This is an **engineering processing failure**, not evidence of unsuitable
+market data or a falsified edge. Root-to-slot membership remains `UNAVAILABLE`.
+
+The bounded integration changes expose budget/slot/index context and make the
+existing coverage reader accept `-` instead of an obsolete acquisition proposal:
+
+```text
+coverage.py PARQUET_DATASET ORIGINAL_RUST_QUALITY_JSON - NEW_REPORT_DIRECTORY
+```
+
+That mode obtains sample identity exclusively from the checked dataset chain;
+it neither relabels old engineering data nor authorizes acquisition. Added SQL
+counts Rust-provided program presence, top-level and recorded CPI references;
+missing CPI stays unknown and failed transactions remain included. The actual
+Parquet/DuckDB gate exercises these changes on fixtures. It is not a substitute
+for the blocked pilot query.
+
+New evidence and the explicit stop report live outside Git at
+`/home/dmesdary/solana-quant-data/datasets/b5-research-pilot-20260914.t4veKM/`.
+All 326 original run files, earlier execution evidence and the original
+acquisition executable remain intact. Separate offline diagnostic binaries
+do not replace that executable. The 725- and 3,137-transaction authentic
+regressions retain their prior engineering identity and four sell facts.
+
+The smallest next step is an explicit, measured decoder-resource decision
+for this **same** complete selection, followed by offline reprocessing and
+manifest-only queries. No new selection or download is needed. This attempt
+does not authorize a larger cap, acquisition, GitHub publication or B4/B5
+status change; remote CI remains not executed.

@@ -26,6 +26,21 @@ def objects(table):
     return [dict(zip([c['name'] for c in table['columns']], row)) for row in table['rows']]
 
 
+def optional_pilot(path):
+    """An old offline proposal is optional context, never a sample identity source."""
+    if path == pathlib.Path('-'):
+        return None, None
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 1048576:
+        raise ValueError('bounded regular pilot report required')
+    raw = path.read_bytes()
+    if len(raw) > 1048576:
+        raise ValueError('oversize pilot report')
+    pilot = json.loads(raw)
+    if pilot['schema'] != 'OF1_OFFLINE_PILOT_SELECTION_1' or pilot['network_authorized'] is not False:
+        raise ValueError('not an offline pilot proposal')
+    return pilot, sha(raw)
+
+
 def rust_slots(quality):
     """The existing Rust reader emits a direct slot report for single-slot input."""
     if 'slots' in quality:
@@ -129,8 +144,13 @@ def render(result):
                   outcomes.get('missing'),outcomes.get('quarantined'),slot['inventory_state']]
         slot_rows.append('<tr>'+''.join('<td>'+e('ONBEKEND' if v is None else v)+'</td>' for v in values)+'</tr>')
     slot_head = ''.join('<th>'+e(v)+'</th>' for v in ['Slot','Verwacht','Aanwezig','Decoded','On-chain ERROR','Unsupported','Missing','Quarantaine','Inventaris'])
-    pilot_view = 'Geen pilot gekoppeld'
+    pilot_heading = 'Brongebonden selectie — geen nieuw acquisitievoorstel'
+    pilot_view = ('<p>Dit rapport gebruikt de reeds opgenomen selectie en sample-identiteit '
+                  'uit het gecontroleerde datasetmanifest. Er is geen oud conceptbudget '
+                  'of nieuwe toestemming gekoppeld. De gemeten pakket- en Pump-tellingen '
+                  'staan hierboven; ze bewijzen geen representativiteit of Research Ready-status.</p>')
     if pilot:
+        pilot_heading = 'Vaste pilotselectie — voorstel, géén GO'
         selected=pilot['selection']; budget=pilot.get('budgets',{})
         range_rows=''.join('<tr>'+''.join('<td>'+e(r[k])+'</td>' for k in ['slot','start','end_exclusive','entity_bytes'])+'</tr>' for r in pilot.get('ranges',[]))
         pilot_view=f"""<p><b>{e(pilot['range_feasibility'])}</b> — geen toestemming of lease.</p>
@@ -151,8 +171,9 @@ body{{background:#111b24;color:#e0eaf3;font:15px system-ui;margin:0}}main{{max-w
 <section><h2>Manifestgebonden dataset</h2><p>{e(json.dumps(result['inventory']))}</p><p>Fysieke publicatie gecontroleerd. Selectiedekking: <b>{e(result['selection']['status'])}</b>. Pakketten verantwoord betekent niet allemaal geslaagd gedecodeerd of geschikt voor onderzoek.</p><details><summary>Volledige geselecteerde slots en brongebonden sample-identiteit</summary><pre>{e(json.dumps({'selection':result['selection'],'sample_identity':result['sample_identity']},indent=2))}</pre></details></section>
 <p>Elke envelope blijft in de noemer: ook failed, missing, unsupported of quarantined. Historische buy-layoutprobes worden apart getoond; een sell die zo'n probe afwijst is niet opnieuw een mislukte sell-decode.</p>
 <section><h2>Slotinventaris en volledige noemers</h2><div class='scroll'><table><tr>{slot_head}</tr>{''.join(slot_rows)}</table></div><p>Transactiestatus: <b>{s['status_ok']} OK</b> / <b>{s['status_error']} ERROR</b> / {s['status_unknown']} onbekend. On-chain ERROR is niet hetzelfde als een fout in onze verwerking.</p><details><summary>Volledige tellingen, onbekenden en Raw-hashes</summary><pre>{e(json.dumps(s,indent=2))}</pre></details></section>
+<p>Programmatellingen lezen uitsluitend bestaande Rust-velden: unieke programmabetrokkenheid per pakket, gedeclareerde top-level instructies en opgenomen CPI-verwijzingen. Failed transactions blijven inbegrepen. Ontbrekende CPI-metadata is onbekend, niet nul; de aparte program_coverage-tabel toont die noemer. Verwijzingen bewijzen geen gecommitteerde toestandsverandering.</p>
 <h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
-<section><h2>Vaste pilotselectie — voorstel, géén GO</h2>{pilot_view}</section>
+<section><h2>{pilot_heading}</h2>{pilot_view}</section>
 <h2>Werkelijk uitgevoerde DuckDB-controles</h2>{''.join(tables)}
 <section><h2>Herkomst</h2><pre>{e(json.dumps(result['bindings'],indent=2))}</pre><a href='query-results.json'>Volledig machineleesbaar resultaat / matrix / SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a></section></main></html>"""
 
@@ -208,17 +229,13 @@ def run(root, quality_path, pilot_path, output):
         proof = proofs.get(row['slot'])
         if not proof or row['raw_sha256'] != proof['raw_sha256'] or any(row[k] != quality['bindings'][k] for k in ['manifest_sha256','payload_manifest_sha256']):
             integrity_errors.append('PARQUET_RUST_SOURCE_BINDING_MISMATCH')
-    pilot_raw = pilot_path.read_bytes()
-    if len(pilot_raw)>1048576: raise ValueError('oversize pilot report')
-    pilot = json.loads(pilot_raw)
-    if pilot['schema']!='OF1_OFFLINE_PILOT_SELECTION_1' or pilot['network_authorized'] is not False:
-        raise ValueError('not an offline pilot proposal')
+    pilot, pilot_sha = optional_pilot(pilot_path)
     if dataset_manifest(root)[1] != manifest_sha: raise ValueError('input changed')
     result = {'schema':'OF1_DECODER_COVERAGE_1','duckdb_version':'1.5.5', 'summary':summary,
               'bindings':{'parquet_manifest_sha256':manifest_sha,'rust_quality_sha256':quality_sha,
                           'decoder':manifest['input']['execution']['decoder_source_sha256'],
                           'writer':manifest['writer'], 'coverage_sql_sha256':sha(queries_raw),'base_sql_sha256':sha(base_raw),
-                          'pilot_sha256':sha(pilot_raw), 'files':{k:{x:v[x] for x in ['bytes','sha256']} for k,v in manifest['files'].items()}},
+                          'pilot_sha256':pilot_sha, 'files':{k:{x:v[x] for x in ['bytes','sha256']} for k,v in manifest['files'].items()}},
               'evidence':manifest['evidence'], 'inventory':inventory(manifest), 'selection':selected,
               'sample_identity':manifest.get('sample_identity'),
               'suitability_matrix':suitability(summary), 'pilot':pilot, 'queries':results}
@@ -237,5 +254,5 @@ def run(root, quality_path, pilot_path, output):
 
 
 if __name__=='__main__':
-    if len(sys.argv)!=5: raise SystemExit('coverage.py DATASET RUST_QUALITY_JSON PILOT_JSON NEW_OUTPUT')
+    if len(sys.argv)!=5: raise SystemExit('coverage.py DATASET RUST_QUALITY_JSON PILOT_JSON_OR_- NEW_OUTPUT')
     run(*(pathlib.Path(p) for p in sys.argv[1:]))

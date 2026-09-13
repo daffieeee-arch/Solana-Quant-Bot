@@ -422,8 +422,38 @@ fn aggregate_budget_checks_exact_limit_and_overflow_before_publication() {
     let mut total = 0;
     report::charge(&mut total, 7, 10).unwrap();
     report::charge(&mut total, 3, 10).unwrap();
-    assert!(report::charge(&mut total, 1, 10).is_err());
+    assert_eq!(
+        report::charge(&mut total, 1, 10).unwrap_err().to_string(),
+        "BRONZE_AGGREGATE_LIMIT current=10 incoming=1 next=11 limit=10"
+    );
     assert_eq!(total, 10);
     let mut maximum = usize::MAX;
-    assert!(report::charge(&mut maximum, 1, usize::MAX).is_err());
+    assert_eq!(
+        report::charge(&mut maximum, 1, usize::MAX)
+            .unwrap_err()
+            .to_string(),
+        format!(
+            "BRONZE_AGGREGATE_LIMIT current={} incoming=1 limit={} overflow=true",
+            usize::MAX,
+            usize::MAX
+        )
+    );
+    assert_eq!(maximum, usize::MAX);
+}
+
+#[test]
+fn recorded_pilot_budget_crossing_stays_a_stop_not_a_limit_increase() {
+    // Recorded accounting amounts, not fabricated transaction bytes or a new cap.
+    assert_eq!(report::MAX_RECORD_JSON_BYTES, 16_777_216);
+    assert_eq!(report::MAX_SELECTION_RECORD_BYTES, 50_331_648);
+    let mut charged = 16_756_921;
+    let error = report::charge(&mut charged, 49_607, report::MAX_RECORD_JSON_BYTES).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "BRONZE_AGGREGATE_LIMIT current=16756921 incoming=49607 next=16806528 limit=16777216"
+    );
+    assert_eq!(
+        charged, 16_756_921,
+        "failed admission must not advance accounting"
+    );
 }

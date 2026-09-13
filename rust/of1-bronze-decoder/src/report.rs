@@ -23,11 +23,15 @@ pub const MAX_SELECTION_METADATA_BYTES: usize = MAX_SELECTION_SLOTS * MAX_DECODE
 /// # Errors
 /// Fails before publishing a partial report when aggregate decoding exceeds scope.
 pub fn charge(total: &mut usize, bytes: usize, limit: usize) -> io::Result<()> {
-    let next = total
-        .checked_add(bytes)
-        .ok_or_else(|| invalid("BRONZE_AGGREGATE_LIMIT"))?;
+    let next = total.checked_add(bytes).ok_or_else(|| {
+        invalid(format!(
+            "BRONZE_AGGREGATE_LIMIT current={total} incoming={bytes} limit={limit} overflow=true"
+        ))
+    })?;
     if next > limit {
-        return Err(invalid("BRONZE_AGGREGATE_LIMIT"));
+        return Err(invalid(format!(
+            "BRONZE_AGGREGATE_LIMIT current={total} incoming={bytes} next={next} limit={limit}"
+        )));
     }
     *total = next;
     Ok(())
@@ -68,7 +72,12 @@ pub fn decode_run(root: &Path) -> io::Result<Value> {
     let mut record_bytes = 0;
     let mut metadata_bytes = 0;
     for published in payloads {
-        let slot = project_slot(&run, published, &verification)?;
+        let slot = project_slot(&run, published, &verification).map_err(|e| {
+            invalid(format!(
+                "{e} request_sequence={}",
+                published.receipt.request.sequence
+            ))
+        })?;
         for (total, key, limit) in [
             (
                 &mut record_bytes,
@@ -298,15 +307,11 @@ fn project_slot(
         let (disposition, error, transaction) = match result {
             Ok(mut tx) => {
                 inspect_pump(&mut tx)?;
-                charge(
+                charge_metadata(
                     &mut metadata_bytes,
-                    usize::try_from(
-                        tx["decoded_metadata_bytes"]
-                            .as_u64()
-                            .ok_or_else(|| invalid("METADATA_SIZE"))?,
-                    )
-                    .map_err(invalid)?,
-                    MAX_DECODED_METADATA_BYTES,
+                    &tx,
+                    slot,
+                    envelope.transaction_index_in_slot,
                 )?;
                 if tx["pump_program_involvement"] == true {
                     pump_count += 1;
@@ -341,12 +346,15 @@ fn project_slot(
             "atomic_observation_package":true,"observed_at":null,"actionable_at":null,"execution_opportunity_at":null,"observation_model_id":null,
             "slice_class":"ENGINEERING_VALIDATION_ONLY","transaction":transaction});
         attach_sample(&mut record, run.aggregate_plan.sample_identity.as_ref())?;
-        charge(
+        charge_record(
             &mut record_bytes,
-            serde_json::to_vec(&record).map_err(invalid)?.len(),
-            MAX_RECORD_JSON_BYTES,
+            &record,
+            slot,
+            envelope.transaction_index_in_slot,
         )?;
-        append_sell_facts(&record, &mut record_bytes, &mut silver_records)?;
+        append_sell_facts(&record, &mut record_bytes, &mut silver_records).map_err(|e| {
+            record_limit_context(&e, slot, envelope.transaction_index_in_slot, "silver")
+        })?;
         records.push(record);
     }
     let records_sha256 = sha256(&serde_json::to_vec(&records).map_err(invalid)?);
@@ -360,6 +368,35 @@ fn project_slot(
         "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]});
     attach_sample(&mut result, run.aggregate_plan.sample_identity.as_ref())?;
     Ok(result)
+}
+
+fn charge_record(total: &mut usize, record: &Value, slot: u64, index: usize) -> io::Result<()> {
+    charge(
+        total,
+        serde_json::to_vec(record).map_err(invalid)?.len(),
+        MAX_RECORD_JSON_BYTES,
+    )
+    .map_err(|e| record_limit_context(&e, slot, index, "bronze"))
+}
+
+fn charge_metadata(total: &mut usize, tx: &Value, slot: u64, index: usize) -> io::Result<()> {
+    let bytes = usize::try_from(
+        tx["decoded_metadata_bytes"]
+            .as_u64()
+            .ok_or_else(|| invalid("METADATA_SIZE"))?,
+    )
+    .map_err(invalid)?;
+    charge(total, bytes, MAX_DECODED_METADATA_BYTES).map_err(|e| {
+        invalid(format!(
+            "{e} budget=decoded_metadata_bytes slot={slot} transaction_index={index}"
+        ))
+    })
+}
+
+fn record_limit_context(error: &io::Error, slot: u64, index: usize, layer: &str) -> io::Error {
+    invalid(format!(
+        "{error} budget=record_json_bytes slot={slot} transaction_index={index} layer={layer}"
+    ))
 }
 
 fn inspect_pump(tx: &mut Value) -> io::Result<()> {
