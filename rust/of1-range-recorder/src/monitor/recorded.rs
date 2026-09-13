@@ -9,11 +9,13 @@ use crate::{
     FormatSource, HOST,
     acquisition::read_limited,
     durable::{
-        ClockSample,
+        Clock, ClockSample, SystemClock,
         acquisition::{
-            AggregateBudget, AggregatePlan, Authority, MetadataLease, PayloadLease,
-            PreparedPayload, Published, Receipt, Request, StageBudget, metadata_proposal_sha256,
-            metadata_requests, payload_proposal_sha256, resource_sample,
+            AggregateBudget, AggregatePlan, Authority, ClockStop, ClockStopKind, MetadataLease,
+            PayloadLease, PreparedPayload, Published, Receipt, Request, StageBudget,
+            StageRecord as Stage, check_recorded_attempt, metadata_proposal_sha256,
+            metadata_requests, payload_proposal_sha256, resource_sample, validate_clock_stop,
+            validate_stage, within_stage,
         },
     },
     sha256,
@@ -30,17 +32,6 @@ use std::{
 const JSON_LIMIT: u64 = 1_048_576;
 const ATTEMPT_LIMIT: usize = 512;
 const TREE_LIMIT: usize = 8192;
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Stage {
-    authority: Authority,
-    budget: StageBudget,
-    lease_sha256: String,
-    started_at: ClockSample,
-    deadline_wall_ms: u64,
-    deadline_boot_ms: u64,
-}
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -110,18 +101,29 @@ fn exact_hash(value: &impl Serialize) -> io::Result<String> {
 
 fn check_stage(
     stage: &Stage,
+    policy: Option<&crate::clock_contract::ClockPolicy>,
     authority: &Authority,
     budget: &StageBudget,
     lease: &impl Serialize,
 ) -> io::Result<()> {
+    if policy.is_some() {
+        return validate_stage(stage, policy, authority, budget, lease).map_err(invalid);
+    }
+    if stage.clock_policy.is_some() {
+        return Err(invalid(
+            "legacy recorded stage cannot acquire a new clock policy",
+        ));
+    }
     let runtime = match authority {
         Authority::Fixture => budget.max_runtime_ms,
         Authority::Approved {
             approved_at_ms,
             not_after_ms,
+            clock_anchor,
             ..
         } => {
-            if stage.started_at.wall_ms < *approved_at_ms
+            if clock_anchor.is_some()
+                || stage.started_at.wall_ms < *approved_at_ms
                 || stage.started_at.wall_ms >= *not_after_ms
             {
                 return Err(invalid("recorded stage was outside its approval interval"));
@@ -144,6 +146,9 @@ fn check_stage(
 }
 
 fn clock_within(at: &ClockSample, stage: &Stage) -> bool {
+    if stage.clock_policy.is_some() {
+        return within_stage(stage, at).is_ok();
+    }
     at.boot_id == stage.started_at.boot_id
         && at.wall_ms >= stage.started_at.wall_ms
         && at.boot_ms >= stage.started_at.boot_ms
@@ -231,6 +236,15 @@ fn artifact(id: &str, label: &str, path: String, bytes: &[u8]) -> Artifact {
 /// fabricated process runtime; interrupted traffic outside receipts is unknown.
 #[allow(clippy::too_many_lines)]
 pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
+    let now = SystemClock.sample().ok();
+    read_run_context_at(root, now.as_ref())
+}
+
+#[allow(clippy::too_many_lines)]
+pub(super) fn read_run_context_at(
+    root: &Path,
+    now: Option<&ClockSample>,
+) -> io::Result<RecordedRun> {
     let root = crate::dataset_location::validate_dataset_location(root)?;
     let mut remaining_entries = TREE_LIMIT;
     bound_tree(&root, &mut remaining_entries)?;
@@ -246,6 +260,7 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
     }
     check_stage(
         &manifest.metadata_stage,
+        manifest.plan.clock_policy.as_ref(),
         &manifest.metadata_lease.authority,
         &manifest.metadata_lease.budget,
         &manifest.metadata_lease,
@@ -273,10 +288,19 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
         let (payload, bytes): (Payload, _) = decode(&root.join("payload.json"))?;
         check_stage(
             &payload.stage,
+            manifest.plan.clock_policy.as_ref(),
             &payload.lease.authority,
             &payload.lease.budget,
             &payload.lease,
         )?;
+        if manifest.plan.clock_policy.is_some() {
+            crate::clock_contract::check_follows(
+                manifest.plan.clock_policy.as_ref(),
+                &manifest.metadata_stage.started_at,
+                &payload.stage.started_at,
+            )
+            .map_err(invalid)?;
+        }
         if payload.lease.schema != "OF1_PAYLOAD_LEASE_1"
             || matches!(payload.lease.authority, Authority::Fixture)
                 != matches!(manifest.metadata_lease.authority, Authority::Fixture)
@@ -362,6 +386,15 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             || &attempt.request != *request
             || attempt.reserved_entity_bytes != request.allowance()
             || !clock_within(&attempt.at, attempt_stage)
+            || (manifest.plan.clock_policy.is_some()
+                && attempts.last().is_some_and(|previous| {
+                    crate::clock_contract::check_follows(
+                        manifest.plan.clock_policy.as_ref(),
+                        &previous.at,
+                        &attempt.at,
+                    )
+                    .is_err()
+                }))
         {
             return Err(invalid("recorded reservation identity mismatch"));
         }
@@ -398,7 +431,7 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
     {
         return Err(invalid("recorded budget accounting mismatch"));
     }
-    let mut last_at = manifest.metadata_stage.started_at.wall_ms;
+    let mut last_at = manifest.metadata_stage.started_at.clone();
     let mut published_receipts = BTreeMap::new();
     for path in directory(&root.join("published"), super::MAX_OPERATIONS)? {
         if !fs::symlink_metadata(&path)?.is_dir() {
@@ -447,8 +480,18 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             || receipt.response_entity_bytes > manifest.plan.budget.max_response_entity_bytes
             || receipt.sha256 != raw_hash(&path.join("raw.bin"), receipt.response_entity_bytes)?
             || !clock_within(&receipt.acquired_at, stage_for(request)?)
-            || receipt.acquired_at.wall_ms < reservation.at.wall_ms
-            || receipt.acquired_at.boot_ms < reservation.at.boot_ms
+            || if manifest.plan.clock_policy.is_some() {
+                check_recorded_attempt(
+                    stage_for(request)?,
+                    &reservation.at,
+                    &receipt.acquired_at,
+                    manifest.plan.budget.response_timeout_ms,
+                )
+                .is_err()
+            } else {
+                receipt.acquired_at.wall_ms < reservation.at.wall_ms
+                    || receipt.acquired_at.boot_ms < reservation.at.boot_ms
+            }
             || receipt.evidence != expected_evidence
             || receipt.domain_counts != "UNAVAILABLE_NOT_DECODED_IN_B4"
         {
@@ -464,7 +507,13 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
         op.received_bytes = Some(receipt.response_entity_bytes);
         op.published_bytes = receipt.response_entity_bytes;
         op.status_code = Some(receipt.response.status);
-        last_at = last_at.max(receipt.acquired_at.wall_ms);
+        if manifest.plan.clock_policy.is_some() {
+            if receipt.acquired_at.boot_ms >= last_at.boot_ms {
+                last_at = receipt.acquired_at.clone();
+            }
+        } else if receipt.acquired_at.wall_ms > last_at.wall_ms {
+            last_at = receipt.acquired_at.clone();
+        }
         artifacts.push(artifact(
             &format!("receipt-{}", request.sequence),
             &format!("Operation {} receipt", request.sequence),
@@ -478,6 +527,24 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             return Err(invalid("duplicate publication"));
         }
     }
+    if manifest.plan.clock_policy.is_some() {
+        // The read-only projection enforces the writer's causal publication gate:
+        // a later operation cannot have been reserved before every earlier
+        // operation's publication. UTC is retained, never used to order these.
+        for attempt in &attempts {
+            for sequence in 0..attempt.request.sequence {
+                let earlier = published_receipts
+                    .get(&sequence)
+                    .ok_or_else(|| invalid("reservation precedes missing earlier publication"))?;
+                crate::clock_contract::check_follows(
+                    manifest.plan.clock_policy.as_ref(),
+                    &earlier.acquired_at,
+                    &attempt.at,
+                )
+                .map_err(invalid)?;
+            }
+        }
+    }
     if let Some(payload) = &payload {
         let receipts = (0..4)
             .map(|i| {
@@ -486,14 +553,115 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
                     .ok_or_else(|| invalid("payload missing metadata receipt"))
             })
             .collect::<io::Result<Vec<_>>>()?;
+        if manifest.plan.clock_policy.is_some() {
+            for receipt in &receipts {
+                crate::clock_contract::check_follows(
+                    manifest.plan.clock_policy.as_ref(),
+                    &receipt.acquired_at,
+                    &payload.stage.started_at,
+                )
+                .map_err(invalid)?;
+            }
+        }
         if exact_hash(&receipts)? != payload.prepared.metadata_receipt_sha256() {
             return Err(invalid("payload metadata receipt binding mismatch"));
         }
     }
+    let mut recorded_boot_high_water = attempts
+        .iter()
+        .map(|attempt| attempt.at.boot_ms)
+        .chain([last_at.boot_ms, stage.started_at.boot_ms])
+        .max()
+        .unwrap_or(manifest.metadata_stage.started_at.boot_ms);
+    let mut clock_stops = Vec::new();
+    for path in directory(&root.join("pending"), TREE_LIMIT)? {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if name != "clock-fatal.json"
+            && !name.starts_with("stage-expired-")
+            && !name.starts_with("attempt-expired-")
+        {
+            continue;
+        }
+        let (stop, _): (ClockStop, _) = decode(&path)?;
+        if name != stop.filename() {
+            return Err(invalid("recorded clock-stop filename mismatch"));
+        }
+        let stop_stage = if stop.lease_sha256 == manifest.metadata_stage.lease_sha256 {
+            &manifest.metadata_stage
+        } else {
+            payload
+                .as_ref()
+                .filter(|payload| payload.stage.lease_sha256 == stop.lease_sha256)
+                .map(|payload| &payload.stage)
+                .ok_or_else(|| invalid("unknown clock-stop lease"))?
+        };
+        let attempt = stop
+            .attempt_id
+            .map(|id| {
+                attempts
+                    .iter()
+                    .find(|attempt| {
+                        attempt.attempt_id == id && attempt.lease_sha256 == stop.lease_sha256
+                    })
+                    .map(|attempt| (id, &attempt.at))
+                    .ok_or_else(|| invalid("clock-stop attempt mismatch"))
+            })
+            .transpose()?;
+        validate_clock_stop(
+            &stop,
+            &manifest.run_id,
+            &manifest.aggregate_sha256,
+            stop_stage,
+            attempt,
+            manifest.plan.budget.response_timeout_ms,
+        )
+        .map_err(invalid)?;
+        recorded_boot_high_water = recorded_boot_high_water.max(stop.high_water.boot_ms);
+        let kind = match stop.kind {
+            ClockStopKind::FatalClock => "FATAL_CLOCK",
+            ClockStopKind::StageDeadline => "STAGE_DEADLINE",
+            ClockStopKind::AttemptDeadline => "ATTEMPT_DEADLINE",
+        };
+        clock_stops.push(format!(
+            "RECORDED_CLOCK_STOP_{kind}: pending/{name}; original evidence preserved"
+        ));
+    }
     let fixture = matches!(manifest.metadata_lease.authority, Authority::Fixture);
     let complete = operations.iter().all(|o| o.state == "PUBLISHED");
+    if !complete {
+        clock_stops.insert(
+            0,
+            "RECORDED_INCOMPLETE: live status and unreceipted traffic unavailable".into(),
+        );
+    }
+    if clock_stops.len() > super::MAX_ERRORS {
+        let omitted = clock_stops.len() - super::MAX_ERRORS + 1;
+        clock_stops.truncate(super::MAX_ERRORS - 1);
+        clock_stops.push(format!(
+            "{omitted} additional validated clock-stop records remain in the original run"
+        ));
+    }
     let published_bytes = operations.iter().map(|o| o.published_bytes).sum();
     let available = resource_sample(&root).map_err(invalid)?.0;
+    let mut clock_context = manifest
+        .plan
+        .clock_policy
+        .clone()
+        .map(|policy| super::ClockContext {
+            policy,
+            boot_id: manifest.metadata_stage.started_at.boot_id.clone(),
+            started_at_boot_ms: manifest.metadata_stage.started_at.boot_ms,
+            deadline_boot_ms: stage.deadline_boot_ms,
+            observed_boot_ms: Some(recorded_boot_high_water),
+            runtime_status: "UNAVAILABLE_CLOCK".into(),
+        });
+    let runtime_remaining_ms = clock_context.as_mut().map_or_else(
+        || Some(stage.deadline_wall_ms.saturating_sub(wall_ms())),
+        |clock| clock.observe(now),
+    );
     let mut snapshot = Snapshot {
         schema_version: SCHEMA.into(),
         id: manifest.run_id.clone(),
@@ -530,8 +698,14 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             end_exclusive: p.prepared.end_slot(),
         }),
         started_at_ms: manifest.metadata_stage.started_at.wall_ms,
-        completed_at_ms: complete.then_some(last_at),
-        elapsed_ms: last_at.saturating_sub(manifest.metadata_stage.started_at.wall_ms),
+        completed_at_ms: complete.then_some(last_at.wall_ms),
+        elapsed_ms: if manifest.plan.clock_policy.is_some() {
+            last_at.boot_ms - manifest.metadata_stage.started_at.boot_ms
+        } else {
+            last_at
+                .wall_ms
+                .saturating_sub(manifest.metadata_stage.started_at.wall_ms)
+        },
         selection: Selection {
             operations_total: 0,
             operations_published: 0,
@@ -556,6 +730,7 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             .download_rate
             .clone()
             .map(super::RateLimit::recorded),
+        clock_context,
         storage: Storage {
             used_bytes: crate::durable::disk_charge(&root).map_err(invalid)?,
             available_bytes: available,
@@ -567,7 +742,7 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             stage_attempts_remaining: stage.budget.max_requests - stage_attempts,
             stage_entity_bytes_remaining: stage.budget.max_response_entity_bytes_total
                 - stage_reserved,
-            runtime_remaining_ms: stage.deadline_wall_ms.saturating_sub(wall_ms()),
+            runtime_remaining_ms,
         },
         operations,
         integrity: Integrity {
@@ -587,11 +762,7 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
         },
         domain_counts: "UNAVAILABLE_NOT_DECODED_IN_B4".into(),
         artifacts,
-        errors: if complete {
-            Vec::new()
-        } else {
-            vec!["RECORDED_INCOMPLETE: live status and unreceipted traffic unavailable".into()]
-        },
+        errors: clock_stops,
         dropped_samples: 0,
     };
     snapshot.refresh_selection();

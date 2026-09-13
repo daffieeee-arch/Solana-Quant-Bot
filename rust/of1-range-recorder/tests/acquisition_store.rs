@@ -55,6 +55,7 @@ impl Harness {
                 schema: AGGREGATE_SCHEMA.into(),
                 sample_identity: None,
                 download_rate: None,
+                clock_policy: None,
                 epoch: 978,
                 format_source: FormatSource::pinned(),
                 code_sha: "a".repeat(40),
@@ -583,6 +584,7 @@ fn fixture_metadata_cannot_be_promoted_by_approved_payload_authority() {
     let prepared = metadata(&mut store);
     let mut lease = payload_lease(&prepared);
     lease.authority = Authority::Approved {
+        clock_anchor: None,
         approval_id: "not-a-live-go".into(),
         operator: "offline-test".into(),
         approved_at_ms: 999_000,
@@ -600,6 +602,7 @@ fn fixture_metadata_cannot_be_promoted_by_approved_payload_authority() {
 fn authentic_authority_requires_exact_proposal_hash_and_live_time_boundary() {
     let mut h = Harness::new();
     h.lease.authority = Authority::Approved {
+        clock_anchor: None,
         approval_id: "offline-admission-test-only".into(),
         operator: "offline-test".into(),
         approved_at_ms: 999_000,

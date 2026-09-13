@@ -41,6 +41,13 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The bounded local clock correction separates actual UTC provenance from
+suspend-aware boot-time approval/runtime limits under an explicit new
+[clock policy](research/OF1_STAGED_ACQUISITION.md#versioned-utc-provenance-and-boot-deadlines).
+It preserves the earlier pre-registration UTC-rollback stop, old binaries and
+approvals. A newly prepared binary-bound package still requires a new exact GO;
+no acquisition, lease or Project promotion follows from development.
+
 The local fixed-pilot preparation now binds the shared 700 Mbps entity-read
 policy and Rust-generated request paths into new proposals; see
 [the exact rate/identity contract](research/OF1_STAGED_ACQUISITION.md#shared-default-download-rate).

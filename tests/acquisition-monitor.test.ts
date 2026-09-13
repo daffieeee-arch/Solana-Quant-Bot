@@ -47,6 +47,39 @@ async function publish(root: string, value = fixture(root)) {
 }
 
 describe('passive Rust snapshot reader', () => {
+  it('retains explicit unknown boot remaining time and rejects contradictory clock envelopes in backend and browser', async () => {
+    const root = await directory(); const snapshot = fixture(root);
+    snapshot.clock_context = { policy: { schema: 'OF1_BOOT_CLOCK_POLICY_1', version: 1,
+      initialization_window_ms: 600_000, approval_validity_ms: 1_200_000 },
+    boot_id: 'original-boot', started_at_boot_ms: 1000, deadline_boot_ms: 61_000,
+    observed_boot_ms: null, runtime_status: 'UNAVAILABLE_BOOT_MISMATCH' };
+    snapshot.budgets.runtime_remaining_ms = null;
+    expect(validateSnapshot(snapshot, id)).toBe(snapshot);
+    const browser = (value: unknown) => parseMonitorResponse({ schema_version: 'OF1_MONITOR_HTTP_1',
+      read_at_unix_ms: 1, runs: [{ id, state: 'READY', snapshot: value }] });
+    expect(browser(snapshot)).toBeTruthy();
+    for (const change of [
+      (s: any) => { s.clock_context = null; },
+      (s: any) => { s.clock_context.policy.version = 2; },
+      (s: any) => { s.clock_context.observed_boot_ms = 999; },
+      (s: any) => { s.clock_context.runtime_status = 'SAME_BOOT'; },
+      (s: any) => { s.clock_context.boot_id = ''; },
+      (s: any) => { s.clock_context.extra = 1; },
+      (s: any) => { s.budgets.runtime_remaining_ms = 0; },
+      (s: any) => { delete s.clock_context; },
+    ]) {
+      const changed = structuredClone(snapshot); change(changed);
+      expect(() => validateSnapshot(changed, id)).toThrow();
+      expect(() => browser(changed)).toThrow();
+    }
+    snapshot.clock_context.runtime_status = 'SAME_BOOT'; snapshot.clock_context.observed_boot_ms = 2000;
+    snapshot.budgets.runtime_remaining_ms = 59_000;
+    expect(validateSnapshot(snapshot, id)).toBe(snapshot);
+    expect(browser(snapshot)).toBeTruthy();
+    snapshot.budgets.runtime_remaining_ms = 60_000;
+    expect(() => validateSnapshot(snapshot, id)).toThrow();
+    expect(() => browser(snapshot)).toThrow();
+  });
   it('returns the exact Rust values and unknowns without re-deriving accounting', async () => {
     const root = await directory();
     const snapshot = await publish(root);

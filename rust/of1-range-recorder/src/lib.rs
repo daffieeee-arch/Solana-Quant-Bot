@@ -5,6 +5,7 @@
 pub mod acquisition;
 pub mod acquisition_http;
 pub mod car;
+pub mod clock_contract;
 pub mod dataset_location;
 pub mod durable;
 pub mod fixture;

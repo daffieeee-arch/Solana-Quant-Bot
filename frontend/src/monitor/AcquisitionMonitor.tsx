@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { parseMonitorResponse, parseOfflineVerification, type MonitorResponse, type MonitorSnapshot, type OfflineVerificationResponse } from './contract';
+import { monitorSnapshotRegressed, parseMonitorResponse, parseOfflineVerification, type MonitorResponse, type MonitorSnapshot, type OfflineVerificationResponse } from './contract';
 
 const number = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 1 });
 const count = new Intl.NumberFormat('nl-NL', { maximumFractionDigits: 0 });
@@ -83,7 +83,7 @@ function Stat({ label, value, detail, accent = false }: { label: string; value: 
   return <div className={`stat${accent ? ' accent' : ''}`}><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
 }
 
-function RunContent({ snapshot: s, stale, now, verification }: { snapshot: MonitorSnapshot; stale: boolean; now: number; verification: OfflineVerificationResponse }) {
+function RunContent({ snapshot: s, stale, observationAge, verification }: { snapshot: MonitorSnapshot; stale: boolean; observationAge: number; verification: OfflineVerificationResponse }) {
   const recorded = s.mode === 'RECORDED';
   const simulation = s.kind === 'LOCAL_SIMULATION';
   const terminal = s.stage === 'COMPLETE' || s.stage === 'STOPPED';
@@ -106,7 +106,7 @@ function RunContent({ snapshot: s, stale, now, verification }: { snapshot: Monit
       <div className="run-state"><span className={`state-chip ${stale ? 'warn' : s.stage === 'STOPPED' ? 'bad' : 'good'}`}>
         <span className="status-dot" />{stale ? 'STALE · metingen verouderd' : recorded ? 'Vastgelegd resultaat' : stageLabels[s.stage]}</span>
         <small>{recorded ? 'Snapshot vastgelegd' : 'Laatste Rust-meting'} · {when(s.updated_at_ms)}</small>
-        {!recorded && <small>{duration(Math.max(0, now - s.updated_at_ms))} geleden · reeks {s.sequence}</small>}
+        {!recorded && <small>{duration(observationAge)} {s.clock_context ? 'sinds laatste nieuwe browsersample' : 'geleden'} · reeks {s.sequence}</small>}
       </div>
     </section>
 
@@ -142,7 +142,8 @@ function RunContent({ snapshot: s, stale, now, verification }: { snapshot: Monit
             <p className="metric-note">Decimale Mbps, gemeten en begrensd op response-entity-bytes. Geen exacte fysieke netwerkcap inclusief TLS-, HTTP- of overige overhead. De gedeelde limiet geldt voor OF1-runs van dezelfde Linux-gebruiker; een lokale simulatie heeft geen OF1-netwerktoegang. Wachttijd is alleen in dit proces gemeten en verlengt geen deadline.</p>
           </> : <p className="metric-note">Historische snelheidsinstelling en limiterwacht onbekend; niet achteraf afgeleid uit receipts.</p>}
         </section>
-        <div className="transfer-footer"><span>{recorded ? 'Initialisatie → laatste receipt' : 'Verstreken'} <b>{duration(s.elapsed_ms)}</b></span><span>Pogingen <b>{s.traffic.attempts}</b></span><span>Retries <b>{s.traffic.retries}</b></span></div>
+        <div className="transfer-footer"><span>{recorded ? 'Initialisatie → laatste receipt' : 'Verstreken'} <b>{duration(!recorded && s.clock_context && s.clock_context.runtime_status !== 'SAME_BOOT' ? null : s.elapsed_ms)}</b></span><span>Pogingen <b>{s.traffic.attempts}</b></span><span>Retries <b>{s.traffic.retries}</b></span></div>
+        {s.clock_context && <p className="metric-note" aria-label="Klokbetekenis">UTC-tijden zijn ongewijzigde provenance. Verstreken tijd en deadline gebruiken uitsluitend dezelfde bootklok; {s.clock_context.runtime_status}. Een andere boot of onbruikbare klok betekent onbekende resttijd, niet nul of een nieuwe deadline.</p>}
       </section>
 
       <aside className="right-panels">
@@ -206,8 +207,10 @@ export function AcquisitionMonitor() {
   const [selected, setSelected] = useState(() => new URLSearchParams(window.location.hash.slice(1)).get('run') ?? '');
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now);
+  const [monotonicNow, setMonotonicNow] = useState(() => performance.now());
   const [verification, setVerification] = useState<{ id: string; bindings: string | undefined; value: OfflineVerificationResponse } | null>(null);
   const previous = useRef(new Map<string, MonitorSnapshot>());
+  const lastChanged = useRef(new Map<string, number>());
 
   useEffect(() => {
     let active = true; let timer: ReturnType<typeof setTimeout>; let controller: AbortController;
@@ -223,11 +226,19 @@ export function AcquisitionMonitor() {
         for (const run of next.runs) {
           if (run.state !== 'READY') continue;
           const old = previous.current.get(run.id); const fresh = run.snapshot;
-          if (old && (fresh.updated_at_ms < old.updated_at_ms || (fresh.session_id === old.session_id && fresh.sequence < old.sequence))) {
+          if (old && monitorSnapshotRegressed(old, fresh)) {
             throw new Error('Verouderde snapshot geweigerd; laatste bekende metingen blijven zichtbaar.');
           }
         }
         if (active) {
+          next.runs.forEach(run => {
+            if (run.state !== 'READY') return;
+            const old = previous.current.get(run.id);
+            if (!old || old.session_id !== run.snapshot.session_id || old.sequence !== run.snapshot.sequence) {
+              lastChanged.current.set(run.id, performance.now());
+            }
+          });
+          for (const id of lastChanged.current.keys()) if (!next.runs.some(run => run.id === id)) lastChanged.current.delete(id);
           previous.current.clear();
           next.runs.forEach(run => { if (run.state === 'READY') previous.current.set(run.id, run.snapshot); });
           setResponse(next); setError(null);
@@ -236,13 +247,16 @@ export function AcquisitionMonitor() {
       finally { clearTimeout(timeout); if (active) timer = setTimeout(refresh, 700); }
     }
     void refresh();
-    const clock = setInterval(() => setNow(Date.now()), 500);
+    const clock = setInterval(() => { setNow(Date.now()); setMonotonicNow(performance.now()); }, 500);
     return () => { active = false; clearTimeout(timer); clearInterval(clock); controller?.abort(); };
   }, []);
 
   const run = response?.runs.find(item => item.id === selected) ?? response?.runs[0];
   const snapshot = run?.state === 'READY' ? run.snapshot : undefined;
-  const stale = Boolean(error) || Boolean(snapshot && snapshot.mode === 'LIVE' && now - snapshot.updated_at_ms > 3000);
+  const observationAge = snapshot ? Math.max(0, snapshot.clock_context
+    ? monotonicNow - (lastChanged.current.get(snapshot.id) ?? monotonicNow) : now - snapshot.updated_at_ms) : 0;
+  const stale = Boolean(error) || Boolean(snapshot && snapshot.mode === 'LIVE' && (observationAge > 3000
+    || snapshot.clock_context && snapshot.clock_context.runtime_status !== 'SAME_BOOT'));
   const verificationRunId = snapshot?.id;
   const verificationBindings = snapshot ? JSON.stringify([snapshot.dataset_root, snapshot.artifacts.map(artifact => [artifact.path, artifact.sha256])]) : undefined;
   useEffect(() => {
@@ -273,7 +287,7 @@ export function AcquisitionMonitor() {
       <div className="workspace-heading"><div><p className="eyebrow">DATA-FIRST RESEARCH PLATFORM</p><h2>Acquisitiemonitor</h2><p>Van bronbytes naar controleerbaar bewijs.</p></div><span className={`connection ${error ? 'warn' : ''}`}><span className="status-dot" />{error ? 'Verbinding onderbroken' : response ? 'Lokale monitor verbonden' : 'Verbinden met lokale monitor…'}</span></div>
       {error && <div className="connection-error" role="alert"><strong>{error}</strong>{snapshot && <span>Laatst bekende snapshot — STALE; geen actuele voortgangsclaim.</span>}</div>}
       {response && <nav className="run-selector" aria-label="Run kiezen">{response.runs.map(item => <button type="button" key={item.id} onClick={() => setSelected(item.id)} aria-pressed={item.id === run?.id} className={item.id === run?.id ? 'selected' : ''}><span>{item.state === 'READY' ? kindLabels[item.snapshot.kind] : 'Niet beschikbaar'}</span><strong>{item.state === 'READY' ? item.snapshot.label : item.id}</strong><small>{item.state === 'READY' ? `Epoch ${item.snapshot.epoch} · ${item.snapshot.mode === 'RECORDED' ? 'vastgelegd resultaat' : stageLabels[item.snapshot.stage]}` : item.reason}</small></button>)}</nav>}
-      {snapshot ? <RunContent snapshot={snapshot} stale={stale} now={now} verification={verification?.id === snapshot.id && verification.bindings === verificationBindings ? verification.value : { state: 'UNAVAILABLE', reason: 'REPORT_NOT_LOADED' }} /> : <section className="empty-state"><h1>{run?.state === 'UNAVAILABLE' ? 'Rungegevens niet beschikbaar' : response ? 'Nog geen Rust-snapshots' : 'Rust-metingen laden'}</h1><p>{run?.state === 'UNAVAILABLE' ? run.reason : 'Start de read-only import of de expliciete lokale simulatie volgens de startinstructies. De browser start geen downloader.'}</p></section>}
+      {snapshot ? <RunContent snapshot={snapshot} stale={stale} observationAge={observationAge} verification={verification?.id === snapshot.id && verification.bindings === verificationBindings ? verification.value : { state: 'UNAVAILABLE', reason: 'REPORT_NOT_LOADED' }} /> : <section className="empty-state"><h1>{run?.state === 'UNAVAILABLE' ? 'Rungegevens niet beschikbaar' : response ? 'Nog geen Rust-snapshots' : 'Rust-metingen laden'}</h1><p>{run?.state === 'UNAVAILABLE' ? run.reason : 'Start de read-only import of de expliciete lokale simulatie volgens de startinstructies. De browser start geen downloader.'}</p></section>}
       <footer className="site-footer"><span>Rust meet en bepaalt · de browser observeert</span><span>Geen providerknoppen · geen wallet · geen acquisitietoestemming</span></footer>
     </main>
   </div>;

@@ -6,9 +6,10 @@
 
 use super::{
     BLOCK, Clock, ClockSample, FaultPoint, RetryComparison, StoreError, StoreResult, children,
-    clock_follows, decode, disk_charge, encode, exact_names, executable_hash, identity,
-    read_bounded, regular, rounded, sync_dir, valid_clock, valid_etag,
+    decode, disk_charge, encode, exact_names, executable_hash, identity, read_bounded, regular,
+    rounded, sync_dir, valid_clock, valid_etag,
 };
+use crate::clock_contract::{ApprovalAnchor, ClockPolicy, check_follows};
 use crate::{FormatSource, HOST, RECORD_BYTES, SLOTS_PER_EPOCH, sha256};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -59,6 +60,9 @@ pub struct AggregatePlan {
     /// newly built official captures require the explicit standard policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download_rate: Option<crate::rate::DownloadRate>,
+    /// None retains all historical serialized bytes and dual-clock semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_policy: Option<ClockPolicy>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -72,6 +76,8 @@ pub enum Authority {
         not_after_ms: u64,
         approved_plan_sha256: String,
         cost_confirmation: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clock_anchor: Option<ApprovalAnchor>,
     },
 }
 
@@ -334,13 +340,16 @@ pub fn current_executable_sha256() -> StoreResult<String> {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
-struct StageRecord {
-    authority: Authority,
-    budget: StageBudget,
-    lease_sha256: String,
-    started_at: ClockSample,
-    deadline_wall_ms: u64,
-    deadline_boot_ms: u64,
+pub(crate) struct StageRecord {
+    pub(crate) authority: Authority,
+    pub(crate) budget: StageBudget,
+    pub(crate) lease_sha256: String,
+    pub(crate) started_at: ClockSample,
+    /// Nominal UTC projection only under the new boot-clock policy.
+    pub(crate) deadline_wall_ms: u64,
+    pub(crate) deadline_boot_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) clock_policy: Option<ClockPolicy>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -437,6 +446,10 @@ pub struct Progress {
     pub available_disk_bytes: u64,
     pub deadline_wall_ms: u64,
     pub deadline_boot_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_policy: Option<ClockPolicy>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_started_at: Option<ClockSample>,
     pub current_lease_sha256: String,
     pub evidence: String,
     pub domain_counts: String,
@@ -450,11 +463,46 @@ struct StreamRecord {
     latest_at: ClockSample,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum ClockStopKind {
+    FatalClock,
+    StageDeadline,
+    AttemptDeadline,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClockStop {
+    pub(crate) schema: String,
+    pub(crate) run_id: String,
+    pub(crate) aggregate_sha256: String,
+    pub(crate) lease_sha256: String,
+    pub(crate) kind: ClockStopKind,
+    pub(crate) attempt_id: Option<u64>,
+    pub(crate) high_water: ClockSample,
+    pub(crate) observed_at: Option<ClockSample>,
+}
+
+impl ClockStop {
+    pub(crate) fn filename(&self) -> String {
+        match self.kind {
+            ClockStopKind::FatalClock => "clock-fatal.json".into(),
+            ClockStopKind::StageDeadline => format!("stage-expired-{}.json", self.lease_sha256),
+            ClockStopKind::AttemptDeadline => format!(
+                "attempt-expired-{:010}.json",
+                self.attempt_id.unwrap_or(u64::MAX)
+            ),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Audit {
     attempts: Vec<Reservation>,
     streams: BTreeMap<u64, StreamRecord>,
     published: BTreeMap<u64, Published>,
+    clock_stops: Vec<ClockStop>,
 }
 
 pub struct AcquisitionStore<C: Clock> {
@@ -486,7 +534,13 @@ impl<C: Clock> AcquisitionStore<C> {
         validate_metadata(&plan, &lease)?;
         let started = clock.sample()?;
         valid_clock(&started)?;
-        let stage = make_stage(&lease.authority, &lease.budget, &lease, &started)?;
+        let stage = make_stage(
+            plan.clock_policy.as_ref(),
+            &lease.authority,
+            &lease.budget,
+            &lease,
+            &started,
+        )?;
         resources(root.parent().ok_or(StoreError::Identity)?, &plan.budget)?;
         let mut nonce = [0u8; 32];
         File::open("/dev/urandom")?.read_exact(&mut nonce)?;
@@ -562,6 +616,7 @@ impl<C: Clock> AcquisitionStore<C> {
         validate_metadata(plan, &manifest.metadata_lease)?;
         validate_stage(
             &manifest.metadata_stage,
+            plan.clock_policy.as_ref(),
             &manifest.metadata_lease.authority,
             &manifest.metadata_lease.budget,
             &manifest.metadata_lease,
@@ -625,7 +680,13 @@ impl<C: Clock> AcquisitionStore<C> {
         crate::acquisition::verify_prepared_payload(&self.manifest.plan, &metadata, prepared)?;
         validate_payload(&self.manifest, &lease, prepared, &self.cache.attempts)?;
         let started = self.sample()?;
-        let stage = make_stage(&lease.authority, &lease.budget, &lease, &started)?;
+        let stage = make_stage(
+            self.manifest.plan.clock_policy.as_ref(),
+            &lease.authority,
+            &lease.budget,
+            &lease,
+            &started,
+        )?;
         let record = PayloadRecord {
             lease,
             stage,
@@ -806,6 +867,19 @@ impl<C: Clock> AcquisitionStore<C> {
         let at = self.dispatch_now(Some(&permit.0))?;
         let stage = self.stage();
         let timeout = self.manifest.plan.budget.response_timeout_ms;
+        if stage.clock_policy.is_some() {
+            return stage
+                .deadline_boot_ms
+                .checked_sub(at.boot_ms)
+                .zip(
+                    at.boot_ms
+                        .checked_sub(permit.0.at.boot_ms)
+                        .and_then(|elapsed| timeout.checked_sub(elapsed)),
+                )
+                .map(|(stage, attempt)| stage.min(attempt))
+                .filter(|remaining| *remaining > 0)
+                .ok_or(StoreError::Deadline);
+        }
         [
             stage.deadline_wall_ms - at.wall_ms,
             stage.deadline_boot_ms - at.boot_ms,
@@ -1193,6 +1267,12 @@ impl<C: Clock> AcquisitionStore<C> {
             available_disk_bytes: available,
             deadline_wall_ms: self.stage().deadline_wall_ms,
             deadline_boot_ms: self.stage().deadline_boot_ms,
+            clock_policy: self.stage().clock_policy.clone(),
+            clock_started_at: self
+                .stage()
+                .clock_policy
+                .as_ref()
+                .map(|_| self.stage().started_at.clone()),
             current_lease_sha256: self.current_lease_sha256().into(),
             evidence: evidence(self.authority()).into(),
             domain_counts: "UNAVAILABLE_NOT_DECODED_IN_B4".into(),
@@ -1264,20 +1344,115 @@ impl<C: Clock> AcquisitionStore<C> {
         Ok(())
     }
     fn sample(&mut self) -> StoreResult<ClockSample> {
-        let at = self.clock.sample()?;
-        clock_follows(&self.high_water, &at)?;
+        self.check_clock_stops(None, false)?;
+        let at = match self.clock.sample() {
+            Ok(at) => at,
+            Err(error) => {
+                if matches!(error, StoreError::Clock) {
+                    self.clock_stop(ClockStopKind::FatalClock, None, None)?;
+                }
+                return Err(error);
+            }
+        };
+        if let Err(error) = self.follows(&self.high_water, &at) {
+            self.clock_stop(ClockStopKind::FatalClock, None, Some(at))?;
+            return Err(error);
+        }
         self.high_water = at.clone();
         Ok(at)
     }
+    fn follows(&self, before: &ClockSample, after: &ClockSample) -> StoreResult<()> {
+        check_follows(self.manifest.plan.clock_policy.as_ref(), before, after)
+    }
     fn dispatch_now(&mut self, attempt: Option<&Reservation>) -> StoreResult<ClockSample> {
         let at = self.sample()?;
+        self.check_clock_stops(attempt, true)?;
         let stage = self.stage();
-        within_stage(stage, &at)?;
-        if let Some(a) = attempt {
-            within_attempt(stage, a, &at, self.manifest.plan.budget.response_timeout_ms)?;
+        if let Err(error) = within_stage(stage, &at) {
+            if matches!(error, StoreError::Deadline) {
+                self.clock_stop(ClockStopKind::StageDeadline, None, Some(at))?;
+            }
+            return Err(error);
+        }
+        if let Some(a) = attempt
+            && let Err(error) =
+                within_attempt(stage, a, &at, self.manifest.plan.budget.response_timeout_ms)
+        {
+            if matches!(error, StoreError::Deadline) {
+                self.clock_stop(ClockStopKind::AttemptDeadline, Some(a.attempt_id), Some(at))?;
+            }
+            return Err(error);
         }
         resources(&self.root, &self.manifest.plan.budget)?;
         Ok(at)
+    }
+    fn check_clock_stops(&self, attempt: Option<&Reservation>, dispatch: bool) -> StoreResult<()> {
+        for stop in &self.cache.clock_stops {
+            match stop.kind {
+                ClockStopKind::FatalClock => return Err(StoreError::Clock),
+                ClockStopKind::StageDeadline
+                    if dispatch && stop.lease_sha256 == self.stage().lease_sha256 =>
+                {
+                    return Err(StoreError::Deadline);
+                }
+                ClockStopKind::AttemptDeadline
+                    if attempt.is_some_and(|a| Some(a.attempt_id) == stop.attempt_id) =>
+                {
+                    return Err(StoreError::Deadline);
+                }
+                _ => (),
+            }
+        }
+        Ok(())
+    }
+    fn clock_stop(
+        &mut self,
+        kind: ClockStopKind,
+        attempt_id: Option<u64>,
+        observed_at: Option<ClockSample>,
+    ) -> StoreResult<()> {
+        if self.manifest.plan.clock_policy.is_none() {
+            return Ok(());
+        }
+        let stop = ClockStop {
+            schema: "OF1_CLOCK_STOP_1".into(),
+            run_id: self.manifest.run_id.clone(),
+            aggregate_sha256: self.manifest.aggregate_sha256.clone(),
+            lease_sha256: self.stage().lease_sha256.clone(),
+            kind,
+            attempt_id,
+            high_water: self.high_water.clone(),
+            observed_at,
+        };
+        if self
+            .cache
+            .clock_stops
+            .iter()
+            .any(|prior| prior.filename() == stop.filename())
+        {
+            return Ok(());
+        }
+        let bytes = encode(&stop)?;
+        if bytes.len() as u64 > RECORD_LIMIT {
+            return Err(StoreError::Corrupt);
+        }
+        // Only a terminal observation adds one bounded durable record. No extra
+        // fsync occurs for a successful clock sample or network fragment. A torn
+        // marker fails audit rather than silently reopening the expired permit.
+        let path = self.root.join("pending").join(stop.filename());
+        self.cache.clock_stops.push(stop);
+        let persisted = (|| {
+            self.identity_guard()?;
+            self.write_new(&path, &bytes)?;
+            sync_dir(&self.root.join("pending"))
+        })();
+        if persisted.is_err() {
+            // A stop not durably recorded is itself a hard failure. Never let
+            // repaired I/O or another clock sample revive this process. The
+            // returned failure is not a claim that the marker was synced.
+            self.poisoned = true;
+        }
+        persisted
     }
     fn trip(&mut self, point: FaultPoint) -> StoreResult<()> {
         if self.fault == Some(point) {
@@ -1337,9 +1512,27 @@ impl<C: Clock> AcquisitionStore<C> {
     }
     fn refresh(&mut self) -> StoreResult<()> {
         let audit = self.audit()?;
+        if self.manifest.plan.clock_policy.is_some() {
+            let mut high = self.high_water.clone();
+            let samples = std::iter::once(&self.manifest.metadata_stage.started_at)
+                .chain(self.payload.as_ref().map(|p| &p.stage.started_at))
+                .chain(audit.attempts.iter().map(|a| &a.at))
+                .chain(audit.streams.values().map(|s| &s.latest_at))
+                .chain(audit.published.values().map(|p| &p.receipt.acquired_at))
+                .chain(audit.clock_stops.iter().map(|s| &s.high_water));
+            for at in samples {
+                self.follows(&self.manifest.metadata_stage.started_at, at)?;
+                if at.boot_ms > high.boot_ms {
+                    high = at.clone();
+                }
+            }
+            self.high_water = high;
+            self.cache = audit;
+            return Ok(());
+        }
         let mut high = self.manifest.metadata_stage.started_at.clone();
         if let Some(p) = &self.payload {
-            clock_follows(&high, &p.stage.started_at)?;
+            self.follows(&high, &p.stage.started_at)?;
             high = p.stage.started_at.clone();
         }
         for a in &audit.attempts {
@@ -1354,8 +1547,8 @@ impl<C: Clock> AcquisitionStore<C> {
             high.wall_ms = high.wall_ms.max(p.receipt.acquired_at.wall_ms);
             high.boot_ms = high.boot_ms.max(p.receipt.acquired_at.boot_ms);
         }
-        clock_follows(&self.high_water, &high)
-            .or_else(|_| clock_follows(&high, &self.high_water))?;
+        self.follows(&self.high_water, &high)
+            .or_else(|_| self.follows(&high, &self.high_water))?;
         self.high_water.wall_ms = self.high_water.wall_ms.max(high.wall_ms);
         self.high_water.boot_ms = self.high_water.boot_ms.max(high.boot_ms);
         self.cache = audit;
@@ -1385,6 +1578,7 @@ impl<C: Clock> AcquisitionStore<C> {
             }
             validate_stage(
                 &payload.stage,
+                self.manifest.plan.clock_policy.as_ref(),
                 &payload.lease.authority,
                 &payload.lease.budget,
                 &payload.lease,
@@ -1415,7 +1609,7 @@ impl<C: Clock> AcquisitionStore<C> {
             } else if a.request.sequence >= 4 {
                 return Err(StoreError::Corrupt);
             }
-            clock_follows(&previous, &a.at)?;
+            self.follows(&previous, &a.at)?;
             within_stage(self.stage_for(&a.request)?, &a.at)?;
             previous = a.at.clone();
             let prior = audit
@@ -1453,7 +1647,7 @@ impl<C: Clock> AcquisitionStore<C> {
         for attempt in &audit.attempts {
             for sequence in 0..attempt.request.sequence {
                 let p = audit.published.get(&sequence).ok_or(StoreError::Corrupt)?;
-                clock_follows(&p.receipt.acquired_at, &attempt.at)?;
+                self.follows(&p.receipt.acquired_at, &attempt.at)?;
             }
         }
         self.audit_payload_binding(&audit)?;
@@ -1476,7 +1670,7 @@ impl<C: Clock> AcquisitionStore<C> {
             }
             validate_payload(&self.manifest, &p.lease, &p.prepared, &attempts)?;
             for object in &metadata {
-                clock_follows(&object.receipt.acquired_at, &p.stage.started_at)?;
+                self.follows(&object.receipt.acquired_at, &p.stage.started_at)?;
             }
             crate::acquisition::verify_prepared_payload(
                 &self.manifest.plan,
@@ -1498,20 +1692,14 @@ impl<C: Clock> AcquisitionStore<C> {
                 .and_then(|s| s.to_str())
                 .ok_or(StoreError::Corrupt)?;
             if name == "quarantine.json" {
-                let (a, reason): (Reservation, String) =
-                    decode(&read_bounded(&path, RECORD_LIMIT)?)?;
-                if audit
-                    .attempts
-                    .get(usize::try_from(a.attempt_id).map_err(|_| StoreError::Corrupt)?)
-                    != Some(&a)
-                {
-                    return Err(StoreError::Corrupt);
-                }
-                return Err(match reason.as_str() {
-                    "SOURCE_DRIFT" => StoreError::SourceDrift,
-                    "CONFLICTING_BYTES" => StoreError::ConflictingBytes,
-                    _ => StoreError::Corrupt,
-                });
+                return Self::audit_quarantine(&path, audit);
+            }
+            if name == "clock-fatal.json"
+                || name.starts_with("stage-expired-")
+                || name.starts_with("attempt-expired-")
+            {
+                self.audit_clock_stop(&path, name, audit)?;
+                continue;
             }
             if name == "payload-intent.json" {
                 let p = self.payload.as_ref().ok_or(StoreError::Corrupt)?;
@@ -1542,7 +1730,7 @@ impl<C: Clock> AcquisitionStore<C> {
                 let a = audit.attempts.get(id).ok_or(StoreError::Corrupt)?;
                 let record = self.read_stream(a)?;
                 for later in audit.attempts.iter().skip(id + 1) {
-                    clock_follows(&record.latest_at, &later.at)?;
+                    self.follows(&record.latest_at, &later.at)?;
                 }
                 audit.streams.insert(id as u64, record);
                 continue;
@@ -1587,6 +1775,55 @@ impl<C: Clock> AcquisitionStore<C> {
             }
         }
         self.audit_retry_compatibility(audit)
+    }
+
+    fn audit_quarantine(path: &Path, audit: &Audit) -> StoreResult<()> {
+        let (a, reason): (Reservation, String) = decode(&read_bounded(path, RECORD_LIMIT)?)?;
+        if audit
+            .attempts
+            .get(usize::try_from(a.attempt_id).map_err(|_| StoreError::Corrupt)?)
+            != Some(&a)
+        {
+            return Err(StoreError::Corrupt);
+        }
+        Err(match reason.as_str() {
+            "SOURCE_DRIFT" => StoreError::SourceDrift,
+            "CONFLICTING_BYTES" => StoreError::ConflictingBytes,
+            _ => StoreError::Corrupt,
+        })
+    }
+    fn audit_clock_stop(&self, path: &Path, name: &str, audit: &mut Audit) -> StoreResult<()> {
+        let stop: ClockStop = decode(&read_bounded(path, RECORD_LIMIT)?)?;
+        let stage = [&self.manifest.metadata_stage]
+            .into_iter()
+            .chain(self.payload.as_ref().map(|p| &p.stage))
+            .find(|stage| stage.lease_sha256 == stop.lease_sha256)
+            .ok_or(StoreError::Corrupt)?;
+        let attempt = stop
+            .attempt_id
+            .map(|id| {
+                audit
+                    .attempts
+                    .get(usize::try_from(id).map_err(|_| StoreError::Corrupt)?)
+                    .ok_or(StoreError::Corrupt)
+            })
+            .transpose()?;
+        if attempt.is_some_and(|a| a.lease_sha256 != stop.lease_sha256) {
+            return Err(StoreError::Corrupt);
+        }
+        validate_clock_stop(
+            &stop,
+            &self.manifest.run_id,
+            &self.manifest.aggregate_sha256,
+            stage,
+            attempt.map(|a| (a.attempt_id, &a.at)),
+            self.manifest.plan.budget.response_timeout_ms,
+        )?;
+        if stop.filename() != name {
+            return Err(StoreError::Corrupt);
+        }
+        audit.clock_stops.push(stop);
+        Ok(())
     }
 
     fn audit_rejected(path: &Path, id: usize, audit: &Audit) -> StoreResult<()> {
@@ -1690,7 +1927,7 @@ impl<C: Clock> AcquisitionStore<C> {
             {
                 return Err(StoreError::Corrupt);
             }
-            clock_follows(&record.latest_at, &receipt.at)?;
+            self.follows(&record.latest_at, &receipt.at)?;
             within_attempt(
                 self.stage_for(&attempt.request)?,
                 attempt,
@@ -1751,7 +1988,7 @@ impl<C: Clock> AcquisitionStore<C> {
             {
                 return Err(StoreError::Corrupt);
             }
-            clock_follows(&stream.latest_at, &receipt.acquired_at)?;
+            self.follows(&stream.latest_at, &receipt.acquired_at)?;
             within_attempt(
                 self.stage_for(&a.request)?,
                 a,
@@ -1763,7 +2000,7 @@ impl<C: Clock> AcquisitionStore<C> {
                 .iter()
                 .skip(usize::try_from(a.attempt_id).map_err(|_| StoreError::Corrupt)? + 1)
             {
-                clock_follows(&receipt.acquired_at, &later.at)?;
+                self.follows(&receipt.acquired_at, &later.at)?;
             }
             let mut overlap = false;
             for (id, prior) in &audit.streams {
@@ -1831,6 +2068,9 @@ fn short_text(value: &str) -> bool {
 }
 
 fn validate_aggregate(plan: &AggregatePlan) -> StoreResult<()> {
+    if let Some(policy) = &plan.clock_policy {
+        policy.validate()?;
+    }
     if let Some(rate) = &plan.download_rate {
         rate.validate().map_err(|_| StoreError::Identity)?;
     }
@@ -1917,7 +2157,11 @@ fn validate_stage_budget(plan: &AggregatePlan, b: &StageBudget) -> StoreResult<(
     Ok(())
 }
 
-fn validate_authority(authority: &Authority, proposed: &str) -> StoreResult<()> {
+fn validate_authority(
+    policy: Option<&ClockPolicy>,
+    authority: &Authority,
+    proposed: &str,
+) -> StoreResult<()> {
     if let Authority::Approved {
         approval_id,
         operator,
@@ -1925,15 +2169,25 @@ fn validate_authority(authority: &Authority, proposed: &str) -> StoreResult<()> 
         not_after_ms,
         approved_plan_sha256,
         cost_confirmation,
+        clock_anchor,
     } = authority
-        && (!short_text(approval_id)
+    {
+        match (policy, clock_anchor) {
+            (Some(policy), Some(anchor)) => {
+                anchor.validate(policy, *approved_at_ms, *not_after_ms)?;
+            }
+            (None, None) => (),
+            _ => return Err(StoreError::Identity),
+        }
+        if !short_text(approval_id)
             || !short_text(operator)
             || *approved_at_ms == 0
             || not_after_ms <= approved_at_ms
             || approved_plan_sha256 != proposed
-            || cost_confirmation != "CONFIRMED_NO_CREDIT_SPEND")
-    {
-        return Err(StoreError::Identity);
+            || cost_confirmation != "CONFIRMED_NO_CREDIT_SPEND"
+        {
+            return Err(StoreError::Identity);
+        }
     }
     Ok(())
 }
@@ -1949,6 +2203,7 @@ fn validate_metadata(plan: &AggregatePlan, lease: &MetadataLease) -> StoreResult
         return Err(StoreError::Budget);
     }
     validate_authority(
+        plan.clock_policy.as_ref(),
         &lease.authority,
         &metadata_proposal_sha256(plan, &lease.budget)?,
     )
@@ -1971,6 +2226,7 @@ fn validate_payload(
     }
     validate_stage_budget(&manifest.plan, &lease.budget)?;
     validate_authority(
+        manifest.plan.clock_policy.as_ref(),
         &lease.authority,
         &payload_proposal_sha256(&manifest.plan, &lease.budget, prepared)?,
     )?;
@@ -2014,20 +2270,67 @@ fn validate_payload(
     Ok(())
 }
 
-fn make_stage(
+pub(crate) fn make_stage(
+    policy: Option<&ClockPolicy>,
     authority: &Authority,
     budget: &StageBudget,
     lease: &impl Serialize,
     started: &ClockSample,
 ) -> StoreResult<StageRecord> {
     valid_clock(started)?;
+    if let Some(policy) = policy {
+        policy.validate()?;
+        let mut deadline_boot_ms = started
+            .boot_ms
+            .checked_add(budget.max_runtime_ms)
+            .ok_or(StoreError::Clock)?;
+        let deadline_wall_ms = match authority {
+            Authority::Approved {
+                approved_at_ms,
+                not_after_ms,
+                clock_anchor: Some(anchor),
+                ..
+            } => {
+                anchor.validate(policy, *approved_at_ms, *not_after_ms)?;
+                anchor.admit_initialization(policy, started)?;
+                deadline_boot_ms = deadline_boot_ms.min(anchor.expires_at_boot_ms);
+                anchor
+                    .t0
+                    .wall_ms
+                    .checked_add(
+                        deadline_boot_ms
+                            .checked_sub(anchor.t0.boot_ms)
+                            .ok_or(StoreError::Clock)?,
+                    )
+                    .ok_or(StoreError::Clock)?
+            }
+            Authority::Fixture => started
+                .wall_ms
+                .checked_add(budget.max_runtime_ms)
+                .ok_or(StoreError::Clock)?,
+            Authority::Approved { .. } => return Err(StoreError::Identity),
+        };
+        return Ok(StageRecord {
+            authority: authority.clone(),
+            budget: budget.clone(),
+            lease_sha256: sha256(&encode(lease)?),
+            started_at: started.clone(),
+            deadline_wall_ms,
+            deadline_boot_ms,
+            clock_policy: Some(policy.clone()),
+        });
+    }
     let mut runtime = budget.max_runtime_ms;
     if let Authority::Approved {
         approved_at_ms,
         not_after_ms,
+        clock_anchor,
         ..
     } = authority
     {
+        if clock_anchor.is_some() {
+            return Err(StoreError::Identity);
+        }
         if started.wall_ms < *approved_at_ms || started.wall_ms >= *not_after_ms {
             return Err(StoreError::Deadline);
         }
@@ -2046,24 +2349,28 @@ fn make_stage(
             .boot_ms
             .checked_add(runtime)
             .ok_or(StoreError::Clock)?,
+        clock_policy: None,
     })
 }
 
-fn validate_stage(
+pub(crate) fn validate_stage(
     stage: &StageRecord,
+    policy: Option<&ClockPolicy>,
     authority: &Authority,
     budget: &StageBudget,
     lease: &impl Serialize,
 ) -> StoreResult<()> {
-    if &make_stage(authority, budget, lease, &stage.started_at)? != stage {
+    if &make_stage(policy, authority, budget, lease, &stage.started_at)? != stage {
         return Err(StoreError::Identity);
     }
     Ok(())
 }
 
-fn within_stage(stage: &StageRecord, at: &ClockSample) -> StoreResult<()> {
-    clock_follows(&stage.started_at, at)?;
-    if at.wall_ms >= stage.deadline_wall_ms || at.boot_ms >= stage.deadline_boot_ms {
+pub(crate) fn within_stage(stage: &StageRecord, at: &ClockSample) -> StoreResult<()> {
+    check_follows(stage.clock_policy.as_ref(), &stage.started_at, at)?;
+    if at.boot_ms >= stage.deadline_boot_ms
+        || stage.clock_policy.is_none() && at.wall_ms >= stage.deadline_wall_ms
+    {
         return Err(StoreError::Deadline);
     }
     Ok(())
@@ -2075,9 +2382,29 @@ fn within_attempt(
     at: &ClockSample,
     timeout: u64,
 ) -> StoreResult<()> {
-    clock_follows(&attempt.at, at)?;
+    check_recorded_attempt(stage, &attempt.at, at, timeout)
+}
+
+pub(crate) fn check_recorded_attempt(
+    stage: &StageRecord,
+    reserved_at: &ClockSample,
+    at: &ClockSample,
+    timeout: u64,
+) -> StoreResult<()> {
+    check_follows(stage.clock_policy.as_ref(), reserved_at, at)?;
     within_stage(stage, at)?;
-    if at.wall_ms - attempt.at.wall_ms >= timeout || at.boot_ms - attempt.at.boot_ms >= timeout {
+    if at
+        .boot_ms
+        .checked_sub(reserved_at.boot_ms)
+        .ok_or(StoreError::Clock)?
+        >= timeout
+        || stage.clock_policy.is_none()
+            && at
+                .wall_ms
+                .checked_sub(reserved_at.wall_ms)
+                .ok_or(StoreError::Clock)?
+                >= timeout
+    {
         return Err(StoreError::Deadline);
     }
     Ok(())
@@ -2088,6 +2415,64 @@ fn sum_charge<'a>(mut attempts: impl Iterator<Item = &'a Reservation>) -> StoreR
         n.checked_add(a.reserved_entity_bytes)
             .ok_or(StoreError::Budget)
     })
+}
+
+/// Read-only recognition of a bounded terminal observation; this never authorizes
+/// a request and does not invalidate the original captured bytes before the stop.
+pub(crate) fn validate_clock_stop(
+    stop: &ClockStop,
+    run_id: &str,
+    aggregate_sha256: &str,
+    stage: &StageRecord,
+    attempt: Option<(u64, &ClockSample)>,
+    timeout: u64,
+) -> StoreResult<()> {
+    let policy = stage.clock_policy.as_ref().ok_or(StoreError::Corrupt)?;
+    if stop.schema != "OF1_CLOCK_STOP_1"
+        || stop.run_id != run_id
+        || stop.aggregate_sha256 != aggregate_sha256
+        || stop.lease_sha256 != stage.lease_sha256
+    {
+        return Err(StoreError::Corrupt);
+    }
+    check_follows(Some(policy), &stage.started_at, &stop.high_water)?;
+    match stop.kind {
+        ClockStopKind::FatalClock => {
+            if stop.attempt_id.is_some()
+                || stop
+                    .observed_at
+                    .as_ref()
+                    .is_some_and(|at| check_follows(Some(policy), &stop.high_water, at).is_ok())
+            {
+                return Err(StoreError::Corrupt);
+            }
+        }
+        ClockStopKind::StageDeadline => {
+            if stop.attempt_id.is_some()
+                || stop.observed_at.as_ref() != Some(&stop.high_water)
+                || stop.high_water.boot_ms < stage.deadline_boot_ms
+            {
+                return Err(StoreError::Corrupt);
+            }
+        }
+        ClockStopKind::AttemptDeadline => {
+            let (id, reserved_at) = attempt.ok_or(StoreError::Corrupt)?;
+            check_follows(Some(policy), reserved_at, &stop.high_water)?;
+            if stop.attempt_id != Some(id)
+                || stop.observed_at.as_ref() != Some(&stop.high_water)
+                || stop
+                    .high_water
+                    .boot_ms
+                    .checked_sub(reserved_at.boot_ms)
+                    .ok_or(StoreError::Clock)?
+                    < timeout
+                || stop.high_water.boot_ms >= stage.deadline_boot_ms
+            {
+                return Err(StoreError::Corrupt);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn capture_disk_allowance(entity: u64) -> StoreResult<u64> {

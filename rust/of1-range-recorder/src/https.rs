@@ -59,6 +59,9 @@ pub type HttpsResult<T> = Result<T, HttpsError>;
 /// Optional operational observations, never acquisition authority or accounting.
 /// Implementations must remain bounded/nonblocking; failures cannot affect capture.
 pub trait CaptureObserver {
+    /// TLS is verified, but the HTTP request has not been admitted or sent yet.
+    /// Observers cannot extend the subsequent durable boot-clock gate.
+    fn tls_verified(&mut self) {}
     fn active(&self) -> bool {
         false
     }
@@ -161,6 +164,13 @@ fn capture_official<C: Clock>(
         .as_ref()
         .ok_or(RateError::Policy)?;
     policy.validate()?;
+    // New official dispatch cannot reinterpret a historical wall-clock lease.
+    store
+        .aggregate_plan()
+        .clock_policy
+        .as_ref()
+        .ok_or(StoreError::Identity)?
+        .validate()?;
     // One shared official request across all runs/processes of this user. Busy
     // coordination fails before reservation, DNS, TLS or a provider request.
     let _shared_download = crate::rate::OfficialDownloadGuard::acquire()?;
@@ -323,6 +333,9 @@ fn capture_reserved<C: Clock>(
         .as_ref()
         .map(|_| RequestRate::new(&deadline))
         .transpose()?;
+    // Instant may exclude suspend. Recheck durable BOOTTIME after DNS and at
+    // every transport admission, never derive a fresh relative stage deadline.
+    store.remaining_ms(&permit)?;
     let socket = TcpStream::connect_timeout(&address, deadline.remaining()?)?;
     let connection = ClientConnection::new(
         config,
@@ -331,11 +344,16 @@ fn capture_reserved<C: Clock>(
     let mut stream = StreamOwned::new(connection, DeadlineTcp { socket, deadline });
     // Complete TLS verification before an HTTP request can be dispatched.
     while stream.conn.is_handshaking() {
+        store.remaining_ms(&permit)?;
         stream.conn.complete_io(&mut stream.sock)?;
     }
     let encoded = encode_request(request, path)?;
+    observer.tls_verified();
+    store.remaining_ms(&permit)?;
     stream.write_all(encoded.as_bytes())?;
+    store.remaining_ms(&permit)?;
     stream.flush()?;
+    store.remaining_ms(&permit)?;
     let mut raw_head = Vec::new();
     if let Err(error) = read_header(&mut stream, &mut raw_head) {
         if !raw_head.is_empty() && store.remaining_ms(&permit).is_ok() {
@@ -411,6 +429,7 @@ fn capture_reserved<C: Clock>(
     // Content-Length (or HEAD's zero-entity semantics) is complete. A TLS peer
     // closing without close_notify is acceptable ONLY at this exact boundary.
     // A bounded extra plaintext byte is always rejected; no read-to-end occurs.
+    store.remaining_ms(&permit)?;
     eof_after_complete_entity(&mut stream)?;
     stream.sock.deadline.remaining()?;
     store.remaining_ms(&permit)?;

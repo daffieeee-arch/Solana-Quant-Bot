@@ -64,6 +64,15 @@ telemetry sampling boundary and add no per-fragment file write or fsync. The
 browser continues to display actual `traffic.speed_bps` independently of the
 configured limit; a measured low rate does not by itself prove throttling.
 
+New clock-policy runs carry a separate `clock_context`: UTC remains the actual
+producer timestamp, while elapsed/remaining time uses the immutable same-boot
+deadline. Boot mismatch or unavailable elapsed-clock evidence makes remaining
+runtime unknown, not zero or renewed authority. Session/sequence and boot order
+accept an actual UTC correction without accepting an older snapshot. Browser
+staleness uses monotonic time since the last changed sample for this policy;
+historical snapshots keep their original contract. None of these observational
+fields can admit an acquisition; see the [clock contract](OF1_STAGED_ACQUISITION.md#versioned-utc-provenance-and-boot-deadlines).
+
 ## Authentic and simulated views
 
 The later 2026-09-11 authentic payload has a separate

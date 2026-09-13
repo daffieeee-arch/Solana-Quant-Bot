@@ -78,6 +78,7 @@ impl Harness {
             schema: AGGREGATE_SCHEMA.into(),
             sample_identity,
             download_rate: None,
+            clock_policy: None,
             epoch: 978,
             format_source: FormatSource::pinned(),
             code_sha: "a".repeat(40),

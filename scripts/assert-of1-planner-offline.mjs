@@ -29,18 +29,18 @@ const LOOPBACK_SOURCE_HASHES = {
 // These files alone contain the reviewed production capability / fixture orchestration.
 // An exact source pin is not a network lease; no official request runs in this gate.
 const ACQUISITION_SOURCE_HASHES = {
-  'src/https.rs': '81f218c600066f3a2ee983b829f68824568a408c33972c8416eabb7d7527cc49',
-  'src/https/fixture.rs': 'ece9a8026e155be03beb5bdbc0c211adad14e486049f7d6c33c200c57f6ff1af',
-  'tests/acquisition_https.rs': '04e0f5c0f1ee6443e0d28d6167bca5574760ed0ee4db3bba93f8349c410cf886',
+  'src/https.rs': '01e08fdabef6be6b3b1b966457ffa57748fc033448f7f551fba4ad5deb36a86e',
+  'src/https/fixture.rs': 'cbc520a5cc3e8fc3a22eb6e473a104cdc155207a2aaac25f4e8f21e5f5c47360',
+  'tests/acquisition_https.rs': '8612ae55ded39f1c1252de7cda00903adadddb528ff1dfefce0cf9480548890d',
   'tests/acquisition_e2e.rs': 'f535c35a39a7a3069c847017ead8bfe4a347493854deec56a7628a405ca5358e',
-  'src/bin/of1-acquisition-fixture-evidence.rs': '65f4efab9dbaeb1f6c55ab34e69b556fb10452584c65eae77f257b528c795d40',
+  'src/bin/of1-acquisition-fixture-evidence.rs': 'b97f14882816bc65e7c0ce08ebc9c117152e0b9850865cdc8bcff2b35ca9f05f',
 };
 // Local-only operational telemetry is a separate, default-disabled capability.
 // Pin its Unix IPC and sealed simulator, never grant a directory-wide exception.
 const MONITOR_SOURCE_HASHES = {
-  'src/monitor/relay.rs': '5b9ace8af2a8b7a992fc8dd929f141aec9d4f73f52ce61ef2af3fb06f3680f0a',
-  'tests/monitor_ipc.rs': '3693c0c8f570784743d06a4118c996302b19d688afd530afb4e6fbd4652cdb8a',
-  'src/bin/of1-monitor-simulation.rs': '6603e0c6c4804e7c2914999ce2be0ecf95b264d87089baa4565b649d5ecacc9b',
+  'src/monitor/relay.rs': '236744232c2916f09b96f27473300f67dadd6e71e6b91b56ea4caf8b193a8135',
+  'tests/monitor_ipc.rs': 'b0d3b8719bfc4faf29ad2cdbc8652283ac866256cd492a823ca7698272b8d8c5',
+  'src/bin/of1-monitor-simulation.rs': '72c773d485506ca41cb74d19901488fec10efee073371f14452cae334f7d259d',
 };
 
 export function validateOf1PlannerInputs(manifest, lock, sources) {

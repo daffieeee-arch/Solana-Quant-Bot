@@ -34,10 +34,16 @@ export interface MonitorSnapshot {
     waiting: boolean | null;
     process_wait_ns: number | null;
   };
+  clock_context?: {
+    policy: { schema: 'OF1_BOOT_CLOCK_POLICY_1'; version: 1; initialization_window_ms: 600_000; approval_validity_ms: 1_200_000 };
+    boot_id: string; started_at_boot_ms: number; deadline_boot_ms: number;
+    observed_boot_ms: number | null;
+    runtime_status: 'SAME_BOOT' | 'UNAVAILABLE_CLOCK' | 'UNAVAILABLE_BOOT_MISMATCH' | 'UNAVAILABLE_BOOT_ROLLBACK';
+  };
   storage: { used_bytes: number; available_bytes: number; cap_bytes: number };
   budgets: {
     attempts_remaining: number; entity_bytes_remaining: number; stage_attempts_remaining: number;
-    stage_entity_bytes_remaining: number; runtime_remaining_ms: number;
+    stage_entity_bytes_remaining: number; runtime_remaining_ms: number | null;
   };
   operations: Array<{
     sequence: number; method: string; path: string; range: string | null;
@@ -154,7 +160,24 @@ export function validateMonitorSnapshot(value: unknown): asserts value is Monito
       || (limit.waiting === true && s.stage !== 'DOWNLOADING')) fail();
   }
   numbers(s.storage, ['used_bytes', 'available_bytes', 'cap_bytes']);
-  numbers(s.budgets, ['attempts_remaining', 'entity_bytes_remaining', 'stage_attempts_remaining', 'stage_entity_bytes_remaining', 'runtime_remaining_ms']);
+  const budgets = numbers(s.budgets, ['attempts_remaining', 'entity_bytes_remaining', 'stage_attempts_remaining', 'stage_entity_bytes_remaining']);
+  nullable(budgets.runtime_remaining_ms, integer);
+  if ('clock_context' in s) {
+    const clock = numbers(s.clock_context, ['started_at_boot_ms', 'deadline_boot_ms']);
+    text(clock.boot_id); if (clock.boot_id === '' || String(clock.boot_id).length > 128) fail();
+    nullable(clock.observed_boot_ms, integer);
+    choice(clock.runtime_status, ['SAME_BOOT', 'UNAVAILABLE_CLOCK', 'UNAVAILABLE_BOOT_MISMATCH', 'UNAVAILABLE_BOOT_ROLLBACK']);
+    const policy = numbers(clock.policy, ['version', 'initialization_window_ms', 'approval_validity_ms']);
+    choice(policy.schema, ['OF1_BOOT_CLOCK_POLICY_1']);
+    if (policy.version !== 1 || policy.initialization_window_ms !== 600_000 || policy.approval_validity_ms !== 1_200_000
+      || Object.keys(clock).sort().join(',') !== 'boot_id,deadline_boot_ms,observed_boot_ms,policy,runtime_status,started_at_boot_ms'
+      || Object.keys(policy).sort().join(',') !== 'approval_validity_ms,initialization_window_ms,schema,version'
+      || Number(clock.deadline_boot_ms) < Number(clock.started_at_boot_ms)
+      || (clock.observed_boot_ms !== null && Number(clock.observed_boot_ms) < Number(clock.started_at_boot_ms))
+      || (clock.runtime_status === 'SAME_BOOT') !== (budgets.runtime_remaining_ms !== null)
+      || (clock.runtime_status === 'SAME_BOOT' && (clock.observed_boot_ms === null
+        || budgets.runtime_remaining_ms !== Math.max(0, Number(clock.deadline_boot_ms) - Number(clock.observed_boot_ms))))) fail();
+  } else if (budgets.runtime_remaining_ms === null) fail();
   array(s.operations, 32, value => {
     const row = numbers(value, ['sequence', 'published_bytes', 'attempts']);
     nullable(row.received_bytes, integer);
@@ -170,6 +193,22 @@ export function validateMonitorSnapshot(value: unknown): asserts value is Monito
     if (!/^[0-9a-f]{64}$/.test(row.sha256)) fail();
   });
   array(s.errors, 16, text);
+}
+
+/** Order new snapshots by same-boot samples and producer sequence, never UTC. */
+export function monitorSnapshotRegressed(old: MonitorSnapshot, fresh: MonitorSnapshot): boolean {
+  if (!old.clock_context && !fresh.clock_context) {
+    return fresh.updated_at_ms < old.updated_at_ms
+      || (fresh.session_id === old.session_id && fresh.sequence < old.sequence);
+  }
+  if (!old.clock_context || !fresh.clock_context || old.clock_context.boot_id !== fresh.clock_context.boot_id) return true;
+  if (fresh.session_id === old.session_id) {
+    if (fresh.sequence < old.sequence) return true;
+    return old.clock_context.observed_boot_ms !== null && fresh.clock_context.observed_boot_ms !== null
+      && fresh.clock_context.observed_boot_ms < old.clock_context.observed_boot_ms;
+  }
+  return old.clock_context.observed_boot_ms === null || fresh.clock_context.observed_boot_ms === null
+    || fresh.clock_context.observed_boot_ms <= old.clock_context.observed_boot_ms;
 }
 
 export function parseMonitorResponse(value: unknown): MonitorResponse {

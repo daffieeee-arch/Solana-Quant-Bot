@@ -41,6 +41,7 @@ pub fn source_sha256() -> String {
         include_bytes!("lib.rs"),
         include_bytes!("sample.rs"),
         include_bytes!("rate.rs"),
+        include_bytes!("clock_contract.rs"),
         crate::sample::SELECTION_PLAN,
         include_bytes!("../Cargo.toml"),
         include_bytes!("../Cargo.lock"),

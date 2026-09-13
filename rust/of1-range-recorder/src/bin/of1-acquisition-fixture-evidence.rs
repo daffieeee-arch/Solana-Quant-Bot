@@ -82,6 +82,7 @@ fn plan() -> Result<AggregatePlan> {
         schema: AGGREGATE_SCHEMA.into(),
         sample_identity: None,
         download_rate: None,
+        clock_policy: None,
         epoch: 978,
         format_source: FormatSource::pinned(),
         code_sha: BASELINE.into(),

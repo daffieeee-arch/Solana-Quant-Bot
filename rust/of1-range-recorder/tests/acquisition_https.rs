@@ -138,6 +138,7 @@ fn plans(timeout: u64) -> (AggregatePlan, MetadataLease) {
         schema: AGGREGATE_SCHEMA.into(),
         sample_identity: None,
         download_rate: Some(DownloadRate::standard()),
+        clock_policy: Some(of1_range_recorder::clock_contract::ClockPolicy::standard()),
         epoch: 978,
         format_source: FormatSource::pinned(),
         code_sha: "a".repeat(40),
@@ -352,14 +353,22 @@ fn unexpected_status_length_or_compression_never_reads_an_entity() {
 fn approved_authority_is_rejected_by_fixture_before_socket_or_reservation() {
     let temp = tempfile::tempdir().unwrap();
     let (plan, mut lease) = plans(3000);
-    let now = SystemClock.sample().unwrap().wall_ms;
+    let sample = SystemClock.sample().unwrap();
+    let now = sample.wall_ms;
     lease.authority = Authority::Approved {
         approval_id: "SYNTHETIC_NEGATIVE_TEST_NOT_A_LIVE_APPROVAL".into(),
         operator: "OFFLINE_TEST".into(),
         approved_at_ms: now,
-        not_after_ms: now + 60_000,
+        not_after_ms: now + 1_200_000,
         approved_plan_sha256: metadata_proposal_sha256(&plan, &lease.budget).unwrap(),
         cost_confirmation: "CONFIRMED_NO_CREDIT_SPEND".into(),
+        clock_anchor: Some(
+            of1_range_recorder::clock_contract::ApprovalAnchor::new(
+                plan.clock_policy.as_ref().unwrap(),
+                sample,
+            )
+            .unwrap(),
+        ),
     };
     let mut store =
         AcquisitionStore::create(&temp.path().join("run"), plan, lease, SystemClock).unwrap();
@@ -394,6 +403,7 @@ fn official_rate_policy_gate_rejects_legacy_missing_policy_before_dns_or_reserva
     let temp = tempfile::tempdir().unwrap();
     let (mut plan, mut lease) = plans(3000);
     plan.download_rate = None;
+    plan.clock_policy = None;
     let now = SystemClock.sample().unwrap().wall_ms;
     lease.authority = Authority::Approved {
         approval_id: "SYNTHETIC_NEGATIVE_TEST_NOT_A_LIVE_APPROVAL".into(),
@@ -402,6 +412,7 @@ fn official_rate_policy_gate_rejects_legacy_missing_policy_before_dns_or_reserva
         not_after_ms: now + 60_000,
         approved_plan_sha256: metadata_proposal_sha256(&plan, &lease.budget).unwrap(),
         cost_confirmation: "CONFIRMED_NO_CREDIT_SPEND".into(),
+        clock_anchor: None,
     };
     let mut store =
         AcquisitionStore::create(&temp.path().join("run"), plan, lease, SystemClock).unwrap();
@@ -489,6 +500,92 @@ fn entity_rate_observations_follow_actual_tls_bytes_not_capacity_or_attempt_allo
             );
         }
     }
+}
+
+#[cfg(feature = "network-of1")]
+#[test]
+fn official_new_binary_cannot_reinterpret_a_legacy_wall_clock_approval() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut plan, mut lease) = plans(3000);
+    plan.clock_policy = None;
+    let now = SystemClock.sample().unwrap().wall_ms;
+    lease.authority = Authority::Approved {
+        approval_id: "SYNTHETIC_NEGATIVE_TEST_NOT_A_LIVE_APPROVAL".into(),
+        operator: "OFFLINE_TEST".into(),
+        approved_at_ms: now,
+        not_after_ms: now + 60_000,
+        approved_plan_sha256: metadata_proposal_sha256(&plan, &lease.budget).unwrap(),
+        cost_confirmation: "CONFIRMED_NO_CREDIT_SPEND".into(),
+        clock_anchor: None,
+    };
+    let mut store =
+        AcquisitionStore::create(&temp.path().join("run"), plan, lease, SystemClock).unwrap();
+    assert!(matches!(
+        of1_range_recorder::https::OfficialHttps::capture(&mut store, 0),
+        Err(HttpsError::Store(
+            of1_range_recorder::durable::StoreError::Identity
+        ))
+    ));
+    assert_eq!(store.progress().unwrap().attempts_reserved, 0);
+}
+
+#[test]
+fn suspend_expiry_after_tls_never_sends_http_or_renews_the_deadline() {
+    use of1_range_recorder::durable::ClockSample;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    };
+    #[derive(Clone)]
+    struct ElapsedClock(Arc<AtomicU64>);
+    impl Clock for ElapsedClock {
+        fn sample(&self) -> Result<ClockSample, StoreError> {
+            Ok(ClockSample {
+                wall_ms: 1_000_000,
+                boot_ms: self.0.load(Ordering::SeqCst),
+                boot_id: "fixture-suspend-boot".into(),
+            })
+        }
+    }
+    struct SuspendAfterTls(Arc<AtomicU64>);
+    impl CaptureObserver for SuspendAfterTls {
+        fn tls_verified(&mut self) {
+            // Deterministic suspend/downtime: Instant and UTC do not advance,
+            // but the original stage's elapsed-boot deadline has been reached.
+            self.0.store(160_000, Ordering::SeqCst);
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("run");
+    let clock = ElapsedClock(Arc::new(AtomicU64::new(100_000)));
+    let (plan, lease) = plans(3000);
+    let mut store = AcquisitionStore::create(&root, plan.clone(), lease, clock.clone()).unwrap();
+    let lease_hash = store.progress().unwrap().current_lease_sha256;
+    let server =
+        FixtureServer::start(OF1_SERVER_NAME, vec![response(200, 1, vec![0], true)]).unwrap();
+    let requests = server.request_byte_counter();
+    let result = FixtureHttps::new(server.port(), server.root_der())
+        .unwrap()
+        .capture_observed(&mut store, 0, &mut SuspendAfterTls(clock.0.clone()));
+    assert!(matches!(
+        result,
+        Err(HttpsError::Store(StoreError::Deadline))
+    ));
+    assert!(server.finish().is_err()); // Peer closed after TLS, before HTTP.
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+    assert_eq!(store.progress().unwrap().attempts_reserved, 1);
+    assert_eq!(store.progress().unwrap().published_requests, 0);
+    drop(store);
+    clock.0.store(160_001, Ordering::SeqCst);
+    let mut resumed = AcquisitionStore::resume(&root, &plan, &lease_hash, clock.clone()).unwrap();
+    assert!(matches!(resumed.reserve(0), Err(StoreError::Deadline)));
+    assert_eq!(resumed.progress().unwrap().attempts_reserved, 1);
+    drop(resumed);
+    clock.0.store(100_001, Ordering::SeqCst);
+    assert!(matches!(
+        AcquisitionStore::resume(&root, &plan, &lease_hash, clock),
+        Err(StoreError::Clock)
+    ));
 }
 
 #[test]

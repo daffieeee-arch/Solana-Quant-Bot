@@ -3,9 +3,10 @@ use of1_range_recorder::{
     FormatSource,
     acquisition::{derive_payload_from_metadata, read_limited, verify_payload},
     car::VerificationLimits,
+    clock_contract::{ClockPolicy, check_follows},
     dataset_location::validate_dataset_location,
     durable::{
-        SystemClock,
+        Clock, SystemClock,
         acquisition::{
             AGGREGATE_SCHEMA, AcquisitionStore, AggregateBudget, AggregatePlan, Authority,
             MetadataLease, PayloadLease, PreparedPayload, StageBudget, current_executable_sha256,
@@ -28,6 +29,54 @@ fn read<T: DeserializeOwned>(path: &str) -> Result<T> {
 fn print(value: &impl Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+// Same policy and unmodified clock sources as the recorder. This observation
+// grants no authority, creates no root/lease and cannot reset an approval T0.
+fn clock_preflight(plan: &AggregatePlan) -> Result<serde_json::Value> {
+    let policy = plan
+        .clock_policy
+        .as_ref()
+        .ok_or("new clock policy required")?;
+    policy.validate()?;
+    let first = SystemClock.sample()?;
+    let mut previous = first.clone();
+    let started = std::time::Instant::now();
+    let mut samples = 1u64;
+    let mut utc_corrections = Vec::new();
+    let mut backwards_utc_samples = 0u64;
+    let mut violation = None;
+    while started.elapsed() < std::time::Duration::from_secs(5) {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let current = SystemClock.sample()?;
+        if let Err(error) = check_follows(Some(policy), &previous, &current) {
+            violation = Some(
+                serde_json::json!({"reason":error.to_string(),"before":previous,"after":current}),
+            );
+            previous = current;
+            samples += 1;
+            break;
+        }
+        if current.wall_ms < previous.wall_ms {
+            backwards_utc_samples += 1;
+            if utc_corrections.len() < 16 {
+                utc_corrections.push(serde_json::json!({"before":previous,"after":current}));
+            }
+        }
+        samples += 1;
+        previous = current;
+    }
+    Ok(serde_json::json!({
+        "schema":"OF1_CLOCK_PREFLIGHT_1", "policy":policy,
+        "first":first,"last":previous,"samples":samples,
+        "elapsed_observation_ms":u64::try_from(started.elapsed().as_millis())?,
+        "backwards_utc_samples":backwards_utc_samples,"utc_correction_examples":utc_corrections,
+        "status":if violation.is_some(){"STOP_CLOCK_CONTRACT_VIOLATION"}else{"SAME_BOOT_NONDECREASING_ELAPSED_CLOCK"},
+        "violation":violation,
+        "utc_role":"UNMODIFIED_OPERATIONAL_PROVENANCE_NOT_ELAPSED_AUTHORITY",
+        "read_only":true,"approved":false,"lease_created":false,"networkEnabled":false,
+        "limitation":"Bounded present observation, not a guarantee of future clock stability or approval."
+    }))
 }
 
 fn metadata_budget(fixed_pilot: bool) -> StageBudget {
@@ -78,6 +127,15 @@ fn main() {
 #[allow(clippy::too_many_lines)]
 fn run(args: &[String]) -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["clock-sample"] => print(&SystemClock.sample()?),
+        ["clock-preflight", plan] => {
+            let observation = clock_preflight(&read(plan)?)?;
+            print(&observation)?;
+            if !observation["violation"].is_null() {
+                return Err("clock preflight observed a boot identity/elapsed-clock violation".into());
+            }
+            Ok(())
+        }
         ["dataset-preflight", root] => {
             let canonical_root = validate_dataset_location(Path::new(root))?;
             print(&serde_json::json!({
@@ -100,6 +158,7 @@ fn run(args: &[String]) -> Result<()> {
                 schema: AGGREGATE_SCHEMA.into(), epoch: 978,
                 sample_identity: (*command == "metadata-pilot-proposal").then(of1_range_recorder::sample::SampleIdentity::fixed_pilot),
                 download_rate: Some(of1_range_recorder::rate::DownloadRate::standard()),
+                clock_policy: Some(ClockPolicy::standard()),
                 format_source: FormatSource::pinned(), code_sha: (*code_sha).into(),
                 toolchain_fingerprint: (*toolchain_fingerprint).into(),
                 executable_sha256: current_executable_sha256()?,
@@ -182,7 +241,7 @@ fn run(args: &[String]) -> Result<()> {
             capture_stage_monitored(root, plan, lease_hash, socket)
         }
         _ => Err(concat!(
-            "usage: of1-acquire dataset-preflight ROOT | ",
+            "usage: of1-acquire clock-sample | clock-preflight AGGREGATE_JSON | dataset-preflight ROOT | ",
             "metadata-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-pilot-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-init ROOT AGGREGATE_JSON METADATA_LEASE_JSON | ",
@@ -296,6 +355,22 @@ fn capture_stage_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn preflight_uses_recorder_policy_without_clamping_utc() {
+        let before = of1_range_recorder::durable::ClockSample {
+            wall_ms: 1_000_000,
+            boot_ms: 100_000,
+            boot_id: "fixture-same-boot".into(),
+        };
+        let mut after = before.clone();
+        after.wall_ms -= 2;
+        after.boot_ms += 10;
+        check_follows(Some(&ClockPolicy::standard()), &before, &after).unwrap();
+        assert_eq!(after.wall_ms, 999_998);
+        assert!(check_follows(None, &before, &after).is_err());
+        after.boot_ms = before.boot_ms - 1;
+        assert!(check_follows(Some(&ClockPolicy::standard()), &before, &after).is_err());
+    }
     #[test]
     fn decision_operations_use_rust_requests_and_preserved_official_paths() {
         let operations = metadata_operations(978).unwrap();

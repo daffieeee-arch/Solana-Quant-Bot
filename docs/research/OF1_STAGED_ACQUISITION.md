@@ -84,6 +84,66 @@ terms require review, not a different endpoint or implicit spending permission.
 
 ## Concrete contracts and state
 
+### Versioned UTC provenance and boot deadlines
+
+New proposals bind `clock_policy = OF1_BOOT_CLOCK_POLICY_1` (version 1).
+The [clock contract](../../rust/of1-range-recorder/src/clock_contract.rs) is shared
+by the recorder and `of1-acquire clock-preflight AGGREGATE_JSON`. A preflight
+observation is read-only and creates no approval, lease or run. It reports actual
+UTC corrections without searching repeatedly for a conveniently green probe.
+
+| Clock role | New policy |
+|---|---|
+| UTC (`wall_ms`) | Actual unmodified operational provenance; no clamping, synthetic monotonic UTC or millisecond tolerance. Never a market-time feature or elapsed-time authority |
+| Suspend-aware Linux boot elapsed (`boot_ms`) | Initialization, approval expiry, stage/attempt runtime and elapsed time; process downtime and suspend consume time |
+| `boot_id` | Immutable approval/run binding; a boot change or decreasing boot time is a hard stop |
+
+Only after a new exact user GO, record the real T0 clock pair once. The immutable
+approval anchor binds initialization by `T0.boot_ms + 600000` and expiry at
+`T0.boot_ms + 1200000`; equality at expiry is expired. The declared UTC
+`approved_at_ms` / `not_after_ms` must match T0 UTC / T0 UTC plus the approved
+duration, but those are provenance/nominal mapping, not a second current-UTC
+expiry test. A forward UTC correction does not consume boot time; a backward
+correction does not grant time. An actually elapsed approval never revives.
+
+The stage deadline is fixed at admission to the earlier of stage-start plus its
+runtime and the approval's boot expiry. Every attempt retains its original
+boot start/timeout. Restart restores those values and spent budgets, not a new
+T0 or deadline. `deadline_wall_ms` is a nominal UTC projection for new-policy
+records, not an observed timestamp or independent permission boundary. Same-boot
+ordering and checked boot subtraction replace UTC subtraction throughout the new
+writer, receipt reader and operational elapsed/remaining calculations.
+
+Hard boot/expiry observations are retained once in bounded stop records: a boot
+fault is run-global; stage expiry belongs to that lease; attempt timeout belongs
+to that attempt. A later lower clock/restart cannot erase a durably recorded stop.
+Write/fsync failure poisons the current process; a partial marker fails audit.
+A crash before a marker is durable cannot prove that unrecorded observation;
+the previously persisted approval/stage/attempt deadlines still remain fixed. A
+timed-out attempt may still take a separately bounded retry; an expired metadata
+lease cannot dispatch again. Completed metadata remains available for forensic
+reading and a separately approved payload stage. No normal-fragment fsync or
+unbounded clock journal is added.
+
+Before run creation, a hard preflight/initialization failure belongs in the
+external execution stop receipt alongside the once-recorded GO. It ends that
+execution: do not register a replacement T0 or repeat initialization under the
+same approval. No unobserved boot-clock fault is claimed to be detectable.
+
+Absent policy preserves the previous dual-clock serialized contract and checks.
+New official dispatch refuses that legacy authority before reservation/DNS;
+historical binaries, manifests, leases and failures are not changed or resumed.
+The new policy requires a new binary, approval target and explicit GO. It does
+not override certificate validity checks or change the system/WSL clock.
+
+The retained pre-registration evidence measured UTC
+`1789321632574 → 1789321632572` while boot time remained `95228460` under the same
+boot ID. This proves a 2 ms UTC regression, and the old strict UTC-order predicate
+explains the old stop. It does **not** establish whether host/guest clock
+synchronization or another timekeeping mechanism caused it. No repeated live
+probe, time-service change or retrospective rewriting supplies that missing
+causal evidence. Deterministic clock fixtures test the new contract separately.
+
 ### Shared default download rate
 
 New official plans explicitly bind the standard `download_rate`: **700 decimal
@@ -146,9 +206,11 @@ stays charged. Retained streams and publication copies count toward disk usage.
 Single writer locking, immutable files and complete audits at reserve/resume/
 publication boundaries protect exact pairs, content hashes and ordering.
 
-Every stage records wall-clock and boot-clock deadlines and boot identity.
-Restart cannot renew them. A reboot, rollback, code/executable or toolchain-plan
-identity change rejects resume. Declared code/toolchain hashes are approval-bound
+Every stage records its versioned clock policy, fixed deadlines and boot identity.
+Restart cannot renew them. A reboot, boot rollback, code/executable or toolchain-plan
+identity change rejects resume; historical policy also rejects UTC rollback.
+New-policy UTC corrections retain actual provenance under the contract above.
+Declared code/toolchain hashes are approval-bound
 provenance, not independently attested builds; the executable hash is measured.
 Expired metadata may be inspected and used for separately approved payload
 admission, but never dispatched again. Metadata and payload runtime allocations
