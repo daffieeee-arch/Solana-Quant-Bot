@@ -31,6 +31,10 @@ function snapshot(overrides: Partial<MonitorSnapshot> = {}): MonitorSnapshot {
 function envelope(...snapshots: MonitorSnapshot[]): MonitorResponse {
   return { schema_version: 'OF1_MONITOR_HTTP_1', read_at_unix_ms: wall, runs: snapshots.map(snapshot => ({ id: snapshot.id, state: 'READY', snapshot })) };
 }
+function rateLimit(): NonNullable<MonitorSnapshot['rate_limit']> {
+  return { policy: { unit: 'RESPONSE_ENTITY_BYTES', bytes_per_second: 87_500_000, burst_bytes: 65_536,
+    concurrency: 1, scope: 'SAME_USER_OFFICIAL_OF1_ALL_RUNS' }, waiting: false, process_wait_ns: 0 };
+}
 function recorded(): MonitorSnapshot {
   return snapshot({
     id: 'b'.repeat(64), kind: 'AUTHENTIC_METADATA', mode: 'RECORDED', stage: 'COMPLETE', label: 'OF1 epoch 978 · metadata',
@@ -85,6 +89,45 @@ describe('separate V2 acquisition monitor', () => {
     expect(screen.queryByText(/STALE · metingen/)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /CAR HEAD receipt/ })).toHaveAttribute('href', `/api/acquisition/runs/${'b'.repeat(64)}/artifacts/receipt-3`);
     expect(screen.getByText('Geen responsebody')).toBeInTheDocument();
+    expect(screen.getByText(/Historische snelheidsinstelling en limiterwacht onbekend/)).toBeInTheDocument();
+  });
+
+  it('shows the shared decimal limit and changes only from measured Rust rate/wait observations', async () => {
+    const first = snapshot({ rate_limit: rateLimit() });
+    await mount(envelope(first));
+    const panel = within(screen.getByRole('region', { name: 'Gedeelde downloadsnelheidslimiet' }));
+    expect(panel.getByText('700 Mbps · 87.500.000 B/s')).toBeInTheDocument();
+    expect(panel.getByText('64 KiB · concurrency 1')).toBeInTheDocument();
+    expect(panel.getByText('Niet aan het wachten bij laatste meting')).toBeInTheDocument();
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('0 ms');
+    const second = snapshot({ rate_limit: { ...rateLimit(), waiting: true, process_wait_ns: 250_749_029 },
+      sequence: 2, updated_at_ms: wall + 700, traffic: { ...first.traffic, speed_bps: 262144 } });
+    vi.mocked(fetch).mockImplementation(async (url) => respond(String(url).endsWith('/verification')
+      ? { state: 'UNAVAILABLE', reason: 'FILE_UNAVAILABLE' } : envelope(second)) as Response);
+    await act(async () => { await vi.advanceTimersByTimeAsync(701); });
+    expect(panel.getByText('Wacht op gedeelde limiet')).toBeInTheDocument();
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('250,7 ms');
+    expect(screen.getByText('Downloadsnelheid').parentElement).toHaveTextContent('256 KiB/s');
+    expect(panel.getByText(/Geen exacte fysieke netwerkcap/)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(panel.queryByText('Wacht op gedeelde limiet')).not.toBeInTheDocument();
+    expect(panel.getByText('Limiter nu').parentElement).toHaveTextContent('Nog onbekend');
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('250,7 ms · laatste meting, verouderd');
+  });
+
+  it('imports the plan limit without fabricating historical limiter observations', async () => {
+    const s = recorded(); s.rate_limit = { ...rateLimit(), waiting: null, process_wait_ns: null };
+    await mount(envelope(s));
+    const panel = within(screen.getByRole('region', { name: 'Gedeelde downloadsnelheidslimiet' }));
+    expect(panel.getByText('700 Mbps · 87.500.000 B/s')).toBeInTheDocument();
+    expect(panel.getByText('Limiter nu').parentElement).toHaveTextContent('Nog onbekend');
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('Nog onbekend');
+    expect(panel.queryByText('0 ms')).not.toBeInTheDocument();
+  });
+
+  it('does not round a measured positive sub-millisecond wait down to zero', async () => {
+    await mount(envelope(snapshot({ rate_limit: { ...rateLimit(), process_wait_ns: 1 } })));
+    expect(screen.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('<0,1 ms');
   });
 
   it('reacts to measured bytes during a request before verification or publication', async () => {
@@ -296,6 +339,31 @@ describe('separate V2 acquisition monitor', () => {
 });
 
 describe('Rust snapshot display contract', () => {
+  it('accepts optional old snapshots but rejects unsafe or contradictory rate-limit telemetry', () => {
+    expect(parseMonitorResponse(envelope(snapshot()))).toBeTruthy();
+    const s = snapshot({ rate_limit: rateLimit() });
+    expect(parseMonitorResponse(envelope(s))).toBeTruthy();
+    for (const mutate of [
+      (r: any) => { r.rate_limit = null; },
+      (r: any) => { r.rate_limit.policy.bytes_per_second = 0; },
+      (r: any) => { r.rate_limit.policy.bytes_per_second = 87_500_001; },
+      (r: any) => { r.rate_limit.policy.unit = 'PHYSICAL_WIRE_BYTES'; },
+      (r: any) => { r.rate_limit.policy.scope = 'PER_CONNECTION'; },
+      (r: any) => { r.rate_limit.policy.burst_bytes = 65_537; },
+      (r: any) => { r.rate_limit.policy.concurrency = 2; },
+      (r: any) => { r.rate_limit.process_wait_ns = -1; },
+      (r: any) => { r.rate_limit.process_wait_ns = Number.MAX_SAFE_INTEGER + 1; },
+      (r: any) => { r.rate_limit.waiting = 'true'; },
+      (r: any) => { r.rate_limit.waiting = null; },
+      (r: any) => { r.rate_limit.any_new_measurement = 1; },
+      (r: any) => { r.rate_limit.policy.unknown = 1; },
+      (r: any) => { r.mode = 'RECORDED'; },
+      (r: any) => { r.stage = 'COMPLETE'; r.rate_limit.waiting = true; },
+    ]) {
+      const changed = structuredClone(s); mutate(changed);
+      expect(() => parseMonitorResponse(envelope(changed))).toThrow();
+    }
+  });
   it('accepts explicit unknowns and preserves every Rust measurement unchanged', () => {
     const response = envelope(snapshot(), recorded());
     expect(parseMonitorResponse(response)).toBe(response);

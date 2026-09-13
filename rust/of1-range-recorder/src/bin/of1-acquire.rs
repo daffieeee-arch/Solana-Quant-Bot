@@ -9,7 +9,7 @@ use of1_range_recorder::{
         acquisition::{
             AGGREGATE_SCHEMA, AcquisitionStore, AggregateBudget, AggregatePlan, Authority,
             MetadataLease, PayloadLease, PreparedPayload, StageBudget, current_executable_sha256,
-            metadata_proposal_sha256, payload_proposal_sha256,
+            metadata_proposal_sha256, metadata_requests, payload_proposal_sha256,
         },
     },
 };
@@ -38,6 +38,24 @@ fn metadata_budget(fixed_pilot: bool) -> StageBudget {
         max_response_entity_bytes_total: 15_576_576,
         max_runtime_ms: 600_000,
     }
+}
+
+// Decision text must consume these actual request descriptors, not maintain a
+// second hand-written path catalog (in particular not epoch-N.car.sha256/.cid).
+fn metadata_operations(epoch: u64) -> Result<Vec<serde_json::Value>> {
+    metadata_requests()
+        .iter()
+        .map(|request| {
+            Ok(serde_json::json!({
+                    "sequence": request.sequence,
+                    "kind": request.kind,
+                    "method": request.method(),
+                    "host": of1_range_recorder::HOST,
+                    "path": request.path(epoch),
+            "max_response_entity_bytes_per_attempt": request.allowance(),
+                }))
+        })
+        .collect()
 }
 
 fn open(root: &str, plan: &str, lease_hash: &str) -> Result<AcquisitionStore<SystemClock>> {
@@ -81,6 +99,7 @@ fn run(args: &[String]) -> Result<()> {
             let aggregate = AggregatePlan {
                 schema: AGGREGATE_SCHEMA.into(), epoch: 978,
                 sample_identity: (*command == "metadata-pilot-proposal").then(of1_range_recorder::sample::SampleIdentity::fixed_pilot),
+                download_rate: Some(of1_range_recorder::rate::DownloadRate::standard()),
                 format_source: FormatSource::pinned(), code_sha: (*code_sha).into(),
                 toolchain_fingerprint: (*toolchain_fingerprint).into(),
                 executable_sha256: current_executable_sha256()?,
@@ -99,6 +118,7 @@ fn run(args: &[String]) -> Result<()> {
                 "networkEnabled":false, "readyToRun":false,
                 "slice_class":aggregate.sample_identity.as_ref().map_or("ENGINEERING_VALIDATION_ONLY", |s| s.sample_class.as_str()),
                 "aggregate":aggregate, "metadata_budget":metadata_budget,
+                "metadata_operations": metadata_operations(aggregate.epoch)?,
                 "approval_target_sha256":metadata_proposal_sha256(&aggregate, &metadata_budget)?,
                 "required_next_action":"Review exact plan/code/toolchain, current cost and availability; obtain metadata-only GO. No payload authorization."
             }))
@@ -164,6 +184,7 @@ fn run(args: &[String]) -> Result<()> {
         _ => Err(concat!(
             "usage: of1-acquire dataset-preflight ROOT | ",
             "metadata-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
+            "metadata-pilot-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-init ROOT AGGREGATE_JSON METADATA_LEASE_JSON | ",
             "progress ROOT AGGREGATE_JSON LEASE_SHA256 | ",
             "capture-stage ROOT AGGREGATE_JSON LEASE_SHA256 [--monitor-socket LOCAL_SOCKET] | ",
@@ -275,6 +296,37 @@ fn capture_stage_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn decision_operations_use_rust_requests_and_preserved_official_paths() {
+        let operations = metadata_operations(978).unwrap();
+        // Observed HTTP-200 metadata receipts: pump-search-09379cff-01,
+        // sequences 1/2. The original receipts remain outside Git, unchanged.
+        let expected = [
+            ("GET", "/978/epoch-978-slot-ranges.raw", 5_184_000),
+            ("GET", "/978/epoch-978.sha256", 4096),
+            ("GET", "/978/epoch-978.cid", 4096),
+            ("HEAD", "/978/epoch-978.car", 0),
+        ];
+        assert_eq!(operations.len(), expected.len());
+        for ((operation, request), (method, path, allowance)) in
+            operations.iter().zip(metadata_requests()).zip(expected)
+        {
+            assert_eq!(operation["sequence"], request.sequence);
+            assert_eq!(operation["method"], method);
+            assert_eq!(operation["path"], path);
+            assert_eq!(operation["path"], request.path(978));
+            assert_eq!(
+                operation["max_response_entity_bytes_per_attempt"],
+                allowance
+            );
+            assert_eq!(operation["host"], of1_range_recorder::HOST);
+        }
+        // Epoch-specific, not a pinned spelling accidentally reused for another epoch.
+        assert_eq!(
+            metadata_operations(979).unwrap()[1]["path"],
+            "/979/epoch-979.sha256"
+        );
+    }
     #[test]
     fn new_pilot_reserves_attempt_room_without_changing_legacy_metadata_caps() {
         let old = metadata_budget(false);

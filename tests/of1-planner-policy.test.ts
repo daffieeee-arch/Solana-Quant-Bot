@@ -42,6 +42,15 @@ describe('OF1 default-off transport dependency boundary', () => {
     expect(validateOf1PlannerInputs(manifest, lock, { 'src/worker.rs': source })).not.toEqual([]);
     expect(validateOf1PlannerInputs(manifest, lock, { 'tests/durability_process.rs': source + ' std::net::TcpStream' })).not.toEqual([]);
   });
+
+  it('allows only the exact offline rate-lock subprocess harness, never another process or socket capability', () => {
+    const path = 'tests/rate_process.rs';
+    const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\n' })).toContain('unreviewed OF1 rate-process harness');
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + ' std::net::TcpStream' })).toContain(`unexpected runtime capability in ${path}`);
+    expect(validateOf1PlannerInputs(manifest, lock, { 'src/rate.rs': source })).toContain('unexpected runtime capability in src/rate.rs');
+  });
   it('allows only exact reviewed loopback sources, never a filename or feature blanket exception', () => {
     for (const path of ['src/transport.rs', 'tests/transport.rs', 'src/bin/of1-transport-evidence.rs']) {
       const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');

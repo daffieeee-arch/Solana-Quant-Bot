@@ -54,6 +54,7 @@ impl Harness {
             plan: AggregatePlan {
                 schema: AGGREGATE_SCHEMA.into(),
                 sample_identity: None,
+                download_rate: None,
                 epoch: 978,
                 format_source: FormatSource::pinned(),
                 code_sha: "a".repeat(40),
@@ -108,6 +109,53 @@ fn index() -> Vec<u8> {
     bytes[..8].copy_from_slice(&64u64.to_le_bytes());
     bytes[8..12].copy_from_slice(&32u32.to_le_bytes());
     bytes
+}
+
+#[test]
+fn download_policy_is_initial_approval_receipt_and_resume_identity() {
+    use of1_range_recorder::rate::DownloadRate;
+    let mut h = Harness::new();
+    let old_bytes = serde_json::to_vec(&h.plan).unwrap();
+    assert!(
+        !String::from_utf8(old_bytes.clone())
+            .unwrap()
+            .contains("download_rate")
+    );
+    let roundtrip: AggregatePlan = serde_json::from_slice(&old_bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&roundtrip).unwrap(), old_bytes);
+    let old_target = metadata_proposal_sha256(&h.plan, &h.lease.budget).unwrap();
+    h.plan.download_rate = Some(DownloadRate::standard());
+    assert_ne!(
+        old_target,
+        metadata_proposal_sha256(&h.plan, &h.lease.budget).unwrap()
+    );
+    let mut store = h.create();
+    complete(&mut store, 0);
+    let published = store.published(0).unwrap().unwrap();
+    let lease_hash = store.current_lease_sha256().to_owned();
+    let rate_bound_plan = store.aggregate_plan().clone();
+    assert_eq!(
+        rate_bound_plan.download_rate,
+        Some(DownloadRate::standard())
+    );
+    assert_eq!(
+        published.receipt.aggregate_sha256,
+        sha256(&serde_json::to_vec(&h.plan).unwrap())
+    );
+    drop(store);
+    assert!(h.resume(&lease_hash).is_ok());
+    h.plan.download_rate = None;
+    assert!(h.resume(&lease_hash).is_err());
+}
+
+#[test]
+fn incompatible_download_policy_fails_before_creating_run() {
+    let mut h = Harness::new();
+    let mut policy = of1_range_recorder::rate::DownloadRate::standard();
+    policy.bytes_per_second += 1;
+    h.plan.download_rate = Some(policy);
+    assert!(AcquisitionStore::create(&h.root, h.plan, h.lease, h.clock).is_err());
+    assert!(!h.root.exists());
 }
 fn cid() -> Vec<u8> {
     let mut bytes = vec![1u8, 0x71, 0x12, 32];

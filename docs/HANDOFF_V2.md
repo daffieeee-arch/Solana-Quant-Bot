@@ -41,6 +41,13 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The local fixed-pilot preparation now binds the shared 700 Mbps entity-read
+policy and Rust-generated request paths into new proposals; see
+[the exact rate/identity contract](research/OF1_STAGED_ACQUISITION.md#shared-default-download-rate).
+The `[422669516,422669519)` selection, old concept packet, runs and binaries
+remain preserved. A new binary-bound metadata decision is preparation only:
+no GO, lease, acquisition or evidence promotion follows from this development.
+
 The separate [B4 download monitor](research/B4_DOWNLOAD_MONITOR.md) observes
 Rust-owned intra-request telemetry and preserved authentic Raw. Its separate
 [verification result](research/OF1_RECORDED_CAR_VERIFICATION.md) distinguishes

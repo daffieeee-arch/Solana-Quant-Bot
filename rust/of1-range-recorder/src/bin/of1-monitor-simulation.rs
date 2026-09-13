@@ -32,6 +32,7 @@ fn plan() -> Result<AggregatePlan> {
     Ok(AggregatePlan {
         schema: "OF1_ACQUISITION_AGGREGATE_1".into(),
         sample_identity: None,
+        download_rate: Some(of1_range_recorder::rate::DownloadRate::standard()),
         epoch: 978,
         format_source: FormatSource::pinned(),
         code_sha: "79d1e9c828525d7eaf3efa5529d1d7b0952fb8cd".into(),

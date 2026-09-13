@@ -39,6 +39,10 @@ function duration(ms: number | null): string {
   return `${Math.floor(seconds / 3600)} u ${Math.floor((seconds % 3600) / 60)} min`;
 }
 function when(ms: number): string { return new Date(ms).toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC'); }
+function waitDuration(ns: number | null): string {
+  if (ns === null) return 'Nog onbekend';
+  return ns > 0 && ns < 100_000 ? '<0,1 ms' : `${number.format(ns / 1_000_000)} ms`;
+}
 function fraction(value: number | null, total: number | null): number | null {
   return value === null || total === null || total === 0 ? null : Math.max(0, Math.min(100, value / total * 100));
 }
@@ -126,6 +130,18 @@ function RunContent({ snapshot: s, stale, now, verification }: { snapshot: Monit
         <div className="current-object"><span>HUIDIGE OPERATIE</span><code>{current ? `${current.method} ${current.path}${current.range ? ` · ${current.range}` : ''}` : terminal ? 'Geen request actief' : 'Wachten op eerste request'}</code></div>
         <div className="chart-heading"><h3>Snelheid tijdens requests</h3><span>{recorded ? 'Historische live metingen niet beschikbaar' : `${s.traffic.speed_samples.length} Rust-meetpunten`}</span></div>
         <SpeedChart samples={s.traffic.speed_samples} available={!recorded} />
+        <section aria-label="Gedeelde downloadsnelheidslimiet">
+          <h3>Gedeelde downloadsnelheidslimiet</h3>
+          {s.rate_limit ? <>
+            <dl className="key-values">
+              <div><dt>Limiet · alle OF1-downloads samen</dt><dd>{number.format(s.rate_limit.policy.bytes_per_second * 8 / 1_000_000)} Mbps · {count.format(s.rate_limit.policy.bytes_per_second)} B/s</dd></div>
+              <div><dt>Toegestane korte burst</dt><dd>{bytes(s.rate_limit.policy.burst_bytes)} · concurrency {s.rate_limit.policy.concurrency}</dd></div>
+              <div><dt>Limiter nu</dt><dd>{recorded || stale || s.rate_limit.waiting === null ? 'Nog onbekend' : s.rate_limit.waiting ? 'Wacht op gedeelde limiet' : 'Niet aan het wachten bij laatste meting'}</dd></div>
+              <div><dt>Gemeten limiterwacht · dit proces</dt><dd>{waitDuration(s.rate_limit.process_wait_ns)}{stale && s.rate_limit.process_wait_ns !== null && ' · laatste meting, verouderd'}</dd></div>
+            </dl>
+            <p className="metric-note">Decimale Mbps, gemeten en begrensd op response-entity-bytes. Geen exacte fysieke netwerkcap inclusief TLS-, HTTP- of overige overhead. De gedeelde limiet geldt voor OF1-runs van dezelfde Linux-gebruiker; een lokale simulatie heeft geen OF1-netwerktoegang. Wachttijd is alleen in dit proces gemeten en verlengt geen deadline.</p>
+          </> : <p className="metric-note">Historische snelheidsinstelling en limiterwacht onbekend; niet achteraf afgeleid uit receipts.</p>}
+        </section>
         <div className="transfer-footer"><span>{recorded ? 'Initialisatie → laatste receipt' : 'Verstreken'} <b>{duration(s.elapsed_ms)}</b></span><span>Pogingen <b>{s.traffic.attempts}</b></span><span>Retries <b>{s.traffic.retries}</b></span></div>
       </section>
 

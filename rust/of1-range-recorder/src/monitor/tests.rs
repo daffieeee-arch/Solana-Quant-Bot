@@ -39,11 +39,22 @@ fn store() -> (
     std::path::PathBuf,
     AcquisitionStore<SystemClock>,
 ) {
+    store_with_rate(None)
+}
+
+fn store_with_rate(
+    download_rate: Option<crate::rate::DownloadRate>,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    AcquisitionStore<SystemClock>,
+) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("run");
     let plan = AggregatePlan {
         schema: AGGREGATE_SCHEMA.into(),
         sample_identity: None,
+        download_rate,
         epoch: 978,
         format_source: FormatSource::pinned(),
         code_sha: "a".repeat(40),
@@ -293,4 +304,147 @@ fn wire_snapshot_is_bounded_and_rejects_duplicate_or_unsafe_values() {
     snapshot = original;
     snapshot.errors = vec!["error".into(); MAX_ERRORS + 1];
     assert!(snapshot.validate().is_err());
+}
+
+fn rate_policy() -> crate::rate::DownloadRate {
+    serde_json::from_value(serde_json::json!({
+        "unit": "RESPONSE_ENTITY_BYTES", "bytes_per_second": 87_500_000,
+        "burst_bytes": 65_536, "concurrency": 1,
+        "scope": "SAME_USER_OFFICIAL_OF1_ALL_RUNS"
+    }))
+    .unwrap()
+}
+
+#[test]
+fn historical_rate_absence_is_preserved_and_recorded_waits_stay_unknown() {
+    let mut snapshot = model_snapshot();
+    assert!(snapshot.rate_limit.is_none());
+    assert!(
+        serde_json::to_value(&snapshot)
+            .unwrap()
+            .get("rate_limit")
+            .is_none()
+    );
+    snapshot.rate_limit = Some(RateLimit::recorded(rate_policy()));
+    snapshot.validate().unwrap();
+    let value = serde_json::to_value(&snapshot).unwrap();
+    assert!(value["rate_limit"]["waiting"].is_null());
+    assert!(value["rate_limit"]["process_wait_ns"].is_null());
+    snapshot.rate_limit.as_mut().unwrap().waiting = Some(false);
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = Some(0);
+    assert!(snapshot.validate().is_err()); // Import cannot manufacture no waiting.
+}
+
+#[test]
+fn read_only_import_uses_actual_plan_rate_without_inventing_historical_waits() {
+    let (_temporary, root, _store) = store_with_rate(Some(rate_policy()));
+    let before = fs::read(root.join("run.json")).unwrap();
+    let snapshot = read_run(&root).unwrap();
+    let limit = snapshot.rate_limit.as_ref().unwrap();
+    assert_eq!(limit.policy, rate_policy());
+    assert!(limit.waiting.is_none());
+    assert!(limit.process_wait_ns.is_none());
+    assert_eq!(fs::read(root.join("run.json")).unwrap(), before);
+    assert_eq!(snapshot.mode, "RECORDED");
+    assert!(snapshot.traffic.speed_bps.is_none());
+    snapshot.validate().unwrap();
+}
+
+#[test]
+fn rate_snapshot_rejects_unknown_units_bounds_and_contradictory_measurements() {
+    let mut snapshot = model_snapshot();
+    snapshot.mode = "LIVE".into();
+    snapshot.stage = "DOWNLOADING".into();
+    snapshot.rate_limit = Some(RateLimit {
+        policy: rate_policy(),
+        waiting: Some(true),
+        process_wait_ns: Some(749_029),
+    });
+    snapshot.validate().unwrap();
+    let original = serde_json::to_value(&snapshot).unwrap();
+    for (field, value) in [
+        ("bytes_per_second", serde_json::json!(0)),
+        ("bytes_per_second", serde_json::json!(87_500_001)),
+        ("burst_bytes", serde_json::json!(65_537)),
+        ("concurrency", serde_json::json!(2)),
+        ("unit", serde_json::json!("PHYSICAL_WIRE_BYTES")),
+        ("scope", serde_json::json!("PER_CONNECTION")),
+    ] {
+        let mut changed = original.clone();
+        changed["rate_limit"]["policy"][field] = value;
+        let rejected: Snapshot = serde_json::from_value(changed).unwrap();
+        assert!(rejected.validate().is_err(), "{field}");
+    }
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = Some(JS_SAFE + 1);
+    assert!(snapshot.validate().is_err());
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = None;
+    assert!(snapshot.validate().is_err());
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = Some(0);
+    snapshot.stage = "COMPLETE".into();
+    assert!(snapshot.validate().is_err());
+    let mut changed = original;
+    changed["rate_limit"]["policy"]["bytes_per_second"] = serde_json::json!(-1);
+    assert!(serde_json::from_value::<Snapshot>(changed).is_err());
+}
+
+#[cfg(feature = "monitor")]
+#[test]
+fn limiter_observations_preserve_submillisecond_waits_and_restart_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut monitor = Monitor::new(model_snapshot(), &directory.path().join("absent.sock"));
+    monitor.rate_policy(&rate_policy());
+    monitor.head(0, 200, 1000);
+    let original_deadline = monitor.snapshot.budgets.runtime_remaining_ms;
+    monitor.rate_wait_started(749_029);
+    assert_eq!(
+        monitor.snapshot.rate_limit.as_ref().unwrap().waiting,
+        Some(true)
+    );
+    assert_eq!(
+        monitor
+            .snapshot
+            .rate_limit
+            .as_ref()
+            .unwrap()
+            .process_wait_ns,
+        Some(0)
+    );
+    monitor.rate_wait_finished(800_111);
+    monitor.received(0, 512);
+    monitor.rate_wait_started(1);
+    monitor.rate_wait_finished(12);
+    assert_eq!(
+        monitor.snapshot.rate_limit.as_ref().unwrap().waiting,
+        Some(false)
+    );
+    assert_eq!(
+        monitor
+            .snapshot
+            .rate_limit
+            .as_ref()
+            .unwrap()
+            .process_wait_ns,
+        Some(800_123)
+    );
+    assert_eq!(monitor.snapshot.traffic.received_bytes, 512);
+    assert_eq!(monitor.snapshot.selection.published_bytes, 0);
+    assert!(monitor.snapshot.budgets.runtime_remaining_ms <= original_deadline);
+    monitor.rate_wait_started(1);
+    monitor.failed(0, "DEADLINE_EXCEEDED");
+    assert_eq!(
+        monitor.snapshot.rate_limit.as_ref().unwrap().waiting,
+        Some(false)
+    );
+    monitor.snapshot.validate().unwrap();
+    let restarted = Monitor::new(monitor.snapshot, &directory.path().join("absent.sock"));
+    assert_eq!(
+        restarted
+            .snapshot
+            .rate_limit
+            .as_ref()
+            .unwrap()
+            .process_wait_ns,
+        Some(0)
+    );
+    assert!(restarted.snapshot.errors.is_empty());
 }

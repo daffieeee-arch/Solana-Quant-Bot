@@ -55,6 +55,10 @@ pub struct AggregatePlan {
     /// Omitted on old runs: never reinterpret legacy engineering plans as research.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sample_identity: Option<crate::sample::SampleIdentity>,
+    /// Approval-bound entity-read shaping. None preserves historical plan bytes;
+    /// newly built official captures require the explicit standard policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_rate: Option<crate::rate::DownloadRate>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1827,6 +1831,9 @@ fn short_text(value: &str) -> bool {
 }
 
 fn validate_aggregate(plan: &AggregatePlan) -> StoreResult<()> {
+    if let Some(rate) = &plan.download_rate {
+        rate.validate().map_err(|_| StoreError::Identity)?;
+    }
     if let Some(sample) = &plan.sample_identity {
         sample.validate(plan.epoch)?;
         if plan.budget.max_slots < sample.end_slot_exclusive - sample.start_slot {

@@ -77,6 +77,7 @@ impl Harness {
         let plan = AggregatePlan {
             schema: AGGREGATE_SCHEMA.into(),
             sample_identity,
+            download_rate: None,
             epoch: 978,
             format_source: FormatSource::pinned(),
             code_sha: "a".repeat(40),

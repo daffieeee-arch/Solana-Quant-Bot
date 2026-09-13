@@ -28,6 +28,12 @@ export interface MonitorSnapshot {
     eta_scope: 'SELECTION' | 'CURRENT_OPERATION' | null;
     speed_samples: Array<{ elapsed_ms: number; bps: number }>;
   };
+  rate_limit?: {
+    policy: { unit: 'RESPONSE_ENTITY_BYTES'; bytes_per_second: 87_500_000;
+      burst_bytes: 65_536; concurrency: 1; scope: 'SAME_USER_OFFICIAL_OF1_ALL_RUNS' };
+    waiting: boolean | null;
+    process_wait_ns: number | null;
+  };
   storage: { used_bytes: number; available_bytes: number; cap_bytes: number };
   budgets: {
     attempts_remaining: number; entity_bytes_remaining: number; stage_attempts_remaining: number;
@@ -134,6 +140,19 @@ export function validateMonitorSnapshot(value: unknown): asserts value is Monito
   nullable(traffic.speed_bps, rate); nullable(traffic.download_eta_ms, integer);
   nullable(traffic.eta_scope, value => choice(value, ['SELECTION', 'CURRENT_OPERATION']));
   array(traffic.speed_samples, 64, value => { const row = object(value); integer(row.elapsed_ms); rate(row.bps); });
+  if ('rate_limit' in s) {
+    const limit = object(s.rate_limit);
+    const policy = numbers(limit.policy, ['bytes_per_second', 'burst_bytes', 'concurrency']);
+    if (Object.keys(limit).sort().join(',') !== 'policy,process_wait_ns,waiting'
+      || Object.keys(policy).sort().join(',') !== 'burst_bytes,bytes_per_second,concurrency,scope,unit') fail();
+    choice(policy.unit, ['RESPONSE_ENTITY_BYTES']); choice(policy.scope, ['SAME_USER_OFFICIAL_OF1_ALL_RUNS']);
+    if (policy.bytes_per_second !== 87_500_000 || policy.burst_bytes !== 65_536 || policy.concurrency !== 1) fail();
+    nullable(limit.waiting, value => { if (typeof value !== 'boolean') fail(); });
+    nullable(limit.process_wait_ns, integer);
+    if ((limit.waiting === null) !== (limit.process_wait_ns === null)
+      || (s.mode === 'RECORDED' && limit.waiting !== null)
+      || (limit.waiting === true && s.stage !== 'DOWNLOADING')) fail();
+  }
   numbers(s.storage, ['used_bytes', 'available_bytes', 'cap_bytes']);
   numbers(s.budgets, ['attempts_remaining', 'entity_bytes_remaining', 'stage_attempts_remaining', 'stage_entity_bytes_remaining', 'runtime_remaining_ms']);
   array(s.operations, 32, value => {

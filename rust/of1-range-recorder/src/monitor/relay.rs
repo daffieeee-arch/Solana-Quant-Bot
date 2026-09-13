@@ -46,6 +46,10 @@ impl Monitor {
         snapshot.traffic.download_eta_ms = None;
         snapshot.traffic.eta_scope = None;
         snapshot.traffic.speed_samples.clear();
+        if let Some(limit) = &mut snapshot.rate_limit {
+            limit.waiting = Some(false);
+            limit.process_wait_ns = Some(0);
+        }
         let rates = Rates::new(snapshot.traffic.received_bytes);
         let elapsed_before_process = wall_ms().saturating_sub(snapshot.started_at_ms);
         let deadline_wall_ms = wall_ms().saturating_add(snapshot.budgets.runtime_remaining_ms);
@@ -149,6 +153,34 @@ impl Monitor {
         self.emit(false);
     }
 
+    pub fn rate_policy(&mut self, policy: &crate::rate::DownloadRate) {
+        if self.snapshot.rate_limit.is_none() {
+            self.snapshot.rate_limit = Some(super::RateLimit {
+                policy: policy.clone(),
+                waiting: Some(false),
+                process_wait_ns: Some(0),
+            });
+        }
+        self.emit(false);
+    }
+
+    /// Wait-start is an observation, not elapsed time or a deadline extension.
+    pub fn rate_wait_started(&mut self, _planned_ns: u64) {
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(true);
+        }
+        self.emit(false);
+    }
+
+    pub fn rate_wait_finished(&mut self, actual_ns: u64) {
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+            limit.process_wait_ns =
+                Some(limit.process_wait_ns.unwrap_or(0).saturating_add(actual_ns));
+        }
+        self.emit(false);
+    }
+
     pub fn verifying(&mut self, sequence: u64) {
         self.stage(sequence, "VERIFYING");
     }
@@ -166,6 +198,9 @@ impl Monitor {
             op.state = stage.into();
         }
         self.snapshot.stage = stage.into();
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+        }
         self.snapshot.traffic.speed_bps = None;
         self.snapshot.traffic.download_eta_ms = None;
         self.emit(true);
@@ -215,6 +250,9 @@ impl Monitor {
             op.error = Some(reason.clone());
         }
         self.snapshot.stage = "STOPPED".into();
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+        }
         self.snapshot.errors.push(reason);
         if self.snapshot.errors.len() > MAX_ERRORS {
             self.snapshot.errors.remove(0);
@@ -236,6 +274,9 @@ impl Monitor {
             return;
         }
         self.snapshot.stage = "COMPLETE".into();
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+        }
         self.snapshot.completed_at_ms = Some(wall_ms());
         self.snapshot.integrity.receipts = "VERIFIED".into();
         self.snapshot.traffic.speed_bps = None;

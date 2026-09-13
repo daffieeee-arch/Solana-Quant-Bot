@@ -52,6 +52,9 @@ pub struct Snapshot {
     pub elapsed_ms: u64,
     pub selection: Selection,
     pub traffic: Traffic,
+    /// Absent on historical snapshots/plans. Operational waits are not receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
     pub storage: Storage,
     pub budgets: Budgets,
     pub operations: Vec<Operation>,
@@ -92,6 +95,26 @@ pub struct Traffic {
     pub download_eta_ms: Option<u64>,
     pub eta_scope: Option<String>,
     pub speed_samples: Vec<SpeedSample>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RateLimit {
+    pub policy: crate::rate::DownloadRate,
+    pub waiting: Option<bool>,
+    /// Actual monotonic sleep time in this process only; unavailable on import.
+    pub process_wait_ns: Option<u64>,
+}
+
+impl RateLimit {
+    #[must_use]
+    pub fn recorded(policy: crate::rate::DownloadRate) -> Self {
+        Self {
+            policy,
+            waiting: None,
+            process_wait_ns: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -290,6 +313,15 @@ impl Snapshot {
             return Err(invalid("unsupported or oversized monitor snapshot"));
         }
         let mut sequences = BTreeSet::new();
+        if let Some(limit) = &self.rate_limit {
+            limit.policy.validate().map_err(invalid)?;
+            if limit.waiting.is_some() != limit.process_wait_ns.is_some()
+                || (self.mode == "RECORDED" && limit.waiting.is_some())
+                || (limit.waiting == Some(true) && self.stage != "DOWNLOADING")
+            {
+                return Err(invalid("invalid monitor rate measurement state"));
+            }
+        }
         for op in &self.operations {
             if !sequences.insert(op.sequence)
                 || !["GET", "HEAD"].contains(&op.method.as_str())

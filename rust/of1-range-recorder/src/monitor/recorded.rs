@@ -551,6 +551,11 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             eta_scope: None,
             speed_samples: Vec::new(),
         },
+        rate_limit: manifest
+            .plan
+            .download_rate
+            .clone()
+            .map(super::RateLimit::recorded),
         storage: Storage {
             used_bytes: crate::durable::disk_charge(&root).map_err(invalid)?,
             available_bytes: available,

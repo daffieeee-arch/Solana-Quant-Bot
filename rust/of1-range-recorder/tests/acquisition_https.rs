@@ -14,6 +14,7 @@ use of1_range_recorder::{
         CaptureObserver, FixtureHttps, HttpsError, OF1_SERVER_NAME,
         fixture::{FixtureServer, ResponseScript},
     },
+    rate::DownloadRate,
     sha256,
 };
 use std::{fs, time::Instant};
@@ -136,6 +137,7 @@ fn plans(timeout: u64) -> (AggregatePlan, MetadataLease) {
     let plan = AggregatePlan {
         schema: AGGREGATE_SCHEMA.into(),
         sample_identity: None,
+        download_rate: Some(DownloadRate::standard()),
         epoch: 978,
         format_source: FormatSource::pinned(),
         code_sha: "a".repeat(40),
@@ -384,6 +386,109 @@ fn official_authority_gate_rejects_fixture_before_dns_socket_or_reservation() {
         Err(HttpsError::Authority)
     ));
     assert_eq!(store.progress().unwrap().attempts_reserved, 0);
+}
+
+#[cfg(feature = "network-of1")]
+#[test]
+fn official_rate_policy_gate_rejects_legacy_missing_policy_before_dns_or_reservation() {
+    let temp = tempfile::tempdir().unwrap();
+    let (mut plan, mut lease) = plans(3000);
+    plan.download_rate = None;
+    let now = SystemClock.sample().unwrap().wall_ms;
+    lease.authority = Authority::Approved {
+        approval_id: "SYNTHETIC_NEGATIVE_TEST_NOT_A_LIVE_APPROVAL".into(),
+        operator: "OFFLINE_TEST".into(),
+        approved_at_ms: now,
+        not_after_ms: now + 60_000,
+        approved_plan_sha256: metadata_proposal_sha256(&plan, &lease.budget).unwrap(),
+        cost_confirmation: "CONFIRMED_NO_CREDIT_SPEND".into(),
+    };
+    let mut store =
+        AcquisitionStore::create(&temp.path().join("run"), plan, lease, SystemClock).unwrap();
+    assert!(matches!(
+        of1_range_recorder::https::OfficialHttps::capture(&mut store, 0),
+        Err(HttpsError::Rate(
+            of1_range_recorder::rate::RateError::Policy
+        ))
+    ));
+    assert_eq!(store.progress().unwrap().attempts_reserved, 0);
+}
+
+#[test]
+fn entity_rate_observations_follow_actual_tls_bytes_not_capacity_or_attempt_allowance() {
+    use of1_range_recorder::rate::{BURST_BYTES, ENTITY_BYTES_PER_SECOND};
+    struct TimedReads {
+        origin: Instant,
+        points: Vec<(u128, u64)>,
+        total: u64,
+        policy_seen: bool,
+        waiting: bool,
+        waits: u64,
+        measured_wait_ns: u64,
+    }
+    impl CaptureObserver for TimedReads {
+        fn rate_policy(&mut self, policy: &DownloadRate) {
+            assert_eq!(policy, &DownloadRate::standard());
+            self.policy_seen = true;
+        }
+        fn received(&mut self, _: u64, bytes: u64) {
+            assert!(self.policy_seen);
+            assert!(!self.waiting);
+            self.total += bytes;
+            self.points
+                .push((self.origin.elapsed().as_nanos(), self.total));
+        }
+        fn rate_wait_started(&mut self, planned_ns: u64) {
+            assert!(planned_ns > 0);
+            assert!(!self.waiting);
+            self.waiting = true;
+            self.waits += 1;
+        }
+        fn rate_wait_finished(&mut self, actual_ns: u64) {
+            assert!(self.waiting);
+            self.measured_wait_ns += actual_ns;
+            self.waiting = false;
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let (plan, lease) = plans(20_000);
+    let mut store =
+        AcquisitionStore::create(&temp.path().join("run"), plan, lease, SystemClock).unwrap();
+    let bytes = vec![42; usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap()];
+    let mut script = response(200, bytes.len(), bytes.clone(), true);
+    script.fragment_bytes = 4093; // Deliberately not a durable-segment divisor.
+    let server = FixtureServer::start(OF1_SERVER_NAME, vec![script]).unwrap();
+    let mut measured = TimedReads {
+        origin: Instant::now(),
+        points: vec![(0, 0)],
+        total: 0,
+        policy_seen: false,
+        waiting: false,
+        waits: 0,
+        measured_wait_ns: 0,
+    };
+    let receipt = FixtureHttps::new(server.port(), server.root_der())
+        .unwrap()
+        .capture_observed(&mut store, 0, &mut measured)
+        .unwrap();
+    server.finish().unwrap();
+    assert_eq!(measured.total, bytes.len() as u64);
+    assert_eq!(receipt.sha256, sha256(&bytes));
+    assert_eq!(receipt.response_entity_bytes, measured.total);
+    assert!(!measured.waiting);
+    assert_eq!(measured.waits == 0, measured.measured_wait_ns == 0);
+    assert!(measured.points.len() > 2);
+    // For every observed interval: at most rate * duration + one 64KiB burst.
+    // A slow scheduler/disk/TLS peer may use less than the limit, never more.
+    for (index, &(start_ns, before)) in measured.points.iter().enumerate() {
+        for &(end_ns, after) in &measured.points[index..] {
+            assert!(
+                u128::from(after - before) * 1_000_000_000
+                    <= (end_ns - start_ns) * u128::from(ENTITY_BYTES_PER_SECOND)
+                        + u128::from(BURST_BYTES) * 1_000_000_000
+            );
+        }
+    }
 }
 
 #[test]

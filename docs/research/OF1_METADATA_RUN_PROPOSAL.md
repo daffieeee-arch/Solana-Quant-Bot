@@ -8,6 +8,30 @@
 
 ## Proposed scope and unchanged caps
 
+The table and twelve-attempt calculation below preserve the engineering-template
+allocation. The fixed research-pilot successor is generated with
+`metadata-pilot-proposal`, not by relabeling an old run: seven metadata attempts
+(at most three per operation), 15,576,576 reserved entity bytes and 600,000 ms.
+Together with nine separately proposed payload attempts / 10,990,731 bytes /
+360,000 ms this allocates sixteen attempts / 26,567,307 bytes / 960,000 ms within
+the unchanged aggregate limits below. The selection remains
+`[422669516,422669519)` with its original seed/algorithm. See the
+[manifest-bound sample contract](B5_MANIFEST_SHARDS_AND_SAMPLE_IDENTITY.md).
+
+New proposals bind `download_rate` to the exact executable/aggregate approval
+target: 700 decimal Mbps = 87,500,000 response-entity bytes/s shared across
+cooperating same-user official captures, concurrency one, maximum 65,536-byte
+short burst. This is not a physical wire/TLS/headers rate guarantee. The
+[limiter contract](OF1_STAGED_ACQUISITION.md#shared-default-download-rate) defines
+empty-start/restart accounting and unchanged deadline admission.
+
+The old outside-Git concept packet accidentally described `.car.sha256` and
+`.car.cid`; it remains historical evidence. Its successor must consume the
+generated `metadata_operations` array from the actual Rust `Request` objects:
+`.sha256` and `.cid`, matching the retained HTTP-200 receipts. No second path
+catalog, replacement receipt, GO, lease or provider call is created by proposal
+generation. All stage budgets are technical volume/runtime bounds, not prices.
+
 Purpose: `ENGINEERING_VALIDATION_ONLY`, epoch 978. Acquire only the fixed modern
 index and source declarations needed to propose a feasible payload slice. Do not
 inspect token outcomes, select a successful token or infer Pump availability.

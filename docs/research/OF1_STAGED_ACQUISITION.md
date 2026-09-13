@@ -84,6 +84,35 @@ terms require review, not a different endpoint or implicit spending permission.
 
 ## Concrete contracts and state
 
+### Shared default download rate
+
+New official plans explicitly bind the standard `download_rate`: **700 decimal
+Mbps = 87,500,000 response-entity bytes/s**, `concurrency = 1`, and a maximum
+**65,536-byte short burst** (about 0.749 ms of rate credit). All cooperating
+official captures by the same Linux user share one fixed coordinator lock across
+run roots and processes; a concurrent holder fails closed before reserving or
+dispatching another request. This is an application entity-read limit, not an
+OS-wide limit on other programs/users or retained historical binaries.
+
+Rust debits integer token credit before each bounded plaintext entity read and
+refunds only unused read capacity. Credit does not grow while a read is outstanding.
+Each exclusive request holder starts empty, including retries/restart: releasing
+the lock discards idle credit, rather than granting a new burst. No per-fragment
+durable write or extra fsync is added. Waiting and reads remain subject to the
+original stage/attempt deadlines; waiting never resets them. Those checks are
+admission boundaries, not preemption guarantees for blocked filesystem calls.
+
+The cap includes retry entity bytes, not only uniquely published bytes. Headers,
+TLS records, DNS and socket/kernel prefetch are not response-entity measurements;
+physical wire usage and physical instantaneous bursts are not bounded exactly by
+this policy. The monitor shows the configured cap, independent actual Rust
+throughput and process-local waiting. Historical/imported wait data stays unknown.
+Old plans omit the optional field and preserve their exact serialization; newly
+built official dispatch rejects a missing/incompatible policy. No old executable,
+manifest, expired approval or run identity is changed or resumed by this work.
+
+### Existing storage contract
+
 The executable JSON contracts are Rust serde types in
 [`durable/acquisition.rs`](../../rust/of1-range-recorder/src/durable/acquisition.rs),
 all with unknown-field rejection. They are not the older draft lease JSON.
