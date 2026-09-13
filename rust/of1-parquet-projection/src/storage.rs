@@ -1,7 +1,7 @@
 //! New-directory-only publication and independently read-back Parquet verification.
 use crate::{
     columns::{self, Layer},
-    hash, invalid,
+    invalid,
 };
 use arrow_array::{Array, BinaryArray, RecordBatch};
 use parquet::{
@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read},
     path::Path,
 };
 
@@ -165,106 +165,14 @@ pub fn verify_layer(layer: Layer, path: &Path, expected_input_sha256: &str) -> i
     )
 }
 
-fn input_seal(input: &Path, execution_sha: &str) -> io::Result<Value> {
-    let execution_bytes = bounded_read(&input.join("execution.json"))?;
-    if hash(&execution_bytes) != execution_sha {
-        return Err(invalid("EXECUTION_RECEIPT_HASH_MISMATCH"));
-    }
-    let execution: Value = serde_json::from_slice(&execution_bytes).map_err(invalid)?;
-    if execution["schema"] != "OF1_BRONZE_EXECUTION_1" {
-        return Err(invalid("EXECUTION_SCHEMA"));
-    }
-    let mut files = BTreeMap::new();
-    for (name, key) in [
-        ("bronze.jsonl", "bronze_jsonl_sha256"),
-        ("silver.jsonl", "silver_jsonl_sha256"),
-        ("quality.json", "quality_sha256"),
-        ("quality.html", "html_sha256"),
-    ] {
-        let bytes = bounded_read(&input.join(name))?;
-        let sha = hash(&bytes);
-        if execution[key] != sha {
-            return Err(invalid(format!("INPUT_HASH_MISMATCH {name}")));
-        }
-        files.insert(name, json!({"sha256":sha,"bytes":bytes.len()}));
-    }
-    let complete = bounded_read(&input.join("COMPLETE"))?;
-    if String::from_utf8_lossy(&complete).trim()
-        != execution["quality_sha256"].as_str().unwrap_or("")
-    {
-        return Err(invalid("INPUT_INCOMPLETE"));
-    }
-    Ok(
-        json!({"execution_sha256":execution_sha,"execution":execution,"complete_sha256":hash(&complete),"files":files}),
-    )
-}
-fn verify_silver_binding(bronze: &[u8], silver: &[u8]) -> io::Result<()> {
-    let mut parents = BTreeMap::<String, (Value, Value)>::new();
-    for line in lines(bronze)? {
-        let v = columns::parse_record(Layer::Bronze, &line)?;
-        // Identical rows are retained physically, not deduplicated by this lookup.
-        parents.insert(
-            hash(&line[..line.len() - 1]),
-            (v["effective_at"].clone(), v["source"].clone()),
-        );
-    }
-    for line in lines(silver)? {
-        let v = columns::parse_record(Layer::Silver, &line)?;
-        let key = v["bronze_record_sha256"]
-            .as_str()
-            .ok_or_else(|| invalid("SILVER_PARENT_REQUIRED"))?;
-        if parents.get(key) != Some(&(v["effective_at"].clone(), v["source"].clone())) {
-            return Err(invalid("SILVER_PARENT_BINDING_MISMATCH"));
-        }
-    }
-    Ok(())
-}
-fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()
-}
-/// Materialize one sealed, bounded existing decoder output into a new directory.
-/// An interrupted directory without COMPLETE is not a dataset; no overwrite/resume.
+/// Default publication is the source-bound streaming multi-file route.
 /// # Errors
-/// Fails closed on source/parent/projection drift, resource limits or publication errors.
+/// Fails on seal, selection, sample, projection, cap or publication errors.
 pub fn materialize(input: &Path, execution_sha: &str, output: &Path) -> io::Result<Value> {
-    let input = input.canonicalize()?;
-    let parent = output
-        .parent()
-        .ok_or_else(|| invalid("OUTPUT_PARENT"))?
-        .canonicalize()?;
-    if parent.starts_with(&input) {
-        return Err(invalid("OUTPUT_INSIDE_INPUT"));
-    }
-    let seal = input_seal(&input, execution_sha)?;
-    let bronze = bounded_read(&input.join("bronze.jsonl"))?;
-    let silver = bounded_read(&input.join("silver.jsonl"))?;
-    verify_silver_binding(&bronze, &silver)?;
-    fs::create_dir(output)?;
-    File::open(&parent)?.sync_all()?;
-    let mut files = BTreeMap::new();
-    for (layer, bytes) in [(Layer::Bronze, bronze), (Layer::Silver, silver)] {
-        let name = format!("{}.parquet", layer.name());
-        let path = output.join(&name);
-        write_layer(layer, &bytes, &path)?;
-        let audit = verify_layer(layer, &path, &hash(&bytes))?;
-        if hash(&bytes) != seal["files"][format!("{}.jsonl", layer.name())]["sha256"] {
-            return Err(invalid("INPUT_CHANGED_DURING_READ"));
-        }
-        files.insert(name,json!({"sha256":hash(&bounded_read(&path)?),"bytes":path.metadata()?.len(),"audit":audit,"schema":columns::schema_descriptor(layer),"schema_sha256":hash(&serde_json::to_vec(&columns::schema_descriptor(layer)).map_err(invalid)?)}));
-    }
-    if input_seal(&input, execution_sha)? != seal {
-        return Err(invalid("INPUT_CHANGED_DURING_PUBLICATION"));
-    }
-    let manifest = json!({"schema":"OF1_PARQUET_DATASET_1","writer":{"version":env!("CARGO_PKG_VERSION"),"source_sha256":crate::source_sha256(),"executable_sha256":hash(&fs::read(std::env::current_exe()?)?),"cargo_lock_sha256":hash(include_bytes!("../Cargo.lock")),"settings":settings()},"input":seal,"files":files,"evidence":{"slice_class":"ENGINEERING_VALIDATION_ONLY","new_domain_decoding":false,"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","unknowns_preserved":true,"historical_activation":"UNPROVEN","physical_writer":"RUST_ARROW_PARQUET_BOUNDED_PROJECTION_ONLY"}});
-    let bytes = serde_json::to_vec_pretty(&manifest).map_err(invalid)?;
-    publish(&output.join("manifest.json"), &bytes)?;
-    File::open(output)?.sync_all()?;
-    publish(
-        &output.join("COMPLETE"),
-        format!("{}\n", hash(&bytes)).as_bytes(),
-    )?;
-    File::open(output)?.sync_all()?;
-    Ok(manifest)
+    crate::shards::materialize(
+        input,
+        execution_sha,
+        output,
+        crate::shards::ShardLimits::default(),
+    )
 }

@@ -39,6 +39,8 @@ pub fn source_sha256() -> String {
         include_bytes!("durable.rs"),
         include_bytes!("dataset_location.rs"),
         include_bytes!("lib.rs"),
+        include_bytes!("sample.rs"),
+        crate::sample::SELECTION_PLAN,
         include_bytes!("../Cargo.toml"),
         include_bytes!("../Cargo.lock"),
     ];
@@ -66,14 +68,18 @@ fn bindings(run: &RecordedRun) -> io::Result<Value> {
             "raw_sha256":p.receipt.sha256, "raw_bytes":p.receipt.response_entity_bytes
         }))
     }).collect::<io::Result<Vec<_>>>()?;
-    Ok(json!({
+    let mut result = json!({
         "manifest_sha256":find("run-manifest").ok_or_else(|| invalid("missing manifest artifact"))?,
         "payload_manifest_sha256":find("payload-manifest"),
         "aggregate_sha256":sha256(&serde_json::to_vec(&run.aggregate_plan).map_err(invalid)?),
         "prepared_payload_sha256":run.prepared.as_ref().map(PreparedPayload::sha256).transpose().map_err(invalid)?,
         "metadata_receipt_sha256":run.prepared.as_ref().map(PreparedPayload::metadata_receipt_sha256),
         "receipts":receipts
-    }))
+    });
+    if let Some(sample) = &run.aggregate_plan.sample_identity {
+        result["sample_identity"] = serde_json::to_value(sample).map_err(invalid)?;
+    }
+    Ok(result)
 }
 
 fn raw(object: &Published) -> io::Result<Vec<u8>> {

@@ -63,6 +63,7 @@ try {
     if(!python)throw Error('COLUMNAR_QUERY_PYTHON required: DuckDB must not be silently skipped');
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_query.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_coverage.py')]));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_manifest.py'),join(scratch,'fixtures')]));
     console.log('DuckDB real Parquet and coverage regressions PASS (sockets denied)');
   }
   console.log('Parquet dependency identity/network-denied gates PASS');

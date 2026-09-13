@@ -11,6 +11,8 @@ arrow-array = { version = "=59.3.0", default-features = false }
 arrow-schema = { version = "=59.3.0", default-features = false }
 parquet = { version = "=59.3.0", default-features = false, features = ["arrow"] }
 serde_json = "=1.0.151"
+# Already present in the reviewed graph; streaming summary skips full record arrays.
+serde = { version = "=1.0.229", default-features = false }
 sha2 = "=0.10.9"
 hex = "=0.4.3"
 

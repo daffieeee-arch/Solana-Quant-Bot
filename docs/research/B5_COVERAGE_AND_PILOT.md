@@ -105,7 +105,13 @@ Deadline checks are admissions, not a guarantee for every final filesystem call.
 
 ## Downstream feasibility and smallest next implementation
 
-Current Bronze supports epoch 978, at most three ascending complete slotranges
+This section preserves the **pre-sharding feasibility decision** at this
+report's capture time. Its bounded follow-up is now implemented locally in the
+[manifest/sample route](B5_MANIFEST_SHARDS_AND_SAMPLE_IDENTITY.md). The original
+range calculations, retained caps, STOP result and execution evidence above
+are not rewritten; the subsequent three-attempt new-run proposal is separate.
+
+At that preflight, Bronze supported epoch 978, at most three ascending complete slotranges
 from **one original run**, 16 MiB total Raw, 4,096 nodes / 16,384 links per slot,
 2 MiB/frame, 16 MiB decoded metadata and 16 MiB combined record JSON per slot.
 Selection JSON/metadata caps are each 48 MiB. Parquet caps each layer at 5,000
@@ -124,8 +130,8 @@ acquisition.** Preserve original per-slot provenance and full denominators while
 publishing multiple deterministic files of at most 5,000 records / 64 MiB, with
 a selection-level completeness manifest and explicit overflow/missing outcomes.
 Also bind the preregistered sample class through Rust without reclassifying old
-engineering evidence. Current Bronze hardcodes `ENGINEERING_VALIDATION_ONLY`
-and Parquet refuses another class; an offline lottery cannot bypass that gate.
+engineering evidence. At that preflight, Bronze hardcoded `ENGINEERING_VALIDATION_ONLY`
+and Parquet refused another class; an offline lottery cannot bypass that gate.
 No changes to those limits or classifiers are made here.
 
 Only after review of that boundary and a tighter retry decision should a fresh

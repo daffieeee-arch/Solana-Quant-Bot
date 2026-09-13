@@ -434,6 +434,28 @@ pub fn facts(record: &Value) -> io::Result<Vec<Value>> {
                     .ok_or_else(|| invalid("SILVER_LIMITS"))?
                     .clone(),
             );
+        if let Some(sample) = record.get("sample_identity") {
+            let parsed: of1_range_recorder::sample::SampleIdentity =
+                serde_json::from_value(sample.clone()).map_err(invalid)?;
+            parsed.validate(parsed.epoch).map_err(invalid)?;
+            let slot = record["effective_at"]["slot"]
+                .as_str()
+                .and_then(|s| s.parse::<u64>().ok())
+                .ok_or_else(|| invalid("SILVER_SAMPLE_SLOT_MISSING"))?;
+            if sample != &record["source"]["bindings"]["sample_identity"]
+                || sample["sample_class"] != record["slice_class"]
+                || !(parsed.start_slot..parsed.end_slot_exclusive).contains(&slot)
+            {
+                return Err(invalid("SILVER_SAMPLE_BINDING_MISMATCH"));
+            }
+            fact["sample_identity"] = sample.clone();
+            fact["slice_class"] = record["slice_class"].clone();
+        } else if record
+            .get("slice_class")
+            .is_some_and(|v| v != "ENGINEERING_VALIDATION_ONLY")
+        {
+            return Err(invalid("SILVER_SAMPLE_BINDING_MISSING"));
+        }
         out.push(fact);
     }
     Ok(out)

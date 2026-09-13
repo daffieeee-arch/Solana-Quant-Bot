@@ -30,6 +30,16 @@ fn print(value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
+fn metadata_budget(fixed_pilot: bool) -> StageBudget {
+    StageBudget {
+        // New proposal leaves nine attempts within the same sixteen-attempt aggregate.
+        // Historical metadata proposal bytes/defaults are not silently rewritten.
+        max_requests: if fixed_pilot { 7 } else { 12 },
+        max_response_entity_bytes_total: 15_576_576,
+        max_runtime_ms: 600_000,
+    }
+}
+
 fn open(root: &str, plan: &str, lease_hash: &str) -> Result<AcquisitionStore<SystemClock>> {
     Ok(AcquisitionStore::resume(
         Path::new(root),
@@ -59,7 +69,7 @@ fn run(args: &[String]) -> Result<()> {
                 "networkEnabled":false, "readyToRun":false
             }))
         }
-        ["metadata-proposal", root, code_sha, toolchain_fingerprint] => {
+        [command @ ("metadata-proposal" | "metadata-pilot-proposal"), root, code_sha, toolchain_fingerprint] => {
             // Fail before generating approval material; initialization repeats
             // this same read-only admission check against the current filesystem.
             validate_dataset_location(Path::new(root))?;
@@ -70,6 +80,7 @@ fn run(args: &[String]) -> Result<()> {
             }
             let aggregate = AggregatePlan {
                 schema: AGGREGATE_SCHEMA.into(), epoch: 978,
+                sample_identity: (*command == "metadata-pilot-proposal").then(of1_range_recorder::sample::SampleIdentity::fixed_pilot),
                 format_source: FormatSource::pinned(), code_sha: (*code_sha).into(),
                 toolchain_fingerprint: (*toolchain_fingerprint).into(),
                 executable_sha256: current_executable_sha256()?,
@@ -82,14 +93,11 @@ fn run(args: &[String]) -> Result<()> {
                     response_timeout_ms: 30_000, request_retries: 2,
                 },
             };
-            let metadata_budget = StageBudget {
-                max_requests: 12, max_response_entity_bytes_total: 15_576_576,
-                max_runtime_ms: 600_000,
-            };
+            let metadata_budget = metadata_budget(aggregate.sample_identity.is_some());
             print(&serde_json::json!({
                 "schema":"OF1_METADATA_RUN_PROPOSAL_1", "approved":false,
                 "networkEnabled":false, "readyToRun":false,
-                "slice_class":"ENGINEERING_VALIDATION_ONLY",
+                "slice_class":aggregate.sample_identity.as_ref().map_or("ENGINEERING_VALIDATION_ONLY", |s| s.sample_class.as_str()),
                 "aggregate":aggregate, "metadata_budget":metadata_budget,
                 "approval_target_sha256":metadata_proposal_sha256(&aggregate, &metadata_budget)?,
                 "required_next_action":"Review exact plan/code/toolchain, current cost and availability; obtain metadata-only GO. No payload authorization."
@@ -262,4 +270,22 @@ fn capture_stage_inner(
     print(
         &serde_json::json!({"stage_capture":"COMPLETE", "next":"STOP_FOR_REVIEW_NO_AUTOMATIC_NEXT_STAGE", "progress":store.progress()?}),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn new_pilot_reserves_attempt_room_without_changing_legacy_metadata_caps() {
+        let old = metadata_budget(false);
+        let new = metadata_budget(true);
+        assert_eq!(old.max_requests, 12);
+        assert_eq!(new.max_requests, 7);
+        assert_eq!(new.max_requests + 3 * 3, 16);
+        assert_eq!(
+            new.max_response_entity_bytes_total,
+            old.max_response_entity_bytes_total
+        );
+        assert_eq!(new.max_runtime_ms, old.max_runtime_ms);
+    }
 }

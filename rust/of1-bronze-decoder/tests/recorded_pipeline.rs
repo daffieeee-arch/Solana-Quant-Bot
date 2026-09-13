@@ -53,15 +53,30 @@ struct Harness {
     temp: tempfile::TempDir,
     root: PathBuf,
     plan: AggregatePlan,
+    first_slot: u64,
     store: AcquisitionStore<HistoricalFixtureClock>,
 }
 
 impl Harness {
     fn new() -> Self {
+        Self::new_sample(None, None)
+    }
+
+    fn new_sample(
+        sample_identity: Option<of1_range_recorder::sample::SampleIdentity>,
+        export: Option<&Path>,
+    ) -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("run");
+        let root = if let Some(export) = export {
+            fs::create_dir(export).unwrap();
+            export.join("run")
+        } else {
+            temp.path().join("run")
+        };
+        let first_slot = sample_identity.as_ref().map_or(SLOT, |s| s.start_slot);
         let plan = AggregatePlan {
             schema: AGGREGATE_SCHEMA.into(),
+            sample_identity,
             epoch: 978,
             format_source: FormatSource::pinned(),
             code_sha: "a".repeat(40),
@@ -100,6 +115,7 @@ impl Harness {
             temp,
             root,
             plan,
+            first_slot,
             store,
         }
     }
@@ -143,7 +159,7 @@ impl Harness {
         let mut index = vec![0; usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap()];
         let mut offset = OFFSET;
         for (i, bytes) in payloads.iter().enumerate() {
-            let at = (i + 1) * 12;
+            let at = (usize::try_from(self.first_slot - 978 * SLOTS_PER_EPOCH).unwrap() + i) * 12;
             index[at..at + 8].copy_from_slice(&offset.to_le_bytes());
             index[at + 8..at + 12]
                 .copy_from_slice(&u32::try_from(bytes.len()).unwrap().to_le_bytes());
@@ -166,8 +182,13 @@ impl Harness {
         let metadata = (0..4)
             .map(|n| self.store.published(n).unwrap().unwrap())
             .collect::<Vec<_>>();
-        let prepared =
-            derive_payload_from_metadata(&self.plan, &metadata, SLOT, SLOT + count).unwrap();
+        let prepared = derive_payload_from_metadata(
+            &self.plan,
+            &metadata,
+            self.first_slot,
+            self.first_slot + count,
+        )
+        .unwrap();
         let lease = PayloadLease {
             schema: "OF1_PAYLOAD_LEASE_1".into(),
             authority: Authority::Fixture,
@@ -562,4 +583,171 @@ fn multi_slot_reports_missing_and_quarantined_envelopes_without_dropping_order()
     assert!(r["pump_program_involvement_transactions"].is_null());
     assert_eq!(r["reasons"]["MISSING_STATUS_METADATA"], 1);
     assert_eq!(before, inventory(&h.root));
+}
+
+#[test]
+fn frozen_sample_identity_flows_from_store_receipts_to_bronze_and_silver() {
+    use of1_range_recorder::sample::{END_SLOT, FIRST_SLOT, SampleIdentity};
+    let export = std::env::var_os("COLUMNAR_SAMPLE_FIXTURE_DIR").map(PathBuf::from);
+    let sample = SampleIdentity::fixed_pilot();
+    let mut h = Harness::new_sample(Some(sample.clone()), export.as_deref());
+    let payloads = [Some("sell"), Some("missing"), Some("wire")]
+        .iter()
+        .enumerate()
+        .map(|(i, variant)| fixture_payload_at(FIRST_SLOT + u64::try_from(i).unwrap(), *variant))
+        .collect::<Vec<_>>();
+    h.metadata_slots(&payloads);
+    let metadata = (0..4)
+        .map(|n| h.store.published(n).unwrap().unwrap())
+        .collect::<Vec<_>>();
+    assert!(derive_payload_from_metadata(&h.plan, &metadata, FIRST_SLOT + 1, END_SLOT).is_err());
+    assert!(derive_payload_from_metadata(&h.plan, &metadata, FIRST_SLOT, END_SLOT + 1).is_err());
+    h.admit_slots(3);
+    for (i, bytes) in payloads.iter().enumerate() {
+        h.publish(4 + u64::try_from(i).unwrap(), bytes);
+    }
+    let before = inventory(&h.root);
+    let r = report::decode_run(&h.root).unwrap();
+    assert_eq!(r, report::decode_run(&h.root).unwrap());
+    let identity = serde_json::to_value(&sample).unwrap();
+    assert_eq!(r["sample_identity"], identity);
+    assert_eq!(r["bindings"]["sample_identity"], identity);
+    assert_eq!(r["slice_class"], "RESEARCH_SAMPLING");
+    assert_eq!(r["receipt_evidence"], "Fixture");
+    assert_eq!(r["research_ready"], false);
+    assert_eq!(
+        r["dispositions"],
+        json!({"DECODED":1,"MISSING":1,"QUARANTINED":1,"UNSUPPORTED":0})
+    );
+    assert_eq!(r["silver_records"].as_array().unwrap().len(), 1);
+    for layer in ["records", "silver_records"] {
+        for row in r[layer].as_array().unwrap() {
+            assert_eq!(row["sample_identity"], identity);
+            assert_eq!(row["source"]["bindings"]["sample_identity"], identity);
+            assert_eq!(row["slice_class"], "RESEARCH_SAMPLING");
+            assert_eq!(row["receipt_evidence"], "Fixture");
+        }
+    }
+    let plan: Value = serde_json::from_slice(&fs::read(h.root.join("run.json")).unwrap()).unwrap();
+    assert_eq!(plan["plan"]["sample_identity"], identity);
+    let aggregate_hash = sha256(&serde_json::to_vec(&h.plan).unwrap());
+    for sequence in 0..7 {
+        let receipt = h.store.published(sequence).unwrap().unwrap().receipt;
+        assert_eq!(receipt.aggregate_sha256, aggregate_hash);
+        assert_eq!(receipt.evidence, "Fixture");
+    }
+    assert_eq!(before, inventory(&h.root));
+    // Optional exported source fixture is created here through the real store,
+    // never copied from an authentic run. The external gate invokes our normal
+    // decoder CLI separately; tests contain no process/network capability.
+}
+
+#[test]
+fn legacy_engineering_cannot_be_retrofitted_with_sample_identity() {
+    use of1_range_recorder::sample::SampleIdentity;
+    let mut h = Harness::new();
+    let legacy_bytes = serde_json::to_vec(&h.plan).unwrap();
+    assert!(
+        !String::from_utf8(legacy_bytes.clone())
+            .unwrap()
+            .contains("sample_identity")
+    );
+    let roundtrip: AggregatePlan = serde_json::from_slice(&legacy_bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&roundtrip).unwrap(), legacy_bytes);
+    h.metadata();
+    h.admit();
+    h.publish(4, &payload());
+    let report = report::decode_run(&h.root).unwrap();
+    assert_eq!(report["slice_class"], "ENGINEERING_VALIDATION_ONLY");
+    assert!(report.get("sample_identity").is_none());
+    let mut retrofitted = h.plan.clone();
+    retrofitted.sample_identity = Some(SampleIdentity::fixed_pilot());
+    let metadata = (0..4)
+        .map(|n| h.store.published(n).unwrap().unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        derive_payload_from_metadata(
+            &retrofitted,
+            &metadata,
+            of1_range_recorder::sample::FIRST_SLOT,
+            of1_range_recorder::sample::END_SLOT
+        )
+        .is_err()
+    );
+    rewrite_json(&h.root.join("run.json"), |v| {
+        v["plan"] = serde_json::to_value(&retrofitted).unwrap();
+        v["aggregate_sha256"] = json!(sha256(&serde_json::to_vec(&retrofitted).unwrap()));
+    });
+    assert!(report::decode_run(&h.root).is_err());
+}
+
+#[test]
+fn sample_changes_approval_target_and_cannot_resume_an_engineering_run() {
+    use of1_range_recorder::{
+        durable::{StoreError, acquisition::metadata_proposal_sha256},
+        sample::SampleIdentity,
+    };
+    let h = Harness::new();
+    let budget = StageBudget {
+        max_requests: 6,
+        max_response_entity_bytes_total: 12_000_000,
+        max_runtime_ms: 60_000,
+    };
+    let mut changed = h.plan.clone();
+    changed.sample_identity = Some(SampleIdentity::fixed_pilot());
+    assert_ne!(
+        metadata_proposal_sha256(&h.plan, &budget).unwrap(),
+        metadata_proposal_sha256(&changed, &budget).unwrap()
+    );
+    let lease = h.store.progress().unwrap().current_lease_sha256;
+    let before = inventory(&h.root);
+    drop(h.store);
+    assert!(matches!(
+        AcquisitionStore::resume(&h.root, &changed, &lease, HistoricalFixtureClock),
+        Err(StoreError::Identity)
+    ));
+    assert_eq!(before, inventory(&h.root));
+}
+
+#[test]
+fn sample_identity_rejects_different_seed_class_window_and_epoch_before_initialization() {
+    use of1_range_recorder::sample::SampleIdentity;
+    let h = Harness::new();
+    for key in [
+        "seed",
+        "sample_class",
+        "selection_plan_sha256",
+        "start_slot",
+        "end_slot_exclusive",
+        "epoch",
+    ] {
+        let mut identity = serde_json::to_value(SampleIdentity::fixed_pilot()).unwrap();
+        identity[key] = if identity[key].is_number() {
+            json!(0)
+        } else {
+            json!("changed")
+        };
+        let sample: SampleIdentity = serde_json::from_value(identity).unwrap();
+        let mut plan = h.plan.clone();
+        plan.sample_identity = Some(sample);
+        let root = h.temp.path().join(key);
+        assert!(
+            AcquisitionStore::create(
+                &root,
+                plan,
+                MetadataLease {
+                    schema: "OF1_METADATA_LEASE_1".into(),
+                    authority: Authority::Fixture,
+                    budget: StageBudget {
+                        max_requests: 6,
+                        max_response_entity_bytes_total: 12_000_000,
+                        max_runtime_ms: 60_000
+                    }
+                },
+                HistoricalFixtureClock
+            )
+            .is_err()
+        );
+        assert!(!root.exists());
+    }
 }

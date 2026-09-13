@@ -80,6 +80,7 @@ fn index_bytes() -> Result<Vec<u8>> {
 fn plan() -> Result<AggregatePlan> {
     Ok(AggregatePlan {
         schema: AGGREGATE_SCHEMA.into(),
+        sample_identity: None,
         epoch: 978,
         format_source: FormatSource::pinned(),
         code_sha: BASELINE.into(),

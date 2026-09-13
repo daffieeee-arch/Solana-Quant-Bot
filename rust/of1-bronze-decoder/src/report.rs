@@ -54,9 +54,9 @@ pub fn decode_run(root: &Path) -> io::Result<Value> {
         return Err(invalid("RAW_RECEIPTS_UNVERIFIED"));
     }
     if payloads.is_empty() {
-        return Ok(
-            json!({"schema":SCHEMA,"run_id":run.snapshot.id,"bindings":verification["bindings"],"input_kind":"METADATA_ONLY","records":[],"silver_records":[],"silver":"NOT_PRODUCED","domain_decoding":"UNAVAILABLE_NO_PAYLOAD","decoded_transactions":null,"research_ready":false}),
-        );
+        let mut report = json!({"schema":SCHEMA,"run_id":run.snapshot.id,"bindings":verification["bindings"],"input_kind":"METADATA_ONLY","records":[],"silver_records":[],"silver":"NOT_PRODUCED","domain_decoding":"UNAVAILABLE_NO_PAYLOAD","decoded_transactions":null,"research_ready":false});
+        attach_sample(&mut report, run.aggregate_plan.sample_identity.as_ref())?;
+        return Ok(report);
     }
     if verification["stages"]["car_slot"] != "VERIFIED" {
         return Err(invalid(format!(
@@ -94,12 +94,34 @@ pub fn decode_run(root: &Path) -> io::Result<Value> {
         }
         slots.push(slot);
     }
-    let projected = combine_slots(slots, record_bytes, metadata_bytes)?;
+    let mut projected = combine_slots(slots, record_bytes, metadata_bytes)?;
+    attach_sample(&mut projected, run.aggregate_plan.sample_identity.as_ref())?;
     let after = verify_recorded(root, None)?;
     if after["bindings"] != verification["bindings"] || after["run_id"] != verification["run_id"] {
         return Err(invalid("INPUT_CHANGED_DURING_DECODE"));
     }
     Ok(projected)
+}
+
+/// Class is obtained solely from the checked immutable source aggregate.
+fn attach_sample(
+    value: &mut Value,
+    sample: Option<&of1_range_recorder::sample::SampleIdentity>,
+) -> io::Result<()> {
+    if let Some(sample) = sample {
+        value["sample_identity"] = serde_json::to_value(sample).map_err(invalid)?;
+        value["slice_class"] = json!(sample.sample_class);
+        // Sample class never promotes fixture evidence or establishes suitability.
+        if value.get("research_ready").is_some() {
+            value["research_ready"] = json!(false);
+        }
+        if value.get("limitations").is_some() {
+            value["limitations"][3] = json!(
+                "Preregistered sample identity only; no economic/executable price, research-readiness, strategy or edge claim"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// One complete native range per slot; no reshaped run, split-range stitching or
@@ -311,13 +333,14 @@ fn project_slot(
         *counts
             .get_mut(disposition)
             .ok_or_else(|| invalid("DISPOSITION"))? += 1;
-        let record = json!({"schema":SCHEMA,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"decoder_source_sha256":decoder_source_sha256,"disposition":disposition,"reason":error,
+        let mut record = json!({"schema":SCHEMA,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"decoder_source_sha256":decoder_source_sha256,"disposition":disposition,"reason":error,
             "source":{"run_id":run.snapshot.id,"raw_path":published.raw_path,"raw_sha256":published.receipt.sha256,"raw_bytes":raw.len(),"receipt_sequence":published.receipt.request.sequence,"bindings":verification["bindings"],"acquisition_executable_sha256":run.aggregate_plan.executable_sha256,
                 "acquired_at_unix_ms":published.receipt.acquired_at.wall_ms.to_string(),"acquired_at_role":"OPERATIONAL_PROVENANCE_NOT_FEATURE","transaction_node_cid_hex":envelope.cid_hex,"raw_section_offset":envelope.raw_offset,"raw_section_length":envelope.raw_length,"car_section_offset":start+envelope.raw_offset as u64,"physical_node_index":envelope.physical_node_index,
                 "inline_transaction_data_hex":hex::encode(&envelope.data.bytes),"inline_status_metadata_hex":hex::encode(&envelope.metadata.bytes),"dataframe_next_cids":envelope.data.next,"metadata_next_cids":envelope.metadata.next},
             "effective_at":{"slot":slot.to_string(),"entry_index":envelope.entry_index,"transaction_index_in_entry":envelope.transaction_index_in_entry,"transaction_index_in_slot":envelope.transaction_index_in_slot,"source_transaction_index":envelope.source_transaction_index.map(|n|n.to_string())},
             "atomic_observation_package":true,"observed_at":null,"actionable_at":null,"execution_opportunity_at":null,"observation_model_id":null,
             "slice_class":"ENGINEERING_VALIDATION_ONLY","transaction":transaction});
+        attach_sample(&mut record, run.aggregate_plan.sample_identity.as_ref())?;
         charge(
             &mut record_bytes,
             serde_json::to_vec(&record).map_err(invalid)?.len(),
@@ -327,16 +350,16 @@ fn project_slot(
         records.push(record);
     }
     let records_sha256 = sha256(&serde_json::to_vec(&records).map_err(invalid)?);
-    Ok(
-        json!({"schema":SCHEMA,"run_id":run.snapshot.id,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"slot":slot.to_string(),"raw_sha256":published.receipt.sha256,"raw_bytes":raw.len(),"car_range_start":start,"car_range_end_exclusive":end_exclusive,
+    let mut result = json!({"schema":SCHEMA,"run_id":run.snapshot.id,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"slot":slot.to_string(),"raw_sha256":published.receipt.sha256,"raw_bytes":raw.len(),"car_range_start":start,"car_range_end_exclusive":end_exclusive,
         "bindings":verification["bindings"],"stages":{"capture":"PUBLISHED","raw_receipts":"VERIFIED","car_slot":"VERIFIED","domain_decoding":"BOUNDED_ATOMIC_TRANSACTION_STATUS"},
         "verified_nodes":archive.verified_nodes,"verified_links":archive.verified_links,"entry_nodes":archive.entries,"transaction_envelopes":archive.envelopes.len(),"dispositions":counts,"reasons":reasons,
         "pump_program_involvement_transactions":if pump_unknown==0{Some(pump_count)}else{None},"pump_program_known_positive":pump_count,"pump_program_unknown":pump_unknown,"pump_event_decode":"PINNED_STRUCTURAL_PROBES_ONLY","root_to_slot_membership":"UNAVAILABLE","signature_crypto_verification":"NOT_PERFORMED",
         "resource_accounting":{"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_RECORD_JSON_BYTES,"max_decoded_metadata_bytes":MAX_DECODED_METADATA_BYTES},
         "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":if silver_records.is_empty(){"NOT_PRODUCED"}else{"BOUNDED_RECORDED_SELL_FACTS"},"silver_fact_count":silver_records.len(),"silver_records":silver_records,"physical_parquet_writer":"NOT_SELECTED",
         "records_sha256":records_sha256,"analysis":pump::summary(&records),"records":records,
-        "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]}),
-    )
+        "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]});
+    attach_sample(&mut result, run.aggregate_plan.sample_identity.as_ref())?;
+    Ok(result)
 }
 
 fn inspect_pump(tx: &mut Value) -> io::Result<()> {
@@ -714,8 +737,16 @@ pub fn html(report: &Value) -> String {
             );
         }
     }
-    format!(
+    let page = format!(
         "<!doctype html><html lang=nl><meta charset=utf-8><meta name=viewport content='width=device-width, initial-scale=1'><title>Raw → Bronze — kwaliteitsrapport</title><style>body{{font:16px system-ui;background:#111827;color:#e5e7eb;margin:32px}}h1{{color:#67e8f9}}a{{color:#67e8f9}}.notice{{padding:16px;background:#253047;border-left:4px solid #fbbf24}}pre,.mono{{font:12px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}}table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border:1px solid #374151;padding:8px;text-align:left;vertical-align:top}}th{{background:#253047;position:sticky;top:0}}summary{{cursor:pointer}}article{{overflow:auto}}</style><h1>Raw → Bronze → beperkte Silver-eventfeiten</h1><p class=notice><strong>{input_label}</strong><br>ENGINEERING_VALIDATION_ONLY · transaction-wire + statusmetadata, behouden buy-diagnose en aparte brongebonden sell-feiten. Geen research-ready dataset of edgeclaim. Root-to-slot membership: UNAVAILABLE. Ontbrekend is nooit nul.</p><p><a href=quality.json>Volledig JSON-rapport + records</a> · <a href=bronze.jsonl>Bronze JSONL</a> · <a href=execution.json>Uitvoeringsidentiteit</a></p>{overview}<details><summary>Bronbinding, dekking en beperkingen</summary><pre>{}</pre></details><details><summary>Alle transactie-enveloppen in bronvolgorde</summary><article><table><thead><tr><th>Slot</th><th>Volgorde</th><th>Decode</th><th>Eerste signature</th><th>Status</th><th>Fee (lamports)</th><th>Programma's (top-level/CPI)</th><th>Reden</th></tr></thead><tbody>{rows}</tbody></table></article></details></html>",
         escape(&serde_json::to_string_pretty(&summary).unwrap_or_default())
-    )
+    );
+    if report["slice_class"] == "RESEARCH_SAMPLING" {
+        page.replace(
+            "ENGINEERING_VALIDATION_ONLY · transaction-wire",
+            "RESEARCH_SAMPLING (identiteit, geen geschiktheidspromotie) · transaction-wire",
+        )
+    } else {
+        page
+    }
 }

@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, truncateSync, rmSync, symlinkSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -6,11 +8,25 @@ import { describe, expect, it } from 'vitest';
 import { validateParquetInputs } from '../scripts/assert-of1-parquet-offline.mjs';
 // @ts-expect-error Reviewed local ESM CI prerequisite selector.
 import { selectPython313, validateQueryLock } from '../scripts/prepare-columnar-query-ci.mjs';
+// @ts-expect-error Local read-only viewer validation; import does not listen.
+import { MAX_REPORT_BYTES, validateReportDirectory } from '../research/columnar-query/serve.mjs';
 const base=new URL('../rust/of1-parquet-projection/',import.meta.url);
 const manifest=readFileSync(new URL('Cargo.toml',base));
 const lock=readFileSync(new URL('Cargo.lock',base));
 const review=JSON.parse(readFileSync(new URL('dependency-review.json',base),'utf8'));
 describe('Parquet dependency and mandatory reader gate',()=>{
+  it('admits the measured multi-shard report without truncation but retains an exact file cap',()=>{
+    const root=mkdtempSync(join(tmpdir(),'columnar-viewer-test-'));
+    try{
+      for(const name of ['index.html','query-results.json','query-execution.json'])writeFileSync(join(root,name),'fixture');
+      const result=join(root,'query-results.json');
+      truncateSync(result,3307557);expect(validateReportDirectory(root)).toBe(root);
+      expect(MAX_REPORT_BYTES).toBe(8*1024*1024);
+      truncateSync(result,MAX_REPORT_BYTES);expect(validateReportDirectory(root)).toBe(root);
+      truncateSync(result,MAX_REPORT_BYTES+1);expect(()=>validateReportDirectory(root)).toThrow('bounded regular');
+      unlinkSync(result);symlinkSync(join(root,'index.html'),result);expect(()=>validateReportDirectory(root)).toThrow('bounded regular');
+    }finally{rmSync(root,{recursive:true,force:true});}
+  });
   it('accepts reviewed identities',()=>expect(validateParquetInputs(manifest,lock,review,{})).toEqual([]));
   it('rejects changed manifest/lock before fetch',()=>{
     expect(validateParquetInputs(Buffer.concat([manifest,Buffer.from('\n')]),lock,review,{})).toContain('unreviewed Parquet manifest');

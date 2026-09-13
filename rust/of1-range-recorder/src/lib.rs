@@ -14,6 +14,7 @@ pub mod https;
 // Unix telemetry remains gated inside this module by the `monitor` feature.
 pub mod monitor;
 pub mod recorded_verification;
+pub mod sample;
 #[cfg(feature = "loopback-fixture")]
 pub mod transport;
 

@@ -470,10 +470,13 @@ pub fn parse_record(layer: Layer, line: &[u8]) -> io::Result<Value> {
             "CANONICAL_JSON_REQUIRED_NO_DUPLICATE_KEYS_OR_NORMALIZATION",
         ));
     }
-    if record["schema"] != layer.record_schema()
-        || record["slice_class"] != "ENGINEERING_VALIDATION_ONLY"
-    {
+    if record["schema"] != layer.record_schema() {
         return Err(invalid("UNSUPPORTED_RECORD_SCHEMA_OR_SLICE_CLASS"));
+    }
+    match record["slice_class"].as_str() {
+        Some("ENGINEERING_VALIDATION_ONLY") if record["sample_identity"].is_null() => {}
+        Some("RESEARCH_SAMPLING") => crate::admission::validate_sample(&record["sample_identity"])?,
+        _ => return Err(invalid("UNSUPPORTED_RECORD_SCHEMA_OR_SLICE_CLASS")),
     }
     for key in [
         "/effective_at/slot",

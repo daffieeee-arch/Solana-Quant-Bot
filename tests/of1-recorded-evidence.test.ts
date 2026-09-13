@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { frameSources, historicalSourceReceipt, retainedSources } from './retained-of1-source-helper.js';
 
 const root = process.cwd();
 const base = resolve(root, 'schemas/acquisition/of1');
@@ -23,20 +24,36 @@ describe('retained authentic read-only verifier evidence (no acquisition)', () =
     });
   });
 
-  it('binds the actual external execution and the compiled source fingerprint, without claiming Git build attestation', () => {
+  it('binds the actual historical execution to preserved source bytes, without claiming Git build attestation', () => {
     expect(execution.report_sha256).toBe(hash(reportBytes));
     expect(execution.binary_sha256).toBe(report.verifier.binary_sha256);
-    const sourcePath = resolve(root, 'rust/of1-range-recorder/src/recorded_verification.rs');
-    const paths = [...readFileSync(sourcePath, 'utf8').matchAll(/include_bytes!\("([^"]+)"\)/g)].map(m => m[1]);
-    expect(paths.length).toBe(13);
-    const framed = paths.flatMap(path => {
-      const bytes = readFileSync(resolve(dirname(sourcePath), path));
-      const length = Buffer.alloc(8); length.writeBigUInt64LE(BigInt(bytes.length));
-      return [length, bytes];
-    });
-    expect(hash(Buffer.concat(framed))).toBe(report.verifier.source_sha256);
+    const historical = retainedSources();
+    const indexes = historicalSourceReceipt.verifier.file_indexes;
+    expect(indexes).toEqual(Array.from({ length: 13 }, (_, i) => i));
+    const sourcePath = 'rust/of1-range-recorder/src/recorded_verification.rs';
+    const paths = [...historical[0].toString().matchAll(/include_bytes!\("([^"]+)"\)/g)].map(m => resolve(root, dirname(sourcePath), m[1]));
+    expect(paths).toEqual(indexes.map((i: number) => resolve(root, historicalSourceReceipt.files[i].path)));
+    expect(hash(frameSources(indexes.map((i: number) => historical[i])))).toBe(report.verifier.source_sha256);
+    expect(historicalSourceReceipt.verifier.framed_source_sha256).toBe(report.verifier.source_sha256);
     expect(execution.source_sha256).toBe(report.verifier.source_sha256);
     expect(execution.binary_sha256).not.toBe(origin.acquisition_executable_sha256);
+  });
+
+  it('binds new sample-aware sources separately instead of relabelling the historical verification', () => {
+    const sourcePath = resolve(root, 'rust/of1-range-recorder/src/recorded_verification.rs');
+    const source = readFileSync(sourcePath, 'utf8');
+    const list = source.match(/let sources: &\[&\[u8\]\] = &\[([\s\S]*?)\n    \];/)?.[1];
+    expect(list).toBeDefined();
+    const tokens = [...list!.matchAll(/include_bytes!\("([^"]+)"\)|crate::sample::SELECTION_PLAN/g)];
+    expect(tokens).toHaveLength(15);
+    expect(tokens.filter(m => m[1] === 'sample.rs')).toHaveLength(1);
+    expect(tokens.filter(m => !m[1])).toHaveLength(1);
+    const current = tokens.map(m => readFileSync(m[1] ? resolve(dirname(sourcePath), m[1]) : resolve(root, 'research/columnar-query/pilot-proposal.json')));
+    expect(hash(frameSources(current))).not.toBe(report.verifier.source_sha256);
+    expect(hash(current[tokens.findIndex(m => !m[1])])).toBe('df930707d0ece9915744aec7cf771c60e92f35298f2a6b4251aeb30d5a6d85a1');
+    expect(() => retainedSources({ ...historicalSourceReceipt, framed_sha256: '0'.repeat(64) })).toThrow('hash mismatch');
+    const changed = structuredClone(historicalSourceReceipt); changed.files[0].sha256 = '0'.repeat(64);
+    expect(() => retainedSources(changed)).toThrow('identity mismatch');
   });
 
   it('keeps the original failure and all four result stages explicit', () => {

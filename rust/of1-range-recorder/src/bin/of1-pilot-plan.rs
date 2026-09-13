@@ -214,6 +214,24 @@ fn main() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
     #[test]
+    fn complete_rank_agrees_with_acquisition_sample_identity() {
+        let fixed = of1_range_recorder::sample::SampleIdentity::fixed_pilot();
+        let first = 978 * SLOTS_PER_EPOCH;
+        let (center, _, count) = select(
+            978,
+            first,
+            first + SLOTS_PER_EPOCH,
+            &[(first, first + 5)],
+            fixed.seed.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(center, fixed.selected_center);
+        assert_eq!(center - 1, fixed.start_slot);
+        assert_eq!(center + 2, fixed.end_slot_exclusive);
+        assert_eq!(count, 431_993);
+        fixed.validate(978).unwrap();
+    }
+    #[test]
     fn deterministic_and_context_exclusions() {
         let first = 978 * SLOTS_PER_EPOCH;
         let a = select(978, first, first + 30, &[(first, first + 5)], b"fixed").unwrap();

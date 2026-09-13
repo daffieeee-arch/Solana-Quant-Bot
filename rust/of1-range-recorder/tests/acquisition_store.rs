@@ -53,6 +53,7 @@ impl Harness {
             _dir: dir,
             plan: AggregatePlan {
                 schema: AGGREGATE_SCHEMA.into(),
+                sample_identity: None,
                 epoch: 978,
                 format_source: FormatSource::pinned(),
                 code_sha: "a".repeat(40),

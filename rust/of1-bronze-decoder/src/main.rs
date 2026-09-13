@@ -47,6 +47,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let execution = json!({"schema":"OF1_BRONZE_EXECUTION_1","decoder_source_sha256":of1_bronze_decoder::source_sha256(),"processed_at_unix_ms":start.to_string(),"finished_at_unix_ms":SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string(),"operational_timestamps_are_not_features":true,"executable_sha256":current_executable_sha256()?,"quality_sha256":sha256(&quality),"bronze_jsonl_sha256":sha256(&bronze),"html_sha256":sha256(html.as_bytes()),"lock_sha256":sha256(include_bytes!("../Cargo.lock")),"run_root":root,"no_acquisition_or_writer_resume":true});
     let mut execution = execution;
+    if let Some(sample) = report.get("sample_identity") {
+        execution["sample_identity"] = sample.clone();
+        execution["slice_class"] = report["slice_class"].clone();
+    }
     execution["silver_jsonl_sha256"] = json!(sha256(&silver));
     execution["silver_fact_count"] = json!(
         report["silver_records"]

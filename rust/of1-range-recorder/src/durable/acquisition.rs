@@ -51,6 +51,10 @@ pub struct AggregatePlan {
     /// Compared with the running executable, including on restart.
     pub executable_sha256: String,
     pub budget: AggregateBudget,
+    /// Serialized into the initial aggregate hash, approval target and receipts.
+    /// Omitted on old runs: never reinterpret legacy engineering plans as research.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_identity: Option<crate::sample::SampleIdentity>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -1823,6 +1827,12 @@ fn short_text(value: &str) -> bool {
 }
 
 fn validate_aggregate(plan: &AggregatePlan) -> StoreResult<()> {
+    if let Some(sample) = &plan.sample_identity {
+        sample.validate(plan.epoch)?;
+        if plan.budget.max_slots < sample.end_slot_exclusive - sample.start_slot {
+            return Err(StoreError::Budget);
+        }
+    }
     if plan.schema != AGGREGATE_SCHEMA
         || plan.format_source != FormatSource::pinned()
         || plan.code_sha.len() != 40

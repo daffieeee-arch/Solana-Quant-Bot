@@ -82,7 +82,8 @@ Ready, edge or live claims. See the non-claims section below.
 The [Parquet gate](../scripts/assert-of1-parquet-offline.mjs) has a real `--static`
 mode before fetch (no Cargo/compiler execution). `--all` checks the reviewed
 graph/features/licenses/build-script hashes, Rust tests and actual DuckDB reads
-of Rust-generated Parquet, including coverage denominators, with sockets denied.
+of Rust-generated Parquet, including coverage denominators, manifest-only shards,
+logical-hash parity and sample/evidence reclassification failures, with sockets denied.
 The [CI reader preparation](../scripts/prepare-columnar-query-ci.mjs) selects an
 already installed CPython 3.13 x64 ABI from the hosted toolcache, records its
 version, and installs only the existing DuckDB 1.5.5 hash-locked wheel in a fresh

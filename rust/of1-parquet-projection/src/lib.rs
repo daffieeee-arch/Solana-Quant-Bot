@@ -1,5 +1,7 @@
 //! Physical projection only. No protocol decoding, network, or inferred domain fields.
+pub mod admission;
 pub mod columns;
+pub mod shards;
 pub mod storage;
 
 use sha2::{Digest, Sha256};
@@ -22,6 +24,8 @@ pub fn source_sha256() -> String {
         include_bytes!("lib.rs").as_slice(),
         include_bytes!("columns.rs"),
         include_bytes!("storage.rs"),
+        include_bytes!("shards.rs"),
+        include_bytes!("admission.rs"),
         include_bytes!("main.rs"),
         include_bytes!("../Cargo.toml"),
         include_bytes!("../Cargo.lock"),

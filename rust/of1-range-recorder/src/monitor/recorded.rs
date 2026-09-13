@@ -250,6 +250,9 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
         &manifest.metadata_lease.budget,
         &manifest.metadata_lease,
     )?;
+    if let Some(sample) = &manifest.plan.sample_identity {
+        sample.validate(manifest.plan.epoch).map_err(invalid)?;
+    }
     if let Authority::Approved {
         approved_plan_sha256,
         ..
@@ -282,6 +285,15 @@ pub fn read_run_context(root: &Path) -> io::Result<RecordedRun> {
             || payload.lease.metadata_receipt_sha256 != payload.prepared.metadata_receipt_sha256()
         {
             return Err(invalid("recorded payload identity mismatch"));
+        }
+        if let Some(sample) = &manifest.plan.sample_identity {
+            sample
+                .validate_range(
+                    manifest.plan.epoch,
+                    payload.prepared.start_slot(),
+                    payload.prepared.end_slot(),
+                )
+                .map_err(invalid)?;
         }
         if let Authority::Approved {
             approved_plan_sha256,

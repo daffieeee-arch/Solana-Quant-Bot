@@ -7,6 +7,7 @@ import sys
 import time
 
 from query import connect, dataset_manifest, rows, sha
+from manifest_reader import attach_dataset, inventory, layer_rows, reader_source_sha256, selection_inventory
 
 HERE = pathlib.Path(__file__).resolve().parent
 LIMIT = 64 * 1024 * 1024
@@ -102,7 +103,8 @@ def suitability(summary):
          'next_step': 'Define a horizon before sampling and support required Rust facts. Name/ticker/logo are optional, not identity.'},
         {'question': 'Is een hypothese na kosten en uitvoeringsaannames gefalsifieerd?',
          'requires': ['outcome-independent research sample', 'untouched holdout', 'adequate sample size', 'cost/latency/execution evidence', 'registered test'],
-         'present': {'engineering_only': True},
+         'present': {'sample_class': summary.get('sample_class', 'ENGINEERING_VALIDATION_ONLY'),
+                     'research_ready': False},
          'missing': ['all research-design and execution gates'],
          'result_kind': 'NOT_EVALUATED_INSUFFICIENT_SUITABLE_DATA',
          'next_step': 'A valid negative research outcome is possible only after these gates. Failed parsing or too little data is not edge falsification.'}
@@ -145,7 +147,8 @@ body{{background:#111b24;color:#e0eaf3;font:15px system-ui;margin:0}}main{{max-w
 <small>PARQUET → DUCKDB · RUST-FEITEN, GEEN NIEUWE DOMEINDECODE</small><h1>Decoderdekking is meetbaar.<br>Onderzoeksgeschiktheid blijft begrensd.</h1>
 <div class='metrics'><div class='metric'><b>{sum(x['reconciled'] for x in s['slots'])} / {len(s['slots'])}</b>slots gereconcilieerd</div><div class='metric'><b>{s['present_envelopes']} / {s['expected_envelopes']}</b>transactiepackages aanwezig / verwacht</div><div class='metric'><b>{s['pump_positive']} / {s['present_envelopes']}</b>packages met Pump-verwijzing</div><div class='metric'><b>{s['silver']['parent_packages']} / {s['pump_positive']}</b>Pump-packages met begrensde sell-feiten</div></div>
 <p class='warn'>{e('ENGINEERING_FAILURE: '+', '.join(s['integrity_errors']) if s['integrity_errors'] else 'Begrensde verwerking gereconcilieerd; onderzoeksgeschiktheid NIET bewezen.')}</p>
-<p class='warn'>Toegelaten sells zijn geen volledige Pump-dekking. ENGINEERING_VALIDATION_ONLY: geen Research Ready-, representativiteits-, lifecycle- of edgeclaim.</p>
+<p class='warn'>Toegelaten sells zijn geen volledige Pump-dekking. {e(result['evidence']['slice_class'])}: sampleklasse, authentiek/fixture-bewijs, pakketverantwoording en geschiktheid blijven afzonderlijk. Geen Research Ready-, representativiteits-, lifecycle- of edgeclaim.</p>
+<section><h2>Manifestgebonden dataset</h2><p>{e(json.dumps(result['inventory']))}</p><p>Fysieke publicatie gecontroleerd. Selectiedekking: <b>{e(result['selection']['status'])}</b>. Pakketten verantwoord betekent niet allemaal geslaagd gedecodeerd of geschikt voor onderzoek.</p><details><summary>Volledige geselecteerde slots en brongebonden sample-identiteit</summary><pre>{e(json.dumps({'selection':result['selection'],'sample_identity':result['sample_identity']},indent=2))}</pre></details></section>
 <p>Elke envelope blijft in de noemer: ook failed, missing, unsupported of quarantined. Historische buy-layoutprobes worden apart getoond; een sell die zo'n probe afwijst is niet opnieuw een mislukte sell-decode.</p>
 <section><h2>Slotinventaris en volledige noemers</h2><div class='scroll'><table><tr>{slot_head}</tr>{''.join(slot_rows)}</table></div><p>Transactiestatus: <b>{s['status_ok']} OK</b> / <b>{s['status_error']} ERROR</b> / {s['status_unknown']} onbekend. On-chain ERROR is niet hetzelfde als een fout in onze verwerking.</p><details><summary>Volledige tellingen, onbekenden en Raw-hashes</summary><pre>{e(json.dumps(s,indent=2))}</pre></details></section>
 <h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
@@ -174,10 +177,13 @@ def run(root, quality_path, pilot_path, output):
         queries[key] = base[key]
     started = time.perf_counter()
     with connect() as db:
-        for layer in ['bronze','silver']:
-            db.from_parquet(str(root/f'{layer}.parquet')).create_view(layer)
+        attach_dataset(db, root, manifest)
         results = {key: dict(rows(db.execute(sql)), sql=sql) for key,sql in queries.items()}
-    slots = coverage(list(range(start,end)), rust_slots(quality), objects(results['slot_counts']),objects(results['index_extents']))
+    selected = selection_inventory(manifest)
+    expected_slots = list(range(start,end))
+    if manifest['schema'] == 'OF1_PARQUET_DATASET_2' and selected['selected_slots'] != expected_slots:
+        raise ValueError('manifest selected slots differ from original payload selection')
+    slots = coverage(expected_slots, rust_slots(quality), objects(results['slot_counts']),objects(results['index_extents']))
     integrity_errors = []
     if results['duplicate_identity']['rows']: integrity_errors.append('DUPLICATE_TRANSACTION_IDENTITY')
     if results['foreign_parent']['rows']: integrity_errors.append('SILVER_PARENT_MISMATCH')
@@ -186,12 +192,15 @@ def run(root, quality_path, pilot_path, output):
     counts = objects(results['slot_counts'])
     total = lambda key: sum(int(row[key]) for row in counts)
     silver = {key:int(value) for key,value in objects(results['silver_suitability'])[0].items()}
-    if total('present_envelopes') != manifest['files']['bronze.parquet']['audit']['rows'] or silver['facts'] != manifest['files']['silver.parquet']['audit']['rows']:
+    if total('present_envelopes') != layer_rows(manifest, 'bronze') or silver['facts'] != layer_rows(manifest, 'silver'):
         integrity_errors.append('MANIFEST_ROW_MISMATCH')
+    if manifest['schema'] == 'OF1_PARQUET_DATASET_2' and not selected['all_expected_packages_accounted']:
+        integrity_errors.append('MANIFEST_SELECTION_INCOMPLETE')
     summary = {'slots':slots, 'expected_envelopes': sum(x['expected_envelopes'] for x in slots) if all(x['expected_envelopes'] is not None for x in slots) else None,
                **{key:total(key) for key in ['present_envelopes','decoded','missing','unsupported','quarantined','status_ok','status_error','status_unknown','pump_positive','pump_negative','pump_unknown']},
                'silver':silver, 'buy_diagnostics':len(results['rejected_buy']['rows']),
                'economic_complete_observations': 'UNAVAILABLE_NOT_PROVEN', 'global_pump_variant_denominator':'UNKNOWN',
+               'sample_class':manifest['evidence']['slice_class'],
                'index_reported_absent': payload['prepared']['index_reported_absent'],
                'integrity_errors':integrity_errors}
     proofs = {str(s['slot']):s for s in rust_slots(quality)}
@@ -210,10 +219,14 @@ def run(root, quality_path, pilot_path, output):
                           'decoder':manifest['input']['execution']['decoder_source_sha256'],
                           'writer':manifest['writer'], 'coverage_sql_sha256':sha(queries_raw),'base_sql_sha256':sha(base_raw),
                           'pilot_sha256':sha(pilot_raw), 'files':{k:{x:v[x] for x in ['bytes','sha256']} for k,v in manifest['files'].items()}},
-              'evidence':manifest['evidence'], 'suitability_matrix':suitability(summary), 'pilot':pilot, 'queries':results}
+              'evidence':manifest['evidence'], 'inventory':inventory(manifest), 'selection':selected,
+              'sample_identity':manifest.get('sample_identity'),
+              'suitability_matrix':suitability(summary), 'pilot':pilot, 'queries':results}
     raw = (json.dumps(result,indent=2,ensure_ascii=False)+'\n').encode()
     receipt = {'schema':'OF1_COVERAGE_EXECUTION_1','result_sha256':sha(raw),'seconds':time.perf_counter()-started,
                'python':sys.version.split()[0],'runner_sha256':sha(pathlib.Path(__file__).read_bytes()),
+               'manifest_reader_sha256':reader_source_sha256(),
+               'query_helpers_sha256':sha((HERE/'query.py').read_bytes()),
                'dataset_path':str(root),'quality_path':str(quality_path.resolve()),'provider_calls':False}
     output.mkdir()
     (output/'query-results.json').write_bytes(raw)

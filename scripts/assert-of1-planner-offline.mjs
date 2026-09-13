@@ -30,16 +30,16 @@ const LOOPBACK_SOURCE_HASHES = {
 const ACQUISITION_SOURCE_HASHES = {
   'src/https.rs': 'aee8900d9cd2c4d8fa2e794df88ed9c194c25717ae2c441222479f7f8d1399ee',
   'src/https/fixture.rs': 'ece9a8026e155be03beb5bdbc0c211adad14e486049f7d6c33c200c57f6ff1af',
-  'tests/acquisition_https.rs': '77cc08d94cbbe027b491d4461f3324b2efef5212abfaf1801a6e1a2ef6a66443',
+  'tests/acquisition_https.rs': 'ed44d1d59b610a3cf9b546587342d6ac7281521d2b70a2cde67d1862d013dc0d',
   'tests/acquisition_e2e.rs': 'f535c35a39a7a3069c847017ead8bfe4a347493854deec56a7628a405ca5358e',
-  'src/bin/of1-acquisition-fixture-evidence.rs': '181c32d8d379e23284bf18c1f4081e19a5ddfdb9070c9fcdaa252bd1cfce6ea2',
+  'src/bin/of1-acquisition-fixture-evidence.rs': '24dc9ca9ec4625fbf2c71a3a3dedbf9c4011c9eda2867b61a94f83a72cd5fb77',
 };
 // Local-only operational telemetry is a separate, default-disabled capability.
 // Pin its Unix IPC and sealed simulator, never grant a directory-wide exception.
 const MONITOR_SOURCE_HASHES = {
   'src/monitor/relay.rs': '38cfe4405e1a51c4d9e51a646bea3bc532d7b7517ddbc6654fc82e5dc4bf888b',
   'tests/monitor_ipc.rs': '3693c0c8f570784743d06a4118c996302b19d688afd530afb4e6fbd4652cdb8a',
-  'src/bin/of1-monitor-simulation.rs': '45e59f9c90fcd8e2959dbd79d17aa586f2a2f7ebc888c3aaa2067be13c14923e',
+  'src/bin/of1-monitor-simulation.rs': '843fe41852841c3e09d07c0985a8caca618bbeade1411e5b5bbb6a942d30de00',
 };
 
 export function validateOf1PlannerInputs(manifest, lock, sources) {

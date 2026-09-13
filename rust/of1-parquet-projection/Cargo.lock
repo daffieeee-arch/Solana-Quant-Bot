@@ -470,6 +470,7 @@ dependencies = [
  "arrow-schema",
  "hex",
  "parquet",
+ "serde",
  "serde_json",
  "sha2",
  "tempfile",

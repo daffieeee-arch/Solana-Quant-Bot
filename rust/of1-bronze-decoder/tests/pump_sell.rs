@@ -439,3 +439,19 @@ fn visible_report_distinguishes_supported_sell_but_keeps_buy_rejection_and_econo
     assert!(html.contains("silver.jsonl"));
     assert_eq!(html, report::html(&output));
 }
+
+#[test]
+fn silver_cannot_promote_class_without_source_sample_binding() {
+    let mut r = synthetic_record();
+    r["slice_class"] = json!("RESEARCH_SAMPLING");
+    assert!(pump_sell::facts(&r).is_err());
+    let identity =
+        serde_json::to_value(of1_range_recorder::sample::SampleIdentity::fixed_pilot()).unwrap();
+    r["sample_identity"] = identity.clone();
+    assert!(pump_sell::facts(&r).is_err());
+    r["source"]["bindings"]["sample_identity"] = identity;
+    assert!(pump_sell::facts(&r).is_err()); // Original engineering slot is outside the frozen draw.
+    r["sample_identity"]["seed"] = json!("replacement");
+    r["source"]["bindings"]["sample_identity"]["seed"] = json!("replacement");
+    assert!(pump_sell::facts(&r).is_err());
+}

@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{fs, path::Path, sync::Arc};
 
 fn record(layer: Layer) -> Value {
-    json!({"schema":layer.record_schema(),"slice_class":"ENGINEERING_VALIDATION_ONLY","effective_at":{"slot":"422496004","transaction_index_in_slot":153},"decoder_source_sha256":"a".repeat(64),"source":{"raw_sha256":"b".repeat(64),"provenance":"SYNTHETIC_TEST_ONLY"},"disposition":"DECODED","transaction":{"status":"OK","fee_lamports":"5000","name":null,"economic_identity":"UNAVAILABLE","wire_hex":"00ff","protobuf_metadata_hex":"0102"}})
+    json!({"schema":layer.record_schema(),"slice_class":"ENGINEERING_VALIDATION_ONLY","input_kind":"FIXTURE_SYNTHETIC_SHARD_TEST","receipt_evidence":"Fixture","effective_at":{"slot":"422496004","transaction_index_in_slot":153},"decoder_source_sha256":"a".repeat(64),"source":{"raw_sha256":"b".repeat(64),"provenance":"SYNTHETIC_TEST_ONLY"},"disposition":"DECODED","transaction":{"status":"OK","fee_lamports":"5000","name":null,"economic_identity":"UNAVAILABLE","wire_hex":"00ff","protobuf_metadata_hex":"0102"}})
 }
 fn line(v: &Value) -> Vec<u8> {
     let mut b = serde_json::to_vec(v).unwrap();
@@ -16,7 +16,8 @@ fn line(v: &Value) -> Vec<u8> {
 }
 fn seal(root: &Path, bronze: &[u8], silver: &[u8]) -> String {
     fs::create_dir(root).unwrap();
-    let quality = b"{}";
+    let quality_bytes=serde_json::to_vec(&json!({"input_kind":"FIXTURE_SYNTHETIC_SHARD_TEST","receipt_evidence":"Fixture","slice_class":"ENGINEERING_VALIDATION_ONLY","selected_slots":[422_496_004],"slots":[]})).unwrap();
+    let quality = quality_bytes.as_slice();
     let html = b"fixture";
     for (name, bytes) in [
         ("bronze.jsonl", bronze),
@@ -40,10 +41,10 @@ fn physical_roundtrip_duplicate_rows_and_order_are_deterministic() {
     let a = storage::materialize(&d.path().join("input"), &sha, &d.path().join("one")).unwrap();
     let b = storage::materialize(&d.path().join("input"), &sha, &d.path().join("two")).unwrap();
     assert_eq!(a, b);
-    assert_eq!(a["files"]["bronze.parquet"]["audit"]["rows"], 2);
+    assert_eq!(a["files"]["bronze-000000.parquet"]["audit"]["rows"], 2);
     for name in [
-        "bronze.parquet",
-        "silver.parquet",
+        "bronze-000000.parquet",
+        "silver-000000.parquet",
         "manifest.json",
         "COMPLETE",
     ] {

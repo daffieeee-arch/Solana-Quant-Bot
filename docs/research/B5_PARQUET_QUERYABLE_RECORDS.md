@@ -65,12 +65,23 @@ An interrupted directory without COMPLETE is **not a published dataset**; the
 writer does not overwrite or resume it. Parent and output directory durability
 are synced. This is offline dataset publication, not an acquisition lease.
 
-Limits are 64 MiB per input/read-back file, 16 MiB per record, 5,000 records per
-layer, and 512-row Arrow batches/row groups. Settings are Parquet 1.0,
-uncompressed, no dictionary, 1 MiB pages, fixed writer name. This first result
-prioritizes losslessness and reproducibility, not compression tuning. No clock,
-temporary output path or random ID enters the deterministic manifest. Timings
-and resource measurements live in separate execution receipts.
+The current [manifest-bound route](B5_MANIFEST_SHARDS_AND_SAMPLE_IDENTITY.md)
+allows at most **5,000 records and 64 MiB per Parquet file**, with at most 64
+files per layer. Each original sealed JSONL input still has a 64-MiB cap; a
+record still has a 16-MiB cap. Sharding does not bypass an earlier decoder or
+source-input stop. Arrow batches are at most 512 rows / 4 MiB of raw records,
+except one atomic record up to its existing 16-MiB cap. A physical overflow
+bisects only at record boundaries. Settings remain Parquet 1.0, uncompressed,
+no dictionary and 1-MiB pages. Fixed writer settings and logical record hashes
+make partitioning reproducible; different shard counts do not change the
+original record stream. Timings live in separate execution receipts.
+
+The v2 manifest lists every file in order, physical and logical hashes,
+original selected slots, accounted versus decoded packages, and source-bound
+sample identity. COMPLETE seals verified files; it does not declare complete
+selection or Research Ready status. The reader uses only the manifest list,
+never a glob. Historical v1 single-file datasets and the executed result below
+remain readable and unchanged; the v2 writer is the current canonical route.
 
 ## Dependencies and local execution
 
@@ -100,11 +111,13 @@ export COLUMNAR_QUERY_PYTHON=/absolute/path/to/isolated/python
 # Use the sealed decoder execution.json SHA, never an invented identity:
 rust/of1-parquet-projection/target/release/of1-parquet-projection \
   INPUT_DIRECTORY EXECUTION_JSON_SHA256 NEW_DATASET_DIRECTORY
+# Optional fourth argument tightens rows per file, never raises the 5,000 cap.
 ISOLATED_DUCKDB_PYTHON research/columnar-query/query.py \
   NEW_DATASET_DIRECTORY NEW_REPORT_DIRECTORY
 ```
 
-The query runner validates COMPLETE and physical Parquet hashes, disables
+The query runner validates COMPLETE, every listed physical Parquet file,
+ordered record hashes, exact row ordinals and manifest/selection totals, disables
 extension auto-install/load, uses one DuckDB thread and a 256 MiB memory bound,
 and executes the committed [SQL](../../research/columnar-query/queries.sql.json).
 Queries read Parquet, not original JSONL. The buy-diagnostic query uses JSON
@@ -132,9 +145,10 @@ No new observation, price, coin metadata, decimal, CPI privilege, account-write
 state, root-to-slot membership or buy-parser interpretation is introduced.
 These three contiguous, outcome-aware engineering slots are not representative
 research data. Queryability does not prove or falsify an edge. The smallest next
-step is to review the narrow dataset contract and then preregister a bounded,
-outcome-independent sampling plan with coverage criteria; acquisition still
-requires a separate concrete GO. Silver support remains variant-bounded.
+step is review of the bounded manifest/sample route and the explicit new-run
+budget proposal for the fixed outcome-independent draw. Executable-bound
+metadata and receipt-bound payload each still require a separate concrete GO.
+Silver support remains variant-bounded.
 
 ## Executed local result — 2026-09-12
 
