@@ -21,6 +21,37 @@ use std::{
 pub const MAX_SHARDS: usize = 64;
 pub const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_PARENT_BINDINGS: usize = 16_384;
+/// Cumulative output writes for one projection, including discarded split probes.
+/// This is distinct from input/record/shard limits and filesystem allocation overhead.
+pub const MAX_DATASET_WRITE_BYTES: u64 = 256 * 1024 * 1024;
+
+struct WriteBudget {
+    limit: u64,
+    written: u64,
+}
+impl WriteBudget {
+    fn new(limit: u64) -> io::Result<Self> {
+        if limit == 0 || limit > MAX_DATASET_WRITE_BYTES {
+            return Err(invalid("DATASET_WRITE_BUDGET_LIMIT"));
+        }
+        Ok(Self { limit, written: 0 })
+    }
+    fn check(&self, bytes: u64) -> io::Result<()> {
+        if self
+            .written
+            .checked_add(bytes)
+            .is_none_or(|n| n > self.limit)
+        {
+            return Err(invalid("DATASET_CUMULATIVE_WRITE_LIMIT"));
+        }
+        Ok(())
+    }
+    fn charge(&mut self, bytes: u64) -> io::Result<()> {
+        self.check(bytes)?;
+        self.written += bytes;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShardLimits {
@@ -107,17 +138,20 @@ pub fn file_hash(path: &Path, limit: u64) -> io::Result<(String, u64)> {
     }
     Ok((hex::encode(h.finalize()), count))
 }
-struct LimitedFile {
+struct LimitedFile<'a> {
     file: File,
     count: u64,
     limit: u64,
+    budget: &'a mut WriteBudget,
 }
-impl Write for LimitedFile {
+impl Write for LimitedFile<'_> {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if self.count.saturating_add(bytes.len() as u64) > self.limit {
             return Err(invalid("SHARD_PHYSICAL_FILE_LIMIT"));
         }
+        self.budget.check(bytes.len() as u64)?;
         let n = self.file.write(bytes)?;
+        self.budget.charge(n as u64)?;
         self.count += n as u64;
         Ok(n)
     }
@@ -132,12 +166,14 @@ fn encode(
     ordinal: u64,
     path: &Path,
     limit: u64,
+    budget: &mut WriteBudget,
 ) -> io::Result<()> {
     let file = OpenOptions::new().write(true).create_new(true).open(path)?;
     let sink = LimitedFile {
         file,
         count: 0,
         limit,
+        budget,
     };
     let props = WriterProperties::builder()
         .set_writer_version(WriterVersion::PARQUET_1_0)
@@ -247,6 +283,7 @@ struct LayerWriter<'a> {
     names: Vec<String>,
     files: BTreeMap<String, Value>,
     logical: Logical,
+    budget: &'a mut WriteBudget,
 }
 impl LayerWriter<'_> {
     fn segment(&mut self, offsets: &[u64], ordinal: u64) -> io::Result<()> {
@@ -262,6 +299,7 @@ impl LayerWriter<'_> {
             ordinal,
             &partial,
             self.limits.bytes,
+            self.budget,
         );
         if let Err(error) = result {
             // Only a known local temporary candidate is removed, never input/evidence.
@@ -299,6 +337,22 @@ pub fn write_shards(
     output: &Path,
     limits: ShardLimits,
 ) -> io::Result<(Value, BTreeMap<String, Value>)> {
+    write_shards_budgeted(
+        layer,
+        input,
+        output,
+        limits,
+        &mut WriteBudget::new(MAX_DATASET_WRITE_BYTES)?,
+    )
+}
+
+fn write_shards_budgeted(
+    layer: Layer,
+    input: &Path,
+    output: &Path,
+    limits: ShardLimits,
+    budget: &mut WriteBudget,
+) -> io::Result<(Value, BTreeMap<String, Value>)> {
     limits.validate()?;
     let (expected_sha, _) = file_hash(input, storage::MAX_FILE_BYTES)?;
     let mut reader = BufReader::new(File::open(input)?);
@@ -313,6 +367,7 @@ pub fn write_shards(
         names: Vec::new(),
         files: BTreeMap::new(),
         logical: Logical::default(),
+        budget,
     };
     while let Some(row) = read_line(&mut reader)? {
         let next = pos + row.len() as u64;
@@ -342,10 +397,17 @@ pub fn write_shards(
     total["schema"] = schema;
     Ok((total, writer.files))
 }
-fn publish(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+fn publish(path: &Path, bytes: &[u8], budget: &mut WriteBudget) -> io::Result<()> {
+    // In particular, no empty COMPLETE marker is created after budget exhaustion.
+    budget.check(bytes.len() as u64)?;
+    let mut file = LimitedFile {
+        file: OpenOptions::new().write(true).create_new(true).open(path)?,
+        count: 0,
+        limit: bytes.len() as u64,
+        budget,
+    };
     file.write_all(bytes)?;
-    file.sync_all()
+    file.file.sync_all()
 }
 /// One complete source-bound projection; no retroactive class argument or resume.
 /// # Errors
@@ -356,6 +418,27 @@ pub fn materialize(
     output: &Path,
     limits: ShardLimits,
 ) -> io::Result<Value> {
+    materialize_with_write_limit(
+        input,
+        execution_sha,
+        output,
+        limits,
+        MAX_DATASET_WRITE_BYTES,
+    )
+}
+
+/// Same projection with a tighter cumulative write cap for bounded regression tests.
+/// No CLI override exists and a caller cannot raise the production cap.
+/// # Errors
+/// Rejects invalid caps or any identity, source, shard, budget or publication failure.
+pub fn materialize_with_write_limit(
+    input: &Path,
+    execution_sha: &str,
+    output: &Path,
+    limits: ShardLimits,
+    write_limit: u64,
+) -> io::Result<Value> {
+    let mut budget = WriteBudget::new(write_limit)?;
     limits.validate()?;
     let input = input.canonicalize()?;
     let parent = output
@@ -372,11 +455,12 @@ pub fn materialize(
     let mut files = BTreeMap::new();
     let mut layers = BTreeMap::new();
     for layer in [Layer::Bronze, Layer::Silver] {
-        let (summary, parts) = write_shards(
+        let (summary, parts) = write_shards_budgeted(
             layer,
             &input.join(format!("{}.jsonl", layer.name())),
             output,
             limits,
+            &mut budget,
         )?;
         if summary["reconstructed_jsonl_sha256"]
             != seal["files"][format!("{}.jsonl", layer.name())]["sha256"]
@@ -404,17 +488,74 @@ pub fn materialize(
     settings["physical_split_rule"] =
         json!("row cap first; on bounded physical overflow bisect at floor(rows/2); no row split");
     settings["max_parent_bindings"] = json!(MAX_PARENT_BINDINGS);
-    let manifest = json!({"schema":"OF1_PARQUET_DATASET_2","writer":{"version":env!("CARGO_PKG_VERSION"),"source_sha256":crate::source_sha256(),"executable_sha256":file_hash(&std::env::current_exe()?,256*1024*1024)?.0,"cargo_lock_sha256":hash(include_bytes!("../Cargo.lock")),"settings":settings},"input":seal,"files":files,"layers":layers,"selection":admitted["selection"],"sample_identity":admitted["sample_identity"],"evidence":{"slice_class":admitted["slice_class"],"receipt_evidence":admitted["receipt_evidence"],"new_domain_decoding":false,"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","unknowns_preserved":true,"historical_activation":"UNPROVEN","physical_writer":"RUST_ARROW_PARQUET_BOUNDED_PROJECTION_ONLY"},"publication":{"state":"FILES_VERIFIED","does_not_assert_selection_completeness_or_research_suitability":true}});
+    settings["max_dataset_written_bytes"] = json!(write_limit);
+    settings["dataset_write_accounting"] = json!(
+        "CUMULATIVE_OUTPUT_BYTES: both layers, discarded split probes, manifest and COMPLETE; no refunds; excludes filesystem allocation overhead"
+    );
+    let manifest = json!({"schema":"OF1_PARQUET_DATASET_2","writer":{"version":env!("CARGO_PKG_VERSION"),"source_sha256":crate::source_sha256(),"executable_sha256":file_hash(&std::env::current_exe()?,256*1024*1024)?.0,"cargo_lock_sha256":hash(include_bytes!("../Cargo.lock")),"settings":settings},"input":seal,"files":files,"layers":layers,"selection":admitted["selection"],"sample_identity":admitted["sample_identity"],"evidence":{"slice_class":admitted["slice_class"],"receipt_evidence":admitted["receipt_evidence"],"new_domain_decoding":false,"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","unknowns_preserved":true,"historical_activation":"UNPROVEN","physical_writer":"RUST_ARROW_PARQUET_BOUNDED_PROJECTION_ONLY"},"publication":{"state":"FILES_VERIFIED","cumulative_shard_write_bytes":budget.written,"does_not_assert_selection_completeness_or_research_suitability":true}});
     let bytes = serde_json::to_vec_pretty(&manifest).map_err(invalid)?;
     if bytes.len() > 1024 * 1024 {
         return Err(invalid("MANIFEST_LIMIT"));
     }
-    publish(&output.join("manifest.json"), &bytes)?;
+    publish(&output.join("manifest.json"), &bytes, &mut budget)?;
     File::open(output)?.sync_all()?;
     publish(
         &output.join("COMPLETE"),
         format!("{}\n", hash(&bytes)).as_bytes(),
+        &mut budget,
     )?;
     File::open(output)?.sync_all()?;
     Ok(manifest)
+}
+
+#[cfg(test)]
+mod write_budget_tests {
+    use super::*;
+
+    #[test]
+    fn cumulative_budget_is_exact_checked_and_never_refunded() {
+        assert!(WriteBudget::new(0).is_err());
+        assert!(WriteBudget::new(MAX_DATASET_WRITE_BYTES + 1).is_err());
+        let mut budget = WriteBudget::new(9).unwrap();
+        budget.charge(4).unwrap();
+        budget.charge(5).unwrap();
+        assert_eq!(budget.written, 9);
+        assert!(budget.check(1).is_err());
+        assert!(budget.check(u64::MAX).is_err());
+        assert!(budget.charge(1).is_err());
+        assert_eq!(budget.written, 9);
+    }
+
+    #[test]
+    fn removed_partial_does_not_restore_shared_budget() {
+        let d = tempfile::tempdir().unwrap();
+        let partial = d.path().join("probe.partial");
+        let mut budget = WriteBudget::new(7).unwrap();
+        {
+            let mut sink = LimitedFile {
+                file: File::create(&partial).unwrap(),
+                count: 0,
+                limit: 5,
+                budget: &mut budget,
+            };
+            sink.write_all(b"first").unwrap();
+            assert!(
+                sink.write_all(b"x")
+                    .unwrap_err()
+                    .to_string()
+                    .contains("SHARD_PHYSICAL_FILE_LIMIT")
+            );
+        }
+        fs::remove_file(partial).unwrap();
+        assert_eq!(budget.written, 5);
+        let complete = d.path().join("COMPLETE");
+        assert!(
+            publish(&complete, b"seal", &mut budget)
+                .unwrap_err()
+                .to_string()
+                .contains("DATASET_CUMULATIVE_WRITE_LIMIT")
+        );
+        assert!(!complete.exists());
+        assert_eq!(budget.written, 5);
+    }
 }

@@ -148,5 +148,37 @@ class CoverageTests(unittest.TestCase):
             self.assertEqual(db.execute(sql['program_frequencies']).fetchall(),[])
             self.assertEqual(db.execute(sql['program_coverage']).fetchall(),[(0,0,0,0,0,0)])
 
+    def test_projected_arrays_keep_duplicates_nulls_and_context_without_wide_rows(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        # A wide synthetic retained record is not a new wire fixture. Only the
+        # existing Rust facts are queried; irrelevant original bytes stay stored.
+        transaction={'program_ids':['P','P'], 'instructions':[{'program_id':'P'},{}],
+                     'inner_instructions':[{'program_id':'P'},None],
+                     'pump_structural_analysis':{'observations':[
+                         {'context':{'kind':'INNER'},'kind':'SELL','layout_outcome':'REJECTED'},
+                         {'context':{'kind':'INNER'},'kind':'SELL','layout_outcome':'REJECTED'}]},
+                     'pump_sell_analysis':[{'disposition':'REJECTED','reason':'X'},
+                                           {'disposition':'REJECTED','reason':'Y'}]}
+        raw=json.dumps({'original_bytes':'ff'*16384,'transaction':transaction}).encode()
+        with connect() as db:
+            self.assertEqual(db.execute("SELECT current_setting('temp_directory')").fetchone(),('',))
+            db.execute('CREATE TABLE bronze(slot UBIGINT, transaction_index UBIGINT,record_ordinal UBIGINT, record_bytes BLOB)')
+            db.executemany('INSERT INTO bronze VALUES (7,?,?,?)',[(i,i,raw) for i in range(256)])
+            self.assertEqual(db.execute(sql['program_frequencies']).fetchall(),[
+                ('P',512,256,256),(None,0,256,0)])
+            self.assertEqual(db.execute(sql['structural_probes']).fetchall(),[
+                ('INNER','SELL','REJECTED',None,512)])
+            admissions=db.execute(sql['sell_admissions']).fetchall()
+            self.assertEqual(len(admissions),512)
+            self.assertEqual(admissions,[(7,i,'REJECTED',reason,None) for i in range(256) for reason in ['X','Y']])
+
+    def test_suitability_does_not_copy_engineering_buy_failure_into_new_sample(self):
+        summary={'slots':[{'reconciled':True}], 'silver':{'facts':2},
+                 'buy_diagnostics':1, 'integrity_errors':[]}
+        entry=suitability(summary)[2]
+        self.assertEqual(entry['result_kind'],'INSUFFICIENT_SUITABLE_DATA')
+        self.assertIn('retained Rust diagnostics',entry['missing'][0])
+        self.assertNotIn('extra buy byte',json.dumps(entry))
+
 
 if __name__=='__main__': unittest.main()

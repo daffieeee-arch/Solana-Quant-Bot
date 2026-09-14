@@ -28,6 +28,7 @@ lookup. It does not first collect all future dataset records. Limits are:
 | Arrow batch | At most 512 rows / 4 MiB raw, except one atomic record up to its existing cap |
 | Parent binding lookup | At most 16,384 distinct Bronze record hashes |
 | Manifest | At most 1 MiB, with each layer schema stored once |
+| One projection's cumulative writes | At most 256 MiB, shared by both layers, discarded split probes, manifest and COMPLETE; no refund after deletion |
 | Browser query result | At most 10,000 rows per displayed query; overflow fails, never publishes a truncated success |
 | Local static viewer | At most 8 MiB per report artifact; enough for the measured 3.3-MiB fixture query JSON, without changing dataset caps |
 
@@ -75,6 +76,11 @@ Missing/corrupt files, duplicate references, reclassification or resealed false
 ACCOUNTED claims fail. Valid record duplicates are not deduplicated by DuckDB.
 
 ## Sample identity follows the real acquisition contract
+
+The later [measured pilot resource correction](B5_PILOT_RESOURCE_CORRECTION.md)
+changes only B5 serialized-record and publication accounting. Earlier budget
+and feasibility calculations below remain their original dated evidence;
+they do not override the new explicit 24-MiB slot / 64-MiB selection profile.
 
 This is one fixed pilot lane, not a general sample-registration framework:
 

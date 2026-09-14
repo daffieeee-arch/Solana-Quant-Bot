@@ -306,3 +306,134 @@ fn synthetic_cannot_relabel_sample_or_evidence() {
     );
     assert!(!d.path().join("bad/COMPLETE").exists());
 }
+
+#[test]
+fn dataset_budget_is_shared_across_layers_and_prevents_complete() {
+    let d = tempfile::tempdir().unwrap();
+    let input = d.path().join("input");
+    let seal = synthetic_input(&input, 3, 1);
+    let full = shards::materialize(
+        &input,
+        &seal,
+        &d.path().join("full"),
+        ShardLimits::default(),
+    )
+    .unwrap();
+    let bronze_bytes = full["files"]
+        .as_object()
+        .unwrap()
+        .values()
+        .filter(|f| f["layer"] == "bronze")
+        .map(|f| f["bytes"].as_u64().unwrap())
+        .sum::<u64>();
+    let output = d.path().join("stopped-in-silver");
+    let error = shards::materialize_with_write_limit(
+        &input,
+        &seal,
+        &output,
+        ShardLimits::default(),
+        bronze_bytes,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("DATASET_CUMULATIVE_WRITE_LIMIT"));
+    assert!(output.join("bronze-000000.parquet").exists());
+    assert!(!output.join("manifest.json").exists());
+    assert!(!output.join("COMPLETE").exists());
+    let shard_bytes = full["files"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|f| f["bytes"].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(
+        full["publication"]["cumulative_shard_write_bytes"],
+        shard_bytes
+    );
+    assert_eq!(
+        full["writer"]["settings"]["max_dataset_written_bytes"],
+        shards::MAX_DATASET_WRITE_BYTES
+    );
+    assert_eq!(
+        full["writer"]["settings"]["max_bytes_per_file"],
+        storage::MAX_FILE_BYTES
+    );
+    assert_eq!(
+        full["writer"]["settings"]["max_rows_per_file"],
+        storage::MAX_ROWS
+    );
+    let before_manifest = d.path().join("stopped-before-manifest");
+    assert!(
+        shards::materialize_with_write_limit(
+            &input,
+            &seal,
+            &before_manifest,
+            ShardLimits::default(),
+            shard_bytes
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("DATASET_CUMULATIVE_WRITE_LIMIT")
+    );
+    assert!(!before_manifest.join("manifest.json").exists());
+    assert!(!before_manifest.join("COMPLETE").exists());
+    for invalid in [0, shards::MAX_DATASET_WRITE_BYTES + 1] {
+        let rejected = d.path().join(format!("invalid-{invalid}"));
+        assert!(
+            shards::materialize_with_write_limit(
+                &input,
+                &seal,
+                &rejected,
+                ShardLimits::default(),
+                invalid
+            )
+            .is_err()
+        );
+        assert!(!rejected.exists());
+    }
+}
+
+#[test]
+fn complete_bytes_are_in_the_same_budget_and_failure_leaves_no_marker() {
+    let d = tempfile::tempdir().unwrap();
+    let input = d.path().join("input");
+    let seal = synthetic_input(&input, 1, 0);
+    let mut manifest = shards::materialize(
+        &input,
+        &seal,
+        &d.path().join("full"),
+        ShardLimits::default(),
+    )
+    .unwrap();
+    let shards = manifest["publication"]["cumulative_shard_write_bytes"]
+        .as_u64()
+        .unwrap();
+    let mut limit = shards;
+    // The only changed content is this decimal bound. Its encoded length settles
+    // once its digit count is stable; no manifest/COMPLETE bytes are excluded.
+    for _ in 0..8 {
+        manifest["writer"]["settings"]["max_dataset_written_bytes"] = json!(limit);
+        let next = shards + serde_json::to_vec_pretty(&manifest).unwrap().len() as u64;
+        if next == limit {
+            break;
+        }
+        limit = next;
+    }
+    manifest["writer"]["settings"]["max_dataset_written_bytes"] = json!(limit);
+    assert_eq!(
+        limit,
+        shards + serde_json::to_vec_pretty(&manifest).unwrap().len() as u64
+    );
+    let output = d.path().join("stopped-before-complete");
+    assert!(
+        shards::materialize_with_write_limit(&input, &seal, &output, ShardLimits::default(), limit)
+            .unwrap_err()
+            .to_string()
+            .contains("DATASET_CUMULATIVE_WRITE_LIMIT")
+    );
+    assert!(output.join("manifest.json").exists());
+    assert!(!output.join("COMPLETE").exists());
+    assert_eq!(
+        fs::read(output.join("manifest.json")).unwrap(),
+        serde_json::to_vec_pretty(&manifest).unwrap()
+    );
+}

@@ -8,6 +8,7 @@ pub mod pump_buy;
 pub mod pump_sell;
 pub mod pump_sell_context;
 pub mod report;
+pub mod resources;
 
 /// Actual compiled source/lock identity, independent of uncommitted Git claims.
 #[must_use]
@@ -19,6 +20,8 @@ pub fn source_sha256() -> String {
         include_bytes!("codec.rs"),
         include_bytes!("proto.rs"),
         include_bytes!("report.rs"),
+        include_bytes!("resources.rs"),
+        include_bytes!("bin/of1-bronze-measure.rs"),
         include_bytes!("pump.rs"),
         include_bytes!("pump_buy.rs"),
         include_bytes!("pump_sell.rs"),

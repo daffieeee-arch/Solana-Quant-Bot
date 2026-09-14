@@ -20,6 +20,8 @@ def connect():
     if duckdb.__version__ != "1.5.5":
         raise ValueError("DuckDB version differs from reviewed lock")
     return duckdb.connect(config={"threads": "1", "memory_limit": "256MB",
+                                 "temp_directory": "",
+                                 "max_temp_directory_size": "0B",
                                  "autoload_known_extensions": "false",
                                  "autoinstall_known_extensions": "false"})
 

@@ -442,12 +442,12 @@ fn aggregate_budget_checks_exact_limit_and_overflow_before_publication() {
 }
 
 #[test]
-fn recorded_pilot_budget_crossing_stays_a_stop_not_a_limit_increase() {
-    // Recorded accounting amounts, not fabricated transaction bytes or a new cap.
-    assert_eq!(report::MAX_RECORD_JSON_BYTES, 16_777_216);
-    assert_eq!(report::MAX_SELECTION_RECORD_BYTES, 50_331_648);
+fn recorded_pilot_stop_remains_reproducible_under_historical_bound() {
+    // Preserve the original stop, not a claim that its first crossing was the
+    // full requirement. The reviewed measured profile has separate limits.
+    const HISTORICAL_SLOT_LIMIT: usize = 16_777_216;
     let mut charged = 16_756_921;
-    let error = report::charge(&mut charged, 49_607, report::MAX_RECORD_JSON_BYTES).unwrap_err();
+    let error = report::charge(&mut charged, 49_607, HISTORICAL_SLOT_LIMIT).unwrap_err();
     assert_eq!(
         error.to_string(),
         "BRONZE_AGGREGATE_LIMIT current=16756921 incoming=49607 next=16806528 limit=16777216"
@@ -456,4 +456,22 @@ fn recorded_pilot_budget_crossing_stays_a_stop_not_a_limit_increase() {
         charged, 16_756_921,
         "failed admission must not advance accounting"
     );
+}
+
+#[test]
+fn measured_profile_has_separate_finite_slot_and_selection_limits() {
+    assert_eq!(report::MAX_RECORD_JSON_BYTES, 25_165_824);
+    assert_eq!(report::MAX_SELECTION_RECORD_BYTES, 67_108_864);
+    let mut old_crossing = 16_756_921;
+    report::charge(&mut old_crossing, 49_607, report::MAX_RECORD_JSON_BYTES).unwrap();
+    assert_eq!(old_crossing, 16_806_528);
+    for limit in [
+        report::MAX_RECORD_JSON_BYTES,
+        report::MAX_SELECTION_RECORD_BYTES,
+    ] {
+        let mut sum = limit - 1;
+        report::charge(&mut sum, 1, limit).unwrap();
+        assert!(report::charge(&mut sum, 1, limit).is_err());
+        assert_eq!(sum, limit);
+    }
 }
