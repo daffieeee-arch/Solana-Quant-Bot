@@ -409,6 +409,10 @@ fn inspect_pump(tx: &mut Value) -> io::Result<()> {
         if !variants.is_empty() {
             tx["pump_buy_variant_analysis"] = json!(variants);
         }
+        let nested_buys = crate::pump_nested_buy::inspect(tx)?;
+        if !nested_buys.is_empty() {
+            tx["pump_nested_buy_analysis"] = json!(nested_buys);
+        }
     }
     // Keep the prior buy-probe field; the new sell lane is explicitly separate.
     tx["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");

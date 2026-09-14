@@ -37,7 +37,7 @@ pub fn inspect(tx: &Value) -> io::Result<Vec<Value>> {
     Ok(out)
 }
 
-fn event_fields(e: &TradeEvent) -> Value {
+pub(crate) fn event_fields(e: &TradeEvent) -> Value {
     json!({"classification":"SOURCE_LAYOUT_EVENT_FIELDS_NOT_ADMITTED_SILVER",
         "mint_address":bs58::encode(e.mint).into_string(),"user_address":bs58::encode(e.user).into_string(),
         "creator_address":bs58::encode(e.creator).into_string(),"fee_recipient":bs58::encode(e.fee_recipient).into_string(),

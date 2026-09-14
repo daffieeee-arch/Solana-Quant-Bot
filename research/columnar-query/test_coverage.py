@@ -47,6 +47,76 @@ def side_summary(db, sql, errors=None):
 
 
 class CoverageTests(unittest.TestCase):
+    def test_nested_buy_diagnostics_are_not_admitted_facts_or_inferred_privileges(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        # Synthetic Rust-result shape, not protocol bytes or a second decoder.
+        diagnostic={'evaluated_profile':'nested25-unresolved','disposition':'NOT_ADMITTED',
+                    'reason':'ACCOUNT_MISMATCH','instruction_bytes':25,
+                    'instruction':{'track_volume':False,'amount_raw_u64':'18446744073709551615',
+                                   'max_sol_cost_raw_u64':'9007199254740993'},
+                    'outer_index':2,'instruction_inner_order':0,'instruction_stack_height':2,
+                    'event_context':{'inner_order':4,'stack_height':3},
+                    'event_reported':{'mint_address':'diagnostic-mint','mayhem_mode':True},
+                    'account_address_correspondence':False,'mayhem_context':{'cpi_signer':None},
+                    'proof_gaps':['unresolved account 16'], 'accounts':[
+                        {'position':6,'role':'user','observed':'pda','expected':'pda',
+                         'address_match':True,'message_signer':False,
+                         'message_minimum_privileges_match':False,'cpi_signer':None},
+                        {'position':16,'role':'bonding_curve_v2','observed':'actual','expected':'source',
+                         'address_match':False,'message_signer':False,
+                         'message_minimum_privileges_match':True,'cpi_signer':None,
+                         'actual_role_if_mismatched':'UNAVAILABLE_SOURCE_PROOF_MISSING'}]}
+        with connect() as db:
+            db.execute('CREATE TABLE bronze(slot UBIGINT,transaction_index UBIGINT,record_ordinal UBIGINT,transaction_status VARCHAR,record_bytes BLOB)')
+            for ordinal,status in enumerate(['OK','ERROR']):
+                db.execute('INSERT INTO bronze VALUES (9,?,?,?,?)',[
+                    ordinal,ordinal,status,json.dumps({'transaction':{
+                        'pump_nested_buy_analysis':[diagnostic,diagnostic]}}).encode()])
+            details=objects(rows(db.execute(sql['nested_buy_details'])))
+            self.assertEqual(len(details),4)  # preserve duplicate diagnoses and failed transactions
+            self.assertEqual([r['transaction_status'] for r in details],['OK','OK','ERROR','ERROR'])
+            for row in details:
+                self.assertEqual(row['disposition'],'NOT_ADMITTED')
+                self.assertEqual(row['track_volume'],'false')
+                self.assertEqual(row['reported_mint'],'diagnostic-mint')
+                self.assertEqual(row['amount_raw_u64'],'18446744073709551615')
+                self.assertEqual(row['max_sol_cost_raw_u64'],'9007199254740993')
+                self.assertEqual(row['actual_cpi_signer'],'null')
+            gaps=objects(rows(db.execute(sql['nested_buy_account_gaps'])))
+            self.assertEqual(len(gaps),8)
+            self.assertEqual([r['account_position'] for r in gaps],['6','16']*4)
+            self.assertTrue(all(r['actual_cpi_signer']=='null' for r in gaps))
+            synthetic_silver(db,[])
+            summary=side_summary(db,sql)
+            question=buy_sell_question(summary,[])
+            self.assertEqual(summary['supported_sides']['buy_facts'],0)
+            self.assertEqual(question['result_kind'],'INSUFFICIENT_SUITABLE_DATA')
+            self.assertIn('remaining account 16',question['next_step'])
+            self.assertIn('separate 24-byte',question['next_step'])
+
+    def test_nested_buy_gaps_keep_null_absent_checks_and_unknown_status(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        diagnostic={'accounts':[
+            {'position':0,'address_match':None,'message_minimum_privileges_match':None},
+            {'position':1},
+            {'position':2,'address_match':True,'message_minimum_privileges_match':None},
+            {'position':3,'address_match':None,'message_minimum_privileges_match':True},
+            {'position':4,'address_match':True,'message_minimum_privileges_match':True}]}
+        with connect() as db:
+            db.execute('CREATE TABLE bronze(slot UBIGINT,transaction_index UBIGINT,record_ordinal UBIGINT,transaction_status VARCHAR,record_bytes BLOB)')
+            records=[{'pump_nested_buy_analysis':[diagnostic]},
+                     {'pump_nested_buy_analysis':[]}, {}, {'pump_nested_buy_analysis':None}]
+            for n,record in enumerate(records):
+                db.execute('INSERT INTO bronze VALUES (9,?,?,NULL,?)',[
+                    n,n,json.dumps({'transaction':record}).encode()])
+            details=objects(rows(db.execute(sql['nested_buy_details'])))
+            self.assertEqual(len(details),1)
+            self.assertIsNone(details[0]['transaction_status'])
+            self.assertIsNone(details[0]['reported_mint'])
+            gaps=objects(rows(db.execute(sql['nested_buy_account_gaps'])))
+            self.assertEqual([r['account_position'] for r in gaps],['0','1','2','3'])
+            self.assertEqual([r['address_match'] for r in gaps],['null',None,'true','null'])
+
     def test_verified_empty_slot_does_not_disappear(self):
         rows=coverage([10,11],[proof(10,0),proof(11,1)],[actual(11,1,decoded=1)],[extent(11,1)])
         self.assertEqual(len(rows),2)
@@ -150,6 +220,14 @@ class CoverageTests(unittest.TestCase):
         self.assertNotIn('behouden payloadcap:',rendered)
         self.assertIn('INSUFFICIENT_SUITABLE_DATA',rendered)
         self.assertEqual(rendered,render(result))
+        result['queries']={'nested_buy_details':{'columns':[{'name':k} for k in
+            ['slot','transaction_index','disposition','reason','reported_mint','actual_cpi_signer']],
+            'rows':[['9','1','NOT_ADMITTED','ACCOUNT_MISMATCH','<untrusted-mint>',None]],'sql':'synthetic shape'}}
+        rendered=render(result)
+        self.assertIn('Afzonderlijke nested-buydiagnoses — geen Silver-toelating',rendered)
+        self.assertIn('Werkelijke CPI-signer: UNAVAILABLE',rendered)
+        self.assertIn('&lt;untrusted-mint&gt;',rendered)
+        self.assertNotIn('<untrusted-mint>',rendered)
 
     def test_program_queries_count_rust_references_not_execution_or_unknown_as_zero(self):
         sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())

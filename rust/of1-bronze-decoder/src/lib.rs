@@ -6,6 +6,7 @@ pub mod proto;
 pub mod pump;
 pub mod pump_buy;
 pub mod pump_buy_variants;
+pub mod pump_nested_buy;
 pub mod pump_sell;
 pub mod pump_sell16;
 pub mod pump_sell_context;
@@ -27,6 +28,9 @@ pub fn source_sha256() -> String {
         include_bytes!("pump.rs"),
         include_bytes!("pump_buy.rs"),
         include_bytes!("pump_buy_variants.rs"),
+        include_bytes!("pump_nested_buy.rs"),
+        include_bytes!("pump_nested_buy_context.rs"),
+        include_bytes!("../sources/pump-nested-buy-evidence.json"),
         include_bytes!("../sources/pump-buy24-evidence.json"),
         include_bytes!("pump_sell.rs"),
         include_bytes!("pump_sell16.rs"),

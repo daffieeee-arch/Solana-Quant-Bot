@@ -1,64 +1,17 @@
-//! Bounded height-two Pump sell -> its own immediate event-CPI only.
-//! Recorded instruction preorder/heights are not CPI `AccountMeta` flags.
+//! Strict own-event association for a height-two Pump buy. Only the generic
+//! recorded order/parent helpers are reused; buy authority/layout rules are
+//! explicit here. No nearby-event matching or invented CPI flags.
 use crate::{
     pump_buy::{account_key, key_at},
-    pump_sell::{Rejection, decode_event},
+    pump_sell::Rejection,
+    pump_sell_context::{check_order, recorded_parents},
 };
 use of1_range_recorder::sha256;
 use pump_protocol_v2::{
-    decode::TradeEvent,
+    decode::{TradeEvent, probe_trade_event_cpi_layout},
     registry::{EVENT_IX_TAG_LE, PUMP_PROGRAM_ID},
 };
 use serde_json::{Value, json};
-
-pub const SOURCE: &[u8] = include_bytes!("../sources/pump-nested-sell-evidence.json");
-pub const CANDIDATE: &str = "pump-sell-9c82f61-token2022-cashback17-nested-height2-v1";
-
-pub(crate) fn check_order(inner: &[Value], top_count: usize) -> Result<(), Rejection> {
-    let mut previous = None;
-    let mut expected_order = 0_u64;
-    for ix in inner {
-        let group = ix["outer_index"]
-            .as_u64()
-            .ok_or(Rejection::InvalidInvocationOrder)?;
-        if previous != Some(group) {
-            if previous.is_some_and(|p| group <= p) || group >= top_count as u64 {
-                return Err(Rejection::InvalidInvocationOrder);
-            }
-            expected_order = 0;
-        }
-        if ix["inner_order"].as_u64() != Some(expected_order) {
-            return Err(Rejection::InvalidInvocationOrder);
-        }
-        expected_order += 1;
-        previous = Some(group);
-    }
-    Ok(())
-}
-
-/// Pop completed sibling/subtrees before determining the parent. Validate the
-/// entire group: an unknown later boundary could hide a duplicate event.
-pub(crate) fn recorded_parents(
-    group: &[&Value],
-) -> Result<(Vec<Option<usize>>, Vec<usize>), Rejection> {
-    let mut stack = vec![None];
-    let mut parents = Vec::new();
-    let mut heights = Vec::new();
-    for (position, ix) in group.iter().enumerate() {
-        let h = ix["stack_height"]
-            .as_u64()
-            .and_then(|n| usize::try_from(n).ok())
-            .ok_or(Rejection::MissingStackHeight)?;
-        if h < 2 || h > stack.len() + 1 {
-            return Err(Rejection::InvalidStackHeight);
-        }
-        stack.truncate(h - 1);
-        parents.push(*stack.last().ok_or(Rejection::InvalidStackHeight)?);
-        heights.push(h);
-        stack.push(Some(position));
-    }
-    Ok((parents, heights))
-}
 
 /// No sorting, missing-height imputation, log-string fallback or nearby-event search.
 /// The existing complete Bronze reader is the provenance boundary of this API.
@@ -144,6 +97,7 @@ pub(crate) fn associated_event(
     }
     let (event_order, bytes) = &events[0];
     let event_ix = group[*event_order];
+    // The pinned BUY IDL has event_authority at position 10.
     let authority = account_key(tx, target, 10).ok_or(Rejection::EventAuthorityMismatch)?;
     let event_accounts = event_ix["account_indexes"]
         .as_array()
@@ -153,7 +107,7 @@ pub(crate) fn associated_event(
     {
         return Err(Rejection::EventAuthorityMismatch);
     }
-    let event = decode_event(bytes)?;
+    let event = probe_trade_event_cpi_layout(bytes).map_err(|_| Rejection::InvalidEvent)?;
     let trace:Vec<_>=group.iter().enumerate().map(|(i,ix)|json!({"inner_order":i,"stack_height":heights[i],"program_id":ix["program_id"],"program_id_index":ix["program_id_index"],"parent_inner_order":parents[i],"account_indexes":ix["account_indexes"],"instruction_sha256":ix["data_hex"].as_str().and_then(|s|hex::decode(s).ok()).map(|b|sha256(&b))})).collect();
     Ok((
         json!({"association":"RECORDED_ORDER_HEIGHTS_EXACT_IMMEDIATE_CHILD_EVENT",

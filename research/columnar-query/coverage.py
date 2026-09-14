@@ -165,8 +165,10 @@ def buy_sell_question(summary, mint_rows):
                        'acquired_at/processed_at are not historical time; observed/actionable/execution time remains unavailable.',
         'optional_metadata': ['name', 'ticker', 'logo', 'website'],
         'not_inferred': ['decimals', 'launch date', 'lifecycle', 'account-state transition', 'executable price'],
-        'next_step': 'Establish the missing Pump-authoritative 24-byte buy/modern-account compatibility rule, '
-                     'including absent track_volume semantics; then repeat the same sealed pilot without reselection.',
+        'next_step': 'Resolve a complete source-bound buy profile before expanding this sample. '
+                     'For nested 25-byte observations, establish remaining account 16 while keeping unrecorded CPI privileges explicit; '
+                     'the separate 24-byte/modern-account bridge and 26-byte rejection remain separate source gaps. '
+                     'Do not infer no activity from zero admitted buys or replace the fixed selection.',
         'research_ready': False,
     }
 
@@ -174,11 +176,29 @@ def buy_sell_question(summary, mint_rows):
 def render(result):
     e = lambda value: html.escape(str(value))
     s = result['summary']
+    nested_rows = objects(result['queries']['nested_buy_details']) if 'nested_buy_details' in result['queries'] else []
+    nested_view = ''
+    if nested_rows:
+        cards = []
+        for row in nested_rows:
+            value = lambda key: e('UNAVAILABLE' if row.get(key) is None or row.get(key) == 'null' else row[key])
+            cards.append(f"""<section><h3>Slot {value('slot')} · transactie {value('transaction_index')}</h3>
+<b>{value('disposition')} / {value('reason')}</b> · opgenomen status {value('transaction_status')}
+<p>Instructie: {value('instruction_bytes')} bytes, track_volume {value('track_volume')};
+raw tokenargument {value('amount_raw_u64')}, max SOL-accountingargument {value('max_sol_cost_raw_u64')}.</p>
+<p>Eigen context: outer {value('outer_index')} / inner {value('instruction_inner_order')} / hoogte {value('instruction_stack_height')}
+→ event inner {value('event_inner_order')} / hoogte {value('event_stack_height')}. Event-mint: <code>{value('reported_mint')}</code>.</p>
+<p>Werkelijke CPI-signer: {value('actual_cpi_signer')}. Bronhiaten: {value('proof_gaps')}.</p></section>""")
+        nested_view = ('<section><h2>Afzonderlijke nested-buydiagnoses — geen Silver-toelating</h2>'
+            '<p>Dit zijn uitgevoerde Rust-controles op opgenomen bytes, via Parquet bevraagd. '
+            'Een passend event is geen volledig bewezen accountprofiel. Diagnostische mints '
+            'worden niet toegevoegd aan de inventaris van toegelaten buy/sell-paren.</p>' + ''.join(cards) + '</section>')
     tables = []
     for name, table in result['queries'].items():
         head = ''.join('<th>'+e(c['name'])+'</th>' for c in table['columns'])
         body = ''.join('<tr>'+''.join('<td>'+e('NULL / onbekend' if v is None else v)+'</td>' for v in row)+'</tr>' for row in table['rows'])
-        expanded = ' open' if name in ['buy_version_details', 'buy_source_versions', 'supported_sides',
+        expanded = ' open' if name in ['nested_buy_details', 'nested_buy_account_gaps',
+                                      'buy_version_details', 'buy_source_versions', 'supported_sides',
                                       'mint_side_inventory', 'buy_sell_ordered_facts',
                                       'sell_profile_details', 'sell_account_evidence_gaps'] else ''
         tables.append(f"<details{expanded}><summary>{e(name)}</summary><div class='scroll'><table><tr>{head}</tr>{body}</table></div><pre>{e(table['sql'])}</pre></details>")
@@ -231,7 +251,7 @@ body{{background:#111b24;color:#e0eaf3;font:15px system-ui;margin:0}}main{{max-w
 <p>Elke envelope blijft in de noemer: ook failed, missing, unsupported of quarantined. Historische buy-layoutprobes worden apart getoond; een sell die zo'n probe afwijst is niet opnieuw een mislukte sell-decode.</p>
 <section><h2>Slotinventaris en volledige noemers</h2><div class='scroll'><table><tr>{slot_head}</tr>{''.join(slot_rows)}</table></div><p>Transactiestatus: <b>{s['status_ok']} OK</b> / <b>{s['status_error']} ERROR</b> / {s['status_unknown']} onbekend. On-chain ERROR is niet hetzelfde als een fout in onze verwerking.</p><details><summary>Volledige tellingen, onbekenden en Raw-hashes</summary><pre>{e(json.dumps(s,indent=2))}</pre></details></section>
 <p>Programmatellingen lezen uitsluitend bestaande Rust-velden: unieke programmabetrokkenheid per pakket, gedeclareerde top-level instructies en opgenomen CPI-verwijzingen. Failed transactions blijven inbegrepen. Ontbrekende CPI-metadata is onbekend, niet nul; de aparte program_coverage-tabel toont die noemer. Verwijzingen bewijzen geen gecommitteerde toestandsverandering.</p>
-{question_view}<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
+{nested_view}{question_view}<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
 <section><h2>{pilot_heading}</h2>{pilot_view}</section>
 <h2>Werkelijk uitgevoerde DuckDB-controles</h2><p>De buy-bronvergelijking is afzonderlijk van de behouden oude B3-layoutprobe: een afwijzing tegen één schema bewijst geen universeel corrupte buy. De geopende profieltabellen tonen iedere Rust-uitkomst met transactiestatus, eigen instructie/event-context en bronhash. Niet-toegelaten profielen blijven zichtbaar; een gelijk accountaantal bewijst geen gelijke variant. Een PDA-adresmatch bewijst geen opgenomen CPI-signerflags. NULL blijft onbekend. Een ontbrekend instructieargument wordt niet ingevuld vanuit de afzonderlijke eventwaarde. Deze queries beslissen niet opnieuw over Silver-toelating.</p>{''.join(tables)}
 <section><h2>Herkomst</h2><pre>{e(json.dumps(result['bindings'],indent=2))}</pre><a href='query-results.json'>Volledig machineleesbaar resultaat / matrix / SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a></section></main></html>"""
@@ -287,6 +307,7 @@ def run(root, quality_path, pilot_path, output):
                'silver':silver, 'supported_sides':sides,
                'buy_diagnostics':len(results['rejected_buy']['rows']),
                'buy_version_diagnostics':len(results['buy_version_details']['rows']),
+               'nested_buy_diagnostics':len(results['nested_buy_details']['rows']),
                'economic_complete_observations': 'UNAVAILABLE_NOT_PROVEN', 'global_pump_variant_denominator':'UNKNOWN',
                'sample_class':manifest['evidence']['slice_class'],
                'index_reported_absent': payload['prepared']['index_reported_absent'],
