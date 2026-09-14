@@ -13,6 +13,7 @@ pub mod pump_sell16;
 pub mod pump_sell_context;
 pub mod report;
 pub mod resources;
+pub mod token_balances;
 
 /// Actual compiled source/lock identity, independent of uncommitted Git claims.
 #[must_use]
@@ -23,6 +24,8 @@ pub fn source_sha256() -> String {
         include_bytes!("archive.rs"),
         include_bytes!("codec.rs"),
         include_bytes!("proto.rs"),
+        include_bytes!("token_balances.rs"),
+        include_bytes!("../sources/token-balance-evidence.json"),
         include_bytes!("report.rs"),
         include_bytes!("resources.rs"),
         include_bytes!("bin/of1-bronze-measure.rs"),

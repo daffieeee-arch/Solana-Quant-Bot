@@ -5,6 +5,7 @@ import json
 import pathlib
 import sys
 import time
+import token_balance_report
 
 from query import connect, dataset_manifest, rows, sha
 from manifest_reader import attach_dataset, inventory, layer_rows, reader_source_sha256, selection_inventory
@@ -102,12 +103,13 @@ def suitability(summary):
          'next_step': 'Retain failed, unsupported and missing outcomes when adding a new sample.'},
         {'question': 'Welke ruwe buys en sells zijn binnen de ondersteunde bronprofielen waargenomen?',
          'requires': ['mint', 'exact raw units', 'instruction/account/event context', 'transaction status', 'provenance'],
-         'present': silver, 'missing': ['global variant coverage', 'quote mint/decimals for economic normalization', 'actual nested CPI privileges are not recorded'],
+         'present': {'silver': silver, 'separate_base_unit_context': summary.get('token_balance_units')}, 'missing': ['global variant coverage', 'quote mint/decimals for economic normalization', 'actual nested CPI privileges are not recorded'],
          'result_kind': 'BOUNDED_RECORDED_FACTS_ONLY',
          'next_step': 'Query these raw facts without converting unknown units or event reserves into prices/account state.'},
         {'question': 'Kunnen buys en sells symmetrisch worden vergeleken?',
          'requires': ['source-supported whole buy instruction', 'same context/evidence rules for both sides', 'common unit identity'],
-         'present': {'supported_sides': sides, 'buy_diagnostics': summary['buy_diagnostics']},
+         'present': {'supported_sides': sides, 'buy_diagnostics': summary['buy_diagnostics'],
+                     'separate_base_unit_context': summary.get('token_balance_units')},
          'missing': ['coverage of retained Rust diagnostics and remaining rejected/unsupported variants', 'economic unit evidence'],
          'result_kind': 'INSUFFICIENT_SUITABLE_DATA',
          'next_step': 'Use each retained Rust rejection and source-bound full instruction/context; no permissive parser or altered bytes.'},
@@ -224,7 +226,9 @@ raw tokenargument {value('amount_raw_u64')}, max SOL-accountingargument {value('
     for name, table in result['queries'].items():
         head = ''.join('<th>'+e(c['name'])+'</th>' for c in table['columns'])
         body = ''.join('<tr>'+''.join('<td>'+e('NULL / onbekend' if v is None else v)+'</td>' for v in row)+'</tr>' for row in table['rows'])
-        expanded = ' open' if name in ['buys', 'exact_quote_buy_details', 'nested_buy_details', 'nested_buy_account_gaps',
+        expanded = ' open' if name in ['trade_units', 'trade_balance_roles', 'trade_balance_observations',
+                                      'token_balance_coverage', 'token_balance_decimal_consistency',
+                                      'buys', 'exact_quote_buy_details', 'nested_buy_details', 'nested_buy_account_gaps',
                                       'buy_version_details', 'buy_source_versions', 'supported_sides',
                                       'mint_side_inventory', 'buy_sell_ordered_facts',
                                       'sell_profile_details', 'sell_account_evidence_gaps'] else ''
@@ -278,7 +282,7 @@ body{{background:#111b24;color:#e0eaf3;font:15px system-ui;margin:0}}main{{max-w
 <p>Elke envelope blijft in de noemer: ook failed, missing, unsupported of quarantined. Historische buy-layoutprobes worden apart getoond; een sell die zo'n probe afwijst is niet opnieuw een mislukte sell-decode.</p>
 <section><h2>Slotinventaris en volledige noemers</h2><div class='scroll'><table><tr>{slot_head}</tr>{''.join(slot_rows)}</table></div><p>Transactiestatus: <b>{s['status_ok']} OK</b> / <b>{s['status_error']} ERROR</b> / {s['status_unknown']} onbekend. On-chain ERROR is niet hetzelfde als een fout in onze verwerking.</p><details><summary>Volledige tellingen, onbekenden en Raw-hashes</summary><pre>{e(json.dumps(s,indent=2))}</pre></details></section>
 <p>Programmatellingen lezen uitsluitend bestaande Rust-velden: unieke programmabetrokkenheid per pakket, gedeclareerde top-level instructies en opgenomen CPI-verwijzingen. Failed transactions blijven inbegrepen. Ontbrekende CPI-metadata is onbekend, niet nul; de aparte program_coverage-tabel toont die noemer. Verwijzingen bewijzen geen gecommitteerde toestandsverandering.</p>
-{buy_view}{nested_view}{question_view}<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
+{buy_view}{token_balance_report.render(result['queries'], result.get('token_balance_projection'))}{nested_view}{question_view}<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
 <section><h2>{pilot_heading}</h2>{pilot_view}</section>
 <h2>Werkelijk uitgevoerde DuckDB-controles</h2><p>De buy-bronvergelijking is afzonderlijk van de behouden oude B3-layoutprobe: een afwijzing tegen één schema bewijst geen universeel corrupte buy. De geopende profieltabellen tonen iedere Rust-uitkomst met transactiestatus, eigen instructie/event-context en bronhash. Niet-toegelaten profielen blijven zichtbaar; een gelijk accountaantal bewijst geen gelijke variant. Een PDA-adresmatch bewijst geen opgenomen CPI-signerflags. NULL blijft onbekend. Een ontbrekend instructieargument wordt niet ingevuld vanuit de afzonderlijke eventwaarde. Deze queries beslissen niet opnieuw over Silver-toelating.</p>{''.join(tables)}
 <section><h2>Herkomst</h2><pre>{e(json.dumps(result['bindings'],indent=2))}</pre><a href='query-results.json'>Volledig machineleesbaar resultaat / matrix / SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a></section></main></html>"""
@@ -305,6 +309,8 @@ def run(root, quality_path, pilot_path, output):
     started = time.perf_counter()
     with connect() as db:
         attach_dataset(db, root, manifest)
+        extra_queries, balance_binding = token_balance_report.query_contract(db)
+        queries.update(extra_queries)
         results = {key: dict(rows(db.execute(sql)), sql=sql) for key,sql in queries.items()}
     selected = selection_inventory(manifest)
     expected_slots = list(range(start,end))
@@ -347,7 +353,9 @@ def run(root, quality_path, pilot_path, output):
             integrity_errors.append('PARQUET_RUST_SOURCE_BINDING_MISMATCH')
     pilot, pilot_sha = optional_pilot(pilot_path)
     if dataset_manifest(root)[1] != manifest_sha: raise ValueError('input changed')
+    summary['token_balance_units'] = token_balance_report.summary(results, balance_binding)
     result = {'schema':'OF1_DECODER_COVERAGE_1','duckdb_version':'1.5.5', 'summary':summary,
+              'token_balance_projection':balance_binding,
               'bindings':{'parquet_manifest_sha256':manifest_sha,'rust_quality_sha256':quality_sha,
                           'decoder':manifest['input']['execution']['decoder_source_sha256'],
                           'writer':manifest['writer'], 'coverage_sql_sha256':sha(queries_raw),'base_sql_sha256':sha(base_raw),

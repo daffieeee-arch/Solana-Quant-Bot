@@ -437,10 +437,11 @@ fn append_supported_facts(
     record_bytes: &mut usize,
     silver_records: &mut Vec<Value>,
 ) -> io::Result<()> {
-    for fact in ordered_trade_facts(
+    for mut fact in ordered_trade_facts(
         pump_sell::facts(record)?,
         crate::pump_buy_exact_quote_v2::facts(record)?,
     )? {
+        fact["token_balance_context"] = crate::token_balances::trade_context(record, &fact);
         // Derived output uses the SAME existing per-slot/selection JSON cap.
         charge(
             record_bytes,

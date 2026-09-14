@@ -51,6 +51,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`research/B5_PILOT_RESOURCE_CORRECTION.md`](research/B5_PILOT_RESOURCE_CORRECTION.md)
 - [`research/B5_NESTED_BUY25_SOURCE_DIAGNOSIS.md`](research/B5_NESTED_BUY25_SOURCE_DIAGNOSIS.md)
 - [`research/B5_BUY_EXACT_QUOTE_V2.md`](research/B5_BUY_EXACT_QUOTE_V2.md)
+- [`research/B5_TOKEN_BALANCE_UNITS.md`](research/B5_TOKEN_BALANCE_UNITS.md)
 - [`research/B4_DOWNLOAD_MONITOR.md`](research/B4_DOWNLOAD_MONITOR.md)
 - [`research/OF1_METADATA_RUN_PROPOSAL.md`](research/OF1_METADATA_RUN_PROPOSAL.md)
 - [`research/OF1_ACQUISITION_EVIDENCE.md`](research/OF1_ACQUISITION_EVIDENCE.md)

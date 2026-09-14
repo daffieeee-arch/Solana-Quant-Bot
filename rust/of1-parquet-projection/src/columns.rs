@@ -38,15 +38,21 @@ pub enum Kind {
     Text,
     Bool,
     Bytes,
+    TokenBalances,
+    BalanceRoles,
+    U64List,
 }
 impl Kind {
-    fn data_type(self) -> DataType {
+    pub(crate) fn data_type(self) -> DataType {
         match self {
             Self::U64 => DataType::UInt64,
             Self::I64 => DataType::Int64,
             Self::Text => DataType::Utf8,
             Self::Bool => DataType::Boolean,
             Self::Bytes => DataType::Binary,
+            Self::TokenBalances => crate::token_balances::data_type(),
+            Self::BalanceRoles => crate::token_balances::roles_data_type(),
+            Self::U64List => DataType::List(Arc::new(Field::new("item", DataType::UInt64, true))),
         }
     }
 }
@@ -138,6 +144,18 @@ fn layer_specs(out: &mut Vec<Column>, layer: Layer) {
     use Kind::{Bool, Bytes, Text, U64};
     match layer {
         Layer::Bronze => {
+            add(
+                out,
+                Text,
+                "/transaction/token_balance_context/",
+                &[("token_balance_collection_status", "collection_status")],
+            );
+            add(
+                out,
+                Kind::TokenBalances,
+                "/transaction/token_balance_context/",
+                &[("token_balance_observations", "observations")],
+            );
             add(
                 out,
                 Text,
@@ -255,6 +273,49 @@ fn silver_specs(out: &mut Vec<Column>) {
     );
     silver_event_numbers(out);
     silver_context(out);
+    silver_balance_context(out);
+}
+fn silver_balance_context(out: &mut Vec<Column>) {
+    use Kind::{Text, U64};
+    add(
+        out,
+        Text,
+        "/token_balance_context/",
+        &[
+            ("units_binding_status", "binding_status"),
+            ("units_base_mint", "base_mint"),
+            ("units_base_token_program", "base_token_program"),
+            ("units_decimals_evidence", "decimals_evidence"),
+            (
+                "units_event_token_amount_decimal",
+                "event_token_amount_decimal",
+            ),
+        ],
+    );
+    add(
+        out,
+        U64,
+        "/token_balance_context/",
+        &[
+            ("units_decimals", "decimals"),
+            ("units_event_token_amount_raw_u64", "event_token_amount_u64"),
+        ],
+    );
+    add(
+        out,
+        Kind::U64List,
+        "/token_balance_context/",
+        &[(
+            "units_matched_observation_indexes",
+            "matched_observation_indexes",
+        )],
+    );
+    add(
+        out,
+        Kind::BalanceRoles,
+        "/token_balance_context/",
+        &[("units_role_balances", "roles")],
+    );
 }
 fn silver_event_numbers(out: &mut Vec<Column>) {
     use Kind::{Bool, I64, U64};
@@ -373,7 +434,7 @@ pub fn state(value: Option<&Value>) -> &'static str {
 }
 #[must_use]
 pub fn schema_descriptor(layer: Layer) -> Value {
-    json!({"schema":"OF1_COLUMNAR_PROJECTION_1","layer":layer.name(),"accepted_record_schemas":layer.record_schemas(),"preserved_record":"exact canonical JSON plus original LF in record_bytes","logical_hash":"SHA256 of length-prefixed canonical JSON records in source order; lengths u64 LE; LF excluded", "fields":schema(layer).fields().iter().map(|f|json!({"name":f.name(),"arrow_type":format!("{:?}",f.data_type()),"nullable":f.is_nullable(),"metadata":f.metadata()})).collect::<Vec<_>>(), "columns":specs(layer).iter().map(|s|json!({"name":s.name,"pointer":s.pointer,"arrow_type":format!("{:?}",s.kind),"state_column":format!("{}_state",s.name)})).collect::<Vec<_>>()})
+    json!({"schema":"OF1_COLUMNAR_PROJECTION_1","layer":layer.name(),"accepted_record_schemas":layer.record_schemas(),"preserved_record":"exact canonical JSON plus original LF in record_bytes","logical_hash":"SHA256 of length-prefixed canonical JSON records in source order; lengths u64 LE; LF excluded", "fields":schema(layer).fields().iter().map(|f|json!({"name":f.name(),"arrow_type":format!("{:?}",f.data_type()),"nullable":f.is_nullable(),"metadata":f.metadata()})).collect::<Vec<_>>(), "columns":specs(layer).iter().map(|s|json!({"name":s.name,"pointer":s.pointer,"arrow_type":format!("{:?}",s.kind),"state_column":format!("{}_state",s.name)})).collect::<Vec<_>>(), "token_balance_projection":crate::token_balances::descriptor(layer)})
 }
 #[must_use]
 pub fn schema(layer: Layer) -> Arc<Schema> {
@@ -392,7 +453,7 @@ pub fn schema(layer: Layer) -> Arc<Schema> {
     }
     Arc::new(Schema::new(fields))
 }
-fn u64_value(v: &Value) -> io::Result<u64> {
+pub(crate) fn u64_value(v: &Value) -> io::Result<u64> {
     if let Some(s) = v.as_str() {
         let n = s.parse::<u64>().map_err(invalid)?;
         if n.to_string() != s {
@@ -459,6 +520,9 @@ fn typed_column(spec: &Column, records: &[Value]) -> io::Result<ArrayRef> {
                 .collect::<io::Result<Vec<_>>>()?;
             Arc::new(bytes.iter().map(|b| b.as_deref()).collect::<BinaryArray>())
         }
+        Kind::TokenBalances => crate::token_balances::array(&values)?,
+        Kind::BalanceRoles => crate::token_balances::roles_array(&values)?,
+        Kind::U64List => crate::token_balances::unsigned_list(&values)?,
     };
     Ok(array)
 }

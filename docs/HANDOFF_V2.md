@@ -46,6 +46,13 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The separate [recorded token-balance/unit projection](research/B5_TOKEN_BALANCE_UNITS.md)
+exposes retained pre/post metadata without changing any admitted trade.
+Protobuf presence/defaults, exact integers and transaction-wide deltas remain
+distinct from event quantities, instruction limits and unavailable account
+state. Its fixed-horizon follow-up is a proposal only, not a sample change,
+acquisition permission or Research Ready promotion.
+
 The separate [exact-quote v2 buy profile](research/B5_BUY_EXACT_QUOTE_V2.md)
 uses its own 24-byte/two-u64 instruction and 27-account source layout,
 without relaxing legacy buy parsers. Recorded instruction/event facts,

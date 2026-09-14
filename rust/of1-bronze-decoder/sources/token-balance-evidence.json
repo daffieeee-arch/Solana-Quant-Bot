@@ -1,0 +1,22 @@
+{
+  "schema": "TOKEN_BALANCE_SOURCE_RECEIPT_V1",
+  "repository": "anza-xyz/agave",
+  "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+  "sources": [
+    {"path":"storage-proto/proto/confirmed_block.proto","sha256":"c29a6db1c76fc1361f2d3920bdbda01f6270b6743c5bdc19997a9f4720ccdcec"},
+    {"path":"storage-proto/src/convert.rs","sha256":"5884bda534f1824b62befe70795e4250fe1302a99acbe1ad4f0ca98856163f4b"}
+  ],
+  "license": "Apache-2.0",
+  "evidence": "PINNED_SCHEMA_AND_CONVERSION_NOT_HISTORICAL_ACCOUNT_CONTENTS",
+  "status_fields": {"pre_token_balances":7,"post_token_balances":8},
+  "token_balance_fields": {"account_index":"1:uint32","mint":"2:string","ui_token_amount":"3:message","owner":"4:string","program_id":"5:string"},
+  "ui_token_amount_fields": {"ui_amount":"1:double","decimals":"2:uint32","amount":"3:string","ui_amount_string":"4:string"},
+  "presence": {
+    "repeated_empty":"Original None and Some(empty) are not distinguishable after convert.rs unwrap_or_default. No missing balance is a zero balance.",
+    "scalars":"Proto3 omitted scalar fields have decoded defaults; wire presence is retained separately. An omitted nested UiTokenAmount message remains unavailable, not a constructed zero observation.",
+    "repeated_singular_fields":"Protobuf last scalar occurrence and singular message merge semantics apply; the exact original nested bytes remain preserved.",
+    "integer_limits":"The source Rust type uses u8 account index/decimals and amount is a u64 decimal string. This projection checks these bounds and does not reproduce convert.rs truncation or failed parse fallback to zero.",
+    "ui_amount":"The double and display string are retained as raw source bytes/fields only. Neither is a canonical token quantity."
+  },
+  "trade_context":"An additive metadata unit/balance correspondence does not change prior trade admission, prove an account snapshot, CPI privileges, an individual instruction delta, quote identity, prices, fees or execution."
+}

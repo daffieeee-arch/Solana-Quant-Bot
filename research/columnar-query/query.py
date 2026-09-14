@@ -8,6 +8,7 @@ import sys
 import time
 
 import duckdb
+import token_balance_report
 from manifest_reader import (attach_dataset, inventory, load_manifest,
                              reader_source_sha256, selection_inventory)
 
@@ -80,7 +81,7 @@ def render(result, operations):
 <p><b>Sampleklasse:</b> {e(result['evidence']['slice_class'])}<br><b>Bronbewijs:</b> {e(result['evidence'].get('receipt_evidence','zie input_evidence'))}<br><b>Research Ready:</b> nee</p>
 <p>{e(sample_text)}</p><details><summary>Volledige sample-identiteit en selectie-inventaris</summary><pre>{e(json.dumps({'sample_identity':sample,'selection':result['selection']},indent=2))}</pre></details></section>
 <div class='receipt'><a href='query-results.json'>JSON-resultaten en SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a><details><summary>Alle bestandpaden, hashes en writeridentiteit</summary><b>Fysieke bestanden en oorspronkelijke volgorde</b><pre>{e(json.dumps({'inventory':result['inventory'],'files':result['files']},indent=2))}</pre><b>Querytijd</b><p>{operations['query_seconds']:.6f} seconden (operationele meting, geen historische feature)</p><b>Dataset</b><pre>{e(operations['dataset_path'])}</pre><b>Manifest SHA-256</b><pre>{e(result['manifest_sha256'])}</pre><b>Writer / bronbinding</b><pre>{e(json.dumps(result['writer'], indent=2))}</pre></details></div>
-{''.join(sections)}<p>NULL is SQL-afwezigheid; *_state onderscheidt MISSING van oorspronkelijke JSON NULL. UNAVAILABLE blijft een letterlijke bewijsstatus. Getallen staan zonder floating-pointconversie in het JSON-rapport.</p></main></html>"""
+{token_balance_report.render(result['queries'], result.get('token_balance_projection'))}{''.join(sections)}<p>NULL is SQL-afwezigheid; *_state onderscheidt MISSING van oorspronkelijke JSON NULL. UNAVAILABLE blijft een letterlijke bewijsstatus. Getallen staan zonder floating-pointconversie in het JSON-rapport.</p></main></html>"""
 
 
 def run(root, output):
@@ -93,6 +94,8 @@ def run(root, output):
     started = time.perf_counter()
     with connect() as db:
         attach_dataset(db, root, manifest)
+        extra_queries, balance_binding = token_balance_report.query_contract(db)
+        queries.update(extra_queries)
         results = {name: dict(rows(db.execute(sql)), sql=sql) for name, sql in queries.items()}
         # Bounds, exact original bytes and integer parity are checked independently
         # by the Rust read-back verifier; Python is only a query consumer.
@@ -101,6 +104,8 @@ def run(root, output):
         raise ValueError("dataset changed during queries")
     result = {"schema": "OF1_PARQUET_QUERY_RESULT_1", "duckdb_version": duckdb.__version__,
               "manifest_sha256": manifest_sha, "queries_sha256": sha(query_bytes),
+              "token_balance_projection": balance_binding,
+              "token_balance_summary": token_balance_report.summary(results, balance_binding),
               "writer": manifest["writer"], "files": {n: {k: v[k] for k in ["sha256", "bytes"]} for n, v in manifest["files"].items()},
               "inventory": inventory(manifest), "selection": selection_inventory(manifest),
               "sample_identity": manifest.get("sample_identity"),

@@ -247,7 +247,8 @@ fn project_transaction(
         "wire_hex":hex::encode(wire),"stored_metadata_hex":hex::encode(stored_meta),"protobuf_metadata_hex":hex::encode(meta),
         "wire_sha256":of1_range_recorder::sha256(wire),"metadata_sha256":of1_range_recorder::sha256(stored_meta),
         "wire_checksum":wire_checksum,"metadata_checksum":metadata_checksum,"metadata_codec":compression,"decoded_metadata_bytes":meta.len(),
-        "unprojected_fields":["token_balances","rewards","return_data","protobuf_unknown_fields"],"unprojected_bytes_preserved":true,
+        "token_balance_context":crate::token_balances::project(status,keys,meta,stored_meta),
+        "unprojected_fields":["rewards","return_data","protobuf_unknown_fields"],"unprojected_bytes_preserved":true,
         "economic_identity":"UNAVAILABLE","name":null,"ticker":null,"launch_at":null
     }))
 }

@@ -3,6 +3,7 @@ pub mod admission;
 pub mod columns;
 pub mod shards;
 pub mod storage;
+mod token_balances;
 
 use sha2::{Digest, Sha256};
 use std::io;
@@ -23,6 +24,7 @@ pub fn source_sha256() -> String {
     for bytes in [
         include_bytes!("lib.rs").as_slice(),
         include_bytes!("columns.rs"),
+        include_bytes!("token_balances.rs"),
         include_bytes!("storage.rs"),
         include_bytes!("shards.rs"),
         include_bytes!("admission.rs"),
