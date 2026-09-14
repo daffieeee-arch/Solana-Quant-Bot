@@ -363,7 +363,7 @@ fn project_slot(
         "resource_accounting":{"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_RECORD_JSON_BYTES,"max_decoded_metadata_bytes":MAX_DECODED_METADATA_BYTES},
         "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":silver_kind(&silver_records),"silver_fact_count":silver_records.len(),"silver_records":silver_records,"physical_parquet_writer":"NOT_SELECTED",
         "records_sha256":records_sha256,"analysis":pump::summary(&records),"records":records,
-        "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]});
+        "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances are source-bound status-metadata observations, not account snapshots; rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]});
     attach_sample(&mut result, run.aggregate_plan.sample_identity.as_ref())?;
     Ok(result)
 }
