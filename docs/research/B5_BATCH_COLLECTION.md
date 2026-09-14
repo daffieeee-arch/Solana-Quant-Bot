@@ -27,8 +27,11 @@ from that list; native child ordinals and full record bytes remain intact.
 
 ## Bounds and restart
 
-- One worker: at most three named slots / 16 MiB captured Raw, retaining the
-  existing 24 MiB serialized slot and 64 MiB serialized selection limits.
+- One worker: at most three named slots / 16 MiB captured Raw, with a
+  [measured 48 MiB serialized slot limit](B5_PILOT_CONTEXT_COLLECTION.md#measured-resource-correction)
+  and the unchanged 64 MiB serialized worker-selection limit. The executed
+  nineteen-slot collection uses one receipt/slot per worker; two large slots
+  cannot silently evade the shared worker limit. The original 24 MiB stop is preserved.
 - Physical Parquet: at most 5,000 records / 64 MiB per file; existing record,
   Arrow-batch, parent-index and cumulative-publication limits still apply.
 - Collection plan: bounded source/slot/batch inventory, not a JSON copy of all
@@ -66,7 +69,13 @@ or a demonstrated same-mint buy/sell pair. Missing names, prices, execution
 opportunities or account state are not invented. Research Ready stays false;
 root-to-slot membership remains UNAVAILABLE.
 
-## Separate, unapproved acquisition proposal
+## Original separate acquisition proposal — historical preparation
+
+The following records this delivery's original **unapproved** proposal, not
+current permission. Subsequent separately approved capture evidence and the
+offline processing of the unchanged selection are bound in the
+[nineteen-slot result](B5_PILOT_CONTEXT_COLLECTION.md). No old proposal or
+acquisition receipt is rewritten and no new acquisition is authorized here.
 
 The retained index and existing Rust planner give sixteen context ranges,
 **22,631,712 unique response-entity-bytes**, or **67,895,136 reserved bytes**

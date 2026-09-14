@@ -49,10 +49,14 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 The separate [manifest-bound batch/collection route](research/B5_BATCH_COLLECTION.md)
 keeps logical selection, bounded workers and physical Parquet files distinct.
 It references original runs and receipts without splitting or relabeling them;
-the three-slot research pilot remains its original sample. The proposed
-sixteen-slot follow-up is post-hoc descriptive context, not an independent
-sample extension or acquisition permission. Collection publication and full
-package accounting remain separate from decoding and Research Ready.
+the three-slot research pilot remains its original sample. The separately
+captured sixteen-slot follow-up is post-hoc descriptive context, not an independent
+sample extension or new acquisition permission. The [executed nineteen-slot
+collection](research/B5_PILOT_CONTEXT_COLLECTION.md) accounts for 21,719 packages,
+including 1,898 failed transactions, and 15 admitted buys / seven sells with the
+unchanged profiles. The original pilot remains 3,224 packages / 223 failures /
+four buys / three sells. Collection publication and full package accounting
+remain separate from decoder coverage and Research Ready; no status is promoted.
 
 The separate [recorded token-balance/unit projection](research/B5_TOKEN_BALANCE_UNITS.md)
 exposes retained pre/post metadata without changing any admitted trade.

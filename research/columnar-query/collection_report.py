@@ -63,6 +63,35 @@ def render(result, execution):
     batch_rows = [[b['batch_id'], b['source_id'], ', '.join(map(str, b['slots'])), b['state'],
                    b.get('bronze_rows'), b.get('silver_rows'), b.get('parquet_files'),
                    b.get('parquet_bytes')] for b in batches]
+    def query_records(name):
+        query = result['queries'].get(name)
+        if query is None or not query['preview_complete']:
+            return None  # a bounded preview must not silently become a total
+        return [dict(zip([c['name'] for c in query['columns']], row, strict=True))
+                for row in query['rows']]
+    coverage = query_records('role_coverage')
+    sides = query_records('mint_admitted_sides')
+    recurrence = query_records('pilot_mint_recurrence')
+    findings = ''
+    if coverage is not None and sides is not None and recurrence is not None:
+        packages = sum(int(r['packages']) for r in coverage)
+        failed = sum(int(r['packages']) for r in coverage if r['transaction_status'] == 'ERROR')
+        pump = sum(int(r['pump_referencing_packages']) for r in coverage)
+        buys = sum(int(r['buys']) for r in sides)
+        sells = sum(int(r['sells']) for r in sides)
+        returning = sum(int(r['context_admitted_trades']) > 0
+                        or int(r['context_recorded_balance_observations']) > 0 for r in recurrence)
+        both = sum(r['has_both_admitted_sides'] is True for r in sides)
+        findings = (f'<section><h2>Werkelijk bevraagde uitkomst</h2><p><b>{packages:,}</b> pakketten; '
+                    f'<b>{failed:,}</b> opgenomen mislukte transacties; <b>{pump}</b> pakketten met '
+                    f'Pump-programmaverwijzing. De bestaande profielen laten <b>{buys} buys en {sells} sells</b> toe.</p>'
+                    f'<p><b>{returning} van {len(recurrence)}</b> pilotmints keren terug in de context via '
+                    f'tradefeiten of balansmetadata. <b>{both}</b> mints hebben beide toegelaten kanten '
+                    'in de collectie; dit is geen bewezen trader-round-trip of rendement.</p>'
+                    '<p>Deze tellingen komen uit de manifestgebonden Parquetqueries hieronder. '
+                    'Profielanalyses kunnen dezelfde instructie vanuit verschillende kandidaten beoordelen: '
+                    'tel hun diagnoseaantallen niet op als unieke transacties. '
+                    'Pakket-, instructie- en Silver-noemers staan afzonderlijk.</p></section>')
     return f"""<!doctype html><html lang='nl'><meta charset='utf-8'><meta name='viewport' content='width=device-width'>
 <title>Manifestgebonden collectie · B5</title><style>
 body{{margin:0;background:#101821;color:#e4edf5;font:15px system-ui}}main{{max-width:1500px;margin:auto;padding:30px}}
@@ -77,7 +106,11 @@ h1{{font-size:30px}}h2{{font-size:21px}}p{{line-height:1.6}}section,.metric{{bac
 <progress value='{published}' max='{max(1,len(batches))}'></progress>
 <p class='warn'>Research Ready: false. Een complete pakkettenverantwoording is geen volledige decoderdekking of onderzoeksgeschiktheid.
 Ontbrekende context is niet nul activiteit. De oorspronkelijke onafhankelijke sample blijft apart van post-hoc beschrijvende context.
-Geen nieuwe acquisitie, herclassificatie, prijs-/fill- of edgeclaim.</p>
+Geen nieuwe acquisitie, herclassificatie, prijs-/fill- of edgeclaim.
+Een buy en sell van dezelfde mint zijn geen bewezen round-trip van dezelfde trader of rendement.
+Eventtijd is bron-gerapporteerd; alleen slot/transactie/instructievolgorde bepaalt hier historische ordening.
+Acquisitie- en verwerkingstijden zijn uitsluitend operationele provenance.</p>
+{findings}
 <section><h2>Volledige logische selectie en context</h2>{table(['Slot','Bron','Rol','Publicatie','Verwachte pakketten','Aanwezig','Decoded','Alle uitkomsten','Verantwoord'], slots)}</section>
 <section><h2>Fysieke batches en bestanden</h2>{table(['Batch','Oorspronkelijke bron','Slots','Status','Bronze','Silver','Parquetbestanden','Parquetbytes'],batch_rows)}
 <p>Batchgrenzen zijn verwerking, geen nieuwe bronruns of wijziging van sample-identiteit. Alleen expliciet genoemde batchmanifests en shardpaden worden gelezen; geen globs.</p></section>
@@ -96,11 +129,14 @@ def run(collection_root, output):
     if output.exists() or output.resolve().is_relative_to(root):
         raise ValueError('new report directory outside collection required')
     sql_bytes = pathlib.Path(__file__).with_name('collection.sql.json').read_bytes()
+    context_sql_bytes = pathlib.Path(__file__).with_name('context.sql.json').read_bytes()
     manifest, digest = load_collection(source)
     started = time.perf_counter()
     with connect() as db:
         summary = attach_collection(db, root, manifest)
-        queries = ({name: bounded_rows(db, sql) for name, sql in json.loads(sql_bytes).items()}
+        definitions = json.loads(sql_bytes)
+        definitions.update(json.loads(context_sql_bytes))
+        queries = ({name: bounded_rows(db, sql) for name, sql in definitions.items()}
                    if summary['verified_batches'] else {})
     elapsed = time.perf_counter() - started
     if load_collection(source)[1] != digest:
@@ -108,6 +144,7 @@ def run(collection_root, output):
     result = {'schema':'OF1_BATCH_COLLECTION_QUERY_1','collection_manifest_sha256':digest,
               'collection':summary,'queries':queries,'duckdb_version':'1.5.5',
               'queries_sha256':sha(sql_bytes),'research_ready':False,
+              'context_queries_sha256':sha(context_sql_bytes),
               'integer_json_policy':'decimal strings plus DuckDB types; null unchanged'}
     raw = (json.dumps(result,indent=2,ensure_ascii=False)+'\n').encode()
     execution = {'schema':'OF1_BATCH_COLLECTION_QUERY_EXECUTION_1','collection_path':str(root),

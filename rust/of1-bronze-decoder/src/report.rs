@@ -12,9 +12,11 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, fmt::Write as _, io, path::Path};
 
 pub const SCHEMA: &str = "OF1_BRONZE_TRANSACTION_1";
-// Full fixed-pilot measurement: 17,786,096 bytes at the largest slot, 47,419,485
-// for the selection. Separate atomic-record/file caps live in resources.
-pub const MAX_RECORD_JSON_BYTES: usize = 24 * 1024 * 1024;
+// Full 19-slot measurement, one original receipt per worker: largest combined
+// Bronze/Silver slot is 41,348,003 bytes. 48 MiB leaves 8,983,645 bytes margin.
+// This cumulative buffer is NOT the unchanged 16-MiB atomic record limit,
+// 64-MiB worker/JSONL limit or 5,000-row / 64-MiB physical Parquet boundary.
+pub const MAX_RECORD_JSON_BYTES: usize = 48 * 1024 * 1024;
 pub const MAX_DECODED_METADATA_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_SELECTION_SLOTS: usize = 3;
 pub const MAX_SELECTION_RAW_BYTES: usize = archive::MAX_SLOT_BYTES;
@@ -269,7 +271,7 @@ fn combine_slots(
     } else {
         Value::Null
     };
-    result["resource_accounting"] = json!({"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_SELECTION_RECORD_BYTES,"max_decoded_metadata_bytes":MAX_SELECTION_METADATA_BYTES,"max_selection_raw_bytes":MAX_SELECTION_RAW_BYTES,"max_slots":MAX_SELECTION_SLOTS,"per_slot_limits_unchanged":false,"resource_profile":"B5_FIXED_PILOT_24_64_MIB_V1","max_slot_record_json_bytes":MAX_RECORD_JSON_BYTES,"max_individual_jsonl_record_bytes":crate::resources::MAX_INDIVIDUAL_RECORD_BYTES});
+    result["resource_accounting"] = json!({"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_SELECTION_RECORD_BYTES,"max_decoded_metadata_bytes":MAX_SELECTION_METADATA_BYTES,"max_selection_raw_bytes":MAX_SELECTION_RAW_BYTES,"max_slots":MAX_SELECTION_SLOTS,"per_slot_limits_unchanged":false,"resource_profile":"B5_BATCH_CONTEXT_48_64_MIB_V1","max_slot_record_json_bytes":MAX_RECORD_JSON_BYTES,"max_individual_jsonl_record_bytes":crate::resources::MAX_INDIVIDUAL_RECORD_BYTES});
     result["dispositions"] = json!(counts);
     result["reasons"] = json!(reasons);
     result["records_sha256"] = json!(sha256(&serde_json::to_vec(&records).map_err(invalid)?));

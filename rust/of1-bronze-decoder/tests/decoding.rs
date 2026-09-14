@@ -460,7 +460,7 @@ fn recorded_pilot_stop_remains_reproducible_under_historical_bound() {
 
 #[test]
 fn measured_profile_has_separate_finite_slot_and_selection_limits() {
-    assert_eq!(report::MAX_RECORD_JSON_BYTES, 25_165_824);
+    assert_eq!(report::MAX_RECORD_JSON_BYTES, 50_331_648);
     assert_eq!(report::MAX_SELECTION_RECORD_BYTES, 67_108_864);
     let mut old_crossing = 16_756_921;
     report::charge(&mut old_crossing, 49_607, report::MAX_RECORD_JSON_BYTES).unwrap();

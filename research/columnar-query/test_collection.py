@@ -51,6 +51,68 @@ def publish(root,manifest,name='collection.json'):
 
 
 class CollectionInventoryTests(unittest.TestCase):
+    def test_findings_never_treat_a_truncated_mint_preview_as_a_complete_summary(self):
+        with tempfile.TemporaryDirectory() as tmp,connect() as db:
+            root=pathlib.Path(tmp);manifest=manifest_fixture(plan_fixture())
+            summary=attach_collection(db,root,manifest)
+            query={'columns':[],'rows':[],'displayed_rows':0,'total_result_rows':201,
+                   'preview_complete':False,'sql':'synthetic bounded-preview case'}
+            result={'collection':summary,'duckdb_version':'1.5.5',
+                    'queries':{name:query for name in ['role_coverage','mint_admitted_sides','pilot_mint_recurrence']}}
+            page=render(result,{'query_seconds':0.1})
+            self.assertNotIn('Werkelijk bevraagde uitkomst',page)
+            self.assertIn('0 van 201 queryrijen',page)
+            self.assertIn('Begrensde detailweergave',page)
+
+    def test_pump_denominator_does_not_count_multiple_facts_as_multiple_packages(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('context.sql.json').read_text())
+        with connect() as db:
+            db.execute('CREATE TABLE bronze(collection_role VARCHAR,collection_source_id VARCHAR,record_sha256 VARCHAR,pump_program_involvement BOOLEAN,transaction_status VARCHAR)')
+            db.execute("INSERT INTO bronze VALUES ('ORIGINAL_SELECTION','p','a',true,'OK'),('ORIGINAL_SELECTION','p','b',true,'ERROR'),('ORIGINAL_SELECTION','p','c',NULL,NULL)")
+            db.execute('CREATE TABLE silver(bronze_record_sha256 VARCHAR,collection_source_id VARCHAR)')
+            db.execute("INSERT INTO silver VALUES ('a','p'),('a','p'),('b','different-source')")
+            row=db.execute(sql['pump_package_coverage']).fetchone()
+            self.assertEqual(row,('ORIGINAL_SELECTION',3,2,1,1,1,1))
+
+    def test_posthoc_recurrence_separates_trade_balance_and_absent_channels(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('context.sql.json').read_text())
+        with connect() as db:
+            db.execute('CREATE TABLE silver(mint VARCHAR,collection_role VARCHAR,is_buy BOOLEAN,slot UBIGINT,user_address VARCHAR,units_decimals UBIGINT)')
+            db.execute("INSERT INTO silver VALUES ('A','ORIGINAL_SELECTION',true,10,'trader1',6),('B','ORIGINAL_SELECTION',false,11,'trader2',NULL),('C','ORIGINAL_SELECTION',true,12,'trader3',6),('A','POSTHOC_DESCRIPTIVE_CONTEXT',false,13,'other-trader',6)")
+            db.execute('CREATE TABLE bronze(slot UBIGINT,transaction_index UBIGINT,collection_role VARCHAR,token_balance_observations STRUCT(mint VARCHAR)[])')
+            db.execute("INSERT INTO bronze VALUES (13,0,'POSTHOC_DESCRIPTIVE_CONTEXT',[{'mint':'B'},{'mint':'B'}]),(14,1,'POSTHOC_DESCRIPTIVE_CONTEXT',NULL)")
+            rows=db.execute(sql['pilot_mint_recurrence']).fetchall()
+            self.assertEqual([r[0] for r in rows],['A','B','C'])
+            self.assertEqual(rows[0][1:4],(1,0,1))
+            self.assertEqual(rows[1][1:6],(0,0,0,2,1))
+            self.assertEqual(rows[2][1:8],(0,0,0,0,0,None,None))
+            self.assertIn('not zero market activity',rows[2][-1])
+            sides=db.execute(sql['mint_admitted_sides']).fetchall()
+            self.assertTrue(sides[0][3])
+            self.assertEqual(sides[0][6],2) # distinct users: never a fabricated round-trip
+            self.assertFalse(sides[1][3])
+            self.assertEqual(sides[1][8],1) # missing base units retained
+            self.assertIn('No automatic',sides[0][-1])
+
+    def test_role_denominators_keep_failed_missing_unsupported_and_unknown_pump(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('context.sql.json').read_text())
+        with connect() as db:
+            db.execute('CREATE TABLE bronze(collection_source_id VARCHAR,collection_role VARCHAR,slice_class VARCHAR,disposition VARCHAR,transaction_status VARCHAR,slot UBIGINT,pump_program_involvement BOOLEAN,status_metadata_bytes BLOB)')
+            db.execute("INSERT INTO bronze VALUES ('pilot','ORIGINAL_SELECTION','RESEARCH_SAMPLING','DECODED','OK',10,true,'a'),('context','POSTHOC_DESCRIPTIVE_CONTEXT','ENGINEERING_VALIDATION_ONLY','DECODED','ERROR',13,true,'a'),('context','POSTHOC_DESCRIPTIVE_CONTEXT','ENGINEERING_VALIDATION_ONLY','MISSING',NULL,13,NULL,NULL),('context','POSTHOC_DESCRIPTIVE_CONTEXT','ENGINEERING_VALIDATION_ONLY','UNSUPPORTED',NULL,14,NULL,'a'),('context','POSTHOC_DESCRIPTIVE_CONTEXT','ENGINEERING_VALIDATION_ONLY','QUARANTINED',NULL,14,NULL,'a')")
+            rows=db.execute(sql['role_coverage']).fetchall()
+            self.assertEqual(sum(r[6] for r in rows),5)
+            self.assertEqual(sum(r[7] for r in rows),2)
+            self.assertEqual(sum(r[8] for r in rows),3)
+            self.assertEqual(sum(r[9] for r in rows),1)
+            self.assertEqual(sum(r[6] for r in rows if r[4]=='ERROR'),1)
+
+    def test_context_queries_do_not_use_operational_clocks_or_derive_prices(self):
+        sql=pathlib.Path(__file__).with_name('context.sql.json').read_text()
+        for forbidden in ['acquired_at','processed_at','::DOUBLE','::FLOAT','SUM(sol_amount','SUM(quote_amount']:
+            self.assertNotIn(forbidden,sql)
+        self.assertIn('event_reported_timestamp',sql)
+        self.assertIn('ORDER BY mint,slot,transaction_index,outer_index',sql)
+
     def test_more_than_three_slots_physical_partition_and_role_separation(self):
         plan=plan_fixture()
         self.assertEqual(len(plan_inventory(plan)[1]),5)

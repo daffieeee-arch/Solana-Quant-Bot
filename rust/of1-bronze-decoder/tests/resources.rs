@@ -3,6 +3,29 @@ use of1_bronze_decoder::resources::*;
 use serde_json::{Value, json};
 
 #[test]
+fn measured_context_slot_changes_only_the_cumulative_slot_buffer() {
+    use of1_bronze_decoder::report;
+    let measured = 41_348_003;
+    let mut old = 0;
+    assert!(report::charge(&mut old, measured, 24 * 1024 * 1024).is_err());
+    assert_eq!(old, 0); // fail before accounting a partial record
+    let mut current = 0;
+    report::charge(&mut current, measured, report::MAX_RECORD_JSON_BYTES).unwrap();
+    let margin = report::MAX_RECORD_JSON_BYTES - current;
+    report::charge(&mut current, margin, report::MAX_RECORD_JSON_BYTES).unwrap();
+    assert!(report::charge(&mut current, 1, report::MAX_RECORD_JSON_BYTES).is_err());
+    assert_eq!(current, 48 * 1024 * 1024);
+    assert_eq!(MAX_INDIVIDUAL_RECORD_BYTES, 16 * 1024 * 1024);
+    assert_eq!(MAX_JSONL_BYTES, 64 * 1024 * 1024);
+    assert_eq!(MAX_QUALITY_BYTES, 64 * 1024 * 1024);
+    assert_eq!(report::MAX_SELECTION_RECORD_BYTES, 64 * 1024 * 1024);
+    assert_eq!(report::MAX_DECODED_METADATA_BYTES, 16 * 1024 * 1024);
+    // Two independently admissible large slots are still not one admissible worker.
+    let mut worker = measured;
+    assert!(report::charge(&mut worker, measured, report::MAX_SELECTION_RECORD_BYTES).is_err());
+}
+
+#[test]
 fn compact_encoding_is_lossless_and_counted_exactly() {
     let record = json!({"u":u64::MAX,"i":i64::MIN,"null":null,"state":"UNAVAILABLE","bytes":"00ff","array":[1,1]});
     for pretty in [false, true] {
