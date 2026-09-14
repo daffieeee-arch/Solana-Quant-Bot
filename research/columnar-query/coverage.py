@@ -92,6 +92,7 @@ def suitability(summary):
     slots = summary['slots']
     silver = summary['silver']
     complete = all(s['reconciled'] for s in slots) and not summary['integrity_errors']
+    sides = summary.get('supported_sides')
     return [
         {'question': 'Is deze geselecteerde Raw-invoer volledig tot transactiepackages verwerkt?',
          'requires': ['selected slot inventory', 'CAR envelope counts', 'one declared outcome per envelope'],
@@ -99,20 +100,20 @@ def suitability(summary):
          'missing': [] if complete else ['unreconciled slot/envelope/integrity check', *summary['integrity_errors']],
          'result_kind': 'BOUNDED_ENGINEERING_CHECK' if complete else 'ENGINEERING_FAILURE',
          'next_step': 'Retain failed, unsupported and missing outcomes when adding a new sample.'},
-        {'question': 'Welke ruwe sells zijn binnen de ondersteunde bronprofielen waargenomen?',
+        {'question': 'Welke ruwe buys en sells zijn binnen de ondersteunde bronprofielen waargenomen?',
          'requires': ['mint', 'exact raw units', 'instruction/account/event context', 'transaction status', 'provenance'],
          'present': silver, 'missing': ['global variant coverage', 'quote mint/decimals for economic normalization', 'actual nested CPI privileges are not recorded'],
          'result_kind': 'BOUNDED_RECORDED_FACTS_ONLY',
          'next_step': 'Query these raw facts without converting unknown units or event reserves into prices/account state.'},
         {'question': 'Kunnen buys en sells symmetrisch worden vergeleken?',
          'requires': ['source-supported whole buy instruction', 'same context/evidence rules for both sides', 'common unit identity'],
-         'present': {'sell_facts': silver['facts'], 'buy_diagnostics': summary['buy_diagnostics']},
-         'missing': ['source-supported full buy layout/context for the retained Rust diagnostics', 'economic unit evidence'],
+         'present': {'supported_sides': sides, 'buy_diagnostics': summary['buy_diagnostics']},
+         'missing': ['coverage of retained Rust diagnostics and remaining rejected/unsupported variants', 'economic unit evidence'],
          'result_kind': 'INSUFFICIENT_SUITABLE_DATA',
          'next_step': 'Use each retained Rust rejection and source-bound full instruction/context; no permissive parser or altered bytes.'},
         {'question': 'Welke vroege flow voorspelt een volledige coin-lifecycle?',
          'requires': ['mint identity', 'creation/earliest required state', 'buys and sells', 'continuous predeclared horizon', 'migration/state evidence'],
-         'present': {'bounded_sell_facts': silver['facts']},
+         'present': {'bounded_recorded_facts': silver['facts'], 'supported_sides': sides},
          'missing': ['creation/horizon completeness', 'supported lifecycle variants and state', 'causal observation model'],
          'result_kind': 'INSUFFICIENT_SUITABLE_DATA',
          'next_step': 'Define a horizon before sampling and support required Rust facts. Name/ticker/logo are optional, not identity.'},
@@ -165,7 +166,10 @@ def buy_sell_question(summary, mint_rows):
                        'acquired_at/processed_at are not historical time; observed/actionable/execution time remains unavailable.',
         'optional_metadata': ['name', 'ticker', 'logo', 'website'],
         'not_inferred': ['decimals', 'launch date', 'lifecycle', 'account-state transition', 'executable price'],
-        'next_step': 'Resolve a complete source-bound buy profile before expanding this sample. '
+        'next_step': ('Measure same-mint side and required contiguous time coverage before proposing any new sample. '
+                     'Admitted exact-quote buys do not resolve other buy variants or establish economic equivalence. '
+                     if sides and sides['buy_facts'] else
+                     'Resolve a complete source-bound buy profile before expanding this sample. ') +
                      'For nested 25-byte observations, establish remaining account 16 while keeping unrecorded CPI privileges explicit; '
                      'the separate 24-byte/modern-account bridge and 26-byte rejection remain separate source gaps. '
                      'Do not infer no activity from zero admitted buys or replace the fixed selection.',
@@ -176,6 +180,29 @@ def buy_sell_question(summary, mint_rows):
 def render(result):
     e = lambda value: html.escape(str(value))
     s = result['summary']
+    buy_rows = objects(result['queries']['buys']) if 'buys' in result['queries'] else []
+    buy_cards = []
+    for row in buy_rows:
+        value = lambda key: e('UNAVAILABLE' if row.get(key) is None else row[key])
+        buy_cards.append(f"""<section><h3>Slot {value('slot')} · transactie {value('transaction_index')}</h3>
+<b>{value('record_schema')}</b><p>Mint: <code>{value('mint')}</code> · opgenomen transactiestatus {value('transaction_status')}.</p>
+<p>Instructiegrenzen: spendable_quote_in <b>{value('spendable_quote_in_raw_u64')}</b>,
+min_tokens_out <b>{value('min_tokens_out_raw_u64')}</b> (exacte u64).</p>
+<p>Afzonderlijk gerapporteerd event: token_amount <b>{value('token_amount_raw_u64')}</b>,
+sol_amount {value('sol_amount_raw_u64')}, quote_amount {value('quote_amount_raw_u64')}.
+Eventnaam {value('event_instruction_name')}; outer {value('outer_index')} → eigen event inner {value('event_inner_order')}.</p>
+<p>Opgenomen quote-interfaceaccount: <code>{value('quote_account_address')}</code>;
+afzonderlijke eventquote-mintbytes: <code>{value('quote_mint_raw_hex')}</code>.
+Economische mintidentiteit: {value('quote_mint_identity')}; decimals: {value('quote_decimals')}.</p>
+<p>Accountinhoud geverifieerd: {value('account_contents_verified')}; gecommitteerde accountstaat:
+{value('committed_account_state')}. Dit is geen prijs, fill of bewijs van accounttoestand.</p></section>""")
+    buy_view = '' if not buy_cards else ('<section><h2>Brongebonden exact-quote buys — opgenomen feiten</h2>'
+        '<p>Afzonderlijk Rust-profiel, geen verruiming van de oude buy-parser. Instructiegrenzen '
+        'en eventhoeveelheden worden niet aan elkaar gelijkgesteld. Track-volume komt uitsluitend '
+        'uit het event; deze instructie heeft dat argument niet. Creator-vault-adrescorrespondentie '
+        'met event.creator bewijst geen ontbrekende bonding-curve-accountinhoud. '
+        'De instructie-quoteaccount en event-quote-mint blijven afzonderlijke observaties.</p>'
+        + ''.join(buy_cards) + '</section>')
     nested_rows = objects(result['queries']['nested_buy_details']) if 'nested_buy_details' in result['queries'] else []
     nested_view = ''
     if nested_rows:
@@ -197,7 +224,7 @@ raw tokenargument {value('amount_raw_u64')}, max SOL-accountingargument {value('
     for name, table in result['queries'].items():
         head = ''.join('<th>'+e(c['name'])+'</th>' for c in table['columns'])
         body = ''.join('<tr>'+''.join('<td>'+e('NULL / onbekend' if v is None else v)+'</td>' for v in row)+'</tr>' for row in table['rows'])
-        expanded = ' open' if name in ['nested_buy_details', 'nested_buy_account_gaps',
+        expanded = ' open' if name in ['buys', 'exact_quote_buy_details', 'nested_buy_details', 'nested_buy_account_gaps',
                                       'buy_version_details', 'buy_source_versions', 'supported_sides',
                                       'mint_side_inventory', 'buy_sell_ordered_facts',
                                       'sell_profile_details', 'sell_account_evidence_gaps'] else ''
@@ -244,14 +271,14 @@ behouden payloadcap: <b>{e(budget.get('payload_reservation_cap_unchanged','ONBEK
     return f"""<!doctype html><html lang='nl'><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>Dekking & geschiktheid</title><style>
 body{{background:#111b24;color:#e0eaf3;font:15px system-ui;margin:0}}main{{max-width:1200px;margin:auto;padding:32px}}h1{{font-size:32px}}p{{line-height:1.55}}section,details,.metric{{background:#1b2b39;border:1px solid #3d5365;border-radius:10px;padding:18px;margin:14px 0}}.metrics{{display:flex;gap:12px;flex-wrap:wrap}}.metric{{flex:1;min-width:180px}}.metric b{{display:block;color:#86e1ce;font-size:26px}}.warn{{color:#ffd495}}a,summary{{color:#86e1ce}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}.scroll{{overflow:auto}}td,th{{text-align:left;padding:8px;border-bottom:1px solid #3d5365}}table{{border-collapse:collapse}}small{{overflow-wrap:anywhere}}</style><main>
 <small>PARQUET → DUCKDB · RUST-FEITEN, GEEN NIEUWE DOMEINDECODE</small><h1>Decoderdekking is meetbaar.<br>Onderzoeksgeschiktheid blijft begrensd.</h1>
-<div class='metrics'><div class='metric'><b>{sum(x['reconciled'] for x in s['slots'])} / {len(s['slots'])}</b>slots gereconcilieerd</div><div class='metric'><b>{s['present_envelopes']} / {s['expected_envelopes']}</b>transactiepackages aanwezig / verwacht</div><div class='metric'><b>{s['pump_positive']} / {s['present_envelopes']}</b>packages met Pump-verwijzing</div><div class='metric'><b>{s['silver']['parent_packages']} / {s['pump_positive']}</b>Pump-packages met begrensde sell-feiten</div></div>
+<div class='metrics'><div class='metric'><b>{sum(x['reconciled'] for x in s['slots'])} / {len(s['slots'])}</b>slots gereconcilieerd</div><div class='metric'><b>{s['present_envelopes']} / {s['expected_envelopes']}</b>transactiepackages aanwezig / verwacht</div><div class='metric'><b>{s['pump_positive']} / {s['present_envelopes']}</b>packages met Pump-verwijzing</div><div class='metric'><b>{s['silver']['parent_packages']} / {s['pump_positive']}</b>Pump-packages met begrensde buy/sell-feiten</div></div>
 <p class='warn'>{e('ENGINEERING_FAILURE: '+', '.join(s['integrity_errors']) if s['integrity_errors'] else 'Begrensde verwerking gereconcilieerd; onderzoeksgeschiktheid NIET bewezen.')}</p>
-<p class='warn'>Toegelaten sells zijn geen volledige Pump-dekking. {e(result['evidence']['slice_class'])}: sampleklasse, authentiek/fixture-bewijs, pakketverantwoording en geschiktheid blijven afzonderlijk. Geen Research Ready-, representativiteits-, lifecycle- of edgeclaim.</p>
+<p class='warn'>Toegelaten buys/sells zijn geen volledige Pump-dekking. {e(result['evidence']['slice_class'])}: sampleklasse, authentiek/fixture-bewijs, pakketverantwoording en geschiktheid blijven afzonderlijk. Geen Research Ready-, representativiteits-, lifecycle- of edgeclaim.</p>
 <section><h2>Manifestgebonden dataset</h2><p>{e(json.dumps(result['inventory']))}</p><p>Fysieke publicatie gecontroleerd. Selectiedekking: <b>{e(result['selection']['status'])}</b>. Pakketten verantwoord betekent niet allemaal geslaagd gedecodeerd of geschikt voor onderzoek.</p><details><summary>Volledige geselecteerde slots en brongebonden sample-identiteit</summary><pre>{e(json.dumps({'selection':result['selection'],'sample_identity':result['sample_identity']},indent=2))}</pre></details></section>
 <p>Elke envelope blijft in de noemer: ook failed, missing, unsupported of quarantined. Historische buy-layoutprobes worden apart getoond; een sell die zo'n probe afwijst is niet opnieuw een mislukte sell-decode.</p>
 <section><h2>Slotinventaris en volledige noemers</h2><div class='scroll'><table><tr>{slot_head}</tr>{''.join(slot_rows)}</table></div><p>Transactiestatus: <b>{s['status_ok']} OK</b> / <b>{s['status_error']} ERROR</b> / {s['status_unknown']} onbekend. On-chain ERROR is niet hetzelfde als een fout in onze verwerking.</p><details><summary>Volledige tellingen, onbekenden en Raw-hashes</summary><pre>{e(json.dumps(s,indent=2))}</pre></details></section>
 <p>Programmatellingen lezen uitsluitend bestaande Rust-velden: unieke programmabetrokkenheid per pakket, gedeclareerde top-level instructies en opgenomen CPI-verwijzingen. Failed transactions blijven inbegrepen. Ontbrekende CPI-metadata is onbekend, niet nul; de aparte program_coverage-tabel toont die noemer. Verwijzingen bewijzen geen gecommitteerde toestandsverandering.</p>
-{nested_view}{question_view}<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
+{buy_view}{nested_view}{question_view}<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
 <section><h2>{pilot_heading}</h2>{pilot_view}</section>
 <h2>Werkelijk uitgevoerde DuckDB-controles</h2><p>De buy-bronvergelijking is afzonderlijk van de behouden oude B3-layoutprobe: een afwijzing tegen één schema bewijst geen universeel corrupte buy. De geopende profieltabellen tonen iedere Rust-uitkomst met transactiestatus, eigen instructie/event-context en bronhash. Niet-toegelaten profielen blijven zichtbaar; een gelijk accountaantal bewijst geen gelijke variant. Een PDA-adresmatch bewijst geen opgenomen CPI-signerflags. NULL blijft onbekend. Een ontbrekend instructieargument wordt niet ingevuld vanuit de afzonderlijke eventwaarde. Deze queries beslissen niet opnieuw over Silver-toelating.</p>{''.join(tables)}
 <section><h2>Herkomst</h2><pre>{e(json.dumps(result['bindings'],indent=2))}</pre><a href='query-results.json'>Volledig machineleesbaar resultaat / matrix / SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a></section></main></html>"""
@@ -273,7 +300,7 @@ def run(root, quality_path, pilot_path, output):
     base_raw = (HERE/'queries.sql.json').read_bytes()
     queries = json.loads(queries_raw)
     base = json.loads(base_raw)
-    for key in ['rejected_buy', 'sells', 'unknown_economics', 'parent_binding']:
+    for key in ['rejected_buy', 'sells', 'buys', 'unknown_economics', 'parent_binding']:
         queries[key] = base[key]
     started = time.perf_counter()
     with connect() as db:
@@ -308,6 +335,7 @@ def run(root, quality_path, pilot_path, output):
                'buy_diagnostics':len(results['rejected_buy']['rows']),
                'buy_version_diagnostics':len(results['buy_version_details']['rows']),
                'nested_buy_diagnostics':len(results['nested_buy_details']['rows']),
+               'exact_quote_buy_diagnostics':len(results['exact_quote_buy_details']['rows']),
                'economic_complete_observations': 'UNAVAILABLE_NOT_PROVEN', 'global_pump_variant_denominator':'UNKNOWN',
                'sample_class':manifest['evidence']['slice_class'],
                'index_reported_absent': payload['prepared']['index_reported_absent'],

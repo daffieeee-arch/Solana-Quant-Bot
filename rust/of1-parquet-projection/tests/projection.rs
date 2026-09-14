@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{fs, path::Path, sync::Arc};
 
 fn record(layer: Layer) -> Value {
-    json!({"schema":layer.record_schema(),"slice_class":"ENGINEERING_VALIDATION_ONLY","input_kind":"FIXTURE_SYNTHETIC_SHARD_TEST","receipt_evidence":"Fixture","effective_at":{"slot":"422496004","transaction_index_in_slot":153},"decoder_source_sha256":"a".repeat(64),"source":{"raw_sha256":"b".repeat(64),"provenance":"SYNTHETIC_TEST_ONLY"},"disposition":"DECODED","transaction":{"status":"OK","fee_lamports":"5000","name":null,"economic_identity":"UNAVAILABLE","wire_hex":"00ff","protobuf_metadata_hex":"0102"}})
+    json!({"schema":layer.record_schemas()[0],"slice_class":"ENGINEERING_VALIDATION_ONLY","input_kind":"FIXTURE_SYNTHETIC_SHARD_TEST","receipt_evidence":"Fixture","effective_at":{"slot":"422496004","transaction_index_in_slot":153},"decoder_source_sha256":"a".repeat(64),"source":{"raw_sha256":"b".repeat(64),"provenance":"SYNTHETIC_TEST_ONLY"},"disposition":"DECODED","transaction":{"status":"OK","fee_lamports":"5000","name":null,"economic_identity":"UNAVAILABLE","wire_hex":"00ff","protobuf_metadata_hex":"0102"}})
 }
 fn line(v: &Value) -> Vec<u8> {
     let mut b = serde_json::to_vec(v).unwrap();
@@ -177,6 +177,45 @@ fn silver_parent_and_provenance_binding_exact() {
     assert!(
         storage::materialize(&d.path().join("bad-input"), &sha, &d.path().join("bad")).is_err()
     );
+}
+#[test]
+fn mixed_silver_schemas_preserve_parent_checks_and_sealed_publication() {
+    let d = tempfile::tempdir().unwrap();
+    let bronze = line(&record(Layer::Bronze));
+    let mut sell = record(Layer::Silver);
+    sell["bronze_record_sha256"] = json!(hash(&bronze[..bronze.len() - 1]));
+    sell["instruction"] = json!({"amount_raw_u64":"91"});
+    sell["event_reported"] = json!({"is_buy":false});
+    let mut buy = sell.clone();
+    buy["schema"] = json!("PUMP_SILVER_RECORDED_BUY_EXACT_QUOTE_V2_1");
+    buy["instruction"] =
+        json!({"spendable_quote_in_raw_u64":"18446744073709551615","min_tokens_out_raw_u64":"1"});
+    buy["event_reported"] = json!({"is_buy":true});
+    let mut silver = line(&sell);
+    silver.extend(line(&buy));
+    let sha = seal(&d.path().join("input"), &bronze, &silver);
+    let a = storage::materialize(&d.path().join("input"), &sha, &d.path().join("one")).unwrap();
+    let b = storage::materialize(&d.path().join("input"), &sha, &d.path().join("two")).unwrap();
+    assert_eq!(a, b);
+    assert_eq!(a["layers"]["silver"]["rows"], 2);
+    assert_eq!(
+        a["layers"]["silver"]["reconstructed_jsonl_sha256"],
+        hash(&silver)
+    );
+    assert_eq!(
+        a["files"]["silver-000000.parquet"]["schema_sha256"],
+        hash(&serde_json::to_vec(&columns::schema_descriptor(Layer::Silver)).unwrap())
+    );
+    assert_eq!(
+        fs::read(d.path().join("one/silver-000000.parquet")).unwrap(),
+        fs::read(d.path().join("two/silver-000000.parquet")).unwrap()
+    );
+    buy["bronze_record_sha256"] = json!("c".repeat(64));
+    let sha = seal(&d.path().join("bad-input"), &bronze, &line(&buy));
+    assert!(
+        storage::materialize(&d.path().join("bad-input"), &sha, &d.path().join("bad")).is_err()
+    );
+    assert!(!d.path().join("bad/COMPLETE").exists());
 }
 #[test]
 fn corruption_and_different_original_hash_fail() {

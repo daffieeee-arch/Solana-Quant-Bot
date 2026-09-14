@@ -5,6 +5,7 @@ pub mod codec;
 pub mod proto;
 pub mod pump;
 pub mod pump_buy;
+pub mod pump_buy_exact_quote_v2;
 pub mod pump_buy_variants;
 pub mod pump_nested_buy;
 pub mod pump_sell;
@@ -27,6 +28,9 @@ pub fn source_sha256() -> String {
         include_bytes!("bin/of1-bronze-measure.rs"),
         include_bytes!("pump.rs"),
         include_bytes!("pump_buy.rs"),
+        include_bytes!("pump_buy_exact_quote_v2.rs"),
+        include_bytes!("pump_buy_exact_quote_context.rs"),
+        include_bytes!("../sources/pump-buy-exact-quote-v2-evidence.json"),
         include_bytes!("pump_buy_variants.rs"),
         include_bytes!("pump_nested_buy.rs"),
         include_bytes!("pump_nested_buy_context.rs"),

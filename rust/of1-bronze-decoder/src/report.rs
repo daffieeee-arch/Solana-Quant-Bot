@@ -256,11 +256,7 @@ fn combine_slots(
     result["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");
     result["records"] = json!(records);
     result["slots"] = json!(slots);
-    result["silver"] = json!(if silver_records.is_empty() {
-        "NOT_PRODUCED"
-    } else {
-        "BOUNDED_RECORDED_SELL_FACTS"
-    });
+    result["silver"] = json!(silver_kind(&silver_records));
     result["silver_fact_count"] = json!(silver_records.len());
     result["silver_records"] = json!(silver_records);
     Ok(result)
@@ -354,7 +350,7 @@ fn project_slot(
             slot,
             envelope.transaction_index_in_slot,
         )?;
-        append_sell_facts(&record, &mut record_bytes, &mut silver_records).map_err(|e| {
+        append_supported_facts(&record, &mut record_bytes, &mut silver_records).map_err(|e| {
             record_limit_context(&e, slot, envelope.transaction_index_in_slot, "silver")
         })?;
         records.push(record);
@@ -365,7 +361,7 @@ fn project_slot(
         "verified_nodes":archive.verified_nodes,"verified_links":archive.verified_links,"entry_nodes":archive.entries,"transaction_envelopes":archive.envelopes.len(),"dispositions":counts,"reasons":reasons,
         "pump_program_involvement_transactions":if pump_unknown==0{Some(pump_count)}else{None},"pump_program_known_positive":pump_count,"pump_program_unknown":pump_unknown,"pump_event_decode":"PINNED_STRUCTURAL_PROBES_ONLY","root_to_slot_membership":"UNAVAILABLE","signature_crypto_verification":"NOT_PERFORMED",
         "resource_accounting":{"record_json_bytes":record_bytes,"decoded_metadata_bytes":metadata_bytes,"max_record_json_bytes":MAX_RECORD_JSON_BYTES,"max_decoded_metadata_bytes":MAX_DECODED_METADATA_BYTES},
-        "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":if silver_records.is_empty(){"NOT_PRODUCED"}else{"BOUNDED_RECORDED_SELL_FACTS"},"silver_fact_count":silver_records.len(),"silver_records":silver_records,"physical_parquet_writer":"NOT_SELECTED",
+        "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":silver_kind(&silver_records),"silver_fact_count":silver_records.len(),"silver_records":silver_records,"physical_parquet_writer":"NOT_SELECTED",
         "records_sha256":records_sha256,"analysis":pump::summary(&records),"records":records,
         "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances, rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]});
     attach_sample(&mut result, run.aggregate_plan.sample_identity.as_ref())?;
@@ -413,18 +409,38 @@ fn inspect_pump(tx: &mut Value) -> io::Result<()> {
         if !nested_buys.is_empty() {
             tx["pump_nested_buy_analysis"] = json!(nested_buys);
         }
+        let exact_quote_buys = crate::pump_buy_exact_quote_v2::inspect(tx)?;
+        if !exact_quote_buys.is_empty() {
+            tx["pump_buy_exact_quote_v2_analysis"] = json!(exact_quote_buys);
+        }
     }
     // Keep the prior buy-probe field; the new sell lane is explicitly separate.
     tx["pump_event_decode"] = json!("PINNED_STRUCTURAL_PROBES_ONLY");
     Ok(())
 }
 
-fn append_sell_facts(
+fn silver_kind(records: &[Value]) -> &'static str {
+    if records.is_empty() {
+        "NOT_PRODUCED"
+    } else if records
+        .iter()
+        .any(|v| v["schema"] == "PUMP_SILVER_RECORDED_BUY_EXACT_QUOTE_V2_1")
+    {
+        "BOUNDED_RECORDED_BUY_SELL_FACTS"
+    } else {
+        "BOUNDED_RECORDED_SELL_FACTS"
+    }
+}
+
+fn append_supported_facts(
     record: &Value,
     record_bytes: &mut usize,
     silver_records: &mut Vec<Value>,
 ) -> io::Result<()> {
-    for fact in pump_sell::facts(record)? {
+    for fact in ordered_trade_facts(
+        pump_sell::facts(record)?,
+        crate::pump_buy_exact_quote_v2::facts(record)?,
+    )? {
         // Derived output uses the SAME existing per-slot/selection JSON cap.
         charge(
             record_bytes,
@@ -434,6 +450,39 @@ fn append_sell_facts(
         silver_records.push(fact);
     }
     Ok(())
+}
+
+// Ordering is recorded instruction order inside one atomic package, not the
+// time of chronological completion or permission to react within a transaction.
+// Preserve every historical sell-only byte/order and duplicate exactly.
+fn ordered_trade_facts(sells: Vec<Value>, buys: Vec<Value>) -> io::Result<Vec<Value>> {
+    if buys.is_empty() {
+        return Ok(sells);
+    }
+    let mut keyed = Vec::with_capacity(sells.len() + buys.len());
+    for fact in sells.into_iter().chain(buys) {
+        let c = &fact["event_context"];
+        let outer = c["outer_index"]
+            .as_u64()
+            .ok_or_else(|| invalid("SILVER_TRADE_OUTER_ORDER_MISSING"))?;
+        if c["parent"]["outer_index"] != outer {
+            return Err(invalid("SILVER_TRADE_PARENT_OUTER_MISMATCH"));
+        }
+        let inner = match c["parent"].get("inner_order") {
+            Some(Value::Null) => None,
+            Some(v) => Some(
+                v.as_u64()
+                    .ok_or_else(|| invalid("SILVER_TRADE_INSTRUCTION_ORDER_INVALID"))?,
+            ),
+            None => return Err(invalid("SILVER_TRADE_INSTRUCTION_ORDER_MISSING")),
+        };
+        let event = c["inner_order"]
+            .as_u64()
+            .ok_or_else(|| invalid("SILVER_TRADE_EVENT_ORDER_MISSING"))?;
+        keyed.push(((outer, inner, event), fact));
+    }
+    keyed.sort_by_key(|(key, _)| *key);
+    Ok(keyed.into_iter().map(|(_, fact)| fact).collect())
 }
 
 fn escape(s: &str) -> String {
@@ -541,11 +590,7 @@ fn sell_outcomes_html(report: &Value) -> String {
     out.push_str("<p>Geneste CPI-privileges: <strong>UNAVAILABLE</strong>. Message-signer/writable zijn alleen message-capaciteit, geen opgenomen CPI-vlaggen. Succes of een PDA-match vult die vlaggen niet in.</p><table class=sell-outcomes><thead><tr><th>Slot / transactie</th><th>Instructiecontext</th><th>Uitkomst</th><th>Eigen event-CPI</th></tr></thead><tbody>");
     if let Some(records) = report["records"].as_array() {
         for record in records {
-            for d in record["transaction"]["pump_sell_analysis"]
-                .as_array()
-                .into_iter()
-                .flatten()
-            {
+            for d in recorded_trade_diagnostics(record) {
                 let _ = write!(
                     out,
                     "<tr><td>{} / {}</td><td>outer {} · inner {}</td><td>{}</td><td>inner {} · height {}</td></tr>",
@@ -571,13 +616,21 @@ fn sell_outcomes_html(report: &Value) -> String {
 fn sell_trace_html(d: &Value) -> String {
     let mut out = String::new();
     if let Some(trace) = d["event_context"]["ordered_group_trace"].as_array() {
-        let _ = write!(
-            out,
-            "<h4>Opgenomen invocation-volgorde</h4><p>Sell-subtree: [{} , {}) · eigen event inner {}. Parentidentiteit volgt uit de stack; rootprogramma niet geïnterpreteerd.</p><table class=sell-trace><thead><tr><th>Inner</th><th>Hoogte</th><th>Parent-inner (null = outer)</th><th>Programma</th></tr></thead><tbody>",
-            d["event_context"]["subtree"]["start_inner_order"],
-            d["event_context"]["subtree"]["end_inner_order_exclusive"],
-            d["event_context"]["inner_order"]
-        );
+        if d["schema"] == "PUMP_BUY_EXACT_QUOTE_V2_OBSERVATION_1" {
+            let _ = write!(
+                out,
+                "<h4>Opgenomen invocation-volgorde</h4><p>Directe buy_exact_quote_in_v2 · eigen event inner {}. Volledige opgenomen hoogte-/volgordecontrole; geen naburig event geleend.</p><table class=sell-trace><thead><tr><th>Inner</th><th>Hoogte</th><th>Parent-inner (null = outer)</th><th>Programma</th></tr></thead><tbody>",
+                d["event_context"]["inner_order"]
+            );
+        } else {
+            let _ = write!(
+                out,
+                "<h4>Opgenomen invocation-volgorde</h4><p>Sell-subtree: [{} , {}) · eigen event inner {}. Parentidentiteit volgt uit de stack; rootprogramma niet geïnterpreteerd.</p><table class=sell-trace><thead><tr><th>Inner</th><th>Hoogte</th><th>Parent-inner (null = outer)</th><th>Programma</th></tr></thead><tbody>",
+                d["event_context"]["subtree"]["start_inner_order"],
+                d["event_context"]["subtree"]["end_inner_order_exclusive"],
+                d["event_context"]["inner_order"]
+            );
+        }
         for call in trace {
             let _ = write!(
                 out,
@@ -595,8 +648,17 @@ fn sell_trace_html(d: &Value) -> String {
 
 fn sell_html(report: &Value) -> String {
     let facts = report["silver_records"].as_array().map_or(0, Vec::len);
+    let has_buy = report["records"].as_array().is_some_and(|r| {
+        r.iter()
+            .any(|v| v["transaction"]["pump_buy_exact_quote_v2_analysis"].is_array())
+    });
+    let title = if has_buy {
+        "Pump buy/sell"
+    } else {
+        "Pump sell"
+    };
     let mut out = format!(
-        "<section id=pump-sell><h2>Pump sell — brongebonden Silver-eventfeiten</h2><p class=notice><strong>{facts} gekoppelde instructie/event-pakketten.</strong> Dit zijn vastgelegde feiten uit een succesvolle transactie, geen gelezen accounttoestand, netto-opbrengst, Research Ready dataset of edge. B4 en B5 blijven open. Quote-mintidentiteit en decimals onbekend; eventfees niet als optelbare kosten of netto-opbrengst behandelen.</p><p><a href=silver.jsonl>Silver JSONL</a> · <a href=quality.json>Volledige diagnose en bronbinding</a></p>"
+        "<section id=pump-sell><h2>{title} — brongebonden Silver-eventfeiten</h2><p class=notice><strong>{facts} gekoppelde instructie/event-pakketten.</strong> Dit zijn vastgelegde feiten uit een succesvolle transactie, geen gelezen accounttoestand, netto-opbrengst, Research Ready dataset of edge. B4 en B5 blijven open. Quote-mintidentiteit en decimals onbekend; eventfees niet als optelbare kosten of netto-opbrengst behandelen.</p><p><a href=silver.jsonl>Silver JSONL</a> · <a href=quality.json>Volledige diagnose en bronbinding</a></p>"
     );
     if facts == 0 {
         out.push_str("<p>Geen Silver geproduceerd voor deze invoer.</p>");
@@ -604,78 +666,76 @@ fn sell_html(report: &Value) -> String {
     out.push_str(&sell_outcomes_html(report));
     if let Some(records) = report["records"].as_array() {
         for record in records {
-            if let Some(ds) = record["transaction"]["pump_sell_analysis"].as_array() {
-                for d in ds {
-                    let _ = write!(
-                        out,
-                        "<section class=sell-observation><h3>Slot {} · transactie {} · outer {}</h3><p>Uitkomst: <strong>{}</strong> · reden: <code>{}</code></p><p>Volledige instructie ({} bytes):</p><pre>{}</pre><pre>{}</pre><p>Kandidaat uit waarnemingspredicaten:</p><pre>{}</pre><h4>Alle {} accountposities</h4><article><table class=sell-accounts><thead><tr><th>Positie</th><th>Rol</th><th>Adres</th><th>Adresmatch</th><th>Message-minimumflags</th><th>Werkelijke CPI-flags</th></tr></thead><tbody>",
-                        escape(
-                            record["effective_at"]["slot"]
-                                .as_str()
-                                .unwrap_or("UNAVAILABLE")
-                        ),
-                        record["effective_at"]["transaction_index_in_slot"],
-                        d["outer_index"],
-                        escape(d["disposition"].as_str().unwrap_or("UNAVAILABLE")),
-                        escape(&d["reason"].to_string()),
-                        d["instruction_bytes"],
-                        escape(d["instruction_data_hex"].as_str().unwrap_or("UNAVAILABLE")),
-                        escape(
-                            &serde_json::to_string_pretty(&d["instruction"]).unwrap_or_default()
-                        ),
-                        escape(
-                            &serde_json::to_string_pretty(&d["candidate_predicates"])
-                                .unwrap_or_default()
-                        ),
-                        d["account_count"]
-                    );
-                    if let Some(rows) = d["accounts"].as_array() {
-                        for r in rows {
-                            let _ = write!(
-                                out,
-                                "<tr><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-                                r["position"],
-                                escape(r["role"].as_str().unwrap_or("UNAVAILABLE")),
-                                escape(r["observed"].as_str().unwrap_or("UNAVAILABLE")),
-                                r["address_match"],
-                                r.get("message_minimum_privileges_match")
-                                    .unwrap_or(&r["required_privileges_match"]),
-                                if d["instruction_inner_order"].is_null() {
-                                    "Directe instructie; geen CPI-flags"
-                                } else {
-                                    "UNAVAILABLE"
-                                }
-                            );
-                        }
+            for d in recorded_trade_diagnostics(record) {
+                let _ = write!(
+                    out,
+                    "<section class=sell-observation><h3>Slot {} · transactie {} · outer {}</h3><p>Uitkomst: <strong>{}</strong> · reden: <code>{}</code></p><p>Volledige instructie ({} bytes):</p><pre>{}</pre><pre>{}</pre><p>Kandidaat uit waarnemingspredicaten:</p><pre>{}</pre><h4>Alle {} accountposities</h4><article><table class=sell-accounts><thead><tr><th>Positie</th><th>Rol</th><th>Adres</th><th>Adresmatch</th><th>Message-minimumflags</th><th>Werkelijke CPI-flags</th></tr></thead><tbody>",
+                    escape(
+                        record["effective_at"]["slot"]
+                            .as_str()
+                            .unwrap_or("UNAVAILABLE")
+                    ),
+                    record["effective_at"]["transaction_index_in_slot"],
+                    d["outer_index"],
+                    escape(d["disposition"].as_str().unwrap_or("UNAVAILABLE")),
+                    escape(&d["reason"].to_string()),
+                    d["instruction_bytes"],
+                    escape(d["instruction_data_hex"].as_str().unwrap_or("UNAVAILABLE")),
+                    escape(&serde_json::to_string_pretty(&d["instruction"]).unwrap_or_default()),
+                    escape(
+                        &serde_json::to_string_pretty(&d["candidate_predicates"])
+                            .unwrap_or_default()
+                    ),
+                    d["account_count"]
+                );
+                if let Some(rows) = d["accounts"].as_array() {
+                    for r in rows {
+                        let _ = write!(
+                            out,
+                            "<tr><td>{}</td><td>{}</td><td class=mono>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+                            r["position"],
+                            escape(r["role"].as_str().unwrap_or("UNAVAILABLE")),
+                            escape(r["observed"].as_str().unwrap_or("UNAVAILABLE")),
+                            r["address_match"],
+                            r.get("message_minimum_privileges_match")
+                                .unwrap_or(&r["required_privileges_match"]),
+                            if d["instruction_inner_order"].is_null() {
+                                "Directe instructie; geen CPI-flags"
+                            } else {
+                                "UNAVAILABLE"
+                            }
+                        );
                     }
-                    out.push_str("</tbody></table></article>");
-                    out.push_str(&sell_trace_html(d));
-                    let _ = write!(
-                        out,
-                        "<details><summary>Event-CPI, exacte eventvelden en provenance</summary><pre>{}</pre><pre>{}</pre><p>Raw SHA-256: <code>{}</code> · bronontvangst SHA-256: <code>{}</code></p></details></section>",
-                        escape(
-                            &serde_json::to_string_pretty(&d["event_context"]).unwrap_or_default()
-                        ),
-                        escape(
-                            &serde_json::to_string_pretty(&d["event_reported"]).unwrap_or_default()
-                        ),
-                        escape(
-                            record["source"]["raw_sha256"]
-                                .as_str()
-                                .unwrap_or("UNAVAILABLE")
-                        ),
-                        escape(
-                            d["source_evidence_sha256"]
-                                .as_str()
-                                .unwrap_or("UNAVAILABLE")
-                        )
-                    );
                 }
+                out.push_str("</tbody></table></article>");
+                out.push_str(&sell_trace_html(d));
+                let _ = write!(
+                    out,
+                    "<details><summary>Event-CPI, exacte eventvelden en provenance</summary><pre>{}</pre><pre>{}</pre><p>Raw SHA-256: <code>{}</code> · bronontvangst SHA-256: <code>{}</code></p></details></section>",
+                    escape(&serde_json::to_string_pretty(&d["event_context"]).unwrap_or_default()),
+                    escape(&serde_json::to_string_pretty(&d["event_reported"]).unwrap_or_default()),
+                    escape(
+                        record["source"]["raw_sha256"]
+                            .as_str()
+                            .unwrap_or("UNAVAILABLE")
+                    ),
+                    escape(
+                        d["source_evidence_sha256"]
+                            .as_str()
+                            .unwrap_or("UNAVAILABLE")
+                    )
+                );
             }
         }
     }
     out.push_str("</section>");
     out
+}
+
+fn recorded_trade_diagnostics(record: &Value) -> impl Iterator<Item = &Value> {
+    ["pump_sell_analysis", "pump_buy_exact_quote_v2_analysis"]
+        .into_iter()
+        .flat_map(|key| record["transaction"][key].as_array().into_iter().flatten())
 }
 
 fn buy_diagnostic_html(case: &Value) -> String {
@@ -788,6 +848,15 @@ pub fn html(report: &Value) -> String {
         "<!doctype html><html lang=nl><meta charset=utf-8><meta name=viewport content='width=device-width, initial-scale=1'><title>Raw → Bronze — kwaliteitsrapport</title><style>body{{font:16px system-ui;background:#111827;color:#e5e7eb;margin:32px}}h1{{color:#67e8f9}}a{{color:#67e8f9}}.notice{{padding:16px;background:#253047;border-left:4px solid #fbbf24}}pre,.mono{{font:12px ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere}}table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border:1px solid #374151;padding:8px;text-align:left;vertical-align:top}}th{{background:#253047;position:sticky;top:0}}summary{{cursor:pointer}}article{{overflow:auto}}</style><h1>Raw → Bronze → beperkte Silver-eventfeiten</h1><p class=notice><strong>{input_label}</strong><br>ENGINEERING_VALIDATION_ONLY · transaction-wire + statusmetadata, behouden buy-diagnose en aparte brongebonden sell-feiten. Geen research-ready dataset of edgeclaim. Root-to-slot membership: UNAVAILABLE. Ontbrekend is nooit nul.</p><p><a href=quality.json>Volledig JSON-rapport + records</a> · <a href=bronze.jsonl>Bronze JSONL</a> · <a href=execution.json>Uitvoeringsidentiteit</a></p>{overview}<details><summary>Bronbinding, dekking en beperkingen</summary><pre>{}</pre></details><details><summary>Alle transactie-enveloppen in bronvolgorde</summary><article><table><thead><tr><th>Slot</th><th>Volgorde</th><th>Decode</th><th>Eerste signature</th><th>Status</th><th>Fee (lamports)</th><th>Programma's (top-level/CPI)</th><th>Reden</th></tr></thead><tbody>{rows}</tbody></table></article></details></html>",
         escape(&serde_json::to_string_pretty(&summary).unwrap_or_default())
     );
+    let page = if report["records"].as_array().is_some_and(|records| {
+        records
+            .iter()
+            .any(|r| r["transaction"]["pump_buy_exact_quote_v2_analysis"].is_array())
+    }) {
+        page.replace("behouden buy-diagnose en aparte brongebonden sell-feiten","behouden legacy-buy-diagnoses en aparte brongebonden buy_exact_quote_in_v2-/sell-feiten")
+    } else {
+        page
+    };
     if report["slice_class"] == "RESEARCH_SAMPLING" {
         page.replace(
             "ENGINEERING_VALIDATION_ONLY · transaction-wire",
@@ -795,5 +864,71 @@ pub fn html(report: &Value) -> String {
         )
     } else {
         page
+    }
+}
+
+#[cfg(test)]
+mod mixed_lane_order_tests {
+    use super::*;
+    fn fact(name: &str, outer: u64, inner: Option<u64>, event: u64) -> Value {
+        json!({"name":name,"event_context":{"outer_index":outer,"inner_order":event,"parent":{"outer_index":outer,"inner_order":inner}},"atomic_observation_package":true})
+    }
+    #[test]
+    fn synthetic_mixed_lanes_follow_instruction_not_lane_order() {
+        let sell = fact("sell", 4, None, 5);
+        let buy = fact("buy", 3, None, 6);
+        let out = ordered_trade_facts(vec![sell.clone()], vec![buy.clone()]).unwrap();
+        assert_eq!(out, vec![buy, sell]);
+        let direct = fact("direct buy", 3, None, 9);
+        let nested0 = fact("nested sell0", 3, Some(0), 4);
+        let nested5 = fact("nested sell5", 3, Some(5), 8);
+        assert_eq!(
+            ordered_trade_facts(vec![nested5.clone(), nested0.clone()], vec![direct.clone()])
+                .unwrap(),
+            vec![direct, nested0, nested5]
+        );
+    }
+    #[test]
+    fn synthetic_sell_only_order_and_duplicate_bytes_remain_exact() {
+        let old = vec![
+            fact("sell4", 4, None, 2),
+            fact("sell3", 3, Some(1), 2),
+            fact("sell4", 4, None, 2),
+        ];
+        assert_eq!(
+            serde_json::to_vec(&ordered_trade_facts(old.clone(), vec![]).unwrap()).unwrap(),
+            serde_json::to_vec(&old).unwrap()
+        );
+        let buy = fact("buy", 3, None, 6);
+        let duplicate = fact("sell", 4, None, 5);
+        assert_eq!(
+            ordered_trade_facts(
+                vec![duplicate.clone(), duplicate.clone()],
+                vec![buy.clone()]
+            )
+            .unwrap(),
+            vec![buy, duplicate.clone(), duplicate]
+        );
+    }
+    #[test]
+    fn synthetic_mixed_order_missing_invalid_or_conflicting_keys_fail_closed() {
+        for pointer in [
+            "/event_context/outer_index",
+            "/event_context/inner_order",
+            "/event_context/parent/inner_order",
+        ] {
+            let mut bad = fact("buy", 3, None, 4);
+            *bad.pointer_mut(pointer).unwrap() = json!("not-an-order");
+            assert!(ordered_trade_facts(vec![fact("sell", 4, None, 2)], vec![bad]).is_err());
+        }
+        let mut bad = fact("buy", 3, None, 4);
+        bad["event_context"]["parent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("inner_order");
+        assert!(ordered_trade_facts(vec![], vec![bad]).is_err());
+        let mut bad = fact("buy", 3, None, 4);
+        bad["event_context"]["parent"]["outer_index"] = json!(2);
+        assert!(ordered_trade_facts(vec![], vec![bad]).is_err());
     }
 }

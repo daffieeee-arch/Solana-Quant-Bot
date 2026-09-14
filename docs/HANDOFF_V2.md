@@ -46,6 +46,15 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The separate [exact-quote v2 buy profile](research/B5_BUY_EXACT_QUOTE_V2.md)
+uses its own 24-byte/two-u64 instruction and 27-account source layout,
+without relaxing legacy buy parsers. Recorded instruction/event facts,
+source expectations and unavailable account state remain separate.
+Parquet/query support distinguishes requested bounds from actual reported
+quantities and buys from sells. All prior rejected profiles, native sample
+identity and acquisition evidence remain preserved; no Research Ready or
+delivery promotion follows.
+
 The bounded local clock correction separates actual UTC provenance from
 suspend-aware boot-time approval/runtime limits under an explicit new
 [clock policy](research/OF1_STAGED_ACQUISITION.md#versioned-utc-provenance-and-boot-deadlines).

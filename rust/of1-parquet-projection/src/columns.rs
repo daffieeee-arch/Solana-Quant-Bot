@@ -21,10 +21,13 @@ impl Layer {
         }
     }
     #[must_use]
-    pub fn record_schema(self) -> &'static str {
+    pub fn record_schemas(self) -> &'static [&'static str] {
         match self {
-            Self::Bronze => "OF1_BRONZE_TRANSACTION_1",
-            Self::Silver => "PUMP_SILVER_RECORDED_SELL_1",
+            Self::Bronze => &["OF1_BRONZE_TRANSACTION_1"],
+            Self::Silver => &[
+                "PUMP_SILVER_RECORDED_SELL_1",
+                "PUMP_SILVER_RECORDED_BUY_EXACT_QUOTE_V2_1",
+            ],
         }
     }
 }
@@ -233,6 +236,8 @@ fn silver_specs(out: &mut Vec<Column>) {
         &[
             ("amount_raw_u64", "amount_raw_u64"),
             ("min_sol_output_raw_u64", "min_sol_output_raw_u64"),
+            ("spendable_quote_in_raw_u64", "spendable_quote_in_raw_u64"),
+            ("min_tokens_out_raw_u64", "min_tokens_out_raw_u64"),
         ],
     );
     add(
@@ -368,7 +373,7 @@ pub fn state(value: Option<&Value>) -> &'static str {
 }
 #[must_use]
 pub fn schema_descriptor(layer: Layer) -> Value {
-    json!({"schema":"OF1_COLUMNAR_PROJECTION_1","layer":layer.name(),"preserved_record":"exact canonical JSON plus original LF in record_bytes","logical_hash":"SHA256 of length-prefixed canonical JSON records in source order; lengths u64 LE; LF excluded", "fields":schema(layer).fields().iter().map(|f|json!({"name":f.name(),"arrow_type":format!("{:?}",f.data_type()),"nullable":f.is_nullable(),"metadata":f.metadata()})).collect::<Vec<_>>(), "columns":specs(layer).iter().map(|s|json!({"name":s.name,"pointer":s.pointer,"arrow_type":format!("{:?}",s.kind),"state_column":format!("{}_state",s.name)})).collect::<Vec<_>>()})
+    json!({"schema":"OF1_COLUMNAR_PROJECTION_1","layer":layer.name(),"accepted_record_schemas":layer.record_schemas(),"preserved_record":"exact canonical JSON plus original LF in record_bytes","logical_hash":"SHA256 of length-prefixed canonical JSON records in source order; lengths u64 LE; LF excluded", "fields":schema(layer).fields().iter().map(|f|json!({"name":f.name(),"arrow_type":format!("{:?}",f.data_type()),"nullable":f.is_nullable(),"metadata":f.metadata()})).collect::<Vec<_>>(), "columns":specs(layer).iter().map(|s|json!({"name":s.name,"pointer":s.pointer,"arrow_type":format!("{:?}",s.kind),"state_column":format!("{}_state",s.name)})).collect::<Vec<_>>()})
 }
 #[must_use]
 pub fn schema(layer: Layer) -> Arc<Schema> {
@@ -470,7 +475,10 @@ pub fn parse_record(layer: Layer, line: &[u8]) -> io::Result<Value> {
             "CANONICAL_JSON_REQUIRED_NO_DUPLICATE_KEYS_OR_NORMALIZATION",
         ));
     }
-    if record["schema"] != layer.record_schema() {
+    if !record["schema"]
+        .as_str()
+        .is_some_and(|schema| layer.record_schemas().contains(&schema))
+    {
         return Err(invalid("UNSUPPORTED_RECORD_SCHEMA_OR_SLICE_CLASS"));
     }
     match record["slice_class"].as_str() {

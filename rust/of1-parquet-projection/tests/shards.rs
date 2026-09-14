@@ -15,7 +15,7 @@ use std::{
 };
 
 fn row(layer: Layer, index: u64) -> Value {
-    json!({"schema":layer.record_schema(),"slice_class":"ENGINEERING_VALIDATION_ONLY","input_kind":"FIXTURE_SYNTHETIC_SHARD_TEST","receipt_evidence":"Fixture","effective_at":{"slot":(100+index/1667).to_string(),"transaction_index_in_slot":index%1667},"decoder_source_sha256":"a".repeat(64),"source":{"raw_sha256":"b".repeat(64),"provenance":"SYNTHETIC_PHYSICAL_BOUNDARY_TEST_ONLY"},"disposition":"DECODED","transaction_status":"OK","transaction":{"status":"OK","fee_lamports":"9007199254740993","name":null,"economic_identity":"UNAVAILABLE","wire_hex":"00ff","protobuf_metadata_hex":"0102"}})
+    json!({"schema":layer.record_schemas()[0],"slice_class":"ENGINEERING_VALIDATION_ONLY","input_kind":"FIXTURE_SYNTHETIC_SHARD_TEST","receipt_evidence":"Fixture","effective_at":{"slot":(100+index/1667).to_string(),"transaction_index_in_slot":index%1667},"decoder_source_sha256":"a".repeat(64),"source":{"raw_sha256":"b".repeat(64),"provenance":"SYNTHETIC_PHYSICAL_BOUNDARY_TEST_ONLY"},"disposition":"DECODED","transaction_status":"OK","transaction":{"status":"OK","fee_lamports":"9007199254740993","name":null,"economic_identity":"UNAVAILABLE","wire_hex":"00ff","protobuf_metadata_hex":"0102"}})
 }
 fn bytes(record: &Value) -> Vec<u8> {
     let mut bytes = serde_json::to_vec(record).unwrap();
