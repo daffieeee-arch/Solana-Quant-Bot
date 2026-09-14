@@ -53,7 +53,11 @@ source expectations and unavailable account state remain separate.
 Parquet/query support distinguishes requested bounds from actual reported
 quantities and buys from sells. All prior rejected profiles, native sample
 identity and acquisition evidence remain preserved; no Research Ready or
-delivery promotion follows.
+delivery promotion follows. The independently reviewed local result retains
+all 3,224 packages / 223 failed transactions and admits four recorded buys
+alongside the three existing sells; no mint has both admitted sides in this
+selection. Double decoder/Parquet/query execution and the earlier 725-/3,137-
+package regressions are verified in the linked result, not inferred from CI.
 
 The bounded local clock correction separates actual UTC provenance from
 suspend-aware boot-time approval/runtime limits under an explicit new
