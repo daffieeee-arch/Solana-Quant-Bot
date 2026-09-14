@@ -126,6 +126,51 @@ def suitability(summary):
     ]
 
 
+def buy_sell_question(summary, mint_rows):
+    """Availability of already admitted Rust facts; no protocol reclassification."""
+    sides = summary.get('supported_sides')
+    missing = []
+    matched = [row['mint'] for row in mint_rows
+               if row['mint'] is not None and int(row['buy_facts']) > 0 and int(row['sell_facts']) > 0]
+    if sides is None:
+        missing.append('Executed buy/sell side inventory is unavailable for this report.')
+    else:
+        if sides['buy_facts'] == 0:
+            missing.append('No source-admitted buy fact; a retained buy diagnosis is not Silver.')
+        if sides['sell_facts'] == 0:
+            missing.append('No source-admitted sell fact in this selection.')
+        for field in ['unknown_side_facts', 'unknown_mint_facts',
+                      'unknown_raw_token_facts', 'incomplete_order_facts']:
+            if sides[field]:
+                missing.append(f'{field}: {sides[field]} retained facts, not silently excluded.')
+        if not matched:
+            missing.append('No mint with both admitted sides; this does not prove no on-chain buys/sells occurred.')
+    errors = summary['integrity_errors']
+    return {
+        'question_id': 'SAME_MINT_RAW_BUY_SELL_IN_FIXED_SELECTION_V1',
+        'question': 'Welke mints hebben in deze vaste selectie zowel een ondersteunde buy als sell, '
+                    'en welke exacte raw tokenhoeveelheden zijn in ketenvolgorde waargenomen?',
+        'scope': 'Descriptive inventory of admitted recorded facts only, not all historical trading activity.',
+        'requires': ['unchanged selected slots and manifest/source identity',
+                     'source-admitted instruction/account/own-event package for both sides',
+                     'same mint identity, exact raw token quantity and chain/invocation order'],
+        'present': {'supported_sides': sides, 'mints_with_both_admitted_sides': matched,
+                    'mint_inventory': mint_rows},
+        'missing': [*errors, *missing],
+        'result_kind': 'ENGINEERING_FAILURE' if errors else 'INSUFFICIENT_SUITABLE_DATA' if missing
+                       else 'DESCRIPTIVE_RECORDED_FACTS_ONLY',
+        'units_policy': 'Raw token integers may be listed within one mint without decimals. '
+                        'Cross-mint normalization, prices and economic returns require additional unit evidence.',
+        'time_policy': 'slot/transaction/own invocation-event order is distinct from event-reported timestamp; '
+                       'acquired_at/processed_at are not historical time; observed/actionable/execution time remains unavailable.',
+        'optional_metadata': ['name', 'ticker', 'logo', 'website'],
+        'not_inferred': ['decimals', 'launch date', 'lifecycle', 'account-state transition', 'executable price'],
+        'next_step': 'Establish the missing Pump-authoritative 24-byte buy/modern-account compatibility rule, '
+                     'including absent track_volume semantics; then repeat the same sealed pilot without reselection.',
+        'research_ready': False,
+    }
+
+
 def render(result):
     e = lambda value: html.escape(str(value))
     s = result['summary']
@@ -133,9 +178,22 @@ def render(result):
     for name, table in result['queries'].items():
         head = ''.join('<th>'+e(c['name'])+'</th>' for c in table['columns'])
         body = ''.join('<tr>'+''.join('<td>'+e('NULL / onbekend' if v is None else v)+'</td>' for v in row)+'</tr>' for row in table['rows'])
-        expanded = ' open' if name in ['sell_profile_details', 'sell_account_evidence_gaps'] else ''
+        expanded = ' open' if name in ['buy_version_details', 'buy_source_versions', 'supported_sides',
+                                      'mint_side_inventory', 'buy_sell_ordered_facts',
+                                      'sell_profile_details', 'sell_account_evidence_gaps'] else ''
         tables.append(f"<details{expanded}><summary>{e(name)}</summary><div class='scroll'><table><tr>{head}</tr>{body}</table></div><pre>{e(table['sql'])}</pre></details>")
     matrix = ''.join(f"<section><h3>{e(q['question'])}</h3><b>{e(q['result_kind'])}</b><p>Nodig: {e('; '.join(q['requires']))}</p><p>Aanwezig: {e(json.dumps(q['present']))}</p><p>Ontbreekt: {e('; '.join(q['missing']) or 'geen binnen deze begrensde toets')}</p><p>Volgende stap: {e(q['next_step'])}</p></section>" for q in result['suitability_matrix'])
+    question = result.get('buy_sell_research_question')
+    question_view = '' if question is None else f"""<section><h2>Concrete buy/sell-vraag — raw feiten binnen dezelfde mint</h2>
+<h3>{e(question['question'])}</h3><b>{e(question['result_kind'])}</b>
+<p>Aanwezige toegelaten kanten: {e(json.dumps(question['present']['supported_sides']))}.
+Dit zijn getelde Rust-Silver-feiten uit Parquet, geen aantallen afgeleid uit een buy-discriminator of event-layoutmatch.</p>
+<p>Ontbreekt: {e('; '.join(question['missing']) or 'geen voor deze beperkte beschrijvende vraag')}.</p>
+<p>Raw tokenhoeveelheden mogen per mint zonder decimals worden getoond. Naam/ticker zijn optioneel.
+Normalisatie, economische vergelijking, uitvoerbare prijs en lifecycle vereisen ander bewijs.</p>
+<p>Historische volgorde: slot → transactie → eigen instructie/event. Het eventtimestamp blijft een gerapporteerde i64,
+niet een bewezen observation/actionable/execution clock.</p>
+<p>Volgende stap: {e(question['next_step'])}</p><details><summary>Machineleesbare vereisten en bewijsgrenzen</summary><pre>{e(json.dumps(question,indent=2))}</pre></details></section>"""
     pilot = result.get('pilot')
     slot_rows = []
     for slot in s['slots']:
@@ -173,9 +231,9 @@ body{{background:#111b24;color:#e0eaf3;font:15px system-ui;margin:0}}main{{max-w
 <p>Elke envelope blijft in de noemer: ook failed, missing, unsupported of quarantined. Historische buy-layoutprobes worden apart getoond; een sell die zo'n probe afwijst is niet opnieuw een mislukte sell-decode.</p>
 <section><h2>Slotinventaris en volledige noemers</h2><div class='scroll'><table><tr>{slot_head}</tr>{''.join(slot_rows)}</table></div><p>Transactiestatus: <b>{s['status_ok']} OK</b> / <b>{s['status_error']} ERROR</b> / {s['status_unknown']} onbekend. On-chain ERROR is niet hetzelfde als een fout in onze verwerking.</p><details><summary>Volledige tellingen, onbekenden en Raw-hashes</summary><pre>{e(json.dumps(s,indent=2))}</pre></details></section>
 <p>Programmatellingen lezen uitsluitend bestaande Rust-velden: unieke programmabetrokkenheid per pakket, gedeclareerde top-level instructies en opgenomen CPI-verwijzingen. Failed transactions blijven inbegrepen. Ontbrekende CPI-metadata is onbekend, niet nul; de aparte program_coverage-tabel toont die noemer. Verwijzingen bewijzen geen gecommitteerde toestandsverandering.</p>
-<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
+{question_view}<h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
 <section><h2>{pilot_heading}</h2>{pilot_view}</section>
-<h2>Werkelijk uitgevoerde DuckDB-controles</h2><p>De geopende sell-profieltabellen tonen iedere Rust-uitkomst met transactiestatus, eigen instructie/event-context en bronhash. Niet-toegelaten profielen blijven zichtbaar; een gelijk accountaantal bewijst geen gelijke variant. Een PDA-adresmatch bewijst geen opgenomen CPI-signerflags. NULL blijft onbekend. Deze queries beslissen niet opnieuw over Silver-toelating.</p>{''.join(tables)}
+<h2>Werkelijk uitgevoerde DuckDB-controles</h2><p>De buy-bronvergelijking is afzonderlijk van de behouden oude B3-layoutprobe: een afwijzing tegen één schema bewijst geen universeel corrupte buy. De geopende profieltabellen tonen iedere Rust-uitkomst met transactiestatus, eigen instructie/event-context en bronhash. Niet-toegelaten profielen blijven zichtbaar; een gelijk accountaantal bewijst geen gelijke variant. Een PDA-adresmatch bewijst geen opgenomen CPI-signerflags. NULL blijft onbekend. Een ontbrekend instructieargument wordt niet ingevuld vanuit de afzonderlijke eventwaarde. Deze queries beslissen niet opnieuw over Silver-toelating.</p>{''.join(tables)}
 <section><h2>Herkomst</h2><pre>{e(json.dumps(result['bindings'],indent=2))}</pre><a href='query-results.json'>Volledig machineleesbaar resultaat / matrix / SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a></section></main></html>"""
 
 
@@ -214,13 +272,21 @@ def run(root, quality_path, pilot_path, output):
     counts = objects(results['slot_counts'])
     total = lambda key: sum(int(row[key]) for row in counts)
     silver = {key:int(value) for key,value in objects(results['silver_suitability'])[0].items()}
+    sides = {key:int(value) for key,value in objects(results['supported_sides'])[0].items()}
+    if (sides['facts'] != silver['facts'] or
+            sides['buy_facts'] + sides['sell_facts'] + sides['unknown_side_facts'] != sides['facts']):
+        integrity_errors.append('SILVER_SIDE_INVENTORY_MISMATCH')
+    if sides['failed_transaction_facts']:
+        integrity_errors.append('FAILED_TRANSACTION_HAS_ADMITTED_SILVER_FACT')
     if total('present_envelopes') != layer_rows(manifest, 'bronze') or silver['facts'] != layer_rows(manifest, 'silver'):
         integrity_errors.append('MANIFEST_ROW_MISMATCH')
     if manifest['schema'] == 'OF1_PARQUET_DATASET_2' and not selected['all_expected_packages_accounted']:
         integrity_errors.append('MANIFEST_SELECTION_INCOMPLETE')
     summary = {'slots':slots, 'expected_envelopes': sum(x['expected_envelopes'] for x in slots) if all(x['expected_envelopes'] is not None for x in slots) else None,
                **{key:total(key) for key in ['present_envelopes','decoded','missing','unsupported','quarantined','status_ok','status_error','status_unknown','pump_positive','pump_negative','pump_unknown']},
-               'silver':silver, 'buy_diagnostics':len(results['rejected_buy']['rows']),
+               'silver':silver, 'supported_sides':sides,
+               'buy_diagnostics':len(results['rejected_buy']['rows']),
+               'buy_version_diagnostics':len(results['buy_version_details']['rows']),
                'economic_complete_observations': 'UNAVAILABLE_NOT_PROVEN', 'global_pump_variant_denominator':'UNKNOWN',
                'sample_class':manifest['evidence']['slice_class'],
                'index_reported_absent': payload['prepared']['index_reported_absent'],
@@ -239,7 +305,9 @@ def run(root, quality_path, pilot_path, output):
                           'pilot_sha256':pilot_sha, 'files':{k:{x:v[x] for x in ['bytes','sha256']} for k,v in manifest['files'].items()}},
               'evidence':manifest['evidence'], 'inventory':inventory(manifest), 'selection':selected,
               'sample_identity':manifest.get('sample_identity'),
-              'suitability_matrix':suitability(summary), 'pilot':pilot, 'queries':results}
+              'suitability_matrix':suitability(summary),
+              'buy_sell_research_question':buy_sell_question(summary, objects(results['mint_side_inventory'])),
+              'pilot':pilot, 'queries':results}
     raw = (json.dumps(result,indent=2,ensure_ascii=False)+'\n').encode()
     receipt = {'schema':'OF1_COVERAGE_EXECUTION_1','result_sha256':sha(raw),'seconds':time.perf_counter()-started,
                'python':sys.version.split()[0],'runner_sha256':sha(pathlib.Path(__file__).read_bytes()),

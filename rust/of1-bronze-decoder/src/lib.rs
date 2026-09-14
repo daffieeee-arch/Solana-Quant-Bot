@@ -5,6 +5,7 @@ pub mod codec;
 pub mod proto;
 pub mod pump;
 pub mod pump_buy;
+pub mod pump_buy_variants;
 pub mod pump_sell;
 pub mod pump_sell16;
 pub mod pump_sell_context;
@@ -25,6 +26,8 @@ pub fn source_sha256() -> String {
         include_bytes!("bin/of1-bronze-measure.rs"),
         include_bytes!("pump.rs"),
         include_bytes!("pump_buy.rs"),
+        include_bytes!("pump_buy_variants.rs"),
+        include_bytes!("../sources/pump-buy24-evidence.json"),
         include_bytes!("pump_sell.rs"),
         include_bytes!("pump_sell16.rs"),
         include_bytes!("../sources/pump-sell16-evidence.json"),

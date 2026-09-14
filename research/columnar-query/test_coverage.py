@@ -3,8 +3,9 @@ import pathlib
 import json
 import tempfile
 import unittest
-from coverage import coverage, bound_json, sha, rust_slots, suitability, optional_pilot, render
-from query import connect
+from coverage import (coverage, bound_json, sha, rust_slots, suitability, optional_pilot,
+                      render, buy_sell_question, objects)
+from query import connect, rows
 
 
 def actual(slot, total, decoded=0, missing=0, unsupported=0, quarantined=0):
@@ -18,6 +19,31 @@ def proof(slot, envelopes):
 
 def extent(slot, count):
     return dict(slot=str(slot),known_indices=str(count),first_index='0' if count else None,last_index=str(count-1) if count else None)
+
+
+def synthetic_silver(db, records):
+    """Typed projected facts only; no transaction/event decoding or admission."""
+    numeric = {
+        'record_ordinal':'UBIGINT', 'slot':'UBIGINT', 'transaction_index':'UBIGINT',
+        'outer_index':'UBIGINT', 'instruction_inner_order':'UBIGINT',
+        'event_inner_order':'UBIGINT', 'token_amount_raw_u64':'UBIGINT',
+        'sol_amount_raw_u64':'UBIGINT', 'timestamp_raw_i64':'BIGINT',
+        'quote_decimals':'UTINYINT', 'base_decimals':'UTINYINT', 'is_buy':'BOOLEAN',
+    }
+    strings = ['transaction_status','mint','quote_mint_identity','observed_at','actionable_at',
+               'execution_opportunity_at','name','ticker','launch_at','candidate_id',
+               'source_evidence_sha256','raw_sha256','record_sha256','bronze_record_sha256']
+    columns = {**numeric, **{key:'VARCHAR' for key in strings}}
+    db.execute('CREATE TABLE silver ('+', '.join(f'{name} {kind}' for name,kind in columns.items())+')')
+    if records:
+        db.executemany('INSERT INTO silver VALUES ('+','.join('?' for _ in columns)+')',
+                       [tuple(record.get(name) for name in columns) for record in records])
+
+
+def side_summary(db, sql, errors=None):
+    values = objects(rows(db.execute(sql['supported_sides'])))[0]
+    return {'supported_sides':{key:int(value) for key,value in values.items()},
+            'integrity_errors':errors or []}
 
 
 class CoverageTests(unittest.TestCase):
@@ -220,6 +246,170 @@ class CoverageTests(unittest.TestCase):
             self.assertEqual([row[2] for row in gaps],['6','14'])
             self.assertTrue(all(row[-1] in [None,'null'] for row in gaps))
             self.assertEqual(details,db.execute(sql['sell_profile_details']).fetchall())
+
+    def test_buy_version_queries_preserve_unknown_argument_event_false_and_source_conflict(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        # Explicitly synthetic Rust diagnostics: the missing instruction argument
+        # cannot be filled from the independently reported false event value.
+        old={'identity':{'commit':'a'*40,'path':'idl/pump.json','sha256':'b'*64},
+             'evidence_status':'PINNED_STRUCTURAL_SOURCE','instruction_bytes':24,
+             'args_layout_match':True,'account_count':12,
+             'full_observation_profile_match':False,'reason':'MODERN_ACCOUNTS_NOT_PROVEN'}
+        modern={'identity':{'commit':'c'*40,'path':'idl/pump.json','sha256':'d'*64},
+                'evidence_status':'PINNED_STRUCTURAL_SOURCE','instruction_bytes':25,
+                'args_layout_match':False,'account_count':16,
+                'full_observation_profile_match':False,'reason':'MISSING_TRACK_VOLUME_ARGUMENT'}
+        diagnosis={'evaluated_profile':'separate-source-comparison','disposition':'NOT_ADMITTED',
+                   'reason':'SOURCE_PROFILE_CONFLICT','instruction':{'bytes':24,
+                       'discriminator_hex':'0102030405060708','amount_raw_u64':'18446744073709551615',
+                       'max_sol_cost_raw_u64':'9007199254740993','track_volume':None,
+                       'track_volume_evidence':'UNAVAILABLE_NOT_IN_INSTRUCTION','sha256':'e'*64},
+                   'event_reported':{'track_volume':False},'token_program':'synthetic-token-program',
+                   'account_count':16,'account_address_correspondence':True,'outer_index':2,
+                   'event_context':{'inner_order':8,'stack_height':2,'event_sha256':'f'*64},
+                   'proof_gaps':['No source-proven combined layout'],'source_evidence_sha256':'0'*64,
+                   'source_comparisons':[old,modern]}
+        absent=json.loads(json.dumps(diagnosis))
+        del absent['instruction']['track_volume']
+        raw=json.dumps({'transaction':{'pump_buy_variant_analysis':[diagnosis,diagnosis,absent]}}).encode()
+        with connect() as db:
+            db.execute('CREATE TABLE bronze(slot UBIGINT,transaction_index UBIGINT,record_ordinal UBIGINT,transaction_status VARCHAR,record_bytes BLOB)')
+            db.execute('INSERT INTO bronze VALUES (9,320,0,\'OK\',?)',[raw])
+            details=objects(rows(db.execute(sql['buy_version_details'])))
+            self.assertEqual(len(details),3)  # Deliberate duplicates remain visible.
+            self.assertEqual(details[0],details[1])
+            self.assertEqual(details[0]['instruction_track_volume'],'null')
+            self.assertIsNone(details[2]['instruction_track_volume'])
+            self.assertTrue(all(d['event_track_volume']=='false' for d in details))
+            self.assertTrue(all(d['disposition']=='NOT_ADMITTED' for d in details))
+            self.assertEqual(details[0]['amount_raw_u64'],'18446744073709551615')
+            self.assertEqual(details[0]['max_sol_cost_raw_u64'],'9007199254740993')
+            self.assertEqual(details[0]['event_inner_order'],'8')
+            versions=objects(rows(db.execute(sql['buy_source_versions'])))
+            self.assertEqual(len(versions),6)
+            self.assertEqual([v['instruction_bytes'] for v in versions],['24','25']*3)
+            self.assertEqual([v['arguments_layout_match'] for v in versions],['true','false']*3)
+            self.assertEqual([v['source_account_count'] for v in versions],['12','16']*3)
+            self.assertEqual(json.loads(versions[0]['source_identity']),old['identity'])
+            self.assertEqual(json.loads(versions[1]['source_identity']),modern['identity'])
+            self.assertTrue(all(v['full_observation_profile_match']=='false' for v in versions))
+            self.assertEqual(details,objects(rows(db.execute(sql['buy_version_details']))))
+            self.assertEqual(versions,objects(rows(db.execute(sql['buy_source_versions']))))
+
+    def test_ordered_buy_sell_query_preserves_integer_extremes_duplicates_and_unknowns(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        common={'slot':7,'transaction_index':9,'outer_index':2,'event_inner_order':5,
+                'transaction_status':'OK','mint':'same-mint','candidate_id':'synthetic-profile',
+                'source_evidence_sha256':'a'*64,'raw_sha256':'b'*64,
+                'record_sha256':'c'*64,'bronze_record_sha256':'d'*64}
+        buy={**common,'record_ordinal':1,'is_buy':True,'instruction_inner_order':None,
+             'token_amount_raw_u64':2**64-1,'sol_amount_raw_u64':2**53+1,
+             'timestamp_raw_i64':-(2**63)}
+        sell={**common,'record_ordinal':0,'is_buy':False,'instruction_inner_order':3,
+              'event_inner_order':8,'token_amount_raw_u64':2**53+1,
+              'sol_amount_raw_u64':0,'timestamp_raw_i64':2**63-1}
+        unknown={'record_ordinal':3,'slot':8,'transaction_index':0,'is_buy':None}
+        with connect() as db:
+            synthetic_silver(db,[sell,buy,{**buy,'record_ordinal':2},unknown])
+            result=rows(db.execute(sql['buy_sell_ordered_facts']))
+            records=objects(result)
+            self.assertEqual([r['recorded_side'] for r in records],['BUY','BUY','SELL','UNAVAILABLE'])
+            self.assertEqual(records[0],records[1])
+            self.assertEqual(records[0]['token_amount_raw_u64'],'18446744073709551615')
+            self.assertEqual(records[0]['sol_amount_raw_u64'],'9007199254740993')
+            self.assertEqual(records[0]['timestamp_raw_i64'],'-9223372036854775808')
+            self.assertEqual(records[2]['token_amount_raw_u64'],'9007199254740993')
+            self.assertEqual(records[2]['sol_amount_raw_u64'],'0')
+            self.assertEqual(records[2]['timestamp_raw_i64'],'9223372036854775807')
+            self.assertIsNone(records[3]['token_amount_raw_u64'])
+            types={c['name']:c['duckdb_type'] for c in result['columns']}
+            self.assertEqual(types['token_amount_raw_u64'],'UBIGINT')
+            self.assertEqual(types['timestamp_raw_i64'],'BIGINT')
+            for record in records:
+                for key in ['quote_mint_identity','quote_decimals','base_decimals','name','ticker',
+                            'launch_at','observed_at','actionable_at','execution_opportunity_at']:
+                    self.assertIsNone(record[key])
+            self.assertEqual(result,rows(db.execute(sql['buy_sell_ordered_facts'])))
+
+    def test_side_inventory_counts_unknown_and_failed_without_silent_filtering(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        known={'slot':3,'transaction_index':0,'outer_index':1,'event_inner_order':2,
+               'token_amount_raw_u64':1,'timestamp_raw_i64':7,'transaction_status':'OK','mint':'M'}
+        cases=[{**known,'is_buy':True},{**known,'is_buy':False},
+               {**known,'is_buy':None},{**known,'is_buy':False,'mint':None},
+               {**known,'is_buy':False,'transaction_status':'ERROR'},
+               {**known,'is_buy':True,'token_amount_raw_u64':None,'event_inner_order':None,
+                'timestamp_raw_i64':None}]
+        with connect() as db:
+            synthetic_silver(db,cases)
+            summary=side_summary(db,sql)
+            self.assertEqual(summary['supported_sides'],{
+                'facts':6,'buy_facts':2,'sell_facts':3,'unknown_side_facts':1,
+                'failed_transaction_facts':1,'unknown_mint_facts':1,'unknown_raw_token_facts':1,
+                'incomplete_order_facts':1,'unavailable_event_timestamp_facts':1})
+            mints=objects(rows(db.execute(sql['mint_side_inventory'])))
+            self.assertIsNone(mints[0]['mint'])
+            self.assertEqual([r['facts'] for r in mints],['1','5'])
+            self.assertEqual(mints[1]['unknown_side_facts'],'1')
+            self.assertEqual(mints[1]['unknown_raw_token_facts'],'1')
+            self.assertEqual(mints[1]['incomplete_order_facts'],'1')
+            question=buy_sell_question(summary,mints)
+            self.assertEqual(question['result_kind'],'INSUFFICIENT_SUITABLE_DATA')
+            self.assertTrue(any('unknown_side_facts: 1' in gap for gap in question['missing']))
+            self.assertFalse(question['research_ready'])
+
+    def test_same_mint_raw_question_needs_order_and_quantities_not_name_ticker_or_decimals(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        common={'slot':3,'outer_index':0,'event_inner_order':1,'transaction_status':'OK',
+                'mint':'same-mint','token_amount_raw_u64':2**64-1}
+        with connect() as db:
+            synthetic_silver(db,[{**common,'transaction_index':1,'is_buy':True},
+                                {**common,'transaction_index':2,'is_buy':False}])
+            summary=side_summary(db,sql)
+            question=buy_sell_question(summary,objects(rows(db.execute(sql['mint_side_inventory']))))
+            self.assertEqual(question['result_kind'],'DESCRIPTIVE_RECORDED_FACTS_ONLY')
+            self.assertEqual(question['present']['mints_with_both_admitted_sides'],['same-mint'])
+            self.assertEqual(question['missing'],[])
+            self.assertEqual(summary['supported_sides']['unavailable_event_timestamp_facts'],2)
+            self.assertIn('without decimals',question['units_policy'])
+            self.assertIn('name',question['optional_metadata'])
+            self.assertIn('ticker',question['optional_metadata'])
+            self.assertIn('executable price',question['not_inferred'])
+            self.assertFalse(question['research_ready'])
+            self.assertEqual(question,buy_sell_question(summary,objects(rows(db.execute(sql['mint_side_inventory'])))))
+
+    def test_missing_buy_is_insufficient_data_not_edge_falsification_and_no_unavailable_is_zero(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        with connect() as db:
+            synthetic_silver(db,[{'slot':3,'transaction_index':2,'outer_index':0,'event_inner_order':1,
+                                 'is_buy':False,'transaction_status':'OK','mint':'M',
+                                 'token_amount_raw_u64':5}])
+            summary=side_summary(db,sql)
+            question=buy_sell_question(summary,objects(rows(db.execute(sql['mint_side_inventory']))))
+            self.assertEqual(question['result_kind'],'INSUFFICIENT_SUITABLE_DATA')
+            self.assertIn('No source-admitted buy fact',question['missing'][0])
+            self.assertIn('not Silver',question['missing'][0])
+            self.assertTrue(any('does not prove no on-chain' in x for x in question['missing']))
+            self.assertFalse(question['research_ready'])
+            missing=buy_sell_question({'integrity_errors':[]},[])
+            self.assertIsNone(missing['present']['supported_sides'])
+            self.assertIn('inventory is unavailable',missing['missing'][0])
+            self.assertEqual(missing['result_kind'],'INSUFFICIENT_SUITABLE_DATA')
+
+    def test_integrity_failure_overrides_apparent_buy_sell_completeness(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        common={'slot':3,'outer_index':0,'event_inner_order':1,'transaction_status':'OK',
+                'mint':'M','token_amount_raw_u64':5}
+        with connect() as db:
+            synthetic_silver(db,[{**common,'transaction_index':1,'is_buy':True},
+                                {**common,'transaction_index':2,'is_buy':False}])
+            inventory=objects(rows(db.execute(sql['mint_side_inventory'])))
+            for error in ['SILVER_PARENT_MISMATCH','PARQUET_RUST_SOURCE_BINDING_MISMATCH',
+                          'SILVER_SIDE_INVENTORY_MISMATCH','FAILED_TRANSACTION_HAS_ADMITTED_SILVER_FACT']:
+                question=buy_sell_question(side_summary(db,sql,[error]),inventory)
+                self.assertEqual(question['result_kind'],'ENGINEERING_FAILURE')
+                self.assertEqual(question['missing'],[error])
+                self.assertFalse(question['research_ready'])
 
 
 if __name__=='__main__': unittest.main()

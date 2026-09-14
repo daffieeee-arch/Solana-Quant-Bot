@@ -91,7 +91,7 @@ fn diagnose(tx: &Value, top: &[Value], ix: &Value, bytes: &[u8]) -> io::Result<V
 
 // Require exactly one source-tagged event in this outer instruction, exact B3
 // event exhaustion, and a recorded direct Pump parent. No last-event-wins rule.
-fn event_context(
+pub(crate) fn event_context(
     tx: &Value,
     top: &[Value],
     ix: &Value,
@@ -226,6 +226,18 @@ fn expected_pda(
 }
 
 fn account_rows(tx: &Value, ix: &Value, event: Option<&TradeEvent>, source: &Value) -> Vec<Value> {
+    account_rows_for_token(tx, ix, event, source, Some(TOKEN))
+}
+
+// Explicit token-profile comparison for a separate diagnostic. The legacy
+// diagnostic above keeps its original Tokenkeg expectation and output exactly.
+pub(crate) fn account_rows_for_token(
+    tx: &Value,
+    ix: &Value,
+    event: Option<&TradeEvent>,
+    source: &Value,
+    token_program: Option<&str>,
+) -> Vec<Value> {
     let Some(rules) = source["account_rules"].as_array() else {
         return Vec::new();
     };
@@ -237,7 +249,7 @@ fn account_rows(tx: &Value, ix: &Value, event: Option<&TradeEvent>, source: &Val
             1 => event.map(|e| bs58::encode(e.fee_recipient).into_string()),
             2 => event.map(|e| bs58::encode(e.mint).into_string()),
             6 => event.map(|e| bs58::encode(e.user).into_string()),
-            8 => Some(TOKEN.into()),
+            8 => token_program.map(str::to_owned),
             _ => rule["fixed_address"].as_str().map(str::to_owned),
         });
         let listed = |list:&str| observed.as_ref().map(|o|source[list].as_array().is_some_and(|a|a.iter().any(|v|v==o)));
