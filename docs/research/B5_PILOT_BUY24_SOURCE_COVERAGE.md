@@ -106,3 +106,101 @@ synthetisch gelabeld. De 725- en 3.137-pakketregressies, vier eerdere
 engineering-sells en drie pilot-sells blijven vereist. Twee volledige
 uitvoeringen vergelijken canonieke recordinhoud, fysieke Parquet/manifest-
 hashes en daadwerkelijk uitgevoerde queryresultaten; procesklokken staan apart.
+
+## Daadwerkelijke herverwerking — 2026-09-14
+
+Releasecode `a40893ae29a1a37a721b3bda1bfe1c5c48e20300`, bestaande Node
+22.23.2 / Rust 1.97.1 / DuckDB 1.5.5. De decoder/projector/queryprocessen
+draaiden met sockets geweigerd en maximaal 2 GiB adresruimte, een strengere
+grens dan werkelijk procesgeheugen. De reader verifieerde de bestaande
+Raw/receipt/plan-/samplebinding; geen oude writer werd hervat.
+
+| Slot | Bronze / verwacht | OK / ERROR | Pump-verwijzende pakketten | Toegelaten buy / sell |
+|---|---:|---:|---:|---:|
+| 422669516 | 1.022 / 1.022 | 973 / 49 | 6 | 0 / 2 |
+| 422669517 | 1.048 / 1.048 | 972 / 76 | 7 | 0 / 0 |
+| 422669518 | 1.154 / 1.154 | 1.056 / 98 | 9 | 0 / 1 |
+| Totaal | 3.224 / 3.224 | 3.001 / 223 | 22 | 0 / 3 |
+
+Alle 3.224 transactiepackages zijn DECODED, zonder ontbrekende, unsupported
+of quarantined package-uitkomst. Dat is **geen** volledige Pump-dekking.
+Tien sell-diagnoses omvatten de drie bestaande feiten, vier succesvolle
+maar afgewezen Mayhem-gevallen en drie mislukte missing-eventgevallen.
+De nieuwe buy-diagnose geeft geen Silver-toelating. De volledige noemer van
+Pump-programmaverwijzingen is 22 pakketten, niet vier of drie feiten.
+
+De strikte vergelijkingsaudit staat slechts één inhoudelijke toevoeging toe:
+`transaction.pump_buy_variant_analysis` bij 422669518/320. Alle oorspronkelijke
+transactievelden, bytes, eerdere buy- en sell-diagnoses en onbekenden zijn
+exact behouden. Root-decoderidentiteit en daarvan afhankelijke, opnieuw
+geverifieerde Silver-parenthashes veranderen wel. De drie sell-feiten blijven
+inhoudelijk exact gelijk. Er zijn nul toegelaten buys en geen mint met beide
+toegelaten kanten; dit bewijst **niet** dat on-chain geen buys voorkwamen.
+
+Twee volledige decodes leveren dezelfde canonieke JSONL/quality/COMPLETE.
+Twee projecties van dezelfde sealed decode-01-executionbinding leveren
+byte-identieke Parquetbestanden en manifests; beide DuckDB-resultaten en het
+coverage-HTML zijn eveneens identiek. Werkelijke procesklokken blijven apart.
+De manifestreader gebruikt alleen de benoemde shards, verifieert hashes en
+typed-column-/recordpariteit; JSON-blobs vervangen de typed kolommen niet.
+
+| Artefact | SHA-256 |
+|---|---|
+| Afzonderlijke offline decoder | `97b6f769251edc4f51c3288dfd1249310502a16eb1a2ca0161b76df53e711d5f` |
+| Compiled decoder-source | `9ff1d8b1670b4db1389149a73084e6c14b2598b14fcbb6425a0bb3eeb5930461` |
+| Datasetmanifest | `788864af24faa778aa1d7597702a8d151a1a96282efd3cb0b45fa4d26694949f` |
+| Bronze JSONL | `7ea79110b508381e31966b1cecb2bc2b401175fd0b0793f37364592a88d6c92e` |
+| Silver JSONL | `a3b565ea94d6c21fe121939250dd48aadfa5bea3729246cad84ec1e8da1c356f` |
+| DuckDB coverage-resultaat | `9368d904c8883050fb9543261e42d398506fb4e1227c2c869b525ffe8916549c` |
+| Browserrapport | `0b38f4375293f94ba7a88f0fa7c149b84a41d7d15d59e83d16e99613e397845f` |
+
+Bronze Parquet bevat 3.224 rijen / 58.412.456 bytes, Silver drie rijen /
+156.919 bytes. De decoderpiek was 347.732 KiB, projector 43.308 KiB en
+coveragequery 371.252 KiB. De volledige historische vergelijkingsaudit bleef
+op 408.776 KiB. Geen resourcegrens is verhoogd. Ook de behouden authentieke
+regressies zijn uitgevoerd: 725 packages / nul sells en 3.137 packages /
+alle vier eerdere engineering-sells, inclusief de ongewijzigde 26-byte
+buy-afwijzing. Geen herclassificatie van engineeringdata naar researchdata.
+
+## Lokaal zichtbaar en controleerbaar
+
+Nieuwe outputroot, buiten Git:
+`/home/dmesdary/solana-quant-data/datasets/b5-buy320-20260914.7Ur1TG/`.
+
+- `decode-01/02`: nieuwe volledige Rust-Bronze/Silver en diagnoses.
+- `parquet-01/02`: manifestgebonden fysieke dataset.
+- `query-01/02` en `coverage-01/02`: daadwerkelijk uitgevoerde SQL,
+  resultaten, receipts en browserrapporten.
+- `pilot-comparison-verified.json`, `legacy-regression-result.json`,
+  `determinism.json`: behoud/pariteit/regressies, met hashes en eigen scripts.
+- `independent-source-audit.json`, `source-audit-tarball-parity.json`:
+  afzonderlijke lokale officiële-broncontroles.
+- `browser-final/expanded/`: vijf werkelijke Windows-Chrome-screenshots;
+  `browser-proof.json` vergelijkt de via HTTP getoonde bytes met de bestanden.
+- `baseline.json`, `identities.json`, `logs/`: oorspronkelijke326-bestanden,
+  eerdere evidence/branches/locks, nieuwe binaryidentiteiten en procesmetingen.
+
+```bash
+/home/dmesdary/.local/share/solana-quant/run-with-toolchain node \
+  research/columnar-query/serve.mjs \
+  /home/dmesdary/solana-quant-data/datasets/b5-buy320-20260914.7Ur1TG/coverage-01 7032
+```
+
+Open **http://localhost:7032/** in de Windows-browser. De bestaande read-only
+viewer toont de geopende bronvergelijking, toegelaten buy/sell-inventaris,
+exacte hoeveelheden/volgorde en concrete ontbrekende onderzoekseisen.
+Oude rapporten blijven op hun eigen locaties behouden. `pipeline.mjs` legt
+alle werkelijke offline commando's en eindige resourcegrenzen vast; opnieuw
+uitvoeren vereist nieuwe outputnamen, geen overschrijven van evidence.
+
+## Kleinste volgende werkpakket
+
+Geen grotere steekproef om de bronlacune te omzeilen. Eerst één gerichte
+autoritatieve compatibiliteitsbron voor de complete 24-byte buy / moderne
+accounts / eigen event, met expliciete ontbrekende-argumentsemantiek; daarna
+een begrensde profielwijziging plus negatieve tests en herhaling van dezelfde
+onveranderde pilot. De bewaarde historische extractie alleen is onvoldoende.
+Als die regel niet aantoonbaar is, blijft de diagnose afgewezen en moet de
+vereiste buy-dekking vóór een vervolgsample expliciet worden begrensd.
+Mayhem-account14 en daadwerkelijke CPI-privileges blijven afzonderlijke
+open bronvragen. Geen acquisition-GO, statuspromotie of edgeclaim volgt hieruit.
