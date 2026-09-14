@@ -98,3 +98,98 @@ Resourcegrenzen blijven 2 GiB per proces / 4 GiB nieuwe artefacten en maximaal
 5.000 records / 64 MiB per fysiek Parquetbestand. Er wordt alleen vanwege de
 nieuwe brongebonden Rust-diagnose opnieuw verwerkt, niet in de hoop door een
 ongewijzigde herhaling alsnog buys toe te laten.
+
+## Werkelijk uitgevoerd — 2026-09-14
+
+Decoder-releasecode: `06d9d038636aac08dbcea30c30ac6d31d414c449`.
+De latere browser-wordwrap is uitsluitend presentatie; de nieuwe reader is
+afzonderlijk bewaard en vervangt de acquisitiebinary niet.
+
+| Slot | Bronze / verwacht | OK / ERROR | Nieuwe nested-buydiagnose | Toegelaten buy / sell |
+|---|---:|---:|---:|---:|
+| 422669516 | 1.022 / 1.022 | 973 / 49 | 974: ACCOUNT_MISMATCH | 0 / 2 |
+| 422669517 | 1.048 / 1.048 | 972 / 76 | 1023: ACCOUNT_MISMATCH | 0 / 0 |
+| 422669518 | 1.154 / 1.154 | 1.056 / 98 | 830: ACCOUNT_MISMATCH | 0 / 1 |
+| Totaal | 3.224 / 3.224 | 3.001 / 223 | 3 diagnoses, geen Silver-buy | 0 / 3 |
+
+Alle transactiepackages zijn DECODED; package-missing/unsupported/quarantine
+zijn nul. Dit zegt niets over volledige Pump-dekking: 22 packages verwijzen
+naar Pump, terwijl maar drie volledige sell-profielen toegelaten zijn.
+Er zijn twee mints met toegelaten sells, geen mint met beide toegelaten kanten.
+De drie afgewezen buy-diagnoses noemen twee **andere** event-mints. Dit zijn
+geen conclusies over ontbrekende on-chain activiteit of voldoende sampling.
+
+De strikte vergelijkingsaudit accepteert alleen de nieuwe
+`pump_nested_buy_analysis` bij de drie kandidaten. Alle oorspronkelijke
+transactievelden, eerdere diagnoses, bytes, onbekenden en drie sell-feiten
+zijn exact behouden. Alleen de nieuwe decoderidentiteit en opnieuw
+gecontroleerde Silver-parenthashes veranderen daarnaast. De 725- en
+3.137-package-regressies zijn werkelijk opnieuw uitgevoerd; alle vier
+engineering-sells en de 26-byte buy-afwijzing blijven exact behouden.
+
+Twee volledige decodes leveren identieke canonieke JSONL/quality/COMPLETE.
+Twee projecties van dezelfde sealed executionbinding leveren byte-identieke
+Parquetbestanden en manifests. Beide queryresultaten zijn identiek. De laatste
+wordwrapverbetering is tweemaal apart gerenderd; query-JSON bleef identiek,
+zonder opnieuw te decoderen. Werkelijke procesmetingen blijven afzonderlijk.
+
+| Artefact | SHA-256 |
+|---|---|
+| Nieuwe offline decoder | `38e7a73b8eeb70a36cf3df40afba35ad660b583c38335cafcfc379d79f49ffcf` |
+| Compiled decoder-source | `d5b697f89db61abb51d03bdaa5bd552effd386826591799a2652786c3ec5677f` |
+| Datasetmanifest | `825c1f4681db8e7eeacdfdc11a2a5cb3694ead6729db10509c2aebe833522628` |
+| Bronze JSONL | `f40dd4642ee5ea52a95145b578a63080f022dbf306be5cb4dc3351c44c6fe4f5` |
+| Silver JSONL | `ebc4c7385209774959570696b0f8f41b864f85bac6c4201c3560468507a8c800` |
+| DuckDB coverage-JSON | `26ed4bb219089cd3f433b75e06e55e4be5d0f667d6449dcc86db868feb57cb64` |
+| Laatste browserrapport | `e648e0feaa5420f4b3fe5815ddec85758ec585cb29d374e179942300b3fc896c` |
+
+Bronze Parquet: 3.224 rijen / 58.472.584 bytes; Silver Parquet: drie rijen /
+156.919 bytes. Geen fysieke bestandsgrens is verhoogd. Data-/queryprocessen
+hadden sockets geweigerd en een 2 GiB adresruimtecap, strenger dan RSS:
+decoderpiek 348.532 KiB, querypiek onder 372.000 KiB, historische volledige
+vergelijkingsaudit 408.696 KiB. Nieuwe data/evidence is circa 0,41 GB, ruim
+onder de 4 GiB-cap; de eindreceipt legt de werkelijke bytes vast.
+
+Uitgevoerde gates: 110 volledige Bronze Rust-tests, waaronder acht nieuwe
+nested-buytests; 24 Parquet Rust-tests; 27 coverage- en 15 manifesttests;
+1.585 Node-tests en 101 kritieke tests; fmt/clippy/build/typecheck,
+repositorypolicy, citation- en offline dependency/netwerkgates.
+Nieuwe negatieve tests behandelen argumentvorm/boolean, account/PDA/fee,
+eigen event, heights/siblings/dubbele events, failed status en onbekende
+privileges. Authentieke CAR-secties zijn apart gelabeld van synthetische
+mutaties. Een verse reviewer controleerde bronbytes, code en werkelijke
+artefacten onafhankelijk; GitHub-verificatie is **niet uitgevoerd**.
+
+Reviewcorrecties en oorspronkelijke ontwikkelfouten blijven buiten Git
+behouden: null/false-labelprecisie, ontbrekende controles in de query,
+JSON-null als fictieve diagnose en een tijdelijke HTML-importsyntaxfout.
+Logbewijs en eventuele post-fix broncaptures worden uitdrukkelijk
+onderscheiden; een latere broncapture bewijst geen oude foutieve bronbytes.
+
+## Lokaal bekijken en reproduceren
+
+Nieuwe outputroot:
+`/home/dmesdary/solana-quant-data/datasets/b5-nested-buy25-20260914.kfFPxr/`.
+
+- `decode-01/02`, `parquet-01/02`: nieuwe volledige records en fysieke dataset.
+- `query-01/02`, `coverage-01/02`: eerste werkelijk uitgevoerde queryrapporten.
+- `coverage-03/04`: definitieve, inhoudelijk gelijke rapporten met woordomloop.
+- `pilot-comparison-verified.json`, `legacy-regression-result.json`,
+  `determinism.json`, `report-final-determinism.json`: tellingen en exact behoud.
+- `independent-source-audit.json`, `independent-code-review.json` en de
+  afzonderlijke artifactreview: controleerbare onafhankelijke bevindingen.
+- `browser-final-v2/expanded/`: echte Windows-Chrome-screenshots en HTTP/hashbewijs.
+- `baseline.json`, `identities.json`, `logs/`, `gates-*`: oorspronkelijke
+  bestanden/refs/locks, nieuwe readeridentiteit en echte proces-/testmetingen.
+
+```bash
+/home/dmesdary/.local/share/solana-quant/run-with-toolchain node \
+  research/columnar-query/serve.mjs \
+  /home/dmesdary/solana-quant-data/datasets/b5-nested-buy25-20260914.kfFPxr/coverage-03 7033
+```
+
+Open **http://localhost:7033/** in de Windows-browser. Het is dezelfde kleine
+read-only rapportviewer, geen nieuw dashboard. `pipeline.mjs`, `legacy.mjs`,
+`pilot-audit.py`, `legacy-audit.py` en `report-final.mjs` bewaren de gebruikte
+offline commando's en vergelijkingen. Een herhaling gebruikt nieuwe outputnamen;
+bestaande evidence wordt niet overschreven. Geen nieuwe lease of acquisitie.

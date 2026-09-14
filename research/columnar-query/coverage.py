@@ -188,7 +188,7 @@ def render(result):
 raw tokenargument {value('amount_raw_u64')}, max SOL-accountingargument {value('max_sol_cost_raw_u64')}.</p>
 <p>Eigen context: outer {value('outer_index')} / inner {value('instruction_inner_order')} / hoogte {value('instruction_stack_height')}
 → event inner {value('event_inner_order')} / hoogte {value('event_stack_height')}. Event-mint: <code>{value('reported_mint')}</code>.</p>
-<p>Werkelijke CPI-signer: {value('actual_cpi_signer')}. Bronhiaten: {value('proof_gaps')}.</p></section>""")
+<p>Werkelijke CPI-signer: {value('actual_cpi_signer')}.</p><pre>Bronhiaten: {value('proof_gaps')}</pre></section>""")
         nested_view = ('<section><h2>Afzonderlijke nested-buydiagnoses — geen Silver-toelating</h2>'
             '<p>Dit zijn uitgevoerde Rust-controles op opgenomen bytes, via Parquet bevraagd. '
             'Een passend event is geen volledig bewezen accountprofiel. Diagnostische mints '
