@@ -213,6 +213,9 @@ class CoverageTests(unittest.TestCase):
             self.assertEqual(details[1][10],'true')
             self.assertIsNone(details[2][10])
             gaps=db.execute(sql['sell_account_evidence_gaps']).fetchall()
+            names=[column[0] for column in db.description]
+            self.assertIn('expected_account_role',names)
+            self.assertNotIn('account_role',names)
             self.assertEqual(len(gaps),2)
             self.assertEqual([row[2] for row in gaps],['6','14'])
             self.assertTrue(all(row[-1] in [None,'null'] for row in gaps))
