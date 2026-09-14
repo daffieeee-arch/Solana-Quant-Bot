@@ -3,14 +3,69 @@ import json
 import pathlib
 import sys
 import unittest
+import tempfile
 
 from query import connect, rows
 import token_balance_report as balances
 
 FIXTURES = pathlib.Path(sys.argv.pop(1)) if len(sys.argv) > 1 else None
+OLD_REJECTED_BUY = "SELECT b.slot, b.transaction_index, b.disposition AS bronze_outcome, b.transaction_status, json_extract_string(d.value, '$.admission') AS instruction_admission, json_extract_string(d.value, '$.full_instruction_error.reason') AS reason, json_extract_string(d.value, '$.unexplained_suffix.hex') AS retained_suffix, json_extract_string(d.value, '$.unexplained_suffix.semantics') AS suffix_semantics, b.raw_sha256, b.record_sha256 FROM bronze b, json_each(CAST(decode(b.record_bytes) AS JSON), '$.transaction.pump_structural_analysis.buy_source_diagnostics') d ORDER BY b.record_ordinal, CAST(d.key AS BIGINT)"
+
+
+def rejected_buy_sql():
+    return json.loads(pathlib.Path(__file__).with_name('queries.sql.json').read_bytes())['rejected_buy']
+
+
+def query_records(db, padding, count, offset=0):
+    """Synthetic SQL-shape fixture, not a canonical/decoded Bronze dataset."""
+    statement="""SELECT i::UBIGINT AS slot,i::UBIGINT AS transaction_index,
+        i::UBIGINT AS record_ordinal,'DECODED' AS disposition,
+        CASE WHEN i%2=0 THEN 'OK' ELSE 'ERROR' END AS transaction_status,
+        'fixture-raw' AS raw_sha256,'fixture-record-'||i AS record_sha256,
+        CAST(json_object('unrelated_metadata',repeat('x',?), 'identity',i,
+        'transaction',json_object('pump_structural_analysis',json_object('buy_source_diagnostics',
+        CASE i%4 WHEN 0 THEN NULL WHEN 1 THEN '[]'::JSON ELSE
+        '[{"admission":"NOT_ADMITTED","full_instruction_error":{"reason":"SOURCE_GAP"}},{"admission":"NOT_ADMITTED","full_instruction_error":{"reason":"SOURCE_GAP"}}]'::JSON END))) AS BLOB) AS record_bytes
+        FROM range(?,?) t(i)"""
+    # Fixture creation itself is bounded; do not bulk-build every padded JSON.
+    for start in range(offset,offset+count,128):
+        prefix='CREATE TABLE bronze AS ' if start==offset else 'INSERT INTO bronze '
+        db.execute(prefix+statement,[padding,start,min(start+128,offset+count)])
 
 
 class TokenBalanceQueries(unittest.TestCase):
+    def test_rejected_buy_narrow_projection_preserves_nulls_duplicates_failures_and_order(self):
+        with connect() as db:
+            query_records(db, 16, 12)
+            expected=rows(db.execute(OLD_REJECTED_BUY))
+            actual=rows(db.execute(rejected_buy_sql()))
+            self.assertEqual(actual,expected)
+            self.assertTrue(any(row[3]=='ERROR' for row in actual['rows']))
+            self.assertTrue(any(row[4] is None for row in actual['rows']))
+            self.assertEqual(len(actual['rows']),15)
+
+    def test_rejected_buy_large_unrelated_metadata_fits_unchanged_256mb_cap(self):
+        with tempfile.TemporaryDirectory(prefix='synthetic-query-parent-') as temporary:
+            # 64 MiB of parent-only payload exposes the former lateral retention.
+            # This tight query budget is unchanged; original parent bytes remain
+            # in the dataset, but only the diagnosis array enters json_each.
+            files=[]
+            for start in range(0,1024,128):
+                file=pathlib.Path(temporary)/f'synthetic-query-shape-{start}.parquet'
+                with connect() as writer:
+                    query_records(writer, 65536, 128, start)
+                    writer.execute("COPY bronze TO ? (FORMAT PARQUET, COMPRESSION UNCOMPRESSED)",[str(file)])
+                files.append(str(file))
+            # Like the real reader, query files rather than retaining a 64-MiB
+            # fixture table in the same in-memory database. This is explicitly a
+            # synthetic SQL-shape fixture, not the canonical Rust dataset writer.
+            with connect() as db:
+                db.from_parquet(files).create_view('bronze')
+                actual=rows(db.execute(rejected_buy_sql()))
+                self.assertEqual(len(actual['rows']),1280)
+                self.assertEqual(db.execute('SELECT COUNT(*) FROM bronze').fetchone(),(1024,))
+                self.assertEqual(db.execute("SELECT current_setting('memory_limit')").fetchone(),('244.1 MiB',))
+
     def db(self):
         if FIXTURES is None:
             raise ValueError('explicit Rust Parquet fixture directory required; do not skip')
