@@ -180,5 +180,43 @@ class CoverageTests(unittest.TestCase):
         self.assertIn('retained Rust diagnostics',entry['missing'][0])
         self.assertNotIn('extra buy byte',json.dumps(entry))
 
+    def test_sell_profiles_query_preserves_rejected_and_failed_packages_and_null_cpi(self):
+        sql=json.loads(pathlib.Path(__file__).with_name('coverage.sql.json').read_bytes())
+        # Synthetic Rust-diagnosis shapes only. SQL does not infer account roles,
+        # PDA signers, mayhem semantics, successful events or Silver admission.
+        cases=[
+            ('OK',{'evaluated_profile':'tokenkeg16','selected_candidate':'admitted16',
+                   'disposition':'MATCHED_RECORDED_EVENT_FACTS','reason':None,
+                   'profile_evidence_status':'OBSERVATION_PREDICATES_MATCHED',
+                   'proof_gaps':[], 'account_count':16,'event_reported':{'mayhem_mode':False},
+                   'accounts':[]}),
+            ('OK',{'evaluated_profile':'mayhem16','selected_candidate':None,
+                   'disposition':'NOT_ADMITTED','reason':'ACCOUNT_MISMATCH',
+                   'proof_gaps':['remaining account unresolved','CPI privileges unavailable'],
+                   'account_count':16,'event_reported':{'mayhem_mode':True},'accounts':[
+                       {'position':6,'role':'user','address_match':True,'message_signer':False,
+                        'message_minimum_privileges_match':False,'cpi_signer':None},
+                       {'position':14,'role':'bonding_curve_v2','address_match':False,
+                        'observed':'actual','expected':'source-derived','message_signer':False,
+                        'message_minimum_privileges_match':True,'cpi_signer':None}]}),
+            ('ERROR',{'disposition':'NOT_ADMITTED','reason':'MISSING_EVENT','accounts':[]}),
+        ]
+        with connect() as db:
+            db.execute('CREATE TABLE bronze(slot UBIGINT,transaction_index UBIGINT,record_ordinal UBIGINT,transaction_status VARCHAR,record_bytes BLOB)')
+            db.executemany('INSERT INTO bronze VALUES (99,?,?,?,?)',[(i,i,status,json.dumps({'transaction':{'pump_sell_analysis':[d]}}).encode()) for i,(status,d) in enumerate(cases)])
+            details=db.execute(sql['sell_profile_details']).fetchall()
+            self.assertEqual(len(details),3)
+            self.assertEqual(details[0][2:7],('OK','tokenkeg16','admitted16','MATCHED_RECORDED_EVENT_FACTS',None))
+            self.assertEqual(details[1][2:7],('OK','mayhem16',None,'NOT_ADMITTED','ACCOUNT_MISMATCH'))
+            self.assertEqual(details[2][2:7],('ERROR',None,None,'NOT_ADMITTED','MISSING_EVENT'))
+            self.assertEqual(details[0][10],'false')
+            self.assertEqual(details[1][10],'true')
+            self.assertIsNone(details[2][10])
+            gaps=db.execute(sql['sell_account_evidence_gaps']).fetchall()
+            self.assertEqual(len(gaps),2)
+            self.assertEqual([row[2] for row in gaps],['6','14'])
+            self.assertTrue(all(row[-1] in [None,'null'] for row in gaps))
+            self.assertEqual(details,db.execute(sql['sell_profile_details']).fetchall())
+
 
 if __name__=='__main__': unittest.main()

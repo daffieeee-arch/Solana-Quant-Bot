@@ -133,7 +133,8 @@ def render(result):
     for name, table in result['queries'].items():
         head = ''.join('<th>'+e(c['name'])+'</th>' for c in table['columns'])
         body = ''.join('<tr>'+''.join('<td>'+e('NULL / onbekend' if v is None else v)+'</td>' for v in row)+'</tr>' for row in table['rows'])
-        tables.append(f"<details><summary>{e(name)}</summary><div class='scroll'><table><tr>{head}</tr>{body}</table></div><pre>{e(table['sql'])}</pre></details>")
+        expanded = ' open' if name in ['sell_profile_details', 'sell_account_evidence_gaps'] else ''
+        tables.append(f"<details{expanded}><summary>{e(name)}</summary><div class='scroll'><table><tr>{head}</tr>{body}</table></div><pre>{e(table['sql'])}</pre></details>")
     matrix = ''.join(f"<section><h3>{e(q['question'])}</h3><b>{e(q['result_kind'])}</b><p>Nodig: {e('; '.join(q['requires']))}</p><p>Aanwezig: {e(json.dumps(q['present']))}</p><p>Ontbreekt: {e('; '.join(q['missing']) or 'geen binnen deze begrensde toets')}</p><p>Volgende stap: {e(q['next_step'])}</p></section>" for q in result['suitability_matrix'])
     pilot = result.get('pilot')
     slot_rows = []
@@ -174,7 +175,7 @@ body{{background:#111b24;color:#e0eaf3;font:15px system-ui;margin:0}}main{{max-w
 <p>Programmatellingen lezen uitsluitend bestaande Rust-velden: unieke programmabetrokkenheid per pakket, gedeclareerde top-level instructies en opgenomen CPI-verwijzingen. Failed transactions blijven inbegrepen. Ontbrekende CPI-metadata is onbekend, niet nul; de aparte program_coverage-tabel toont die noemer. Verwijzingen bewijzen geen gecommitteerde toestandsverandering.</p>
 <h2>Onderzoeksvraag → aanwezige feiten → ontbrekende stap</h2>{matrix}
 <section><h2>{pilot_heading}</h2>{pilot_view}</section>
-<h2>Werkelijk uitgevoerde DuckDB-controles</h2>{''.join(tables)}
+<h2>Werkelijk uitgevoerde DuckDB-controles</h2><p>De geopende sell-profieltabellen tonen iedere Rust-uitkomst met transactiestatus, eigen instructie/event-context en bronhash. Niet-toegelaten profielen blijven zichtbaar; een gelijk accountaantal bewijst geen gelijke variant. Een PDA-adresmatch bewijst geen opgenomen CPI-signerflags. NULL blijft onbekend. Deze queries beslissen niet opnieuw over Silver-toelating.</p>{''.join(tables)}
 <section><h2>Herkomst</h2><pre>{e(json.dumps(result['bindings'],indent=2))}</pre><a href='query-results.json'>Volledig machineleesbaar resultaat / matrix / SQL</a> · <a href='query-execution.json'>Uitvoeringsreceipt</a></section></main></html>"""
 
 

@@ -1,4 +1,4 @@
-//! Source-pinned sell/Token-2022/cashback: direct and bounded nested contexts.
+//! Source-pinned sell profiles: preserved cashback17 and bounded no-accumulator16.
 //! Silver contains recorded instruction/event facts, NEVER account-write state,
 //! executable economics, historical activation, or a repaired buy suffix.
 use crate::{
@@ -111,7 +111,7 @@ pub fn decode_event(data: &[u8]) -> Result<TradeEvent, Rejection> {
     Ok(event)
 }
 
-fn associated_event(tx: &Value, ix: &Value) -> Result<(Value, TradeEvent), Rejection> {
+pub(crate) fn associated_event(tx: &Value, ix: &Value) -> Result<(Value, TradeEvent), Rejection> {
     let top = tx["instructions"]
         .as_array()
         .ok_or(Rejection::UnsupportedInvocation)?;
@@ -169,7 +169,12 @@ fn associated_event(tx: &Value, ix: &Value) -> Result<(Value, TradeEvent), Rejec
     ))
 }
 
-fn expected_pda(tx: &Value, ix: &Value, pos: usize, event: &TradeEvent) -> Option<(Pubkey, u8)> {
+pub(crate) fn expected_pda(
+    tx: &Value,
+    ix: &Value,
+    pos: usize,
+    event: &TradeEvent,
+) -> Option<(Pubkey, u8)> {
     let mint = account_key(tx, ix, 2)?;
     let user = account_key(tx, ix, 6)?;
     let token = account_key(tx, ix, 9)?;
@@ -220,7 +225,7 @@ fn accounts(tx: &Value, ix: &Value, event: &TradeEvent, source: &Value) -> Vec<V
     }).collect()
 }
 
-fn event_fields(e: &TradeEvent) -> Value {
+pub(crate) fn event_fields(e: &TradeEvent) -> Value {
     // All numeric wire quantities are decimal strings, including zero. Unknown
     // identity/decimals remain null, distinct from the observed zero mint bytes.
     json!({"mint_address":bs58::encode(e.mint).into_string(),"user_address":bs58::encode(e.user).into_string(),"is_buy":e.is_buy,"ix_name":e.ix_name,
@@ -238,7 +243,7 @@ fn event_fields(e: &TradeEvent) -> Value {
         "field_role":"EVENT_REPORTED_NOT_ACCOUNT_WRITE_STATE","fee_role":"NAMED_EVENT_FIELDS_NOT_ADDITIVE_NET_PROCEEDS_OR_RECIPIENT_BALANCE_DELTAS"})
 }
 
-fn mark_cpi_flags_unavailable(rows: &mut [Value]) {
+pub(crate) fn mark_cpi_flags_unavailable(rows: &mut [Value]) {
     for row in rows {
         // Preserve message minimum checks; they cannot prove the CPI metas.
         row["message_minimum_privileges_match"] = row["required_privileges_match"].clone();
@@ -275,6 +280,12 @@ fn account_predicate(ix: &Value, rows: &[Value], direct: bool) -> bool {
 }
 
 fn diagnose(tx: &Value, ix: &Value, data: &[u8], direct: bool, source: &Value) -> Value {
+    if ix["account_indexes"]
+        .as_array()
+        .is_some_and(|a| a.len() == 16)
+    {
+        return crate::pump_sell16::diagnose(tx, ix, data, direct, source);
+    }
     let instruction = decode_instruction(data);
     let context = if direct {
         associated_event(tx, ix)
