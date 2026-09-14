@@ -492,7 +492,10 @@ pub fn materialize_with_write_limit(
     settings["dataset_write_accounting"] = json!(
         "CUMULATIVE_OUTPUT_BYTES: both layers, discarded split probes, manifest and COMPLETE; no refunds; excludes filesystem allocation overhead"
     );
-    let manifest = json!({"schema":"OF1_PARQUET_DATASET_2","writer":{"version":env!("CARGO_PKG_VERSION"),"source_sha256":crate::source_sha256(),"executable_sha256":file_hash(&std::env::current_exe()?,256*1024*1024)?.0,"cargo_lock_sha256":hash(include_bytes!("../Cargo.lock")),"settings":settings},"input":seal,"files":files,"layers":layers,"selection":admitted["selection"],"sample_identity":admitted["sample_identity"],"evidence":{"slice_class":admitted["slice_class"],"receipt_evidence":admitted["receipt_evidence"],"new_domain_decoding":false,"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","unknowns_preserved":true,"historical_activation":"UNPROVEN","physical_writer":"RUST_ARROW_PARQUET_BOUNDED_PROJECTION_ONLY"},"publication":{"state":"FILES_VERIFIED","cumulative_shard_write_bytes":budget.written,"does_not_assert_selection_completeness_or_research_suitability":true}});
+    let mut manifest = json!({"schema":"OF1_PARQUET_DATASET_2","writer":{"version":env!("CARGO_PKG_VERSION"),"source_sha256":crate::source_sha256(),"executable_sha256":file_hash(&std::env::current_exe()?,crate::MAX_EXECUTABLE_BYTES)?.0,"cargo_lock_sha256":hash(include_bytes!("../Cargo.lock")),"settings":settings},"input":seal,"files":files,"layers":layers,"selection":admitted["selection"],"sample_identity":admitted["sample_identity"],"evidence":{"slice_class":admitted["slice_class"],"receipt_evidence":admitted["receipt_evidence"],"new_domain_decoding":false,"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","unknowns_preserved":true,"historical_activation":"UNPROVEN","physical_writer":"RUST_ARROW_PARQUET_BOUNDED_PROJECTION_ONLY"},"publication":{"state":"FILES_VERIFIED","cumulative_shard_write_bytes":budget.written,"does_not_assert_selection_completeness_or_research_suitability":true}});
+    if let Some(binding) = admitted.get("batch_binding") {
+        manifest["batch_binding"] = binding.clone();
+    }
     let bytes = serde_json::to_vec_pretty(&manifest).map_err(invalid)?;
     if bytes.len() > 1024 * 1024 {
         return Err(invalid("MANIFEST_LIMIT"));

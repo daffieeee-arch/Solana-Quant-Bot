@@ -42,7 +42,7 @@ try {
   await writeResearchNetworkDenyFilter(filter,process.arch,{allowLocalProcessSpawn:true});
   await buildResearchSeccompLauncher(launcher);
   const run=(command,args)=>{
-    const r=spawnSync(launcher,[filter,command,...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024,timeout:900_000,env:{...process.env,CARGO_NET_OFFLINE:'true',PYTHONDONTWRITEBYTECODE:'1',COLUMNAR_TEST_FIXTURE_DIR:join(scratch,'fixtures')}});
+    const r=spawnSync(launcher,[filter,command,...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024,timeout:900_000,env:{...process.env,CARGO_NET_OFFLINE:'true',PYTHONDONTWRITEBYTECODE:'1',COLUMNAR_TEST_FIXTURE_DIR:join(scratch,'fixtures'),COLUMNAR_BATCH_FIXTURE_DIR:join(scratch,'batch-source')}});
     if(r.error||r.status!==0)throw Error(r.error?.message||r.stderr||r.stdout||'offline gate failed');return r.stdout+r.stderr;
   };
   const probe=run(process.execPath,['--input-type=module','-e',"import net from 'node:net';const s=net.createConnection({host:'127.0.0.1',port:9});s.on('connect',()=>process.exit(2));s.on('error',e=>{if(e.code==='EPERM')console.log('NETWORK_DENIED');else process.exit(3);});"]);
@@ -66,6 +66,13 @@ try {
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_exact_quote.py')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_token_balances.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_manifest.py'),join(scratch,'fixtures')]));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_collection.py'),join(scratch,'fixtures')]));
+    // The ordinary CI Bronze gate precedes this gate. Re-execute only its
+    // explicit six-slot source export, then prove the actual cross-crate path.
+    // This remains offline and creates no provider/acquisition capability.
+    const bronze=join(root,'rust/of1-bronze-decoder');
+    process.stdout.write(run('cargo',['+1.97.1','test','--manifest-path',join(bronze,'Cargo.toml'),'--locked','--offline','--test','recorded_pipeline','six_slot_original_fixture_is_streamed_in_multiple_partitions_without_record_changes','--','--exact']));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_collection_pipeline.py'),join(scratch,'batch-source'),join(scratch,'batch-pipeline'),join(bronze,'target/debug/of1-bronze-batch'),join(crate,'target/debug/of1-parquet-projection'),join(bronze,'target/debug/of1-bronze-collection')]));
     console.log('DuckDB real Parquet and coverage regressions PASS (sockets denied)');
   }
   console.log('Parquet dependency identity/network-denied gates PASS');

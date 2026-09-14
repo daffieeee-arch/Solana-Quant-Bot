@@ -59,6 +59,25 @@ pub fn seal(input: &Path, execution_sha: &str) -> io::Result<Value> {
         return Err(invalid("EXECUTION_SCHEMA"));
     }
     let mut files = BTreeMap::new();
+    if !execution["batch_binding"].is_null() {
+        let bytes = storage::bounded_read(&input.join("batch.json"))?;
+        let binding: Value = serde_json::from_slice(&bytes).map_err(invalid)?;
+        if binding != execution["batch_binding"] {
+            return Err(invalid("BATCH_EXECUTION_BINDING"));
+        }
+        let executable = std::env::current_exe()?;
+        if binding["workers"]["projector_sha256"]
+            != shards::file_hash(&executable, crate::MAX_EXECUTABLE_BYTES)?.0
+        {
+            return Err(invalid("BATCH_PROJECTOR_EXECUTABLE_MISMATCH"));
+        }
+        files.insert(
+            "batch.json",
+            json!({"sha256":hash(&bytes),"bytes":bytes.len()}),
+        );
+    } else if input.join("batch.json").exists() {
+        return Err(invalid("UNBOUND_BATCH_FILE"));
+    }
     for (name, key) in [
         ("bronze.jsonl", "bronze_jsonl_sha256"),
         ("silver.jsonl", "silver_jsonl_sha256"),
@@ -194,43 +213,62 @@ fn source(quality: &Value, execution: &Value) -> io::Result<Source> {
                 return Err(invalid("SAMPLE_SELECTED_WINDOW_BINDING"));
             }
         }
+        let selected = if quality["batch_binding"].is_null() {
+            if !execution["batch_binding"].is_null() {
+                return Err(invalid("BATCH_QUALITY_BINDING"));
+            }
+            (start..end).collect()
+        } else {
+            if quality["batch_binding"]["source_run_id"] != run["run_id"] {
+                return Err(invalid("BATCH_ORIGINAL_RUN_ID"));
+            }
+            crate::batch::selected(
+                &quality["batch_binding"],
+                execution,
+                bindings,
+                &sample,
+                &payload,
+            )?
+        };
         Ok(Source {
             sample,
             class: class.into(),
             receipt: evidence,
             bindings: bindings.clone(),
-            selected: (start..end).collect(),
+            selected,
             synthetic: false,
         })
     } else {
-        // Explicit synthetic writer fixtures are useful, never an authentic sample bypass.
-        if quality["input_kind"] != "FIXTURE_SYNTHETIC_SHARD_TEST"
-            || quality["receipt_evidence"] != "Fixture"
-            || quality["slice_class"] != "ENGINEERING_VALIDATION_ONLY"
-            || !quality["sample_identity"].is_null()
-            || !execution["sample_identity"].is_null()
-        {
-            return Err(invalid("ORIGINAL_RUN_OR_EXPLICIT_FIXTURE_REQUIRED"));
-        }
-        let selected = quality["selected_slots"]
-            .as_array()
-            .ok_or_else(|| invalid("SELECTED_SLOTS"))?
-            .iter()
-            .map(number)
-            .collect::<io::Result<Vec<_>>>()?;
-        if selected.is_empty() || selected.len() > 128 || selected.windows(2).any(|w| w[0] >= w[1])
-        {
-            return Err(invalid("SELECTED_SLOTS"));
-        }
-        Ok(Source {
-            sample: Value::Null,
-            class: "ENGINEERING_VALIDATION_ONLY".into(),
-            receipt: json!("Fixture"),
-            bindings: Value::Null,
-            selected,
-            synthetic: true,
-        })
+        synthetic_source(quality, execution)
     }
+}
+fn synthetic_source(quality: &Value, execution: &Value) -> io::Result<Source> {
+    // Explicit synthetic writer fixtures are useful, never an authentic sample bypass.
+    if quality["input_kind"] != "FIXTURE_SYNTHETIC_SHARD_TEST"
+        || quality["receipt_evidence"] != "Fixture"
+        || quality["slice_class"] != "ENGINEERING_VALIDATION_ONLY"
+        || !quality["sample_identity"].is_null()
+        || !execution["sample_identity"].is_null()
+    {
+        return Err(invalid("ORIGINAL_RUN_OR_EXPLICIT_FIXTURE_REQUIRED"));
+    }
+    let selected = quality["selected_slots"]
+        .as_array()
+        .ok_or_else(|| invalid("SELECTED_SLOTS"))?
+        .iter()
+        .map(number)
+        .collect::<io::Result<Vec<_>>>()?;
+    if selected.is_empty() || selected.len() > 128 || selected.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(invalid("SELECTED_SLOTS"));
+    }
+    Ok(Source {
+        sample: Value::Null,
+        class: "ENGINEERING_VALIDATION_ONLY".into(),
+        receipt: json!("Fixture"),
+        bindings: Value::Null,
+        selected,
+        synthetic: true,
+    })
 }
 /// Exact frozen proposal identity; this verifies identity, not acquisition authorization.
 /// # Errors
@@ -347,7 +385,11 @@ pub fn inspect(input: &Path, seal: &Value) -> io::Result<Value> {
         }
     }
     check_silver(input, &source, &parents)?;
-    Ok(inventory(&source, &expected, slots))
+    let mut result = inventory(&source, &expected, slots);
+    if let Some(binding) = quality.get("batch_binding") {
+        result["batch_binding"] = binding.clone();
+    }
+    Ok(result)
 }
 fn check_silver(
     input: &Path,
@@ -408,4 +450,35 @@ fn inventory(
     }
     let complete = inventory.iter().all(|s| s["accounted"] == true);
     json!({"sample_identity":source.sample,"slice_class":source.class,"receipt_evidence":source.receipt,"selection":{"selected_slots":source.selected,"slots":inventory,"all_expected_packages_accounted":complete,"decoded_packages":total_outcomes.get("DECODED").copied().unwrap_or(0),"package_outcomes":total_outcomes,"status":if complete{"ACCOUNTED"}else{"INCOMPLETE"}}})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn batch_run_id_must_match_hashed_original_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let put = |name: &str, v: &Value| {
+            let p = dir.path().join(name);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            let b = serde_json::to_vec(v).unwrap();
+            fs::write(p, &b).unwrap();
+            hash(&b)
+        };
+        let run = json!({"run_id":"actual-run","aggregate_sha256":"aggregate","metadata_lease":{"authority":{"mode":"FIXTURE"}},"plan":{}});
+        let payload = json!({"lease":{"authority":{"mode":"FIXTURE"}},"prepared":{"start_slot":100,"end_slot":101}});
+        let receipt = json!({"aggregate_sha256":"aggregate","evidence":"Fixture","sha256":"raw","response_entity_bytes":10});
+        let bindings = json!({"manifest_sha256":put("run.json",&run),"payload_manifest_sha256":put("payload.json",&payload),"aggregate_sha256":"aggregate","receipts":[{"sequence":4,"path":"published/0000000004/receipt.json","sha256":put("published/0000000004/receipt.json",&receipt),"raw_sha256":"raw","raw_bytes":10}]});
+        let quality = json!({"bindings":bindings,"receipt_evidence":"Fixture","slice_class":"ENGINEERING_VALIDATION_ONLY","batch_binding":{"source_run_id":"invented-run"}});
+        let execution = json!({"run_root":dir.path()});
+        assert!(
+            source(&quality, &execution)
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("BATCH_ORIGINAL_RUN_ID")
+        );
+    }
 }

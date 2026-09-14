@@ -1,7 +1,9 @@
 //! Offline Solana decoding and pinned Pump structural inspection; no transport,
 //! acquisition resume, signer or independently promoted Pump candidate.
 pub mod archive;
+pub mod batch;
 pub mod codec;
+pub mod collection;
 pub mod proto;
 pub mod pump;
 pub mod pump_buy;
@@ -22,6 +24,10 @@ pub fn source_sha256() -> String {
     for bytes in [
         include_bytes!("lib.rs").as_slice(),
         include_bytes!("archive.rs"),
+        include_bytes!("batch.rs"),
+        include_bytes!("collection.rs"),
+        include_bytes!("bin/of1-bronze-collection.rs"),
+        include_bytes!("bin/of1-bronze-batch.rs"),
         include_bytes!("codec.rs"),
         include_bytes!("proto.rs"),
         include_bytes!("token_balances.rs"),

@@ -1,5 +1,6 @@
 //! Physical projection only. No protocol decoding, network, or inferred domain fields.
 pub mod admission;
+pub mod batch;
 pub mod columns;
 pub mod shards;
 pub mod storage;
@@ -7,6 +8,10 @@ mod token_balances;
 
 use sha2::{Digest, Sha256};
 use std::io;
+
+/// Streaming executable identity ceiling, separate from the unchanged 64 MiB
+/// data-file limit. Debug symbols must not change data admission semantics.
+pub const MAX_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[must_use]
 pub fn hash(bytes: &[u8]) -> String {
@@ -28,6 +33,7 @@ pub fn source_sha256() -> String {
         include_bytes!("storage.rs"),
         include_bytes!("shards.rs"),
         include_bytes!("admission.rs"),
+        include_bytes!("batch.rs"),
         include_bytes!("main.rs"),
         include_bytes!("../Cargo.toml"),
         include_bytes!("../Cargo.lock"),

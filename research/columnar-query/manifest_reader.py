@@ -132,9 +132,55 @@ def sample_inventory(manifest):
             raise ValueError("unsupported or altered fixed source sample identity")
         if manifest["input"]["execution"].get("sample_identity") != sample or manifest["input"]["execution"].get("slice_class") != "RESEARCH_SAMPLING":
             raise ValueError("sample identity is not bound by original decoder execution")
-        if manifest["selection"]["selected_slots"] != list(range(sample["start_slot"], sample["end_slot_exclusive"])):
+        if manifest.get("batch_binding") is not None:
+            batch_inventory(manifest)
+        elif manifest["selection"]["selected_slots"] != list(range(sample["start_slot"], sample["end_slot_exclusive"])):
             raise ValueError("sample selection disagrees with original slot inventory")
     return sample
+
+
+def batch_inventory(manifest):
+    """A physical subset retains the complete original native sample identity.
+
+    This mirrors Rust's exact plan binding; no caller label or rewritten source
+    receipt can provide an alternative sample identity here.
+    """
+    binding = manifest.get("batch_binding")
+    if binding is None:
+        return None
+    if binding.get("schema") != "OF1_BATCH_BINDING_1":
+        raise ValueError("unsupported physical batch binding")
+    original_plan = binding.get("plan_json")
+    if not isinstance(original_plan, str) or len(original_plan.encode()) > MAX_MANIFEST_BYTES or sha(original_plan.encode()) != binding.get("plan_sha256"):
+        raise ValueError("batch original plan bytes/hash mismatch")
+    from collection_reader import plan_inventory
+    plan = json.loads(original_plan, object_pairs_hook=pairs_unique)
+    sources, _, batches = plan_inventory(plan)
+    planned = [b for b in batches if b["batch_id"] == binding.get("batch_id")]
+    if len(planned) != 1 or binding.get("source_id") not in sources:
+        raise ValueError("batch not in original plan")
+    expected, source = planned[0], sources[binding["source_id"]]
+    execution = manifest["input"]["execution"]
+    if (binding.get("selected_slots"), binding.get("receipt_sequences"), binding.get("source_id")) != (expected["slots"], expected["receipt_sequences"], expected["source_id"]):
+        raise ValueError("batch receipt/slot/source assignment mismatch")
+    pairs = [(binding.get("original_bindings"), source["bindings"]),
+             (binding.get("sample_identity"), source.get("sample_identity")),
+             (binding.get("sample_identity"), manifest.get("sample_identity")),
+             (binding.get("source_run_id"), source["run_id"]),
+             (binding.get("source_run_root"), source["run_root"]),
+             (binding.get("source_run_root"), execution["run_root"]),
+             (binding.get("logical_selection"), plan["logical_selection"]),
+             (binding.get("workers"), plan["workers"]),
+             (binding, execution.get("batch_binding")),
+             (binding.get("selected_slots"), manifest["selection"]["selected_slots"]),
+             (execution["executable_sha256"], plan["workers"]["batch_decoder_sha256"])]
+    if any(actual != expected for actual, expected in pairs):
+        raise ValueError("batch immutable source/sample/worker identity mismatch")
+    if manifest.get("sample_identity") is not None:
+        sample = manifest["sample_identity"]
+        if any(not sample["start_slot"] <= slot < sample["end_slot_exclusive"] for slot in binding["selected_slots"]):
+            raise ValueError("physical subset extends original research sample")
+    return binding
 
 
 def load_manifest(root):
@@ -178,6 +224,7 @@ def load_manifest(root):
                 raise ValueError("layer row total mismatch")
     selection_inventory(manifest)
     sample_inventory(manifest)
+    batch_inventory(manifest)
     return manifest, sha(raw)
 
 

@@ -43,6 +43,17 @@ pub fn charge(total: &mut usize, bytes: usize, limit: usize) -> io::Result<()> {
 /// # Errors
 /// Fails before publication on run, receipt, CID, graph or input identity changes.
 pub fn decode_run(root: &Path) -> io::Result<Value> {
+    decode_selection(root, None)
+}
+
+/// Decode exact original receipt sequences without changing the source run.
+/// # Errors
+/// Rejects unavailable, unplanned or over-budget selections before publication.
+pub fn decode_receipts(root: &Path, sequences: &[u64]) -> io::Result<Value> {
+    decode_selection(root, Some(sequences))
+}
+
+fn decode_selection(root: &Path, sequences: Option<&[u64]>) -> io::Result<Value> {
     let run = read_run_context(root)?;
     if run.aggregate_plan.epoch != 978 {
         return Err(invalid("UNSUPPORTED_EPOCH_OUTSIDE_BOUNDED_978_LANE"));
@@ -50,12 +61,22 @@ pub fn decode_run(root: &Path) -> io::Result<Value> {
     let mut payloads = run
         .published
         .iter()
-        .filter(|p| matches!(p.receipt.request.kind, RequestKind::CarRange { .. }))
+        .filter(|p| {
+            matches!(p.receipt.request.kind, RequestKind::CarRange { .. })
+                && sequences.is_none_or(|s| s.contains(&p.receipt.request.sequence))
+        })
         .collect::<Vec<_>>();
     // Plan order is authoritative; never infer ordering from directory enumeration.
     payloads.sort_by_key(|p| p.receipt.request.sequence);
     check_selection(&payloads)?;
-    let verification = verify_recorded(root, None)?;
+    if sequences.is_some_and(|s| s.len() != payloads.len()) {
+        return Err(invalid("SELECTED_RAW_NOT_PUBLISHED"));
+    }
+    let verify = || match sequences {
+        Some(s) => of1_range_recorder::recorded_verification::verify_recorded_selection(root, s),
+        None => verify_recorded(root, None),
+    };
+    let verification = verify()?;
     if verification["stages"]["raw_receipts"] != "VERIFIED" {
         return Err(invalid("RAW_RECEIPTS_UNVERIFIED"));
     }
@@ -107,7 +128,7 @@ pub fn decode_run(root: &Path) -> io::Result<Value> {
     }
     let mut projected = combine_slots(slots, record_bytes, metadata_bytes)?;
     attach_sample(&mut projected, run.aggregate_plan.sample_identity.as_ref())?;
-    let after = verify_recorded(root, None)?;
+    let after = verify()?;
     if after["bindings"] != verification["bindings"] || after["run_id"] != verification["run_id"] {
         return Err(invalid("INPUT_CHANGED_DURING_DECODE"));
     }

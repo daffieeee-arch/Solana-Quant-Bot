@@ -46,6 +46,14 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The separate [manifest-bound batch/collection route](research/B5_BATCH_COLLECTION.md)
+keeps logical selection, bounded workers and physical Parquet files distinct.
+It references original runs and receipts without splitting or relabeling them;
+the three-slot research pilot remains its original sample. The proposed
+sixteen-slot follow-up is post-hoc descriptive context, not an independent
+sample extension or acquisition permission. Collection publication and full
+package accounting remain separate from decoding and Research Ready.
+
 The separate [recorded token-balance/unit projection](research/B5_TOKEN_BALANCE_UNITS.md)
 exposes retained pre/post metadata without changing any admitted trade.
 The executed pilot retains 3,224 packages / 223 failed transactions and exposes
