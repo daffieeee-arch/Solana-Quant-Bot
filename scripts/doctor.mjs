@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { NODE_VERSION, RUST_VERSION } from './lib/development-toolchain.mjs';
 
 const REPOSITORY = resolve(import.meta.dirname, '..');
-const inside = (child, parent) => child === parent || child.startsWith(parent + sep);
+const inside = (child, parent) => child === parent || child.startsWith(parent === sep ? sep : parent + sep);
 
 export function inspectDatasetRoot(input, repository = REPOSITORY) {
   if (!input || !isAbsolute(input)) return { status: 'FAIL', reason: 'ABSOLUTE_DATASET_ROOT_REQUIRED' };
@@ -53,7 +53,7 @@ export function supportedFilesystem(type, path) {
 function execute(command, args, env) {
   const result = spawnSync(command, args, {
     cwd: REPOSITORY, encoding: 'utf8', timeout: 10_000, maxBuffer: 256 * 1024,
-    env: { ...env, RUSTUP_AUTO_INSTALL: '0', CARGO_NET_OFFLINE: 'true', npm_config_offline: 'true',
+    env: { ...env, GIT_OPTIONAL_LOCKS: '0', RUSTUP_AUTO_INSTALL: '0', CARGO_NET_OFFLINE: 'true', npm_config_offline: 'true',
       npm_config_update_notifier: 'false', npm_config_audit: 'false', UV_OFFLINE: '1' },
   });
   // Do not print errors/ambient configuration: only known version and Git metadata outputs.

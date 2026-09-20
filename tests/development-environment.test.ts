@@ -20,7 +20,7 @@ describe('read-only Linux development doctor', () => {
   it('requires an explicit absolute root and rejects overlap with the checkout', () => {
     const { root, repo } = fixture();
     for (const input of [undefined, '', './data']) expect(inspectDatasetRoot(input, repo).status).toBe('FAIL');
-    for (const input of [repo, join(repo, 'data'), root]) {
+    for (const input of [repo, join(repo, 'data'), root, '/']) {
       expect(inspectDatasetRoot(input, repo).reason).toBe('DATASET_REPOSITORY_OVERLAP');
     }
   });
