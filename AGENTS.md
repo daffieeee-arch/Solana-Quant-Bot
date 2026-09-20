@@ -33,7 +33,7 @@ The approved annotated archive tag `v1-paper-platform-final` exists at the last 
 
 Implement a walking skeleton: one official source, one approved plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one lifecycle and one visible result. Do not build a generic framework before a second proven use case requires it.
 
-PR 5 decides the physical Bronze/Silver Parquet writer. If Python performs only that serialization, it must be a generated, lossless materializer with schema and logical-hash parity and no semantic reinterpretation.
+The bounded B5 physical projection uses Rust Arrow/Parquet for Rust-authorized Bronze/Silver records; see `docs/research/B5_PARQUET_QUERYABLE_RECORDS.md`. Broader schemas remain unfinished. Any future Python-only serialization must be a generated, lossless materializer with schema and logical-hash parity and no semantic reinterpretation.
 
 ## Triton-only rule
 
@@ -96,6 +96,7 @@ npm run build
 node scripts/assert-pump-protocol-v2-offline.mjs --static
 node scripts/assert-of1-planner-offline.mjs --static
 node scripts/assert-of1-bronze-offline.mjs --static
+node scripts/assert-of1-parquet-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
@@ -104,6 +105,7 @@ cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --ch
 node scripts/assert-pump-protocol-v2-offline.mjs --all
 node scripts/assert-of1-planner-offline.mjs --all
 node scripts/assert-of1-bronze-offline.mjs --all
+node scripts/assert-of1-parquet-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked

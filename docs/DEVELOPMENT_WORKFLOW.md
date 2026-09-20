@@ -49,7 +49,7 @@ PR count is not a performance metric. A bounded PR may split when correctness/re
 
 Implement one official source, one approved acquisition plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one token lifecycle and one visible result. Do not create a generic plugin/framework/abstraction for a hypothetical second case.
 
-Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity and produces or authorizes their records. Python reads approved Silver and owns Gold/research; it must not decode Pump wire data or create alternative Silver rules. PR 5 decides the physical Bronze/Silver Parquet writer. If Python serializes those layers, generated schemas and logical hashes must prove a lossless, non-semantic materialization.
+Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity and produces or authorizes their records. Python reads approved Silver and owns Gold/research; it must not decode Pump wire data or create alternative Silver rules. The bounded B5 projection selects Rust Arrow/Parquet. If Python later serializes those layers, generated schemas and logical hashes must prove a lossless, non-semantic materialization.
 
 ## Project #4 workflow
 
@@ -105,6 +105,7 @@ npm run build
 node scripts/assert-pump-protocol-v2-offline.mjs --static
 node scripts/assert-of1-planner-offline.mjs --static
 node scripts/assert-of1-bronze-offline.mjs --static
+node scripts/assert-of1-parquet-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
@@ -113,6 +114,7 @@ cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --ch
 node scripts/assert-pump-protocol-v2-offline.mjs --all
 node scripts/assert-of1-planner-offline.mjs --all
 node scripts/assert-of1-bronze-offline.mjs --all
+node scripts/assert-of1-parquet-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked

@@ -46,6 +46,8 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Development and runtime boundary
 
+The [2026-09-20 VPS integration](operations/VPS_WSL_INTEGRATION.md) combines the imported WSL stack with the isolated VPS tooling in a separate worktree. Use the repository wrapper and explicit OF1 root, not archived WSL launch commands. Migration/query evidence, fresh offline decoding and CI acceptance are tracked separately; no acquisition or delivery promotion follows.
+
 The separate [manifest-bound batch/collection route](research/B5_BATCH_COLLECTION.md)
 keeps logical selection, bounded workers and physical Parquet files distinct.
 It references original runs and receipts without splitting or relabeling them;
@@ -227,7 +229,7 @@ Before deleting a subsystem: identify its invariant → migrate useful tests/gol
 | PR 2A / B2A | **Complete and Operationally Verified:** obsolete platform removal and reachable-legacy quarantine; no future product capability or data-evidence claim added |
 | PR 3 / B3 | **Complete at Fixture evidence:** one bounded Pump protocol walking skeleton plus a structural/fixture-only protocol evidence matrix; observed compatibility and historical activation remain unknown |
 | PR 4 / B4 | **In progress, bounded Raw result:** the preserved 45,051-byte empty range and the later 605,402-byte transaction-bearing range; [separate offline verification](research/OF1_RECORDED_CAR_VERIFICATION.md) and [bounded B5 preparation](research/B5_AUTHENTIC_RAW_BRONZE.md), no new run approval. PR #94 B4A and the [Rust offline integration](research/OF1_OFFLINE_TRANSPORT.md) remain `Fixture` partial results. Further metadata and payload each require a separately reviewed exact GO |
-| PR 5 / B5 | **Next, partial offline preparation explicitly authorized:** [725 retained single-slot decodes](research/B5_AUTHENTIC_RAW_BRONZE.md), [3,137 multi-slot decodes](research/B5_MULTISLOT_PUMP_SEARCH.md), [four bounded recorded sell facts](research/B5_NESTED_PUMP_SELL_CONTEXT.md) and a [Rust Parquet query projection](research/B5_PARQUET_QUERYABLE_RECORDS.md); broader Silver coverage and coin lifecycle remain outstanding |
+| PR 5 / B5 | **Next, partial offline preparation explicitly authorized:** [725 retained single-slot decodes](research/B5_AUTHENTIC_RAW_BRONZE.md), [3,137 multi-slot decodes](research/B5_MULTISLOT_PUMP_SEARCH.md), [four bounded recorded sell facts](research/B5_NESTED_PUMP_SELL_CONTEXT.md) and a [Rust Parquet query projection](research/B5_PARQUET_QUERYABLE_RECORDS.md); the [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md) retains 21,719 packages and 22 facts; broader Silver coverage and coin lifecycle remain outstanding |
 | PR 6 | Interactive browser Research Observatory MVP |
 | PR 7 | Bounded scale-up, Cohort Explorer and explicit data-sufficiency result |
 | PR 8 | PIT Gold v0 and first falsifiable baseline, or a valid `INSUFFICIENT_SAMPLE`/falsification result |

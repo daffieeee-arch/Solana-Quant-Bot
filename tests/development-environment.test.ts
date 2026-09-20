@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync,
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { collectDoctor, inspectDatasetRoot, parseDoctorArgs, supportedFilesystem } from '../scripts/doctor.mjs';
-import { developmentEnvironment, NODE_VERSION, RUST_VERSION, toolchainPaths } from '../scripts/lib/development-toolchain.mjs';
+import { developmentEnvironment, NODE_VERSION, RUST_VERSION, toolchainPaths, validQueryVersion } from '../scripts/lib/development-toolchain.mjs';
 import { runWithToolchain } from '../scripts/with-toolchain.mjs';
 
 const temporary: string[] = [];
@@ -114,5 +114,57 @@ describe('project-specific toolchain selection', () => {
     })).toThrow('absent');
     expect(existsSync(marker)).toBe(false);
     expect(readdirSync(root).sort()).toEqual(['data', 'repo']);
+  });
+
+  it('selects the query venv without inheriting another project Python environment', () => {
+    const env = { PATH: '/usr/bin', SOLANA_TOOLCHAIN_ROOT: '/tools',
+      PYTHONHOME: '/other/python', PYTHONPATH: '/other/modules',
+      SOLANA_QUANT_DATA_ROOT: '/explicit/data' };
+    const selected = developmentEnvironment(env);
+    expect(selected.COLUMNAR_QUERY_PYTHON).toBe('/tools/columnar-query-313-duckdb155/bin/python');
+    expect(selected.PATH.split(':')[2]).toBe('/tools/columnar-query-313-duckdb155/bin');
+    expect(selected.SOLANA_QUANT_DATA_ROOT).toBe('/explicit/data');
+    expect(selected.PYTHONHOME).toBeUndefined();
+    expect(selected.PYTHONPATH).toBeUndefined();
+    expect(selected.PYTHONNOUSERSITE).toBe('1');
+    expect(selected.PYTHONDONTWRITEBYTECODE).toBe('1');
+    expect(env.PYTHONHOME).toBe('/other/python');
+    expect(developmentEnvironment({ COLUMNAR_QUERY_PYTHON: '/custom/bin/python' }).COLUMNAR_QUERY_PYTHON).toBe('/custom/bin/python');
+    expect(() => toolchainPaths({ COLUMNAR_QUERY_PYTHON: 'relative/python' })).toThrow('absolute');
+  });
+
+  it('requires the reviewed DuckDB reader ABI and rejects missing or different metadata', () => {
+    const valid = { implementation: 'CPython', abi: '3.13', python: '3.13.15', duckdb: '1.5.5' };
+    expect(validQueryVersion(JSON.stringify(valid))).toBe(true);
+    for (const other of [null, {}, { ...valid, abi: '3.12' }, { ...valid, duckdb: '1.5.4' }, { ...valid, implementation: 'PyPy' }]) {
+      expect(validQueryVersion(JSON.stringify(other))).toBe(false);
+    }
+    expect(validQueryVersion('not json')).toBe(false);
+  });
+
+  it('reports the query reader independently without opening a dataset or installing Python', () => {
+    const { data } = fixture();
+    const calls: string[] = [];
+    const result = collectDoctor({ datasetRoot: data, env: { COLUMNAR_QUERY_PYTHON: '/query/bin/python' },
+      command: (name: string, args: string[]) => {
+        calls.push([name, ...args].join(' '));
+        if (name === '/query/bin/python') {
+          expect(args.slice(0, 3)).toEqual(['-I', '-B', '-c']);
+          return JSON.stringify({ implementation: 'CPython', abi: '3.13', python: '3.13.15', duckdb: '1.5.5' });
+        }
+        return null;
+      } });
+    expect(result.checks.find((c: { id: string }) => c.id === 'columnar-query')).toMatchObject({ status: 'PASS' });
+    expect(calls.some(call => /(^pip\b|\binstall\b)/u.test(call))).toBe(false);
+    expect(calls).toContain('uv --version');
+  });
+
+  it('rejects unsafe data roots before starting any development child', () => {
+    const { root, repo } = fixture();
+    const marker = join(root, 'must-not-exist');
+    expect(() => runWithToolchain(['node', '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'bad')`], {
+      SOLANA_QUANT_DATA_ROOT: '/', SOLANA_TOOLCHAIN_ROOT: repo,
+    })).toThrow('external directory');
+    expect(existsSync(marker)).toBe(false);
   });
 });
