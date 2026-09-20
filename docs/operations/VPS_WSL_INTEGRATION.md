@@ -56,15 +56,28 @@ The existing report service remains on loopback port 7040 and serves its
 preserved migration report. No new collector, acquisition, provider endpoint,
 paper/trading process, public listener or system configuration is introduced.
 
-## Validation status
+## Validation records and acceptance
 
-Integration validation is in progress. The read-only doctor and all four
-static dependency/source gates passed before dependency preparation.
-The focused environment suite passed 14 tests, and the full Node suite passed
-1,599 tests in 106 files. Policy, citations and TypeScript passed. The full
-build, Rust/Parquet gates, fresh offline data reproduction, independent review
-and GitHub CI remain separate acceptance steps; no integration completion is
-claimed until their actual receipts are recorded here.
+The task-local audit directory keeps one immutable JSON receipt and log per
+stage, including failures. Its final `RESULTAAT.md` identifies the tested Git
+revision, completed data comparisons, remaining limitations and the current
+review/merge state. [PR #119](https://github.com/daffieeee-arch/Solana-Quant-Bot/pull/119)
+binds the reviewed code and exact GitHub checks to those external receipts.
+No dataset or historical acquisition receipt is copied into Git.
+
+The initial read-only doctor and all four static dependency/source gates passed.
+At `f16ea61`, policy, citations, TypeScript, the full build and 1,599 Node tests
+in 106 files passed locally. The subsequent 41 focused environment/policy tests
+passed with the stricter verified-venv selection and exact 45-minute CI budget.
+Full Pump and OF1 gates also passed locally; the latter's successful receipt is
+`rust-planner-short.json`, retaining the earlier failure separately.
+
+Acceptance additionally requires the complete Bronze and Parquet/DuckDB gates,
+reducer checks, final full Node suite, unchanged-input query reproduction, two
+fresh Raw replays, record/physical/query comparison and original-source
+preservation. Independent review and green GitHub CI are separate delivery
+gates. Passing a subset, a cancelled CI run or a complete dataset collection
+cannot satisfy those remaining acceptance conditions.
 
 The first PR #119 run (`35531541423`, head `f16ea61`) was cancelled by GitHub
 with the explicit annotation `The job has exceeded the maximum execution time
