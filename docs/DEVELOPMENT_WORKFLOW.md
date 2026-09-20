@@ -12,25 +12,39 @@ Before proposing or changing code:
 4. state the bounded hypothesis, evidence needed and explicit non-goals;
 5. run the read-only Linux/WSL doctor checks; report missing prerequisites instead of installing them.
 
-Never edit `main` directly. Create one bounded branch from current `origin/main`, stop if user work would be overwritten, and preserve unrelated dirty changes. After merge, delete the head branch (repository auto-delete is enabled) or run the dry-run/execute flow in [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md). Do not leave squash-merged delivery branches on the remote.
+Never edit `main` directly. Create a new bounded task branch from current fetched `origin/main`, stop if user work would be overwritten, and preserve existing work. Fixes for an open PR stay on that PR's branch. Verify deletion of that PR's GitHub head after merge; local cleanup is conditional on the preservation checks below and in [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md).
 
 ## Delivery contract
 
 - Prefer one clear problem per PR.
 - Write tests before or with parser, causality, persistence, evidence and safety changes.
-- Use fresh-context review for protocol, durability, security and research-methodology work.
+- Use a separate agent with fresh context for independent review of every implementation PR; reviewers assess only and never edit code.
 - Treat WAL/checkpoint changes as crash-safety work with kill/restart/corruption seams.
 - Treat schema and feature-time changes as causality work with leakage tests, including proof that operational `acquired_at`/`processed_at` never become historical feature, label, split or decision inputs.
 - No “done/proven/research-ready/profitable” claim without named reproducible evidence.
 - No large refactor whose success is only smaller files or passing reachability output.
 
-Every implementation PR reports purpose, base/head SHAs, linked Project issues, exact files, tests/evidence, safety/network impact, rollback and unresolved decisions. GitHub CI must be green before merge; inspect job logs, not only the badge. Do not auto-merge safety-sensitive work.
+Every implementation PR reports purpose, base/head SHAs, linked Project issues, exact files, tests/evidence, safety/network impact, rollback and unresolved decisions. GitHub CI must be green on the reviewed latest commit before merge; inspect job logs, not only the badge. Apply the authorized review and squash-merge procedure below, including for safety-sensitive work.
 
 The [public-repository controls](operations/GITHUB_PUBLIC_REPOSITORY_CONTROLS.md)
 enforce PR plus green CI on `main`, including administrators, without requiring
 a second approving GitHub account. Independent review still applies. Roadmap
 metadata from external public submissions requires explicit intake approval;
 unreviewed issue/PR text cannot authorize delivery or evidence status.
+
+## Authorized review, merge and verification
+
+The user approved this standing procedure on 2026-09-21 for approved V2 development tasks, including PR #119. Separate independent review agents and conditional squash-merges are explicitly authorized; another permission question is unnecessary when the conditions below hold. This is development-delivery authorization, not permission for provider calls, acquisition, installations, shared configuration changes or trading.
+
+1. Implement the bounded task, update documentation, run appropriate checks and push its branch. Maintain the PR description and Project #4 using measured evidence, preserving separate delivery and research-evidence states.
+2. Give a separate reviewer fresh context: the exact base/head commits, task and acceptance criteria, relevant repository instructions and locations of evidence. Have the reviewer independently inspect the real diff, surrounding code, tests and evidence. Do not substitute an implementer's summary or green CI for that inspection. Reviewers do not change code or start expensive work without coordination.
+3. Record each review's exact head SHA, findings, severity, evidence and conclusion at the PR. Fix valid findings on the same branch. Explain rejected findings with evidence. Obtain independent follow-up review of the fixes and their consequences, rerun relevant tests and required gates, and update the reviewed head. Repeat until no blocking finding remains. Resolve review discussions only after addressing their substance.
+4. Immediately before merge, reread the PR head, latest-commit required checks, acceptance evidence, review results and discussion state. The head must equal the independently reviewed SHA. A changed head requires review and checks of that revision; do not merge by relying on stale results.
+5. Squash-merge the exact reviewed head through the normal protected PR path. Do not use administrator bypass, force-push `main`, weaken required checks or ignore unresolved review discussions. Do not queue an unattended merge that can outlive the commit verification.
+6. Fetch and inspect the resulting `origin/main` commit, its CI job/logs and roadmap synchronization. Check the squash commit's parents and resulting tree against the accepted integration. A failed post-merge gate means the delivery remains incomplete: report it and repair it on a new bounded task branch from current `origin/main`, with this same review loop.
+7. Confirm the merged GitHub task branch is absent. Before any local deletion, verify clean tracked and untracked state, no current use, no open PR and preservation of unique commits/evidence. A squash merge alone does not prove that a local branch has no unique history. Preserve protected original VPS/WSL worktrees, open-PR branches, unique commits, archive tags and migration evidence. Limit cleanup to the just-completed task; no general old-WSL-branch cleanup follows from this procedure.
+
+The final delivery report identifies the PR, findings and their resolutions, exact reviewed commit, test results, squash-merge commit, main CI and roadmap synchronization, and what was removed or deliberately retained. Missing post-merge evidence must stay visibly incomplete.
 
 ## Result cadence
 

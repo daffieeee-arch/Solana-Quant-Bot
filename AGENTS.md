@@ -19,6 +19,22 @@ The current scanner/portfolio/dashboard/paper runtime is **FROZEN LEGACY**. Do n
 - Verify documents against code, tests, Git history and current issues/PRs; do not treat prose as proof.
 - One clear problem per PR where practical. Use tests with changes and fresh-context review for protocol, durability, security and causality work.
 
+## Approved development delivery workflow
+
+The user approved this standing workflow on 2026-09-21 for authorized Solana Quant Platform V2 development tasks. It also applies to PR #119. See [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md) for execution and evidence details.
+
+1. Start each new bounded task on a new task branch from current fetched `origin/main`; never edit `main` directly. Preserve existing work. Fixes for an open PR stay on that PR's branch.
+2. Implement the task, update relevant documentation, run appropriate checks and push the task branch. Keep the PR description and GitHub Project #4 aligned with actual evidence.
+3. Every implementation PR receives independent review from a separate agent with fresh context. The user explicitly authorizes these review agents for approved development tasks; do not ask again. Reviewers assess only and never change code. They inspect the actual diff, relevant code, tests and evidence; green CI alone is not a review.
+4. Record findings and the reviewed commit at the PR. Fix valid findings and justify rejected findings. Have fixes and their consequences independently reviewed again. Repeat relevant tests and required gates after changes.
+5. Squash-merge is authorized when acceptance criteria are met, all required checks on the latest commit are green, no blocking independent-review finding remains, and every review discussion is substantively addressed. Immediately before merging, verify that the PR head is still the reviewed commit. Never bypass GitHub protections.
+6. After merging, verify the resulting `main` commit, main CI and roadmap synchronization. Report a failed check, repair it with a bounded change under this workflow, and do not declare the task fully complete meanwhile.
+7. Verify deletion of the merged GitHub task branch. Remove local task branches/worktrees only when clean, no longer in use and demonstrably safe to delete. Preserve unique commits, open-PR branches, archive tags, migration evidence and protected original worktrees. Never perform a general cleanup of old WSL branches.
+
+This authorization does not relax the safety boundaries: never interrupt Hyperliquid captures, change shared settings, install without authorization, or start unauthorized provider requests, acquisition or trading processes. Bound heavy Solana work. All OF1 data on this VPS remains under `/home/chupa/Solana-project/data-old-faithful-one`.
+
+Report the PR, review findings and resolutions, reviewed commit, tests, squash-merge commit, main CI/roadmap result, and exactly what was cleaned up or deliberately preserved.
+
 The approved annotated archive tag `v1-paper-platform-final` exists at the last pre-cleanup `main` commit `f870621f5df76b935ce828fa9205fb9ff7504f67` (tag object `de5b3850e0527afe8271c54abfdb95098d55e395`). The content-migration ledger bound to that tag has SHA-256 `54eca8ad9239b9921cd1b0da50d5948f08c6113188fd5c5ed73d66719ab407e5`. There is no permanent legacy directory; Git and this immutable tag are the archive. B2A removals and retained invariants are enumerated in [`roadmap/b2a-invariant-salvage-manifest.json`](roadmap/b2a-invariant-salvage-manifest.json).
 
 ## Active architecture boundaries

@@ -22,6 +22,10 @@ GitHub Project [#4 — Solana Quant Platform — Roadmap & Cockpit](https://gith
 
 Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is replaced, `HISTORICAL` records old evidence only, and `RETIRED` is a cancelled/do-not-execute target. The complete registry is [`DOCUMENT_STATUS.md`](DOCUMENT_STATUS.md).
 
+## Approved development workflow
+
+For approved V2 development tasks, the user authorized the [independent-review and squash-merge workflow](DEVELOPMENT_WORKFLOW.md#authorized-review-merge-and-verification) on 2026-09-21, including PR #119. Use a new task branch from current `origin/main`; keep open-PR fixes on its existing branch. Every implementation PR receives a separate, explicitly authorized reviewer agent with fresh context who assesses only. Record the reviewed commit and findings at the PR, fix and independently re-review valid issues, and squash-merge only the reviewed latest head after all acceptance criteria, required checks and review discussions are satisfied. Verify the resulting main commit, CI and roadmap synchronization before claiming completion. Remove only proven-safe task artifacts; preserve protected original worktrees, unique commits, archives and migration evidence. The full standing instructions are in [`AGENTS.md`](../AGENTS.md); existing provider, installation, host/capture and data-root boundaries remain in force.
+
 ## Current phase
 
 - **Current phase:** `2 Authentic Acquisition`, bounded delivery B4.

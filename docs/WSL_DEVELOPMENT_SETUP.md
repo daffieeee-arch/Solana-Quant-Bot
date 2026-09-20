@@ -91,7 +91,7 @@ Only perform these steps under an explicit installation instruction. The 2026-09
 
 1. Retrieve the Node `22.23.2` Linux x64 archive and `SHASUMS256.txt` from `https://nodejs.org/download/release/v22.23.2/`. Verify SHA-256 before extraction into the isolated toolchain root.
 2. Retrieve a pinned rustup installer and its checksum from `https://static.rust-lang.org/rustup/archive/<version>/x86_64-unknown-linux-gnu/`. Record the installer identity. Set **both** project-local `CARGO_HOME` and `RUSTUP_HOME`, then use `--no-modify-path --profile minimal --default-toolchain 1.97.1 --component rustfmt,clippy`. This setup used rustup `1.29.1`.
-3. Run the three static dependency gates before fetching Cargo graphs:
+3. Run the four static dependency gates before fetching Cargo graphs:
 
 ```bash
 node scripts/assert-pump-protocol-v2-offline.mjs --static
