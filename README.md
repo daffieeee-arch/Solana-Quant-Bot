@@ -48,6 +48,6 @@ Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acq
 
 G0 is complete: issues #63 and #70 are closed under their reviewed final states. B2A/[#81](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/81) is completed and `Operationally Verified`; B3/[#82](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/82) is `Done` / `SUPERSEDED` / `Fixture`; B4/[#83](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/83) is the single concrete `In Progress` / `ACTIVE NOW` delivery; and B5/[#84](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/84) is `Backlog` / `NEXT`. No B4 acquisition run is authorized.
 
-Development happens on Windows 11 → WSL2 Ubuntu with repository and datasets on WSL ext4. Do not install dependencies or change a user toolchain automatically.
+Development runs on WSL2 Ubuntu or an explicitly approved Linux VPS, with repository and datasets on native ext4. Use the [project toolchain wrapper and read-only doctor](docs/WSL_DEVELOPMENT_SETUP.md); project-local installation requires explicit authorization and preserves shared toolchain defaults. The VPS development profile does not authorize production runtime or acquisition.
 
 This repository is research software, not investment advice.

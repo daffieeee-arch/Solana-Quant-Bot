@@ -12,7 +12,7 @@ Actions capacity for standard public runners. It does **not**:
 
 - authorize OF1/Triton network calls;
 - weaken zero-cost / Triton-only product boundaries;
-- expose dataset roots (those stay outside Git on WSL);
+- expose dataset roots (those stay outside Git on the approved Linux filesystem);
 - make `PROJECT_TOKEN` optional for Roadmap Sync.
 
 The public cutover is an operator action, not a secret-scan guarantee from this

@@ -1,101 +1,114 @@
-# WSL_DEVELOPMENT_SETUP.md — V2 setup and doctor contract
+# Linux / WSL development setup and read-only doctor
 
-> **Document status: ACTIVE.** This specifies prerequisites; it does not install or change them.
+> **Document status: ACTIVE.** The historical filename is retained for links. The user approved project-local VPS setup on 2026-09-20. The doctor and wrapper never install software.
 
 ## Supported development boundary
 
-- Windows 11 with WSL2 Ubuntu. The current local reference is Ubuntu `26.04 LTS`; GitHub CI remains `ubuntu-24.04`, and doctor reports rather than hides that distro difference.
-- Repository stored on the WSL ext4 filesystem, for example `/home/<user>/code/Solana-Quant-Bot`; do not develop or run durability tests under `/mnt/c`.
-- Dataset root stored outside the Git checkout on WSL ext4, for example `/home/<user>/solana-quant-data`, and supplied through a task-specific variable such as `SOLANA_QUANT_DATA_ROOT`.
-- No automatic `sudo`, package-manager, `rustup`, `uv`, npm-global or shell-profile mutation. A failed doctor reports the missing prerequisite and stops.
+- WSL2 Ubuntu or an explicitly approved native Linux VPS. The earlier WSL reference is Ubuntu 26.04; the current VPS and GitHub CI use Ubuntu 24.04. The doctor reports the actual distro and kernel.
+- Repository and datasets on native ext2/ext3/ext4. Reject Windows/shared mounts such as drvfs/9p and `/mnt/*`; locking, atomic rename and `fsync` are correctness requirements. Passing a filesystem check is not power-loss proof.
+- On this VPS the checkout is `/home/chupa/Solana-project/Solana-bot`. **All OF1 data** belongs under `/home/chupa/Solana-project/data-old-faithful-one`, including Raw, derived layers, manifests, receipts, plans, execution evidence and research results. This existing directory is outside Git.
+- Other hosts must supply their own explicit absolute dataset root. Existing roots and path components must not be symlinks; this intentionally stricter rule prevents escape/alias ambiguity. Missing roots are reported without creation.
+- Existing Hyperliquid data captures must never be interrupted. Do not signal/restart their processes, change their environments, mutate shared defaults or reboot the server for Solana work.
+- Linux VPS **development** does not activate the later production shadow/paper/live runtime. Acquisition still requires its own exact approved lease.
 
-Atomic rename, locking and `fsync` behavior are part of replay correctness; filesystem placement is therefore a correctness requirement, not only a performance preference.
+## Pinned tools and native dependencies
 
-## Exact contracts and candidate local versions
-
-| Tool | Status | Version/value | Notes |
-|---|---|---|---|
-| Node.js | **EXACT EXISTING CI CONTRACT** | `22.23.2` | Matches `.github/workflows/ci.yml`; do not update the lockfile with an unreviewed Node major |
-| npm | transitional CI environment | bundled/selected with pinned Node; record exact output | `package-lock.json` v3 is authoritative; a future repository toolchain file should pin npm before treating its version as enforced |
-| Rust | **EXACT EXISTING CI CONTRACT** | release `1.97.1` | Use the named rustup toolchain; verify with `rustc +1.97.1 -Vv` |
-| Cargo | **EXACT EXISTING CI CONTRACT** | `cargo +1.97.1` | Record `cargo +1.97.1 -V`; do not substitute the default toolchain |
-| rustfmt/clippy | **EXACT EXISTING CI CONTRACT** | components of Rust `1.97.1` | Required by existing gates |
-| Python | **CANDIDATE LOCAL VERSION** | uv-managed CPython `3.13.15` | Not a V2 contract until the Python-workspace PR tests dependencies and commits `pyproject.toml`/`uv.lock` |
-| uv | **CANDIDATE LOCAL VERSION** | `0.12.5` | Not a V2 contract until that same reviewed workspace/compatibility decision |
-| rustc LLVM | expected existing toolchain observation | `22.1.6`, verify with `rustc +1.97.1 -Vv` | Embedded Rust compiler backend expected by the existing freeze |
-| system Clang/LLVM | current requirement | `NONE` / `NOT_REQUIRED` for PR 1 gates | Pin a version only when an owning native dependency proves the need, before installation |
-| make/build-essential | current native prerequisite | Ubuntu `build-essential`; doctor records installed package and `make --version` | Required because locked `fs-ext` rebuilds through node-gyp; package version follows the approved Ubuntu image |
-
-The repository contains conflicting historical Rust commit metadata for the same `1.97.1` label. V2 pins the official release/toolchain name and records the full `rustc -Vv` output; neither historical commit string is silently declared canonical.
-
-## Native prerequisites
-
-The doctor checks, but never installs:
-
-- `git`, `ca-certificates` and `curl`;
-- `build-essential`, including `cc`, `c++` and `make`;
-- `pkg-config`;
-- `rustup` with Rust `1.97.1`, `rustfmt` and `clippy`;
-- Node `22.23.2` and its npm;
-- the actually available Python and uv versions; CPython `3.13.15` and uv `0.12.5` are candidate local versions, not installation requirements or final pins.
-
-Future PRs may prove a need for pinned Clang/LLVM, CMake, protobuf, OpenSSL, zlib, zstd or LZ4 development packages. They are not architecture requirements merely because they may be common in Arrow/gRPC stacks. Add each only with an owning dependency, exact supported version range and doctor check.
-
-The current Ubuntu `build-essential`/`make` candidate version is deliberately not an architecture pin: the approved distro package supplies the native toolchain and doctor records its exact installed version. System Clang/LLVM has the explicit version value `NONE` until a real dependency owns a pin.
-
-## Doctor specification
-
-A future `doctor` command must be read-only, emit machine-readable JSON plus a short terminal summary, reveal no environment values/secrets and return non-zero for a required failure. PR 1 defines the checks but does not add an installer or executable.
-
-Each check must report its own status so one missing binary does not hide later results. If the dataset root does not yet exist, inspect its nearest existing parent without creating anything.
-
-Required report fields:
-
-| Check | Required behavior |
+| Tool | Contract |
 |---|---|
-| OS/WSL | report distro/release, kernel and WSL detection; identify drift from local reference Ubuntu `26.04 LTS`; fail if durability tests are attempted outside Linux |
-| repository | resolve real path, branch, HEAD, dirty state and remote name without printing credentials |
-| filesystem | use `findmnt -T <repo>` and `<dataset-root>`; require an ext-family WSL filesystem and reject `drvfs`, `9p` and `/mnt/*` |
-| free space | report bytes available at repo and dataset roots; compare only with the separately approved run plan, never a universal cap |
-| Node/npm | exact Node `22.23.2`; report npm version and lockfile version |
-| Rust/Cargo | require toolchain `1.97.1`; report `rustc -Vv`, Cargo, rustfmt and clippy versions |
-| native build | report `cc`, `c++`, `make` and `pkg-config` versions; fail current full local gates when absent |
-| Python/uv | report actual versions and candidate drift without failing current gates. Require definitive versions only after the Python-workspace PR selects pins in `pyproject.toml`/`uv.lock` and tests the chosen Polars, DuckDB, PyArrow, API, marimo and MLflow stack |
-| network posture | report requested mode only; never probe Triton/OF1/RPC as part of doctor |
-| dataset root | require an absolute path outside the repository, reject symlinks escaping an approved root, report writability without retaining a test artifact |
+| Node.js | Exact `22.23.2`, matching CI |
+| npm | Bundled with the approved Node archive; doctor records the exact version. Lockfile v3 remains authoritative; no independent npm pin is claimed |
+| Rust/Cargo | Named rustup toolchain `1.97.1`, including rustfmt and clippy; record full `rustc -Vv` |
+| Native compiler | Ubuntu build-essential (C/C++ and make), pkg-config, git, curl and CA certificates |
+| Python / uv | Candidate `3.13.15` / `0.12.5`, not final V2 pins. System Python is sufficient for current native Node builds; no Python workspace is introduced here |
+| Clang/CMake/protoc/system zstd | Not required by the current reviewed graphs. Bronze compiles bundled zstd C; protobuf projection is checked in |
 
-Suggested read-only operator checks:
+`fs-ext` is native: install/rebuild it with the selected Node version and that version's headers. Never copy `node_modules` from WSL or another project. Keep all Cargo locks and `package-lock.json` unchanged during setup.
 
-```bash
-node --version
-npm --version
-rustup toolchain list
-rustc +1.97.1 -Vv
-cargo +1.97.1 -Vv
-cargo +1.97.1 fmt --version
-cargo +1.97.1 clippy --version
-python3 --version
-uv --version
-cc --version
-c++ --version
-make --version
-pkg-config --version
-findmnt -T /home/<user>/code/Solana-Quant-Bot -o TARGET,FSTYPE,OPTIONS
-df -B1 /home/<user>/code/Solana-Quant-Bot /home/<user>/solana-quant-data
+## Project-local toolchain layout
+
+The Linux x86_64 wrapper uses this default layout outside the checkout:
+
+```text
+~/.local/share/solana-quant/toolchains/
+  node-v22.23.2-linux-x64/
+  cargo/                         # rustup proxies + isolated registry cache
+  rustup/                        # isolated named Rust toolchain
+  npm-cache/
 ```
 
-These commands are diagnostic examples, not an installation script. Replace `<user>` explicitly; do not copy placeholders into automation.
+An absolute `SOLANA_TOOLCHAIN_ROOT` may select another installation with the same layout. The wrapper checks the installed versions and Rust proxies before starting a child. It changes only that child's environment; it never sources a profile, runs `nvm use`, changes a shared default or downloads missing tools.
 
-## Dataset-root rules
+```bash
+node scripts/with-toolchain.mjs -- node --version
+node scripts/with-toolchain.mjs -- cargo +1.97.1 -V
+node scripts/with-toolchain.mjs -- rustc +1.97.1 -Vv
+node scripts/with-toolchain.mjs -- node scripts/doctor.mjs \
+  --dataset-root /home/chupa/Solana-project/data-old-faithful-one
+```
 
-- The root is outside Git and contains immutable run/dataset identities rather than mutable “latest” truth.
-- Every acquisition plan records required free space and a high-water abort policy before approval.
-- `.partial` output is verified before atomic publication; restart validates existing bytes and manifests.
-- No run may silently raise its disk, byte, request or runtime budget.
-- Deleting datasets is a separately authorized retention operation; the doctor never deletes or cleans.
+The initial `node` is only the dependency-free wrapper bootstrap (tested with the host's Node 24 and pinned Node 22). Child Node/npm commands use the project's Node 22. The wrapper fixes paper/live safety defaults, `RUSTUP_AUTO_INSTALL=0`, Cargo build jobs to two, and npm/Cargo offline defaults. Those defaults prevent implicit package fetching in normal development; **they are not an OS network sandbox**. Existing seccomp gates provide syscall denial for replay, with separately source-pinned loopback fixtures where required.
 
-## Observation on 2026-09-01
+If a future service needs Node, its start command must also explicitly select the pinned binary/environment. No service or shell-profile change is part of this setup.
 
-The PR 1 read-only audit observed an Ubuntu 26.04 WSL ext4 checkout with roughly 945 GiB free. Node was `24.18.1`, npm `11.16.0`, Python `3.13.15` via uv, system Python `3.14.4`, and uv `0.12.5`; Rust/Cargo, build-essential/make/pkg-config and system Clang/LLVM were not available on `PATH`. The observed Python/uv pair informed the candidate local versions above but does not establish final V2 pins.
+## Read-only doctor
 
-This is an environment observation, not a request to mutate it. Consequently, checks requiring the missing pinned toolchain must be run in GitHub CI or after a separate explicit local-install approval.
+`node scripts/doctor.mjs --dataset-root <absolute-path>` emits JSON on stdout, a short summary on stderr, and exits nonzero on required failures. Alternatively supply `SOLANA_QUANT_DATA_ROOT`; `npm run doctor -- --dataset-root ...` is a convenience entrypoint.
+
+The doctor checks each prerequisite independently:
+
+- Linux/WSL, architecture, distro, kernel and reference environments;
+- canonical checkout path, branch, HEAD, dirty boolean and remote **names**, never credential-bearing URLs;
+- explicit external dataset path, existence and permission bits, without a write probe or directory creation;
+- native filesystem type and available bytes at the checkout and the dataset's nearest existing parent;
+- exact Node/Rust/Cargo, npm, rustup, rustfmt/clippy, native build tools and CA-bundle presence;
+- native-addon presence (ABI/behavior still requires the tests);
+- available Python/uv as informational results, with no inferred Python compatibility claim;
+- kernel seccomp/AppArmor metadata, explicitly marking an execution probe as **not run**.
+
+It does not read `.env`, credentials, wallets, dataset contents or arbitrary environment values. It has no network client or installer. It lists installed Rust toolchains before invoking the pin, and disables rustup auto-install. Missing tools do not hide later checks. Free space is reported without pretending that an acquisition budget has been approved. The separate seccomp/full test gates must pass before claiming execution isolation works.
+
+## Explicitly approved installation and dependency preparation
+
+Only perform these steps under an explicit installation instruction. The 2026-09-20 instruction covers this VPS's isolated development setup; it does not grant standing permission to upgrade shared tools.
+
+1. Retrieve the Node `22.23.2` Linux x64 archive and `SHASUMS256.txt` from `https://nodejs.org/download/release/v22.23.2/`. Verify SHA-256 before extraction into the isolated toolchain root.
+2. Retrieve a pinned rustup installer and its checksum from `https://static.rust-lang.org/rustup/archive/<version>/x86_64-unknown-linux-gnu/`. Record the installer identity. Set **both** project-local `CARGO_HOME` and `RUSTUP_HOME`, then use `--no-modify-path --profile minimal --default-toolchain 1.97.1 --component rustfmt,clippy`. This setup used rustup `1.29.1`.
+3. Run the three static dependency gates before fetching Cargo graphs:
+
+```bash
+node scripts/assert-pump-protocol-v2-offline.mjs --static
+node scripts/assert-of1-planner-offline.mjs --static
+node scripts/assert-of1-bronze-offline.mjs --static
+```
+
+4. Fetch only locked package graphs. Network exceptions are explicit **per dependency-preparation command**, for example wrapper + `npm ci --offline=false --ignore-scripts --no-audit --no-fund`, or wrapper + `env CARGO_NET_OFFLINE=false cargo +1.97.1 fetch --locked --manifest-path <manifest>`. Include Pump, OF1 recorder, Bronze and retained reducer manifests. Registry/toolchain downloads are not Solana-provider calls or canonical data evidence.
+5. Review install hooks; rebuild locked native Node dependencies offline under the existing seccomp launcher with `allowLocalProcessSpawn: true`, passing `--nodedir=<toolchain-root>/node-v22.23.2-linux-x64` to use the already verified headers. Keep installation receipts/logs outside Git. No forced dependency upgrades.
+
+Official installation and environment references: [Node release files](https://nodejs.org/download/release/v22.23.2/), [rustup custom installation roots](https://rust-lang.github.io/rustup/installation/index.html#choosing-where-to-install), [rustup auto-install control](https://rust-lang.github.io/rustup/environment-variables.html). An archive checksum binds the downloaded bytes; it is not a separately verified signing-key attestation.
+
+## Protect other projects during builds and tests
+
+Start heavy commands in a dedicated, temporary user scope. These are development caps, not acquisition budgets or permanent service settings:
+
+```bash
+systemd-run --user --scope --quiet \
+  -p CPUQuota=200% -p MemoryHigh=5G -p MemoryMax=6G -p TasksMax=256 \
+  -p CPUWeight=25 -p IOWeight=25 \
+  nice -n 10 node scripts/with-toolchain.mjs -- npm test -- --maxWorkers=2 --minWorkers=1
+```
+
+Use the same scope limits for builds, native rebuilds and full Rust gates, and avoid concurrent heavy suites. Scope names may be supplied to make monitoring explicit. A scope is not a persistent service. If scope creation fails, stop heavy work instead of silently running without limits. Observe free memory, load, disk availability and the original Hyperliquid process identities read-only; pause/stop only Solana work if contention develops. Resource limits reduce contention but are not proof of capture continuity; do not claim full data continuity solely from living PIDs.
+
+The current unprivileged Bubblewrap/user-namespace probes failed while the project's existing seccomp launcher worked. No AppArmor or sysctl change is required by this development profile. Full gates, including separate permitted local HTTP/TLS fixtures, still need actual execution on the host.
+
+## Validation and evidence boundary
+
+Run the doctor, policy/citation checks, full Node suite, typecheck/build and the current CI Rust gates under the selected environment. The [CI workflow](../.github/workflows/ci.yml) is the authoritative full list and includes **all three** isolated gates: Pump protocol, OF1 planner/recorder and Bronze decoder, plus retained reducer/support formatting, clippy/test/build and patch integrity.
+
+A green environment and fixture suite does not establish authentic acquisition, Silver, research readiness or a trading edge. No data migration, provider request, collector, dashboard service or trade is started by the setup. The next dataset milestone remains verified migration and offline reproduction of existing evidence.
+
+## Historical observations
+
+The 2026-09-01 WSL audit observed Ubuntu 26.04/ext4, roughly 945 GiB free, PATH Node `24.18.1`, npm `11.16.0`, uv Python `3.13.15`, system Python `3.14.4` and uv `0.12.5`; Rust/native build prerequisites were absent from PATH. The 2026-09-05 observation later found a Rust installation without rustup on PATH and a Node-native ABI mismatch. These are historical host observations, not portable setup instructions.
+
+The 2026-09-20 VPS preflight observed Ubuntu 24.04.5, native ext4, eight vCPUs, approximately 13 GiB available RAM and 440 GiB free disk, system Python `3.12.3`, uv `0.12.5`, PATH Node `24.18.1`, native build tools, and no Rust toolchain. The user's subsequent instruction authorized the isolated installation described above, while preserving active Hyperliquid captures.
