@@ -39,7 +39,7 @@ pub fn inspect(tx: &Value) -> io::Result<Value> {
     Ok(
         json!({"source_manifest_sha256":sha256(SOURCE),"official_source":{"repository":registry::SOURCE_REPOSITORY,"commit":registry::SOURCE_COMMIT,"path":registry::SOURCE_PATH,"blob":registry::SOURCE_BLOB,"sha256":registry::SOURCE_SHA256},
         "scope":"STRUCTURAL_LAYOUT_ONLY","candidate_selection":"NOT_PERFORMED_NO_CALLER_SUPPLIED_COUNT","transaction_status":tx["status"],
-        "cpi_coverage":if tx["inner_instructions"].is_null(){"UNAVAILABLE"}else{"RECORDED"},"observations":observations,
+        "cpi_coverage":if tx["inner_instructions"].is_null(){"UNAVAILABLE"}else{"RECORDED"},"buy_source_diagnostics":crate::pump_buy::inspect(tx)?,"observations":observations,
         "silver":"NOT_PRODUCED","committed_pump_state":"NOT_ESTABLISHED","historical_activation":"UNKNOWN","economic_identity":"UNAVAILABLE",
         "admission_limit":"Layout probes alone do not establish candidate uniqueness, account layout, activation or committed state; no Silver promotion"}),
     )
@@ -47,7 +47,7 @@ pub fn inspect(tx: &Value) -> io::Result<Value> {
 
 // Reconstruct only the tree actually supported by contiguous recorded heights.
 // A missing height or impossible jump invalidates this parent lane, not the tx.
-fn parent(top: &[Value], previous: &[Value], current: &Value) -> Value {
+pub(crate) fn parent(top: &[Value], previous: &[Value], current: &Value) -> Value {
     let Some(outer) = current["outer_index"].as_u64() else {
         return Value::Null;
     };

@@ -39,6 +39,10 @@ pub fn source_sha256() -> String {
         include_bytes!("durable.rs"),
         include_bytes!("dataset_location.rs"),
         include_bytes!("lib.rs"),
+        include_bytes!("sample.rs"),
+        include_bytes!("rate.rs"),
+        include_bytes!("clock_contract.rs"),
+        crate::sample::SELECTION_PLAN,
         include_bytes!("../Cargo.toml"),
         include_bytes!("../Cargo.lock"),
     ];
@@ -50,7 +54,10 @@ pub fn source_sha256() -> String {
     sha256(&framed)
 }
 
-fn bindings(run: &RecordedRun) -> io::Result<Value> {
+/// Full immutable source identity, independent of physical decode partitions.
+/// # Errors
+/// Rejects a missing required manifest/receipt artifact.
+pub fn bindings(run: &RecordedRun) -> io::Result<Value> {
     let find = |id: &str| {
         run.snapshot
             .artifacts
@@ -66,14 +73,18 @@ fn bindings(run: &RecordedRun) -> io::Result<Value> {
             "raw_sha256":p.receipt.sha256, "raw_bytes":p.receipt.response_entity_bytes
         }))
     }).collect::<io::Result<Vec<_>>>()?;
-    Ok(json!({
+    let mut result = json!({
         "manifest_sha256":find("run-manifest").ok_or_else(|| invalid("missing manifest artifact"))?,
         "payload_manifest_sha256":find("payload-manifest"),
         "aggregate_sha256":sha256(&serde_json::to_vec(&run.aggregate_plan).map_err(invalid)?),
         "prepared_payload_sha256":run.prepared.as_ref().map(PreparedPayload::sha256).transpose().map_err(invalid)?,
         "metadata_receipt_sha256":run.prepared.as_ref().map(PreparedPayload::metadata_receipt_sha256),
         "receipts":receipts
-    }))
+    });
+    if let Some(sample) = &run.aggregate_plan.sample_identity {
+        result["sample_identity"] = serde_json::to_value(sample).map_err(invalid)?;
+    }
+    Ok(result)
 }
 
 fn raw(object: &Published) -> io::Result<Vec<u8>> {
@@ -159,7 +170,10 @@ fn prior_failure(paths: Option<(&Path, &Path)>, run: &RecordedRun) -> io::Result
     )
 }
 
-fn check_payload(run: &RecordedRun) -> io::Result<(&'static str, Option<String>, Vec<Value>)> {
+fn check_payload(
+    run: &RecordedRun,
+    selected: Option<&[u64]>,
+) -> io::Result<(&'static str, Option<String>, Vec<Value>)> {
     let Some(prepared) = &run.prepared else {
         return Ok(("NOT_ACQUIRED", None, vec![]));
     };
@@ -173,6 +187,9 @@ fn check_payload(run: &RecordedRun) -> io::Result<(&'static str, Option<String>,
     let mut assembled = BTreeMap::<u64, (u64, Vec<u8>)>::new();
     let mut total = 0_u64;
     for request in prepared.requests() {
+        if selected.is_some_and(|sequences| !sequences.contains(&request.sequence)) {
+            continue;
+        }
         let RequestKind::CarRange {
             slot,
             start,
@@ -226,7 +243,7 @@ fn check_payload(run: &RecordedRun) -> io::Result<(&'static str, Option<String>,
             Err(error) => return Ok(("QUARANTINED", Some(error.to_string()), vec![])),
         }
     }
-    if slots.is_empty() || !prepared.index_reported_absent().is_empty() {
+    if slots.is_empty() || (selected.is_none() && !prepared.index_reported_absent().is_empty()) {
         return Ok((
             "INCOMPLETE",
             Some("INDEX_REPORTS_ABSENT_SLOTS".into()),
@@ -242,6 +259,59 @@ fn check_payload(run: &RecordedRun) -> io::Result<(&'static str, Option<String>,
 /// # Errors
 /// Rejects changed, unbound, oversized, nonregular or corrupt inputs.
 pub fn verify_recorded(root: &Path, prior: Option<(&Path, &Path)>) -> io::Result<Value> {
+    verify_recorded_inner(root, prior, None)
+}
+
+/// Verify only explicitly named native payload receipts, retaining the complete
+/// original immutable run/lease/index/receipt binding. All Raw is hash-audited
+/// streaming by the existing reader; only this bounded subset is CAR-assembled.
+/// No writer state is opened or repaired.
+/// # Errors
+/// Rejects missing/duplicate/unplanned sequences or more than three requests /
+/// 16 MiB selected Raw; original per-response and run bounds remain unchanged.
+pub fn verify_recorded_selection(root: &Path, selected: &[u64]) -> io::Result<Value> {
+    let run = read_run_context(root)?;
+    let prepared = run
+        .prepared
+        .as_ref()
+        .ok_or_else(|| invalid("NO_PREPARED_PAYLOAD"))?;
+    if selected.is_empty() || selected.len() > 3 || selected.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(invalid("INVALID_BOUNDED_RECEIPT_SELECTION"));
+    }
+    let mut total = 0_u64;
+    for sequence in selected {
+        let request = prepared
+            .requests()
+            .iter()
+            .find(|r| r.sequence == *sequence)
+            .ok_or_else(|| invalid("UNPLANNED_RECEIPT_SELECTION"))?;
+        let RequestKind::CarRange {
+            start,
+            end_exclusive,
+            ..
+        } = request.kind
+        else {
+            return Err(invalid("NON_PAYLOAD_RECEIPT_SELECTION"));
+        };
+        total = total
+            .checked_add(
+                end_exclusive
+                    .checked_sub(start)
+                    .ok_or_else(|| invalid("RANGE"))?,
+            )
+            .ok_or_else(|| invalid("SELECTION_OVERFLOW"))?;
+    }
+    if total > RESPONSE_LIMIT {
+        return Err(invalid("SELECTED_RAW_LIMIT"));
+    }
+    verify_recorded_inner(root, None, Some(selected))
+}
+
+fn verify_recorded_inner(
+    root: &Path,
+    prior: Option<(&Path, &Path)>,
+    selected: Option<&[u64]>,
+) -> io::Result<Value> {
     // Bound resources before the existing streaming audit uses manifest limits.
     let (manifest, _) = limited_json(&root.join("run.json"))?;
     let budget = &manifest["plan"]["budget"];
@@ -257,7 +327,7 @@ pub fn verify_recorded(root: &Path, prior: Option<(&Path, &Path)>) -> io::Result
     let before = read_run_context(root)?;
     let bound = bindings(&before)?;
     let historical = prior_failure(prior, &before)?;
-    let (car_status, error, slots) = check_payload(&before)?;
+    let (car_status, error, slots) = check_payload(&before, selected)?;
     let after = read_run_context(root)?;
     if bindings(&after)? != bound
         || after.snapshot.id != before.snapshot.id

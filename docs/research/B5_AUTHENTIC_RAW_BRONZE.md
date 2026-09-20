@@ -121,7 +121,12 @@ There is no Silver, physical Parquet-writer decision or lifecycle output here.
 
 ## Bounds, publication and checks
 
-Offline reader bounds are 16 MiB total selected CAR, 4,096 nodes and 16,384 links per slot, 2 MiB per
+The [2026-09-14 B5 resource correction](B5_PILOT_RESOURCE_CORRECTION.md) supersedes
+only the serialized-record caps below with 24 MiB per slot and 64 MiB per
+selection; the prior execution receipts remain unchanged. Raw, protocol,
+frame and decompressed-metadata bounds are not raised.
+
+The original offline reader bounds were 16 MiB total selected CAR, 4,096 nodes and 16,384 links per slot, 2 MiB per
 assembled frame/decompressed status, an 8 MiB zstd window, and 16 MiB each for
 per-slot decompressed metadata and serialized records, plus explicit 48 MiB
 selection budgets for each across at most three slots. These are local decoder

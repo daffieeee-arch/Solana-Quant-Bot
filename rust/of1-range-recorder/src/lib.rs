@@ -5,6 +5,7 @@
 pub mod acquisition;
 pub mod acquisition_http;
 pub mod car;
+pub mod clock_contract;
 pub mod dataset_location;
 pub mod durable;
 pub mod fixture;
@@ -13,7 +14,9 @@ pub mod https;
 // Read-only recorded projections are also available without IPC or transport.
 // Unix telemetry remains gated inside this module by the `monitor` feature.
 pub mod monitor;
+pub mod rate;
 pub mod recorded_verification;
+pub mod sample;
 #[cfg(feature = "loopback-fixture")]
 pub mod transport;
 

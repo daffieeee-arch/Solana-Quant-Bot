@@ -65,19 +65,33 @@ work, not necessarily the wall-clock time of one review cycle.
 ### Ordered gates
 
 1. pin Rust `1.97.1` (rustfmt/clippy);
-2. static-validate Pump protocol and OF1 planner source/dependency contracts;
-3. restore the scoped Rust cache, then fetch both locked dependency graphs;
+2. static-validate Pump protocol, OF1 planner, Bronze decoder and Parquet projection source/dependency contracts;
+3. restore the scoped Rust cache, fetch the four locked graphs and prepare the isolated hash-locked DuckDB reader;
 4. `npm ci`;
 5. repository/zero-cost policy + offline research citation gate;
 6. focused policy/Pump/zero-cost tests, then full Vitest suite;
 7. TypeScript typecheck + retained Research Cockpit/inertness build;
 8. Rust format checks for reducer, namespace lock, Jetstreamer/Solana snapshots, Pump protocol;
-9. isolated Pump protocol and OF1 planner offline evidence gates;
+9. isolated Pump protocol, OF1 planner, Bronze and Parquet/DuckDB offline evidence gates;
 10. reducer clippy/test/build (`--locked`);
 11. committed-diff whitespace + clean tracked worktree.
 
 Green CI never upgrades fixture evidence into authentic acquisition, Research
 Ready, edge or live claims. See the non-claims section below.
+
+The [Parquet gate](../scripts/assert-of1-parquet-offline.mjs) has a real `--static`
+mode before fetch (no Cargo/compiler execution). `--all` checks the reviewed
+graph/features/licenses/build-script hashes, Rust tests and actual DuckDB reads
+of Rust-generated Parquet, including coverage denominators, manifest-only shards,
+logical-hash parity and sample/evidence reclassification failures, with sockets denied.
+The [CI reader preparation](../scripts/prepare-columnar-query-ci.mjs) selects an
+already installed CPython 3.13 x64 ABI from the hosted toolcache, records its
+version, and installs only the existing DuckDB 1.5.5 hash-locked wheel in a fresh
+runner-temp venv. No new action, system package, global Python or research
+workspace is introduced. Missing compatible Python or wheel fails, never skips.
+Local runs set `COLUMNAR_QUERY_PYTHON` to the existing isolated interpreter and
+do not run CI-only preparation. Runner availability and remote runtime remain
+unverified until later publication; no GitHub workflow is invoked by this work.
 
 ### Scoped Rust cache and measured phases
 

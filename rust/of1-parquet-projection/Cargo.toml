@@ -1,0 +1,27 @@
+[package]
+name = "of1-parquet-projection"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "UNLICENSED"
+description = "Bounded lossless Rust-owned Bronze/Silver Arrow Parquet materialization"
+
+[dependencies]
+arrow-array = { version = "=59.3.0", default-features = false }
+arrow-schema = { version = "=59.3.0", default-features = false }
+parquet = { version = "=59.3.0", default-features = false, features = ["arrow"] }
+serde_json = "=1.0.151"
+# Already present in the reviewed graph; streaming summary skips full record arrays.
+serde = { version = "=1.0.229", default-features = false }
+sha2 = "=0.10.9"
+hex = "=0.4.3"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

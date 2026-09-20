@@ -241,13 +241,14 @@ fn project_transaction(
         "version":version,"signatures":tx.signatures.iter().map(ToString::to_string).collect::<Vec<_>>(),"signature_crypto_verification":"NOT_PERFORMED",
         "status":if error.is_null(){"OK"}else{"ERROR"},"transaction_error":error,
         "fee_lamports":status.fee.to_string(),"pre_balances_lamports":status.pre_balances.iter().map(ToString::to_string).collect::<Vec<_>>(),"post_balances_lamports":status.post_balances.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "account_keys":keys,"recent_blockhash":tx.message.recent_blockhash().to_string(),"instructions":instructions,"inner_instructions":if status.inner_instructions_none{Value::Null}else{json!(inner)},
+        "account_keys":keys,"message_account_layout":{"static_keys":tx.message.static_account_keys().len(),"required_signatures":tx.message.header().num_required_signatures,"readonly_signed":tx.message.header().num_readonly_signed_accounts,"readonly_unsigned":tx.message.header().num_readonly_unsigned_accounts,"loaded_writable":status.loaded_writable_addresses.len(),"loaded_readonly":status.loaded_readonly_addresses.len(),"semantics":"COMPILED_MESSAGE_PRIVILEGES_NOT_ACCOUNT_CONTENT_OR_CPI_PRIVILEGES"},"recent_blockhash":tx.message.recent_blockhash().to_string(),"instructions":instructions,"inner_instructions":if status.inner_instructions_none{Value::Null}else{json!(inner)},
         "log_messages":if status.log_messages_none{Value::Null}else{json!(status.log_messages)},"program_ids":programs,"program_ids_semantics":"DECLARED_TOP_LEVEL_AND_RECORDED_INNER_CPI_NOT_EXECUTION_PROOF","pump_program_involvement":pump,"pump_event_decode":"NOT_PERFORMED",
         "compute_units_consumed":status.compute_units_consumed.map(|n|n.to_string()),"cost_units":status.cost_units.map(|n|n.to_string()),
         "wire_hex":hex::encode(wire),"stored_metadata_hex":hex::encode(stored_meta),"protobuf_metadata_hex":hex::encode(meta),
         "wire_sha256":of1_range_recorder::sha256(wire),"metadata_sha256":of1_range_recorder::sha256(stored_meta),
         "wire_checksum":wire_checksum,"metadata_checksum":metadata_checksum,"metadata_codec":compression,"decoded_metadata_bytes":meta.len(),
-        "unprojected_fields":["token_balances","rewards","return_data","protobuf_unknown_fields"],"unprojected_bytes_preserved":true,
+        "token_balance_context":crate::token_balances::project(status,keys,meta,stored_meta),
+        "unprojected_fields":["rewards","return_data","protobuf_unknown_fields"],"unprojected_bytes_preserved":true,
         "economic_identity":"UNAVAILABLE","name":null,"ticker":null,"launch_at":null
     }))
 }

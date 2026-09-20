@@ -52,6 +52,12 @@ pub struct Snapshot {
     pub elapsed_ms: u64,
     pub selection: Selection,
     pub traffic: Traffic,
+    /// Absent on historical snapshots/plans. Operational waits are not receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimit>,
+    /// New plans separate actual UTC provenance from same-boot elapsed/deadlines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_context: Option<ClockContext>,
     pub storage: Storage,
     pub budgets: Budgets,
     pub operations: Vec<Operation>,
@@ -96,6 +102,62 @@ pub struct Traffic {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct RateLimit {
+    pub policy: crate::rate::DownloadRate,
+    pub waiting: Option<bool>,
+    /// Actual monotonic sleep time in this process only; unavailable on import.
+    pub process_wait_ns: Option<u64>,
+}
+
+impl RateLimit {
+    #[must_use]
+    pub fn recorded(policy: crate::rate::DownloadRate) -> Self {
+        Self {
+            policy,
+            waiting: None,
+            process_wait_ns: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClockContext {
+    pub policy: crate::clock_contract::ClockPolicy,
+    pub boot_id: String,
+    pub started_at_boot_ms: u64,
+    pub deadline_boot_ms: u64,
+    /// Last usable same-boot sample. It is not current when `runtime_status` is unavailable.
+    pub observed_boot_ms: Option<u64>,
+    pub runtime_status: String,
+}
+
+impl ClockContext {
+    /// Pure observation of the original immutable boot deadline. UTC is neither
+    /// read nor changed. Different/unknown boot is unavailable, never zero time.
+    pub(crate) fn observe(&mut self, now: Option<&crate::durable::ClockSample>) -> Option<u64> {
+        let Some(now) = now else {
+            self.runtime_status = "UNAVAILABLE_CLOCK".into();
+            return None;
+        };
+        if now.boot_id != self.boot_id {
+            self.runtime_status = "UNAVAILABLE_BOOT_MISMATCH".into();
+            return None;
+        }
+        if now.boot_ms < self.started_at_boot_ms
+            || self.observed_boot_ms.is_some_and(|last| now.boot_ms < last)
+        {
+            self.runtime_status = "UNAVAILABLE_BOOT_ROLLBACK".into();
+            return None;
+        }
+        self.observed_boot_ms = Some(now.boot_ms);
+        self.runtime_status = "SAME_BOOT".into();
+        Some(self.deadline_boot_ms.saturating_sub(now.boot_ms))
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SpeedSample {
     pub elapsed_ms: u64,
     pub bps: f64,
@@ -116,7 +178,7 @@ pub struct Budgets {
     pub entity_bytes_remaining: u64,
     pub stage_attempts_remaining: u64,
     pub stage_entity_bytes_remaining: u64,
-    pub runtime_remaining_ms: u64,
+    pub runtime_remaining_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -290,6 +352,46 @@ impl Snapshot {
             return Err(invalid("unsupported or oversized monitor snapshot"));
         }
         let mut sequences = BTreeSet::new();
+        if let Some(clock) = &self.clock_context {
+            clock.policy.validate().map_err(invalid)?;
+            if clock.boot_id.is_empty()
+                || clock.boot_id.len() > 128
+                || clock.deadline_boot_ms < clock.started_at_boot_ms
+                || ![
+                    "SAME_BOOT",
+                    "UNAVAILABLE_CLOCK",
+                    "UNAVAILABLE_BOOT_MISMATCH",
+                    "UNAVAILABLE_BOOT_ROLLBACK",
+                ]
+                .contains(&clock.runtime_status.as_str())
+                || (clock.runtime_status == "SAME_BOOT")
+                    != self.budgets.runtime_remaining_ms.is_some()
+                || (clock.runtime_status == "SAME_BOOT" && clock.observed_boot_ms.is_none())
+                || clock
+                    .observed_boot_ms
+                    .is_some_and(|observed| observed < clock.started_at_boot_ms)
+                || (clock.runtime_status == "SAME_BOOT"
+                    && self.budgets.runtime_remaining_ms
+                        != clock
+                            .observed_boot_ms
+                            .map(|now| clock.deadline_boot_ms.saturating_sub(now)))
+            {
+                return Err(invalid("invalid monitor boot-clock context"));
+            }
+        } else if self.budgets.runtime_remaining_ms.is_none() {
+            return Err(invalid(
+                "legacy monitor runtime must retain its numeric clock contract",
+            ));
+        }
+        if let Some(limit) = &self.rate_limit {
+            limit.policy.validate().map_err(invalid)?;
+            if limit.waiting.is_some() != limit.process_wait_ns.is_some()
+                || (self.mode == "RECORDED" && limit.waiting.is_some())
+                || (limit.waiting == Some(true) && self.stage != "DOWNLOADING")
+            {
+                return Err(invalid("invalid monitor rate measurement state"));
+            }
+        }
         for op in &self.operations {
             if !sequences.insert(op.sequence)
                 || !["GET", "HEAD"].contains(&op.method.as_str())

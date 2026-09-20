@@ -1,0 +1,1279 @@
+{
+  "schema": "OF1_COLUMNAR_DEPENDENCIES_1",
+  "scope": "Rust physical Arrow/Parquet projection only; no compression/object_store/network features",
+  "manifest_sha256": "b3b5ffe6ec29a1cb5834dba219845dd163dc48f98cd8d671d32af26c73ccb40a",
+  "lock_sha256": "925133d91c6de02fcac1588bb7141db7c719327525a8606aff50af8bfc9a9af8",
+  "streaming_serde_review": "Existing locked serde 1.0.229 is now a direct dependency for IgnoredAny streaming quality-record-array skipping. Package, version, feature, license and build-script inventories are byte-identical to the previous reviewed graph; no added package, fetch or default feature.",
+  "packages": [
+    {
+      "name": "ahash",
+      "version": "0.8.12",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "android_system_properties",
+      "version": "0.1.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "arrow-array",
+      "version": "59.3.0",
+      "license": "Apache-2.0 AND MIT",
+      "buildScript": false
+    },
+    {
+      "name": "arrow-buffer",
+      "version": "59.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "arrow-data",
+      "version": "59.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "arrow-ipc",
+      "version": "59.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "arrow-schema",
+      "version": "59.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "arrow-select",
+      "version": "59.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "autocfg",
+      "version": "1.5.1",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "base64",
+      "version": "0.23.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "bitflags",
+      "version": "2.13.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "bumpalo",
+      "version": "3.20.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "bytes",
+      "version": "1.12.1",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "cc",
+      "version": "1.4.5",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cfg-if",
+      "version": "1.0.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "chrono",
+      "version": "0.4.45",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "const-random-macro",
+      "version": "0.1.16",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "const-random",
+      "version": "0.1.18",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "core-foundation-sys",
+      "version": "0.8.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "cpufeatures",
+      "version": "0.2.17",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "crunchy",
+      "version": "0.2.4",
+      "license": "MIT",
+      "buildScript": true
+    },
+    {
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "digest",
+      "version": "0.10.7",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "errno",
+      "version": "0.3.14",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "fastrand",
+      "version": "2.5.0",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "find-msvc-tools",
+      "version": "0.1.12",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "license": "Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "futures-core",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "futures-task",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "futures-util",
+      "version": "0.3.34",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "generic-array",
+      "version": "0.14.7",
+      "license": "MIT",
+      "buildScript": true
+    },
+    {
+      "name": "getrandom",
+      "version": "0.2.17",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "getrandom",
+      "version": "0.3.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "getrandom",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "half",
+      "version": "2.7.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "hashbrown",
+      "version": "0.17.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "hex",
+      "version": "0.4.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "iana-time-zone-haiku",
+      "version": "0.1.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "iana-time-zone",
+      "version": "0.1.65",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "itoa",
+      "version": "1.0.18",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "js-sys",
+      "version": "0.3.105",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "libc",
+      "version": "0.2.189",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "libm",
+      "version": "0.2.16",
+      "license": "MIT",
+      "buildScript": true
+    },
+    {
+      "name": "linux-raw-sys",
+      "version": "0.12.1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "log",
+      "version": "0.4.34",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "memchr",
+      "version": "2.8.3",
+      "license": "Unlicense OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "num-bigint",
+      "version": "0.5.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "num-complex",
+      "version": "0.4.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "num-integer",
+      "version": "0.1.47",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "num-traits",
+      "version": "0.2.19",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "of1-parquet-projection",
+      "version": "0.1.0",
+      "license": "UNLICENSED",
+      "buildScript": false
+    },
+    {
+      "name": "once_cell",
+      "version": "1.21.4",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "parquet",
+      "version": "59.3.0",
+      "license": "Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "pin-project-lite",
+      "version": "0.2.17",
+      "license": "Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "proc-macro2",
+      "version": "1.0.107",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "quote",
+      "version": "1.0.47",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "r-efi",
+      "version": "5.3.0",
+      "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+      "buildScript": false
+    },
+    {
+      "name": "r-efi",
+      "version": "6.0.0",
+      "license": "MIT OR Apache-2.0 OR LGPL-2.1-or-later",
+      "buildScript": false
+    },
+    {
+      "name": "rustc_version",
+      "version": "0.4.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "rustix",
+      "version": "1.1.4",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": true
+    },
+    {
+      "name": "rustversion",
+      "version": "1.0.23",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "semver",
+      "version": "1.0.28",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "seq-macro",
+      "version": "0.3.6",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "serde_core",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "serde_json",
+      "version": "1.0.151",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "serde",
+      "version": "1.0.229",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "sha2",
+      "version": "0.10.9",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "shlex",
+      "version": "2.0.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "slab",
+      "version": "0.4.12",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "syn",
+      "version": "2.0.119",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "syn",
+      "version": "3.0.5",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "tempfile",
+      "version": "3.27.0",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "tiny-keccak",
+      "version": "2.0.2",
+      "license": "CC0-1.0",
+      "buildScript": true
+    },
+    {
+      "name": "twox-hash",
+      "version": "2.1.4",
+      "license": "MIT",
+      "buildScript": false
+    },
+    {
+      "name": "typenum",
+      "version": "1.20.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "unicode-ident",
+      "version": "1.0.24",
+      "license": "(MIT OR Apache-2.0) AND Unicode-3.0",
+      "buildScript": false
+    },
+    {
+      "name": "version_check",
+      "version": "0.9.5",
+      "license": "MIT/Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "wasi",
+      "version": "0.11.1+wasi-snapshot-preview1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "wasip2",
+      "version": "1.0.4+wasi-0.2.12",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "wasm-bindgen-macro-support",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "wasm-bindgen-macro",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "wasm-bindgen-shared",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "wasm-bindgen",
+      "version": "0.2.128",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
+    },
+    {
+      "name": "windows-core",
+      "version": "0.62.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-implement",
+      "version": "0.60.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-interface",
+      "version": "0.59.3",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-link",
+      "version": "0.2.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-result",
+      "version": "0.4.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-strings",
+      "version": "0.5.1",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "windows-sys",
+      "version": "0.61.2",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "wit-bindgen",
+      "version": "0.57.1",
+      "license": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT",
+      "buildScript": true
+    },
+    {
+      "name": "zerocopy-derive",
+      "version": "0.8.57",
+      "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+      "buildScript": false
+    },
+    {
+      "name": "zerocopy",
+      "version": "0.8.57",
+      "license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+      "buildScript": true
+    },
+    {
+      "name": "zmij",
+      "version": "1.0.23",
+      "license": "MIT",
+      "buildScript": true
+    }
+  ],
+  "features": [
+    {
+      "package": "ahash@0.8.12",
+      "features": [
+        "compile-time-rng",
+        "const-random",
+        "getrandom",
+        "runtime-rng"
+      ]
+    },
+    {
+      "package": "android_system_properties@0.1.6",
+      "features": []
+    },
+    {
+      "package": "arrow-array@59.3.0",
+      "features": []
+    },
+    {
+      "package": "arrow-buffer@59.3.0",
+      "features": []
+    },
+    {
+      "package": "arrow-data@59.3.0",
+      "features": []
+    },
+    {
+      "package": "arrow-ipc@59.3.0",
+      "features": [
+        "default"
+      ]
+    },
+    {
+      "package": "arrow-schema@59.3.0",
+      "features": []
+    },
+    {
+      "package": "arrow-select@59.3.0",
+      "features": []
+    },
+    {
+      "package": "autocfg@1.5.1",
+      "features": []
+    },
+    {
+      "package": "base64@0.23.1",
+      "features": [
+        "alloc",
+        "std"
+      ]
+    },
+    {
+      "package": "bitflags@2.13.2",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "block-buffer@0.10.4",
+      "features": []
+    },
+    {
+      "package": "bumpalo@3.20.3",
+      "features": [
+        "default"
+      ]
+    },
+    {
+      "package": "bytes@1.12.1",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "cc@1.4.5",
+      "features": []
+    },
+    {
+      "package": "cfg-if@1.0.4",
+      "features": []
+    },
+    {
+      "package": "chrono@0.4.45",
+      "features": [
+        "alloc",
+        "clock",
+        "iana-time-zone",
+        "now",
+        "std",
+        "winapi",
+        "windows-link"
+      ]
+    },
+    {
+      "package": "const-random-macro@0.1.16",
+      "features": []
+    },
+    {
+      "package": "const-random@0.1.18",
+      "features": []
+    },
+    {
+      "package": "core-foundation-sys@0.8.7",
+      "features": [
+        "default",
+        "link"
+      ]
+    },
+    {
+      "package": "cpufeatures@0.2.17",
+      "features": []
+    },
+    {
+      "package": "crunchy@0.2.4",
+      "features": [
+        "default",
+        "limit_128"
+      ]
+    },
+    {
+      "package": "crypto-common@0.1.7",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "digest@0.10.7",
+      "features": [
+        "alloc",
+        "block-buffer",
+        "core-api",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "errno@0.3.14",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "fastrand@2.5.0",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "find-msvc-tools@0.1.12",
+      "features": []
+    },
+    {
+      "package": "flatbuffers@25.12.19",
+      "features": []
+    },
+    {
+      "package": "futures-core@0.3.34",
+      "features": [
+        "alloc",
+        "std"
+      ]
+    },
+    {
+      "package": "futures-task@0.3.34",
+      "features": [
+        "alloc",
+        "std"
+      ]
+    },
+    {
+      "package": "futures-util@0.3.34",
+      "features": [
+        "alloc",
+        "slab",
+        "std"
+      ]
+    },
+    {
+      "package": "generic-array@0.14.7",
+      "features": [
+        "more_lengths"
+      ]
+    },
+    {
+      "package": "getrandom@0.2.17",
+      "features": []
+    },
+    {
+      "package": "getrandom@0.3.4",
+      "features": []
+    },
+    {
+      "package": "getrandom@0.4.3",
+      "features": []
+    },
+    {
+      "package": "half@2.7.1",
+      "features": [
+        "num-traits"
+      ]
+    },
+    {
+      "package": "hashbrown@0.17.1",
+      "features": []
+    },
+    {
+      "package": "hex@0.4.3",
+      "features": [
+        "alloc",
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "iana-time-zone-haiku@0.1.2",
+      "features": []
+    },
+    {
+      "package": "iana-time-zone@0.1.65",
+      "features": [
+        "fallback"
+      ]
+    },
+    {
+      "package": "itoa@1.0.18",
+      "features": []
+    },
+    {
+      "package": "js-sys@0.3.105",
+      "features": [
+        "default",
+        "std",
+        "unsafe-eval"
+      ]
+    },
+    {
+      "package": "libc@0.2.189",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "libm@0.2.16",
+      "features": [
+        "arch",
+        "default"
+      ]
+    },
+    {
+      "package": "linux-raw-sys@0.12.1",
+      "features": [
+        "auxvec",
+        "elf",
+        "errno",
+        "general",
+        "ioctl",
+        "no_std"
+      ]
+    },
+    {
+      "package": "log@0.4.34",
+      "features": []
+    },
+    {
+      "package": "memchr@2.8.3",
+      "features": [
+        "alloc",
+        "std"
+      ]
+    },
+    {
+      "package": "num-bigint@0.5.1",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "num-complex@0.4.6",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "num-integer@0.1.47",
+      "features": [
+        "i128",
+        "std"
+      ]
+    },
+    {
+      "package": "num-traits@0.2.19",
+      "features": [
+        "i128",
+        "libm",
+        "std"
+      ]
+    },
+    {
+      "package": "of1-parquet-projection@0.1.0",
+      "features": []
+    },
+    {
+      "package": "once_cell@1.21.4",
+      "features": [
+        "alloc",
+        "race",
+        "std"
+      ]
+    },
+    {
+      "package": "parquet@59.3.0",
+      "features": [
+        "arrow",
+        "arrow-array",
+        "arrow-buffer",
+        "arrow-data",
+        "arrow-ipc",
+        "arrow-schema",
+        "arrow-select",
+        "base64"
+      ]
+    },
+    {
+      "package": "pin-project-lite@0.2.17",
+      "features": []
+    },
+    {
+      "package": "proc-macro2@1.0.107",
+      "features": [
+        "default",
+        "proc-macro"
+      ]
+    },
+    {
+      "package": "quote@1.0.47",
+      "features": [
+        "default",
+        "proc-macro"
+      ]
+    },
+    {
+      "package": "r-efi@5.3.0",
+      "features": []
+    },
+    {
+      "package": "r-efi@6.0.0",
+      "features": []
+    },
+    {
+      "package": "rustc_version@0.4.1",
+      "features": []
+    },
+    {
+      "package": "rustix@1.1.4",
+      "features": [
+        "alloc",
+        "default",
+        "fs",
+        "std"
+      ]
+    },
+    {
+      "package": "rustversion@1.0.23",
+      "features": []
+    },
+    {
+      "package": "semver@1.0.28",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "seq-macro@0.3.6",
+      "features": []
+    },
+    {
+      "package": "serde_core@1.0.229",
+      "features": [
+        "result",
+        "std"
+      ]
+    },
+    {
+      "package": "serde_derive@1.0.229",
+      "features": [
+        "default"
+      ]
+    },
+    {
+      "package": "serde_json@1.0.151",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "serde@1.0.229",
+      "features": []
+    },
+    {
+      "package": "sha2@0.10.9",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "shlex@2.0.1",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "slab@0.4.12",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "syn@2.0.119",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro"
+      ]
+    },
+    {
+      "package": "syn@3.0.5",
+      "features": [
+        "clone-impls",
+        "default",
+        "derive",
+        "extra-traits",
+        "full",
+        "parsing",
+        "printing",
+        "proc-macro",
+        "visit",
+        "visit-mut"
+      ]
+    },
+    {
+      "package": "tempfile@3.27.0",
+      "features": [
+        "default",
+        "getrandom"
+      ]
+    },
+    {
+      "package": "tiny-keccak@2.0.2",
+      "features": [
+        "default",
+        "shake"
+      ]
+    },
+    {
+      "package": "twox-hash@2.1.4",
+      "features": [
+        "xxhash64"
+      ]
+    },
+    {
+      "package": "typenum@1.20.1",
+      "features": []
+    },
+    {
+      "package": "unicode-ident@1.0.24",
+      "features": []
+    },
+    {
+      "package": "version_check@0.9.5",
+      "features": []
+    },
+    {
+      "package": "wasi@0.11.1+wasi-snapshot-preview1",
+      "features": []
+    },
+    {
+      "package": "wasip2@1.0.4+wasi-0.2.12",
+      "features": []
+    },
+    {
+      "package": "wasm-bindgen-macro-support@0.2.128",
+      "features": []
+    },
+    {
+      "package": "wasm-bindgen-macro@0.2.128",
+      "features": []
+    },
+    {
+      "package": "wasm-bindgen-shared@0.2.128",
+      "features": []
+    },
+    {
+      "package": "wasm-bindgen@0.2.128",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "windows-core@0.62.2",
+      "features": [
+        "default",
+        "std"
+      ]
+    },
+    {
+      "package": "windows-implement@0.60.2",
+      "features": []
+    },
+    {
+      "package": "windows-interface@0.59.3",
+      "features": []
+    },
+    {
+      "package": "windows-link@0.2.1",
+      "features": []
+    },
+    {
+      "package": "windows-result@0.4.1",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "windows-strings@0.5.1",
+      "features": [
+        "std"
+      ]
+    },
+    {
+      "package": "windows-sys@0.61.2",
+      "features": [
+        "Win32",
+        "Win32_Foundation",
+        "Win32_Networking",
+        "Win32_Networking_WinSock",
+        "Win32_Storage",
+        "Win32_Storage_FileSystem",
+        "Win32_System",
+        "Win32_System_Diagnostics",
+        "Win32_System_Diagnostics_Debug",
+        "default"
+      ]
+    },
+    {
+      "package": "wit-bindgen@0.57.1",
+      "features": []
+    },
+    {
+      "package": "zerocopy-derive@0.8.57",
+      "features": []
+    },
+    {
+      "package": "zerocopy@0.8.57",
+      "features": [
+        "derive",
+        "simd",
+        "zerocopy-derive"
+      ]
+    },
+    {
+      "package": "zmij@1.0.23",
+      "features": []
+    }
+  ],
+  "build_scripts": [
+    {
+      "package": "ahash@0.8.12",
+      "sha256": "d7dd5428c78b80bb3c99068561641ec661f0f94defbda17f85b443e358ab6396",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "crunchy@0.2.4",
+      "sha256": "08bfcfa380ded6870ed262baa4b6e87ec54482306aebffabefbd19c83ad4b6ba",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "flatbuffers@25.12.19",
+      "sha256": "e957a322f7c679e29de9c3b5ad5a96c0fad4052e72b9bd693461e9ad4f23e8b3",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "generic-array@0.14.7",
+      "sha256": "08fa30c4a2c1ad24fe5f987e721dfb20131f45ea5b5dc3e836dcf88a8e33248c",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "getrandom@0.3.4",
+      "sha256": "d542c9c3bbc2f64a26c758eac8af16178aab52464bdd8bf0b9a767ba87665021",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "getrandom@0.4.3",
+      "sha256": "662faa06d7b2a9c5bea2c17a127a90e00b9f9b31105b0360da516e47cf816e95",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "iana-time-zone-haiku@0.1.2",
+      "sha256": "10304831100a60c1c2b990762dcfeb47dae8342cf9b54595bec94884e7de5784",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "libc@0.2.189",
+      "sha256": "e47f4a6762799b6e69cefc7acdb3291df828010e4de20609f7378f9c94ea29e6",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "libm@0.2.16",
+      "sha256": "85dfa93693f40e282ecf2d9a3115280d8f508f056063862add9e529b8143b71b",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "num-traits@0.2.19",
+      "sha256": "d3969209fc1c9d201c66ed11820d0b328600d75b3971f8ceebeab04900bc0587",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "proc-macro2@1.0.107",
+      "sha256": "baeb20b52f6b536be8657a566591a507bb2e34a45cf8baa42b135510a0c3c729",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "quote@1.0.47",
+      "sha256": "cd6808c02e476b09a520105e2c6f6d325cccb1ecd542cbbcc836a0ae6f6fb0f1",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "rustix@1.1.4",
+      "sha256": "74cb32e64aa6fe99c2496a425b016e22f4e43c438a8237966b8acae04a98eaf9",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "rustversion@1.0.23",
+      "sha256": "4438b108d5b198ca43ef0a78509da89861020674abd05166addd1c3058afbfa6",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "serde@1.0.229",
+      "sha256": "e2ea6a7a82f5404c3e28cb055883c737ee7903367a10206fbb47b75c009f0eb3",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "serde_core@1.0.229",
+      "sha256": "7bc6b1eec8913ff4cd8e4b9b92cd04a82a4f38beb30a0b73a64c1e6e49f07b5f",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "serde_json@1.0.151",
+      "sha256": "a681e754be844c7dbef957f5d2d00b01f37c5dca160ef1055a8d8f975697a881",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "tiny-keccak@2.0.2",
+      "sha256": "c3e63c57ab0d28633f522c4a056c3230e9399fda6e511954da81ebfd00b216b2",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "wasm-bindgen@0.2.128",
+      "sha256": "33c90a6eb1745c53f9047e0ecde135b249b0ea3d9e1a2a40c9610a33f225e6c9",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "wasm-bindgen-shared@0.2.128",
+      "sha256": "2ad2b0d08ef35c6a9013b5488bdf568630f0fc517d10b47f3851ad5c6ef10da4",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "wit-bindgen@0.57.1",
+      "sha256": "99b4276049457d3ea1d304277d66b0ff1abba0b9b1f5d60a5e25bdd3fd897a91",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "zerocopy@0.8.57",
+      "sha256": "a45528e5f53be3899e8b0aaf0c523a332a5a816321f29f1c5e6ba0732dc7435d",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "zmij@1.0.23",
+      "sha256": "ad320bc635887879bdbbf1b9322da4a157ec2c5a4243bd7c2cf9b6884a3b2a41",
+      "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    }
+  ]
+}

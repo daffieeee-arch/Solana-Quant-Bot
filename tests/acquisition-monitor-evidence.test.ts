@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { historicalSourceReceipt, retainedSources, sourceHash } from './retained-of1-source-helper.js';
 
 const evidence = JSON.parse(readFileSync('schemas/acquisition/of1/monitor-browser-evidence.json', 'utf8'));
 
@@ -47,7 +48,14 @@ describe('executed paced payload monitor evidence', () => {
       expect(bytes.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
       expect(createHash('sha256').update(bytes).digest('hex')).toBe(sha256);
     }
-    expect(createHash('sha256').update(readFileSync('rust/of1-range-recorder/src/bin/of1-monitor-simulation.rs')).digest('hex')).toBe(payload.simulator_source_sha256);
+    const retained = retainedSources();
+    const simulator = historicalSourceReceipt.monitor_simulator;
+    expect(historicalSourceReceipt.files[simulator.file_index].path).toBe('rust/of1-range-recorder/src/bin/of1-monitor-simulation.rs');
+    expect(sourceHash(retained[simulator.file_index])).toBe(payload.simulator_source_sha256);
+    expect(simulator.source_sha256).toBe(payload.simulator_source_sha256);
+    // A new optional source binding is a new binary/source identity, not a rerun
+    // of these retained screenshots. Preserve both facts rather than rewriting evidence.
+    expect(sourceHash(readFileSync('rust/of1-range-recorder/src/bin/of1-monitor-simulation.rs'))).not.toBe(payload.simulator_source_sha256);
     expect(payload.evidence).toBe('Fixture');
     expect(payload.new_authentic_acquisition).toBe(false);
     expect(payload.page_network).toEqual({ non_loopback: 0, denied: 0, warnings: 0 });

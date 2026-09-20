@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcquisitionMonitor, MAX_MONITOR_RESPONSE_CHARS, bytes } from './AcquisitionMonitor';
-import { parseMonitorResponse, parseOfflineVerification, type MonitorResponse, type MonitorSnapshot, type OfflineVerificationReport } from './contract';
+import { monitorSnapshotRegressed, parseMonitorResponse, parseOfflineVerification, type MonitorResponse, type MonitorSnapshot, type OfflineVerificationReport } from './contract';
 
 const wall = 1_788_800_000_000;
 const id = 'a'.repeat(64);
@@ -30,6 +30,16 @@ function snapshot(overrides: Partial<MonitorSnapshot> = {}): MonitorSnapshot {
 }
 function envelope(...snapshots: MonitorSnapshot[]): MonitorResponse {
   return { schema_version: 'OF1_MONITOR_HTTP_1', read_at_unix_ms: wall, runs: snapshots.map(snapshot => ({ id: snapshot.id, state: 'READY', snapshot })) };
+}
+function rateLimit(): NonNullable<MonitorSnapshot['rate_limit']> {
+  return { policy: { unit: 'RESPONSE_ENTITY_BYTES', bytes_per_second: 87_500_000, burst_bytes: 65_536,
+    concurrency: 1, scope: 'SAME_USER_OFFICIAL_OF1_ALL_RUNS' }, waiting: false, process_wait_ns: 0 };
+}
+function clockContext(): NonNullable<MonitorSnapshot['clock_context']> {
+  return { policy: { schema: 'OF1_BOOT_CLOCK_POLICY_1', version: 1,
+    initialization_window_ms: 600_000, approval_validity_ms: 1_200_000 },
+  boot_id: 'fixture-boot', started_at_boot_ms: 1000, deadline_boot_ms: 592_000,
+  observed_boot_ms: 2000, runtime_status: 'SAME_BOOT' };
 }
 function recorded(): MonitorSnapshot {
   return snapshot({
@@ -85,6 +95,77 @@ describe('separate V2 acquisition monitor', () => {
     expect(screen.queryByText(/STALE · metingen/)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /CAR HEAD receipt/ })).toHaveAttribute('href', `/api/acquisition/runs/${'b'.repeat(64)}/artifacts/receipt-3`);
     expect(screen.getByText('Geen responsebody')).toBeInTheDocument();
+    expect(screen.getByText(/Historische snelheidsinstelling en limiterwacht onbekend/)).toBeInTheDocument();
+  });
+
+  it('shows the shared decimal limit and changes only from measured Rust rate/wait observations', async () => {
+    const first = snapshot({ rate_limit: rateLimit() });
+    await mount(envelope(first));
+    const panel = within(screen.getByRole('region', { name: 'Gedeelde downloadsnelheidslimiet' }));
+    expect(panel.getByText('700 Mbps · 87.500.000 B/s')).toBeInTheDocument();
+    expect(panel.getByText('64 KiB · concurrency 1')).toBeInTheDocument();
+    expect(panel.getByText('Niet aan het wachten bij laatste meting')).toBeInTheDocument();
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('0 ms');
+    const second = snapshot({ rate_limit: { ...rateLimit(), waiting: true, process_wait_ns: 250_749_029 },
+      sequence: 2, updated_at_ms: wall + 700, traffic: { ...first.traffic, speed_bps: 262144 } });
+    vi.mocked(fetch).mockImplementation(async (url) => respond(String(url).endsWith('/verification')
+      ? { state: 'UNAVAILABLE', reason: 'FILE_UNAVAILABLE' } : envelope(second)) as Response);
+    await act(async () => { await vi.advanceTimersByTimeAsync(701); });
+    expect(panel.getByText('Wacht op gedeelde limiet')).toBeInTheDocument();
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('250,7 ms');
+    expect(screen.getByText('Downloadsnelheid').parentElement).toHaveTextContent('256 KiB/s');
+    expect(panel.getByText(/Geen exacte fysieke netwerkcap/)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+    expect(panel.queryByText('Wacht op gedeelde limiet')).not.toBeInTheDocument();
+    expect(panel.getByText('Limiter nu').parentElement).toHaveTextContent('Nog onbekend');
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('250,7 ms · laatste meting, verouderd');
+  });
+
+  it('imports the plan limit without fabricating historical limiter observations', async () => {
+    const s = recorded(); s.rate_limit = { ...rateLimit(), waiting: null, process_wait_ns: null };
+    await mount(envelope(s));
+    const panel = within(screen.getByRole('region', { name: 'Gedeelde downloadsnelheidslimiet' }));
+    expect(panel.getByText('700 Mbps · 87.500.000 B/s')).toBeInTheDocument();
+    expect(panel.getByText('Limiter nu').parentElement).toHaveTextContent('Nog onbekend');
+    expect(panel.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('Nog onbekend');
+    expect(panel.queryByText('0 ms')).not.toBeInTheDocument();
+  });
+
+  it('does not round a measured positive sub-millisecond wait down to zero', async () => {
+    await mount(envelope(snapshot({ rate_limit: { ...rateLimit(), process_wait_ns: 1 } })));
+    expect(screen.getByText('Gemeten limiterwacht · dit proces').parentElement).toHaveTextContent('<0,1 ms');
+  });
+
+  it('accepts a higher same-boot sequence after UTC recoil and ages samples with the browser monotonic clock', async () => {
+    let monotonic = 0; vi.spyOn(performance, 'now').mockImplementation(() => monotonic);
+    const first = snapshot({ clock_context: clockContext() });
+    await mount(envelope(first));
+    const next = snapshot({ sequence: 2, updated_at_ms: wall - 2, elapsed_ms: 1700,
+      clock_context: { ...clockContext(), observed_boot_ms: 2700 },
+      budgets: { ...first.budgets, runtime_remaining_ms: 589_300 } });
+    vi.mocked(fetch).mockImplementation(async (url) => respond(String(url).endsWith('/verification')
+      ? { state: 'UNAVAILABLE', reason: 'FILE_UNAVAILABLE' } : envelope(next)) as Response);
+    monotonic = 700;
+    await act(async () => { await vi.advanceTimersByTimeAsync(701); });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText(/sinds laatste nieuwe browsersample · reeks 2/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Klokbetekenis')).toHaveTextContent('UTC-tijden zijn ongewijzigde provenance');
+    vi.setSystemTime(wall + 3_600_000); monotonic = 1400;
+    await act(async () => { await vi.advanceTimersByTimeAsync(701); });
+    expect(screen.queryByText('STALE · metingen verouderd')).not.toBeInTheDocument();
+    vi.setSystemTime(wall - 3_600_000); monotonic = 4001;
+    await act(async () => { await vi.advanceTimersByTimeAsync(701); });
+    expect(screen.getByText('STALE · metingen verouderd')).toBeInTheDocument();
+  });
+
+  it('shows unavailable remaining time after a different-boot forensic import, never zero or a reset', async () => {
+    const s = recorded(); s.clock_context = { ...clockContext(), observed_boot_ms: null, runtime_status: 'UNAVAILABLE_BOOT_MISMATCH' };
+    s.budgets.runtime_remaining_ms = null;
+    await mount(envelope(s));
+    expect(screen.getByText('Deadline-resttijd bij vastlegging').parentElement).toHaveTextContent('Nog onbekend');
+    expect(screen.getByText(/Initialisatie → laatste receipt/)).toHaveTextContent('20 s');
+    expect(screen.getByLabelText('Klokbetekenis')).toHaveTextContent('UNAVAILABLE_BOOT_MISMATCH');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('reacts to measured bytes during a request before verification or publication', async () => {
@@ -296,6 +377,43 @@ describe('separate V2 acquisition monitor', () => {
 });
 
 describe('Rust snapshot display contract', () => {
+  it('orders the new contract by same-boot samples/sequence while retaining legacy UTC rules', () => {
+    const before = snapshot({ clock_context: clockContext() });
+    const fresh = snapshot({ clock_context: { ...clockContext(), observed_boot_ms: 2001 }, sequence: 2, updated_at_ms: wall - 2 });
+    expect(monitorSnapshotRegressed(before, fresh)).toBe(false);
+    expect(monitorSnapshotRegressed(before, { ...fresh, sequence: 0 })).toBe(true);
+    expect(monitorSnapshotRegressed(before, { ...fresh, clock_context: { ...clockContext(), observed_boot_ms: 1999 } })).toBe(true);
+    expect(monitorSnapshotRegressed(before, { ...fresh, session_id: 'restart', sequence: 0 })).toBe(false);
+    expect(monitorSnapshotRegressed(before, { ...fresh, session_id: 'restart', clock_context: clockContext() })).toBe(true);
+    expect(monitorSnapshotRegressed(before, { ...fresh, clock_context: { ...clockContext(), boot_id: 'different' } })).toBe(true);
+    expect(monitorSnapshotRegressed(before, { ...fresh, clock_context: { ...clockContext(), observed_boot_ms: null, runtime_status: 'UNAVAILABLE_CLOCK' } })).toBe(false);
+    expect(monitorSnapshotRegressed(snapshot(), snapshot({ sequence: 2, updated_at_ms: wall - 2 }))).toBe(true);
+  });
+  it('accepts optional old snapshots but rejects unsafe or contradictory rate-limit telemetry', () => {
+    expect(parseMonitorResponse(envelope(snapshot()))).toBeTruthy();
+    const s = snapshot({ rate_limit: rateLimit() });
+    expect(parseMonitorResponse(envelope(s))).toBeTruthy();
+    for (const mutate of [
+      (r: any) => { r.rate_limit = null; },
+      (r: any) => { r.rate_limit.policy.bytes_per_second = 0; },
+      (r: any) => { r.rate_limit.policy.bytes_per_second = 87_500_001; },
+      (r: any) => { r.rate_limit.policy.unit = 'PHYSICAL_WIRE_BYTES'; },
+      (r: any) => { r.rate_limit.policy.scope = 'PER_CONNECTION'; },
+      (r: any) => { r.rate_limit.policy.burst_bytes = 65_537; },
+      (r: any) => { r.rate_limit.policy.concurrency = 2; },
+      (r: any) => { r.rate_limit.process_wait_ns = -1; },
+      (r: any) => { r.rate_limit.process_wait_ns = Number.MAX_SAFE_INTEGER + 1; },
+      (r: any) => { r.rate_limit.waiting = 'true'; },
+      (r: any) => { r.rate_limit.waiting = null; },
+      (r: any) => { r.rate_limit.any_new_measurement = 1; },
+      (r: any) => { r.rate_limit.policy.unknown = 1; },
+      (r: any) => { r.mode = 'RECORDED'; },
+      (r: any) => { r.stage = 'COMPLETE'; r.rate_limit.waiting = true; },
+    ]) {
+      const changed = structuredClone(s); mutate(changed);
+      expect(() => parseMonitorResponse(envelope(changed))).toThrow();
+    }
+  });
   it('accepts explicit unknowns and preserves every Rust measurement unchanged', () => {
     const response = envelope(snapshot(), recorded());
     expect(parseMonitorResponse(response)).toBe(response);

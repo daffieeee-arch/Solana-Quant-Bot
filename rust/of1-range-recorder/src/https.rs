@@ -11,6 +11,7 @@ use crate::{
             SEGMENT_BYTES,
         },
     },
+    rate::{Admission, DownloadRate, EntityRate, RateError},
 };
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned, pki_types::ServerName};
 use std::{
@@ -49,6 +50,8 @@ pub enum HttpsError {
     Trailing,
     #[error("INVALID_LOOPBACK_FIXTURE_PORT_OR_ROOT")]
     Fixture,
+    #[error("response-entity rate limit rejected: {0}")]
+    Rate(#[from] RateError),
 }
 
 pub type HttpsResult<T> = Result<T, HttpsError>;
@@ -56,6 +59,9 @@ pub type HttpsResult<T> = Result<T, HttpsError>;
 /// Optional operational observations, never acquisition authority or accounting.
 /// Implementations must remain bounded/nonblocking; failures cannot affect capture.
 pub trait CaptureObserver {
+    /// TLS is verified, but the HTTP request has not been admitted or sent yet.
+    /// Observers cannot extend the subsequent durable boot-clock gate.
+    fn tls_verified(&mut self) {}
     fn active(&self) -> bool {
         false
     }
@@ -66,6 +72,9 @@ pub trait CaptureObserver {
     fn publishing(&mut self, _: u64) {}
     fn published(&mut self, _: u64, _: &Receipt) {}
     fn failed(&mut self, _: u64, _: &str) {}
+    fn rate_policy(&mut self, _: &DownloadRate) {}
+    fn rate_wait_started(&mut self, _: u64) {}
+    fn rate_wait_finished(&mut self, _: u64) {}
 }
 
 struct NoObservation;
@@ -96,6 +105,15 @@ impl CaptureObserver for crate::monitor::Monitor {
     }
     fn failed(&mut self, seq: u64, reason: &str) {
         self.failed(seq, reason);
+    }
+    fn rate_policy(&mut self, policy: &DownloadRate) {
+        self.rate_policy(policy);
+    }
+    fn rate_wait_started(&mut self, planned_ns: u64) {
+        self.rate_wait_started(planned_ns);
+    }
+    fn rate_wait_finished(&mut self, actual_ns: u64) {
+        self.rate_wait_finished(actual_ns);
     }
 }
 
@@ -140,6 +158,23 @@ fn capture_official<C: Clock>(
     if !matches!(store.authority(), Authority::Approved { .. }) {
         return Err(HttpsError::Authority);
     }
+    let policy = store
+        .aggregate_plan()
+        .download_rate
+        .as_ref()
+        .ok_or(RateError::Policy)?;
+    policy.validate()?;
+    // New official dispatch cannot reinterpret a historical wall-clock lease.
+    store
+        .aggregate_plan()
+        .clock_policy
+        .as_ref()
+        .ok_or(StoreError::Identity)?
+        .validate()?;
+    // One shared official request across all runs/processes of this user. Busy
+    // coordination fails before reservation, DNS, TLS or a provider request.
+    let _shared_download = crate::rate::OfficialDownloadGuard::acquire()?;
+    observer.rate_policy(policy);
     let request = store.request(sequence)?.clone();
     let path = store.source_path(sequence)?;
     let permit = store.reserve(sequence)?;
@@ -215,6 +250,10 @@ impl FixtureHttps {
         if !matches!(store.authority(), Authority::Fixture) {
             return Err(HttpsError::Authority);
         }
+        if let Some(policy) = &store.aggregate_plan().download_rate {
+            policy.validate()?;
+            observer.rate_policy(policy);
+        }
         let request = store.request(sequence)?.clone();
         let path = store.source_path(sequence)?;
         let permit = store.reserve(sequence)?;
@@ -288,6 +327,15 @@ fn capture_reserved<C: Clock>(
     deadline: Deadline,
     observer: &mut dyn CaptureObserver,
 ) -> HttpsResult<Receipt> {
+    let mut limiter = store
+        .aggregate_plan()
+        .download_rate
+        .as_ref()
+        .map(|_| RequestRate::new(&deadline))
+        .transpose()?;
+    // Instant may exclude suspend. Recheck durable BOOTTIME after DNS and at
+    // every transport admission, never derive a fresh relative stage deadline.
+    store.remaining_ms(&permit)?;
     let socket = TcpStream::connect_timeout(&address, deadline.remaining()?)?;
     let connection = ClientConnection::new(
         config,
@@ -296,11 +344,16 @@ fn capture_reserved<C: Clock>(
     let mut stream = StreamOwned::new(connection, DeadlineTcp { socket, deadline });
     // Complete TLS verification before an HTTP request can be dispatched.
     while stream.conn.is_handshaking() {
+        store.remaining_ms(&permit)?;
         stream.conn.complete_io(&mut stream.sock)?;
     }
     let encoded = encode_request(request, path)?;
+    observer.tls_verified();
+    store.remaining_ms(&permit)?;
     stream.write_all(encoded.as_bytes())?;
+    store.remaining_ms(&permit)?;
     stream.flush()?;
+    store.remaining_ms(&permit)?;
     let mut raw_head = Vec::new();
     if let Err(error) = read_header(&mut stream, &mut raw_head) {
         if !raw_head.is_empty() && store.remaining_ms(&permit).is_ok() {
@@ -333,16 +386,34 @@ fn capture_reserved<C: Clock>(
         // complete 64 KiB segments, plus a final or interrupted short segment.
         let mut filled = 0;
         while filled < limit {
+            // Rate admission applies to plaintext response-entity capacity only.
+            // TLS framing/prefetch, headers and the final one-byte EOF probe are
+            // outside this metric: it is not physical-wire traffic shaping.
+            if let Some(rate) = limiter.as_mut()
+                && let Err(error) = rate.before_read(
+                    (limit - filled) as u64,
+                    store,
+                    &permit,
+                    &stream.sock.deadline,
+                    observer,
+                )
+            {
+                retain_partial(store, &permit, &buffer[..filled])?;
+                return Err(error);
+            }
             match stream.read(&mut buffer[filled..limit]) {
                 Ok(0) => {
+                    finish_rate_read(&mut limiter, 0)?;
                     retain_partial(store, &permit, &buffer[..filled])?;
                     return Err(HttpsError::Truncated);
                 }
                 Ok(count) => {
+                    finish_rate_read(&mut limiter, count as u64)?;
                     observer.received(request.sequence, count as u64);
                     filled += count;
                 }
                 Err(error) => {
+                    finish_rate_read(&mut limiter, 0)?;
                     retain_partial(store, &permit, &buffer[..filled])?;
                     return if error.kind() == io::ErrorKind::UnexpectedEof {
                         Err(HttpsError::Truncated)
@@ -358,11 +429,76 @@ fn capture_reserved<C: Clock>(
     // Content-Length (or HEAD's zero-entity semantics) is complete. A TLS peer
     // closing without close_notify is acceptable ONLY at this exact boundary.
     // A bounded extra plaintext byte is always rejected; no read-to-end occurs.
+    store.remaining_ms(&permit)?;
     eof_after_complete_entity(&mut stream)?;
     stream.sock.deadline.remaining()?;
     store.remaining_ms(&permit)?;
     observer.verifying(request.sequence);
     Ok(store.finish_stream_observed(permit, || observer.publishing(request.sequence))?)
+}
+
+fn finish_rate_read(rate: &mut Option<RequestRate>, actual: u64) -> HttpsResult<()> {
+    if let Some(rate) = rate {
+        rate.bucket
+            .complete(actual, duration_ns(rate.origin.elapsed())?)?;
+    }
+    Ok(())
+}
+
+struct RequestRate {
+    origin: Instant,
+    deadline_ns: u64,
+    bucket: EntityRate,
+}
+
+impl RequestRate {
+    fn new(deadline: &Deadline) -> HttpsResult<Self> {
+        let origin = Instant::now();
+        let remaining = deadline
+            .ends
+            .checked_duration_since(origin)
+            .ok_or(HttpsError::Deadline)?;
+        Ok(Self {
+            origin,
+            deadline_ns: duration_ns(remaining)?,
+            bucket: EntityRate::empty(0),
+        })
+    }
+
+    fn before_read<C: Clock>(
+        &mut self,
+        capacity: u64,
+        store: &mut AcquisitionStore<C>,
+        permit: &Permit,
+        deadline: &Deadline,
+        observer: &mut dyn CaptureObserver,
+    ) -> HttpsResult<()> {
+        loop {
+            deadline.remaining()?;
+            store.remaining_ms(permit)?;
+            match self.bucket.admit(
+                capacity,
+                duration_ns(self.origin.elapsed())?,
+                self.deadline_ns,
+            )? {
+                Admission::Ready => return Ok(()),
+                Admission::Wait { nanoseconds } => {
+                    observer.rate_wait_started(nanoseconds);
+                    let waiting = Instant::now();
+                    std::thread::sleep(Duration::from_nanos(nanoseconds));
+                    observer.rate_wait_finished(duration_ns(waiting.elapsed())?);
+                    // Never construct a new deadline after waiting. Store checks
+                    // independently enforce the original wall/boot stage clocks.
+                    deadline.remaining()?;
+                    store.remaining_ms(permit)?;
+                }
+            }
+        }
+    }
+}
+
+fn duration_ns(duration: Duration) -> HttpsResult<u64> {
+    u64::try_from(duration.as_nanos()).map_err(|_| HttpsError::Deadline)
 }
 
 fn retain_partial<C: Clock>(

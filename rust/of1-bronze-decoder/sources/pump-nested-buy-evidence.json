@@ -1,0 +1,180 @@
+{
+  "schema": "PUMP_NESTED_BUY_DIAGNOSTIC_SOURCE_1",
+  "profile": "pump-buy-9c82f61-token2022-mayhem18-nested-height2-unresolved-v1",
+  "classification": "RETAINED_OFFICIAL_SCHEMA_PLUS_SEPARATE_RECORDED_CONTEXT_NOT_ACTIVATION",
+  "base_buy_receipt_sha256": "b338dddb2cf03e84481ac97bd567377a14dfcdf090abc2d1fe8cc02f9fa42be4",
+  "source_manifest": {
+    "repository": "pump-fun/pump-public-docs",
+    "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+    "path": "idl/pump.json",
+    "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+    "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49"
+  },
+  "sources": [
+    {
+      "repository": "https://github.com/pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "idl/pump.json",
+      "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+      "bytes": 169632,
+      "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+      "url": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/idl/pump.json"
+    },
+    {
+      "repository": "https://github.com/pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "docs/BREAKING_FEE_RECIPIENT.md",
+      "blob": "22dbe8a2c27f0ee4044f22b13f65eccc6900336b",
+      "bytes": 3370,
+      "sha256": "8b05e0906eaf1746508b0b2f909ac7c344ce7be33a6564d595335c9fda399868",
+      "url": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/docs/BREAKING_FEE_RECIPIENT.md"
+    },
+    {
+      "repository": "https://github.com/pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "docs/FEE_RECIPIENTS.md",
+      "blob": "36d53482a0db7c566f267a1ce657d8dba8c5791b",
+      "bytes": 2158,
+      "sha256": "9d66921d571a6129e5ef72504b60ae63888558e752eeb4a329b962f5cd229192",
+      "url": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/docs/FEE_RECIPIENTS.md"
+    }
+  ],
+  "client": {
+    "package": "@pump-fun/pump-sdk",
+    "version": "1.36.0",
+    "git_head": "1c9e0343fbc28158c071bcf03237b047e8cc32d9",
+    "git_head_status": "REGISTRY_DECLARED_GITHUB_COMMIT_NOT_RETRIEVABLE_404",
+    "license": "MIT",
+    "tarball": "https://registry.npmjs.org/@pump-fun/pump-sdk/-/pump-sdk-1.36.0.tgz",
+    "sha512_integrity": "sha512-X8rf+Wm/p/jhBj6zbwouM9blJ3UW8XJFSL7YTT8osBnpHsOH0ccT0DjCkIi6AAT7b6jf1nM3MXk7l78Fuf1M0g==",
+    "tarball_sha256": "e3e612d9bf0be5f1a443d321aee51b044b5e98408170c3eb8baebf6346f569aa",
+    "files": [
+      {
+        "path": "src/sdk.ts",
+        "bytes": 59470,
+        "sha256": "242736485abfa36648646b07e5b81b6e7bd4fe5a074411ebd790bc029e534b80"
+      },
+      {
+        "path": "src/pda.ts",
+        "bytes": 7159,
+        "sha256": "f6311abd14dea28e80cdb852f2363ef958ec48f470a0d16c8d4cf78694c9f972"
+      },
+      {
+        "path": "src/idl/pump.json",
+        "bytes": 234422,
+        "sha256": "eb93ce13a3f709b3affc80220425f75664423e0e1f8da9996d8591411feeee01"
+      },
+      {
+        "path": "package.json",
+        "bytes": 2650,
+        "sha256": "bb2294975f1a62db0aa386154fe6751223ef7e3f8ad872b3ebb7f7dc4ea44f92"
+      }
+    ],
+    "runtime_use": "NOT_INSTALLED_OR_EXECUTED_SOURCE_INSPECTION_ONLY"
+  },
+  "trace_sources": [
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/src/convert.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/src/convert.rs",
+      "sha256": "5884bda534f1824b62befe70795e4250fe1302a99acbe1ad4f0ca98856163f4b",
+      "license": "Apache-2.0",
+      "scope": "archival conversion retains group/vector order, program/account indices, data and optional stack height"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "transaction-status/src/lib.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/transaction-status/src/lib.rs",
+      "sha256": "d9e56f67a8654bddef0f14fad17ee2edd2383a0f010aea4c2df611eb4b492fbd",
+      "license": "Apache-2.0",
+      "scope": "retained 3.1.12 crate; map_inner_instructions preserves ordered vectors and recorded heights"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "transaction-context/src/lib.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/transaction-context/src/lib.rs",
+      "sha256": "013e87b10ccdd34bf1632b0121642a1f89e66967c49f87f777ef9213ddface6a",
+      "license": "Apache-2.0",
+      "scope": "retained 3.1.12 crate; invocation push/pop and trace semantics; InstructionAccount flags are separate fields, absent from archived CompiledInstruction"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/proto/confirmed_block.proto",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/proto/confirmed_block.proto",
+      "sha256": "c29a6db1c76fc1361f2d3920bdbda01f6270b6743c5bdc19997a9f4720ccdcec",
+      "license": "Apache-2.0",
+      "retained_at": "rust/of1-bronze-decoder/sources/confirmed_block.proto",
+      "scope": "outer index, ordered inner instructions, program/account indices, data, optional stack height; no CPI signer/writable flags"
+    },
+    {
+      "repository": "anza-xyz/solana-sdk",
+      "commit": "1eeebd07c5fd5e7e8a32b66cf1341cef529551c0",
+      "commit_identity_basis": "already locked registry package .cargo_vcs_info.json; no new GitHub verification",
+      "path": "message/src/inner_instruction.rs",
+      "url": "https://github.com/anza-xyz/solana-sdk/blob/1eeebd07c5fd5e7e8a32b66cf1341cef529551c0/message/src/inner_instruction.rs",
+      "sha256": "ba99a1dcad243c7ef1e014197428f8d7eece2bced93b9a9b2dedcd1813b74ce0",
+      "crate": "solana-message",
+      "version": "3.0.1",
+      "registry_checksum": "85666605c9fd727f865ed381665db0a8fc29f984a030ecc1e40f43bfb2541623",
+      "license": "Apache-2.0",
+      "scope": "ordered invoked-instruction list; transaction instructions start at stack height one"
+    },
+    {
+      "repository": "anza-xyz/solana-sdk",
+      "commit": "1eeebd07c5fd5e7e8a32b66cf1341cef529551c0",
+      "commit_identity_basis": "same already locked registry package",
+      "path": "message/src/compiled_instruction.rs",
+      "url": "https://github.com/anza-xyz/solana-sdk/blob/1eeebd07c5fd5e7e8a32b66cf1341cef529551c0/message/src/compiled_instruction.rs",
+      "sha256": "da3b22c2e359ffbee2662af70814ef5b9cd21814a5a09832bdba1fb7f5f50193",
+      "license": "Apache-2.0",
+      "scope": "program index, ordered account indices, data only; no per-CPI AccountMeta flags"
+    }
+  ],
+  "source_license": "No LICENSE at pinned Pump documentation commit; complete IDL not vendored.",
+  "instruction": {
+    "name": "buy",
+    "discriminator_hex": "66063d1201daebea",
+    "bytes": 25,
+    "args": [
+      "amount:u64",
+      "max_sol_cost:u64",
+      "track_volume:OptionBool(bool)"
+    ],
+    "boolean_offset": 24,
+    "no_byte_synthesis_or_discard": true
+  },
+  "account_roles": "BUY-specific first16 IDL roles, then expected curve-v2 PDA and documented buyback recipient; no sell positions substituted",
+  "token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+  "association": {
+    "selected_instruction_height": 2,
+    "event_parent": "exact selected inner-order node, not merely the same program ID",
+    "event_height": 3,
+    "subtree_end": "first later instruction at height <= selected height, or end of the complete recorded group",
+    "full_group_order_and_heights_required": true,
+    "missing_height_log_fallback": false,
+    "exactly_one_immediate_child_event": true,
+    "parent_account_inclusion_required": true,
+    "existing_instruction_account_event_status_provenance_checks_retained": true
+  },
+  "privileges": {
+    "message_flags": "verified compiled-message capacity only, including loaded addresses",
+    "required_privileges": "source-defined minimum flags; existing message-capacity checks remain required",
+    "actual_cpi_signer_flags": null,
+    "actual_cpi_writable_flags": null,
+    "actual_cpi_privileges": "UNAVAILABLE_NOT_RECORDED_IN_STATUS_METADATA",
+    "infer_from_success_or_pda": false,
+    "silver_admission_scope": "recorded instruction/event facts with exact subtree and addresses; never proof of actual CPI flags, account contents or committed account state"
+  },
+  "observed_profile_gaps": [
+    "Remaining account16 does not equal documented bonding-curve-v2 PDA",
+    "User message nonsigner matches SDK Mayhem sol-vault PDA but actual CPI signer/writable flags are unavailable",
+    "No complete source-supported Mayhem buy profile admitted"
+  ],
+  "scope": "Only nested exact25byte buy-discriminator diagnostics. Retain old24/26byte and sell evidence; no Silver path, no new candidate registration.",
+  "admission": false,
+  "no_network_source_retrieval": true
+}

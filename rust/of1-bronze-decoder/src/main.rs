@@ -1,5 +1,5 @@
 //! Offline-only CLI. Output must be a NEW directory outside the preserved run.
-use of1_bronze_decoder::report;
+use of1_bronze_decoder::{report, resources};
 use of1_range_recorder::{durable::acquisition::current_executable_sha256, sha256};
 use serde_json::json;
 use std::{
@@ -30,24 +30,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let start = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let report = report::decode_run(&root)?;
-    let quality = serde_json::to_vec_pretty(&report)?;
+    let quality = resources::bounded_json(&report, "QUALITY_JSON", resources::MAX_QUALITY_BYTES)?;
     let html = report::html(&report);
-    let mut bronze = Vec::new();
-    for record in report["records"].as_array().ok_or("records absent")? {
-        serde_json::to_writer(&mut bronze, record)?;
-        bronze.push(b'\n');
-    }
+    resources::check_size("QUALITY_HTML", html.len(), resources::MAX_HTML_BYTES)?;
+    let bronze = resources::bounded_jsonl(
+        report["records"].as_array().ok_or("records absent")?,
+        resources::MAX_JSONL_BYTES,
+    )?;
+    let silver = resources::bounded_jsonl(
+        report["silver_records"]
+            .as_array()
+            .ok_or("silver records absent")?,
+        resources::MAX_JSONL_BYTES,
+    )?;
     let execution = json!({"schema":"OF1_BRONZE_EXECUTION_1","decoder_source_sha256":of1_bronze_decoder::source_sha256(),"processed_at_unix_ms":start.to_string(),"finished_at_unix_ms":SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis().to_string(),"operational_timestamps_are_not_features":true,"executable_sha256":current_executable_sha256()?,"quality_sha256":sha256(&quality),"bronze_jsonl_sha256":sha256(&bronze),"html_sha256":sha256(html.as_bytes()),"lock_sha256":sha256(include_bytes!("../Cargo.lock")),"run_root":root,"no_acquisition_or_writer_resume":true});
+    let mut execution = execution;
+    if let Some(sample) = report.get("sample_identity") {
+        execution["sample_identity"] = sample.clone();
+        execution["slice_class"] = report["slice_class"].clone();
+    }
+    execution["silver_jsonl_sha256"] = json!(sha256(&silver));
+    execution["silver_fact_count"] = json!(
+        report["silver_records"]
+            .as_array()
+            .ok_or("silver records absent")?
+            .len()
+    );
+    let execution_bytes =
+        resources::bounded_json(&execution, "EXECUTION_JSON", resources::MAX_EXECUTION_BYTES)?;
+    resources::publication_bytes(
+        &[
+            quality.len(),
+            bronze.len(),
+            silver.len(),
+            html.len(),
+            execution_bytes.len(),
+        ],
+        resources::MAX_PUBLICATION_BYTES,
+    )?;
     // Fail on an existing output. Partial output after a crash is explicit: the
     // publication marker is written LAST and never interpreted as resumable input.
     fs::create_dir(&output)?;
     write_new(&output.join("quality.json"), &quality)?;
     write_new(&output.join("bronze.jsonl"), &bronze)?;
+    write_new(&output.join("silver.jsonl"), &silver)?;
     write_new(&output.join("quality.html"), html.as_bytes())?;
-    write_new(
-        &output.join("execution.json"),
-        &serde_json::to_vec_pretty(&execution)?,
-    )?;
+    write_new(&output.join("execution.json"), &execution_bytes)?;
     // Establish all artifact names before a durable completion marker can exist.
     fs::File::open(&output)?.sync_all()?;
     write_new(&output.join("COMPLETE"), sha256(&quality).as_bytes())?;

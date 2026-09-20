@@ -1,0 +1,41 @@
+{
+  "schema": "B5_TOKEN_BALANCE_CONTEXT_HORIZON_PROPOSAL_1",
+  "status": "DRAFT_NOT_ACQUISITION_OR_SAMPLE_AUTHORITY",
+  "network_authorized": false,
+  "original_selection_unchanged": [422669516, 422669519],
+  "original_selection_plan_sha256": "df930707d0ece9915744aec7cf771c60e92f35298f2a6b4251aeb30d5a6d85a1",
+  "original_seed": "solana-quant-epoch978-pilot-v1-20260912",
+  "original_algorithm": "SHA256_MIN_CENTER_1",
+  "question": "Welke ondersteunde raw buy/sell-eventfeiten en afzonderlijke transactiebrede tokenbalanscontext volgen binnen de eerstvolgende 16 slots op de bestaande pilotwaarnemingen van dezelfde mint?",
+  "horizon_after_each_observation_slots": 16,
+  "new_contiguous_context_union": [422669519, 422669535],
+  "new_slots": 16,
+  "complete_context_union": [422669516, 422669535],
+  "duration_seconds": null,
+  "rationale": "Eenmalig kort, expliciet voorgesteld ketenvolgordevenster voor een beschrijvende dekkingstoets. Zestien slots is een vooraf te beoordelen ontwerpparameter, geen empirisch bewezen minimale toereikende duur. Geen extra voorafvenster nodig voor deze vraag: behouden prebalansen zijn context bij de opgenomen transacties, niet bij de volledige mintlifecycle. Geen aanname van 400 ms per slot.",
+  "classification_of_future_context": "POSTHOC_DESCRIPTIVE_CONTEXT_NOT_A_NEW_OUTCOME_INDEPENDENT_SAMPLE",
+  "sample_policy": "Oorspronkelijke sample-identiteit en bytes niet uitbreiden of herschrijven. Dit voorstel vereist een apart brongebonden contextmanifest en nieuwe expliciete metadata/payloadbesluiten; een toekomstige echte onderzoekssteekproef moet dit contextrecept vooraf opnemen en los blijven van reeds bekeken data.",
+  "coverage_required": [
+    "Alle 19 slots van de context-unie verantwoord, inclusief missing/absent bronranges; geen vervangende slots",
+    "Iedere Transaction-envelope en status behouden; foutuitkomsten, ontbrekende metadata en unsupported Pump-varianten in volledige noemers",
+    "Exacte mint/accountkey/tokenprogramma en consistente waargenomen decimals; conflict of ontbrekende observatie blijft zichtbaar",
+    "Gebonden transactievolgorde en eigen instructie/eventcontext; balance-delta nooit automatisch instructiehoeveelheid",
+    "Geen volledige mintactiviteit claimen wanneer variant- of tokenbalansregistratie ontbreekt; ontbrekende timestamps blijven onbekend"
+  ],
+  "stop_rules": [
+    "Eenmalig eindpunt 422669535 exclusief, ongeacht rendement, Pump-aanwezigheid, decode-uitkomsten of gevonden buy/sell-paren",
+    "Geen seedwijziging, vervangend venster of verdere verlenging bij nul paren",
+    "Harde integriteits-/budget-/deadlinefout stopt; incomplete dekking wordt niet als complete dataset gepubliceerd",
+    "Uitkomsten blijven beschrijvend; geen Gold, causaliteit, uitvoerbare prijs, Research Ready- of edgeclaim"
+  ],
+  "implementation_before_execution": [
+    "Huidige Bronze-CLI accepteert maximaal drie payloadslots per run; een grotere Raw-run kan niet achteraf als fictieve drie-slotruns worden gekopieerd",
+    "Kleine read-only manifestgebonden batchroute nodig: behoud oorspronkelijke run/receipt/sample/contextbindingen, verwerk maximaal drie slots en 16 MiB Raw per batch en geef alle geselecteerde slots door",
+    "Voor 16 nieuwe slots minimaal zes zulke batches; aantal kan groter zijn bij byte-/recordcaps. De bestaande drie slots blijven onveranderd en worden alleen als bestaande context gerefereerd",
+    "Behoud 24 MiB recordoutput per slot, 64 MiB per decoderselectie/JSONL/quality en 5000 records / 64 MiB per Parquetbestand; collectiequery moet alle batchmanifests expliciet binden, niet globben",
+    "Controleer concrete indexranges, totale Raw-/decodeomvang, fysieke sharding en gezamenlijke resourcecaps voor het nieuwe beslispakket; huidige 2 GiB/proces en 4 GiB artefactruimte is geen bewezen budget voor de toekomstige uitbreiding"
+  ],
+  "new_byte_request_runtime_budget": null,
+  "budget_status": "NOT_MEASURED_OR_APPROVED_FOR_THIS_FUTURE_CONTEXT",
+  "research_ready": false
+}
