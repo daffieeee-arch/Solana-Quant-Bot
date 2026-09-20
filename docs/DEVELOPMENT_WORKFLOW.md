@@ -10,7 +10,7 @@ Before proposing or changing code:
 2. inspect `pwd`, worktree, remotes, branch tracking and fetched `origin/main`;
 3. inspect the actual code/tests and relevant current issues/merged PRs;
 4. state the bounded hypothesis, evidence needed and explicit non-goals;
-5. run the read-only WSL doctor checks; report missing prerequisites instead of installing them.
+5. run the read-only Linux/WSL doctor checks; report missing prerequisites instead of installing them.
 
 Never edit `main` directly. Create one bounded branch from current `origin/main`, stop if user work would be overwritten, and preserve unrelated dirty changes. After merge, delete the head branch (repository auto-delete is enabled) or run the dry-run/execute flow in [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md). Do not leave squash-merged delivery branches on the remote.
 
@@ -87,9 +87,9 @@ Only the existing read-only documentation MCPs `triton-docs`, `solana-mcp` and `
 
 ## Local environment
 
-Use Windows 11 → WSL2 Ubuntu and keep repository/datasets on WSL ext4. Follow [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md).
+Use WSL2 Ubuntu or an explicitly approved Linux VPS development host and keep repository/datasets on native ext4. Follow [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md).
 
-No script or agent may automatically run `sudo`, install apt packages/toolchains, edit shell profiles, configure MCPs or create dataset directories. A doctor failure is a reported prerequisite, not permission to mutate the machine.
+The doctor never installs software or creates directories. Project-local toolchain/dependency installation requires explicit user authorization, as granted for the 2026-09-20 VPS setup. Preserve shared defaults, shell profiles and other projects. Never interrupt existing Hyperliquid captures; resource-limit heavy Solana commands and stop only Solana work if contention develops. No implicit sudo, system package, MCP or dataset-directory changes follow from a doctor failure.
 
 ## Current quality gates
 
@@ -103,12 +103,16 @@ npm test
 npx --no-install tsc --noEmit
 npm run build
 node scripts/assert-pump-protocol-v2-offline.mjs --static
+node scripts/assert-of1-planner-offline.mjs --static
+node scripts/assert-of1-bronze-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check
 node scripts/assert-pump-protocol-v2-offline.mjs --all
+node scripts/assert-of1-planner-offline.mjs --all
+node scripts/assert-of1-bronze-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked
@@ -124,7 +128,7 @@ Run relevant focused tests during development and the full executable set before
 - No runtime state/caches/generated reports/build output in the source tree.
 - `package-lock.json` remains tracked; it is a dependency lock, not runtime state.
 - Reusable deterministic fixtures live under `tests/fixtures/` with provenance/evidence class.
-- Authentic datasets live outside Git under an explicit WSL ext4 root and immutable manifests.
+- Authentic datasets live outside Git under an explicit native-ext4 root and immutable manifests.
 - Never treat a fixture as an authentic sample or relabel an engineering-validation slice as research sampling.
 
 ## Cleanup and archive discipline
@@ -139,7 +143,7 @@ Before deleting a subsystem:
 
 The explicitly approved annotated tag `v1-paper-platform-final` is the pre-cleanup archive. Tag object `de5b3850e0527afe8271c54abfdb95098d55e395` peels to commit `f870621f5df76b935ce828fa9205fb9ff7504f67`; do not move or overwrite it. Every removed path and retained invariant must appear in [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json). There is no permanent legacy directory.
 
-TrueNAS, Hermes, Phase 8C/8D and GHCR recovery are retired targets and their confirmed paths are removed by B2A. Do not restore, repair, dispatch or deploy them. Future generic Linux VPS work begins only after the research/shadow/new-paper gates and its own approval.
+TrueNAS, Hermes, Phase 8C/8D and GHCR recovery are retired targets and their confirmed paths are removed by B2A. Do not restore, repair, dispatch or deploy them. Production VPS runtime work begins only after the research/shadow/new-paper gates and its own approval; approved Linux VPS development follows the separate setup profile.
 
 ## Safety and research integrity
 

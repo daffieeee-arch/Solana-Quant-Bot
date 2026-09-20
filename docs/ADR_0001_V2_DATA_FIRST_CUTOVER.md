@@ -66,6 +66,10 @@ Jetstreamer HTTP/S3/backend overrides are default-deny. Future Titan quote traff
 - Preserve obsolete implementation in a permanent legacy directory.
 - Introduce alternate Solana/network data providers as fallbacks.
 
+## Development-host amendment — 2026-09-20
+
+The user approved Linux VPS development alongside WSL2, project-local Node/Rust installation, and bounded development checks. Native ext4 and immutable evidence rules remain required. All OF1 data on this VPS belongs under `/home/chupa/Solana-project/data-old-faithful-one`, outside Git. Existing Hyperliquid captures must remain uninterrupted. This amendment changes the development host boundary only; acquisition still needs a separately approved lease, and production shadow/paper/live deployment retains the original evidence gates. See [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md).
+
 ## Open decisions
 
 1. **Hosted Old Faithful gRPC:** public official documentation and the consulted documentation MCP do not fully align. Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acquisition path. V2 initially uses direct official OF1 access through a pinned Jetstreamer/OF1 path. Any future hosted endpoint requires explicit availability and cost confirmation from Triton.

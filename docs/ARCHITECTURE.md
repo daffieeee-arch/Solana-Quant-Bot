@@ -43,7 +43,7 @@ V2 does not assume a profitable strategy. It must make “no edge”, “insuffi
 | product UI | React/TypeScript | visualization and linked interaction; no protocol/trading business logic or wallet capability |
 | analytical projection | optional later ClickHouse | fully rebuildable; never the only research truth or execution state |
 
-Development and local visualization run on Windows 11 → WSL2 Ubuntu with repository and dataset roots on WSL ext4. The only later deployment target is a generic Linux VPS after research, prospective shadow/paper and stability gates. That target is designed anew: it does not inherit the retired TrueNAS/Phase 8 deployment topology.
+Development and local visualization run on WSL2 Ubuntu or an explicitly approved Linux VPS development host with repository and dataset roots on native ext4. The 2026-09-20 host decision expands development support only. The only later deployment target is a generic Linux VPS after research, prospective shadow/paper and stability gates. That target is designed anew: it does not inherit the retired TrueNAS/Phase 8 deployment topology.
 
 ## Network-provider capability model
 

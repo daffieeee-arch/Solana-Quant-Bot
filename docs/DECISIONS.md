@@ -60,9 +60,9 @@ The first product view exposes authentic acquisition quality and token lifecycle
 
 Implement one source/plan/range/variant/Bronze/Silver/lifecycle/visible result. Generalize only after a second proven use case. After at most three or four engineering PRs without a visible or research-measurable outcome, the next PR must produce one.
 
-### D14 — WSL-first development; generic VPS later
+### D14 — Linux development profiles; production VPS gates retained
 
-Development/testing/research run on Windows 11 → WSL2 Ubuntu with repository and datasets on WSL ext4. No automatic sudo/toolchain mutation. TrueNAS and Hermes AI are retired. A generic Linux VPS waits for strategy, prospective paper/shadow and runtime stability evidence.
+Amended by the user on 2026-09-20: development/testing/research may run on WSL2 Ubuntu or the approved Ubuntu VPS, with repository and datasets on native ext4. Project-local prerequisites may be installed with explicit authorization; shared toolchain defaults and shell profiles remain unchanged. The current VPS OF1 root is `/home/chupa/Solana-project/data-old-faithful-one`. Existing Hyperliquid captures must not be interrupted. TrueNAS and Hermes AI remain retired. Production runtime deployment still waits for strategy, prospective paper/shadow and stability evidence. See [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md).
 
 ### D15 — Git history is the archive
 

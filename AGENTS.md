@@ -27,7 +27,7 @@ The approved annotated archive tag `v1-paper-platform-final` exists at the last 
 - Python: reads approved Silver and produces Gold, features, labels, cohort/split assignments, statistics, backtests, walk-forward results and experiment artifacts with Polars/DuckDB, marimo and MLflow. It must not implement Pump wire decoding or alternative Silver business logic.
 - React/TypeScript: Research Observatory first; later the Professional Trading Workstation. No trading-domain or wallet logic in the browser.
 - Canonical research truth: immutable source evidence plus Parquet/Arrow and manifests. ClickHouse is optional and rebuildable later.
-- Development: Windows 11 → WSL2 Ubuntu, repository and datasets on WSL ext4; see [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md).
+- Development: WSL2 Ubuntu or an explicitly approved Linux VPS development host, with repository and datasets on native ext4; see [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md).
 - Future runtime: generic Linux VPS only after strategy, shadow/paper and stability gates.
 - TrueNAS and Hermes AI are retired from the active architecture. Their removed historical assets remain available at `v1-paper-platform-final`; do not restore, repair or deploy them as V2 targets.
 
@@ -84,7 +84,7 @@ Only the existing read-only documentation MCPs `triton-docs`, `solana-mcp` and `
 
 ## Engineering gates
 
-Run the read-only doctor checks first. Never auto-install with `sudo`, mutate the user toolchain or change shell configuration. The post-B2A full gates are:
+Run the read-only doctor checks first. Install project-local prerequisites only when explicitly authorized; never auto-install with `sudo`, change shared toolchain defaults or edit shell configuration. The post-B2A full gates are:
 
 ```bash
 npm ci
@@ -94,12 +94,16 @@ npm test
 npx --no-install tsc --noEmit
 npm run build
 node scripts/assert-pump-protocol-v2-offline.mjs --static
+node scripts/assert-of1-planner-offline.mjs --static
+node scripts/assert-of1-bronze-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check
 node scripts/assert-pump-protocol-v2-offline.mjs --all
+node scripts/assert-of1-planner-offline.mjs --all
+node scripts/assert-of1-bronze-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked

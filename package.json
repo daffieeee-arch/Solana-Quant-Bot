@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "doctor": "node scripts/doctor.mjs",
     "start:cockpit": "node dist/cockpit-main.js",
     "start:acquisition-monitor": "node dist/acquisition-monitor/main.js",
     "build:monitor": "tsc -p frontend/tsconfig.monitor.json && vite build --config frontend/vite.monitor.config.ts",

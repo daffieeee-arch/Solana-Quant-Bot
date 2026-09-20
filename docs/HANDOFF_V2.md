@@ -44,9 +44,9 @@ decoded coin dataset or B4 completion. It does not extend the frozen dashboard.
 
 The [Rust index planner](research/OF1_RUST_PLANNER.md), [Raw/receipt store](research/OF1_DURABLE_RAW_STORE.md) and [loopback-only transport](research/OF1_OFFLINE_TRANSPORT.md) form one fixture integration. The [durability report](research/OF1_DURABILITY_EVIDENCE.md) and [end-to-end transport report](research/OF1_TRANSPORT_EVIDENCE.md) expose immutable publication, charged retries and restart-surviving deadlines. The [parity inventory](../schemas/acquisition/of1/transport-parity.json) maps all 26 old JS test cases before replacement. These are not acquisition evidence; no live lease is implied.
 
-- Development, tests, research and local visualization run on Windows 11 → WSL2 Ubuntu, with the repository on the WSL ext4 filesystem.
-- Large datasets live outside Git under an explicitly configured dataset root on the WSL filesystem.
-- The local prerequisite and doctor contract is [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md). Setup never runs `sudo` or changes a toolchain automatically.
+- Development, tests, research and local visualization run on WSL2 Ubuntu or an explicitly approved Linux VPS development host, with the repository on native ext4. The 2026-09-20 VPS development decision does not authorize shadow, paper or live deployment.
+- Large datasets live outside Git under an explicitly configured dataset root on native ext4. On the current VPS all OF1 data belongs under `/home/chupa/Solana-project/data-old-faithful-one`.
+- The local prerequisite, project wrapper and read-only doctor contract is [`WSL_DEVELOPMENT_SETUP.md`](WSL_DEVELOPMENT_SETUP.md). Explicitly approved project-local installation preserves shared defaults and shell profiles; the doctor never installs anything.
 - TrueNAS and Hermes AI are **retired from the active product architecture**. B2A removes their confirmed active-tree assets; the immutable tag and Git history retain the old tree. They are not deployment targets.
 - A generic Linux VPS is a later runtime target only after strategy evidence, prospective paper/shadow results and a stable new runtime exist.
 - There is no permanent `legacy/` directory. Git history and the approved annotated tag are the archive.
