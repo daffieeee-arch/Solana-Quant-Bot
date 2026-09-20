@@ -7,12 +7,13 @@ export const RUST_HOST = 'x86_64-unknown-linux-gnu';
 // The bounded DuckDB reader only; these are not future Gold workspace pins.
 export const QUERY_PYTHON_ABI = '3.13';
 export const DUCKDB_VERSION = '1.5.5';
-export const QUERY_VERSION_PROBE = "import sys,platform,json,importlib.metadata; print(json.dumps({'implementation':platform.python_implementation(),'abi':'.'.join(map(str,sys.version_info[:2])),'python':platform.python_version(),'duckdb':importlib.metadata.version('duckdb')}))";
+export const QUERY_VERSION_PROBE = "import sys,platform,json,importlib.metadata; print(json.dumps({'implementation':platform.python_implementation(),'abi':'.'.join(map(str,sys.version_info[:2])),'python':platform.python_version(),'duckdb':importlib.metadata.version('duckdb'),'isolated_venv':sys.prefix!=sys.base_prefix,'prefix':sys.prefix}))";
 
 export function validQueryVersion(output) {
   try {
     const value = JSON.parse(output);
-    return value.implementation === 'CPython' && value.abi === QUERY_PYTHON_ABI && value.duckdb === DUCKDB_VERSION;
+    return value.implementation === 'CPython' && value.abi === QUERY_PYTHON_ABI && value.duckdb === DUCKDB_VERSION
+      && value.isolated_venv === true && typeof value.prefix === 'string' && isAbsolute(value.prefix);
   } catch { return false; }
 }
 
@@ -60,5 +61,7 @@ export function developmentEnvironment(env = process.env) {
   };
   delete selected.PYTHONHOME;
   delete selected.PYTHONPATH;
+  delete selected.VIRTUAL_ENV;
+  delete selected.UV_PROJECT_ENVIRONMENT;
   return selected;
 }

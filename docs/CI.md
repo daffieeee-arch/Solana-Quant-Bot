@@ -34,13 +34,15 @@ privilege claim.
 ## Canonical general CI design
 
 `ci.yml` runs **one** `tests-build-zero-cost` job on `ubuntu-24.04` with a
-**35-minute** budget. The single-job shape is intentional:
+**45-minute** budget. The single-job shape is intentional:
 
 1. fail-closed policy can deep-compare the entire workflow;
 2. no job-level secrets, containers, services or write permissions;
 3. one checkout with `persist-credentials: false`;
 4. only approved actions: pinned `actions/checkout`, `actions/setup-node` and
    narrowly scoped `actions/cache`.
+
+The first integrated WSL/VPS run [35531541423](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/35531541423) reached the former 35-minute hard stop during Parquet/DuckDB, after Node, Pump, OF1 and Bronze passed. The expanded recorded-pipeline suite alone took 612 seconds. The job budget is now 45 minutes; the policy still requires that exact bound and every gate. The timeout receipt is retained with the [integration evidence](operations/VPS_WSL_INTEGRATION.md).
 
 ### Triggers
 
@@ -90,8 +92,9 @@ version, and installs only the existing DuckDB 1.5.5 hash-locked wheel in a fres
 runner-temp venv. No new action, system package, global Python or research
 workspace is introduced. Missing compatible Python or wheel fails, never skips.
 Local runs set `COLUMNAR_QUERY_PYTHON` to the existing isolated interpreter and
-do not run CI-only preparation. Runner availability and remote runtime remain
-unverified until later publication; no GitHub workflow is invoked by this work.
+do not run CI-only preparation. The first VPS integration run verified hosted
+reader preparation and real DuckDB checks before the job timeout; complete
+integration acceptance is recorded separately in the integration evidence.
 
 ### Scoped Rust cache and measured phases
 

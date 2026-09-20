@@ -47,7 +47,7 @@ jobs:
   quality:
     name: tests-build-zero-cost
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -144,6 +144,11 @@ describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
     expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(35);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality['timeout-minutes']).toBe(45);
+    for (const minutes of [0, 35, 46, 360]) {
+      expect(errors(SAFE_WORKFLOW.replace('timeout-minutes: 45', `timeout-minutes: ${minutes}`)))
+        .toContain('workflow must match the canonical validation-only structure exactly');
+    }
   });
 
   it('runs PR validation and main validation without duplicate feature-branch pushes', () => {

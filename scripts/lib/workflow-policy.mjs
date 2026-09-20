@@ -169,7 +169,7 @@ const CANONICAL_WORKFLOW = {
     quality: {
       name: 'tests-build-zero-cost',
       'runs-on': 'ubuntu-24.04',
-      'timeout-minutes': 35,
+      'timeout-minutes': 45,
       steps: CANONICAL_STEPS,
     },
   },

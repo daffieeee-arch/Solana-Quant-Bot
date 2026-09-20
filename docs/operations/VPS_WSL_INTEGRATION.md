@@ -26,8 +26,10 @@ Its successful migration is separate from accepting this combined code revision.
 ## Development boundary
 
 The repository wrapper selects project-local Node 22.23.2, Rust 1.97.1 and the
-existing CPython 3.13 / DuckDB 1.5.5 query reader. It validates an explicitly
-supplied external data root without changing shared defaults or shell profiles.
+existing CPython 3.13 / DuckDB 1.5.5 query reader. It rejects a non-venv reader,
+clears inherited Python module/venv overrides for the child, and binds the child
+to the verified query venv. It validates an explicitly supplied external data
+root without changing shared defaults or shell profiles.
 Node dependencies are installed in this worktree from the unchanged lockfile;
 native hooks run with sockets denied. Locked Cargo registry preparation is a
 separate package-only step, never a Solana-provider request.
@@ -39,6 +41,15 @@ runner checks the ten preserved capture process identities, available memory
 and free disk; it stops only its Solana scope on pressure or a mismatch.
 Dataset workers retain their stricter 2-GiB process and 4-GiB result bounds.
 This monitors process identity, not Hyperliquid data completeness.
+
+The native temporary directory for these gates is
+`/home/chupa/Solana-project/data-old-faithful-one/tmp-vps-integration`, selected
+per child with `TMPDIR`. Do not use the longer audit directory as `TMPDIR`: the
+monitor Unix-socket fixtures append names that exceed Linux `sun_path` there.
+The first complete planner attempt failed on that path limit after earlier
+phases passed; its log is preserved as `rust-planner.log`. All nine focused
+monitor IPC fixtures then passed using the short path. No socket limit, OS
+configuration, fixture source or assertion was changed.
 
 No Hyperliquid process, environment, service, data or configuration is changed.
 The existing report service remains on loopback port 7040 and serves its
@@ -54,6 +65,14 @@ The focused environment suite passed 14 tests, and the full Node suite passed
 build, Rust/Parquet gates, fresh offline data reproduction, independent review
 and GitHub CI remain separate acceptance steps; no integration completion is
 claimed until their actual receipts are recorded here.
+
+The first PR #119 run (`35531541423`, head `f16ea61`) was cancelled by GitHub
+with the explicit annotation `The job has exceeded the maximum execution time
+of 35m0s`. Node, Pump, OF1 and Bronze passed; Parquet Rust tests and initial
+DuckDB checks passed before cancellation. The full job log and annotation are
+preserved in the audit directory. The CI limit and its exact-policy fixture
+are increased to 45 minutes without changing or skipping a gate. This first
+run is not a successful integration CI receipt.
 
 ## Data acceptance contract
 

@@ -118,6 +118,8 @@ systemd-run --user --scope --quiet \
 
 Use the same scope limits for builds, native rebuilds and full Rust gates, and avoid concurrent heavy suites. Scope names may be supplied to make monitoring explicit. A scope is not a persistent service. If scope creation fails, stop heavy work instead of silently running without limits. Observe free memory, load, disk availability and the original Hyperliquid process identities read-only; pause/stop only Solana work if contention develops. Resource limits reduce contention but are not proof of capture continuity; do not claim full data continuity solely from living PIDs.
 
+For full gates on this VPS, select `TMPDIR=/home/chupa/Solana-project/data-old-faithful-one/tmp-vps-integration` for the child command. This existing native directory has room for the Parquet fixture gate and keeps monitor Unix-socket paths short enough. Longer nested audit paths can exceed the Unix socket path limit. Do not edit global temporary-directory defaults.
+
 The current unprivileged Bubblewrap/user-namespace probes failed while the project's existing seccomp launcher worked. No AppArmor or sysctl change is required by this development profile. Full gates include separate permitted local HTTP/TLS fixtures. Task-specific host results are recorded in [the VPS integration evidence](operations/VPS_WSL_INTEGRATION.md).
 
 ## Validation and evidence boundary

@@ -38,7 +38,10 @@ export function runWithToolchain(args, env = process.env) {
   if (query.status !== 0 || !validQueryVersion(query.stdout)) {
     throw new Error('Project query reader requires isolated CPython 3.13 and DuckDB 1.5.5; no installation attempted.');
   }
-  const child = spawn(args[0], args.slice(1), { env: childEnv, stdio: 'inherit' });
+  childEnv.VIRTUAL_ENV = JSON.parse(query.stdout).prefix;
+  childEnv.UV_PROJECT_ENVIRONMENT = childEnv.VIRTUAL_ENV;
+  const command = ['python', 'python3'].includes(args[0]) ? paths.queryPython : args[0];
+  const child = spawn(command, args.slice(1), { env: childEnv, stdio: 'inherit' });
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
   child.on('error', () => { console.error('Unable to start the requested development command'); process.exitCode = 1; });
   child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : 143); });
