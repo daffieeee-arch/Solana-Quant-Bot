@@ -23,6 +23,42 @@ The independent migration audit is preserved at
 It verified 10,450 ordinary files and reproduced all 21 collection queries.
 Its successful migration is separate from accepting this combined code revision.
 
+## PR #119 frozen acceptance scope — 2026-09-21
+
+The approved delivery task persists the standing development workflow and accepts
+this imported WSL/VPS integration. The initial independent review was partitioned
+across acquisition/monitor, canonical Bronze/Parquet and Python/tooling/evidence;
+these assessments together form one full round. One focused independent recheck
+of valid in-scope fixes and their consequences follows. Remaining blockers then
+require the user's decision; the round budget never permits an unsafe merge.
+
+Acceptance criteria:
+
+1. Active instructions record the user's branch, bounded review/test, protected
+   squash-merge, post-merge verification and safe-cleanup workflow.
+2. The imported stack retains provider admission, canonical ordering and exact
+   quantities, complete package accounting, native sample/parent identities and
+   child/collection consistency. Fix demonstrated violations in supported paths;
+   new decoder profiles, acquisition, strategy work and optional refactors are
+   outside this task. Nonblocking out-of-scope ideas go to the backlog.
+3. The isolated VPS tools and all required gates have valid evidence. Reuse the
+   existing 21-query reproduction, two fresh Raw replays and preservation audit
+   where inputs, behavior and environment remain relevantly unchanged. A code
+   fix requires targeted behavior/risk checks and an explicit assessment of its
+   effect on that evidence; all required GitHub checks pass on the final head.
+4. Independent review findings are substantively resolved and the exact reviewed
+   head is verified immediately before a protected squash merge. The resulting
+   main commit/tree, main CI and Project #4 synchronization are checked afterward.
+   B4/B5 and Research Ready are not promoted by integration completion.
+5. Capture identities, original VPS/WSL worktrees, unique commits, archive tags,
+   migration evidence and original OF1 data remain preserved. Confirm deletion
+   of the merged GitHub task branch; remove local task artifacts only after the
+   clean, unused and safe-to-delete conditions are proven.
+
+Review/fix/merge evidence is recorded separately in
+`migrations/vps-integration-review-20260921/` under the same OF1 data root.
+Earlier migration and integration receipts remain immutable.
+
 ## Development boundary
 
 The repository wrapper selects project-local Node 22.23.2, Rust 1.97.1 and the

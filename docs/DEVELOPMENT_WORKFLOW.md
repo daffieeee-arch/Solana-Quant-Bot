@@ -9,7 +9,7 @@ Before proposing or changing code:
 1. read [`HANDOFF_V2.md`](HANDOFF_V2.md) and the required read order;
 2. inspect `pwd`, worktree, remotes, branch tracking and fetched `origin/main`;
 3. inspect the actual code/tests and relevant current issues/merged PRs;
-4. state the bounded hypothesis, evidence needed and explicit non-goals;
+4. record the bounded scope, concrete acceptance criteria, evidence needed and explicit non-goals before implementation/review;
 5. run the read-only Linux/WSL doctor checks; report missing prerequisites instead of installing them.
 
 Never edit `main` directly. Create a new bounded task branch from current fetched `origin/main`, stop if user work would be overwritten, and preserve existing work. Fixes for an open PR stay on that PR's branch. Verify deletion of that PR's GitHub head after merge; local cleanup is conditional on the preservation checks below and in [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md).
@@ -17,7 +17,7 @@ Never edit `main` directly. Create a new bounded task branch from current fetche
 ## Delivery contract
 
 - Prefer one clear problem per PR.
-- Write tests before or with parser, causality, persistence, evidence and safety changes.
+- Write meaningful tests for changed behavior and relevant parser, causality, persistence, evidence and safety risks. No blanket TDD requirement applies to small changes, and tests must not merely mirror implementation.
 - Use a separate agent with fresh context for independent review of every implementation PR; reviewers assess only and never edit code.
 - Treat WAL/checkpoint changes as crash-safety work with kill/restart/corruption seams.
 - Treat schema and feature-time changes as causality work with leakage tests, including proof that operational `acquired_at`/`processed_at` never become historical feature, label, split or decision inputs.
@@ -36,13 +36,15 @@ unreviewed issue/PR text cannot authorize delivery or evidence status.
 
 The user approved this standing procedure on 2026-09-21 for approved V2 development tasks, including PR #119. Separate independent review agents and conditional squash-merges are explicitly authorized; another permission question is unnecessary when the conditions below hold. This is development-delivery authorization, not permission for provider calls, acquisition, installations, shared configuration changes or trading.
 
-1. Implement the bounded task, update documentation, run appropriate checks and push its branch. Maintain the PR description and Project #4 using measured evidence, preserving separate delivery and research-evidence states.
+1. Freeze the scope and concrete acceptance criteria before implementation/review. Implement the bounded task, update documentation, run appropriate checks and push its branch. Maintain the PR description and Project #4 using measured evidence, preserving separate delivery and research-evidence states. Do not expand review scope with optional improvements.
 2. Give a separate reviewer fresh context: the exact base/head commits, task and acceptance criteria, relevant repository instructions and locations of evidence. Have the reviewer independently inspect the real diff, surrounding code, tests and evidence. Do not substitute an implementer's summary or green CI for that inspection. Reviewers do not change code or start expensive work without coordination.
-3. Record each review's exact head SHA, findings, severity, evidence and conclusion at the PR. Fix valid findings on the same branch. Explain rejected findings with evidence. Obtain independent follow-up review of the fixes and their consequences, rerun relevant tests and required gates, and update the reviewed head. Repeat until no blocking finding remains. Resolve review discussions only after addressing their substance.
+3. Conduct one complete independent review round, consolidating findings as far as possible; parallel reviewers partitioning a large diff count as one combined round. Record the exact head SHA, findings, severity, evidence and conclusion at the PR. Fix valid in-scope findings on the same branch and explain rejected findings with evidence. Conduct one focused independent recheck of the fixes and their consequences, with relevant tests and required gates, and record the reviewed head. If blocking findings remain after that recheck, stop automatic repair/review rounds, report what remains, why it blocks and the smallest next step, then wait for the user's decision. Never merge because the round budget is exhausted. Resolve discussions only after addressing their substance. Put nonblocking out-of-scope ideas on the backlog; avoid style-driven rewrites.
 4. Immediately before merge, reread the PR head, latest-commit required checks, acceptance evidence, review results and discussion state. The head must equal the independently reviewed SHA. A changed head requires review and checks of that revision; do not merge by relying on stale results.
 5. Squash-merge the exact reviewed head through the normal protected PR path. Do not use administrator bypass, force-push `main`, weaken required checks or ignore unresolved review discussions. Do not queue an unattended merge that can outlive the commit verification.
-6. Fetch and inspect the resulting `origin/main` commit, its CI job/logs and roadmap synchronization. Check the squash commit's parents and resulting tree against the accepted integration. A failed post-merge gate means the delivery remains incomplete: report it and repair it on a new bounded task branch from current `origin/main`, with this same review loop.
+6. Fetch and inspect the resulting `origin/main` commit, its CI job/logs and roadmap synchronization. Check the squash commit's parents and resulting tree against the accepted integration. A failed post-merge gate means the delivery remains incomplete: report it and repair it on a new bounded task branch from current `origin/main`, subject to the same scope and bounded-review rules.
 7. Confirm the merged GitHub task branch is absent. Before any local deletion, verify clean tracked and untracked state, no current use, no open PR and preservation of unique commits/evidence. A squash merge alone does not prove that a local branch has no unique history. Preserve protected original VPS/WSL worktrees, open-PR branches, unique commits, archive tags and migration evidence. Limit cleanup to the just-completed task; no general old-WSL-branch cleanup follows from this procedure.
+
+Reuse existing test results while the relevant code, inputs and environment remain unchanged. Repeat checks only after relevant changes, failures, concrete uncertainties or for required gates. All required GitHub checks must pass on the final commit. Finish once the acceptance criteria, required checks and bounded review are complete; do not start another optimization round.
 
 The final delivery report identifies the PR, findings and their resolutions, exact reviewed commit, test results, squash-merge commit, main CI and roadmap synchronization, and what was removed or deliberately retained. Missing post-merge evidence must stay visibly incomplete.
 
@@ -136,7 +138,7 @@ git diff --check
 git status --porcelain
 ```
 
-Run relevant focused tests during development and the full executable set before review. If the exact local Node/Rust/native toolchain is unavailable, do not install it implicitly; record blocked local gates and use clean GitHub CI as the authoritative execution.
+Run relevant focused tests during development. The full executable set must have valid evidence before delivery; reuse unaffected completed gates rather than rerunning everything for every review or documentation edit. If the exact local Node/Rust/native toolchain is unavailable, do not install it implicitly; record blocked local gates and use clean GitHub CI as the authoritative execution.
 
 ## Repository and dataset hygiene
 
