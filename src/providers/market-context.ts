@@ -90,7 +90,9 @@ function tag(item: string, name: string): string {
 }
 
 function cleanRssText(value: string): string {
-  return value.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+  // Text only: consume ordinary tags and every remaining angle delimiter in one pass.
+  // Excluding nested openers avoids rescanning a malformed title; sinks still escape text.
+  return value.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1').replace(/<[^<>]*>|[<>]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function isSafeHttpsUrl(value: string): boolean {

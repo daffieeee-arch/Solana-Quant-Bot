@@ -10,6 +10,51 @@ const rss = `<?xml version="1.0"?><rss><channel>
 </channel></rss>`;
 
 describe('MarketContextProvider', () => {
+  it.each([
+    ['ordinary formatting', '  Bitcoin <b>news</b>\n', 'Bitcoin news'],
+    ['nested tag fragments', '<scr<script>ipt>update</scr</script>ipt>', 'scriptupdate/script'],
+    ['overlapping delimiters', '<<script>update</script>>', 'update'],
+    ['nested comment opener', '<!<!-->update-->', '!update--'],
+    ['unmatched delimiters', '< update > > <', ''],
+    ['encoded text', '&lt;script&gt;update&lt;/script&gt;', '&lt;script&gt;update&lt;/script&gt;'],
+  ])('keeps RSS %s as text without reconstructing markup', async (_label, title, expected) => {
+    const feed = rss.replace('Bitcoin sees renewed interest', title);
+    const provider = new MarketContextProvider(async (url) => new Response(
+      url.includes('coingecko') ? '[]' : feed,
+    ));
+
+    const { news } = await provider.get();
+    if (!expected) {
+      expect(news).toEqual([]);
+    } else {
+      expect(news).toHaveLength(1);
+      expect(news[0].title).toBe(expected);
+      expect(news[0].title).not.toMatch(/[<>]/);
+    }
+  });
+
+  it('handles a large malformed RSS title within the existing input and test limits', async () => {
+    const feed = rss.replace('Bitcoin sees renewed interest', '<'.repeat(400_000) + 'bounded headline');
+    const provider = new MarketContextProvider(async (url) => new Response(
+      url.includes('coingecko') ? '[]' : feed,
+    ));
+
+    const { news } = await provider.get();
+    expect(news).toHaveLength(1);
+    expect(news[0].title).toBe('bounded headline');
+  });
+
+  it('retains HTTPS-only RSS links after text normalization', async () => {
+    const feed = `<rss><channel>${['https://example.invalid/news', 'http://example.invalid/news', 'javascript:alert(1)'].map((url) =>
+      `<item><title>Headline</title><link><![CDATA[${url}]]></link><pubDate>Sat, 25 Jul 2026 20:00:00 GMT</pubDate></item>`,
+    ).join('')}</channel></rss>`;
+    const provider = new MarketContextProvider(async (url) => new Response(
+      url.includes('coingecko') ? '[]' : feed,
+    ));
+
+    expect((await provider.get()).news.map((item) => item.url)).toEqual(['https://example.invalid/news']);
+  });
+
   it('normalizes a major-coin ticker and a safe RSS headline without exposing a trading signal', async () => {
     const provider = new MarketContextProvider(async (url) => new Response(
       url.includes('simple/price') ? JSON.stringify({ solana: { eur: 125.5 } }) : url.includes('coingecko') ? JSON.stringify(coinResponse) : rss,

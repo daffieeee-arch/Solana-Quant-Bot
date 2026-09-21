@@ -43,6 +43,9 @@ The historical [`PHASE7_OLD_FAITHFUL_PILOT_A_READINESS.md`](PHASE7_OLD_FAITHFUL_
 21. **Interactive Research Observatory V2 remains unimplemented.** Authentic static manifest-bound HTML/JSON reports now exist for bounded B5; PR 6 still owns the interactive product. The frozen legacy cockpit remains fixture evidence.
 22. **The frozen paper data model can overstate evidence.** Retained legacy code maps some missing values to fallback price/zero/OK. B2A makes the monitor loopback-only/read-only and removes its default runtime launch, but does not repair those semantics; do not extend or use them as V2 evidence.
 23. **Legacy quarantine is intentionally minimal.** B2A removes dashboard mutation routes/controls and non-loopback binding rather than creating a feature-flag framework. Full legacy-source deletion waits for replacement/parity evidence; isolated tests remain allowed without listeners.
+
+    The bounded [#122 safety repair](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/122) keeps RSS normalization text-only: ordinary tags and remaining literal angle delimiters are removed in one pass without entity decoding or repeated stripping. React text rendering, fallback HTML escaping, HTTPS validation and existing input limits remain required; this is not a general HTML sanitizer or provider activation. The general dashboard catch returns only HTTP 500 `{ "ok": false, "error": "internal_error" }`, without inspecting the thrown value. Focused RSS and loopback HTTP regressions cover nested/large malformed text, generic errors and successful subsequent requests. CodeQL alert disposition is verified separately at delivery; a green scan job alone is insufficient.
+
 24. **Full workstation remains unimplemented and intentionally later.** Docking, saved layouts, sequenced WebSocket plane, professional charts/grids and linked context wait for authentic contracts and separate epic activation.
 
 ## Development and CI
