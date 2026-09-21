@@ -50,6 +50,12 @@ For approved V2 development tasks, the user authorized the [independent-review a
 
 ## Development and runtime boundary
 
+The bounded [mint observation timeline](research/B5_MINT_TIMELINE.md) groups
+existing trades, balances, diagnoses and message references per source-bound
+transaction across the preserved nineteen-slot collection. It is a post-hoc
+descriptive lifecycle fragment, not a complete lifecycle or sample promotion.
+All 22 facts, Mayhem rejections and B4/B5 Unproven states remain unchanged.
+
 The [2026-09-20 VPS integration](operations/VPS_WSL_INTEGRATION.md) combines the imported WSL stack with the isolated VPS tooling in a separate worktree. Use the repository wrapper and explicit OF1 root, not archived WSL launch commands. Migration/query evidence, fresh offline decoding and CI acceptance are tracked separately; no acquisition or delivery promotion follows.
 
 The separate [manifest-bound batch/collection route](research/B5_BATCH_COLLECTION.md)

@@ -67,6 +67,7 @@ try {
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_query.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_coverage.py')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_exact_quote.py')]));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_mint_timeline.py')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_token_balances.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_manifest.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_collection.py'),join(scratch,'fixtures')]));
