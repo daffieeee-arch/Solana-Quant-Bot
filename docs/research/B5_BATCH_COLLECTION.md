@@ -53,6 +53,14 @@ properties. An incomplete collection names unprocessed slots and unknown
 package denominators. The report has bounded detail tables alongside full
 aggregate counts; bounded presentation is not silent dataset truncation.
 
+The Python reader independently requires `ACCOUNTED` child selections and
+slots before accepting a `VERIFIED` batch. It derives collection completeness
+from those verified children; resealing an outer `COMPLETE` manifest cannot
+promote an incomplete child, including an explicit false accounting flag when
+numeric counts happen to match. Valid progress snapshots retain `PENDING`
+batches and remain `INCOMPLETE`. The six-slot pipeline regression exercises
+both rejected promotions against real Rust-written synthetic Parquet.
+
 ## Sample identity and post-hoc context
 
 The original `[422669516,422669519)` pilot keeps the unchanged source-bound

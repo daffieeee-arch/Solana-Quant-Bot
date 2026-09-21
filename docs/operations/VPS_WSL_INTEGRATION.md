@@ -59,6 +59,22 @@ Review/fix/merge evidence is recorded separately in
 `migrations/vps-integration-review-20260921/` under the same OF1 data root.
 Earlier migration and integration receipts remain immutable.
 
+The initial review identified two in-scope P2 defects: sell-only publication
+bypassed recorded instruction sorting, and the Python collection reader could
+accept outer completeness over an incomplete child. The bounded corrections
+use the existing stable sort for all trade lanes and require complete child
+accounting before deriving collection completeness. Synthetic regressions
+reproduce both defects before correction and check ordering/duplicates,
+invalid keys, resealed incomplete children and valid pending progress.
+
+The existing 22 authentic Silver facts have 22 distinct Bronze parents, so
+the ordering correction cannot reorder that accepted record stream. Historical
+replay receipts remain evidence for their original worker binaries, not a new
+execution of corrected code. Reuse is conditional on verifying every retained
+fact's ordering keys and complete child accounting; rerun the affected query
+reader against the unchanged collection. Current behavioral tests and final-head
+CI separately cover the corrected implementation and synthetic edge cases.
+
 ## Development boundary
 
 The repository wrapper selects project-local Node 22.23.2, Rust 1.97.1 and the

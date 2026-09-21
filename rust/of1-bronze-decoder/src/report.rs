@@ -478,11 +478,8 @@ fn append_supported_facts(
 
 // Ordering is recorded instruction order inside one atomic package, not the
 // time of chronological completion or permission to react within a transaction.
-// Preserve every historical sell-only byte/order and duplicate exactly.
+// Apply the same stable ordering to every lane combination; retain duplicates.
 fn ordered_trade_facts(sells: Vec<Value>, buys: Vec<Value>) -> io::Result<Vec<Value>> {
-    if buys.is_empty() {
-        return Ok(sells);
-    }
     let mut keyed = Vec::with_capacity(sells.len() + buys.len());
     for fact in sells.into_iter().chain(buys) {
         let c = &fact["event_context"];
@@ -913,25 +910,19 @@ mod mixed_lane_order_tests {
         );
     }
     #[test]
-    fn synthetic_sell_only_order_and_duplicate_bytes_remain_exact() {
-        let old = vec![
-            fact("sell4", 4, None, 2),
-            fact("sell3", 3, Some(1), 2),
-            fact("sell4", 4, None, 2),
-        ];
+    fn synthetic_sell_order_is_independent_of_buy_presence_and_preserves_duplicates() {
+        let direct = fact("direct sell", 3, None, 2);
+        let nested = fact("nested sell", 2, Some(1), 2);
+        let sells = vec![direct.clone(), nested.clone(), direct.clone()];
+        let expected = vec![nested, direct.clone(), direct];
+        let sell_only = ordered_trade_facts(sells.clone(), vec![]).unwrap();
+        assert_eq!(sell_only, expected);
+        let buy = fact("unrelated buy", 4, None, 6);
+        let mut mixed = ordered_trade_facts(sells, vec![buy.clone()]).unwrap();
+        assert_eq!(mixed.pop(), Some(buy));
         assert_eq!(
-            serde_json::to_vec(&ordered_trade_facts(old.clone(), vec![]).unwrap()).unwrap(),
-            serde_json::to_vec(&old).unwrap()
-        );
-        let buy = fact("buy", 3, None, 6);
-        let duplicate = fact("sell", 4, None, 5);
-        assert_eq!(
-            ordered_trade_facts(
-                vec![duplicate.clone(), duplicate.clone()],
-                vec![buy.clone()]
-            )
-            .unwrap(),
-            vec![buy, duplicate.clone(), duplicate]
+            serde_json::to_vec(&mixed).unwrap(),
+            serde_json::to_vec(&sell_only).unwrap()
         );
     }
     #[test]
@@ -943,6 +934,7 @@ mod mixed_lane_order_tests {
         ] {
             let mut bad = fact("buy", 3, None, 4);
             *bad.pointer_mut(pointer).unwrap() = json!("not-an-order");
+            assert!(ordered_trade_facts(vec![bad.clone()], vec![]).is_err());
             assert!(ordered_trade_facts(vec![fact("sell", 4, None, 2)], vec![bad]).is_err());
         }
         let mut bad = fact("buy", 3, None, 4);

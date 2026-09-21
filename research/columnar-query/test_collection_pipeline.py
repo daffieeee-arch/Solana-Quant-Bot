@@ -15,11 +15,46 @@ from collection_reader import attach_collection,load_collection
 from collection_report import run as report
 from collection_run import Runner,digest
 from query import connect
+from manifest_reader import attach_dataset,load_manifest
 
 
 def inventory(root):
     return {str(path.relative_to(root)):{'bytes':path.stat().st_size,'sha256':digest(path)}
             for path in sorted(root.rglob('*')) if path.is_file()}
+
+
+def reject_incomplete_children(complete_root,output):
+    """Resealed metadata must not promote incomplete Rust-written children."""
+    for mutation in ['missing-package','unaccounted-equal-counts']:
+        clone=output/mutation
+        shutil.copytree(complete_root,clone)
+        manifest,_=load_collection(clone)
+        child=clone/manifest['batches'][0]['parquet_manifest_path']
+        child_manifest=json.loads(child.read_bytes())
+        selection=child_manifest['selection'];slot=selection['slots'][0]
+        slot['accounted']=False
+        if mutation=='missing-package':
+            slot['expected_packages']+=1
+            manifest['slot_outcomes'][0]['transaction_envelopes']+=1
+        selection['status']='INCOMPLETE'
+        selection['all_expected_packages_accounted']=False
+        child.write_text(json.dumps(child_manifest,indent=2)+'\n')
+        (child.parent/'COMPLETE').write_text(digest(child)+'\n')
+        manifest['batches'][0]['parquet_manifest_sha256']=digest(child)
+        outer=clone/'collection.json'
+        outer.write_text(json.dumps(manifest,indent=2)+'\n')
+        (clone/'collection.json.sha256').write_text(digest(outer)+'\n')
+        # An incomplete dataset is readable evidence in its own right. The
+        # collection must reject its promotion, not rely on a corrupt hash.
+        checked_child,_=load_manifest(child.parent)
+        with connect() as db:attach_dataset(db,child.parent,checked_child)
+        checked,_=load_collection(clone)
+        assert checked['state']=='COMPLETE'
+        try:
+            with connect() as db:attach_collection(db,clone,checked)
+        except ValueError as error:
+            assert 'child package accounting incomplete' in str(error),error
+        else:raise AssertionError(f'collection falsely accepted {mutation} child')
 
 
 def run(fixture,output,decoder,projector,verifier):
@@ -62,6 +97,7 @@ def run(fixture,output,decoder,projector,verifier):
         report(root,output/f'report-{width}')
         summaries.append(summary);collections.append(manifest)
     assert collections[0]['layers']==collections[1]['layers']==collections[2]['layers'],'partition changed canonical record stream'
+    reject_incomplete_children(output/'width-3',output)
     for mutation in ['missing-shard','corrupt-shard','changed-plan']:
         clone=output/mutation
         shutil.copytree(output/'width-3',clone)
@@ -86,6 +122,7 @@ def run(fixture,output,decoder,projector,verifier):
              'slots':6,'widths':[1,2,3],'logical_layers':collections[0]['layers'],
              'original_source_unchanged':True,'resume_first_batch_unchanged':True,
              'missing_corrupt_changed_plan_rejected':True,
+             'incomplete_child_promotion_rejected':True,
              'outcomes':summaries[0]['test_outcomes'],'provider_calls':False,
              'research_ready':False,'binary_hashes':{p.name:digest(p) for p in [decoder,projector,verifier]}}
     (output/'pipeline-test.json').write_text(json.dumps(receipt,indent=2)+'\n')

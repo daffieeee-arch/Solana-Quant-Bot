@@ -191,6 +191,10 @@ def attach_collection(db, root, manifest):
         selected=selection_inventory(child)
         if selected['selected_slots']!=expected['slots']:
             raise ValueError('child selected slots differ from physical plan')
+        # A readable incomplete child is evidence, never a VERIFIED batch.
+        # selection_inventory also checks each accounted slot's exact counts.
+        if selected['status']!='ACCOUNTED' or selected['all_expected_packages_accounted'] is not True:
+            raise ValueError('child package accounting incomplete')
         if child.get('sample_identity')!=sources[batch['source_id']].get('sample_identity'):
             raise ValueError('child reclassified original source sample')
         binding=child.get('batch_binding')
@@ -257,7 +261,11 @@ def attach_collection(db, root, manifest):
                               'present_packages':actual['present_packages'] if actual else None,
                               'decoded_packages':actual['decoded_packages'] if actual else None,
                               'outcomes':actual['outcomes'] if actual else None,'accounted':actual['accounted'] if actual else False})
-    return {'collection_id':manifest['plan']['collection_id'],'status':manifest['state'],
+    accounted=len(complete_slots)==len(logical) and all(row['accounted'] is True for row in complete_slots.values())
+    status='COMPLETE' if accounted else 'INCOMPLETE'
+    if manifest['state']!=status or manifest['completeness']['all_selected_slots_accounted'] is not accounted:
+        raise ValueError('collection completeness differs from verified child accounting')
+    return {'collection_id':manifest['plan']['collection_id'],'status':status,
             'verified_batches':sum(b['state']=='VERIFIED' for b in summary_batches),
             'batches':summary_batches,'selected_slots':summary_slots,'layers':manifest['layers'],
             'sources':manifest['plan']['sources'],'research_ready':False,

@@ -62,6 +62,14 @@ schema `PUMP_SILVER_RECORDED_BUY_EXACT_QUOTE_V2_1`, afzonderlijk van het
 bestaande sell-schema. Beide behouden het oorspronkelijke Bronze-parent,
 Raw/receipt/planbinding, bytes, volgorde en native sample-identiteit.
 
+De gepubliceerde feiten volgen de opgenomen instructievolgorde binnen het
+atomaire transactie-pakket, ook als uitsluitend sells aanwezig zijn. Een
+eerdere geneste sell staat vóór een latere directe sell; een toegevoegde buy
+verandert hun onderlinge volgorde niet. Gelijke sorteersleutels behouden hun
+volgorde en duplicaten blijven aanwezig. Dit geeft geen toestemming om binnen
+dezelfde reeds uitgevoerde transactie te reageren of te handelen. De beperkte
+correctie uit PR #119 wijzigt geen profiel of historisch bewijsbestand.
+
 De Rust-Parquetprojectie accepteert uitsluitend de twee benoemde Silver-
 schemas. `spendable_quote_in_raw_u64` en `min_tokens_out_raw_u64` zijn eigen
 getypeerde kolommen; sell-argumentkolommen zijn voor buys afwezig, niet nul.
