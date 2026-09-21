@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Offline physical projection only. No registry access, provider or acquisition.
+import { createCiPhaseTimer } from './lib/ci-phase-timing.mjs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { buildResearchSeccompLauncher } from './build-research-seccomp-launcher.mjs';
@@ -37,14 +38,16 @@ const errors=validateParquetInputs(readFileSync(join(crate,'Cargo.toml')),readFi
 if(errors.length)throw Error(errors.join('\n'));
 if(mode==='--static'){console.log('Parquet manifest/lock/source PASS (no subprocess or fetch)');return;}
 const scratch=mkdtempSync(join(tmpdir(),'of1-parquet-offline-'));
+const timing=createCiPhaseTimer();
+let passed=false;
 try {
   const launcher=join(scratch,'launcher'),filter=join(scratch,'network-deny.bpf');
   await writeResearchNetworkDenyFilter(filter,process.arch,{allowLocalProcessSpawn:true});
   await buildResearchSeccompLauncher(launcher);
-  const run=(command,args)=>{
+  const run=(command,args,label=`parquet.${command==='cargo'?args[1]:command===process.execPath?'probe':basename(args[0],'.py')}`)=>timing.measure(label,()=>{
     const r=spawnSync(launcher,[filter,command,...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024,timeout:900_000,env:{...process.env,CARGO_NET_OFFLINE:'true',PYTHONDONTWRITEBYTECODE:'1',COLUMNAR_TEST_FIXTURE_DIR:join(scratch,'fixtures'),COLUMNAR_BATCH_FIXTURE_DIR:join(scratch,'batch-source')}});
     if(r.error||r.status!==0)throw Error(r.error?.message||r.stderr||r.stdout||'offline gate failed');return r.stdout+r.stderr;
-  };
+  });
   const probe=run(process.execPath,['--input-type=module','-e',"import net from 'node:net';const s=net.createConnection({host:'127.0.0.1',port:9});s.on('connect',()=>process.exit(2));s.on('error',e=>{if(e.code==='EPERM')console.log('NETWORK_DENIED');else process.exit(3);});"]);
   if(probe!=='NETWORK_DENIED\n')throw Error('socket denial not established');
   const manifest=['--manifest-path',join(crate,'Cargo.toml')];
@@ -57,7 +60,7 @@ try {
   for(const entry of reviewed.build_scripts){const p=m.packages.find(p=>`${p.name}@${p.version}`===entry.package);const t=p?.targets.find(t=>t.kind.includes('custom-build'));if(!t||hash(readFileSync(t.src_path))!==entry.sha256)throw Error('build script drift');}
   for(const bad of ['object_store','reqwest','hyper','tokio','solana-rpc-client','openssl','zstd-sys','lz4-sys'])if(packages.some(p=>p.name===bad))throw Error(`unexpected runtime/native dependency: ${bad}`);
   const commands=mode==='--release'?[['build',['--release']]]:mode==='--check'?[['check',[]]]:[['fmt',['--','--check']],['clippy',['--all-targets','--','-D','warnings']],['test',['--all-targets']],['build',[]]];
-  for(const [cmd,args] of commands){console.log(`Parquet ${cmd}: sockets denied`);process.stdout.write(run('cargo',['+1.97.1',cmd,...manifest,...(cmd==='fmt'?[]:['--locked','--offline']),...args]));}
+  for(const [cmd,args] of commands){console.log(`Parquet ${cmd}: sockets denied`);process.stdout.write(run('cargo',['+1.97.1',cmd,...manifest,...(mode==='--all'&&['test','build'].includes(cmd)?['--profile','ci-test']:[]),...(cmd==='fmt'?[]:['--locked','--offline']),...args]));}
   if(mode==='--all'){
     const python=process.env.COLUMNAR_QUERY_PYTHON??(process.env.RUNNER_TEMP?join(process.env.RUNNER_TEMP,'solana-quant-columnar-query/bin/python'):null);
     if(!python)throw Error('COLUMNAR_QUERY_PYTHON required: DuckDB must not be silently skipped');
@@ -71,12 +74,13 @@ try {
     // explicit six-slot source export, then prove the actual cross-crate path.
     // This remains offline and creates no provider/acquisition capability.
     const bronze=join(root,'rust/of1-bronze-decoder');
-    process.stdout.write(run('cargo',['+1.97.1','test','--manifest-path',join(bronze,'Cargo.toml'),'--locked','--offline','--test','recorded_pipeline','six_slot_original_fixture_is_streamed_in_multiple_partitions_without_record_changes','--','--exact']));
-    process.stdout.write(run(python,[join(root,'research/columnar-query/test_collection_pipeline.py'),join(scratch,'batch-source'),join(scratch,'batch-pipeline'),join(bronze,'target/debug/of1-bronze-batch'),join(crate,'target/debug/of1-parquet-projection'),join(bronze,'target/debug/of1-bronze-collection')]));
+    process.stdout.write(run('cargo',['+1.97.1','test','--profile','ci-test','--manifest-path',join(bronze,'Cargo.toml'),'--locked','--offline','--test','recorded_pipeline','six_slot_original_fixture_is_streamed_in_multiple_partitions_without_record_changes','--','--exact'],'parquet.fixture.bronze-six-slot'));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_collection_pipeline.py'),join(scratch,'batch-source'),join(scratch,'batch-pipeline'),join(bronze,'target/ci-test/of1-bronze-batch'),join(crate,'target/ci-test/of1-parquet-projection'),join(bronze,'target/ci-test/of1-bronze-collection')]));
     console.log('DuckDB real Parquet and coverage regressions PASS (sockets denied)');
   }
   console.log('Parquet dependency identity/network-denied gates PASS');
-}finally{rmSync(scratch,{recursive:true,force:true});}
+  passed=true;
+}finally{rmSync(scratch,{recursive:true,force:true});timing.finish({passed,summaryPath:process.env.GITHUB_STEP_SUMMARY});}
 }
 if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url){
   if(process.argv.length!==3){console.error('one explicit gate mode required');process.exitCode=1;}

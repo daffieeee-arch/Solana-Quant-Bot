@@ -54,8 +54,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/registry/src\nrust/of1-range-recorder/target\nrust/pump-protocol-v2/target\nrust/old-faithful-pump-reducer/target"
-          key: rust-v1-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}
-          restore-keys: rust-v1-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
+          key: rust-v2-ci-test-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}
+          restore-keys: rust-v2-ci-test-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
       - name: Fetch locked Pump protocol dependencies
         run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Fetch locked OF1 planner dependencies

@@ -168,7 +168,7 @@ integration acceptance is recorded separately in the integration evidence.
 It does not cache Cargo credentials/configuration, complete home directories,
 temporary fixture runs, leases, datasets or operational evidence.
 
-The versioned key binds runner OS/architecture, Rust 1.97.1, every Rust
+The `rust-v2-ci-test` key binds the selected CI profile, runner OS/architecture, Rust 1.97.1, every Rust
 Cargo.lock/Cargo.toml hash and the checked-out commit SHA. The single restore
 prefix retains the same toolchain and lock/manifest identity. Cargo still checks
 source/features and rebuilds affected artifacts. A cache hit never skips a gate,
@@ -176,8 +176,8 @@ test, assertion or evidence regeneration; a miss is an ordinary cold build.
 Default cache branch scoping applies; the trusted-main Roadmap workflow does not
 restore this build cache. No cache quota, billing or larger-runner setting changes.
 
-The OF1 gate emits `OF1_CI_PHASE` records on stderr for compilation, test and
-fixture subprocesses, followed by `OF1_CI_TIMING` with the overall gate outcome.
+The OF1, Bronze and Parquet gates emit `OF1_CI_PHASE` records on stderr for compilation, test and
+fixture/query subprocesses (Bronze/Parquet labels carry their gate prefix), followed by `OF1_CI_TIMING` with the overall gate outcome.
 GitHub Actions also receives a compact step-summary table, including failure
 when a later validation fails after successful subprocesses. These are measured
 operational durations only: no commands, environment values or dataset contents
@@ -187,6 +187,71 @@ Unavailable summary output cannot turn a failed gate green or hide its exception
 Compare a cold run and a warm run of the same revision before making a speed
 claim. Runtime-heavy tests still run in full and are not accelerated merely by
 restoring compiled artifacts. Subphase measurements guide any later parallelism.
+
+### Explicit optimized test profile
+
+The three heavy offline gates select `--profile ci-test` for previously
+unoptimized test executions and fixture binaries. Each independent Cargo root
+(`of1-range-recorder`, `of1-bronze-decoder`, `of1-parquet-projection`) defines the
+same profile: `inherits = "dev"`, `opt-level = 1`, `debug = 1`,
+`debug-assertions = true`, `overflow-checks = true`. Unwinding and the existing
+Cargo defaults otherwise remain inherited. Limited debug information retains
+backtrace support while reducing binary size; optimization can increase cold
+compilation cost. See [Cargo's profile contract](https://doc.rust-lang.org/cargo/reference/profiles.html)
+(accessed 2026-09-21). Normal dev/release profiles, clippy, Pump and the reducer
+remain unchanged. Existing explicitly selected release TLS/monitor fixture
+lanes retain their prior settings; this PR does not claim to enable assertions
+in those unchanged release lanes.
+
+Each changed crate runs two additional `ci_profile` runtime regressions: a
+real `debug_assert!` and an overflowing integer operation must panic. This
+validation target intentionally requires dev/ci-test safety settings; it is
+not selected by the separate release fixture commands. The full prior test
+inventory, corruption/crash/boundary assertions and all network-denial probes
+remain. The second six-slot Bronze export and real Rust → Parquet → DuckDB
+collection chain still run, using the matching `target/ci-test` workers.
+
+Profile definitions are covered by the pre-fetch manifest hashes and cache
+manifest identity. The profile name is explicit in the versioned cache prefix;
+cache paths/permissions remain unchanged. Cargo separates custom-profile
+artifacts from `target/debug` and `target/release`. Fixture plans and execution
+receipts keep hashing the actual binary: a different build may have a different
+executable hash, which must never be substituted with a prior hash. Canonical
+parity comparisons compile the same candidate source/manifests in both profiles,
+use the same retained fixture source and distinguish logical records
+and SQL results from intentionally different build/execution bindings. Adding
+the profile definition legitimately changes the manifest-bound source identity
+relative to older commits; historical records and hashes are never rewritten.
+
+Task scope, measurement receipts and acceptance evidence are tracked in
+[#123](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/123) and outside Git
+at `/home/chupa/Solana-project/data-old-faithful-one/governance/ci-rust-test-profile-20260921`.
+The controlled local recorded-pipeline comparison (20 unchanged cases, two test
+threads, two-CPU scope, cold target directories and already present registry
+sources, Rust 1.97.1) measured:
+
+| Phase | Previous test profile | ci-test |
+|---|---:|---:|
+| Compile | 40.580 s | 68.772 s |
+| Execute all 20 cases | 693.938 s | 30.419 s |
+| Compile + execute | 734.518 s | 99.191 s |
+| Test executable size | 48,190,960 bytes | 34,101,272 bytes |
+
+The measured net reduction is 86.5%, including 28.2 seconds of additional
+compilation. Cargo artifact receipts report optimization 0 → 1, debug info 2 → 1,
+and assertions/overflow checks true in both profiles. This does not isolate
+executable hashing as the cause; no integrity routine was changed.
+
+The earlier complete hosted jobs took 2,251/2,469 seconds on PRs and 1,455 seconds
+on main; Node took only 49–75 seconds and OF1/Bronze/Parquet dominated. Those are
+operational observations across different runners/cache states, not a controlled
+speed guarantee. The PR and main run links and actual phase timings for this
+delivery are recorded at #123; their totals include compilation and cache work.
+
+Existing PR/main gates, security workflows and the 45-minute job bound remain
+required. No fixture repeat, assertion, test case or gate is removed. Broad
+parallelism, new cache directories and changed-file test selection are separate
+future decisions.
 
 ## Roadmap Sync boundary
 

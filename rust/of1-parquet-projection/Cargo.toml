@@ -25,3 +25,12 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = "deny"
 pedantic = "deny"
+
+# Offline CI only: faster execution with the dev safety semantics retained.
+# Ordinary dev/release builds and historical binary identities are unchanged.
+[profile.ci-test]
+inherits = "dev"
+opt-level = 1
+debug = 1
+debug-assertions = true
+overflow-checks = true

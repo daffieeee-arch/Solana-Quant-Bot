@@ -1,7 +1,7 @@
 {
   "schema": "OF1_COLUMNAR_DEPENDENCIES_1",
   "scope": "Rust physical Arrow/Parquet projection only; no compression/object_store/network features",
-  "manifest_sha256": "b3b5ffe6ec29a1cb5834dba219845dd163dc48f98cd8d671d32af26c73ccb40a",
+  "manifest_sha256": "09463bc7b893e6a2ccd83801d451ee060100f854b0201598e24d7b59c140402b",
   "lock_sha256": "925133d91c6de02fcac1588bb7141db7c719327525a8606aff50af8bfc9a9af8",
   "streaming_serde_review": "Existing locked serde 1.0.229 is now a direct dependency for IgnoredAny streaming quality-record-array skipping. Package, version, feature, license and build-script inventories are byte-identical to the previous reviewed graph; no added package, fetch or default feature.",
   "packages": [

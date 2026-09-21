@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The existing syscall-denial gate applied to one new, isolated decoder crate.
 // No acquisition execution, fixture server, extra permissions or generic framework.
+import { createCiPhaseTimer } from './lib/ci-phase-timing.mjs';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync, mkdtempSync, rmSync } from 'node:fs';
@@ -41,10 +42,12 @@ async function run(mode){
   if(mode!=='--all')throw Error('usage: --static | --all');
   const scratch=mkdtempSync(join(tmpdir(),'of1-bronze-offline-'));
   const launcher=join(scratch,'launcher'),filter=join(scratch,'network-deny.bpf');
-  const isolated=(command,args)=>{
+  const timing=createCiPhaseTimer();
+  let passed=false;
+  const isolated=(command,args)=>timing.measure(`bronze.${command==='cargo'?args[1]:'probe'}`,()=>{
     const r=spawnSync(launcher,[filter,command,...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024,timeout:900_000,env:{...process.env,CARGO_NET_OFFLINE:'true'}});
     if(r.error||r.status!==0)throw Error(r.error?.message||r.stderr||r.stdout||'isolated Bronze command failed');return r.stdout;
-  };
+  });
   try{
     await writeResearchNetworkDenyFilter(filter,process.arch,{allowLocalProcessSpawn:true});await buildResearchSeccompLauncher(launcher);
     const probe=isolated(process.execPath,['--input-type=module','-e',"import net from 'node:net';const s=net.createConnection({host:'127.0.0.1',port:9});s.on('connect',()=>process.exit(2));s.on('error',e=>{if(e.code==='EPERM')console.log('NETWORK_DENIED');else process.exit(3);});"]);
@@ -58,8 +61,9 @@ async function run(mode){
     for(const entry of reviewed.build_scripts){const p=m.packages.find(p=>`${p.name}@${p.version}`===entry.package);const t=p?.targets.find(t=>t.kind.includes('custom-build'));if(!t||hash(readFileSync(t.src_path))!==entry.sha256)throw Error('Bronze build-script drift: '+entry.package);}
     for(const [command,args] of [
       ['fmt',[...manifest,'--','--check']],['clippy',[...manifest,'--locked','--offline','--all-targets','--','-D','warnings']],['test',[...manifest,'--locked','--offline','--all-targets']],['build',[...manifest,'--locked','--offline']],
-    ]){console.log(`Bronze ${command} (sockets denied)`);process.stdout.write(isolated('cargo',['+1.97.1',command,...args]));}
+    ]){console.log(`Bronze ${command} (sockets denied)`);process.stdout.write(isolated('cargo',['+1.97.1',command,...(['test','build'].includes(command)?['--profile','ci-test']:[]),...args]));}
     console.log('Bronze offline graph/fmt/clippy/tests/build PASS');
-  }finally{rmSync(scratch,{recursive:true,force:true});}
+    passed=true;
+  }finally{rmSync(scratch,{recursive:true,force:true});timing.finish({passed,summaryPath:process.env.GITHUB_STEP_SUMMARY});}
 }
 if(process.argv[1]&&pathToFileURL(resolve(process.argv[1])).href===import.meta.url)run(process.argv[2]).catch(e=>{console.error(e.message);process.exitCode=1;});
