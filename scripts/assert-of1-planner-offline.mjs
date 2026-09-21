@@ -14,7 +14,7 @@ import { createCiPhaseTimer } from './lib/ci-phase-timing.mjs';
 const root = resolve(import.meta.dirname, '..');
 const crate = join(root, 'rust/of1-range-recorder');
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const MANIFEST_HASH = 'dfd72a9c45e3c1d20f1c50830933711fb953e1d402019ca873c16bc7049d8bbf';
+const MANIFEST_HASH = 'a98abc110b726dcb369b8cb03c4ea198d83723347eda027e767540ec2390e5d1';
 const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
@@ -169,10 +169,10 @@ async function run(mode) {
     isolated('clippy.default', 'cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--', '-D', 'warnings']);
     isolated('clippy.loopback', 'cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--features', 'loopback-fixture', '--', '-D', 'warnings']);
     isolated('clippy.all-features', 'cargo', ['+1.97.1', 'clippy', ...manifest, '--locked', '--offline', '--all-targets', '--all-features', '--', '-D', 'warnings']);
-    process.stdout.write(isolated('test.lib.all-features', 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-features', '--lib']).stdout);
-    const tests = isolated('test.default', 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--all-targets']);
+    process.stdout.write(isolated('test.lib.all-features', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--all-features', '--lib']).stdout);
+    const tests = isolated('test.default', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--all-targets']);
     process.stdout.write(tests.stdout);
-    const build = isolated('compile.default-bins', 'cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
+    const build = isolated('compile.default-bins', 'cargo', ['+1.97.1', 'build', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
     const artifacts = build.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s));
     const binary = artifacts
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-plan-evidence' && v.executable)?.executable;
@@ -212,13 +212,13 @@ async function run(mode) {
       else if (outputs[0] !== readFileSync(join(root, path), 'utf8')) throw new Error(`OF1 durability report drift: ${path}`);
     }
     // Compile dependencies/build scripts with sockets denied, even for the fixture lane.
-    const fixtureBuild = isolated('compile.transport-test', 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline',
+    const fixtureBuild = isolated('compile.transport-test', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline',
       '--features', 'loopback-fixture', '--test', 'transport', '--no-run', '--message-format=json-render-diagnostics']);
     const testBinary = fixtureBuild.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'transport' && v.executable)?.executable;
     if (!testBinary) throw new Error('loopback test binary missing');
     process.stdout.write(loopback('test.transport', testBinary, ['--test-threads=1']).stdout);
-    const fixtureBins = isolated('compile.transport-evidence', 'cargo', ['+1.97.1', 'build', ...manifest, '--locked', '--offline',
+    const fixtureBins = isolated('compile.transport-evidence', 'cargo', ['+1.97.1', 'build', ...manifest, '--profile', 'ci-test', '--locked', '--offline',
       '--features', 'loopback-fixture', '--bin', 'of1-transport-evidence', '--message-format=json-render-diagnostics']);
     const fixtureBinary = fixtureBins.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))
       .find(v => v.reason === 'compiler-artifact' && v.target.name === 'of1-transport-evidence' && v.executable)?.executable;
@@ -239,7 +239,7 @@ async function run(mode) {
     // Source-reviewed numeric-loopback TLS tests only. Use the proposed runner's
     // release profile for these new large-index fixture lanes: repeated debug hashing
     // exhausted the unchanged 25-minute job budget despite passing every test.
-    // Existing debug/default tests and all assertions/cases remain. Compilation/build
+    // The ci-test lanes retain debug assertions, overflow checks and every case. Compilation/build
     // scripts still execute under socket denial; no official dispatch is run.
     for (const target of ['acquisition_https', 'acquisition_e2e', 'monitor_ipc', 'rate_process']) {
       const built = isolated(`compile.${target}`, 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--release',

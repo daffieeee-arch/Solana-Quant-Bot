@@ -1,6 +1,6 @@
 {
   "schema": "OF1_BRONZE_DEPENDENCY_REVIEW_1",
-  "manifest_sha256": "c599a573a22d97176aa3f1f75f16df10ebfa10ca590c5288612ee4ebe651db75",
+  "manifest_sha256": "8b5e50fb3f5f4276b16c1581b2ae0d37d737429d8d915eb4f41602228acaa8e1",
   "lock_sha256": "1a6e486fc422e5ee9b5e54b8d4b63b567c560cf61f96c3b0284a503c752eff08",
   "packages": [
     {

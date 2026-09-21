@@ -74,8 +74,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: "~/.cargo/registry/index\\n~/.cargo/registry/cache\\n~/.cargo/registry/src\\nrust/of1-range-recorder/target\\nrust/pump-protocol-v2/target\\nrust/old-faithful-pump-reducer/target"
-          key: rust-v1-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-\${{ github.sha }}
-          restore-keys: rust-v1-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
+          key: rust-v2-ci-test-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-\${{ github.sha }}
+          restore-keys: rust-v2-ci-test-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
       - name: Fetch locked Pump protocol dependencies
         run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Fetch locked OF1 planner dependencies
@@ -189,6 +189,7 @@ describe('semantic CI workflow policy', () => {
       SAFE_WORKFLOW.replace('rust/old-faithful-pump-reducer/target', 'data'),
       SAFE_WORKFLOW.replace('actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9', 'actions/cache@v6'),
       SAFE_WORKFLOW.replace('1.97.1-${{ hashFiles', 'stable-${{ hashFiles'),
+      SAFE_WORKFLOW.replace('rust-v2-ci-test-', 'rust-v1-'),
       SAFE_WORKFLOW.replace(/          restore-keys: .+/, '          restore-keys: rust-'),
       SAFE_WORKFLOW.replace('      - name: Run complete test suite',
         "      - name: Run complete test suite\n        if: steps.cache.outputs.cache-hit != 'true'"),

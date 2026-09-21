@@ -56,8 +56,8 @@ const CANONICAL_STEPS = [
     uses: 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
     with: {
       path: '~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/registry/src\nrust/of1-range-recorder/target\nrust/pump-protocol-v2/target\nrust/old-faithful-pump-reducer/target',
-      key: "rust-v1-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}",
-      'restore-keys': "rust-v1-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-",
+      key: "rust-v2-ci-test-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}",
+      'restore-keys': "rust-v2-ci-test-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-",
     },
   },
   {
