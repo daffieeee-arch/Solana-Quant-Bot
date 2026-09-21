@@ -27,9 +27,72 @@ billing, credentials or access controls.
 |---|---|---|
 | [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | canonical general validation | **ACTIVE** |
 | [`.github/workflows/roadmap-sync.yml`](../.github/workflows/roadmap-sync.yml) | Project #4 reconciliation | **ACTIVE**; modify only through reviewed governance work |
+| [`.github/workflows/codeql.yml`](../.github/workflows/codeql.yml) | CodeQL source-security analysis | **ACTIVE**; only its analysis job may write security results |
+| [`.github/workflows/dependency-review.yml`](../.github/workflows/dependency-review.yml) | PR dependency vulnerability review | **ACTIVE**; read-only GitHub token |
 
-Exactly two workflow files. Never collapse CI and Roadmap Sync into one broad
-privilege claim.
+Exactly four workflow files. The security workflows were explicitly requested
+on 2026-09-21. Ordinary CI, Roadmap Sync and security analysis retain separate
+privilege boundaries. Both security workflows are parsed and deep-compared by
+`scripts/lib/security-workflow-policy.mjs`; additional files, steps, privileges,
+mutable action refs and weakened checks fail the ordinary repository policy.
+
+## CodeQL and dependency review
+
+CodeQL runs on PRs targeting main, main pushes, Monday at 05:43 UTC and manual
+dispatch. Four language jobs cover Actions, JavaScript/TypeScript, Python and
+Rust, at most two concurrently, with 30 minutes per job. Each uses the standard
+GitHub-hosted Ubuntu 24.04 runner; nothing is installed on the VPS. Only the
+CodeQL job gets `security-events: write`, solely to publish scan results.
+Checkouts do not retain credentials. There are no repository/provider secrets,
+deployment steps, shared application caches or paid runners in these workflows.
+
+The CodeQL action is pinned to official v4.38.1 commit
+`1c5b675653bb5c22dbe9b12b556ec555138e09fd`; dependency review is pinned to official
+v5.0.0 commit `a1d282b36b6f3519aa1f3fc636f609c47dddb294` (verified 2026-09-21).
+Action updates need a reviewed pin and policy update. Their internal Node runtime
+does not change the project's Node 22.23.2 pin or other VPS projects.
+
+CodeQL uses `build-mode: none` and the default query suite. This is not an
+execution sandbox: Rust extraction uses rust-analyzer and can execute Cargo
+build scripts/procedural macros and resolve dependencies. Rust 1.97.1 is prepared
+on the disposable hosted runner. No application, collector or project tests are
+explicitly launched by this scan. Coverage of generated code and semantic
+dependencies can be incomplete; a successful scan is not a clean-security or
+research-readiness claim. The existing functional CI gates remain required.
+See [GitHub's build-mode documentation](https://docs.github.com/en/code-security/reference/code-scanning/codeql/build-options-for-compiled-languages).
+
+Dependency review runs on every PR targeting main, including PRs without
+manifest changes so its required check never disappears behind path filters.
+The five-minute job fails on newly introduced **moderate, high or critical**
+vulnerabilities in runtime, development or unknown dependency scopes. It does
+not silently ignore advisories or use warn-only mode. Results are in the check
+summary; PR comments are disabled so no PR write permission is needed.
+License enforcement and external OpenSSF Scorecard requests are disabled.
+Snapshot warnings have a bounded 60-second retry window.
+See [the action's reviewed inputs](https://github.com/actions/dependency-review-action/blob/a1d282b36b6f3519aa1f3fc636f609c47dddb294/action.yml).
+
+The operator enables the `dependency-review` required check only after its first
+successful PR execution, preserving the existing `tests-build-zero-cost` check
+and other protection settings. Initial CodeQL findings remain visible for
+triage; this change does not claim to remediate all previously existing code.
+Default CodeQL setup must remain off to avoid a duplicate generated workflow;
+the committed workflow provides advanced setup.
+
+Dependency review evaluates a PR diff, not the whole existing dependency tree.
+The initial Dependabot inventory has four medium alerts across three advisories:
+`vitest`/`@vitest/mocker` 3.2.7, `stream-json` 1.9.1 and `uuid` 8.3.2. Those are not
+dismissed, upgraded or declared exploitable merely by installing this control.
+The GitHub dependency graph covers npm, Cargo and Actions; verify its coverage
+of the separately hash-locked DuckDB reader rather than assuming every custom
+dependency format is recognized. Lock/hash integrity and known-vulnerability
+screening are different checks.
+
+Acceptance requires the policy bypass regressions, existing required CI, the
+first successful dependency-review check, uploaded CodeQL analyses for all four
+languages, independent review, and post-merge main CI/CodeQL/roadmap read-back.
+The visible result is the PR check summaries and GitHub Security code-scanning
+results. Provider access, automatic dependency upgrades, backups, hardware
+changes and application deployment are outside this task.
 
 ## Canonical general CI design
 

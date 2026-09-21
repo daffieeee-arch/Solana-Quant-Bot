@@ -80,8 +80,13 @@ Roadmap Sync are separate required checks.
 - Verify GitHub settings by reading the repository and main-protection APIs;
   never test protection by pushing an actual credential or force-pushing main.
 - Repository secret protection does not require a new CI secret or a provider call.
-- Do not add CodeQL, deployment, paid runners, automatic dependency merges or
-  additional mandatory reviewer accounts as an implicit part of this profile.
+- CodeQL and dependency review were explicitly authorized on 2026-09-21;
+  their separate permissions, pinned actions and acceptance checks are recorded
+  in [CI](../CI.md#codeql-and-dependency-review). Dependency review becomes an
+  additional required check after its first successful execution. The original
+  2026-09-11 settings table above remains the historical approval baseline.
+- Do not add deployment, paid runners, automatic dependency merges or additional
+  mandatory reviewer accounts as an implicit part of this profile.
 
 Related contracts: [CI](../CI.md), [development workflow](../DEVELOPMENT_WORKFLOW.md),
 [branch hygiene](BRANCH_HYGIENE.md), and [Project operations](GITHUB_PROJECTS_ROADMAP.md).

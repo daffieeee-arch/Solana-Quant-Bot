@@ -9,6 +9,10 @@ import {
   validateWorkflowConfiguration,
 } from './lib/workflow-policy.mjs';
 import {
+  SECURITY_WORKFLOW_PATHS,
+  validateSecurityWorkflowConfiguration,
+} from './lib/security-workflow-policy.mjs';
+import {
   validateCitationModuleGraph,
   validateTrackedResearchPaths,
 } from './ci-research-citations.mjs';
@@ -167,6 +171,9 @@ function runPolicy() {
     errors.push('zero-cost unlock must remain strict: only explicit true enables live Triton');
   }
   errors.push(...validateWorkflowConfiguration(text('.github/workflows/ci.yml')));
+  for (const path of SECURITY_WORKFLOW_PATHS) {
+    errors.push(...validateSecurityWorkflowConfiguration(path, text(path)));
+  }
 
   const textExtensions = new Set([
     '.cjs', '.css', '.env', '.html', '.js', '.json', '.jsx', '.md', '.mjs', '.py', '.sh', '.ts', '.tsx', '.txt', '.yaml', '.yml',
