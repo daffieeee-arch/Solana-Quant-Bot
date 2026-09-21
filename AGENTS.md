@@ -19,6 +19,24 @@ The current scanner/portfolio/dashboard/paper runtime is **FROZEN LEGACY**. Do n
 - Verify documents against code, tests, Git history and current issues/PRs; do not treat prose as proof.
 - One clear problem per PR where practical. Use tests with changes and fresh-context review for protocol, durability, security and causality work.
 
+## Approved development delivery workflow
+
+The user approved this standing workflow on 2026-09-21 for authorized Solana Quant Platform V2 development tasks. It also applies to PR #119. See [`docs/DEVELOPMENT_WORKFLOW.md`](docs/DEVELOPMENT_WORKFLOW.md) for execution and evidence details.
+
+1. Start each new bounded task on a new task branch from current fetched `origin/main`; never edit `main` directly. Preserve existing work. Fixes for an open PR stay on that PR's branch.
+2. Record the bounded scope and concrete acceptance criteria before implementation/review; do not expand them during review with optional improvements. Implement the task, update relevant documentation, run appropriate checks and push the task branch. Keep the PR description and GitHub Project #4 aligned with actual evidence.
+3. Every implementation PR receives independent review from a separate agent with fresh context. The user explicitly authorizes these review agents for approved development tasks; do not ask again. Reviewers assess only and never change code. They inspect the actual diff, relevant code, tests and evidence; green CI alone is not a review.
+4. Conduct one complete independent review round and consolidate findings. Record findings and the reviewed commit at the PR. Fix valid in-scope findings and justify rejected findings, then conduct one focused independent recheck of fixes and their consequences. If blockers remain after that recheck, stop automatic repair/review rounds, report the remaining blockers, their impact and the smallest next step, and wait for the user's decision. Never merge because the round budget was reached. Put nonblocking out-of-scope improvements on the backlog; do not rewrite for style preferences.
+5. Squash-merge is authorized when acceptance criteria are met, all required checks on the latest commit are green, no blocking independent-review finding remains, and every review discussion is substantively addressed. Immediately before merging, verify that the PR head is still the reviewed commit. Never bypass GitHub protections.
+6. After merging, verify the resulting `main` commit, main CI and roadmap synchronization. Report a failed check, repair it with a bounded change under this workflow, and do not declare the task fully complete meanwhile.
+7. Verify deletion of the merged GitHub task branch. Remove local task branches/worktrees only when clean, no longer in use and demonstrably safe to delete. Preserve unique commits, open-PR branches, archive tags, migration evidence and protected original worktrees. Never perform a general cleanup of old WSL branches.
+
+This authorization does not relax the safety boundaries: never interrupt Hyperliquid captures, change shared settings, install without authorization, or start unauthorized provider requests, acquisition or trading processes. Bound heavy Solana work. All OF1 data on this VPS remains under `/home/chupa/Solana-project/data-old-faithful-one`.
+
+Write meaningful tests for changed behavior and relevant risks; no blanket TDD requirement or tests that only mirror the implementation. Reuse existing test evidence while code, inputs and environment remain relevantly unchanged. Repeat checks only for changes, failures, concrete uncertainties or required gates; all required GitHub checks must pass on the final commit. Finish when acceptance criteria, required checks and the bounded review are satisfied; do not start another optimization round.
+
+Report the PR, review findings and resolutions, reviewed commit, tests, squash-merge commit, main CI/roadmap result, and exactly what was cleaned up or deliberately preserved.
+
 The approved annotated archive tag `v1-paper-platform-final` exists at the last pre-cleanup `main` commit `f870621f5df76b935ce828fa9205fb9ff7504f67` (tag object `de5b3850e0527afe8271c54abfdb95098d55e395`). The content-migration ledger bound to that tag has SHA-256 `54eca8ad9239b9921cd1b0da50d5948f08c6113188fd5c5ed73d66719ab407e5`. There is no permanent legacy directory; Git and this immutable tag are the archive. B2A removals and retained invariants are enumerated in [`roadmap/b2a-invariant-salvage-manifest.json`](roadmap/b2a-invariant-salvage-manifest.json).
 
 ## Active architecture boundaries
@@ -33,7 +51,7 @@ The approved annotated archive tag `v1-paper-platform-final` exists at the last 
 
 Implement a walking skeleton: one official source, one approved plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one lifecycle and one visible result. Do not build a generic framework before a second proven use case requires it.
 
-PR 5 decides the physical Bronze/Silver Parquet writer. If Python performs only that serialization, it must be a generated, lossless materializer with schema and logical-hash parity and no semantic reinterpretation.
+The bounded B5 physical projection uses Rust Arrow/Parquet for Rust-authorized Bronze/Silver records; see `docs/research/B5_PARQUET_QUERYABLE_RECORDS.md`. Broader schemas remain unfinished. Any future Python-only serialization must be a generated, lossless materializer with schema and logical-hash parity and no semantic reinterpretation.
 
 ## Triton-only rule
 
@@ -96,6 +114,7 @@ npm run build
 node scripts/assert-pump-protocol-v2-offline.mjs --static
 node scripts/assert-of1-planner-offline.mjs --static
 node scripts/assert-of1-bronze-offline.mjs --static
+node scripts/assert-of1-parquet-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
@@ -104,6 +123,7 @@ cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --ch
 node scripts/assert-pump-protocol-v2-offline.mjs --all
 node scripts/assert-of1-planner-offline.mjs --all
 node scripts/assert-of1-bronze-offline.mjs --all
+node scripts/assert-of1-parquet-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked

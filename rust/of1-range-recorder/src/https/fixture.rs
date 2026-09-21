@@ -8,7 +8,7 @@ use std::{
     net::TcpListener,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -28,6 +28,7 @@ pub struct FixtureServer {
     root_der: Vec<u8>,
     stopped: Arc<AtomicBool>,
     worker: Option<JoinHandle<HttpsResult<Vec<String>>>>,
+    observed_request_bytes: Arc<AtomicU64>,
 }
 
 impl FixtureServer {
@@ -80,6 +81,8 @@ impl FixtureServer {
         listener.set_nonblocking(true)?;
         let stopped = Arc::new(AtomicBool::new(false));
         let stop = stopped.clone();
+        let observed_request_bytes = Arc::new(AtomicU64::new(0));
+        let observed = observed_request_bytes.clone();
         let worker = thread::spawn(move || {
             serve(
                 &listener,
@@ -87,6 +90,7 @@ impl FixtureServer {
                 scripts,
                 &stop,
                 fragment_delay_ms,
+                &observed,
             )
         });
         Ok(Self {
@@ -94,6 +98,7 @@ impl FixtureServer {
             root_der,
             stopped,
             worker: Some(worker),
+            observed_request_bytes,
         })
     }
 
@@ -105,6 +110,12 @@ impl FixtureServer {
     #[must_use]
     pub fn root_der(&self) -> Vec<u8> {
         self.root_der.clone()
+    }
+
+    /// Fixture-only counter remains readable after joining a stopped peer.
+    #[must_use]
+    pub fn request_byte_counter(&self) -> Arc<AtomicU64> {
+        self.observed_request_bytes.clone()
     }
 
     /// Join the bounded script and return received HTTP requests, never TLS private material.
@@ -134,6 +145,7 @@ fn serve(
     scripts: Vec<ResponseScript>,
     stop: &AtomicBool,
     fragment_delay_ms: u64,
+    observed_request_bytes: &AtomicU64,
 ) -> HttpsResult<Vec<String>> {
     let mut requests = Vec::new();
     for script in scripts {
@@ -170,6 +182,7 @@ fn serve(
                 return Err(HttpsError::Truncated);
             }
             request.push(byte[0]);
+            observed_request_bytes.fetch_add(1, Ordering::SeqCst);
         }
         requests.push(String::from_utf8(request).map_err(|_| HttpsError::Fixture)?);
         thread::sleep(Duration::from_millis(script.delay_ms));

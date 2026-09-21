@@ -18,6 +18,7 @@ const MANIFEST_HASH = 'dfd72a9c45e3c1d20f1c50830933711fb953e1d402019ca873c16bc70
 const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
+const RATE_PROCESS_TEST_HASH = 'a1982e6bf196bc790fbd4689fa6c802b4f947a9b2dfb82d4c4788986e792ccf7';
 // No blanket network/process exception for a directory or Cargo feature. Exact reviewed
 // fixture sources only; their constructors accept a port, never a host/URL/provider config.
 const LOOPBACK_SOURCE_HASHES = {
@@ -28,18 +29,18 @@ const LOOPBACK_SOURCE_HASHES = {
 // These files alone contain the reviewed production capability / fixture orchestration.
 // An exact source pin is not a network lease; no official request runs in this gate.
 const ACQUISITION_SOURCE_HASHES = {
-  'src/https.rs': 'aee8900d9cd2c4d8fa2e794df88ed9c194c25717ae2c441222479f7f8d1399ee',
-  'src/https/fixture.rs': 'ece9a8026e155be03beb5bdbc0c211adad14e486049f7d6c33c200c57f6ff1af',
-  'tests/acquisition_https.rs': '77cc08d94cbbe027b491d4461f3324b2efef5212abfaf1801a6e1a2ef6a66443',
+  'src/https.rs': '01e08fdabef6be6b3b1b966457ffa57748fc033448f7f551fba4ad5deb36a86e',
+  'src/https/fixture.rs': 'cbc520a5cc3e8fc3a22eb6e473a104cdc155207a2aaac25f4e8f21e5f5c47360',
+  'tests/acquisition_https.rs': '8612ae55ded39f1c1252de7cda00903adadddb528ff1dfefce0cf9480548890d',
   'tests/acquisition_e2e.rs': 'f535c35a39a7a3069c847017ead8bfe4a347493854deec56a7628a405ca5358e',
-  'src/bin/of1-acquisition-fixture-evidence.rs': '181c32d8d379e23284bf18c1f4081e19a5ddfdb9070c9fcdaa252bd1cfce6ea2',
+  'src/bin/of1-acquisition-fixture-evidence.rs': 'b97f14882816bc65e7c0ce08ebc9c117152e0b9850865cdc8bcff2b35ca9f05f',
 };
 // Local-only operational telemetry is a separate, default-disabled capability.
 // Pin its Unix IPC and sealed simulator, never grant a directory-wide exception.
 const MONITOR_SOURCE_HASHES = {
-  'src/monitor/relay.rs': '38cfe4405e1a51c4d9e51a646bea3bc532d7b7517ddbc6654fc82e5dc4bf888b',
-  'tests/monitor_ipc.rs': '3693c0c8f570784743d06a4118c996302b19d688afd530afb4e6fbd4652cdb8a',
-  'src/bin/of1-monitor-simulation.rs': '45e59f9c90fcd8e2959dbd79d17aa586f2a2f7ebc888c3aaa2067be13c14923e',
+  'src/monitor/relay.rs': '236744232c2916f09b96f27473300f67dadd6e71e6b91b56ea4caf8b193a8135',
+  'tests/monitor_ipc.rs': 'b0d3b8719bfc4faf29ad2cdbc8652283ac866256cd492a823ca7698272b8d8c5',
+  'src/bin/of1-monitor-simulation.rs': '72c773d485506ca41cb74d19901488fec10efee073371f14452cae334f7d259d',
 };
 
 export function validateOf1PlannerInputs(manifest, lock, sources) {
@@ -48,6 +49,7 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
   if (hash(lock) !== LOCK_HASH) errors.push('unreviewed OF1 dependency lock');
   for (const [path, source] of Object.entries(sources)) {
     const crashHarness = path === 'tests/durability_process.rs';
+    const rateHarness = path === 'tests/rate_process.rs';
     const fixtureSource = Object.hasOwn(LOOPBACK_SOURCE_HASHES, path);
     const acquisitionSource = Object.hasOwn(ACQUISITION_SOURCE_HASHES, path);
     const monitorSource = Object.hasOwn(MONITOR_SOURCE_HASHES, path);
@@ -59,13 +61,14 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
       ? String(source).replaceAll('"Error: Command failed: ', '"Error: diagnostic failed: ')
       : source;
     if (crashHarness && hash(source) !== PROCESS_TEST_HASH) errors.push('unreviewed OF1 process-crash harness');
+    if (rateHarness && hash(source) !== RATE_PROCESS_TEST_HASH) errors.push('unreviewed OF1 rate-process harness');
     if (fixtureSource && hash(source) !== LOOPBACK_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 loopback source: ${path}`);
     if (acquisitionSource && hash(source) !== ACQUISITION_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 acquisition source: ${path}`);
     if (monitorSource && hash(source) !== MONITOR_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 monitor source: ${path}`);
     if (path === 'build.rs' || /\bunsafe\s*\{|#\s*\[\s*path\s*=/u.test(source)
       || (!fixtureSource && !acquisitionSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
       || (!monitorSource && /\bUnixDatagram\b/u.test(source))
-      || (!crashHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
+      || (!crashHarness && !rateHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
       errors.push(`unexpected runtime capability in ${path}`);
     }
   }
@@ -238,7 +241,7 @@ async function run(mode) {
     // exhausted the unchanged 25-minute job budget despite passing every test.
     // Existing debug/default tests and all assertions/cases remain. Compilation/build
     // scripts still execute under socket denial; no official dispatch is run.
-    for (const target of ['acquisition_https', 'acquisition_e2e', 'monitor_ipc']) {
+    for (const target of ['acquisition_https', 'acquisition_e2e', 'monitor_ipc', 'rate_process']) {
       const built = isolated(`compile.${target}`, 'cargo', ['+1.97.1', 'test', ...manifest, '--locked', '--offline', '--release',
         '--all-features', '--test', target, '--no-run', '--message-format=json-render-diagnostics']);
       const executable = built.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s))

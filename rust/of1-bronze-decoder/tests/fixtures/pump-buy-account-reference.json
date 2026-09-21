@@ -1,0 +1,89 @@
+{
+  "classification": "OFFLINE_REFERENCE_NOT_CANONICAL_SILVER",
+  "provenance": {
+    "input": "authentic-pump-sections.json fixture 0; unchanged authentic CAR section",
+    "slot": "422496004",
+    "transaction_index_in_slot": 142,
+    "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+    "section_sha256": "7ac7f87151b8475a1d65a8364f62f641c78396ca3d1208e591e7380f9343c838",
+    "reference": "existing locked @solana/web3.js 1.98.4 PublicKey.findProgramAddressSync, sockets denied",
+    "reference_script_sha256": "aea1535cd27c9634245d2446b014873e31551ca45d05128de35bed4281542c09",
+    "reference_script_retained_at": "/home/dmesdary/solana-quant-data/governance/b5-pump-buy-20260911.N7N6e2/account-reference.mjs",
+    "seed_source": "sources/pump-buy-evidence.json: pinned IDL and exact source-inspected SDK src/pda.ts",
+    "creator_basis": "TradeEvent creator bytes at CPI offset 185; not curve account state",
+    "not_protocol_authority": true
+  },
+  "creator": "CLEeskqFQjRzPhjHH7k2Ns5GFqPbj1Rk1e2ZKgbEhdAu",
+  "checks": [
+    {
+      "position": 0,
+      "observed": "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+      "expected": "4wTV1YmiEkRvAtNtsSGPtUrqRYQMe5SKy2uB4Jjaxnjf",
+      "bump": 255,
+      "match": true
+    },
+    {
+      "position": 3,
+      "observed": "7Avq5SfSpbycTYKa22aUdRDNyYn7etmD3e2EVpVMtnFA",
+      "expected": "7Avq5SfSpbycTYKa22aUdRDNyYn7etmD3e2EVpVMtnFA",
+      "bump": 252,
+      "match": true
+    },
+    {
+      "position": 4,
+      "observed": "AdVxC5J9iVMzG2zKfsuoNaYyX3WZSq6QfgeyhEKLrg5Q",
+      "expected": "AdVxC5J9iVMzG2zKfsuoNaYyX3WZSq6QfgeyhEKLrg5Q",
+      "bump": 255,
+      "match": true
+    },
+    {
+      "position": 5,
+      "observed": "9pCVVwLSd38NUawxmxkyN1XBpCDJypiKiqAgGicJGjdM",
+      "expected": "9pCVVwLSd38NUawxmxkyN1XBpCDJypiKiqAgGicJGjdM",
+      "bump": 253,
+      "match": true
+    },
+    {
+      "position": 9,
+      "observed": "HJTUTTb6KC53XJmfzw2z9fsQ66WEUfYQsQgkhh2wpcjE",
+      "expected": "HJTUTTb6KC53XJmfzw2z9fsQ66WEUfYQsQgkhh2wpcjE",
+      "bump": 252,
+      "match": true
+    },
+    {
+      "position": 10,
+      "observed": "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+      "expected": "Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1",
+      "bump": 255,
+      "match": true
+    },
+    {
+      "position": 12,
+      "observed": "Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y",
+      "expected": "Hq2wp8uJ9jCPsYgNHex8RtqdvMPfVGoYwjvF1ATiwn2Y",
+      "bump": 255,
+      "match": true
+    },
+    {
+      "position": 13,
+      "observed": "Ef2TfPiCxgDiu2kW9xo5z7WBDGFcrjxMMnzGX8cTqL1G",
+      "expected": "Ef2TfPiCxgDiu2kW9xo5z7WBDGFcrjxMMnzGX8cTqL1G",
+      "bump": 255,
+      "match": true
+    },
+    {
+      "position": 14,
+      "observed": "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
+      "expected": "8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt",
+      "bump": 253,
+      "match": true
+    },
+    {
+      "position": 16,
+      "observed": "3TyCQwnfXAgns8nUWT2v9o1JV9LkJSDZjnDUA5jrV8Ja",
+      "expected": "3TyCQwnfXAgns8nUWT2v9o1JV9LkJSDZjnDUA5jrV8Ja",
+      "bump": 255,
+      "match": true
+    }
+  ]
+}

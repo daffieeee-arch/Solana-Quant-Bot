@@ -1,0 +1,1122 @@
+{
+  "schema": "PUMP_BUY_EXACT_QUOTE_V2_SOURCE_1",
+  "candidate": "pump-buy-exact-quote-v2-9c82f61-token2022-native-sol-direct27-v1",
+  "classification": "PINNED_IDL_SDK_PLUS_RECORDED_EVENT_CONTEXT_NOT_ACTIVATION",
+  "sources": [
+    {
+      "repository": "https://github.com/pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "idl/pump.json",
+      "blob": "062e66f032bb9f295353b573be3400070bd55e5b",
+      "bytes": 169632,
+      "sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+      "url": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/idl/pump.json"
+    },
+    {
+      "repository": "https://github.com/pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "docs/BREAKING_FEE_RECIPIENT.md",
+      "blob": "22dbe8a2c27f0ee4044f22b13f65eccc6900336b",
+      "bytes": 3370,
+      "sha256": "8b05e0906eaf1746508b0b2f909ac7c344ce7be33a6564d595335c9fda399868",
+      "url": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/docs/BREAKING_FEE_RECIPIENT.md"
+    },
+    {
+      "repository": "https://github.com/pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "docs/FEE_RECIPIENTS.md",
+      "blob": "36d53482a0db7c566f267a1ce657d8dba8c5791b",
+      "bytes": 2158,
+      "sha256": "9d66921d571a6129e5ef72504b60ae63888558e752eeb4a329b962f5cd229192",
+      "url": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/docs/FEE_RECIPIENTS.md"
+    },
+    {
+      "repository": "pump-fun/pump-public-docs",
+      "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+      "path": "README.md",
+      "sha256": "7609341176750cd2c78a74e8b3eab052053d71cecabd0252ef9c4d8e356e8cca",
+      "url": "https://github.com/pump-fun/pump-public-docs/blob/9c82f61cb711b044a17f770ab8ce9f9bdf78f333/README.md"
+    }
+  ],
+  "client": {
+    "package": "@pump-fun/pump-sdk",
+    "version": "1.36.0",
+    "git_head": "1c9e0343fbc28158c071bcf03237b047e8cc32d9",
+    "git_head_status": "REGISTRY_DECLARED_GITHUB_COMMIT_NOT_RETRIEVABLE_404",
+    "license": "MIT",
+    "tarball": "https://registry.npmjs.org/@pump-fun/pump-sdk/-/pump-sdk-1.36.0.tgz",
+    "sha512_integrity": "sha512-X8rf+Wm/p/jhBj6zbwouM9blJ3UW8XJFSL7YTT8osBnpHsOH0ccT0DjCkIi6AAT7b6jf1nM3MXk7l78Fuf1M0g==",
+    "tarball_sha256": "e3e612d9bf0be5f1a443d321aee51b044b5e98408170c3eb8baebf6346f569aa",
+    "files": [
+      {
+        "path": "src/sdk.ts",
+        "bytes": 59470,
+        "sha256": "242736485abfa36648646b07e5b81b6e7bd4fe5a074411ebd790bc029e534b80"
+      },
+      {
+        "path": "src/pda.ts",
+        "bytes": 7159,
+        "sha256": "f6311abd14dea28e80cdb852f2363ef958ec48f470a0d16c8d4cf78694c9f972"
+      },
+      {
+        "path": "src/idl/pump.json",
+        "bytes": 234422,
+        "sha256": "eb93ce13a3f709b3affc80220425f75664423e0e1f8da9996d8591411feeee01"
+      },
+      {
+        "path": "package.json",
+        "bytes": 2650,
+        "sha256": "bb2294975f1a62db0aa386154fe6751223ef7e3f8ad872b3ebb7f7dc4ea44f92"
+      }
+    ],
+    "runtime_use": "NOT_INSTALLED_OR_EXECUTED_SOURCE_INSPECTION_ONLY"
+  },
+  "trace_sources": [
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/src/convert.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/src/convert.rs",
+      "sha256": "5884bda534f1824b62befe70795e4250fe1302a99acbe1ad4f0ca98856163f4b",
+      "license": "Apache-2.0",
+      "scope": "archival conversion retains group/vector order, program/account indices, data and optional stack height"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "transaction-status/src/lib.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/transaction-status/src/lib.rs",
+      "sha256": "d9e56f67a8654bddef0f14fad17ee2edd2383a0f010aea4c2df611eb4b492fbd",
+      "license": "Apache-2.0",
+      "scope": "retained 3.1.12 crate; map_inner_instructions preserves ordered vectors and recorded heights"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "transaction-context/src/lib.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/transaction-context/src/lib.rs",
+      "sha256": "013e87b10ccdd34bf1632b0121642a1f89e66967c49f87f777ef9213ddface6a",
+      "license": "Apache-2.0",
+      "scope": "retained 3.1.12 crate; invocation push/pop and trace semantics; InstructionAccount flags are separate fields, absent from archived CompiledInstruction"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/proto/confirmed_block.proto",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/proto/confirmed_block.proto",
+      "sha256": "c29a6db1c76fc1361f2d3920bdbda01f6270b6743c5bdc19997a9f4720ccdcec",
+      "license": "Apache-2.0",
+      "retained_at": "rust/of1-bronze-decoder/sources/confirmed_block.proto",
+      "scope": "outer index, ordered inner instructions, program/account indices, data, optional stack height; no CPI signer/writable flags"
+    },
+    {
+      "repository": "anza-xyz/solana-sdk",
+      "commit": "1eeebd07c5fd5e7e8a32b66cf1341cef529551c0",
+      "commit_identity_basis": "already locked registry package .cargo_vcs_info.json; no new GitHub verification",
+      "path": "message/src/inner_instruction.rs",
+      "url": "https://github.com/anza-xyz/solana-sdk/blob/1eeebd07c5fd5e7e8a32b66cf1341cef529551c0/message/src/inner_instruction.rs",
+      "sha256": "ba99a1dcad243c7ef1e014197428f8d7eece2bced93b9a9b2dedcd1813b74ce0",
+      "crate": "solana-message",
+      "version": "3.0.1",
+      "registry_checksum": "85666605c9fd727f865ed381665db0a8fc29f984a030ecc1e40f43bfb2541623",
+      "license": "Apache-2.0",
+      "scope": "ordered invoked-instruction list; transaction instructions start at stack height one"
+    },
+    {
+      "repository": "anza-xyz/solana-sdk",
+      "commit": "1eeebd07c5fd5e7e8a32b66cf1341cef529551c0",
+      "commit_identity_basis": "same already locked registry package",
+      "path": "message/src/compiled_instruction.rs",
+      "url": "https://github.com/anza-xyz/solana-sdk/blob/1eeebd07c5fd5e7e8a32b66cf1341cef529551c0/message/src/compiled_instruction.rs",
+      "sha256": "da3b22c2e359ffbee2662af70814ef5b9cd21814a5a09832bdba1fb7f5f50193",
+      "license": "Apache-2.0",
+      "scope": "program index, ordered account indices, data only; no per-CPI AccountMeta flags"
+    }
+  ],
+  "source_license": "No LICENSE at pinned Pump documentation commit; complete IDL not vendored.",
+  "instruction": {
+    "name": "buy_exact_quote_in_v2",
+    "discriminator": [
+      194,
+      171,
+      28,
+      70,
+      104,
+      77,
+      91,
+      47
+    ],
+    "bytes": 24,
+    "args": [
+      {
+        "name": "spendable_quote_in",
+        "type": "u64"
+      },
+      {
+        "name": "min_tokens_out",
+        "type": "u64"
+      }
+    ],
+    "no_track_volume_argument": true,
+    "all_27_accounts_mandatory": true
+  },
+  "account_rules": [
+    {
+      "position": 0,
+      "name": "global",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              103,
+              108,
+              111,
+              98,
+              97,
+              108
+            ]
+          }
+        ]
+      },
+      "docs": []
+    },
+    {
+      "position": 1,
+      "name": "base_mint",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 2,
+      "name": "quote_mint",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 3,
+      "name": "base_token_program",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 4,
+      "name": "quote_token_program",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 5,
+      "name": "associated_token_program",
+      "signer": false,
+      "writable": false,
+      "fixed_address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 6,
+      "name": "fee_recipient",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 7,
+      "name": "associated_quote_fee_recipient",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "account",
+            "path": "fee_recipient"
+          },
+          {
+            "kind": "account",
+            "path": "quote_token_program"
+          },
+          {
+            "kind": "account",
+            "path": "quote_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            140,
+            151,
+            37,
+            143,
+            78,
+            36,
+            137,
+            241,
+            187,
+            61,
+            16,
+            41,
+            20,
+            142,
+            13,
+            131,
+            11,
+            90,
+            19,
+            153,
+            218,
+            255,
+            16,
+            132,
+            4,
+            142,
+            123,
+            216,
+            219,
+            233,
+            248,
+            89
+          ]
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 8,
+      "name": "buyback_fee_recipient",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 9,
+      "name": "associated_quote_buyback_fee_recipient",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "account",
+            "path": "buyback_fee_recipient"
+          },
+          {
+            "kind": "account",
+            "path": "quote_token_program"
+          },
+          {
+            "kind": "account",
+            "path": "quote_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            140,
+            151,
+            37,
+            143,
+            78,
+            36,
+            137,
+            241,
+            187,
+            61,
+            16,
+            41,
+            20,
+            142,
+            13,
+            131,
+            11,
+            90,
+            19,
+            153,
+            218,
+            255,
+            16,
+            132,
+            4,
+            142,
+            123,
+            216,
+            219,
+            233,
+            248,
+            89
+          ]
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 10,
+      "name": "bonding_curve",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              98,
+              111,
+              110,
+              100,
+              105,
+              110,
+              103,
+              45,
+              99,
+              117,
+              114,
+              118,
+              101
+            ]
+          },
+          {
+            "kind": "account",
+            "path": "base_mint"
+          }
+        ]
+      },
+      "docs": []
+    },
+    {
+      "position": 11,
+      "name": "associated_base_bonding_curve",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "account",
+            "path": "bonding_curve"
+          },
+          {
+            "kind": "account",
+            "path": "base_token_program"
+          },
+          {
+            "kind": "account",
+            "path": "base_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            140,
+            151,
+            37,
+            143,
+            78,
+            36,
+            137,
+            241,
+            187,
+            61,
+            16,
+            41,
+            20,
+            142,
+            13,
+            131,
+            11,
+            90,
+            19,
+            153,
+            218,
+            255,
+            16,
+            132,
+            4,
+            142,
+            123,
+            216,
+            219,
+            233,
+            248,
+            89
+          ]
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 12,
+      "name": "associated_quote_bonding_curve",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "account",
+            "path": "bonding_curve"
+          },
+          {
+            "kind": "account",
+            "path": "quote_token_program"
+          },
+          {
+            "kind": "account",
+            "path": "quote_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            140,
+            151,
+            37,
+            143,
+            78,
+            36,
+            137,
+            241,
+            187,
+            61,
+            16,
+            41,
+            20,
+            142,
+            13,
+            131,
+            11,
+            90,
+            19,
+            153,
+            218,
+            255,
+            16,
+            132,
+            4,
+            142,
+            123,
+            216,
+            219,
+            233,
+            248,
+            89
+          ]
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 13,
+      "name": "user",
+      "signer": true,
+      "writable": true,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 14,
+      "name": "associated_base_user",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 15,
+      "name": "associated_quote_user",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "account",
+            "path": "user"
+          },
+          {
+            "kind": "account",
+            "path": "quote_token_program"
+          },
+          {
+            "kind": "account",
+            "path": "quote_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            140,
+            151,
+            37,
+            143,
+            78,
+            36,
+            137,
+            241,
+            187,
+            61,
+            16,
+            41,
+            20,
+            142,
+            13,
+            131,
+            11,
+            90,
+            19,
+            153,
+            218,
+            255,
+            16,
+            132,
+            4,
+            142,
+            123,
+            216,
+            219,
+            233,
+            248,
+            89
+          ]
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 16,
+      "name": "creator_vault",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              99,
+              114,
+              101,
+              97,
+              116,
+              111,
+              114,
+              45,
+              118,
+              97,
+              117,
+              108,
+              116
+            ]
+          },
+          {
+            "kind": "account",
+            "path": "bonding_curve.creator",
+            "account": "BondingCurve"
+          }
+        ]
+      },
+      "docs": []
+    },
+    {
+      "position": 17,
+      "name": "associated_creator_vault",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "account",
+            "path": "creator_vault"
+          },
+          {
+            "kind": "account",
+            "path": "quote_token_program"
+          },
+          {
+            "kind": "account",
+            "path": "quote_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            140,
+            151,
+            37,
+            143,
+            78,
+            36,
+            137,
+            241,
+            187,
+            61,
+            16,
+            41,
+            20,
+            142,
+            13,
+            131,
+            11,
+            90,
+            19,
+            153,
+            218,
+            255,
+            16,
+            132,
+            4,
+            142,
+            123,
+            216,
+            219,
+            233,
+            248,
+            89
+          ]
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 18,
+      "name": "sharing_config",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              115,
+              104,
+              97,
+              114,
+              105,
+              110,
+              103,
+              45,
+              99,
+              111,
+              110,
+              102,
+              105,
+              103
+            ]
+          },
+          {
+            "kind": "account",
+            "path": "base_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            12,
+            53,
+            255,
+            169,
+            5,
+            90,
+            142,
+            86,
+            141,
+            168,
+            247,
+            188,
+            7,
+            86,
+            21,
+            39,
+            76,
+            241,
+            201,
+            44,
+            164,
+            31,
+            64,
+            0,
+            156,
+            81,
+            106,
+            164,
+            20,
+            194,
+            124,
+            112
+          ]
+        }
+      },
+      "docs": [
+        "seeds; the account is intentionally not deserialized here because it may be uninitialized",
+        "for mints that have not created a fee sharing config. Handlers must check",
+        "`data_is_empty()` / owner before reading."
+      ]
+    },
+    {
+      "position": 19,
+      "name": "global_volume_accumulator",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              103,
+              108,
+              111,
+              98,
+              97,
+              108,
+              95,
+              118,
+              111,
+              108,
+              117,
+              109,
+              101,
+              95,
+              97,
+              99,
+              99,
+              117,
+              109,
+              117,
+              108,
+              97,
+              116,
+              111,
+              114
+            ]
+          }
+        ]
+      },
+      "docs": []
+    },
+    {
+      "position": 20,
+      "name": "user_volume_accumulator",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              117,
+              115,
+              101,
+              114,
+              95,
+              118,
+              111,
+              108,
+              117,
+              109,
+              101,
+              95,
+              97,
+              99,
+              99,
+              117,
+              109,
+              117,
+              108,
+              97,
+              116,
+              111,
+              114
+            ]
+          },
+          {
+            "kind": "account",
+            "path": "user"
+          }
+        ]
+      },
+      "docs": []
+    },
+    {
+      "position": 21,
+      "name": "associated_user_volume_accumulator",
+      "signer": false,
+      "writable": true,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "account",
+            "path": "user_volume_accumulator"
+          },
+          {
+            "kind": "account",
+            "path": "quote_token_program"
+          },
+          {
+            "kind": "account",
+            "path": "quote_mint"
+          }
+        ],
+        "program": {
+          "kind": "const",
+          "value": [
+            140,
+            151,
+            37,
+            143,
+            78,
+            36,
+            137,
+            241,
+            187,
+            61,
+            16,
+            41,
+            20,
+            142,
+            13,
+            131,
+            11,
+            90,
+            19,
+            153,
+            218,
+            255,
+            16,
+            132,
+            4,
+            142,
+            123,
+            216,
+            219,
+            233,
+            248,
+            89
+          ]
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 22,
+      "name": "fee_config",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              102,
+              101,
+              101,
+              95,
+              99,
+              111,
+              110,
+              102,
+              105,
+              103
+            ]
+          },
+          {
+            "kind": "const",
+            "value": [
+              1,
+              86,
+              224,
+              246,
+              147,
+              102,
+              90,
+              207,
+              68,
+              219,
+              21,
+              104,
+              191,
+              23,
+              91,
+              170,
+              81,
+              137,
+              203,
+              151,
+              245,
+              210,
+              255,
+              59,
+              101,
+              93,
+              43,
+              182,
+              253,
+              109,
+              24,
+              176
+            ]
+          }
+        ],
+        "program": {
+          "kind": "account",
+          "path": "fee_program"
+        }
+      },
+      "docs": []
+    },
+    {
+      "position": 23,
+      "name": "fee_program",
+      "signer": false,
+      "writable": false,
+      "fixed_address": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 24,
+      "name": "system_program",
+      "signer": false,
+      "writable": false,
+      "fixed_address": "11111111111111111111111111111111",
+      "pda": null,
+      "docs": []
+    },
+    {
+      "position": 25,
+      "name": "event_authority",
+      "signer": false,
+      "writable": false,
+      "fixed_address": null,
+      "pda": {
+        "seeds": [
+          {
+            "kind": "const",
+            "value": [
+              95,
+              95,
+              101,
+              118,
+              101,
+              110,
+              116,
+              95,
+              97,
+              117,
+              116,
+              104,
+              111,
+              114,
+              105,
+              116,
+              121
+            ]
+          }
+        ]
+      },
+      "docs": []
+    },
+    {
+      "position": 26,
+      "name": "program",
+      "signer": false,
+      "writable": false,
+      "fixed_address": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+      "pda": null,
+      "docs": []
+    }
+  ],
+  "normal_fee_recipients": [
+    "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+    "7VtfL8fvgNfhz17qKRMjzQEXgbdpnHHHQRh54R9jP2RJ",
+    "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+    "9rPYyANsfQZw3DnDmKE3YCQF5E8oD89UXoHn9JFEhJUz",
+    "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY",
+    "CebN5WGQ4jvEPvsVU4EoHEpgzq1VV7AbicfhtW4xC9iM",
+    "FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz",
+    "G5UZAVbAf46s7cKWoyKu8kYTip9DGTpbLZ2qa9Aq69dP"
+  ],
+  "mayhem_fee_recipients": [
+    "GesfTA3X2arioaHp8bbKdjG9vJtskViWACZoYvxp4twS",
+    "4budycTjhs9fD6xw62VBducVTNgMgJJ5BgtKq7mAZwn6",
+    "8SBKzEQU4nLSzcwF4a74F2iaUDQyTfjGndn6qUWBnrpR",
+    "4UQeTP1T39KZ9Sfxzo3WR5skgsaP6NZa87BAkuazLEKH",
+    "8sNeir4QsLsJdYpc9RZacohhK1Y5FLU3nC5LXgYB4aa6",
+    "Fh9HmeLNUMVCvejxCtCL2DbYaRyBFVJ5xrWkLnMH6fdk",
+    "463MEnMeGyJekNZFQSTUABBEbLnvMTALbT6ZmsxAbAdq",
+    "6AUH3WEHucYZyC61hqpqYUWVto5qA5hjHuNQ32GNnNxA"
+  ],
+  "buyback_fee_recipients": [
+    "5YxQFdt3Tr9zJLvkFccqXVUwhdTWJQc1fFg2YPbxvxeD",
+    "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
+    "GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL",
+    "3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR",
+    "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
+    "EHAAiTxcdDwQ3U4bU6YcMsQGaekdzLS3B5SmYo46kJtL",
+    "5eHhjP8JaYkz83CWwvGU2uMUXefd3AazWGx4gpcuEEYD",
+    "A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW"
+  ],
+  "event": {
+    "type": "TradeEvent",
+    "discriminator": [
+      189,
+      219,
+      127,
+      211,
+      78,
+      230,
+      97,
+      238
+    ],
+    "full_schema_docs_sdk_identical": true,
+    "ix_name_wire_type": "string",
+    "observed_ix_name": "buy_exact_quote_in",
+    "ix_name_status": "RECORDED_LABEL_FOR_SOURCE_BOUND_EXACT_QUOTE_V2_CALL_NOT_LEGACY_BUY_OR_HISTORICAL_ACTIVATION",
+    "field_comments_are_not_complete_enum": true
+  },
+  "profile": {
+    "invocation": "DIRECT_TOP_LEVEL_ONLY",
+    "base_token_program": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "quote_account": "So11111111111111111111111111111111111111112",
+    "quote_token_program": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+    "quote_semantics": "PINNED_README_SPECIFIES_WSOL_ACCOUNT_FOR_NATIVE_SOL_INTERFACE_NOT_MINT_ACCOUNT_STATE",
+    "event_quote_mint_raw_zero_preserved": true,
+    "quote_decimals": null,
+    "base_decimals": null,
+    "creator_vault_basis": "PDA_FROM_EVENT_REPORTED_CREATOR_NOT_PROOF_OF_BONDING_CURVE_ACCOUNT_CREATOR",
+    "base_user_ata_basis": "ADDITIONAL_BOUNDED_ADDRESS_CORRESPONDENCE_NOT_TOKEN_ACCOUNT_CONTENT",
+    "message_privileges": "DIRECT_INSTRUCTION_COMPILED_MESSAGE_REQUIREMENTS",
+    "actual_event_cpi_flags": "UNAVAILABLE_NOT_REQUIRED_AS_ACCOUNT_STATE_CLAIM"
+  },
+  "candidate_scope": "ONE_OBSERVATION_MATCHED_REGISTERED_PROFILE_NOT_CALLER_COUNT_OR_GLOBAL_HISTORICAL_UNIQUENESS",
+  "silver_scope": "RECORDED_INSTRUCTION_AND_OWN_EVENT_FACTS_ONLY",
+  "historical_activation": "UNKNOWN",
+  "research_ready": false
+}

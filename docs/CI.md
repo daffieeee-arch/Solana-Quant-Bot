@@ -34,13 +34,15 @@ privilege claim.
 ## Canonical general CI design
 
 `ci.yml` runs **one** `tests-build-zero-cost` job on `ubuntu-24.04` with a
-**35-minute** budget. The single-job shape is intentional:
+**45-minute** budget. The single-job shape is intentional:
 
 1. fail-closed policy can deep-compare the entire workflow;
 2. no job-level secrets, containers, services or write permissions;
 3. one checkout with `persist-credentials: false`;
 4. only approved actions: pinned `actions/checkout`, `actions/setup-node` and
    narrowly scoped `actions/cache`.
+
+The first integrated WSL/VPS run [35531541423](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/35531541423) reached the former 35-minute hard stop during Parquet/DuckDB, after Node, Pump, OF1 and Bronze passed. The expanded recorded-pipeline suite alone took 612 seconds. The job budget is now 45 minutes; the policy still requires that exact bound and every gate. The timeout receipt is retained with the [integration evidence](operations/VPS_WSL_INTEGRATION.md).
 
 ### Triggers
 
@@ -65,19 +67,34 @@ work, not necessarily the wall-clock time of one review cycle.
 ### Ordered gates
 
 1. pin Rust `1.97.1` (rustfmt/clippy);
-2. static-validate Pump protocol and OF1 planner source/dependency contracts;
-3. restore the scoped Rust cache, then fetch both locked dependency graphs;
+2. static-validate Pump protocol, OF1 planner, Bronze decoder and Parquet projection source/dependency contracts;
+3. restore the scoped Rust cache, fetch the four locked graphs and prepare the isolated hash-locked DuckDB reader;
 4. `npm ci`;
 5. repository/zero-cost policy + offline research citation gate;
 6. focused policy/Pump/zero-cost tests, then full Vitest suite;
 7. TypeScript typecheck + retained Research Cockpit/inertness build;
 8. Rust format checks for reducer, namespace lock, Jetstreamer/Solana snapshots, Pump protocol;
-9. isolated Pump protocol and OF1 planner offline evidence gates;
+9. isolated Pump protocol, OF1 planner, Bronze and Parquet/DuckDB offline evidence gates;
 10. reducer clippy/test/build (`--locked`);
 11. committed-diff whitespace + clean tracked worktree.
 
 Green CI never upgrades fixture evidence into authentic acquisition, Research
 Ready, edge or live claims. See the non-claims section below.
+
+The [Parquet gate](../scripts/assert-of1-parquet-offline.mjs) has a real `--static`
+mode before fetch (no Cargo/compiler execution). `--all` checks the reviewed
+graph/features/licenses/build-script hashes, Rust tests and actual DuckDB reads
+of Rust-generated Parquet, including coverage denominators, manifest-only shards,
+logical-hash parity and sample/evidence reclassification failures, with sockets denied.
+The [CI reader preparation](../scripts/prepare-columnar-query-ci.mjs) selects an
+already installed CPython 3.13 x64 ABI from the hosted toolcache, records its
+version, and installs only the existing DuckDB 1.5.5 hash-locked wheel in a fresh
+runner-temp venv. No new action, system package, global Python or research
+workspace is introduced. Missing compatible Python or wheel fails, never skips.
+Local runs set `COLUMNAR_QUERY_PYTHON` to the existing isolated interpreter and
+do not run CI-only preparation. The first VPS integration run verified hosted
+reader preparation and real DuckDB checks before the job timeout; complete
+integration acceptance is recorded separately in the integration evidence.
 
 ### Scoped Rust cache and measured phases
 

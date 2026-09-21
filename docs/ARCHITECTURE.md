@@ -2,6 +2,8 @@
 
 > **Document status: ACTIVE target and transition architecture.** “Target” describes a reviewed boundary, not implemented proof. Current evidence status is stated separately.
 
+The imported WSL stack retains a bounded [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md): 21,719 Bronze packages, including 1,898 failed transactions, and 22 Silver facts (15 buys / seven sells). Its three-slot research pilot and sixteen post-hoc context slots remain distinct. Rust owns the existing Arrow/Parquet writer; Python reads the sealed manifests. The [VPS integration record](operations/VPS_WSL_INTEGRATION.md) tracks host validation separately. Earlier named run results remain historical evidence; neither migration nor integration promotes B4/B5, Research Ready or execution readiness.
+
 ## System boundary
 
 ```text
@@ -15,7 +17,7 @@ direct official Triton Old Faithful OF1 acquisition (leased, bounded)
                   |
  versioned Pump registry/decode -> canonical Silver facts Rust-owned/authorized
                   |
-      Parquet/Arrow + immutable manifests          physical writer: PR 5 decision
+      Parquet/Arrow + immutable manifests          bounded writer: Rust Arrow/Parquet
              /                     \
  Python reads approved Silver   React/TypeScript
  PIT Gold + evaluation          Research Observatory
@@ -38,7 +40,7 @@ V2 does not assume a profitable strategy. It must make “no edge”, “insuffi
 | acquisition/replay | Rust | the only historical network-capable binary; exact host capability, bytes, ordering, coverage, resume and hard budgets |
 | Pump protocol truth | Rust | pinned official source, version registry, codegen/reference decoder, exact integers and normalized events |
 | canonical Raw/Bronze/Silver | Rust plus language-neutral schemas | logical/canonical semantics, exact ordering/integers, evidence, coverage, quarantine and dataset-manifest identity; Rust produces or authorizes canonical Bronze/Silver records |
-| physical Bronze/Silver Parquet | explicit PR 5 decision | does not transfer semantic ownership. A Python implementation is allowed only as a generated, lossless materializer with schema and logical-hash parity |
+| physical Bronze/Silver Parquet | Rust Arrow/Parquet for the bounded B5 projection | does not transfer semantic ownership. A Python implementation is allowed only as a generated, lossless materializer with schema and logical-hash parity |
 | Gold and research artifacts | Python | read approved Silver; build features, labels, cohorts/splits, statistics, backtests and experiment artifacts with Polars/DuckDB. No Pump wire decode or alternative Silver logic |
 | product UI | React/TypeScript | visualization and linked interaction; no protocol/trading business logic or wallet capability |
 | analytical projection | optional later ClickHouse | fully rebuildable; never the only research truth or execution state |
@@ -147,7 +149,7 @@ Rust owns and produces or authorizes versioned canonical Pump instruction attemp
 
 Python reads approved Silver and produces PIT observation snapshots, feature vectors, labels, cohort/split assignments, censoring and immutable experiment manifests. Gold records coverage, evidence class, dataset/decoder/schema/code identities and cost-model assumptions. Python cannot wire-decode Pump or reinterpret Silver semantics.
 
-Parquet partitioning is coarse by layer/table/schema/epoch/slot bucket, never one directory per mint. PR 5 selects the physical Bronze/Silver writer. If Python performs that serialization, generated schemas must make it a lossless Rust-authorized materializer with deterministic row order plus schema/content/logical-hash parity; it may not reinterpret, filter or enrich records. Dataset manifests bind source identifiers, ranges/CIDs/hashes, `acquired_at`, `processed_at`, decoder/schema versions, code SHA, coverage, quarantine counts and file hashes. Rust owns the Raw/Bronze/Silver manifest identity; Python owns Gold/experiment manifests derived from approved Silver.
+Parquet partitioning is coarse by layer/table/schema/epoch/slot bucket, never one directory per mint. The bounded B5 projection selects Rust Arrow/Parquet; broader layer schemas remain unfinished. If Python performs that serialization, generated schemas must make it a lossless Rust-authorized materializer with deterministic row order plus schema/content/logical-hash parity; it may not reinterpret, filter or enrich records. Dataset manifests bind source identifiers, ranges/CIDs/hashes, `acquired_at`, `processed_at`, decoder/schema versions, code SHA, coverage, quarantine counts and file hashes. Rust owns the Raw/Bronze/Silver manifest identity; Python owns Gold/experiment manifests derived from approved Silver.
 
 ## Causality and availability
 
@@ -239,11 +241,11 @@ Signing/submission remains outside the paper engine and behind a later separatel
 | selected fixture Pump parsing/golden vectors | fixture evidence only |
 | current WAL/quarantine/restart invariants | proven for current implementation; must be migrated deliberately |
 | B2A legacy launch/control quarantine | Operationally Verified by merged PR #91; this is safety/retirement evidence, not protocol, data or runtime-product evidence |
-| authentic OF1 Raw/Bronze/Silver | unavailable/not yet run |
+| authentic OF1 Raw/Bronze/Silver | bounded retained acquisitions and offline B5 collection; no general coverage or Research Ready claim |
 | universal or activation-bounded Pump registry | unproven |
-| Research Observatory over authentic data | unimplemented |
+| Research Observatory over authentic data | static manifest-bound query reports exist; interactive B6 remains unimplemented |
 | PIT Gold, walk-forward edge or profitability | unproven |
 | prospective Triton shadow and executable paper fills | unproven |
 | VPS/live execution | not authorized |
 
-Repository contents that contradict this table are historical status, not current product truth.
+Named run receipts and the linked VPS integration record delimit these current claims; older run outcomes remain unchanged.

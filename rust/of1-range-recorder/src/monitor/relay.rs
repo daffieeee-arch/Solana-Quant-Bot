@@ -6,6 +6,7 @@ use super::{
     MAX_ERRORS, MAX_RUNS, MAX_SNAPSHOT_BYTES, Rates, SAMPLE_INTERVAL_MS, Snapshot, invalid, wall_ms,
 };
 use crate::durable::acquisition::{AggregateBudget, Progress, Receipt, StageBudget};
+use crate::durable::{Clock, SystemClock};
 use std::{
     collections::BTreeMap,
     fs::{self, OpenOptions},
@@ -21,6 +22,7 @@ pub struct Monitor {
     destination: PathBuf,
     started: Instant,
     elapsed_before_process: u64,
+    process_started_boot_ms: Option<u64>,
     last_emit_ms: Option<u64>,
     rates: Rates,
     deadline_wall_ms: u64,
@@ -46,9 +48,30 @@ impl Monitor {
         snapshot.traffic.download_eta_ms = None;
         snapshot.traffic.eta_scope = None;
         snapshot.traffic.speed_samples.clear();
+        if let Some(limit) = &mut snapshot.rate_limit {
+            limit.waiting = Some(false);
+            limit.process_wait_ns = Some(0);
+        }
         let rates = Rates::new(snapshot.traffic.received_bytes);
-        let elapsed_before_process = wall_ms().saturating_sub(snapshot.started_at_ms);
-        let deadline_wall_ms = wall_ms().saturating_add(snapshot.budgets.runtime_remaining_ms);
+        let elapsed_before_process = if let Some(clock) = &mut snapshot.clock_context {
+            let now = SystemClock.sample().ok();
+            snapshot.budgets.runtime_remaining_ms = clock.observe(now.as_ref());
+            if clock.runtime_status == "SAME_BOOT"
+                && let Some(observed) = clock.observed_boot_ms
+            {
+                snapshot.elapsed_ms = observed - clock.started_at_boot_ms;
+            }
+            snapshot.elapsed_ms
+        } else {
+            wall_ms().saturating_sub(snapshot.started_at_ms)
+        };
+        let deadline_wall_ms =
+            wall_ms().saturating_add(snapshot.budgets.runtime_remaining_ms.unwrap_or(0));
+        let process_started_boot_ms = snapshot
+            .clock_context
+            .as_ref()
+            .filter(|clock| clock.runtime_status == "SAME_BOOT")
+            .and_then(|clock| clock.observed_boot_ms);
         let socket = UnixDatagram::unbound()
             .ok()
             .and_then(|socket| socket.set_nonblocking(true).ok().map(|()| socket));
@@ -58,6 +81,7 @@ impl Monitor {
             destination: destination.into(),
             started: Instant::now(),
             elapsed_before_process,
+            process_started_boot_ms,
             last_emit_ms: None,
             rates,
             deadline_wall_ms,
@@ -149,6 +173,34 @@ impl Monitor {
         self.emit(false);
     }
 
+    pub fn rate_policy(&mut self, policy: &crate::rate::DownloadRate) {
+        if self.snapshot.rate_limit.is_none() {
+            self.snapshot.rate_limit = Some(super::RateLimit {
+                policy: policy.clone(),
+                waiting: Some(false),
+                process_wait_ns: Some(0),
+            });
+        }
+        self.emit(false);
+    }
+
+    /// Wait-start is an observation, not elapsed time or a deadline extension.
+    pub fn rate_wait_started(&mut self, _planned_ns: u64) {
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(true);
+        }
+        self.emit(false);
+    }
+
+    pub fn rate_wait_finished(&mut self, actual_ns: u64) {
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+            limit.process_wait_ns =
+                Some(limit.process_wait_ns.unwrap_or(0).saturating_add(actual_ns));
+        }
+        self.emit(false);
+    }
+
     pub fn verifying(&mut self, sequence: u64) {
         self.stage(sequence, "VERIFYING");
     }
@@ -166,6 +218,9 @@ impl Monitor {
             op.state = stage.into();
         }
         self.snapshot.stage = stage.into();
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+        }
         self.snapshot.traffic.speed_bps = None;
         self.snapshot.traffic.download_eta_ms = None;
         self.emit(true);
@@ -215,6 +270,9 @@ impl Monitor {
             op.error = Some(reason.clone());
         }
         self.snapshot.stage = "STOPPED".into();
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+        }
         self.snapshot.errors.push(reason);
         if self.snapshot.errors.len() > MAX_ERRORS {
             self.snapshot.errors.remove(0);
@@ -236,6 +294,9 @@ impl Monitor {
             return;
         }
         self.snapshot.stage = "COMPLETE".into();
+        if let Some(limit) = &mut self.snapshot.rate_limit {
+            limit.waiting = Some(false);
+        }
         self.snapshot.completed_at_ms = Some(wall_ms());
         self.snapshot.integrity.receipts = "VERIFIED".into();
         self.snapshot.traffic.speed_bps = None;
@@ -271,8 +332,23 @@ impl Monitor {
         self.snapshot.traffic.reserved_bytes = progress.charged_entity_bytes;
         self.snapshot.storage.used_bytes = progress.disk_charge_bytes;
         self.snapshot.storage.available_bytes = progress.available_disk_bytes;
-        self.snapshot.budgets.runtime_remaining_ms =
-            progress.deadline_wall_ms.saturating_sub(wall_ms());
+        if let Some(clock) = &mut self.snapshot.clock_context {
+            if progress.clock_policy.as_ref() == Some(&clock.policy)
+                && progress
+                    .clock_started_at
+                    .as_ref()
+                    .is_some_and(|started| started.boot_id == clock.boot_id)
+            {
+                clock.deadline_boot_ms = progress.deadline_boot_ms;
+                self.snapshot.budgets.runtime_remaining_ms =
+                    clock.observe(SystemClock.sample().ok().as_ref());
+            } else {
+                self.snapshot.budgets.runtime_remaining_ms = clock.observe(None);
+            }
+        } else {
+            self.snapshot.budgets.runtime_remaining_ms =
+                Some(progress.deadline_wall_ms.saturating_sub(wall_ms()));
+        }
         self.deadline_wall_ms = progress.deadline_wall_ms;
     }
 
@@ -288,13 +364,44 @@ impl Monitor {
             return;
         }
         self.last_emit_ms = Some(elapsed);
-        self.snapshot.elapsed_ms = self.elapsed_before_process.saturating_add(elapsed);
-        self.snapshot.updated_at_ms = wall_ms();
-        self.snapshot.budgets.runtime_remaining_ms = self
-            .deadline_wall_ms
-            .saturating_sub(self.snapshot.updated_at_ms);
+        if let Some(clock) = &mut self.snapshot.clock_context {
+            let now = SystemClock.sample().ok();
+            self.snapshot.updated_at_ms = now.as_ref().map_or_else(wall_ms, |at| at.wall_ms);
+            self.snapshot.budgets.runtime_remaining_ms = clock.observe(now.as_ref());
+            if clock.runtime_status == "SAME_BOOT"
+                && let Some(observed) = clock.observed_boot_ms
+            {
+                self.snapshot.elapsed_ms = observed - clock.started_at_boot_ms;
+            }
+        } else {
+            self.snapshot.elapsed_ms = self.elapsed_before_process.saturating_add(elapsed);
+            self.snapshot.updated_at_ms = wall_ms();
+            self.snapshot.budgets.runtime_remaining_ms = Some(
+                self.deadline_wall_ms
+                    .saturating_sub(self.snapshot.updated_at_ms),
+            );
+        }
         self.snapshot.sequence += 1;
-        self.rates.observe(&mut self.snapshot, elapsed);
+        let measurement_ms = self
+            .snapshot
+            .clock_context
+            .as_ref()
+            .map_or(Some(elapsed), |clock| {
+                (clock.runtime_status == "SAME_BOOT")
+                    .then_some(clock.observed_boot_ms)
+                    .flatten()
+                    .zip(self.process_started_boot_ms)
+                    .and_then(|(now, started)| now.checked_sub(started))
+            });
+        if let Some(measurement_ms) = measurement_ms {
+            // BOOTTIME includes suspend for the new policy; process-local Instant
+            // remains only a lossy telemetry emission throttle, not elapsed truth.
+            self.rates.observe(&mut self.snapshot, measurement_ms);
+        } else {
+            self.snapshot.traffic.speed_bps = None;
+            self.snapshot.traffic.download_eta_ms = None;
+            self.snapshot.traffic.eta_scope = None;
+        }
         if self.snapshot.traffic.download_eta_ms.is_none() {
             self.snapshot.traffic.eta_scope = None;
         }
@@ -379,7 +486,52 @@ pub struct Relay {
     socket: UnixDatagram,
     socket_path: PathBuf,
     directory: PathBuf,
-    latest: BTreeMap<String, (String, u64, u64)>,
+    latest: BTreeMap<String, ObservationOrder>,
+}
+
+struct ObservationOrder {
+    session: String,
+    sequence: u64,
+    updated_at_ms: u64,
+    boot: Option<(String, Option<u64>)>,
+}
+
+impl ObservationOrder {
+    fn from_snapshot(snapshot: &Snapshot) -> Self {
+        Self {
+            session: snapshot.session_id.clone(),
+            sequence: snapshot.sequence,
+            updated_at_ms: snapshot.updated_at_ms,
+            boot: snapshot
+                .clock_context
+                .as_ref()
+                .map(|clock| (clock.boot_id.clone(), clock.observed_boot_ms)),
+        }
+    }
+
+    fn rejects(&self, next: &Self) -> bool {
+        let clock_regression = match (&self.boot, &next.boot) {
+            (None, None) => {
+                next.updated_at_ms < self.updated_at_ms
+                    || (self.session != next.session && next.updated_at_ms == self.updated_at_ms)
+            }
+            (Some((old_id, Some(old))), Some((id, Some(new)))) => {
+                old_id != id || new < old || (self.session != next.session && new == old)
+            }
+            (Some((old_id, _)), Some((id, None)))
+                if old_id == id && self.session == next.session =>
+            {
+                false
+            }
+            (Some((old_id, None)), Some((id, Some(_))))
+                if old_id == id && self.session == next.session =>
+            {
+                false
+            }
+            _ => true,
+        };
+        clock_regression || (self.session == next.session && next.sequence <= self.sequence)
+    }
 }
 
 impl Relay {
@@ -429,26 +581,16 @@ impl Relay {
         if !self.latest.contains_key(&snapshot.id) && self.latest.len() >= MAX_RUNS {
             return Err(invalid("monitor run retention limit reached"));
         }
+        let order = ObservationOrder::from_snapshot(&snapshot);
         if self
             .latest
             .get(&snapshot.id)
-            .is_some_and(|(session, sequence, updated_at_ms)| {
-                snapshot.updated_at_ms < *updated_at_ms
-                    || session != &snapshot.session_id && snapshot.updated_at_ms == *updated_at_ms
-                    || session == &snapshot.session_id && snapshot.sequence <= *sequence
-            })
+            .is_some_and(|previous| previous.rejects(&order))
         {
             return Err(invalid("monitor sequence regression"));
         }
         write_snapshot(&snapshot, &self.directory)?;
-        self.latest.insert(
-            snapshot.id,
-            (
-                snapshot.session_id,
-                snapshot.sequence,
-                snapshot.updated_at_ms,
-            ),
-        );
+        self.latest.insert(snapshot.id, order);
         Ok(true)
     }
 }
@@ -471,5 +613,41 @@ pub fn run_relay(socket_path: &Path, directory: &Path) -> io::Result<()> {
                 error.to_string().chars().take(256).collect::<String>()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod clock_order_tests {
+    use super::ObservationOrder;
+
+    fn order(session: &str, sequence: u64, utc: u64, boot: Option<u64>) -> ObservationOrder {
+        ObservationOrder {
+            session: session.into(),
+            sequence,
+            updated_at_ms: utc,
+            boot: Some(("fixture-boot".into(), boot)),
+        }
+    }
+
+    #[test]
+    fn utc_recoil_and_forward_jump_do_not_reject_same_boot_progress() {
+        let previous = order("one", 4, 1_000_000, Some(100));
+        assert!(!previous.rejects(&order("one", 5, 999_998, Some(101))));
+        assert!(!previous.rejects(&order("one", 5, 9_999_999, Some(101))));
+        assert!(previous.rejects(&order("one", 4, 9_999_999, Some(101))));
+        assert!(previous.rejects(&order("one", 5, 9_999_999, Some(99))));
+        assert!(!previous.rejects(&order("restart", 0, 999_998, Some(101))));
+        assert!(previous.rejects(&order("restart", 0, 9_999_999, Some(100))));
+    }
+
+    #[test]
+    fn explicit_same_session_unknown_clock_stop_can_replace_live_snapshot() {
+        let previous = order("one", 4, 1_000_000, Some(100));
+        assert!(!previous.rejects(&order("one", 5, 999_998, None)));
+        assert!(previous.rejects(&order("restart", 5, 999_998, None)));
+        assert!(previous.rejects(&order("one", 4, 999_998, None)));
+        let mut changed_boot = order("one", 5, 999_998, None);
+        changed_boot.boot.as_mut().unwrap().0 = "different-boot".into();
+        assert!(previous.rejects(&changed_boot));
     }
 }

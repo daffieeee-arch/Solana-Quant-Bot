@@ -422,8 +422,56 @@ fn aggregate_budget_checks_exact_limit_and_overflow_before_publication() {
     let mut total = 0;
     report::charge(&mut total, 7, 10).unwrap();
     report::charge(&mut total, 3, 10).unwrap();
-    assert!(report::charge(&mut total, 1, 10).is_err());
+    assert_eq!(
+        report::charge(&mut total, 1, 10).unwrap_err().to_string(),
+        "BRONZE_AGGREGATE_LIMIT current=10 incoming=1 next=11 limit=10"
+    );
     assert_eq!(total, 10);
     let mut maximum = usize::MAX;
-    assert!(report::charge(&mut maximum, 1, usize::MAX).is_err());
+    assert_eq!(
+        report::charge(&mut maximum, 1, usize::MAX)
+            .unwrap_err()
+            .to_string(),
+        format!(
+            "BRONZE_AGGREGATE_LIMIT current={} incoming=1 limit={} overflow=true",
+            usize::MAX,
+            usize::MAX
+        )
+    );
+    assert_eq!(maximum, usize::MAX);
+}
+
+#[test]
+fn recorded_pilot_stop_remains_reproducible_under_historical_bound() {
+    // Preserve the original stop, not a claim that its first crossing was the
+    // full requirement. The reviewed measured profile has separate limits.
+    const HISTORICAL_SLOT_LIMIT: usize = 16_777_216;
+    let mut charged = 16_756_921;
+    let error = report::charge(&mut charged, 49_607, HISTORICAL_SLOT_LIMIT).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "BRONZE_AGGREGATE_LIMIT current=16756921 incoming=49607 next=16806528 limit=16777216"
+    );
+    assert_eq!(
+        charged, 16_756_921,
+        "failed admission must not advance accounting"
+    );
+}
+
+#[test]
+fn measured_profile_has_separate_finite_slot_and_selection_limits() {
+    assert_eq!(report::MAX_RECORD_JSON_BYTES, 50_331_648);
+    assert_eq!(report::MAX_SELECTION_RECORD_BYTES, 67_108_864);
+    let mut old_crossing = 16_756_921;
+    report::charge(&mut old_crossing, 49_607, report::MAX_RECORD_JSON_BYTES).unwrap();
+    assert_eq!(old_crossing, 16_806_528);
+    for limit in [
+        report::MAX_RECORD_JSON_BYTES,
+        report::MAX_SELECTION_RECORD_BYTES,
+    ] {
+        let mut sum = limit - 1;
+        report::charge(&mut sum, 1, limit).unwrap();
+        assert!(report::charge(&mut sum, 1, limit).is_err());
+        assert_eq!(sum, limit);
+    }
 }

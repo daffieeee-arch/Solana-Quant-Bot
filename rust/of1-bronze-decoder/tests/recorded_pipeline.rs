@@ -53,24 +53,41 @@ struct Harness {
     temp: tempfile::TempDir,
     root: PathBuf,
     plan: AggregatePlan,
+    first_slot: u64,
     store: AcquisitionStore<HistoricalFixtureClock>,
 }
 
 impl Harness {
     fn new() -> Self {
+        Self::new_sample(None, None)
+    }
+
+    fn new_sample(
+        sample_identity: Option<of1_range_recorder::sample::SampleIdentity>,
+        export: Option<&Path>,
+    ) -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("run");
+        let root = if let Some(export) = export {
+            fs::create_dir(export).unwrap();
+            export.join("run")
+        } else {
+            temp.path().join("run")
+        };
+        let first_slot = sample_identity.as_ref().map_or(SLOT, |s| s.start_slot);
         let plan = AggregatePlan {
             schema: AGGREGATE_SCHEMA.into(),
+            sample_identity,
+            download_rate: None,
+            clock_policy: None,
             epoch: 978,
             format_source: FormatSource::pinned(),
             code_sha: "a".repeat(40),
             toolchain_fingerprint: "b".repeat(64),
             executable_sha256: current_executable_sha256().unwrap(),
             budget: AggregateBudget {
-                max_slots: 4,
+                max_slots: 6,
                 max_plan_bytes: 131_072,
-                max_requests: 14,
+                max_requests: 18,
                 max_response_entity_bytes: SLOTS_PER_EPOCH * RECORD_BYTES,
                 max_total_response_entity_bytes: 16_000_000,
                 max_disk_bytes: 64 * 1024 * 1024,
@@ -100,6 +117,7 @@ impl Harness {
             temp,
             root,
             plan,
+            first_slot,
             store,
         }
     }
@@ -143,7 +161,7 @@ impl Harness {
         let mut index = vec![0; usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap()];
         let mut offset = OFFSET;
         for (i, bytes) in payloads.iter().enumerate() {
-            let at = (i + 1) * 12;
+            let at = (usize::try_from(self.first_slot - 978 * SLOTS_PER_EPOCH).unwrap() + i) * 12;
             index[at..at + 8].copy_from_slice(&offset.to_le_bytes());
             index[at + 8..at + 12]
                 .copy_from_slice(&u32::try_from(bytes.len()).unwrap().to_le_bytes());
@@ -166,14 +184,19 @@ impl Harness {
         let metadata = (0..4)
             .map(|n| self.store.published(n).unwrap().unwrap())
             .collect::<Vec<_>>();
-        let prepared =
-            derive_payload_from_metadata(&self.plan, &metadata, SLOT, SLOT + count).unwrap();
+        let prepared = derive_payload_from_metadata(
+            &self.plan,
+            &metadata,
+            self.first_slot,
+            self.first_slot + count,
+        )
+        .unwrap();
         let lease = PayloadLease {
             schema: "OF1_PAYLOAD_LEASE_1".into(),
             authority: Authority::Fixture,
             budget: StageBudget {
                 max_requests: count * 2,
-                max_response_entity_bytes_total: 16384,
+                max_response_entity_bytes_total: 65536,
                 max_runtime_ms: 60_000,
             },
             prepared_payload_sha256: prepared.sha256().unwrap(),
@@ -236,9 +259,20 @@ fn fixture_payload(change: Option<&str>) -> Vec<u8> {
 }
 
 fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
-    let fixtures: Value =
-        serde_json::from_str(include_str!("fixtures/authentic-sections.json")).unwrap();
-    let raw = hex::decode(fixtures["fixtures"][0]["section_hex"].as_str().unwrap()).unwrap();
+    let (file, position) = if change == Some("nested_sell") {
+        (include_str!("fixtures/authentic-pump-sections.json"), 3)
+    } else if change == Some("sell") {
+        (include_str!("fixtures/authentic-pump-sections.json"), 1)
+    } else {
+        (include_str!("fixtures/authentic-sections.json"), 0)
+    };
+    let fixtures: Value = serde_json::from_str(file).unwrap();
+    let raw = hex::decode(
+        fixtures["fixtures"][position]["section_hex"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
     let prefix = raw.iter().position(|b| b & 128 == 0).unwrap() + 1;
     let C::Array(mut tx) = serde_cbor::from_slice(&raw[prefix + 36..]).unwrap() else {
         panic!("tx")
@@ -246,7 +280,33 @@ fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
     // This graph is explicitly synthetic: native slot field, receipts and index
     // are constructed together, never masquerading as a copied authentic run.
     tx[3] = n(slot);
-    if let Some(change) = change {
+    if matches!(change, Some("sell" | "nested_sell")) {
+        tx[4] = n(0);
+    } // Synthetic one-tx graph; original Raw is never changed.
+    if matches!(change, Some("failed" | "unsupported")) {
+        use prost::Message;
+        let C::Array(frame) = &mut tx[2] else {
+            panic!("metadata frame")
+        };
+        let C::Bytes(stored) = &frame[4] else {
+            panic!("metadata bytes")
+        };
+        let (bytes, _) = of1_bronze_decoder::codec::metadata_bytes(stored).unwrap();
+        let mut metadata = of1_bronze_decoder::proto::Status::decode(bytes.as_slice()).unwrap();
+        metadata.err = Some(of1_bronze_decoder::proto::TransactionError {
+            err: if change == Some("unsupported") {
+                u32::MAX.to_le_bytes().to_vec()
+            } else {
+                bincode::serialize(&solana_transaction_error::TransactionError::AccountNotFound)
+                    .unwrap()
+            },
+        });
+        frame[1] = C::Null; // New synthetic uncompressed frame: no copied checksum.
+        frame[4] = C::Bytes(metadata.encode_to_vec());
+    }
+    if let Some(change) =
+        change.filter(|c| !matches!(*c, "sell" | "nested_sell" | "failed" | "unsupported"))
+    {
         let which = if change == "wire" { 1 } else { 2 };
         let C::Array(f) = &mut tx[which] else {
             panic!("frame")
@@ -288,9 +348,77 @@ fn metadata_only_never_claims_zero_transactions_or_authentic_dataset() {
     let report = report::decode_run(&h.root).unwrap();
     assert_eq!(report["input_kind"], "METADATA_ONLY");
     assert!(report["decoded_transactions"].is_null());
+    assert_eq!(report["silver_records"], json!([]));
+    assert_eq!(report["silver"], "NOT_PRODUCED");
     assert_eq!(before, inventory(&h.root));
     assert!(h.temp.path().exists());
 }
+
+#[test]
+fn synthetic_native_run_with_authentic_sell_wire_keeps_fixture_provenance_and_silver_determinism() {
+    let mut h = Harness::new();
+    let bytes = fixture_payload_at(SLOT, Some("sell"));
+    h.metadata_slots(std::slice::from_ref(&bytes));
+    h.admit_slots(1);
+    h.publish(4, &bytes);
+    let before = inventory(&h.root);
+    let r = report::decode_run(&h.root).unwrap();
+    assert_eq!(r, report::decode_run(&h.root).unwrap());
+    assert_eq!(r["dispositions"]["DECODED"], 1);
+    assert_eq!(r["silver_fact_count"], 1);
+    let fact = &r["silver_records"][0];
+    assert_eq!(fact["receipt_evidence"], "Fixture");
+    assert_eq!(fact["input_kind"], "FIXTURE_RECORDED_CAR_SLOT");
+    assert_eq!(fact["source"]["raw_sha256"], sha256(&bytes));
+    assert_eq!(fact["source"]["bindings"], r["bindings"]);
+    assert_eq!(
+        fact["bronze_record_sha256"],
+        sha256(&serde_json::to_vec(&r["records"][0]).unwrap())
+    );
+    let accounted = serde_json::to_vec(&r["records"][0]).unwrap().len()
+        + serde_json::to_vec(fact).unwrap().len();
+    assert_eq!(r["resource_accounting"]["record_json_bytes"], accounted);
+    assert_eq!(before, inventory(&h.root));
+    assert!(report::html(&r).contains("1 gekoppelde instructie/event-pakketten"));
+}
+#[test]
+fn native_nested_sell_preserves_receipts_context_and_determinism() {
+    let mut h = Harness::new();
+    let bytes = fixture_payload_at(SLOT, Some("nested_sell"));
+    h.metadata_slots(std::slice::from_ref(&bytes));
+    h.admit_slots(1);
+    h.publish(4, &bytes);
+    let before = inventory(&h.root);
+    let r = report::decode_run(&h.root).unwrap();
+    assert_eq!(r, report::decode_run(&h.root).unwrap());
+    assert_eq!(r["dispositions"]["DECODED"], 1);
+    assert_eq!(r["silver_fact_count"], 1);
+    let fact = &r["silver_records"][0];
+    assert_eq!(fact["receipt_evidence"], "Fixture");
+    assert_eq!(fact["source"]["raw_sha256"], sha256(&bytes));
+    assert_eq!(fact["source"]["bindings"], r["bindings"]);
+    assert_eq!(
+        fact["bronze_record_sha256"],
+        sha256(&serde_json::to_vec(&r["records"][0]).unwrap())
+    );
+    let d = &r["records"][0]["transaction"]["pump_sell_analysis"][0];
+    assert_eq!(d["event_context"]["parent"]["inner_order"], 0);
+    assert_eq!(d["event_context"]["inner_order"], 3);
+    assert_eq!(
+        d["event_context"]["subtree"]["end_inner_order_exclusive"],
+        4
+    );
+    assert!(
+        d["accounts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|a| a["cpi_signer"].is_null() && a["cpi_privileges_verified"] == false)
+    );
+    assert!(report::html(&r).contains("class=sell-trace"));
+    assert_eq!(before, inventory(&h.root));
+}
+
 #[test]
 fn receipt_to_bronze_is_deterministic_read_only_with_expired_clock_and_held_writer_lock() {
     let mut h = Harness::new();
@@ -480,4 +608,432 @@ fn multi_slot_reports_missing_and_quarantined_envelopes_without_dropping_order()
     assert!(r["pump_program_involvement_transactions"].is_null());
     assert_eq!(r["reasons"]["MISSING_STATUS_METADATA"], 1);
     assert_eq!(before, inventory(&h.root));
+}
+
+#[test]
+fn frozen_sample_identity_flows_from_store_receipts_to_bronze_and_silver() {
+    use of1_range_recorder::sample::{END_SLOT, FIRST_SLOT, SampleIdentity};
+    let export = std::env::var_os("COLUMNAR_SAMPLE_FIXTURE_DIR").map(PathBuf::from);
+    let sample = SampleIdentity::fixed_pilot();
+    let mut h = Harness::new_sample(Some(sample.clone()), export.as_deref());
+    let payloads = [Some("sell"), Some("missing"), Some("wire")]
+        .iter()
+        .enumerate()
+        .map(|(i, variant)| fixture_payload_at(FIRST_SLOT + u64::try_from(i).unwrap(), *variant))
+        .collect::<Vec<_>>();
+    h.metadata_slots(&payloads);
+    let metadata = (0..4)
+        .map(|n| h.store.published(n).unwrap().unwrap())
+        .collect::<Vec<_>>();
+    assert!(derive_payload_from_metadata(&h.plan, &metadata, FIRST_SLOT + 1, END_SLOT).is_err());
+    assert!(derive_payload_from_metadata(&h.plan, &metadata, FIRST_SLOT, END_SLOT + 1).is_err());
+    h.admit_slots(3);
+    for (i, bytes) in payloads.iter().enumerate() {
+        h.publish(4 + u64::try_from(i).unwrap(), bytes);
+    }
+    let before = inventory(&h.root);
+    let r = report::decode_run(&h.root).unwrap();
+    assert_eq!(r, report::decode_run(&h.root).unwrap());
+    let identity = serde_json::to_value(&sample).unwrap();
+    assert_eq!(r["sample_identity"], identity);
+    assert_eq!(r["bindings"]["sample_identity"], identity);
+    assert_eq!(r["slice_class"], "RESEARCH_SAMPLING");
+    assert_eq!(r["receipt_evidence"], "Fixture");
+    assert_eq!(r["research_ready"], false);
+    assert_eq!(
+        r["dispositions"],
+        json!({"DECODED":1,"MISSING":1,"QUARANTINED":1,"UNSUPPORTED":0})
+    );
+    assert_eq!(r["silver_records"].as_array().unwrap().len(), 1);
+    for layer in ["records", "silver_records"] {
+        for row in r[layer].as_array().unwrap() {
+            assert_eq!(row["sample_identity"], identity);
+            assert_eq!(row["source"]["bindings"]["sample_identity"], identity);
+            assert_eq!(row["slice_class"], "RESEARCH_SAMPLING");
+            assert_eq!(row["receipt_evidence"], "Fixture");
+        }
+    }
+    let plan: Value = serde_json::from_slice(&fs::read(h.root.join("run.json")).unwrap()).unwrap();
+    assert_eq!(plan["plan"]["sample_identity"], identity);
+    let aggregate_hash = sha256(&serde_json::to_vec(&h.plan).unwrap());
+    for sequence in 0..7 {
+        let receipt = h.store.published(sequence).unwrap().unwrap().receipt;
+        assert_eq!(receipt.aggregate_sha256, aggregate_hash);
+        assert_eq!(receipt.evidence, "Fixture");
+    }
+    assert_eq!(before, inventory(&h.root));
+    // Optional exported source fixture is created here through the real store,
+    // never copied from an authentic run. The external gate invokes our normal
+    // decoder CLI separately; tests contain no process/network capability.
+}
+
+#[test]
+fn legacy_engineering_cannot_be_retrofitted_with_sample_identity() {
+    use of1_range_recorder::sample::SampleIdentity;
+    let mut h = Harness::new();
+    let legacy_bytes = serde_json::to_vec(&h.plan).unwrap();
+    assert!(
+        !String::from_utf8(legacy_bytes.clone())
+            .unwrap()
+            .contains("sample_identity")
+    );
+    let roundtrip: AggregatePlan = serde_json::from_slice(&legacy_bytes).unwrap();
+    assert_eq!(serde_json::to_vec(&roundtrip).unwrap(), legacy_bytes);
+    h.metadata();
+    h.admit();
+    h.publish(4, &payload());
+    let report = report::decode_run(&h.root).unwrap();
+    assert_eq!(report["slice_class"], "ENGINEERING_VALIDATION_ONLY");
+    assert!(report.get("sample_identity").is_none());
+    let mut retrofitted = h.plan.clone();
+    retrofitted.sample_identity = Some(SampleIdentity::fixed_pilot());
+    let metadata = (0..4)
+        .map(|n| h.store.published(n).unwrap().unwrap())
+        .collect::<Vec<_>>();
+    assert!(
+        derive_payload_from_metadata(
+            &retrofitted,
+            &metadata,
+            of1_range_recorder::sample::FIRST_SLOT,
+            of1_range_recorder::sample::END_SLOT
+        )
+        .is_err()
+    );
+    rewrite_json(&h.root.join("run.json"), |v| {
+        v["plan"] = serde_json::to_value(&retrofitted).unwrap();
+        v["aggregate_sha256"] = json!(sha256(&serde_json::to_vec(&retrofitted).unwrap()));
+    });
+    assert!(report::decode_run(&h.root).is_err());
+}
+
+fn batch_plan(h: &Harness, width: usize, count: usize) -> of1_bronze_decoder::batch::Plan {
+    use of1_bronze_decoder::batch::{Batch, Plan, Selection, Source, Workers};
+    let source = of1_bronze_decoder::batch::source_identity(&h.root).unwrap();
+    Plan {
+        schema: of1_bronze_decoder::batch::SCHEMA.into(),
+        collection_id: "sealed-six-slot-fixture".into(),
+        workers: Workers {
+            batch_decoder_sha256: current_executable_sha256().unwrap(),
+            projector_sha256: "c".repeat(64),
+        },
+        research_ready: false,
+        sources: vec![Source {
+            source_id: "original".into(),
+            run_root: h.root.clone(),
+            run_id: source["run_id"].as_str().unwrap().into(),
+            bindings: source["bindings"].clone(),
+            sample_identity: source["sample_identity"].clone(),
+        }],
+        logical_selection: (0..count)
+            .map(|i| Selection {
+                source_id: "original".into(),
+                slot: h.first_slot + i as u64,
+                role: "ORIGINAL_SELECTION".into(),
+            })
+            .collect(),
+        batches: (0..count)
+            .collect::<Vec<_>>()
+            .chunks(width)
+            .enumerate()
+            .map(|(i, slots)| Batch {
+                batch_id: format!("batch-{i:03}"),
+                source_id: "original".into(),
+                slots: slots.iter().map(|s| h.first_slot + *s as u64).collect(),
+                receipt_sequences: slots.iter().map(|s| 4 + *s as u64).collect(),
+                output_directory: format!("batch-{i:03}"),
+            })
+            .collect(),
+    }
+}
+
+fn six_slot_fixture(export: Option<&Path>) -> Harness {
+    let mut h = Harness::new_sample(None, export);
+    let payloads = [
+        Some("sell"),
+        Some("missing"),
+        Some("wire"),
+        Some("unsupported"),
+        Some("failed"),
+        Some("nested_sell"),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, change)| fixture_payload_at(SLOT + i as u64, *change))
+    .collect::<Vec<_>>();
+    h.metadata_slots(&payloads);
+    h.admit_slots(6);
+    for (i, bytes) in payloads.iter().enumerate() {
+        h.publish(4 + i as u64, bytes);
+    }
+    h
+}
+
+#[test]
+fn six_slot_original_fixture_is_streamed_in_multiple_partitions_without_record_changes() {
+    let export = std::env::var_os("COLUMNAR_BATCH_FIXTURE_DIR").map(PathBuf::from);
+    let h = six_slot_fixture(export.as_deref());
+    let before = inventory(&h.root);
+    assert_eq!(
+        report::decode_run(&h.root).unwrap_err().to_string(),
+        "BRONZE_SELECTION_SLOT_LIMIT"
+    );
+    let mut expected = None;
+    for width in [1, 2, 3] {
+        let p = batch_plan(&h, width, 6);
+        p.validate_sources().unwrap();
+        let mut records = Vec::new();
+        let mut facts = Vec::new();
+        for batch in &p.batches {
+            let r = report::decode_receipts(&h.root, &batch.receipt_sequences).unwrap();
+            records.extend(r["records"].as_array().unwrap().clone());
+            facts.extend(r["silver_records"].as_array().unwrap().clone());
+        }
+        assert_eq!(records.len(), 6);
+        assert_eq!(facts.len(), 2);
+        assert_eq!(
+            records
+                .iter()
+                .map(|r| r["disposition"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "DECODED",
+                "MISSING",
+                "QUARANTINED",
+                "UNSUPPORTED",
+                "DECODED",
+                "DECODED"
+            ]
+        );
+        assert_eq!(records[4]["transaction"]["status"], "ERROR");
+        for fact in &facts {
+            assert!(
+                records.iter().any(
+                    |r| fact["bronze_record_sha256"] == sha256(&serde_json::to_vec(r).unwrap())
+                )
+            );
+        }
+        let value = json!({"records":records,"silver":facts});
+        if let Some(expected) = &expected {
+            assert_eq!(&value, expected);
+        } else {
+            expected = Some(value);
+        }
+        if let Some(export) = &export {
+            fs::write(
+                export.join(format!("plan-width-{width}.json")),
+                serde_json::to_vec_pretty(&p).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    assert_eq!(before, inventory(&h.root));
+}
+
+#[test]
+fn batch_plan_rejects_overlap_gaps_conflicting_receipts_and_sample_reclassification() {
+    let h = six_slot_fixture(None);
+    let base = batch_plan(&h, 3, 6);
+    for kind in [
+        "overlap",
+        "gap",
+        "logical_gap",
+        "receipt",
+        "source",
+        "role",
+        "wide",
+    ] {
+        let mut p = base.clone();
+        match kind {
+            "overlap" => p.batches[1].slots[0] = p.batches[0].slots[2],
+            "gap" => {
+                p.batches[1].slots.remove(0);
+                p.batches[1].receipt_sequences.remove(0);
+            }
+            "logical_gap" => {
+                p.logical_selection.remove(3);
+                p.batches[1].slots.remove(0);
+                p.batches[1].receipt_sequences.remove(0);
+            }
+            "receipt" => p.batches[1].receipt_sequences[0] = p.batches[0].receipt_sequences[2],
+            "source" => p.sources[0].bindings["aggregate_sha256"] = json!("f".repeat(64)),
+            "role" => p.logical_selection[0].role = "RESEARCH_SAMPLING".into(),
+            _ => {
+                p.batches[0].slots.push(SLOT + 3);
+                p.batches[0].receipt_sequences.push(7);
+            }
+        }
+        assert!(p.validate_sources().is_err(), "{kind}");
+    }
+}
+
+#[test]
+fn batch_resume_reuses_only_verified_complete_matching_outputs() {
+    let h = multi(3);
+    let plan = batch_plan(&h, 1, 3);
+    let dir = tempfile::tempdir().unwrap();
+    let plan_path = dir.path().join("plan.json");
+    fs::write(&plan_path, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
+    let out = dir.path().join("batch");
+    let first = of1_bronze_decoder::batch::execute(&plan_path, "batch-000", &out).unwrap();
+    let before = inventory(&out);
+    assert_eq!(
+        first,
+        of1_bronze_decoder::batch::execute(&plan_path, "batch-000", &out).unwrap()
+    );
+    assert_eq!(before, inventory(&out));
+    let changed = dir.path().join("changed.json");
+    let mut p = plan.clone();
+    p.collection_id = "different-plan".into();
+    fs::write(&changed, serde_json::to_vec_pretty(&p).unwrap()).unwrap();
+    assert!(of1_bronze_decoder::batch::execute(&changed, "batch-000", &out).is_err());
+    fs::write(out.join("bronze.jsonl"), b"changed\n").unwrap();
+    assert!(
+        of1_bronze_decoder::batch::execute(&plan_path, "batch-000", &out)
+            .unwrap_err()
+            .to_string()
+            .contains("ARTIFACT_MISMATCH")
+    );
+    let partial = dir.path().join("partial");
+    fs::create_dir(&partial).unwrap();
+    fs::write(partial.join("quality.json"), b"{}").unwrap();
+    assert!(
+        of1_bronze_decoder::batch::execute(&plan_path, "batch-000", &partial)
+            .unwrap_err()
+            .to_string()
+            .contains("PARTIAL")
+    );
+}
+
+#[test]
+fn missing_batches_are_pending_and_never_complete_collection() {
+    let h = multi(3);
+    let plan = batch_plan(&h, 1, 3);
+    let dir = tempfile::tempdir().unwrap();
+    let plan_path = dir.path().join("plan.json");
+    fs::write(&plan_path, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
+    let empty = of1_bronze_decoder::collection::inspect(&plan_path, dir.path()).unwrap();
+    assert_eq!(empty["state"], "INCOMPLETE");
+    assert_eq!(empty["slot_outcomes"].as_array().unwrap().len(), 3);
+    assert!(
+        empty["slot_outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["state"] == "PENDING" && s["transaction_envelopes"].is_null())
+    );
+    let parent = dir.path().join("batch-000");
+    fs::create_dir(&parent).unwrap();
+    of1_bronze_decoder::batch::execute(&plan_path, "batch-000", &parent.join("decode")).unwrap();
+    let pending = of1_bronze_decoder::collection::inspect(&plan_path, dir.path()).unwrap();
+    assert_eq!(pending["state"], "INCOMPLETE");
+    assert_eq!(
+        pending["batches"][0]["pending_reason"],
+        "DECODE_VERIFIED_PROJECTION_PENDING"
+    );
+}
+
+#[test]
+fn batch_cannot_shorten_native_sample_by_relabeling_complete_partition() {
+    use of1_range_recorder::sample::{FIRST_SLOT, SampleIdentity};
+    let mut h = Harness::new_sample(Some(SampleIdentity::fixed_pilot()), None);
+    let payloads = (0..3)
+        .map(|i| fixture_payload_at(FIRST_SLOT + i, None))
+        .collect::<Vec<_>>();
+    h.metadata_slots(&payloads);
+    h.admit_slots(3);
+    for (i, bytes) in payloads.iter().enumerate() {
+        h.publish(4 + i as u64, bytes);
+    }
+    let p = batch_plan(&h, 1, 3);
+    p.validate_sources().unwrap();
+    let mut short = p.clone();
+    short.logical_selection.pop();
+    short.batches.pop();
+    assert!(
+        short
+            .validate_sources()
+            .unwrap_err()
+            .to_string()
+            .contains("INCOMPLETE_NATIVE_SAMPLE")
+    );
+    let mut relabel = p;
+    relabel.logical_selection[0].role = "POSTHOC_DESCRIPTIVE_CONTEXT".into();
+    assert!(
+        relabel
+            .validate_sources()
+            .unwrap_err()
+            .to_string()
+            .contains("RECLASSIFICATION")
+    );
+}
+
+#[test]
+fn sample_changes_approval_target_and_cannot_resume_an_engineering_run() {
+    use of1_range_recorder::{
+        durable::{StoreError, acquisition::metadata_proposal_sha256},
+        sample::SampleIdentity,
+    };
+    let h = Harness::new();
+    let budget = StageBudget {
+        max_requests: 6,
+        max_response_entity_bytes_total: 12_000_000,
+        max_runtime_ms: 60_000,
+    };
+    let mut changed = h.plan.clone();
+    changed.sample_identity = Some(SampleIdentity::fixed_pilot());
+    assert_ne!(
+        metadata_proposal_sha256(&h.plan, &budget).unwrap(),
+        metadata_proposal_sha256(&changed, &budget).unwrap()
+    );
+    let lease = h.store.progress().unwrap().current_lease_sha256;
+    let before = inventory(&h.root);
+    drop(h.store);
+    assert!(matches!(
+        AcquisitionStore::resume(&h.root, &changed, &lease, HistoricalFixtureClock),
+        Err(StoreError::Identity)
+    ));
+    assert_eq!(before, inventory(&h.root));
+}
+
+#[test]
+fn sample_identity_rejects_different_seed_class_window_and_epoch_before_initialization() {
+    use of1_range_recorder::sample::SampleIdentity;
+    let h = Harness::new();
+    for key in [
+        "seed",
+        "sample_class",
+        "selection_plan_sha256",
+        "start_slot",
+        "end_slot_exclusive",
+        "epoch",
+    ] {
+        let mut identity = serde_json::to_value(SampleIdentity::fixed_pilot()).unwrap();
+        identity[key] = if identity[key].is_number() {
+            json!(0)
+        } else {
+            json!("changed")
+        };
+        let sample: SampleIdentity = serde_json::from_value(identity).unwrap();
+        let mut plan = h.plan.clone();
+        plan.sample_identity = Some(sample);
+        let root = h.temp.path().join(key);
+        assert!(
+            AcquisitionStore::create(
+                &root,
+                plan,
+                MetadataLease {
+                    schema: "OF1_METADATA_LEASE_1".into(),
+                    authority: Authority::Fixture,
+                    budget: StageBudget {
+                        max_requests: 6,
+                        max_response_entity_bytes_total: 12_000_000,
+                        max_runtime_ms: 60_000
+                    }
+                },
+                HistoricalFixtureClock
+            )
+            .is_err()
+        );
+        assert!(!root.exists());
+    }
 }

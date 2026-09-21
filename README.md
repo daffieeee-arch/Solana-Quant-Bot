@@ -19,7 +19,7 @@ pinned official Pump truth
   -> much later generic Linux VPS / separately gated live boundary
 ```
 
-Rust owns or authorizes the logical/canonical Raw, Bronze and Silver facts, including protocol decode, ordering, evidence, coverage, quarantine and manifest identity. Python starts from approved Silver and owns Gold, features, labels and research/evaluation artifacts; it contains no Pump wire decoder or alternative Silver business logic. The physical Bronze/Silver Parquet writer remains a PR 5 decision and any Python-only serializer must be generated, lossless and logical-hash equivalent. React/TypeScript owns visualization. Immutable files and manifests are canonical research truth; ClickHouse is an optional later projection.
+Rust owns or authorizes the logical/canonical Raw, Bronze and Silver facts, including protocol decode, ordering, evidence, coverage, quarantine and manifest identity. Python starts from approved Silver and owns Gold, features, labels and research/evaluation artifacts; it contains no Pump wire decoder or alternative Silver business logic. The bounded B5 projection now uses Rust Arrow/Parquet; any later Python-only serializer must be generated, lossless and logical-hash equivalent. React/TypeScript owns visualization. Immutable files and manifests are canonical research truth; ClickHouse is an optional later projection.
 
 The existing scanner, portfolio, dashboard and paper runtime are frozen legacy. Existing fixture tests, golden vectors and crash-safety invariants remain valuable evidence, but current decoders/fills are not universal protocol or executable-liquidity truth. B2A removes the confirmed TrueNAS, Hermes AI and Phase 8C/8D deployment targets and quarantines the retained monitor as explicit loopback-only/read-only evidence. No default package command starts the legacy scanner or provider runtime. The exact removal/retention record is [`roadmap/b2a-invariant-salvage-manifest.json`](roadmap/b2a-invariant-salvage-manifest.json); the pre-cleanup tree is archived at annotated tag `v1-paper-platform-final`.
 
@@ -44,7 +44,8 @@ Hosted Old Faithful gRPC is not assumed available and is not the selected V2 acq
 - [`docs/PROJECT_V2_REBASE.md`](docs/PROJECT_V2_REBASE.md) for the non-destructive issue migration;
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for system boundaries;
 - [`docs/WSL_DEVELOPMENT_SETUP.md`](docs/WSL_DEVELOPMENT_SETUP.md) for the read-only setup/doctor contract;
-- [`AGENTS.md`](AGENTS.md) for coding-agent rules.
+- [`AGENTS.md`](AGENTS.md) for coding-agent rules;
+- [`docs/operations/VPS_WSL_INTEGRATION.md`](docs/operations/VPS_WSL_INTEGRATION.md) for the combined development stack and its offline acceptance evidence.
 
 G0 is complete: issues #63 and #70 are closed under their reviewed final states. B2A/[#81](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/81) is completed and `Operationally Verified`; B3/[#82](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/82) is `Done` / `SUPERSEDED` / `Fixture`; B4/[#83](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/83) is the single concrete `In Progress` / `ACTIVE NOW` delivery; and B5/[#84](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/84) is `Backlog` / `NEXT`. No B4 acquisition run is authorized.
 

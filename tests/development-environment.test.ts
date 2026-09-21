@@ -2,8 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { once } from 'node:events';
 import { collectDoctor, inspectDatasetRoot, parseDoctorArgs, supportedFilesystem } from '../scripts/doctor.mjs';
-import { developmentEnvironment, NODE_VERSION, RUST_VERSION, toolchainPaths } from '../scripts/lib/development-toolchain.mjs';
+import { developmentEnvironment, NODE_VERSION, RUST_VERSION, toolchainPaths, validQueryVersion } from '../scripts/lib/development-toolchain.mjs';
 import { runWithToolchain } from '../scripts/with-toolchain.mjs';
 
 const temporary: string[] = [];
@@ -114,5 +115,82 @@ describe('project-specific toolchain selection', () => {
     })).toThrow('absent');
     expect(existsSync(marker)).toBe(false);
     expect(readdirSync(root).sort()).toEqual(['data', 'repo']);
+  });
+
+  it('selects the query venv without inheriting another project Python environment', () => {
+    const env = { PATH: '/usr/bin', SOLANA_TOOLCHAIN_ROOT: '/tools',
+      PYTHONHOME: '/other/python', PYTHONPATH: '/other/modules', VIRTUAL_ENV: '/other/venv', UV_PROJECT_ENVIRONMENT: '/other/uv',
+      SOLANA_QUANT_DATA_ROOT: '/explicit/data' };
+    const selected = developmentEnvironment(env);
+    expect(selected.COLUMNAR_QUERY_PYTHON).toBe('/tools/columnar-query-313-duckdb155/bin/python');
+    expect(selected.PATH.split(':')[2]).toBe('/tools/columnar-query-313-duckdb155/bin');
+    expect(selected.SOLANA_QUANT_DATA_ROOT).toBe('/explicit/data');
+    expect(selected.PYTHONHOME).toBeUndefined();
+    expect(selected.PYTHONPATH).toBeUndefined();
+    expect(selected.VIRTUAL_ENV).toBeUndefined();
+    expect(selected.UV_PROJECT_ENVIRONMENT).toBeUndefined();
+    expect(selected.PYTHONNOUSERSITE).toBe('1');
+    expect(selected.PYTHONDONTWRITEBYTECODE).toBe('1');
+    expect(env.PYTHONHOME).toBe('/other/python');
+    expect(developmentEnvironment({ COLUMNAR_QUERY_PYTHON: '/custom/bin/python' }).COLUMNAR_QUERY_PYTHON).toBe('/custom/bin/python');
+    expect(() => toolchainPaths({ COLUMNAR_QUERY_PYTHON: 'relative/python' })).toThrow('absolute');
+  });
+
+  it('requires the reviewed DuckDB reader ABI and rejects missing or different metadata', () => {
+    const valid = { implementation: 'CPython', abi: '3.13', python: '3.13.15', duckdb: '1.5.5', isolated_venv: true, prefix: '/query' };
+    expect(validQueryVersion(JSON.stringify(valid))).toBe(true);
+    for (const other of [null, {}, { ...valid, abi: '3.12' }, { ...valid, duckdb: '1.5.4' }, { ...valid, implementation: 'PyPy' }, { ...valid, isolated_venv: false }, { ...valid, prefix: 'relative' }]) {
+      expect(validQueryVersion(JSON.stringify(other))).toBe(false);
+    }
+    expect(validQueryVersion('not json')).toBe(false);
+  });
+
+  it('reports the query reader independently without opening a dataset or installing Python', () => {
+    const { data } = fixture();
+    const calls: string[] = [];
+    const result = collectDoctor({ datasetRoot: data, env: { COLUMNAR_QUERY_PYTHON: '/query/bin/python' },
+      command: (name: string, args: string[]) => {
+        calls.push([name, ...args].join(' '));
+        if (name === '/query/bin/python') {
+          expect(args.slice(0, 3)).toEqual(['-I', '-B', '-c']);
+          return JSON.stringify({ implementation: 'CPython', abi: '3.13', python: '3.13.15', duckdb: '1.5.5', isolated_venv: true, prefix: '/query' });
+        }
+        return null;
+      } });
+    expect(result.checks.find((c: { id: string }) => c.id === 'columnar-query')).toMatchObject({ status: 'PASS' });
+    expect(calls.some(call => /(^pip\b|\binstall\b)/u.test(call))).toBe(false);
+    expect(calls).toContain('uv --version');
+  });
+
+  it('rejects unsafe data roots before starting any development child', () => {
+    const { root, repo } = fixture();
+    const marker = join(root, 'must-not-exist');
+    expect(() => runWithToolchain(['node', '-e', `require('fs').writeFileSync(${JSON.stringify(marker)},'bad')`], {
+      SOLANA_QUANT_DATA_ROOT: '/', SOLANA_TOOLCHAIN_ROOT: repo,
+    })).toThrow('external directory');
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it('runs a custom query executable with its verified venv and leaves the caller unchanged', async () => {
+    const { root } = fixture();
+    const query = join(root, 'custom-reader.mjs');
+    const prefix = join(root, 'verified-venv');
+    const output = join(root, 'child.json');
+    const env = { ...process.env, SOLANA_TOOLCHAIN_ROOT: root, COLUMNAR_QUERY_PYTHON: query,
+      VIRTUAL_ENV: '/another/project', UV_PROJECT_ENVIRONMENT: '/another/uv',
+      PYTHONPATH: '/another/modules', PYTHONHOME: '/another/python' };
+    const paths = toolchainPaths(env);
+    for (const dir of [paths.nodeBin, join(paths.cargoHome, 'bin'), paths.rustBin]) mkdirSync(dir, { recursive: true });
+    symlinkSync(process.execPath, paths.node);
+    for (const name of ['rustup', 'cargo', 'rustc', 'rustfmt', 'cargo-clippy']) writeFileSync(join(paths.cargoHome, 'bin', name), 'fixture');
+    writeFileSync(join(paths.rustBin, 'rustc'), '#!/bin/sh\nprintf "rustc 1.97.1 fixture\\n"\n', { mode: 0o700 });
+    const metadata = { implementation: 'CPython', abi: '3.13', python: '3.13.15', duckdb: '1.5.5', isolated_venv: true, prefix };
+    writeFileSync(query, `#!${process.execPath}\nimport fs from 'node:fs';\nif(process.argv[2]==='-I') console.log(${JSON.stringify(JSON.stringify(metadata))});\nelse fs.writeFileSync(${JSON.stringify(output)},JSON.stringify({venv:process.env.VIRTUAL_ENV,uv:process.env.UV_PROJECT_ENVIRONMENT,pythonPath:process.env.PYTHONPATH??null,pythonHome:process.env.PYTHONHOME??null}));\n`, { mode: 0o700 });
+    const child = runWithToolchain(['python'], env);
+    const [code] = await once(child, 'exit');
+    expect(code).toBe(0);
+    expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({ venv: prefix, uv: prefix, pythonPath: null, pythonHome: null });
+    expect(env.VIRTUAL_ENV).toBe('/another/project');
+    expect(env.PYTHONPATH).toBe('/another/modules');
   });
 });

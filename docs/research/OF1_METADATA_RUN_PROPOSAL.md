@@ -8,6 +8,39 @@
 
 ## Proposed scope and unchanged caps
 
+Newly prepared successors bind the
+[versioned clock contract](OF1_STAGED_ACQUISITION.md#versioned-utc-provenance-and-boot-deadlines).
+The same Rust `clock-preflight AGGREGATE_JSON` contract observes raw UTC but gates
+on nondecreasing same-boot elapsed time. After a new explicit GO only, sample the
+actual T0 pair once and retain the approval anchor; initialization is bounded by
+T0 boot time +10 minutes and expiry by +20 minutes. No restart/UTC correction
+resets either. Old strict-clock GO/stop evidence remains intact; it does not
+authorize the new binary. No lease is registered during offline preparation.
+
+The table and twelve-attempt calculation below preserve the engineering-template
+allocation. The fixed research-pilot successor is generated with
+`metadata-pilot-proposal`, not by relabeling an old run: seven metadata attempts
+(at most three per operation), 15,576,576 reserved entity bytes and 600,000 ms.
+Together with nine separately proposed payload attempts / 10,990,731 bytes /
+360,000 ms this allocates sixteen attempts / 26,567,307 bytes / 960,000 ms within
+the unchanged aggregate limits below. The selection remains
+`[422669516,422669519)` with its original seed/algorithm. See the
+[manifest-bound sample contract](B5_MANIFEST_SHARDS_AND_SAMPLE_IDENTITY.md).
+
+New proposals bind `download_rate` to the exact executable/aggregate approval
+target: 700 decimal Mbps = 87,500,000 response-entity bytes/s shared across
+cooperating same-user official captures, concurrency one, maximum 65,536-byte
+short burst. This is not a physical wire/TLS/headers rate guarantee. The
+[limiter contract](OF1_STAGED_ACQUISITION.md#shared-default-download-rate) defines
+empty-start/restart accounting and unchanged deadline admission.
+
+The old outside-Git concept packet accidentally described `.car.sha256` and
+`.car.cid`; it remains historical evidence. Its successor must consume the
+generated `metadata_operations` array from the actual Rust `Request` objects:
+`.sha256` and `.cid`, matching the retained HTTP-200 receipts. No second path
+catalog, replacement receipt, GO, lease or provider call is created by proposal
+generation. All stage budgets are technical volume/runtime bounds, not prices.
+
 Purpose: `ENGINEERING_VALIDATION_ONLY`, epoch 978. Acquire only the fixed modern
 index and source declarations needed to propose a feasible payload slice. Do not
 inspect token outcomes, select a successful token or infer Pump availability.
@@ -158,6 +191,14 @@ confirmed no-credit-spend status. No credential is required or recorded. Do not
 change cost text merely to pass validation: verify current terms first. The
 approved window must encompass the proposed stage deadline; it is capped at that
 expiry even if initialization occurs late.
+
+The displayed historical shape also omits the mandatory new-policy
+`authority.clock_anchor`. For a new proposal, after GO only, use this exact
+binary's `clock-sample` once for actual T0 UTC/boot/boot-ID, and bind
+`initialize_by_boot_ms = T0.boot_ms + 600000` and
+`expires_at_boot_ms = T0.boot_ms + 1200000`. Rust validates that mapping and
+the policy; the anchor is never regenerated on restart. Do not fill it with
+preparation time or convert the legacy lease to the new clock policy.
 
 ## Commands only after metadata GO
 

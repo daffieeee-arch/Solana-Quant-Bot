@@ -3,7 +3,7 @@ use crate::{
     FormatSource,
     acquisition_http::parse_response_head,
     durable::{
-        SystemClock,
+        Clock, ClockSample, StoreResult, SystemClock,
         acquisition::{
             AGGREGATE_SCHEMA, AcquisitionStore, AggregateBudget, AggregatePlan, Authority,
             MetadataLease, StageBudget, current_executable_sha256, metadata_requests,
@@ -39,10 +39,37 @@ fn store() -> (
     std::path::PathBuf,
     AcquisitionStore<SystemClock>,
 ) {
+    store_with_rate(None)
+}
+
+fn store_with_rate(
+    download_rate: Option<crate::rate::DownloadRate>,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    AcquisitionStore<SystemClock>,
+) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("run");
-    let plan = AggregatePlan {
+    let store = AcquisitionStore::create(
+        &root,
+        fixture_plan(download_rate, None),
+        fixture_lease(),
+        SystemClock,
+    )
+    .unwrap();
+    (dir, root, store)
+}
+
+fn fixture_plan(
+    download_rate: Option<crate::rate::DownloadRate>,
+    clock_policy: Option<crate::clock_contract::ClockPolicy>,
+) -> AggregatePlan {
+    AggregatePlan {
         schema: AGGREGATE_SCHEMA.into(),
+        sample_identity: None,
+        download_rate,
+        clock_policy,
         epoch: 978,
         format_source: FormatSource::pinned(),
         code_sha: "a".repeat(40),
@@ -61,8 +88,11 @@ fn store() -> (
             response_timeout_ms: 30_000,
             request_retries: 2,
         },
-    };
-    let lease = MetadataLease {
+    }
+}
+
+fn fixture_lease() -> MetadataLease {
+    MetadataLease {
         schema: "OF1_METADATA_LEASE_1".into(),
         authority: Authority::Fixture,
         budget: StageBudget {
@@ -70,12 +100,10 @@ fn store() -> (
             max_response_entity_bytes_total: 15_576_576,
             max_runtime_ms: 600_000,
         },
-    };
-    let store = AcquisitionStore::create(&root, plan, lease, SystemClock).unwrap();
-    (dir, root, store)
+    }
 }
 
-fn publish(store: &mut AcquisitionStore<SystemClock>, sequence: u64, bytes: &[u8]) {
+fn publish<C: Clock>(store: &mut AcquisitionStore<C>, sequence: u64, bytes: &[u8]) {
     let permit = store.reserve(sequence).unwrap();
     let length = if sequence == 3 {
         709_264_399_796
@@ -292,4 +320,396 @@ fn wire_snapshot_is_bounded_and_rejects_duplicate_or_unsafe_values() {
     snapshot = original;
     snapshot.errors = vec!["error".into(); MAX_ERRORS + 1];
     assert!(snapshot.validate().is_err());
+}
+
+fn rate_policy() -> crate::rate::DownloadRate {
+    serde_json::from_value(serde_json::json!({
+        "unit": "RESPONSE_ENTITY_BYTES", "bytes_per_second": 87_500_000,
+        "burst_bytes": 65_536, "concurrency": 1,
+        "scope": "SAME_USER_OFFICIAL_OF1_ALL_RUNS"
+    }))
+    .unwrap()
+}
+
+#[test]
+fn historical_rate_absence_is_preserved_and_recorded_waits_stay_unknown() {
+    let mut snapshot = model_snapshot();
+    assert!(snapshot.rate_limit.is_none());
+    assert!(
+        serde_json::to_value(&snapshot)
+            .unwrap()
+            .get("rate_limit")
+            .is_none()
+    );
+    snapshot.rate_limit = Some(RateLimit::recorded(rate_policy()));
+    snapshot.validate().unwrap();
+    let value = serde_json::to_value(&snapshot).unwrap();
+    assert!(value["rate_limit"]["waiting"].is_null());
+    assert!(value["rate_limit"]["process_wait_ns"].is_null());
+    snapshot.rate_limit.as_mut().unwrap().waiting = Some(false);
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = Some(0);
+    assert!(snapshot.validate().is_err()); // Import cannot manufacture no waiting.
+}
+
+#[test]
+fn read_only_import_uses_actual_plan_rate_without_inventing_historical_waits() {
+    let (_temporary, root, _store) = store_with_rate(Some(rate_policy()));
+    let before = fs::read(root.join("run.json")).unwrap();
+    let snapshot = read_run(&root).unwrap();
+    let limit = snapshot.rate_limit.as_ref().unwrap();
+    assert_eq!(limit.policy, rate_policy());
+    assert!(limit.waiting.is_none());
+    assert!(limit.process_wait_ns.is_none());
+    assert_eq!(fs::read(root.join("run.json")).unwrap(), before);
+    assert_eq!(snapshot.mode, "RECORDED");
+    assert!(snapshot.traffic.speed_bps.is_none());
+    snapshot.validate().unwrap();
+}
+
+#[test]
+fn rate_snapshot_rejects_unknown_units_bounds_and_contradictory_measurements() {
+    let mut snapshot = model_snapshot();
+    snapshot.mode = "LIVE".into();
+    snapshot.stage = "DOWNLOADING".into();
+    snapshot.rate_limit = Some(RateLimit {
+        policy: rate_policy(),
+        waiting: Some(true),
+        process_wait_ns: Some(749_029),
+    });
+    snapshot.validate().unwrap();
+    let original = serde_json::to_value(&snapshot).unwrap();
+    for (field, value) in [
+        ("bytes_per_second", serde_json::json!(0)),
+        ("bytes_per_second", serde_json::json!(87_500_001)),
+        ("burst_bytes", serde_json::json!(65_537)),
+        ("concurrency", serde_json::json!(2)),
+        ("unit", serde_json::json!("PHYSICAL_WIRE_BYTES")),
+        ("scope", serde_json::json!("PER_CONNECTION")),
+    ] {
+        let mut changed = original.clone();
+        changed["rate_limit"]["policy"][field] = value;
+        let rejected: Snapshot = serde_json::from_value(changed).unwrap();
+        assert!(rejected.validate().is_err(), "{field}");
+    }
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = Some(JS_SAFE + 1);
+    assert!(snapshot.validate().is_err());
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = None;
+    assert!(snapshot.validate().is_err());
+    snapshot.rate_limit.as_mut().unwrap().process_wait_ns = Some(0);
+    snapshot.stage = "COMPLETE".into();
+    assert!(snapshot.validate().is_err());
+    let mut changed = original;
+    changed["rate_limit"]["policy"]["bytes_per_second"] = serde_json::json!(-1);
+    assert!(serde_json::from_value::<Snapshot>(changed).is_err());
+}
+
+#[cfg(feature = "monitor")]
+#[test]
+fn limiter_observations_preserve_submillisecond_waits_and_restart_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut monitor = Monitor::new(model_snapshot(), &directory.path().join("absent.sock"));
+    monitor.rate_policy(&rate_policy());
+    monitor.head(0, 200, 1000);
+    let original_deadline = monitor.snapshot.budgets.runtime_remaining_ms;
+    monitor.rate_wait_started(749_029);
+    assert_eq!(
+        monitor.snapshot.rate_limit.as_ref().unwrap().waiting,
+        Some(true)
+    );
+    assert_eq!(
+        monitor
+            .snapshot
+            .rate_limit
+            .as_ref()
+            .unwrap()
+            .process_wait_ns,
+        Some(0)
+    );
+    monitor.rate_wait_finished(800_111);
+    monitor.received(0, 512);
+    monitor.rate_wait_started(1);
+    monitor.rate_wait_finished(12);
+    assert_eq!(
+        monitor.snapshot.rate_limit.as_ref().unwrap().waiting,
+        Some(false)
+    );
+    assert_eq!(
+        monitor
+            .snapshot
+            .rate_limit
+            .as_ref()
+            .unwrap()
+            .process_wait_ns,
+        Some(800_123)
+    );
+    assert_eq!(monitor.snapshot.traffic.received_bytes, 512);
+    assert_eq!(monitor.snapshot.selection.published_bytes, 0);
+    assert!(monitor.snapshot.budgets.runtime_remaining_ms <= original_deadline);
+    monitor.rate_wait_started(1);
+    monitor.failed(0, "DEADLINE_EXCEEDED");
+    assert_eq!(
+        monitor.snapshot.rate_limit.as_ref().unwrap().waiting,
+        Some(false)
+    );
+    monitor.snapshot.validate().unwrap();
+    let restarted = Monitor::new(monitor.snapshot, &directory.path().join("absent.sock"));
+    assert_eq!(
+        restarted
+            .snapshot
+            .rate_limit
+            .as_ref()
+            .unwrap()
+            .process_wait_ns,
+        Some(0)
+    );
+    assert!(restarted.snapshot.errors.is_empty());
+}
+
+#[derive(Clone)]
+struct MonitorClock(std::rc::Rc<std::cell::RefCell<ClockSample>>);
+impl MonitorClock {
+    fn new() -> Self {
+        Self(std::rc::Rc::new(std::cell::RefCell::new(ClockSample {
+            wall_ms: 1_000_000,
+            boot_ms: 1000,
+            boot_id: "monitor-fixture-boot".into(),
+        })))
+    }
+    fn set(&self, wall_ms: u64, boot_ms: u64) {
+        self.0.borrow_mut().wall_ms = wall_ms;
+        self.0.borrow_mut().boot_ms = boot_ms;
+    }
+}
+impl Clock for MonitorClock {
+    fn sample(&self) -> StoreResult<ClockSample> {
+        Ok(self.0.borrow().clone())
+    }
+}
+
+fn clock_context() -> ClockContext {
+    ClockContext {
+        policy: crate::clock_contract::ClockPolicy::standard(),
+        boot_id: "monitor-fixture-boot".into(),
+        started_at_boot_ms: 1000,
+        deadline_boot_ms: 601_000,
+        observed_boot_ms: None,
+        runtime_status: "UNAVAILABLE_CLOCK".into(),
+    }
+}
+
+#[test]
+fn boot_runtime_does_not_follow_utc_jumps_or_fabricate_zero_after_reboot() {
+    let mut context = clock_context();
+    let clock = MonitorClock::new();
+    clock.set(999_998, 1010);
+    assert_eq!(
+        context.observe(Some(&clock.sample().unwrap())),
+        Some(599_990)
+    );
+    clock.set(9_999_999, 1020);
+    assert_eq!(
+        context.observe(Some(&clock.sample().unwrap())),
+        Some(599_980)
+    );
+    assert_eq!(context.observe(None), None);
+    assert_eq!(context.runtime_status, "UNAVAILABLE_CLOCK");
+    assert_eq!(context.observed_boot_ms, Some(1020));
+    clock.set(100, 1019);
+    assert_eq!(context.observe(Some(&clock.sample().unwrap())), None);
+    assert_eq!(context.runtime_status, "UNAVAILABLE_BOOT_ROLLBACK");
+    let mut other = clock.sample().unwrap();
+    other.boot_id = "different-boot".into();
+    assert_eq!(context.observe(Some(&other)), None);
+    assert_eq!(context.runtime_status, "UNAVAILABLE_BOOT_MISMATCH");
+    assert_eq!(context.observed_boot_ms, Some(1020));
+    clock.set(1, 601_000);
+    assert_eq!(context.observe(Some(&clock.sample().unwrap())), Some(0));
+    assert_eq!(context.deadline_boot_ms, 601_000);
+}
+
+#[test]
+fn new_policy_utc_recoil_receipts_import_restart_and_raw_utc_remain_exact() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("run");
+    let clock = MonitorClock::new();
+    let plan = fixture_plan(None, Some(crate::clock_contract::ClockPolicy::standard()));
+    let mut store =
+        AcquisitionStore::create(&root, plan.clone(), fixture_lease(), clock.clone()).unwrap();
+    let original_manifest = fs::read(root.join("run.json")).unwrap();
+    clock.set(999_998, 1010);
+    let mut index = vec![0; 5_184_000];
+    index[..8].copy_from_slice(&64u64.to_le_bytes());
+    index[8..12].copy_from_slice(&32u32.to_le_bytes());
+    publish(&mut store, 0, &index);
+    let lease = store.current_lease_sha256().to_owned();
+    drop(store);
+    clock.set(999_996, 1020);
+    let mut store = AcquisitionStore::resume(&root, &plan, &lease, clock.clone()).unwrap();
+    publish(&mut store, 1, &[b'0'; 64]);
+    clock.set(999_994, 1030);
+    publish(
+        &mut store,
+        2,
+        b"bafyreielu2mwxw6ymjjfmwxgfk72evqfx4d4cly2z7mbg52bosbwzdlaqe\n",
+    );
+    clock.set(999_992, 1040);
+    publish(&mut store, 3, b"");
+    let before: Vec<_> = (0..4)
+        .map(|id| fs::read(root.join(format!("published/{id:010}/receipt.json"))).unwrap())
+        .collect();
+    let imported = recorded::read_run_context_at(&root, Some(&clock.sample().unwrap()))
+        .unwrap()
+        .snapshot;
+    assert_eq!(imported.completed_at_ms, Some(999_992)); // Last causal receipt, not maximum UTC.
+    assert_eq!(imported.started_at_ms, 1_000_000);
+    assert_eq!(imported.elapsed_ms, 40);
+    assert_eq!(imported.budgets.runtime_remaining_ms, Some(599_960));
+    assert_eq!(imported.selection.operations_published, 4);
+    assert_eq!(
+        imported.clock_context.as_ref().unwrap().observed_boot_ms,
+        Some(1040)
+    );
+    clock.set(99_999_999, 1050);
+    let later = recorded::read_run_context_at(&root, Some(&clock.sample().unwrap()))
+        .unwrap()
+        .snapshot;
+    assert_eq!(later.budgets.runtime_remaining_ms, Some(599_950));
+    assert_eq!(later.elapsed_ms, 40);
+    let mut rollback = clock.sample().unwrap();
+    rollback.boot_ms = 1039;
+    let backward = recorded::read_run_context_at(&root, Some(&rollback))
+        .unwrap()
+        .snapshot;
+    assert!(backward.budgets.runtime_remaining_ms.is_none());
+    assert_eq!(
+        backward.clock_context.as_ref().unwrap().runtime_status,
+        "UNAVAILABLE_BOOT_ROLLBACK"
+    );
+    let mut rebooted = clock.sample().unwrap();
+    rebooted.boot_id = "new-boot".into();
+    let recorded = recorded::read_run_context_at(&root, Some(&rebooted))
+        .unwrap()
+        .snapshot;
+    assert!(recorded.budgets.runtime_remaining_ms.is_none());
+    assert_eq!(
+        recorded.clock_context.as_ref().unwrap().runtime_status,
+        "UNAVAILABLE_BOOT_MISMATCH"
+    );
+    assert_eq!(recorded.elapsed_ms, 40); // Historical same-boot duration remains proven.
+    assert_eq!(fs::read(root.join("run.json")).unwrap(), original_manifest);
+    for (id, receipt) in before.iter().enumerate() {
+        assert_eq!(
+            &fs::read(root.join(format!("published/{id:010}/receipt.json"))).unwrap(),
+            receipt
+        );
+    }
+    let target = root.join("published/0000000003/receipt.json");
+    for (field, value) in [
+        ("boot_id", serde_json::json!("wrong-boot")),
+        ("boot_ms", serde_json::json!(999)),
+        ("boot_ms", serde_json::json!(601_000)),
+        ("boot_ms", serde_json::json!(31_040)),
+    ] {
+        let mut corrupt: serde_json::Value = serde_json::from_slice(&before[3]).unwrap();
+        corrupt["acquired_at"][field] = value;
+        fs::write(&target, serde_json::to_vec(&corrupt).unwrap()).unwrap();
+        assert!(recorded::read_run_context_at(&root, Some(&clock.sample().unwrap())).is_err());
+    }
+    fs::write(target, &before[3]).unwrap();
+    let first = root.join("published/0000000000/receipt.json");
+    let mut later_than_next_reservation: serde_json::Value =
+        serde_json::from_slice(&before[0]).unwrap();
+    later_than_next_reservation["acquired_at"]["boot_ms"] = serde_json::json!(1021);
+    fs::write(
+        &first,
+        serde_json::to_vec(&later_than_next_reservation).unwrap(),
+    )
+    .unwrap();
+    assert!(recorded::read_run_context_at(&root, Some(&clock.sample().unwrap())).is_err());
+    fs::write(first, &before[0]).unwrap();
+    assert_payload_stage_order(&mut store, &plan, &clock, &root);
+}
+
+fn assert_payload_stage_order(
+    store: &mut AcquisitionStore<MonitorClock>,
+    plan: &AggregatePlan,
+    clock: &MonitorClock,
+    root: &std::path::Path,
+) {
+    let published = (0..4)
+        .map(|id| store.published(id).unwrap().unwrap())
+        .collect::<Vec<_>>();
+    let prepared = crate::acquisition::derive_payload_from_metadata(
+        plan,
+        &published,
+        422_496_000,
+        422_496_001,
+    )
+    .unwrap();
+    clock.set(999_990, 1060);
+    store
+        .admit_payload(
+            crate::durable::acquisition::PayloadLease {
+                schema: "OF1_PAYLOAD_LEASE_1".into(),
+                authority: Authority::Fixture,
+                budget: StageBudget {
+                    max_requests: 3,
+                    max_response_entity_bytes_total: 96,
+                    max_runtime_ms: 120_000,
+                },
+                prepared_payload_sha256: prepared.sha256().unwrap(),
+                metadata_receipt_sha256: prepared.metadata_receipt_sha256().into(),
+            },
+            &prepared,
+        )
+        .unwrap();
+    let payload_path = root.join("payload.json");
+    let original_payload = fs::read(&payload_path).unwrap();
+    let admitted = recorded::read_run_context_at(root, Some(&clock.sample().unwrap()))
+        .unwrap()
+        .snapshot;
+    assert_eq!(admitted.budgets.runtime_remaining_ms, Some(120_000));
+    for (boot, boot_id) in [
+        (1060, "other-boot"),
+        (999, "monitor-fixture-boot"),
+        (1039, "monitor-fixture-boot"),
+    ] {
+        let mut corrupt: serde_json::Value = serde_json::from_slice(&original_payload).unwrap();
+        corrupt["stage"]["started_at"]["boot_ms"] = serde_json::json!(boot);
+        corrupt["stage"]["started_at"]["boot_id"] = serde_json::json!(boot_id);
+        corrupt["stage"]["deadline_boot_ms"] = serde_json::json!(boot + 120_000);
+        fs::write(&payload_path, serde_json::to_vec(&corrupt).unwrap()).unwrap();
+        assert!(recorded::read_run_context_at(root, Some(&clock.sample().unwrap())).is_err());
+    }
+    fs::write(payload_path, original_payload).unwrap();
+}
+
+#[test]
+fn fatal_clock_stop_is_readable_without_resuming_or_invalidating_prior_raw() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("run");
+    let clock = MonitorClock::new();
+    let plan = fixture_plan(None, Some(crate::clock_contract::ClockPolicy::standard()));
+    let mut store = AcquisitionStore::create(&root, plan, fixture_lease(), clock.clone()).unwrap();
+    publish(&mut store, 0, &vec![0; 5_184_000]);
+    clock.set(999_998, 999);
+    assert!(store.reserve(1).is_err());
+    let marker_path = root.join("pending/clock-fatal.json");
+    let original_marker = fs::read(&marker_path).unwrap();
+    let snapshot = recorded::read_run_context_at(&root, None).unwrap().snapshot;
+    assert_eq!(snapshot.stage, "STOPPED");
+    assert_eq!(snapshot.selection.operations_published, 1);
+    assert!(snapshot.budgets.runtime_remaining_ms.is_none());
+    assert!(
+        snapshot
+            .errors
+            .iter()
+            .any(|error| error.contains("RECORDED_CLOCK_STOP_FATAL_CLOCK"))
+    );
+    assert_eq!(fs::read(&marker_path).unwrap(), original_marker);
+    let mut malformed: serde_json::Value = serde_json::from_slice(&original_marker).unwrap();
+    malformed["lease_sha256"] = serde_json::json!("0".repeat(64));
+    fs::write(&marker_path, serde_json::to_vec(&malformed).unwrap()).unwrap();
+    assert!(recorded::read_run_context_at(&root, None).is_err());
+    fs::write(marker_path, original_marker).unwrap();
 }

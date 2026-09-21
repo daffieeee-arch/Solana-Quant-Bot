@@ -1,0 +1,102 @@
+{
+  "schema": "PUMP_NESTED_SELL_SOURCE_EVIDENCE_1",
+  "candidate_id": "pump-sell-9c82f61-token2022-cashback17-nested-height2-v1",
+  "classification": "RETAINED_SOURCE_SCHEMA_AND_SEPARATE_RECORDED_OBSERVATION_NOT_HISTORICAL_ACTIVATION",
+  "pump_source_receipt": {
+    "path": "pump-sell-evidence.json",
+    "sha256": "f7725e44484d6f8899c3e45c341dd509b85037b9d2090f48a7f175d6324e00e7",
+    "repository": "pump-fun/pump-public-docs",
+    "commit": "9c82f61cb711b044a17f770ab8ce9f9bdf78f333",
+    "idl_path": "idl/pump.json",
+    "idl_sha256": "b90bc471327f671449271d5d1d42354d1fae6f5a06502f5834459a3108138e49",
+    "instruction": "sell",
+    "instruction_bytes": 24,
+    "event": "TradeEvent",
+    "account_profile": "same fourteen IDL roles plus documented three remaining accounts; Token-2022 cashback profile"
+  },
+  "trace_sources": [
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/src/convert.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/src/convert.rs",
+      "sha256": "5884bda534f1824b62befe70795e4250fe1302a99acbe1ad4f0ca98856163f4b",
+      "license": "Apache-2.0",
+      "scope": "archival conversion retains group/vector order, program/account indices, data and optional stack height"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "transaction-status/src/lib.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/transaction-status/src/lib.rs",
+      "sha256": "d9e56f67a8654bddef0f14fad17ee2edd2383a0f010aea4c2df611eb4b492fbd",
+      "license": "Apache-2.0",
+      "scope": "retained 3.1.12 crate; map_inner_instructions preserves ordered vectors and recorded heights"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "transaction-context/src/lib.rs",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/transaction-context/src/lib.rs",
+      "sha256": "013e87b10ccdd34bf1632b0121642a1f89e66967c49f87f777ef9213ddface6a",
+      "license": "Apache-2.0",
+      "scope": "retained 3.1.12 crate; invocation push/pop and trace semantics; InstructionAccount flags are separate fields, absent from archived CompiledInstruction"
+    },
+    {
+      "repository": "anza-xyz/agave",
+      "commit": "6c1ba34691f17ac902ae3d2e1147eed5723b9cef",
+      "path": "storage-proto/proto/confirmed_block.proto",
+      "url": "https://github.com/anza-xyz/agave/blob/6c1ba34691f17ac902ae3d2e1147eed5723b9cef/storage-proto/proto/confirmed_block.proto",
+      "sha256": "c29a6db1c76fc1361f2d3920bdbda01f6270b6743c5bdc19997a9f4720ccdcec",
+      "license": "Apache-2.0",
+      "retained_at": "rust/of1-bronze-decoder/sources/confirmed_block.proto",
+      "scope": "outer index, ordered inner instructions, program/account indices, data, optional stack height; no CPI signer/writable flags"
+    },
+    {
+      "repository": "anza-xyz/solana-sdk",
+      "commit": "1eeebd07c5fd5e7e8a32b66cf1341cef529551c0",
+      "commit_identity_basis": "already locked registry package .cargo_vcs_info.json; no new GitHub verification",
+      "path": "message/src/inner_instruction.rs",
+      "url": "https://github.com/anza-xyz/solana-sdk/blob/1eeebd07c5fd5e7e8a32b66cf1341cef529551c0/message/src/inner_instruction.rs",
+      "sha256": "ba99a1dcad243c7ef1e014197428f8d7eece2bced93b9a9b2dedcd1813b74ce0",
+      "crate": "solana-message",
+      "version": "3.0.1",
+      "registry_checksum": "85666605c9fd727f865ed381665db0a8fc29f984a030ecc1e40f43bfb2541623",
+      "license": "Apache-2.0",
+      "scope": "ordered invoked-instruction list; transaction instructions start at stack height one"
+    },
+    {
+      "repository": "anza-xyz/solana-sdk",
+      "commit": "1eeebd07c5fd5e7e8a32b66cf1341cef529551c0",
+      "commit_identity_basis": "same already locked registry package",
+      "path": "message/src/compiled_instruction.rs",
+      "url": "https://github.com/anza-xyz/solana-sdk/blob/1eeebd07c5fd5e7e8a32b66cf1341cef529551c0/message/src/compiled_instruction.rs",
+      "sha256": "da3b22c2e359ffbee2662af70814ef5b9cd21814a5a09832bdba1fb7f5f50193",
+      "license": "Apache-2.0",
+      "scope": "program index, ordered account indices, data only; no per-CPI AccountMeta flags"
+    }
+  ],
+  "association_contract": {
+    "selected_instruction_height": 2,
+    "event_parent": "exact selected inner-order node, not merely the same program ID",
+    "event_height": 3,
+    "subtree_end": "first later instruction at height <= selected height, or end of the complete recorded group",
+    "full_group_order_and_heights_required": true,
+    "missing_height_log_fallback": false,
+    "exactly_one_immediate_child_event": true,
+    "parent_account_inclusion_required": true,
+    "existing_instruction_account_event_status_provenance_checks_retained": true
+  },
+  "privilege_contract": {
+    "message_flags": "verified compiled-message capacity only, including loaded addresses",
+    "required_privileges": "source-defined minimum flags; existing message-capacity checks remain required",
+    "actual_cpi_signer_flags": null,
+    "actual_cpi_writable_flags": null,
+    "actual_cpi_privileges": "UNAVAILABLE_NOT_RECORDED_IN_STATUS_METADATA",
+    "infer_from_success_or_pda": false,
+    "silver_admission_scope": "recorded instruction/event facts with exact subtree and addresses; never proof of actual CPI flags, account contents or committed account state"
+  },
+  "network_retrieval_this_step": false,
+  "historical_activation": "UNKNOWN",
+  "root_to_slot_membership": "UNAVAILABLE"
+}

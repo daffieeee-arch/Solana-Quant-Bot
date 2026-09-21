@@ -50,7 +50,7 @@ Raw evidence plus Arrow/Parquet and manifests are canonical. Rust owns the logic
 
 ### D11 — Language responsibilities
 
-Rust owns acquisition/protocol/canonical Raw/Bronze/Silver semantics, evidence/coverage/quarantine and replay; later it owns paper state. Python reads approved Silver and produces Gold, features, labels, cohort/split assignments, statistics, backtests and experiment artifacts. It cannot contain Pump wire decoding or alternative Silver business logic. PR 5 selects the physical Bronze/Silver Parquet writer; a Python-only writer must be generated, lossless and prove schema/logical-hash parity. React/TypeScript owns visualization. Business logic is not duplicated into the browser.
+Rust owns acquisition/protocol/canonical Raw/Bronze/Silver semantics, evidence/coverage/quarantine and replay; later it owns paper state. Python reads approved Silver and produces Gold, features, labels, cohort/split assignments, statistics, backtests and experiment artifacts. It cannot contain Pump wire decoding or alternative Silver business logic. The bounded B5 physical projection selects Rust Arrow/Parquet; any later Python-only writer must be generated, lossless and prove schema/logical-hash parity. React/TypeScript owns visualization. Business logic is not duplicated into the browser.
 
 ### D12 — Research Observatory before workstation
 

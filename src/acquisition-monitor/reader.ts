@@ -61,6 +61,22 @@ function boundedTree(value: unknown, depth = 0): boolean {
     && Object.entries(value).every(([key, item]) => key.length <= 80 && boundedTree(item, depth + 1));
 }
 
+function validClockContext(value: unknown, remaining: unknown): boolean {
+  if (!integers(value, ['started_at_boot_ms', 'deadline_boot_ms'])
+    || !text(value.boot_id, 128) || value.boot_id.length === 0 || !nullableInteger(value.observed_boot_ms)
+    || !['SAME_BOOT', 'UNAVAILABLE_CLOCK', 'UNAVAILABLE_BOOT_MISMATCH', 'UNAVAILABLE_BOOT_ROLLBACK'].includes(String(value.runtime_status))
+    || !integers(value.policy, ['version', 'initialization_window_ms', 'approval_validity_ms'])
+    || value.policy.schema !== 'OF1_BOOT_CLOCK_POLICY_1' || value.policy.version !== 1
+    || value.policy.initialization_window_ms !== 600_000 || value.policy.approval_validity_ms !== 1_200_000
+    || Object.keys(value).sort().join(',') !== 'boot_id,deadline_boot_ms,observed_boot_ms,policy,runtime_status,started_at_boot_ms'
+    || Object.keys(value.policy).sort().join(',') !== 'approval_validity_ms,initialization_window_ms,schema,version'
+    || Number(value.deadline_boot_ms) < Number(value.started_at_boot_ms)
+    || (value.observed_boot_ms !== null && Number(value.observed_boot_ms) < Number(value.started_at_boot_ms))) return false;
+  return (value.runtime_status === 'SAME_BOOT') === (remaining !== null)
+    && (value.runtime_status !== 'SAME_BOOT' || (value.observed_boot_ms !== null
+      && remaining === Math.max(0, Number(value.deadline_boot_ms) - Number(value.observed_boot_ms))));
+}
+
 /** Validate the wire envelope, not reinterpret Rust's acquisition semantics. */
 export function validateSnapshot(value: unknown, id: string): Record<string, unknown> {
   if (!object(value) || !boundedTree(value) || value.schema_version !== 'OF1_MONITOR_1'
@@ -87,7 +103,9 @@ export function validateSnapshot(value: unknown, id: string): Record<string, unk
     || !Array.isArray(value.traffic.speed_samples) || value.traffic.speed_samples.length > 64
     || !value.traffic.speed_samples.every((sample) => object(sample) && integer(sample.elapsed_ms) && typeof sample.bps === 'number')
     || !integers(value.storage, ['used_bytes', 'available_bytes', 'cap_bytes'])
-    || !integers(value.budgets, ['attempts_remaining', 'entity_bytes_remaining', 'stage_attempts_remaining', 'stage_entity_bytes_remaining', 'runtime_remaining_ms'])
+    || !integers(value.budgets, ['attempts_remaining', 'entity_bytes_remaining', 'stage_attempts_remaining', 'stage_entity_bytes_remaining'])
+    || !nullableInteger(value.budgets.runtime_remaining_ms)
+    || ('clock_context' in value ? !validClockContext(value.clock_context, value.budgets.runtime_remaining_ms) : value.budgets.runtime_remaining_ms === null)
     || !object(value.integrity) || !text(value.integrity.receipts) || !text(value.integrity.car)
     || value.integrity.root_to_slot !== 'UNAVAILABLE' || value.domain_counts !== 'UNAVAILABLE_NOT_DECODED_IN_B4'
     || !Array.isArray(value.errors) || value.errors.length > 16 || !value.errors.every((error) => text(error))) {

@@ -1,10 +1,21 @@
 //! Offline Solana decoding and pinned Pump structural inspection; no transport,
 //! acquisition resume, signer or independently promoted Pump candidate.
 pub mod archive;
+pub mod batch;
 pub mod codec;
+pub mod collection;
 pub mod proto;
 pub mod pump;
+pub mod pump_buy;
+pub mod pump_buy_exact_quote_v2;
+pub mod pump_buy_variants;
+pub mod pump_nested_buy;
+pub mod pump_sell;
+pub mod pump_sell16;
+pub mod pump_sell_context;
 pub mod report;
+pub mod resources;
+pub mod token_balances;
 
 /// Actual compiled source/lock identity, independent of uncommitted Git claims.
 #[must_use]
@@ -13,10 +24,34 @@ pub fn source_sha256() -> String {
     for bytes in [
         include_bytes!("lib.rs").as_slice(),
         include_bytes!("archive.rs"),
+        include_bytes!("batch.rs"),
+        include_bytes!("collection.rs"),
+        include_bytes!("bin/of1-bronze-collection.rs"),
+        include_bytes!("bin/of1-bronze-batch.rs"),
         include_bytes!("codec.rs"),
         include_bytes!("proto.rs"),
+        include_bytes!("token_balances.rs"),
+        include_bytes!("../sources/token-balance-evidence.json"),
         include_bytes!("report.rs"),
+        include_bytes!("resources.rs"),
+        include_bytes!("bin/of1-bronze-measure.rs"),
         include_bytes!("pump.rs"),
+        include_bytes!("pump_buy.rs"),
+        include_bytes!("pump_buy_exact_quote_v2.rs"),
+        include_bytes!("pump_buy_exact_quote_context.rs"),
+        include_bytes!("../sources/pump-buy-exact-quote-v2-evidence.json"),
+        include_bytes!("pump_buy_variants.rs"),
+        include_bytes!("pump_nested_buy.rs"),
+        include_bytes!("pump_nested_buy_context.rs"),
+        include_bytes!("../sources/pump-nested-buy-evidence.json"),
+        include_bytes!("../sources/pump-buy24-evidence.json"),
+        include_bytes!("pump_sell.rs"),
+        include_bytes!("pump_sell16.rs"),
+        include_bytes!("../sources/pump-sell16-evidence.json"),
+        include_bytes!("pump_sell_context.rs"),
+        include_bytes!("../sources/pump-nested-sell-evidence.json"),
+        include_bytes!("../sources/pump-sell-evidence.json"),
+        include_bytes!("../sources/pump-buy-evidence.json"),
         include_bytes!("main.rs"),
         include_bytes!("../Cargo.toml"),
         include_bytes!("../Cargo.lock"),

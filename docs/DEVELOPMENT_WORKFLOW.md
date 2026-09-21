@@ -9,28 +9,44 @@ Before proposing or changing code:
 1. read [`HANDOFF_V2.md`](HANDOFF_V2.md) and the required read order;
 2. inspect `pwd`, worktree, remotes, branch tracking and fetched `origin/main`;
 3. inspect the actual code/tests and relevant current issues/merged PRs;
-4. state the bounded hypothesis, evidence needed and explicit non-goals;
+4. record the bounded scope, concrete acceptance criteria, evidence needed and explicit non-goals before implementation/review;
 5. run the read-only Linux/WSL doctor checks; report missing prerequisites instead of installing them.
 
-Never edit `main` directly. Create one bounded branch from current `origin/main`, stop if user work would be overwritten, and preserve unrelated dirty changes. After merge, delete the head branch (repository auto-delete is enabled) or run the dry-run/execute flow in [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md). Do not leave squash-merged delivery branches on the remote.
+Never edit `main` directly. Create a new bounded task branch from current fetched `origin/main`, stop if user work would be overwritten, and preserve existing work. Fixes for an open PR stay on that PR's branch. Verify deletion of that PR's GitHub head after merge; local cleanup is conditional on the preservation checks below and in [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYGIENE.md).
 
 ## Delivery contract
 
 - Prefer one clear problem per PR.
-- Write tests before or with parser, causality, persistence, evidence and safety changes.
-- Use fresh-context review for protocol, durability, security and research-methodology work.
+- Write meaningful tests for changed behavior and relevant parser, causality, persistence, evidence and safety risks. No blanket TDD requirement applies to small changes, and tests must not merely mirror implementation.
+- Use a separate agent with fresh context for independent review of every implementation PR; reviewers assess only and never edit code.
 - Treat WAL/checkpoint changes as crash-safety work with kill/restart/corruption seams.
 - Treat schema and feature-time changes as causality work with leakage tests, including proof that operational `acquired_at`/`processed_at` never become historical feature, label, split or decision inputs.
 - No “done/proven/research-ready/profitable” claim without named reproducible evidence.
 - No large refactor whose success is only smaller files or passing reachability output.
 
-Every implementation PR reports purpose, base/head SHAs, linked Project issues, exact files, tests/evidence, safety/network impact, rollback and unresolved decisions. GitHub CI must be green before merge; inspect job logs, not only the badge. Do not auto-merge safety-sensitive work.
+Every implementation PR reports purpose, base/head SHAs, linked Project issues, exact files, tests/evidence, safety/network impact, rollback and unresolved decisions. GitHub CI must be green on the reviewed latest commit before merge; inspect job logs, not only the badge. Apply the authorized review and squash-merge procedure below, including for safety-sensitive work.
 
 The [public-repository controls](operations/GITHUB_PUBLIC_REPOSITORY_CONTROLS.md)
 enforce PR plus green CI on `main`, including administrators, without requiring
 a second approving GitHub account. Independent review still applies. Roadmap
 metadata from external public submissions requires explicit intake approval;
 unreviewed issue/PR text cannot authorize delivery or evidence status.
+
+## Authorized review, merge and verification
+
+The user approved this standing procedure on 2026-09-21 for approved V2 development tasks, including PR #119. Separate independent review agents and conditional squash-merges are explicitly authorized; another permission question is unnecessary when the conditions below hold. This is development-delivery authorization, not permission for provider calls, acquisition, installations, shared configuration changes or trading.
+
+1. Freeze the scope and concrete acceptance criteria before implementation/review. Implement the bounded task, update documentation, run appropriate checks and push its branch. Maintain the PR description and Project #4 using measured evidence, preserving separate delivery and research-evidence states. Do not expand review scope with optional improvements.
+2. Give a separate reviewer fresh context: the exact base/head commits, task and acceptance criteria, relevant repository instructions and locations of evidence. Have the reviewer independently inspect the real diff, surrounding code, tests and evidence. Do not substitute an implementer's summary or green CI for that inspection. Reviewers do not change code or start expensive work without coordination.
+3. Conduct one complete independent review round, consolidating findings as far as possible; parallel reviewers partitioning a large diff count as one combined round. Record the exact head SHA, findings, severity, evidence and conclusion at the PR. Fix valid in-scope findings on the same branch and explain rejected findings with evidence. Conduct one focused independent recheck of the fixes and their consequences, with relevant tests and required gates, and record the reviewed head. If blocking findings remain after that recheck, stop automatic repair/review rounds, report what remains, why it blocks and the smallest next step, then wait for the user's decision. Never merge because the round budget is exhausted. Resolve discussions only after addressing their substance. Put nonblocking out-of-scope ideas on the backlog; avoid style-driven rewrites.
+4. Immediately before merge, reread the PR head, latest-commit required checks, acceptance evidence, review results and discussion state. The head must equal the independently reviewed SHA. A changed head requires review and checks of that revision; do not merge by relying on stale results.
+5. Squash-merge the exact reviewed head through the normal protected PR path. Do not use administrator bypass, force-push `main`, weaken required checks or ignore unresolved review discussions. Do not queue an unattended merge that can outlive the commit verification.
+6. Fetch and inspect the resulting `origin/main` commit, its CI job/logs and roadmap synchronization. Check the squash commit's parents and resulting tree against the accepted integration. A failed post-merge gate means the delivery remains incomplete: report it and repair it on a new bounded task branch from current `origin/main`, subject to the same scope and bounded-review rules.
+7. Confirm the merged GitHub task branch is absent. Before any local deletion, verify clean tracked and untracked state, no current use, no open PR and preservation of unique commits/evidence. A squash merge alone does not prove that a local branch has no unique history. Preserve protected original VPS/WSL worktrees, open-PR branches, unique commits, archive tags and migration evidence. Limit cleanup to the just-completed task; no general old-WSL-branch cleanup follows from this procedure.
+
+Reuse existing test results while the relevant code, inputs and environment remain unchanged. Repeat checks only after relevant changes, failures, concrete uncertainties or for required gates. All required GitHub checks must pass on the final commit. Finish once the acceptance criteria, required checks and bounded review are complete; do not start another optimization round.
+
+The final delivery report identifies the PR, findings and their resolutions, exact reviewed commit, test results, squash-merge commit, main CI and roadmap synchronization, and what was removed or deliberately retained. Missing post-merge evidence must stay visibly incomplete.
 
 ## Result cadence
 
@@ -49,7 +65,7 @@ PR count is not a performance metric. A bounded PR may split when correctness/re
 
 Implement one official source, one approved acquisition plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one token lifecycle and one visible result. Do not create a generic plugin/framework/abstraction for a hypothetical second case.
 
-Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity and produces or authorizes their records. Python reads approved Silver and owns Gold/research; it must not decode Pump wire data or create alternative Silver rules. PR 5 decides the physical Bronze/Silver Parquet writer. If Python serializes those layers, generated schemas and logical hashes must prove a lossless, non-semantic materialization.
+Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity and produces or authorizes their records. Python reads approved Silver and owns Gold/research; it must not decode Pump wire data or create alternative Silver rules. The bounded B5 projection selects Rust Arrow/Parquet. If Python later serializes those layers, generated schemas and logical hashes must prove a lossless, non-semantic materialization.
 
 ## Project #4 workflow
 
@@ -105,6 +121,7 @@ npm run build
 node scripts/assert-pump-protocol-v2-offline.mjs --static
 node scripts/assert-of1-planner-offline.mjs --static
 node scripts/assert-of1-bronze-offline.mjs --static
+node scripts/assert-of1-parquet-offline.mjs --static
 cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check
 cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check
 cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check
@@ -113,6 +130,7 @@ cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --ch
 node scripts/assert-pump-protocol-v2-offline.mjs --all
 node scripts/assert-of1-planner-offline.mjs --all
 node scripts/assert-of1-bronze-offline.mjs --all
+node scripts/assert-of1-parquet-offline.mjs --all
 cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
 cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets
 cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked
@@ -120,7 +138,7 @@ git diff --check
 git status --porcelain
 ```
 
-Run relevant focused tests during development and the full executable set before review. If the exact local Node/Rust/native toolchain is unavailable, do not install it implicitly; record blocked local gates and use clean GitHub CI as the authoritative execution.
+Run relevant focused tests during development. The full executable set must have valid evidence before delivery; reuse unaffected completed gates rather than rerunning everything for every review or documentation edit. If the exact local Node/Rust/native toolchain is unavailable, do not install it implicitly; record blocked local gates and use clean GitHub CI as the authoritative execution.
 
 ## Repository and dataset hygiene
 

@@ -5,7 +5,7 @@ import { accessSync, constants, existsSync, lstatSync, readFileSync, realpathSyn
 import { arch, platform, release } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { NODE_VERSION, RUST_VERSION } from './lib/development-toolchain.mjs';
+import { NODE_VERSION, RUST_VERSION, toolchainPaths, QUERY_VERSION_PROBE, validQueryVersion } from './lib/development-toolchain.mjs';
 
 const REPOSITORY = resolve(import.meta.dirname, '..');
 const inside = (child, parent) => child === parent || child.startsWith(parent === sep ? sep : parent + sep);
@@ -125,7 +125,16 @@ export function collectDoctor({ datasetRoot, env = process.env, command = execut
   add('ca-certificates', existsSync('/etc/ssl/certs/ca-certificates.crt') ? 'PASS' : 'FAIL', { bundlePresent: existsSync('/etc/ssl/certs/ca-certificates.crt') });
   version('python', 'python3', ['--version'], false);
   version('uv', 'uv', ['--version'], false);
-  add('python-contract', 'INFO', { pinned: false, candidatePython: '3.13.15', candidateUv: '0.12.5' });
+  let queryPython = null;
+  try { queryPython = toolchainPaths(env).queryPython; } catch { /* Independently reported below. */ }
+  const queryVersion = queryPython ? run(queryPython, ['-I', '-B', '-c', QUERY_VERSION_PROBE]) : null;
+  const queryReady = validQueryVersion(queryVersion);
+  add('columnar-query', queryReady ? 'PASS' : 'FAIL', {
+    executable: queryPython, requiredPythonAbi: '3.13', requiredDuckdb: '1.5.5',
+    version: queryReady ? JSON.parse(queryVersion) : null,
+    reason: 'INSTALLED_METADATA_ONLY_PARQUET_GATE_PROVES_BEHAVIOR',
+  });
+  add('python-contract', 'INFO', { researchWorkspacePinned: false, queryReaderPinned: true });
   add('node-dependencies', existsSync(join(repo, 'node_modules/fs-ext/build/Release/fs_ext.node')) ? 'PASS' : 'FAIL', {
     reason: 'PRESENCE_ONLY_NATIVE_ABI_AND_BEHAVIOR_REQUIRE_TESTS',
   });

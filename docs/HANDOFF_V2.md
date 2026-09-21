@@ -22,6 +22,10 @@ GitHub Project [#4 — Solana Quant Platform — Roadmap & Cockpit](https://gith
 
 Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is replaced, `HISTORICAL` records old evidence only, and `RETIRED` is a cancelled/do-not-execute target. The complete registry is [`DOCUMENT_STATUS.md`](DOCUMENT_STATUS.md).
 
+## Approved development workflow
+
+For approved V2 development tasks, the user authorized the [independent-review and squash-merge workflow](DEVELOPMENT_WORKFLOW.md#authorized-review-merge-and-verification) on 2026-09-21, including PR #119. Use a new task branch from current `origin/main`; keep open-PR fixes on its existing branch. Every implementation PR receives a separate, explicitly authorized reviewer agent with fresh context who assesses only. Freeze scope and concrete acceptance criteria first. Conduct one complete independent review round, record the reviewed commit and findings at the PR, fix valid in-scope issues, then conduct one focused independent recheck. Remaining blockers after that recheck require the user's decision before another repair/review round; never merge to meet the round budget. Reuse valid unchanged test evidence and backlog nonblocking out-of-scope ideas. Squash-merge only the reviewed latest head after all acceptance criteria, required checks and review discussions are satisfied, then finish without another optimization round. Verify the resulting main commit, CI and roadmap synchronization before claiming completion. Remove only proven-safe task artifacts; preserve protected original worktrees, unique commits, archives and migration evidence. The full standing instructions are in [`AGENTS.md`](../AGENTS.md); existing provider, installation, host/capture and data-root boundaries remain in force.
+
 ## Current phase
 
 - **Current phase:** `2 Authentic Acquisition`, bounded delivery B4.
@@ -31,9 +35,72 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 - **B4 offline remainder (not live B4B):** The [OF1 memo](research/OF1_QUANT_RESEARCH_MEMO_V2.md), [superseded JS remainder contract](research/B4_OFFLINE_REMAINDER.md) and [candidate pin review](research/JETSTREAMER_V0_7_0_PIN_REVIEW.md) retain their evidence limits. The current [Rust fixture integration](research/OF1_OFFLINE_TRANSPORT.md) combines index planning, durable reservations, local HTTP, Raw/receipt publication and restart. It does not authorize a download or complete B4. The Jetstreamer SHA is a candidate pin only. Further live B4B work still requires a separate exact lease; the executed bounded observations above do not extend it.
 - **B4 staged implementation and bounded payload observation:** The [fixed-host acquisition contract](research/OF1_STAGED_ACQUISITION.md) adds separate metadata/payload admission, durable shared accounting, optional HTTPS and offline CAR/CID/slot checks. Its [executed local report](research/OF1_ACQUISITION_EVIDENCE.md) remains synthetic/loopback `Fixture` evidence; the separately retained authentic runs do not promote that report. The [metadata-only run proposal](research/OF1_METADATA_RUN_PROPOSAL.md) retains the original aggregate caps; any new run requires a new exact GO. The original `[422496000, 422496128)` window is still unapproved: 16 attempts cannot cover 128 nonempty slots. The [lease draft](research/B4_ENGINEERING_VALIDATION_LEASE_PLAN.md) remains non-executable, with approval flags false and cost `NOT_CONFIRMED`; actual approvals and expired deadlines remain outside Git. The captured `[422496000, 422496001)` range passes the corrected archival check with 64 Entry, one Rewards, one Block and zero Transaction envelopes. This is not domain decoding, Pump observation, epoch-wide coverage or B4 completion. Root-to-slot membership stays `UNAVAILABLE`.
 - **Next delivery:** B5/[#84](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/84) is `Backlog`, `NEXT`, Phase `3 Bronze & Silver`, Evidence `Unproven`. An explicit development GO permits the [bounded offline transaction/status decoder](research/B5_AUTHENTIC_RAW_BRONZE.md) as partial preparation, without promoting or completing B4/B5.
+- **Bounded Pump-buy follow-up:** the [source/account diagnosis](research/B5_PUMP_BUY_SOURCE_BINDING.md) explains the recorded 18-account pattern and correlates the direct event-CPI. The 26th instruction byte remains unexplained; full-input rejection, no Silver, unknown economics/activation and all prior evidence remain intact.
+- **Separate local sell follow-up:** the [bounded sell route](research/B5_PUMP_SELL_OBSERVATION.md) tests the 24-byte instruction, 17-account pattern and direct event-CPI for provenance-bound recorded Silver event facts. It does not admit the buy, infer account state/economics, complete B5 or promote Project evidence; local results and later GitHub checks remain separate.
+- **Stacked local nested-sell follow-up:** [exact order/height association](research/B5_NESTED_PUMP_SELL_CONTEXT.md) adds only the two recorded height-two sells and their own immediate event-CPIs. Missing CPI signer/writable flags remain unavailable, separately from message capacity. The earlier no-Silver search result and direct-sell evidence stay preserved; no acquisition, GitHub mutation or Project promotion follows.
+- **Local physical projection:** the [bounded Rust Arrow/Parquet writer and DuckDB queries](research/B5_PARQUET_QUERYABLE_RECORDS.md) preserve all existing Bronze/Silver records, typed columns and explicit unknowns. This is partial offline B5 preparation, not a new decode, representative dataset or delivery/Evidence promotion; historical JSON receipts remain unchanged.
+- **Local coverage and sampling preparation:** the [measured coverage report and fixed pilot proposal](research/B5_COVERAGE_AND_PILOT.md) keep every slot/package and rejected buy visible. The outcome-independent selection is not acquisition authority or research-class admission; existing decoder/writer limits, missing economic context and unchanged retry caps remain explicit.
+- **Local manifest/sample preparation:** the [bounded multi-file projection](research/B5_MANIFEST_SHARDS_AND_SAMPLE_IDENTITY.md) separates physical publication, full package accounting, sample class and suitability. The fixed pilot identity follows the real AggregatePlan/receipt chain in offline fixtures; old engineering runs are not reclassified. The new three-attempt budget comparison is an unapproved new-run proposal, not a changed historical cap or acquisition GO.
+- **Recorded research-pilot resource correction:** the fixed `[422669516,422669519)` selection retains its native `RESEARCH_SAMPLING` identity. The [original offline stop](research/B5_COVERAGE_AND_PILOT.md#recorded-pilot-offline-attempt--2026-09-14) at the then-current 16 MiB slot cap remains preserved. The separately authorized [measured B5 correction and complete offline result](research/B5_PILOT_RESOURCE_CORRECTION.md) now account for all 3,224 Bronze packages, including 223 failed transactions, and two supported sell facts in manifest-bound Parquet and executed DuckDB reports. This changes no B4 acquisition cap or protocol rule; broader Pump coverage, economic identity and Research Ready remain unproven. No delivery is promoted.
+- **Recorded 16-account sell follow-up:** the [separate source-bound profile review and reprocessing](research/B5_PILOT_SELL16_PROFILES.md) preserve those original results and add only the Tokenkeg/no-accumulator sell at 422669518/1062. New outputs retain 3,224 packages / 223 failed transactions and contain three supported sells. Four mayhem cases remain rejected: account14 differs from the pinned curve-v2 PDA and actual CPI signer flags are unavailable. The three failed missing-event cases and all buy diagnoses remain unchanged. Sample identity is preserved; Research Ready remains false, with no acquisition or Project promotion.
+- **Recorded buy source-coverage follow-up:** the [separate 24-byte buy diagnosis and executed buy/sell inventory](research/B5_PILOT_BUY24_SOURCE_COVERAGE.md) preserve all those records and sell facts. Tx 422669518/320 has a historical two-u64 argument shape and modern account/event correspondence, but no retained authoritative rule bridges the complete versions or defines omitted `track_volume`; the event's false value never fills that missing argument. No Silver-buy is admitted. New manifest-bound outputs retain 3,224 packages / 223 failed transactions, three sells, all four Mayhem rejections and the unchanged sample identity. The report makes the same-mint raw buy/sell question and its missing evidence explicit; no acquisition, Research Ready claim or Project promotion.
 - **Current execution posture:** PAPER / RESEARCH ONLY. B3 canonical protocol/source evidence is bound only to pinned official Pump GitHub bytes. Approved toolchain, package-registry and source-review traffic is not protocol evidence. Separately approved official OF1 metadata and separately approved CAR-range acquisitions occurred; this offline decoder work performs no provider request. No Solana RPC, wallet, signing or execution call occurred. B4's active status does not authorize another acquisition run. No profitability, research-readiness, paper-realism or live-readiness claim is established.
 
+- **Separate nested 25-byte buy investigation:** the [bounded Rust diagnosis](research/B5_NESTED_BUY25_SOURCE_DIAGNOSIS.md) validates the three retained instructions and their own event subtrees, without borrowing a sibling CPI. Their actual boolean byte is present; this is not the separate 24-/26-byte source gap. All three differ from the pinned remaining buy-account16 PDA. Actual CPI privileges remain unavailable, and no Silver-buy is admitted. Earlier buy/sell facts, sample identity and original evidence stay preserved; Research Ready remains false.
+
 ## Development and runtime boundary
+
+The [2026-09-20 VPS integration](operations/VPS_WSL_INTEGRATION.md) combines the imported WSL stack with the isolated VPS tooling in a separate worktree. Use the repository wrapper and explicit OF1 root, not archived WSL launch commands. Migration/query evidence, fresh offline decoding and CI acceptance are tracked separately; no acquisition or delivery promotion follows.
+
+The separate [manifest-bound batch/collection route](research/B5_BATCH_COLLECTION.md)
+keeps logical selection, bounded workers and physical Parquet files distinct.
+It references original runs and receipts without splitting or relabeling them;
+the three-slot research pilot remains its original sample. The separately
+captured sixteen-slot follow-up is post-hoc descriptive context, not an independent
+sample extension or new acquisition permission. The [executed nineteen-slot
+collection](research/B5_PILOT_CONTEXT_COLLECTION.md) accounts for 21,719 packages,
+including 1,898 failed transactions, and 15 admitted buys / seven sells with the
+unchanged profiles. The original pilot remains 3,224 packages / 223 failures /
+four buys / three sells. Collection publication and full package accounting
+remain separate from decoder coverage and Research Ready; no status is promoted.
+
+The separate [recorded token-balance/unit projection](research/B5_TOKEN_BALANCE_UNITS.md)
+exposes retained pre/post metadata without changing any admitted trade.
+The executed pilot retains 3,224 packages / 223 failed transactions and exposes
+7,512 observations in 481 packages. All seven existing trades have separately
+bound explicit metadata decimals=6; no quote-price or instruction-delta claim
+follows. Manifest-bound Parquet and actual DuckDB reports preserve sample identity.
+Protobuf presence/defaults, exact integers and transaction-wide deltas remain
+distinct from event quantities, instruction limits and unavailable account
+state. Its fixed-horizon follow-up is a proposal only, not a sample change,
+acquisition permission or Research Ready promotion.
+
+The separate [exact-quote v2 buy profile](research/B5_BUY_EXACT_QUOTE_V2.md)
+uses its own 24-byte/two-u64 instruction and 27-account source layout,
+without relaxing legacy buy parsers. Recorded instruction/event facts,
+source expectations and unavailable account state remain separate.
+Parquet/query support distinguishes requested bounds from actual reported
+quantities and buys from sells. All prior rejected profiles, native sample
+identity and acquisition evidence remain preserved; no Research Ready or
+delivery promotion follows. The independently reviewed local result retains
+all 3,224 packages / 223 failed transactions and admits four recorded buys
+alongside the three existing sells; no mint has both admitted sides in this
+selection. Double decoder/Parquet/query execution and the earlier 725-/3,137-
+package regressions are verified in the linked result, not inferred from CI.
+
+The bounded local clock correction separates actual UTC provenance from
+suspend-aware boot-time approval/runtime limits under an explicit new
+[clock policy](research/OF1_STAGED_ACQUISITION.md#versioned-utc-provenance-and-boot-deadlines).
+It preserves the earlier pre-registration UTC-rollback stop, old binaries and
+approvals. A newly prepared binary-bound package still requires a new exact GO;
+no acquisition, lease or Project promotion follows from development.
+
+The local fixed-pilot preparation now binds the shared 700 Mbps entity-read
+policy and Rust-generated request paths into new proposals; see
+[the exact rate/identity contract](research/OF1_STAGED_ACQUISITION.md#shared-default-download-rate).
+The `[422669516,422669519)` selection, old concept packet, runs and binaries
+remain preserved. A new binary-bound metadata decision is preparation only:
+no GO, lease, acquisition or evidence promotion follows from this development.
 
 The separate [B4 download monitor](research/B4_DOWNLOAD_MONITOR.md) observes
 Rust-owned intra-request telemetry and preserved authentic Raw. Its separate
@@ -65,7 +132,7 @@ The annotated tag `v1-paper-platform-final` was created with explicit approval b
 
 Implement a **walking skeleton**, not a speculative framework: one official source, one approved acquisition plan, one small authentic range, one required Pump variant, one Bronze path, one Silver path, one token lifecycle and one visible result. Generalize only after a second proven use case requires it.
 
-PR 5 makes the explicit physical Bronze/Silver Parquet-writer decision. A Python implementation is permitted only as a generated, lossless materializer of Rust-authorized records with schema and logical-hash parity; it may not reinterpret semantics.
+The bounded offline B5 [physical projection](research/B5_PARQUET_QUERYABLE_RECORDS.md) selects Rust Arrow/Parquet for the existing Bronze/Silver records, with exact schema/record parity. This does not finalize every future layer schema. Any later Python serialization remains permitted only as a generated, lossless materializer of Rust-authorized records with schema and logical-hash parity; it may not reinterpret semantics.
 
 ## Triton-only network boundary
 
@@ -166,7 +233,7 @@ Before deleting a subsystem: identify its invariant → migrate useful tests/gol
 | PR 2A / B2A | **Complete and Operationally Verified:** obsolete platform removal and reachable-legacy quarantine; no future product capability or data-evidence claim added |
 | PR 3 / B3 | **Complete at Fixture evidence:** one bounded Pump protocol walking skeleton plus a structural/fixture-only protocol evidence matrix; observed compatibility and historical activation remain unknown |
 | PR 4 / B4 | **In progress, bounded Raw result:** the preserved 45,051-byte empty range and the later 605,402-byte transaction-bearing range; [separate offline verification](research/OF1_RECORDED_CAR_VERIFICATION.md) and [bounded B5 preparation](research/B5_AUTHENTIC_RAW_BRONZE.md), no new run approval. PR #94 B4A and the [Rust offline integration](research/OF1_OFFLINE_TRANSPORT.md) remain `Fixture` partial results. Further metadata and payload each require a separately reviewed exact GO |
-| PR 5 / B5 | **Next, partial offline preparation explicitly authorized:** [725 retained single-slot decodes](research/B5_AUTHENTIC_RAW_BRONZE.md) plus [3,137 multi-slot decodes/Pump layout search](research/B5_MULTISLOT_PUMP_SEARCH.md); Silver, coin lifecycle and physical Parquet writer remain outstanding |
+| PR 5 / B5 | **Next, partial offline preparation explicitly authorized:** [725 retained single-slot decodes](research/B5_AUTHENTIC_RAW_BRONZE.md), [3,137 multi-slot decodes](research/B5_MULTISLOT_PUMP_SEARCH.md), [four bounded recorded sell facts](research/B5_NESTED_PUMP_SELL_CONTEXT.md) and a [Rust Parquet query projection](research/B5_PARQUET_QUERYABLE_RECORDS.md); the [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md) retains 21,719 packages and 22 facts; broader Silver coverage and coin lifecycle remain outstanding |
 | PR 6 | Interactive browser Research Observatory MVP |
 | PR 7 | Bounded scale-up, Cohort Explorer and explicit data-sufficiency result |
 | PR 8 | PIT Gold v0 and first falsifiable baseline, or a valid `INSUFFICIENT_SAMPLE`/falsification result |

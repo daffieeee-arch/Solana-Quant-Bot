@@ -19,7 +19,8 @@
 | npm | Bundled with the approved Node archive; doctor records the exact version. Lockfile v3 remains authoritative; no independent npm pin is claimed |
 | Rust/Cargo | Named rustup toolchain `1.97.1`, including rustfmt and clippy; record full `rustc -Vv` |
 | Native compiler | Ubuntu build-essential (C/C++ and make), pkg-config, git, curl and CA certificates |
-| Python / uv | Candidate `3.13.15` / `0.12.5`, not final V2 pins. System Python is sufficient for current native Node builds; no Python workspace is introduced here |
+| Query Python / DuckDB | CPython `3.13` ABI and the hash-locked DuckDB `1.5.5` wheel for the bounded Parquet reader. The existing VPS venv uses CPython `3.13.15`. No full Gold/Python workspace pin follows |
+| uv | Informational existing tool; no global Python or uv configuration change |
 | Clang/CMake/protoc/system zstd | Not required by the current reviewed graphs. Bronze compiles bundled zstd C; protobuf projection is checked in |
 
 `fs-ext` is native: install/rebuild it with the selected Node version and that version's headers. Never copy `node_modules` from WSL or another project. Keep all Cargo locks and `package-lock.json` unchanged during setup.
@@ -34,6 +35,7 @@ The Linux x86_64 wrapper uses this default layout outside the checkout:
   cargo/                         # rustup proxies + isolated registry cache
   rustup/                        # isolated named Rust toolchain
   npm-cache/
+  columnar-query-313-duckdb155/    # isolated, already installed query venv
 ```
 
 An absolute `SOLANA_TOOLCHAIN_ROOT` may select another installation with the same layout. The wrapper checks the installed versions and Rust proxies before starting a child. It changes only that child's environment; it never sources a profile, runs `nvm use`, changes a shared default or downloads missing tools.
@@ -44,9 +46,25 @@ node scripts/with-toolchain.mjs -- cargo +1.97.1 -V
 node scripts/with-toolchain.mjs -- rustc +1.97.1 -Vv
 node scripts/with-toolchain.mjs -- node scripts/doctor.mjs \
   --dataset-root /home/chupa/Solana-project/data-old-faithful-one
+
+# Explicit data root applies only to this command and its children:
+SOLANA_QUANT_DATA_ROOT=/home/chupa/Solana-project/data-old-faithful-one \
+  node scripts/with-toolchain.mjs -- python --version
 ```
 
 The initial `node` is only the dependency-free wrapper bootstrap (tested with the host's Node 24 and pinned Node 22). Child Node/npm commands use the project's Node 22. The wrapper fixes paper/live safety defaults, `RUSTUP_AUTO_INSTALL=0`, Cargo build jobs to two, and npm/Cargo offline defaults. Those defaults prevent implicit package fetching in normal development; **they are not an OS network sandbox**. Existing seccomp gates provide syscall denial for replay, with separately source-pinned loopback fixtures where required.
+
+The wrapper also selects the existing query venv, verifies its CPython ABI and
+installed DuckDB metadata, and sets `COLUMNAR_QUERY_PYTHON` for the Parquet gate.
+An explicit absolute `COLUMNAR_QUERY_PYTHON` may select another isolated venv
+with the same contract. Bare `python`/`python3` in the child use that venv;
+inherited `PYTHONHOME`/`PYTHONPATH` and user-site packages cannot select another
+project's modules. Bytecode writes and implicit pip/uv fetching are disabled.
+Metadata/version checks do not replace actual Parquet-query tests.
+`SOLANA_QUANT_DATA_ROOT`, when supplied, must pass the read-only external-root
+check. Dataset commands still take explicit paths; no archived WSL plan is
+rewritten or resumed. No shell profile, shared interpreter or migration wrapper
+needs modification. Run commands from the intended worktree.
 
 If a future service needs Node, its start command must also explicitly select the pinned binary/environment. No service or shell-profile change is part of this setup.
 
@@ -62,7 +80,7 @@ The doctor checks each prerequisite independently:
 - native filesystem type and available bytes at the checkout and the dataset's nearest existing parent;
 - exact Node/Rust/Cargo, npm, rustup, rustfmt/clippy, native build tools and CA-bundle presence;
 - native-addon presence (ABI/behavior still requires the tests);
-- available Python/uv as informational results, with no inferred Python compatibility claim;
+- available Python/uv and a separate required query-reader ABI/DuckDB metadata check; actual query behavior remains a separate gate;
 - kernel seccomp/AppArmor metadata, explicitly marking an execution probe as **not run**.
 
 It does not read `.env`, credentials, wallets, dataset contents or arbitrary environment values. It has no network client or installer. It lists installed Rust toolchains before invoking the pin, and disables rustup auto-install. Missing tools do not hide later checks. Free space is reported without pretending that an acquisition budget has been approved. The separate seccomp/full test gates must pass before claiming execution isolation works.
@@ -73,12 +91,13 @@ Only perform these steps under an explicit installation instruction. The 2026-09
 
 1. Retrieve the Node `22.23.2` Linux x64 archive and `SHASUMS256.txt` from `https://nodejs.org/download/release/v22.23.2/`. Verify SHA-256 before extraction into the isolated toolchain root.
 2. Retrieve a pinned rustup installer and its checksum from `https://static.rust-lang.org/rustup/archive/<version>/x86_64-unknown-linux-gnu/`. Record the installer identity. Set **both** project-local `CARGO_HOME` and `RUSTUP_HOME`, then use `--no-modify-path --profile minimal --default-toolchain 1.97.1 --component rustfmt,clippy`. This setup used rustup `1.29.1`.
-3. Run the three static dependency gates before fetching Cargo graphs:
+3. Run the four static dependency gates before fetching Cargo graphs:
 
 ```bash
 node scripts/assert-pump-protocol-v2-offline.mjs --static
 node scripts/assert-of1-planner-offline.mjs --static
 node scripts/assert-of1-bronze-offline.mjs --static
+node scripts/assert-of1-parquet-offline.mjs --static
 ```
 
 4. Fetch only locked package graphs. Network exceptions are explicit **per dependency-preparation command**, for example wrapper + `npm ci --offline=false --ignore-scripts --no-audit --no-fund`, or wrapper + `env CARGO_NET_OFFLINE=false cargo +1.97.1 fetch --locked --manifest-path <manifest>`. Include Pump, OF1 recorder, Bronze and retained reducer manifests. Registry/toolchain downloads are not Solana-provider calls or canonical data evidence.
@@ -99,13 +118,15 @@ systemd-run --user --scope --quiet \
 
 Use the same scope limits for builds, native rebuilds and full Rust gates, and avoid concurrent heavy suites. Scope names may be supplied to make monitoring explicit. A scope is not a persistent service. If scope creation fails, stop heavy work instead of silently running without limits. Observe free memory, load, disk availability and the original Hyperliquid process identities read-only; pause/stop only Solana work if contention develops. Resource limits reduce contention but are not proof of capture continuity; do not claim full data continuity solely from living PIDs.
 
-The current unprivileged Bubblewrap/user-namespace probes failed while the project's existing seccomp launcher worked. No AppArmor or sysctl change is required by this development profile. Full gates, including separate permitted local HTTP/TLS fixtures, still need actual execution on the host.
+For full gates on this VPS, select `TMPDIR=/home/chupa/Solana-project/data-old-faithful-one/tmp-vps-integration` for the child command. This existing native directory has room for the Parquet fixture gate and keeps monitor Unix-socket paths short enough. Longer nested audit paths can exceed the Unix socket path limit. Do not edit global temporary-directory defaults.
+
+The current unprivileged Bubblewrap/user-namespace probes failed while the project's existing seccomp launcher worked. No AppArmor or sysctl change is required by this development profile. Full gates include separate permitted local HTTP/TLS fixtures. Task-specific host results are recorded in [the VPS integration evidence](operations/VPS_WSL_INTEGRATION.md).
 
 ## Validation and evidence boundary
 
-Run the doctor, policy/citation checks, full Node suite, typecheck/build and the current CI Rust gates under the selected environment. The [CI workflow](../.github/workflows/ci.yml) is the authoritative full list and includes **all three** isolated gates: Pump protocol, OF1 planner/recorder and Bronze decoder, plus retained reducer/support formatting, clippy/test/build and patch integrity.
+Run the doctor, policy/citation checks, full Node suite, typecheck/build and the current CI Rust gates under the selected environment. The [CI workflow](../.github/workflows/ci.yml) is the authoritative full list and includes **all four** isolated gates: Pump protocol, OF1 planner/recorder, Bronze decoder and Parquet/DuckDB, plus retained reducer/support formatting, clippy/test/build and patch integrity. Local gates use the installed query venv; the CI-only query installer is never invoked on the VPS.
 
-A green environment and fixture suite does not establish authentic acquisition, Silver, research readiness or a trading edge. No data migration, provider request, collector, dashboard service or trade is started by the setup. The next dataset milestone remains verified migration and offline reproduction of existing evidence.
+A green environment and fixture suite does not establish authentic acquisition, Silver, research readiness or a trading edge. No provider request, collector, dashboard service or trade is started by the setup. Migration and existing Parquet-query reproduction have separate preserved evidence; fresh Raw processing and integrated CI require their own results.
 
 ## Historical observations
 

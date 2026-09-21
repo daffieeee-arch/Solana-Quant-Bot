@@ -4,7 +4,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { developmentEnvironment, toolchainPaths, NODE_VERSION, RUST_VERSION } from './lib/development-toolchain.mjs';
+import { developmentEnvironment, toolchainPaths, NODE_VERSION, RUST_VERSION, QUERY_VERSION_PROBE, validQueryVersion } from './lib/development-toolchain.mjs';
+import { inspectDatasetRoot } from './doctor.mjs';
 
 export function runWithToolchain(args, env = process.env) {
   if (args[0] === '--') args = args.slice(1);
@@ -14,6 +15,9 @@ export function runWithToolchain(args, env = process.env) {
   }
   const paths = toolchainPaths(env);
   const childEnv = developmentEnvironment(env);
+  if (env.SOLANA_QUANT_DATA_ROOT && inspectDatasetRoot(env.SOLANA_QUANT_DATA_ROOT).status !== 'PASS') {
+    throw new Error('SOLANA_QUANT_DATA_ROOT must be an existing external directory without symlink components');
+  }
   for (const name of ['rustup', 'cargo', 'rustc', 'rustfmt', 'cargo-clippy']) {
     if (!existsSync(join(paths.cargoHome, 'bin', name))) throw new Error('Project Rust proxies are absent; no installation attempted.');
   }
@@ -28,7 +32,16 @@ export function runWithToolchain(args, env = process.env) {
       throw new Error('Pinned project toolchain version mismatch');
     }
   }
-  const child = spawn(args[0], args.slice(1), { env: childEnv, stdio: 'inherit' });
+  const query = spawnSync(paths.queryPython, ['-I', '-B', '-c', QUERY_VERSION_PROBE], {
+    env: childEnv, encoding: 'utf8', timeout: 10_000, maxBuffer: 64 * 1024,
+  });
+  if (query.status !== 0 || !validQueryVersion(query.stdout)) {
+    throw new Error('Project query reader requires isolated CPython 3.13 and DuckDB 1.5.5; no installation attempted.');
+  }
+  childEnv.VIRTUAL_ENV = JSON.parse(query.stdout).prefix;
+  childEnv.UV_PROJECT_ENVIRONMENT = childEnv.VIRTUAL_ENV;
+  const command = ['python', 'python3'].includes(args[0]) ? paths.queryPython : args[0];
+  const child = spawn(command, args.slice(1), { env: childEnv, stdio: 'inherit' });
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
   child.on('error', () => { console.error('Unable to start the requested development command'); process.exitCode = 1; });
   child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : 143); });

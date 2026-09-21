@@ -63,9 +63,13 @@ node scripts/cleanup-merged-pr-branches.mjs --execute --yes
 
 ## After a merge
 
-1. Confirm GitHub deleted the head branch (or run the cleanup script).
-2. Locally: `git fetch --prune` and delete the local branch.
-3. Start the next task from a fresh `origin/main` checkout.
+The [approved development workflow](../DEVELOPMENT_WORKFLOW.md#authorized-review-merge-and-verification) authorizes verification and safe cleanup of the just-completed task. It does not authorize a historical sweep.
+
+1. Confirm the resulting main commit, main CI and roadmap synchronization before reporting full delivery.
+2. Confirm GitHub deleted that PR's exact head branch. If it remains, recheck its current head SHA and all open PRs before a narrowly scoped deletion; stop if the branch moved or is in use. Do not invoke the historical bulk-cleanup helper as a routine post-merge step.
+3. Inspect each local task worktree and branch before considering removal: both tracked and untracked contents must be clean, no process/session may still use it, no open PR may need it, and unique commits and evidence must remain reachable. A squash merge does not make the original commits ancestors of `main` and is not by itself safe-deletion proof.
+4. Preserve original VPS/WSL migration worktrees, old WSL branches, open-PR heads, unique commits, archive tags and migration evidence. Record the reason for retaining any just-completed task branch/worktree. Do not force local deletion merely to satisfy tidiness.
+5. Start the next task on a new branch from fresh `origin/main`.
 
 ## Explicit non-goals
 

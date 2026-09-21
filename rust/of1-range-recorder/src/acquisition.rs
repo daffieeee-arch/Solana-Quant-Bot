@@ -186,6 +186,17 @@ pub fn derive_payload_from_metadata(
     start_slot: u64,
     end_slot: u64,
 ) -> StoreResult<PreparedPayload> {
+    if let Some(sample) = &aggregate.sample_identity {
+        sample.validate_range(aggregate.epoch, start_slot, end_slot)?;
+        let aggregate_hash =
+            sha256(&serde_json::to_vec(aggregate).map_err(|_| StoreError::Corrupt)?);
+        if metadata
+            .iter()
+            .any(|p| p.receipt.aggregate_sha256 != aggregate_hash)
+        {
+            return Err(StoreError::Identity);
+        }
+    }
     let metadata_receipt_sha256 = metadata_receipt_sha256(metadata)?;
     let index = raw(&metadata[0], SLOTS_PER_EPOCH * RECORD_BYTES)?;
     let index_sha256 = sha256(&index);

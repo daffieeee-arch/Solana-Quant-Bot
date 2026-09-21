@@ -43,6 +43,8 @@ reconstruct the receipt-backed terminal summary without resuming the writer.
 | Verified / published | The byte counter conservatively counts only verified, durably published Raw/receipt pairs. A separate stage shows verification before publication; neither means CAR-root membership, protocol support or Research Ready |
 | Reserved | Full response allowances durably charged before dispatch, not downloaded or useful data |
 | Speed / ETA | Rust monotonic-clock samples; ETA stays unknown without sufficient measurements and a known remaining selection size. It estimates download only, not remaining verification/publication time |
+| Shared speed limit | New plans bind 87,500,000 response-entity-bytes/s = 700 decimal Mbps, across official OF1 runs by the same Linux user with concurrency one. The bounded short burst is 65,536 bytes, not a per-connection allocation. TLS/HTTP/other physical network overhead is outside this byte unit |
+| Limiter wait | Rust reports the observed waiting flag and actual monotonic sleep nanoseconds accumulated in the current process only, preserving sub-millisecond waits. Waiting does not extend deadlines. Import cannot reconstruct past waiting; old plans without this setting remain unavailable, not zero/unlimited. A stale snapshot makes the current waiting state unknown |
 | Storage | Existing conservative durable-store disk charge and available filesystem bytes, sampled at operation boundaries/import; not a per-fragment filesystem scan |
 | Last update | Producer timestamp/session/sequence; a live snapshot older than three seconds is visibly stale. Recorded history is labelled recorded, never presented as a current download |
 | Domain counts | `UNAVAILABLE_NOT_DECODED_IN_B4`; transactions/Pump events/coins are not zero |
@@ -52,6 +54,24 @@ schema. It carries at most 32 operations, 64 speed samples, 16 errors and 40
 artifact references in 64 KiB. The relay keeps at most 16 latest run snapshots.
 Rust owns selection/budget/evidence calculations; TypeScript validates transport
 shape and formats the result. A browser refresh does not mutate any run.
+
+The optional `rate_limit` object carries the immutable plan policy separately
+from lossy operational waiting measurements. It is omitted for historical plans;
+new-plan receipt imports show the policy with `waiting` and `process_wait_ns`
+both null. A new process starts a new operational wait counter, not a durable
+run-total claim. Intra-request wait hooks use the existing five-per-second
+telemetry sampling boundary and add no per-fragment file write or fsync. The
+browser continues to display actual `traffic.speed_bps` independently of the
+configured limit; a measured low rate does not by itself prove throttling.
+
+New clock-policy runs carry a separate `clock_context`: UTC remains the actual
+producer timestamp, while elapsed/remaining time uses the immutable same-boot
+deadline. Boot mismatch or unavailable elapsed-clock evidence makes remaining
+runtime unknown, not zero or renewed authority. Session/sequence and boot order
+accept an actual UTC correction without accepting an older snapshot. Browser
+staleness uses monotonic time since the last changed sample for this policy;
+historical snapshots keep their original contract. None of these observational
+fields can admit an acquisition; see the [clock contract](OF1_STAGED_ACQUISITION.md#versioned-utc-provenance-and-boot-deadlines).
 
 ## Authentic and simulated views
 

@@ -1,0 +1,98 @@
+{
+  "schema": "B5_PARQUET_LOCAL_RESULT_1",
+  "branch": "v2/b5-parquet-queryable-records",
+  "base": "bcf66356a8c453ce317ceefa6c463cb7a370f4d9",
+  "implementation_commit": "91f53154fd84af1c7bd7531d4126f95e05ee2224",
+  "full_result": {
+    "path": "/home/dmesdary/solana-quant-data/datasets/b5-parquet-20260912.NO4c2L/result.json",
+    "bytes": 104712,
+    "sha256": "e15d5059ba41725090a2d3e42d4e67c21f7a3e315cdfdf3d71aecb7040bcafea"
+  },
+  "manifest": {
+    "path": "/home/dmesdary/solana-quant-data/datasets/b5-parquet-20260912.NO4c2L/dataset-01/manifest.json",
+    "bytes": 80203,
+    "sha256": "78b6fb182e6af684a64cf7c03e891bd8b5c35e62deb586ab248e8b8138529f5e"
+  },
+  "query_results": {
+    "path": "/home/dmesdary/solana-quant-data/datasets/b5-parquet-20260912.NO4c2L/queries-03/query-results.json",
+    "bytes": 16725,
+    "sha256": "1a4f74004327a6232ba10305c25f50cf53a7e72a3da8b3300b0061e7bf76904b"
+  },
+  "visible_report": {
+    "path": "/home/dmesdary/solana-quant-data/datasets/b5-parquet-20260912.NO4c2L/queries-03/index.html",
+    "bytes": 15167,
+    "sha256": "5a09b83400f23bd61a47b050e7273a069529f7461de2df18262fc4ee2ed10e28"
+  },
+  "writer": {
+    "cargo_lock_sha256": "6c4c7bc27c966bf87ab7bf741f43228abf4d1a52c69b0369eec1e6469c35ba5e",
+    "executable_sha256": "11905586b4758ee12edfe267838b0954b598ff0eeb4c605cf1ae641ba544aab5",
+    "settings": {
+      "arrow_parquet_version": "59.3.0",
+      "batch_rows": 512,
+      "compression": "UNCOMPRESSED",
+      "created_by": "of1-parquet-projection/0.1.0",
+      "dictionary": false,
+      "page_bytes": 1048576,
+      "parquet_version": "1.0",
+      "row_group_rows": 512
+    },
+    "source_sha256": "04cddfa2f0b2ca240f828eb636fe4c33437003e3c5db64ce4a1065c442ca36e5",
+    "version": "0.1.0"
+  },
+  "counts": {
+    "bronze": 3137,
+    "silver": 4,
+    "failed_transactions_retained": 87,
+    "unadmitted_buy_transaction": 142,
+    "regression_725": 725
+  },
+  "determinism": {
+    "two_parquet_files": true,
+    "two_manifests": true,
+    "two_logical_query_results": true
+  },
+  "tests": {
+    "node": {
+      "files": 104,
+      "tests": 1568
+    },
+    "critical": 101,
+    "bronze_rust": 74,
+    "parquet_rust": 13,
+    "duckdb_boundary_fixture": "PASS",
+    "full_local_gates": "PASS",
+    "github": "NOT_RUN_OFFLINE_ONLY"
+  },
+  "independent_review": {
+    "path": "/home/dmesdary/solana-quant-data/datasets/b5-parquet-20260912.NO4c2L/independent-final-review-receipt.json",
+    "bytes": 8119,
+    "sha256": "aa5d13d9c1d787c6ca22d6701917dc5b2b3d1acf10d734c73fd244c327b57afd"
+  },
+  "preserved_inputs": {
+    "original_run_files": 520,
+    "nested_output_files": 66,
+    "snapshot": {
+      "path": "/home/dmesdary/solana-quant-data/datasets/b5-parquet-20260912.NO4c2L/inputs-before.json",
+      "bytes": 13944,
+      "sha256": "707d795e4bf6c508be9976aea922618f237a80a138f0754f6e1908169d1329c6"
+    }
+  },
+  "evidence": {
+    "input": "EXISTING_AUTHENTIC_RECORDED_CAR_DERIVED_RECORDS; ORIGINAL RECEIPT CLASS PRESERVED",
+    "new_tests": "SYNTHETIC_FIXTURE",
+    "slice_class": "ENGINEERING_VALIDATION_ONLY",
+    "no_new_decoding": true,
+    "root_to_slot_membership": "UNAVAILABLE",
+    "queryability_not_research_ready": true
+  },
+  "boundaries": {
+    "github_requests": false,
+    "provider_requests": false,
+    "acquisition_resume": false,
+    "lease_changes": false,
+    "project_mutations": false,
+    "system_or_global_toolchain_install": false,
+    "original_binaries_replaced": false
+  },
+  "browser_url": "http://localhost:7020/"
+}

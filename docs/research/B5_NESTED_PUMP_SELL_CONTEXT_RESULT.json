@@ -1,0 +1,942 @@
+{
+  "schema": "OF1_B5_NESTED_PUMP_SELL_COMPACT_RECEIPT_1",
+  "recorded_at_utc": "2026-09-12T18:48:30.523Z",
+  "evidence_scope": "AUTHENTIC_ENGINEERING_RECORDED_INSTRUCTION_EVENT_FACTS; synthetic adversarial/native-run tests remain Fixture; no delivery or Project promotion",
+  "implementation_commit": "a3be6ff49a6ed60b5108f716735797960f7158e3",
+  "authorized_local_base": "765263f5d948576a7d294b0d1ef649be105f9e60",
+  "branch": "v2/b5-nested-pump-sell-context",
+  "github_status": "NOT_CONTACTED_OR_PUBLISHED_USER_OFFLINE_BOUNDARY",
+  "prior_pr_117": "UNCHANGED",
+  "executable": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/bin/of1-bronze-decoder-e20f35d965cc466fbdb6bfbfeb8820f4907e09e4fccbb563bdcf7f7563208d7a",
+    "bytes": 2995304,
+    "sha256": "e20f35d965cc466fbdb6bfbfeb8820f4907e09e4fccbb563bdcf7f7563208d7a"
+  },
+  "decoder_source_sha256": "8d8786c7db9cb7cc85c29da699452be4adbba3f551cd4b92971dd1dd1e32e545",
+  "lock_sha256": "1a6e486fc422e5ee9b5e54b8d4b63b567c560cf61f96c3b0284a503c752eff08",
+  "source_receipts": [
+    {
+      "path": "/home/dmesdary/code/Solana-Quant-Bot/rust/of1-bronze-decoder/sources/pump-sell-evidence.json",
+      "bytes": 10996,
+      "sha256": "f7725e44484d6f8899c3e45c341dd509b85037b9d2090f48a7f175d6324e00e7"
+    },
+    {
+      "path": "/home/dmesdary/code/Solana-Quant-Bot/rust/of1-bronze-decoder/sources/pump-nested-sell-evidence.json",
+      "bytes": 5739,
+      "sha256": "0f47b3ead08a00dcae9dbaecd4ea1091f72f6b4842d19740a649de6d0e4b05fc"
+    }
+  ],
+  "authentic_fixture": {
+    "path": "/home/dmesdary/code/Solana-Quant-Bot/rust/of1-bronze-decoder/tests/fixtures/authentic-pump-sections.json",
+    "bytes": 35716,
+    "sha256": "9d9787c443edf82222b148261f808f9e29ce05c79856c7a23f04004643aa85f3"
+  },
+  "toolchain": {
+    "node": "v22.23.2",
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)\nrelease: 1.97.1\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.20.0-DEV (sys:0.4.88+curl-8.20.0 vendored ssl:OpenSSL/3.6.2)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Ubuntu 26.4.0 (resolute) [64-bit]"
+  },
+  "dependencies": "UNCHANGED manifests/locks/resolved packages/features; no package download; npm ci --offline used retained lock/cache",
+  "socket_denied_build_and_execution": true,
+  "network_filter": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/offline-build/network-deny.bpf",
+    "bytes": 168,
+    "sha256": "ed1f7151e7e083fb8b5a4af3364506d5c02be16f06a8de737d78e45c388cff85"
+  },
+  "release_build": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-build-correct-filter.log",
+    "bytes": 164,
+    "sha256": "f30a8e82d68212e237c92127eaeb42785dfdef2a58644b150433a40796b5e880"
+  },
+  "input_inventory": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/inputs-before.json",
+    "bytes": 115549,
+    "sha256": "a1bbfb4340b08a13c28bc4c9726559f25df5dbafd03750eb30d2bc0d68e4d11f"
+  },
+  "preserved_input_runs": [
+    {
+      "root": "/home/dmesdary/solana-quant-data/runs/of1-e978-pump-search-09379cff-01",
+      "files": 302,
+      "all_original_bytes_unchanged": true
+    },
+    {
+      "root": "/home/dmesdary/solana-quant-data/runs/of1-e978-metadata-09379cff-04",
+      "files": 218,
+      "all_original_bytes_unchanged": true
+    }
+  ],
+  "original_acquisition_executable": {
+    "path": "/home/dmesdary/solana-quant-data/run-plans/of1-e978-metadata-09379cff-04/bin/of1-acquire",
+    "bytes": 3868784,
+    "sha256": "6189491afb7bbfe09da3cc73763c7f07c750c39bf466023be570ade2da62de05"
+  },
+  "previous_sell_binary": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-sell-20260912.xNETcu/bin/of1-bronze-decoder-f39dcf44ad0db0f3e516ab33fefb4f667374bdb97c7082f3814b7129c8664154",
+    "sha256": "f39dcf44ad0db0f3e516ab33fefb4f667374bdb97c7082f3814b7129c8664154"
+  },
+  "previous_sell_result": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-sell-20260912.xNETcu/result.json",
+    "sha256": "d78f416ec339389fa89e14275ffb99f73904a9d699f70b23a049c2c71b939904"
+  },
+  "original_record_preservation": [
+    {
+      "baseline": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-sell-20260912.xNETcu/release-01/quality.json",
+        "bytes": 37107388,
+        "sha256": "abd6503151ebc2c551dc3d33ed32349c588dfb96226f97028749913ef52963c3"
+      },
+      "records": 3137,
+      "previous_fields_and_direct_sell_facts_unchanged": true,
+      "permitted_differences": [
+        "new decoder source identity and associated Bronze binding",
+        "nested sell diagnosis for tx1002/1016 only"
+      ]
+    },
+    {
+      "baseline": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-pump-sell-20260912.xNETcu/regression-725/quality.json",
+        "bytes": 6753870,
+        "sha256": "60b575007e3545304e81166c8a50fdfa5712955048038e7aaf7fdc582c60a932"
+      },
+      "records": 725,
+      "previous_fields_and_direct_sell_facts_unchanged": true,
+      "permitted_differences": [
+        "new decoder source identity and associated Bronze binding",
+        "nested sell diagnosis for tx1002/1016 only"
+      ]
+    }
+  ],
+  "raw_bytes": 2931906,
+  "transaction_envelopes": 3137,
+  "dispositions": {
+    "DECODED": 3137,
+    "MISSING": 0,
+    "QUARANTINED": 0,
+    "UNSUPPORTED": 0
+  },
+  "status_counts": {
+    "ERROR": 87,
+    "OK": 3050
+  },
+  "vote_program_transactions": 2845,
+  "slots": [
+    {
+      "slot": "422496002",
+      "raw_sha256": "5a609ed91292eb0e22157dd965301c150ff2e585d87cebaf22f6a7c71c05f49b",
+      "raw_bytes": 894187,
+      "transaction_envelopes": 1092,
+      "dispositions": {
+        "DECODED": 1092,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      }
+    },
+    {
+      "slot": "422496003",
+      "raw_sha256": "15988c29c7e04a5a53c9cf8242bb20f284b3b8ba047ae7659b64a1441c5f185a",
+      "raw_bytes": 808748,
+      "transaction_envelopes": 977,
+      "dispositions": {
+        "DECODED": 977,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      }
+    },
+    {
+      "slot": "422496004",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "raw_bytes": 1228971,
+      "transaction_envelopes": 1068,
+      "dispositions": {
+        "DECODED": 1068,
+        "MISSING": 0,
+        "QUARANTINED": 0,
+        "UNSUPPORTED": 0
+      }
+    }
+  ],
+  "silver_fact_count": 4,
+  "facts": [
+    {
+      "effective_at": {
+        "entry_index": 85,
+        "slot": "422496004",
+        "source_transaction_index": "153",
+        "transaction_index_in_entry": 2,
+        "transaction_index_in_slot": 153
+      },
+      "signature": "4vDV2fgMjYyKGHWhEjV3SnKnGxo7eEcQ65thksPiK7Eb5QTQM2LM2Lf9B31nZyNHsQiknriRp8tFVhCRaXDyqEtg",
+      "candidate_id": "pump-sell-9c82f61-token2022-cashback17-direct-v1",
+      "source_evidence_sha256": "f7725e44484d6f8899c3e45c341dd509b85037b9d2090f48a7f175d6324e00e7",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "bronze_record_sha256": "0026dd9fd291365a59b197d386fe17d9f5de9833d6e524e3b77ec70baaaf79c0",
+      "instruction": {
+        "amount_raw_u64": "26761699489951",
+        "min_sol_output_raw_u64": "650823659"
+      },
+      "instruction_sha256": "bee483bc1525bb1cfa55b25f94a2c3848ad41ba2d5c0a21b1d5b24ce997d8da7",
+      "event_sha256": "d26a7bd6420252a2ba13e5f17d0d2a3ad5d0f36c1509d2d85289f1532bead3bb",
+      "event_cpi_bytes": 367,
+      "event_inner_order": 2,
+      "event_stack_height": 2,
+      "parent": {
+        "inner_order": null,
+        "outer_index": 2,
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+      },
+      "subtree": null,
+      "ordered_group_trace": null,
+      "accounts": {
+        "count": 17,
+        "all_addresses_match": true,
+        "message_minimums_match": true,
+        "actual_cpi_flags": "NOT_APPLICABLE_DIRECT_INSTRUCTION",
+        "canonical_json_sha256": "75a483abb5dc41da8f850e9ae6eca6f7f3114c17dcd41807b328f2af05f97b77"
+      },
+      "event_fields": {
+        "mint": "Fgj9BfzfUGi7gQwyZvvrfsQMCQpYVYUB6JaA5GfYpump",
+        "token_amount_raw_u64": "26761699489951",
+        "sol_amount_raw_u64": "939139477",
+        "quote_mint_raw_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "all_fields_and_full_bindings": "preserved in linked full result and hash-bound Silver JSONL"
+      },
+      "transaction_status": "OK",
+      "transaction_fee_lamports": "7505017"
+    },
+    {
+      "effective_at": {
+        "entry_index": 157,
+        "slot": "422496004",
+        "source_transaction_index": "996",
+        "transaction_index_in_entry": 1,
+        "transaction_index_in_slot": 996
+      },
+      "signature": "2x9d8zwUdQ9uUiA9MKDY4MQUhT3jpVX8gsURY6xpvNNxRbyKqsDBRrcH4akhDjUCMXvRLZbLEy8ZFGHgXmboi6Hg",
+      "candidate_id": "pump-sell-9c82f61-token2022-cashback17-direct-v1",
+      "source_evidence_sha256": "f7725e44484d6f8899c3e45c341dd509b85037b9d2090f48a7f175d6324e00e7",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "bronze_record_sha256": "a0848331099bb3a57993b816c24234b941678ad3547a359ef2c87a3c1cf3b938",
+      "instruction": {
+        "amount_raw_u64": "33039135172779",
+        "min_sol_output_raw_u64": "798326079"
+      },
+      "instruction_sha256": "49bdeb0cd051b67b995d556e16339dc4228683a897ba8b9889b8bb1b5eba071a",
+      "event_sha256": "1cd195a93f97a7aa847a89bca22c47b92495c97b4d80d692a295b5d57b22a1b6",
+      "event_cpi_bytes": 367,
+      "event_inner_order": 2,
+      "event_stack_height": 2,
+      "parent": {
+        "inner_order": null,
+        "outer_index": 2,
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+      },
+      "subtree": null,
+      "ordered_group_trace": null,
+      "accounts": {
+        "count": 17,
+        "all_addresses_match": true,
+        "message_minimums_match": true,
+        "actual_cpi_flags": "NOT_APPLICABLE_DIRECT_INSTRUCTION",
+        "canonical_json_sha256": "ed50c6ed988d3b161eb72adbb2d34e6c4f64c061a65a235752c881fe3133757a"
+      },
+      "event_fields": {
+        "mint": "Fgj9BfzfUGi7gQwyZvvrfsQMCQpYVYUB6JaA5GfYpump",
+        "token_amount_raw_u64": "33039135172779",
+        "sol_amount_raw_u64": "1090390855",
+        "quote_mint_raw_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "all_fields_and_full_bindings": "preserved in linked full result and hash-bound Silver JSONL"
+      },
+      "transaction_status": "OK",
+      "transaction_fee_lamports": "7505045"
+    },
+    {
+      "effective_at": {
+        "entry_index": 157,
+        "slot": "422496004",
+        "source_transaction_index": "1002",
+        "transaction_index_in_entry": 7,
+        "transaction_index_in_slot": 1002
+      },
+      "signature": "36vtGZbEXoM1DMCEZs4YUCxckvtyPvhxtZsGTbjCv9SRXRYB3UbBHnVpG8GFUw1zJ5kEUMiiiwgx6wek1fNcRwJ7",
+      "candidate_id": "pump-sell-9c82f61-token2022-cashback17-nested-height2-v1",
+      "source_evidence_sha256": "0f47b3ead08a00dcae9dbaecd4ea1091f72f6b4842d19740a649de6d0e4b05fc",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "bronze_record_sha256": "e41e14a98b6e70cdb31483eab8a0c5e73325b9e507bc1d247bc9bcc0a6502b49",
+      "instruction": {
+        "amount_raw_u64": "15071528820578",
+        "min_sol_output_raw_u64": "0"
+      },
+      "instruction_sha256": "0a60c596d5fd8c6bdde92ea18638414dab14fdef1fc4be751b5c2dddb1172e5d",
+      "event_sha256": "244228a947ba866c1b6b76ddc0627b8311ae5c621b84c07dfbd5c0a0562f881a",
+      "event_cpi_bytes": 367,
+      "event_inner_order": 3,
+      "event_stack_height": 3,
+      "parent": {
+        "inner_order": 0,
+        "outer_index": 2,
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+      },
+      "subtree": {
+        "boundary": "FIRST_LATER_HEIGHT_LE_SELECTED_OR_END_OF_RECORDED_GROUP",
+        "end_inner_order_exclusive": 4,
+        "start_inner_order": 0
+      },
+      "ordered_group_trace": [
+        {
+          "account_indexes": [
+            21,
+            16,
+            13,
+            4,
+            5,
+            2,
+            0,
+            11,
+            6,
+            22,
+            23,
+            20,
+            24,
+            25,
+            7,
+            14,
+            17
+          ],
+          "inner_order": 0,
+          "instruction_sha256": "0a60c596d5fd8c6bdde92ea18638414dab14fdef1fc4be751b5c2dddb1172e5d",
+          "parent_inner_order": null,
+          "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "program_id_index": 20,
+          "stack_height": 2
+        },
+        {
+          "account_indexes": [
+            24,
+            20
+          ],
+          "inner_order": 1,
+          "instruction_sha256": "bc0b1256b4433046e32926e67eee414dab8059708ae0ff8662153dd9f03d26ab",
+          "parent_inner_order": 0,
+          "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+          "program_id_index": 25,
+          "stack_height": 3
+        },
+        {
+          "account_indexes": [
+            2,
+            13,
+            5,
+            0
+          ],
+          "inner_order": 2,
+          "instruction_sha256": "df5938273fb24643f1477750740395132c6ddc2421a3b42390b4da3793f0b5e2",
+          "parent_inner_order": 0,
+          "program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+          "program_id_index": 22,
+          "stack_height": 3
+        },
+        {
+          "account_indexes": [
+            23
+          ],
+          "inner_order": 3,
+          "instruction_sha256": "244228a947ba866c1b6b76ddc0627b8311ae5c621b84c07dfbd5c0a0562f881a",
+          "parent_inner_order": 0,
+          "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "program_id_index": 20,
+          "stack_height": 3
+        },
+        {
+          "account_indexes": [
+            0,
+            18
+          ],
+          "inner_order": 4,
+          "instruction_sha256": "cd2e6a38737abbf834c20c6df4845d00616d46cf1cb384722c76db2ece8887e6",
+          "parent_inner_order": null,
+          "program_id": "11111111111111111111111111111111",
+          "program_id_index": 11,
+          "stack_height": 2
+        }
+      ],
+      "accounts": {
+        "count": 17,
+        "all_addresses_match": true,
+        "message_minimums_match": true,
+        "actual_cpi_flags": {
+          "evidence": "UNAVAILABLE_NOT_RECORDED_IN_STATUS_METADATA",
+          "signer": null,
+          "writable": null
+        },
+        "canonical_json_sha256": "027e77867760463e429d0a4fa2b97a7402a0101de9c931a1dbb81a4f44e57dba"
+      },
+      "event_fields": {
+        "mint": "CfVN6VbvAx5YDbhH9NzDKEGk95aQ6adBtd4HAGx3pump",
+        "token_amount_raw_u64": "15071528820578",
+        "sol_amount_raw_u64": "2205351813",
+        "quote_mint_raw_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "all_fields_and_full_bindings": "preserved in linked full result and hash-bound Silver JSONL"
+      },
+      "transaction_status": "OK",
+      "transaction_fee_lamports": "245000"
+    },
+    {
+      "effective_at": {
+        "entry_index": 160,
+        "slot": "422496004",
+        "source_transaction_index": "1016",
+        "transaction_index_in_entry": 12,
+        "transaction_index_in_slot": 1016
+      },
+      "signature": "3t9L6erztMjZp9SS3VqQM1gBNgt3SU2u4moBnQLchhSs95pwpMXrrWVs2Hci5XRtbSeFaJwqLEMfJpJLzqFowRYR",
+      "candidate_id": "pump-sell-9c82f61-token2022-cashback17-nested-height2-v1",
+      "source_evidence_sha256": "0f47b3ead08a00dcae9dbaecd4ea1091f72f6b4842d19740a649de6d0e4b05fc",
+      "raw_sha256": "4487ab047ab4d4d7267a218e69877e4222178800fe5cba51547269a3772156db",
+      "bronze_record_sha256": "475bb8cdd3285fd0a0a100811be10039595c239658d46d1844aa2895d6fca977",
+      "instruction": {
+        "amount_raw_u64": "10431201672810",
+        "min_sol_output_raw_u64": "0"
+      },
+      "instruction_sha256": "203635b5b6fed6391c66cf9f7e1f07a5e46a196d2d87a928bddb97bc6b91d831",
+      "event_sha256": "2f1d41e703727c6696d9b465b3776ae743790793d660f5ef4ee687cbcc4ce4df",
+      "event_cpi_bytes": 367,
+      "event_inner_order": 3,
+      "event_stack_height": 3,
+      "parent": {
+        "inner_order": 0,
+        "outer_index": 2,
+        "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+      },
+      "subtree": {
+        "boundary": "FIRST_LATER_HEIGHT_LE_SELECTED_OR_END_OF_RECORDED_GROUP",
+        "end_inner_order_exclusive": 4,
+        "start_inner_order": 0
+      },
+      "ordered_group_trace": [
+        {
+          "account_indexes": [
+            21,
+            16,
+            13,
+            4,
+            5,
+            2,
+            0,
+            11,
+            6,
+            22,
+            23,
+            20,
+            24,
+            25,
+            7,
+            14,
+            17
+          ],
+          "inner_order": 0,
+          "instruction_sha256": "203635b5b6fed6391c66cf9f7e1f07a5e46a196d2d87a928bddb97bc6b91d831",
+          "parent_inner_order": null,
+          "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "program_id_index": 20,
+          "stack_height": 2
+        },
+        {
+          "account_indexes": [
+            24,
+            20
+          ],
+          "inner_order": 1,
+          "instruction_sha256": "870bacfdae5dad2cd5f36c8b7943be1a66317a587a20e010abb2d16c6612fb47",
+          "parent_inner_order": 0,
+          "program_id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+          "program_id_index": 25,
+          "stack_height": 3
+        },
+        {
+          "account_indexes": [
+            2,
+            13,
+            5,
+            0
+          ],
+          "inner_order": 2,
+          "instruction_sha256": "2c86ae1bf075572ab7f89b1d060a88600c0f771aba8158cd10d663dc64ab6696",
+          "parent_inner_order": 0,
+          "program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+          "program_id_index": 22,
+          "stack_height": 3
+        },
+        {
+          "account_indexes": [
+            23
+          ],
+          "inner_order": 3,
+          "instruction_sha256": "2f1d41e703727c6696d9b465b3776ae743790793d660f5ef4ee687cbcc4ce4df",
+          "parent_inner_order": 0,
+          "program_id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "program_id_index": 20,
+          "stack_height": 3
+        },
+        {
+          "account_indexes": [
+            0,
+            18
+          ],
+          "inner_order": 4,
+          "instruction_sha256": "e8bb88580aa4439e1b82eb4be02d1268938824c491f08882790590a46990e9bb",
+          "parent_inner_order": null,
+          "program_id": "11111111111111111111111111111111",
+          "program_id_index": 11,
+          "stack_height": 2
+        }
+      ],
+      "accounts": {
+        "count": 17,
+        "all_addresses_match": true,
+        "message_minimums_match": true,
+        "actual_cpi_flags": {
+          "evidence": "UNAVAILABLE_NOT_RECORDED_IN_STATUS_METADATA",
+          "signer": null,
+          "writable": null
+        },
+        "canonical_json_sha256": "78540010d95ea6231ddcea9a42bd8e4cc3ff2690bb2180b817a0ccaa30921ea7"
+      },
+      "event_fields": {
+        "mint": "CfVN6VbvAx5YDbhH9NzDKEGk95aQ6adBtd4HAGx3pump",
+        "token_amount_raw_u64": "10431201672810",
+        "sol_amount_raw_u64": "1446431596",
+        "quote_mint_raw_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+        "all_fields_and_full_bindings": "preserved in linked full result and hash-bound Silver JSONL"
+      },
+      "transaction_status": "OK",
+      "transaction_fee_lamports": "245000"
+    }
+  ],
+  "sell_diagnostics": [
+    {
+      "effective_at": {
+        "entry_index": 85,
+        "slot": "422496004",
+        "source_transaction_index": "153",
+        "transaction_index_in_entry": 2,
+        "transaction_index_in_slot": 153
+      },
+      "disposition": "MATCHED_RECORDED_EVENT_FACTS",
+      "reason": null,
+      "matching_registered_candidates": [
+        "pump-sell-9c82f61-token2022-cashback17-direct-v1"
+      ]
+    },
+    {
+      "effective_at": {
+        "entry_index": 157,
+        "slot": "422496004",
+        "source_transaction_index": "996",
+        "transaction_index_in_entry": 1,
+        "transaction_index_in_slot": 996
+      },
+      "disposition": "MATCHED_RECORDED_EVENT_FACTS",
+      "reason": null,
+      "matching_registered_candidates": [
+        "pump-sell-9c82f61-token2022-cashback17-direct-v1"
+      ]
+    },
+    {
+      "effective_at": {
+        "entry_index": 157,
+        "slot": "422496004",
+        "source_transaction_index": "1002",
+        "transaction_index_in_entry": 7,
+        "transaction_index_in_slot": 1002
+      },
+      "disposition": "MATCHED_RECORDED_EVENT_FACTS",
+      "reason": null,
+      "matching_registered_candidates": [
+        "pump-sell-9c82f61-token2022-cashback17-nested-height2-v1"
+      ]
+    },
+    {
+      "effective_at": {
+        "entry_index": 160,
+        "slot": "422496004",
+        "source_transaction_index": "1016",
+        "transaction_index_in_entry": 12,
+        "transaction_index_in_slot": 1016
+      },
+      "disposition": "MATCHED_RECORDED_EVENT_FACTS",
+      "reason": null,
+      "matching_registered_candidates": [
+        "pump-sell-9c82f61-token2022-cashback17-nested-height2-v1"
+      ]
+    }
+  ],
+  "buy_142": "UNCHANGED_UNEXPECTED_TRAILING_BYTES; full26 retained; no Silver or invented suffix rule",
+  "two_executions": [
+    {
+      "name": "quality.json",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-01/quality.json",
+        "bytes": 37221575,
+        "sha256": "0f803f2963b3a4ba8fd9086d360db0f8014c635552d8ff955a71e3c414bd796a"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-02/quality.json",
+        "bytes": 37221575,
+        "sha256": "0f803f2963b3a4ba8fd9086d360db0f8014c635552d8ff955a71e3c414bd796a"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "bronze.jsonl",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-01/bronze.jsonl",
+        "bytes": 29878517,
+        "sha256": "001db7f0a5081328c1d8bfa7090bb0b92203921cf8cf53da1b2a9c4403a31a93"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-02/bronze.jsonl",
+        "bytes": 29878517,
+        "sha256": "001db7f0a5081328c1d8bfa7090bb0b92203921cf8cf53da1b2a9c4403a31a93"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "silver.jsonl",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-01/silver.jsonl",
+        "bytes": 90834,
+        "sha256": "c61314047b7acbb75c935fd98bfe4a7a152ef422a2ca1b65edf0760d58e4f5ac"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-02/silver.jsonl",
+        "bytes": 90834,
+        "sha256": "c61314047b7acbb75c935fd98bfe4a7a152ef422a2ca1b65edf0760d58e4f5ac"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "quality.html",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-01/quality.html",
+        "bytes": 1281262,
+        "sha256": "298e4461317b2b308bb69dd87758935586bea421e237a78781e02e44983543a4"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-02/quality.html",
+        "bytes": 1281262,
+        "sha256": "298e4461317b2b308bb69dd87758935586bea421e237a78781e02e44983543a4"
+      },
+      "byte_identical": true
+    },
+    {
+      "name": "COMPLETE",
+      "first": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-01/COMPLETE",
+        "bytes": 64,
+        "sha256": "f7828a8397b136ed7aa97982b2b446b3222cb4d8d5e2a4f2b4afc039c562319b"
+      },
+      "second": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-02/COMPLETE",
+        "bytes": 64,
+        "sha256": "f7828a8397b136ed7aa97982b2b446b3222cb4d8d5e2a4f2b4afc039c562319b"
+      },
+      "byte_identical": true
+    }
+  ],
+  "execution_receipts": [
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-01/execution.json",
+      "bytes": 963,
+      "sha256": "e38a25f8b5318ca446b44db2e6569fa76b8af2263686d8915ac740840979715f"
+    },
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-02/execution.json",
+      "bytes": 963,
+      "sha256": "1eb4e9b8c85184058cbbbeb10036b9474080a5b4fb3d1dd736217a73fde2d538"
+    },
+    {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/regression-725/execution.json",
+      "bytes": 960,
+      "sha256": "4ce88d12c9ca553eeeb73a8f0cf23f08cdcc79746f239ef8af5f2447894fcdd7"
+    }
+  ],
+  "resource_accounting": {
+    "decoded_metadata_bytes": 1483666,
+    "max_decoded_metadata_bytes": 50331648,
+    "max_record_json_bytes": 50331648,
+    "max_selection_raw_bytes": 16777216,
+    "max_slots": 3,
+    "per_slot_limits_unchanged": true,
+    "record_json_bytes": 29966210
+  },
+  "resource_measurements": [
+    {
+      "name": "release-01",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-01.resource.txt",
+        "bytes": 1247,
+        "sha256": "56fbec5832788ac099a12871d2d91001f410037fd58205564437fcfde20d563b"
+      },
+      "elapsed": "0:00.93",
+      "peak_rss_kib": 254076
+    },
+    {
+      "name": "release-02",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/release-02.resource.txt",
+        "bytes": 1246,
+        "sha256": "50c1fa6d3fa7ea3120236daaef9b392ff117575f816c9961df2c8e51972c1627"
+      },
+      "elapsed": "0:00.93",
+      "peak_rss_kib": 253956
+    },
+    {
+      "name": "regression-725",
+      "receipt": {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/regression-725.resource.txt",
+        "bytes": 1245,
+        "sha256": "f907c6c374936b6ed14b9abd8942690e80b52929d94c78999d2e60a3df31b010"
+      },
+      "elapsed": "0:00.22",
+      "peak_rss_kib": 53768
+    }
+  ],
+  "regression_725": {
+    "quality": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/regression-725/quality.json",
+      "bytes": 6753870,
+      "sha256": "a467e069d74917cf44458af875737820f783f4cc4533b4610c162aad88698aca"
+    },
+    "dispositions": {
+      "DECODED": 725,
+      "MISSING": 0,
+      "QUARANTINED": 0,
+      "UNSUPPORTED": 0
+    },
+    "silver_fact_count": 0
+  },
+  "browser": {
+    "receipt": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/browser-01/b5-browser-evidence-success.json",
+      "bytes": 43836,
+      "sha256": "bc073ce8da8b98d00168e2e240a03060790bab62ca58490b2ad0a48ada9bc74a"
+    },
+    "screenshots": [
+      {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/browser-01/nested-sell-summary.png",
+        "bytes": 103659,
+        "sha256": "b20f8e1649fefcf7fbbfd214ecb59bc0fd27423e4739b6c7852f42cbb43e86e7"
+      },
+      {
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/browser-01/nested-sell-context.png",
+        "bytes": 87167,
+        "sha256": "d55856ae772c380b41bb02bdbc7ffa52f605bc92c1503f26257eb94a94e011b9"
+      }
+    ],
+    "url": "http://localhost:7016/quality.html#pump-sell",
+    "page_requests_only_loopback": true,
+    "packet_capture_claim": false
+  },
+  "local_gates": {
+    "completion": {
+      "schema": "LOCAL_OFFLINE_GATES_COMPLETION_1",
+      "implementation_commit": "a3be6ff49a6ed60b5108f716735797960f7158e3",
+      "command": "/home/dmesdary/.local/share/solana-quant/run-with-toolchain bash /home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/local-gates.sh",
+      "started_at_utc": "2026-09-12T18:32:29Z",
+      "completed_at_utc": "2026-09-12T18:47:43Z",
+      "exit_code": 0,
+      "completion_marker": "ALL_LOCAL_GATES_PASS",
+      "unchanged_full_gate_reruns": 0,
+      "node_files": 104,
+      "node_tests": 1568,
+      "critical_tests": 101,
+      "bronze_tests": 74,
+      "bronze_test_groups": [
+        15,
+        14,
+        19,
+        15,
+        11
+      ],
+      "github_ci": "NOT_REQUESTED_LOCAL_ONLY",
+      "roadmap_sync": "NOT_REQUESTED_LOCAL_ONLY",
+      "network_scope": "offline package cache; socket-denied compiler/decoder; fixed loopback fixture servers only"
+    },
+    "command": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/local-gates.sh",
+      "bytes": 1803,
+      "sha256": "0eb91d8252483aa092ad51b872a1d41bc2335e91efbb3fa8e983e7f78a7f1642"
+    },
+    "logs": [
+      {
+        "gate": "npm-ci",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/npm-ci.log",
+        "bytes": 608,
+        "sha256": "65f2b72092629f96839a390000c125b51f6a300aeb3b92223165ffbfa0322820"
+      },
+      {
+        "gate": "policy",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/policy.log",
+        "bytes": 188,
+        "sha256": "1a672b31a1c38cfb9c5101c5173979510bb370c595dc11f5bf81b899979712ab"
+      },
+      {
+        "gate": "citations",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/citations.log",
+        "bytes": 173,
+        "sha256": "1cc477624915cba2a479ef7dbae56301feb215b12a2ca66dd64bd98bf0a3b9b3"
+      },
+      {
+        "gate": "critical",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/critical.log",
+        "bytes": 650,
+        "sha256": "372400ad94e0c67594f91c31eb4aa7d78c5c6e207a34c0d1b8cc8194bb520b35"
+      },
+      {
+        "gate": "node-suite",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/node-suite.log",
+        "bytes": 24249,
+        "sha256": "e04a9f74f6022475a23a76d671ad23a53e3ece9d2948b5ea7ad3311aaafc4bb4"
+      },
+      {
+        "gate": "typescript",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/typescript.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "gate": "build",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/build.log",
+        "bytes": 1684,
+        "sha256": "b2e6625f1906917e12823e3c27ffdaa50e37eb2884fdd16e01fabfae0b018bbf"
+      },
+      {
+        "gate": "fmt-old-faithful-pump-reducer",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/fmt-old-faithful-pump-reducer.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "gate": "fmt-linux-kernel-namespace-lock",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/fmt-linux-kernel-namespace-lock.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "gate": "fmt-jetstreamer-v0-7-callback-types",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/fmt-jetstreamer-v0-7-callback-types.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "gate": "fmt-solana-runtime-v3.1.12-bank-types",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/fmt-solana-runtime-v3.1.12-bank-types.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "gate": "fmt-pump-protocol-v2",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/fmt-pump-protocol-v2.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "gate": "pump-offline",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/pump-offline.log",
+        "bytes": 82,
+        "sha256": "6ede6c482992d9a1aa8f9d6ad0b18df4d8613c86b19fa6d2384a04b6a8886564"
+      },
+      {
+        "gate": "planner-offline",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/planner-offline.log",
+        "bytes": 25977,
+        "sha256": "e9a2e4326ac55362cbfaa8f09fc7e0d6374e545177c9cd36178c72c1cd2f8fc1"
+      },
+      {
+        "gate": "bronze-offline",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/bronze-offline.log",
+        "bytes": 7399,
+        "sha256": "79eb61317bf339d3cb51e8810d548982a49e5355b18a4fd0b32dba85faca75eb"
+      },
+      {
+        "gate": "reducer-clippy",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/reducer-clippy.log",
+        "bytes": 72,
+        "sha256": "f2066ca264b9a8598ecd436c70919e1efe1acea4098ad2a13b5d82d67bc049ec"
+      },
+      {
+        "gate": "reducer-tests",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/reducer-tests.log",
+        "bytes": 18154,
+        "sha256": "d27347f5a631084fa62eac79b1b62f7522216f53c74119d7cd2aa86d23207349"
+      },
+      {
+        "gate": "reducer-build",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/reducer-build.log",
+        "bytes": 72,
+        "sha256": "4cf86278c1e6d659943a46a3d7e3da429ac15be90f0f17742e24ef85228e7d3e"
+      },
+      {
+        "gate": "diff-check",
+        "status": "PASS",
+        "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/diff-check.log",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ],
+    "node_files": 104,
+    "node_tests": 1568,
+    "critical_tests": 101,
+    "bronze_tests": 74,
+    "added_tests": 15
+  },
+  "review": {
+    "description": "Separate read-only source/diff, authentic-artifact and documentation/browser review",
+    "receipt": {
+      "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/independent-review.json",
+      "bytes": 1984,
+      "sha256": "c52770cd70a5da264e0843eb1c9c06d2e4da90dafc42832e6b3cebddf43d5570"
+    }
+  },
+  "remaining_limits": [
+    "ENGINEERING_VALIDATION_ONLY",
+    "ROOT_TO_SLOT_MEMBERSHIP_UNAVAILABLE",
+    "SIGNATURE_CRYPTO_NOT_PERFORMED",
+    "ACTUAL_CPI_SIGNER_WRITABLE_FLAGS_UNAVAILABLE",
+    "ONLY_HEIGHT_TWO_NESTED_PROFILE",
+    "BUY_SUFFIX_UNEXPLAINED",
+    "ACCOUNT_CONTENTS_AND_COMMITTED_STATE_NOT_ESTABLISHED",
+    "QUOTE_MINT_IDENTITY_AND_DECIMALS_UNKNOWN",
+    "NO_NET_PROCEEDS_PRICE_LIFECYCLE_HISTORICAL_ACTIVATION_OR_EDGE_CLAIM"
+  ],
+  "no_new_network_data": true,
+  "no_github_request": true,
+  "no_lease_resume_or_acquisition_binary_replacement": true,
+  "no_b3_evidence_change": true,
+  "next_step": "Bounded reviewed Rust-owned lossless Parquet/Arrow materialization of these existing JSON records, schema/manifest/logical-hash parity and one read-only query. Not implemented or authorized as another acquisition.",
+  "full_retained_result": {
+    "path": "/home/dmesdary/solana-quant-data/governance/b5-nested-sell-20260912.c012J5/result.json",
+    "sha256": "ee5f1af7c05768fadf8ba2c3b1b08ec3e9a9f9c58f63a4c9c07aa85b126f814f",
+    "bytes": 133966
+  }
+}

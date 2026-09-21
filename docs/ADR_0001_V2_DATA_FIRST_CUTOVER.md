@@ -76,7 +76,7 @@ The user approved Linux VPS development alongside WSL2, project-local Node/Rust 
 2. Exact Jetstreamer/OF1 source commit, index files, acquisition host/redirect allowlist and raw-byte capture hook.
 3. Exact first engineering-validation and research-sampling plans, including ranges and budgets.
 4. The evidence threshold that promotes an observed-compatible Pump variant to a bounded activation range.
-5. The physical Bronze/Silver Parquet writer and deterministic encoding profile in PR 5. Logical semantics and manifest identity remain Rust-owned; if Python performs physical serialization it must be a generated, lossless materializer with schema/logical-hash parity and no semantic reinterpretation.
+5. Broader Bronze/Silver schemas and future encoding profiles. The bounded B5 projection has selected Rust Arrow/Parquet with a pinned deterministic profile. Logical semantics and manifest identity remain Rust-owned; if Python performs physical serialization it must be a generated, lossless materializer with schema/logical-hash parity and no semantic reinterpretation.
 6. Exact later Gold windows, folds, embargoes and holdout period after data sufficiency is measured.
 
 ## Supersession

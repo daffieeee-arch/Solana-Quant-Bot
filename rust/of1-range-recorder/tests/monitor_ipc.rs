@@ -64,6 +64,8 @@ fn progress(attempts: u64, reserved: u64) -> Progress {
         available_disk_bytes: 100_000,
         deadline_wall_ms: now + 10000,
         deadline_boot_ms: 10000,
+        clock_policy: None,
+        clock_started_at: None,
         current_lease_sha256: "b".repeat(64),
         evidence: "Fixture".into(),
         domain_counts: "UNAVAILABLE_NOT_DECODED_IN_B4".into(),
