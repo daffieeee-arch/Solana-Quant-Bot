@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { parseWorkflowYaml } from './strict-yaml.mjs';
+import { SECURITY_WORKFLOW_PATHS } from './security-workflow-policy.mjs';
 
 function own(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);
@@ -182,7 +183,8 @@ export function validateTrackedWorkflowPaths(trackedPaths) {
   const expected = [
     '.github/workflows/ci.yml',
     '.github/workflows/roadmap-sync.yml',
-  ];
+    ...SECURITY_WORKFLOW_PATHS,
+  ].sort();
   return isDeepStrictEqual(workflowPaths, expected)
     ? []
     : [`tracked workflow file set must be exactly ${expected.join(', ')}; found ${workflowPaths.join(', ') || 'none'}`];

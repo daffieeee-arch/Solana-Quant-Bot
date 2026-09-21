@@ -20,11 +20,13 @@ function patternMatches(pathPattern: string, path: string): boolean {
 }
 
 describe('B2A retired-platform policy', () => {
-  it('retains only ordinary CI and Roadmap Sync workflows', () => {
+  it('retains only reviewed validation, roadmap and security workflows', () => {
     const tracked = trackedPaths();
     expect(validateTrackedWorkflowPaths(tracked)).toEqual([]);
     expect(tracked.filter((path) => path.startsWith('.github/workflows/'))).toEqual([
       '.github/workflows/ci.yml',
+      '.github/workflows/codeql.yml',
+      '.github/workflows/dependency-review.yml',
       '.github/workflows/roadmap-sync.yml',
     ]);
   });

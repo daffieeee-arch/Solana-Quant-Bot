@@ -431,11 +431,13 @@ describe('semantic CI workflow policy', () => {
     }
   });
 
-  it('rejects trigger drift and any workflow outside ordinary CI and Roadmap Sync', () => {
+  it('rejects trigger drift and workflows outside the reviewed CI, roadmap and security set', () => {
     const pullRequestTarget = SAFE_WORKFLOW.replace('  pull_request:', '  pull_request_target:');
     expect(errors(pullRequestTarget)).toMatch(/trigger|canonical workflow/i);
     const reviewed = [
       '.github/workflows/ci.yml',
+      '.github/workflows/codeql.yml',
+      '.github/workflows/dependency-review.yml',
       '.github/workflows/roadmap-sync.yml',
     ];
     expect(workflowFileSetErrors(reviewed)).toBe('');
