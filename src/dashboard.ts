@@ -195,11 +195,10 @@ export async function createDashboardServer(options: { port: number; bindHost?: 
     // (remote DoS). Elke fout wordt een 500, nooit een exit.
     try {
       await handleRequest(request, response);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+    } catch {
       try {
         response.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
-        response.end(JSON.stringify({ ok: false, error: 'internal_error', message: message.slice(0, 120) }));
+        response.end(JSON.stringify({ ok: false, error: 'internal_error' }));
       } catch {
         /* response al verzonden */
       }
