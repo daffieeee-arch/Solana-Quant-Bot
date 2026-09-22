@@ -63,6 +63,17 @@ class WalkingSkeletonTests(unittest.TestCase):
         self.assertFalse(skeleton.research_input_allowed("ENGINEERING_VALIDATION_ONLY", True))
         self.assertFalse(skeleton.research_input_allowed("RESEARCH_SAMPLING", False))
 
+    def test_receipt_sequences_are_scoped_to_the_selected_source(self):
+        plan = {
+            "sources": [
+                {"source_id": "pilot", "bindings": {"receipts": [{"sequence": 4, "raw_bytes": 10, "raw_sha256": "pilot"}]}},
+                {"source_id": "context", "bindings": {"receipts": [{"sequence": 4, "raw_bytes": 20, "raw_sha256": "context"}]}},
+            ],
+            "batches": [{"batch_id": "pilot-batch", "source_id": "pilot", "receipt_sequences": [4]}],
+        }
+        receipts = skeleton._source_receipts(plan, [{"batch_id": "pilot-batch"}])
+        self.assertEqual(receipts, [{"sequence": 4, "raw_bytes": 10, "raw_sha256": "pilot", "source_id": "pilot"}])
+
     def test_canonical_output_preserves_exact_integers_and_replays_identically(self):
         value = {"u64": 18446744073709551615, "signed": -9007199254740993, "missing": None}
         first = skeleton.canonical(value)

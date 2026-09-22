@@ -134,11 +134,26 @@ def _child_bindings(root, collection, batches):
 
 def _source_receipts(plan, batches):
     planned = {batch["batch_id"]: batch for batch in plan["batches"]}
-    sequences = {sequence for batch in batches for sequence in planned[batch["batch_id"]]["receipt_sequences"]}
+    selected_sources = {planned[batch["batch_id"]]["source_id"] for batch in batches}
+    sequences_by_source = {
+        source_id: {
+            sequence
+            for batch in batches
+            if planned[batch["batch_id"]]["source_id"] == source_id
+            for sequence in planned[batch["batch_id"]]["receipt_sequences"]
+        }
+        for source_id in selected_sources
+    }
     result = []
     for source in plan["sources"]:
-        result.extend(receipt for receipt in source["bindings"]["receipts"] if receipt["sequence"] in sequences)
-    return sorted(result, key=lambda receipt: receipt["sequence"])
+        source_id = source["source_id"]
+        sequences = sequences_by_source.get(source_id, set())
+        result.extend(
+            {**receipt, "source_id": source_id}
+            for receipt in source["bindings"]["receipts"]
+            if receipt["sequence"] in sequences
+        )
+    return sorted(result, key=lambda receipt: (receipt["source_id"], receipt["sequence"], receipt["raw_sha256"]))
 
 
 def _raw_index(db, start_slot, end_slot):
@@ -282,11 +297,21 @@ def run(collection_root, output, start_slot, end_slot, collection_sha256=COLLECT
     selected_source = next(source for source in plan["sources"] if source["source_id"] == selected[0]["source_id"])
     sample_identity = selected_source.get("sample_identity")
     slice_class = sample_identity.get("sample_class") if sample_identity else "ENGINEERING_VALIDATION_ONLY"
+    selected_receipts = _source_receipts(plan, batches)
+    selected_raw_hashes = {
+        slot["raw_sha256"]
+        for batch in batches
+        for slot in batch["slots"]
+        if slot["slot"] in {row["slot"] for row in selected}
+    }
+    receipt_raw_hashes = {receipt["raw_sha256"] for receipt in selected_receipts if receipt["raw_bytes"]}
+    if selected_raw_hashes != receipt_raw_hashes:
+        raise ValueError("selected source receipt/raw bindings are incomplete or ambiguous")
     provenance = {
         "collection_sha256": digest,
         "plan_sha256": manifest["plan_sha256"],
         "selected_batches": children,
-        "selected_receipts": _source_receipts(plan, batches),
+        "selected_receipts": selected_receipts,
         "selected_source": {"source_id": selected_source["source_id"], "run_id": selected_source["run_id"], "run_root_provenance": selected_source["run_root"], "bindings": selected_source["bindings"], "historical_paths_are_provenance_only": True},
         "writer_identities": [json.loads(value) for value in writer_ids],
         "research_ready": False,
