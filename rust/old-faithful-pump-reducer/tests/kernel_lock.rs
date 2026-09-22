@@ -1,8 +1,7 @@
 #![allow(clippy::default_trait_access, clippy::too_many_lines)]
 
 use std::{
-    collections::HashMap,
-    os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _},
+    os::unix::ffi::OsStrExt as _,
     path::{Path, PathBuf},
     process::{Child, Command},
     thread,
@@ -13,7 +12,6 @@ use old_faithful_pump_reducer::{
     AdapterProvenance, OldFaithfulSourceManifest, Phase5Reducer, ReducerConfig, ReducerLimits,
     ReducerProvenance, SlotRange,
 };
-use sha2::{Digest as _, Sha256};
 
 const START: u64 = 432_000_000;
 
@@ -261,45 +259,19 @@ fn killed_writer_releases_kernel_namespace_immediately() {
 
 #[test]
 fn distinct_namespaces_with_the_same_primary_key_do_not_alias() {
-    let temp = tempfile::tempdir().unwrap();
-    let effective_uid = std::fs::metadata(temp.path()).unwrap().uid();
-    let mut seen = HashMap::<i32, PathBuf>::new();
-    let mut collision = None;
-    for index in 0..200_000_u32 {
-        let namespace = temp.path().join(format!("namespace-{index}"));
-        let mut hasher = Sha256::new();
-        hasher.update(effective_uid.to_be_bytes());
-        hasher.update([0]);
-        hasher.update(namespace.as_os_str().as_bytes());
-        let digest = hasher.finalize();
-        let key = i32::from_be_bytes(digest[..4].try_into().unwrap());
-        if key == 0 {
-            continue;
+    // Fresh paths and the actual effective UID seed each independent registry.
+    // The closed support probe injects only a deterministic full-digest fixture;
+    // hashing and the primary-key function used by production remain unchanged.
+    std::thread::scope(|scope| {
+        for _ in 0..2 {
+            scope.spawn(|| {
+                let temp = tempfile::tempdir().unwrap();
+                linux_kernel_namespace_lock::assert_primary_key_collision_isolated_for_test(
+                    temp.path().as_os_str().as_bytes(),
+                );
+            });
         }
-        if let Some(other) = seen.insert(key, namespace.clone()) {
-            collision = Some((other, namespace));
-            break;
-        }
-    }
-    let (first_namespace, second_namespace) = collision.expect("expected birthday collision");
-    let first =
-        linux_kernel_namespace_lock::NamespaceLock::acquire(first_namespace.as_os_str().as_bytes())
-            .unwrap();
-    let second = linux_kernel_namespace_lock::NamespaceLock::acquire(
-        second_namespace.as_os_str().as_bytes(),
-    )
-    .expect("distinct full namespace digests must not alias");
-    drop(first);
-    let duplicate_second = linux_kernel_namespace_lock::NamespaceLock::acquire(
-        second_namespace.as_os_str().as_bytes(),
-    )
-    .unwrap_err();
-    assert_eq!(duplicate_second.kind(), std::io::ErrorKind::WouldBlock);
-    let replacement_first =
-        linux_kernel_namespace_lock::NamespaceLock::acquire(first_namespace.as_os_str().as_bytes())
-            .expect("collision mapping must remain stable while another slot is active");
-    drop(replacement_first);
-    drop(second);
+    });
 }
 
 #[test]
