@@ -45,7 +45,12 @@ impl NamespaceLock {
                 "namespace must not be empty",
             ));
         }
-        let fingerprint = namespace_fingerprint(namespace);
+        Self::acquire_fingerprint(namespace_fingerprint(namespace))
+    }
+
+    // Private boundary: production callers always hash the effective UID and
+    // namespace above. Only the closed test probe below supplies fixture digests.
+    fn acquire_fingerprint(fingerprint: [u8; 32]) -> io::Result<Self> {
         let key = primary_key(&fingerprint);
         for _ in 0..REGISTRY_RETRIES {
             let (semaphore_id, created) = get_or_create_registry(key)?;
@@ -446,4 +451,71 @@ pub fn make_current_process_nondumpable() -> io::Result<()> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+/// Exercises a deterministic primary-key collision using actual Linux locks.
+///
+/// The first identity is the production effective-UID/namespace digest. The
+/// second is a synthetic full digest differing in its last byte, leaving the
+/// primary-key prefix and fallback unchanged. This tests collision handling,
+/// not SHA-256 collision discovery. No arbitrary key override or lock escapes
+/// this closed probe, which is absent without `test-support`.
+///
+/// # Panics
+///
+/// Panics on a failed collision invariant or OS error. The caller must supply
+/// its own unique test namespace. Only the exclusively created registry is
+/// reserved for cleanup; an existing registry fails before any mutation.
+#[cfg(feature = "test-support")]
+pub fn assert_primary_key_collision_isolated_for_test(namespace: &[u8]) {
+    let reservation = reserve_uninitialized_registry_for_test(namespace).unwrap();
+    initialize_registry(reservation.semaphore_id).unwrap();
+    let first_identity = namespace_fingerprint(namespace);
+    let mut second_identity = first_identity;
+    second_identity[31] ^= 1;
+    assert_ne!(first_identity, second_identity);
+    assert_eq!(primary_key(&first_identity), primary_key(&second_identity));
+
+    let first = NamespaceLock::acquire(namespace).unwrap();
+    let second = NamespaceLock::acquire_fingerprint(second_identity).unwrap();
+    assert_eq!(first.semaphore_id, reservation.semaphore_id);
+    assert_eq!(first.semaphore_id, second.semaphore_id);
+    assert_ne!(first.slot, second.slot);
+    let values = registry_values(reservation.semaphore_id).unwrap();
+    assert!(slot_matches(&values, first.slot, &first_identity));
+    assert!(slot_matches(&values, second.slot, &second_identity));
+    assert_eq!(values[slot_active_index(first.slot)], 1);
+    assert_eq!(values[slot_active_index(second.slot)], 1);
+    assert_eq!(
+        NamespaceLock::acquire(namespace).unwrap_err().kind(),
+        io::ErrorKind::WouldBlock
+    );
+    assert_eq!(
+        NamespaceLock::acquire_fingerprint(second_identity)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+
+    let first_slot = first.slot;
+    drop(first);
+    assert!(reservation.is_present());
+    assert_eq!(
+        NamespaceLock::acquire_fingerprint(second_identity)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::WouldBlock
+    );
+    let replacement = NamespaceLock::acquire(namespace).unwrap();
+    assert_eq!(replacement.semaphore_id, second.semaphore_id);
+    assert_eq!(replacement.slot, first_slot);
+    drop(second);
+    let second_again = NamespaceLock::acquire_fingerprint(second_identity).unwrap();
+    assert_eq!(second_again.semaphore_id, replacement.semaphore_id);
+    drop(second_again);
+    drop(replacement);
+    assert!(
+        !reservation.is_present(),
+        "own registry must be removed after final release"
+    );
 }
