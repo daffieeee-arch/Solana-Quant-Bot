@@ -335,6 +335,18 @@ async function run(mode) {
         || report.integrity.slots.reduce((n, slot) => n + slot.report.verified_nodes, 0) !== nodes) {
         throw new Error('read-only recorded verifier identity/preservation/determinism drift');
       }
+      const inspection = JSON.parse(isolated(`inspect.${name}.json`, reader, [directory, '--inspect-json']).stdout);
+      const html = isolated(`inspect.${name}.html`, reader, [directory, '--inspect-html']).stdout;
+      if (inspection.schema !== 'OF1_RAW_ARCHIVAL_INSPECTION_1'
+        || inspection.stages.car_slot !== state
+        || JSON.stringify(inspection.bindings) !== JSON.stringify(report.bindings)
+        || JSON.stringify(inspection.verifier) !== JSON.stringify(report.verifier)
+        || inspection.integrity.slots.reduce((n, slot) => n + slot.archival_nodes.length, 0) !== nodes
+        || !html.startsWith('<!doctype html>') || html.includes('<script')
+        || !html.includes(inspection.bindings.manifest_sha256)
+        || before !== JSON.stringify(inventory(directory))) {
+        throw new Error('receipt-bound Raw span CLI/HTML/preservation drift');
+      }
     }
     process.stdout.write('OF1 separate read-only verifier: metadata-only + sealed CAR, deterministic, source-preserving, socket-denied PASS\n');
     process.stdout.write('OF1 socket-denied default/build, local IPC and fixed-loopback TLS acquisition graph/fmt/clippy/tests/evidence PASS; no official call\n');

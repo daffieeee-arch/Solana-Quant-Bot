@@ -2,7 +2,7 @@
 //! acquisition authority or domain decoding. Old failures are separate history.
 use crate::{
     acquisition::{read_limited, verify_prepared_payload},
-    car::{VerificationLimits, verify_slot_sections},
+    car::{VerificationLimits, inspect_slot_sections, verify_slot_sections},
     durable::acquisition::{PreparedPayload, Published, RequestKind, current_executable_sha256},
     monitor::{RecordedRun, read_run_context},
     sha256,
@@ -31,6 +31,7 @@ pub fn source_sha256() -> String {
         include_bytes!("recorded_verification.rs"),
         include_bytes!("bin/of1-verify-recorded.rs"),
         include_bytes!("car.rs"),
+        include_bytes!("raw_inspection_html.rs"),
         include_bytes!("monitor/recorded.rs"),
         include_bytes!("monitor/mod.rs"),
         include_bytes!("acquisition.rs"),
@@ -170,9 +171,26 @@ fn prior_failure(paths: Option<(&Path, &Path)>, run: &RecordedRun) -> io::Result
     )
 }
 
+fn append_range(
+    bytes: &mut Vec<u8>,
+    next: &mut u64,
+    start: u64,
+    end: u64,
+    raw: &[u8],
+) -> io::Result<()> {
+    if start != *next || end.checked_sub(start) != Some(raw.len() as u64) {
+        return Err(invalid("noncontiguous or truncated slot range"));
+    }
+    bytes.try_reserve_exact(raw.len()).map_err(invalid)?;
+    bytes.extend_from_slice(raw);
+    *next = end;
+    Ok(())
+}
+
 fn check_payload(
     run: &RecordedRun,
     selected: Option<&[u64]>,
+    inspect: bool,
 ) -> io::Result<(&'static str, Option<String>, Vec<Value>)> {
     let Some(prepared) = &run.prepared else {
         return Ok(("NOT_ACQUIRED", None, vec![]));
@@ -185,6 +203,7 @@ fn check_payload(
         .collect::<Vec<_>>();
     verify_prepared_payload(&run.aggregate_plan, &metadata, prepared).map_err(invalid)?;
     let mut assembled = BTreeMap::<u64, (u64, Vec<u8>)>::new();
+    let mut ranges = BTreeMap::<u64, Vec<Value>>::new();
     let mut total = 0_u64;
     for request in prepared.requests() {
         if selected.is_some_and(|sequences| !sequences.contains(&request.sequence)) {
@@ -219,27 +238,48 @@ fn check_payload(
         if entry.0 != start {
             return Err(invalid("noncontiguous slot range"));
         }
-        entry
-            .1
-            .try_reserve_exact(usize::try_from(length).map_err(invalid)?)
-            .map_err(invalid)?;
-        entry.1.extend(raw(object)?);
-        entry.0 = end_exclusive;
+        if inspect {
+            ranges.entry(slot).or_default().push(json!({
+                "receipt_sequence": request.sequence,
+                "receipt_path": format!("published/{:010}/receipt.json", request.sequence),
+                "raw_path": format!("published/{:010}/raw.bin", request.sequence),
+                "raw_sha256": object.receipt.sha256,
+                "assembled_offset": entry.1.len(), "length": length,
+                "raw_offset": 0, "car_offset": start.to_string()
+            }));
+        }
+        append_range(
+            &mut entry.1,
+            &mut entry.0,
+            start,
+            end_exclusive,
+            &raw(object)?,
+        )?;
     }
     let mut slots = Vec::new();
     for (slot, (_, bytes)) in assembled {
-        let result = verify_slot_sections(
-            slot,
-            &bytes,
-            VerificationLimits {
-                max_total_bytes: usize::try_from(ASSEMBLY_LIMIT).map_err(invalid)?,
-                max_section_bytes: usize::try_from(ASSEMBLY_LIMIT).map_err(invalid)?,
-                max_nodes: 4096,
-                max_links: 16_384,
-            },
-        );
+        let limits = VerificationLimits {
+            max_total_bytes: usize::try_from(ASSEMBLY_LIMIT).map_err(invalid)?,
+            max_section_bytes: usize::try_from(ASSEMBLY_LIMIT).map_err(invalid)?,
+            max_nodes: 4096,
+            max_links: 16_384,
+        };
+        let result =
+            if inspect {
+                inspect_slot_sections(slot, &bytes, limits).map(|inspection| json!({
+                "slot":slot, "archival_node_counts": inspection.integrity.archival_node_counts,
+                "report":inspection.integrity, "archival_nodes":inspection.archival_nodes,
+                "transaction_envelopes":inspection.transaction_envelopes,
+                "ordering":inspection.ordering, "ranges":ranges.remove(&slot).unwrap_or_default(),
+                "assembled_sha256":sha256(&bytes)
+            }))
+            } else {
+                verify_slot_sections(slot, &bytes, limits).map(|report| json!({
+                "slot":slot,"archival_node_counts":report.archival_node_counts,"report":report
+            }))
+            };
         match result {
-            Ok(report) => slots.push(json!({"slot":slot,"archival_node_counts":report.archival_node_counts,"report":report})),
+            Ok(report) => slots.push(report),
             Err(error) => return Ok(("QUARANTINED", Some(error.to_string()), vec![])),
         }
     }
@@ -247,7 +287,7 @@ fn check_payload(
         return Ok((
             "INCOMPLETE",
             Some("INDEX_REPORTS_ABSENT_SLOTS".into()),
-            slots,
+            if inspect { vec![] } else { slots },
         ));
     }
     Ok(("VERIFIED", None, slots))
@@ -259,7 +299,7 @@ fn check_payload(
 /// # Errors
 /// Rejects changed, unbound, oversized, nonregular or corrupt inputs.
 pub fn verify_recorded(root: &Path, prior: Option<(&Path, &Path)>) -> io::Result<Value> {
-    verify_recorded_inner(root, prior, None)
+    verify_recorded_inner(root, prior, None, false)
 }
 
 /// Verify only explicitly named native payload receipts, retaining the complete
@@ -304,13 +344,23 @@ pub fn verify_recorded_selection(root: &Path, selected: &[u64]) -> io::Result<Va
     if total > RESPONSE_LIMIT {
         return Err(invalid("SELECTED_RAW_LIMIT"));
     }
-    verify_recorded_inner(root, None, Some(selected))
+    verify_recorded_inner(root, None, Some(selected), false)
+}
+
+/// Inspect verified archival spans through the same immutable reader and CAR parser.
+/// No partial facts are published for incomplete or quarantined runs. This does not
+/// assemble/decompress `DataFrame` payloads or decode Solana/Pump domain records.
+/// # Errors
+/// Retains all reader identity, receipt, mutation and resource rejection rules.
+pub fn inspect_recorded(root: &Path) -> io::Result<Value> {
+    verify_recorded_inner(root, None, None, true)
 }
 
 fn verify_recorded_inner(
     root: &Path,
     prior: Option<(&Path, &Path)>,
     selected: Option<&[u64]>,
+    inspect: bool,
 ) -> io::Result<Value> {
     // Bound resources before the existing streaming audit uses manifest limits.
     let (manifest, _) = limited_json(&root.join("run.json"))?;
@@ -327,7 +377,7 @@ fn verify_recorded_inner(
     let before = read_run_context(root)?;
     let bound = bindings(&before)?;
     let historical = prior_failure(prior, &before)?;
-    let (car_status, error, slots) = check_payload(&before, selected)?;
+    let (car_status, error, slots) = check_payload(&before, selected, inspect)?;
     let after = read_run_context(root)?;
     if bindings(&after)? != bound
         || after.snapshot.id != before.snapshot.id
@@ -335,12 +385,76 @@ fn verify_recorded_inner(
     {
         return Err(invalid("recorded inputs changed during verification"));
     }
-    Ok(json!({
+    let mut result = json!({
         "schema":"OF1_OFFLINE_VERIFICATION_1", "run_id":before.snapshot.id,"dataset_root":before.snapshot.dataset_root,
         "verifier":{"name":"of1-verify-recorded","version":"1", "binary_sha256":current_executable_sha256().map_err(invalid)?,"source_sha256":source_sha256()},
         "bindings":bound,
         "stages":{"capture":if before.snapshot.stage=="COMPLETE" {"COMPLETE"}else{"INCOMPLETE"},"raw_receipts":"VERIFIED","car_slot":car_status,"domain_decoding":"NOT_PERFORMED"},
         "integrity":{"error":error,"root_to_slot_membership":"UNAVAILABLE","whole_car_sha256_verified":false,"slots":slots},
         "prior_failure":historical,"evidence":"RAW_ENGINEERING_CHECK_ONLY","research_ready":false
-    }))
+    });
+    if inspect {
+        result["schema"] = json!("OF1_RAW_ARCHIVAL_INSPECTION_1");
+        result["inspection"] = json!({
+            "read_root":root, "offset_basis":"ZERO_BASED_HALF_OPEN_ASSEMBLED_SLOT_SECTIONS",
+            "section_span":"INCLUDES_VARINT_AND_CID", "raw_cbor_span":"EXCLUDES_VARINT_AND_CID",
+            "data_span":"BYTESTRING_CONTENT_ONLY_NO_CBOR_HEADER",
+            "range_mapping":"Intersect [offset,offset+length) with ranges; raw byte = raw_offset + offset - assembled_offset; CAR byte = car_offset + offset - assembled_offset. Split spans at every receipt boundary.",
+            "cid_encoding":"LOWERCASE_HEX_FULL_CID_BYTES",
+            "dataframe_payload_and_checksum":"NOT_EVALUATED",
+            "domain_counts":"UNAVAILABLE_NOT_DECODED",
+            "canonical_admission":"NONE_DIAGNOSTICS_ONLY"
+        });
+    }
+    Ok(result)
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use super::*;
+
+    #[test]
+    fn actual_receipt_range_assembly_is_deterministic_across_chunk_boundaries() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../schemas/acquisition/of1/car-structural-fixture.json"
+        ))
+        .unwrap();
+        let bytes = hex::decode(fixture["sections_hex"].as_str().unwrap()).unwrap();
+        let limits = VerificationLimits {
+            max_total_bytes: 8192,
+            max_section_bytes: 4096,
+            max_nodes: 32,
+            max_links: 64,
+        };
+        let expected = inspect_slot_sections(422_496_000, &bytes, limits).unwrap();
+        for size in 1..=bytes.len() {
+            let (mut assembled, mut next) = (Vec::new(), 4096);
+            for chunk in bytes.chunks(size) {
+                let start = next;
+                append_range(
+                    &mut assembled,
+                    &mut next,
+                    start,
+                    start + chunk.len() as u64,
+                    chunk,
+                )
+                .unwrap();
+            }
+            assert_eq!(next, 4096 + bytes.len() as u64);
+            assert_eq!(
+                inspect_slot_sections(422_496_000, &assembled, limits).unwrap(),
+                expected
+            );
+        }
+        for (start, end, fragment) in [
+            (4095, 4096, &[1][..]),
+            (4097, 4098, &[1][..]),
+            (4096, 4098, &[1][..]),
+        ] {
+            let (mut assembled, mut next) = (vec![], 4096);
+            assert!(append_range(&mut assembled, &mut next, start, end, fragment).is_err());
+            assert!(assembled.is_empty());
+            assert_eq!(next, 4096);
+        }
+    }
 }

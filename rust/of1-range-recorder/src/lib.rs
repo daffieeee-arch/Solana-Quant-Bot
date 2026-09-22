@@ -454,3 +454,5 @@ fn check_entry_budget(requests: usize, absent: usize, cap: u64) -> Result<()> {
     }
     Ok(())
 }
+
+pub mod raw_inspection_html;
