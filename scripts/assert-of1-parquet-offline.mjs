@@ -71,6 +71,7 @@ try {
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_token_balances.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_manifest.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_collection.py'),join(scratch,'fixtures')]));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_walking_skeleton.py')]));
     // The ordinary CI Bronze gate precedes this gate. Re-execute only its
     // explicit six-slot source export, then prove the actual cross-crate path.
     // This remains offline and creates no provider/acquisition capability.
