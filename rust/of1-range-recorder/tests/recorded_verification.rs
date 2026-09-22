@@ -13,7 +13,7 @@ use of1_range_recorder::{
             current_executable_sha256,
         },
     },
-    recorded_verification::verify_recorded,
+    recorded_verification::{inspect_recorded, verify_recorded},
     sha256,
 };
 use serde_json::{Value, json};
@@ -202,6 +202,14 @@ fn expired_historical_fixture_is_read_without_writer_lock_or_source_changes() {
     h.metadata();
     // Store remains alive and holds writer.lock. Its boot/deadline are historical.
     let before = inventory(&h.root);
+    let inspected = inspect_recorded(&h.root).unwrap();
+    assert_eq!(inspected["stages"]["car_slot"], "NOT_ACQUIRED");
+    assert!(
+        inspected["integrity"]["slots"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     let first = verify_recorded(&h.root, None).unwrap();
     let second = verify_recorded(&h.root, None).unwrap();
     assert_eq!(first, second);
@@ -220,6 +228,14 @@ fn selected_unpublished_payload_remains_incomplete_not_verified_or_zero() {
     h.admit();
     let before = inventory(&h.root);
     let report = verify_recorded(&h.root, None).unwrap();
+    let inspected = inspect_recorded(&h.root).unwrap();
+    assert_eq!(inspected["stages"]["car_slot"], "INCOMPLETE");
+    assert!(
+        inspected["integrity"]["slots"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(report["stages"]["capture"], "INCOMPLETE");
     assert_eq!(report["stages"]["car_slot"], "INCOMPLETE");
     assert_eq!(report["stages"]["domain_decoding"], "NOT_PERFORMED");
@@ -239,6 +255,19 @@ fn full_fixture_report_binds_receipt_bytes_and_all_archival_node_kinds() {
     assert_eq!(report["stages"]["raw_receipts"], "VERIFIED");
     assert_eq!(report["stages"]["car_slot"], "VERIFIED");
     assert_eq!(report["stages"]["domain_decoding"], "NOT_PERFORMED");
+    let inspected = inspect_recorded(&h.root).unwrap();
+    assert_eq!(inspected, inspect_recorded(&h.root).unwrap());
+    assert_eq!(inspected["bindings"], report["bindings"]);
+    let slot = &inspected["integrity"]["slots"][0];
+    assert_eq!(slot["ranges"][0]["car_offset"], OFFSET.to_string());
+    assert_eq!(slot["ranges"][0]["assembled_offset"], 0);
+    assert_eq!(slot["ranges"][0]["length"], payload().len());
+    assert_eq!(slot["ranges"][0]["raw_sha256"], sha256(&payload()));
+    assert_eq!(slot["archival_nodes"].as_array().unwrap().len(), 5);
+    assert_eq!(slot["transaction_envelopes"].as_array().unwrap().len(), 1);
+    let html = of1_range_recorder::raw_inspection_html::render(&inspected).unwrap();
+    assert!(html.contains("Worked example"));
+    assert!(html.contains(&before["published/0000000004/receipt.json"]));
     let bindings = &report["bindings"];
     assert_eq!(bindings["manifest_sha256"], before["run.json"]);
     assert_eq!(bindings["payload_manifest_sha256"], before["payload.json"]);
@@ -295,6 +324,7 @@ fn corrupt_raw_receipt_and_aggregate_fail_without_mutating_source() {
         }
         let before = inventory(&h.root);
         assert!(verify_recorded(&h.root, None).is_err(), "{target}");
+        assert!(inspect_recorded(&h.root).is_err(), "{target}");
         assert_eq!(before, inventory(&h.root), "{target}");
     }
 }
@@ -311,6 +341,14 @@ fn receipt_valid_but_invalid_car_is_quarantined_without_partial_slot_promotion()
     let report = verify_recorded(&h.root, None).unwrap();
     assert_eq!(report["stages"]["capture"], "COMPLETE");
     assert_eq!(report["stages"]["raw_receipts"], "VERIFIED");
+    let inspected = inspect_recorded(&h.root).unwrap();
+    assert_eq!(inspected["stages"]["car_slot"], "QUARANTINED");
+    assert!(
+        inspected["integrity"]["slots"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(report["stages"]["car_slot"], "QUARANTINED");
     assert_eq!(report["stages"]["domain_decoding"], "NOT_PERFORMED");
     assert!(report["integrity"]["slots"].as_array().unwrap().is_empty());
@@ -334,6 +372,7 @@ fn self_consistent_rehashed_range_is_rejected_when_index_metadata_disagrees() {
     });
     let before = inventory(&h.root);
     assert!(verify_recorded(&h.root, None).is_err());
+    assert!(inspect_recorded(&h.root).is_err());
     assert_eq!(before, inventory(&h.root));
 }
 

@@ -1,15 +1,23 @@
 //! Standalone offline forensic verifier. Stdout only; never resume an old writer.
-use of1_range_recorder::recorded_verification::verify_recorded;
+use of1_range_recorder::{
+    raw_inspection_html,
+    recorded_verification::{inspect_recorded, verify_recorded},
+};
 use std::{error::Error, path::Path};
 
 fn run() -> Result<bool, Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let report = match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        [root, "--inspect-json" | "--inspect-html"] => inspect_recorded(Path::new(root))?,
         [root] => verify_recorded(Path::new(root), None)?,
         [root, "--prior-failure", failure, "--prior-run-result", result] => verify_recorded(Path::new(root), Some((Path::new(failure), Path::new(result))))?,
-        _ => return Err("usage: of1-verify-recorded RUN_ROOT [--prior-failure FAILURE_JSON --prior-run-result RESULT_JSON]".into()),
+        _ => return Err("usage: of1-verify-recorded RUN_ROOT [--inspect-json | --inspect-html | --prior-failure FAILURE_JSON --prior-run-result RESULT_JSON]".into()),
     };
-    println!("{}", serde_json::to_string_pretty(&report)?);
+    if args.last().is_some_and(|a| a == "--inspect-html") {
+        println!("{}", raw_inspection_html::render(&report)?);
+    } else {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    }
     Ok(report["stages"]["car_slot"] != "QUARANTINED"
         && report["stages"]["car_slot"] != "INCOMPLETE")
 }
