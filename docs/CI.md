@@ -319,3 +319,38 @@ new host. GitHub CI remains the complete gate when local toolchains diverge.
 Older Phase 8 image workflows and PR-1 local/CI count comparisons remain
 historical evidence only. They do not authorize restoring retired deployment
 paths.
+
+## Bounded regression setup for the #130 CI blockers
+
+The namespace collision regression uses the existing `test-support` feature to
+run a closed probe against real System V semaphores. One full fingerprint is the
+ordinary effective-UID/temporary-namespace SHA-256; the other is a synthetic
+fingerprint differing only in its last byte. Both therefore deterministically
+use the unchanged primary-key function and the same registry, with different
+full identities. This is collision handling evidence, not a discovered SHA-256
+collision. The private fingerprint acquisition path never exposes a public key
+or digest override or returns test locks. Production namespace hashing is
+unchanged. Two temporary namespaces run concurrently; kernel values, exclusivity,
+reacquisition and cleanup are checked. Exclusive registry reservation prevents
+cleanup of an unrelated registry.
+
+The outbound seccomp test builds the unchanged real filter/launcher in a bounded
+setup hook (15 seconds), outside the unchanged 5-second assertion budget.
+Compilation has a 10-second bound and a 256-KiB combined output cap; failure kills
+only the newly created compiler process group, including compiler children.
+One filtered Node process performs all three existing loopback/listener,
+TCP-connect and UDP-send checks, with a 1-second watchdog and a 3-second parent
+kill bound. Both denials must explicitly be `EPERM`; other errors and all
+timeouts fail. `SECCOMP_PHASE` records distinguish generation, compilation,
+process startup and the individual probes. No global timeout, security filter,
+workflow, required gate or Rust CI profile changes.
+
+The preserved #130 attempt 1 failed during the old 200,000-candidate collision
+search before acquiring locks. Attempt 2 timed out the old seccomp test at
+5.935 seconds (the same test took 0.960 seconds in attempt 1). The bounded local
+baseline measured 1 ms filter generation, 66 ms compilation, 23–27 ms per Node
+startup and 176 ms total. It did not reproduce the historical runner delay;
+that run has no phase timings, so contention or a specific slow phase remains
+unproven. New timing evidence is separate from those unchanged failed receipts.
+The task evidence is outside Git under
+`/home/chupa/Solana-project/data-old-faithful-one/governance/ci-reliability-130-20260922`.
