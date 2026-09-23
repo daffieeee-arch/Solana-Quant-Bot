@@ -414,6 +414,22 @@ describe('GitHub Project field identity and mutation safety', () => {
 });
 
 describe('Roadmap Sync trusted-default-branch security boundary', () => {
+  it('runs only after main pushes, daily or deliberate dispatch, without cancelling mutations', () => {
+    const workflow = YAML.parse(readFileSync('.github/workflows/roadmap-sync.yml', 'utf8'));
+    expect(workflow.on).toEqual({
+      workflow_dispatch: {},
+      push: { branches: ['main'] },
+      schedule: [{ cron: '17 4 * * *' }],
+    });
+    expect(workflow.concurrency).toEqual({
+      group: 'roadmap-sync-${{ github.repository }}',
+      'cancel-in-progress': false,
+    });
+    expect(Object.keys(workflow.jobs)).toEqual(['reconcile']);
+    expect(workflow.jobs.reconcile['runs-on']).toBe('ubuntu-24.04');
+    expect(workflow.jobs.reconcile['timeout-minutes']).toBe(15);
+  });
+
   it('keeps PROJECT_TOKEN exclusively in the trusted reconciliation step', () => {
     const raw = readFileSync('.github/workflows/roadmap-sync.yml', 'utf8');
     const workflow = YAML.parse(raw) as {

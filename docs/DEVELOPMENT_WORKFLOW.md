@@ -41,12 +41,12 @@ The user approved this standing procedure on 2026-09-21 for approved V2 developm
 3. Conduct one complete independent review round, consolidating findings as far as possible; parallel reviewers partitioning a large diff count as one combined round. Record the exact head SHA, findings, severity, evidence and conclusion at the PR. Fix valid in-scope findings on the same branch and explain rejected findings with evidence. Conduct one focused independent recheck of the fixes and their consequences, with relevant tests and required gates, and record the reviewed head. If blocking findings remain after that recheck, stop automatic repair/review rounds, report what remains, why it blocks and the smallest next step, then wait for the user's decision. Never merge because the round budget is exhausted. Resolve discussions only after addressing their substance. Put nonblocking out-of-scope ideas on the backlog; avoid style-driven rewrites.
 4. Immediately before merge, reread the PR head, latest-commit required checks, acceptance evidence, review results and discussion state. The head must equal the independently reviewed SHA. A changed head requires review and checks of that revision; do not merge by relying on stale results.
 5. Squash-merge the exact reviewed head through the normal protected PR path. Do not use administrator bypass, force-push `main`, weaken required checks or ignore unresolved review discussions. Do not queue an unattended merge that can outlive the commit verification.
-6. Fetch and inspect the resulting `origin/main` commit, its CI job/logs and roadmap synchronization. Check the squash commit's parents and resulting tree against the accepted integration. A failed post-merge gate means the delivery remains incomplete: report it and repair it on a new bounded task branch from current `origin/main`, subject to the same scope and bounded-review rules.
+6. Fetch and inspect the resulting `origin/main` commit and technical/security job logs. Check the squash commit's parents and tree against the accepted integration. Technical, security and evidence failures keep technical delivery incomplete and require bounded repair. Record administrative roadmap synchronization separately under the cadence below; a demonstrated external Projects availability/visibility failure remains open but does not block an otherwise justified protected merge or further product work.
 7. Confirm the merged GitHub task branch is absent. Before any local deletion, verify clean tracked and untracked state, no current use, no open PR and preservation of unique commits/evidence. A squash merge alone does not prove that a local branch has no unique history. Preserve protected original VPS/WSL worktrees, open-PR branches, unique commits, archive tags and migration evidence. Limit cleanup to the just-completed task; no general old-WSL-branch cleanup follows from this procedure.
 
 Reuse existing test results while the relevant code, inputs and environment remain unchanged. Repeat checks only after relevant changes, failures, concrete uncertainties or for required gates. All required GitHub checks must pass on the final commit. Finish once the acceptance criteria, required checks and bounded review are complete; do not start another optimization round.
 
-The final delivery report identifies the PR, findings and their resolutions, exact reviewed commit, test results, squash-merge commit, main CI and roadmap synchronization, and what was removed or deliberately retained. Missing post-merge evidence must stay visibly incomplete.
+The final delivery report identifies the PR, findings and their resolutions, exact reviewed commit, test results, squash-merge commit, main CI and roadmap synchronization, and what was removed or deliberately retained. Missing post-merge evidence must stay visibly incomplete in its corresponding technical or administrative status.
 
 ## Result cadence
 
@@ -66,6 +66,25 @@ PR count is not a performance metric. A bounded PR may split when correctness/re
 Implement one official source, one approved acquisition plan, one small authentic range, one necessary Pump variant, one Bronze path, one Silver path, one token lifecycle and one visible result. Do not create a generic plugin/framework/abstraction for a hypothetical second case.
 
 Rust owns logical/canonical Raw/Bronze/Silver semantics and manifest identity and produces or authorizes their records. Python reads approved Silver and owns Gold/research; it must not decode Pump wire data or create alternative Silver rules. The bounded B5 projection selects Rust Arrow/Parquet. If Python later serializes those layers, generated schemas and logical hashes must prove a lossless, non-semantic materialization.
+
+## Technical delivery and administrative synchronization — 2026-09-23
+
+The owner explicitly separates these statuses. A demonstrated external Projects
+availability/visibility failure does not invalidate green technical/security gates,
+review or authentic evidence; it remains a visible open administrative point.
+Failures in changed code, security or evidence still block. Do not assume every
+sync error is external, manufacture a green check, or bypass branch protection.
+
+Keep issue and PR content current. Automatic sync runs only on main pushes and
+the existing daily schedule (04:17 UTC); deliberate dispatch runs on main. No
+issue/PR-event replacement trigger is allowed. The board follows main updates
+and normally no later than the next daily synchronization. Report actual read-back,
+not intended fields. After >24 hours without a successful sync, name the backlog
+and last successful run in delivery reports; do not launch automatic diagnosis
+or retry loops. After batched important status changes without a main update,
+one deliberate trusted-main sync is allowed. Never overlap active reconciliation.
+The synchronizer still stops on inconsistent answers; its checks and retries
+are unchanged. See [operations](operations/GITHUB_PROJECTS_ROADMAP.md).
 
 ## Project #4 workflow
 
