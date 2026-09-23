@@ -28,6 +28,18 @@ For approved V2 development tasks, the user authorized the [independent-review a
 
 ## Current phase
 
+The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md) is the current delivery decision. Its documentation PR and private closeout receipts record the ordered GitHub transition: #83 before #84.
+
+- **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
+- **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
+- **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
+- **Next phase:** `4 Research Observatory`; B6/#85 is `Backlog` / `NEXT` / `Unproven`. The first [mint-package inspector proposal](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md#one-proposed-first-b6-increment--not-started) is not started. No concrete development item is `ACTIVE NOW` until a new task is approved.
+- **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
+
+### Preserved pre-acceptance delivery history
+
+The following run-by-run status statements describe their publication-time state **before the 2026-09-23 acceptance**. They preserve partial results and non-claims; they are not current Project instructions. Only the dated decision above changes delivery acceptance.
+
 The bounded [#129 Raw archive byte inspection](research/B5_RAW_ARCHIVAL_SPANS.md) adds optional receipt-bound node/CBOR/inline and continuation DataFrame spans through the existing Rust verifier. It selects only the retained slot 422496001 capture; no domain decode, acquisition, Silver admission or B4/B5 promotion follows. Exact execution, review and delivery evidence is retained separately under the OF1 governance root.
 
 
@@ -56,13 +68,15 @@ The bounded [#129 Raw archive byte inspection](research/B5_RAW_ARCHIVAL_SPANS.md
 The bounded [native delivery-order parity check](research/B5_NATIVE_ORDER_PARITY.md)
 compares canonical, reversed and fixed odd/even delivery of the same verified
 transaction packages through the current Rust decoder and Parquet writer. It
-adds no protocol admission or lifecycle evidence; B5 remains open/Unproven.
+adds no protocol admission or lifecycle evidence. Its technical result is part
+of the dated B5 acceptance; the earlier Unproven verdict remains historical.
 
 The bounded [mint observation timeline](research/B5_MINT_TIMELINE.md) groups
 existing trades, balances, diagnoses and message references per source-bound
 transaction across the preserved nineteen-slot collection. It is a post-hoc
 descriptive lifecycle fragment, not a complete lifecycle or sample promotion.
-All 22 facts, Mayhem rejections and B4/B5 Unproven states remain unchanged.
+All 22 facts and Mayhem rejections remain unchanged. The dated acceptance
+changes B4/B5 delivery status only; the fragment remains incomplete.
 
 The [2026-09-20 VPS integration](operations/VPS_WSL_INTEGRATION.md) combines the imported WSL stack with the isolated VPS tooling in a separate worktree. Use the repository wrapper and explicit OF1 root, not archived WSL launch commands. Migration/query evidence, fresh offline decoding and CI acceptance are tracked separately; no acquisition or delivery promotion follows.
 
@@ -246,9 +260,9 @@ Before deleting a subsystem: identify its invariant → migrate useful tests/gol
 | PR 1 | V2 source of truth and complete, reviewable Project #4 rebase plan |
 | PR 2A / B2A | **Complete and Operationally Verified:** obsolete platform removal and reachable-legacy quarantine; no future product capability or data-evidence claim added |
 | PR 3 / B3 | **Complete at Fixture evidence:** one bounded Pump protocol walking skeleton plus a structural/fixture-only protocol evidence matrix; observed compatibility and historical activation remain unknown |
-| PR 4 / B4 | **In progress, bounded Raw result:** the preserved 45,051-byte empty range and the later 605,402-byte transaction-bearing range; [separate offline verification](research/OF1_RECORDED_CAR_VERIFICATION.md) and [bounded B5 preparation](research/B5_AUTHENTIC_RAW_BRONZE.md), no new run approval. PR #94 B4A and the [Rust offline integration](research/OF1_OFFLINE_TRANSPORT.md) remain `Fixture` partial results. Further metadata and payload each require a separately reviewed exact GO |
-| PR 5 / B5 | **Next, partial offline preparation explicitly authorized:** [725 retained single-slot decodes](research/B5_AUTHENTIC_RAW_BRONZE.md), [3,137 multi-slot decodes](research/B5_MULTISLOT_PUMP_SEARCH.md), [four bounded recorded sell facts](research/B5_NESTED_PUMP_SELL_CONTEXT.md) and a [Rust Parquet query projection](research/B5_PARQUET_QUERYABLE_RECORDS.md); the [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md) retains 21,719 packages and 22 facts; broader Silver coverage and coin lifecycle remain outstanding |
-| PR 6 | Interactive browser Research Observatory MVP |
+| PR 4 / B4 | **Accepted / Engineering Validation:** bounded authentic acquisition, budget/integrity/coverage and clean resume; crash/retry behaviour remains separate Fixture evidence. [Dated decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md); no new acquisition |
+| PR 5 / B5 | **Accepted / Engineering Validation:** native Rust layers/writer, #132 static report, #133 order parity, and accepted 15-package / five-fact / 58-balance lifecycle fragment with explicit gaps. [Dated decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md); no Research Ready claim |
+| PR 6 / B6 #85 | **Next, not started:** interactive Research Observatory; first bounded mint-package inspector remains a proposal |
 | PR 7 | Bounded scale-up, Cohort Explorer and explicit data-sufficiency result |
 | PR 8 | PIT Gold v0 and first falsifiable baseline, or a valid `INSUFFICIENT_SAMPLE`/falsification result |
 
