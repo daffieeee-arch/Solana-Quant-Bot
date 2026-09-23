@@ -1,6 +1,9 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, parseInspection, type Inspection, type Json, type Package } from '../../../src/mint-inspector/contract';
 
+import { PilotQualityPanel } from './PilotQuality';
+import { readJsonResponse } from './read-response';
+
 export type ViewState = 'READY' | 'STALE' | 'GAP' | 'REPLAYING' | 'UNAVAILABLE' | 'UNPROVEN' | 'QUARANTINED';
 const stateText: Record<ViewState, string> = {
   READY: 'Geregistreerd rapport beschikbaar. Dit zegt niets over Research Ready.',
@@ -82,6 +85,7 @@ function PackageDetails({ p, inspection }: { p: Package; inspection: Inspection 
 
 export function InspectionView({ inspection }: { inspection: Inspection }) {
   const [index, setIndex] = useState(0);
+  const [view, setView] = useState<'mint' | 'pilot'>('mint');
   const t = inspection.timeline, p = t.transactions[index];
   const move = (next: number) => setIndex(Math.max(0, Math.min(t.transactions.length - 1, next)));
   function keys(event: KeyboardEvent<HTMLElement>) {
@@ -93,6 +97,8 @@ export function InspectionView({ inspection }: { inspection: Inspection }) {
   return <>
     <header className="topbar"><span className="brand-mark">SQ</span><span>Solana Quant <strong>V2</strong></span><span className="local-only">LOKAAL · ALLEEN LEZEN</span></header>
     <main>
+      <nav className="workspace-nav" aria-label="Inspectieweergave"><button aria-pressed={view === 'mint'} onClick={() => setView('mint')}>Mintdossier</button><button aria-pressed={view === 'pilot'} onClick={() => setView('pilot')}>Datakwaliteit pilot</button></nav>
+      {view === 'pilot' ? <PilotQualityPanel key={`${inspection.inputs.collection}:${inspection.inputs.plan}`} bindings={inspection.inputs} mintCounts={t.counts} /> : <>
       <div className="title-row"><div><p className="eyebrow">B6 · GEDEELTELIJKE LOKALE ONTWIKKELING</p><h1>Een mint. {t.counts.transactions} packages.</h1><p className="subtitle">Een controleerbaar lifecyclefragment uit bestaande OF1-evidence.</p></div><Badge tone="context">Post-hoc beschrijvend</Badge></div>
       <div className="mint-line"><span>MINT</span><code>{t.mint}</code></div>
       <div className="stats" aria-label="Geverifieerde selectietellingen">
@@ -118,28 +124,17 @@ export function InspectionView({ inspection }: { inspection: Inspection }) {
         <ul>{t.limits.map(limit => <li key={limit}>{limit}</li>)}</ul>
         <p>GAP = ontbrekende verwachte brondekking · UNAVAILABLE = niet beschikbaar · QUARANTINED = aanwezig maar afgewezen. Ontbrekende dekking is geen nulactiviteit.</p>
       </section>
+      </>}
     </main><footer>Rust-geautoriseerde feiten · Geen browserdecode · Geen prijs-, fill- of rendementsclaim</footer>
   </>;
 }
 
-async function readResponse(response: Response): Promise<Inspection> {
-  if (!response.ok || !response.body) throw new Error('Unavailable');
-  const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
-  try {
-    for (;;) { const result = await reader.read(); if (result.done) break;
-      size += result.value.byteLength; if (size > MAX_RESPONSE_BYTES) throw new Error('Response limit'); chunks.push(result.value);
-    }
-  } finally { await reader.cancel(); }
-  const bytes = new Uint8Array(size); let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-  return parseInspection(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
-}
 export function MintInspector() {
   const [data, setData] = useState<Inspection | null>(null), [failed, setFailed] = useState(false);
   useEffect(() => {
     const controller = new AbortController(); let active = true;
     const timer = setTimeout(() => controller.abort(), 10000);
-    void fetch('/api/inspection', { signal: controller.signal, cache: 'no-store', credentials: 'omit' }).then(readResponse)
+    void fetch('/api/inspection', { signal: controller.signal, cache: 'no-store', credentials: 'omit' }).then(r => readJsonResponse(r, MAX_RESPONSE_BYTES)).then(parseInspection)
       .then(value => { if (active) setData(value); }).catch(() => { if (active) setFailed(true); }).finally(() => clearTimeout(timer));
     return () => { active = false; controller.abort(); clearTimeout(timer); };
   }, []);

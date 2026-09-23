@@ -15,7 +15,9 @@ frozen legacy dashboard. The proposal is recorded in
 `be077022bc163218335d1cc112c03068694819a4`; B4/#83 and B5/#84 were closed in
 order with verified Engineering Validation. The original reviewed local
 inspector at `74c527d6d502360157b842e330de0502c18c823c` remains preserved in its
-original worktree; integration changes only documentation and routing.
+original worktree; PR #135 integrated it with documentation/routing changes only,
+at `eef008317f178e14c5aad93e92f9ed8d7fdf7aa4`. The separate pilot-quality
+increment below adds a bounded report view; it does not complete #85.
 
 The selected mint is `4aG2APjGceKMLjyhFLjAEYaqu4w2meifWb2hAy4Wpump`, within
 `[422669516,422669535)`, collection SHA256
@@ -67,6 +69,47 @@ Other state fixtures (`STALE`, `GAP`, `REPLAYING`, `UNAVAILABLE`, `UNPROVEN`,
 `QUARANTINED`) do not invent authentic observations. Unknowns and coverage
 limits remain visible. No polling or automatic reload is performed.
 
+## Pilot data quality — bounded second increment
+
+The keyboard-accessible workspace buttons distinguish the existing mint
+fragment (15 packages / 5 facts / 58 balances, including pilot and context) from
+the complete three-slot pilot `[422669516,422669519)` across all mints:
+3 blocks, 3,224 atomic packages, 223 failed transactions and 7 existing facts.
+The pilot retains `RESEARCH_SAMPLING`; no context slot is reclassified.
+
+Bronze decoding, transaction success and Silver admission have separate panels.
+The recorded zero Bronze quarantines/unsupported packages does not imply full
+Pump instruction coverage. This manifest does not publish a complete rejected
+Pump instruction count: that field is UNAVAILABLE, never a package/fact
+subtraction. Mayhem remains rejected. Missing optional coverage is unavailable,
+not zero. Creation/completion/migration/full lifetime, historical activation,
+account state and actual CPI privileges remain unproven; Research Ready is false.
+
+An optional registry `pilot` group contains exactly `manifest`, `decoder0`,
+`decoder1`, `decoder2`, using the same relative-path/SHA256 contract, capped at
+256 KiB per input and response. It binds the reviewed #132
+`report-f23b254/manifest.json` and the three decoder execution receipts named by
+that manifest. The earlier pre-review `report-final` is not this input.
+The adapter copies only existing string decoder identities; numeric domain
+fields in execution receipts are not projected. Receipt exports retain their
+original bytes. An absent registration leaves pilot quality UNAVAILABLE;
+an invalid registration prevents publication of the snapshot.
+
+With that registration the same allowlist adds `/api/pilot-quality` and
+`/evidence/pilot-{manifest,decoder0,decoder1,decoder2}.json`. No path parameter,
+provider or write route is added. The shared display contract checks pilot range,
+class, collection/plan hashes, source-scoped receipts, decoder receipt hashes,
+batch/writer identity, count consistency and logical row counts. It preserves
+string integers/nulls and reuses existing offline report evidence; it does not
+reopen source Raw or Parquet files. Both views retain bounded reads and aborts;
+switching back to the mint keeps its package position. There is no polling.
+
+Expandable provenance exposes source/receipt/sample bindings, all batch decoder
+identities, native Rust writer/settings, physical and logical hashes and report
+code identities. Hash-pinning the existing reports is not a fresh dataset replay.
+The authentic input bindings and browser/validation evidence are preserved in
+the separate OF1 dossier `governance/b6-quality-delivery-20260923/`.
+
 ## Reproduce and open privately
 
 Original local artifacts are under
@@ -75,14 +118,16 @@ Original local artifacts are under
 plan. That sealed local dossier retains the original review, tests and authentic
 browser screenshots. New delivery evidence and private build output belong to
 `/home/chupa/Solana-project/data-old-faithful-one/governance/pr134-b6-integration-20260923/`.
-Its `RESULTAAT.md` records final heads/checks and evidence reuse. Generated assets
-and records never belong in Git.
+Its `RESULTAAT.md` retains historical integration evidence. Current pilot-quality
+delivery uses `governance/b6-quality-delivery-20260923/`, with
+`registry-quality.json` and `site-quality/`; older sealed builds remain intact.
+Generated assets and records never belong in Git.
 
 Use the approved local Node/dependencies; first run the read-only doctor.
 No install or upgrade is implied. Build under the existing resource scope:
 
 ```bash
-cd /home/chupa/Solana-project/Solana-bot/.worktrees/b6-mint-inspector-integration-20260923
+cd /home/chupa/Solana-project/Solana-bot/.worktrees/b6-pilot-quality-20260923
 SOLANA_QUANT_DATA_ROOT=/home/chupa/Solana-project/data-old-faithful-one \
   node scripts/with-toolchain.mjs -- npm run doctor
 systemd-run --user --scope --unit=solana-b6-mint-build \
@@ -107,8 +152,8 @@ systemd-run --user --scope --unit=solana-b6-mint-view \
   /home/chupa/Solana-project/data-old-faithful-one/governance/b6-mint-inspector-local-20260923/outbound-deny.bpf \
   node dist/mint-inspector/main.js \
   /home/chupa/Solana-project/data-old-faithful-one \
-  governance/b6-mint-inspector-local-20260923/registry.json \
-  /home/chupa/Solana-project/data-old-faithful-one/governance/pr134-b6-integration-20260923/site \
+  governance/b6-quality-delivery-20260923/registry-quality.json \
+  /home/chupa/Solana-project/data-old-faithful-one/governance/b6-quality-delivery-20260923/site-quality \
   7042
 ```
 
@@ -122,7 +167,8 @@ On your own computer, forward loopback only, substituting your known VPS host:
 ssh -N -L 127.0.0.1:7042:127.0.0.1:7042 chupa@<VPS-host>
 ```
 
-Open `http://127.0.0.1:7042/`. Tab into the package region; arrows select
+Open `http://127.0.0.1:7042/`. Choose **Datakwaliteit pilot** with a click or
+Tab/Enter; **Mintdossier** returns to the package view. Tab into the package region; arrows select
 previous/next and Home/End select first/last. Tab to a detail heading and use
 Enter/Space to expand it. Every package remains available, including failures.
 
@@ -154,17 +200,20 @@ No full dataset replay or full local
 suite is required for this bounded increment.
 
 The original local review and authentic browser/data evidence are retained.
-Only integration/documentation changes receive focused independent review;
-unchanged runtime, test and build files must match `74c527d` byte for byte.
-Required PR CI, CodeQL and dependency review run on the final integration head,
+PR #135 reused that review with a focused review of integration/documentation;
+its runtime, test and build files matched `74c527d` byte for byte. The separate
+pilot-quality change receives one independent review and, only for findings, one
+focused fix/recheck. Focused contract/adapter/UI tests, build/typechecks and one
+authentic browser session validate the increment. Required PR CI, CodeQL and
+dependency review run on the final head,
 followed by protected squash and technical main verification. Roadmap synchronization
 is separate administration under the 2026-09-23 delivery amendment; its known
 external visibility failure does not erase this inspector's technical evidence. No
 duplicate CI steps are added; no dataset replay follows from integration.
 
 Current B6 routing is In Progress / ACTIVE NOW / Unproven. This increment covers
-one registered mint snapshot, its package inspection, provenance, state fixtures
-and bounded API. It does not deliver the full #85 ingestion-quality/replay
+one registered mint snapshot, its package inspection, provenance, state fixtures,
+a bounded three-slot pilot quality snapshot and bounded API. It does not deliver the full #85 ingestion-quality/replay
 workspaces, supported lifecycle-series/participant views or broader acceptance
 evidence. These are remaining scope, not permission to invent missing values or
 start another task. B7 is queued NEXT only. Keep #85 open and Research Ready false.

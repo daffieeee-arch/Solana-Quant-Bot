@@ -39,19 +39,19 @@ export interface Inspection {
 export class ContractError extends Error {
   constructor() { super('INSPECTOR_CONTRACT_INVALID'); }
 }
-function check(ok: unknown): asserts ok { if (!ok) throw new ContractError(); }
+export function check(ok: unknown): asserts ok { if (!ok) throw new ContractError(); }
 export function object(value: unknown): Record<string, unknown> {
   check(value !== null && typeof value === 'object' && !Array.isArray(value));
   return value as Record<string, unknown>;
 }
-function list(value: unknown): unknown[] { check(Array.isArray(value) && value.length <= 10000); return value; }
+export function list(value: unknown): unknown[] { check(Array.isArray(value) && value.length <= 10000); return value; }
 function text(value: unknown): asserts value is string { check(typeof value === 'string' && value.length <= 262144); }
 export function hash(value: unknown): asserts value is string { check(typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)); }
-function uint(value: unknown): asserts value is string { check(typeof value === 'string' && /^(0|[1-9][0-9]{0,39})$/.test(value)); }
+export function uint(value: unknown): asserts value is string { check(typeof value === 'string' && /^(0|[1-9][0-9]{0,39})$/.test(value)); }
 function equalCount(value: unknown, count: number): void { uint(value); check(value === String(count)); }
 
 /** Reject numeric JSON anywhere, before display can round an integer. Keep nulls. */
-function exactTree(value: unknown, depth = 0, budget = { left: 100000 }): void {
+export function exactTree(value: unknown, depth = 0, budget = { left: 100000 }): void {
   check(depth <= 32 && --budget.left >= 0);
   if (value === null || typeof value === 'boolean') return;
   if (typeof value === 'string') { text(value); return; }

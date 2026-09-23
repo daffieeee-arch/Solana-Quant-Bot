@@ -4,6 +4,7 @@ import { readdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve, extname } from 'node:path';
 import { readBoundedFile } from '../acquisition-monitor/reader.js';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, hash, object, parseInspection, type InputHashes, type InputName } from './contract.js';
+import { MAX_PILOT_BYTES, PILOT_INPUT_NAMES, parsePilotQuality, type PilotInputName } from './pilot-quality.js';
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const fail = (): never => { throw new Error('INSPECTOR_INPUT_UNAVAILABLE'); };
@@ -37,9 +38,32 @@ export async function loadInspection(root: string, registryPath: string) {
   if (collection.schema !== 'OF1_BATCH_COLLECTION_1' || collection.plan_sha256 !== hashes.plan
     || collection.research_ready !== false || collection.state !== 'COMPLETE') fail();
   const inspection = parseInspection({ schema: 'OF1_MINT_INSPECTOR_1', state: 'READY', inputs: hashes, timeline, lifecycle });
+  const pilotBytes = {} as Partial<Record<PilotInputName, Buffer>>;
+  let pilotResponse: Buffer | undefined;
+  if (registry.pilot !== undefined) {
+    const registeredInputs = object(registry.pilot), pilotHashes = {} as Record<PilotInputName, string>;
+    if (Object.keys(registeredInputs).sort().join(',') !== [...PILOT_INPUT_NAMES].sort().join(',')) fail();
+    for (const name of PILOT_INPUT_NAMES) {
+      const registered = object(registeredInputs[name]); hash(registered.sha256);
+      const data = await registeredFile(root, registered.path, MAX_PILOT_BYTES);
+      if (sha256(data) !== registered.sha256) fail();
+      pilotBytes[name] = data; pilotHashes[name] = registered.sha256;
+    }
+    const manifest = object(JSON.parse(pilotBytes.manifest!.toString('utf8')));
+    const decoders = PILOT_INPUT_NAMES.slice(1).map(name => {
+      const execution = object(JSON.parse(pilotBytes[name]!.toString('utf8'))), binding = object(execution.batch_binding);
+      if (execution.schema !== 'OF1_BRONZE_EXECUTION_1' || execution.slice_class !== 'RESEARCH_SAMPLING'
+        || binding.plan_sha256 !== hashes.plan) fail();
+      // Copy only existing string identities. Numeric domain fields are neither converted nor projected.
+      return { batch_id: binding.batch_id, source_id: binding.source_id, execution_sha256: pilotHashes[name],
+        decoder_source_sha256: execution.decoder_source_sha256, executable_sha256: execution.executable_sha256, lock_sha256: execution.lock_sha256 };
+    });
+    pilotResponse = Buffer.from(JSON.stringify(parsePilotQuality({ schema: 'OF1_PILOT_QUALITY_VIEW_1', inputs: pilotHashes, manifest, decoders }, hashes)));
+    if (pilotResponse.length > MAX_PILOT_BYTES) fail();
+  }
   const response = Buffer.from(JSON.stringify(inspection));
   if (response.length > MAX_RESPONSE_BYTES) fail();
-  return { inspection, response, bytes };
+  return { inspection, response, bytes, pilotResponse, pilotBytes };
 }
 
 export async function createMintInspector(options: { dataRoot: string; registryPath: string; staticDirectory: string; port: number }) {
@@ -49,6 +73,10 @@ export async function createMintInspector(options: { dataRoot: string; registryP
   const routes = new Map<string, { bytes: Buffer; type: string }>();
   routes.set('/api/inspection', { bytes: input.response, type: 'application/json' });
   for (const name of INPUT_NAMES) routes.set(`/evidence/${name}.json`, { bytes: input.bytes[name], type: 'application/json' });
+  if (input.pilotResponse) {
+    routes.set('/api/pilot-quality', { bytes: input.pilotResponse, type: 'application/json' });
+    for (const name of PILOT_INPUT_NAMES) routes.set(`/evidence/pilot-${name}.json`, { bytes: input.pilotBytes[name]!, type: 'application/json' });
+  }
   routes.set('/', { bytes: await registeredFile(staticRoot, 'inspector.html', 65536), type: 'text/html' });
   const assets = await readdir(join(staticRoot, 'assets'));
   if (assets.length > 16) fail();
