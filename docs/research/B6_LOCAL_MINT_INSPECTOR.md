@@ -1,9 +1,9 @@
 # B6 — local read-only mint inspector
 
-> **Document status: ACTIVE local increment.** Owner-authorized on 2026-09-23,
-> independently of PR #134's administrative block. Not delivered on main, not
-> complete B6 acceptance, and not Research Ready. No GitHub mutation, push, PR
-> or workflow trigger is authorized as part of this local task.
+> **Document status: ACTIVE partial B6 increment.** Originally authorized for
+> local development on 2026-09-23, then separately authorized for protected
+> integration after PR #134. #85 remains open / In Progress / ACTIVE NOW /
+> Unproven. This is not complete B6 acceptance or Research Ready.
 
 ## Scope and data contract
 
@@ -11,8 +11,11 @@ This independent React/TypeScript entry point displays the existing
 [manifest-bound mint timeline](B5_MINT_TIMELINE.md). It does not extend the
 frozen legacy dashboard. The proposal is recorded in
 `docs/research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md` at reviewed commit
-`f8792bbe83e0f0fd4a32612e5765250dde398b35` on PR #134. That decision and its
-protected branch remain separate from this work.
+`f8792bbe83e0f0fd4a32612e5765250dde398b35` on PR #134. That decision was delivered by PR #134 at
+`be077022bc163218335d1cc112c03068694819a4`; B4/#83 and B5/#84 were closed in
+order with verified Engineering Validation. The original reviewed local
+inspector at `74c527d6d502360157b842e330de0502c18c823c` remains preserved in its
+original worktree; integration changes only documentation and routing.
 
 The selected mint is `4aG2APjGceKMLjyhFLjAEYaqu4w2meifWb2hAy4Wpump`, within
 `[422669516,422669535)`, collection SHA256
@@ -66,18 +69,22 @@ limits remain visible. No polling or automatic reload is performed.
 
 ## Reproduce and open privately
 
-All private artifacts are under
+Original local artifacts are under
 `/home/chupa/Solana-project/data-old-faithful-one/governance/b6-mint-inspector-local-20260923/`.
 `registry.json` pins the preserved timeline, lifecycle report, collection and
-plan. See `RESULTAAT.md` for exact local commit, validation, review, screenshots
-or browser limitations. Generated assets and records never belong in Git.
+plan. That sealed local dossier retains the original review, tests and authentic
+browser screenshots. New delivery evidence and private build output belong to
+`/home/chupa/Solana-project/data-old-faithful-one/governance/pr134-b6-integration-20260923/`.
+Its `RESULTAAT.md` records final heads/checks and evidence reuse. Generated assets
+and records never belong in Git.
 
 Use the approved local Node/dependencies; first run the read-only doctor.
 No install or upgrade is implied. Build under the existing resource scope:
 
 ```bash
-cd /home/chupa/Solana-project/Solana-bot/.worktrees/b6-mint-inspector-local-20260923
-node scripts/with-toolchain.mjs -- npm run doctor
+cd /home/chupa/Solana-project/Solana-bot/.worktrees/b6-mint-inspector-integration-20260923
+SOLANA_QUANT_DATA_ROOT=/home/chupa/Solana-project/data-old-faithful-one \
+  node scripts/with-toolchain.mjs -- npm run doctor
 systemd-run --user --scope --unit=solana-b6-mint-build \
   -p CPUQuota=200% -p MemoryHigh=5G -p MemoryMax=6G -p TasksMax=256 \
   -p CPUWeight=25 nice -n 10 ionice -c 3 timeout --kill-after=15s 180s \
@@ -101,7 +108,7 @@ systemd-run --user --scope --unit=solana-b6-mint-view \
   node dist/mint-inspector/main.js \
   /home/chupa/Solana-project/data-old-faithful-one \
   governance/b6-mint-inspector-local-20260923/registry.json \
-  /home/chupa/Solana-project/data-old-faithful-one/governance/b6-mint-inspector-local-20260923/site \
+  /home/chupa/Solana-project/data-old-faithful-one/governance/pr134-b6-integration-20260923/site \
   7042
 ```
 
@@ -146,9 +153,16 @@ its prior legacy/network exclusions preserved. No workflow is changed.
 No full dataset replay or full local
 suite is required for this bounded increment.
 
-Once #134 can be delivered, reassess current main and integrate this preserved
-local branch without losing its reviewed history. Review integration changes
-if any, run all then-required PR checks (CI, CodeQL, dependency review and
-roadmap-sync) on the final head, follow protected merge and verify main plus
-Project read-back. Existing local evidence is not hosted-CI evidence. This
-task changes no issue or managed Project field and does not close B6.
+The original local review and authentic browser/data evidence are retained.
+Only integration/documentation changes receive focused independent review;
+unchanged runtime, test and build files must match `74c527d` byte for byte.
+Required PR CI, CodeQL, dependency review and roadmap-sync run on the final
+integration head, followed by protected squash and main verification. No
+duplicate CI steps are added; no dataset replay follows from integration.
+
+Current B6 routing is In Progress / ACTIVE NOW / Unproven. This increment covers
+one registered mint snapshot, its package inspection, provenance, state fixtures
+and bounded API. It does not deliver the full #85 ingestion-quality/replay
+workspaces, supported lifecycle-series/participant views or broader acceptance
+evidence. These are remaining scope, not permission to invent missing values or
+start another task. B7 is queued NEXT only. Keep #85 open and Research Ready false.
