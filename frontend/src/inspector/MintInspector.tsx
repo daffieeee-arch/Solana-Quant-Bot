@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, parseInspection, type Inspection, type Json, type Package } from '../../../src/mint-inspector/contract';
 
 import { PilotQualityPanel } from './PilotQuality';
@@ -30,7 +30,7 @@ const pilot = (p: Package) => p.collection_role === 'ORIGINAL_SELECTION';
 
 function PackageDetails({ p, inspection }: { p: Package; inspection: Inspection }) {
   const batch = inspection.timeline.bindings.batches.find(b => b.batch_id === p.collection_batch_id && b.source_id === p.collection_source_id);
-  return <article className="package-detail" aria-label="Geselecteerd atomair package" key={p.package_id}>
+  return <article id="selected-package" className="package-detail" aria-label="Geselecteerd atomair package" key={p.package_id}>
     <header className="package-header">
       <div><p className="eyebrow">CHAINPOSITIE · GEEN KLOKTIJD</p><h2>Slot {p.slot} <span>/ tx {p.transaction_index}</span></h2></div>
       <Badge tone={p.transaction_status === 'ERROR' ? 'failure' : 'success'}>{p.transaction_status}</Badge>
@@ -86,8 +86,29 @@ function PackageDetails({ p, inspection }: { p: Package; inspection: Inspection 
 export function InspectionView({ inspection }: { inspection: Inspection }) {
   const [index, setIndex] = useState(0);
   const [view, setView] = useState<'mint' | 'pilot'>('mint');
+  const [playing, setPlaying] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const t = inspection.timeline, p = t.transactions[index];
-  const move = (next: number) => setIndex(Math.max(0, Math.min(t.transactions.length - 1, next)));
+  const last = t.transactions.length - 1;
+  function pause() {
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = null;
+    setPlaying(false);
+  }
+  const move = (next: number) => { pause(); setIndex(Math.max(0, Math.min(last, next))); };
+  const workspace = (next: 'mint' | 'pilot') => { pause(); setView(next); };
+  useEffect(() => {
+    if (!playing || view !== 'mint' || index >= last) return;
+    // One presentation step per committed package; never catch up using wall-clock time.
+    let active = true;
+    timer.current = setTimeout(() => {
+      if (!active) return;
+      timer.current = null;
+      setIndex(index + 1);
+      if (index + 1 === last) setPlaying(false);
+    }, 2000);
+    return () => { active = false; if (timer.current !== null) clearTimeout(timer.current); timer.current = null; };
+  }, [playing, view, index, last]);
   function keys(event: KeyboardEvent<HTMLElement>) {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || (event.target as HTMLElement).closest('input,textarea,select,[contenteditable]')) return;
     const next = event.key === 'ArrowLeft' ? index - 1 : event.key === 'ArrowRight' ? index + 1
@@ -97,10 +118,11 @@ export function InspectionView({ inspection }: { inspection: Inspection }) {
   return <>
     <header className="topbar"><span className="brand-mark">SQ</span><span>Solana Quant <strong>V2</strong></span><span className="local-only">LOKAAL · ALLEEN LEZEN</span></header>
     <main>
-      <nav className="workspace-nav" aria-label="Inspectieweergave"><button aria-pressed={view === 'mint'} onClick={() => setView('mint')}>Mintdossier</button><button aria-pressed={view === 'pilot'} onClick={() => setView('pilot')}>Datakwaliteit pilot</button></nav>
+      <nav className="workspace-nav" aria-label="Inspectieweergave"><button aria-pressed={view === 'mint'} onClick={() => workspace('mint')}>Mintdossier</button><button aria-pressed={view === 'pilot'} onClick={() => workspace('pilot')}>Datakwaliteit pilot</button></nav>
       {view === 'pilot' ? <PilotQualityPanel key={`${inspection.inputs.collection}:${inspection.inputs.plan}`} bindings={inspection.inputs} mintCounts={t.counts} /> : <>
       <div className="title-row"><div><p className="eyebrow">B6 · GEDEELTELIJKE LOKALE ONTWIKKELING</p><h1>Een mint. {t.counts.transactions} packages.</h1><p className="subtitle">Een controleerbaar lifecyclefragment uit bestaande OF1-evidence.</p></div><Badge tone="context">Post-hoc beschrijvend</Badge></div>
       <div className="mint-line"><span>MINT</span><code>{t.mint}</code></div>
+      <p className="totals-caption">Volledig dossier · tellingen onafhankelijk van de replaypositie</p>
       <div className="stats" aria-label="Geverifieerde selectietellingen">
         {[['Packages', t.counts.transactions, `${t.counts.by_role.ORIGINAL_SELECTION?.transactions ?? 'UNAVAILABLE'} pilot · ${t.counts.by_role.POSTHOC_DESCRIPTIVE_CONTEXT?.transactions ?? 'UNAVAILABLE'} context`], ['Silver-feiten', t.counts.silver_facts, `${shown(t.counts.buys)} buys · ${shown(t.counts.sells)} sells`], ['Balansobservaties', t.counts.balance_observations, `${t.counts.by_role.ORIGINAL_SELECTION?.balance_observations ?? 'UNAVAILABLE'} pilot · ${t.counts.by_role.POSTHOC_DESCRIPTIVE_CONTEXT?.balance_observations ?? 'UNAVAILABLE'} context`], ['Mislukte packages', t.counts.status.ERROR, 'Zonder Silver-feiten']].map(([label, n, note]) => <div className="stat" key={label}><span>{label}</span><strong>{n}</strong><small>{note}</small></div>)}
       </div>
@@ -108,13 +130,27 @@ export function InspectionView({ inspection }: { inspection: Inspection }) {
       <details className="lifecycle"><summary>Lifecyclefasen en bewijsgrenzen</summary><div className="phase-grid">{inspection.lifecycle.phases.map(phase => <section key={phase.phase}><h3>{phase.phase}</h3><Badge>{phase.status}</Badge><p>{phase.evidence}</p><p className="muted">{phase.limit}</p></section>)}</div></details>
 
       <section className="inspector" onKeyDown={keys} aria-label="Mintpackages in chainvolgorde" tabIndex={0}>
-        <div className="inspector-toolbar"><div><h2>Transactiepackages</h2><p>← → Vorige / volgende · Home / End · Enter of spatie klapt details open</p></div>
-          <nav aria-label="Package kiezen"><button onClick={() => move(index - 1)} disabled={index === 0}>← Vorige</button><output aria-live="polite">{index + 1} / {t.transactions.length}</output><button onClick={() => move(index + 1)} disabled={index === t.transactions.length - 1}>Volgende →</button></nav>
+        <div className="inspector-toolbar"><div><h2>Chronologische tijdlijn</h2><p>← → Vorige / volgende · Home / End · Handmatige selectie pauzeert</p></div>
+          <nav aria-label="Package kiezen"><button onClick={() => move(index - 1)} disabled={index === 0}>← Vorige</button><output aria-label="Geselecteerde replaypositie" aria-live="polite">{index + 1} / {t.transactions.length}</output><button onClick={() => move(index + 1)} disabled={index >= last}>Volgende →</button></nav>
+          <div className="playback-controls"><button onClick={() => playing ? pause() : setPlaying(true)} disabled={index >= last}>{playing ? 'Pauzeren' : 'Afspelen'}</button><button onClick={() => move(0)}>Opnieuw beginnen</button><span role="status">{playing ? 'Speelt af' : index === last ? 'Einde fragment' : 'Gepauzeerd'}</span></div>
         </div>
-        <div className="inspection-grid"><aside><p className="list-caption">COMPLETE SELECTIE · CHAINVOLGORDE</p><ol className="package-list">{t.transactions.map((row, i) => <li key={row.package_id}><button className={i === index ? 'selected' : ''} aria-current={i === index ? 'true' : undefined} onClick={() => move(i)}>
-          <span className="row-index">{String(i + 1).padStart(2, '0')}</span><span className="row-main"><strong>{row.slot} <span>/ {row.transaction_index}</span></strong><small>{pilot(row) ? 'Pilot' : 'Post-hoc context'} · {row.silver_facts.length} feiten</small></span><span className={`status-dot ${row.transaction_status === 'ERROR' ? 'error' : ''}`} aria-label={row.transaction_status} /></button></li>)}</ol></aside>
-          {p ? <PackageDetails key={p.package_id} p={p} inspection={inspection} /> : <StateNotice state="UNAVAILABLE" />}
-        </div>
+        <p className="playback-note">Presentatietempo: één heel package per 2 seconden. Geen historische latency, informatiebeschikbaarheid of uitvoerbare handelsmogelijkheid.</p>
+        <p className="list-caption">VOLLEDIGE SELECTIE · CHAINVOLGORDE · GEEN TIJDSCHAAL</p>
+        <ol className="package-list" aria-label="Volledige packagetijdlijn">{t.transactions.map((row, i) => <li key={row.package_id}><button className={i === index ? 'selected' : ''} aria-current={i === index ? 'true' : undefined} aria-controls="selected-package" onClick={() => move(i)}>
+          <span className="row-index">{String(i + 1).padStart(2, '0')}</span><span className="row-main"><strong>{row.slot} <span>/ {row.transaction_index}</span></strong><small>{pilot(row) ? 'Pilot' : 'Post-hoc context'} · {row.transaction_status} · {row.silver_facts.length} feiten</small></span></button></li>)}</ol>
+        <section className="trade-overview" aria-label="Handelstabel volledig dossier"><h2>Handelsfeiten · volledig dossier ({t.counts.silver_facts})</h2>
+          <p className="muted">Oorspronkelijke eventhoeveelheden, geen fills of transactiebrede balansdelta’s. Raw integers worden niet omgerekend. Quote-eenheden blijven onbekend waar de bron dat aangeeft.</p>
+          <div className="table-scroll"><table><caption className="sr-only">Bestaande Silver-feiten in packagevolgorde; selecteer een package voor alle feiten en bronbindingen.</caption><thead><tr><th>Feit</th><th>Slot / transactie</th><th>Token · raw u64</th><th>Quote · raw u64</th><th>Geregistreerde eenheden</th><th>Package</th></tr></thead>
+            <tbody>{t.transactions.flatMap((row, i) => row.silver_facts.map(f => <tr key={f.record_sha256} data-fact-hash={f.record_sha256} className={index === i ? 'current-trade' : ''}>
+              <td><Badge tone={f.record.event_reported.is_buy ? 'buy' : 'sell'}>{f.record.event_reported.is_buy ? 'Buy' : 'Sell'}</Badge></td>
+              <td>{row.slot} / {row.transaction_index}<small>{pilot(row) ? 'Pilot' : 'Post-hoc context'}</small></td>
+              <td>{shown(f.record.event_reported.token_amount_raw_u64)}</td><td>{shown(f.record.event_reported.quote_amount_raw_u64)}</td>
+              <td><small>Token-decimals (balanscontext): {shown(f.record.token_balance_context?.decimals)}</small><small>Quote: {shown(f.record.quote_mint_identity)} · decimals: {shown(f.record.quote_decimals)}</small></td>
+              <td><button aria-controls="selected-package" onClick={() => move(i)}>Package {String(i + 1).padStart(2, '0')}</button></td>
+            </tr>))}</tbody></table></div>
+        </section>
+        {p ? <PackageDetails key={p.package_id} p={p} inspection={inspection} /> : <StateNotice state="UNAVAILABLE" />}
+
       </section>
       <section className="provenance"><h2>Provenance & beschikbaarheid</h2><StateNotice state="READY" />
         <p>Deze pagina leest een bij startup geverifieerde, onveranderlijke rapportsnapshot. Geen polling, providerverkeer of nieuwe toelating.</p>

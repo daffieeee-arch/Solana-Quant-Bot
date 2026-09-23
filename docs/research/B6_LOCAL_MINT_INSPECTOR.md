@@ -213,7 +213,42 @@ duplicate CI steps are added; no dataset replay follows from integration.
 
 Current B6 routing is In Progress / ACTIVE NOW / Unproven. This increment covers
 one registered mint snapshot, its package inspection, provenance, state fixtures,
-a bounded three-slot pilot quality snapshot and bounded API. It does not deliver the full #85 ingestion-quality/replay
+a bounded three-slot pilot quality snapshot, chronological presentation replay and bounded API. It does not deliver the full #85 ingestion-quality/replay
 workspaces, supported lifecycle-series/participant views or broader acceptance
 evidence. These are remaining scope, not permission to invent missing values or
 start another task. B7 is queued NEXT only. Keep #85 open and Research Ready false.
+
+
+## Chronological presentation replay — 2026-09-23
+
+The mint workspace presents every existing package in validated chain order in
+one compact timeline. Selection opens the same atomic package details and source
+bindings. Play advances by one complete package every two seconds; pause,
+previous/next, timeline/trade selection, Home/End and restart cancel the pending
+step. Restart returns to the first package paused. Switching workspace pauses
+without losing the selection; unmount clears the timer. Playback stops at the
+last package. The tempo is presentation only: no historical latency, information
+availability, actionable time or execution opportunity is modeled.
+
+The trade table shows all five existing Silver facts (two buys, three sells),
+in package order, with exact original event raw u64 quantities and a parent
+package link. It displays recorded token decimals from balance context without
+changing `base_decimals`; quote identity `UNKNOWN` and quote decimals `null`
+remain unknown. No amount conversion, new price, cumulative quantity, return,
+fill or account interpretation is introduced. Full-dossier totals remain fixed
+at 15 packages / 5 facts / 58 balance observations / 3 failed packages; they do
+not count replay progress. The separate pilot-quality workspace remains the
+three-slot selection with 3 blocks / 3,224 packages / 223 failures / 7 facts.
+
+Focused tests cover single-step/end behavior, pause/resume, restart, manual and
+keyboard selection, workspace change, StrictMode/unmount cleanup, multiple facts
+per atomic package, exact large integers and unknown units. Authentic browser
+validation and screenshots use the same eight registered inputs, with output in
+`governance/b6-mint-replay-20260923/` below the private OF1 root. No source dataset
+replay is required. Build/start commands above apply with the new worktree,
+`registry.json` and `site` in that evidence directory. Stop the foreground
+adapter with Ctrl-C; it retains the existing automatic lifetime bound.
+
+This is another partial #85 increment, not a full replay engine or completed B6.
+Missing lifecycle phases and Research Ready=false remain visible. Technical
+checks and Projects synchronization retain their separate delivery statuses.
