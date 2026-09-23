@@ -4,6 +4,15 @@
 
 ## Mission and success criterion
 
+**Bounded B6 presentation replay, 2026-09-23:** the [mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md#chronological-presentation-replay--2026-09-23)
+now adds a complete 15-package chain-order timeline, play/pause/restart and the
+five-fact trade table over unchanged registered inputs. Each step retains one
+atomic package; full-dossier counts (15 / 5 / 58 / 3 failed) do not represent
+replay progress. Two-second presentation steps imply no historical latency or
+execution opportunity. The separate pilot-quality view remains intact. Private
+browser/test evidence: `governance/b6-mint-replay-20260923/`; #85 stays open,
+In Progress / ACTIVE NOW / Unproven and Research Ready remains false.
+
 **First B6 increment, 2026-09-23:** the separately approved
 [private read-only mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md) reuses
 15 existing packages without new decoding or admission. Its original local
@@ -11,8 +20,8 @@ reviewed commit `74c527d6d502360157b842e330de0502c18c823c` and worktree are
 preserved. PR #134 delivered the B4/B5 acceptance as
 `be077022bc163218335d1cc112c03068694819a4`; #83 was closed and verified before
 #84. The owner then authorized protected integration of this existing B6
-increment. #85 remains open / Unproven; Research Ready remains false. The later explicit owner authorization permits only the bounded pilot quality
-increment described below; no acquisition or broader Observatory scope follows.
+increment. #85 remains open / Unproven; Research Ready remains false. The later explicit owner authorizations permit the bounded pilot quality and
+presentation replay increments described here; no acquisition or broader Observatory scope follows.
 
 Solana Quant Platform V2 is a **data-first research platform**. Its job is to obtain authentic Pump/Solana evidence, build reproducible point-in-time datasets, expose that evidence visually, and either discover a statistically and economically defensible edge or falsify the hypothesis. Profitability is not assumed.
 
@@ -48,7 +57,7 @@ dispatch. Keep issue/PR content current; the board normally catches up by the
 next daily run. Report >24h backlog and the last successful run without automatic
 diagnosis/retries. Batched important status changes without a main update may
 receive one manual trusted-main sync. See [workflow](DEVELOPMENT_WORKFLOW.md).
-The separately authorized next bounded B6 increment is the existing three-slot
+The separately authorized three-slot B6 increment uses the existing
 pilot quality view, now implemented as a separate bounded increment in the
 [private inspector](research/B6_LOCAL_MINT_INSPECTOR.md): 3 blocks / 3,224 packages /
 223 failures / 7 Silver facts, distinct from the 15-package mint selection.
@@ -64,7 +73,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** `4 Research Observatory`; B6/#85 is `In Progress` / `ACTIVE NOW` / `Unproven`. Its first [read-only mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md) is a partial result over the existing 15 packages. B7/#86 is queued `Backlog` / `NEXT` / `Unproven`, not started; B8 stays `LATER`.
+- **Current phase:** `4 Research Observatory`; B6/#85 is `In Progress` / `ACTIVE NOW` / `Unproven`. Its [read-only mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md), presentation timeline/trade table and pilot-quality view remain partial results. B7/#86 is queued `Backlog` / `NEXT` / `Unproven`, not started; B8 stays `LATER`.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history
