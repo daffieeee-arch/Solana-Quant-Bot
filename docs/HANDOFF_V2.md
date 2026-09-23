@@ -49,7 +49,13 @@ next daily run. Report >24h backlog and the last successful run without automati
 diagnosis/retries. Batched important status changes without a main update may
 receive one manual trusted-main sync. See [workflow](DEVELOPMENT_WORKFLOW.md).
 The separately authorized next bounded B6 increment is the existing three-slot
-pilot quality view; no B7, acquisition or Research Ready promotion follows.
+pilot quality view, now implemented as a separate bounded increment in the
+[private inspector](research/B6_LOCAL_MINT_INSPECTOR.md): 3 blocks / 3,224 packages /
+223 failures / 7 Silver facts, distinct from the 15-package mint selection.
+Bronze decoding, transaction success and Silver admission remain separate;
+missing Pump rejection totals remain UNAVAILABLE. No B7, acquisition or Research
+Ready promotion follows. Delivery evidence is recorded separately under OF1
+`governance/b6-quality-delivery-20260923/`; #85 remains open and Unproven.
 
 ## Current phase
 

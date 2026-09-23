@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto';
 import { request } from 'node:http';
 import { createMintInspector, loadInspection } from '../src/mint-inspector/server.js';
 import { fixtureInspection } from './fixtures/mint-inspector.js';
+import { fixturePilotQuality } from './fixtures/pilot-quality.js';
+import { object } from '../src/mint-inspector/contract.js';
 
 const roots: string[] = [], servers: Array<{ close(): Promise<void> }> = [];
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -34,9 +36,53 @@ function get(port: number, path: string, method = 'GET', headers: Record<string,
     }); req.on('timeout', () => req.destroy(new Error('local request timeout'))); req.on('error', reject); req.end();
   });
 }
+async function registerPilot(fixture: Awaited<ReturnType<typeof setup>>) {
+  const data = fixturePilotQuality(), pilot: Record<string, { path: string; sha256: string }> = {};
+  const p = data.manifest.provenance;
+  p.collection_sha256 = fixture.registry.inputs.collection.sha256; p.plan_sha256 = fixture.registry.inputs.plan.sha256;
+  for (let i = 0; i < 3; i++) {
+    const d = data.decoders[i], bytes = JSON.stringify({ schema: 'OF1_BRONZE_EXECUTION_1', slice_class: 'RESEARCH_SAMPLING',
+      batch_binding: { batch_id: d.batch_id, source_id: d.source_id, plan_sha256: p.plan_sha256 },
+      decoder_source_sha256: d.decoder_source_sha256, executable_sha256: d.executable_sha256, lock_sha256: d.lock_sha256,
+      unused_numeric_field: 42 });
+    pilot[`decoder${i}`] = { path: `decoder${i}.json`, sha256: sha(bytes) };
+    object((p.selected_batches as unknown[])[i]).decoder_execution_sha256 = sha(bytes);
+    await writeFile(join(fixture.root, `decoder${i}.json`), bytes);
+  }
+  const bytes = JSON.stringify(data.manifest); pilot.manifest = { path: 'pilot.json', sha256: sha(bytes) };
+  await writeFile(join(fixture.root, 'pilot.json'), bytes);
+  await writeFile(join(fixture.root, 'registry.json'), JSON.stringify({ ...fixture.registry, pilot }));
+  return { pilot, bytes };
+}
 afterEach(async () => { await Promise.all(servers.splice(0).map(s => s.close())); await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 
 describe('registered loopback mint adapter', () => {
+  it('serves the bound pilot separately, preserving manifest bytes and the mint snapshot', async () => {
+    const fixture = await setup(), registered = await registerPilot(fixture), server = await createMintInspector(fixture.options); servers.push(server);
+    const result = await get(server.port, '/api/pilot-quality'); expect(result.status).toBe(200);
+    expect(JSON.parse(result.body).manifest.counts).toEqual(fixturePilotQuality().manifest.counts);
+    expect(result.body).not.toContain('unused_numeric_field');
+    expect((await get(server.port, '/evidence/pilot-manifest.json')).body).toBe(registered.bytes);
+    expect(JSON.parse((await get(server.port, '/api/inspection')).body).timeline).toEqual(fixture.data.timeline);
+    expect((await get(server.port, '/api/pilot-quality', 'POST')).status).toBe(405);
+    expect((await get(server.port, '/api/pilot-quality?path=pilot.json')).status).toBe(404);
+    expect((await get(server.port, '/evidence/pilot-unknown.json')).status).toBe(404);
+    expect((await get(server.port, '/evidence/pilot-decoder0.json', 'GET', { Origin: 'https://attacker.invalid' })).status).toBe(403);
+  });
+  it('keeps unregistered pilot evidence unavailable without affecting the mint', async () => {
+    const fixture = await setup(), server = await createMintInspector(fixture.options); servers.push(server);
+    expect((await get(server.port, '/api/pilot-quality')).status).toBe(404);
+    expect((await get(server.port, '/api/inspection')).status).toBe(200);
+  });
+  it.each(['modified', 'incomplete', 'wrong-receipt', 'symlink'])('fails before publishing invalid pilot registration: %s', async variant => {
+    const fixture = await setup(), { pilot } = await registerPilot(fixture);
+    if (variant === 'modified') await writeFile(join(fixture.root, 'pilot.json'), '{}');
+    if (variant === 'incomplete') delete pilot.decoder2;
+    if (variant === 'wrong-receipt') pilot.decoder1 = pilot.decoder0;
+    if (variant === 'symlink') { await symlink('pilot.json', join(fixture.root, 'pilot-link.json')); pilot.manifest.path = 'pilot-link.json'; }
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify({ ...fixture.registry, pilot }));
+    await expect(createMintInspector(fixture.options)).rejects.toThrow();
+  });
   it('serves one complete immutable snapshot and byte-identical registered artifacts', async () => {
     const fixture = await setup(), server = await createMintInspector(fixture.options); servers.push(server);
     const result = await get(server.port, '/api/inspection'); expect(result.status).toBe(200);
