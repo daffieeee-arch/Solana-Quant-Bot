@@ -4,6 +4,16 @@
 
 ## Mission and success criterion
 
+**Bounded B6 event observations, 2026-09-23:** the [mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md#event-reported-reserve-points-and-addresses--2026-09-23)
+adds separate event-reported real/virtual token reserve points with an exact
+value table, and the reported user/creator/fee-recipient address fields. It
+reuses the same five facts, 15 packages, 58 balances and eight registered inputs.
+Point/table selection pauses playback and opens the whole atomic package;
+missing/invalid values are not plotted or filled. No verified account-state,
+price, ownership or signer-right claim follows. Timeline/replay/pilot-quality
+remain intact; #85 stays open / Unproven, Research Ready=false. Private evidence:
+`governance/b6-reserves-addresses-20260923/`. No acquisition or dataset replay.
+
 **Bounded B6 presentation replay, 2026-09-23:** the [mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md#chronological-presentation-replay--2026-09-23)
 now adds a complete 15-package chain-order timeline, play/pause/restart and the
 five-fact trade table over unchanged registered inputs. Each step retains one
@@ -20,8 +30,8 @@ reviewed commit `74c527d6d502360157b842e330de0502c18c823c` and worktree are
 preserved. PR #134 delivered the B4/B5 acceptance as
 `be077022bc163218335d1cc112c03068694819a4`; #83 was closed and verified before
 #84. The owner then authorized protected integration of this existing B6
-increment. #85 remains open / Unproven; Research Ready remains false. The later explicit owner authorizations permit the bounded pilot quality and
-presentation replay increments described here; no acquisition or broader Observatory scope follows.
+increment. #85 remains open / Unproven; Research Ready remains false. The later explicit owner authorizations permit the bounded pilot quality,
+presentation replay and event-observation increments described here; no acquisition or broader Observatory scope follows.
 
 Solana Quant Platform V2 is a **data-first research platform**. Its job is to obtain authentic Pump/Solana evidence, build reproducible point-in-time datasets, expose that evidence visually, and either discover a statistically and economically defensible edge or falsify the hypothesis. Profitability is not assumed.
 

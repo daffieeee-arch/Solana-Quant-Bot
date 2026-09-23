@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, parseInspection, type Inspection, type Json, type Package } from '../../../src/mint-inspector/contract';
 
+import { EventObservations } from './EventObservations';
 import { PilotQualityPanel } from './PilotQuality';
 import { readJsonResponse } from './read-response';
 
@@ -149,6 +150,7 @@ export function InspectionView({ inspection }: { inspection: Inspection }) {
               <td><button aria-controls="selected-package" onClick={() => move(i)}>Package {String(i + 1).padStart(2, '0')}</button></td>
             </tr>))}</tbody></table></div>
         </section>
+        <EventObservations packages={t.transactions} selectedIndex={index} onSelect={move} />
         {p ? <PackageDetails key={p.package_id} p={p} inspection={inspection} /> : <StateNotice state="UNAVAILABLE" />}
 
       </section>
