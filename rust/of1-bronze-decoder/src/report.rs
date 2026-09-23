@@ -1,6 +1,6 @@
 //! Deterministic Bronze JSON and self-contained quality HTML; operational
 //! processing time and executable identity belong in a separate execution receipt.
-use crate::{archive, codec, invalid, pump, pump_sell};
+use crate::{archive, codec, delivery::DeliveryOrder, invalid, pump, pump_sell};
 use of1_range_recorder::{
     acquisition::read_limited,
     durable::acquisition::{Published, RequestKind},
@@ -45,17 +45,29 @@ pub fn charge(total: &mut usize, bytes: usize, limit: usize) -> io::Result<()> {
 /// # Errors
 /// Fails before publication on run, receipt, CID, graph or input identity changes.
 pub fn decode_run(root: &Path) -> io::Result<Value> {
-    decode_selection(root, None)
+    decode_selection(root, None, DeliveryOrder::Canonical).map(|(report, _)| report)
 }
 
 /// Decode exact original receipt sequences without changing the source run.
 /// # Errors
 /// Rejects unavailable, unplanned or over-budget selections before publication.
 pub fn decode_receipts(root: &Path, sequences: &[u64]) -> io::Result<Value> {
-    decode_selection(root, Some(sequences))
+    decode_selection(root, Some(sequences), DeliveryOrder::Canonical).map(|(report, _)| report)
 }
 
-fn decode_selection(root: &Path, sequences: Option<&[u64]>) -> io::Result<Value> {
+/// Exercise delivery before the SAME native transaction/status/Pump decoder.
+/// The second value records actual delivery, separate from canonical data.
+/// # Errors
+/// All original integrity, selection and resource gates still apply.
+pub fn decode_run_with_delivery(root: &Path, order: DeliveryOrder) -> io::Result<(Value, Value)> {
+    decode_selection(root, None, order)
+}
+
+fn decode_selection(
+    root: &Path,
+    sequences: Option<&[u64]>,
+    order: DeliveryOrder,
+) -> io::Result<(Value, Value)> {
     let run = read_run_context(root)?;
     if run.aggregate_plan.epoch != 978 {
         return Err(invalid("UNSUPPORTED_EPOCH_OUTSIDE_BOUNDED_978_LANE"));
@@ -85,7 +97,10 @@ fn decode_selection(root: &Path, sequences: Option<&[u64]>) -> io::Result<Value>
     if payloads.is_empty() {
         let mut report = json!({"schema":SCHEMA,"run_id":run.snapshot.id,"bindings":verification["bindings"],"input_kind":"METADATA_ONLY","records":[],"silver_records":[],"silver":"NOT_PRODUCED","domain_decoding":"UNAVAILABLE_NO_PAYLOAD","decoded_transactions":null,"research_ready":false});
         attach_sample(&mut report, run.aggregate_plan.sample_identity.as_ref())?;
-        return Ok(report);
+        return Ok((
+            report,
+            json!({"schema":"OF1_NATIVE_DELIVERY_1","order":order.name(),"canonical_inputs":[],"delivered_canonical_ranks":[]}),
+        ));
     }
     if verification["stages"]["car_slot"] != "VERIFIED" {
         return Err(invalid(format!(
@@ -93,40 +108,56 @@ fn decode_selection(root: &Path, sequences: Option<&[u64]>) -> io::Result<Value>
             verification["integrity"]["error"]
         )));
     }
-    let mut slots = Vec::new();
-    let mut record_bytes = 0;
-    let mut metadata_bytes = 0;
-    for published in payloads {
-        let slot = project_slot(&run, published, &verification).map_err(|e| {
+    let mut prepared = payloads
+        .iter()
+        .map(|p| SlotProjection::prepare(p))
+        .collect::<io::Result<Vec<_>>>()?;
+    let positions = prepared
+        .iter()
+        .enumerate()
+        .flat_map(|(slot, p)| (0..p.archive.envelopes.len()).map(move |index| (slot, index)))
+        .collect::<Vec<_>>();
+    let canonical_inputs = positions
+        .iter()
+        .map(|&(s, i)| {
+            let p = &prepared[s];
+            json!([
+                p.slot.to_string(),
+                i,
+                p.published.receipt.request.sequence,
+                p.published.receipt.sha256,
+                p.archive.envelopes[i].cid_hex
+            ])
+        })
+        .collect::<Vec<_>>();
+    let mut delivered = Vec::with_capacity(positions.len());
+    let (mut record_bytes, mut metadata_bytes) = (0, 0);
+    for rank in order.ranks(positions.len()) {
+        let (s, i) = positions[rank];
+        let p = &mut prepared[s];
+        let before = (p.record_bytes, p.metadata_bytes);
+        p.project(&run, &verification, i).map_err(|e| {
             invalid(format!(
                 "{e} request_sequence={}",
-                published.receipt.request.sequence
+                p.published.receipt.request.sequence
             ))
         })?;
-        for (total, key, limit) in [
-            (
-                &mut record_bytes,
-                "record_json_bytes",
-                MAX_SELECTION_RECORD_BYTES,
-            ),
-            (
-                &mut metadata_bytes,
-                "decoded_metadata_bytes",
-                MAX_SELECTION_METADATA_BYTES,
-            ),
-        ] {
-            charge(
-                total,
-                usize::try_from(
-                    slot["resource_accounting"][key]
-                        .as_u64()
-                        .ok_or_else(|| invalid("SLOT_ACCOUNTING"))?,
-                )
-                .map_err(invalid)?,
-                limit,
-            )?;
-        }
-        slots.push(slot);
+        // Enforce resident aggregate limits during delivery, not after all slots.
+        charge(
+            &mut record_bytes,
+            p.record_bytes - before.0,
+            MAX_SELECTION_RECORD_BYTES,
+        )?;
+        charge(
+            &mut metadata_bytes,
+            p.metadata_bytes - before.1,
+            MAX_SELECTION_METADATA_BYTES,
+        )?;
+        delivered.push(rank);
+    }
+    let mut slots = Vec::new();
+    for p in prepared {
+        slots.push(p.finish(&run, &verification)?);
     }
     let mut projected = combine_slots(slots, record_bytes, metadata_bytes)?;
     attach_sample(&mut projected, run.aggregate_plan.sample_identity.as_ref())?;
@@ -134,7 +165,11 @@ fn decode_selection(root: &Path, sequences: Option<&[u64]>) -> io::Result<Value>
     if after["bindings"] != verification["bindings"] || after["run_id"] != verification["run_id"] {
         return Err(invalid("INPUT_CHANGED_DURING_DECODE"));
     }
-    Ok(projected)
+    let delivery = json!({"schema":"OF1_NATIVE_DELIVERY_1","order":order.name(),
+        "boundary":"VERIFIED_NATIVE_ENVELOPE_BEFORE_TRANSACTION_STATUS_PUMP_DECODE",
+        "canonical_input_fields":["slot","transaction_index_in_slot","receipt_sequence","raw_sha256","transaction_node_cid_hex"],
+        "canonical_inputs":canonical_inputs,"delivered_canonical_ranks":delivered});
+    Ok((projected, delivery))
 }
 
 /// Class is obtained solely from the checked immutable source aggregate.
@@ -285,65 +320,103 @@ fn combine_slots(
     Ok(result)
 }
 
-fn project_slot(
-    run: &RecordedRun,
-    published: &Published,
-    verification: &Value,
-) -> io::Result<Value> {
-    let input_kind = match published.receipt.evidence.as_str() {
-        "Fixture" => "FIXTURE_RECORDED_CAR_SLOT",
-        "UNREVIEWED_AUTHENTIC_RAW" => "AUTHENTIC_RECORDED_CAR_SLOT",
-        _ => return Err(invalid("UNSUPPORTED_RECEIPT_EVIDENCE")),
-    };
-    let RequestKind::CarRange {
-        slot,
-        start,
-        end_exclusive,
-        ..
-    } = published.receipt.request.kind
-    else {
-        return Err(invalid("PAYLOAD_KIND"));
-    };
-    let raw = read_limited(&published.raw_path, archive::MAX_SLOT_BYTES as u64).map_err(invalid)?;
-    if sha256(&raw) != published.receipt.sha256 || raw.len() as u64 != end_exclusive - start {
-        return Err(invalid("RAW_CHANGED"));
+struct SlotProjection<'a> {
+    published: &'a Published,
+    archive: archive::Archive,
+    raw_bytes: usize,
+    slot: u64,
+    start: u64,
+    end_exclusive: u64,
+    input_kind: &'static str,
+    decoder_source_sha256: String,
+    counts: BTreeMap<&'static str, u64>,
+    reasons: BTreeMap<String, u64>,
+    packages: Vec<(usize, Value, Vec<Value>)>,
+    record_bytes: usize,
+    metadata_bytes: usize,
+    pump_count: u64,
+    pump_unknown: u64,
+}
+
+impl<'a> SlotProjection<'a> {
+    fn prepare(published: &'a Published) -> io::Result<Self> {
+        let input_kind = match published.receipt.evidence.as_str() {
+            "Fixture" => "FIXTURE_RECORDED_CAR_SLOT",
+            "UNREVIEWED_AUTHENTIC_RAW" => "AUTHENTIC_RECORDED_CAR_SLOT",
+            _ => return Err(invalid("UNSUPPORTED_RECEIPT_EVIDENCE")),
+        };
+        let RequestKind::CarRange {
+            slot,
+            start,
+            end_exclusive,
+            ..
+        } = published.receipt.request.kind
+        else {
+            return Err(invalid("PAYLOAD_KIND"));
+        };
+        let raw =
+            read_limited(&published.raw_path, archive::MAX_SLOT_BYTES as u64).map_err(invalid)?;
+        if sha256(&raw) != published.receipt.sha256 || raw.len() as u64 != end_exclusive - start {
+            return Err(invalid("RAW_CHANGED"));
+        }
+        let archive = archive::inspect(slot, &raw)?;
+        Ok(Self {
+            published,
+            archive,
+            raw_bytes: raw.len(),
+            slot,
+            start,
+            end_exclusive,
+            input_kind,
+            decoder_source_sha256: crate::source_sha256(),
+            counts: BTreeMap::from([
+                ("DECODED", 0),
+                ("MISSING", 0),
+                ("QUARANTINED", 0),
+                ("UNSUPPORTED", 0),
+            ]),
+            reasons: BTreeMap::new(),
+            packages: Vec::new(),
+            record_bytes: 0,
+            metadata_bytes: 0,
+            pump_count: 0,
+            pump_unknown: 0,
+        })
     }
-    let archive = archive::inspect(slot, &raw)?;
-    let mut counts = BTreeMap::from([
-        ("DECODED", 0_u64),
-        ("MISSING", 0),
-        ("QUARANTINED", 0),
-        ("UNSUPPORTED", 0),
-    ]);
-    let mut reasons = BTreeMap::<String, u64>::new();
-    let mut records = Vec::new();
-    let mut silver_records = Vec::new();
-    let decoder_source_sha256 = crate::source_sha256();
-    let mut pump_count = 0;
-    let mut pump_unknown = 0;
-    let mut record_bytes = 0;
-    let mut metadata_bytes = 0;
-    for envelope in &archive.envelopes {
+
+    fn project(&mut self, run: &RecordedRun, verification: &Value, index: usize) -> io::Result<()> {
+        let archive = &self.archive;
+        let envelope = &archive.envelopes[index];
+        let published = self.published;
+        let (slot, start, input_kind) = (self.slot, self.start, self.input_kind);
+        let decoder_source_sha256 = &self.decoder_source_sha256;
+        let record_bytes = &mut self.record_bytes;
+        let metadata_bytes = &mut self.metadata_bytes;
+        let counts = &mut self.counts;
+        let reasons = &mut self.reasons;
+        let pump_count = &mut self.pump_count;
+        let pump_unknown = &mut self.pump_unknown;
+        let mut silver_records = Vec::new();
         let result = codec::decode(envelope, &archive.continuations);
         let (disposition, error, transaction) = match result {
             Ok(mut tx) => {
                 inspect_pump(&mut tx)?;
                 charge_metadata(
-                    &mut metadata_bytes,
+                    metadata_bytes,
                     &tx,
                     slot,
                     envelope.transaction_index_in_slot,
                 )?;
                 if tx["pump_program_involvement"] == true {
-                    pump_count += 1;
+                    *pump_count += 1;
                 }
                 if tx["pump_program_involvement"].is_null() {
-                    pump_unknown += 1;
+                    *pump_unknown += 1;
                 }
                 ("DECODED", Value::Null, tx)
             }
             Err(e) => {
-                pump_unknown += 1;
+                *pump_unknown += 1;
                 let reason = e.to_string();
                 let kind = if reason.starts_with("MISSING_") {
                     "MISSING"
@@ -360,7 +433,7 @@ fn project_slot(
             .get_mut(disposition)
             .ok_or_else(|| invalid("DISPOSITION"))? += 1;
         let mut record = json!({"schema":SCHEMA,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"decoder_source_sha256":decoder_source_sha256,"disposition":disposition,"reason":error,
-            "source":{"run_id":run.snapshot.id,"raw_path":published.raw_path,"raw_sha256":published.receipt.sha256,"raw_bytes":raw.len(),"receipt_sequence":published.receipt.request.sequence,"bindings":verification["bindings"],"acquisition_executable_sha256":run.aggregate_plan.executable_sha256,
+            "source":{"run_id":run.snapshot.id,"raw_path":published.raw_path,"raw_sha256":published.receipt.sha256,"raw_bytes":self.raw_bytes,"receipt_sequence":published.receipt.request.sequence,"bindings":verification["bindings"],"acquisition_executable_sha256":run.aggregate_plan.executable_sha256,
                 "acquired_at_unix_ms":published.receipt.acquired_at.wall_ms.to_string(),"acquired_at_role":"OPERATIONAL_PROVENANCE_NOT_FEATURE","transaction_node_cid_hex":envelope.cid_hex,"raw_section_offset":envelope.raw_offset,"raw_section_length":envelope.raw_length,"car_section_offset":start+envelope.raw_offset as u64,"physical_node_index":envelope.physical_node_index,
                 "inline_transaction_data_hex":hex::encode(&envelope.data.bytes),"inline_status_metadata_hex":hex::encode(&envelope.metadata.bytes),"dataframe_next_cids":envelope.data.next,"metadata_next_cids":envelope.metadata.next},
             "effective_at":{"slot":slot.to_string(),"entry_index":envelope.entry_index,"transaction_index_in_entry":envelope.transaction_index_in_entry,"transaction_index_in_slot":envelope.transaction_index_in_slot,"source_transaction_index":envelope.source_transaction_index.map(|n|n.to_string())},
@@ -368,18 +441,43 @@ fn project_slot(
             "slice_class":"ENGINEERING_VALIDATION_ONLY","transaction":transaction});
         attach_sample(&mut record, run.aggregate_plan.sample_identity.as_ref())?;
         charge_record(
-            &mut record_bytes,
+            record_bytes,
             &record,
             slot,
             envelope.transaction_index_in_slot,
         )?;
-        append_supported_facts(&record, &mut record_bytes, &mut silver_records).map_err(|e| {
+        append_supported_facts(&record, record_bytes, &mut silver_records).map_err(|e| {
             record_limit_context(&e, slot, envelope.transaction_index_in_slot, "silver")
         })?;
-        records.push(record);
+        // The package is completed before anything is placed in the canonical output.
+        self.packages.push((index, record, silver_records));
+        Ok(())
     }
-    let records_sha256 = sha256(&serde_json::to_vec(&records).map_err(invalid)?);
-    let mut result = json!({"schema":SCHEMA,"run_id":run.snapshot.id,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"slot":slot.to_string(),"raw_sha256":published.receipt.sha256,"raw_bytes":raw.len(),"car_range_start":start,"car_range_end_exclusive":end_exclusive,
+
+    fn finish(mut self, run: &RecordedRun, verification: &Value) -> io::Result<Value> {
+        self.packages.sort_by_key(|p| p.0);
+        if self.packages.len() != self.archive.envelopes.len()
+            || self.packages.iter().enumerate().any(|(i, p)| i != p.0)
+        {
+            return Err(invalid("DELIVERY_PACKAGE_COVERAGE"));
+        }
+        let (mut records, mut silver_records) = (Vec::new(), Vec::new());
+        for (_, record, mut facts) in self.packages {
+            records.push(record);
+            silver_records.append(&mut facts);
+        }
+        let (published, archive) = (self.published, self.archive);
+        let (slot, start, end_exclusive, input_kind) =
+            (self.slot, self.start, self.end_exclusive, self.input_kind);
+        let (counts, reasons, pump_count, pump_unknown) = (
+            self.counts,
+            self.reasons,
+            self.pump_count,
+            self.pump_unknown,
+        );
+        let (record_bytes, metadata_bytes) = (self.record_bytes, self.metadata_bytes);
+        let records_sha256 = sha256(&serde_json::to_vec(&records).map_err(invalid)?);
+        let mut result = json!({"schema":SCHEMA,"run_id":run.snapshot.id,"input_kind":input_kind,"receipt_evidence":published.receipt.evidence,"slot":slot.to_string(),"raw_sha256":published.receipt.sha256,"raw_bytes":self.raw_bytes,"car_range_start":start,"car_range_end_exclusive":end_exclusive,
         "bindings":verification["bindings"],"stages":{"capture":"PUBLISHED","raw_receipts":"VERIFIED","car_slot":"VERIFIED","domain_decoding":"BOUNDED_ATOMIC_TRANSACTION_STATUS"},
         "verified_nodes":archive.verified_nodes,"verified_links":archive.verified_links,"entry_nodes":archive.entries,"transaction_envelopes":archive.envelopes.len(),"dispositions":counts,"reasons":reasons,
         "pump_program_involvement_transactions":if pump_unknown==0{Some(pump_count)}else{None},"pump_program_known_positive":pump_count,"pump_program_unknown":pump_unknown,"pump_event_decode":"PINNED_STRUCTURAL_PROBES_ONLY","root_to_slot_membership":"UNAVAILABLE","signature_crypto_verification":"NOT_PERFORMED",
@@ -387,8 +485,9 @@ fn project_slot(
         "slice_class":"ENGINEERING_VALIDATION_ONLY","research_ready":false,"silver":silver_kind(&silver_records),"silver_fact_count":silver_records.len(),"silver_records":silver_records,"physical_parquet_writer":"NOT_SELECTED",
         "records_sha256":records_sha256,"analysis":pump::summary(&records),"records":records,
         "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances are source-bound status-metadata observations, not account snapshots; rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]});
-    attach_sample(&mut result, run.aggregate_plan.sample_identity.as_ref())?;
-    Ok(result)
+        attach_sample(&mut result, run.aggregate_plan.sample_identity.as_ref())?;
+        Ok(result)
+    }
 }
 
 fn charge_record(total: &mut usize, record: &Value, slot: u64, index: usize) -> io::Result<()> {

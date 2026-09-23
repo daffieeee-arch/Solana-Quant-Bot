@@ -53,6 +53,11 @@ The bounded [#129 Raw archive byte inspection](research/B5_RAW_ARCHIVAL_SPANS.md
 
 ## Development and runtime boundary
 
+The bounded [native delivery-order parity check](research/B5_NATIVE_ORDER_PARITY.md)
+compares canonical, reversed and fixed odd/even delivery of the same verified
+transaction packages through the current Rust decoder and Parquet writer. It
+adds no protocol admission or lifecycle evidence; B5 remains open/Unproven.
+
 The bounded [mint observation timeline](research/B5_MINT_TIMELINE.md) groups
 existing trades, balances, diagnoses and message references per source-bound
 transaction across the preserved nineteen-slot collection. It is a post-hoc

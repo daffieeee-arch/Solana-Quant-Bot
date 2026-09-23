@@ -4,6 +4,7 @@ pub mod archive;
 pub mod batch;
 pub mod codec;
 pub mod collection;
+pub mod delivery;
 pub mod proto;
 pub mod pump;
 pub mod pump_buy;
@@ -29,6 +30,7 @@ pub fn source_sha256() -> String {
         include_bytes!("bin/of1-bronze-collection.rs"),
         include_bytes!("bin/of1-bronze-batch.rs"),
         include_bytes!("codec.rs"),
+        include_bytes!("delivery.rs"),
         include_bytes!("proto.rs"),
         include_bytes!("token_balances.rs"),
         include_bytes!("../sources/token-balance-evidence.json"),
