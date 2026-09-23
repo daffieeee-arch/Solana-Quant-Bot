@@ -271,8 +271,8 @@ future decisions.
 
 ## Roadmap Sync boundary
 
-Roadmap Sync observes PR/issue events via `pull_request_target` but always
-checks out the **trusted default branch** and never executes PR-head code. It
+Roadmap Sync runs on pushes to `main`, the daily schedule and deliberate manual
+dispatch. It always checks out the **trusted default branch** and never executes PR-head code. It
 requires repository secret `PROJECT_TOKEN`. Missing token fails closed; do not
 weaken that gate to make a PR look green.
 
