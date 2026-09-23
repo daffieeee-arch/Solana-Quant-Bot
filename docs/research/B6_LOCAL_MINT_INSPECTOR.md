@@ -252,3 +252,54 @@ adapter with Ctrl-C; it retains the existing automatic lifetime bound.
 This is another partial #85 increment, not a full replay engine or completed B6.
 Missing lifecycle phases and Research Ready=false remain visible. Technical
 checks and Projects synchronization retain their separate delivery statuses.
+
+
+## Event-reported reserve points and addresses — 2026-09-23
+
+The mint workspace shows the five unchanged Silver facts as two discrete point
+series: `real_token_reserves_raw_u64` (circle) and
+`virtual_token_reserves_raw_u64` (diamond). They share a labelled raw-u64 axis;
+package positions are ordinal, not time or latency. Points are slightly offset
+within their atomic package for readability, not to invent chain positions.
+There are no connecting series lines, interpolation, forward-fill or values for
+packages without an observation. These are event-reported reserves, never
+verified historical account-write state, executable liquidity or completion.
+
+The adjacent exact table preserves every integer string, slot/transaction,
+pilot/context class and full fact hash. A bounded BigInt ratio supplies screen
+coordinates only. Missing fields, explicit null, literal `0` and invalid
+u64 syntax/type/overflow remain distinct; missing/invalid values have no point.
+No quote-reserve conversion, price, SOL amount, return or completion percentage
+is calculated. Existing quote identities/decimals elsewhere remain UNKNOWN/null.
+
+The address table shows `user_address`, `creator_address_reported` and
+`fee_recipient` separately for every fact, grouped under their complete atomic
+package, with unchanged text and no external links/enrichment. Field names are
+reported roles, not proof of signer rights, economic ownership, unique persons
+or wallet clusters. Missing/null/non-text/empty address fields remain explicit;
+rendering a nonempty reported string is not address validation.
+
+Both views cover the whole dossier and mark the selected package. Point
+click/Enter/Space and table selection reuse the existing selection action,
+pause playback and open the same full package with source bindings. Multiple
+facts in one package retain distinct hashes/rows/points while selecting their
+whole parent. Existing timeline, replay and separate pilot-quality view remain.
+The API, registries, all eight input hashes and five fact hashes are unchanged.
+
+Focused value/selection/grouping regressions, existing UI tests, build/typechecks
+and one authentic sandboxed browser walkthrough provide this increment's
+evidence under OF1 `governance/b6-reserves-addresses-20260923/`. Its `OPENEN.md`,
+`registry.json`, `site/` and start script describe the current private build;
+previous sealed builds stay intact. No dataset replay or acquisition occurs.
+
+Relative to original #85, this supplies bounded supported reserve series,
+reported-address participation context, adjacent fact provenance and keyboard
+selection with evidence classes and explicit missing states. It infers no participant
+identity and does not claim complete Observatory acceptance. Software still
+not delivered includes compact acquisition-byte/runtime presentation and
+volume/cumulative-flow/curve/phase presentations where a suitable authorized
+source contract exists, plus full-workspace acceptance/accessibility evidence.
+Unavailable historical creation/completion/migration, full lifespan, activation,
+actual CPI rights and independently evidenced price/account-state semantics are
+source-evidence limits, not values the UI may compute or invent. #85 stays open /
+Unproven; Research Ready=false. No new acceptance criteria or follow-on work.

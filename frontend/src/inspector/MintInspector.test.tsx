@@ -31,7 +31,7 @@ describe('mint inspection view', () => {
     render(<InspectionView inspection={data} />);
     expect(screen.getAllByText('18446744073709551615').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Niet ingevuld (null)').length).toBeGreaterThan(0);
-    expect(screen.getByText('Pilot · RESEARCH_SAMPLING')).toBeTruthy();
+    expect(within(screen.getByRole('article', { name: 'Geselecteerd atomair package' })).getByText('Pilot · RESEARCH_SAMPLING')).toBeTruthy();
     expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy(); expect(document.querySelector('img')).toBeNull();
     expect(screen.getByText('Research Ready: false')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'timeline.json' }).getAttribute('href')).toBe('/evidence/timeline.json');
