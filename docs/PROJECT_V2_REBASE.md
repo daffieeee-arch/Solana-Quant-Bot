@@ -1,6 +1,6 @@
 # PROJECT_V2_REBASE.md — controlled Project #4 migration plan
 
-> **Document status: ACTIVE completed migration contract and execution ledger.** Original migration/closeout history is preserved. The [2026-09-23 B4/B5 decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md) accepts both bounded engineering deliveries at `Done` / `SUPERSEDED` / `Engineering Validation`; B6/#85 is `Backlog` / `NEXT` / `Unproven`, not started. This document does not itself mutate Project #4 or authorize acquisition.
+> **Document status: ACTIVE completed migration contract and execution ledger.** Original migration/closeout history is preserved. The [2026-09-23 B4/B5 decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md) accepts both bounded engineering deliveries at `Done` / `SUPERSEDED` / `Engineering Validation`; B6/#85 is `In Progress` / `ACTIVE NOW` / `Unproven` with one partial mint-inspector increment; B7/#86 is queued `NEXT`, not started. This document does not itself mutate Project #4 or authorize acquisition.
 
 ## Authority and migration rules
 
@@ -70,7 +70,7 @@ Add a single-select field named `V2 Disposition` without changing GitHub `Status
 
 Suggested colors are red, orange, yellow, purple, gray and gray respectively. No #27–#63 issue is classified `RETIRED`; retirement applies to obsolete TrueNAS/Phase 8/Hermes project items outside this range.
 
-An approved active development task has exactly one concrete non-program/non-epic `ACTIVE NOW` delivery. The explicitly requested 2026-09-23 stop before B6 leaves no active development item between tasks; B6 remains queued `NEXT`, not in progress. Completed operational controls such as #56 retain their verified Evidence without receiving a second active-delivery disposition. Cross-cutting programs/epics may be broader without obscuring the delivery head.
+An approved active development task has exactly one concrete non-program/non-epic `ACTIVE NOW` delivery. The initial 2026-09-23 acceptance decision stopped before B6. The later explicit B6 GO and integration authorization make #85 the one concrete `ACTIVE NOW` delivery; #86 is queued `NEXT` without development authorization. Completed operational controls such as #56 retain their verified Evidence without receiving a second active-delivery disposition. Cross-cutting programs/epics may be broader without obscuring the delivery head.
 
 ## Successor catalog
 
@@ -82,7 +82,7 @@ The identifiers below remain stable migration keys rather than substitutes for G
 |---|---|---|---|---|
 | [G0 / #70](https://github.com/daffieeee-arch/Solana-Quant-Bot/issues/70) | Implement and verify the Project #4 V2 rebase | 0 | `SUPERSEDED` (completed) | completed export, bounded Roadmap Sync/config hardening, successor migration, reconciliation, retention audit and repository evidence; steady-state controls remain #56/#62 |
 
-G0 was created before V2 metadata support existed; its accepted historical closeout is `Done` / `SUPERSEDED` / `Operationally Verified`. B2A and B3 completed next at their recorded evidence levels. B4/#83 and B5/#84 are technically accepted on 2026-09-23 as `Done` / `SUPERSEDED` / `Engineering Validation` within their bounded contracts. B6/#85 is `Backlog` / `NEXT` / `Unproven`, queued for separate approval; no B6 implementation is started. Research Ready remains false; no acquisition is authorized. The `SUPERSEDED` completed-milestone convention removes active routing; #83/#84 close as completed, not as abandoned. #56 and #62 retain steady-state controls.
+G0 was created before V2 metadata support existed; its accepted historical closeout is `Done` / `SUPERSEDED` / `Operationally Verified`. B2A and B3 completed next at their recorded evidence levels. B4/#83 and B5/#84 are technically accepted on 2026-09-23 as `Done` / `SUPERSEDED` / `Engineering Validation` within their bounded contracts. B6/#85 is `In Progress` / `ACTIVE NOW` / `Unproven`: its separately approved first read-only mint inspector is a partial increment, not complete Observatory acceptance. B7/#86 is queued `Backlog` / `NEXT` / `Unproven`; this routing does not start B7, and B8 remains `LATER`. Research Ready remains false; no acquisition is authorized. The `SUPERSEDED` completed-milestone convention removes active routing; #83/#84 close as completed, not as abandoned. #56 and #62 retain steady-state controls.
 
 ### Program and epics
 
@@ -285,7 +285,7 @@ Retain existing `roadmap-meta`. Add V2 metadata keys only after the synchronizer
 12. **Complete:** the pin-removal gate reconciled exactly; #63 was closed individually as `not planned / superseded`; #70 completed; B2A/#81 became `ACTIVE NOW`; and B3/#82 became `NEXT`.
 13. **Complete:** B2A/#81 removed the bounded retired paths and quarantined the retained legacy surface. Its cleanup is recorded by [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json) and archived by `v1-paper-platform-final`.
 14. **Complete:** B3/#82 completed as `Done` / `SUPERSEDED` / `Fixture`; its accepted evidence remains structural and fixture-compatible only.
-15. **Current, 2026-09-23 acceptance:** B4/#83 and B5/#84 are technically accepted on 2026-09-23 as `Done` / `SUPERSEDED` / `Engineering Validation` within their bounded contracts. B6/#85 is `Backlog` / `NEXT` / `Unproven`, queued for separate approval; no B6 implementation is started. Research Ready remains false; no acquisition is authorized. See the [dated decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md) for ordered #83-before-#84 closure; original migration rows above remain historical.
+15. **Current, 2026-09-23 acceptance:** B4/#83 and B5/#84 are technically accepted on 2026-09-23 as `Done` / `SUPERSEDED` / `Engineering Validation` within their bounded contracts. B6/#85 is `In Progress` / `ACTIVE NOW` / `Unproven`: its separately approved first read-only mint inspector is a partial increment, not complete Observatory acceptance. B7/#86 is queued `Backlog` / `NEXT` / `Unproven`; this routing does not start B7, and B8 remains `LATER`. Research Ready remains false; no acquisition is authorized. See the [dated decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md) for ordered #83-before-#84 closure; original migration rows above remain historical.
 
 Stop on a count mismatch, missing successor, unexpected issue state change, option-ID drift, retention error, description/README drift or view warning. The preflight exports and original issue bodies are the rollback source; restore values/notes explicitly rather than guessing.
 

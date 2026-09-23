@@ -4,6 +4,16 @@
 
 ## Mission and success criterion
 
+**First B6 increment, 2026-09-23:** the separately approved
+[private read-only mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md) reuses
+15 existing packages without new decoding or admission. Its original local
+reviewed commit `74c527d6d502360157b842e330de0502c18c823c` and worktree are
+preserved. PR #134 delivered the B4/B5 acceptance as
+`be077022bc163218335d1cc112c03068694819a4`; #83 was closed and verified before
+#84. The owner then authorized protected integration of this existing B6
+increment. #85 remains open / Unproven; Research Ready remains false. No next
+implementation task, acquisition or broader Observatory scope is authorized.
+
 Solana Quant Platform V2 is a **data-first research platform**. Its job is to obtain authentic Pump/Solana evidence, build reproducible point-in-time datasets, expose that evidence visually, and either discover a statistically and economically defensible edge or falsify the hypothesis. Profitability is not assumed.
 
 The product order is:
@@ -33,7 +43,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Next phase:** `4 Research Observatory`; B6/#85 is `Backlog` / `NEXT` / `Unproven`. The first [mint-package inspector proposal](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md#one-proposed-first-b6-increment--not-started) is not started. No concrete development item is `ACTIVE NOW` until a new task is approved.
+- **Current phase:** `4 Research Observatory`; B6/#85 is `In Progress` / `ACTIVE NOW` / `Unproven`. Its first [read-only mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md) is a partial result over the existing 15 packages. B7/#86 is queued `Backlog` / `NEXT` / `Unproven`, not started; B8 stays `LATER`.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history
@@ -262,7 +272,7 @@ Before deleting a subsystem: identify its invariant → migrate useful tests/gol
 | PR 3 / B3 | **Complete at Fixture evidence:** one bounded Pump protocol walking skeleton plus a structural/fixture-only protocol evidence matrix; observed compatibility and historical activation remain unknown |
 | PR 4 / B4 | **Accepted / Engineering Validation:** bounded authentic acquisition, budget/integrity/coverage and clean resume; crash/retry behaviour remains separate Fixture evidence. [Dated decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md); no new acquisition |
 | PR 5 / B5 | **Accepted / Engineering Validation:** native Rust layers/writer, #132 static report, #133 order parity, and accepted 15-package / five-fact / 58-balance lifecycle fragment with explicit gaps. [Dated decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md); no Research Ready claim |
-| PR 6 / B6 #85 | **Next, not started:** interactive Research Observatory; first bounded mint-package inspector remains a proposal |
+| PR 6 / B6 #85 | **In progress, partial increment:** [private mint-package inspector](research/B6_LOCAL_MINT_INSPECTOR.md); #85 stays open and Unproven |
 | PR 7 | Bounded scale-up, Cohort Explorer and explicit data-sufficiency result |
 | PR 8 | PIT Gold v0 and first falsifiable baseline, or a valid `INSUFFICIENT_SAMPLE`/falsification result |
 

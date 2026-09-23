@@ -460,10 +460,14 @@ describe('semantic CI workflow policy', () => {
       'start:cockpit': 'node dist/cockpit-main.js',
       'start:acquisition-monitor': 'node dist/acquisition-monitor/main.js',
       'build:monitor': 'tsc -p frontend/tsconfig.monitor.json && vite build --config frontend/vite.monitor.config.ts',
-      build: 'tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:cockpit && npm run verify:cockpit-runtime && npm run build:monitor',
+      build: 'tsc -p tsconfig.json && npm run verify:research-transport && npm run verify:phase8a-runner-offline && npm run build:cockpit && npm run verify:cockpit-runtime && npm run build:monitor && npm run build:mint-inspector',
+      'start:mint-inspector': 'node dist/mint-inspector/main.js',
+      'build:mint-inspector': 'tsc -p tsconfig.inspector.json && tsc -p frontend/tsconfig.inspector.json && vite build --config frontend/vite.inspector.config.ts',
       'build:frontend': 'vite build --config frontend/vite.config.ts',
     };
     expect(validatePackageScripts(safe)).toEqual([]);
+    expect(validatePackageScripts({ ...safe, 'build:mint-inspector': `${safe['build:mint-inspector']} && curl https://example.invalid` }).join('\n')).toMatch(/read-only mint inspector commands/);
+    expect(validatePackageScripts({ ...safe, 'start:mint-inspector': 'node unreviewed.js' }).join('\n')).toMatch(/read-only mint inspector commands/);
 
     for (const scripts of [
       { ...safe, dev: 'tsx src/main.ts' },

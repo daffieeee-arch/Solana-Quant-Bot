@@ -58,3 +58,18 @@ Acceptance for that future increment:
 4. Keyboard-accessible previous/next selection and atomic-package expansion have contract tests and authentic browser screenshots. Operational clocks never drive historical order; event values are not labelled executable prices or account state.
 
 This is one partial B6 increment, not full #85 acceptance. No new acquisition, installation, server deployment or implementation starts with this decision.
+
+## Subsequent B6 authorization and integration — 2026-09-23
+
+The table and proposal above retain the acceptance-time decision: that closeout
+did not authorize B6. The owner subsequently gave a separate bounded local GO
+and then authorized integration of the [first mint inspector](B6_LOCAL_MINT_INSPECTOR.md).
+PR #134 merged as `be077022bc163218335d1cc112c03068694819a4`; main CI, CodeQL
+and roadmap-sync passed, and #83 was closed/verified before #84. Both read back
+Done / SUPERSEDED / Engineering Validation. The temporary Project inconsistency
+converged; its original cause remains unknown and both failed runs are preserved.
+
+Current B6 routing is In Progress / ACTIVE NOW / Unproven with only this partial
+increment. #85 remains open; B7 is queued NEXT without a development GO. This
+later authorization changes neither the accepted B4/B5 interpretation nor
+their original criteria, dataset classes or Research Ready=false boundary.

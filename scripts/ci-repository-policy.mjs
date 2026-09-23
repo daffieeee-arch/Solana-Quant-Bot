@@ -30,6 +30,7 @@ const SAFE_DEFAULT_BUILD = [
   'npm run build:cockpit',
   'npm run verify:cockpit-runtime',
   'npm run build:monitor',
+  'npm run build:mint-inspector',
 ].join(' && ');
 
 export function validateTrackedRepositoryPaths(trackedPaths) {
@@ -73,6 +74,10 @@ export function validatePackageScripts(scripts) {
   }
   if (scripts.build !== SAFE_DEFAULT_BUILD) {
     errors.push('package.json build must match the reviewed B2A offline command graph exactly');
+  }
+  if (scripts['start:mint-inspector'] !== 'node dist/mint-inspector/main.js'
+      || scripts['build:mint-inspector'] !== 'tsc -p tsconfig.inspector.json && tsc -p frontend/tsconfig.inspector.json && vite build --config frontend/vite.inspector.config.ts') {
+    errors.push('package.json must use the reviewed independent read-only mint inspector commands');
   }
   for (const name of ['verify:phase8c-contracts', 'verify:phase8d1-supply-chain']) {
     if (Object.prototype.hasOwnProperty.call(scripts, name)) {
