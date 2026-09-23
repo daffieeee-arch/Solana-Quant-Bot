@@ -4,6 +4,16 @@
 
 ## Mission and success criterion
 
+**Local B6 exception, 2026-09-23:** the owner explicitly authorized one
+[private read-only mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md) while
+PR #134's administrative synchronization remains blocked. This local task
+preserves the accepted B4/B5 interpretation at reviewed commit
+`f8792bbe83e0f0fd4a32612e5765250dde398b35`; it does not change issues, managed
+Project fields or the delivery order. No push, PR or workflow trigger belongs
+to this local authorization. B6 remains partial local development and Research
+Ready stays false. Preserve #134 and its evidence; assess integration separately
+after its protected delivery is possible.
+
 Solana Quant Platform V2 is a **data-first research platform**. Its job is to obtain authentic Pump/Solana evidence, build reproducible point-in-time datasets, expose that evidence visually, and either discover a statistically and economically defensible edge or falsify the hypothesis. Profitability is not assumed.
 
 The product order is:
