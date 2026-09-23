@@ -76,6 +76,10 @@ Project #4 remains central. Preserve original issue bodies, acceptance criteria,
 
 Only existing read-only `triton-docs`, `solana-mcp` and `old-faithful-docs` may remain without a new decision. MCP content is navigation rather than data evidence; no secrets/private source/wallet use, no remote instruction execution, and claims trace to official URL/commit/hash/date.
 
+### D18 — Bounded B4/B5 engineering acceptance (2026-09-23)
+
+The owner explicitly accepted B4's bounded authentic acquisition, budget/integrity/coverage and clean-resume contract, with crash/retry evidence remaining Fixture and domain counts supplied by offline B5. The owner also accepted B5's native Rust route/writer, #132 walking skeleton, #133 order parity and lifecycle proposal A: the authentic 15-package / five-fact / 58-balance mintfragment with missing phases visible. See the [dated decision and evidence chain](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md). Original criteria and sealed reports remain preserved. Close #83 before #84 as completed with `Engineering Validation`; this changes no dataset class. Research Ready is false, and creation/completion/migration, full lifetime, historical activation and actual CPI rights remain unproven. B6 is a proposal/queued successor only.
+
 ## Preserved invariants from V1
 
 These survive even where implementation is replaced:

@@ -11,6 +11,10 @@
 
 An embedded historical `approved`, `ready` or similar field never overrides this document status.
 
+## Dated B4/B5 acceptance and execution-time status
+
+The [2026-09-23 B4/B5 acceptance decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md) governs current delivery status. B4/B5 research documents below retain their execution-time partial/open/Unproven and no-promotion statements as historical evidence; those statements do not override the later explicit acceptance. Their protocol, fixture, coverage and research limits remain active and unchanged. Original issue criteria, private sealed dossiers and content-hashed evidence are not rewritten. `Engineering Validation` on the Project does not reclassify datasets or promote individual fixtures, historical activation or Research Ready.
+
 ## Active documents
 
 - [`../AGENTS.md`](../AGENTS.md)
@@ -43,6 +47,7 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 - [`research/B5_AUTHENTIC_RAW_BRONZE.md`](research/B5_AUTHENTIC_RAW_BRONZE.md)
 - [`research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md`](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md)
 - [`research/B5_NATIVE_ORDER_PARITY.md`](research/B5_NATIVE_ORDER_PARITY.md)
+- [`research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md`](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md)
 - [`research/B5_MULTISLOT_PUMP_SEARCH.md`](research/B5_MULTISLOT_PUMP_SEARCH.md)
 - [`research/B5_PUMP_BUY_SOURCE_BINDING.md`](research/B5_PUMP_BUY_SOURCE_BINDING.md)
 - [`research/B5_PUMP_SELL_OBSERVATION.md`](research/B5_PUMP_SELL_OBSERVATION.md)
