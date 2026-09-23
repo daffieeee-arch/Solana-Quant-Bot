@@ -11,8 +11,8 @@ reviewed commit `74c527d6d502360157b842e330de0502c18c823c` and worktree are
 preserved. PR #134 delivered the B4/B5 acceptance as
 `be077022bc163218335d1cc112c03068694819a4`; #83 was closed and verified before
 #84. The owner then authorized protected integration of this existing B6
-increment. #85 remains open / Unproven; Research Ready remains false. No next
-implementation task, acquisition or broader Observatory scope is authorized.
+increment. #85 remains open / Unproven; Research Ready remains false. The later explicit owner authorization permits only the bounded pilot quality
+increment described below; no acquisition or broader Observatory scope follows.
 
 Solana Quant Platform V2 is a **data-first research platform**. Its job is to obtain authentic Pump/Solana evidence, build reproducible point-in-time datasets, expose that evidence visually, and either discover a statistically and economically defensible edge or falsify the hypothesis. Profitability is not assumed.
 
@@ -34,7 +34,22 @@ Documentation uses four authority labels: `ACTIVE` is current, `SUPERSEDED` is r
 
 ## Approved development workflow
 
-For approved V2 development tasks, the user authorized the [independent-review and squash-merge workflow](DEVELOPMENT_WORKFLOW.md#authorized-review-merge-and-verification) on 2026-09-21, including PR #119. Use a new task branch from current `origin/main`; keep open-PR fixes on its existing branch. Every implementation PR receives a separate, explicitly authorized reviewer agent with fresh context who assesses only. Freeze scope and concrete acceptance criteria first. Conduct one complete independent review round, record the reviewed commit and findings at the PR, fix valid in-scope issues, then conduct one focused independent recheck. Remaining blockers after that recheck require the user's decision before another repair/review round; never merge to meet the round budget. Reuse valid unchanged test evidence and backlog nonblocking out-of-scope ideas. Squash-merge only the reviewed latest head after all acceptance criteria, required checks and review discussions are satisfied, then finish without another optimization round. Verify the resulting main commit, CI and roadmap synchronization before claiming completion. Remove only proven-safe task artifacts; preserve protected original worktrees, unique commits, archives and migration evidence. The full standing instructions are in [`AGENTS.md`](../AGENTS.md); existing provider, installation, host/capture and data-root boundaries remain in force.
+For approved V2 development tasks, the user authorized the [independent-review and squash-merge workflow](DEVELOPMENT_WORKFLOW.md#authorized-review-merge-and-verification) on 2026-09-21, including PR #119. Use a new task branch from current `origin/main`; keep open-PR fixes on its existing branch. Every implementation PR receives a separate, explicitly authorized reviewer agent with fresh context who assesses only. Freeze scope and concrete acceptance criteria first. Conduct one complete independent review round, record the reviewed commit and findings at the PR, fix valid in-scope issues, then conduct one focused independent recheck. Remaining blockers after that recheck require the user's decision before another repair/review round; never merge to meet the round budget. Reuse valid unchanged test evidence and backlog nonblocking out-of-scope ideas. Squash-merge only the reviewed latest head after all acceptance criteria, required checks and review discussions are satisfied, then finish without another optimization round. Verify the resulting main commit and technical/security checks; report administrative roadmap synchronization separately under the 2026-09-23 amendment below. Remove only proven-safe task artifacts; preserve protected original worktrees, unique commits, archives and migration evidence. The full standing instructions are in [`AGENTS.md`](../AGENTS.md); existing provider, installation, host/capture and data-root boundaries remain in force.
+
+### Delivery/synchronization amendment — 2026-09-23
+
+PR #135 delivered the first inspector as `eef008317f178e14c5aad93e92f9ed8d7fdf7aa4`.
+The owner separates technical delivery from administrative Project synchronization.
+A demonstrated external Projects availability/visibility failure remains an open
+administrative point and does not block otherwise justified development/merge;
+code, security, evidence and required technical checks still block. No protection
+bypass. Sync runs only on main pushes, daily at 04:17 UTC and deliberate main
+dispatch. Keep issue/PR content current; the board normally catches up by the
+next daily run. Report >24h backlog and the last successful run without automatic
+diagnosis/retries. Batched important status changes without a main update may
+receive one manual trusted-main sync. See [workflow](DEVELOPMENT_WORKFLOW.md).
+The separately authorized next bounded B6 increment is the existing three-slot
+pilot quality view; no B7, acquisition or Research Ready promotion follows.
 
 ## Current phase
 

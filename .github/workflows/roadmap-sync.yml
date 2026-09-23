@@ -2,27 +2,6 @@ name: Roadmap sync
 
 on:
   workflow_dispatch: {}
-  issues:
-    types:
-      - opened
-      - edited
-      - reopened
-      - closed
-      - labeled
-      - unlabeled
-      - assigned
-      - unassigned
-      - milestoned
-      - demilestoned
-  pull_request_target:
-    types:
-      - opened
-      - edited
-      - synchronize
-      - reopened
-      - ready_for_review
-      - converted_to_draft
-      - closed
   push:
     branches:
       - main
@@ -42,8 +21,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      # pull_request_target is used only to observe PR state. The workflow always
-      # checks out the trusted default branch and never executes PR-head code.
+      # Even manual dispatch always checks out trusted default-branch code.
+      # Never execute PR-head code with PROJECT_TOKEN.
       - name: Check out trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:

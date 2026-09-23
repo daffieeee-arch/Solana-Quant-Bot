@@ -156,8 +156,10 @@ suite is required for this bounded increment.
 The original local review and authentic browser/data evidence are retained.
 Only integration/documentation changes receive focused independent review;
 unchanged runtime, test and build files must match `74c527d` byte for byte.
-Required PR CI, CodeQL, dependency review and roadmap-sync run on the final
-integration head, followed by protected squash and main verification. No
+Required PR CI, CodeQL and dependency review run on the final integration head,
+followed by protected squash and technical main verification. Roadmap synchronization
+is separate administration under the 2026-09-23 delivery amendment; its known
+external visibility failure does not erase this inspector's technical evidence. No
 duplicate CI steps are added; no dataset replay follows from integration.
 
 Current B6 routing is In Progress / ACTIVE NOW / Unproven. This increment covers

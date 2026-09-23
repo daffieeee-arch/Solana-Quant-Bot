@@ -94,6 +94,22 @@ The visible result is the PR check summaries and GitHub Security code-scanning
 results. Provider access, automatic dependency upgrades, backups, hardware
 changes and application deployment are outside this task.
 
+## Administrative roadmap cadence
+
+Owner decision 2026-09-23: roadmap-sync runs only after pushes to main, daily
+at 04:17 UTC, and deliberate dispatch on main. It has no issue or PR-event
+trigger. Trusted-main checkout/config, token scope, minimal permissions and
+serial non-cancelling execution remain intact. The synchronizer itself and
+all consistency/pagination/retry limits are unchanged.
+
+Technical CI, CodeQL, dependency review and independent review remain delivery
+gates. A demonstrated external Projects availability/visibility fault is recorded
+separately as open administration; it does not block an otherwise safe protected
+merge or further product work. Code/security/evidence faults still block. Keep
+issue/PR content current and report last successful sync plus backlog after
+>24h without success; no automatic diagnosis/retry loop. See the full
+[delivery contract](DEVELOPMENT_WORKFLOW.md#technical-delivery-and-administrative-synchronization--2026-09-23).
+
 ## Canonical general CI design
 
 `ci.yml` runs **one** `tests-build-zero-cost` job on `ubuntu-24.04` with a

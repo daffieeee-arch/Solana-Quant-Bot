@@ -21,6 +21,30 @@ The controlled content migration created E0–E7 as #72/#74–#80 and B2A–B8 a
 
 The immutable preflight recorded issue #63 as `CLOSED` / `COMPLETED`, contrary to the accepted migration plan. Its close was temporally associated with PR #69's merge, but the exact initiating mechanism remains unproven. A separately authorized governance correction reopened it after the snapshot; current-schema Roadmap Sync run `33555734237` passed, and the snapshot and hashes remain unchanged. Issue #63 stayed open and pinned through the completed G0/E0 audit. PR #90 removed the pin; only after that gate passed was #63 closed individually as `not planned / superseded`. The immutable preflight remains unchanged and correctly differs from these documented later events.
 
+## Synchronization cadence and delivery status — 2026-09-23
+
+The owner approved only `push` to main, the existing daily `17 4 * * *` schedule
+(04:17 UTC), and deliberate `workflow_dispatch` on main. Issue and
+`pull_request_target` triggers are removed, without substitute per-PR triggers.
+Keep issue/PR content current; Project fields follow main updates and normally
+no later than the next daily sync. An important status change without a main
+update may receive one manual sync after changes are batched and no reconciliation
+is active. All executions use trusted main code/config, minimal token permissions,
+and serial `cancel-in-progress: false`; pagination, identity/duplicate/field checks,
+retry bounds and fail-closed stops are unchanged.
+
+Technical delivery and administrative synchronization have separate outcomes.
+A demonstrated external availability/visibility fault does not block technically
+safe product work or protected merge. Changed-code, security and evidence errors
+remain blockers; unknown sync failures are not automatically classified external.
+Record the failed run and actual unsynchronized state as open administration.
+Never fake success, recreate items or directly override managed fields.
+
+If >24 hours have elapsed since the last successful sync, report that run and the
+backlog in the delivery report. Do not start an automatic diagnostic/retry loop.
+Normal future main/scheduled runs retain their normal fail-closed behaviour; this
+frequency change does not claim to fix the #134/#135 visibility discrepancy.
+
 ## Post-mutation projection convergence
 
 Roadmap Sync run `33560315744` created and fully populated the Project item for issue #72, but its immediate read-back did not yet expose that item as active. This is treated as bounded GitHub Projects read-after-write projection lag, not as permission to replay the successful mutation or resume the paused content migration.
@@ -101,7 +125,7 @@ The final expected field state consists of captured supported unmanaged fields u
 
 The user-owned Project requires a protected `PROJECT_TOKEN`; GitHub's repository-scoped `GITHUB_TOKEN` is insufficient. Never place the token in Git, `.env`, shell history, YAML, issue/PR text, logs, prompts or MCP queries.
 
-The workflow receives `pull_request_target` events but must always execute trusted default-branch code. A pull-request branch may run offline validation but may not receive `PROJECT_TOKEN` or mutate the user Project. Mutation is allowed only through the reviewed workflow running code and config from the trusted default branch. Never:
+The workflow no longer receives issue or `pull_request_target` events and always executes trusted default-branch code, including on manual dispatch. A pull-request branch may run offline validation but may not receive `PROJECT_TOKEN` or mutate the user Project. Mutation is allowed only through the reviewed workflow running code and config from the trusted default branch. Never:
 
 - check out a PR head;
 - run scripts or artifacts from a PR branch;
@@ -179,7 +203,7 @@ npm test -- --run tests/github-projects-lifecycle.test.ts
 npm test -- --run tests/github-projects-routing.test.ts tests/github-projects-verification.test.ts tests/github-projects-managed-field-clearing.test.ts
 ```
 
-Do not manually dispatch Roadmap Sync from a feature branch. Ordinary PR-event reconciliation under current trusted-main configuration is expected and must be allowed to finish. Do not overlap it with a manual reconciliation or place a token on a command line.
+Do not manually dispatch Roadmap Sync from a feature branch. Normal main-push/daily reconciliation must be allowed to finish; issue/PR edits no longer start it. Do not overlap it with a manual reconciliation or place a token on a command line.
 
 ## Migration stop conditions
 
