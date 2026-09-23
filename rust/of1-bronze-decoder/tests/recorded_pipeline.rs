@@ -261,7 +261,7 @@ fn fixture_payload(change: Option<&str>) -> Vec<u8> {
 fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
     let (file, position) = if change == Some("nested_sell") {
         (include_str!("fixtures/authentic-pump-sections.json"), 3)
-    } else if change == Some("sell") {
+    } else if matches!(change, Some("sell" | "failed_sell")) {
         (include_str!("fixtures/authentic-pump-sections.json"), 1)
     } else {
         (include_str!("fixtures/authentic-sections.json"), 0)
@@ -280,10 +280,10 @@ fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
     // This graph is explicitly synthetic: native slot field, receipts and index
     // are constructed together, never masquerading as a copied authentic run.
     tx[3] = n(slot);
-    if matches!(change, Some("sell" | "nested_sell")) {
+    if matches!(change, Some("sell" | "nested_sell" | "failed_sell")) {
         tx[4] = n(0);
     } // Synthetic one-tx graph; original Raw is never changed.
-    if matches!(change, Some("failed" | "unsupported")) {
+    if matches!(change, Some("failed" | "unsupported" | "failed_sell")) {
         use prost::Message;
         let C::Array(frame) = &mut tx[2] else {
             panic!("metadata frame")
@@ -304,9 +304,12 @@ fn fixture_payload_at(slot: u64, change: Option<&str>) -> Vec<u8> {
         frame[1] = C::Null; // New synthetic uncompressed frame: no copied checksum.
         frame[4] = C::Bytes(metadata.encode_to_vec());
     }
-    if let Some(change) =
-        change.filter(|c| !matches!(*c, "sell" | "nested_sell" | "failed" | "unsupported"))
-    {
+    if let Some(change) = change.filter(|c| {
+        !matches!(
+            *c,
+            "sell" | "nested_sell" | "failed" | "unsupported" | "failed_sell"
+        )
+    }) {
         let which = if change == "wire" { 1 } else { 2 };
         let C::Array(f) = &mut tx[which] else {
             panic!("frame")
@@ -1036,4 +1039,116 @@ fn sample_identity_rejects_different_seed_class_window_and_epoch_before_initiali
         );
         assert!(!root.exists());
     }
+}
+
+// Synthetic native graph containing complete authentic wire packages. Only the
+// fixture's enclosing position/slot/receipt identity is constructed here.
+fn parity_payload(slot: u64, variants: &[&str]) -> Vec<u8> {
+    let mut bodies = Vec::new();
+    let mut links = Vec::new();
+    for (index, variant) in variants.iter().enumerate() {
+        let raw = fixture_payload_at(slot, Some(variant));
+        let prefix = raw.iter().position(|b| b & 128 == 0).unwrap() + 1;
+        let size = raw[..prefix]
+            .iter()
+            .enumerate()
+            .fold(0usize, |n, (i, b)| n | (usize::from(b & 127) << (7 * i)));
+        let C::Array(mut tx) = serde_cbor::from_slice(&raw[prefix + 36..prefix + size]).unwrap()
+        else {
+            panic!("transaction")
+        };
+        tx[4] = n(index as u64);
+        let (bytes, link) = section(&a(tx));
+        bodies.extend(bytes);
+        links.push(link);
+    }
+    let (entry, entry_link) = section(&a(vec![n(1), n(0), C::Bytes(vec![0; 32]), a(links)]));
+    let (rewards, rewards_link) = section(&a(vec![
+        n(5),
+        n(slot),
+        a(vec![n(6), C::Null, C::Null, C::Null, C::Bytes(vec![])]),
+    ]));
+    let (block, _) = section(&a(vec![
+        n(2),
+        n(slot),
+        a(vec![a(vec![C::Integer(-1), n(0)])]),
+        a(vec![entry_link]),
+        a(vec![n(slot - 1), n(0)]),
+        rewards_link,
+    ]));
+    [bodies, entry, rewards, block].concat()
+}
+
+#[test]
+fn native_delivery_orders_preserve_atomic_packages_and_state_distinctions() {
+    use of1_bronze_decoder::delivery::DeliveryOrder;
+    let export = std::env::var_os("COLUMNAR_PARITY_FIXTURE_DIR").map(PathBuf::from);
+    let mut h = Harness::new_sample(None, export.as_deref());
+    let payloads = [
+        parity_payload(SLOT, &["sell", "failed_sell"]),
+        parity_payload(SLOT + 1, &["nested_sell", "missing"]),
+        parity_payload(SLOT + 2, &["wire", "unsupported"]),
+    ];
+    h.metadata_slots(&payloads);
+    h.admit_slots(3);
+    for (i, p) in payloads.iter().enumerate() {
+        h.publish(4 + i as u64, p);
+    }
+    let before = inventory(&h.root);
+    let mut baseline = None;
+    let mut inputs = None;
+    for (order, expected) in [
+        (DeliveryOrder::Canonical, vec![0, 1, 2, 3, 4, 5]),
+        (DeliveryOrder::Reverse, vec![5, 4, 3, 2, 1, 0]),
+        (DeliveryOrder::OddEven, vec![1, 3, 5, 0, 2, 4]),
+    ] {
+        let (r, trace) = report::decode_run_with_delivery(&h.root, order).unwrap();
+        assert_eq!(trace["delivered_canonical_ranks"], json!(expected));
+        assert_eq!(r["transaction_envelopes"], 6);
+        assert_eq!(
+            r["dispositions"],
+            json!({"DECODED":3,"MISSING":1,"QUARANTINED":1,"UNSUPPORTED":1})
+        );
+        assert_eq!(r["root_to_slot_membership"], "UNAVAILABLE");
+        assert_eq!(r["records"][1]["transaction"]["status"], "ERROR");
+        assert!(
+            r["records"][0]["transaction"]["instructions"]
+                .as_array()
+                .unwrap()
+                .len()
+                > 1
+        );
+        assert_eq!(r["silver_fact_count"], 2);
+        let failed_hash = sha256(&serde_json::to_vec(&r["records"][1]).unwrap());
+        for fact in r["silver_records"].as_array().unwrap() {
+            assert_ne!(fact["bronze_record_sha256"], failed_hash);
+            assert!(
+                r["records"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p["transaction"]["status"] == "OK"
+                        && fact["bronze_record_sha256"] == sha256(&serde_json::to_vec(p).unwrap()))
+            );
+        }
+        for (i, record) in r["records"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(
+                record["effective_at"]["slot"],
+                (SLOT + (i / 2) as u64).to_string()
+            );
+            assert_eq!(record["effective_at"]["transaction_index_in_slot"], i % 2);
+            assert_eq!(record["atomic_observation_package"], true);
+        }
+        if let Some(expected) = &baseline {
+            assert_eq!(&r, expected);
+        } else {
+            baseline = Some(r);
+        }
+        if let Some(expected) = &inputs {
+            assert_eq!(&trace["canonical_inputs"], expected);
+        } else {
+            inputs = Some(trace["canonical_inputs"].clone());
+        }
+    }
+    assert_eq!(before, inventory(&h.root));
 }
