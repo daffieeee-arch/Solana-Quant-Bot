@@ -4,6 +4,17 @@
 
 ## Mission and success criterion
 
+**Bounded B6 descriptive flow, 2026-09-24:** the [mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md#descriptive-token-volume-flow-and-event-users--2026-09-24)
+adds a pinned Python report of admitted raw token buy/sell/gross/net volumes
+and distinct reported event-user strings. Full totals and atomic-package
+prefixes keep pilot/context separate; the combined fragment stays post-hoc.
+The adapter checks the same registered snapshot and exact package/fact references;
+the browser presents precomputed statistics with exact tables and package links.
+Same 15 packages / five facts / 58 balances / three failures, no decode/replay,
+quote conversion, ownership or market-total inference. #85 stays open / Unproven,
+Research Ready=false. Private evidence: `governance/b6-volume-flow-20260924/`.
+
+
 **Bounded B6 event observations, 2026-09-23:** the [mint inspector](research/B6_LOCAL_MINT_INSPECTOR.md#event-reported-reserve-points-and-addresses--2026-09-23)
 adds separate event-reported real/virtual token reserve points with an exact
 value table, and the reported user/creator/fee-recipient address fields. It

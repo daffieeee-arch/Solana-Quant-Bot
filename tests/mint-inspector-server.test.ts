@@ -7,13 +7,14 @@ import { request } from 'node:http';
 import { createMintInspector, loadInspection } from '../src/mint-inspector/server.js';
 import { fixtureInspection } from './fixtures/mint-inspector.js';
 import { fixturePilotQuality } from './fixtures/pilot-quality.js';
+import { fixtureMintFlow } from './fixtures/mint-flow.js';
 import { object } from '../src/mint-inspector/contract.js';
 
 const roots: string[] = [], servers: Array<{ close(): Promise<void> }> = [];
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
-async function setup() {
+async function setup(data = fixtureInspection()) {
   const root = await mkdtemp(join(tmpdir(), 'mint-inspector-')); roots.push(root);
-  const data = fixtureInspection(), plan = '{}', planHash = sha(plan);
+  const plan = '{}', planHash = sha(plan);
   const collection = JSON.stringify({ schema: 'OF1_BATCH_COLLECTION_1', state: 'COMPLETE', plan_sha256: planHash, research_ready: false });
   const collectionHash = sha(collection);
   data.timeline.bindings.plan_sha256 = planHash; data.timeline.bindings.collection_sha256 = collectionHash;
@@ -57,6 +58,31 @@ async function registerPilot(fixture: Awaited<ReturnType<typeof setup>>) {
 afterEach(async () => { await Promise.all(servers.splice(0).map(s => s.close())); await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 
 describe('registered loopback mint adapter', () => {
+  it('binds the Python flow to the registered snapshot and keeps its exact bytes read-only', async () => {
+    const { inspection, flow } = fixtureMintFlow(), fixture = await setup(inspection);
+    flow.report.inputs = Object.fromEntries(Object.entries(fixture.registry.inputs).map(([k, v]) => [k, v.sha256])) as typeof flow.report.inputs;
+    const bytes = JSON.stringify(flow.report);
+    await writeFile(join(fixture.root, 'flow.json'), bytes);
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify({ ...fixture.registry, flow: { path: 'flow.json', sha256: sha(bytes) } }));
+    const server = await createMintInspector(fixture.options); servers.push(server);
+    expect(JSON.parse((await get(server.port, '/api/mint-flow')).body).report).toEqual(flow.report);
+    expect((await get(server.port, '/evidence/mint-flow.json')).body).toBe(bytes);
+    expect((await get(server.port, '/api/mint-flow', 'POST')).status).toBe(405);
+    expect((await get(server.port, '/api/mint-flow?path=other.json')).status).toBe(404);
+    expect((await get(server.port, '/evidence/mint-flow.json', 'GET', { Origin: 'https://attacker.invalid' })).status).toBe(403);
+    expect(JSON.parse((await get(server.port, '/api/inspection')).body).timeline).toEqual(fixture.data.timeline);
+  });
+  it.each(['wrong-snapshot', 'corrupted', 'symlink', 'fact-order'])('never publishes invalid registered flow: %s', async variant => {
+    const { inspection, flow } = fixtureMintFlow(), fixture = await setup(inspection);
+    flow.report.inputs = Object.fromEntries(Object.entries(fixture.registry.inputs).map(([k, v]) => [k, v.sha256])) as typeof flow.report.inputs;
+    if (variant === 'wrong-snapshot') flow.report.inputs.timeline = '0'.repeat(64);
+    if (variant === 'fact-order') flow.report.packages[0].fact_hashes.reverse();
+    const bytes = JSON.stringify(flow.report), registered = { path: 'flow.json', sha256: sha(bytes) };
+    await writeFile(join(fixture.root, 'flow.json'), variant === 'corrupted' ? '{}' : bytes);
+    if (variant === 'symlink') { await symlink('flow.json', join(fixture.root, 'flow-link.json')); registered.path = 'flow-link.json'; }
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify({ ...fixture.registry, flow: registered }));
+    await expect(createMintInspector(fixture.options)).rejects.toThrow();
+  });
   it('serves the bound pilot separately, preserving manifest bytes and the mint snapshot', async () => {
     const fixture = await setup(), registered = await registerPilot(fixture), server = await createMintInspector(fixture.options); servers.push(server);
     const result = await get(server.port, '/api/pilot-quality'); expect(result.status).toBe(200);
@@ -73,6 +99,7 @@ describe('registered loopback mint adapter', () => {
     const fixture = await setup(), server = await createMintInspector(fixture.options); servers.push(server);
     expect((await get(server.port, '/api/pilot-quality')).status).toBe(404);
     expect((await get(server.port, '/api/inspection')).status).toBe(200);
+    expect((await get(server.port, '/api/mint-flow')).status).toBe(404);
   });
   it.each(['modified', 'incomplete', 'wrong-receipt', 'symlink'])('fails before publishing invalid pilot registration: %s', async variant => {
     const fixture = await setup(), { pilot } = await registerPilot(fixture);
