@@ -66,6 +66,7 @@ try {
     if(!python)throw Error('COLUMNAR_QUERY_PYTHON required: DuckDB must not be silently skipped');
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_query.py'),join(scratch,'fixtures')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_coverage.py')]));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_b7_sampling.py')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_exact_quote.py')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_mint_timeline.py')]));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_mint_flow.py')]));
