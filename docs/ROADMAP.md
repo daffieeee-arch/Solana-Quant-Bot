@@ -4,6 +4,16 @@
 
 The imported WSL stack retains a bounded [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md): 21,719 Bronze packages, including 1,898 failed transactions, and 22 Silver facts (15 buys / seven sells). Its three-slot research pilot and sixteen post-hoc context slots remain distinct. Rust owns the existing Arrow/Parquet writer; Python reads the sealed manifests. The [VPS integration record](operations/VPS_WSL_INTEGRATION.md) tracks host validation separately. Earlier named run results remain historical evidence; neither migration nor integration promotes B4/B5, Research Ready or execution readiness.
 
+## Current bounded task — 2026-09-24
+
+B6/#85 was delivered by #141 (`6e278f51c29e07b59ccf6c41e4d97638e3c97f75`)
+and read back as Done / SUPERSEDED / Engineering Validation after scheduled
+sync 35980423282. The owner explicitly started only B7/#86's offline
+[research and sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md).
+#86 remains open / Unproven, In Progress / ACTIVE NOW; B8 stays LATER.
+The proposal is not a sufficiency verdict or acquisition GO. Older routing
+paragraphs below preserve their earlier decision-time context.
+
 ## Program outcome
 
 Build authentic, reproducible Solana/Pump research evidence and determine whether a statistically and economically defensible edge exists. `FALSIFIED` and `INSUFFICIENT_SAMPLE` are valid outcomes. Profitability is never an assumption or a milestone label.

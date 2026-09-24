@@ -4,6 +4,17 @@
 
 ## Mission and success criterion
 
+**B7 offline preparation, 2026-09-24:** the owner authorized one
+[research/sampling decision proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md),
+not acquisition. B6/#85 is technically delivered by #141 at
+`6e278f51c29e07b59ccf6c41e4d97638e3c97f75`; scheduled sync 35980423282
+succeeded and #85 was read back as Done / SUPERSEDED / Engineering Validation.
+B7/#86 is now partial preparation, In Progress / ACTIVE NOW / Unproven.
+Its fixed windows, existing-Rust byte calculations and explicit native-sample /
+current-cost blockers are not an executable lease. B8 remains LATER. All network
+and execution approvals are false; Research Ready remains false. The dated B6
+notes below retain their earlier routing statements as publication-time history.
+
 **B6 bounded engineering acceptance, 2026-09-24:** the owner authorized closure of
 #85 when its original criteria are evidenced. The [criterion table and decision](research/B6_ENGINEERING_ACCEPTANCE_20260924.md)
 cover both authentic workspaces, operational Raw bytes/clocks, immutable page
@@ -109,7 +120,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** bounded B6/#85 engineering closeout under the [original-criteria acceptance](research/B6_ENGINEERING_ACCEPTANCE_20260924.md). After verified technical delivery, #85 is completed with `Done / SUPERSEDED / Engineering Validation`; actual Project fields may lag. The read-only mint and pilot-quality workspaces are the delivered MVP, not the later full workstation. B7/#86 remains queued `Backlog / NEXT / Unproven`, not started; B8 stays `LATER`.
+- **Current phase:** bounded B7/#86 offline [sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md), `In Progress / ACTIVE NOW / Unproven`; acquisition blocked pending a separately reviewed native sample/campaign binding and current cost confirmation. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; the two workspaces are the bounded MVP, not the later full workstation. B8 remains `LATER`; no data expansion is authorized.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history
