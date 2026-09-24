@@ -9,7 +9,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ["plan-check",plan]=>{let (p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;serde_json::json!({"state":"VERIFIED","plan_sha256":h,"slots":p.logical_selection.len(),"batches":p.batches.len()})},
         ["verify-batch",plan,id,output]=>{let(p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;batch::verify_output(&p,&h,p.batch(id)?,Path::new(output))?},
         ["inspect",plan,root]=>collection::inspect(Path::new(plan),Path::new(root))?,
-        ["seal",plan,root,output]=>{let(p,h)=batch::read_plan(Path::new(plan))?;let _campaign=batch::campaign_output(&p,&h,Path::new(output),2*1024*1024)?;let v=collection::inspect(Path::new(plan),Path::new(root))?;let bytes=serde_json::to_vec_pretty(&v)?;batch::write_new(Path::new(output),&bytes)?;batch::write_new(Path::new(&format!("{output}.sha256")),sha256(&bytes).as_bytes())?;fs::File::open(Path::new(output).parent().ok_or("output parent")?)?.sync_all()?;v},
+        ["seal",plan,root,output]=>collection::seal(Path::new(plan),Path::new(root),Path::new(output))?,
+
         ["campaign-processing-proposal",plan]=>{
             let(p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;
             let(sample,_)=batch::campaign_sample(&p)?.ok_or("B7 required")?;
@@ -28,22 +29,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::json!({"state":"ADMITTED_EXISTING_APPROVAL","new_authority":false})
         },
         ["campaign-check",plan,root,reserve]=>{
+            of1_range_recorder::campaign::verify_worker_address_space()?;
             let(p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;
             let(g,s)=batch::campaign_output(&p,&h,Path::new(root),reserve.parse()?)?.ok_or("B7 required")?;
-            serde_json::json!({"state":"WITHIN_EXISTING_LEASE","remaining_ms":g.processing_remaining_ms(&s)?,"new_authority":false})
+            serde_json::json!({"state":"WITHIN_EXISTING_LEASE","remaining_ms":g.processing_remaining_ms(&s)?,"deadline_boot_ms":g.processing_deadline_boot_ms(&s)?,"new_authority":false})
         },
         ["campaign-complete",plan,root]=>{
             let(p,h)=batch::read_plan(Path::new(plan))?;
             let(mut guard,sample)=batch::campaign_output(&p,&h,Path::new(root),2*1024*1024)?.ok_or("B7 required")?;
-            let v=collection::inspect(Path::new(plan),Path::new(root))?;
+            let v=collection::inspect_with_checkpoint(Path::new(plan),Path::new(root),&mut ||guard.processing_tick(&sample).map_err(std::io::Error::other))?;
             if v["state"]!="COMPLETE" {return Err("complete verified collection required".into())}
             let retained:serde_json::Value=serde_json::from_slice(&of1_range_recorder::acquisition::read_limited(&Path::new(root).join("collection.json"),16*1024*1024)?)?;
             if retained!=v{return Err("final collection identity mismatch".into())}
             let(raw,html)=collection::campaign_report(&p,Path::new(root),&v,&guard.accounting()?)?;
             guard.processing_tick(&sample)?;
             batch::write_new(&Path::new(root).join("campaign-report.json"),&raw)?;
+            guard.processing_tick(&sample)?;
             batch::write_new(&Path::new(root).join("index.html"),&html)?;
             fs::File::open(root)?.sync_all()?;
+            guard.processing_tick(&sample)?;
             batch::write_new(&Path::new(root).join("campaign-report.COMPLETE"),sha256(&raw).as_bytes())?;
             fs::File::open(root)?.sync_all()?;
             guard.complete_processing(sample.b7.ok_or("B7 required")?.window_ordinal)?;

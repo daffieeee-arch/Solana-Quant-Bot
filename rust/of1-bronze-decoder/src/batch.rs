@@ -390,9 +390,15 @@ pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Va
         ("execution.json", execution.as_slice()),
         ("batch.json", batch_bytes.as_slice()),
     ] {
+        if let Some((guard, sample)) = &campaign {
+            guard.processing_tick(sample).map_err(invalid)?;
+        }
         write_new(&output.join(name), bytes)?;
     }
     fs::File::open(&output)?.sync_all()?;
+    if let Some((guard, sample)) = &campaign {
+        guard.processing_tick(sample).map_err(invalid)?;
+    }
     write_new(&output.join("COMPLETE"), sha256(&quality).as_bytes())?;
     fs::File::open(&output)?.sync_all()?;
     fs::File::open(&parent)?.sync_all()?;

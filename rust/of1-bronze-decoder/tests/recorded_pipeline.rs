@@ -1166,6 +1166,61 @@ fn native_delivery_orders_preserve_atomic_packages_and_state_distinctions() {
     assert_eq!(before, inventory(&h.root));
 }
 
+fn assert_reserved_processing_denied(
+    plan: &of1_bronze_decoder::batch::Plan,
+    campaign: &Path,
+    parent: &Path,
+    root: &Path,
+    start_slot: u64,
+) {
+    use of1_range_recorder::{
+        b7,
+        campaign::{Guard, ProcessingApproval},
+        durable::{Clock, SystemClock},
+    };
+    let reserved = b7::sample(4, campaign).unwrap();
+    let mut reserved_plan = plan.clone();
+    reserved_plan.sources[0].sample_identity = serde_json::to_value(&reserved).unwrap();
+    let shift = reserved.start_slot - start_slot;
+    for row in &mut reserved_plan.logical_selection {
+        row.slot += shift;
+    }
+    for batch in &mut reserved_plan.batches {
+        for slot in &mut batch.slots {
+            *slot += shift;
+        }
+    }
+    let reserved_path = parent.join("reserved-plan.json");
+    fs::write(
+        &reserved_path,
+        serde_json::to_vec_pretty(&reserved_plan).unwrap(),
+    )
+    .unwrap();
+    let error = of1_bronze_decoder::collection::inspect(&reserved_path, parent).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("B7_RESERVED_EVALUATION_PROCESSING_NOT_AUTHORIZED")
+    );
+    let denied = Guard::admit_processing(
+        &reserved,
+        root,
+        ProcessingApproval {
+            authority: Authority::Fixture,
+            window: 4,
+            plan_sha256: "a".repeat(64),
+            worker_sha256s: vec!["b".repeat(64); 3],
+        },
+        &SystemClock.sample().unwrap(),
+    )
+    .unwrap_err();
+    assert!(
+        denied
+            .to_string()
+            .contains("B7_RESERVED_EVALUATION_PROCESSING_NOT_AUTHORIZED")
+    );
+}
+
 #[test]
 fn b7_native_sample_reaches_atomic_bronze_silver_and_denies_unapproved_output() {
     use of1_range_recorder::{
@@ -1211,6 +1266,7 @@ fn b7_native_sample_reaches_atomic_bronze_silver_and_denies_unapproved_output() 
         first["sample_identity"]
     );
     assert_eq!(first["receipt_evidence"], "Fixture");
+    assert_reserved_processing_denied(&plan, &campaign, parent, &root, sample.start_slot);
     let plan_path = parent.join("plan.json");
     let bytes = serde_json::to_vec_pretty(&plan).unwrap();
     fs::write(&plan_path, &bytes).unwrap();

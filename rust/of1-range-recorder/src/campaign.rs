@@ -599,6 +599,7 @@ impl Guard {
         approval: ProcessingApproval,
         at: &ClockSample,
     ) -> StoreResult<()> {
+        development_processing_only(sample)?;
         let mut g = Self::for_recorded(sample, run_root)?;
         let binding = sample.b7.as_ref().ok_or(StoreError::Identity)?;
         if approval.window != binding.window_ordinal
@@ -676,7 +677,11 @@ impl Guard {
         plan_sha: &str,
         additional: u64,
     ) -> StoreResult<Self> {
+        development_processing_only(sample)?;
         let g = Self::for_recorded(sample, run_root)?;
+        if !g.header.fixture {
+            verify_worker_address_space()?;
+        }
         let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
         let p = g
             .state
@@ -724,6 +729,22 @@ impl Guard {
         Ok(g)
     }
     /// # Errors
+    /// Original absolute boot-clock deadline, never renewed by a worker start.
+    pub fn processing_deadline_boot_ms(&self, sample: &SampleIdentity) -> StoreResult<u64> {
+        let i = sample
+            .b7
+            .as_ref()
+            .ok_or(StoreError::Identity)?
+            .window_ordinal;
+        Ok(self
+            .state
+            .processing
+            .get(&i)
+            .ok_or(StoreError::Identity)?
+            .stage
+            .deadline_boot_ms)
+    }
+    /// # Errors
     /// Remaining fixed runtime; a restart never creates a new deadline.
     pub fn processing_remaining_ms(&self, sample: &SampleIdentity) -> StoreResult<u64> {
         let i = sample
@@ -759,6 +780,7 @@ impl Guard {
         if p.complete {
             return Err(StoreError::Identity);
         }
+        within_stage(&p.stage, &SystemClock.sample()?)?;
         p.complete = true;
         self.commit(n)
     }
@@ -805,6 +827,46 @@ impl Guard {
         n.phase2 = Some(approval);
         g.commit(n)
     }
+}
+
+/// No evaluation processing or analytical presentation is authorized in this increment.
+/// Identity validation/acquisition retain the original role without relabeling.
+/// # Errors
+/// Reserved evaluation waits for a separately reviewed visibility/processing gate.
+pub fn development_processing_only(sample: &SampleIdentity) -> StoreResult<()> {
+    sample.validate(978)?;
+    if sample.b7.as_ref().ok_or(StoreError::Identity)?.cohort_role != "DEVELOPMENT" {
+        return Err(StoreError::ReservedEvaluation);
+    }
+    Ok(())
+}
+
+fn address_space_limit(text: &str) -> StoreResult<()> {
+    let fields = text
+        .lines()
+        .find_map(|line| line.strip_prefix("Max address space"))
+        .ok_or(StoreError::WorkerLimit)?
+        .split_whitespace()
+        .collect::<Vec<_>>();
+    if fields.len() != 3 || fields[2] != "bytes" {
+        return Err(StoreError::WorkerLimit);
+    }
+    let soft = fields[0]
+        .parse::<u64>()
+        .map_err(|_| StoreError::WorkerLimit)?;
+    let hard = fields[1]
+        .parse::<u64>()
+        .map_err(|_| StoreError::WorkerLimit)?;
+    if soft == 0 || soft > hard || hard > 2 * 1024 * 1024 * 1024 {
+        return Err(StoreError::WorkerLimit);
+    }
+    Ok(())
+}
+/// # Errors
+/// Native workers require the existing hard `RLIMIT_AS` cap, including direct use.
+/// This observes the current process; it never changes shared or process settings.
+pub fn verify_worker_address_space() -> StoreResult<()> {
+    address_space_limit(&fs::read_to_string("/proc/self/limits")?)
 }
 
 fn hex_hash(v: &str) -> bool {
@@ -898,6 +960,31 @@ mod tests {
             true,
         )
         .unwrap()
+    }
+    #[test]
+    fn worker_address_space_must_be_a_real_bounded_hard_limit() {
+        for limits in [
+            "Max address space unlimited unlimited bytes",
+            "Max address space 2147483648 unlimited bytes",
+            "Max address space 2147483648 6442450944 bytes",
+            "missing",
+        ] {
+            assert!(address_space_limit(limits).is_err());
+        }
+        address_space_limit("Max address space 2147483648 2147483648 bytes").unwrap();
+        address_space_limit("Max address space 1073741824 2147483648 bytes").unwrap();
+    }
+    #[test]
+    fn reserved_identity_is_valid_but_processing_is_not_authorized() {
+        let root = Path::new("/fixture/campaign");
+        for i in 0..16 {
+            let sample = b7::sample(i, root).unwrap();
+            sample.validate(978).unwrap();
+            assert_eq!(
+                development_processing_only(&sample).is_ok(),
+                matches!(i,0..=3|8..=11)
+            );
+        }
     }
     #[test]
     fn shared_precharges_survive_runs_restart_and_failed_attempts() {

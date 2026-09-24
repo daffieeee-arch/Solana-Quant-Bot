@@ -49,6 +49,10 @@ pub enum StoreError {
     Integrity(String),
     #[error("hard budget exhausted")]
     Budget,
+    #[error("B7_RESERVED_EVALUATION_PROCESSING_NOT_AUTHORIZED")]
+    ReservedEvaluation,
+    #[error("B7_WORKER_ADDRESS_SPACE_LIMIT_REQUIRED")]
+    WorkerLimit,
     #[error("original deadline or attempt timeout reached")]
     Deadline,
     #[error("clock rollback, invalid clock or boot identity changed")]

@@ -8,9 +8,10 @@ import copy
 import json
 import pathlib
 import sys
+import subprocess
 
-from collection_reader import load_collection
-from collection_run import Runner, digest
+from collection_reader import load_collection, attach_collection
+from collection_run import Runner, digest, process_limits
 from manifest_reader import attach_dataset, load_manifest, sample_inventory
 
 
@@ -32,7 +33,22 @@ def run(fixture, decoder, projector, verifier):
     try: Runner(path,output,decoder,projector,verifier)
     except BlockingIOError: pass
     else: raise AssertionError('duplicate campaign driver')
+    probe=[str(verifier),'campaign-check',str(runner.plan_path),str(output),'0']
+    unlimited=subprocess.run(probe,capture_output=True,timeout=30)
+    assert unlimited.returncode==1 and unlimited.stderr==b'Error: WorkerLimit\n', unlimited.stderr
+    bounded=subprocess.run(probe,capture_output=True,preexec_fn=process_limits,timeout=30,check=True)
+    assert json.loads(bounded.stdout)['remaining_ms']>0
     runner.run(max_new_batches=1)
+    pending=output/'collection-progress-0000.json'
+    pending_manifest,_=load_collection(pending)
+    assert all(b['state']=='PENDING' for b in pending_manifest['batches'])
+    try: attach_collection(None,output,pending_manifest)
+    except ValueError as e: assert 'B7_ANALYTICAL_EXPORT_NOT_AUTHORIZED' in str(e)
+    else: raise AssertionError('pending B7 collection escaped campaign admission')
+    outside=fixture/'denied-generic-report'
+    generic=subprocess.run([sys.executable,str(pathlib.Path(__file__).with_name('collection_report.py')),str(pending),str(outside)],capture_output=True,timeout=30)
+    assert generic.returncode!=0 and b'B7_ANALYTICAL_EXPORT_NOT_AUTHORIZED' in generic.stderr
+    assert not outside.exists()
     first=output/plan['batches'][0]['output_directory']/'parquet'
     initial=digest(first/'manifest.json')
     runner.driver_lock.close()

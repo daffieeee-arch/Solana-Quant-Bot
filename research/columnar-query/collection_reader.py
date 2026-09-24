@@ -172,6 +172,8 @@ def sql_literal(value):
 
 def attach_collection(db, root, manifest):
     sources,logical,planned=plan_inventory(manifest['plan'])
+    if any((source.get('sample_identity') or {}).get('b7') is not None for source in sources.values()):
+        raise ValueError('B7_ANALYTICAL_EXPORT_NOT_AUTHORIZED: pending and complete campaigns use guarded native reports only')
     role_map={r['slot']:r['role'] for r in logical}
     layer_parts={layer:[] for layer in ['bronze','silver']}
     ordinals={layer:0 for layer in layer_parts}

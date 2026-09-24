@@ -131,10 +131,18 @@ class Runner:
         status=self.campaign_command('campaign-check',self.plan_path,self.root,reserve)
         if status.get('state')!='WITHIN_EXISTING_LEASE' or status.get('remaining_ms',0)<=0:
             raise ValueError('campaign processing lease exhausted')
-        return min(900,status['remaining_ms']/1000)
+        deadline=status.get('deadline_boot_ms')
+        if type(deadline) is not int: raise ValueError('native absolute processing deadline required')
+        return self.remaining_until(deadline)
+
+    @staticmethod
+    def remaining_until(deadline):
+        remaining=deadline/1000-time.clock_gettime(time.CLOCK_BOOTTIME)
+        if remaining<=0: raise ValueError('original campaign processing deadline exhausted')
+        return min(900,remaining)
 
     def step(self,label,args):
-        remaining=self.campaign_check(STAGE_RESERVATION_BYTES+1024*1024)
+        self.campaign_check(STAGE_RESERVATION_BYTES+1024*1024)
         self.counter+=1
         prefix=self.root/f'operation-{self.counter:04d}'
         while pathlib.Path(str(prefix)+'.stdout').exists() or pathlib.Path(str(prefix)+'.json').exists():
@@ -157,6 +165,8 @@ class Runner:
         error=None; returncode=None
         with pathlib.Path(str(prefix)+'.stdout').open('xb') as stdout, pathlib.Path(str(prefix)+'.stderr').open('xb') as stderr:
             try:
+                # Recheck after filesystem scans, executable hashing and log creation.
+                remaining=self.campaign_check(STAGE_RESERVATION_BYTES+1024*1024)
                 result=subprocess.run([str(a) for a in args],stdout=stdout,stderr=stderr,
                                       preexec_fn=process_limits,timeout=remaining,
                                       env={**os.environ,'CARGO_NET_OFFLINE':'true','PYTHONDONTWRITEBYTECODE':'1'})
