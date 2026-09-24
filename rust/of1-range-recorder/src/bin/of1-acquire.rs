@@ -128,6 +128,13 @@ fn main() {
 fn run(args: &[String]) -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["clock-sample"] => print(&SystemClock.sample()?),
+        ["campaign-status",root]=>print(&of1_range_recorder::campaign::Guard::status(Path::new(root))?),
+        ["campaign-phase2-admit",plan,approval]=> {
+            let plan:AggregatePlan=read(plan)?;
+            let sample=plan.sample_identity.as_ref().ok_or("B7 sample required")?;
+            of1_range_recorder::campaign::Guard::admit_phase2(sample,read(approval)?,&SystemClock.sample()?)?;
+            print(&serde_json::json!({"state":"SEPARATELY_APPROVED_PHASE_TWO","network_started":false}))
+        },
         ["clock-preflight", plan] => {
             let observation = clock_preflight(&read(plan)?)?;
             print(&observation)?;
@@ -181,6 +188,24 @@ fn run(args: &[String]) -> Result<()> {
                 "approval_target_sha256":metadata_proposal_sha256(&aggregate, &metadata_budget)?,
                 "required_next_action":"Review exact plan/code/toolchain, current cost and availability; obtain metadata-only GO. No payload authorization."
             }))
+        }
+        ["metadata-b7-proposal", code_sha, toolchain_fingerprint, ordinal] => {
+            for (value,len) in [(*code_sha,40),(*toolchain_fingerprint,64)] {
+                if value.len()!=len || !value.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b)){return Err("exact lowercase code/toolchain hashes required".into())}
+            }
+            let sample=of1_range_recorder::b7::sample(ordinal.parse()?,Path::new(of1_range_recorder::b7::PRODUCTION_ROOT))?;
+            sample.validate(978)?;
+            let aggregate=AggregatePlan{schema:AGGREGATE_SCHEMA.into(),epoch:978,format_source:FormatSource::pinned(),
+                code_sha:(*code_sha).into(),toolchain_fingerprint:(*toolchain_fingerprint).into(),executable_sha256:current_executable_sha256()?,
+                sample_identity:Some(sample),clock_policy:Some(ClockPolicy::standard()),download_rate:Some(of1_range_recorder::rate::DownloadRate::standard()),
+                budget:AggregateBudget{max_slots:16,max_plan_bytes:1_048_576,max_requests:60,max_response_entity_bytes:16_777_216,
+                    max_total_response_entity_bytes:134_217_728,max_disk_bytes:268_435_456,required_free_disk_bytes:of1_range_recorder::campaign::FREE_BYTES,
+                    max_memory_bytes:536_870_912,max_runtime_ms:1_800_000,response_timeout_ms:30_000,request_retries:2}};
+            let budget=metadata_budget(false);
+            print(&serde_json::json!({"schema":"OF1_B7_METADATA_PROPOSAL_1","design_accepted":true,
+                "approved":false,"network_approved":false,"metadata_approved":false,"payload_approved":false,"execution_approved":false,
+                "aggregate":aggregate,"metadata_budget":budget,"metadata_operations":metadata_operations(978)?,
+                "approval_target_sha256":metadata_proposal_sha256(&aggregate,&budget)?,"lease_created":false,"research_ready":false}))
         }
         ["metadata-init", root, plan, lease] => {
             validate_dataset_location(Path::new(root))?;

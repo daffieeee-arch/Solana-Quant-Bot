@@ -4,6 +4,11 @@
 > Partial #86 preparation only. No provider request, approval, acquisition or
 > B7 sufficiency conclusion. #86 stays open / Unproven; Research Ready is false.
 
+The preceding status records the proposal at publication. The owner subsequently
+accepted this design and authorized native preparation plus a conditional first
+DEVELOPMENT window; see the separate [dated campaign decision](B7_NATIVE_CAMPAIGN.md).
+The original proposal JSON and private sealed report remain unchanged.
+
 ## One question and its limits
 
 In what fraction of eligible **16-slot windows** does at least one mint have an

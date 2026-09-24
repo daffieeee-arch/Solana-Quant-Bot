@@ -450,11 +450,37 @@ pub fn materialize_with_write_limit(
     }
     let seal = admission::seal(&input, execution_sha)?;
     let admitted = admission::inspect(&input, &seal)?;
+    let campaign = if admitted["sample_identity"]["b7"].is_null() {
+        None
+    } else {
+        let sample =
+            serde_json::from_value(admitted["sample_identity"].clone()).map_err(invalid)?;
+        Some((
+            of1_range_recorder::campaign::Guard::output(
+                &sample,
+                Path::new(
+                    seal["execution"]["run_root"]
+                        .as_str()
+                        .ok_or_else(|| invalid("B7_RUN"))?,
+                ),
+                output,
+                seal["execution"]["batch_binding"]["plan_sha256"]
+                    .as_str()
+                    .ok_or_else(|| invalid("B7_BATCH_REQUIRED"))?,
+                write_limit + 1024 * 1024,
+            )
+            .map_err(invalid)?,
+            sample,
+        ))
+    };
     fs::create_dir(output)?;
     File::open(&parent)?.sync_all()?;
     let mut files = BTreeMap::new();
     let mut layers = BTreeMap::new();
     for layer in [Layer::Bronze, Layer::Silver] {
+        if let Some((guard, sample)) = &campaign {
+            guard.processing_tick(sample).map_err(invalid)?;
+        }
         let (summary, parts) = write_shards_budgeted(
             layer,
             &input.join(format!("{}.jsonl", layer.name())),
@@ -495,6 +521,9 @@ pub fn materialize_with_write_limit(
     let mut manifest = json!({"schema":"OF1_PARQUET_DATASET_2","writer":{"version":env!("CARGO_PKG_VERSION"),"source_sha256":crate::source_sha256(),"executable_sha256":file_hash(&std::env::current_exe()?,crate::MAX_EXECUTABLE_BYTES)?.0,"cargo_lock_sha256":hash(include_bytes!("../Cargo.lock")),"settings":settings},"input":seal,"files":files,"layers":layers,"selection":admitted["selection"],"sample_identity":admitted["sample_identity"],"evidence":{"slice_class":admitted["slice_class"],"receipt_evidence":admitted["receipt_evidence"],"new_domain_decoding":false,"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","unknowns_preserved":true,"historical_activation":"UNPROVEN","physical_writer":"RUST_ARROW_PARQUET_BOUNDED_PROJECTION_ONLY"},"publication":{"state":"FILES_VERIFIED","cumulative_shard_write_bytes":budget.written,"does_not_assert_selection_completeness_or_research_suitability":true}});
     if let Some(binding) = admitted.get("batch_binding") {
         manifest["batch_binding"] = binding.clone();
+    }
+    if let Some((guard, sample)) = &campaign {
+        guard.processing_tick(sample).map_err(invalid)?;
     }
     let bytes = serde_json::to_vec_pretty(&manifest).map_err(invalid)?;
     if bytes.len() > 1024 * 1024 {

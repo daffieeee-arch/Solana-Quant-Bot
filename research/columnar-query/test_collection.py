@@ -242,6 +242,7 @@ class RunnerIdentityTests(unittest.TestCase):
 
     def test_operation_reservation_stops_before_subprocess(self):
         runner=Runner.__new__(Runner)
+        runner.campaign=False  # Original non-campaign artifact reservation fixture.
         runner.counter=0
         with tempfile.TemporaryDirectory() as tmp:
             runner.root=pathlib.Path(tmp)

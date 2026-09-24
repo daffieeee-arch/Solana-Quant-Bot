@@ -128,6 +128,27 @@ def sample_inventory(manifest):
                     "selection_plan_sha256": sha(proposal_raw), "epoch": 978,
                     "seed": "solana-quant-epoch978-pilot-v1-20260912", "algorithm": "SHA256_MIN_CENTER_1",
                     "selected_center": 422669517, "start_slot": 422669516, "end_slot_exclusive": 422669519}
+        if sample.get("schema") == "OF1_B7_WINDOW_SAMPLE_1":
+            # Identity projection only. Native admission remains authoritative.
+            from b7_sampling import select, canonical
+            proposal=json.loads(regular_bytes(pathlib.Path(__file__).with_name("b7-proposal.json"),MAX_MANIFEST_BYTES),object_pairs_hook=pairs_unique)
+            selected=select(proposal)
+            if sha(canonical(selected))!="085d33c70ad504a9e14378629df7ec584c88826dc918f4eafb780bb44c824782":
+                raise ValueError("frozen B7 selection changed")
+            binding=sample.get("b7",{})
+            ordinal=binding.get("window_ordinal")
+            if type(ordinal) is not int or not 0<=ordinal<16: raise ValueError("B7 ordinal")
+            window=selected['windows'][ordinal]
+            root=binding.get('campaign_root')
+            if not isinstance(root,str) or not pathlib.Path(root).is_absolute() or '..' in pathlib.Path(root).parts:
+                raise ValueError("B7 campaign path")
+            expected={"schema":"OF1_B7_WINDOW_SAMPLE_1","sample_class":"RESEARCH_SAMPLING",
+                      "selection_plan_sha256":selected['proposal_sha256'],"epoch":978,"seed":proposal['seed'],"algorithm":proposal['algorithm'],
+                      "selected_center":window['boundary_slot'],"start_slot":window['start_slot'],"end_slot_exclusive":window['end_slot_exclusive'],
+                      "b7":{"campaign_id":"b7-recurrence-v1-20260924","campaign_root":root,
+                            "accepted_report_sha256":"80d8f6fb0d10fa7c210fb4bd6e9fe4d1bdbb8b19539fa7fd021394d03f3bf415",
+                            "selection_sha256":sha(canonical(selected)),"window_ordinal":ordinal,"rank":window['rank'],
+                            "rank_sha256":window['rank_sha256'],"cohort_role":window['role'],"phase":window['stage']}}
         if json.dumps(sample, sort_keys=True) != json.dumps(expected, sort_keys=True) or evidence["slice_class"] != "RESEARCH_SAMPLING":
             raise ValueError("unsupported or altered fixed source sample identity")
         if manifest["input"]["execution"].get("sample_identity") != sample or manifest["input"]["execution"].get("slice_class") != "RESEARCH_SAMPLING":
@@ -234,6 +255,8 @@ def attach_dataset(db, root, manifest):
     Logical ordinal equality is checked across files. Duplicate record bytes are
     allowed and have distinct ordinals; duplicate file/ordinal references are not.
     """
+    if (manifest.get('sample_identity') or {}).get('b7') is not None:
+        raise ValueError('B7_ANALYTICAL_EXPORT_NOT_AUTHORIZED: use campaign-bound native quality reports; evaluation remains sealed')
     for layer in ["bronze", "silver"]:
         ordinal = 0
         paths = []

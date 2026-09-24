@@ -328,6 +328,12 @@ pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Va
     if plan.sources.iter().any(|s| output.starts_with(&s.run_root)) {
         return Err(invalid("BATCH_OUTPUT_INSIDE_SOURCE"));
     }
+    let campaign = campaign_output(
+        &plan,
+        &plan_hash,
+        &output,
+        resources::MAX_PUBLICATION_BYTES as u64 + 1024 * 1024,
+    )?;
     let start = now()?;
     let mut report = report::decode_receipts(&source.run_root, &batch.receipt_sequences)?;
     let plan_json = String::from_utf8(read_limited(plan_path, MAX_PLAN_BYTES).map_err(invalid)?)
@@ -372,6 +378,9 @@ pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Va
         resources::MAX_PUBLICATION_BYTES,
     )?;
     plan.validate_sources()?;
+    if let Some((guard, sample)) = &campaign {
+        guard.processing_tick(sample).map_err(invalid)?;
+    }
     fs::create_dir(&output)?;
     for (name, bytes) in [
         ("quality.json", quality.as_slice()),
@@ -491,4 +500,49 @@ pub fn verify_output(
     Ok(
         json!({"batch_id":batch.batch_id,"state":"VERIFIED","batch_binding":binding,"execution":execution,"output":output}),
     )
+}
+
+/// One B7 window per collection; original pilot/context collections are unchanged.
+/// # Errors
+/// Mixed campaigns, windows, roles and paths cannot share a processing lease.
+pub fn campaign_sample(
+    plan: &Plan,
+) -> io::Result<Option<(of1_range_recorder::sample::SampleIdentity, PathBuf)>> {
+    let b7 = plan
+        .sources
+        .iter()
+        .filter(|s| !s.sample_identity["b7"].is_null())
+        .collect::<Vec<_>>();
+    if b7.is_empty() {
+        return Ok(None);
+    }
+    if plan.sources.len() != 1 || b7.len() != 1 {
+        return Err(invalid("B7_SINGLE_WINDOW_COLLECTION_REQUIRED"));
+    }
+    let sample: of1_range_recorder::sample::SampleIdentity =
+        serde_json::from_value(b7[0].sample_identity.clone()).map_err(invalid)?;
+    sample.validate(978).map_err(invalid)?;
+    Ok(Some((sample, b7[0].run_root.clone())))
+}
+/// # Errors
+/// Guard must live through all writes; no unregistered B7 output path is accepted.
+pub fn campaign_output(
+    plan: &Plan,
+    hash: &str,
+    path: &Path,
+    bytes: u64,
+) -> io::Result<
+    Option<(
+        of1_range_recorder::campaign::Guard,
+        of1_range_recorder::sample::SampleIdentity,
+    )>,
+> {
+    campaign_sample(plan)?
+        .map(|(sample, run)| {
+            let guard =
+                of1_range_recorder::campaign::Guard::output(&sample, &run, path, hash, bytes)
+                    .map_err(invalid)?;
+            Ok((guard, sample))
+        })
+        .transpose()
 }

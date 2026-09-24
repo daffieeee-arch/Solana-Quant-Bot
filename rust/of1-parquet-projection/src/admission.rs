@@ -274,17 +274,9 @@ fn synthetic_source(quality: &Value, execution: &Value) -> io::Result<Source> {
 /// # Errors
 /// Rejects caller-supplied labels, unknown selections, changed seeds or post-hoc plans.
 pub fn validate_sample(sample: &Value) -> io::Result<()> {
-    if hash(include_bytes!(
-        "../../../research/columnar-query/pilot-proposal.json"
-    )) != "df930707d0ece9915744aec7cf771c60e92f35298f2a6b4251aeb30d5a6d85a1"
-    {
-        return Err(invalid("FROZEN_SELECTION_PLAN_CHANGED"));
-    }
-    let expected = json!({"schema":"OF1_FIXED_PILOT_SAMPLE_1","sample_class":"RESEARCH_SAMPLING","selection_plan_sha256":hash(include_bytes!("../../../research/columnar-query/pilot-proposal.json")),"epoch":978,"seed":"solana-quant-epoch978-pilot-v1-20260912","algorithm":"SHA256_MIN_CENTER_1","selected_center":422_669_517_u64,"start_slot":422_669_516_u64,"end_slot_exclusive":422_669_519_u64});
-    if sample != &expected {
-        return Err(invalid("UNBOUND_OR_CHANGED_SAMPLE_IDENTITY"));
-    }
-    Ok(())
+    let identity: of1_range_recorder::sample::SampleIdentity =
+        serde_json::from_value(sample.clone()).map_err(invalid)?;
+    identity.validate(978).map_err(invalid)
 }
 fn record_binding(record: &Value, source: &Source) -> io::Result<()> {
     if record["slice_class"] != source.class || record["sample_identity"] != source.sample {
@@ -455,6 +447,24 @@ fn inventory(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_pilot_and_both_frozen_b7_roles_share_admission() {
+        validate_sample(
+            &serde_json::to_value(of1_range_recorder::sample::SampleIdentity::fixed_pilot())
+                .unwrap(),
+        )
+        .unwrap();
+        for ordinal in [0, 4, 8, 12] {
+            let identity =
+                of1_range_recorder::b7::sample(ordinal, Path::new("/tmp/identity-only-fixture"))
+                    .unwrap();
+            let mut value = serde_json::to_value(identity).unwrap();
+            validate_sample(&value).unwrap();
+            value["b7"]["cohort_role"] = json!("POSTHOC_CONTEXT");
+            assert!(validate_sample(&value).is_err());
+        }
+    }
+
     use std::fs;
 
     #[test]

@@ -18,6 +18,7 @@ const MANIFEST_HASH = 'a98abc110b726dcb369b8cb03c4ea198d83723347eda027e767540ec2
 const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
+const B7_PROCESS_TEST_HASH = '30c5f3305d4e2c9983700a16ca2861787ddecdbb2a8a726d517571a15150cae4';
 const RATE_PROCESS_TEST_HASH = 'a1982e6bf196bc790fbd4689fa6c802b4f947a9b2dfb82d4c4788986e792ccf7';
 // No blanket network/process exception for a directory or Cargo feature. Exact reviewed
 // fixture sources only; their constructors accept a port, never a host/URL/provider config.
@@ -50,6 +51,7 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
   for (const [path, source] of Object.entries(sources)) {
     const crashHarness = path === 'tests/durability_process.rs';
     const rateHarness = path === 'tests/rate_process.rs';
+    const b7Harness = path === 'src/campaign/process_tests.rs';
     const fixtureSource = Object.hasOwn(LOOPBACK_SOURCE_HASHES, path);
     const acquisitionSource = Object.hasOwn(ACQUISITION_SOURCE_HASHES, path);
     const monitorSource = Object.hasOwn(MONITOR_SOURCE_HASHES, path);
@@ -61,6 +63,7 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
       ? String(source).replaceAll('"Error: Command failed: ', '"Error: diagnostic failed: ')
       : source;
     if (crashHarness && hash(source) !== PROCESS_TEST_HASH) errors.push('unreviewed OF1 process-crash harness');
+    if (b7Harness && hash(source) !== B7_PROCESS_TEST_HASH) errors.push('unreviewed B7 process-crash harness');
     if (rateHarness && hash(source) !== RATE_PROCESS_TEST_HASH) errors.push('unreviewed OF1 rate-process harness');
     if (fixtureSource && hash(source) !== LOOPBACK_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 loopback source: ${path}`);
     if (acquisitionSource && hash(source) !== ACQUISITION_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 acquisition source: ${path}`);
@@ -68,7 +71,7 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     if (path === 'build.rs' || /\bunsafe\s*\{|#\s*\[\s*path\s*=/u.test(source)
       || (!fixtureSource && !acquisitionSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
       || (!monitorSource && /\bUnixDatagram\b/u.test(source))
-      || (!crashHarness && !rateHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
+      || (!crashHarness && !rateHarness && !b7Harness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
       errors.push(`unexpected runtime capability in ${path}`);
     }
   }
