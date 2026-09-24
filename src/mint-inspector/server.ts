@@ -5,6 +5,7 @@ import { isAbsolute, join, resolve, extname } from 'node:path';
 import { readBoundedFile } from '../acquisition-monitor/reader.js';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, hash, object, parseInspection, type InputHashes, type InputName } from './contract.js';
 import { MAX_PILOT_BYTES, PILOT_INPUT_NAMES, parsePilotQuality, type PilotInputName } from './pilot-quality.js';
+import { parseMintFlow } from './mint-flow.js';
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const fail = (): never => { throw new Error('INSPECTOR_INPUT_UNAVAILABLE'); };
@@ -63,7 +64,16 @@ export async function loadInspection(root: string, registryPath: string) {
   }
   const response = Buffer.from(JSON.stringify(inspection));
   if (response.length > MAX_RESPONSE_BYTES) fail();
-  return { inspection, response, bytes, pilotResponse, pilotBytes };
+  let flowBytes: Buffer | undefined, flowResponse: Buffer | undefined;
+  if (registry.flow !== undefined) {
+    const registered = object(registry.flow); hash(registered.sha256);
+    flowBytes = await registeredFile(root, registered.path, MAX_RESPONSE_BYTES);
+    if (sha256(flowBytes) !== registered.sha256) fail();
+    flowResponse = Buffer.from(JSON.stringify(parseMintFlow({ sha256: registered.sha256,
+      report: JSON.parse(flowBytes.toString('utf8')) }, inspection)));
+    if (flowResponse.length > MAX_RESPONSE_BYTES) fail();
+  }
+  return { inspection, response, bytes, pilotResponse, pilotBytes, flowBytes, flowResponse };
 }
 
 export async function createMintInspector(options: { dataRoot: string; registryPath: string; staticDirectory: string; port: number }) {
@@ -76,6 +86,10 @@ export async function createMintInspector(options: { dataRoot: string; registryP
   if (input.pilotResponse) {
     routes.set('/api/pilot-quality', { bytes: input.pilotResponse, type: 'application/json' });
     for (const name of PILOT_INPUT_NAMES) routes.set(`/evidence/pilot-${name}.json`, { bytes: input.pilotBytes[name]!, type: 'application/json' });
+  }
+  if (input.flowResponse) {
+    routes.set('/api/mint-flow', { bytes: input.flowResponse, type: 'application/json' });
+    routes.set('/evidence/mint-flow.json', { bytes: input.flowBytes!, type: 'application/json' });
   }
   routes.set('/', { bytes: await registeredFile(staticRoot, 'inspector.html', 65536), type: 'text/html' });
   const assets = await readdir(join(staticRoot, 'assets'));

@@ -303,3 +303,89 @@ Unavailable historical creation/completion/migration, full lifespan, activation,
 actual CPI rights and independently evidenced price/account-state semantics are
 source-evidence limits, not values the UI may compute or invent. #85 stays open /
 Unproven; Research Ready=false. No new acceptance criteria or follow-on work.
+
+## Descriptive token volume, flow and event users — 2026-09-24
+
+The separately authorized B6 increment uses `research/columnar-query/mint_flow.py`
+to aggregate the existing pinned timeline's admitted Rust-authorized facts.
+It reuses the bounded file reader, duplicate-key rejection, timeline count
+contract and exact canonical JSON serializer. No Raw/Parquet query or replay,
+wire decode, Silver admission or Gold/feature platform is introduced.
+
+`OF1_MINT_FLOW_1` / producer version `ADMITTED_EVENT_TOKEN_FLOW_1` defines:
+
+| Field | Exact descriptive definition |
+|---|---|
+| `buy_token_raw` | sum of `event_reported.token_amount_raw_u64` for admitted facts with `is_buy=true` |
+| `sell_token_raw` | same sum for admitted facts with `is_buy=false` |
+| `gross_token_raw` | buy plus sell |
+| `net_token_raw` | buy minus sell, including negative values |
+| `unique_event_users` | distinct nonempty reported `user_address` strings in the named selection |
+| `buy_facts`, `sell_facts`, `facts` | admitted observation counts, independent of packages or balances |
+
+Python integers are unbounded for sums; individual amounts must be canonical
+u64 strings. Output integers are decimal strings. Missing/null/invalid amount,
+side or user values fail before publication; facts are never silently dropped
+or coerced to zero. Repeated addresses count once within each group. They do
+not establish signer rights, ownership, persons or wallet clusters.
+
+The report binds all four input SHA256s, mint, post-hoc selection class, producer
+version/source hashes, every ordered package/source/parent identity and every
+fact hash. `totals` and each package's `cumulative` expose `ALL`,
+`ORIGINAL_SELECTION` and `POSTHOC_DESCRIPTIVE_CONTEXT` separately. Prefixes are
+published after all facts of the full atomic package; failures cannot have
+facts. No acquisition/processing clock orders these observations. An empty
+package contributes zero **admitted observations**, never proven zero market
+activity. The combined mint selection stays post-hoc descriptive; its pilot
+subset is not all mints in the separate three-slot pilot-quality workspace.
+
+The optional registry `flow: {path, sha256}` pins this report under the same
+explicit root and existing bounded path/read contract. Before listening, the
+adapter validates its hash, four snapshot inputs, producer version, field types,
+all ordered package identities/classes/statuses and exact fact references
+against the already validated mint dossier. It validates prefix/final equality
+without recomputing descriptive statistics in TypeScript. The registered Python
+producer and its tested arithmetic remain the authority for these sums.
+Absent registration renders UNAVAILABLE; invalid registration prevents startup.
+Only fixed GET routes `/api/mint-flow` and `/evidence/mint-flow.json` are added.
+The latter exports original report bytes. Existing mutation, path, origin,
+response-size, loopback and lifetime boundaries remain unchanged.
+
+The compact tables distinguish full-dossier totals from the prefix through the
+selected package, with pilot/context rows in both. A selectable cumulative point
+series and exact table share the existing package move/pause/reset action.
+Graph scaling converts only bounded BigInt coordinate ratios; it never sums
+facts. Open points indicate no new admitted fact, not market inactivity. All
+source fact hashes and complete parent details remain inspectable. Quote
+identity stays UNKNOWN, quote decimals null, and volume in a named quote
+currency UNAVAILABLE. No price, SOL conversion, account balance, market total,
+profit or strategy interpretation follows.
+
+Reproduce under the existing resource-limited, network-denied wrapper:
+
+```bash
+node scripts/with-toolchain.mjs -- \
+  /home/chupa/Solana-project/data-old-faithful-one/migrations/vps-integration-20260920/launcher \
+  /home/chupa/Solana-project/data-old-faithful-one/migrations/vps-integration-20260920/network-deny.bpf \
+  python research/columnar-query/mint_flow.py \
+  /home/chupa/Solana-project/data-old-faithful-one \
+  /home/chupa/Solana-project/data-old-faithful-one/governance/b6-volume-flow-20260924/registry.json \
+  /home/chupa/Solana-project/data-old-faithful-one/governance/NEW-FLOW-OUTPUT
+```
+
+The output directory must be new. `flow.json` is canonical; actual execution
+clocks/Python version are separate in `execution.json`. New private registry,
+assets, focused Python/contract/adapter/UI regressions and authentic browser
+screenshots are retained under OF1 `governance/b6-volume-flow-20260924/`.
+Use that dossier's `OPENEN.md` and temporary start script; prior sealed builds
+and original reports stay intact. CI runs the new Python tests in the existing
+offline Parquet gate, without a duplicate workflow or new dependency.
+
+This supplies original #85's bounded descriptive volume/cumulative-flow and
+reported-user summary. Remaining software includes compact acquisition-byte/
+runtime presentation, supported curve/phase presentation and full-workspace
+state/accessibility acceptance evidence. Historical creation/completion/
+migration, full lifespan, activation, actual CPI rights and independently
+verified price/account-state semantics remain missing source evidence; the UI
+cannot invent them. No new completion criterion is added. #85 stays open /
+Unproven and Research Ready=false; no B7 or next task starts.

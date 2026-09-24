@@ -1,0 +1,652 @@
+{
+  "inspection": {
+    "schema": "OF1_MINT_INSPECTOR_1",
+    "state": "READY",
+    "inputs": {
+      "timeline": "1111111111111111111111111111111111111111111111111111111111111111",
+      "lifecycle": "2222222222222222222222222222222222222222222222222222222222222222",
+      "collection": "3333333333333333333333333333333333333333333333333333333333333333",
+      "plan": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "timeline": {
+      "schema": "OF1_MINT_TIMELINE_1",
+      "mint": "11111111111111111111111111111111",
+      "research_ready": false,
+      "display_complete": true,
+      "selection_class": "POSTHOC_DESCRIPTIVE_LIFECYCLE_FRAGMENT",
+      "transactions": [
+        {
+          "package_id": "pilot:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bronze_record_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "collection_source_id": "pilot",
+          "collection_batch_id": "batch-0",
+          "collection_role": "ORIGINAL_SELECTION",
+          "slice_class": "RESEARCH_SAMPLING",
+          "sample_identity": {
+            "sample_class": "RESEARCH_SAMPLING"
+          },
+          "slot": "10",
+          "transaction_index": "0",
+          "transaction_status": "OK",
+          "transaction_error": null,
+          "atomic_observation_package": true,
+          "effective_at": {
+            "slot": "10",
+            "transaction_index_in_slot": "0"
+          },
+          "signatures": [
+            "synthetic-signature"
+          ],
+          "inclusion": {
+            "SILVER_FACT": true,
+            "BALANCE_MINT": true
+          },
+          "bronze_disposition": "DECODED",
+          "bronze_reason": null,
+          "decoder_source_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "source": {
+            "raw_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "receipt_sequence": "0",
+            "raw_section_offset": "10",
+            "raw_section_length": "20",
+            "transaction_node_cid_hex": "0171"
+          },
+          "receipt": {
+            "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "raw_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "raw_bytes": "100",
+            "sequence": "0",
+            "path": "published/0000000000/receipt.json"
+          },
+          "balance_observations": [
+            {
+              "observation_index": "0",
+              "observation": {
+                "mint": "11111111111111111111111111111111",
+                "side": "PRE",
+                "amount_u64": "18446744073709551615",
+                "decimals": null,
+                "account_index": "2",
+                "exact_decimal_amount": null
+              }
+            }
+          ],
+          "silver_facts": [
+            {
+              "record_sha256": "9999999999999999999999999999999999999999999999999999999999999999",
+              "record": {
+                "schema": "SYNTHETIC_SILVER",
+                "bronze_record_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "transaction_status": "OK",
+                "atomic_observation_package": true,
+                "research_ready": false,
+                "event_reported": {
+                  "mint_address": "11111111111111111111111111111111",
+                  "is_buy": false,
+                  "token_amount_raw_u64": "10",
+                  "quote_amount_raw_u64": "9",
+                  "user_address": "reported-user-A"
+                },
+                "token_balance_context": null,
+                "quote_mint_identity": "UNKNOWN",
+                "quote_decimals": null
+              }
+            },
+            {
+              "record_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "record": {
+                "schema": "SYNTHETIC_SILVER",
+                "bronze_record_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "transaction_status": "OK",
+                "atomic_observation_package": true,
+                "research_ready": false,
+                "event_reported": {
+                  "mint_address": "11111111111111111111111111111111",
+                  "is_buy": true,
+                  "token_amount_raw_u64": "7",
+                  "quote_amount_raw_u64": "9",
+                  "user_address": "reported-user-A"
+                },
+                "token_balance_context": null,
+                "quote_mint_identity": "UNKNOWN",
+                "quote_decimals": null
+              }
+            }
+          ],
+          "diagnostics": [],
+          "instructions": [],
+          "diagnostic_inventory": {
+            "fixture": "UNAVAILABLE"
+          },
+          "instruction_inventory": {
+            "instructions": "RECORDED",
+            "inner_instructions": "RECORDED"
+          }
+        },
+        {
+          "package_id": "context:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bronze_record_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "collection_source_id": "context",
+          "collection_batch_id": "batch-1",
+          "collection_role": "POSTHOC_DESCRIPTIVE_CONTEXT",
+          "slice_class": "ENGINEERING_VALIDATION_ONLY",
+          "sample_identity": null,
+          "slot": "10",
+          "transaction_index": "1",
+          "transaction_status": "OK",
+          "transaction_error": null,
+          "atomic_observation_package": true,
+          "effective_at": {
+            "slot": "10",
+            "transaction_index_in_slot": "1"
+          },
+          "signatures": [
+            "synthetic-signature"
+          ],
+          "inclusion": {
+            "SILVER_FACT": true,
+            "BALANCE_MINT": true
+          },
+          "bronze_disposition": "DECODED",
+          "bronze_reason": null,
+          "decoder_source_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "source": {
+            "raw_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "receipt_sequence": "0",
+            "raw_section_offset": "10",
+            "raw_section_length": "20",
+            "transaction_node_cid_hex": "0171"
+          },
+          "receipt": {
+            "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "raw_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "raw_bytes": "100",
+            "sequence": "0",
+            "path": "published/0000000000/receipt.json"
+          },
+          "balance_observations": [
+            {
+              "observation_index": "0",
+              "observation": {
+                "mint": "11111111111111111111111111111111",
+                "side": "PRE",
+                "amount_u64": "18446744073709551615",
+                "decimals": null,
+                "account_index": "2",
+                "exact_decimal_amount": null
+              }
+            }
+          ],
+          "silver_facts": [
+            {
+              "record_sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+              "record": {
+                "schema": "SYNTHETIC_SILVER",
+                "bronze_record_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "transaction_status": "OK",
+                "atomic_observation_package": true,
+                "research_ready": false,
+                "event_reported": {
+                  "mint_address": "11111111111111111111111111111111",
+                  "is_buy": true,
+                  "token_amount_raw_u64": "4",
+                  "quote_amount_raw_u64": "9",
+                  "user_address": "reported-user-B"
+                },
+                "token_balance_context": null,
+                "quote_mint_identity": "UNKNOWN",
+                "quote_decimals": null
+              }
+            }
+          ],
+          "diagnostics": [],
+          "instructions": [],
+          "diagnostic_inventory": {
+            "fixture": "UNAVAILABLE"
+          },
+          "instruction_inventory": {
+            "instructions": "RECORDED",
+            "inner_instructions": "RECORDED"
+          }
+        },
+        {
+          "package_id": "context:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "bronze_record_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "collection_source_id": "context",
+          "collection_batch_id": "batch-2",
+          "collection_role": "POSTHOC_DESCRIPTIVE_CONTEXT",
+          "slice_class": "ENGINEERING_VALIDATION_ONLY",
+          "sample_identity": null,
+          "slot": "10",
+          "transaction_index": "2",
+          "transaction_status": "ERROR",
+          "transaction_error": {
+            "error": "SYNTHETIC_ERROR"
+          },
+          "atomic_observation_package": true,
+          "effective_at": {
+            "slot": "10",
+            "transaction_index_in_slot": "2"
+          },
+          "signatures": [
+            "synthetic-signature"
+          ],
+          "inclusion": {
+            "SILVER_FACT": false,
+            "BALANCE_MINT": true
+          },
+          "bronze_disposition": "DECODED",
+          "bronze_reason": null,
+          "decoder_source_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "source": {
+            "raw_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "receipt_sequence": "0",
+            "raw_section_offset": "10",
+            "raw_section_length": "20",
+            "transaction_node_cid_hex": "0171"
+          },
+          "receipt": {
+            "sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "raw_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "raw_bytes": "100",
+            "sequence": "0",
+            "path": "published/0000000000/receipt.json"
+          },
+          "balance_observations": [
+            {
+              "observation_index": "0",
+              "observation": {
+                "mint": "11111111111111111111111111111111",
+                "side": "PRE",
+                "amount_u64": "18446744073709551615",
+                "decimals": null,
+                "account_index": "2",
+                "exact_decimal_amount": null
+              }
+            }
+          ],
+          "silver_facts": [],
+          "diagnostics": [],
+          "instructions": [],
+          "diagnostic_inventory": {
+            "fixture": "UNAVAILABLE"
+          },
+          "instruction_inventory": {
+            "instructions": "RECORDED",
+            "inner_instructions": "RECORDED"
+          }
+        }
+      ],
+      "counts": {
+        "transactions": "3",
+        "instruction_references": "0",
+        "declared_top_level_instructions": "0",
+        "recorded_cpi_instructions": "0",
+        "diagnoses": "0",
+        "profile_diagnoses": "0",
+        "structural_probes": "0",
+        "diagnosed_instruction_positions": "0",
+        "diagnoses_without_instruction_position": "0",
+        "diagnoses_explicit_mint_match": "0",
+        "diagnoses_unknown_mint": "0",
+        "not_admitted_profile_diagnoses": "0",
+        "balance_observations": "3",
+        "balance_packages": "3",
+        "silver_facts": "3",
+        "buys": "2",
+        "sells": "1",
+        "status": {
+          "ERROR": "1",
+          "OK": "2"
+        },
+        "packages_with_unknown_cpi_inventory": "0",
+        "by_role": {
+          "ORIGINAL_SELECTION": {
+            "transactions": "1",
+            "silver_facts": "2",
+            "balance_observations": "1",
+            "balance_packages": "1"
+          },
+          "POSTHOC_DESCRIPTIVE_CONTEXT": {
+            "transactions": "2",
+            "silver_facts": "1",
+            "balance_observations": "2",
+            "balance_packages": "2"
+          }
+        }
+      },
+      "limits": [
+        "SYNTHETIC_DISPLAY_FIXTURE"
+      ],
+      "bindings": {
+        "collection_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "plan_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "batches": [
+          {
+            "batch_id": "batch-0",
+            "source_id": "pilot",
+            "selected_slots": [
+              "10"
+            ],
+            "parquet_manifest_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          {
+            "batch_id": "batch-1",
+            "source_id": "context",
+            "selected_slots": [
+              "10"
+            ],
+            "parquet_manifest_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+          },
+          {
+            "batch_id": "batch-2",
+            "source_id": "context",
+            "selected_slots": [
+              "10"
+            ],
+            "parquet_manifest_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+          }
+        ]
+      },
+      "collection": {
+        "plan_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "research_ready": false
+      }
+    },
+    "lifecycle": {
+      "schema": "B5_LIFECYCLE_ACCEPTANCE_PROPOSAL_1",
+      "mint": "11111111111111111111111111111111",
+      "research_ready": false,
+      "counts": {
+        "transactions": "3",
+        "instruction_references": "0",
+        "declared_top_level_instructions": "0",
+        "recorded_cpi_instructions": "0",
+        "diagnoses": "0",
+        "profile_diagnoses": "0",
+        "structural_probes": "0",
+        "diagnosed_instruction_positions": "0",
+        "diagnoses_without_instruction_position": "0",
+        "diagnoses_explicit_mint_match": "0",
+        "diagnoses_unknown_mint": "0",
+        "not_admitted_profile_diagnoses": "0",
+        "balance_observations": "3",
+        "balance_packages": "3",
+        "silver_facts": "3",
+        "buys": "2",
+        "sells": "1",
+        "status": {
+          "ERROR": "1",
+          "OK": "2"
+        },
+        "packages_with_unknown_cpi_inventory": "0",
+        "by_role": {
+          "ORIGINAL_SELECTION": {
+            "transactions": "1",
+            "silver_facts": "2",
+            "balance_observations": "1",
+            "balance_packages": "1"
+          },
+          "POSTHOC_DESCRIPTIVE_CONTEXT": {
+            "transactions": "2",
+            "silver_facts": "1",
+            "balance_observations": "2",
+            "balance_packages": "2"
+          }
+        }
+      },
+      "collection": {
+        "sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "plan_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "facts": [
+        {
+          "silver_record_sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+        },
+        {
+          "silver_record_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        {
+          "silver_record_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "Creatie",
+          "status": "NIET_AANTOONBAAR",
+          "evidence": "SYNTHETIC_DISPLAY_FIXTURE",
+          "limit": "No inference"
+        }
+      ]
+    }
+  },
+  "flow": {
+    "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+    "report": {
+      "schema": "OF1_MINT_FLOW_1",
+      "state": "READY",
+      "research_ready": false,
+      "mint": "11111111111111111111111111111111",
+      "selection_class": "POSTHOC_DESCRIPTIVE_LIFECYCLE_FRAGMENT",
+      "inputs": {
+        "timeline": "1111111111111111111111111111111111111111111111111111111111111111",
+        "lifecycle": "2222222222222222222222222222222222222222222222222222222222222222",
+        "collection": "3333333333333333333333333333333333333333333333333333333333333333",
+        "plan": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "producer": {
+        "name": "research/columnar-query/mint_flow.py",
+        "version": "ADMITTED_EVENT_TOKEN_FLOW_1",
+        "source_sha256": {
+          "mint_flow.py": "ad4c78a5cd0955e0fdd04e821029f9fdcc04e05b631aa45579fa548d2f8d50c3",
+          "mint_timeline.py": "7d90d7773aa9f69ae60938ba2ed90db2ee43033ab728925f70222d0d996a62fc",
+          "manifest_reader.py": "b8dfde2d3fbb7525926e8b3aa868626d101380135241cd42eabd8b0d4cea5754"
+        }
+      },
+      "quote_volume": {
+        "state": "UNAVAILABLE",
+        "quote_mint_identity": "UNKNOWN",
+        "quote_decimals": null,
+        "amount_raw": null
+      },
+      "totals": {
+        "ALL": {
+          "buy_token_raw": "11",
+          "sell_token_raw": "10",
+          "gross_token_raw": "21",
+          "net_token_raw": "1",
+          "unique_event_users": "2",
+          "buy_facts": "2",
+          "sell_facts": "1",
+          "facts": "3"
+        },
+        "ORIGINAL_SELECTION": {
+          "buy_token_raw": "7",
+          "sell_token_raw": "10",
+          "gross_token_raw": "17",
+          "net_token_raw": "-3",
+          "unique_event_users": "1",
+          "buy_facts": "1",
+          "sell_facts": "1",
+          "facts": "2"
+        },
+        "POSTHOC_DESCRIPTIVE_CONTEXT": {
+          "buy_token_raw": "4",
+          "sell_token_raw": "0",
+          "gross_token_raw": "4",
+          "net_token_raw": "4",
+          "unique_event_users": "1",
+          "buy_facts": "1",
+          "sell_facts": "0",
+          "facts": "1"
+        }
+      },
+      "packages": [
+        {
+          "package_id": "pilot:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bronze_record_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "collection_source_id": "pilot",
+          "collection_role": "ORIGINAL_SELECTION",
+          "slice_class": "RESEARCH_SAMPLING",
+          "slot": "10",
+          "transaction_index": "0",
+          "transaction_status": "OK",
+          "fact_hashes": [
+            "9999999999999999999999999999999999999999999999999999999999999999",
+            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          ],
+          "package_totals": {
+            "buy_token_raw": "7",
+            "sell_token_raw": "10",
+            "gross_token_raw": "17",
+            "net_token_raw": "-3",
+            "unique_event_users": "1",
+            "buy_facts": "1",
+            "sell_facts": "1",
+            "facts": "2"
+          },
+          "cumulative": {
+            "ALL": {
+              "buy_token_raw": "7",
+              "sell_token_raw": "10",
+              "gross_token_raw": "17",
+              "net_token_raw": "-3",
+              "unique_event_users": "1",
+              "buy_facts": "1",
+              "sell_facts": "1",
+              "facts": "2"
+            },
+            "ORIGINAL_SELECTION": {
+              "buy_token_raw": "7",
+              "sell_token_raw": "10",
+              "gross_token_raw": "17",
+              "net_token_raw": "-3",
+              "unique_event_users": "1",
+              "buy_facts": "1",
+              "sell_facts": "1",
+              "facts": "2"
+            },
+            "POSTHOC_DESCRIPTIVE_CONTEXT": {
+              "buy_token_raw": "0",
+              "sell_token_raw": "0",
+              "gross_token_raw": "0",
+              "net_token_raw": "0",
+              "unique_event_users": "0",
+              "buy_facts": "0",
+              "sell_facts": "0",
+              "facts": "0"
+            }
+          }
+        },
+        {
+          "package_id": "context:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "bronze_record_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "collection_source_id": "context",
+          "collection_role": "POSTHOC_DESCRIPTIVE_CONTEXT",
+          "slice_class": "ENGINEERING_VALIDATION_ONLY",
+          "slot": "10",
+          "transaction_index": "1",
+          "transaction_status": "OK",
+          "fact_hashes": [
+            "8888888888888888888888888888888888888888888888888888888888888888"
+          ],
+          "package_totals": {
+            "buy_token_raw": "4",
+            "sell_token_raw": "0",
+            "gross_token_raw": "4",
+            "net_token_raw": "4",
+            "unique_event_users": "1",
+            "buy_facts": "1",
+            "sell_facts": "0",
+            "facts": "1"
+          },
+          "cumulative": {
+            "ALL": {
+              "buy_token_raw": "11",
+              "sell_token_raw": "10",
+              "gross_token_raw": "21",
+              "net_token_raw": "1",
+              "unique_event_users": "2",
+              "buy_facts": "2",
+              "sell_facts": "1",
+              "facts": "3"
+            },
+            "ORIGINAL_SELECTION": {
+              "buy_token_raw": "7",
+              "sell_token_raw": "10",
+              "gross_token_raw": "17",
+              "net_token_raw": "-3",
+              "unique_event_users": "1",
+              "buy_facts": "1",
+              "sell_facts": "1",
+              "facts": "2"
+            },
+            "POSTHOC_DESCRIPTIVE_CONTEXT": {
+              "buy_token_raw": "4",
+              "sell_token_raw": "0",
+              "gross_token_raw": "4",
+              "net_token_raw": "4",
+              "unique_event_users": "1",
+              "buy_facts": "1",
+              "sell_facts": "0",
+              "facts": "1"
+            }
+          }
+        },
+        {
+          "package_id": "context:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "bronze_record_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "collection_source_id": "context",
+          "collection_role": "POSTHOC_DESCRIPTIVE_CONTEXT",
+          "slice_class": "ENGINEERING_VALIDATION_ONLY",
+          "slot": "10",
+          "transaction_index": "2",
+          "transaction_status": "ERROR",
+          "fact_hashes": [],
+          "package_totals": {
+            "buy_token_raw": "0",
+            "sell_token_raw": "0",
+            "gross_token_raw": "0",
+            "net_token_raw": "0",
+            "unique_event_users": "0",
+            "buy_facts": "0",
+            "sell_facts": "0",
+            "facts": "0"
+          },
+          "cumulative": {
+            "ALL": {
+              "buy_token_raw": "11",
+              "sell_token_raw": "10",
+              "gross_token_raw": "21",
+              "net_token_raw": "1",
+              "unique_event_users": "2",
+              "buy_facts": "2",
+              "sell_facts": "1",
+              "facts": "3"
+            },
+            "ORIGINAL_SELECTION": {
+              "buy_token_raw": "7",
+              "sell_token_raw": "10",
+              "gross_token_raw": "17",
+              "net_token_raw": "-3",
+              "unique_event_users": "1",
+              "buy_facts": "1",
+              "sell_facts": "1",
+              "facts": "2"
+            },
+            "POSTHOC_DESCRIPTIVE_CONTEXT": {
+              "buy_token_raw": "4",
+              "sell_token_raw": "0",
+              "gross_token_raw": "4",
+              "net_token_raw": "4",
+              "unique_event_users": "1",
+              "buy_facts": "1",
+              "sell_facts": "0",
+              "facts": "1"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

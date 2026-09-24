@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, parseInspection, type Inspection, type Json, type Package } from '../../../src/mint-inspector/contract';
 
 import { EventObservations } from './EventObservations';
+import { MintFlowUnavailable, MintFlowView, useMintFlow } from './MintFlow';
+import { type MintFlow } from '../../../src/mint-inspector/mint-flow';
 import { PilotQualityPanel } from './PilotQuality';
 import { readJsonResponse } from './read-response';
 
@@ -84,7 +86,7 @@ function PackageDetails({ p, inspection }: { p: Package; inspection: Inspection 
   </article>;
 }
 
-export function InspectionView({ inspection }: { inspection: Inspection }) {
+export function InspectionView({ inspection, flow }: { inspection: Inspection; flow?: MintFlow | null }) {
   const [index, setIndex] = useState(0);
   const [view, setView] = useState<'mint' | 'pilot'>('mint');
   const [playing, setPlaying] = useState(false);
@@ -150,6 +152,7 @@ export function InspectionView({ inspection }: { inspection: Inspection }) {
               <td><button aria-controls="selected-package" onClick={() => move(i)}>Package {String(i + 1).padStart(2, '0')}</button></td>
             </tr>))}</tbody></table></div>
         </section>
+        {flow ? <MintFlowView key={inspection.inputs.timeline} flow={flow} selectedIndex={index} onSelect={move} /> : <MintFlowUnavailable loading={flow === null} />}
         <EventObservations packages={t.transactions} selectedIndex={index} onSelect={move} />
         {p ? <PackageDetails key={p.package_id} p={p} inspection={inspection} /> : <StateNotice state="UNAVAILABLE" />}
 
@@ -169,6 +172,7 @@ export function InspectionView({ inspection }: { inspection: Inspection }) {
 
 export function MintInspector() {
   const [data, setData] = useState<Inspection | null>(null), [failed, setFailed] = useState(false);
+  const flow = useMintFlow(data);
   useEffect(() => {
     const controller = new AbortController(); let active = true;
     const timer = setTimeout(() => controller.abort(), 10000);
@@ -176,6 +180,6 @@ export function MintInspector() {
       .then(value => { if (active) setData(value); }).catch(() => { if (active) setFailed(true); }).finally(() => clearTimeout(timer));
     return () => { active = false; controller.abort(); clearTimeout(timer); };
   }, []);
-  if (data) return <InspectionView inspection={data} />;
+  if (data) return <InspectionView inspection={data} flow={flow} />;
   return <main className="loading"><h1>Mintinspecteur</h1>{failed ? <StateNotice state="UNAVAILABLE" /> : <p role="status">Geregistreerd rapport wordt gecontroleerd…</p>}</main>;
 }
