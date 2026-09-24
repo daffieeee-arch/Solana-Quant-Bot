@@ -1,18 +1,19 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. The owner accepted the [bounded B4/B5 engineering contracts on 2026-09-23](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md). B4/#83 and B5/#84 are complete at `Engineering Validation`; The [2026-09-24 B6 acceptance](research/B6_ENGINEERING_ACCEPTANCE_20260924.md) supports technical completion of the original bounded MVP after protected delivery gates, with `Done / SUPERSEDED / Engineering Validation` metadata; actual Project synchronization is separate. Research Ready remains false. The completed migration ledger and historical source/lease evidence are preserved; no further acquisition is authorized.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. The owner accepted the [bounded B4/B5 engineering contracts on 2026-09-23](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md). B4/#83 and B5/#84 are complete at `Engineering Validation`; The [2026-09-24 B6 acceptance](research/B6_ENGINEERING_ACCEPTANCE_20260924.md) supports technical completion of the original bounded MVP after protected delivery gates, with `Done / SUPERSEDED / Engineering Validation` metadata; actual Project synchronization is separate. Research Ready remains false. The completed migration ledger and historical source/lease evidence are preserved; only the separately bound first B7 DEVELOPMENT window has the conditional authorization described below.
 
 The imported WSL stack retains a bounded [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md): 21,719 Bronze packages, including 1,898 failed transactions, and 22 Silver facts (15 buys / seven sells). Its three-slot research pilot and sixteen post-hoc context slots remain distinct. Rust owns the existing Arrow/Parquet writer; Python reads the sealed manifests. The [VPS integration record](operations/VPS_WSL_INTEGRATION.md) tracks host validation separately. Earlier named run results remain historical evidence; neither migration nor integration promotes B4/B5, Research Ready or execution readiness.
 
 ## Current bounded task — 2026-09-24
 
-B6/#85 was delivered by #141 (`6e278f51c29e07b59ccf6c41e4d97638e3c97f75`)
-and read back as Done / SUPERSEDED / Engineering Validation after scheduled
-sync 35980423282. The owner explicitly started only B7/#86's offline
-[research and sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md).
-#86 remains open / Unproven, In Progress / ACTIVE NOW; B8 stays LATER.
-The proposal is not a sufficiency verdict or acquisition GO. Older routing
-paragraphs below preserve their earlier decision-time context.
+B6/#85 was delivered by #141 and read back Done / SUPERSEDED / Engineering
+Validation. The owner accepted #142's bounded feasibility design and authorized
+[native sample/campaign enforcement](research/B7_NATIVE_CAMPAIGN.md).
+Only after reviewed protected delivery: acquire and process DEVELOPMENT window
+`[422526144,422526160)` under its exact immutable two-stage plan; payload follows
+only matching fresh metadata. No other window or evaluation outcome is approved.
+#86 remains open / Unproven, In Progress / ACTIVE NOW; Research Ready=false,
+B8 stays LATER. Older dated paragraphs retain their decision-time context.
 
 ## Program outcome
 

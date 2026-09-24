@@ -45,7 +45,10 @@ describe('retained authentic read-only verifier evidence (no acquisition)', () =
     const list = source.match(/let sources: &\[&\[u8\]\] = &\[([\s\S]*?)\n    \];/)?.[1];
     expect(list).toBeDefined();
     const tokens = [...list!.matchAll(/include_bytes!\("([^"]+)"\)|crate::sample::SELECTION_PLAN/g)];
-    expect(tokens).toHaveLength(18);
+    expect(tokens).toHaveLength(21);
+    expect(tokens.filter(m => m[1] === 'b7.rs')).toHaveLength(1);
+    expect(tokens.filter(m => m[1] === 'campaign.rs')).toHaveLength(1);
+    expect(tokens.filter(m => m[1] === '../../../research/columnar-query/b7-proposal.json')).toHaveLength(1);
     expect(tokens.filter(m => m[1] === 'raw_inspection_html.rs')).toHaveLength(1);
     expect(tokens.filter(m => m[1] === 'sample.rs')).toHaveLength(1);
     expect(tokens.filter(m => m[1] === 'rate.rs')).toHaveLength(1);

@@ -5,6 +5,7 @@ No decoding, source rewriting, provider construction or plan improvisation.
 The caller chooses an already reviewed Rust plan and exact worker binaries.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -61,7 +62,7 @@ def process_limits():
 
 
 class Runner:
-    def __init__(self,plan_path,root,decoder,projector,verifier):
+    def __init__(self,plan_path,root,decoder,projector,verifier,campaign_approval=None):
         self.plan_path=plan_path.resolve(strict=True)
         self.plan_raw=regular_bytes(self.plan_path,MAX_MANIFEST_BYTES)
         self.plan=json.loads(self.plan_raw,object_pairs_hook=pairs_unique)
@@ -78,6 +79,19 @@ class Runner:
             original=pathlib.Path(source['run_root']).resolve(strict=True)
             if self.root.is_relative_to(original) or original.is_relative_to(self.root):
                 raise ValueError('collection outputs must be separate from preserved source runs')
+        self.campaign=any((source.get('sample_identity') or {}).get('b7') is not None for source in self.sources.values())
+        self.driver_lock=None
+        if self.campaign:
+            if not self.root.exists():
+                if campaign_approval is None: raise ValueError('B7 processing requires a separately bound approval')
+                self.campaign_command('campaign-admit',self.plan_path,campaign_approval)
+            elif campaign_approval is not None:
+                raise ValueError('resume uses the existing processing lease, never a new approval')
+            lock=self.root/'driver.lock'
+            if lock.is_symlink() or not lock.is_file(): raise ValueError('native B7 driver lock missing')
+            self.driver_lock=lock.open('r+')
+            fcntl.flock(self.driver_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            self.campaign_check(1024*1024)
         if not self.root.exists():
             self.root.mkdir()
         if self.root.is_symlink() or not self.root.is_dir():
@@ -106,7 +120,29 @@ class Runner:
         while (self.root/f'operation-{self.counter:04d}.json').exists() or (self.root/f'operation-{self.counter:04d}.stdout').exists():
             self.counter+=1
 
+    def campaign_command(self,*args):
+        result=subprocess.run([str(self.verifier),*[str(a) for a in args]],capture_output=True,
+                              preexec_fn=process_limits,timeout=30,check=True)
+        if len(result.stdout)>1024*1024: raise ValueError('oversize native campaign status')
+        return json.loads(result.stdout,object_pairs_hook=pairs_unique)
+
+    def campaign_check(self,reserve):
+        if not self.campaign: return 900
+        status=self.campaign_command('campaign-check',self.plan_path,self.root,reserve)
+        if status.get('state')!='WITHIN_EXISTING_LEASE' or status.get('remaining_ms',0)<=0:
+            raise ValueError('campaign processing lease exhausted')
+        deadline=status.get('deadline_boot_ms')
+        if type(deadline) is not int: raise ValueError('native absolute processing deadline required')
+        return self.remaining_until(deadline)
+
+    @staticmethod
+    def remaining_until(deadline):
+        remaining=deadline/1000-time.clock_gettime(time.CLOCK_BOOTTIME)
+        if remaining<=0: raise ValueError('original campaign processing deadline exhausted')
+        return min(900,remaining)
+
     def step(self,label,args):
+        self.campaign_check(STAGE_RESERVATION_BYTES+1024*1024)
         self.counter+=1
         prefix=self.root/f'operation-{self.counter:04d}'
         while pathlib.Path(str(prefix)+'.stdout').exists() or pathlib.Path(str(prefix)+'.json').exists():
@@ -129,8 +165,10 @@ class Runner:
         error=None; returncode=None
         with pathlib.Path(str(prefix)+'.stdout').open('xb') as stdout, pathlib.Path(str(prefix)+'.stderr').open('xb') as stderr:
             try:
+                # Recheck after filesystem scans, executable hashing and log creation.
+                remaining=self.campaign_check(STAGE_RESERVATION_BYTES+1024*1024)
                 result=subprocess.run([str(a) for a in args],stdout=stdout,stderr=stderr,
-                                      preexec_fn=process_limits,timeout=900,
+                                      preexec_fn=process_limits,timeout=remaining,
                                       env={**os.environ,'CARGO_NET_OFFLINE':'true','PYTHONDONTWRITEBYTECODE':'1'})
                 returncode=result.returncode
             except (OSError,subprocess.SubprocessError) as failure:
@@ -189,6 +227,7 @@ class Runner:
             self.step('SEAL_FINAL_COLLECTION',[self.verifier,'seal',self.plan_path,self.root,final])
         elif load_collection(final)[0]!=manifest:
             raise ValueError('existing final collection differs from current exact verification')
+        if self.campaign: self.campaign_command('campaign-complete',self.plan_path,self.root)
         print(json.dumps({'state':'COMPLETE','manifest':str(final),'research_ready':False}),flush=True)
         return final
 
@@ -200,7 +239,8 @@ if __name__=='__main__':
     for name in ['decoder','projector','verifier']:
         parser.add_argument('--'+name,type=pathlib.Path,required=True)
     parser.add_argument('--max-new-batches',type=int)
+    parser.add_argument('--campaign-approval',type=pathlib.Path)
     args=parser.parse_args()
     if args.max_new_batches is not None and args.max_new_batches<0:
         parser.error('max-new-batches must be nonnegative')
-    Runner(args.plan,args.output,args.decoder,args.projector,args.verifier).run(args.max_new_batches)
+    Runner(args.plan,args.output,args.decoder,args.projector,args.verifier,args.campaign_approval).run(args.max_new_batches)

@@ -518,6 +518,7 @@ pub struct AcquisitionStore<C: Clock> {
     inflight: Option<u64>,
     poisoned: bool,
     fault: Option<FaultPoint>,
+    campaign: Option<crate::campaign::Guard>,
 }
 
 impl<C: Clock> AcquisitionStore<C> {
@@ -541,6 +542,20 @@ impl<C: Clock> AcquisitionStore<C> {
             &lease,
             &started,
         )?;
+        let aggregate_sha = sha256(&encode(&plan)?);
+        let campaign =
+            if let Some(sample) = plan.sample_identity.as_ref().filter(|s| s.b7.is_some()) {
+                Some(crate::campaign::Guard::acquisition(
+                    sample,
+                    root,
+                    &aggregate_sha,
+                    &stage.lease_sha256,
+                    matches!(lease.authority, Authority::Fixture),
+                    true,
+                )?)
+            } else {
+                None
+            };
         resources(root.parent().ok_or(StoreError::Identity)?, &plan.budget)?;
         let mut nonce = [0u8; 32];
         File::open("/dev/urandom")?.read_exact(&mut nonce)?;
@@ -573,6 +588,7 @@ impl<C: Clock> AcquisitionStore<C> {
             inflight: None,
             poisoned: false,
             fault: None,
+            campaign,
         };
         for name in ["attempts", "pending", "published"] {
             fs::create_dir(root.join(name))?;
@@ -629,6 +645,19 @@ impl<C: Clock> AcquisitionStore<C> {
         } else {
             None
         };
+        let campaign =
+            if let Some(sample) = plan.sample_identity.as_ref().filter(|s| s.b7.is_some()) {
+                Some(crate::campaign::Guard::acquisition(
+                    sample,
+                    root,
+                    &manifest.aggregate_sha256,
+                    expected_current_lease_sha256,
+                    matches!(manifest.metadata_lease.authority, Authority::Fixture),
+                    false,
+                )?)
+            } else {
+                None
+            };
         let mut store = Self {
             root: root.into(),
             lock,
@@ -642,12 +671,31 @@ impl<C: Clock> AcquisitionStore<C> {
             inflight: None,
             poisoned: false,
             fault: None,
+            campaign,
         };
         if store.current_lease_sha256() != expected_current_lease_sha256 {
             return Err(StoreError::Identity);
         }
         store.refresh()?;
         store.sample()?;
+        if let Some(guard) = &store.campaign {
+            guard.verify_charges(
+                store
+                    .manifest
+                    .plan
+                    .sample_identity
+                    .as_ref()
+                    .and_then(|s| s.b7.as_ref())
+                    .ok_or(StoreError::Identity)?
+                    .window_ordinal,
+                &store
+                    .cache
+                    .attempts
+                    .iter()
+                    .map(|a| (a.attempt_id, a.reserved_entity_bytes))
+                    .collect::<Vec<_>>(),
+            )?;
+        }
         Ok(store)
     }
 
@@ -696,6 +744,17 @@ impl<C: Clock> AcquisitionStore<C> {
         let bytes = encode(&record)?;
         if bytes.len() as u64 > self.manifest.plan.budget.max_plan_bytes {
             return Err(StoreError::Budget);
+        }
+        if let Some(guard) = &mut self.campaign {
+            let window = self
+                .manifest
+                .plan
+                .sample_identity
+                .as_ref()
+                .and_then(|s| s.b7.as_ref())
+                .ok_or(StoreError::Identity)?
+                .window_ordinal;
+            guard.admit_payload(window, &record.stage.lease_sha256)?;
         }
         // Retained intent + canonical hard link: a torn/unmatched intent is never replayed.
         let intent = self.root.join("pending/payload-intent.json");
@@ -831,6 +890,17 @@ impl<C: Clock> AcquisitionStore<C> {
             reserved_entity_bytes: allowance,
             at,
         };
+        if let Some(guard) = &mut self.campaign {
+            let window = self
+                .manifest
+                .plan
+                .sample_identity
+                .as_ref()
+                .and_then(|s| s.b7.as_ref())
+                .ok_or(StoreError::Identity)?
+                .window_ordinal;
+            guard.reserve(window, count, allowance)?;
+        }
         let intent = self
             .root
             .join("pending")
@@ -1463,6 +1533,9 @@ impl<C: Clock> AcquisitionStore<C> {
         Ok(())
     }
     fn space(&self, additional: u64) -> StoreResult<()> {
+        if let Some(guard) = &self.campaign {
+            guard.space(additional)?;
+        }
         resources(&self.root, &self.manifest.plan.budget)?;
         if disk_charge(&self.root)?
             .checked_add(additional)
@@ -2076,6 +2149,23 @@ fn validate_aggregate(plan: &AggregatePlan) -> StoreResult<()> {
     }
     if let Some(sample) = &plan.sample_identity {
         sample.validate(plan.epoch)?;
+        if sample.b7.is_some() {
+            let b = &plan.budget;
+            if b.max_slots != 16
+                || b.max_requests > 60
+                || b.max_total_response_entity_bytes > 134_217_728
+                || b.max_response_entity_bytes > 16_777_216
+                || b.max_disk_bytes > 268_435_456
+                || b.max_memory_bytes > 536_870_912
+                || b.max_runtime_ms > 1_800_000
+                || b.response_timeout_ms > 30_000
+                || b.request_retries > 2
+                || plan.clock_policy.as_ref() != Some(&ClockPolicy::standard())
+                || plan.download_rate.as_ref() != Some(&crate::rate::DownloadRate::standard())
+            {
+                return Err(StoreError::Budget);
+            }
+        }
         if plan.budget.max_slots < sample.end_slot_exclusive - sample.start_slot {
             return Err(StoreError::Budget);
         }
@@ -2157,7 +2247,7 @@ fn validate_stage_budget(plan: &AggregatePlan, b: &StageBudget) -> StoreResult<(
     Ok(())
 }
 
-fn validate_authority(
+pub(crate) fn validate_authority(
     policy: Option<&ClockPolicy>,
     authority: &Authority,
     proposed: &str,
@@ -2197,6 +2287,25 @@ fn validate_metadata(plan: &AggregatePlan, lease: &MetadataLease) -> StoreResult
         return Err(StoreError::Identity);
     }
     validate_stage_budget(plan, &lease.budget)?;
+    if plan
+        .sample_identity
+        .as_ref()
+        .is_some_and(|s| s.b7.is_some())
+        && !matches!(lease.authority, Authority::Fixture)
+        && plan.budget.required_free_disk_bytes < crate::campaign::FREE_BYTES
+    {
+        return Err(StoreError::Budget);
+    }
+    if plan
+        .sample_identity
+        .as_ref()
+        .is_some_and(|s| s.b7.is_some())
+        && (lease.budget.max_requests > 12
+            || lease.budget.max_response_entity_bytes_total > 15_576_576
+            || lease.budget.max_runtime_ms > 600_000)
+    {
+        return Err(StoreError::Budget);
+    }
     if lease.budget.max_requests < 4
         || lease.budget.max_response_entity_bytes_total < SLOTS_PER_EPOCH * RECORD_BYTES + 8192
     {
@@ -2225,6 +2334,23 @@ fn validate_payload(
         return Err(StoreError::Identity);
     }
     validate_stage_budget(&manifest.plan, &lease.budget)?;
+    if let Some(b) = manifest
+        .plan
+        .sample_identity
+        .as_ref()
+        .and_then(|s| s.b7.as_ref())
+        && (lease.budget.max_requests > 48
+            || lease.budget.max_runtime_ms > 1_200_000
+            || lease.budget.max_response_entity_bytes_total
+                > crate::b7::PAYLOAD_BYTES
+                    [usize::try_from(b.window_ordinal).map_err(|_| StoreError::Identity)?]
+                    * 3
+            || (!matches!(lease.authority, Authority::Fixture)
+                && (prepared.index_sha256 != crate::b7::INDEX_SHA256
+                    || prepared.source_fingerprint != crate::b7::SOURCE_FINGERPRINT)))
+    {
+        return Err(StoreError::Budget);
+    }
     validate_authority(
         manifest.plan.clock_policy.as_ref(),
         &lease.authority,
