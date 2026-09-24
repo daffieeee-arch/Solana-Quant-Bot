@@ -1,9 +1,9 @@
 # B6 — local read-only mint inspector
 
-> **Document status: ACTIVE partial B6 increment.** Originally authorized for
-> local development on 2026-09-23, then separately authorized for protected
-> integration after PR #134. #85 remains open / In Progress / ACTIVE NOW /
-> Unproven. This is not complete B6 acceptance or Research Ready.
+> **Document status: ACTIVE.** Original local authorization and increments below
+> remain historical delivery evidence. The [2026-09-24 original-criterion table](B6_ENGINEERING_ACCEPTANCE_20260924.md)
+> governs bounded B6 engineering completion after protected review/PR/main gates.
+> Research Ready remains false; B7 is not started.
 
 ## Scope and data contract
 
@@ -17,7 +17,7 @@ order with verified Engineering Validation. The original reviewed local
 inspector at `74c527d6d502360157b842e330de0502c18c823c` remains preserved in its
 original worktree; PR #135 integrated it with documentation/routing changes only,
 at `eef008317f178e14c5aad93e92f9ed8d7fdf7aa4`. The separate pilot-quality
-increment below adds a bounded report view; it does not complete #85.
+increment below added a bounded report view; that increment alone did not complete #85.
 
 The selected mint is `4aG2APjGceKMLjyhFLjAEYaqu4w2meifWb2hAy4Wpump`, within
 `[422669516,422669535)`, collection SHA256
@@ -65,9 +65,7 @@ within the existing private VPS trust boundary; this is not a multi-user
 authentication service.
 
 `READY` means the registered snapshot is available, not research eligibility.
-Other state fixtures (`STALE`, `GAP`, `REPLAYING`, `UNAVAILABLE`, `UNPROVEN`,
-`QUARANTINED`) do not invent authentic observations. Unknowns and coverage
-limits remain visible. No polling or automatic reload is performed.
+The page now pins the byte hash of each API envelope. A mismatched response is withheld as `STALE`, never silently substituted. Changed pilot/flow bindings immediately withhold old values; aborted late responses cannot overwrite a current view. `GAP` presents an actual declared missing denominator, `REPLAYING` denotes bounded atomic presentation replay, and unavailable/unproven fields remain explicit. Adverse-state fixtures are not authentic observations. No polling or automatic reload is performed.
 
 ## Pilot data quality — bounded second increment
 
@@ -389,3 +387,32 @@ migration, full lifespan, activation, actual CPI rights and independently
 verified price/account-state semantics remain missing source evidence; the UI
 cannot invent them. No new completion criterion is added. #85 stays open /
 Unproven and Research Ready=false; no B7 or next task starts.
+
+## Operational pilot presentation and acceptance — 2026-09-24
+
+`pilotOperations` optionally registers exactly `acquisition0`, `acquisition1`,
+`acquisition2`, `reportExecution`, `reportSource`, each by relative path and
+SHA256. All five must be present together, with the existing `pilot` registration.
+The original acquisition receipts must match its selected source/run/aggregate,
+receipt/raw hash, slot and byte range. Report execution must hash-bind the
+original skeleton whose existing producer projection equals the pilot manifest.
+No Raw/Parquet processing is repeated. Each receipt is capped at 256 KiB;
+`reportSource` reuses the existing 8 MiB report cap. Fixed evidence GET routes
+are `/evidence/pilot-{name}.json`; no request chooses a filename.
+
+The selected receipt payload sum is **3663577 Raw-bytes**, excluding retries,
+metadata, network overhead and total disk storage. Original acquisition and
+decoder UTC timestamps are copied with exact integer strings; report generation
+has its separately recorded duration. No download or monotone decoder duration
+is invented. These clocks are operational provenance only. The immutable
+HTML page pins exact hashes for inspection, pilot-quality and flow envelopes;
+only verified bytes and runtime-valid contracts reach panels.
+
+The [acceptance table](B6_ENGINEERING_ACCEPTANCE_20260924.md) maps the original
+#85 criteria to authentic and fixture evidence. Private build/registry,
+start/SSH commands and screenshots are in OF1
+`governance/b6-engineering-acceptance-20260924/OPENEN.md`. This replaces earlier
+increment start instructions for the new registered operational panel; original
+worktrees, builds and sealed dossiers remain preserved. Technical completion
+does not establish a complete lifecycle, known quote price, Research Ready or
+permission to start B7.

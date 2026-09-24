@@ -9,6 +9,7 @@ export interface PilotQuality {
   inputs: Record<PilotInputName, string>;
   manifest: ObjectValue & { counts: ObjectValue; range: ObjectValue; provenance: ObjectValue };
   decoders: ObjectValue[];
+  operations?: ObjectValue;
 }
 
 export function parsePilotQuality(value: unknown, bindings: Pick<InputHashes, 'collection' | 'plan'>): PilotQuality {
@@ -59,6 +60,7 @@ export function parsePilotQuality(value: unknown, bindings: Pick<InputHashes, 'c
     const d = decoders[index];
     check(d.batch_id === b.batch_id && d.source_id === source.source_id && d.execution_sha256 === b.decoder_execution_sha256
       && d.execution_sha256 === inputs[PILOT_INPUT_NAMES[index + 1]]);
+    for (const key of ['processed_at_unix_ms', 'finished_at_unix_ms']) if (d[key] !== undefined && d[key] !== null) uint(d[key]);
     for (const key of ['decoder_source_sha256', 'executable_sha256', 'lock_sha256']) hash(d[key]);
     const writer = object(b.writer);
     for (const key of ['source_sha256', 'executable_sha256', 'cargo_lock_sha256']) hash(writer[key]);
@@ -66,5 +68,19 @@ export function parsePilotQuality(value: unknown, bindings: Pick<InputHashes, 'c
       const candidate = object(w); return ['source_sha256', 'executable_sha256', 'cargo_lock_sha256'].every(k => candidate[k] === writer[k]);
     }));
   });
+  if (v.operations !== undefined) {
+    const o = object(v.operations), pins = object(o.inputs), a = list(o.acquisitions).map(object), report = object(o.report);
+    check(Object.keys(pins).sort().join(',') === 'acquisition0,acquisition1,acquisition2,reportExecution,reportSource');
+    Object.values(pins).forEach(hash); check(a.length === 3);
+    a.forEach((r, i) => {
+      check(r.receipt_sha256 === receipts[i].sha256 && r.receipt_sha256 === pins[`acquisition${i}`]
+        && r.raw_sha256 === receipts[i].raw_sha256 && r.raw_bytes === receipts[i].raw_bytes && r.sequence === receipts[i].sequence && r.slot === slots[i]);
+      for (const k of ['acquired_at_unix_ms', 'range_start', 'range_end_exclusive']) uint(r[k]);
+      check(BigInt(r.range_end_exclusive as string) - BigInt(r.range_start as string) === BigInt(r.raw_bytes as string));
+    });
+    check(report.skeleton_sha256 === pins.reportSource);
+    check(typeof report.elapsed_seconds === 'string' && /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:e[+-]?[0-9]+)?$/.test(report.elapsed_seconds));
+    for (const k of ['started_at_utc', 'completed_at_utc']) check(typeof report[k] === 'string' && Number.isFinite(Date.parse(report[k] as string)));
+  }
   return value as PilotQuality;
 }

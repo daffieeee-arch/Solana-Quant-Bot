@@ -15,6 +15,8 @@ An embedded historical `approved`, `ready` or similar field never overrides this
 
 The [2026-09-23 B4/B5 acceptance decision](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md) governs current delivery status. B4/B5 research documents below retain their execution-time partial/open/Unproven and no-promotion statements as historical evidence; those statements do not override the later explicit acceptance. Their protocol, fixture, coverage and research limits remain active and unchanged. Original issue criteria, private sealed dossiers and content-hashed evidence are not rewritten. `Engineering Validation` on the Project does not reclassify datasets or promote individual fixtures, historical activation or Research Ready.
 
+The [2026-09-24 B6 criterion-based acceptance](research/B6_ENGINEERING_ACCEPTANCE_20260924.md) governs B6 closeout after protected technical delivery. Prior increment notes retain their publication-time partial/open status; source limits and original criteria remain unchanged.
+
 ## Active documents
 
 - [`../AGENTS.md`](../AGENTS.md)
@@ -65,6 +67,7 @@ The [2026-09-23 B4/B5 acceptance decision](research/B4_B5_ENGINEERING_ACCEPTANCE
 - [`research/B5_PILOT_CONTEXT_COLLECTION.md`](research/B5_PILOT_CONTEXT_COLLECTION.md)
 - [`research/B5_MINT_TIMELINE.md`](research/B5_MINT_TIMELINE.md)
 - [`research/B6_LOCAL_MINT_INSPECTOR.md`](research/B6_LOCAL_MINT_INSPECTOR.md)
+- [`research/B6_ENGINEERING_ACCEPTANCE_20260924.md`](research/B6_ENGINEERING_ACCEPTANCE_20260924.md)
 - [`research/B5_RAW_ARCHIVAL_SPANS.md`](research/B5_RAW_ARCHIVAL_SPANS.md)
 - [`operations/VPS_WSL_INTEGRATION.md`](operations/VPS_WSL_INTEGRATION.md)
 - [`research/B4_DOWNLOAD_MONITOR.md`](research/B4_DOWNLOAD_MONITOR.md)

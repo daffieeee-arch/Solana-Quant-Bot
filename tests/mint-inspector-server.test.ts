@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, writeFile, symlink, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -25,7 +25,7 @@ async function setup(data = fixtureInspection()) {
   for (const [name, bytes] of Object.entries(inputBytes)) await writeFile(join(root, `${name}.json`), bytes);
   await writeFile(join(root, 'registry.json'), JSON.stringify(registry));
   await mkdir(join(root, 'site/assets'), { recursive: true });
-  await writeFile(join(root, 'site/inspector.html'), '<!doctype html><title>Fixture</title>');
+  await writeFile(join(root, 'site/inspector.html'), '<!doctype html><html><head><title>Fixture</title></head><body></body></html>');
   await writeFile(join(root, 'site/assets/fixture.js'), '/* static fixture */');
   return { root, data, registry, inputBytes, options: { dataRoot: root, registryPath: 'registry.json', staticDirectory: join(root, 'site'), port: 0 } };
 }
@@ -55,9 +55,49 @@ async function registerPilot(fixture: Awaited<ReturnType<typeof setup>>) {
   await writeFile(join(fixture.root, 'registry.json'), JSON.stringify({ ...fixture.registry, pilot }));
   return { pilot, bytes };
 }
+async function registerOperations(fixture: Awaited<ReturnType<typeof setup>>) {
+  const { pilot } = await registerPilot(fixture), manifest = JSON.parse(await readFile(join(fixture.root, 'pilot.json'), 'utf8'));
+  const p = manifest.provenance; p.selected_source.run_id = 'fixture-run';
+  const pins: Record<string, { path: string; sha256: string }> = {};
+  async function save(name: string, value: unknown) {
+    const bytes = JSON.stringify(value); pins[name] = { path: `${name}.json`, sha256: sha(bytes) }; await writeFile(join(fixture.root, `${name}.json`), bytes);
+  }
+  for (let i = 0; i < 3; i++) {
+    const r = p.selected_receipts[i], bytes = 100 + i;
+    await save(`acquisition${i}`, { schema: 'OF1_ACQUISITION_RECEIPT_1', run_id: p.selected_source.run_id,
+      aggregate_sha256: p.selected_source.bindings.aggregate_sha256, request: { sequence: i + 4,
+        kind: { kind: 'CAR_RANGE', slot: 422669516 + i, start: i * 200, end_exclusive: i * 200 + bytes } },
+      source_host: 'fixture.invalid', source_path: '/fixture.car', response_entity_bytes: bytes, sha256: r.raw_sha256, acquired_at: { wall_ms: 1000 + i } });
+    for (const receipt of [r, p.selected_source.bindings.receipts[i]]) { receipt.raw_bytes = String(bytes); receipt.sha256 = pins[`acquisition${i}`].sha256; }
+  }
+  const bytes = JSON.stringify(manifest); await writeFile(join(fixture.root, 'pilot.json'), bytes); pilot.manifest.sha256 = sha(bytes);
+  await save('reportSource', manifest);
+  await save('reportExecution', { schema: 'OF1_RAW_BRONZE_SILVER_WALKING_SKELETON_EXECUTION_1', provider_calls: false,
+    skeleton_sha256: pins.reportSource.sha256, started_at_utc: '2026-01-01T00:00:00Z', completed_at_utc: '2026-01-01T00:00:02Z', elapsed_seconds: 2.125 });
+  const registry = { ...fixture.registry, pilot, pilotOperations: pins };
+  await writeFile(join(fixture.root, 'registry.json'), JSON.stringify(registry)); return registry;
+}
 afterEach(async () => { await Promise.all(servers.splice(0).map(s => s.close())); await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 
 describe('registered loopback mint adapter', () => {
+  it('publishes operational clocks only with the selected receipt and original report bindings', async () => {
+    const fixture = await setup(), registry = await registerOperations(fixture), server = await createMintInspector(fixture.options); servers.push(server);
+    const q = JSON.parse((await get(server.port, '/api/pilot-quality')).body);
+    expect(q.operations.acquisitions.map((r: { acquired_at_unix_ms: string }) => r.acquired_at_unix_ms)).toEqual(['1000', '1001', '1002']);
+    expect(q.operations.report.elapsed_seconds).toBe('2.125');
+    expect(sha((await get(server.port, '/evidence/pilot-acquisition0.json')).body)).toBe(registry.pilotOperations.acquisition0.sha256);
+    expect((await get(server.port, '/evidence/pilot-reportSource.json', 'POST')).status).toBe(405);
+    expect((await get(server.port, '/evidence/pilot-reportSource.json?path=other')).status).toBe(404);
+  });
+  it.each(['corrupt', 'wrong-receipt', 'missing-input', 'symlink'])('rejects operational registration %s before listening', async variant => {
+    const fixture = await setup(), registry = await registerOperations(fixture);
+    if (variant === 'corrupt') await writeFile(join(fixture.root, 'reportExecution.json'), '{}');
+    if (variant === 'wrong-receipt') registry.pilotOperations.acquisition0 = registry.pilotOperations.acquisition1;
+    if (variant === 'missing-input') delete registry.pilotOperations.reportSource;
+    if (variant === 'symlink') { await symlink('acquisition0.json', join(fixture.root, 'alias.json')); registry.pilotOperations.acquisition0.path = 'alias.json'; }
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify(registry));
+    await expect(createMintInspector(fixture.options)).rejects.toThrow();
+  });
   it('binds the Python flow to the registered snapshot and keeps its exact bytes read-only', async () => {
     const { inspection, flow } = fixtureMintFlow(), fixture = await setup(inspection);
     flow.report.inputs = Object.fromEntries(Object.entries(fixture.registry.inputs).map(([k, v]) => [k, v.sha256])) as typeof flow.report.inputs;
@@ -88,6 +128,8 @@ describe('registered loopback mint adapter', () => {
     const result = await get(server.port, '/api/pilot-quality'); expect(result.status).toBe(200);
     expect(JSON.parse(result.body).manifest.counts).toEqual(fixturePilotQuality().manifest.counts);
     expect(result.body).not.toContain('unused_numeric_field');
+    expect(JSON.parse(result.body).decoders[0].processed_at_unix_ms).toBeNull();
+    expect((await get(server.port, '/')).body).toContain(`name="inspector-snapshot-pilot-quality" content="${sha(result.body)}"`);
     expect((await get(server.port, '/evidence/pilot-manifest.json')).body).toBe(registered.bytes);
     expect(JSON.parse((await get(server.port, '/api/inspection')).body).timeline).toEqual(fixture.data.timeline);
     expect((await get(server.port, '/api/pilot-quality', 'POST')).status).toBe(405);
@@ -115,6 +157,9 @@ describe('registered loopback mint adapter', () => {
     const result = await get(server.port, '/api/inspection'); expect(result.status).toBe(200);
     expect(JSON.parse(result.body).timeline).toEqual(fixture.data.timeline);
     expect((await get(server.port, '/evidence/timeline.json')).body).toBe(fixture.inputBytes.timeline);
+    const html = (await get(server.port, '/')).body;
+    expect(html).toContain(`name="inspector-snapshot-inspection" content="${sha(result.body)}"`);
+    expect(html).toContain('name="inspector-snapshot-pilot-quality" content="UNAVAILABLE"');
     expect(result.headers['content-security-policy']).toContain("frame-ancestors 'none'");
     expect(result.headers['access-control-allow-origin']).toBeUndefined();
     await writeFile(join(fixture.root, 'timeline.json'), '{"changed":true}');

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import React from 'react';
+import { createHash, webcrypto } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { fixtureMintFlow } from '../../../tests/fixtures/mint-flow';
 import { InspectionView, MintInspector } from './MintInspector';
 import { MintFlowView } from './MintFlow';
 
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); document.head.querySelectorAll('meta[name^="inspector-snapshot-"]').forEach(n => n.remove()); });
 const region = () => screen.getByRole('region', { name: 'Brongebonden volume en flow' });
 const full = () => within(region()).getByRole('table', { name: 'Volledig dossier · onafhankelijk van replaypositie' });
 const prefix = () => within(region()).getByRole('table', { name: /^Tot en met geselecteerd/ });
@@ -61,6 +62,11 @@ describe('source-bound Python mint flow presentation', () => {
   });
   it('rejects a wrong snapshot response as UNAVAILABLE without hiding the original mint dossier', async () => {
     const { inspection, flow } = fixtureMintFlow(); flow.report.inputs.timeline = '0'.repeat(64);
+    vi.stubGlobal('crypto', webcrypto);
+    for (const [name, value] of [['inspection', inspection], ['mint-flow', flow]]) {
+      const meta = document.createElement('meta'); meta.name = `inspector-snapshot-${name}`;
+      meta.content = createHash('sha256').update(JSON.stringify(value)).digest('hex'); document.head.append(meta);
+    }
     vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url === '/api/inspection' ? inspection : flow), { status: 200 })));
     render(<MintInspector />);
     expect(await screen.findByText(/UNAVAILABLE · Geen geldige samenvatting/)).toBeTruthy();

@@ -5,6 +5,7 @@ import { isAbsolute, join, resolve, extname } from 'node:path';
 import { readBoundedFile } from '../acquisition-monitor/reader.js';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, hash, object, parseInspection, type InputHashes, type InputName } from './contract.js';
 import { MAX_PILOT_BYTES, PILOT_INPUT_NAMES, parsePilotQuality, type PilotInputName } from './pilot-quality.js';
+import { decoderClocks, operationalProjection, OPERATION_INPUT_NAMES, type OperationInputName } from './operations.js';
 import { parseMintFlow } from './mint-flow.js';
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
@@ -41,6 +42,8 @@ export async function loadInspection(root: string, registryPath: string) {
   const inspection = parseInspection({ schema: 'OF1_MINT_INSPECTOR_1', state: 'READY', inputs: hashes, timeline, lifecycle });
   const pilotBytes = {} as Partial<Record<PilotInputName, Buffer>>;
   let pilotResponse: Buffer | undefined;
+  const operationBytes = {} as Partial<Record<OperationInputName, Buffer>>;
+  if (registry.pilotOperations !== undefined && registry.pilot === undefined) fail();
   if (registry.pilot !== undefined) {
     const registeredInputs = object(registry.pilot), pilotHashes = {} as Record<PilotInputName, string>;
     if (Object.keys(registeredInputs).sort().join(',') !== [...PILOT_INPUT_NAMES].sort().join(',')) fail();
@@ -57,9 +60,21 @@ export async function loadInspection(root: string, registryPath: string) {
         || binding.plan_sha256 !== hashes.plan) fail();
       // Copy only existing string identities. Numeric domain fields are neither converted nor projected.
       return { batch_id: binding.batch_id, source_id: binding.source_id, execution_sha256: pilotHashes[name],
-        decoder_source_sha256: execution.decoder_source_sha256, executable_sha256: execution.executable_sha256, lock_sha256: execution.lock_sha256 };
+        decoder_source_sha256: execution.decoder_source_sha256, executable_sha256: execution.executable_sha256, lock_sha256: execution.lock_sha256, ...decoderClocks(execution) };
     });
-    pilotResponse = Buffer.from(JSON.stringify(parsePilotQuality({ schema: 'OF1_PILOT_QUALITY_VIEW_1', inputs: pilotHashes, manifest, decoders }, hashes)));
+    let operations;
+    if (registry.pilotOperations !== undefined) {
+      const pins = object(registry.pilotOperations), identities = {} as Record<OperationInputName, string>, values = {} as Record<OperationInputName, unknown>;
+      if (Object.keys(pins).sort().join(',') !== [...OPERATION_INPUT_NAMES].sort().join(',')) fail();
+      for (const name of OPERATION_INPUT_NAMES) {
+        const pin = object(pins[name]); hash(pin.sha256);
+        const data = await registeredFile(root, pin.path, name === 'reportSource' ? MAX_RESPONSE_BYTES : MAX_PILOT_BYTES);
+        if (sha256(data) !== pin.sha256) fail();
+        operationBytes[name] = data; identities[name] = pin.sha256; values[name] = JSON.parse(data.toString('utf8'));
+      }
+      operations = operationalProjection(manifest, identities, values);
+    }
+    pilotResponse = Buffer.from(JSON.stringify(parsePilotQuality({ schema: 'OF1_PILOT_QUALITY_VIEW_1', inputs: pilotHashes, manifest, decoders, ...(operations ? { operations } : {}) }, hashes)));
     if (pilotResponse.length > MAX_PILOT_BYTES) fail();
   }
   const response = Buffer.from(JSON.stringify(inspection));
@@ -73,7 +88,7 @@ export async function loadInspection(root: string, registryPath: string) {
       report: JSON.parse(flowBytes.toString('utf8')) }, inspection)));
     if (flowResponse.length > MAX_RESPONSE_BYTES) fail();
   }
-  return { inspection, response, bytes, pilotResponse, pilotBytes, flowBytes, flowResponse };
+  return { inspection, response, bytes, pilotResponse, pilotBytes, flowBytes, flowResponse, operationBytes };
 }
 
 export async function createMintInspector(options: { dataRoot: string; registryPath: string; staticDirectory: string; port: number }) {
@@ -91,7 +106,14 @@ export async function createMintInspector(options: { dataRoot: string; registryP
     routes.set('/api/mint-flow', { bytes: input.flowResponse, type: 'application/json' });
     routes.set('/evidence/mint-flow.json', { bytes: input.flowBytes!, type: 'application/json' });
   }
-  routes.set('/', { bytes: await registeredFile(staticRoot, 'inspector.html', 65536), type: 'text/html' });
+  for (const name of OPERATION_INPUT_NAMES) if (input.operationBytes[name])
+    routes.set(`/evidence/pilot-${name}.json`, { bytes: input.operationBytes[name]!, type: 'application/json' });
+  const html = (await registeredFile(staticRoot, 'inspector.html', 65536)).toString('utf8');
+  if (!html.includes('</head>') || html.includes('name="inspector-snapshot-')) fail();
+  // A page pins its immutable API bytes. A restarted adapter cannot silently replace its snapshot.
+  const pins = [['inspection', input.response], ['pilot-quality', input.pilotResponse], ['mint-flow', input.flowResponse]] as const;
+  const meta = pins.map(([name, bytes]) => `<meta name="inspector-snapshot-${name}" content="${bytes ? sha256(bytes) : 'UNAVAILABLE'}">`).join('');
+  routes.set('/', { bytes: Buffer.from(html.replace('</head>', `${meta}</head>`)), type: 'text/html' });
   const assets = await readdir(join(staticRoot, 'assets'));
   if (assets.length > 16) fail();
   let total = 0;

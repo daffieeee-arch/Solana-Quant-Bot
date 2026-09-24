@@ -1,13 +1,35 @@
 import { useEffect, useState } from 'react';
-import { type InputHashes, type Json, type Timeline } from '../../../src/mint-inspector/contract';
+import { object, list, type InputHashes, type Timeline } from '../../../src/mint-inspector/contract';
 import { MAX_PILOT_BYTES, PILOT_INPUT_NAMES, parsePilotQuality, type PilotQuality } from '../../../src/mint-inspector/pilot-quality';
-import { readJsonResponse } from './read-response';
+import { registeredResponse, SnapshotMismatch } from './read-response';
 
-const shown = (v: Json | undefined) => v === null || v === undefined ? 'UNAVAILABLE' : typeof v === 'string' ? v : JSON.stringify(v);
+const shown = (v: unknown) => v === null || v === undefined ? 'UNAVAILABLE' : typeof v === 'string' ? v : JSON.stringify(v);
 function Evidence({ title, value }: { title: string; value: unknown }) {
   return <details className="evidence"><summary>{title}</summary><pre className="raw-record">{JSON.stringify(value, null, 2)}</pre></details>;
 }
 type MintCounts = Pick<Timeline['counts'], 'transactions' | 'silver_facts' | 'balance_observations'>;
+function Operations({ quality }: { quality: PilotQuality }) {
+  const receipts = list(quality.manifest.provenance.selected_receipts).map(object);
+  const total = receipts.reduce((sum, r) => sum + BigInt(r.raw_bytes as string), 0n).toString();
+  const operations = quality.operations, acquisitions = operations ? list(operations.acquisitions).map(object) : [];
+  const report = operations ? object(operations.report) : null;
+  return <section className="quality-coverage" aria-label="Operationele bronbytes en klokken"><h2>Bronbytes & operationele klokken</h2>
+    <p><strong>{total} Raw-bytes</strong> · Som van de drie unieke geselecteerde payloadreceipts. Geen totaal netwerkverkeer, metadata-/retrykosten of volledige opslagomvang.</p>
+    <div className="table-scroll"><table><caption>Oorspronkelijke acquisitiereceipts · tijdstip na ontvangst (Unix ms, UTC)</caption>
+      <thead><tr><th>Slot / receipt</th><th>Raw-bytes</th><th>acquired_at.wall_ms</th><th>Receipt-SHA256</th></tr></thead>
+      <tbody>{receipts.map((r, i) => <tr key={r.sequence as string}><td>{shown(list(quality.manifest.range.selected_slots)[i])} / {shown(r.sequence)}</td><td>{shown(r.raw_bytes)}</td><td>{shown(acquisitions[i]?.acquired_at_unix_ms)}</td><td><code>{shown(r.sha256)}</code></td></tr>)}</tbody></table></div>
+    <p>Downloadduur: <strong>UNAVAILABLE</strong> · Geen expliciet gebonden request-start/eindduur in deze receipts. Ontvangsttijdstippen, decoderklokken en bestandsdatums zijn geen downloadduur.</p>
+    {!operations && <p>Acquisitie- en rapportklokken: UNAVAILABLE · De aanvullende operationele receipts zijn niet geregistreerd.</p>}
+    <div className="table-scroll"><table><caption>Offline decoder · bestaande operationele UTC-klokken (Unix ms)</caption>
+      <thead><tr><th>Batch</th><th>processed_at_unix_ms</th><th>finished_at_unix_ms</th></tr></thead>
+      <tbody>{quality.decoders.map(d => <tr key={d.batch_id as string}><td>{shown(d.batch_id)}</td><td>{shown(d.processed_at_unix_ms)}</td><td>{shown(d.finished_at_unix_ms)}</td></tr>)}</tbody></table></div>
+    <p>Deze decoderklokken begrenzen de geregistreerde verwerkingsfase, inclusief rapportopbouw, niet de hele proceslooptijd. Een monotone decoderlooptijd is UNAVAILABLE: de receipt registreert UTC-klokken, geen elapsed-counter; klokcorrecties zijn niet uitgesloten.</p>
+    <dl><dt>Rapportgeneratie · start UTC</dt><dd>{shown(report?.started_at_utc)}</dd><dt>Rapportgeneratie · einde UTC</dt><dd>{shown(report?.completed_at_utc)}</dd><dt>Gemeten rapportgeneratieduur · seconden</dt><dd>{shown(report?.elapsed_seconds)}</dd></dl>
+    <p>Rapportgeneratie betreft het bestaande pilotrapport (Python perf_counter), niet acquisitie, decoderduur of deze browserweergave. Operationele klokken worden niet gebruikt in chainvolgorde, replay, reservegrafieken of handelsstatistieken.</p>
+    {operations && <Evidence title="Operationele receiptbindingen en klokprovenance" value={operations} />}
+    {operations && <ul>{Object.entries(object(operations.inputs)).map(([name, digest]) => <li key={name}><a href={`/evidence/pilot-${name}.json`} download>{name}.json</a> · <code>{shown(digest)}</code></li>)}</ul>}
+  </section>;
+}
 export function PilotQualityView({ quality, mintCounts }: { quality: PilotQuality; mintCounts: MintCounts }) {
   const m = quality.manifest, c = m.counts, p = m.provenance, r = m.range;
   return <section aria-label="Datakwaliteit drie-slot-pilot">
@@ -34,7 +56,9 @@ export function PilotQualityView({ quality, mintCounts }: { quality: PilotQualit
         <p className="muted">Dit manifest bevat geen volledig afwijzingsinventaris. Een verschil tussen package- en feittellingen is geen afwijzingstelling.</p>
       </section>
     </div>
+    <Operations quality={quality} />
     <section className="quality-coverage"><h2>Dekking en ontbrekende informatie</h2>
+      {c.missing !== undefined && c.missing !== null && BigInt(c.missing as string) > 0n && <p role="status"><strong>GAP</strong> · {shown(c.missing)} verwachte packages ontbreken binnen {shown(c.transactions)} gedeclareerde transacties. De aanwezige {shown(c.decoded)} gedecodeerde packages vullen dit gat niet.</p>}
       <p>GAP · ontbrekende verwachte slots: <strong>{Array.isArray(r.gap_slots) && r.gap_slots.length === 0 ? 'Geen binnen dit bronbereik' : shown(r.gap_slots)}</strong>.</p>
       <p>UNAVAILABLE · historische accountstaat, feitelijke CPI-rechten en historische programma-activering zijn niet bewezen door dit rapport. QUARANTINED betekent aanwezige maar afgewezen evidence.</p>
       <p>Geen gaps in dit bereik bewijst geen volledige lifecycle of universele Pump-dekking. Eventreserves zijn geen accountstaat. Er worden geen prijzen, fills of rendementen afgeleid.</p>
@@ -52,15 +76,17 @@ export function PilotQualityView({ quality, mintCounts }: { quality: PilotQualit
 }
 
 export function PilotQualityPanel({ bindings, mintCounts }: { bindings: InputHashes; mintCounts: MintCounts }) {
-  const [data, setData] = useState<PilotQuality | null>(null), [failed, setFailed] = useState(false);
+  const key = `${bindings.collection}:${bindings.plan}`;
+  const [result, setResult] = useState<{ key: string; data?: PilotQuality; failure?: string } | null>(null);
   useEffect(() => {
     const controller = new AbortController(); let active = true;
     const timer = setTimeout(() => controller.abort(), 10000);
     void fetch('/api/pilot-quality', { signal: controller.signal, cache: 'no-store', credentials: 'omit' })
-      .then(r => readJsonResponse(r, MAX_PILOT_BYTES)).then(value => parsePilotQuality(value, bindings))
-      .then(value => { if (active) setData(value); }).catch(() => { if (active) setFailed(true); }).finally(() => clearTimeout(timer));
+      .then(registeredResponse('pilot-quality', MAX_PILOT_BYTES)).then(value => parsePilotQuality(value, bindings))
+      .then(value => { if (active) setResult({ key, data: value }); }).catch(error => { if (active) setResult({ key, failure: error instanceof SnapshotMismatch ? 'STALE' : 'UNAVAILABLE' }); }).finally(() => clearTimeout(timer));
     return () => { active = false; controller.abort(); clearTimeout(timer); };
-  }, [bindings]);
+  }, [bindings, key]);
+  const data = result?.key === key ? result.data : undefined, failure = result?.key === key ? result.failure : undefined;
   if (data) return <PilotQualityView quality={data} mintCounts={mintCounts} />;
-  return <section><h1>Datakwaliteit pilot</h1><p role="status">{failed ? 'UNAVAILABLE · Geen geldig geregistreerd pilotrapport beschikbaar. Er worden geen tellingen aangevuld.' : 'Geregistreerd pilotrapport wordt gecontroleerd…'}</p></section>;
+  return <section><h1>Datakwaliteit pilot</h1><p role="status">{failure ? `${failure} · Geen geldig geregistreerd pilotrapport beschikbaar. Er worden geen tellingen aangevuld.` : 'Geregistreerd pilotrapport wordt gecontroleerd…'}</p></section>;
 }
