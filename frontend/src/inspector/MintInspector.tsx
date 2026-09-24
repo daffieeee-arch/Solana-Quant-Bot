@@ -5,14 +5,14 @@ import { EventObservations } from './EventObservations';
 import { MintFlowUnavailable, MintFlowView, useMintFlow } from './MintFlow';
 import { type MintFlow } from '../../../src/mint-inspector/mint-flow';
 import { PilotQualityPanel } from './PilotQuality';
-import { readJsonResponse } from './read-response';
+import { registeredResponse, SnapshotMismatch } from './read-response';
 
 export type ViewState = 'READY' | 'STALE' | 'GAP' | 'REPLAYING' | 'UNAVAILABLE' | 'UNPROVEN' | 'QUARANTINED';
 const stateText: Record<ViewState, string> = {
   READY: 'Geregistreerd rapport beschikbaar. Dit zegt niets over Research Ready.',
   STALE: 'Verouderde weergave; gebruik deze niet als actuele evidence.',
   GAP: 'Verwachte brondekking ontbreekt. Ontbrekend is geen nulactiviteit.',
-  REPLAYING: 'Verwerking niet afgerond; er worden geen gedeeltelijke packages getoond.',
+  REPLAYING: 'Presentatiereplay actief; iedere stap toont één volledig package. Geen historische klok.',
   UNAVAILABLE: 'Rapport niet beschikbaar. Er worden geen tellingen aangevuld.',
   UNPROVEN: 'Onvoldoende bewijs voor deze eigenschap.',
   QUARANTINED: 'Evidence aanwezig, maar niet betrouwbaar toegelaten.',
@@ -86,7 +86,7 @@ function PackageDetails({ p, inspection }: { p: Package; inspection: Inspection 
   </article>;
 }
 
-export function InspectionView({ inspection, flow }: { inspection: Inspection; flow?: MintFlow | null }) {
+export function InspectionView({ inspection, flow }: { inspection: Inspection; flow?: MintFlow | 'STALE' | null }) {
   const [index, setIndex] = useState(0);
   const [view, setView] = useState<'mint' | 'pilot'>('mint');
   const [playing, setPlaying] = useState(false);
@@ -123,19 +123,19 @@ export function InspectionView({ inspection, flow }: { inspection: Inspection; f
     <main>
       <nav className="workspace-nav" aria-label="Inspectieweergave"><button aria-pressed={view === 'mint'} onClick={() => workspace('mint')}>Mintdossier</button><button aria-pressed={view === 'pilot'} onClick={() => workspace('pilot')}>Datakwaliteit pilot</button></nav>
       {view === 'pilot' ? <PilotQualityPanel key={`${inspection.inputs.collection}:${inspection.inputs.plan}`} bindings={inspection.inputs} mintCounts={t.counts} /> : <>
-      <div className="title-row"><div><p className="eyebrow">B6 · GEDEELTELIJKE LOKALE ONTWIKKELING</p><h1>Een mint. {t.counts.transactions} packages.</h1><p className="subtitle">Een controleerbaar lifecyclefragment uit bestaande OF1-evidence.</p></div><Badge tone="context">Post-hoc beschrijvend</Badge></div>
+      <div className="title-row"><div><p className="eyebrow">B6 · BRONGEBONDEN ENGINEERINGWEERGAVE</p><h1>Een mint. {t.counts.transactions} packages.</h1><p className="subtitle">Een controleerbaar lifecyclefragment uit bestaande OF1-evidence.</p></div><Badge tone="context">Post-hoc beschrijvend</Badge></div>
       <div className="mint-line"><span>MINT</span><code>{t.mint}</code></div>
       <p className="totals-caption">Volledig dossier · tellingen onafhankelijk van de replaypositie</p>
       <div className="stats" aria-label="Geverifieerde selectietellingen">
         {[['Packages', t.counts.transactions, `${t.counts.by_role.ORIGINAL_SELECTION?.transactions ?? 'UNAVAILABLE'} pilot · ${t.counts.by_role.POSTHOC_DESCRIPTIVE_CONTEXT?.transactions ?? 'UNAVAILABLE'} context`], ['Silver-feiten', t.counts.silver_facts, `${shown(t.counts.buys)} buys · ${shown(t.counts.sells)} sells`], ['Balansobservaties', t.counts.balance_observations, `${t.counts.by_role.ORIGINAL_SELECTION?.balance_observations ?? 'UNAVAILABLE'} pilot · ${t.counts.by_role.POSTHOC_DESCRIPTIVE_CONTEXT?.balance_observations ?? 'UNAVAILABLE'} context`], ['Mislukte packages', t.counts.status.ERROR, 'Zonder Silver-feiten']].map(([label, n, note]) => <div className="stat" key={label}><span>{label}</span><strong>{n}</strong><small>{note}</small></div>)}
       </div>
-      <div className="boundary"><strong>Research Ready: false</strong><span>Creatie, completion, migratie en volledige levensduur blijven onbewezen. Eerste en laatste waarneming zijn geen begin of einde.</span></div>
+      <div className="boundary"><strong>Research Ready: false</strong><span>UNPROVEN · Creatie, completion, migratie en volledige levensduur blijven onbewezen. Eerste en laatste waarneming zijn geen begin of einde.</span></div>
       <details className="lifecycle"><summary>Lifecyclefasen en bewijsgrenzen</summary><div className="phase-grid">{inspection.lifecycle.phases.map(phase => <section key={phase.phase}><h3>{phase.phase}</h3><Badge>{phase.status}</Badge><p>{phase.evidence}</p><p className="muted">{phase.limit}</p></section>)}</div></details>
 
       <section className="inspector" onKeyDown={keys} aria-label="Mintpackages in chainvolgorde" tabIndex={0}>
         <div className="inspector-toolbar"><div><h2>Chronologische tijdlijn</h2><p>← → Vorige / volgende · Home / End · Handmatige selectie pauzeert</p></div>
           <nav aria-label="Package kiezen"><button onClick={() => move(index - 1)} disabled={index === 0}>← Vorige</button><output aria-label="Geselecteerde replaypositie" aria-live="polite">{index + 1} / {t.transactions.length}</output><button onClick={() => move(index + 1)} disabled={index >= last}>Volgende →</button></nav>
-          <div className="playback-controls"><button onClick={() => playing ? pause() : setPlaying(true)} disabled={index >= last}>{playing ? 'Pauzeren' : 'Afspelen'}</button><button onClick={() => move(0)}>Opnieuw beginnen</button><span role="status">{playing ? 'Speelt af' : index === last ? 'Einde fragment' : 'Gepauzeerd'}</span></div>
+          <div className="playback-controls"><button onClick={() => playing ? pause() : setPlaying(true)} disabled={index >= last}>{playing ? 'Pauzeren' : 'Afspelen'}</button><button onClick={() => move(0)}>Opnieuw beginnen</button><span role="status">{playing ? 'REPLAYING · Speelt af' : index === last ? 'Einde fragment' : 'Gepauzeerd'}</span></div>
         </div>
         <p className="playback-note">Presentatietempo: één heel package per 2 seconden. Geen historische latency, informatiebeschikbaarheid of uitvoerbare handelsmogelijkheid.</p>
         <p className="list-caption">VOLLEDIGE SELECTIE · CHAINVOLGORDE · GEEN TIJDSCHAAL</p>
@@ -152,7 +152,7 @@ export function InspectionView({ inspection, flow }: { inspection: Inspection; f
               <td><button aria-controls="selected-package" onClick={() => move(i)}>Package {String(i + 1).padStart(2, '0')}</button></td>
             </tr>))}</tbody></table></div>
         </section>
-        {flow ? <MintFlowView key={inspection.inputs.timeline} flow={flow} selectedIndex={index} onSelect={move} /> : <MintFlowUnavailable loading={flow === null} />}
+        {flow && flow !== 'STALE' ? <MintFlowView key={inspection.inputs.timeline} flow={flow} selectedIndex={index} onSelect={move} /> : <MintFlowUnavailable loading={flow === null} stale={flow === 'STALE'} />}
         <EventObservations packages={t.transactions} selectedIndex={index} onSelect={move} />
         {p ? <PackageDetails key={p.package_id} p={p} inspection={inspection} /> : <StateNotice state="UNAVAILABLE" />}
 
@@ -171,15 +171,15 @@ export function InspectionView({ inspection, flow }: { inspection: Inspection; f
 }
 
 export function MintInspector() {
-  const [data, setData] = useState<Inspection | null>(null), [failed, setFailed] = useState(false);
+  const [data, setData] = useState<Inspection | null>(null), [failure, setFailure] = useState<ViewState | null>(null);
   const flow = useMintFlow(data);
   useEffect(() => {
     const controller = new AbortController(); let active = true;
     const timer = setTimeout(() => controller.abort(), 10000);
-    void fetch('/api/inspection', { signal: controller.signal, cache: 'no-store', credentials: 'omit' }).then(r => readJsonResponse(r, MAX_RESPONSE_BYTES)).then(parseInspection)
-      .then(value => { if (active) setData(value); }).catch(() => { if (active) setFailed(true); }).finally(() => clearTimeout(timer));
+    void fetch('/api/inspection', { signal: controller.signal, cache: 'no-store', credentials: 'omit' }).then(registeredResponse('inspection', MAX_RESPONSE_BYTES)).then(parseInspection)
+      .then(value => { if (active) setData(value); }).catch(error => { if (active) setFailure(error instanceof SnapshotMismatch ? 'STALE' : 'UNAVAILABLE'); }).finally(() => clearTimeout(timer));
     return () => { active = false; controller.abort(); clearTimeout(timer); };
   }, []);
   if (data) return <InspectionView inspection={data} flow={flow} />;
-  return <main className="loading"><h1>Mintinspecteur</h1>{failed ? <StateNotice state="UNAVAILABLE" /> : <p role="status">Geregistreerd rapport wordt gecontroleerd…</p>}</main>;
+  return <main className="loading"><h1>Mintinspecteur</h1>{failure ? <StateNotice state={failure} /> : <p role="status">Geregistreerd rapport wordt gecontroleerd…</p>}</main>;
 }

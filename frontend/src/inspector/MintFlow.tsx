@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MAX_RESPONSE_BYTES, type Inspection } from '../../../src/mint-inspector/contract';
 import { FLOW_GROUPS, parseMintFlow, type FlowGroup, type FlowTotals, type MintFlow } from '../../../src/mint-inspector/mint-flow';
-import { readJsonResponse } from './read-response';
+import { registeredResponse, SnapshotMismatch } from './read-response';
 
 const labels: Record<FlowGroup, string> = { ALL: 'Gecombineerd · post-hoc beschrijvend',
   ORIGINAL_SELECTION: 'Pilot · RESEARCH_SAMPLING', POSTHOC_DESCRIPTIVE_CONTEXT: 'Context · ENGINEERING_VALIDATION_ONLY' };
@@ -60,23 +60,24 @@ export function MintFlowView({ flow, selectedIndex, onSelect }: { flow: MintFlow
   </section>;
 }
 
-export function useMintFlow(inspection: Inspection | null): MintFlow | null | undefined {
-  const [flow, setFlow] = useState<MintFlow | null | undefined>(null);
+export function useMintFlow(inspection: Inspection | null): MintFlow | 'STALE' | null | undefined {
+  const key = inspection ? JSON.stringify(inspection.inputs) : null;
+  const [result, setResult] = useState<{ key: string; flow: MintFlow | 'STALE' | null | undefined } | null>(null);
   useEffect(() => {
-    if (!inspection) return;
+    if (!inspection || !key) return;
     const controller = new AbortController(); let active = true;
-    setFlow(null);
+    setResult({ key, flow: null });
     const timer = setTimeout(() => controller.abort(), 10000);
     void fetch('/api/mint-flow', { signal: controller.signal, cache: 'no-store', credentials: 'omit' })
-      .then(r => readJsonResponse(r, MAX_RESPONSE_BYTES)).then(value => parseMintFlow(value, inspection))
-      .then(value => { if (active) setFlow(value); }).catch(() => { if (active) setFlow(undefined); }).finally(() => clearTimeout(timer));
+      .then(registeredResponse('mint-flow', MAX_RESPONSE_BYTES)).then(value => parseMintFlow(value, inspection))
+      .then(value => { if (active) setResult({ key, flow: value }); }).catch(error => { if (active) setResult({ key, flow: error instanceof SnapshotMismatch ? 'STALE' : undefined }); }).finally(() => clearTimeout(timer));
     return () => { active = false; controller.abort(); clearTimeout(timer); };
-  }, [inspection]);
-  return flow;
+  }, [inspection, key]);
+  return result?.key === key ? result?.flow : null;
 }
 
-export function MintFlowUnavailable({ loading }: { loading: boolean }) {
+export function MintFlowUnavailable({ loading, stale = false }: { loading: boolean; stale?: boolean }) {
   return <section aria-label="Brongebonden volume en flow"><h2>Toegelaten waarnemingen · volume & flow</h2><p role="status">{loading
     ? 'Geregistreerde Python-samenvatting wordt gecontroleerd…'
-    : 'UNAVAILABLE · Geen geldige samenvatting voor deze geregistreerde snapshot. Er worden geen statistieken aangevuld.'}</p></section>;
+    : `${stale ? 'STALE' : 'UNAVAILABLE'} · Geen geldige samenvatting voor deze geregistreerde snapshot. Er worden geen statistieken aangevuld.`}</p></section>;
 }
