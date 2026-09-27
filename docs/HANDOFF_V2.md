@@ -20,9 +20,12 @@ No B8 work. The 2026-09-27 initialization repair preserves the stopped execution
 merged as #144 (`6984f8d`). Its main-CI run 36318383471 failed in the default
 OF1 library tests without retained stdout assertion details. That failure and
 repair evidence remain sealed in `governance/b7-metadata-init-20260927/`.
-The separately authorized bounded diagnostic task preserves both failure streams
-and performs one offline diagnosis; if unreproduced, fully green new PR/main
-checks permit the same first window without claiming a historical cause repair.
+The separately authorized bounded diagnostic task preserves both failure streams.
+Its first offline diagnosis passed; #145's runner then exposed a campaign lock
+reacquisition failure. One controlled offline syscall probe reproduced inherited
+descriptor retention, addressed by explicit guard-end unlock with a deterministic
+exclusivity/charge regression. The older #144 failure's exact cause remains
+unknown. Full reviewed PR/main verification still precedes the first window.
 New diagnostic/execution evidence: `governance/b7-ci-diagnostics-20260927/`.
 Private binding dossier: `governance/b7-native-campaign-20260924/`.
 B6/#85 was delivered by #141 and read back Done / SUPERSEDED / Engineering

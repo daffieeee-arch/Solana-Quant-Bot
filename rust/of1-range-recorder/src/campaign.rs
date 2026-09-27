@@ -187,6 +187,15 @@ pub struct Guard {
     head_hash: String,
     poisoned: bool,
 }
+impl Drop for Guard {
+    fn drop(&mut self) {
+        // Closing this File alone releases flock only after the last duplicate
+        // closes. A concurrent subprocess spawn can briefly inherit it before
+        // CLOEXEC runs. End the lock at this guard's actual ownership boundary;
+        // failure still falls back to File's close, never retries acquisition.
+        let _ = self.lock.unlock();
+    }
+}
 impl Guard {
     fn new(root: &Path, fixture: bool, limits: Limits) -> StoreResult<Self> {
         let root = canonical_new(root)?;
@@ -1005,6 +1014,27 @@ mod tests {
         }
         address_space_limit("Max address space 2147483648 2147483648 bytes").unwrap();
         address_space_limit("Max address space 1073741824 2147483648 bytes").unwrap();
+    }
+    #[test]
+    fn guard_release_does_not_wait_for_an_inherited_file_description() {
+        let (_dir, root) = fixture(3, 99);
+        let mut first = run(&root, 0);
+        first.reserve(0, 0, 30).unwrap();
+        // dup and a forked child's inherited descriptor share the same open
+        // file description. Keep it alive deterministically, without a sleep.
+        let inherited = first.lock.try_clone().unwrap();
+        assert!(matches!(Guard::open(&root, true), Err(StoreError::Locked)));
+        drop(first);
+        let second = Guard::open(&root, true).unwrap();
+        assert_eq!((second.state.requests, second.state.entity), (1, 30));
+        second.verify_charges(0, &[(0, 30)]).unwrap();
+        assert!(matches!(Guard::open(&root, true), Err(StoreError::Locked)));
+        drop(inherited);
+        // Closing the old duplicate cannot unlock the new owner's description.
+        assert!(matches!(Guard::open(&root, true), Err(StoreError::Locked)));
+        drop(second);
+        let resumed = Guard::open(&root, true).unwrap();
+        assert_eq!((resumed.state.requests, resumed.state.entity), (1, 30));
     }
     #[test]
     fn reserved_identity_is_valid_but_processing_is_not_authorized() {

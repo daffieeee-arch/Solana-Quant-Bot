@@ -207,6 +207,16 @@ it does not dump command arguments or the environment. The existing 16-MiB
 capture bound, isolation, timeouts and test parallelism remain unchanged.
 This preserves Cargo's stderr and the Rust harness's stdout assertion details.
 
+In #145 this exposed a campaign guard reacquisition failure (`Locked`). A single
+offline syscall experiment reproduced it by delaying a spawned test child's
+exec: the child temporarily retained a duplicate of another thread's locked
+file description after that thread closed its guard. The campaign guard now
+explicitly unlocks when its ownership ends. A deterministic duplicate-descriptor
+regression retains exclusivity while each guard is alive, immediate reacquisition
+after drop, and unchanged durable charges. No sleeps, lock retries or serializing
+the library suite replace those assertions. The old #144 main failure lacks the
+details needed to prove it had this same cause; its sealed log remains evidence.
+
 Compare a cold run and a warm run of the same revision before making a speed
 claim. Runtime-heavy tests still run in full and are not accelerated merely by
 restoring compiled artifacts. Subphase measurements guide any later parallelism.
