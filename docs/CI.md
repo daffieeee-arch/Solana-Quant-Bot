@@ -200,6 +200,13 @@ operational durations only: no commands, environment values or dataset contents
 are added, and deterministic evidence/stdout contracts remain unchanged.
 Unavailable summary output cannot turn a failed gate green or hide its exception.
 
+The OF1 planner wrapper retains both separately labelled, bounded stdout and
+stderr on failure, including when `spawnSync` returns an error with captured
+output. The diagnostic names the phase, exit status, signal and process error;
+it does not dump command arguments or the environment. The existing 16-MiB
+capture bound, isolation, timeouts and test parallelism remain unchanged.
+This preserves Cargo's stderr and the Rust harness's stdout assertion details.
+
 Compare a cold run and a warm run of the same revision before making a speed
 claim. Runtime-heavy tests still run in full and are not accelerated merely by
 restoring compiled artifacts. Subphase measurements guide any later parallelism.
