@@ -37,7 +37,7 @@ const MANIFEST_HASH = 'a98abc110b726dcb369b8cb03c4ea198d83723347eda027e767540ec2
 const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
-const B7_PROCESS_TEST_HASH = '30c5f3305d4e2c9983700a16ca2861787ddecdbb2a8a726d517571a15150cae4';
+const B7_PROCESS_TEST_HASH = '36cc976711aefb79e238b090cfaf2145eca9eee7fb8d87cd4d1bd8ab55c5ea8f';
 const METADATA_INIT_TEST_HASH = '170b213ce35e573688be4063f985f66d35e2387092a8e33ec305d561fe265a84';
 const RATE_PROCESS_TEST_HASH = 'a1982e6bf196bc790fbd4689fa6c802b4f947a9b2dfb82d4c4788986e792ccf7';
 // No blanket network/process exception for a directory or Cargo feature. Exact reviewed
