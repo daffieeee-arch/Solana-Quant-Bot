@@ -305,6 +305,28 @@ fn now() -> io::Result<String> {
 /// # Errors
 /// Any source/worker/plan/content mismatch stops; no acquisition is possible.
 pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Value> {
+    execute_selected(plan_path, batch_id, output, None)
+}
+
+/// Publish one whole-transaction part, never a complete-slot assertion.
+/// # Errors
+/// Existing publication, identity, campaign and resource gates remain mandatory.
+pub fn execute_part(
+    plan_path: &Path,
+    batch_id: &str,
+    output: &Path,
+    part: usize,
+) -> io::Result<Value> {
+    execute_selected(plan_path, batch_id, output, Some(part))
+}
+
+#[allow(clippy::too_many_lines)] // Retained validation/publication sequence; shared by both routes.
+fn execute_selected(
+    plan_path: &Path,
+    batch_id: &str,
+    output: &Path,
+    part: Option<usize>,
+) -> io::Result<Value> {
     let (plan, plan_hash) = read_plan(plan_path)?;
     plan.validate_sources()?;
     if current_executable_sha256().map_err(invalid)? != plan.workers.batch_decoder_sha256 {
@@ -313,7 +335,15 @@ pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Va
     let batch = plan.batch(batch_id)?;
     let source = plan.source(&batch.source_id)?;
     if output.exists() {
-        return verify_output(&plan, &plan_hash, batch, output);
+        return verify_output_identity(
+            &plan,
+            &plan_hash,
+            batch,
+            output,
+            &crate::source_sha256(),
+            &sha256(include_bytes!("../Cargo.lock")),
+            part,
+        );
     }
     let parent = fs::canonicalize(
         output
@@ -335,7 +365,19 @@ pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Va
         resources::MAX_PUBLICATION_BYTES as u64 + 1024 * 1024,
     )?;
     let start = now()?;
-    let mut report = report::decode_receipts(&source.run_root, &batch.receipt_sequences)?;
+    if let Some((guard, sample)) = &campaign {
+        guard
+            .check_processing_slots(sample, &batch.slots)
+            .map_err(invalid)?;
+    }
+    let mut report = if let Some(part) = part {
+        if batch.receipt_sequences.len() != 1 {
+            return Err(invalid("PART_SINGLE_SLOT_REQUIRED"));
+        }
+        report::decode_receipt_part(&source.run_root, batch.receipt_sequences[0], part)?
+    } else {
+        report::decode_receipts(&source.run_root, &batch.receipt_sequences)?
+    };
     let plan_json = String::from_utf8(read_limited(plan_path, MAX_PLAN_BYTES).map_err(invalid)?)
         .map_err(invalid)?;
     if sha256(plan_json.as_bytes()) != plan_hash {
@@ -362,6 +404,9 @@ pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Va
     if let Some(sample) = report.get("sample_identity") {
         execution["sample_identity"] = sample.clone();
         execution["slice_class"] = report["slice_class"].clone();
+    }
+    if let Some(part) = report.get("slot_part") {
+        execution["slot_part"] = part.clone();
     }
     let execution =
         resources::bounded_json(&execution, "EXECUTION_JSON", resources::MAX_EXECUTION_BYTES)?;
@@ -402,7 +447,15 @@ pub fn execute(plan_path: &Path, batch_id: &str, output: &Path) -> io::Result<Va
     write_new(&output.join("COMPLETE"), sha256(&quality).as_bytes())?;
     fs::File::open(&output)?.sync_all()?;
     fs::File::open(&parent)?.sync_all()?;
-    verify_output(&plan, &plan_hash, batch, &output)
+    verify_output_identity(
+        &plan,
+        &plan_hash,
+        batch,
+        &output,
+        &crate::source_sha256(),
+        &sha256(include_bytes!("../Cargo.lock")),
+        part,
+    )
 }
 
 /// Verify each persisted artifact before resume. No timestamp or deadline reset.
@@ -413,6 +466,28 @@ pub fn verify_output(
     plan_hash: &str,
     batch: &Batch,
     output: &Path,
+) -> io::Result<Value> {
+    verify_output_identity(
+        plan,
+        plan_hash,
+        batch,
+        output,
+        &crate::source_sha256(),
+        &sha256(include_bytes!("../Cargo.lock")),
+        None,
+    )
+}
+
+/// Internal continuation verification pins the ORIGINAL producer, never assigns
+/// old records to today's decoder. Public ordinary resume retains current identity.
+pub(crate) fn verify_output_identity(
+    plan: &Plan,
+    plan_hash: &str,
+    batch: &Batch,
+    output: &Path,
+    source_hash: &str,
+    lock_hash: &str,
+    part: Option<usize>,
 ) -> io::Result<Value> {
     let mut names = fs::read_dir(output)?
         .map(|e| e.map(|e| e.file_name().to_string_lossy().to_string()))
@@ -465,11 +540,18 @@ pub fn verify_output(
     )
     .map_err(invalid)?;
     if execution["batch_binding"] != binding
-        || execution["decoder_source_sha256"] != crate::source_sha256()
+        || execution["decoder_source_sha256"] != source_hash
         || execution["executable_sha256"] != plan.workers.batch_decoder_sha256
-        || execution["lock_sha256"] != sha256(include_bytes!("../Cargo.lock"))
+        || execution["lock_sha256"] != lock_hash
     {
         return Err(invalid("BATCH_RESUME_WORKER_MISMATCH"));
+    }
+    match part {
+        None if !execution["slot_part"].is_null() => return Err(invalid("PART_IS_NOT_WHOLE_SLOT")),
+        Some(n) if execution["slot_part"]["ordinal"] != n => {
+            return Err(invalid("PART_ORDINAL_MISMATCH"));
+        }
+        _ => (),
     }
     for (name, key, limit) in [
         (

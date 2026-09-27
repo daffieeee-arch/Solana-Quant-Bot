@@ -106,6 +106,35 @@ struct Processing {
     approval: ProcessingApproval,
     stage: StageRecord,
     complete: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continuation: Option<Continuation>,
+}
+
+/// One additional OFFLINE decision for the retained first-window checkpoint.
+/// All fields except authority participate in the explicit approval target.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ContinuationApproval {
+    pub authority: Authority,
+    pub window: u64,
+    pub previous_ledger_sha256: String,
+    pub original_processing_sha256: String,
+    pub checkpoint_sha256: String,
+    pub decision_sha256: String,
+    pub plan_sha256: String,
+    pub worker_sha256s: Vec<String>,
+    pub remaining_slots: Vec<u64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Continuation {
+    approval: ContinuationApproval,
+    stage: StageRecord,
+}
+impl Processing {
+    fn active_stage(&self) -> &StageRecord {
+        self.continuation.as_ref().map_or(&self.stage, |c| &c.stage)
+    }
 }
 /// Separate phase-two decision, after a named phase-one integrity/resource review.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -314,6 +343,19 @@ impl Guard {
                 || next.runs.len() < state.runs.len()
             {
                 return Err(fail());
+            }
+            for (i, old) in &state.processing {
+                let new = next.processing.get(i).ok_or_else(fail)?;
+                if old.approval != new.approval
+                    || old.stage != new.stage
+                    || (old.complete && !new.complete)
+                    || old
+                        .continuation
+                        .as_ref()
+                        .is_some_and(|c| new.continuation.as_ref() != Some(c))
+                {
+                    return Err(fail());
+                }
             }
             previous = sha256(&b);
             state = next;
@@ -672,6 +714,7 @@ impl Guard {
                 approval,
                 stage,
                 complete: false,
+                continuation: None,
             },
         );
         g.commit(n)?;
@@ -708,6 +751,187 @@ impl Guard {
         }
         Ok(g)
     }
+
+    /// Read-only continuation preflight; caller retains the writer lock while
+    /// verifying the original checkpoint and source before admitting a decision.
+    /// # Errors
+    /// Missing/corrupt state, other windows or existing continuation fail closed.
+    pub fn continuation_context(
+        sample: &SampleIdentity,
+        run_root: &Path,
+    ) -> StoreResult<(Self, serde_json::Value)> {
+        development_processing_only(sample)?;
+        let g = Self::for_recorded(sample, run_root)?;
+        let i = sample
+            .b7
+            .as_ref()
+            .ok_or(StoreError::Identity)?
+            .window_ordinal;
+        let p = g.state.processing.get(&i).ok_or(StoreError::Identity)?;
+        if i != 0 || p.complete || p.continuation.is_some() {
+            return Err(StoreError::Identity);
+        }
+        let context = serde_json::json!({"ledger_sha256":g.head_hash,
+            "original_processing_sha256":sha256(&bytes(&(&p.approval,&p.stage))?),
+            "approval":p.approval,"stage":p.stage});
+        Ok((g, context))
+    }
+
+    /// # Errors
+    /// Only the explicitly bounded remaining four slots and fixed part profile.
+    pub fn continuation_target(
+        sample: &SampleIdentity,
+        a: &ContinuationApproval,
+    ) -> StoreResult<String> {
+        development_processing_only(sample)?;
+        if sample
+            .b7
+            .as_ref()
+            .ok_or(StoreError::Identity)?
+            .window_ordinal
+            != 0
+            || a.window != 0
+            || a.remaining_slots != (422_526_156..422_526_160).collect::<Vec<_>>()
+            || [
+                &a.previous_ledger_sha256,
+                &a.original_processing_sha256,
+                &a.checkpoint_sha256,
+                &a.decision_sha256,
+                &a.plan_sha256,
+            ]
+            .iter()
+            .any(|h| !hex_hash(h))
+            || a.worker_sha256s.len() != 3
+            || a.worker_sha256s.iter().any(|h| !hex_hash(h))
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(sha256(&bytes(&(
+            "OF1_B7_CONTINUATION_APPROVAL_1",
+            sample,
+            a.window,
+            &a.previous_ledger_sha256,
+            &a.original_processing_sha256,
+            &a.checkpoint_sha256,
+            &a.decision_sha256,
+            &a.plan_sha256,
+            &a.worker_sha256s,
+            &a.remaining_slots,
+            "OF1_ATOMIC_SLOT_PARTS_128_V1",
+            900_000_u64,
+            4_u64 * 1024 * 1024 * 1024,
+        ))?))
+    }
+
+    /// Append one additional processing stage. No old lease, charge or
+    /// reservation is replaced. The caller has verified the bound checkpoint.
+    /// # Errors
+    /// Duplicate/stale decisions, authority drift and ambiguous journal seams stop.
+    pub fn admit_continuation(
+        &mut self,
+        sample: &SampleIdentity,
+        a: ContinuationApproval,
+        at: &ClockSample,
+    ) -> StoreResult<()> {
+        let target = Self::continuation_target(sample, &a)?;
+        let p = self
+            .state
+            .processing
+            .get(&a.window)
+            .ok_or(StoreError::Identity)?;
+        if p.complete
+            || p.continuation.is_some()
+            || self.head_hash != a.previous_ledger_sha256
+            || sha256(&bytes(&(&p.approval, &p.stage))?) != a.original_processing_sha256
+            || matches!(a.authority, Authority::Fixture) != self.header.fixture
+        {
+            return Err(StoreError::Identity);
+        }
+        let policy = ClockPolicy::standard();
+        validate_authority(Some(&policy), &a.authority, &target)?;
+        let stage = make_stage(
+            Some(&policy),
+            &a.authority,
+            &StageBudget {
+                max_requests: 1,
+                max_response_entity_bytes_total: 1,
+                max_runtime_ms: 900_000,
+            },
+            &a,
+            at,
+        )?;
+        self.space(0)?;
+        let window = a.window;
+        let used = durable::disk_charge(&self.root.join("work/w00"))?;
+        if used
+            .checked_add(4 * 1024 * 1024)
+            .is_none_or(|n| n > 4 * 1024 * 1024 * 1024)
+            || durable::acquisition::resource_sample(&self.root)?.0
+                < self.header.limits.free.saturating_add(4 * 1024 * 1024)
+        {
+            return Err(StoreError::Budget);
+        }
+        let mut next = self.state.clone();
+        next.processing
+            .get_mut(&window)
+            .ok_or(StoreError::Identity)?
+            .continuation = Some(Continuation { approval: a, stage });
+        self.commit(next)
+    }
+
+    /// # Errors
+    /// A new producer may decode only the four slots named in its decision.
+    pub fn check_processing_slots(
+        &self,
+        sample: &SampleIdentity,
+        slots: &[u64],
+    ) -> StoreResult<()> {
+        let p = self
+            .state
+            .processing
+            .get(
+                &sample
+                    .b7
+                    .as_ref()
+                    .ok_or(StoreError::Identity)?
+                    .window_ordinal,
+            )
+            .ok_or(StoreError::Identity)?;
+        if let Some(c) = &p.continuation
+            && (slots.is_empty()
+                || slots
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    != slots.len()
+                || slots
+                    .iter()
+                    .any(|s| !c.approval.remaining_slots.contains(s)))
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(())
+    }
+
+    /// # Errors
+    /// Read back the admitted continuation, never renew it.
+    pub fn continuation_decision(
+        &self,
+        sample: &SampleIdentity,
+    ) -> StoreResult<ContinuationApproval> {
+        self.state
+            .processing
+            .get(
+                &sample
+                    .b7
+                    .as_ref()
+                    .ok_or(StoreError::Identity)?
+                    .window_ordinal,
+            )
+            .and_then(|p| p.continuation.as_ref())
+            .map(|c| c.approval.clone())
+            .ok_or(StoreError::Identity)
+    }
     /// # Errors
     /// Only registered native output, under the campaign reservation and deadline.
     /// Fixture outputs remain Fixture; no historical caller label creates a sample.
@@ -729,16 +953,19 @@ impl Guard {
             .processing
             .get(&b.window_ordinal)
             .ok_or(StoreError::Identity)?;
+        let (active_plan, active_workers) = p
+            .continuation
+            .as_ref()
+            .map_or((&p.approval.plan_sha256, &p.approval.worker_sha256s), |c| {
+                (&c.approval.plan_sha256, &c.approval.worker_sha256s)
+            });
         if p.complete
-            || p.approval.plan_sha256 != plan_sha
-            || !p
-                .approval
-                .worker_sha256s
-                .contains(&durable::acquisition::current_executable_sha256()?)
+            || active_plan != plan_sha
+            || !active_workers.contains(&durable::acquisition::current_executable_sha256()?)
         {
             return Err(StoreError::Identity);
         }
-        within_stage(&p.stage, &SystemClock.sample()?)?;
+        within_stage(p.active_stage(), &SystemClock.sample()?)?;
         let allowed = g.root.join(format!("work/w{:02}", b.window_ordinal));
         let path = if path.exists() {
             path.canonicalize()?
@@ -746,6 +973,9 @@ impl Guard {
             canonical_new(path)?
         };
         if !path.starts_with(&allowed) && path != allowed {
+            return Err(StoreError::Identity);
+        }
+        if p.continuation.is_some() && !path.starts_with(allowed.join("continuation-1")) {
             return Err(StoreError::Identity);
         }
         let used = if allowed.exists() {
@@ -782,7 +1012,7 @@ impl Guard {
             .processing
             .get(&i)
             .ok_or(StoreError::Identity)?
-            .stage
+            .active_stage()
             .deadline_boot_ms)
     }
     /// # Errors
@@ -795,8 +1025,10 @@ impl Guard {
             .window_ordinal;
         let p = self.state.processing.get(&i).ok_or(StoreError::Identity)?;
         let now = SystemClock.sample()?;
-        within_stage(&p.stage, &now)?;
-        Ok(p.stage.deadline_boot_ms.saturating_sub(now.boot_ms))
+        within_stage(p.active_stage(), &now)?;
+        Ok(p.active_stage()
+            .deadline_boot_ms
+            .saturating_sub(now.boot_ms))
     }
     /// # Errors
     /// Existing processing deadline and space remain binding at publication.
@@ -810,7 +1042,7 @@ impl Guard {
         if p.complete {
             return Err(StoreError::Identity);
         }
-        within_stage(&p.stage, &SystemClock.sample()?)?;
+        within_stage(p.active_stage(), &SystemClock.sample()?)?;
         self.space(0)
     }
     /// # Errors
@@ -821,7 +1053,7 @@ impl Guard {
         if p.complete {
             return Err(StoreError::Identity);
         }
-        within_stage(&p.stage, &SystemClock.sample()?)?;
+        within_stage(p.active_stage(), &SystemClock.sample()?)?;
         p.complete = true;
         self.commit(n)
     }
@@ -1001,6 +1233,158 @@ mod tests {
             true,
         )
         .unwrap()
+    }
+    pub(super) fn continuation_fixture() -> (
+        tempfile::TempDir,
+        Guard,
+        SampleIdentity,
+        ContinuationApproval,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("campaign");
+        let g = Guard::new(
+            &root,
+            true,
+            Limits {
+                free: 0,
+                ..Limits::production()
+            },
+        )
+        .unwrap();
+        drop(g);
+        let mut g = run(&root, 0);
+        g.reserve(0, 0, 10).unwrap();
+        let sample = b7::sample(0, &root).unwrap();
+        let approval = ProcessingApproval {
+            authority: Authority::Fixture,
+            window: 0,
+            plan_sha256: "a".repeat(64),
+            worker_sha256s: vec![durable::acquisition::current_executable_sha256().unwrap(); 3],
+        };
+        let at = ClockSample {
+            boot_id: "HISTORICAL_CONTINUATION_FIXTURE_BOOT".into(),
+            ..SystemClock.sample().unwrap()
+        };
+        let stage = make_stage(
+            Some(&ClockPolicy::standard()),
+            &Authority::Fixture,
+            &StageBudget {
+                max_requests: 1,
+                max_response_entity_bytes_total: 1,
+                max_runtime_ms: 900_000,
+            },
+            &approval,
+            &at,
+        )
+        .unwrap();
+        let mut next = g.state.clone();
+        next.processing.insert(
+            0,
+            Processing {
+                approval,
+                stage,
+                complete: false,
+                continuation: None,
+            },
+        );
+        g.commit(next).unwrap();
+        fs::create_dir(root.join("work/w00")).unwrap();
+        write(&root.join("work/w00/old-failure"), b"retained failure").unwrap();
+        let p = &g.state.processing[&0];
+        let a = ContinuationApproval {
+            authority: Authority::Fixture,
+            window: 0,
+            previous_ledger_sha256: g.head_hash.clone(),
+            original_processing_sha256: sha256(&bytes(&(&p.approval, &p.stage)).unwrap()),
+            checkpoint_sha256: "b".repeat(64),
+            decision_sha256: "c".repeat(64),
+            plan_sha256: "d".repeat(64),
+            worker_sha256s: p.approval.worker_sha256s.clone(),
+            remaining_slots: (422_526_156..422_526_160).collect(),
+        };
+        (dir, g, sample, a)
+    }
+    #[test]
+    fn continuation_adds_one_deadline_without_changing_old_charges_or_checkpoint() {
+        let (_dir, mut g, s, a) = continuation_fixture();
+        let old = g.state.clone();
+        let root = g.root.clone();
+        let at = SystemClock.sample().unwrap();
+        assert!(g.processing_remaining_ms(&s).is_err());
+        g.admit_continuation(&s, a.clone(), &at).unwrap();
+        assert_eq!(g.state.processing[&0].approval, old.processing[&0].approval);
+        assert_eq!(g.state.processing[&0].stage, old.processing[&0].stage);
+        assert_eq!(
+            (g.state.requests, g.state.entity, g.state.runs.clone()),
+            (old.requests, old.entity, old.runs)
+        );
+        assert_eq!(
+            g.processing_deadline_boot_ms(&s).unwrap(),
+            at.boot_ms + 900_000
+        );
+        assert_eq!(
+            g.continuation_decision(&s).unwrap().checkpoint_sha256,
+            a.checkpoint_sha256
+        );
+        assert!(g.admit_continuation(&s, a.clone(), &at).is_err());
+        assert!(g.check_processing_slots(&s, &[422_526_155]).is_err());
+        assert!(
+            g.check_processing_slots(&s, &[422_526_156, 422_526_156])
+                .is_err()
+        );
+        g.check_processing_slots(&s, &[422_526_156]).unwrap();
+        drop(g);
+        let mut reopened = Guard::open(&root, true).unwrap();
+        assert_eq!(
+            reopened.processing_deadline_boot_ms(&s).unwrap(),
+            at.boot_ms + 900_000
+        );
+        assert!(reopened.admit_continuation(&s, a, &at).is_err());
+        assert_eq!(
+            fs::read(root.join("work/w00/old-failure")).unwrap(),
+            b"retained failure"
+        );
+        assert!(
+            within_stage(
+                reopened.state.processing[&0].active_stage(),
+                &ClockSample {
+                    boot_ms: at.boot_ms + 900_001,
+                    ..at
+                }
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn continuation_rejects_stale_or_mismatched_authority_without_mutation() {
+        for field in [
+            "ledger",
+            "processing",
+            "window",
+            "slots",
+            "duplicate",
+            "worker",
+            "hash",
+        ] {
+            let (_dir, mut g, s, mut a) = continuation_fixture();
+            let head = g.head_hash.clone();
+            match field {
+                "ledger" => a.previous_ledger_sha256 = "f".repeat(64),
+                "processing" => a.original_processing_sha256 = "f".repeat(64),
+                "window" => a.window = 1,
+                "slots" => a.remaining_slots[0] = 422_526_155,
+                "duplicate" => a.remaining_slots[1] = a.remaining_slots[0],
+                "worker" => a.worker_sha256s.clear(),
+                _ => a.decision_sha256 = "invalid".into(),
+            }
+            assert!(
+                g.admit_continuation(&s, a, &SystemClock.sample().unwrap())
+                    .is_err(),
+                "{field}"
+            );
+            assert_eq!(g.head_hash, head);
+            assert!(g.state.processing[&0].continuation.is_none());
+        }
     }
     #[test]
     fn worker_address_space_must_be_a_real_bounded_hard_limit() {

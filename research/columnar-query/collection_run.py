@@ -148,7 +148,7 @@ class Runner:
         while pathlib.Path(str(prefix)+'.stdout').exists() or pathlib.Path(str(prefix)+'.json').exists():
             self.counter+=1
             prefix=self.root/f'operation-{self.counter:04d}'
-        size=artifact_size(self.root)
+        size=artifact_size(getattr(self,'accounting_root',self.root))
         if size+STAGE_RESERVATION_BYTES>ARTIFACT_BYTES:
             raise ValueError('insufficient remaining artifact cap for bounded worker and two logs')
         stat=os.statvfs(self.root)
@@ -178,8 +178,9 @@ class Runner:
                  'plan_sha256':hashlib.sha256(self.plan_raw).hexdigest(),
                  'stdout_sha256':digest(pathlib.Path(str(prefix)+'.stdout')),
                  'stderr_sha256':digest(pathlib.Path(str(prefix)+'.stderr')),
-                 'artifact_bytes_after':artifact_size(self.root),'provider_calls':False,
-                 'process_address_space_cap_bytes':PROCESS_BYTES}
+                 'artifact_bytes_after':artifact_size(getattr(self,'accounting_root',self.root)),'provider_calls':False,
+                 'process_address_space_cap_bytes':PROCESS_BYTES,
+                 'children_peak_rss_kib_so_far':resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss}
         exclusive_json(pathlib.Path(str(prefix)+'.json'),receipt)
         print(json.dumps({'stage':label,'state':'VERIFIED_STEP' if returncode==0 and error is None else 'STOPPED',
                           'operation':self.counter,'elapsed_seconds':receipt['elapsed_seconds']}),flush=True)

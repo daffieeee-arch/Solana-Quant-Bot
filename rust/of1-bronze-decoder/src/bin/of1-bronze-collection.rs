@@ -1,10 +1,18 @@
 //! Offline source/plan/collection verifier. Publication never mutates old output.
-use of1_bronze_decoder::{batch, collection};
+use of1_bronze_decoder::{batch, collection, continuation};
 use of1_range_recorder::sha256;
 use std::{fs, path::Path};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let value=match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice(){
+        ["continuation-proposal",plan,checkpoint,decoder,projector]=>continuation::proposal(Path::new(plan),Path::new(checkpoint),decoder,projector)?,
+        ["continuation-admit",decision,authority]=>continuation::admit(Path::new(decision),Path::new(authority))?,
+        ["continuation-check",decision,reserve]=>continuation::check(Path::new(decision),reserve.parse()?)?,
+        ["continuation-inventory",decision]=>continuation::inventory(Path::new(decision))?,
+        ["continuation-verify-retained",decision]=>continuation::verify_retained(Path::new(decision))?,
+        ["continuation-verify-part",decision,id,ordinal,parquet]=>continuation::verify_part(Path::new(decision),id,ordinal.parse()?,parquet.parse()?)?,
+        ["continuation-seal-slot",decision,id]=>continuation::seal_slot(Path::new(decision),id)?,
+        ["continuation-complete",decision]=>continuation::complete(Path::new(decision))?,
         ["source",root]=>batch::source_identity(Path::new(root))?,
         ["plan-check",plan]=>{let (p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;serde_json::json!({"state":"VERIFIED","plan_sha256":h,"slots":p.logical_selection.len(),"batches":p.batches.len()})},
         ["verify-batch",plan,id,output]=>{let(p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;batch::verify_output(&p,&h,p.batch(id)?,Path::new(output))?},
