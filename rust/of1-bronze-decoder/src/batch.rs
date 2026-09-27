@@ -63,6 +63,8 @@ pub struct Plan {
     pub sources: Vec<Source>,
     pub batches: Vec<Batch>,
     pub research_ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot_part_profile: Option<String>,
 }
 
 fn id(s: &str) -> bool {
@@ -105,6 +107,18 @@ impl Plan {
             || self.batches.len() > MAX_COLLECTION_SLOTS
         {
             return Err(invalid("BATCH_PLAN_BOUNDARY"));
+        }
+        if let Some(profile) = &self.slot_part_profile {
+            let (sample, _) = campaign_sample(self)?.ok_or_else(|| invalid("PARTS_REQUIRE_B7"))?;
+            if profile != report::PART_PROFILE
+                || sample
+                    .b7
+                    .as_ref()
+                    .is_none_or(|b| b.cohort_role != "DEVELOPMENT")
+                || self.batches.iter().any(|b| b.slots.len() != 1)
+            {
+                return Err(invalid("BATCH_PART_PROFILE_OR_WINDOW"));
+            }
         }
         let mut sources = BTreeSet::new();
         for source in &self.sources {
@@ -328,6 +342,9 @@ fn execute_selected(
     part: Option<usize>,
 ) -> io::Result<Value> {
     let (plan, plan_hash) = read_plan(plan_path)?;
+    if plan.slot_part_profile.is_some() && part.is_none() {
+        return Err(invalid("PLAN_REQUIRES_ATOMIC_PARTS"));
+    }
     plan.validate_sources()?;
     if current_executable_sha256().map_err(invalid)? != plan.workers.batch_decoder_sha256 {
         return Err(invalid("BATCH_DECODER_EXECUTABLE_MISMATCH"));

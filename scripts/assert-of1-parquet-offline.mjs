@@ -45,7 +45,7 @@ try {
   await writeResearchNetworkDenyFilter(filter,process.arch,{allowLocalProcessSpawn:true});
   await buildResearchSeccompLauncher(launcher);
   const run=(command,args,label=`parquet.${command==='cargo'?args[1]:command===process.execPath?'probe':basename(args[0],'.py')}`)=>timing.measure(label,()=>{
-    const r=spawnSync(launcher,[filter,command,...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024,timeout:900_000,env:{...process.env,CARGO_NET_OFFLINE:'true',PYTHONDONTWRITEBYTECODE:'1',COLUMNAR_TEST_FIXTURE_DIR:join(scratch,'fixtures'),COLUMNAR_BATCH_FIXTURE_DIR:join(scratch,'batch-source'),COLUMNAR_PARITY_FIXTURE_DIR:join(scratch,'parity-source'),COLUMNAR_B7_FIXTURE_DIR:join(scratch,'b7-source'),COLUMNAR_CONTINUATION_FIXTURE_DIR:join(scratch,'continuation-source')}});
+    const r=spawnSync(launcher,[filter,command,...args],{cwd:root,encoding:'utf8',maxBuffer:32*1024*1024,timeout:900_000,env:{...process.env,CARGO_NET_OFFLINE:'true',PYTHONDONTWRITEBYTECODE:'1',COLUMNAR_TEST_FIXTURE_DIR:join(scratch,'fixtures'),COLUMNAR_BATCH_FIXTURE_DIR:join(scratch,'batch-source'),COLUMNAR_PARITY_FIXTURE_DIR:join(scratch,'parity-source'),COLUMNAR_B7_FIXTURE_DIR:join(scratch,'b7-source'),COLUMNAR_CONTINUATION_FIXTURE_DIR:join(scratch,'continuation-source'),COLUMNAR_REGULAR_PARTS_FIXTURE_DIR:join(scratch,'regular-parts-source')}});
     if(r.error||r.status!==0)throw Error(r.error?.message||r.stderr||r.stdout||'offline gate failed');return r.stdout+r.stderr;
   });
   const probe=run(process.execPath,['--input-type=module','-e',"import net from 'node:net';const s=net.createConnection({host:'127.0.0.1',port:9});s.on('connect',()=>process.exit(2));s.on('error',e=>{if(e.code==='EPERM')console.log('NETWORK_DENIED');else process.exit(3);});"]);
@@ -86,6 +86,8 @@ try {
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_b7_campaign_pipeline.py'),join(scratch,'b7-source'),join(bronze,'target/ci-test/of1-bronze-batch'),join(crate,'target/ci-test/of1-parquet-projection'),join(bronze,'target/ci-test/of1-bronze-collection')]));
     process.stdout.write(run('cargo',['+1.97.1','test','--profile','ci-test','--manifest-path',join(bronze,'Cargo.toml'),'--locked','--offline','--test','recorded_pipeline','continuation_fixture_retains_twelve_and_needs_atomic_parts','--','--exact'],'parquet.fixture.b7-continuation'));
     process.stdout.write(run(python,[join(root,'research/columnar-query/test_continuation_pipeline.py'),join(scratch,'continuation-source'),join(bronze,'target/ci-test/of1-bronze-batch'),join(crate,'target/ci-test/of1-parquet-projection'),join(bronze,'target/ci-test/of1-bronze-collection')]));
+    process.stdout.write(run('cargo',['+1.97.1','test','--profile','ci-test','--manifest-path',join(bronze,'Cargo.toml'),'--locked','--offline','--test','recorded_pipeline','regular_b7_parts_start_at_first_slot_with_same_limits','--','--exact'],'parquet.fixture.b7-regular-parts'));
+    process.stdout.write(run(python,[join(root,'research/columnar-query/test_regular_parts_pipeline.py'),join(scratch,'regular-parts-source'),join(bronze,'target/ci-test/of1-bronze-batch'),join(crate,'target/ci-test/of1-parquet-projection'),join(bronze,'target/ci-test/of1-bronze-collection')]));
     console.log('DuckDB real Parquet and coverage regressions PASS (sockets denied)');
   }
   console.log('Parquet dependency identity/network-denied gates PASS');

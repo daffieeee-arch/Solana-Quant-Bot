@@ -1,6 +1,6 @@
 # B7 — fixed native sample and campaign boundary
 
-> **Document status: ACTIVE — bounded implementation and conditional first-window execution.** 2026-09-24. #86 remains open / Unproven; Research Ready=false. No B8 labels, evaluation outcomes or Cohort Explorer expansion.
+> **Document status: ACTIVE — bounded native campaign; conditional second-window execution.** 2026-09-24. #86 remains open / Unproven; Research Ready=false. No B8 labels, evaluation outcomes or Cohort Explorer expansion.
 
 ## Owner decisions, without rewriting the proposal
 
@@ -263,3 +263,64 @@ and durable admission crash seams. These fixtures are not authentic counts.
 Execution and final authentic-window results are recorded separately in
 `governance/b7-bounded-slot-continuation-20260927/`. #86 remains Unproven and
 Research Ready remains false regardless of complete engineering accounting.
+
+
+## Ordinary atomic-part processing and second window — 2026-09-27
+
+The first window completed through #146 with 21,068 atomic packages, 2,965
+failures and 57 admitted facts. The twelve original slots and their 39 facts
+retain their producer identity and byte hashes. Native completion, not a prose
+claim, is required before the second execution. See the sealed
+`governance/b7-bounded-slot-continuation-20260927/RESULTAAT.md`.
+
+The owner separately authorizes ordinal 1, DEVELOPMENT `[422552336,422552352)`,
+within the same fixed campaign. Metadata ≤12 attempts /15,576,576 reserved
+entity bytes /600s; payload ≤48 /100,473,774 /1200s; offline processing ≤900s
+under the existing 4-GiB work reservation. Only `files.old-faithful.net:443`;
+exact binaries, plans, ranges and fresh leases are frozen first. Payload follows
+only matching fresh metadata. No other window, phase two or evaluation outcomes.
+
+The optional immutable plan field `slot_part_profile` accepts only
+`OF1_ATOMIC_SLOT_PARTS_128_V1`, one original B7 DEVELOPMENT sample and one slot
+per batch. `collection_run.py` dispatches that registered profile directly to
+`parts-inventory`, bounded native decoder/projector parts, `parts-seal-slot`
+and `parts-complete`. There is no preliminary whole-slot attempt. The native
+batch worker refuses whole-slot execution of a part-profile plan. Plans without
+this field retain their historical serialization and behavior, including pilot,
+engineering and explicit first-window continuation plans.
+
+The slot verifier is shared with the delivered continuation: exact part-directory
+inventory, full transaction boundaries, contiguous indices, Raw/receipt/sample
+binding, decoder identity, per-part physical/logical checks, failed-parent
+exclusion and every disposition must pass before a slot is ACCOUNTED. A partial
+or corrupted slot cannot publish a complete manifest. The regular collection
+`OF1_PARTED_BATCH_COLLECTION_1` binds each verified slot manifest by path/hash;
+slot manifests bind all part files/layers and their full original manifests.
+The same ordered logical hash is independently recomputed in an offline fixture.
+This does not add an analytical export route or change Silver admission.
+
+All existing individual record/JSONL/report/file/RAM caps remain. The campaign
+Guard accounts the entire 4-GiB work reservation while incomplete; temporary
+worker output and bounded stdout/stderr are inside it. Drivers use the original
+absolute deadline, one registered driver lock, exact retained plan/binary/runner
+identity and checked free space. Only fully verified existing parts are reused;
+partial failed files remain preserved. New ordinary processing is not a
+continuation grant and cannot renew or refund the first window's lease/charges.
+
+The read-only storage assessment records apparent, allocated and native-charge
+bytes by category. The first campaign uses 2,339,524,608 native-charge bytes;
+second-window admission conservatively adds 4 GiB work +256 MiB acquisition
+output +1 MiB administrative headroom, reaching 6,903,975,936 bytes versus
+32 GiB, with >20 GiB remaining host free space. The weighted fixed-selection
+forecast is 30,044,649,674 bytes. One window cannot establish a universal
+expansion factor: +25% more variable output would exceed the cap. These are
+planning estimates; unchanged native checks govern actual admission/writes.
+The prior transient peak was not continuously measured; bounded temporary
+reservations are not presented as measured disk peaks or extra permanent data.
+No prior output, retained segments, failed logs or sealed evidence is removed.
+
+Evidence and eventual second-window result:
+`governance/b7-second-development-window-20260927/` under the approved OF1 root.
+Execution remains conditional on successful protected integration/main checks
+and a fresh native storage/previous-completion check. #86 is open / Unproven;
+Research Ready=false. The full-selection forecast grants no remaining acquisition.

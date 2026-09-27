@@ -121,8 +121,11 @@ class Runner:
             self.counter+=1
 
     def campaign_command(self,*args):
+        # Full native verification remains bounded by the admitted absolute
+        # deadline; a worker invocation never renews that lease.
+        timeout=self.remaining_until(self.deadline_boot_ms) if args[0]=='parts-complete' else 30
         result=subprocess.run([str(self.verifier),*[str(a) for a in args]],capture_output=True,
-                              preexec_fn=process_limits,timeout=30,check=True)
+                              preexec_fn=process_limits,timeout=timeout,check=True)
         if len(result.stdout)>1024*1024: raise ValueError('oversize native campaign status')
         return json.loads(result.stdout,object_pairs_hook=pairs_unique)
 
@@ -133,6 +136,7 @@ class Runner:
             raise ValueError('campaign processing lease exhausted')
         deadline=status.get('deadline_boot_ms')
         if type(deadline) is not int: raise ValueError('native absolute processing deadline required')
+        self.deadline_boot_ms=deadline
         return self.remaining_until(deadline)
 
     @staticmethod
@@ -195,7 +199,39 @@ class Runner:
         self.step('SEAL_READ_ONLY_PROGRESS',[self.verifier,'seal',self.plan_path,self.root,path])
         return load_collection(path)[0],path
 
+    def run_parts(self,max_new_batches=None):
+        inventory=self.campaign_command('parts-inventory',self.plan_path,self.root)
+        completed=0
+        for batch in inventory['batches']:
+            name=batch['batch_id']
+            directory=literal_path(self.root,batch['output_directory'])
+            if not (directory/'slot.json').exists() and max_new_batches is not None and completed>=max_new_batches:
+                print(json.dumps({'state':'CONTROLLED_PAUSE','next_batch':name}),flush=True)
+                return None
+            for ordinal in range(batch['inventory']['parts']):
+                part=directory/f'part-{ordinal:04d}'
+                decoded,parquet=part/'decode',part/'parquet'
+                self.campaign_check(1024*1024)
+                part.mkdir(parents=True,exist_ok=True)
+                if decoded.exists():
+                    self.step('VERIFY_DECODE_PART',[self.verifier,'parts-verify',self.plan_path,self.root,name,ordinal,'false'])
+                else:
+                    self.step('DECODE_PART',[self.decoder,self.plan_path,name,decoded,ordinal])
+                if parquet.exists():
+                    self.step('VERIFY_PARQUET_PART',[self.verifier,'parts-verify',self.plan_path,self.root,name,ordinal,'true'])
+                else:
+                    self.step('PROJECT_PART',[self.projector,decoded,digest(decoded/'execution.json'),parquet])
+            self.step('SEAL_COMPLETE_SLOT',[self.verifier,'parts-seal-slot',self.plan_path,self.root,name])
+            completed+=1
+        # Native publication includes its own bounded report, under the same
+        # processing guard. No new campaign file after completion.
+        result=self.campaign_command('parts-complete',self.plan_path,self.root)
+        print(json.dumps(result),flush=True)
+        return self.root/'collection.json'
+
     def run(self,max_new_batches=None):
+        if self.plan.get('slot_part_profile') is not None:
+            return self.run_parts(max_new_batches)
         self.step('VALIDATE_PLAN_AND_ORIGINAL_SOURCES',[self.verifier,'plan-check',self.plan_path])
         manifest,last=self.snapshot()
         verified={b['batch_id'] for b in manifest['batches'] if b['state']=='VERIFIED'}

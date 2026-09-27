@@ -421,7 +421,7 @@ pub fn verify_part(path: &Path, id: &str, ordinal: usize, with_parquet: bool) ->
     Ok(json!({"state":"VERIFIED_PART","ordinal":ordinal,"parquet_verified":with_parquet}))
 }
 
-fn add_counts(total: &mut BTreeMap<String, u64>, value: &Value) -> io::Result<()> {
+pub(crate) fn add_counts(total: &mut BTreeMap<String, u64>, value: &Value) -> io::Result<()> {
     for (k, value) in value
         .as_object()
         .ok_or_else(|| invalid("CONTINUATION_COUNTS"))?
@@ -439,108 +439,19 @@ fn inspect_slot(
     batch: &batch::Batch,
     check: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<Value> {
-    check()?;
-    let source = decision.plan.source(&batch.source_id)?;
-    let inv = report::receipt_part_inventory(&source.run_root, batch.receipt_sequences[0])?;
-    let n = collection::number(&inv["parts"])?;
-    let total = collection::number(&inv["transaction_envelopes"])?;
-    let base = decision.root()?.join(&batch.output_directory);
-    verify_part_directories(&base, n)?;
-    let (mut bronze, mut silver) = (Logical::default(), Logical::default());
-    let (mut outcomes, mut statuses, mut diagnoses, mut reasons) = (
-        BTreeMap::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-        BTreeMap::new(),
-    );
-    let mut parts = Vec::new();
-    for ordinal in 0..n {
-        check()?;
-        let part = base.join(format!("part-{ordinal:04}"));
-        let decode = part.join("decode");
-        let parquet = part.join("parquet");
-        let checked = batch::verify_output_identity(
-            &decision.plan,
-            &decision.plan_hash()?,
-            batch,
-            &decode,
-            &crate::source_sha256(),
-            &sha256(include_bytes!("../Cargo.lock")),
-            Some(usize::try_from(ordinal).map_err(invalid)?),
-        )?;
-        let (quality, qhash) =
-            collection::json_file(&decode.join("quality.json"), resources::MAX_QUALITY_BYTES)?;
-        let start = ordinal * report::PART_PACKAGES as u64;
-        let end = total.min(start + report::PART_PACKAGES as u64);
-        let expected = json!({"profile":report::PART_PROFILE,"ordinal":ordinal,"start_transaction":start,
-            "end_transaction_exclusive":end,"slot_transaction_envelopes":total,"max_packages":report::PART_PACKAGES});
-        if quality["slot_part"] != expected
-            || checked["execution"]["slot_part"] != expected
-            || quality["raw_sha256"] != inv["raw_sha256"]
-            || quality["transaction_envelopes"] != end - start
-            || quality["whole_slot_accounted"] != false
-        {
-            return Err(invalid("CONTINUATION_PART_RANGE_OR_SOURCE"));
-        }
-        let (manifest, mhash) = collection::parquet(
-            &decision.plan,
-            batch,
-            &parquet,
-            &checked["execution"],
-            &quality,
-        )?;
-        let before = (bronze.rows, silver.rows);
-        let counts = collection::inspect_records(
-            &decision.plan,
-            batch,
-            &decode,
-            &mut bronze,
-            &mut silver,
-            &crate::source_sha256(),
-            start,
-        )?;
-        if bronze.rows - before.0 != end - start
-            || manifest["layers"]["bronze"]["rows"] != end - start
-            || manifest["layers"]["silver"]["rows"] != silver.rows - before.1
-            || quality["silver_fact_count"] != silver.rows - before.1
-        {
-            return Err(invalid("CONTINUATION_PART_COUNT_PARITY"));
-        }
-        let actual = counts.get(&batch.slots[0]).cloned().unwrap_or_default();
-        for kind in ["DECODED", "MISSING", "UNSUPPORTED", "QUARANTINED"] {
-            if actual.get(kind).copied().unwrap_or(0)
-                != collection::number(&quality["dispositions"][kind])?
-            {
-                return Err(invalid("CONTINUATION_PART_DISPOSITION"));
-            }
-        }
-        add_counts(&mut outcomes, &quality["dispositions"])?;
-        add_counts(
-            &mut statuses,
-            &quality["analysis"]["transaction_status_counts"],
-        )?;
-        add_counts(&mut diagnoses, &quality["analysis"]["pump_layout_outcomes"])?;
-        add_counts(&mut reasons, &quality["reasons"])?;
-        parts.push(json!({"ordinal":ordinal,"range":expected,"quality_sha256":qhash,"execution_sha256":sha256(&read_limited(&decode.join("execution.json"),resources::MAX_EXECUTION_BYTES as u64).map_err(invalid)?),
-            "decode_directory":format!("{}/part-{ordinal:04}/decode",batch.output_directory),
-            "parquet_manifest_path":format!("{}/part-{ordinal:04}/parquet/manifest.json",batch.output_directory),
-            "parquet_manifest_sha256":mhash,"physical_files":manifest["files"],"layers":layer_identities(&manifest)?}));
-    }
-    if bronze.rows != total {
-        return Err(invalid("CONTINUATION_SLOT_COVERAGE"));
-    }
-    check()?;
-    Ok(
-        json!({"schema":"OF1_VERIFIED_ATOMIC_SLOT_PARTS_1","state":"ACCOUNTED","slot":batch.slots[0],
-        "batch_id":batch.batch_id,"decision_sha256":decision.hash()?,"plan_sha256":decision.plan_hash()?,"profile":decision.profile,
-        "original_source":source,"raw_sha256":inv["raw_sha256"],"transaction_envelopes":total,
-        "dispositions":outcomes,"transaction_status_counts":statuses,"pump_layout_outcomes":diagnoses,"reasons":reasons,
-        "silver_fact_count":silver.rows,"parts":parts,"layers":{"bronze":bronze.value(),"silver":silver.value()},
-        "producer_source_sha256":crate::source_sha256(),"research_ready":false}),
+    crate::slot_parts::inspect_slot(
+        &crate::slot_parts::Context {
+            plan: &decision.plan,
+            plan_hash: &decision.plan_hash()?,
+            root: &decision.root()?,
+            decision_sha256: Some(&decision.hash()?),
+        },
+        batch,
+        check,
     )
 }
 
-fn publish_exact(
+pub(crate) fn publish_exact(
     path: &Path,
     raw: &[u8],
     check: &mut dyn FnMut() -> io::Result<()>,
@@ -739,46 +650,5 @@ fn publish_report(
         tick,
     )?;
     fs::File::open(&root)?.sync_all()?;
-    Ok(())
-}
-
-// Full schemas remain in each hash-bound Parquet manifest. Repeating them
-// for every part would consume the unchanged aggregate publication budget.
-fn layer_identities(manifest: &Value) -> io::Result<Value> {
-    let mut layers = manifest["layers"].clone();
-    for name in ["bronze", "silver"] {
-        let layer = layers[name]
-            .as_object_mut()
-            .ok_or_else(|| invalid("PARQUET_LAYER"))?;
-        if layer.remove("schema").is_none() || !layer.contains_key("schema_sha256") {
-            return Err(invalid("PARQUET_SCHEMA_BINDING"));
-        }
-    }
-    Ok(layers)
-}
-
-fn verify_part_directories(base: &Path, n: u64) -> io::Result<()> {
-    let expected = (0..n)
-        .map(|i| format!("part-{i:04}"))
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut actual = std::collections::BTreeSet::new();
-    for entry in fs::read_dir(base)? {
-        let entry = entry?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| invalid("PART_FILENAME"))?;
-        if ["slot.json", "slot.json.sha256"].contains(&name.as_str())
-            && entry.file_type()?.is_file()
-        {
-            continue;
-        }
-        if !entry.file_type()?.is_dir() || !expected.contains(&name) || !actual.insert(name) {
-            return Err(invalid("UNEXPECTED_SLOT_PART"));
-        }
-    }
-    if actual != expected {
-        return Err(invalid("INCOMPLETE_SLOT_PARTS"));
-    }
     Ok(())
 }

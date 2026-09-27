@@ -17,6 +17,7 @@ pub mod pump_sell16;
 pub mod pump_sell_context;
 pub mod report;
 pub mod resources;
+pub mod slot_parts;
 pub mod token_balances;
 
 /// Actual compiled source/lock identity, independent of uncommitted Git claims.
@@ -29,6 +30,7 @@ pub fn source_sha256() -> String {
         include_bytes!("batch.rs"),
         include_bytes!("collection.rs"),
         include_bytes!("continuation.rs"),
+        include_bytes!("slot_parts.rs"),
         include_bytes!("bin/of1-bronze-collection.rs"),
         include_bytes!("bin/of1-bronze-batch.rs"),
         include_bytes!("codec.rs"),

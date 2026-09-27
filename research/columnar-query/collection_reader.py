@@ -41,7 +41,7 @@ def plan_inventory(plan):
     if plan.get('schema') != 'OF1_BATCH_COLLECTION_PLAN_1' or plan.get('research_ready') is not False:
         raise ValueError('unsupported collection plan / Research Ready promotion')
     bounded_id(plan['collection_id'])
-    if set(plan)!={'schema','collection_id','workers','sources','logical_selection','batches','research_ready'}:
+    if set(plan)-{'slot_part_profile'}!={'schema','collection_id','workers','sources','logical_selection','batches','research_ready'}:
         raise ValueError('unexpected collection plan fields')
     if set(plan['workers'])!={'batch_decoder_sha256','projector_sha256'} or any(not isinstance(value,str) or not re.fullmatch('[0-9a-f]{64}',value) for value in plan['workers'].values()):
         raise ValueError('exact worker executable hashes required')
@@ -116,6 +116,12 @@ def plan_inventory(plan):
         assigned += [(batch['source_id'],slot) for slot in selected]
     if assigned != [(row['source_id'],row['slot']) for row in logical]:
         raise ValueError('physical batches overlap, reorder, or leave an unplanned logical gap')
+    if 'slot_part_profile' in plan:
+        if plan['slot_part_profile']!='OF1_ATOMIC_SLOT_PARTS_128_V1' or len(sources)!=1 or any(len(b['slots'])!=1 for b in batches):
+            raise ValueError('unsupported bounded native part profile')
+        sample=next(iter(sources.values())).get('sample_identity') or {}
+        if (sample.get('b7') or {}).get('cohort_role')!='DEVELOPMENT':
+            raise ValueError('native B7 DEVELOPMENT sample required for ordinary parts')
     return sources,logical,batches
 
 
