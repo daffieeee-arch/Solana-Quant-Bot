@@ -178,3 +178,88 @@ plan and fresh lease. Old deadlines are never edited or reused. Matching fresh
 metadata is required before payload; any new substantive blocker stops this task.
 New evidence belongs to `governance/b7-metadata-init-20260927/`. No other window,
 evaluation inspection or B8 is authorized; #86 stays open and Unproven.
+
+
+## Bounded offline continuation — 2026-09-27
+
+The first authentic DEVELOPMENT window is downloaded, not yet a completed
+research dataset. #145's evidence in `governance/b7-ci-diagnostics-20260927/`
+preserves the failed decoder operation and twelve verified slots
+`[422526144,422526156)`: 15,359 packages, 2,163 ERROR transactions, 39 Silver
+facts. Checkpoint SHA256:
+`9c6f0b47744405dbf0041abcce769d47cfd45f7681d97325c36b2b4541760e41`.
+Slot 422526156 hit `BRONZE_AGGREGATE_LIMIT`: 50,325,641 +121,844 record bytes
+would exceed 50,331,648. This is cumulative resident output, not an individual
+record, Raw-integrity or Silver-admission failure.
+
+The owner separately authorizes only offline completion of slots
+`[422526156,422526160)` after protected integration. No new acquisition, other
+window, evaluation inspection or B8 is authorized. Old leases, failed output,
+reservations and manifests are immutable evidence.
+
+### Part publication
+
+`OF1_ATOMIC_SLOT_PARTS_128_V1` uses the same Rust receipt verifier, CAR reader,
+transaction decoder and native Parquet projector. Each part selects at most
+128 whole packages in canonical transaction-index order. Records and Silver
+facts retain their original chain positions, source identities and exact
+integers. A package never straddles parts. Individual 16-MiB records, 48-MiB
+resident record accumulation, metadata/file caps and the existing worker
+address-space limit are unchanged. If one part still exceeds a cap, stop;
+there is no adaptive limit increase or fallback decoder.
+
+A part manifest says `PART_ACCOUNTED`, never whole-slot completeness. Native
+slot publication requires the exact full inventory of contiguous parts,
+matching Raw, receipt, producer, count, physical-hash and logical-hash evidence.
+Missing, duplicate, corrupt, incomplete or unexpected parts cannot publish a
+complete slot. Missing/unsupported/quarantined packages remain evidence;
+failed transactions produce no successful Silver facts. Source gaps and
+unavailable protocol/account-state evidence retain distinct meanings.
+
+### Explicit continuation authority and scheduler
+
+`of1-bronze-collection continuation-proposal OLD_PLAN CHECKPOINT DECODER_SHA
+PROJECTOR_SHA` verifies the preserved prefix and emits a canonical
+`OF1_B7_CONTINUATION_DECISION_1` plus approval target. This read-only proposal
+binds the original source/receipt/sample/plan, checkpoint, current ledger and
+original processing approval/stage; only worker identities and the named
+continuation profile differ. Production approval uses the existing validated
+clock/authority contract and must be newly issued for that target.
+
+`continuation-admit DECISION AUTHORITY` rechecks the native prefix and ledger
+under the campaign lock, appends one separate ≤900-second processing stage,
+then creates `work/w00/continuation-1`. It never changes the old lease or grants
+new attempts, bytes or storage. A duplicate, stale, mismatched, corrupt or
+ambiguous admission fails closed. An admitted-but-interrupted initialization
+is retained, not manually repaired or granted another lease.
+
+`research/columnar-query/continuation_run.py DECISION --authority AUTHORITY
+--decoder BINARY --projector BINARY --verifier BINARY` schedules only native
+inventory parts. For a clean part-boundary restart omit `--authority`; the
+same absolute deadline and runner/binary identity apply. `--max-new-parts N`
+is a controlled pause, not a new budget. The original driver lock excludes
+simultaneous schedulers. The current production authorization is one offline
+lease; it does not guarantee time remains for a later restart.
+
+The native campaign guard checks every worker admission and publication. All
+old work, failures, new parts, logs, Parquet and reports share the existing
+4-GiB work reservation and 32-GiB campaign ceiling. Python schedules workers
+and records operational clocks; it does not decode or authorize protocol
+meaning. Existing outer CPU 200%, RAM/high 5/6GiB, process 256, one-worker,
+free-space/headroom stops and socket-denial requirements remain mandatory.
+
+The final native `OF1_CONTINUED_BATCH_COLLECTION_1` carries the original
+checkpoint unchanged and each continued slot's new producer/part evidence.
+It uses the existing `OF1_ORDERED_RECORD_CHAIN_1` over all canonical rows;
+physical files are separately bound. The static HTML/JSON report stays inside
+the campaign work tree. Real operation times, RSS and disk accounting are
+separate operational evidence, never historical features. Generic analytical
+readers are not extended to B7 or RESERVED_EVALUATION by this increment.
+
+Offline evidence includes a Rust fixture spanning two parts, deterministic
+whole/parts equality, failed/unknown packages, native CLI/Parquet continuation
+with twelve preserved slots, part-boundary interruption, corrupt publication,
+and durable admission crash seams. These fixtures are not authentic counts.
+Execution and final authentic-window results are recorded separately in
+`governance/b7-bounded-slot-continuation-20260927/`. #86 remains Unproven and
+Research Ready remains false regardless of complete engineering accounting.

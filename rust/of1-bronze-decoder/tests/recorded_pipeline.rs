@@ -54,6 +54,8 @@ struct Harness {
     root: PathBuf,
     plan: AggregatePlan,
     first_slot: u64,
+    fixture_object_bytes: usize,
+    fixture_payload_budget: u64,
     store: AcquisitionStore<HistoricalFixtureClock>,
 }
 
@@ -131,6 +133,8 @@ impl Harness {
             root,
             plan,
             first_slot,
+            fixture_object_bytes: 100_000,
+            fixture_payload_budget: 65_536,
             store,
         }
     }
@@ -150,7 +154,11 @@ impl Harness {
             ),
             _ => format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nETag: \"fixture\"\r\n\r\n",
-                if sequence == 3 { 100_000 } else { bytes.len() }
+                if sequence == 3 {
+                    self.fixture_object_bytes
+                } else {
+                    bytes.len()
+                }
             ),
         };
         let permit = self.store.reserve(sequence).unwrap();
@@ -209,7 +217,7 @@ impl Harness {
             authority: Authority::Fixture,
             budget: StageBudget {
                 max_requests: count * 2,
-                max_response_entity_bytes_total: 65536,
+                max_response_entity_bytes_total: self.fixture_payload_budget,
                 max_runtime_ms: 60_000,
             },
             prepared_payload_sha256: prepared.sha256().unwrap(),
@@ -1300,4 +1308,101 @@ fn b7_native_sample_reaches_atomic_bronze_silver_and_denies_unapproved_output() 
         );
         assert!(!parent.join("escape").exists());
     }
+}
+
+#[test]
+fn atomic_slot_parts_equal_whole_decode_without_duplicates_or_failure_facts() {
+    let mut h = Harness::new();
+    h.fixture_object_bytes = 4 * 1024 * 1024;
+    h.fixture_payload_budget = 2 * 1024 * 1024;
+    let variants = (0..131)
+        .map(|i| match i % 6 {
+            0 => "sell",
+            1 => "failed_sell",
+            2 => "nested_sell",
+            3 => "missing",
+            4 => "wire",
+            _ => "unsupported",
+        })
+        .collect::<Vec<_>>();
+    let payload = parity_payload(SLOT, &variants);
+    h.metadata_slots(std::slice::from_ref(&payload));
+    h.admit_slots(1);
+    h.publish(4, &payload);
+    let full = report::decode_receipts(&h.root, &[4]).unwrap();
+    let inventory = report::receipt_part_inventory(&h.root, 4).unwrap();
+    assert_eq!(inventory["transaction_envelopes"], 131);
+    assert_eq!(inventory["parts"], 2);
+    let mut records = Vec::new();
+    let mut facts = Vec::new();
+    for ordinal in 0..2 {
+        let part = report::decode_receipt_part(&h.root, 4, ordinal).unwrap();
+        assert_eq!(
+            part,
+            report::decode_receipt_part(&h.root, 4, ordinal).unwrap()
+        );
+        assert_eq!(part["whole_slot_accounted"], false);
+        assert_eq!(part["slot_part"]["start_transaction"], ordinal * 128);
+        records.extend(part["records"].as_array().unwrap().iter().cloned());
+        facts.extend(part["silver_records"].as_array().unwrap().iter().cloned());
+    }
+    assert_eq!(records, full["records"].as_array().unwrap().clone());
+    assert_eq!(facts, full["silver_records"].as_array().unwrap().clone());
+    assert!(!facts.is_empty());
+    assert!(facts.iter().all(|f| f["transaction_status"] == "OK"));
+    assert!(
+        records
+            .iter()
+            .any(|r| r["transaction"]["status"] == "ERROR")
+    );
+    assert!(records.iter().any(|r| r["disposition"] == "MISSING"));
+    assert!(records.iter().any(|r| r["disposition"] == "UNSUPPORTED"));
+    assert!(records.iter().any(|r| r["disposition"] == "QUARANTINED"));
+    assert!(report::decode_receipt_part(&h.root, 4, 2).is_err());
+    assert!(report::decode_receipt_part(&h.root, 4, usize::MAX).is_err());
+}
+
+#[test]
+fn continuation_fixture_retains_twelve_and_needs_atomic_parts() {
+    // Optional export is consumed by the ordinary offline Parquet gate. This
+    // remains a synthetic source; no authentic campaign is opened by tests.
+    let temporary = tempfile::tempdir().unwrap();
+    let export = std::env::var_os("COLUMNAR_CONTINUATION_FIXTURE_DIR").map(PathBuf::from);
+    let parent = export.as_deref().unwrap_or(temporary.path());
+    if export.is_some() {
+        fs::create_dir(parent).unwrap();
+    }
+    let sample = of1_range_recorder::b7::sample(0, &parent.join("campaign")).unwrap();
+    let mut h = Harness::new_sample(Some(sample.clone()), None);
+    h.fixture_object_bytes = 4 * 1024 * 1024;
+    h.fixture_payload_budget = 2 * 1024 * 1024;
+    let payloads = (0..16)
+        .map(|i| {
+            if i == 12 {
+                parity_payload(
+                    sample.start_slot + i,
+                    &(0..131)
+                        .map(|j| if j % 2 == 0 { "sell" } else { "failed_sell" })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                fixture_payload_at(sample.start_slot + i, Some("sell"))
+            }
+        })
+        .collect::<Vec<_>>();
+    h.metadata_slots(&payloads);
+    h.admit_slots(16);
+    for (i, payload) in payloads.iter().enumerate() {
+        h.publish(4 + i as u64, payload);
+    }
+    let plan = batch_plan(&h, 1, 16);
+    fs::write(
+        parent.join("plan.json"),
+        serde_json::to_vec_pretty(&plan).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        report::receipt_part_inventory(&h.root, 16).unwrap()["parts"],
+        2
+    );
 }

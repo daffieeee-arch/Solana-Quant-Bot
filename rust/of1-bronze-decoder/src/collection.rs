@@ -14,14 +14,14 @@ use std::{
     path::Path,
 };
 
-fn json_file(path: &Path, limit: usize) -> io::Result<(Value, String)> {
+pub(crate) fn json_file(path: &Path, limit: usize) -> io::Result<(Value, String)> {
     let bytes = read_limited(path, limit as u64).map_err(invalid)?;
     Ok((
         serde_json::from_slice(&bytes).map_err(invalid)?,
         sha256(&bytes),
     ))
 }
-fn number(v: &Value) -> io::Result<u64> {
+pub(crate) fn number(v: &Value) -> io::Result<u64> {
     v.as_u64()
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         .ok_or_else(|| invalid("COLLECTION_INTEGER"))
@@ -31,11 +31,26 @@ fn basename(v: &str) -> bool {
 }
 
 #[derive(Default)]
-struct Logical {
-    rows: u64,
+pub(crate) struct Logical {
+    pub(crate) rows: u64,
     hash: String,
 }
 impl Logical {
+    pub(crate) fn from_verified(value: &Value) -> io::Result<Self> {
+        let hash = value["ordered_logical_sha256"]
+            .as_str()
+            .ok_or_else(|| invalid("LOGICAL_HASH"))?;
+        if value["logical_hash_algorithm"] != "OF1_ORDERED_RECORD_CHAIN_1"
+            || hash.len() != 64
+            || hex::decode(hash).is_err()
+        {
+            return Err(invalid("LOGICAL_HASH_IDENTITY"));
+        }
+        Ok(Self {
+            rows: number(&value["rows"])?,
+            hash: hash.to_owned(),
+        })
+    }
     fn add(&mut self, bytes: &[u8]) -> io::Result<()> {
         // Ordered length-framed chain, independent of file/batch boundaries.
         // This is not presented as a physical-file SHA256.
@@ -53,7 +68,7 @@ impl Logical {
             .ok_or_else(|| invalid("COLLECTION_COUNT_OVERFLOW"))?;
         Ok(())
     }
-    fn value(&self) -> Value {
+    pub(crate) fn value(&self) -> Value {
         json!({"rows":self.rows,"ordered_logical_sha256":if self.rows==0 {sha256(b"OF1_ORDERED_RECORD_CHAIN_1")}else{self.hash.clone()},"logical_hash_algorithm":"OF1_ORDERED_RECORD_CHAIN_1"})
     }
 }
@@ -89,12 +104,14 @@ fn rows(path: &Path, mut visit: impl FnMut(&[u8], &Value) -> io::Result<()>) -> 
     Ok(())
 }
 
-fn inspect_records(
+pub(crate) fn inspect_records(
     plan: &Plan,
     batch: &Batch,
     decode: &Path,
     bronze: &mut Logical,
     silver: &mut Logical,
+    source_hash: &str,
+    first_index: u64,
 ) -> io::Result<BTreeMap<u64, BTreeMap<String, u64>>> {
     let source = plan.source(&batch.source_id)?;
     let mut parents = BTreeMap::new();
@@ -113,7 +130,8 @@ fn inspect_records(
             || v["source"]["run_id"] != source.run_id
             || v["source"]["bindings"] != source.bindings
             || v["sample_identity"] != source.sample_identity
-            || v["decoder_source_sha256"] != crate::source_sha256()
+            || v["decoder_source_sha256"] != source_hash
+            || v["atomic_observation_package"] != true
         {
             return Err(invalid("COLLECTION_RECORD_SOURCE_OR_ORDER"));
         }
@@ -123,7 +141,7 @@ fn inspect_records(
             return Err(invalid("COLLECTION_RECORD_SAMPLE_RECLASSIFICATION"));
         }
         previous = Some((slot, index));
-        if index != counts.get(&slot).map_or(0, |c| c.values().sum()) {
+        if index != first_index + counts.get(&slot).map_or(0, |c| c.values().sum()) {
             return Err(invalid("COLLECTION_PACKAGE_INDEX_GAP_OR_DUPLICATE"));
         }
         let disposition = v["disposition"]
@@ -143,7 +161,10 @@ fn inspect_records(
         if parents.len() >= 16_384 {
             return Err(invalid("COLLECTION_PARENT_WORKER_LIMIT"));
         }
-        parents.insert(sha256(bytes), (slot, index));
+        parents.insert(
+            sha256(bytes),
+            (slot, index, v["transaction"]["status"] == "OK"),
+        );
         bronze.add(bytes)
     })?;
     let mut previous = None;
@@ -153,7 +174,8 @@ fn inspect_records(
         let parent = v["bronze_record_sha256"]
             .as_str()
             .ok_or_else(|| invalid("COLLECTION_SILVER_PARENT"))?;
-        if parents.get(parent) != Some(&(slot, index))
+        if parents.get(parent) != Some(&(slot, index, true))
+            || v["transaction_status"] != "OK"
             || previous.is_some_and(|p| p > (slot, index))
             || v["sample_identity"] != source.sample_identity
         {
@@ -165,7 +187,7 @@ fn inspect_records(
     Ok(counts)
 }
 
-fn parquet(
+pub(crate) fn parquet(
     plan: &Plan,
     batch: &Batch,
     path: &Path,
@@ -181,8 +203,15 @@ fn parquet(
         || manifest["input"]["execution"] != *execution
         || manifest["selection"]["selected_slots"] != json!(batch.slots)
         || manifest["sample_identity"] != quality["sample_identity"]
-        || manifest["selection"]["all_expected_packages_accounted"] != true
-        || manifest["selection"]["status"] != "ACCOUNTED"
+        || if quality["slot_part"].is_null() {
+            manifest["selection"]["all_expected_packages_accounted"] != true
+                || manifest["selection"]["status"] != "ACCOUNTED"
+        } else {
+            manifest["selection"]["slot_part"] != quality["slot_part"]
+                || manifest["selection"]["all_expected_packages_accounted"] != false
+                || manifest["selection"]["all_part_packages_accounted"] != true
+                || manifest["selection"]["status"] != "PART_ACCOUNTED"
+        }
     {
         return Err(invalid("COLLECTION_PARQUET_INPUT_OR_SELECTION"));
     }
@@ -272,6 +301,24 @@ pub fn inspect_with_checkpoint(
     root: &Path,
     check: &mut dyn FnMut() -> io::Result<()>,
 ) -> io::Result<Value> {
+    inspect_identity(
+        plan_path,
+        root,
+        &crate::source_sha256(),
+        &sha256(include_bytes!("../Cargo.lock")),
+        check,
+    )
+}
+
+/// Recheck a previously bound producer without attributing old output to new code.
+#[allow(clippy::too_many_lines)] // Retained validation/publication sequence; shared by both routes.
+pub(crate) fn inspect_identity(
+    plan_path: &Path,
+    root: &Path,
+    source_hash: &str,
+    lock_hash: &str,
+    check: &mut dyn FnMut() -> io::Result<()>,
+) -> io::Result<Value> {
     let (plan, plan_hash) = batch::read_plan(plan_path)?;
     if let Some((sample, _)) = batch::campaign_sample(&plan)? {
         of1_range_recorder::campaign::development_processing_only(&sample).map_err(invalid)?;
@@ -295,7 +342,15 @@ pub fn inspect_with_checkpoint(
                 return Err(invalid("COLLECTION_PARQUET_WITHOUT_DECODE"));
             }
             if decode.exists() {
-                batch::verify_output(&plan, &plan_hash, batch, &decode)?;
+                batch::verify_output_identity(
+                    &plan,
+                    &plan_hash,
+                    batch,
+                    &decode,
+                    source_hash,
+                    lock_hash,
+                    None,
+                )?;
                 entry["pending_reason"] = json!("DECODE_VERIFIED_PROJECTION_PENDING");
             } else {
                 entry["pending_reason"] = json!("BATCH_NOT_EXECUTED");
@@ -310,13 +365,29 @@ pub fn inspect_with_checkpoint(
                 outcomes.push(json!({"source_id":batch.source_id,"slot":slot,"role":selection.role,"state":"PENDING","transaction_envelopes":null,"dispositions":null}));
             }
         } else {
-            let checked = batch::verify_output(&plan, &plan_hash, batch, &decode)?;
+            let checked = batch::verify_output_identity(
+                &plan,
+                &plan_hash,
+                batch,
+                &decode,
+                source_hash,
+                lock_hash,
+                None,
+            )?;
             let quality = json_file(&decode.join("quality.json"), resources::MAX_QUALITY_BYTES)?.0;
             let (manifest, manifest_hash) =
                 parquet(&plan, batch, &projected, &checked["execution"], &quality)?;
             let bronze_before = bronze.rows;
             let silver_before = silver.rows;
-            let counts = inspect_records(&plan, batch, &decode, &mut bronze, &mut silver)?;
+            let counts = inspect_records(
+                &plan,
+                batch,
+                &decode,
+                &mut bronze,
+                &mut silver,
+                source_hash,
+                0,
+            )?;
             if bronze.rows - bronze_before != number(&manifest["layers"]["bronze"]["rows"])?
                 || silver.rows - silver_before != number(&manifest["layers"]["silver"]["rows"])?
             {
@@ -363,7 +434,7 @@ pub fn inspect_with_checkpoint(
     plan.validate_sources()?;
     check()?;
     Ok(
-        json!({"schema":"OF1_BATCH_COLLECTION_1","plan_sha256":plan_hash,"plan":plan,"state":if complete{"COMPLETE"}else{"INCOMPLETE"},"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","batches":batches,"slot_outcomes":outcomes,"layers":{"bronze":bronze.value(),"silver":silver.value()},"completeness":{"all_selected_slots_accounted":complete,"successful_decoding_separate":true,"research_suitability":"NOT_ESTABLISHED"},"collector_source_sha256":crate::source_sha256()}),
+        json!({"schema":"OF1_BATCH_COLLECTION_1","plan_sha256":plan_hash,"plan":plan,"state":if complete{"COMPLETE"}else{"INCOMPLETE"},"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","batches":batches,"slot_outcomes":outcomes,"layers":{"bronze":bronze.value(),"silver":silver.value()},"completeness":{"all_selected_slots_accounted":complete,"successful_decoding_separate":true,"research_suitability":"NOT_ESTABLISHED"},"collector_source_sha256":source_hash}),
     )
 }
 

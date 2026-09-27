@@ -25,7 +25,22 @@ Its first offline diagnosis passed; #145's runner then exposed a campaign lock
 reacquisition failure. One controlled offline syscall probe reproduced inherited
 descriptor retention, addressed by explicit guard-end unlock with a deterministic
 exclusivity/charge regression. The older #144 failure's exact cause remains
-unknown. Full reviewed PR/main verification still precedes the first window.
+unknown. #145 subsequently passed full PR/main checks and merged as
+`350fada65cbf1895de0696fadaef955aa3d4f814`. The first window's four metadata
+objects and sixteen Raw ranges were acquired: 20 attempts, 38,398,184 received
+entity bytes. Offline processing preserved twelve complete slots, 15,359
+packages, 2,163 failed transactions and 39 Silver facts. Slot 422526156 stopped
+at the existing cumulative 48-MiB record buffer. No collection completion or
+Research Ready claim follows from that prefix.
+
+**Bounded offline continuation, 2026-09-27:** the owner permits one reviewed
+repair and, after protected integration/main checks, only the remaining four
+slots from existing Raw. The [native continuation contract](research/B7_NATIVE_CAMPAIGN.md#bounded-offline-continuation--2026-09-27)
+retains all old outputs and charges, verifies the twelve-slot checkpoint, and
+separately grants at most 900 seconds under the same 4-GiB work /32-GiB campaign
+limits. No new network permission, old-deadline edit or implicit renewal.
+New evidence: `governance/b7-bounded-slot-continuation-20260927/`; execution and
+complete-window acceptance are pending until actually recorded there.
 New diagnostic/execution evidence: `governance/b7-ci-diagnostics-20260927/`.
 Private binding dossier: `governance/b7-native-campaign-20260924/`.
 B6/#85 was delivered by #141 and read back Done / SUPERSEDED / Engineering
@@ -136,7 +151,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** bounded B7/#86 offline [sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md), `In Progress / ACTIVE NOW / Unproven`; native binding delivered by #143. Its first metadata-init stopped before campaign creation/network because the run parent did not yet exist. The owner authorized the bounded CLI initialization repair and, after protected delivery, the same first DEVELOPMENT window under a fresh binary-bound lease. Archive access is confirmed free. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; the two workspaces are the bounded MVP, not the later full workstation. B8 remains `LATER`; only the first window and its unchanged caps above are authorized.
+- **Current phase:** bounded B7/#86 offline [sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md), `In Progress / ACTIVE NOW / Unproven`; native binding delivered by #143, initialization/diagnostics by #144/#145. The first window is acquired; twelve slots are processed. Only the explicitly approved four-slot offline continuation above is pending. Archive access is confirmed free. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; the two workspaces are the bounded MVP, not the later full workstation. B8 remains `LATER`; only the first window and its unchanged caps above are authorized.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

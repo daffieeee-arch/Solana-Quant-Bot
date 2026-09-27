@@ -441,6 +441,27 @@ fn campaign_tick(
 
 /// Same projection with a tighter cumulative write cap for bounded regression tests.
 /// No CLI override exists and a caller cannot raise the production cap.
+fn check_campaign_slots(
+    campaign: Option<&(
+        of1_range_recorder::campaign::Guard,
+        of1_range_recorder::sample::SampleIdentity,
+    )>,
+    admitted: &Value,
+) -> io::Result<()> {
+    if let Some((guard, sample)) = campaign {
+        let slots = admitted["selection"]["selected_slots"]
+            .as_array()
+            .ok_or_else(|| invalid("B7_SELECTED_SLOTS"))?
+            .iter()
+            .map(|v| v.as_u64().ok_or_else(|| invalid("B7_SLOT")))
+            .collect::<io::Result<Vec<_>>>()?;
+        guard
+            .check_processing_slots(sample, &slots)
+            .map_err(invalid)?;
+    }
+    Ok(())
+}
+
 /// # Errors
 /// Rejects invalid caps or any identity, source, shard, budget or publication failure.
 pub fn materialize_with_write_limit(
@@ -485,6 +506,7 @@ pub fn materialize_with_write_limit(
             sample,
         ))
     };
+    check_campaign_slots(campaign.as_ref(), &admitted)?;
     fs::create_dir(output)?;
     File::open(&parent)?.sync_all()?;
     let mut files = BTreeMap::new();

@@ -22,6 +22,9 @@ pub const MAX_SELECTION_SLOTS: usize = 3;
 pub const MAX_SELECTION_RAW_BYTES: usize = archive::MAX_SLOT_BYTES;
 pub const MAX_SELECTION_RECORD_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_SELECTION_METADATA_BYTES: usize = MAX_SELECTION_SLOTS * MAX_DECODED_METADATA_BYTES;
+/// Physical subdivision only; no source/sample or instruction boundary changes.
+pub const PART_PACKAGES: usize = 128;
+pub const PART_PROFILE: &str = "OF1_ATOMIC_SLOT_PARTS_128_V1";
 
 /// Explicit aggregate resident-output budget, in addition to per-frame bounds.
 /// # Errors
@@ -45,14 +48,52 @@ pub fn charge(total: &mut usize, bytes: usize, limit: usize) -> io::Result<()> {
 /// # Errors
 /// Fails before publication on run, receipt, CID, graph or input identity changes.
 pub fn decode_run(root: &Path) -> io::Result<Value> {
-    decode_selection(root, None, DeliveryOrder::Canonical).map(|(report, _)| report)
+    decode_selection(root, None, DeliveryOrder::Canonical, None).map(|(report, _)| report)
 }
 
 /// Decode exact original receipt sequences without changing the source run.
 /// # Errors
 /// Rejects unavailable, unplanned or over-budget selections before publication.
 pub fn decode_receipts(root: &Path, sequences: &[u64]) -> io::Result<Value> {
-    decode_selection(root, Some(sequences), DeliveryOrder::Canonical).map(|(report, _)| report)
+    decode_selection(root, Some(sequences), DeliveryOrder::Canonical, None)
+        .map(|(report, _)| report)
+}
+
+/// Same verified native decoder, restricted to one canonical atomic part.
+/// # Errors
+/// All original per-record, resident, metadata and input-integrity caps apply.
+pub fn decode_receipt_part(root: &Path, sequence: u64, part: usize) -> io::Result<Value> {
+    decode_selection(
+        root,
+        Some(&[sequence]),
+        DeliveryOrder::Canonical,
+        Some(part),
+    )
+    .map(|(report, _)| report)
+}
+
+/// Existing CAR reader supplies part inventory without a transaction re-decode.
+/// # Errors
+/// Original full receipt/hash/graph validation is required before inventory.
+pub fn receipt_part_inventory(root: &Path, sequence: u64) -> io::Result<Value> {
+    let run = read_run_context(root)?;
+    let v =
+        of1_range_recorder::recorded_verification::verify_recorded_selection(root, &[sequence])?;
+    if v["stages"]["raw_receipts"] != "VERIFIED" || v["stages"]["car_slot"] != "VERIFIED" {
+        return Err(invalid("PART_RAW_UNVERIFIED"));
+    }
+    let published = run
+        .published
+        .iter()
+        .find(|p| p.receipt.request.sequence == sequence)
+        .ok_or_else(|| invalid("PART_RECEIPT_MISSING"))?;
+    check_selection(&[published])?;
+    let p = SlotProjection::prepare(published)?;
+    let total = p.archive.envelopes.len();
+    Ok(
+        json!({"slot":p.slot,"transaction_envelopes":total,"parts":total.div_ceil(PART_PACKAGES).max(1),
+        "raw_sha256":published.receipt.sha256,"profile":PART_PROFILE}),
+    )
 }
 
 /// Exercise delivery before the SAME native transaction/status/Pump decoder.
@@ -60,13 +101,14 @@ pub fn decode_receipts(root: &Path, sequences: &[u64]) -> io::Result<Value> {
 /// # Errors
 /// All original integrity, selection and resource gates still apply.
 pub fn decode_run_with_delivery(root: &Path, order: DeliveryOrder) -> io::Result<(Value, Value)> {
-    decode_selection(root, None, order)
+    decode_selection(root, None, order, None)
 }
 
 fn decode_selection(
     root: &Path,
     sequences: Option<&[u64]>,
     order: DeliveryOrder,
+    part: Option<usize>,
 ) -> io::Result<(Value, Value)> {
     let run = read_run_context(root)?;
     if run.aggregate_plan.epoch != 978 {
@@ -112,11 +154,8 @@ fn decode_selection(
         .iter()
         .map(|p| SlotProjection::prepare(p))
         .collect::<io::Result<Vec<_>>>()?;
-    let positions = prepared
-        .iter()
-        .enumerate()
-        .flat_map(|(slot, p)| (0..p.archive.envelopes.len()).map(move |index| (slot, index)))
-        .collect::<Vec<_>>();
+    scope_part(&mut prepared, part)?;
+    let positions = part_positions(&prepared);
     let canonical_inputs = positions
         .iter()
         .map(|&(s, i)| {
@@ -321,6 +360,7 @@ fn combine_slots(
 }
 
 struct SlotProjection<'a> {
+    part: Option<(usize, usize, usize)>,
     published: &'a Published,
     archive: archive::Archive,
     raw_bytes: usize,
@@ -361,6 +401,7 @@ impl<'a> SlotProjection<'a> {
         }
         let archive = archive::inspect(slot, &raw)?;
         Ok(Self {
+            part: None,
             published,
             archive,
             raw_bytes: raw.len(),
@@ -456,8 +497,13 @@ impl<'a> SlotProjection<'a> {
 
     fn finish(mut self, run: &RecordedRun, verification: &Value) -> io::Result<Value> {
         self.packages.sort_by_key(|p| p.0);
-        if self.packages.len() != self.archive.envelopes.len()
-            || self.packages.iter().enumerate().any(|(i, p)| i != p.0)
+        let (_, first, end) = self.part.unwrap_or((0, 0, self.archive.envelopes.len()));
+        if self.packages.len() != end - first
+            || self
+                .packages
+                .iter()
+                .enumerate()
+                .any(|(i, p)| first + i != p.0)
         {
             return Err(invalid("DELIVERY_PACKAGE_COVERAGE"));
         }
@@ -486,6 +532,13 @@ impl<'a> SlotProjection<'a> {
         "records_sha256":records_sha256,"analysis":pump::summary(&records),"records":records,
         "limitations":["No token names, tickers, launch dates or lifecycle inference","Buy structural probes remain unadmitted; separate sell facts are recorded instruction/events, not account state or historical activation","Token balances are source-bound status-metadata observations, not account snapshots; rewards, return data and unknown protobuf fields remain unprojected; original protobuf retained","No outcome-independent sample, economic/executable price, strategy or edge claim","No reconstructed observation/actionability model"]});
         attach_sample(&mut result, run.aggregate_plan.sample_identity.as_ref())?;
+        if let Some((ordinal, start, end)) = self.part {
+            result["slot_part"] = json!({"profile":PART_PROFILE,"ordinal":ordinal,
+                "start_transaction":start,"end_transaction_exclusive":end,
+                "slot_transaction_envelopes":archive.envelopes.len(),"max_packages":PART_PACKAGES});
+            result["transaction_envelopes"] = json!(end - start);
+            result["whole_slot_accounted"] = json!(false);
+        }
         Ok(result)
     }
 }
@@ -985,6 +1038,35 @@ pub fn html(report: &Value) -> String {
     } else {
         page
     }
+}
+
+fn scope_part(prepared: &mut [SlotProjection<'_>], part: Option<usize>) -> io::Result<()> {
+    if let Some(ordinal) = part {
+        if prepared.len() != 1 {
+            return Err(invalid("PART_REQUIRES_ONE_COMPLETE_RAW_SLOT"));
+        }
+        let p = &mut prepared[0];
+        let start = ordinal
+            .checked_mul(PART_PACKAGES)
+            .ok_or_else(|| invalid("PART_OVERFLOW"))?;
+        let total = p.archive.envelopes.len();
+        if start >= total && !(ordinal == 0 && total == 0) {
+            return Err(invalid("PART_OUTSIDE_SLOT"));
+        }
+        p.part = Some((ordinal, start, total.min(start + PART_PACKAGES)));
+    }
+    Ok(())
+}
+
+fn part_positions(prepared: &[SlotProjection<'_>]) -> Vec<(usize, usize)> {
+    prepared
+        .iter()
+        .enumerate()
+        .flat_map(|(slot, p)| {
+            let (_, start, end) = p.part.unwrap_or((0, 0, p.archive.envelopes.len()));
+            (start..end).map(move |index| (slot, index))
+        })
+        .collect::<Vec<_>>()
 }
 
 #[cfg(test)]

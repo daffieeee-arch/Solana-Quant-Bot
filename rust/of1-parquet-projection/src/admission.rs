@@ -315,6 +315,7 @@ pub fn inspect(input: &Path, seal: &Value) -> io::Result<Value> {
     ));
     let quality = Summary::deserialize(&mut deserializer).map_err(invalid)?.0;
     deserializer.end().map_err(invalid)?;
+    let part = validate_part(&quality, &seal["execution"])?;
     let source = source(&quality, &seal["execution"])?;
     let slot_reports = if let Some(slots) = quality["slots"].as_array() {
         slots.clone()
@@ -377,11 +378,42 @@ pub fn inspect(input: &Path, seal: &Value) -> io::Result<Value> {
         }
     }
     check_silver(input, &source, &parents)?;
-    let mut result = inventory(&source, &expected, slots);
+    let mut result = inventory(&source, &expected, slots, part.as_ref());
     if let Some(binding) = quality.get("batch_binding") {
         result["batch_binding"] = binding.clone();
     }
     Ok(result)
+}
+
+fn validate_part(quality: &Value, execution: &Value) -> io::Result<Option<Value>> {
+    let part = &quality["slot_part"];
+    if part.is_null() && execution["slot_part"].is_null() {
+        return Ok(None);
+    }
+    let start = number(&part["start_transaction"])?;
+    let end = number(&part["end_transaction_exclusive"])?;
+    let total = number(&part["slot_transaction_envelopes"])?;
+    if part != &execution["slot_part"]
+        || part.as_object().is_none_or(|v| v.len() != 6)
+        || part["profile"] != "OF1_ATOMIC_SLOT_PARTS_128_V1"
+        || part["max_packages"] != 128
+        || number(&part["ordinal"])?.checked_mul(128) != Some(start)
+        || start > total
+        || (start == total && start != 0)
+        || end
+            != total.min(
+                start
+                    .checked_add(128)
+                    .ok_or_else(|| invalid("PART_OVERFLOW"))?,
+            )
+        || quality["transaction_envelopes"] != end - start
+        || quality["whole_slot_accounted"] != false
+        || quality["slots"].is_array()
+        || quality["batch_binding"]["selected_slots"] != json!([number(&quality["slot"])?])
+    {
+        return Err(invalid("INVALID_ATOMIC_PART"));
+    }
+    Ok(Some(part.clone()))
 }
 fn check_silver(
     input: &Path,
@@ -414,6 +446,7 @@ fn inventory(
     source: &Source,
     expected: &BTreeMap<u64, Value>,
     mut slots: BTreeMap<u64, Slot>,
+    part: Option<&Value>,
 ) -> Value {
     let mut total_outcomes = BTreeMap::<String, u64>::new();
     let mut inventory = Vec::new();
@@ -425,7 +458,12 @@ fn inventory(
             && wanted == Some(slot.present)
             && !slot.duplicates;
         if let Some(n) = wanted {
-            accounted &= slot.indices.iter().copied().eq(0..n);
+            let start = part
+                .and_then(|p| p["start_transaction"].as_u64())
+                .unwrap_or(0);
+            accounted &= start
+                .checked_add(n)
+                .is_some_and(|end| slot.indices.iter().copied().eq(start..end));
         } else {
             accounted = false;
         }
@@ -441,7 +479,12 @@ fn inventory(
         inventory.push(json!({"slot":selected,"expected_packages":wanted,"present_packages":slot.present,"decoded_packages":slot.outcomes.get("DECODED").copied().unwrap_or(0),"outcomes":slot.outcomes,"duplicate_package_identity":slot.duplicates,"accounted":accounted}));
     }
     let complete = inventory.iter().all(|s| s["accounted"] == true);
-    json!({"sample_identity":source.sample,"slice_class":source.class,"receipt_evidence":source.receipt,"selection":{"selected_slots":source.selected,"slots":inventory,"all_expected_packages_accounted":complete,"decoded_packages":total_outcomes.get("DECODED").copied().unwrap_or(0),"package_outcomes":total_outcomes,"status":if complete{"ACCOUNTED"}else{"INCOMPLETE"}}})
+    let mut value = json!({"sample_identity":source.sample,"slice_class":source.class,"receipt_evidence":source.receipt,"selection":{"selected_slots":source.selected,"slots":inventory,"all_expected_packages_accounted":complete && part.is_none(),"decoded_packages":total_outcomes.get("DECODED").copied().unwrap_or(0),"package_outcomes":total_outcomes,"status":if complete{if part.is_some(){"PART_ACCOUNTED"}else{"ACCOUNTED"}}else{"INCOMPLETE"}}});
+    if let Some(part) = part {
+        value["selection"]["slot_part"] = part.clone();
+        value["selection"]["all_part_packages_accounted"] = json!(complete);
+    }
+    value
 }
 
 #[cfg(test)]

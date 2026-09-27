@@ -4,6 +4,7 @@ pub mod archive;
 pub mod batch;
 pub mod codec;
 pub mod collection;
+pub mod continuation;
 pub mod delivery;
 pub mod proto;
 pub mod pump;
@@ -27,6 +28,7 @@ pub fn source_sha256() -> String {
         include_bytes!("archive.rs"),
         include_bytes!("batch.rs"),
         include_bytes!("collection.rs"),
+        include_bytes!("continuation.rs"),
         include_bytes!("bin/of1-bronze-collection.rs"),
         include_bytes!("bin/of1-bronze-batch.rs"),
         include_bytes!("codec.rs"),
