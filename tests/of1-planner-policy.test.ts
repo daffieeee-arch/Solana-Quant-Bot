@@ -1,11 +1,34 @@
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { validateOf1PlannerInputs } from '../scripts/assert-of1-planner-offline.mjs';
+import { assertOf1ProcessResult, validateOf1PlannerInputs } from '../scripts/assert-of1-planner-offline.mjs';
 
 const manifest = readFileSync('rust/of1-range-recorder/Cargo.toml');
 const lock = readFileSync('rust/of1-range-recorder/Cargo.lock');
 
 describe('OF1 default-off transport dependency boundary', () => {
+  it('fails with both real subprocess streams and retains them alongside a process error', () => {
+    const result = spawnSync(process.execPath, ['-e',
+      "require('node:fs').writeSync(1, 'fixture-assertion-on-stdout'); require('node:fs').writeSync(2, 'fixture-diagnostic-on-stderr'); process.exit(7);"],
+    { encoding: 'utf8', timeout: 2_000, maxBuffer: 4_096 });
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(7);
+    for (const failure of [result, { ...result, status: null, signal: 'SIGTERM',
+      error: Object.assign(new Error('fixture process error'), { code: 'ETIMEDOUT' }) }]) {
+      let caught: unknown;
+      try { assertOf1ProcessResult('test.default', failure); } catch (error) { caught = error; }
+      expect(caught).toBeInstanceOf(Error);
+      const message = (caught as Error).message;
+      expect(message).toContain('phase=test.default');
+      expect(message).toContain(`exitcode=${failure.status}`);
+      expect(message).toContain(`signal=${failure.signal ?? 'none'}`);
+      expect(message).toContain('--- stdout ---\nfixture-assertion-on-stdout');
+      expect(message).toContain('--- stderr ---\nfixture-diagnostic-on-stderr');
+      expect(message).toContain(failure.error ? 'process_error=ETIMEDOUT: fixture process error' : 'process_error=none');
+      expect((caught as Error).cause).toBe(failure.error);
+    }
+  });
+
   it('pins the test-only metadata-init CLI subprocess without granting runtime or network capability', () => {
     const path = 'src/bin/of1-acquire/metadata_init_tests.rs';
     const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');

@@ -13,6 +13,25 @@ import { createCiPhaseTimer } from './lib/ci-phase-timing.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const crate = join(root, 'rust/of1-range-recorder');
+const OUTPUT_LIMIT = 16 * 1024 * 1024;
+
+// Keep both captured streams even when spawnSync also reports a process error.
+// No command arguments or environment are included in the diagnostic envelope.
+export function assertOf1ProcessResult(label, result) {
+  if (!result.error && result.status === 0 && !result.signal) return result;
+  const bounded = (value) => {
+    const text = String(value ?? '');
+    return text.length <= OUTPUT_LIMIT ? text
+      : `${text.slice(0, OUTPUT_LIMIT)}\n[output truncated at ${OUTPUT_LIMIT} characters]`;
+  };
+  throw new Error([
+    `OF1 subprocess failed: phase=${label} exitcode=${result.status ?? 'null'} signal=${result.signal ?? 'none'}`,
+    `process_error=${result.error ? bounded(`${result.error.code ?? result.error.name}: ${result.error.message}`) : 'none'}`,
+    '--- stdout ---', bounded(result.stdout),
+    '--- stderr ---', bounded(result.stderr),
+  ].join('\n'), { cause: result.error });
+}
+
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const MANIFEST_HASH = 'a98abc110b726dcb369b8cb03c4ea198d83723347eda027e767540ec2390e5d1';
 const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
@@ -118,23 +137,19 @@ async function run(mode) {
   let checksPassed = false;
   const isolated = (label, command, args) => timing.measure(label, () => {
     const result = spawnSync(launcher, [filter, command, ...args], {
-      cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
+      cwd: root, encoding: 'utf8', maxBuffer: OUTPUT_LIMIT,
       env: { ...process.env, CARGO_NET_OFFLINE: 'true' },
     });
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'isolated process failed');
-    return result;
+    return assertOf1ProcessResult(label, result);
   });
   // A loopback listener cannot run under the all-sockets-denied lane. These exact
   // source-pinned tests/binary use only fixed numeric loopback, no ambient endpoints,
   // DNS or HTTP proxy. This is not claimed to be an OS-wide external-network sandbox.
   const loopback = (label, command, args) => timing.measure(label, () => {
     const result = spawnSync(command, args, { cwd: root, encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024, timeout: 180_000,
+      maxBuffer: OUTPUT_LIMIT, timeout: 180_000,
       env: { ...process.env, CARGO_NET_OFFLINE: 'true' } });
-    if (result.error) throw result.error;
-    if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'loopback fixture failed');
-    return result;
+    return assertOf1ProcessResult(label, result);
   });
   try {
     await writeResearchNetworkDenyFilter(filter, process.arch, { allowLocalProcessSpawn: true });
