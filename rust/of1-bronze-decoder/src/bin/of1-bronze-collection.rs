@@ -1,5 +1,5 @@
 //! Offline source/plan/collection verifier. Publication never mutates old output.
-use of1_bronze_decoder::{batch, collection, continuation};
+use of1_bronze_decoder::{batch, collection, continuation, slot_parts};
 use of1_range_recorder::sha256;
 use std::{fs, path::Path};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,6 +13,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ["continuation-verify-part",decision,id,ordinal,parquet]=>continuation::verify_part(Path::new(decision),id,ordinal.parse()?,parquet.parse()?)?,
         ["continuation-seal-slot",decision,id]=>continuation::seal_slot(Path::new(decision),id)?,
         ["continuation-complete",decision]=>continuation::complete(Path::new(decision))?,
+        ["parts-inventory",plan,root]=>slot_parts::inventory(Path::new(plan),Path::new(root))?,
+        ["parts-verify",plan,root,id,ordinal,parquet]=>slot_parts::verify_part(Path::new(plan),Path::new(root),id,ordinal.parse()?,parquet.parse()?)?,
+        ["parts-seal-slot",plan,root,id]=>slot_parts::seal_slot(Path::new(plan),Path::new(root),id)?,
+        ["parts-complete",plan,root]=>slot_parts::complete(Path::new(plan),Path::new(root))?,
         ["source",root]=>batch::source_identity(Path::new(root))?,
         ["plan-check",plan]=>{let (p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;serde_json::json!({"state":"VERIFIED","plan_sha256":h,"slots":p.logical_selection.len(),"batches":p.batches.len()})},
         ["verify-batch",plan,id,output]=>{let(p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;batch::verify_output(&p,&h,p.batch(id)?,Path::new(output))?},

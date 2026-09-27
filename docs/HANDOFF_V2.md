@@ -4,6 +4,27 @@
 
 ## Mission and success criterion
 
+**Current bounded task, 2026-09-27:** #146 merged as
+`8ead9b6a1d0416f20ed92645add28bf32459ead1`. The first DEVELOPMENT window is
+complete: 16 slots, 21,068 packages, 2,965 failures and 57 Silver facts. All
+original twelve-slot files and 39 facts remain unchanged. Its complete native
+manifest SHA256 is `371690ef49fd41a9e8221f2626546df32e93bd18d8d0793396be6d89e9e40511`;
+sealed evidence: `governance/b7-bounded-slot-continuation-20260927/`.
+The owner now conditionally authorizes **only the second preregistered DEVELOPMENT
+window `[422552336,422552352)` (ordinal 1)** after the storage assessment and
+protected delivery of the ordinary atomic-part route. Metadata: ≤12 attempts /
+15,576,576 entity bytes /600s; payload: ≤48 attempts /100,473,774 entity bytes
+/1200s; processing: unchanged 4 GiB /900s. Same campaign, 32-GiB cap, resource
+limits and source/range checks; no acquisition until main technical gates pass.
+The measured first-window native disk charge is 2,339,524,608 bytes. The
+next-window conservative admission bound is 6,903,975,936 bytes including prior
+output. The weighted 16-window forecast is 30,044,649,674 bytes, **not a capacity
+guarantee or authorization**; a +25% variable-expansion scenario exceeds 32 GiB.
+New evidence/results: `governance/b7-second-development-window-20260927/`.
+See [the exact regular route and limits](research/B7_NATIVE_CAMPAIGN.md#ordinary-atomic-part-processing-and-second-window--2026-09-27).
+No other windows, evaluation outcome inspection or B8; #86 remains open /
+Unproven and Research Ready=false. Earlier decisions below are historical scope.
+
 **B7 native campaign preparation, 2026-09-24:** the owner accepted #142's
 frozen feasibility design and authorized [minimal native campaign binding](research/B7_NATIVE_CAMPAIGN.md).
 After independent review and protected integration, a subsequent explicit GO
@@ -39,8 +60,8 @@ slots from existing Raw. The [native continuation contract](research/B7_NATIVE_C
 retains all old outputs and charges, verifies the twelve-slot checkpoint, and
 separately grants at most 900 seconds under the same 4-GiB work /32-GiB campaign
 limits. No new network permission, old-deadline edit or implicit renewal.
-New evidence: `governance/b7-bounded-slot-continuation-20260927/`; execution and
-complete-window acceptance are pending until actually recorded there.
+Evidence: `governance/b7-bounded-slot-continuation-20260927/`; the completed
+execution and exact mixed-producer identities are recorded there (see current status above).
 New diagnostic/execution evidence: `governance/b7-ci-diagnostics-20260927/`.
 Private binding dossier: `governance/b7-native-campaign-20260924/`.
 B6/#85 was delivered by #141 and read back Done / SUPERSEDED / Engineering
@@ -151,7 +172,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** bounded B7/#86 offline [sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md), `In Progress / ACTIVE NOW / Unproven`; native binding delivered by #143, initialization/diagnostics by #144/#145. The first window is acquired; twelve slots are processed. Only the explicitly approved four-slot offline continuation above is pending. Archive access is confirmed free. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; the two workspaces are the bounded MVP, not the later full workstation. B8 remains `LATER`; only the first window and its unchanged caps above are authorized.
+- **Current phase:** bounded B7/#86 offline [sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md), `In Progress / ACTIVE NOW / Unproven`; native binding delivered by #143, initialization/diagnostics by #144/#145. The first window is complete through #146. Only the second selected DEVELOPMENT window is conditionally authorized as described above. Archive access is confirmed free. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; the two workspaces are the bounded MVP, not the later full workstation. B8 remains `LATER`; only the two explicit window decisions and their unchanged caps above are authorized.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

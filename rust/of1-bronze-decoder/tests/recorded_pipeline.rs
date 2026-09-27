@@ -736,6 +736,7 @@ fn batch_plan(h: &Harness, width: usize, count: usize) -> of1_bronze_decoder::ba
     Plan {
         schema: of1_bronze_decoder::batch::SCHEMA.into(),
         collection_id: "sealed-six-slot-fixture".into(),
+        slot_part_profile: None,
         workers: Workers {
             batch_decoder_sha256: current_executable_sha256().unwrap(),
             projector_sha256: "c".repeat(64),
@@ -1364,10 +1365,19 @@ fn atomic_slot_parts_equal_whole_decode_without_duplicates_or_failure_facts() {
 
 #[test]
 fn continuation_fixture_retains_twelve_and_needs_atomic_parts() {
+    export_part_fixture("COLUMNAR_CONTINUATION_FIXTURE_DIR", 12, false);
+}
+
+#[test]
+fn regular_b7_parts_start_at_first_slot_with_same_limits() {
+    export_part_fixture("COLUMNAR_REGULAR_PARTS_FIXTURE_DIR", 0, true);
+}
+
+fn export_part_fixture(variable: &str, large_slot: u64, ordinary: bool) {
     // Optional export is consumed by the ordinary offline Parquet gate. This
     // remains a synthetic source; no authentic campaign is opened by tests.
     let temporary = tempfile::tempdir().unwrap();
-    let export = std::env::var_os("COLUMNAR_CONTINUATION_FIXTURE_DIR").map(PathBuf::from);
+    let export = std::env::var_os(variable).map(PathBuf::from);
     let parent = export.as_deref().unwrap_or(temporary.path());
     if export.is_some() {
         fs::create_dir(parent).unwrap();
@@ -1378,7 +1388,7 @@ fn continuation_fixture_retains_twelve_and_needs_atomic_parts() {
     h.fixture_payload_budget = 2 * 1024 * 1024;
     let payloads = (0..16)
         .map(|i| {
-            if i == 12 {
+            if i == large_slot {
                 parity_payload(
                     sample.start_slot + i,
                     &(0..131)
@@ -1395,14 +1405,18 @@ fn continuation_fixture_retains_twelve_and_needs_atomic_parts() {
     for (i, payload) in payloads.iter().enumerate() {
         h.publish(4 + i as u64, payload);
     }
-    let plan = batch_plan(&h, 1, 16);
+    let mut plan = batch_plan(&h, 1, 16);
+    if ordinary {
+        plan.slot_part_profile = Some(report::PART_PROFILE.into());
+    }
+    plan.validate_sources().unwrap();
     fs::write(
         parent.join("plan.json"),
         serde_json::to_vec_pretty(&plan).unwrap(),
     )
     .unwrap();
     assert_eq!(
-        report::receipt_part_inventory(&h.root, 16).unwrap()["parts"],
+        report::receipt_part_inventory(&h.root, 4 + large_slot).unwrap()["parts"],
         2
     );
 }
