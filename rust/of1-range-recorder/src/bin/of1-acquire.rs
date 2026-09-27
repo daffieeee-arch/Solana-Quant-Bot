@@ -208,11 +208,24 @@ fn run(args: &[String]) -> Result<()> {
                 "approval_target_sha256":metadata_proposal_sha256(&aggregate,&budget)?,"lease_created":false,"research_ready":false}))
         }
         ["metadata-init", root, plan, lease] => {
-            validate_dataset_location(Path::new(root))?;
+            let location = validate_dataset_location(Path::new(root));
+            // Preserve rejection of existing Git/invalid locations before reading
+            // approval material. A missing parent needs the exact B7 identity.
+            if let Err(error) = &location
+                && error.kind() != std::io::ErrorKind::NotFound {
+                return Err(location.unwrap_err().into());
+            }
             let plan: AggregatePlan = read(plan)?;
             let lease: MetadataLease = read(lease)?;
-            if !matches!(lease.authority, Authority::Approved { .. }) {
+            if !metadata_init_authority(&lease.authority) {
                 return Err("metadata-init requires a separately approved immutable metadata lease".into());
+            }
+            if let Some(sample) = plan.sample_identity.as_ref().filter(|s| s.b7.is_some()) {
+                of1_range_recorder::campaign::validate_acquisition_location(
+                    sample, Path::new(root), matches!(lease.authority, Authority::Fixture),
+                )?;
+            } else {
+                location?;
             }
             print(&AcquisitionStore::create(Path::new(root), plan, lease, SystemClock)?.progress()?)
         }
@@ -279,6 +292,21 @@ fn run(args: &[String]) -> Result<()> {
             "capture-stage is default-disabled and requires separately approved stage GO"
         ).into()),
     }
+}
+
+fn metadata_init_authority(authority: &Authority) -> bool {
+    // Test binaries alone may exercise the real command dispatcher with the
+    // existing offline Fixture store. No feature/env/CLI production override.
+    #[cfg(test)]
+    if matches!(authority, Authority::Fixture) {
+        return true;
+    }
+    matches!(authority, Authority::Approved { .. })
+}
+
+#[cfg(test)]
+mod metadata_init_tests {
+    include!("of1-acquire/metadata_init_tests.rs");
 }
 
 #[cfg(not(feature = "network-of1"))]

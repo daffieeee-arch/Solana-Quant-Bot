@@ -146,6 +146,38 @@ fn canonical_new(p: &Path) -> StoreResult<PathBuf> {
         .join(p.file_name().ok_or(StoreError::Identity)?))
 }
 
+/// Read-only admission before native campaign creation. Only the first exact
+/// run may have two missing ancestors; ordinary location checks are unchanged.
+/// # Errors
+/// Rejects changed sample/root authority, aliases, Git locations and incomplete
+/// parents. This does not validate a lease or repair existing campaign state.
+pub fn validate_acquisition_location(
+    sample: &SampleIdentity,
+    run_root: &Path,
+    fixture: bool,
+) -> StoreResult<()> {
+    sample.validate(978)?;
+    let binding = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+    let root = Path::new(&binding.campaign_root);
+    if crate::dataset_location::validate_dataset_location(root)? != root
+        || fixture == (root == Path::new(b7::PRODUCTION_ROOT))
+        || run_root != root.join(format!("runs/w{:02}", binding.window_ordinal))
+    {
+        return Err(StoreError::Identity);
+    }
+    // symlink_metadata also prevents treating a dangling alias as an unused root.
+    match fs::symlink_metadata(root) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && binding.window_ordinal == 0 => Ok(()),
+        Err(e) => Err(e.into()),
+        Ok(_) => {
+            if crate::dataset_location::validate_dataset_location(run_root)? != run_root {
+                return Err(StoreError::Identity);
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Held for the complete writer operation. Other windows/processes fail closed.
 pub struct Guard {
     root: PathBuf,
@@ -460,7 +492,7 @@ impl Guard {
         fixture: bool,
         create: bool,
     ) -> StoreResult<Self> {
-        sample.validate(978)?;
+        validate_acquisition_location(sample, run_root, fixture)?;
         let binding = sample.b7.as_ref().ok_or(StoreError::Identity)?;
         let root = Path::new(&binding.campaign_root);
         let mut g = if create && binding.window_ordinal == 0 && !root.exists() {
