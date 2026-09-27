@@ -94,6 +94,17 @@ def run(fixture,decoder,projector,verifier):
     assert [s['producer'] for s in manifest['slot_outcomes']]==['ORIGINAL_RETAINED']*12+['CONTINUATION']*4
     assert manifest['sample_identity']==plan['sources'][0]['sample_identity']
     assert manifest['research_ready'] is False
+    # The aggregate retains identities, not ~60KB of duplicated schema per
+    # part. Full schema definitions are still available in verified manifests.
+    for slot in manifest['continued_slots']:
+        for part in slot['manifest']['parts']:
+            original=final.parent/part['parquet_manifest_path']
+            assert digest(original)==part['parquet_manifest_sha256']
+            dataset=json.loads(original.read_bytes())
+            for name in ['bronze','silver']:
+                expected=dict(dataset['layers'][name]);schema=expected.pop('schema')
+                assert schema and part['layers'][name]==expected
+                assert len(json.dumps(part['layers'][name]))<4096
     assert inventory(first)==first_hashes
     assert {name:digest(root/name) for name in before}==before
     assert digest(final)==(final.with_suffix('.json.sha256')).read_text()

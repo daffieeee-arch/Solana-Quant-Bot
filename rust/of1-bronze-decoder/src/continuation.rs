@@ -524,7 +524,7 @@ fn inspect_slot(
         parts.push(json!({"ordinal":ordinal,"range":expected,"quality_sha256":qhash,"execution_sha256":sha256(&read_limited(&decode.join("execution.json"),resources::MAX_EXECUTION_BYTES as u64).map_err(invalid)?),
             "decode_directory":format!("{}/part-{ordinal:04}/decode",batch.output_directory),
             "parquet_manifest_path":format!("{}/part-{ordinal:04}/parquet/manifest.json",batch.output_directory),
-            "parquet_manifest_sha256":mhash,"physical_files":manifest["files"],"layers":manifest["layers"]}));
+            "parquet_manifest_sha256":mhash,"physical_files":manifest["files"],"layers":layer_identities(&manifest)?}));
     }
     if bronze.rows != total {
         return Err(invalid("CONTINUATION_SLOT_COVERAGE"));
@@ -740,6 +740,21 @@ fn publish_report(
     )?;
     fs::File::open(&root)?.sync_all()?;
     Ok(())
+}
+
+// Full schemas remain in each hash-bound Parquet manifest. Repeating them
+// for every part would consume the unchanged aggregate publication budget.
+fn layer_identities(manifest: &Value) -> io::Result<Value> {
+    let mut layers = manifest["layers"].clone();
+    for name in ["bronze", "silver"] {
+        let layer = layers[name]
+            .as_object_mut()
+            .ok_or_else(|| invalid("PARQUET_LAYER"))?;
+        if layer.remove("schema").is_none() || !layer.contains_key("schema_sha256") {
+            return Err(invalid("PARQUET_SCHEMA_BINDING"));
+        }
+    }
+    Ok(layers)
 }
 
 fn verify_part_directories(base: &Path, n: u64) -> io::Result<()> {
