@@ -990,3 +990,116 @@ fn exclusive_writer_and_manifest_identity_hold_at_every_permit() {
     fs::write(manifest, serde_json::to_vec(&json).unwrap()).unwrap();
     assert!(matches!(store.reserve(0), Err(StoreError::Identity)));
 }
+
+fn b7_harness() -> Harness {
+    let mut h = Harness::new();
+    let campaign = h.root.parent().unwrap().join("campaign");
+    h.plan.sample_identity = Some(of1_range_recorder::b7::sample(0, &campaign).unwrap());
+    h.root = campaign.join("runs/w00");
+    h.plan.clock_policy = Some(of1_range_recorder::clock_contract::ClockPolicy::standard());
+    h.plan.download_rate = Some(of1_range_recorder::rate::DownloadRate::standard());
+    h.plan.budget.max_slots = 16;
+    h.plan.budget.max_requests = 60;
+    h.lease.budget.max_runtime_ms = 600_000;
+    h
+}
+
+#[test]
+fn b7_campaign_and_native_reservations_agree_across_crash_boundaries() {
+    for point in [
+        FaultPoint::BeforeReservationPublish,
+        FaultPoint::AfterReservationPublish,
+    ] {
+        let h = b7_harness();
+        let mut store = h.create();
+        let lease = store.current_lease_sha256().to_owned();
+        store.inject_fault(point);
+        assert!(matches!(store.reserve(0),Err(StoreError::Injected(found)) if found==point));
+        drop(store);
+        let status =
+            of1_range_recorder::campaign::Guard::status(h.root.parent().unwrap().parent().unwrap())
+                .unwrap();
+        assert_eq!(status["attempts_reserved"], 1);
+        assert_eq!(status["entity_bytes_reserved"], 5_184_000);
+        if point == FaultPoint::BeforeReservationPublish {
+            assert!(h.resume(&lease).is_err());
+        } else {
+            assert_eq!(
+                h.resume(&lease)
+                    .unwrap()
+                    .progress()
+                    .unwrap()
+                    .charged_entity_bytes,
+                5_184_000
+            );
+        }
+    }
+    for point in [FaultPoint::BeforePublish, FaultPoint::AfterPublishSync] {
+        let h = b7_harness();
+        let mut store = h.create();
+        let lease = store.current_lease_sha256().to_owned();
+        let request = store.request(0).unwrap().clone();
+        let permit = store.reserve(0).unwrap();
+        let bytes = index();
+        store
+            .begin_stream(&permit, head(&request, bytes.len() as u64, "\"fixture\""))
+            .unwrap();
+        for segment in bytes.chunks(SEGMENT_BYTES) {
+            store.append_stream(&permit, segment).unwrap();
+        }
+        store.inject_fault(point);
+        assert!(store.finish_stream(permit).is_err());
+        drop(store);
+        let mut resumed = h.resume(&lease).unwrap();
+        assert_eq!(resumed.progress().unwrap().attempts_reserved, 1);
+        assert_eq!(
+            resumed.published(0).unwrap().is_some(),
+            point == FaultPoint::AfterPublishSync
+        );
+        if point == FaultPoint::AfterPublishSync {
+            assert!(resumed.reserve(0).is_err());
+        }
+    }
+}
+
+#[test]
+fn b7_requires_exact_role_budget_and_stage_authority_before_execution() {
+    for change in ["role", "slots", "attempts", "stage-runtime", "authority"] {
+        let mut h = b7_harness();
+        let campaign = h.root.parent().unwrap().parent().unwrap().to_path_buf();
+        match change {
+            "role" => {
+                h.plan
+                    .sample_identity
+                    .as_mut()
+                    .unwrap()
+                    .b7
+                    .as_mut()
+                    .unwrap()
+                    .cohort_role = "RESERVED_EVALUATION".into();
+            }
+            "slots" => h.plan.budget.max_slots = 17,
+            "attempts" => h.plan.budget.max_requests = 61,
+            "stage-runtime" => h.lease.budget.max_runtime_ms = 600_001,
+            _ => {
+                h.lease.authority = Authority::Approved {
+                    approval_id: "unapproved".into(),
+                    operator: "fixture".into(),
+                    approved_at_ms: 1,
+                    not_after_ms: 2,
+                    approved_plan_sha256: "0".repeat(64),
+                    cost_confirmation: "UNAPPROVED".into(),
+                    clock_anchor: None,
+                }
+            }
+        }
+        assert!(
+            AcquisitionStore::create(&h.root, h.plan, h.lease, h.clock).is_err(),
+            "{change}"
+        );
+        assert!(
+            !campaign.exists(),
+            "no writes before permission/identity validation: {change}"
+        );
+    }
+}

@@ -22,6 +22,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let root = fs::canonicalize(&args[0])?;
+    if of1_range_recorder::monitor::read_run_context(&root)?
+        .aggregate_plan
+        .sample_identity
+        .as_ref()
+        .is_some_and(|s| s.b7.is_some())
+    {
+        return Err("B7 requires the admitted bounded collection worker route".into());
+    }
     let output = PathBuf::from(&args[1]);
     let parent = fs::canonicalize(output.parent().ok_or("output parent required")?)?;
     let output = parent.join(output.file_name().ok_or("output name required")?);

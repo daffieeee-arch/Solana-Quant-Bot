@@ -68,6 +68,7 @@ The [2026-09-24 B6 criterion-based acceptance](research/B6_ENGINEERING_ACCEPTANC
 - [`research/B5_MINT_TIMELINE.md`](research/B5_MINT_TIMELINE.md)
 - [`research/B6_LOCAL_MINT_INSPECTOR.md`](research/B6_LOCAL_MINT_INSPECTOR.md)
 - [`research/B6_ENGINEERING_ACCEPTANCE_20260924.md`](research/B6_ENGINEERING_ACCEPTANCE_20260924.md)
+- [`research/B7_NATIVE_CAMPAIGN.md`](research/B7_NATIVE_CAMPAIGN.md)
 - [`research/B7_RESEARCH_SAMPLING_PROPOSAL.md`](research/B7_RESEARCH_SAMPLING_PROPOSAL.md)
 - [`research/B5_RAW_ARCHIVAL_SPANS.md`](research/B5_RAW_ARCHIVAL_SPANS.md)
 - [`operations/VPS_WSL_INTEGRATION.md`](operations/VPS_WSL_INTEGRATION.md)

@@ -13,6 +13,8 @@ pub mod fixture;
 pub mod https;
 // Read-only recorded projections are also available without IPC or transport.
 // Unix telemetry remains gated inside this module by the `monitor` feature.
+pub mod b7;
+pub mod campaign;
 pub mod monitor;
 pub mod rate;
 pub mod recorded_verification;

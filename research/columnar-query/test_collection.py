@@ -240,8 +240,28 @@ class RunnerIdentityTests(unittest.TestCase):
             decoder.write_bytes(b'changed decoder')
             with self.assertRaisesRegex(ValueError,'executable differs'):Runner(path,output,decoder,projector,verifier)
 
+    def test_fixed_boot_deadline_is_not_renewed_after_preparation(self):
+        with patch('collection_run.time.clock_gettime',return_value=100.5):
+            self.assertEqual(Runner.remaining_until(101000),0.5)
+        with patch('collection_run.time.clock_gettime',return_value=101.0):
+            with self.assertRaisesRegex(ValueError,'original campaign processing deadline'):
+                Runner.remaining_until(101000)
+
+    def test_expiry_during_preparation_stops_before_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner=Runner.__new__(Runner);runner.root=pathlib.Path(tmp);runner.counter=0
+            runner.plan_path=runner.root/'plan.json';runner.plan_raw=b'fixture';runner.plan_path.write_bytes(runner.plan_raw)
+            worker=runner.root/'never-started';worker.write_bytes(b'fixture')
+            runner.binary_hashes={str(worker):sha(worker.read_bytes())}
+            with patch.object(runner,'campaign_check',side_effect=[900,ValueError('original campaign processing deadline exhausted')]) as check, patch('collection_run.subprocess.run') as command:
+                with self.assertRaisesRegex(ValueError,'original campaign processing deadline'):
+                    runner.step('EXPIRED_DURING_HASHING',[worker])
+                self.assertEqual(check.call_count,2)
+                command.assert_not_called()
+
     def test_operation_reservation_stops_before_subprocess(self):
         runner=Runner.__new__(Runner)
+        runner.campaign=False  # Original non-campaign artifact reservation fixture.
         runner.counter=0
         with tempfile.TemporaryDirectory() as tmp:
             runner.root=pathlib.Path(tmp)

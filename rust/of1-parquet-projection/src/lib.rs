@@ -41,5 +41,6 @@ pub fn source_sha256() -> String {
         h.update((bytes.len() as u64).to_le_bytes());
         h.update(bytes);
     }
+    h.update(of1_range_recorder::recorded_verification::source_sha256().as_bytes());
     hex::encode(h.finalize())
 }

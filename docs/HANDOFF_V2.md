@@ -4,16 +4,20 @@
 
 ## Mission and success criterion
 
-**B7 offline preparation, 2026-09-24:** the owner authorized one
-[research/sampling decision proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md),
-not acquisition. B6/#85 is technically delivered by #141 at
-`6e278f51c29e07b59ccf6c41e4d97638e3c97f75`; scheduled sync 35980423282
-succeeded and #85 was read back as Done / SUPERSEDED / Engineering Validation.
-B7/#86 is now partial preparation, In Progress / ACTIVE NOW / Unproven.
-Its fixed windows, existing-Rust byte calculations and explicit native-sample /
-current-cost blockers are not an executable lease. B8 remains LATER. All network
-and execution approvals are false; Research Ready remains false. The dated B6
-notes below retain their earlier routing statements as publication-time history.
+**B7 native campaign preparation, 2026-09-24:** the owner accepted #142's
+frozen feasibility design and authorized [minimal native campaign binding](research/B7_NATIVE_CAMPAIGN.md).
+After independent review and protected integration, a subsequent explicit GO
+permits only DEVELOPMENT `[422526144,422526160)`: metadata ≤12 attempts /
+15,576,576 entity bytes /600s, then matching payload ≤48 attempts /99,642,069
+entity bytes /1200s and existing offline native processing. Freeze exact binary,
+plans and ranges first; source/range mismatch stops. Official OF1 archive access
+is confirmed free, not a remaining cost blocker. Other windows, phase two,
+evaluation outcome inspection and paid services are not authorized. Sealed #142
+proposal fields remain historical; separate decision/lease records govern.
+B7/#86 stays open, In Progress / ACTIVE NOW / Unproven; Research Ready=false.
+No B8 work. Private dossier: `governance/b7-native-campaign-20260924/`.
+B6/#85 was delivered by #141 and read back Done / SUPERSEDED / Engineering
+Validation after scheduled sync 35980423282; no sync diagnosis is reopened.
 
 **B6 bounded engineering acceptance, 2026-09-24:** the owner authorized closure of
 #85 when its original criteria are evidenced. The [criterion table and decision](research/B6_ENGINEERING_ACCEPTANCE_20260924.md)

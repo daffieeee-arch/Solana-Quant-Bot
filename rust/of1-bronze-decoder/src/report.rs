@@ -778,7 +778,7 @@ fn sell_html(report: &Value) -> String {
         "Pump sell"
     };
     let mut out = format!(
-        "<section id=pump-sell><h2>{title} — brongebonden Silver-eventfeiten</h2><p class=notice><strong>{facts} gekoppelde instructie/event-pakketten.</strong> Dit zijn vastgelegde feiten uit een succesvolle transactie, geen gelezen accounttoestand, netto-opbrengst, Research Ready dataset of edge. B4 en B5 blijven open. Quote-mintidentiteit en decimals onbekend; eventfees niet als optelbare kosten of netto-opbrengst behandelen.</p><p><a href=silver.jsonl>Silver JSONL</a> · <a href=quality.json>Volledige diagnose en bronbinding</a></p>"
+        "<section id=pump-sell><h2>{title} — brongebonden Silver-eventfeiten</h2><p class=notice><strong>{facts} gekoppelde instructie/event-pakketten.</strong> Dit zijn vastgelegde feiten uit een succesvolle transactie, geen gelezen accounttoestand, netto-opbrengst, Research Ready dataset of edge. B4/B5-engineeringacceptatie is geen Research Ready-claim. Quote-mintidentiteit en decimals onbekend; eventfees niet als optelbare kosten of netto-opbrengst behandelen.</p><p><a href=silver.jsonl>Silver JSONL</a> · <a href=quality.json>Volledige diagnose en bronbinding</a></p>"
     );
     if facts == 0 {
         out.push_str("<p>Geen Silver geproduceerd voor deze invoer.</p>");

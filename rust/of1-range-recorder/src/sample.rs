@@ -22,6 +22,8 @@ pub struct SampleIdentity {
     pub selected_center: u64,
     pub start_slot: u64,
     pub end_slot_exclusive: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub b7: Option<crate::b7::Binding>,
 }
 
 impl SampleIdentity {
@@ -29,6 +31,7 @@ impl SampleIdentity {
     #[must_use]
     pub fn fixed_pilot() -> Self {
         Self {
+            b7: None,
             schema: "OF1_FIXED_PILOT_SAMPLE_1".into(),
             sample_class: "RESEARCH_SAMPLING".into(),
             selection_plan_sha256: SELECTION_PLAN_SHA256.into(),
@@ -44,6 +47,14 @@ impl SampleIdentity {
     /// # Errors
     /// A different class, seed, proposal or selection requires a new reviewed lane.
     pub fn validate(&self, epoch: u64) -> Result<(), StoreError> {
+        if self.b7.is_some() {
+            crate::b7::validate(self)?;
+            return if self.epoch == epoch {
+                Ok(())
+            } else {
+                Err(StoreError::Identity)
+            };
+        }
         if self != &Self::fixed_pilot()
             || self.epoch != epoch
             || sha256(SELECTION_PLAN) != SELECTION_PLAN_SHA256

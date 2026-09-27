@@ -427,6 +427,18 @@ pub fn materialize(
     )
 }
 
+fn campaign_tick(
+    campaign: Option<&(
+        of1_range_recorder::campaign::Guard,
+        of1_range_recorder::sample::SampleIdentity,
+    )>,
+) -> io::Result<()> {
+    if let Some((guard, sample)) = campaign {
+        guard.processing_tick(sample).map_err(invalid)?;
+    }
+    Ok(())
+}
+
 /// Same projection with a tighter cumulative write cap for bounded regression tests.
 /// No CLI override exists and a caller cannot raise the production cap.
 /// # Errors
@@ -450,11 +462,35 @@ pub fn materialize_with_write_limit(
     }
     let seal = admission::seal(&input, execution_sha)?;
     let admitted = admission::inspect(&input, &seal)?;
+    let campaign = if admitted["sample_identity"]["b7"].is_null() {
+        None
+    } else {
+        let sample =
+            serde_json::from_value(admitted["sample_identity"].clone()).map_err(invalid)?;
+        Some((
+            of1_range_recorder::campaign::Guard::output(
+                &sample,
+                Path::new(
+                    seal["execution"]["run_root"]
+                        .as_str()
+                        .ok_or_else(|| invalid("B7_RUN"))?,
+                ),
+                output,
+                seal["execution"]["batch_binding"]["plan_sha256"]
+                    .as_str()
+                    .ok_or_else(|| invalid("B7_BATCH_REQUIRED"))?,
+                write_limit + 1024 * 1024,
+            )
+            .map_err(invalid)?,
+            sample,
+        ))
+    };
     fs::create_dir(output)?;
     File::open(&parent)?.sync_all()?;
     let mut files = BTreeMap::new();
     let mut layers = BTreeMap::new();
     for layer in [Layer::Bronze, Layer::Silver] {
+        campaign_tick(campaign.as_ref())?;
         let (summary, parts) = write_shards_budgeted(
             layer,
             &input.join(format!("{}.jsonl", layer.name())),
@@ -496,12 +532,15 @@ pub fn materialize_with_write_limit(
     if let Some(binding) = admitted.get("batch_binding") {
         manifest["batch_binding"] = binding.clone();
     }
+    campaign_tick(campaign.as_ref())?;
     let bytes = serde_json::to_vec_pretty(&manifest).map_err(invalid)?;
     if bytes.len() > 1024 * 1024 {
         return Err(invalid("MANIFEST_LIMIT"));
     }
+    campaign_tick(campaign.as_ref())?;
     publish(&output.join("manifest.json"), &bytes, &mut budget)?;
     File::open(output)?.sync_all()?;
+    campaign_tick(campaign.as_ref())?;
     publish(
         &output.join("COMPLETE"),
         format!("{}\n", hash(&bytes)).as_bytes(),

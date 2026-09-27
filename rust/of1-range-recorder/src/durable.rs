@@ -49,6 +49,10 @@ pub enum StoreError {
     Integrity(String),
     #[error("hard budget exhausted")]
     Budget,
+    #[error("B7_RESERVED_EVALUATION_PROCESSING_NOT_AUTHORIZED")]
+    ReservedEvaluation,
+    #[error("B7_WORKER_ADDRESS_SPACE_LIMIT_REQUIRED")]
+    WorkerLimit,
     #[error("original deadline or attempt timeout reached")]
     Deadline,
     #[error("clock rollback, invalid clock or boot identity changed")]
@@ -1424,14 +1428,14 @@ fn decode<T: DeserializeOwned>(bytes: &[u8]) -> StoreResult<T> {
 fn identity(meta: &fs::Metadata) -> (u64, u64) {
     (meta.dev(), meta.ino())
 }
-fn regular(path: &Path) -> StoreResult<fs::Metadata> {
+pub(crate) fn regular(path: &Path) -> StoreResult<fs::Metadata> {
     let meta = fs::symlink_metadata(path)?;
     if !meta.is_file() {
         return Err(StoreError::Corrupt);
     }
     Ok(meta)
 }
-fn read_bounded(path: &Path, max: u64) -> StoreResult<Vec<u8>> {
+pub(crate) fn read_bounded(path: &Path, max: u64) -> StoreResult<Vec<u8>> {
     let size = regular(path)?.len();
     if size > max {
         return Err(StoreError::Corrupt);
@@ -1445,10 +1449,10 @@ fn read_bounded(path: &Path, max: u64) -> StoreResult<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn sync_dir(path: &Path) -> StoreResult<()> {
+pub(crate) fn sync_dir(path: &Path) -> StoreResult<()> {
     File::open(path)?.sync_all().map_err(Into::into)
 }
-fn children(path: &Path, max: u64) -> StoreResult<Vec<PathBuf>> {
+pub(crate) fn children(path: &Path, max: u64) -> StoreResult<Vec<PathBuf>> {
     if !fs::symlink_metadata(path)?.is_dir() {
         return Err(StoreError::Corrupt);
     }

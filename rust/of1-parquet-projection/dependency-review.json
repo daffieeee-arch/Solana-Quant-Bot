@@ -1,8 +1,8 @@
 {
   "schema": "OF1_COLUMNAR_DEPENDENCIES_1",
   "scope": "Rust physical Arrow/Parquet projection only; no compression/object_store/network features",
-  "manifest_sha256": "09463bc7b893e6a2ccd83801d451ee060100f854b0201598e24d7b59c140402b",
-  "lock_sha256": "925133d91c6de02fcac1588bb7141db7c719327525a8606aff50af8bfc9a9af8",
+  "manifest_sha256": "9859f88e064fd42b7b5021eb2773f43fa6e9f3330db0c7ec714f64a04a5a506d",
+  "lock_sha256": "2d90f6260f4432027de8c64c3b58c781fbfd8cf6564208717089243fa3fda49c",
   "streaming_serde_review": "Existing locked serde 1.0.229 is now a direct dependency for IgnoredAny streaming quality-record-array skipping. Package, version, feature, license and build-script inventories are byte-identical to the previous reviewed graph; no added package, fetch or default feature.",
   "packages": [
     {
@@ -318,6 +318,12 @@
       "buildScript": false
     },
     {
+      "name": "of1-range-recorder",
+      "version": "0.1.0",
+      "license": "UNLICENSED",
+      "buildScript": false
+    },
+    {
       "name": "once_cell",
       "version": "1.21.4",
       "license": "MIT OR Apache-2.0",
@@ -448,6 +454,18 @@
       "version": "3.27.0",
       "license": "MIT OR Apache-2.0",
       "buildScript": false
+    },
+    {
+      "name": "thiserror-impl",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": false
+    },
+    {
+      "name": "thiserror",
+      "version": "2.0.20",
+      "license": "MIT OR Apache-2.0",
+      "buildScript": true
     },
     {
       "name": "tiny-keccak",
@@ -888,6 +906,10 @@
       "features": []
     },
     {
+      "package": "of1-range-recorder@0.1.0",
+      "features": []
+    },
+    {
       "package": "once_cell@1.21.4",
       "features": [
         "alloc",
@@ -984,7 +1006,12 @@
     },
     {
       "package": "serde@1.0.229",
-      "features": []
+      "features": [
+        "default",
+        "derive",
+        "serde_derive",
+        "std"
+      ]
     },
     {
       "package": "sha2@0.10.9",
@@ -1038,6 +1065,17 @@
       "features": [
         "default",
         "getrandom"
+      ]
+    },
+    {
+      "package": "thiserror-impl@2.0.20",
+      "features": []
+    },
+    {
+      "package": "thiserror@2.0.20",
+      "features": [
+        "default",
+        "std"
       ]
     },
     {
@@ -1274,6 +1312,12 @@
       "package": "zmij@1.0.23",
       "sha256": "ad320bc635887879bdbbf1b9322da4a157ec2c5a4243bd7c2cf9b6884a3b2a41",
       "purpose": "compiler/target probing or local code generation; builds executed with sockets denied; platform-only scripts remain locked but are not compiled on Linux"
+    },
+    {
+      "package": "thiserror@2.0.20",
+      "sha256": "ccc38283604f99237ad2333bbe395259e29fdf2ff4e04a60a95de9e4499c09a3",
+      "purpose": "Existing repo-pinned thiserror compiler capability probing; compiled with sockets denied."
     }
-  ]
+  ],
+  "native_campaign_review": "Local of1-range-recorder path dependency with default features disabled shares the authoritative sample validator and durable campaign writer guard. Adds existing repo-pinned thiserror/thiserror-impl 2.0.20 and serde derive; no version upgrades, download, TLS, HTTP or monitor feature. Runtime projection remains offline and its socket-denial gates unchanged."
 }

@@ -9,6 +9,13 @@ describe('OF1 default-off transport dependency boundary', () => {
   it('accepts the reviewed manifest and lock', () => {
     expect(validateOf1PlannerInputs(manifest, lock, {})).toEqual([]);
   });
+  it('pins the B7 same-test-binary crash harness without admitting production process execution', () => {
+    const path = 'src/campaign/process_tests.rs';
+    const source = readFileSync('rust/of1-range-recorder/' + path, 'utf8');
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\n' })).toContain('unreviewed B7 process-crash harness');
+    expect(validateOf1PlannerInputs(manifest, lock, { 'src/campaign.rs': source })).toContain('unexpected runtime capability in src/campaign.rs');
+  });
   it('rejects manifest, feature, dependency and lock drift before fetch', () => {
     for (const suffix of ['\n[features]\nnetwork-of1 = []\n', '\n[build-dependencies]\nreqwest="1"\n', '\n[patch.crates-io]\n']) {
       expect(validateOf1PlannerInputs(manifest + suffix, lock, {})).toContain('unreviewed OF1 manifest');

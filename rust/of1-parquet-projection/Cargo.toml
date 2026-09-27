@@ -7,6 +7,8 @@ license = "UNLICENSED"
 description = "Bounded lossless Rust-owned Bronze/Silver Arrow Parquet materialization"
 
 [dependencies]
+# Shared native sample/campaign admission; no transport features.
+of1-range-recorder = { path = "../of1-range-recorder", default-features = false }
 arrow-array = { version = "=59.3.0", default-features = false }
 arrow-schema = { version = "=59.3.0", default-features = false }
 parquet = { version = "=59.3.0", default-features = false, features = ["arrow"] }

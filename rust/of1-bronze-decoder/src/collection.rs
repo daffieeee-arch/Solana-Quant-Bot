@@ -8,6 +8,7 @@ use of1_range_recorder::{acquisition::read_limited, sha256};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
     fs,
     io::{self, BufRead, BufReader, Read},
     path::Path,
@@ -260,7 +261,22 @@ fn parquet(
 /// # Errors
 /// Changed source, partial output, corrupt shards or conflicting parents stop.
 pub fn inspect(plan_path: &Path, root: &Path) -> io::Result<Value> {
+    inspect_with_checkpoint(plan_path, root, &mut || Ok(()))
+}
+
+/// Same bounded inspection with checks between native batches and before return.
+/// # Errors
+/// A failed checkpoint stops inspection without publishing a manifest.
+pub fn inspect_with_checkpoint(
+    plan_path: &Path,
+    root: &Path,
+    check: &mut dyn FnMut() -> io::Result<()>,
+) -> io::Result<Value> {
     let (plan, plan_hash) = batch::read_plan(plan_path)?;
+    if let Some((sample, _)) = batch::campaign_sample(&plan)? {
+        of1_range_recorder::campaign::development_processing_only(&sample).map_err(invalid)?;
+    }
+    check()?;
     plan.validate_sources()?;
     let root = fs::canonicalize(root)?;
     let mut bronze = Logical::default();
@@ -269,6 +285,7 @@ pub fn inspect(plan_path: &Path, root: &Path) -> io::Result<Value> {
     let mut outcomes = Vec::new();
     let mut complete = true;
     for batch in &plan.batches {
+        check()?;
         let base = root.join(&batch.output_directory);
         let decode = base.join("decode");
         let projected = base.join("parquet");
@@ -344,7 +361,131 @@ pub fn inspect(plan_path: &Path, root: &Path) -> io::Result<Value> {
         batches.push(entry);
     }
     plan.validate_sources()?;
+    check()?;
     Ok(
         json!({"schema":"OF1_BATCH_COLLECTION_1","plan_sha256":plan_hash,"plan":plan,"state":if complete{"COMPLETE"}else{"INCOMPLETE"},"research_ready":false,"root_to_slot_membership":"UNAVAILABLE","batches":batches,"slot_outcomes":outcomes,"layers":{"bronze":bronze.value(),"silver":silver.value()},"completeness":{"all_selected_slots_accounted":complete,"successful_decoding_separate":true,"research_suitability":"NOT_ESTABLISHED"},"collector_source_sha256":crate::source_sha256()}),
     )
+}
+
+/// Guarded collection seal, including direct CLI invocation.
+/// # Errors
+/// Expiry during inspection/serialization denies publication; incomplete files
+/// never acquire the final hash marker after expiry.
+pub fn seal(plan_path: &Path, root: &Path, output: &Path) -> io::Result<Value> {
+    let (plan, hash) = batch::read_plan(plan_path)?;
+    let campaign = batch::campaign_output(&plan, &hash, output, 2 * 1024 * 1024)?;
+    let mut check = || {
+        if let Some((guard, sample)) = &campaign {
+            guard.processing_tick(sample).map_err(invalid)?;
+        }
+        Ok(())
+    };
+    publish_seal(output, &mut check, |gate| {
+        inspect_with_checkpoint(plan_path, root, gate)
+    })
+}
+fn publish_seal(
+    output: &Path,
+    check: &mut impl FnMut() -> io::Result<()>,
+    inspect: impl FnOnce(&mut dyn FnMut() -> io::Result<()>) -> io::Result<Value>,
+) -> io::Result<Value> {
+    check()?;
+    let value = inspect(check)?;
+    let raw = serde_json::to_vec_pretty(&value).map_err(invalid)?;
+    check()?;
+    batch::write_new(output, &raw)?;
+    check()?;
+    batch::write_new(
+        Path::new(&format!("{}.sha256", output.display())),
+        sha256(&raw).as_bytes(),
+    )?;
+    fs::File::open(output.parent().ok_or_else(|| invalid("output parent"))?)?.sync_all()?;
+    Ok(value)
+}
+/// Bounded existing-diagnostic presentation, under the caller's campaign guard.
+/// Reserved evaluation processing/presentation is denied in this increment.
+/// # Errors
+/// Original collection verification must succeed before publication.
+pub fn campaign_report(
+    plan: &Plan,
+    root: &Path,
+    manifest: &Value,
+    accounting: &Value,
+) -> io::Result<(Vec<u8>, Vec<u8>)> {
+    let (sample, _) = batch::campaign_sample(plan)?.ok_or_else(|| invalid("B7_REQUIRED"))?;
+    of1_range_recorder::campaign::development_processing_only(&sample).map_err(invalid)?;
+    let role = &sample
+        .b7
+        .as_ref()
+        .ok_or_else(|| invalid("B7_REQUIRED"))?
+        .cohort_role;
+    let mut slots = Vec::new();
+    if role == "DEVELOPMENT" {
+        for b in &plan.batches {
+            let quality = json_file(
+                &root.join(&b.output_directory).join("decode/quality.json"),
+                resources::MAX_QUALITY_BYTES,
+            )?
+            .0;
+            slots.push(json!({"slots":b.slots,"transaction_status_counts":quality["analysis"]["transaction_status_counts"],
+                "pump_layout_outcomes":quality["analysis"]["pump_layout_outcomes"],"silver_fact_count":quality["silver_fact_count"],
+                "dispositions":quality["dispositions"],"diagnostic_report":format!("{}/decode/quality.html",b.output_directory)}));
+        }
+    }
+    let value = json!({"schema":"OF1_B7_WINDOW_REPORT_1","sample_identity":sample,
+        "collection_manifest_sha256":sha256(&read_limited(&root.join("collection.json"),batch::MAX_PLAN_BYTES).map_err(invalid)?),
+        "state":manifest["state"],"coverage":manifest["completeness"],"campaign_accounting":accounting,
+        "layers":if role=="DEVELOPMENT"{manifest["layers"].clone()}else{Value::Null},"slot_diagnostics":slots,
+        "reserved_evaluation_outcomes_visible":false,"research_ready":false,
+        "limits":"Window feasibility evidence only; native sample identity is not research sufficiency. Missing is not zero; Bronze accounting is not full Pump coverage."});
+    let raw = serde_json::to_vec_pretty(&value).map_err(invalid)?;
+    let escape = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('\"', "&quot;")
+    };
+    let mut rows = String::new();
+    for v in value["slot_diagnostics"]
+        .as_array()
+        .ok_or_else(|| invalid("B7_DIAGNOSTICS"))?
+    {
+        write!(&mut rows,"<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td><a href=\"{}\">Rust-diagnose</a></td></tr>",
+            escape(&v["slots"].to_string()),escape(&v["transaction_status_counts"].to_string()),escape(&v["dispositions"].to_string()),
+            escape(&v["silver_fact_count"].to_string()),escape(v["diagnostic_report"].as_str().ok_or_else(||invalid("B7_LINK"))?)).map_err(invalid)?;
+    }
+    let html = format!(
+        "<!doctype html><html lang=nl><meta charset=utf-8><meta name=viewport content='width=device-width, initial-scale=1'><title>B7 venster</title><style>body{{font:16px system-ui;margin:2rem;max-width:1100px}}table{{border-collapse:collapse;width:100%}}td,th{{border:1px solid #888;padding:.5rem;text-align:left}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}</style><h1>B7 · één brongebonden venster</h1><p>Research Ready: false. RESEARCH_SAMPLING is een selectie-identiteit, geen voldoende onderzoekssample. Bronze-dekking, transactiesucces en Silver-toelating zijn afzonderlijk.</p><p><a href=campaign-report.json>JSON</a> · <a href=collection.json>Geverifieerd manifest</a></p><table><caption>Oorspronkelijke Rust-diagnoses per batch</caption><tr><th>Slots</th><th>Transactiestatus</th><th>Bronze-uitkomsten</th><th>Silver-feiten</th><th>Bronnen</th></tr>{rows}</table><details open><summary>Identiteit, aantallen, werkelijk geboekt verbruik en beperkingen</summary><pre>{}</pre></details></html>",
+        escape(std::str::from_utf8(&raw).map_err(invalid)?)
+    );
+    if raw.len() + html.len() > 1024 * 1024 {
+        return Err(invalid("B7_REPORT_LIMIT"));
+    }
+    Ok((raw, html.into_bytes()))
+}
+
+#[cfg(test)]
+mod campaign_publication_tests {
+    use super::*;
+    #[test]
+    fn expiry_during_inspection_prevents_collection_publication() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = temp.path().join("collection.json");
+        let expired = std::cell::Cell::new(false);
+        let mut gate = || {
+            if expired.get() {
+                Err(invalid("original processing deadline"))
+            } else {
+                Ok(())
+            }
+        };
+        let result = publish_seal(&output, &mut gate, |check| {
+            check()?;
+            expired.set(true);
+            Ok(json!({"inspection":"finished after deadline"}))
+        });
+        assert!(result.is_err());
+        assert!(!output.exists());
+        assert!(!temp.path().join("collection.json.sha256").exists());
+    }
 }
