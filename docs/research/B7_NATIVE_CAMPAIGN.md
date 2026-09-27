@@ -147,3 +147,34 @@ accessed `2026-09-24T13:36:05Z`, retained privately with URL/type/byte length:
 `of1.md` SHA256
 `61e6734e4fce60c347dea3887893c059d050ae73b4fad5f5265bcb669a21826d`.
 Cost documentation is not an acquisition lease.
+
+## First-campaign CLI initialization — 2026-09-27
+
+PR #143 merged as `b93d4be04a2014d1de97830e6b0a4a2b1b126188` with green
+technical main checks. The first actual `metadata-init` stopped before native
+campaign creation or any request: ordinary location admission required the
+`runs` parent that native campaign initialization itself creates. The stopped
+binary, lease, immutable plan and zero-consumption evidence remain sealed in
+`governance/b7-first-development-window-20260924/`.
+
+The owner authorized one bounded repair. Read-only admission recognizes only
+the exact first B7 run under its validated, canonical, outside-Git campaign
+root. Native creation still validates the full plan/lease/clock before creating
+its own anchor, journal, runs and work directories. No admission function creates
+parents. Existing/incomplete campaign state and create-once anchors cannot become
+fresh budgets; ordinary dataset location rules remain unchanged. The native
+guard repeats the sample/location check before any campaign mutation.
+
+The offline regression re-executes the test binary and exercises the actual
+`metadata-init` command dispatcher, JSON files and native store/guard. Only a
+`cfg(test)` authority seam permits the existing Fixture authority at a temporary
+root; production builds remain Approved-only with no feature/environment/CLI
+root override. This is offline initialization evidence, not authentic acquisition
+or a test of live transport. Historical location and receipt/hash tests remain.
+
+After protected repair integration and technical main verification, the existing
+first-window permission permits a new immutable repaired-binary/source/range
+plan and fresh lease. Old deadlines are never edited or reused. Matching fresh
+metadata is required before payload; any new substantive blocker stops this task.
+New evidence belongs to `governance/b7-metadata-init-20260927/`. No other window,
+evaluation inspection or B8 is authorized; #86 stays open and Unproven.

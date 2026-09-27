@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync,
-  readdirSync, realpathSync, rmSync,
+  readdirSync, realpathSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -162,5 +162,21 @@ describe('OF1 dataset CLI location admission is shared and offline', () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('usage:');
+  });
+
+  it('keeps the ordinary production CLI Approved-only despite the test-binary Fixture seam', () => {
+    const parent = join(scratch, 'authority');
+    mkdirSync(parent);
+    const root = join(parent, 'run');
+    const proposal = JSON.parse(invoke(['metadata-proposal', root, codeSha, toolchainSha]).stdout);
+    const plan = join(parent, 'plan.json');
+    const lease = join(parent, 'lease.json');
+    writeFileSync(plan, JSON.stringify(proposal.aggregate));
+    writeFileSync(lease, JSON.stringify({ schema: 'OF1_METADATA_LEASE_1', authority: { mode: 'FIXTURE' }, budget: proposal.metadata_budget }));
+    const result = invoke(['metadata-init', root, plan, lease]);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('metadata-init requires a separately approved immutable metadata lease');
+    expect(existsSync(root)).toBe(false);
   });
 });

@@ -15,7 +15,9 @@ is confirmed free, not a remaining cost blocker. Other windows, phase two,
 evaluation outcome inspection and paid services are not authorized. Sealed #142
 proposal fields remain historical; separate decision/lease records govern.
 B7/#86 stays open, In Progress / ACTIVE NOW / Unproven; Research Ready=false.
-No B8 work. Private dossier: `governance/b7-native-campaign-20260924/`.
+No B8 work. The 2026-09-27 initialization repair preserves the stopped execution in
+`governance/b7-first-development-window-20260924/`; new repair/execution evidence
+is separate in `governance/b7-metadata-init-20260927/`. Private binding dossier: `governance/b7-native-campaign-20260924/`.
 B6/#85 was delivered by #141 and read back Done / SUPERSEDED / Engineering
 Validation after scheduled sync 35980423282; no sync diagnosis is reopened.
 
@@ -124,7 +126,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** bounded B7/#86 offline [sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md), `In Progress / ACTIVE NOW / Unproven`; acquisition blocked pending a separately reviewed native sample/campaign binding and current cost confirmation. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; the two workspaces are the bounded MVP, not the later full workstation. B8 remains `LATER`; no data expansion is authorized.
+- **Current phase:** bounded B7/#86 offline [sampling proposal](research/B7_RESEARCH_SAMPLING_PROPOSAL.md), `In Progress / ACTIVE NOW / Unproven`; native binding delivered by #143. Its first metadata-init stopped before campaign creation/network because the run parent did not yet exist. The owner authorized the bounded CLI initialization repair and, after protected delivery, the same first DEVELOPMENT window under a fresh binary-bound lease. Archive access is confirmed free. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; the two workspaces are the bounded MVP, not the later full workstation. B8 remains `LATER`; only the first window and its unchanged caps above are authorized.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

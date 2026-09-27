@@ -6,6 +6,15 @@ const manifest = readFileSync('rust/of1-range-recorder/Cargo.toml');
 const lock = readFileSync('rust/of1-range-recorder/Cargo.lock');
 
 describe('OF1 default-off transport dependency boundary', () => {
+  it('pins the test-only metadata-init CLI subprocess without granting runtime or network capability', () => {
+    const path = 'src/bin/of1-acquire/metadata_init_tests.rs';
+    const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\n' })).toContain('unreviewed metadata-init CLI harness');
+    expect(validateOf1PlannerInputs(manifest, lock, { 'src/bin/of1-acquire.rs': source })).toContain('unexpected runtime capability in src/bin/of1-acquire.rs');
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\nstd::net::TcpStream' })).toContain(`unexpected runtime capability in ${path}`);
+  });
+
   it('accepts the reviewed manifest and lock', () => {
     expect(validateOf1PlannerInputs(manifest, lock, {})).toEqual([]);
   });
