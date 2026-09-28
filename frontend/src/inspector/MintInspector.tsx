@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { INPUT_NAMES, MAX_RESPONSE_BYTES, parseInspection, type Inspection, type Json, type Package } from '../../../src/mint-inspector/contract';
 
+import { DevelopmentCohortPanel } from './DevelopmentCohort';
 import { EventObservations } from './EventObservations';
 import { MintFlowUnavailable, MintFlowView, useMintFlow } from './MintFlow';
 import { type MintFlow } from '../../../src/mint-inspector/mint-flow';
@@ -88,7 +89,7 @@ function PackageDetails({ p, inspection }: { p: Package; inspection: Inspection 
 
 export function InspectionView({ inspection, flow }: { inspection: Inspection; flow?: MintFlow | 'STALE' | null }) {
   const [index, setIndex] = useState(0);
-  const [view, setView] = useState<'mint' | 'pilot'>('mint');
+  const [view, setView] = useState<'mint' | 'pilot' | 'cohort'>('mint');
   const [playing, setPlaying] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const t = inspection.timeline, p = t.transactions[index];
@@ -99,7 +100,7 @@ export function InspectionView({ inspection, flow }: { inspection: Inspection; f
     setPlaying(false);
   }
   const move = (next: number) => { pause(); setIndex(Math.max(0, Math.min(last, next))); };
-  const workspace = (next: 'mint' | 'pilot') => { pause(); setView(next); };
+  const workspace = (next: 'mint' | 'pilot' | 'cohort') => { pause(); setView(next); };
   useEffect(() => {
     if (!playing || view !== 'mint' || index >= last) return;
     // One presentation step per committed package; never catch up using wall-clock time.
@@ -121,8 +122,8 @@ export function InspectionView({ inspection, flow }: { inspection: Inspection; f
   return <>
     <header className="topbar"><span className="brand-mark">SQ</span><span>Solana Quant <strong>V2</strong></span><span className="local-only">LOKAAL · ALLEEN LEZEN</span></header>
     <main>
-      <nav className="workspace-nav" aria-label="Inspectieweergave"><button aria-pressed={view === 'mint'} onClick={() => workspace('mint')}>Mintdossier</button><button aria-pressed={view === 'pilot'} onClick={() => workspace('pilot')}>Datakwaliteit pilot</button></nav>
-      {view === 'pilot' ? <PilotQualityPanel key={`${inspection.inputs.collection}:${inspection.inputs.plan}`} bindings={inspection.inputs} mintCounts={t.counts} /> : <>
+      <nav className="workspace-nav" aria-label="Inspectieweergave"><button aria-pressed={view === 'mint'} onClick={() => workspace('mint')}>Mintdossier</button><button aria-pressed={view === 'pilot'} onClick={() => workspace('pilot')}>Datakwaliteit pilot</button><button aria-pressed={view === 'cohort'} onClick={() => workspace('cohort')}>DEVELOPMENT-cohort</button></nav>
+      {view === 'cohort' ? <DevelopmentCohortPanel /> : view === 'pilot' ? <PilotQualityPanel key={`${inspection.inputs.collection}:${inspection.inputs.plan}`} bindings={inspection.inputs} mintCounts={t.counts} /> : <>
       <div className="title-row"><div><p className="eyebrow">B6 · BRONGEBONDEN ENGINEERINGWEERGAVE</p><h1>Een mint. {t.counts.transactions} packages.</h1><p className="subtitle">Een controleerbaar lifecyclefragment uit bestaande OF1-evidence.</p></div><Badge tone="context">Post-hoc beschrijvend</Badge></div>
       <div className="mint-line"><span>MINT</span><code>{t.mint}</code></div>
       <p className="totals-caption">Volledig dossier · tellingen onafhankelijk van de replaypositie</p>

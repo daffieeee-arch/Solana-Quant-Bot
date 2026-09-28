@@ -7,6 +7,7 @@ import { request } from 'node:http';
 import { createMintInspector, loadInspection } from '../src/mint-inspector/server.js';
 import { fixtureInspection } from './fixtures/mint-inspector.js';
 import { fixturePilotQuality } from './fixtures/pilot-quality.js';
+import { fixtureDevelopmentCohort } from './fixtures/development-cohort.js';
 import { fixtureMintFlow } from './fixtures/mint-flow.js';
 import { object } from '../src/mint-inspector/contract.js';
 
@@ -80,6 +81,29 @@ async function registerOperations(fixture: Awaited<ReturnType<typeof setup>>) {
 afterEach(async () => { await Promise.all(servers.splice(0).map(s => s.close())); await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 
 describe('registered loopback mint adapter', () => {
+  it('publishes only the exact admitted DEVELOPMENT report, with no evaluation/export path or mutations', async () => {
+    const fixture = await setup(), { report, admissionBytes } = fixtureDevelopmentCohort();
+    const reportBytes = JSON.stringify(report), developmentCohort = {
+      report: { path: 'cohort.json', sha256: sha(reportBytes) }, admission: { path: 'admission.json', sha256: sha(admissionBytes.toString()) },
+    };
+    await writeFile(join(fixture.root, 'cohort.json'), reportBytes); await writeFile(join(fixture.root, 'admission.json'), admissionBytes);
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify({ ...fixture.registry, developmentCohort }));
+    const server = await createMintInspector(fixture.options); servers.push(server);
+    expect((await get(server.port, '/api/development-cohort')).body).toBe(reportBytes);
+    expect((await get(server.port, '/evidence/development-cohort.json')).body).toBe(reportBytes);
+    expect((await get(server.port, '/')).body).toContain(`inspector-snapshot-development-cohort" content="${sha(reportBytes)}`);
+    expect((await get(server.port, '/api/development-cohort', 'POST')).status).toBe(405);
+    for (const path of ['/api/development-cohort?ordinal=4', '/evidence/admission.json', '/evidence/evaluation.json', '/api/development-cohort?path=other'])
+      expect((await get(server.port, path)).status).toBe(404);
+    expect((await get(server.port, '/api/development-cohort', 'GET', { Origin: 'https://attacker.invalid' })).status).toBe(403);
+    // Re-registration of a valid JSON but changed snapshot fails before a listener exists.
+    report.windows[0].collection_sha256 = '0'.repeat(64);
+    const wrong = JSON.stringify(report); await writeFile(join(fixture.root, 'cohort.json'), wrong);
+    developmentCohort.report.sha256 = sha(wrong);
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify({ ...fixture.registry, developmentCohort }));
+    await expect(createMintInspector(fixture.options)).rejects.toThrow();
+    expect((await get(server.port, '/api/development-cohort')).body).toBe(reportBytes);
+  });
   it('publishes operational clocks only with the selected receipt and original report bindings', async () => {
     const fixture = await setup(), registry = await registerOperations(fixture), server = await createMintInspector(fixture.options); servers.push(server);
     const q = JSON.parse((await get(server.port, '/api/pilot-quality')).body);

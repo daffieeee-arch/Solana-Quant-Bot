@@ -5,6 +5,7 @@ use std::{fs, path::Path};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let value=match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice(){
+        ["development-cohort"]=>of1_bronze_decoder::development_cohort::read()?,
         ["continuation-proposal",plan,checkpoint,decoder,projector]=>continuation::proposal(Path::new(plan),Path::new(checkpoint),decoder,projector)?,
         ["continuation-admit",decision,authority]=>continuation::admit(Path::new(decision),Path::new(authority))?,
         ["continuation-check",decision,reserve]=>continuation::check(Path::new(decision),reserve.parse()?)?,

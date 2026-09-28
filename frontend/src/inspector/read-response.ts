@@ -19,7 +19,7 @@ export async function readJsonResponse(response: Response, limit: number, expect
 
 export class SnapshotMismatch extends Error { constructor() { super('SNAPSHOT_MISMATCH'); } }
 /** Capture a page pin before starting an asynchronous read. No polling or fallback snapshot. */
-export function registeredResponse(name: 'inspection' | 'pilot-quality' | 'mint-flow', limit: number): (r: Response) => Promise<unknown> {
+export function registeredResponse(name: 'inspection' | 'pilot-quality' | 'mint-flow' | 'development-cohort', limit: number): (r: Response) => Promise<unknown> {
   const pin = document.querySelector<HTMLMetaElement>(`meta[name="inspector-snapshot-${name}"]`)?.content;
   return async response => {
     if (!pin || !/^[0-9a-f]{64}$/.test(pin)) throw new Error('Unregistered response');

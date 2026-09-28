@@ -7,6 +7,8 @@ import { INPUT_NAMES, MAX_RESPONSE_BYTES, hash, object, parseInspection, type In
 import { MAX_PILOT_BYTES, PILOT_INPUT_NAMES, parsePilotQuality, type PilotInputName } from './pilot-quality.js';
 import { decoderClocks, operationalProjection, OPERATION_INPUT_NAMES, type OperationInputName } from './operations.js';
 import { parseMintFlow } from './mint-flow.js';
+import { MAX_COHORT_BYTES } from './development-cohort.js';
+import { bindDevelopmentCohort } from './cohort-binding.js';
 
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const fail = (): never => { throw new Error('INSPECTOR_INPUT_UNAVAILABLE'); };
@@ -88,7 +90,20 @@ export async function loadInspection(root: string, registryPath: string) {
       report: JSON.parse(flowBytes.toString('utf8')) }, inspection)));
     if (flowResponse.length > MAX_RESPONSE_BYTES) fail();
   }
-  return { inspection, response, bytes, pilotResponse, pilotBytes, flowBytes, flowResponse, operationBytes };
+  let cohortBytes: Buffer | undefined;
+  if (registry.developmentCohort !== undefined) {
+    const pins = object(registry.developmentCohort);
+    if (Object.keys(pins).sort().join(',') !== 'admission,report') fail();
+    const admitted = {} as Record<'report' | 'admission', Buffer>;
+    for (const name of ['report', 'admission'] as const) {
+      const pin = object(pins[name]); hash(pin.sha256);
+      admitted[name] = await registeredFile(root, pin.path, MAX_COHORT_BYTES);
+      if (sha256(admitted[name]) !== pin.sha256) fail();
+    }
+    bindDevelopmentCohort(admitted.report, admitted.admission);
+    cohortBytes = admitted.report;
+  }
+  return { inspection, response, bytes, pilotResponse, pilotBytes, flowBytes, flowResponse, operationBytes, cohortBytes };
 }
 
 export async function createMintInspector(options: { dataRoot: string; registryPath: string; staticDirectory: string; port: number }) {
@@ -96,6 +111,10 @@ export async function createMintInspector(options: { dataRoot: string; registryP
   const input = await loadInspection(options.dataRoot, options.registryPath);
   const staticRoot = await directory(options.staticDirectory);
   const routes = new Map<string, { bytes: Buffer; type: string }>();
+  if (input.cohortBytes) {
+    routes.set('/api/development-cohort', { bytes: input.cohortBytes, type: 'application/json' });
+    routes.set('/evidence/development-cohort.json', { bytes: input.cohortBytes, type: 'application/json' });
+  }
   routes.set('/api/inspection', { bytes: input.response, type: 'application/json' });
   for (const name of INPUT_NAMES) routes.set(`/evidence/${name}.json`, { bytes: input.bytes[name], type: 'application/json' });
   if (input.pilotResponse) {
@@ -111,7 +130,7 @@ export async function createMintInspector(options: { dataRoot: string; registryP
   const html = (await registeredFile(staticRoot, 'inspector.html', 65536)).toString('utf8');
   if (!html.includes('</head>') || html.includes('name="inspector-snapshot-')) fail();
   // A page pins its immutable API bytes. A restarted adapter cannot silently replace its snapshot.
-  const pins = [['inspection', input.response], ['pilot-quality', input.pilotResponse], ['mint-flow', input.flowResponse]] as const;
+  const pins = [['inspection', input.response], ['pilot-quality', input.pilotResponse], ['mint-flow', input.flowResponse], ['development-cohort', input.cohortBytes]] as const;
   const meta = pins.map(([name, bytes]) => `<meta name="inspector-snapshot-${name}" content="${bytes ? sha256(bytes) : 'UNAVAILABLE'}">`).join('');
   routes.set('/', { bytes: Buffer.from(html.replace('</head>', `${meta}</head>`)), type: 'text/html' });
   const assets = await readdir(join(staticRoot, 'assets'));
