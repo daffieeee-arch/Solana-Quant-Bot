@@ -12,16 +12,20 @@ explicit continuation; the other three use #147's ordinary atomic-part route.
 Sealed completion evidence: `governance/b7-phase1-development-completion-20260928/`.
 The earlier two collections and their 76 facts remain unchanged.
 
-The owner authorizes one offline [DEVELOPMENT cohort view](research/B7_DEVELOPMENT_COHORT.md)
-over exactly those four manifest hashes. Rust verifies original publications,
-physical/logical hashes and successful atomic parents; Python only summarizes
-admitted facts and concrete buy-first-half /sell-second-half pairs. Original
-producers remain original producers. No Raw redecode, acquisition, new admission,
-evaluation output inspection, phase two or B8. Generic B7 analytical readers
-remain denied; the new route has no caller-controlled cohort/root/allow flag.
-New evidence: `governance/b7-development-cohort-20260928/`. #86 stays open /
-Unproven; technical delivery and Projects administration remain separate.
-Research Ready=false. Earlier dated decisions below are historical scope.
+The offline [DEVELOPMENT cohort view](research/B7_DEVELOPMENT_COHORT.md) from
+#148 retains the same four manifest hashes and 122 facts. The next bounded
+increment inventories original Bronze Pump-instruction positions and existing
+diagnoses, using the same native fixed-snapshot admission. It distinguishes
+1,559 unique instructions from probes, failed parents, trade facts and event
+CPIs. The versioned `DEVELOPMENT_INSTRUCTION_COVERAGE_1` rules keep all four
+negative conclusions UNAVAILABLE; the existing 2 /1 /1 /1 positive pair counts
+are unchanged. No Raw redecode, new protocol interpretation/admission, acquisition,
+evaluation visibility, phase two or B8. Generic B7 readers remain denied.
+New evidence: `governance/b7-instruction-coverage-20260928/`; #148's sealed
+`governance/b7-development-cohort-20260928/` remains unchanged. #86 stays open /
+Unproven, Research Ready=false. CodeQL alert #4 stays separately open; this task
+does not suppress or resolve it. Technical delivery and Projects administration
+remain separate. Earlier dated decisions below are historical scope.
 
 **B7 native campaign preparation, 2026-09-24:** the owner accepted #142's
 frozen feasibility design and authorized [minimal native campaign binding](research/B7_NATIVE_CAMPAIGN.md).

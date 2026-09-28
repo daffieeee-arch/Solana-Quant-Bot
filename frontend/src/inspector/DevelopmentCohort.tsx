@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { InstructionCoveragePanel } from './InstructionCoverage';
 import { MAX_COHORT_BYTES, parseDevelopmentCohort, type DevelopmentCohort, type CohortFact } from '../../../src/mint-inspector/development-cohort';
 import { object } from '../../../src/mint-inspector/contract';
 import { registeredResponse, SnapshotMismatch } from './read-response';
@@ -39,6 +40,7 @@ export function DevelopmentCohortView({ report }: { report: DevelopmentCohort })
         </> : <p>Selecteer een feit of paar om de bronbindingen te inspecteren. Er wordt niets buiten de geregistreerde snapshot geopend.</p>}
       </article>
     </section>
+    <InstructionCoveragePanel cohort={report} ordinal={ordinal} />
     <section className="quality-coverage"><h2>Dekking, diagnoses en onbekenden</h2>
       <p>Bronze-decodering, transactiesucces en Silver-toelating zijn afzonderlijke stappen. Failures blijven evidence en leveren geen toegelaten handelsfeiten. Nul ontbrekende Raw-slots bewijst geen volledige Pump-dekking.</p>
       <p><strong>UNPROVEN</strong> · Volledige semantische dekking. <strong>GAP</strong> betreft ontbrekende verwachte brondekking; <strong>QUARANTINED</strong> betreft aanwezige maar afgewezen evidence. <strong>UNAVAILABLE</strong> betekent onbekend, nooit nul.</p>

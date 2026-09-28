@@ -1,3 +1,4 @@
+import { fixtureInstructionCoverage } from './fixtures/instruction-coverage.js';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, writeFile, readFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -81,6 +82,27 @@ async function registerOperations(fixture: Awaited<ReturnType<typeof setup>>) {
 afterEach(async () => { await Promise.all(servers.splice(0).map(s => s.close())); await Promise.all(roots.splice(0).map(p => rm(p, { recursive: true, force: true }))); });
 
 describe('registered loopback mint adapter', () => {
+  it('publishes instruction coverage only when bound to the registered native inventory and same cohort', async () => {
+    const fixture = await setup(), f = fixtureInstructionCoverage();
+    const values = { cohort: f.cohortBytes, cohortAdmission: f.cohort.admissionBytes, instructions: Buffer.from(JSON.stringify(f.report)), instructionAdmission: f.admissionBytes };
+    const pins: Record<string, { path: string; sha256: string }> = {};
+    for (const [name, bytes] of Object.entries(values)) { await writeFile(join(fixture.root, name + '.json'), bytes); pins[name] = { path: name + '.json', sha256: sha(bytes.toString()) }; }
+    const registry = { ...fixture.registry, developmentCohort: { report: pins.cohort, admission: pins.cohortAdmission }, developmentInstructions: { report: pins.instructions, admission: pins.instructionAdmission } };
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify(registry));
+    const server = await createMintInspector(fixture.options); servers.push(server);
+    expect((await get(server.port, '/api/development-instructions')).body).toBe(values.instructions.toString());
+    expect((await get(server.port, '/evidence/development-instructions.json')).body).toBe(values.instructions.toString());
+    expect((await get(server.port, '/')).body).toContain(`inspector-snapshot-development-instructions" content="${pins.instructions.sha256}`);
+    for (const method of ['POST','PUT','DELETE']) expect((await get(server.port, '/api/development-instructions', method)).status).toBe(405);
+    for (const path of ['/api/development-instructions?ordinal=4','/api/development-instructions?path=evaluation','/evidence/instructionAdmission.json']) expect((await get(server.port, path)).status).toBe(404);
+    expect((await get(server.port, '/api/development-instructions', 'GET', { Origin:'https://attacker.invalid' })).status).toBe(403);
+    f.report.cohort_report_sha256 = '0'.repeat(64);
+    const wrong = JSON.stringify(f.report); await writeFile(join(fixture.root, 'instructions.json'), wrong); pins.instructions.sha256 = sha(wrong);
+    await writeFile(join(fixture.root, 'registry.json'), JSON.stringify(registry));
+    await expect(createMintInspector(fixture.options)).rejects.toThrow();
+    expect((await get(server.port, '/api/development-instructions')).body).toBe(values.instructions.toString());
+  });
+
   it('publishes only the exact admitted DEVELOPMENT report, with no evaluation/export path or mutations', async () => {
     const fixture = await setup(), { report, admissionBytes } = fixtureDevelopmentCohort();
     const reportBytes = JSON.stringify(report), developmentCohort = {
