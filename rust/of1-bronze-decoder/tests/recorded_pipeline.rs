@@ -1219,6 +1219,7 @@ fn assert_reserved_processing_denied(
             window: 4,
             plan_sha256: "a".repeat(64),
             worker_sha256s: vec!["b".repeat(64); 3],
+            evaluation: None,
         },
         &SystemClock.sample().unwrap(),
     )
@@ -1293,6 +1294,7 @@ fn b7_native_sample_reaches_atomic_bronze_silver_and_denies_unapproved_output() 
                 window: 0,
                 plan_sha256: sha256(&bytes),
                 worker_sha256s: vec![binary.clone(), binary.clone(), binary],
+                evaluation: None,
             },
             &SystemClock.sample().unwrap(),
         )
@@ -1419,4 +1421,70 @@ fn export_part_fixture(variable: &str, large_slot: u64, ordinary: bool) {
         report::receipt_part_inventory(&h.root, 4 + large_slot).unwrap()["parts"],
         2
     );
+}
+
+#[test]
+fn sealed_evaluation_source_fixture() {
+    let Some(export) = std::env::var_os("COLUMNAR_EVALUATION_FIXTURE_DIR") else {
+        return;
+    };
+    let parent = PathBuf::from(export);
+    let ordinal = std::env::var("COLUMNAR_EVALUATION_ORDINAL")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+    assert!(ordinal < 16);
+    fs::create_dir_all(&parent).unwrap();
+    let campaign = parent.join("campaign");
+    let sample = of1_range_recorder::b7::sample(ordinal, &campaign).unwrap();
+    if ordinal == 8 {
+        use of1_range_recorder::{
+            campaign::{Guard, PhaseApproval},
+            durable::{Clock, SystemClock},
+        };
+        let status = Guard::status(&campaign).unwrap();
+        Guard::admit_phase2(
+            &sample,
+            PhaseApproval {
+                authority: Authority::Fixture,
+                phase_one_evidence_sha256: "f".repeat(64),
+                phase_one_ledger_sha256: status["ledger_sha256"].as_str().unwrap().into(),
+            },
+            &SystemClock.sample().unwrap(),
+        )
+        .unwrap();
+    }
+    let mut h = Harness::new_sample(Some(sample.clone()), None);
+    h.fixture_object_bytes = 4 * 1024 * 1024;
+    h.fixture_payload_budget = 2 * 1024 * 1024;
+    let payloads = (0..16)
+        .map(|i| {
+            if ordinal == 4 && i == 0 {
+                parity_payload(
+                    sample.start_slot + i,
+                    &(0..131)
+                        .map(|j| if j % 2 == 0 { "sell" } else { "failed_sell" })
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                fixture_payload_at(
+                    sample.start_slot + i,
+                    if i == 0 { Some("sell") } else { None },
+                )
+            }
+        })
+        .collect::<Vec<_>>();
+    h.metadata_slots(&payloads);
+    h.admit_slots(16);
+    for (i, raw) in payloads.iter().enumerate() {
+        h.publish(4 + i as u64, raw);
+    }
+    let mut plan = batch_plan(&h, 1, 16);
+    plan.slot_part_profile = Some(report::PART_PROFILE.into());
+    plan.validate_sources().unwrap();
+    fs::write(
+        parent.join(format!("plan-{ordinal:02}.json")),
+        serde_json::to_vec_pretty(&plan).unwrap(),
+    )
+    .unwrap();
 }

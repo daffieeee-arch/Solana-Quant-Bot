@@ -4,7 +4,23 @@
 
 ## Mission and success criterion
 
-**Current bounded task, 2026-09-28:** the four phase-1 DEVELOPMENT windows
+**B7 method freeze and offline shield, 2026-09-28:** the owner accepted the unchanged
+method hash `493835145514ed99b3a8858be948f094d5a549f925a493baf6e047abfc8dbd75`.
+See [the bounded evaluation route](research/B7_EVALUATION_SHIELD.md). The separate
+acceptance record is in `governance/b7-evaluation-shield-20260928/`; the original
+`governance/b7-testability-decision-20260928/` remains sealed. This task permits
+only fixtures and already admitted DEVELOPMENT data, no authentic evaluation
+processing/access or acquisition. Processing and final visibility require separate
+source/method/software-bound decisions; application shielding is not an OS barrier
+against the file owner. The existing method review and 45 scenarios are reused.
+The four DEVELOPMENT windows remain 64 slots /80,541 packages /9,505 failures /
+122 facts. All four have positive pair witnesses; unavailable negative certification
+does not erase those witnesses. One eventual final assessment, no B8/model work,
+#86 open /Unproven and Research Ready=false. Next fixed ordinal 4 remains unexecuted.
+The implementation/review/gate outcomes are recorded in the new private dossier.
+
+
+**Previous bounded delivery, 2026-09-28:** the four phase-1 DEVELOPMENT windows
 (ordinals 0–3) are complete under the fixed B7 selection. They contain 64 slots,
 80,541 packages, 9,505 failed transactions and 122 admitted Silver facts
 (57 /19 /13 /33). The first collection retains its twelve original slots and
@@ -13,8 +29,7 @@ Sealed completion evidence: `governance/b7-phase1-development-completion-2026092
 The earlier two collections and their 76 facts remain unchanged.
 
 The offline [DEVELOPMENT cohort view](research/B7_DEVELOPMENT_COHORT.md) from
-#148 retains the same four manifest hashes and 122 facts. The next bounded
-increment inventories original Bronze Pump-instruction positions and existing
+#148 retains the same four manifest hashes and 122 facts. The #149 increment inventories original Bronze Pump-instruction positions and existing
 diagnoses, using the same native fixed-snapshot admission. It distinguishes
 1,559 unique instructions from probes, failed parents, trade facts and event
 CPIs. The versioned `DEVELOPMENT_INSTRUCTION_COVERAGE_1` rules keep all four
@@ -174,7 +189,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows are complete; the current authorized increment is their exact-snapshot, offline descriptive cohort view. No further acquisition, evaluation inspection or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
+- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows are complete; the current authorized increment freezes the accepted B7 method and proves separate sealed processing/final release with offline fixtures. No further acquisition, evaluation inspection or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

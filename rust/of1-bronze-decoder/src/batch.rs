@@ -111,10 +111,12 @@ impl Plan {
         if let Some(profile) = &self.slot_part_profile {
             let (sample, _) = campaign_sample(self)?.ok_or_else(|| invalid("PARTS_REQUIRE_B7"))?;
             if profile != report::PART_PROFILE
-                || sample
-                    .b7
-                    .as_ref()
-                    .is_none_or(|b| b.cohort_role != "DEVELOPMENT")
+                || sample.b7.as_ref().is_none_or(|b| {
+                    !matches!(
+                        b.cohort_role.as_str(),
+                        "DEVELOPMENT" | "RESERVED_EVALUATION"
+                    )
+                })
                 || self.batches.iter().any(|b| b.slots.len() != 1)
             {
                 return Err(invalid("BATCH_PART_PROFILE_OR_WINDOW"));
@@ -424,6 +426,11 @@ fn execute_selected(
     }
     if let Some(part) = report.get("slot_part") {
         execution["slot_part"] = part.clone();
+    }
+    if let Some((guard, sample)) = &campaign
+        && let Some(a) = guard.evaluation_processing(sample).map_err(invalid)?
+    {
+        execution["evaluation_processing"] = serde_json::to_value(a).map_err(invalid)?;
     }
     let execution =
         resources::bounded_json(&execution, "EXECUTION_JSON", resources::MAX_EXECUTION_BYTES)?;

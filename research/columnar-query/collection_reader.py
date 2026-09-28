@@ -120,7 +120,7 @@ def plan_inventory(plan):
         if plan['slot_part_profile']!='OF1_ATOMIC_SLOT_PARTS_128_V1' or len(sources)!=1 or any(len(b['slots'])!=1 for b in batches):
             raise ValueError('unsupported bounded native part profile')
         sample=next(iter(sources.values())).get('sample_identity') or {}
-        if (sample.get('b7') or {}).get('cohort_role')!='DEVELOPMENT':
+        if (sample.get('b7') or {}).get('cohort_role') not in ['DEVELOPMENT','RESERVED_EVALUATION']:
             raise ValueError('native B7 DEVELOPMENT sample required for ordinary parts')
     return sources,logical,batches
 
@@ -133,6 +133,8 @@ def load_collection(path):
     if regular_bytes(pathlib.Path(str(manifest_path)+'.sha256'),65).decode().strip()!=sha(raw):
         raise ValueError('collection publication/hash mismatch')
     manifest=json.loads(raw,object_pairs_hook=pairs_unique)
+    if any(((s.get('sample_identity') or {}).get('b7') or {}).get('cohort_role')=='RESERVED_EVALUATION' for s in manifest.get('plan',{}).get('sources',[])):
+        raise ValueError('B7_EVALUATION_READ_NOT_AUTHORIZED')
     if manifest.get('schema')!='OF1_BATCH_COLLECTION_1' or manifest.get('research_ready') is not False:
         raise ValueError('unsupported collection schema / Research Ready promotion')
     _,logical,planned=plan_inventory(manifest['plan'])

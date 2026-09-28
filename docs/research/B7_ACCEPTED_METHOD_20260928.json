@@ -1,0 +1,85 @@
+{
+  "schema": "B7_RECURRENCE_METHOD_DRAFT_1",
+  "status": "DRAFT_FOR_OWNER_FREEZE",
+  "changes_to_accepted_design": [],
+  "research_ready": false,
+  "execution_authorized": false,
+  "evaluation_access_authorized": false,
+  "source_report_sha256": "80d8f6fb0d10fa7c210fb4bd6e9fe4d1bdbb8b19539fa7fd021394d03f3bf415",
+  "selection_sha256": "085d33c70ad504a9e14378629df7ec584c88826dc918f4eafb780bb44c824782",
+  "coverage_rule": "DEVELOPMENT_INSTRUCTION_COVERAGE_1",
+  "estimand": "Window-level presence of an admitted same-mint buy in first eight slots and admitted sell in last eight slots in the frozen Rust-admitted event tape, separately per epoch-half stratum. Not all actual Pump trades.",
+  "certification_interpretation": "The accepted negative gate deliberately withholds some fully observed tape zeros when existing evidence could hide non-admitted trades. Keep this conservative coarsening; do not relabel the estimand market-wide. The resulting identification interval can be wider than the sharp interval for the admitted tape.",
+  "unit": "One fixed 16-slot window; different atomic packages for the two halves; one positive window irrespective of number of matched mints.",
+  "label_precedence": [
+    {
+      "label": "POSITIVE",
+      "value": "1",
+      "requires": "At least one original successful admitted buy fact in [start,start+8) and sell fact in [start+8,start+16), same reported mint, different source-bound packages; valid sample/source/fact/parent/instruction/event links.",
+      "coverage": "Uncertainty elsewhere cannot negate a valid existential witness. Invalid identity or witness is not rescued by apparent pair counts."
+    },
+    {
+      "label": "NEGATIVE_CERTIFIED",
+      "value": "0",
+      "requires": "No admitted pair after complete verified window processing, with no potentially hiding successful/unknown-parent rejected, unexplained or unbound event-layout instruction and no missing program/location/CPI context under the unchanged coverage rule.",
+      "not_enough": "An empty result, no detected gap, a generic WRONG_DISCRIMINATOR probe, index absence or failed transaction alone cannot establish this label."
+    },
+    {
+      "label": "UNKNOWN",
+      "value": null,
+      "requires": "All other cases without a valid positive witness; preserve every assigned window and explicit reason.",
+      "reasons": ["NOT_ACQUIRED", "GAP", "QUARANTINED", "SEMANTIC_UNAVAILABLE", "SOURCE_OR_IDENTITY_FAILURE"],
+      "no_complete_case_analysis": true
+    }
+  ],
+  "separate_outcomes": {
+    "engineering": "Integrity/resource/execution failures remain failures, not hypothesis evidence; stop for the applicable decision. Never silently replace a window.",
+    "statistical": "INSUFFICIENT_SAMPLE if the fixed final width exceeds 0.50 or required validity/contamination gates fail. No such final outcome is assigned now.",
+    "hypothesis": "This precision assessment has no null/effect threshold and performs no baseline test, market-edge falsification, training or profitability assessment."
+  },
+  "censoring_and_time": "No outside halo. First/last eight slots define the fixed within-window question; later trades are not chased. Full lifecycle is censored/unknown. Chain positions define halves; acquisition/processing/report clocks are excluded. Historical availability, actionability, latency and execution opportunity remain UNAVAILABLE.",
+  "denominators": {
+    "DEVELOPMENT_assigned": 8,
+    "RESERVED_EVALUATION_assigned": 8,
+    "pooling": false,
+    "known_negative": "8-k-m",
+    "unknowns": "Remain in fixed denominator; never imputed or dropped",
+    "already_inspected_development": "Four positive witnesses available; not untouched holdout; no population estimate claimed"
+  },
+  "final_rule": {
+    "single_final_look": true,
+    "identification": "[k/8,(k+m)/8]",
+    "radius": "sqrt(ln(40)/16)",
+    "interval": "[max(0,k/8-radius),min(1,(k+m)/8+radius)]",
+    "width_target": "0.50",
+    "acceptance_stratum": "RESERVED_EVALUATION",
+    "source_and_semantic_gates": "Valid immutable source/sample/admission bindings for every known label; unchanged fixed design; no contaminated evaluation. Publish engineering status separately.",
+    "passing_precision_scenarios": [[0,0],[8,0]],
+    "sufficient_scope": "Only the bounded event-tape estimate, conditional on sampling assumptions and all validity gates; not full B7/B8 or Research Ready",
+    "no_optional_stopping": "No interim sufficiency calculation, favorable-outcome extension, replacement, threshold/horizon change or repeated final evaluation"
+  },
+  "assumptions": [
+    "Preregistered deterministic SHA256 rank modeled as uniform sampling without replacement inside each fixed finite stratum; not demonstrated randomization.",
+    "Nominal 95 percent per-stratum bound, not a simultaneous guarantee across both strata.",
+    "Fixed population binary tape outcomes under frozen decoder/protocol rules; UNKNOWN includes conservative withheld certifications.",
+    "No IID-mint or nonoverlap-implies-temporal-independence claim. Design-based finite-population interpretation is conditional on the declared sampling model.",
+    "One epoch, separate earlier/later populations, 32-slot embargo and preserved exclusions. No cross-regime generalization or DEVELOPMENT-to-evaluation pooling."
+  ],
+  "freeze_artifact_required": [
+    "Owner-approved method version/hash and immutable decision record before evaluation visibility",
+    "Accepted selection and cohort/rank/stage identities; no change",
+    "Exact decoder/admission/coverage/label software identities and source manifests used at execution; actual mixed producer provenance retained",
+    "Read policy and tested allowlist denying unapproved evaluation exports, aggregates, logs, errors and browser/API paths",
+    "Single final assessment boundary, contamination register, fixed n and threshold",
+    "Explicit evidence/cost limits: no prices, return, fill, actionability or fee model is supplied by this event-only question"
+  ],
+  "sequence": [
+    "Freeze this methodological interpretation under B7; this is not Gold/model execution.",
+    "Separately review technical shielding using DEVELOPMENT/fixtures without evaluation outcomes. Current route remains DEVELOPMENT ordinals 0-3 only.",
+    "Obtain explicit bounded execution and evaluation-visibility authority; follow unchanged stage/rank order and integrity/resource triggers. This draft grants none.",
+    "Keep evaluation records and outcome-bearing diagnostics/quality reports/aggregates sealed until one final assessment. Acquisition integrity metadata alone must not reveal outcomes.",
+    "Compute every assigned label and both stratum intervals once at the fixed final boundary; publish unknowns, source gates and outcome. Register accidental exposure; do not redraw or call contaminated data untouched.",
+    "Use accepted sufficiency result as the B8 entry input; any later B8 baseline additionally needs its own PIT/observation/cost/experiment contract and authority. No automatic model work or repeat use as untouched evaluation."
+  ],
+  "remaining_technical_gate": "Existing #148/#149 access intentionally cannot evaluate RESERVED_EVALUATION. A separately authorized bounded implementation/review is required before execution; do not add a generic allow-B7 switch."
+}

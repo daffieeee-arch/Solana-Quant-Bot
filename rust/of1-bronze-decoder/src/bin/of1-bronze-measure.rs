@@ -11,6 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let root = PathBuf::from(&args[0]);
+    of1_bronze_decoder::evaluation::deny_source(&root)?;
     let sequences = args[1..]
         .iter()
         .map(|v| {

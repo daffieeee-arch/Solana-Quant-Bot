@@ -4,6 +4,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() != 3 && args.len() != 4 {
         return Err("usage: of1-bronze-batch PLAN BATCH_ID OUTPUT [PART_ORDINAL]".into());
     }
+    of1_bronze_decoder::evaluation::deny_plan(std::path::Path::new(&args[0]))?;
     let result = if let Some(part) = args.get(3) {
         of1_bronze_decoder::batch::execute_part(
             std::path::Path::new(&args[0]),

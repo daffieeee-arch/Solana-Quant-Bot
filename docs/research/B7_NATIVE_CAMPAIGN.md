@@ -2,6 +2,14 @@
 
 > **Document status: ACTIVE — bounded native campaign; conditional second-window execution.** 2026-09-24. #86 remains open / Unproven; Research Ready=false. No B8 labels, evaluation outcomes or Cohort Explorer expansion.
 
+## Current offline evaluation preparation
+
+The 2026-09-28 [accepted method and sealed evaluation route](B7_EVALUATION_SHIELD.md)
+supersede the earlier implementation-time statement that no such route exists.
+Only offline implementation/fixtures are authorized. Acquisition, real evaluation
+processing and final visibility still require separate exact decisions. Earlier
+execution permissions below remain historical and cannot be reused.
+
 ## Owner decisions, without rewriting the proposal
 
 The owner accepted #142's **feasibility design**, bound to private

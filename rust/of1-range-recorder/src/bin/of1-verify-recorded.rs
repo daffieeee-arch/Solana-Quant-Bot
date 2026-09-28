@@ -7,6 +7,17 @@ use std::{error::Error, path::Path};
 
 fn run() -> Result<bool, Box<dyn Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
+    if let Some(root) = args.first() {
+        let run = of1_range_recorder::monitor::read_run_context(Path::new(root))?;
+        if let Some(sample) = run
+            .aggregate_plan
+            .sample_identity
+            .as_ref()
+            .filter(|s| s.b7.is_some())
+        {
+            of1_range_recorder::campaign::development_processing_only(sample)?;
+        }
+    }
     let report = match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         [root, "--inspect-json" | "--inspect-html"] => inspect_recorded(Path::new(root))?,
         [root] => verify_recorded(Path::new(root), None)?,

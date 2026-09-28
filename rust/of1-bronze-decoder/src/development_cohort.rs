@@ -203,10 +203,22 @@ impl Reader {
         hash: &str,
         start: usize,
     ) -> io::Result<()> {
+        self.slots_checked(root, slots, plan, hash, start, &mut || Ok(()))
+    }
+    fn slots_checked(
+        &mut self,
+        root: &Path,
+        slots: &[Value],
+        plan: &batch::Plan,
+        hash: &str,
+        start: usize,
+        check: &mut dyn FnMut() -> io::Result<()>,
+    ) -> io::Result<()> {
         if slots.len() != 16 - start {
             return Err(invalid("COHORT_SLOT_INVENTORY"));
         }
         for (batch, descriptor) in plan.batches.iter().skip(start).zip(slots) {
+            check()?;
             let (slot, _) = pinned(
                 root,
                 text(&descriptor["manifest_path"])?,
@@ -222,7 +234,9 @@ impl Reader {
                 if part["ordinal"] != i {
                     return Err(invalid("COHORT_PART_ORDER"));
                 }
+                check()?;
                 self.part(root, part, plan, hash, batch, Some(i))?;
+                check()?;
             }
         }
         Ok(())
@@ -347,6 +361,72 @@ fn read_mode(instructions: bool) -> io::Result<Value> {
         "reader_binary_sha256":of1_range_recorder::durable::acquisition::current_executable_sha256().map_err(invalid)?,
         "research_ready":false,"windows":windows});
     resources::bounded_json(&result, "COHORT_EXPORT", MAX_EXPORT)?;
+    Ok(result)
+}
+
+/// Private reuse by the separate exact-snapshot final release gate. No caller
+/// flag or changed DEVELOPMENT capability; original reader/export caps apply.
+pub(crate) fn evaluation_window(
+    root: &Path,
+    m: &Value,
+    check: &mut dyn FnMut() -> io::Result<()>,
+) -> io::Result<Value> {
+    let sample: SampleIdentity =
+        serde_json::from_value(m["sample_identity"].clone()).map_err(invalid)?;
+    sample.validate(978).map_err(invalid)?;
+    if sample.b7.as_ref().is_none_or(|b| {
+        b.cohort_role != "RESERVED_EVALUATION"
+            || !of1_range_recorder::campaign::EVALUATION_WINDOWS.contains(&b.window_ordinal)
+    }) || m["state"] != "COMPLETE"
+        || m["schema"] != "OF1_PARTED_BATCH_COLLECTION_1"
+        || m["evaluation_processing"]["evaluation"]["method_sha256"]
+            != of1_range_recorder::campaign::METHOD_SHA256
+    {
+        return Err(invalid("RELEASED_WINDOW_IDENTITY"));
+    }
+    let p: batch::Plan = serde_json::from_value(m["plan"].clone()).map_err(invalid)?;
+    p.validate()?;
+    p.validate_sources()?;
+    if p.sources.len() != 1 || p.sources[0].sample_identity != m["sample_identity"] {
+        return Err(invalid("RELEASED_SOURCE"));
+    }
+    let statuses = m["transaction_status_counts"]
+        .as_object()
+        .ok_or_else(|| invalid("RELEASED_STATUS_PARTITION"))?;
+    let sum = statuses.values().try_fold(0_u64, |n, v| {
+        n.checked_add(collection::number(v)?)
+            .ok_or_else(|| invalid("STATUS_OVERFLOW"))
+    })?;
+    if sum != collection::number(&m["layers"]["bronze"]["rows"])? {
+        return Err(invalid("RELEASED_STATUS_PARTITION"));
+    }
+    // Sparse native count map, proven exhaustive by its total; missing metadata
+    // objects/null values fail above. An absent ERROR bin is then exactly zero.
+    let failures = statuses
+        .get("ERROR")
+        .map(collection::number)
+        .transpose()?
+        .unwrap_or(0);
+    let counts = json!({"packages":m["layers"]["bronze"]["rows"],"failures":failures,"silver_facts":m["layers"]["silver"]["rows"]});
+    let mut reader = Reader::new();
+    reader.inventory = Some(crate::instruction_inventory::Inventory::default());
+    reader.slots_checked(
+        root,
+        list(&m["slots"])?,
+        &p,
+        text(&m["plan_sha256"])?,
+        0,
+        check,
+    )?;
+    reader.verify_layers(&m["layers"])?;
+    let inventory = reader
+        .inventory
+        .take()
+        .ok_or_else(|| invalid("RELEASED_INVENTORY"))?
+        .finish(&counts)?;
+    let result = json!({"sample_identity":m["sample_identity"],"counts":counts,"layers":m["layers"],
+        "parts":reader.parts,"facts":reader.facts,"instruction_inventory":inventory,"research_ready":false});
+    resources::bounded_json(&result, "RELEASED_WINDOW", MAX_EXPORT)?;
     Ok(result)
 }
 
