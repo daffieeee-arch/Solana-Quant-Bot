@@ -12,7 +12,7 @@ export function fixtureDevelopmentCohort() {
         schema: 'SYNTHETIC_UI_FIXTURE', transaction_status: 'OK', atomic_observation_package: true, sample_identity: sample,
         source: { run_id: `fixture-${pin.ordinal}`, bindings: { sample_identity: sample, receipt_sha256: 'f'.repeat(64) } },
         event_reported: { mint_address: 'A'.repeat(32), is_buy: n === 0, token_amount_raw_u64: '18446744073709551615', quote_amount_raw_u64: '0' },
-        quote_mint_identity: 'UNKNOWN', quote_decimals: null, event_context: { selected_invocation: { outer_index: '1', inner_order: '0' } },
+        quote_mint_identity: 'UNKNOWN', quote_decimals: null, instruction_sha256: '1'.repeat(64), event_context: { event_cpi_sha256: '2'.repeat(64), selected_invocation: { outer_index: '1', inner_order: '0' } },
         bronze_record_sha256: sha(`${pin.ordinal}-${n}`) };
       const canonical_record_json = JSON.stringify(record);
       return { record, canonical_record_json, record_sha256: sha(canonical_record_json), part_id: '0' };

@@ -93,3 +93,96 @@ checks use authentic registered output, including keyboard and mobile layout.
 One independent review and mandatory protected delivery gates apply. The
 external dossier records exact reviewed commit, checks, report hash and screenshots.
 #86 remains open / Unproven; Projects synchronization follows the existing cadence.
+
+## Unique instruction inventory — DEVELOPMENT_INSTRUCTION_COVERAGE_1
+
+The bounded `development-instructions` native command uses the **same** four
+pins and original publication reader as above, without arguments, new protocol
+probes or Raw decoding. It reads the original Bronze instructions/diagnoses and
+checks a second Bronze logical stream against the verified collection, alongside
+all original Silver hashes. A result is published only after all four pass.
+
+An instruction identity is `source.run_id : Bronze record SHA256 : outer index :
+TOP or CPI inner_order` (zero-based). An identical repeated reference at that
+location is deduplicated; conflicting contents fail. Identical bytes at different
+locations remain different instructions. Missing location/program identity or
+missing CPI context is a separate package uncertainty, not a fabricated count.
+All known Pump-program instructions, including failed-parent declarations and
+recorded CPIs, remain present. Presence does not establish execution or privileges.
+
+Classification uses all existing bound evidence, in this precedence:
+
+| Exclusive instruction category | Required existing evidence |
+|---|---|
+| `ADMITTED_TRADE` | Original successful atomic Silver parent, exact trade location and instruction hash |
+| `SUPPORTING_EVENT_CPI` | The same fact's distinct event location/hash and recorded parent; never a second trade |
+| `REJECTED_TRADE` | Original trade-specific `NOT_ADMITTED` diagnosis, or `NOT_ADMITTED_DIAGNOSTIC_ONLY`, at this exact location/hash; original reasons retained |
+| `OTHER_INSTRUCTION` | Existing full `TRADE_EVENT_CPI_LAYOUT` compatibility at a recorded CPI, without a Silver link; proves a source-layout observation, not historical activation |
+| `UNEXPLAINED` | No conclusive existing instruction verdict |
+
+Generic `WRONG_DISCRIMINATOR` probe failures do not create rejected trades.
+The original trade diagnostics are discriminator-targeted (see `pump_buy.rs`,
+`pump_sell.rs`, `pump_nested_buy.rs`, `pump_buy_variants.rs` and
+`pump_buy_exact_quote_v2.rs`); this inventory does not repeat those decoders.
+An admitted fact takes precedence over nonmatching probes/other diagnostics.
+Multiple facts can share one trade instruction; each fact still has exactly one
+trade and one event link. Every exported original probe/diagnosis carries its
+Bronze JSON pointer and original-value hash. Source pointers retain the original
+receipt, Raw hash/range/CID, manifest part and decoder/writer identities.
+
+Python only counts this native inventory and checks unchanged original facts
+against the existing reviewed cohort report. Separate denominators are all
+packages, Pump-bearing packages, unique instruction positions, failed-parent
+instructions, probe references/distinct per-instruction probe values, diagnosis
+references, facts and package-context uncertainties. Exclusive categories sum to
+unique positions; reason counts can overlap and do not sum to that denominator.
+
+The versioned research boundary is deliberately conservative:
+
+- The unchanged admitted buy-first-half /sell-second-half pair in different
+  packages remains a **positive observation**.
+- No admitted pair is not an automatic negative observation.
+- Any non-failed/unknown-parent rejected, unexplained or unbound event-layout
+  instruction may hide a trade observation. Missing program/location/CPI context
+  outside known failed parents also prevents a negative conclusion: `UNAVAILABLE`.
+  This does not assert that an unknown instruction is a trade, assign an unknown
+  instruction to a mint, or infer a mint from its accounts.
+- Failed parents remain inventory evidence but cannot contribute successful facts.
+  No-gap detection alone creates no negative B8 label or sufficiency verdict.
+- These are inventory rules, not a requirement to solve every Pump variant before
+  further methodology. Evaluation stays blocked; no selection or dataset changes.
+
+Authentic inventory (same four completed snapshots):
+
+| Ordinal | Unique instructions | Silver trade | Supporting event | Other event-layout | Rejected trade | Unexplained |
+|---|---:|---:|---:|---:|---:|---:|
+| 0 | 615 | 57 | 57 | 93 | 78 | 330 |
+| 1 | 324 | 19 | 19 | 45 | 49 | 192 |
+| 2 | 295 | 13 | 13 | 70 | 87 | 112 |
+| 3 | 325 | 33 | 33 | 60 | 71 | 128 |
+| Total | 1559 | 122 | 122 | 268 | 285 | 762 |
+
+There are 755 Pump-bearing packages, 71 instructions with failed parents,
+1,559 probe references, 439 diagnosis references and three packages with missing
+CPI information. No duplicate instruction references were found in authentic
+inputs; that branch is fixture evidence. Potentially hiding package counts are
+227 /112 /122 /118, with negative conclusions UNAVAILABLE in every window.
+Existing pair counts 2 /1 /1 /1 and all 122 fact hashes remain unchanged.
+
+The private view adds window/category/reason filters, complete paginated rows,
+atomic-parent source inspection and downloadable JSON. Pagination limits display,
+not counting or completeness. Its registry additionally binds
+`developmentInstructions.report` and `.admission`; both are literal paths/hashes.
+The adapter verifies native inventory equality, existing cohort snapshot and all
+fact links before listening. Other B7 readers and arbitrary/evaluation routes
+remain denied. Existing mint, pilot and cohort output are retained.
+
+Reproduce under the approved offline/resource wrapper:
+
+```text
+python research/columnar-query/development_instructions.py ABSOLUTE_NATIVE_BINARY EXACT_BINARY_SHA256 /home/chupa/Solana-project/data-old-faithful-one/governance/b7-development-cohort-20260928/report/review/cohort.json b8308de7160baaf5c39805d0b4956dfe119f3b4e09298e6b8a3d037e05989486 NEW_EXTERNAL_OUTPUT_DIRECTORY
+```
+
+New create-only evidence: `governance/b7-instruction-coverage-20260928/`.
+The dossier records exact code/binary/report hashes, offline checks and authentic
+browser evidence. CodeQL alert #4 remains separately open and untouched.

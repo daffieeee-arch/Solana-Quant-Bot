@@ -72,6 +72,7 @@ fn header(v: &Value, pin: &Value, ordinal: usize) -> io::Result<()> {
 }
 
 struct Reader {
+    inventory: Option<crate::instruction_inventory::Inventory>,
     bronze: collection::Logical,
     silver: collection::Logical,
     exported_silver: collection::Logical,
@@ -84,6 +85,10 @@ impl Reader {
     fn verify_layers(&self, expected: &Value) -> io::Result<()> {
         if json!({"bronze":self.bronze.value(),"silver":self.silver.value()}) != *expected
             || self.exported_silver.value() != self.silver.value()
+            || self
+                .inventory
+                .as_ref()
+                .is_some_and(|i| i.logical.value() != self.bronze.value())
         {
             return Err(invalid("COHORT_LOGICAL_HASH_PARITY"));
         }
@@ -97,6 +102,7 @@ impl Reader {
     }
     fn new() -> Self {
         Self {
+            inventory: None,
             bronze: collection::Logical::default(),
             silver: collection::Logical::default(),
             exported_silver: collection::Logical::default(),
@@ -176,6 +182,11 @@ impl Reader {
             );
             Ok(())
         })?;
+        if let Some(inventory) = &mut self.inventory {
+            collection::rows(&decode.join("bronze.jsonl"), |raw, record| {
+                inventory.package(raw, record, part_id, &self.facts)
+            })?;
+        }
         self.parts.push(json!({"part_id":part_id,"batch_id":batch.batch_id,"source_id":batch.source_id,
             "parquet_manifest_path":parquet.join("manifest.json"),"parquet_manifest_sha256":descriptor["parquet_manifest_sha256"],
             "decode_directory":decode,"decoder_source_sha256":execution["decoder_source_sha256"],
@@ -241,6 +252,16 @@ fn plan(value: &Value, hash: &Value) -> io::Result<batch::Plan> {
 /// Any changed snapshot, missing binding/file, duplicate or failed parent denies
 /// the whole result. This function never writes to or resumes the campaign.
 pub fn read() -> io::Result<Value> {
+    read_mode(false)
+}
+
+/// The same four-manifest capability, with an existing-record instruction projection.
+/// # Errors
+/// Denies any identity, completeness or fact/instruction binding mismatch.
+pub fn read_instructions() -> io::Result<Value> {
+    read_mode(true)
+}
+fn read_mode(instructions: bool) -> io::Result<Value> {
     let pins: Value = serde_json::from_slice(PINS).map_err(invalid)?;
     let root = Path::new(b7::PRODUCTION_ROOT);
     if fs::canonicalize(root)? != root {
@@ -251,6 +272,9 @@ pub fn read() -> io::Result<Value> {
         let (m, base) = pinned(root, text(&pin["relative_manifest"])?, &pin["sha256"])?;
         header(&m, pin, i)?;
         let mut reader = Reader::new();
+        if instructions {
+            reader.inventory = Some(crate::instruction_inventory::Inventory::default());
+        }
         if i == 0 {
             if m["schema"] != "OF1_CONTINUED_BATCH_COLLECTION_1" {
                 return Err(invalid("COHORT_CONTINUED_REQUIRED"));
@@ -303,12 +327,22 @@ pub fn read() -> io::Result<Value> {
             reader.slots(&base, list(&m["slots"])?, &p, text(&m["plan_sha256"])?, 0)?;
         }
         reader.verify_layers(&m["layers"])?;
+        let inventory = reader
+            .inventory
+            .take()
+            .map(|v| v.finish(&pin["counts"]))
+            .transpose()?;
         windows.push(json!({"ordinal":i,"collection_sha256":pin["sha256"],"collection_path":base.join("collection.json"),
             "sample_identity":m["sample_identity"],"counts":pin["counts"],"layers":m["layers"],
             "coverage":m["completeness"],"slot_outcomes":m["slot_outcomes"],"pump_layout_outcomes":m["pump_layout_outcomes"],
-            "diagnosis_denominator":m["diagnosis_denominator"],"parts":reader.parts,"facts":reader.facts}));
+            "diagnosis_denominator":m["diagnosis_denominator"],"parts":reader.parts,"facts":if instructions {vec![]}else{reader.facts}}));
+        if let Some(inventory) = inventory {
+            windows
+                .last_mut()
+                .ok_or_else(|| invalid("INVENTORY_WINDOW"))?["instruction_inventory"] = inventory;
+        }
     }
-    let result = json!({"schema":"OF1_B7_DEVELOPMENT_ADMISSION_1","pins_sha256":sha256(PINS),
+    let result = json!({"schema":if instructions {"OF1_B7_DEVELOPMENT_INSTRUCTIONS_ADMISSION_1"}else{"OF1_B7_DEVELOPMENT_ADMISSION_1"},"pins_sha256":sha256(PINS),
         "selection_sha256":b7::SELECTION_SHA256,"reader_source_sha256":crate::source_sha256(),
         "reader_binary_sha256":of1_range_recorder::durable::acquisition::current_executable_sha256().map_err(invalid)?,
         "research_ready":false,"windows":windows});
