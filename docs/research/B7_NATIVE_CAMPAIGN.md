@@ -324,3 +324,21 @@ Evidence and eventual second-window result:
 Execution remains conditional on successful protected integration/main checks
 and a fresh native storage/previous-completion check. #86 is open / Unproven;
 Research Ready=false. The full-selection forecast grants no remaining acquisition.
+
+
+## Exact four-window read-only capability — 2026-09-28
+
+The later explicit owner decision permits the [DEVELOPMENT cohort view](B7_DEVELOPMENT_COHORT.md)
+of ordinals 0–3 only. The completion dossier is
+`governance/b7-phase1-development-completion-20260928/`. This is a separate
+read-only analysis permission, not a processing lease renewal or campaign budget
+reset. `of1-bronze-collection development-cohort` admits only the compiled fixed
+selection and four exact collection hashes, with no path/cohort override.
+It reads original manifest-listed output, preserves retained/continued producer
+identities, and publishes only after all four collections pass existing gates.
+Generic Python dataset/collection readers still refuse all B7; evaluation
+records, reports and aggregates remain outside the new capability.
+Analysis artifacts stay outside the campaign and Git in a bounded governance
+folder (report ≤256 MiB, temporary output ≤1 GiB, native export ≤16 MiB,
+900-second execution; existing host headroom and CPU/RAM limits). They do not
+modify or refund campaign charges. No acquisition or evaluation permission follows.

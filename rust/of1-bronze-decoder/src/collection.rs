@@ -51,7 +51,7 @@ impl Logical {
             hash: hash.to_owned(),
         })
     }
-    fn add(&mut self, bytes: &[u8]) -> io::Result<()> {
+    pub(crate) fn add(&mut self, bytes: &[u8]) -> io::Result<()> {
         // Ordered length-framed chain, independent of file/batch boundaries.
         // This is not presented as a physical-file SHA256.
         let mut framed = if self.rows == 0 {
@@ -73,7 +73,10 @@ impl Logical {
     }
 }
 
-fn rows(path: &Path, mut visit: impl FnMut(&[u8], &Value) -> io::Result<()>) -> io::Result<()> {
+pub(crate) fn rows(
+    path: &Path,
+    mut visit: impl FnMut(&[u8], &Value) -> io::Result<()>,
+) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file() || metadata.len() > resources::MAX_JSONL_BYTES as u64 {
         return Err(invalid("COLLECTION_JSONL_TYPE_SIZE"));
