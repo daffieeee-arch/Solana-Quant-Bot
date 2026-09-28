@@ -83,6 +83,8 @@ struct State {
     runs: BTreeMap<u64, Run>,
     processing: BTreeMap<u64, Processing>,
     phase2: Option<PhaseApproval>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    evaluation_release: Option<EvaluationRelease>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +101,8 @@ pub struct ProcessingApproval {
     pub window: u64,
     pub plan_sha256: String,
     pub worker_sha256s: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation: Option<EvaluationBinding>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -108,6 +112,8 @@ struct Processing {
     complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation: Option<Continuation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sealed_manifest_sha256: Option<String>,
 }
 
 /// One additional OFFLINE decision for the retained first-window checkpoint.
@@ -143,6 +149,408 @@ pub struct PhaseApproval {
     pub authority: Authority,
     pub phase_one_evidence_sha256: String,
     pub phase_one_ledger_sha256: String,
+}
+
+/// Exact owner-frozen method; its original DRAFT text is not rewritten.
+pub const METHOD_SHA256: &str = "493835145514ed99b3a8858be948f094d5a549f925a493baf6e047abfc8dbd75";
+pub const METHOD_ACCEPTANCE_SHA256: &str =
+    "3301a68c498911a598dac6037145a24add4008d598af69cd01a0f78dfb3d570c";
+pub const EVALUATION_WINDOWS: [u64; 8] = [4, 5, 6, 7, 12, 13, 14, 15];
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluationBinding {
+    #[serde(default)]
+    pub driver_files: BTreeMap<String, String>,
+    #[serde(default)]
+    pub python_sha256: String,
+    pub method_sha256: String,
+    pub acceptance_sha256: String,
+    pub previous_ledger_sha256: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluationRelease {
+    pub authority: Authority,
+    pub binding: EvaluationBinding,
+    pub manifests: BTreeMap<u64, String>,
+    pub unavailable: BTreeMap<u64, String>,
+    pub terminal_decision_sha256: Option<String>,
+    pub verifier_sha256: String,
+    pub assessment_software_sha256: String,
+    pub no_prior_outcome_access: bool,
+    pub single_final_assessment: bool,
+}
+fn validate_evaluation_binding(
+    sample: &SampleIdentity,
+    binding: Option<&EvaluationBinding>,
+) -> StoreResult<()> {
+    sample.validate(978)?;
+    let sample = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+    match (sample.cohort_role.as_str(), binding) {
+        ("DEVELOPMENT", None) => Ok(()),
+        ("RESERVED_EVALUATION", Some(b))
+            if EVALUATION_WINDOWS.contains(&sample.window_ordinal)
+                && b.method_sha256 == METHOD_SHA256
+                && b.acceptance_sha256 == METHOD_ACCEPTANCE_SHA256
+                && hex_hash(&b.previous_ledger_sha256)
+                && valid_driver(b) =>
+        {
+            Ok(())
+        }
+        _ => Err(StoreError::ReservedEvaluation),
+    }
+}
+/// Application worker boundary: evaluation children must have the approved
+/// native collector as parent. This is not protection against the OS data owner.
+pub const DRIVER_FILES: [&str; 4] = [
+    "collection_reader.py",
+    "collection_run.py",
+    "evaluation_run.py",
+    "manifest_reader.py",
+];
+fn valid_driver(b: &EvaluationBinding) -> bool {
+    b.driver_files
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        == DRIVER_FILES
+        && b.driver_files.values().all(|h| hex_hash(h))
+        && hex_hash(&b.python_sha256)
+}
+/// # Errors
+/// Bind only the existing local offline driver modules, never downloaded code.
+pub fn driver_files(path: &Path) -> StoreResult<BTreeMap<String, String>> {
+    let parent = path.parent().ok_or(StoreError::Identity)?;
+    if path.file_name().and_then(|n| n.to_str()) != Some("evaluation_run.py") {
+        return Err(StoreError::Identity);
+    }
+    DRIVER_FILES
+        .iter()
+        .map(|name| {
+            Ok((
+                (*name).into(),
+                sha256(&durable::read_bounded(&parent.join(name), 1024 * 1024)?),
+            ))
+        })
+        .collect()
+}
+/// # Errors
+/// Exact bounded executable identity; follows /proc PID/exe only for the parent.
+pub fn executable_file_hash(path: &Path) -> StoreResult<String> {
+    use sha2::Digest;
+    use std::io::Read;
+    let mut f = File::open(path)?;
+    if f.metadata()?.len() > 512 * 1024 * 1024 {
+        return Err(StoreError::Identity);
+    }
+    let mut h = sha2::Sha256::new();
+    let mut buf = [0; 8192];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", h.finalize()))
+}
+fn sealed_worker(binding: &EvaluationBinding) -> StoreResult<()> {
+    if !valid_driver(binding) {
+        return Err(StoreError::ReservedEvaluation);
+    }
+    let status = fs::read_to_string("/proc/self/status")?;
+    let parent = status
+        .lines()
+        .find_map(|l| l.strip_prefix("PPid:"))
+        .ok_or(StoreError::Identity)?
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| StoreError::Identity)?;
+    let args = fs::read(format!("/proc/{parent}/cmdline"))?;
+    let args = args.split(|b| *b == 0).collect::<Vec<_>>();
+    let script = Path::new(
+        std::str::from_utf8(args.get(1).ok_or(StoreError::Identity)?)
+            .map_err(|_| StoreError::Identity)?,
+    );
+    if driver_files(script)? != binding.driver_files
+        || executable_file_hash(Path::new(&format!("/proc/{parent}/exe")))? != binding.python_sha256
+    {
+        return Err(StoreError::ReservedEvaluation);
+    }
+    Ok(())
+}
+
+impl Guard {
+    /// # Errors
+    /// Processing consent binds the frozen method in addition to source plan,
+    /// cohort, worker binaries and unchanged limits. No implicit authority.
+    pub fn bound_processing_target(
+        sample: &SampleIdentity,
+        a: &ProcessingApproval,
+    ) -> StoreResult<String> {
+        validate_evaluation_binding(sample, a.evaluation.as_ref())?;
+        let base = Self::processing_target(sample, &a.plan_sha256, &a.worker_sha256s)?;
+        match &a.evaluation {
+            None => Ok(base),
+            Some(binding) => Ok(sha256(&bytes(&(
+                "OF1_B7_SEALED_PROCESSING_1",
+                base,
+                binding,
+            ))?)),
+        }
+    }
+    /// # Errors
+    /// Return immutable original processing provenance for a manifest only.
+    pub fn evaluation_processing(
+        &self,
+        sample: &SampleIdentity,
+    ) -> StoreResult<Option<ProcessingApproval>> {
+        let i = sample
+            .b7
+            .as_ref()
+            .ok_or(StoreError::Identity)?
+            .window_ordinal;
+        let p = self.state.processing.get(&i).ok_or(StoreError::Identity)?;
+        Ok(p.approval.evaluation.as_ref().map(|_| p.approval.clone()))
+    }
+    /// # Errors
+    /// Fixed final boundary only; proposals contain identities, never outcomes.
+    pub fn evaluation_release_proposal(
+        root: &Path,
+        assessment: &str,
+    ) -> StoreResult<EvaluationRelease> {
+        Self::evaluation_final_proposal(root, assessment, None)
+    }
+    /// # Errors
+    /// An explicit terminal decision can retain missing assigned windows; never
+    /// infer a negative, refund charges, replace a selection or admit a new phase.
+    pub fn evaluation_final_proposal(
+        root: &Path,
+        assessment: &str,
+        terminal: Option<&str>,
+    ) -> StoreResult<EvaluationRelease> {
+        let h: Header = read(&root.join("campaign.json"))?;
+        let g = Self::open(root, h.fixture)?;
+        let now = SystemClock.sample()?;
+        if g.state.evaluation_release.is_some()
+            || !hex_hash(assessment)
+            || (terminal.is_none()
+                && (0..16).any(|i| g.state.processing.get(&i).is_none_or(|p| !p.complete)))
+            || terminal.is_some_and(|h| !hex_hash(h))
+            || g.state
+                .processing
+                .values()
+                .any(|p| !p.complete && within_stage(p.active_stage(), &now).is_ok())
+        {
+            return Err(StoreError::ReservedEvaluation);
+        }
+        let mut manifests = BTreeMap::new();
+        let mut unavailable = BTreeMap::new();
+        let verifier = durable::acquisition::current_executable_sha256()?;
+        for i in EVALUATION_WINDOWS {
+            let Some(p) = g.state.processing.get(&i).filter(|p| p.complete) else {
+                if terminal.is_none() {
+                    return Err(StoreError::ReservedEvaluation);
+                }
+                unavailable.insert(
+                    i,
+                    if g.state.runs.contains_key(&i) {
+                        "PROCESSING_UNAVAILABLE"
+                    } else {
+                        "NOT_ACQUIRED"
+                    }
+                    .into(),
+                );
+                continue;
+            };
+            validate_evaluation_binding(
+                &b7::sample(usize::try_from(i).map_err(|_| fail())?, root).map_err(|_| fail())?,
+                p.approval.evaluation.as_ref(),
+            )?;
+            let hash = p
+                .sealed_manifest_sha256
+                .clone()
+                .ok_or(StoreError::Identity)?;
+            let raw = durable::read_bounded(
+                &root.join(format!("work/w{i:02}/collection.json")),
+                2 * 1024 * 1024,
+            )?;
+            if sha256(&raw) != hash {
+                return Err(StoreError::Identity);
+            }
+            manifests.insert(i, hash);
+        }
+        Ok(EvaluationRelease {
+            authority: Authority::Fixture,
+            binding: EvaluationBinding {
+                method_sha256: METHOD_SHA256.into(),
+                acceptance_sha256: METHOD_ACCEPTANCE_SHA256.into(),
+                previous_ledger_sha256: g.head_hash.clone(),
+                driver_files: BTreeMap::default(),
+                python_sha256: String::new(),
+            },
+            manifests,
+            unavailable,
+            terminal_decision_sha256: terminal.map(str::to_owned),
+            verifier_sha256: verifier,
+            assessment_software_sha256: assessment.into(),
+            no_prior_outcome_access: true,
+            single_final_assessment: true,
+        })
+    }
+    /// # Errors
+    /// Proposal hash is not an owner approval; exact final software and snapshots.
+    pub fn evaluation_release_target(a: &EvaluationRelease) -> StoreResult<String> {
+        if a.binding.method_sha256 != METHOD_SHA256
+            || a.binding.acceptance_sha256 != METHOD_ACCEPTANCE_SHA256
+            || !hex_hash(&a.binding.previous_ledger_sha256)
+            || !hex_hash(&a.verifier_sha256)
+            || !hex_hash(&a.assessment_software_sha256)
+            || !a.no_prior_outcome_access
+            || !a.single_final_assessment
+            || a.manifests
+                .keys()
+                .chain(a.unavailable.keys())
+                .copied()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>()
+                != EVALUATION_WINDOWS
+            || a.unavailable.keys().any(|i| a.manifests.contains_key(i))
+            || a.unavailable
+                .values()
+                .any(|s| !matches!(s.as_str(), "NOT_ACQUIRED" | "PROCESSING_UNAVAILABLE"))
+            || (!a.unavailable.is_empty() && a.terminal_decision_sha256.is_none())
+            || a.terminal_decision_sha256
+                .as_ref()
+                .is_some_and(|h| !hex_hash(h))
+            || a.manifests.values().any(|h| !hex_hash(h))
+        {
+            return Err(StoreError::ReservedEvaluation);
+        }
+        Ok(sha256(&bytes(&(
+            "OF1_B7_SINGLE_FINAL_RELEASE_1",
+            b7::SELECTION_SHA256,
+            &a.binding,
+            &a.manifests,
+            &a.unavailable,
+            &a.terminal_decision_sha256,
+            &a.verifier_sha256,
+            &a.assessment_software_sha256,
+            a.no_prior_outcome_access,
+            a.single_final_assessment,
+        ))?))
+    }
+    /// # Errors
+    /// Validate authority before re-verification; return its fixed boot deadline.
+    pub fn release_preflight(
+        root: &Path,
+        a: &EvaluationRelease,
+        at: &ClockSample,
+    ) -> StoreResult<u64> {
+        let expected = Self::evaluation_final_proposal(
+            root,
+            &a.assessment_software_sha256,
+            a.terminal_decision_sha256.as_deref(),
+        )?;
+        if expected.binding != a.binding
+            || expected.manifests != a.manifests
+            || expected.unavailable != a.unavailable
+            || expected.verifier_sha256 != a.verifier_sha256
+        {
+            return Err(StoreError::Identity);
+        }
+        let header: Header = read(&root.join("campaign.json"))?;
+        if matches!(a.authority, Authority::Fixture) != header.fixture {
+            return Err(StoreError::Identity);
+        }
+        let policy = ClockPolicy::standard();
+        validate_authority(
+            Some(&policy),
+            &a.authority,
+            &Self::evaluation_release_target(a)?,
+        )?;
+        let stage = make_stage(
+            Some(&policy),
+            &a.authority,
+            &StageBudget {
+                max_requests: 1,
+                max_response_entity_bytes_total: 1,
+                max_runtime_ms: 900_000,
+            },
+            a,
+            at,
+        )?;
+        Ok(stage.deadline_boot_ms)
+    }
+    /// # Errors
+    /// Commits once, only after caller re-verifies all bound immutable manifests.
+    /// Journal ambiguity/crashes retain existing charges and stop, never reset.
+    pub fn release_evaluation(
+        root: &Path,
+        a: EvaluationRelease,
+        at: &ClockSample,
+    ) -> StoreResult<()> {
+        let expected = Self::evaluation_final_proposal(
+            root,
+            &a.assessment_software_sha256,
+            a.terminal_decision_sha256.as_deref(),
+        )?;
+        if a.binding != expected.binding
+            || a.manifests != expected.manifests
+            || a.unavailable != expected.unavailable
+            || a.verifier_sha256 != expected.verifier_sha256
+        {
+            return Err(StoreError::Identity);
+        }
+        let target = Self::evaluation_release_target(&a)?;
+        let policy = ClockPolicy::standard();
+        validate_authority(Some(&policy), &a.authority, &target)?;
+        make_stage(
+            Some(&policy),
+            &a.authority,
+            &StageBudget {
+                max_requests: 1,
+                max_response_entity_bytes_total: 1,
+                max_runtime_ms: 900_000,
+            },
+            &a,
+            at,
+        )?;
+        let h: Header = read(&root.join("campaign.json"))?;
+        let mut g = Self::open(root, h.fixture)?;
+        if g.head_hash != a.binding.previous_ledger_sha256
+            || matches!(a.authority, Authority::Fixture) != h.fixture
+            || g.state.evaluation_release.is_some()
+        {
+            return Err(StoreError::Identity);
+        }
+        let mut n = g.state.clone();
+        n.evaluation_release = Some(a);
+        g.commit(n)
+    }
+    /// # Errors
+    /// Only the exact explicitly released snapshots are readable via this route.
+    pub fn released_evaluation(root: &Path) -> StoreResult<EvaluationRelease> {
+        let h: Header = read(&root.join("campaign.json"))?;
+        let g = Self::open(root, h.fixture)?;
+        let a = g
+            .state
+            .evaluation_release
+            .clone()
+            .ok_or(StoreError::ReservedEvaluation)?;
+        Self::evaluation_release_target(&a)?;
+        for (i, h) in &a.manifests {
+            if sha256(&durable::read_bounded(
+                &root.join(format!("work/w{i:02}/collection.json")),
+                2 * 1024 * 1024,
+            )?) != *h
+            {
+                return Err(StoreError::Identity);
+            }
+        }
+        Ok(a)
+    }
 }
 
 fn fail() -> StoreError {
@@ -344,9 +752,20 @@ impl Guard {
             {
                 return Err(fail());
             }
+            if state
+                .evaluation_release
+                .as_ref()
+                .is_some_and(|old| next.evaluation_release.as_ref() != Some(old))
+            {
+                return Err(fail());
+            }
             for (i, old) in &state.processing {
                 let new = next.processing.get(i).ok_or_else(fail)?;
-                if old.approval != new.approval
+                if old
+                    .sealed_manifest_sha256
+                    .as_ref()
+                    .is_some_and(|h| new.sealed_manifest_sha256.as_ref() != Some(h))
+                    || old.approval != new.approval
                     || old.stage != new.stage
                     || (old.complete && !new.complete)
                     || old
@@ -562,6 +981,9 @@ impl Guard {
         if canonical_new(run_root)? != expected {
             return Err(StoreError::Identity);
         }
+        if g.state.evaluation_release.is_some() {
+            return Err(StoreError::ReservedEvaluation);
+        }
         if create {
             if g.state.processing.values().any(|p| !p.complete)
                 || g.state.runs.contains_key(&binding.window_ordinal)
@@ -603,6 +1025,9 @@ impl Guard {
     /// # Errors
     /// The separately verified native payload lease is charged to the same run.
     pub fn admit_payload(&mut self, window: u64, lease: &str) -> StoreResult<()> {
+        if self.state.evaluation_release.is_some() {
+            return Err(StoreError::ReservedEvaluation);
+        }
         let mut n = self.state.clone();
         let r = n.runs.get_mut(&window).ok_or(StoreError::Identity)?;
         if r.payload_lease.is_some() {
@@ -615,6 +1040,9 @@ impl Guard {
     /// Permanently charge before the run's own reservation and before any network.
     /// A failed/unfinished attempt has exactly the same charge as a successful one.
     pub fn reserve(&mut self, window: u64, attempt: u64, allowance: u64) -> StoreResult<()> {
+        if self.state.evaluation_release.is_some() {
+            return Err(StoreError::ReservedEvaluation);
+        }
         let mut n = self.state.clone();
         let r = n.runs.get_mut(&window).ok_or(StoreError::Identity)?;
         if attempt != r.requests || r.attempts.contains_key(&attempt) {
@@ -682,17 +1110,27 @@ impl Guard {
         approval: ProcessingApproval,
         at: &ClockSample,
     ) -> StoreResult<()> {
-        development_processing_only(sample)?;
+        validate_evaluation_binding(sample, approval.evaluation.as_ref())?;
         let mut g = Self::for_recorded(sample, run_root)?;
         let binding = sample.b7.as_ref().ok_or(StoreError::Identity)?;
-        if approval.window != binding.window_ordinal
+        if g.state.evaluation_release.is_some()
+            || approval.window != binding.window_ordinal
             || g.state.processing.contains_key(&approval.window)
             || matches!(approval.authority, Authority::Fixture) != g.header.fixture
         {
             return Err(StoreError::Identity);
         }
-        let target =
-            Self::processing_target(sample, &approval.plan_sha256, &approval.worker_sha256s)?;
+        if let Some(binding) = &approval.evaluation {
+            sealed_worker(binding)?;
+            if binding.previous_ledger_sha256 != g.head_hash
+                || (0..approval.window)
+                    .any(|i| g.state.processing.get(&i).is_none_or(|p| !p.complete))
+                || g.state.evaluation_release.is_some()
+            {
+                return Err(StoreError::Identity);
+            }
+        }
+        let target = Self::bound_processing_target(sample, &approval)?;
         let policy = ClockPolicy::standard();
         validate_authority(Some(&policy), &approval.authority, &target)?;
         let stage = make_stage(
@@ -715,6 +1153,7 @@ impl Guard {
                 stage,
                 complete: false,
                 continuation: None,
+                sealed_manifest_sha256: None,
             },
         );
         g.commit(n)?;
@@ -768,7 +1207,8 @@ impl Guard {
             .ok_or(StoreError::Identity)?
             .window_ordinal;
         let p = g.state.processing.get(&i).ok_or(StoreError::Identity)?;
-        if i != 0 || p.complete || p.continuation.is_some() {
+        if g.state.evaluation_release.is_some() || i != 0 || p.complete || p.continuation.is_some()
+        {
             return Err(StoreError::Identity);
         }
         let context = serde_json::json!({"ledger_sha256":g.head_hash,
@@ -833,6 +1273,10 @@ impl Guard {
         a: ContinuationApproval,
         at: &ClockSample,
     ) -> StoreResult<()> {
+        if self.state.evaluation_release.is_some() {
+            return Err(StoreError::ReservedEvaluation);
+        }
+
         let target = Self::continuation_target(sample, &a)?;
         let p = self
             .state
@@ -942,7 +1386,6 @@ impl Guard {
         plan_sha: &str,
         additional: u64,
     ) -> StoreResult<Self> {
-        development_processing_only(sample)?;
         let g = Self::for_recorded(sample, run_root)?;
         if !g.header.fixture {
             verify_worker_address_space()?;
@@ -953,13 +1396,18 @@ impl Guard {
             .processing
             .get(&b.window_ordinal)
             .ok_or(StoreError::Identity)?;
+        validate_evaluation_binding(sample, p.approval.evaluation.as_ref())?;
+        if p.approval.evaluation.is_some() {
+            sealed_worker(p.approval.evaluation.as_ref().ok_or(StoreError::Identity)?)?;
+        }
         let (active_plan, active_workers) = p
             .continuation
             .as_ref()
             .map_or((&p.approval.plan_sha256, &p.approval.worker_sha256s), |c| {
                 (&c.approval.plan_sha256, &c.approval.worker_sha256s)
             });
-        if p.complete
+        if g.state.evaluation_release.is_some()
+            || p.complete
             || active_plan != plan_sha
             || !active_workers.contains(&durable::acquisition::current_executable_sha256()?)
         {
@@ -1054,6 +1502,20 @@ impl Guard {
             return Err(StoreError::Identity);
         }
         within_stage(p.active_stage(), &SystemClock.sample()?)?;
+        if p.approval.evaluation.is_some() {
+            let raw = durable::read_bounded(
+                &self.root.join(format!("work/w{window:02}/collection.json")),
+                2 * 1024 * 1024,
+            )?;
+            let v: serde_json::Value = serde_json::from_slice(&raw).map_err(|_| fail())?;
+            if v["state"] != "COMPLETE"
+                || v["evaluation_processing"]
+                    != serde_json::to_value(&p.approval).map_err(|_| fail())?
+            {
+                return Err(StoreError::Identity);
+            }
+            p.sealed_manifest_sha256 = Some(sha256(&raw));
+        }
         p.complete = true;
         self.commit(n)
     }
@@ -1068,7 +1530,8 @@ impl Guard {
         let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
         let header: Header = read(&Path::new(&b.campaign_root).join("campaign.json"))?;
         let mut g = Self::open(Path::new(&b.campaign_root), header.fixture)?;
-        if g.state.phase2.is_some()
+        if g.state.evaluation_release.is_some()
+            || g.state.phase2.is_some()
             || g.head_hash != approval.phase_one_ledger_sha256
             || !hex_hash(&approval.phase_one_evidence_sha256)
             || (0..8).any(|i| g.state.processing.get(&i).is_none_or(|p| !p.complete))
@@ -1260,6 +1723,7 @@ mod tests {
             window: 0,
             plan_sha256: "a".repeat(64),
             worker_sha256s: vec![durable::acquisition::current_executable_sha256().unwrap(); 3],
+            evaluation: None,
         };
         let at = ClockSample {
             boot_id: "HISTORICAL_CONTINUATION_FIXTURE_BOOT".into(),
@@ -1285,6 +1749,7 @@ mod tests {
                 stage,
                 complete: false,
                 continuation: None,
+                sealed_manifest_sha256: None,
             },
         );
         g.commit(next).unwrap();
@@ -1538,5 +2003,114 @@ mod tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod evaluation_tests {
+    use super::*;
+    #[test]
+    fn terminal_decision_retains_all_assigned_unknowns_and_closes_writers() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("campaign");
+        drop(
+            Guard::new(
+                &root,
+                true,
+                Limits {
+                    free: 0,
+                    ..Limits::production()
+                },
+            )
+            .unwrap(),
+        );
+        assert!(Guard::evaluation_release_proposal(&root, &"f".repeat(64)).is_err());
+        assert!(Guard::evaluation_final_proposal(&root, &"f".repeat(64), Some("invalid")).is_err());
+        let a = Guard::evaluation_final_proposal(&root, &"f".repeat(64), Some(&"e".repeat(64)))
+            .unwrap();
+        assert!(a.manifests.is_empty());
+        assert_eq!(a.unavailable.len(), 8);
+        assert!(a.unavailable.values().all(|r| r == "NOT_ACQUIRED"));
+        let mut changed = a.clone();
+        changed.unavailable.remove(&4);
+        assert!(Guard::evaluation_release_target(&changed).is_err());
+        let before = Guard::status(&root).unwrap();
+        Guard::release_evaluation(&root, a.clone(), &SystemClock.sample().unwrap()).unwrap();
+        assert!(Guard::release_evaluation(&root, a, &SystemClock.sample().unwrap()).is_err());
+        let after = Guard::status(&root).unwrap();
+        assert_eq!(before["attempts_reserved"], after["attempts_reserved"]);
+        assert_eq!(
+            before["entity_bytes_reserved"],
+            after["entity_bytes_reserved"]
+        );
+        assert_eq!(
+            Guard::released_evaluation(&root).unwrap().unavailable.len(),
+            8
+        );
+        let s = b7::sample(0, &root).unwrap();
+        assert!(
+            Guard::acquisition(
+                &s,
+                &root.join("runs/w00"),
+                &"a".repeat(64),
+                &"b".repeat(64),
+                true,
+                true
+            )
+            .is_err()
+        );
+        assert!(!root.join("runs/w00").exists());
+    }
+    #[test]
+    fn frozen_method_and_distinct_processing_authority() {
+        assert_eq!(
+            sha256(include_bytes!(
+                "../../../docs/research/B7_ACCEPTED_METHOD_20260928.json"
+            )),
+            METHOD_SHA256
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let sample = b7::sample(4, &tmp.path().join("campaign")).unwrap();
+        let mut a = ProcessingApproval {
+            authority: Authority::Fixture,
+            window: 4,
+            plan_sha256: "a".repeat(64),
+            worker_sha256s: vec!["b".repeat(64); 3],
+            evaluation: None,
+        };
+        assert!(Guard::bound_processing_target(&sample, &a).is_err());
+        a.evaluation = Some(EvaluationBinding {
+            method_sha256: METHOD_SHA256.into(),
+            acceptance_sha256: METHOD_ACCEPTANCE_SHA256.into(),
+            previous_ledger_sha256: "c".repeat(64),
+            driver_files: DRIVER_FILES
+                .iter()
+                .map(|n| ((*n).into(), "d".repeat(64)))
+                .collect(),
+            python_sha256: "e".repeat(64),
+        });
+        let target = Guard::bound_processing_target(&sample, &a).unwrap();
+        assert_ne!(
+            target,
+            Guard::processing_target(&sample, &a.plan_sha256, &a.worker_sha256s).unwrap()
+        );
+        let mut changed = a.clone();
+        changed.evaluation.as_mut().unwrap().method_sha256 = "0".repeat(64);
+        assert!(Guard::bound_processing_target(&sample, &changed).is_err());
+        let mut changed = sample.clone();
+        changed.b7.as_mut().unwrap().cohort_role = "DEVELOPMENT".into();
+        assert!(Guard::bound_processing_target(&changed, &a).is_err());
+        let mut changed = sample.clone();
+        changed.b7.as_mut().unwrap().selection_sha256 = "0".repeat(64);
+        assert!(Guard::bound_processing_target(&changed, &a).is_err());
+        let development = b7::sample(0, &tmp.path().join("campaign")).unwrap();
+        assert!(Guard::bound_processing_target(&development, &a).is_err());
+        a.evaluation = None;
+        a.window = 0;
+        assert_eq!(
+            Guard::bound_processing_target(&development, &a).unwrap(),
+            Guard::processing_target(&development, &a.plan_sha256, &a.worker_sha256s).unwrap()
+        );
+        assert!(Guard::released_evaluation(&tmp.path().join("absent")).is_err());
     }
 }

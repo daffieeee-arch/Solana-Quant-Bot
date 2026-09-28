@@ -7,6 +7,7 @@ pub mod collection;
 pub mod continuation;
 pub mod delivery;
 pub mod development_cohort;
+pub mod evaluation;
 mod instruction_inventory;
 pub mod proto;
 pub mod pump;
@@ -30,6 +31,7 @@ pub fn source_sha256() -> String {
         include_bytes!("lib.rs").as_slice(),
         include_bytes!("archive.rs"),
         include_bytes!("batch.rs"),
+        include_bytes!("evaluation.rs"),
         include_bytes!("collection.rs"),
         include_bytes!("development_cohort.rs"),
         include_bytes!("instruction_inventory.rs"),

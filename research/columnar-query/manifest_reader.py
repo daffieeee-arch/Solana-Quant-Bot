@@ -209,6 +209,8 @@ def load_manifest(root):
     if regular_bytes(root / "COMPLETE", 65).decode().strip() != sha(raw):
         raise ValueError("incomplete dataset / manifest hash mismatch")
     manifest = json.loads(raw, object_pairs_hook=pairs_unique)
+    if ((manifest.get("sample_identity") or {}).get("b7") or {}).get("cohort_role")=="RESERVED_EVALUATION":
+        raise ValueError("B7_EVALUATION_READ_NOT_AUTHORIZED")
     if manifest["schema"] not in ["OF1_PARQUET_DATASET_1", "OF1_PARQUET_DATASET_2"]:
         raise ValueError("unsupported dataset schema")
     if manifest["schema"] == "OF1_PARQUET_DATASET_2":

@@ -4,6 +4,32 @@ use of1_range_recorder::sha256;
 use std::{fs, path::Path};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|s| s.starts_with("evaluation-")) {
+        return evaluation(&args);
+    }
+    if let Some(command) = args.first() {
+        if matches!(
+            command.as_str(),
+            "parts-inventory"
+                | "parts-verify"
+                | "parts-seal-slot"
+                | "parts-complete"
+                | "plan-check"
+                | "verify-batch"
+                | "inspect"
+                | "seal"
+                | "campaign-complete"
+        ) {
+            of1_bronze_decoder::evaluation::deny_plan(Path::new(
+                args.get(1).ok_or("plan required")?,
+            ))?;
+        }
+        if command == "source" {
+            of1_bronze_decoder::evaluation::deny_source(Path::new(
+                args.get(1).ok_or("source required")?,
+            ))?;
+        }
+    }
     let value=match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice(){
         ["development-instructions"]=>of1_bronze_decoder::development_cohort::read_instructions()?,
         ["development-cohort"]=>of1_bronze_decoder::development_cohort::read()?,
@@ -70,5 +96,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _=>return Err("usage: of1-bronze-collection source RUN | plan-check PLAN | verify-batch PLAN ID DECODE | inspect PLAN ROOT | seal PLAN ROOT NEW_MANIFEST".into()),
     };
     println!("{}", serde_json::to_string_pretty(&value)?);
+    Ok(())
+}
+
+fn evaluation(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    // No error body/panic payload from a sealed operation reaches its caller.
+    std::panic::set_hook(Box::new(|_| {}));
+    let result = (|| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        of1_range_recorder::campaign::verify_worker_address_space()?;
+        Ok(
+            match args
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .as_slice()
+            {
+                ["evaluation-proposal", plan, driver, python] => {
+                    of1_bronze_decoder::evaluation::proposal(
+                        Path::new(plan),
+                        Path::new(driver),
+                        Path::new(python),
+                    )?
+                }
+                ["evaluation-release-proposal", root, assessment] => {
+                    let a = of1_range_recorder::campaign::Guard::evaluation_release_proposal(
+                        Path::new(root),
+                        assessment,
+                    )?;
+                    serde_json::json!({"approved":false,"target_sha256":of1_range_recorder::campaign::Guard::evaluation_release_target(&a)?,"binding":a})
+                }
+                ["evaluation-terminal-proposal", root, assessment, terminal] => {
+                    let a = of1_range_recorder::campaign::Guard::evaluation_final_proposal(
+                        Path::new(root),
+                        assessment,
+                        Some(terminal),
+                    )?;
+                    serde_json::json!({"approved":false,"target_sha256":of1_range_recorder::campaign::Guard::evaluation_release_target(&a)?,"binding":a})
+                }
+                ["evaluation-release", root, approval] => {
+                    of1_bronze_decoder::evaluation::release(Path::new(root), Path::new(approval))?
+                }
+                ["evaluation-read-window", root, ordinal] => {
+                    of1_bronze_decoder::evaluation::read_window(Path::new(root), ordinal.parse()?)?
+                }
+                ["evaluation-read-released", root] => {
+                    of1_bronze_decoder::evaluation::read_released(Path::new(root))?
+                }
+                _ => return Err("sealed usage".into()),
+            },
+        )
+    })();
+    if let Ok(v) = result {
+        println!("{}", serde_json::to_string(&v)?);
+    } else {
+        eprintln!("B7_EVALUATION_DENIED_OR_STOPPED");
+        std::process::exit(1);
+    }
+
     Ok(())
 }

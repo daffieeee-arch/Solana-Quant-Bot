@@ -128,6 +128,7 @@ pub fn seal_slot(path: &Path, root: &Path, id: &str) -> io::Result<Value> {
 
 /// # Errors
 /// All slots must be sealed. Existing charges and the original deadline remain binding.
+#[allow(clippy::too_many_lines)] // One atomic verification/publication sequence; unchanged limits.
 pub fn complete(path: &Path, root: &Path) -> io::Result<Value> {
     let (plan, hash, mut guard, sample) = gate(path, root, 5 * 1024 * 1024)?;
     let mut tick = || guard.processing_tick(&sample).map_err(invalid);
@@ -181,12 +182,15 @@ pub fn complete(path: &Path, root: &Path) -> io::Result<Value> {
             "raw_sha256":value["raw_sha256"],"part_count":value["parts"].as_array().map(Vec::len)}));
         children.push(json!({"manifest_path":format!("{}/slot.json",batch.output_directory),"sha256":sha256(&raw)}));
     }
-    let manifest = json!({"schema":"OF1_PARTED_BATCH_COLLECTION_1","state":"COMPLETE","plan":plan,"plan_sha256":hash,
+    let mut manifest = json!({"schema":"OF1_PARTED_BATCH_COLLECTION_1","state":"COMPLETE","plan":plan,"plan_sha256":hash,
         "profile":report::PART_PROFILE,"slot_outcomes":slots,"slots":children,"sample_identity":sample,
         "layers":{"bronze":bronze.value(),"silver":silver.value()},"transaction_status_counts":statuses,"pump_layout_outcomes":diagnoses,
         "diagnosis_denominator":"Outcomes, not distinct rejected instructions or transactions",
         "completeness":{"all_selected_slots_accounted":true,"missing_selected_raw_slots":0,"research_suitability":"NOT_ESTABLISHED"},
         "producer_source_sha256":crate::source_sha256(),"research_ready":false,"root_to_slot_membership":"UNAVAILABLE"});
+    if let Some(a) = guard.evaluation_processing(&sample).map_err(invalid)? {
+        manifest["evaluation_processing"] = serde_json::to_value(a).map_err(invalid)?;
+    }
     let raw = resources::bounded_json(&manifest, "PARTED_COLLECTION", 2 * 1024 * 1024)?;
     publish_exact(&root.join("collection.json"), &raw, &mut tick)?;
     publish_exact(
@@ -210,7 +214,13 @@ pub fn complete(path: &Path, root: &Path) -> io::Result<Value> {
     );
     resources::check_size("PARTED_HTML", html.len(), 1024 * 1024)?;
     publish_exact(&root.join("campaign-report.json"), &report_raw, &mut tick)?;
-    publish_exact(&root.join("index.html"), html.as_bytes(), &mut tick)?;
+    if sample
+        .b7
+        .as_ref()
+        .is_some_and(|b| b.cohort_role == "DEVELOPMENT")
+    {
+        publish_exact(&root.join("index.html"), html.as_bytes(), &mut tick)?;
+    }
     publish_exact(
         &root.join("campaign-report.COMPLETE"),
         sha256(&report_raw).as_bytes(),
