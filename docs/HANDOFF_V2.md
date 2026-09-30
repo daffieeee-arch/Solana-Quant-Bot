@@ -4,6 +4,23 @@
 
 ## Mission and success criterion
 
+**B7 evaluation preparation repair, 2026-09-30:** the owner authorizes one
+bounded repair of #150's missing public source/plan preparation path. The
+preflight stop is sealed in `governance/b7-first-evaluation-sealed-20260928T135734Z/`;
+no acquisition, processing or new campaign charges occurred there. The native
+preparation commands return only verified acquisition identities and a fixed
+plan; processing and visibility remain separate permissions. After protected
+integration and green technical main checks, the existing permission covers only
+phase 1 ordinal 4 / RESERVED_EVALUATION-rank 1 `[422802704,422802720)`:
+metadata 12 attempts /15,576,576 entity bytes /600s, matching sixteen payload
+ranges 48 /68,136,183 /1200s, then sealed atomic-part processing with one worker,
+4GiB /900s under unchanged campaign/resource caps and fresh leases. No final
+release, outcome inspection, other windows, phase two or B8. Execution status and
+review/gate evidence: `governance/b7-evaluation-preparation-20260930/`.
+Research Ready=false; #86 remains open /Unproven. Earlier scopes below retain
+their historical authorizations and do not override this bounded owner decision.
+
+
 **B7 method freeze and offline shield, 2026-09-28:** the owner accepted the unchanged
 method hash `493835145514ed99b3a8858be948f094d5a549f925a493baf6e047abfc8dbd75`.
 See [the bounded evaluation route](research/B7_EVALUATION_SHIELD.md). The separate
@@ -189,7 +206,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows are complete; the current authorized increment freezes the accepted B7 method and proves separate sealed processing/final release with offline fixtures. No further acquisition, evaluation inspection or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
+- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows are complete; the accepted method and sealed-processing fixture evidence remain unchanged. The 2026-09-30 owner decision above authorizes only the preparation repair and conditional ordinal-4 acquisition/sealed processing. No evaluation visibility, next window or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

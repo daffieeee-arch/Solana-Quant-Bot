@@ -111,6 +111,16 @@ fn evaluation(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                 .collect::<Vec<_>>()
                 .as_slice()
             {
+                ["evaluation-source", root] => {
+                    of1_bronze_decoder::evaluation::prepare_source(Path::new(root))?
+                }
+                ["evaluation-plan", source, decoder, projector] => {
+                    of1_bronze_decoder::evaluation::prepare_plan(
+                        Path::new(source),
+                        decoder,
+                        projector,
+                    )?
+                }
                 ["evaluation-proposal", plan, driver, python] => {
                     of1_bronze_decoder::evaluation::proposal(
                         Path::new(plan),

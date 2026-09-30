@@ -1479,6 +1479,11 @@ fn sealed_evaluation_source_fixture() {
     for (i, raw) in payloads.iter().enumerate() {
         h.publish(4 + i as u64, raw);
     }
+    // Evaluation preparation must cross the public CLI, not an internal plan helper.
+    if sample.b7.as_ref().unwrap().cohort_role == "RESERVED_EVALUATION" {
+        assert!(!parent.join(format!("plan-{ordinal:02}.json")).exists());
+        return;
+    }
     let mut plan = batch_plan(&h, 1, 16);
     plan.slot_part_profile = Some(report::PART_PROFILE.into());
     plan.validate_sources().unwrap();

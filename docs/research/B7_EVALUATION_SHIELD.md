@@ -1,7 +1,8 @@
 # B7 — accepted method and sealed evaluation processing
 
-> ACTIVE. Fixed campaign only. No acquisition, authentic evaluation processing,
-> evaluation visibility or B8 is authorized by this implementation.
+> ACTIVE. Fixed campaign only. Software never grants acquisition, processing or
+> visibility authority. The separately dated owner decision below permits only
+> conditional ordinal-4 acquisition and sealed processing; no visibility or B8.
 
 ## Method acceptance, 2026-09-28
 
@@ -119,3 +120,53 @@ fresh exact plans/source comparison/leases, available resources and the normal
 technical delivery gates are required. Detailed budget proposal and measured
 accounting belong to the private task dossier. #86 stays open / Unproven;
 Research Ready=false. No phase two or B8 begins here.
+
+
+## Native source/plan preparation repair — 2026-09-30
+
+The authentic preflight exposed a missing public preparation step: generic
+`source` correctly refused RESERVED_EVALUATION, while `evaluation-proposal`
+required an existing bound plan. The earlier fixture constructed that plan
+internally. The stop remains sealed under
+`governance/b7-first-evaluation-sealed-20260928T135734Z/`; no requests or new
+campaign charges occurred. That evidence is reused, not retried or overwritten.
+
+The narrowly scoped native commands are:
+
+```text
+of1-bronze-collection evaluation-source RUN
+of1-bronze-collection evaluation-plan SOURCE_PREPARATION_JSON DECODER_SHA PROJECTOR_SHA
+of1-bronze-collection evaluation-proposal PLAN DRIVER PYTHON
+```
+
+Run all three under the existing resource/address-space limits and network
+isolation. Save each successful JSON response as a new immutable file. Source
+preparation audits the original acquisition receipts, complete payload publication,
+fixed sample/cohort/location, registered campaign and completed predecessors.
+It emits only acquisition/source hashes, exact native sample identity, accepted
+method/acceptance, ledger and preparer identity. Plan preparation rechecks that
+entire record, rejecting changed/extra fields, and constructs one original
+sixteen-slot selection with one atomic-part batch per slot using native request
+sequences. It retains the existing workers/schema/source validation. Neither
+command creates a lease, campaign work directory, record, label or domain count.
+Errors use the existing fixed sealed CLI error; generic source/reader/export and
+direct worker denials remain intact. Separate processing approval revalidates
+source, method, software and current ledger before native admission.
+
+The fixture generator now publishes only synthetic acquisition receipts for
+reserved windows; it cannot supply a finished evaluation plan. The ordinary
+pipeline regression calls both public preparation commands, then the separate
+proposal/fixture authority and real evaluation_run. It tests changed receipts,
+cohort/source/hash/software/ledger substitutions, unchanged campaign state during
+preparation, missing approval, fixed error responses and early-read refusal.
+DEVELOPMENT continues through its existing route. No authentic evaluation data
+are used in tests and no protocol or Silver rule changes.
+
+The owner separately authorized only ordinal 4, after normal protected delivery
+and green technical main checks, under the unchanged source/ranges and limits in
+`governance/b7-evaluation-shield-20260928/report-delivered/next-step.json`
+(SHA256 `03276798777eb659e38c07ace367467fd06121d218314b3feb0e79dc636ff54d`).
+Fresh separate metadata/payload/processing records and leases are mandatory;
+final release remains unauthorized. The original proposal's false fields stay
+historical. New operational evidence, including any stop, belongs to
+`governance/b7-evaluation-preparation-20260930/`. No following window is authorized.
