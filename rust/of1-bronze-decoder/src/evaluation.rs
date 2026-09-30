@@ -13,6 +13,97 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Only immutable acquisition identities; no archival/domain decode or admission.
+/// # Errors
+/// Rejects incomplete acquisition, wrong cohort/location or campaign binding.
+pub fn prepare_source(root: &Path) -> io::Result<Value> {
+    let root = root.canonicalize()?;
+    let run = of1_range_recorder::monitor::read_run_context(&root)?;
+    let sample = run
+        .aggregate_plan
+        .sample_identity
+        .as_ref()
+        .ok_or_else(|| invalid("EVALUATION_REQUIRED"))?;
+    let guard = Guard::evaluation_preparation_context(sample, &root).map_err(invalid)?;
+    if run.snapshot.stage != "COMPLETE" || run.prepared.is_none() {
+        return Err(invalid("COMPLETE_ACQUISITION_REQUIRED"));
+    }
+    let mut source = batch::source_identity(&root)?;
+    let b = sample.b7.as_ref().ok_or_else(|| invalid("B7"))?;
+    source["source_id"] = json!(format!("b7-w{:02}", b.window_ordinal));
+    Ok(json!({
+        "schema":"OF1_B7_EVALUATION_SOURCE_1", "source":source,
+        "method_sha256":of1_range_recorder::campaign::METHOD_SHA256,
+        "acceptance_sha256":of1_range_recorder::campaign::METHOD_ACCEPTANCE_SHA256,
+        "ledger_sha256":guard.accounting().map_err(invalid)?["ledger_sha256"],
+        "preparer_sha256":of1_range_recorder::durable::acquisition::current_executable_sha256().map_err(invalid)?
+    }))
+}
+
+/// Construct the fixed full-window plan from a reverified preparation record.
+/// # Errors
+/// Refuses changed sources/roles/ledger/software, missing receipts or invalid workers.
+pub fn prepare_plan(source_path: &Path, decoder: &str, projector: &str) -> io::Result<Value> {
+    let saved: Value =
+        serde_json::from_slice(&read_limited(source_path, batch::MAX_PLAN_BYTES).map_err(invalid)?)
+            .map_err(invalid)?;
+    let root = Path::new(
+        saved["source"]["run_root"]
+            .as_str()
+            .ok_or_else(|| invalid("SOURCE_REQUIRED"))?,
+    );
+    let current = prepare_source(root)?;
+    if saved != current {
+        return Err(invalid("PREPARATION_CHANGED"));
+    }
+    let source: batch::Source =
+        serde_json::from_value(current["source"].clone()).map_err(invalid)?;
+    let run = of1_range_recorder::monitor::read_run_context(root)?;
+    let sample = run
+        .aggregate_plan
+        .sample_identity
+        .as_ref()
+        .ok_or_else(|| invalid("B7"))?;
+    let prepared = run
+        .prepared
+        .as_ref()
+        .ok_or_else(|| invalid("PAYLOAD_REQUIRED"))?;
+    let mut selections = Vec::new();
+    let mut batches = Vec::new();
+    for (i, slot) in (sample.start_slot..sample.end_slot_exclusive).enumerate() {
+        let request = prepared.requests().iter().find(|r| matches!(
+            r.kind, of1_range_recorder::durable::acquisition::RequestKind::CarRange { slot: s, .. } if s == slot
+        )).ok_or_else(|| invalid("SLOT_RECEIPT_REQUIRED"))?;
+        selections.push(batch::Selection {
+            source_id: source.source_id.clone(),
+            slot,
+            role: "ORIGINAL_SELECTION".into(),
+        });
+        batches.push(batch::Batch {
+            batch_id: format!("batch-{i:03}"),
+            source_id: source.source_id.clone(),
+            slots: vec![slot],
+            receipt_sequences: vec![request.sequence],
+            output_directory: format!("batch-{i:03}"),
+        });
+    }
+    let plan = batch::Plan {
+        schema: batch::SCHEMA.into(),
+        collection_id: format!("{}-sealed", source.source_id),
+        workers: batch::Workers {
+            batch_decoder_sha256: decoder.into(),
+            projector_sha256: projector.into(),
+        },
+        sources: vec![source],
+        logical_selection: selections,
+        batches,
+        slot_part_profile: Some(report::PART_PROFILE.into()),
+        research_ready: false,
+    };
+    plan.validate_sources()?;
+    serde_json::to_value(plan).map_err(invalid)
+}
+
 /// # Errors
 /// Public legacy commands cannot inspect reserved evaluation sources.
 pub fn deny_source(root: &Path) -> io::Result<()> {

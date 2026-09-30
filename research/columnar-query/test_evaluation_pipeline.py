@@ -61,12 +61,52 @@ def run(root, generator, decoder, projector, verifier, phase):
         env={**os.environ,'COLUMNAR_EVALUATION_FIXTURE_DIR':str(root),'COLUMNAR_EVALUATION_ORDINAL':str(ordinal)}
         subprocess.run([str(generator),'sealed_evaluation_source_fixture','--exact'],
                        env=env,capture_output=True,timeout=90,check=True)
-        path=root/f'plan-{ordinal:02}.json';p=json.loads(path.read_bytes())
-        p['workers']={'batch_decoder_sha256':digest(decoder),'projector_sha256':digest(projector)}
-        path.write_text(json.dumps(p,indent=2))
+        path=root/f'plan-{ordinal:02}.json'
         work=root/f'campaign/work/w{ordinal:02}'
         approval=root/f'approval-{ordinal:02}.json'
         if ordinal in [4,5,6,7,12,13,14,15]:
+            assert not path.exists(), 'fixture must not construct evaluation plan internally'
+            head=(root/'campaign/head.json').read_bytes()
+            source=native('evaluation-source',root/f'campaign/runs/w{ordinal:02}')
+            assert set(source)=={'schema','source','method_sha256','acceptance_sha256','ledger_sha256','preparer_sha256'}
+            source_path=root/f'source-{ordinal:02}.json';source_path.write_text(json.dumps(source))
+            p=native('evaluation-plan',source_path,digest(decoder),digest(projector))
+            assert not work.exists() and (root/'campaign/head.json').read_bytes()==head
+            path.write_text(json.dumps(p,indent=2))
+            if ordinal==4:
+                native('source',root/'campaign/runs/w04',ok=False)
+                native('evaluation-source',root/'campaign/runs/w03',ok=False)
+                assert set(source['source'])=={'source_id','run_root','run_id','bindings','sample_identity'}
+                assert set(source['source']['bindings'])=={'manifest_sha256','payload_manifest_sha256','aggregate_sha256','prepared_payload_sha256','metadata_receipt_sha256','receipts','sample_identity'}
+                receipt=root/'campaign/runs/w04'/source['source']['bindings']['receipts'][4]['path']
+                original=receipt.read_bytes()
+                try:
+                    receipt.write_bytes(original+b' ')
+                    # Valid JSON may have different physical bytes: the saved binding must fail.
+                    r=native('evaluation-plan',source_path,digest(decoder),digest(projector),ok=False)
+                    assert r.stdout==b'' and r.stderr==b'B7_EVALUATION_DENIED_OR_STOPPED\n'
+                    corrupt=json.loads(original);corrupt['sha256']='0'*64
+                    receipt.write_text(json.dumps(corrupt))
+                    r=native('evaluation-source',root/'campaign/runs/w04',ok=False)
+                    assert r.stdout==b'' and r.stderr==b'B7_EVALUATION_DENIED_OR_STOPPED\n'
+                finally:receipt.write_bytes(original)
+                for key in ['method_sha256','acceptance_sha256','ledger_sha256','preparer_sha256']:
+                    bad=copy.deepcopy(source);bad[key]='0'*64
+                    invalid=root/f'bad-preparation-{key}.json';invalid.write_text(json.dumps(bad))
+                    native('evaluation-plan',invalid,digest(decoder),digest(projector),ok=False)
+                for change in ['receipt','cohort','root','extra']:
+                    bad=copy.deepcopy(source)
+                    if change=='receipt':bad['source']['bindings']['receipts'][4]['sha256']='0'*64
+                    elif change=='cohort':bad['source']['sample_identity']['b7']['cohort_role']='DEVELOPMENT'
+                    elif change=='root':bad['source']['run_root']=str(root/'campaign/runs/w03')
+                    else:bad['outcome']='SEALED_SENTINEL_987654321'
+                    invalid=root/f'bad-preparation-{change}.json';invalid.write_text(json.dumps(bad))
+                    r=native('evaluation-plan',invalid,digest(decoder),digest(projector),ok=False)
+                    assert r.stdout==b'' and r.stderr==b'B7_EVALUATION_DENIED_OR_STOPPED\n'
+                malformed=root/'bad-source.json';malformed.write_text('SEALED_SENTINEL_987654321')
+                r=native('evaluation-plan',malformed,digest(decoder),digest(projector),ok=False)
+                assert r.stdout==b'' and r.stderr==b'B7_EVALUATION_DENIED_OR_STOPPED\n'
+                assert not work.exists() and (root/'campaign/head.json').read_bytes()==head
             proposal=native('evaluation-proposal',path,driver,sys.executable)
             a=proposal['binding'];assert a['evaluation']['method_sha256']=='493835145514ed99b3a8858be948f094d5a549f925a493baf6e047abfc8dbd75'
             approval.write_text(json.dumps(a))
@@ -94,6 +134,7 @@ def run(root, generator, decoder, projector, verifier, phase):
                 sealed(path)
                 assert before=={str(f.relative_to(work)):digest(f) for f in (work/'batch-000').rglob('*') if f.is_file()}
                 sealed(path,approval,ok=False)  # no budget/lease reset or duplicate
+                native('evaluation-source',root/'campaign/runs/w04',ok=False)
             else:sealed(path,approval)
             assert not (work/'index.html').exists()
             child=work/'batch-000/part-0000/parquet'
@@ -105,6 +146,9 @@ def run(root, generator, decoder, projector, verifier, phase):
                 r=subprocess.run([str(exe),*[str(a) for a in args]],capture_output=True,preexec_fn=process_limits,timeout=30)
                 assert r.returncode!=0 and not (work/'escape').exists()
         else:
+            p=json.loads(path.read_bytes())
+            p['workers']={'batch_decoder_sha256':digest(decoder),'projector_sha256':digest(projector)}
+            path.write_text(json.dumps(p,indent=2))
             a={'authority':{'mode':'FIXTURE'},'window':ordinal,'plan_sha256':digest(path),
                'worker_sha256s':[digest(f) for f in [decoder,projector,verifier]]}
             approval.write_text(json.dumps(a))

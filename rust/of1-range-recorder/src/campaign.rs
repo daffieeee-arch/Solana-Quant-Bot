@@ -1164,6 +1164,26 @@ impl Guard {
         durable::sync_dir(output.parent().ok_or(StoreError::Identity)?)?;
         Ok(())
     }
+    /// Read-only preparation, never processing admission or outcome access.
+    /// # Errors
+    /// Refuses another cohort, unregistered source, incomplete predecessors,
+    /// already-started processing or a terminal campaign. Retains the writer lock.
+    pub fn evaluation_preparation_context(
+        sample: &SampleIdentity,
+        run_root: &Path,
+    ) -> StoreResult<Self> {
+        let g = Self::for_recorded(sample, run_root)?;
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        if b.cohort_role != "RESERVED_EVALUATION"
+            || g.state.evaluation_release.is_some()
+            || g.state.processing.contains_key(&b.window_ordinal)
+            || (0..b.window_ordinal).any(|i| g.state.processing.get(&i).is_none_or(|p| !p.complete))
+        {
+            return Err(StoreError::ReservedEvaluation);
+        }
+        Ok(g)
+    }
+
     fn for_recorded(sample: &SampleIdentity, run_root: &Path) -> StoreResult<Self> {
         sample.validate(978)?;
         let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
