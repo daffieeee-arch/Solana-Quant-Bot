@@ -23,128 +23,6 @@ function walk(value, path, visitor) {
   }
 }
 
-const CANONICAL_STEPS = [
-  {
-    name: 'Check out repository',
-    uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
-    with: { 'fetch-depth': 0, 'persist-credentials': false },
-  },
-  {
-    name: 'Set up Node.js',
-    uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-    with: { 'node-version': '22.23.2', cache: 'npm', 'cache-dependency-path': 'package-lock.json' },
-  },
-  {
-    name: 'Install pinned Rust toolchain',
-    run: 'rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt',
-  },
-  {
-    name: 'Validate Pump protocol dependencies before fetch',
-    run: 'node scripts/assert-pump-protocol-v2-offline.mjs --static',
-  },
-  {
-    name: 'Validate OF1 planner dependencies before fetch',
-    run: 'node scripts/assert-of1-planner-offline.mjs --static',
-  },
-  {
-    name: 'Validate Bronze decoder dependencies before fetch',
-    run: 'node scripts/assert-of1-bronze-offline.mjs --static',
-  },
-  { name: 'Validate Parquet dependencies before fetch', run: 'node scripts/assert-of1-parquet-offline.mjs --static' },
-  {
-    name: 'Restore scoped Rust build cache',
-    uses: 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9',
-    with: {
-      path: '~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/registry/src\nrust/of1-range-recorder/target\nrust/pump-protocol-v2/target\nrust/old-faithful-pump-reducer/target',
-      key: "rust-v2-ci-test-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}",
-      'restore-keys': "rust-v2-ci-test-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-",
-    },
-  },
-  {
-    name: 'Fetch locked Pump protocol dependencies',
-    run: 'cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked',
-  },
-  {
-    name: 'Fetch locked OF1 planner dependencies',
-    run: 'cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked',
-  },
-  {
-    name: 'Fetch locked Bronze decoder dependencies',
-    run: 'cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked',
-  },
-  { name: 'Fetch locked Parquet dependencies', run: 'cargo +1.97.1 fetch --manifest-path rust/of1-parquet-projection/Cargo.toml --locked' },
-  { name: 'Prepare isolated locked DuckDB reader', run: 'node scripts/prepare-columnar-query-ci.mjs' },
-  { name: 'Install locked dependencies', run: 'npm ci' },
-  { name: 'Enforce repository and zero-cost policy', run: 'npm run ci:policy' },
-  { name: 'Enforce offline research citation gate', run: 'npm run ci:research-citations' },
-  {
-    name: 'Run policy bypass and critical zero-cost/Pump tests',
-    run: 'npx --no-install vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/pump-protocol-v2-policy.test.ts tests/pump-silver-event.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts',
-  },
-  { name: 'Run complete test suite', run: 'npm test' },
-  { name: 'Type-check', run: 'npx --no-install tsc --noEmit' },
-  { name: 'Build backend and frontend', run: 'npm run build' },
-  {
-    name: 'Check Rust reducer formatting',
-    run: 'cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check',
-  },
-  {
-    name: 'Check Linux namespace-lock formatting',
-    run: 'cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check',
-  },
-  {
-    name: 'Check Jetstreamer callback snapshot formatting',
-    run: 'cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check',
-  },
-  {
-    name: 'Check Solana runtime snapshot formatting',
-    run: 'cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check',
-  },
-  {
-    name: 'Check Pump protocol v2 formatting',
-    run: 'cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check',
-  },
-  {
-    name: 'Verify Pump protocol v2 isolated graph, clippy, tests and evidence',
-    run: 'node scripts/assert-pump-protocol-v2-offline.mjs --all',
-  },
-  {
-    name: 'Verify OF1 planner isolated graph, formatting, tests and evidence',
-    run: 'node scripts/assert-of1-planner-offline.mjs --all',
-  },
-  {
-    name: 'Verify Bronze decoder isolated graph, formatting, tests and evidence',
-    run: 'node scripts/assert-of1-bronze-offline.mjs --all',
-  },
-  { name: 'Verify Parquet and DuckDB offline parity and coverage', run: 'node scripts/assert-of1-parquet-offline.mjs --all' },
-  {
-    name: 'Lint Rust reducer',
-    run: 'cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings',
-  },
-  {
-    name: 'Test Rust reducer',
-    run: 'cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets',
-  },
-  {
-    name: 'Build Rust reducer',
-    run: 'cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked',
-  },
-  {
-    name: 'Check committed pull-request patch integrity',
-    if: "github.event_name == 'pull_request'",
-    run: 'git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"',
-  },
-  {
-    name: 'Check committed push integrity',
-    if: "github.event_name != 'pull_request'",
-    run: 'git show --check --format= HEAD',
-  },
-  {
-    name: 'Verify tracked files were not modified by checks',
-    run: 'test -z "$(git status --porcelain --untracked-files=no)"',
-  },
-];
-
 const CANONICAL_WORKFLOW = {
   name: 'CI',
   on: {
@@ -167,13 +45,269 @@ const CANONICAL_WORKFLOW = {
     ENTRY_SHADOW_MODE: 'true',
   },
   jobs: {
-    quality: {
-      name: 'tests-build-zero-cost',
-      'runs-on': 'ubuntu-24.04',
-      'timeout-minutes': 45,
-      steps: CANONICAL_STEPS,
-    },
+  "quality": {
+    "name": "core-offline",
+    "runs-on": "ubuntu-24.04",
+    "timeout-minutes": 45,
+    "steps": [
+      {
+        "name": "Check out repository",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+          "fetch-depth": 0,
+          "persist-credentials": false
+        }
+      },
+      {
+        "name": "Set up Node.js",
+        "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        "with": {
+          "node-version": "22.23.2",
+          "cache": "npm",
+          "cache-dependency-path": "package-lock.json"
+        }
+      },
+      {
+        "name": "Install pinned Rust toolchain",
+        "run": "rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt"
+      },
+      {
+        "name": "Validate Pump protocol dependencies before fetch",
+        "run": "node scripts/assert-pump-protocol-v2-offline.mjs --static"
+      },
+      {
+        "name": "Validate OF1 planner dependencies before fetch",
+        "run": "node scripts/assert-of1-planner-offline.mjs --static"
+      },
+      {
+        "name": "Validate Bronze decoder dependencies before fetch",
+        "run": "node scripts/assert-of1-bronze-offline.mjs --static"
+      },
+      {
+        "name": "Validate Parquet dependencies before fetch",
+        "run": "node scripts/assert-of1-parquet-offline.mjs --static"
+      },
+      {
+        "name": "Restore scoped Rust build cache",
+        "uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+        "with": {
+          "path": "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/registry/src\nrust/of1-range-recorder/target\nrust/pump-protocol-v2/target\nrust/old-faithful-pump-reducer/target",
+          "key": "rust-v2-ci-test-core-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}",
+          "restore-keys": "rust-v2-ci-test-core-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-"
+        }
+      },
+      {
+        "name": "Fetch locked Pump protocol dependencies",
+        "run": "cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked"
+      },
+      {
+        "name": "Fetch locked OF1 planner dependencies",
+        "run": "cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked"
+      },
+      {
+        "name": "Install locked dependencies",
+        "run": "npm ci"
+      },
+      {
+        "name": "Enforce repository and zero-cost policy",
+        "run": "npm run ci:policy"
+      },
+      {
+        "name": "Enforce offline research citation gate",
+        "run": "npm run ci:research-citations"
+      },
+      {
+        "name": "Run policy bypass and critical zero-cost/Pump tests",
+        "run": "npx --no-install vitest run tests/ci-policy.test.ts tests/ci-research-citations.test.ts tests/pump-protocol-v2-policy.test.ts tests/pump-silver-event.test.ts tests/zero-cost.test.ts tests/pump-replay.test.ts tests/pump-vertical-slice.test.ts tests/lifecycle-tp-sl.test.ts"
+      },
+      {
+        "name": "Run complete test suite",
+        "run": "npm test"
+      },
+      {
+        "name": "Type-check",
+        "run": "npx --no-install tsc --noEmit"
+      },
+      {
+        "name": "Build backend and frontend",
+        "run": "npm run build"
+      },
+      {
+        "name": "Check Rust reducer formatting",
+        "run": "cargo +1.97.1 fmt --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --all -- --check"
+      },
+      {
+        "name": "Check Linux namespace-lock formatting",
+        "run": "cargo +1.97.1 fmt --manifest-path rust/linux-kernel-namespace-lock/Cargo.toml -- --check"
+      },
+      {
+        "name": "Check Jetstreamer callback snapshot formatting",
+        "run": "cargo +1.97.1 fmt --manifest-path rust/jetstreamer-v0-7-callback-types/Cargo.toml -- --check"
+      },
+      {
+        "name": "Check Solana runtime snapshot formatting",
+        "run": "cargo +1.97.1 fmt --manifest-path rust/solana-runtime-v3.1.12-bank-types/Cargo.toml -- --check"
+      },
+      {
+        "name": "Check Pump protocol v2 formatting",
+        "run": "cargo +1.97.1 fmt --manifest-path rust/pump-protocol-v2/Cargo.toml --all -- --check"
+      },
+      {
+        "name": "Verify Pump protocol v2 isolated graph, clippy, tests and evidence",
+        "run": "node scripts/assert-pump-protocol-v2-offline.mjs --all"
+      },
+      {
+        "name": "Verify OF1 planner isolated graph, formatting, tests and evidence",
+        "run": "node scripts/assert-of1-planner-offline.mjs --all"
+      },
+      {
+        "name": "Lint Rust reducer",
+        "run": "cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings"
+      },
+      {
+        "name": "Test Rust reducer",
+        "run": "cargo +1.97.1 test --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets"
+      },
+      {
+        "name": "Build Rust reducer",
+        "run": "cargo +1.97.1 build --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked"
+      },
+      {
+        "name": "Check committed pull-request patch integrity",
+        "if": "github.event_name == 'pull_request'",
+        "run": "git diff --check \"${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}\""
+      },
+      {
+        "name": "Check committed push integrity",
+        "if": "github.event_name != 'pull_request'",
+        "run": "git show --check --format= HEAD"
+      },
+      {
+        "name": "Verify tracked files were not modified by checks",
+        "run": "test -z \"$(git status --porcelain --untracked-files=no)\""
+      }
+    ]
   },
+  "columnar": {
+    "name": "columnar-offline",
+    "runs-on": "ubuntu-24.04",
+    "timeout-minutes": 45,
+    "steps": [
+      {
+        "name": "Check out repository",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+          "fetch-depth": 0,
+          "persist-credentials": false
+        }
+      },
+      {
+        "name": "Set up Node.js",
+        "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        "with": {
+          "node-version": "22.23.2",
+          "cache": "npm",
+          "cache-dependency-path": "package-lock.json"
+        }
+      },
+      {
+        "name": "Install pinned Rust toolchain",
+        "run": "rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt"
+      },
+      {
+        "name": "Validate Pump protocol dependencies before fetch",
+        "run": "node scripts/assert-pump-protocol-v2-offline.mjs --static"
+      },
+      {
+        "name": "Validate OF1 planner dependencies before fetch",
+        "run": "node scripts/assert-of1-planner-offline.mjs --static"
+      },
+      {
+        "name": "Validate Bronze decoder dependencies before fetch",
+        "run": "node scripts/assert-of1-bronze-offline.mjs --static"
+      },
+      {
+        "name": "Validate Parquet dependencies before fetch",
+        "run": "node scripts/assert-of1-parquet-offline.mjs --static"
+      },
+      {
+        "name": "Restore scoped Rust build cache",
+        "uses": "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+        "with": {
+          "path": "~/.cargo/registry/index\n~/.cargo/registry/cache\n~/.cargo/registry/src\nrust/of1-range-recorder/target\nrust/pump-protocol-v2/target\nrust/of1-bronze-decoder/target\nrust/of1-parquet-projection/target",
+          "key": "rust-v2-ci-test-columnar-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-${{ github.sha }}",
+          "restore-keys": "rust-v2-ci-test-columnar-${{ runner.os }}-${{ runner.arch }}-1.97.1-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-"
+        }
+      },
+      {
+        "name": "Fetch locked Pump protocol dependencies",
+        "run": "cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked"
+      },
+      {
+        "name": "Fetch locked OF1 planner dependencies",
+        "run": "cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked"
+      },
+      {
+        "name": "Fetch locked Bronze decoder dependencies",
+        "run": "cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked"
+      },
+      {
+        "name": "Fetch locked Parquet dependencies",
+        "run": "cargo +1.97.1 fetch --manifest-path rust/of1-parquet-projection/Cargo.toml --locked"
+      },
+      {
+        "name": "Prepare isolated locked DuckDB reader",
+        "run": "node scripts/prepare-columnar-query-ci.mjs"
+      },
+      {
+        "name": "Verify Bronze decoder isolated graph, formatting, tests and evidence",
+        "run": "node scripts/assert-of1-bronze-offline.mjs --all"
+      },
+      {
+        "name": "Verify Parquet and DuckDB offline parity and coverage",
+        "run": "node scripts/assert-of1-parquet-offline.mjs --all"
+      },
+      {
+        "name": "Verify tracked files were not modified by checks",
+        "run": "test -z \"$(git status --porcelain --untracked-files=no)\""
+      }
+    ]
+  },
+  "required": {
+    "name": "tests-build-zero-cost",
+    "runs-on": "ubuntu-24.04",
+    "timeout-minutes": 5,
+    "needs": [
+      "quality",
+      "columnar"
+    ],
+    "if": "${{ always() }}",
+    "steps": [
+      {
+        "name": "Check out repository",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+          "fetch-depth": 0,
+          "persist-credentials": false
+        }
+      },
+      {
+        "name": "Set up Node.js",
+        "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        "with": {
+          "node-version": "22.23.2"
+        }
+      },
+      {
+        "name": "Require every offline job to succeed",
+        "env": {
+          "CI_REQUIRED_RESULTS": "${{ toJSON(needs) }}"
+        },
+        "run": "node scripts/assert-required-ci.mjs"
+      }
+    ]
+  }
+},
 };
 
 export function validateTrackedWorkflowPaths(trackedPaths) {
@@ -240,8 +374,8 @@ export function validateWorkflowConfiguration(workflow) {
   if (!isMap(root.jobs) || Object.keys(root.jobs).length === 0) {
     errors.push('workflow jobs must be a non-empty mapping');
   }
-  if (!isMap(root.jobs) || !isDeepStrictEqual(Object.keys(root.jobs), ['quality'])) {
-    errors.push('workflow must define exactly one job named quality');
+  if (!isMap(root.jobs) || !isDeepStrictEqual(Object.keys(root.jobs), ['quality', 'columnar', 'required'])) {
+    errors.push('workflow must define exactly quality, columnar and required jobs');
   }
 
   let checkoutCount = 0;
@@ -264,8 +398,9 @@ export function validateWorkflowConfiguration(workflow) {
         errors.push(`job ${jobName} steps must be a sequence`);
         continue;
       }
-      if (job.steps.length !== CANONICAL_STEPS.length) {
-        errors.push(`job ${jobName} must contain exactly ${CANONICAL_STEPS.length} canonical steps`);
+      const canonicalSteps = CANONICAL_WORKFLOW.jobs[jobName]?.steps ?? [];
+      if (job.steps.length !== canonicalSteps.length) {
+        errors.push(`job ${jobName} must contain exactly ${canonicalSteps.length} canonical steps`);
       }
 
       job.steps.forEach((step, stepIndex) => {
@@ -273,7 +408,7 @@ export function validateWorkflowConfiguration(workflow) {
           errors.push(`job ${jobName} step ${stepIndex + 1} must be a mapping`);
           return;
         }
-        const expectedStep = CANONICAL_STEPS[stepIndex];
+        const expectedStep = canonicalSteps[stepIndex];
         if (own(step, 'env') && !isMap(step.env)) {
           errors.push(`job ${jobName} step ${stepIndex + 1} env must be a mapping`);
         }
@@ -328,8 +463,8 @@ export function validateWorkflowConfiguration(workflow) {
       });
     }
   }
-  if (checkoutCount !== 1) {
-    errors.push(`workflow must contain exactly one actions/checkout step; found ${checkoutCount}`);
+  if (checkoutCount !== 3) {
+    errors.push(`workflow must contain exactly three actions/checkout steps; found ${checkoutCount}`);
   }
 
   walk(root, [], (value, path) => {

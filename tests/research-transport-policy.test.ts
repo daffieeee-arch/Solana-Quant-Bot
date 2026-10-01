@@ -86,6 +86,22 @@ describe('research transport policy entrypoint', () => {
     expect(result.stdout).toContain('Research transport-free static graph PASS');
   });
 
+  it.each([
+    ['local', 'const Object = {};', undefined],
+    ['imported alias', "import { alternate as Object } from '../helper.js';", 'export const alternate = {};'],
+  ] as const)('rejects a %s Object shadow inside the narrow descriptor exception', async (_label, declaration, helper) => {
+    const result = await runStaticPolicy(`
+      ${declaration}
+      function normalizeFixtureRegistryEntry(entry) {
+        return Object.getOwnPropertyDescriptor(entry, 'startInclusive');
+      }
+      export const normalize = normalizeFixtureRegistryEntry;
+    `, helper, 'pump-silver-contract.js');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('forbidden research capability');
+    expect(result.stdout).not.toContain('PASS');
+  });
+
   it('rejects a descriptor-loop value capability escape', async () => {
     const result = await runStaticPolicy(`
       function hasExactOwnKeys(value, expected) {

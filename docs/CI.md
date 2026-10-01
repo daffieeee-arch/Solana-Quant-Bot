@@ -112,16 +112,39 @@ issue/PR content current and report last successful sync plus backlog after
 
 ## Canonical general CI design
 
-`ci.yml` runs **one** `tests-build-zero-cost` job on `ubuntu-24.04` with a
-**45-minute** budget. The single-job shape is intentional:
+`ci.yml` runs two independent work jobs on `ubuntu-24.04`, each with the
+existing **45-minute** cap. `core-offline` runs Node/build/policy, Pump, OF1 and
+reducer checks. `columnar-offline` runs Bronze followed by Parquet/DuckDB. The
+sixteen-window evaluation fixture remains one sequential four-phase campaign;
+its eight releases, negative cases and resume checks are not sharded or skipped.
 
-1. fail-closed policy can deep-compare the entire workflow;
-2. no job-level secrets, containers, services or write permissions;
-3. one checkout with `persist-credentials: false`;
-4. only approved actions: pinned `actions/checkout`, `actions/setup-node` and
-   narrowly scoped `actions/cache`.
+The protected **`tests-build-zero-cost`** check is an always-running five-minute
+aggregate requiring both work jobs. It accepts only two explicit `success`
+results. Missing, skipped, cancelled, failed or malformed results fail closed;
+partial successes from separate runs are never combined. Branch protection and
+security workflows are unchanged. The policy deep-compares all three jobs,
+their dependencies, commands, bounds, triggers and inputs. Each checkout disables
+credential persistence. All jobs retain `contents: read`, with no secrets,
+services, containers, deployment or job-level permission overrides.
 
-The first integrated WSL/VPS run [35531541423](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/35531541423) reached the former 35-minute hard stop during Parquet/DuckDB, after Node, Pump, OF1 and Bronze passed. The expanded recorded-pipeline suite alone took 612 seconds. The job budget is now 45 minutes; the policy still requires that exact bound and every gate. The timeout receipt is retained with the [integration evidence](operations/VPS_WSL_INTEGRATION.md).
+PR #152's historical run [36883925111](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/36883925111)
+reached the 45-minute cap: Parquet/DuckDB used 32m45s and stopped before phase
+three/reducer completion. That partial result is not a passing chain. The new
+split removes the independent core work from the columnar critical path; it does
+not increase either work-job deadline. The earlier 35-minute integration stop
+[35531541423](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/35531541423)
+remains historical evidence.
+
+The first split run [36903163731](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/36903163731)
+also retained a concrete Node failure: the existing wrong-built-file transport
+test took 5,196 ms against its unchanged 5,000-ms bound. A bounded actual-CLI
+profile found 218 TypeScript file reads for that one small input, including
+unused default libraries and ambient types. The syntax/local-symbol gate now
+uses `noLib: true` and `types: []`; its checker, parse diagnostics, import walk
+and security assertions remain. Local/imported `Object` shadow regressions
+protect the narrow descriptor exception. The same diagnostic reads one file
+afterward (1.122 s to 0.367 s locally); runner contention is not quantified by
+that single measurement. Full GitHub execution remains the delivery gate.
 
 ### Triggers
 
@@ -144,6 +167,11 @@ work, not necessarily the wall-clock time of one review cycle.
 - concurrency cancels superseded runs on the same ref
 
 ### Ordered gates
+
+The core job retains the Node/Pump/OF1/reducer order below; the independent
+columnar job performs its own pinned setup, dependency validation/cache/fetch,
+DuckDB preparation, Bronze then Parquet checks and tracked-tree check. No artifact
+or test-result transfer between jobs is trusted. The aggregate runs after both.
 
 1. pin Rust `1.97.1` (rustfmt/clippy);
 2. static-validate Pump protocol, OF1 planner, Bronze decoder and Parquet projection source/dependency contracts;
@@ -179,13 +207,14 @@ integration acceptance is recorded separately in the integration evidence.
 
 `actions/cache` is pinned to official v6.1.0 commit
 `55cc8345863c7cc4c66a329aec7e433d2d1c52a9`. Its exact paths are Cargo registry
-`index`, `cache` and `src`, plus the ignored `target` directories of
-`of1-range-recorder`, `pump-protocol-v2` and `old-faithful-pump-reducer`.
+`index`, `cache` and `src`, plus ignored build targets. The core job caches
+`of1-range-recorder`, `pump-protocol-v2` and `old-faithful-pump-reducer`; the
+columnar job caches OF1, Pump, `of1-bronze-decoder` and `of1-parquet-projection`.
 It does not cache Cargo credentials/configuration, complete home directories,
 temporary fixture runs, leases, datasets or operational evidence.
 
 The `rust-v2-ci-test` key binds the selected CI profile, runner OS/architecture, Rust 1.97.1, every Rust
-Cargo.lock/Cargo.toml hash and the checked-out commit SHA. The single restore
+Cargo.lock/Cargo.toml hash, job scope and the checked-out commit SHA. Each restore
 prefix retains the same toolchain and lock/manifest identity. Cargo still checks
 source/features and rebuilds affected artifacts. A cache hit never skips a gate,
 test, assertion or evidence regeneration; a miss is an ordinary cold build.
@@ -193,7 +222,7 @@ Default cache branch scoping applies; the trusted-main Roadmap workflow does not
 restore this build cache. No cache quota, billing or larger-runner setting changes.
 
 The OF1, Bronze and Parquet gates emit `OF1_CI_PHASE` records on stderr for compilation, test and
-fixture/query subprocesses (Bronze/Parquet labels carry their gate prefix), followed by `OF1_CI_TIMING` with the overall gate outcome.
+fixture/query subprocesses (Bronze/Parquet labels carry their gate prefix), followed by `OF1_CI_TIMING` with the overall gate outcome. The synthetic evaluation fixture also emits `OF1_SEALED_WINDOW_1` per-window preparation, operation and wall times. These fixture diagnostics do not open authentic evaluation outputs.
 GitHub Actions also receives a compact step-summary table, including failure
 when a later validation fails after successful subprocesses. These are measured
 operational durations only: no commands, environment values or dataset contents
@@ -246,7 +275,7 @@ collection chain still run, using the matching `target/ci-test` workers.
 
 Profile definitions are covered by the pre-fetch manifest hashes and cache
 manifest identity. The profile name is explicit in the versioned cache prefix;
-cache paths/permissions remain unchanged. Cargo separates custom-profile
+permissions remain unchanged; the reviewed columnar cache now includes its build targets. Cargo separates custom-profile
 artifacts from `target/debug` and `target/release`. Fixture plans and execution
 receipts keep hashing the actual binary: a different build may have a different
 executable hash, which must never be substituted with a prior hash. Canonical
@@ -282,9 +311,9 @@ speed guarantee. The PR and main run links and actual phase timings for this
 delivery are recorded at #123; their totals include compilation and cache work.
 
 Existing PR/main gates, security workflows and the 45-minute job bound remain
-required. No fixture repeat, assertion, test case or gate is removed. Broad
-parallelism, new cache directories and changed-file test selection are separate
-future decisions.
+required. No fixture repeat, assertion, test case or gate is removed. The
+bounded job split and columnar build-cache paths were subsequently authorized in
+#152; changed-file test selection remains outside that change.
 
 ## Roadmap Sync boundary
 
@@ -320,7 +349,7 @@ Branch inventory process: [`operations/BRANCH_HYGIENE.md`](operations/BRANCH_HYG
 
 ## Future CI evolution (not in this change)
 
-Parallel Rust/Node jobs, broader caches, or path filters may be added only
+Further job splits, broader caches, or path filters may be added only
 through a reviewed policy update that keeps:
 
 - `contents: read` for ordinary CI;

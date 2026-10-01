@@ -107,12 +107,24 @@ fn metadata_operations(epoch: u64) -> Result<Vec<serde_json::Value>> {
         .collect()
 }
 
-fn open(root: &str, plan: &str, lease_hash: &str) -> Result<AcquisitionStore<SystemClock>> {
+#[cfg(not(test))]
+type CliClock = SystemClock;
+#[cfg(test)]
+use continuation_tests::CliClock;
+#[cfg(not(test))]
+fn cli_clock() -> CliClock {
+    SystemClock
+}
+#[cfg(test)]
+fn cli_clock() -> CliClock {
+    CliClock
+}
+fn open(root: &str, plan: &str, lease_hash: &str) -> Result<AcquisitionStore<CliClock>> {
     Ok(AcquisitionStore::resume(
         Path::new(root),
         &read(plan)?,
         lease_hash,
-        SystemClock,
+        cli_clock(),
     )?)
 }
 
@@ -229,6 +241,12 @@ fn run(args: &[String]) -> Result<()> {
             }
             print(&AcquisitionStore::create(Path::new(root), plan, lease, SystemClock)?.progress()?)
         }
+        ["payload-continuation-proposal", root, plan, old_lease] => print(&AcquisitionStore::payload_continuation_proposal(
+            Path::new(root), &read(plan)?, old_lease, cli_clock())?),
+        ["payload-continuation-admit", root, plan, old_lease, approval] => {
+            let a: of1_range_recorder::durable::acquisition::continuation::PayloadContinuation = read(approval)?;
+            print(&AcquisitionStore::admit_payload_continuation(Path::new(root), &read(plan)?, old_lease, a, cli_clock())?)
+        },
         ["progress", root, plan, lease_hash] => print(&open(root, plan, lease_hash)?.progress()?),
         ["prepare-payload", root, plan, lease_hash, first, end] => {
             let aggregate: AggregatePlan = read(plan)?;
@@ -284,6 +302,8 @@ fn run(args: &[String]) -> Result<()> {
             "metadata-pilot-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-init ROOT AGGREGATE_JSON METADATA_LEASE_JSON | ",
             "progress ROOT AGGREGATE_JSON LEASE_SHA256 | ",
+            "payload-continuation-proposal ROOT AGGREGATE_JSON OLD_LEASE_SHA256 | ",
+            "payload-continuation-admit ROOT AGGREGATE_JSON OLD_LEASE_SHA256 APPROVAL_JSON | ",
             "capture-stage ROOT AGGREGATE_JSON LEASE_SHA256 [--monitor-socket LOCAL_SOCKET] | ",
             "prepare-payload ROOT AGGREGATE_JSON LEASE_SHA256 FIRST_SLOT END_SLOT | ",
             "payload-admit ROOT AGGREGATE_JSON CURRENT_LEASE_SHA256 PAYLOAD_LEASE_JSON PREPARED_JSON | ",
@@ -309,13 +329,27 @@ mod metadata_init_tests {
     include!("of1-acquire/metadata_init_tests.rs");
 }
 
+#[cfg(test)]
+mod continuation_tests {
+    include!("of1-acquire/continuation_tests.rs");
+}
+
 #[cfg(not(feature = "network-of1"))]
-fn capture_stage(_: &str, _: &str, _: &str) -> Result<()> {
+fn capture_stage(root: &str, plan: &str, lease: &str) -> Result<()> {
+    #[cfg(test)]
+    if continuation_tests::active() {
+        return continuation_tests::capture(root, plan, lease);
+    }
+    let _ = (root, plan, lease);
     Err("network-of1 capability disabled; no store mutation or connection attempted".into())
 }
 
 #[cfg(feature = "network-of1")]
 fn capture_stage(root: &str, plan: &str, lease_hash: &str) -> Result<()> {
+    #[cfg(test)]
+    if continuation_tests::active() {
+        return continuation_tests::capture(root, plan, lease_hash);
+    }
     capture_stage_inner(root, plan, lease_hash, None)
 }
 
@@ -365,6 +399,16 @@ fn capture_stage_inner(
         if store.published(sequence)?.is_some() {
             continue;
         }
+        loop {
+            match store.continuation_wait_ms() {
+                Ok(0) => break,
+                Ok(ms) => std::thread::sleep(std::time::Duration::from_millis(ms.min(1_000))),
+                Err(error) => {
+                    store.stop_payload_continuation()?;
+                    return Err(error.into());
+                }
+            }
+        }
         // Exactly one attempt. An error stops this command; a later explicit invocation
         // resumes with spent budgets and original deadlines, never a hidden retry/refund.
         #[cfg(feature = "monitor")]
@@ -378,6 +422,7 @@ fn capture_stage_inner(
         #[cfg(not(feature = "monitor"))]
         let result = of1_range_recorder::https::OfficialHttps::capture(&mut store, sequence);
         if let Err(error) = result {
+            store.stop_payload_continuation()?;
             #[cfg(feature = "monitor")]
             if let Some(observer) = monitor.as_mut()
                 && observer.snapshot.stage != "STOPPED"

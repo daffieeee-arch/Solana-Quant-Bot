@@ -1424,6 +1424,7 @@ fn export_part_fixture(variable: &str, large_slot: u64, ordinary: bool) {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Keep the fixed campaign/source export and interrupted ordinal-4 prefix together.
 fn sealed_evaluation_source_fixture() {
     let Some(export) = std::env::var_os("COLUMNAR_EVALUATION_FIXTURE_DIR") else {
         return;
@@ -1477,7 +1478,46 @@ fn sealed_evaluation_source_fixture() {
     h.metadata_slots(&payloads);
     h.admit_slots(16);
     for (i, raw) in payloads.iter().enumerate() {
+        if ordinal == 4 && i >= 13 {
+            continue;
+        }
         h.publish(4 + i as u64, raw);
+    }
+    if ordinal == 4 {
+        let fixture = parent.join("continuation-fixture");
+        fs::create_dir(&fixture).unwrap();
+        for (i, raw) in payloads.iter().enumerate().skip(13) {
+            fs::write(fixture.join(format!("{}.bin", i + 4)), raw).unwrap();
+        }
+        fs::write(
+            fixture.join("aggregate.json"),
+            serde_json::to_vec(&h.plan).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            fixture.join("lease.txt"),
+            h.store.progress().unwrap().current_lease_sha256,
+        )
+        .unwrap();
+        let permit = h.store.reserve(17).unwrap();
+        h.store
+            .reject_response(
+                &permit,
+                b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n",
+                "HTTP_REJECTED",
+            )
+            .unwrap();
+        // Explicit synthetic future clock: original 60-second payload lease expired.
+        fs::write(
+            fixture.join("clock.json"),
+            serde_json::to_vec(&ClockSample {
+                wall_ms: 200_000,
+                boot_ms: 110_000,
+                boot_id: "HISTORICAL_OFFLINE_FIXTURE_NOT_CURRENT_BOOT".into(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
     }
     // Evaluation preparation must cross the public CLI, not an internal plan helper.
     if sample.b7.as_ref().unwrap().cohort_role == "RESERVED_EVALUATION" {

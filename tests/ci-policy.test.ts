@@ -19,7 +19,6 @@ const workflowFileSetErrors = (paths: string[]) => {
 };
 
 const SAFE_WORKFLOW = `name: CI
-
 on:
   push:
     branches:
@@ -29,23 +28,19 @@ on:
       - main
   workflow_call: {}
   workflow_dispatch: {}
-
 permissions:
   contents: read
-
 concurrency:
   group: ci-\${{ github.workflow }}-\${{ github.ref }}
   cancel-in-progress: true
-
 env:
   CI: 'true'
   MODE: paper
   TRITON_LIVE_ENABLED: 'false'
   ENTRY_SHADOW_MODE: 'true'
-
 jobs:
   quality:
-    name: tests-build-zero-cost
+    name: core-offline
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -74,18 +69,12 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: "~/.cargo/registry/index\\n~/.cargo/registry/cache\\n~/.cargo/registry/src\\nrust/of1-range-recorder/target\\nrust/pump-protocol-v2/target\\nrust/old-faithful-pump-reducer/target"
-          key: rust-v2-ci-test-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-\${{ github.sha }}
-          restore-keys: rust-v2-ci-test-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
+          key: rust-v2-ci-test-core-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-\${{ github.sha }}
+          restore-keys: rust-v2-ci-test-core-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
       - name: Fetch locked Pump protocol dependencies
         run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
       - name: Fetch locked OF1 planner dependencies
         run: cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked
-      - name: Fetch locked Bronze decoder dependencies
-        run: cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked
-      - name: Fetch locked Parquet dependencies
-        run: cargo +1.97.1 fetch --manifest-path rust/of1-parquet-projection/Cargo.toml --locked
-      - name: Prepare isolated locked DuckDB reader
-        run: node scripts/prepare-columnar-query-ci.mjs
       - name: Install locked dependencies
         run: npm ci
       - name: Enforce repository and zero-cost policy
@@ -114,10 +103,6 @@ jobs:
         run: node scripts/assert-pump-protocol-v2-offline.mjs --all
       - name: Verify OF1 planner isolated graph, formatting, tests and evidence
         run: node scripts/assert-of1-planner-offline.mjs --all
-      - name: Verify Bronze decoder isolated graph, formatting, tests and evidence
-        run: node scripts/assert-of1-bronze-offline.mjs --all
-      - name: Verify Parquet and DuckDB offline parity and coverage
-        run: node scripts/assert-of1-parquet-offline.mjs --all
       - name: Lint Rust reducer
         run: cargo +1.97.1 clippy --manifest-path rust/old-faithful-pump-reducer/Cargo.toml --locked --all-targets -- -D warnings
       - name: Test Rust reducer
@@ -132,6 +117,76 @@ jobs:
         run: git show --check --format= HEAD
       - name: Verify tracked files were not modified by checks
         run: test -z "$(git status --porcelain --untracked-files=no)"
+  columnar:
+    name: columnar-offline
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22.23.2'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+      - name: Validate Pump protocol dependencies before fetch
+        run: node scripts/assert-pump-protocol-v2-offline.mjs --static
+      - name: Validate OF1 planner dependencies before fetch
+        run: node scripts/assert-of1-planner-offline.mjs --static
+      - name: Validate Bronze decoder dependencies before fetch
+        run: node scripts/assert-of1-bronze-offline.mjs --static
+      - name: Validate Parquet dependencies before fetch
+        run: node scripts/assert-of1-parquet-offline.mjs --static
+      - name: Restore scoped Rust build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: "~/.cargo/registry/index\\n~/.cargo/registry/cache\\n~/.cargo/registry/src\\nrust/of1-range-recorder/target\\nrust/pump-protocol-v2/target\\nrust/of1-bronze-decoder/target\\nrust/of1-parquet-projection/target"
+          key: rust-v2-ci-test-columnar-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-\${{ github.sha }}
+          restore-keys: rust-v2-ci-test-columnar-\${{ runner.os }}-\${{ runner.arch }}-1.97.1-\${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}-
+      - name: Fetch locked Pump protocol dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/pump-protocol-v2/Cargo.toml --locked
+      - name: Fetch locked OF1 planner dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/of1-range-recorder/Cargo.toml --locked
+      - name: Fetch locked Bronze decoder dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/of1-bronze-decoder/Cargo.toml --locked
+      - name: Fetch locked Parquet dependencies
+        run: cargo +1.97.1 fetch --manifest-path rust/of1-parquet-projection/Cargo.toml --locked
+      - name: Prepare isolated locked DuckDB reader
+        run: node scripts/prepare-columnar-query-ci.mjs
+      - name: Verify Bronze decoder isolated graph, formatting, tests and evidence
+        run: node scripts/assert-of1-bronze-offline.mjs --all
+      - name: Verify Parquet and DuckDB offline parity and coverage
+        run: node scripts/assert-of1-parquet-offline.mjs --all
+      - name: Verify tracked files were not modified by checks
+        run: test -z "$(git status --porcelain --untracked-files=no)"
+  required:
+    name: tests-build-zero-cost
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs:
+      - quality
+      - columnar
+    if: \${{ always() }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22.23.2'
+      - name: Require every offline job to succeed
+        env:
+          CI_REQUIRED_RESULTS: \${{ toJSON(needs) }}
+        run: node scripts/assert-required-ci.mjs
 `;
 
 const errors = (workflow: string) => validateWorkflowConfiguration(workflow).join('\n');
@@ -143,7 +198,7 @@ const addStep = (body: string) => SAFE_WORKFLOW.replace(
 describe('semantic CI workflow policy', () => {
   it('accepts the canonical read-only zero-cost workflow', () => {
     expect(validateWorkflowConfiguration(SAFE_WORKFLOW)).toEqual([]);
-    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(35);
+    expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality.steps).toHaveLength(30);
     expect(parseWorkflowYaml(SAFE_WORKFLOW).jobs.quality['timeout-minutes']).toBe(45);
     for (const minutes of [0, 35, 46, 360]) {
       expect(errors(SAFE_WORKFLOW.replace('timeout-minutes: 45', `timeout-minutes: ${minutes}`)))
@@ -179,6 +234,43 @@ describe('semantic CI workflow policy', () => {
     expect(position('Validate OF1 planner dependencies before fetch')).toBeLessThan(position(cache.name));
     expect(position(cache.name)).toBeLessThan(position('Fetch locked Pump protocol dependencies'));
     expect(position(cache.name)).toBeLessThan(position('Fetch locked OF1 planner dependencies'));
+  });
+
+  it('caches Bronze/Parquet build artifacts separately and never gates on hits', () => {
+    const jobs = parseWorkflowYaml(SAFE_WORKFLOW).jobs;
+    expect(Object.keys(jobs)).toEqual(['quality', 'columnar', 'required']);
+    const steps = jobs.columnar.steps;
+    const cache = steps.find((step: { name: string }) => step.name === 'Restore scoped Rust build cache');
+    expect(cache.with.path.split('\n')).toEqual([
+      '~/.cargo/registry/index', '~/.cargo/registry/cache', '~/.cargo/registry/src',
+      'rust/of1-range-recorder/target', 'rust/pump-protocol-v2/target',
+      'rust/of1-bronze-decoder/target', 'rust/of1-parquet-projection/target',
+    ]);
+    expect(cache.with.key).toContain('rust-v2-ci-test-columnar-');
+    expect(cache.with['restore-keys']).toBe(cache.with.key.replace('${{ github.sha }}', ''));
+    expect(steps.findIndex((step: { name: string }) => step.name.startsWith('Validate Parquet')))
+      .toBeLessThan(steps.indexOf(cache));
+    for (const name of ['Bronze decoder', 'Parquet and DuckDB']) {
+      const gate = steps.find((step: { name: string }) => step.name.startsWith(`Verify ${name}`));
+      expect(gate.if).toBeUndefined();
+    }
+  });
+
+  it('requires the always-running fail-closed aggregate without changing the protected check name', () => {
+    const job = parseWorkflowYaml(SAFE_WORKFLOW).jobs.required;
+    expect(job.name).toBe('tests-build-zero-cost');
+    expect(job.needs).toEqual(['quality', 'columnar']);
+    expect(job.if).toBe('${{ always() }}');
+    expect(job.steps.at(-1).run).toBe('node scripts/assert-required-ci.mjs');
+    for (const variant of [
+      SAFE_WORKFLOW.replace('    if: ${{ always() }}', '    if: ${{ success() }}'),
+      SAFE_WORKFLOW.replace('      - columnar', '      - quality'),
+      SAFE_WORKFLOW.replace('node scripts/assert-required-ci.mjs', 'true'),
+      SAFE_WORKFLOW.replace('  columnar:', '  columnar:\n    continue-on-error: true'),
+      SAFE_WORKFLOW.replace('  columnar:', '  columnar:\n    if: false'),
+      SAFE_WORKFLOW.replace('rust/of1-bronze-decoder/target', 'datasets'),
+      SAFE_WORKFLOW.replace('rust/of1-parquet-projection/target', 'governance'),
+    ]) expect(errors(variant)).toMatch(/canonical|unapproved/i);
   });
 
   it('rejects broad cache paths, cross-toolchain keys, unpinned actions and hit-based gate skips', () => {
@@ -343,7 +435,7 @@ describe('semantic CI workflow policy', () => {
       '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - name: Install locked dependencies',
     );
     expect(errors(unsafe)).toMatch(/every checkout step.*persist-credentials: false/i);
-    expect(errors(unsafe)).toMatch(/exactly one actions\/checkout step/i);
+    expect(errors(unsafe)).toMatch(/exactly three actions\/checkout steps/i);
   });
 
   it('rejects a second checkout even when both disable credential persistence', () => {
@@ -351,7 +443,7 @@ describe('semantic CI workflow policy', () => {
       '      - name: Install locked dependencies',
       '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with: { persist-credentials: false }\n      - name: Install locked dependencies',
     );
-    expect(errors(unsafe)).toMatch(/exactly one actions\/checkout step/i);
+    expect(errors(unsafe)).toMatch(/exactly three actions\/checkout steps/i);
   });
 
   it('rejects safety overrides hidden in another nested map such as container.env', () => {

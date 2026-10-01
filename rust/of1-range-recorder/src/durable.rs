@@ -1484,23 +1484,43 @@ fn rounded(size: u64) -> StoreResult<u64> {
         .ok_or(StoreError::Budget)
 }
 pub(crate) fn disk_charge(path: &Path) -> StoreResult<u64> {
+    disk_charge_walk(path, &mut BTreeMap::new())
+}
+
+/// Charge every entry exactly as the ordinary traversal does, collecting the
+/// requested subtree totals in that same traversal. No cached filesystem state.
+/// Missing subtrees remain zero; symlinks and special files still fail closed.
+pub(crate) fn disk_charge_with_subtrees(
+    path: &Path,
+    subtrees: &mut BTreeMap<PathBuf, u64>,
+) -> StoreResult<u64> {
+    for value in subtrees.values_mut() {
+        *value = 0;
+    }
+    disk_charge_walk(path, subtrees)
+}
+
+fn disk_charge_walk(path: &Path, subtrees: &mut BTreeMap<PathBuf, u64>) -> StoreResult<u64> {
     let meta = fs::symlink_metadata(path)?;
-    if meta.is_file() {
-        return Ok(
-            rounded(meta.len())?.max(meta.blocks().checked_mul(512).ok_or(StoreError::Budget)?)
-        );
-    }
-    if !meta.is_dir() {
+    let sum = if meta.is_file() {
+        rounded(meta.len())?.max(meta.blocks().checked_mul(512).ok_or(StoreError::Budget)?)
+    } else if meta.is_dir() {
+        let mut sum = BLOCK.max(meta.blocks().checked_mul(512).ok_or(StoreError::Budget)?);
+        for entry in fs::read_dir(path)? {
+            sum = sum
+                .checked_add(disk_charge_walk(&entry?.path(), subtrees)?)
+                .ok_or(StoreError::Budget)?;
+        }
+        sum
+    } else {
         return Err(StoreError::Corrupt);
-    }
-    let mut sum = BLOCK.max(meta.blocks().checked_mul(512).ok_or(StoreError::Budget)?);
-    for entry in fs::read_dir(path)? {
-        sum = sum
-            .checked_add(disk_charge(&entry?.path())?)
-            .ok_or(StoreError::Budget)?;
+    };
+    if let Some(total) = subtrees.get_mut(path) {
+        *total = sum;
     }
     Ok(sum)
 }
+
 fn executable_hash() -> StoreResult<String> {
     let mut file = File::open(std::env::current_exe()?)?;
     let mut digest = Sha256::new();
@@ -1513,4 +1533,44 @@ fn executable_hash() -> StoreResult<String> {
         digest.update(&buffer[..count]);
     }
     Ok(hex::encode(digest.finalize()))
+}
+
+#[cfg(test)]
+mod disk_charge_tests {
+    use super::*;
+
+    #[test]
+    fn single_traversal_keeps_full_and_nested_charges_and_rejects_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work/w00");
+        fs::create_dir_all(work.join("failed")).unwrap();
+        fs::write(dir.path().join("raw"), [1; 8193]).unwrap();
+        fs::write(work.join("empty"), []).unwrap();
+        fs::write(work.join("failed/retained"), [2; 4097]).unwrap();
+        let absent = dir.path().join("work/w01");
+        let nested = work.join("failed");
+        let mut subtrees = BTreeMap::from([
+            (work.clone(), 999),
+            (nested.clone(), 999),
+            (absent.clone(), 999),
+        ]);
+        assert_eq!(
+            disk_charge_with_subtrees(dir.path(), &mut subtrees).unwrap(),
+            disk_charge(dir.path()).unwrap()
+        );
+        assert_eq!(subtrees[&work], disk_charge(&work).unwrap());
+        assert_eq!(subtrees[&nested], disk_charge(&nested).unwrap());
+        assert_eq!(subtrees[&absent], 0);
+        // A retained hard link is still charged at each path, not deduplicated.
+        let old = subtrees[&work];
+        fs::hard_link(work.join("failed/retained"), work.join("duplicate")).unwrap();
+        disk_charge_with_subtrees(dir.path(), &mut subtrees).unwrap();
+        assert_eq!(
+            subtrees[&work] - old,
+            disk_charge(&work.join("duplicate")).unwrap()
+        );
+        std::os::unix::fs::symlink(&work, &absent).unwrap();
+        assert!(disk_charge_with_subtrees(dir.path(), &mut subtrees).is_err());
+        assert!(disk_charge(dir.path()).is_err());
+    }
 }

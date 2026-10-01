@@ -5,6 +5,9 @@ use super::{
     Artifact, Budgets, Integrity, Operation, SCHEMA, Selection, Slots, Snapshot, Storage, Traffic,
     invalid, operation, wall_ms,
 };
+use crate::durable::acquisition::continuation::{
+    CONTINUATION_WAIT_MS, ContinuationRecord, validate_continuation,
+};
 use crate::{
     FormatSource, HOST,
     acquisition::read_limited,
@@ -339,6 +342,30 @@ pub(super) fn read_run_context_at(
     } else {
         None
     };
+    let continuation = if root.join("continuation.json").exists() {
+        let (c, bytes): (ContinuationRecord, _) = decode(&root.join("continuation.json"))?;
+        let p = payload
+            .as_ref()
+            .ok_or_else(|| invalid("continuation requires payload"))?;
+        validate_continuation(
+            &root,
+            &manifest.plan,
+            &manifest.run_id,
+            &p.stage,
+            &p.prepared,
+            &c,
+        )
+        .map_err(invalid)?;
+        artifacts.push(artifact(
+            "payload-continuation",
+            "Separate payload continuation",
+            "continuation.json".into(),
+            &bytes,
+        ));
+        Some(c)
+    } else {
+        None
+    };
     let mut requests = metadata_requests();
     if let Some(payload) = &payload {
         requests.extend_from_slice(payload.prepared.requests());
@@ -350,10 +377,27 @@ pub(super) fn read_run_context_at(
     if request_map.len() != requests.len() {
         return Err(invalid("duplicate planned operation"));
     }
-    let stage = payload
-        .as_ref()
-        .map_or(&manifest.metadata_stage, |p| &p.stage);
-    let stage_for = |request: &Request| -> io::Result<&Stage> {
+    let stage = continuation.as_ref().map_or_else(
+        || {
+            payload
+                .as_ref()
+                .map_or(&manifest.metadata_stage, |p| &p.stage)
+        },
+        |c| &c.stage,
+    );
+    let stage_for = |request: &Request, attempt_id: u64, lease: &str| -> io::Result<&Stage> {
+        if let Some(c) = &continuation
+            && attempt_id >= c.approval.binding.prior_attempts
+        {
+            let index =
+                usize::try_from(attempt_id - c.approval.binding.prior_attempts).map_err(invalid)?;
+            if c.stage.lease_sha256 != lease
+                || c.approval.binding.requests.get(index) != Some(request)
+            {
+                return Err(invalid("continuation attempt identity"));
+            }
+            return Ok(&c.stage);
+        }
         if request.sequence < 4 {
             Ok(&manifest.metadata_stage)
         } else {
@@ -376,7 +420,7 @@ pub(super) fn read_run_context_at(
         let request = request_map
             .get(&attempt.request.sequence)
             .ok_or_else(|| invalid("unplanned recorded attempt"))?;
-        let attempt_stage = stage_for(request)?;
+        let attempt_stage = stage_for(request, attempt.attempt_id, &attempt.lease_sha256)?;
         if path.file_name().and_then(|p| p.to_str())
             != Some(&format!("{:010}.json", attempts.len()))
             || attempt.attempt_id != attempts.len() as u64
@@ -451,7 +495,10 @@ pub(super) fn read_run_context_at(
         let reservation = attempts
             .get(usize::try_from(receipt.attempt_id).map_err(invalid)?)
             .ok_or_else(|| invalid("unreserved receipt"))?;
-        let expected_evidence = if matches!(stage_for(request)?.authority, Authority::Fixture) {
+        let expected_evidence = if matches!(
+            stage_for(request, receipt.attempt_id, &receipt.lease_sha256)?.authority,
+            Authority::Fixture
+        ) {
             "Fixture"
         } else {
             "UNREVIEWED_AUTHENTIC_RAW"
@@ -479,10 +526,13 @@ pub(super) fn read_run_context_at(
                 != receipt.response_entity_bytes
             || receipt.response_entity_bytes > manifest.plan.budget.max_response_entity_bytes
             || receipt.sha256 != raw_hash(&path.join("raw.bin"), receipt.response_entity_bytes)?
-            || !clock_within(&receipt.acquired_at, stage_for(request)?)
+            || !clock_within(
+                &receipt.acquired_at,
+                stage_for(request, receipt.attempt_id, &receipt.lease_sha256)?,
+            )
             || if manifest.plan.clock_policy.is_some() {
                 check_recorded_attempt(
-                    stage_for(request)?,
+                    stage_for(request, receipt.attempt_id, &receipt.lease_sha256)?,
                     &reservation.at,
                     &receipt.acquired_at,
                     manifest.plan.budget.response_timeout_ms,
@@ -589,7 +639,11 @@ pub(super) fn read_run_context_at(
         if name != stop.filename() {
             return Err(invalid("recorded clock-stop filename mismatch"));
         }
-        let stop_stage = if stop.lease_sha256 == manifest.metadata_stage.lease_sha256 {
+        let stop_stage = if let Some(c) = &continuation
+            && stop.lease_sha256 == c.stage.lease_sha256
+        {
+            &c.stage
+        } else if stop.lease_sha256 == manifest.metadata_stage.lease_sha256 {
             &manifest.metadata_stage
         } else {
             payload
@@ -628,6 +682,47 @@ pub(super) fn read_run_context_at(
         clock_stops.push(format!(
             "RECORDED_CLOCK_STOP_{kind}: pending/{name}; original evidence preserved"
         ));
+    }
+    if let Some(c) = &continuation {
+        if attempts.len() < 18
+            || attempts
+                .iter()
+                .take(18)
+                .map(|a| a.reserved_entity_bytes)
+                .sum::<u64>()
+                != c.approval.binding.prior_entity_bytes
+        {
+            return Err(invalid("continuation original charges"));
+        }
+        let p = payload.as_ref().ok_or_else(|| invalid("payload"))?;
+        let original_payload = attempts
+            .iter()
+            .filter(|a| a.request.sequence >= 4)
+            .collect::<Vec<_>>();
+        if original_payload.len() as u64 > p.lease.budget.max_requests
+            || original_payload
+                .iter()
+                .map(|a| a.reserved_entity_bytes)
+                .sum::<u64>()
+                > p.lease.budget.max_response_entity_bytes_total
+        {
+            return Err(invalid("continuation original caps"));
+        }
+        let mut previous = c.stage.started_at.boot_ms;
+        for (i, a) in attempts.iter().skip(18).enumerate() {
+            if a.at.boot_ms
+                < previous
+                    .checked_add(CONTINUATION_WAIT_MS)
+                    .ok_or_else(|| invalid("clock"))?
+            {
+                return Err(invalid("continuation pacing"));
+            }
+            if let Some(p) = published_receipts.get(&a.request.sequence) {
+                previous = p.acquired_at.boot_ms;
+            } else if attempts.len() != 19 + i {
+                return Err(invalid("continuation after failure"));
+            }
+        }
     }
     let fixture = matches!(manifest.metadata_lease.authority, Authority::Fixture);
     let complete = operations.iter().all(|o| o.state == "PUBLISHED");

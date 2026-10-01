@@ -69,6 +69,8 @@ struct Run {
     aggregate: String,
     metadata_lease: String,
     payload_lease: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload_continuation: Option<(String, String)>,
     requests: u64,
     entity: u64,
     attempts: BTreeMap<u64, u64>,
@@ -696,6 +698,7 @@ impl Guard {
         guard.space(0)?;
         Ok(guard)
     }
+    #[allow(clippy::too_many_lines)] // Validate the complete monotone journal before opening a writer.
     fn open(root: &Path, fixture: bool) -> StoreResult<Self> {
         let original = root;
         let root = root.canonicalize()?;
@@ -758,6 +761,22 @@ impl Guard {
                 .is_some_and(|old| next.evaluation_release.as_ref() != Some(old))
             {
                 return Err(fail());
+            }
+            for (i, old) in &state.runs {
+                let new = next.runs.get(i).ok_or_else(fail)?;
+                if old.aggregate != new.aggregate
+                    || old.metadata_lease != new.metadata_lease
+                    || old
+                        .payload_lease
+                        .as_ref()
+                        .is_some_and(|p| new.payload_lease.as_ref() != Some(p))
+                    || old
+                        .payload_continuation
+                        .as_ref()
+                        .is_some_and(|p| new.payload_continuation.as_ref() != Some(p))
+                {
+                    return Err(fail());
+                }
             }
             for (i, old) in &state.processing {
                 let new = next.processing.get(i).ok_or_else(fail)?;
@@ -897,16 +916,20 @@ impl Guard {
         if (a.dev(), a.ino()) != (b.dev(), b.ino()) {
             return Err(StoreError::Locked);
         }
-        let mut disk = durable::disk_charge(&self.root)?
+        // The campaign total already includes every work tree. Collect those
+        // same subtree charges during the full walk instead of reading them a
+        // second time. Every call still rechecks the filesystem at this boundary.
+        let mut work_charges = self
+            .state
+            .processing
+            .keys()
+            .map(|window| (self.root.join(format!("work/w{window:02}")), 0))
+            .collect();
+        let mut disk = durable::disk_charge_with_subtrees(&self.root, &mut work_charges)?
             .checked_add(4096)
             .ok_or(StoreError::Budget)?;
         for (&window, processing) in &self.state.processing {
-            let path = self.root.join(format!("work/w{window:02}"));
-            let used = if path.exists() {
-                durable::disk_charge(&path)?
-            } else {
-                0
-            };
+            let used = work_charges[&self.root.join(format!("work/w{window:02}"))];
             if used > 4 * 1024 * 1024 * 1024 {
                 return Err(StoreError::Budget);
             }
@@ -1002,6 +1025,7 @@ impl Guard {
                     aggregate: aggregate.into(),
                     metadata_lease: lease.into(),
                     payload_lease: None,
+                    payload_continuation: None,
                     requests: 0,
                     entity: 0,
                     attempts: BTreeMap::new(),
@@ -1015,7 +1039,11 @@ impl Guard {
                 .get(&binding.window_ordinal)
                 .ok_or(StoreError::Corrupt)?;
             if r.aggregate != aggregate
-                || (r.metadata_lease != lease && r.payload_lease.as_deref() != Some(lease))
+                || (r.metadata_lease != lease
+                    && r.payload_lease.as_deref() != Some(lease)
+                    && r.payload_continuation
+                        .as_ref()
+                        .is_none_or(|(h, _)| h != lease))
             {
                 return Err(StoreError::Identity);
             }
@@ -1035,6 +1063,51 @@ impl Guard {
         }
         r.payload_lease = Some(lease.into());
         self.commit(n)
+    }
+    pub(crate) fn payload_continuation_head(&self) -> StoreResult<String> {
+        let r = self.state.runs.get(&4).ok_or(StoreError::Identity)?;
+        if self.state.runs.len() != 5
+            || (0..4).any(|i| self.state.processing.get(&i).is_none_or(|p| !p.complete))
+            || r.requests != 18
+            || r.payload_lease.is_none()
+            || r.payload_continuation.is_some()
+            || self.state.processing.contains_key(&4)
+            || self.state.evaluation_release.is_some()
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(self.head_hash.clone())
+    }
+    pub(crate) fn admit_payload_continuation(
+        &mut self,
+        previous: &str,
+        lease: &str,
+    ) -> StoreResult<()> {
+        if self.payload_continuation_head()? != previous || !hex_hash(lease) {
+            return Err(StoreError::Identity);
+        }
+        let mut n = self.state.clone();
+        n.runs
+            .get_mut(&4)
+            .ok_or(StoreError::Identity)?
+            .payload_continuation = Some((lease.into(), previous.into()));
+        self.commit(n)
+    }
+    pub(crate) fn verify_payload_continuation(
+        &self,
+        lease: &str,
+        previous: &str,
+    ) -> StoreResult<()> {
+        if self
+            .state
+            .runs
+            .get(&4)
+            .and_then(|r| r.payload_continuation.as_ref())
+            != Some(&(lease.into(), previous.into()))
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(())
     }
     /// # Errors
     /// Permanently charge before the run's own reservation and before any network.
@@ -1206,6 +1279,20 @@ impl Guard {
                 .get(&b.window_ordinal)
                 .is_none_or(|r| r.aggregate != aggregate || r.payload_lease.is_none())
         {
+            return Err(StoreError::Identity);
+        }
+        if let Some(reg) = g
+            .state
+            .runs
+            .get(&b.window_ordinal)
+            .and_then(|r| r.payload_continuation.as_ref())
+        {
+            let c: crate::durable::acquisition::continuation::ContinuationRecord =
+                read(&run_root.join("continuation.json"))?;
+            if c.stage.lease_sha256 != reg.0 || c.approval.binding.previous_ledger_sha256 != reg.1 {
+                return Err(StoreError::Identity);
+            }
+        } else if run_root.join("continuation.json").exists() {
             return Err(StoreError::Identity);
         }
         Ok(g)

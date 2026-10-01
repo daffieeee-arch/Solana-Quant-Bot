@@ -269,6 +269,10 @@ async function assertStaticGraph(directory) {
       checkJs: false,
       module: ts.ModuleKind.ESNext,
       noResolve: true,
+      // This gate checks syntax and local lexical bindings, not ambient types.
+      // Keep the checker for shadowing/aliases without parsing unused libraries.
+      noLib: true,
+      types: [],
       skipLibCheck: true,
       target: ts.ScriptTarget.Latest,
     });
