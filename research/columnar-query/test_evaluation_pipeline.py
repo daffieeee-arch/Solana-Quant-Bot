@@ -12,6 +12,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import time
 
 from collection_run import Runner, digest, process_limits
 from manifest_reader import load_manifest
@@ -58,9 +59,11 @@ def run(root, generator, decoder, projector, verifier, phase, acquisition_cli):
 
     evidence=[{'ordinal':i,'manifest_sha256':digest(root/f'campaign/work/w{i:02}/collection.json')} for i in range(phase*4)]
     for ordinal in range(phase*4,(phase+1)*4):
+        window_started=time.monotonic()
         env={**os.environ,'COLUMNAR_EVALUATION_FIXTURE_DIR':str(root),'COLUMNAR_EVALUATION_ORDINAL':str(ordinal)}
         subprocess.run([str(generator),'sealed_evaluation_source_fixture','--exact'],
                        env=env,capture_output=True,timeout=90,check=True)
+        preparation_seconds=time.monotonic()-window_started
         if ordinal == 4:
             f=root/'continuation-fixture';run_root=root/'campaign/runs/w04'
             before={str(p.relative_to(run_root)):digest(p) for p in run_root.rglob('*') if p.is_file()}
@@ -184,6 +187,14 @@ def run(root, generator, decoder, projector, verifier, phase, acquisition_cli):
             assert m['transaction_status_counts']['ERROR']==65 and m['layers']['silver']['rows']==66
         evidence.append({'ordinal':ordinal,'manifest_sha256':digest(work/'collection.json')})
         if ordinal<15:native('evaluation-read-released',root/'campaign',ok=False)
+        # Synthetic fixture timings only; never expose authenticated evaluation
+        # workers' outputs. Retained failed/resumed operations remain included.
+        operations=[json.loads(f.read_bytes()) for f in sorted(work.glob('operation-*.json'))]
+        print(json.dumps({'fixture_timing':'OF1_SEALED_WINDOW_1','ordinal':ordinal,'phase':phase,
+                          'preparation_seconds':preparation_seconds,
+                          'window_seconds':time.monotonic()-window_started,
+                          'recorded_operation_count':len(operations),
+                          'recorded_operation_seconds':sum(o['elapsed_seconds'] for o in operations)}),flush=True)
     if phase<3:
         print(json.dumps({'state':'PASS','evidence':'Fixture','stage':phase,'same_campaign_continues':True}))
         return

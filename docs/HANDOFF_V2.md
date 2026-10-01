@@ -4,6 +4,16 @@
 
 ## Mission and success criterion
 
+**PR #152 CI runtime repair, 2026-10-01:** the 45-minute cancellation is retained
+in `governance/b7-payload-continuation-clippy-20261001/`; fixture phases 0–2 alone
+are not complete-chain evidence. The bounded follow-up profiles all four phases,
+removes duplicate traversal within each campaign storage check (no cached charges
+or omitted admission/publication checks), and separates independent core and
+columnar jobs with a fail-closed required aggregate. Bronze/Parquet build caches
+never contain datasets, permissions or test outcomes. See [CI](CI.md); new timing,
+review and delivery evidence is in `governance/b7-ci-runtime-20261001/`. Authentic
+continuation remains conditional on protected merge and green technical main.
+
 **B7 ordinal-4 payload continuation, 2026-10-01:** a separate owner decision
 accepts `governance/b7-ordinal4-resume-decision-20260930T194523Z/continuation-proposal.json`
 (SHA256 `4d8837537949f6c066beb5d07b78c2234e4d98d37f6ed40081076dd97847ae82`).

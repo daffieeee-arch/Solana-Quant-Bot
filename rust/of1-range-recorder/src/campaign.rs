@@ -916,16 +916,20 @@ impl Guard {
         if (a.dev(), a.ino()) != (b.dev(), b.ino()) {
             return Err(StoreError::Locked);
         }
-        let mut disk = durable::disk_charge(&self.root)?
+        // The campaign total already includes every work tree. Collect those
+        // same subtree charges during the full walk instead of reading them a
+        // second time. Every call still rechecks the filesystem at this boundary.
+        let mut work_charges = self
+            .state
+            .processing
+            .keys()
+            .map(|window| (self.root.join(format!("work/w{window:02}")), 0))
+            .collect();
+        let mut disk = durable::disk_charge_with_subtrees(&self.root, &mut work_charges)?
             .checked_add(4096)
             .ok_or(StoreError::Budget)?;
         for (&window, processing) in &self.state.processing {
-            let path = self.root.join(format!("work/w{window:02}"));
-            let used = if path.exists() {
-                durable::disk_charge(&path)?
-            } else {
-                0
-            };
+            let used = work_charges[&self.root.join(format!("work/w{window:02}"))];
             if used > 4 * 1024 * 1024 * 1024 {
                 return Err(StoreError::Budget);
             }
