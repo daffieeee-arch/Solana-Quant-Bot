@@ -135,6 +135,17 @@ not increase either work-job deadline. The earlier 35-minute integration stop
 [35531541423](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/35531541423)
 remains historical evidence.
 
+The first split run [36903163731](https://github.com/daffieeee-arch/Solana-Quant-Bot/actions/runs/36903163731)
+also retained a concrete Node failure: the existing wrong-built-file transport
+test took 5,196 ms against its unchanged 5,000-ms bound. A bounded actual-CLI
+profile found 218 TypeScript file reads for that one small input, including
+unused default libraries and ambient types. The syntax/local-symbol gate now
+uses `noLib: true` and `types: []`; its checker, parse diagnostics, import walk
+and security assertions remain. Local/imported `Object` shadow regressions
+protect the narrow descriptor exception. The same diagnostic reads one file
+afterward (1.122 s to 0.367 s locally); runner contention is not quantified by
+that single measurement. Full GitHub execution remains the delivery gate.
+
 ### Triggers
 
 - pull requests targeting `main`

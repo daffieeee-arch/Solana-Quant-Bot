@@ -13,6 +13,9 @@ columnar jobs with a fail-closed required aggregate. Bronze/Parquet build caches
 never contain datasets, permissions or test outcomes. See [CI](CI.md); new timing,
 review and delivery evidence is in `governance/b7-ci-runtime-20261001/`. Authentic
 continuation remains conditional on protected merge and green technical main.
+The first split run exposed the previously recorded five-second Node transport
+test timeout. Its static syntax/local-binding gate no longer loads unused ambient
+TypeScript declarations; security checks and the test deadline remain unchanged.
 
 **B7 ordinal-4 payload continuation, 2026-10-01:** a separate owner decision
 accepts `governance/b7-ordinal4-resume-decision-20260930T194523Z/continuation-proposal.json`
