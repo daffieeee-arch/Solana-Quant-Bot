@@ -335,11 +335,12 @@ mod continuation_tests {
 }
 
 #[cfg(not(feature = "network-of1"))]
-fn capture_stage(_root: &str, _plan: &str, _lease: &str) -> Result<()> {
+fn capture_stage(root: &str, plan: &str, lease: &str) -> Result<()> {
     #[cfg(test)]
     if continuation_tests::active() {
-        return continuation_tests::capture(_root, _plan, _lease);
+        return continuation_tests::capture(root, plan, lease);
     }
+    let _ = (root, plan, lease);
     Err("network-of1 capability disabled; no store mutation or connection attempted".into())
 }
 
