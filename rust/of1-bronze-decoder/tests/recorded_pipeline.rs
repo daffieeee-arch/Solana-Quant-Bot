@@ -1424,6 +1424,7 @@ fn export_part_fixture(variable: &str, large_slot: u64, ordinary: bool) {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Keep the fixed campaign/source export and interrupted ordinal-4 prefix together.
 fn sealed_evaluation_source_fixture() {
     let Some(export) = std::env::var_os("COLUMNAR_EVALUATION_FIXTURE_DIR") else {
         return;
