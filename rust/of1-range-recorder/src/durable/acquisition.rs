@@ -19,6 +19,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod continuation;
+use continuation::ContinuationRecord;
+
 pub const SEGMENT_BYTES: usize = 65_536;
 const RECORD_LIMIT: u64 = 131_072;
 const MANIFEST_LIMIT: u64 = 1_048_576;
@@ -512,6 +515,8 @@ pub struct AcquisitionStore<C: Clock> {
     manifest: Manifest,
     manifest_bytes: Vec<u8>,
     payload: Option<PayloadRecord>,
+    continuation: Option<ContinuationRecord>,
+    preparation_only: bool,
     clock: C,
     high_water: ClockSample,
     cache: Audit,
@@ -582,6 +587,8 @@ impl<C: Clock> AcquisitionStore<C> {
             manifest,
             manifest_bytes,
             payload: None,
+            continuation: None,
+            preparation_only: false,
             clock,
             high_water: started,
             cache: Audit::default(),
@@ -609,7 +616,30 @@ impl<C: Clock> AcquisitionStore<C> {
         expected_current_lease_sha256: &str,
         clock: C,
     ) -> StoreResult<Self> {
-        validate_aggregate(plan)?;
+        Self::resume_inner(root, plan, expected_current_lease_sha256, clock, false)
+    }
+
+    #[allow(clippy::too_many_lines)] // Keep the ordered identity/lock/audit admission together.
+    fn resume_inner(
+        root: &Path,
+        plan: &AggregatePlan,
+        expected_current_lease_sha256: &str,
+        clock: C,
+        preparation_only: bool,
+    ) -> StoreResult<Self> {
+        let continuation = if root.join("continuation.json").exists() {
+            Some(decode::<ContinuationRecord>(&read_bounded(
+                &root.join("continuation.json"),
+                MANIFEST_LIMIT,
+            )?)?)
+        } else {
+            None
+        };
+        if preparation_only || continuation.is_some() {
+            validate_aggregate_shape(plan)?;
+        } else {
+            validate_aggregate(plan)?;
+        }
         let root_meta = fs::symlink_metadata(root)?;
         if !root_meta.is_dir() {
             return Err(StoreError::Identity);
@@ -666,6 +696,8 @@ impl<C: Clock> AcquisitionStore<C> {
             manifest,
             manifest_bytes,
             payload,
+            continuation,
+            preparation_only,
             clock,
             cache: Audit::default(),
             inflight: None,
@@ -673,6 +705,16 @@ impl<C: Clock> AcquisitionStore<C> {
             fault: None,
             campaign,
         };
+        if let Some(c) = &store.continuation {
+            store
+                .campaign
+                .as_ref()
+                .ok_or(StoreError::Identity)?
+                .verify_payload_continuation(
+                    &c.stage.lease_sha256,
+                    &c.approval.binding.previous_ledger_sha256,
+                )?;
+        }
         if store.current_lease_sha256() != expected_current_lease_sha256 {
             return Err(StoreError::Identity);
         }
@@ -843,6 +885,20 @@ impl<C: Clock> AcquisitionStore<C> {
             return Err(StoreError::Identity);
         }
         let request = self.request(sequence)?.clone();
+        if let Some(c) = &self.continuation {
+            let next = self
+                .cache
+                .attempts
+                .len()
+                .checked_sub(18)
+                .ok_or(StoreError::Corrupt)?;
+            if c.approval.binding.requests.get(next) != Some(&request) {
+                return Err(StoreError::Identity);
+            }
+            if self.continuation_wait_ms()? != 0 {
+                return Err(StoreError::Deadline);
+            }
+        }
         // Deterministic inventory order: only the first remaining logical request is eligible.
         let first = if self.payload.is_some() { 4 } else { 0 };
         if (first..sequence).any(|s| !self.cache.published.contains_key(&s)) {
@@ -1350,12 +1406,24 @@ impl<C: Clock> AcquisitionStore<C> {
     }
 
     fn stage(&self) -> &StageRecord {
+        if let Some(c) = &self.continuation {
+            return &c.stage;
+        }
         self.payload
             .as_ref()
             .map_or(&self.manifest.metadata_stage, |p| &p.stage)
     }
-    fn stage_for(&self, request: &Request) -> StoreResult<&StageRecord> {
-        if request.sequence < 4 {
+    fn stage_for_reservation(&self, reservation: &Reservation) -> StoreResult<&StageRecord> {
+        if let Some(c) = &self.continuation
+            && reservation.attempt_id >= c.approval.binding.prior_attempts
+        {
+            if reservation.lease_sha256 != c.stage.lease_sha256 || reservation.request.sequence < 17
+            {
+                return Err(StoreError::Identity);
+            }
+            return Ok(&c.stage);
+        }
+        if reservation.request.sequence < 4 {
             Ok(&self.manifest.metadata_stage)
         } else {
             self.payload
@@ -1379,7 +1447,7 @@ impl<C: Clock> AcquisitionStore<C> {
             .collect()
     }
     fn usable(&self) -> StoreResult<()> {
-        if self.poisoned {
+        if self.poisoned || self.preparation_only {
             Err(StoreError::Poisoned)
         } else {
             Ok(())
@@ -1589,6 +1657,7 @@ impl<C: Clock> AcquisitionStore<C> {
             let mut high = self.high_water.clone();
             let samples = std::iter::once(&self.manifest.metadata_stage.started_at)
                 .chain(self.payload.as_ref().map(|p| &p.stage.started_at))
+                .chain(self.continuation.as_ref().map(|c| &c.stage.started_at))
                 .chain(audit.attempts.iter().map(|a| &a.at))
                 .chain(audit.streams.values().map(|s| &s.latest_at))
                 .chain(audit.published.values().map(|p| &p.receipt.acquired_at))
@@ -1628,9 +1697,16 @@ impl<C: Clock> AcquisitionStore<C> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // One ordered immutable record audit, including continuation history.
     fn audit(&self) -> StoreResult<Audit> {
         self.identity_guard()?;
-        if executable_hash()? != self.manifest.plan.executable_sha256 {
+        let expected_executable = self
+            .continuation
+            .as_ref()
+            .map_or(self.manifest.plan.executable_sha256.as_str(), |c| {
+                c.approval.binding.continuation_executable_sha256.as_str()
+            });
+        if !self.preparation_only && executable_hash()? != expected_executable {
             return Err(StoreError::Identity);
         }
         let mut names = vec![
@@ -1642,6 +1718,22 @@ impl<C: Clock> AcquisitionStore<C> {
         ];
         if self.payload.is_some() {
             names.push("payload.json");
+        }
+        if self.continuation.is_some() {
+            names.push("continuation.json");
+            if self.root.join("continuation-stop.json").exists() {
+                names.push("continuation-stop.json");
+                if read_bounded(&self.root.join("continuation-stop.json"), RECORD_LIMIT)?
+                    != encode(&self.stage().lease_sha256)?
+                {
+                    return Err(StoreError::Corrupt);
+                }
+            }
+            if read_bounded(&self.root.join("continuation.json"), MANIFEST_LIMIT)?
+                != encode(self.continuation.as_ref().ok_or(StoreError::Identity)?)?
+            {
+                return Err(StoreError::Corrupt);
+            }
         }
         exact_names(&self.root, &names)?;
         self.space(0)?;
@@ -1670,7 +1762,7 @@ impl<C: Clock> AcquisitionStore<C> {
                 || a.run_id != self.manifest.run_id
                 || a.aggregate_sha256 != self.manifest.aggregate_sha256
                 || self.request(a.request.sequence)? != &a.request
-                || a.lease_sha256 != self.stage_for(&a.request)?.lease_sha256
+                || a.lease_sha256 != self.stage_for_reservation(&a)?.lease_sha256
                 || a.reserved_entity_bytes != a.request.allowance()
             {
                 return Err(StoreError::Corrupt);
@@ -1683,7 +1775,7 @@ impl<C: Clock> AcquisitionStore<C> {
                 return Err(StoreError::Corrupt);
             }
             self.follows(&previous, &a.at)?;
-            within_stage(self.stage_for(&a.request)?, &a.at)?;
+            within_stage(self.stage_for_reservation(&a)?, &a.at)?;
             previous = a.at.clone();
             let prior = audit
                 .attempts
@@ -1703,6 +1795,7 @@ impl<C: Clock> AcquisitionStore<C> {
         for stage in [&self.manifest.metadata_stage]
             .into_iter()
             .chain(self.payload.as_ref().map(|p| &p.stage))
+            .chain(self.continuation.as_ref().map(|c| &c.stage))
         {
             let attempts: Vec<_> = audit
                 .attempts
@@ -1724,6 +1817,7 @@ impl<C: Clock> AcquisitionStore<C> {
             }
         }
         self.audit_payload_binding(&audit)?;
+        self.audit_continuation(&audit)?;
         Ok(audit)
     }
 
@@ -1772,6 +1866,13 @@ impl<C: Clock> AcquisitionStore<C> {
                 || name.starts_with("attempt-expired-")
             {
                 self.audit_clock_stop(&path, name, audit)?;
+                continue;
+            }
+            if name == "continuation-intent.json" {
+                let c = self.continuation.as_ref().ok_or(StoreError::Corrupt)?;
+                if read_bounded(&path, MANIFEST_LIMIT)? != encode(c)? {
+                    return Err(StoreError::Corrupt);
+                }
                 continue;
             }
             if name == "payload-intent.json" {
@@ -1870,6 +1971,7 @@ impl<C: Clock> AcquisitionStore<C> {
         let stage = [&self.manifest.metadata_stage]
             .into_iter()
             .chain(self.payload.as_ref().map(|p| &p.stage))
+            .chain(self.continuation.as_ref().map(|c| &c.stage))
             .find(|stage| stage.lease_sha256 == stop.lease_sha256)
             .ok_or(StoreError::Corrupt)?;
         let attempt = stop
@@ -1962,7 +2064,7 @@ impl<C: Clock> AcquisitionStore<C> {
         }
         let expected = attempt.request.entity_length(&identity.head)?;
         within_attempt(
-            self.stage_for(&attempt.request)?,
+            self.stage_for_reservation(attempt)?,
             attempt,
             &identity.at,
             self.manifest.plan.budget.response_timeout_ms,
@@ -2002,7 +2104,7 @@ impl<C: Clock> AcquisitionStore<C> {
             }
             self.follows(&record.latest_at, &receipt.at)?;
             within_attempt(
-                self.stage_for(&attempt.request)?,
+                self.stage_for_reservation(attempt)?,
                 attempt,
                 &receipt.at,
                 self.manifest.plan.budget.response_timeout_ms,
@@ -2049,7 +2151,7 @@ impl<C: Clock> AcquisitionStore<C> {
                 || raw.len() as u64 != expected
                 || sha256(&raw) != receipt.sha256
                 || raw != stream.bytes
-                || receipt.evidence != evidence(&self.stage_for(&a.request)?.authority)
+                || receipt.evidence != evidence(&self.stage_for_reservation(a)?.authority)
                 || receipt.domain_counts != "UNAVAILABLE_NOT_DECODED_IN_B4"
                 || path.file_name().and_then(|n| n.to_str())
                     != Some(format!("{:010}", a.request.sequence).as_str())
@@ -2063,7 +2165,7 @@ impl<C: Clock> AcquisitionStore<C> {
             }
             self.follows(&stream.latest_at, &receipt.acquired_at)?;
             within_attempt(
-                self.stage_for(&a.request)?,
+                self.stage_for_reservation(a)?,
                 a,
                 &receipt.acquired_at,
                 self.manifest.plan.budget.response_timeout_ms,
@@ -2141,6 +2243,12 @@ fn short_text(value: &str) -> bool {
 }
 
 fn validate_aggregate(plan: &AggregatePlan) -> StoreResult<()> {
+    if plan.executable_sha256 != executable_hash()? {
+        return Err(StoreError::Identity);
+    }
+    validate_aggregate_shape(plan)
+}
+fn validate_aggregate_shape(plan: &AggregatePlan) -> StoreResult<()> {
     if let Some(policy) = &plan.clock_policy {
         policy.validate()?;
     }
@@ -2179,7 +2287,6 @@ fn validate_aggregate(plan: &AggregatePlan) -> StoreResult<()> {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
         || !hash(&plan.toolchain_fingerprint)
         || !hash(&plan.executable_sha256)
-        || plan.executable_sha256 != executable_hash()?
         || plan
             .epoch
             .checked_add(1)

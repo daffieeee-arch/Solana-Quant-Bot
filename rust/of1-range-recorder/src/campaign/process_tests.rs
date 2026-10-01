@@ -121,3 +121,72 @@ fn continuation_crash_never_refunds_or_regrants_processing() {
         );
     }
 }
+
+#[test]
+fn actual_approved_generator_preserves_clock_contract_and_separate_stage_budgets() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/of1-approved-authority.py");
+    let policy = ClockPolicy::standard();
+    for (kind, requests, entity, runtime) in [
+        ("metadata", 12, 15_576_576, 600_000),
+        ("payload", 48, 68_136_183, 1_200_000),
+        ("processing", 1, 1, 900_000),
+        ("continuation", 3, 4_175_463, 600_000),
+    ] {
+        // One actual pair per new approval; no fixture authority or campaign mutation.
+        let at = SystemClock.sample().unwrap();
+        let target = "a".repeat(64);
+        let input = serde_json::json!({"clock":at,"target_sha256":target,
+            "approval_id":"offline-native-approved-validation","operator":"synthetic offline validation only"});
+        let mut child = Command::new("python3")
+            .arg(&script)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&input).unwrap())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{:?}", output.stderr);
+        let a: Authority = serde_json::from_slice(&output.stdout).unwrap();
+        let budget = StageBudget {
+            max_requests: requests,
+            max_response_entity_bytes_total: entity,
+            max_runtime_ms: runtime,
+        };
+        validate_authority(Some(&policy), &a, &target).unwrap();
+        let stage = make_stage(Some(&policy), &a, &budget, &input, &at).unwrap();
+        assert_eq!(stage.deadline_boot_ms - at.boot_ms, runtime);
+        assert_eq!(stage.budget, budget);
+        let mut wrong = serde_json::to_value(&a).unwrap();
+        wrong["clock_anchor"]["initialize_by_boot_ms"] = serde_json::json!(at.boot_ms + runtime);
+        wrong["clock_anchor"]["expires_at_boot_ms"] = serde_json::json!(at.boot_ms + runtime);
+        wrong["not_after_ms"] = serde_json::json!(at.wall_ms + runtime);
+        if runtime == 1_200_000 {
+            wrong["clock_anchor"]["initialize_by_boot_ms"] =
+                serde_json::json!(at.boot_ms + 1_200_000);
+        }
+        let wrong: Authority = serde_json::from_value(wrong).unwrap();
+        assert!(validate_authority(Some(&policy), &wrong, &target).is_err());
+        assert!(validate_authority(Some(&policy), &a, &"b".repeat(64)).is_err());
+        let mut changed = at.clone();
+        changed.boot_id.push_str("-wrong");
+        assert!(make_stage(Some(&policy), &a, &budget, &input, &changed).is_err());
+        changed = at.clone();
+        changed.boot_ms += 1_200_001;
+        changed.wall_ms += 1_200_001;
+        assert!(make_stage(Some(&policy), &a, &budget, &input, &changed).is_err());
+        println!(
+            "{}",
+            serde_json::json!({"kind":kind,"generated_authority":a,"budget":budget,
+            "native_approved_validation":"PASS","wrong_offsets_boot_expiry_target":"REFUSED"})
+        );
+    }
+}

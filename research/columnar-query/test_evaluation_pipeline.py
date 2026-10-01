@@ -17,7 +17,7 @@ from collection_run import Runner, digest, process_limits
 from manifest_reader import load_manifest
 
 
-def run(root, generator, decoder, projector, verifier, phase):
+def run(root, generator, decoder, projector, verifier, phase, acquisition_cli):
     assert phase in range(4)
     if phase==0:root.mkdir()
     driver_root=root/'driver'
@@ -61,6 +61,28 @@ def run(root, generator, decoder, projector, verifier, phase):
         env={**os.environ,'COLUMNAR_EVALUATION_FIXTURE_DIR':str(root),'COLUMNAR_EVALUATION_ORDINAL':str(ordinal)}
         subprocess.run([str(generator),'sealed_evaluation_source_fixture','--exact'],
                        env=env,capture_output=True,timeout=90,check=True)
+        if ordinal == 4:
+            f=root/'continuation-fixture';run_root=root/'campaign/runs/w04'
+            before={str(p.relative_to(run_root)):digest(p) for p in run_root.rglob('*') if p.is_file()}
+            old_lease=(f/'lease.txt').read_text()
+            def acquisition(op, lease, approval=None, ok=True):
+                args=[op,str(run_root),str(f/'aggregate.json'),lease]
+                if approval is not None:args.append(str(approval))
+                argfile=f/'args.json';argfile.write_text(json.dumps(args))
+                env={**os.environ,'OF1_CONTINUATION_TEST_ARGS':str(argfile),
+                    'OF1_CONTINUATION_TEST_CLOCK':str(f/'clock.json'),
+                    'OF1_CONTINUATION_TEST_RAW':str(f)}
+                r=subprocess.run([str(acquisition_cli),'--exact','continuation_tests::cli_child','--nocapture'],
+                                 env=env,capture_output=True,timeout=90)
+                assert (r.returncode==0)==ok,(r.stdout,r.stderr)
+                if ok:return json.loads(r.stdout[r.stdout.index(b'{'):r.stdout.rindex(b'}')+1])
+            acquisition('capture-stage',old_lease,ok=False)
+            proposal=acquisition('payload-continuation-proposal',old_lease)
+            a=f/'approval.json';a.write_text(json.dumps(proposal['approval']))
+            admitted=acquisition('payload-continuation-admit',old_lease,a)
+            final=acquisition('capture-stage',admitted['current_lease_sha256'])
+            assert final['published_requests']==20 and final['attempts_reserved']==21 and final['unpublished_attempts']==1
+            assert all(digest(run_root/p)==h for p,h in before.items())
         path=root/f'plan-{ordinal:02}.json'
         work=root/f'campaign/work/w{ordinal:02}'
         approval=root/f'approval-{ordinal:02}.json'
@@ -77,7 +99,7 @@ def run(root, generator, decoder, projector, verifier, phase):
                 native('source',root/'campaign/runs/w04',ok=False)
                 native('evaluation-source',root/'campaign/runs/w03',ok=False)
                 assert set(source['source'])=={'source_id','run_root','run_id','bindings','sample_identity'}
-                assert set(source['source']['bindings'])=={'manifest_sha256','payload_manifest_sha256','aggregate_sha256','prepared_payload_sha256','metadata_receipt_sha256','receipts','sample_identity'}
+                assert set(source['source']['bindings'])=={'manifest_sha256','payload_manifest_sha256','aggregate_sha256','prepared_payload_sha256','metadata_receipt_sha256','receipts','sample_identity','payload_continuation_sha256'}
                 receipt=root/'campaign/runs/w04'/source['source']['bindings']['receipts'][4]['path']
                 original=receipt.read_bytes()
                 try:
@@ -186,4 +208,4 @@ def run(root, generator, decoder, projector, verifier, phase):
                       'no_authentic_evaluation_access':True}))
 
 
-if __name__=='__main__':run(*[pathlib.Path(v).resolve() for v in sys.argv[1:6]],int(sys.argv[6]))
+if __name__=='__main__':run(*[pathlib.Path(v).resolve() for v in sys.argv[1:6]],int(sys.argv[6]),pathlib.Path(sys.argv[7]))

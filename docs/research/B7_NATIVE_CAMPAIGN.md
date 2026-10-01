@@ -350,3 +350,53 @@ Analysis artifacts stay outside the campaign and Git in a bounded governance
 folder (report ≤256 MiB, temporary output ≤1 GiB, native export ≤16 MiB,
 900-second execution; existing host headroom and CPU/RAM limits). They do not
 modify or refund campaign charges. No acquisition or evaluation permission follows.
+
+## Ordinal-4 payload continuation — 2026-10-01
+
+`OF1_B7_PAYLOAD_CONTINUATION_1` is one explicit exception for the already
+acquired ordinal-4 prefix, not a general lease-renewal API. Native commands:
+
+```
+of1-acquire payload-continuation-proposal RUN AGGREGATE OLD_PAYLOAD_LEASE_HASH
+of1-acquire payload-continuation-admit RUN AGGREGATE OLD_PAYLOAD_LEASE_HASH APPROVAL
+of1-acquire capture-stage RUN AGGREGATE NEW_CONTINUATION_LEASE_HASH
+```
+
+The proposal is outcome-free and grants no authority. Admission recomputes the
+binding while holding both run and campaign locks. It binds the fixed B7 sample,
+original aggregate/lease/producer, current ledger, prepared source/ranges, hashes
+of all retained run files, and the new acquisition executable. Only the existing
+13-payload + 4-metadata + one charged-429 prefix is eligible; DEVELOPMENT windows
+0–3 must already be complete. The production source pins and three ranges match
+the accepted private proposal. Fixture roots remain separate and cannot authorize
+a production connector.
+
+Admission appends an intent, a campaign journal entry and an atomic continuation
+record. An interrupted admission at an ambiguous boundary fails closed. Neither
+old authority nor prior charges are rewritten. Each new reservation is charged
+before transport. A failed or unpublished new attempt is terminal; restarting
+cannot return it or move on to a different range. After complete publication,
+restart skips that range. Pacing is anchored in persisted native boot-clock
+initialization/success times: 60 seconds before the first request, then 60 seconds
+after each successful request. The 600-second execution grant is separate from
+the expired original stage, subject to unchanged aggregate/payload byte, request,
+disk and worker limits. It cannot be extended by a restart.
+
+The writer, campaign ledger and immutable source reader all verify this record.
+Existing receipts keep their original producer bindings; new receipts bind the
+new continuation lease/executable. Downstream source identity includes the
+continuation record hash. Completeness is twenty distinct valid planned receipts,
+not `unpublished_attempts == 0`: the historical 429 remains charged evidence.
+Sealed evaluation preparation/processing still require their separate authority;
+generic readers, exports and final visibility remain denied.
+
+`scripts/of1-approved-authority.py` only serializes a separately granted approval
+from one caller-supplied native clock sample. The unchanged native validator is
+authoritative: initialization window 600,000 ms; approval validity 1,200,000 ms;
+stage runtime remains separately bounded. Offline tests run this actual generator
+against APPROVED authority validation for metadata, payload, processing and the
+continuation. Synthetic CLI tests cover historical expiry, refused/mismatched
+consent, reservation/publication interruptions, pacing, terminal failure and
+preservation of all historical hashes. The existing sealed end-to-end fixture
+now completes ordinal 4 through this public continuation route before processing.
+These fixtures expose no authentic evaluation outcomes.

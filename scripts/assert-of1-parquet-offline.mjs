@@ -93,7 +93,10 @@ try {
     const compiled=run('cargo',['+1.97.1','test','--profile','ci-test','--manifest-path',join(bronze,'Cargo.toml'),'--locked','--offline','--test','recorded_pipeline','--no-run','--message-format=json'],'parquet.fixture.evaluation-executable');
     const generator=compiled.split('\n').filter(line=>line.startsWith('{')).map(line=>JSON.parse(line)).find(row=>row.reason==='compiler-artifact'&&row.target?.name==='recorded_pipeline'&&row.executable)?.executable;
     if(!generator)throw Error('exact native fixture executable missing');
-    for(const phase of [0,1,2,3])process.stdout.write(run(python,[join(root,'research/columnar-query/test_evaluation_pipeline.py'),join(scratch,'evaluation-fixture'),generator,join(bronze,'target/ci-test/of1-bronze-batch'),join(crate,'target/ci-test/of1-parquet-projection'),join(bronze,'target/ci-test/of1-bronze-collection'),String(phase)],`parquet.fixture.sealed-phase-${phase}`));
+    const acquisitionCompiled=run('cargo',['+1.97.1','test','--profile','ci-test','--manifest-path',join(root,'rust/of1-range-recorder/Cargo.toml'),'--locked','--offline','--features','monitor','--bin','of1-acquire','--no-run','--message-format=json'],'parquet.fixture.continuation-cli');
+    const acquisitionCli=acquisitionCompiled.split('\n').filter(line=>line.startsWith('{')).map(line=>JSON.parse(line)).find(row=>row.reason==='compiler-artifact'&&row.target?.name==='of1-acquire'&&row.executable&&row.profile?.test)?.executable;
+    if(!acquisitionCli)throw Error('exact native continuation fixture CLI missing');
+    for(const phase of [0,1,2,3])process.stdout.write(run(python,[join(root,'research/columnar-query/test_evaluation_pipeline.py'),join(scratch,'evaluation-fixture'),generator,join(bronze,'target/ci-test/of1-bronze-batch'),join(crate,'target/ci-test/of1-parquet-projection'),join(bronze,'target/ci-test/of1-bronze-collection'),String(phase),acquisitionCli],`parquet.fixture.sealed-phase-${phase}`));
     console.log('DuckDB real Parquet and coverage regressions PASS (sockets denied)');
   }
   console.log('Parquet dependency identity/network-denied gates PASS');

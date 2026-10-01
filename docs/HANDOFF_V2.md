@@ -4,6 +4,25 @@
 
 ## Mission and success criterion
 
+**B7 ordinal-4 payload continuation, 2026-10-01:** a separate owner decision
+accepts `governance/b7-ordinal4-resume-decision-20260930T194523Z/continuation-proposal.json`
+(SHA256 `4d8837537949f6c066beb5d07b78c2234e4d98d37f6ed40081076dd97847ae82`).
+The expired payload lease, thirteen published payloads, four metadata receipts
+and charged HTTP 429 remain immutable. After reviewed protected delivery and green
+technical main checks, one append-only continuation may dispatch only sequences
+17–19 in the same campaign/run: three attempts, 4,175,463 reserved entity bytes,
+600 seconds separately granted, with persisted 60-second spacing and stop on the
+first error. No metadata refresh or retry. The [native contract](research/B7_NATIVE_CAMPAIGN.md#ordinal-4-payload-continuation--2026-10-01)
+binds the old/new executables, exact source, ledger and retained files. Completion
+requires all twenty valid receipts; the historical unpublished failed attempt is
+not erased. A fresh separate sealed-processing permission remains conditional on
+complete acquisition (one worker, 900 seconds, 4 GiB). No outcomes, final release,
+other window, phase two or B8 are authorized. The actual execution status and immutable receipts are recorded in
+`governance/b7-payload-continuation-20261001/`; implementation alone does not
+prove acquisition or sealed completion. #86 stays open / Unproven and Research
+Ready=false. Prior failed runs and lease history remain evidence.
+
+
 **B7 evaluation preparation repair, 2026-09-30:** the owner authorizes one
 bounded repair of #150's missing public source/plan preparation path. The
 preflight stop is sealed in `governance/b7-first-evaluation-sealed-20260928T135734Z/`;
@@ -206,7 +225,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows are complete; the accepted method and sealed-processing fixture evidence remain unchanged. The 2026-09-30 owner decision above authorizes only the preparation repair and conditional ordinal-4 acquisition/sealed processing. No evaluation visibility, next window or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
+- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows are complete; the accepted method and sealed-processing fixture evidence remain unchanged. The 2026-10-01 decision above authorizes only the fixed ordinal-4 payload continuation and conditional sealed processing. No evaluation visibility, next window or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

@@ -38,6 +38,15 @@ describe('OF1 default-off transport dependency boundary', () => {
     expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\nstd::net::TcpStream' })).toContain(`unexpected runtime capability in ${path}`);
   });
 
+  it('pins the synthetic continuation CLI harness without a runtime transport override', () => {
+    const path = 'src/bin/of1-acquire/continuation_tests.rs';
+    const source = readFileSync(`rust/of1-range-recorder/${path}`, 'utf8');
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source })).toEqual([]);
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\n' })).toContain('unreviewed continuation CLI harness');
+    expect(validateOf1PlannerInputs(manifest, lock, { 'src/bin/of1-acquire.rs': source })).toContain('unexpected runtime capability in src/bin/of1-acquire.rs');
+    expect(validateOf1PlannerInputs(manifest, lock, { [path]: source + '\nstd::net::TcpStream' })).toContain(`unexpected runtime capability in ${path}`);
+  });
+
   it('accepts the reviewed manifest and lock', () => {
     expect(validateOf1PlannerInputs(manifest, lock, {})).toEqual([]);
   });
