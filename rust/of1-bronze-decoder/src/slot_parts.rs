@@ -7,13 +7,19 @@ use crate::{
 };
 use of1_range_recorder::{acquisition::read_limited, sha256};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, fs, io, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs, io,
+    path::{Path, PathBuf},
+};
 
 pub(crate) struct Context<'a> {
     pub plan: &'a Plan,
     pub plan_hash: &'a str,
     pub root: &'a Path,
     pub decision_sha256: Option<&'a str>,
+    pub producer_source_sha256: &'a str,
+    pub lock_sha256: &'a str,
 }
 
 type Guard = of1_range_recorder::campaign::Guard;
@@ -29,12 +35,242 @@ fn gate(path: &Path, root: &Path, reserve: u64) -> io::Result<(Plan, String, Gua
     let binding = sample.b7.as_ref().ok_or_else(|| invalid("B7_REQUIRED"))?;
     let expected =
         Path::new(&binding.campaign_root).join(format!("work/w{:02}", binding.window_ordinal));
-    if root != expected || root.canonicalize()? != expected || path != root.join("plan.json") {
+    if root != expected || root.canonicalize()? != expected {
         return Err(invalid("REGISTERED_SLOT_PART_ROOT_REQUIRED"));
     }
     let (guard, sample) = batch::campaign_output(&plan, &hash, root, reserve)?
         .ok_or_else(|| invalid("B7_REQUIRED"))?;
+    let accepted = guard.evaluation_continuation(&sample).map_err(invalid)?;
+    if accepted.as_ref().is_some_and(|a| {
+        a.collector_source_sha256 != crate::source_sha256()
+            || a.collector_lock_sha256 != sha256(include_bytes!("../Cargo.lock"))
+    }) {
+        return Err(invalid("COLLECTOR_IDENTITY_CHANGED"));
+    }
+    if path
+        != accepted
+            .as_ref()
+            .map_or(root.join("plan.json"), |a| a.plan_path.clone())
+    {
+        return Err(invalid("REGISTERED_PROCESSING_PLAN_PATH"));
+    }
     Ok((plan, hash, guard, sample))
+}
+
+struct Published {
+    plan: Plan,
+    hash: String,
+    batch: batch::Batch,
+    source: String,
+    lock: String,
+    directory: PathBuf,
+}
+
+fn batch_directory(root: &Path, batch: &batch::Batch, generation: usize) -> PathBuf {
+    if generation == 0 {
+        root.join(&batch.output_directory)
+    } else {
+        root.join(format!(
+            "{}-continuation-{generation}",
+            batch.output_directory
+        ))
+    }
+}
+
+fn original_identity(original: &Plan, root: &Path) -> io::Result<(String, String)> {
+    let first = original
+        .batches
+        .first()
+        .ok_or_else(|| invalid("EMPTY_WINDOW"))?;
+    let execution = root
+        .join(&first.output_directory)
+        .join("part-0000/decode/execution.json");
+    if !execution.exists() {
+        return Ok((
+            crate::source_sha256(),
+            sha256(include_bytes!("../Cargo.lock")),
+        ));
+    }
+    let (v, _) = collection::json_file(&execution, resources::MAX_EXECUTION_BYTES)?;
+    Ok((
+        v["decoder_source_sha256"]
+            .as_str()
+            .ok_or_else(|| invalid("ORIGINAL_SOURCE"))?
+            .into(),
+        v["lock_sha256"]
+            .as_str()
+            .ok_or_else(|| invalid("ORIGINAL_LOCK"))?
+            .into(),
+    ))
+}
+
+fn published(
+    original: &Plan,
+    original_hash: &str,
+    root: &Path,
+    guard: &Guard,
+    sample: &Sample,
+    id: &str,
+) -> io::Result<Option<Published>> {
+    let original_batch = original.batch(id)?;
+    let history = guard.evaluation_processing_plans(sample).map_err(invalid)?;
+    if history[0].0 != original_hash {
+        return Err(invalid("ORIGINAL_PLAN_BINDING"));
+    }
+    let continuation = guard.evaluation_continuation(sample).map_err(invalid)?;
+    let mut found = None;
+    for (generation, (expected_hash, path, workers, source, lock)) in history.iter().enumerate() {
+        let directory = batch_directory(root, original_batch, generation);
+        if !directory.join("slot.json").exists() {
+            continue;
+        }
+        if found.is_some() {
+            return Err(invalid("DUPLICATE_SLOT_PUBLICATION"));
+        }
+        let (plan, hash) = if let Some(path) = path {
+            batch::read_plan(path)?
+        } else {
+            (original.clone(), original_hash.to_owned())
+        };
+        let mut expected = original.clone();
+        expected.workers = plan.workers.clone();
+        if hash != *expected_hash
+            || serde_json::to_value(&plan).map_err(invalid)?
+                != serde_json::to_value(&expected).map_err(invalid)?
+            || workers.first() != Some(&plan.workers.batch_decoder_sha256)
+            || workers.get(1) != Some(&plan.workers.projector_sha256)
+        {
+            return Err(invalid("PUBLISHED_PLAN_CHANGED"));
+        }
+        let (first_source, first_lock) = original_identity(original, root)?;
+        let producer = if let Some(v) = source {
+            v.clone()
+        } else {
+            continuation
+                .as_ref()
+                .map_or(first_source, |a| a.original_producer_source_sha256.clone())
+        };
+        let lock = if let Some(v) = lock {
+            v.clone()
+        } else {
+            continuation
+                .as_ref()
+                .map_or(first_lock, |a| a.original_lock_sha256.clone())
+        };
+        let mut batch = plan.batch(id)?.clone();
+        batch.output_directory = directory
+            .file_name()
+            .ok_or_else(|| invalid("BATCH_DIRECTORY"))?
+            .to_str()
+            .ok_or_else(|| invalid("BATCH_DIRECTORY"))?
+            .into();
+        found = Some(Published {
+            plan,
+            hash,
+            batch,
+            source: producer,
+            lock,
+            directory,
+        });
+    }
+    Ok(found)
+}
+
+fn verified_published(
+    item: &Published,
+    root: &Path,
+    check: &mut dyn FnMut() -> io::Result<()>,
+) -> io::Result<Value> {
+    let context = Context {
+        plan: &item.plan,
+        plan_hash: &item.hash,
+        root,
+        decision_sha256: None,
+        producer_source_sha256: &item.source,
+        lock_sha256: &item.lock,
+    };
+    let value = inspect_slot(&context, &item.batch, check)?;
+    let raw = resources::bounded_json(
+        &value,
+        "SLOT_PART_MANIFEST",
+        usize::try_from(batch::MAX_PLAN_BYTES).map_err(invalid)?,
+    )?;
+    let file = item.directory.join("slot.json");
+    if read_limited(&file, batch::MAX_PLAN_BYTES).map_err(invalid)? != raw
+        || read_limited(&file.with_extension("json.sha256"), 64).map_err(invalid)?
+            != sha256(&raw).as_bytes()
+    {
+        return Err(invalid("RETAINED_SLOT_CHANGED"));
+    }
+    Ok(value)
+}
+
+/// Recheck each retained sealed slot and its original producer before any new
+/// grant. Partial slot directories are never counted as completed.
+pub(crate) fn verify_retained_evaluation(
+    original: &Plan,
+    hash: &str,
+    root: &Path,
+    guard: &Guard,
+    sample: &Sample,
+) -> io::Result<Value> {
+    let (source, lock) = original_identity(original, root)?;
+    let mut sealed = 0_u64;
+    let mut gap = false;
+    for batch in &original.batches {
+        if let Some(item) = published(original, hash, root, guard, sample, &batch.batch_id)? {
+            if gap {
+                return Err(invalid("NONCONTIGUOUS_SEALED_SLOTS"));
+            }
+            verified_published(&item, root, &mut || Ok(()))?;
+            sealed += 1;
+        } else {
+            gap = true;
+        }
+    }
+    if sealed == 0 {
+        return Err(invalid("INCOMPLETE_CHECKPOINT_REQUIRED"));
+    }
+    Ok(
+        json!({"sealed_slots":sealed,"remaining_slots":original.batches.len() as u64-sealed,
+        "original_producer_source_sha256":source,"original_lock_sha256":lock}),
+    )
+}
+
+/// A sealed slot is reused only after full native source, part and manifest proof.
+/// # Errors
+/// Rejects an unsealed, changed or unauthorised slot publication.
+pub fn verify_retained_slot(path: &Path, root: &Path, id: &str) -> io::Result<Value> {
+    let (_, _, guard, sample) = gate(path, root, 0)?;
+    let (original, hash) = batch::read_plan(&root.join("plan.json"))?;
+    let item = published(&original, &hash, root, &guard, &sample, id)?
+        .ok_or_else(|| invalid("SLOT_NOT_SEALED"))?;
+    verified_published(&item, root, &mut || {
+        guard.processing_tick(&sample).map_err(invalid)
+    })?;
+    Ok(json!({"state":"VERIFIED_RETAINED_SLOT","research_ready":false}))
+}
+
+/// Path and completion status only; no outcome count or label.
+/// # Errors
+/// Rejects an invalid plan, work root or publication identity.
+pub fn location(path: &Path, root: &Path, id: &str) -> io::Result<Value> {
+    let (plan, _, guard, sample) = gate(path, root, 0)?;
+    let original_path = root.join("plan.json");
+    let (original, original_hash) = batch::read_plan(&original_path)?;
+    let existing = published(&original, &original_hash, root, &guard, &sample, id)?;
+    let batch = plan.batch(id)?;
+    let generation = guard
+        .evaluation_continuation_generation(&sample)
+        .map_err(invalid)?;
+    let directory = existing.as_ref().map_or_else(
+        || batch_directory(root, batch, generation),
+        |v| v.directory.clone(),
+    );
+    Ok(
+        json!({"state":if existing.is_some(){"SEALED"}else{"PENDING"},"directory":directory,
+        "generation":generation}),
+    )
 }
 
 /// # Errors
@@ -63,9 +299,10 @@ pub fn verify_part(
 ) -> io::Result<Value> {
     let (plan, hash, guard, sample) = gate(path, root, 0)?;
     let batch = plan.batch(id)?;
-    let part = root
-        .join(&batch.output_directory)
-        .join(format!("part-{ordinal:04}"));
+    let generation = guard
+        .evaluation_continuation_generation(&sample)
+        .map_err(invalid)?;
+    let part = batch_directory(root, batch, generation).join(format!("part-{ordinal:04}"));
     let checked = batch::verify_output_identity(
         &plan,
         &hash,
@@ -97,15 +334,26 @@ pub fn verify_part(
 pub fn seal_slot(path: &Path, root: &Path, id: &str) -> io::Result<Value> {
     let (plan, hash, guard, sample) = gate(path, root, 2 * 1024 * 1024)?;
     let mut tick = || guard.processing_tick(&sample).map_err(invalid);
-    let batch = plan.batch(id)?;
+    let mut batch = plan.batch(id)?.clone();
+    let generation = guard
+        .evaluation_continuation_generation(&sample)
+        .map_err(invalid)?;
+    batch.output_directory = batch_directory(root, &batch, generation)
+        .file_name()
+        .ok_or_else(|| invalid("BATCH_DIRECTORY"))?
+        .to_str()
+        .ok_or_else(|| invalid("BATCH_DIRECTORY"))?
+        .into();
     let value = inspect_slot(
         &Context {
             plan: &plan,
             plan_hash: &hash,
             root,
             decision_sha256: None,
+            producer_source_sha256: &crate::source_sha256(),
+            lock_sha256: &sha256(include_bytes!("../Cargo.lock")),
         },
-        batch,
+        &batch,
         &mut tick,
     )?;
     let raw = resources::bounded_json(
@@ -130,32 +378,19 @@ pub fn seal_slot(path: &Path, root: &Path, id: &str) -> io::Result<Value> {
 /// All slots must be sealed. Existing charges and the original deadline remain binding.
 #[allow(clippy::too_many_lines)] // One atomic verification/publication sequence; unchanged limits.
 pub fn complete(path: &Path, root: &Path) -> io::Result<Value> {
-    let (plan, hash, mut guard, sample) = gate(path, root, 5 * 1024 * 1024)?;
+    let (_active_plan, _active_hash, mut guard, sample) = gate(path, root, 5 * 1024 * 1024)?;
     let mut tick = || guard.processing_tick(&sample).map_err(invalid);
-    let context = Context {
-        plan: &plan,
-        plan_hash: &hash,
-        root,
-        decision_sha256: None,
-    };
+    let (plan, hash) = batch::read_plan(&root.join("plan.json"))?;
     let (mut bronze, mut silver) = (Logical::default(), Logical::default());
     let (mut statuses, mut diagnoses) = (BTreeMap::new(), BTreeMap::new());
     let mut slots = Vec::new();
     let mut children = Vec::new();
     for batch in &plan.batches {
-        let value = inspect_slot(&context, batch, &mut tick)?;
-        let raw = resources::bounded_json(
-            &value,
-            "SLOT_PART_MANIFEST",
-            usize::try_from(batch::MAX_PLAN_BYTES).map_err(invalid)?,
-        )?;
-        let p = root.join(&batch.output_directory).join("slot.json");
-        if read_limited(&p, batch::MAX_PLAN_BYTES).map_err(invalid)? != raw
-            || read_limited(&p.with_extension("json.sha256"), 64).map_err(invalid)?
-                != sha256(&raw).as_bytes()
-        {
-            return Err(invalid("PARTS_SLOT_NOT_SEALED"));
-        }
+        let item = published(&plan, &hash, root, &guard, &sample, &batch.batch_id)?
+            .ok_or_else(|| invalid("PARTS_SLOT_NOT_SEALED"))?;
+        let value = verified_published(&item, root, &mut tick)?;
+        let raw = read_limited(&item.directory.join("slot.json"), batch::MAX_PLAN_BYTES)
+            .map_err(invalid)?;
         for part in value["parts"]
             .as_array()
             .ok_or_else(|| invalid("SLOT_PARTS"))?
@@ -165,12 +400,12 @@ pub fn complete(path: &Path, root: &Path) -> io::Result<Value> {
                 .as_str()
                 .ok_or_else(|| invalid("PART_DIRECTORY"))?;
             collection::inspect_records(
-                &plan,
-                batch,
+                &item.plan,
+                &item.batch,
                 &root.join(relative),
                 &mut bronze,
                 &mut silver,
-                &crate::source_sha256(),
+                &item.source,
                 collection::number(&part["range"]["start_transaction"])?,
             )?;
         }
@@ -180,7 +415,7 @@ pub fn complete(path: &Path, root: &Path) -> io::Result<Value> {
             "silver_fact_count":value["silver_fact_count"],"transaction_status_counts":value["transaction_status_counts"],
             "dispositions":value["dispositions"],"pump_layout_outcomes":value["pump_layout_outcomes"],
             "raw_sha256":value["raw_sha256"],"part_count":value["parts"].as_array().map(Vec::len)}));
-        children.push(json!({"manifest_path":format!("{}/slot.json",batch.output_directory),"sha256":sha256(&raw)}));
+        children.push(json!({"manifest_path":item.directory.join("slot.json").strip_prefix(root).map_err(invalid)?.to_str().ok_or_else(|| invalid("SLOT_PATH"))?,"sha256":sha256(&raw)}));
     }
     let mut manifest = json!({"schema":"OF1_PARTED_BATCH_COLLECTION_1","state":"COMPLETE","plan":plan,"plan_sha256":hash,
         "profile":report::PART_PROFILE,"slot_outcomes":slots,"slots":children,"sample_identity":sample,
@@ -190,6 +425,13 @@ pub fn complete(path: &Path, root: &Path) -> io::Result<Value> {
         "producer_source_sha256":crate::source_sha256(),"research_ready":false,"root_to_slot_membership":"UNAVAILABLE"});
     if let Some(a) = guard.evaluation_processing(&sample).map_err(invalid)? {
         manifest["evaluation_processing"] = serde_json::to_value(a).map_err(invalid)?;
+    }
+    let continuations = guard
+        .evaluation_continuation_records(&sample)
+        .map_err(invalid)?;
+    if !continuations.is_empty() {
+        manifest["evaluation_continuations"] =
+            serde_json::to_value(continuations).map_err(invalid)?;
     }
     let raw = resources::bounded_json(&manifest, "PARTED_COLLECTION", 2 * 1024 * 1024)?;
     publish_exact(&root.join("collection.json"), &raw, &mut tick)?;
@@ -271,8 +513,8 @@ pub(crate) fn inspect_slot(
             context.plan_hash,
             batch,
             &decode,
-            &crate::source_sha256(),
-            &sha256(include_bytes!("../Cargo.lock")),
+            context.producer_source_sha256,
+            context.lock_sha256,
             Some(usize::try_from(ordinal).map_err(invalid)?),
         )?;
         let (quality, qhash) =
@@ -303,7 +545,7 @@ pub(crate) fn inspect_slot(
             &decode,
             &mut bronze,
             &mut silver,
-            &crate::source_sha256(),
+            context.producer_source_sha256,
             start,
         )?;
         if bronze.rows - before.0 != end - start
@@ -343,7 +585,7 @@ pub(crate) fn inspect_slot(
         "original_source":source,"raw_sha256":inv["raw_sha256"],"transaction_envelopes":total,
         "dispositions":outcomes,"transaction_status_counts":statuses,"pump_layout_outcomes":diagnoses,"reasons":reasons,
         "silver_fact_count":silver.rows,"parts":parts,"layers":{"bronze":bronze.value(),"silver":silver.value()},
-        "producer_source_sha256":crate::source_sha256(),"research_ready":false}),
+        "producer_source_sha256":context.producer_source_sha256,"research_ready":false}),
     )
 }
 

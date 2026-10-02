@@ -4,6 +4,20 @@
 
 ## Mission and success criterion
 
+**B7 sealed-processing continuation, 2026-10-02:** ordinal 4
+`[422802704,422802720)` has complete acquisition but incomplete processing
+after the original 900-second lease expired. The operational diagnosis is
+`governance/b7-ordinal4-processing-stop-diagnosis-20261001T210644Z/`.
+Thirteen slots through `422802716` have sealed output; slot `422802717`
+contains an unfinished Parquet publication that remains evidence. The native
+continuation route for the fixed campaign requires a separate approval per
+window, re-verifies sealed slots under their original producers and writes
+unfinished slots in a new generation. It retains the original lease, charges
+and 4-GiB work boundary; it does not grant authentic processing or outcome
+visibility. A separate exact owner decision is required before any authentic
+continuation. No new acquisition, evaluation release or B8 is authorized.
+Research Ready remains false and #86 remains open.
+
 **PR #152 CI runtime repair, 2026-10-01:** the 45-minute cancellation is retained
 in `governance/b7-payload-continuation-clippy-20261001/`; fixture phases 0–2 alone
 are not complete-chain evidence. The bounded follow-up profiles all four phases,
@@ -65,7 +79,8 @@ against the file owner. The existing method review and 45 scenarios are reused.
 The four DEVELOPMENT windows remain 64 slots /80,541 packages /9,505 failures /
 122 facts. All four have positive pair witnesses; unavailable negative certification
 does not erase those witnesses. One eventual final assessment, no B8/model work,
-#86 open /Unproven and Research Ready=false. Next fixed ordinal 4 remains unexecuted.
+#86 open /Unproven and Research Ready=false. Ordinal 4 had not yet been
+executed at the date of that method-freeze record; the newer status is above.
 The implementation/review/gate outcomes are recorded in the new private dossier.
 
 
@@ -238,7 +253,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows are complete; the accepted method and sealed-processing fixture evidence remain unchanged. The 2026-10-01 decision above authorizes only the fixed ordinal-4 payload continuation and conditional sealed processing. No evaluation visibility, next window or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
+- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows and ordinal-4 acquisition are complete. Ordinal-4 sealed processing remains incomplete after the expired lease; authentic continuation awaits a separate exact decision. No evaluation visibility, next window or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

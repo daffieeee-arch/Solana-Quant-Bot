@@ -80,13 +80,18 @@ class Runner:
             if self.root.is_relative_to(original) or original.is_relative_to(self.root):
                 raise ValueError('collection outputs must be separate from preserved source runs')
         self.campaign=any((source.get('sample_identity') or {}).get('b7') is not None for source in self.sources.values())
+        self.evaluation=any(((source.get('sample_identity') or {}).get('b7') or {}).get('cohort_role')=='RESERVED_EVALUATION' for source in self.sources.values())
         self.driver_lock=None
         if self.campaign:
             if not self.root.exists():
                 if campaign_approval is None: raise ValueError('B7 processing requires a separately bound approval')
                 self.campaign_command('campaign-admit',self.plan_path,campaign_approval)
             elif campaign_approval is not None:
-                raise ValueError('resume uses the existing processing lease, never a new approval')
+                if not self.evaluation:
+                    raise ValueError('development resume uses the existing processing lease')
+                self.campaign_command('evaluation-continuation-admit',self.plan_path,
+                                      pathlib.Path(__file__).with_name('evaluation_run.py'),
+                                      sys.executable,campaign_approval)
             lock=self.root/'driver.lock'
             if lock.is_symlink() or not lock.is_file(): raise ValueError('native B7 driver lock missing')
             self.driver_lock=lock.open('r+')
@@ -97,9 +102,12 @@ class Runner:
         if self.root.is_symlink() or not self.root.is_dir():
             raise ValueError('ordinary collection directory required')
         retained=self.root/'plan.json'
+        generation=getattr(self,'continuation_generation',0)
         if retained.exists():
-            if regular_bytes(retained,MAX_MANIFEST_BYTES)!=self.plan_raw:
+            if generation==0 and regular_bytes(retained,MAX_MANIFEST_BYTES)!=self.plan_raw:
                 raise ValueError('resume plan identity mismatch')
+            if generation>0 and not self.evaluation:
+                raise ValueError('continuation restricted to sealed evaluation')
         else:
             with retained.open('xb') as handle:
                 handle.write(self.plan_raw)
@@ -109,13 +117,13 @@ class Runner:
                   'manifest_reader_sha256':digest(pathlib.Path(__file__).with_name('manifest_reader.py')),
                   'python_version':sys.version.split()[0],
                   'plan_sha256':hashlib.sha256(self.plan_raw).hexdigest()}
-        identity_path=self.root/'runner-identity.json'
+        identity_path=self.root/('runner-identity.json' if generation==0 else f'runner-identity-continuation-{generation}.json')
         if identity_path.exists():
             if json.loads(regular_bytes(identity_path,MAX_MANIFEST_BYTES),object_pairs_hook=pairs_unique)!=identity:
                 raise ValueError('resume code/toolchain/binary identity mismatch')
         else:
             exclusive_json(identity_path,identity)
-        self.plan_path=retained
+        if generation==0:self.plan_path=retained
         self.counter=0
         while (self.root/f'operation-{self.counter:04d}.json').exists() or (self.root/f'operation-{self.counter:04d}.stdout').exists():
             self.counter+=1
@@ -123,7 +131,8 @@ class Runner:
     def campaign_command(self,*args):
         # Full native verification remains bounded by the admitted absolute
         # deadline; a worker invocation never renews that lease.
-        timeout=self.remaining_until(self.deadline_boot_ms) if args[0]=='parts-complete' else 30
+        timeout=(self.remaining_until(self.deadline_boot_ms) if args[0]=='parts-complete'
+                 else 600 if args[0]=='evaluation-continuation-admit' else 30)
         result=subprocess.run([str(self.verifier),*[str(a) for a in args]],capture_output=True,
                               preexec_fn=process_limits,timeout=timeout,check=True)
         if len(result.stdout)>1024*1024: raise ValueError('oversize native campaign status')
@@ -137,15 +146,20 @@ class Runner:
         deadline=status.get('deadline_boot_ms')
         if type(deadline) is not int: raise ValueError('native absolute processing deadline required')
         self.deadline_boot_ms=deadline
+        generation=status.get('evaluation_continuation_generation',0)
+        if type(generation) is not int or generation<0 or generation>16:
+            raise ValueError('native continuation generation required')
+        self.continuation_generation=generation
         return self.remaining_until(deadline)
 
     @staticmethod
     def remaining_until(deadline):
         remaining=deadline/1000-time.clock_gettime(time.CLOCK_BOOTTIME)
         if remaining<=0: raise ValueError('original campaign processing deadline exhausted')
-        return min(900,remaining)
+        return min(1200,remaining)
 
     def step(self,label,args):
+        step_started=time.monotonic()
         self.campaign_check(STAGE_RESERVATION_BYTES+1024*1024)
         self.counter+=1
         prefix=self.root/f'operation-{self.counter:04d}'
@@ -166,6 +180,7 @@ class Runner:
         print(json.dumps({'stage':label,'state':'STARTED','operation':self.counter,
                           'artifacts_bytes':size}),flush=True)
         started=time.monotonic()
+        preflight_seconds=started-step_started
         error=None; returncode=None
         with pathlib.Path(str(prefix)+'.stdout').open('xb') as stdout, pathlib.Path(str(prefix)+'.stderr').open('xb') as stderr:
             try:
@@ -177,14 +192,17 @@ class Runner:
                 returncode=result.returncode
             except (OSError,subprocess.SubprocessError) as failure:
                 error=type(failure).__name__
+        worker_seconds=time.monotonic()-started
         receipt={'schema':'OF1_COLLECTION_OPERATION_1','stage':label,'returncode':returncode,'error':error,
-                 'elapsed_seconds':time.monotonic()-started,'executable_sha256':digest(pathlib.Path(args[0])),
+                 'elapsed_seconds':worker_seconds,'preflight_seconds':preflight_seconds,
+                 'executable_sha256':digest(pathlib.Path(args[0])),
                  'plan_sha256':hashlib.sha256(self.plan_raw).hexdigest(),
                  'stdout_sha256':digest(pathlib.Path(str(prefix)+'.stdout')),
                  'stderr_sha256':digest(pathlib.Path(str(prefix)+'.stderr')),
                  'artifact_bytes_after':artifact_size(getattr(self,'accounting_root',self.root)),'provider_calls':False,
                  'process_address_space_cap_bytes':PROCESS_BYTES,
                  'children_peak_rss_kib_so_far':resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss}
+        receipt['total_step_seconds']=time.monotonic()-step_started
         exclusive_json(pathlib.Path(str(prefix)+'.json'),receipt)
         print(json.dumps({'stage':label,'state':'VERIFIED_STEP' if returncode==0 and error is None else 'STOPPED',
                           'operation':self.counter,'elapsed_seconds':receipt['elapsed_seconds']}),flush=True)
@@ -204,7 +222,14 @@ class Runner:
         completed=0
         for batch in inventory['batches']:
             name=batch['batch_id']
-            directory=literal_path(self.root,batch['output_directory'])
+            location=self.campaign_command('parts-location',self.plan_path,self.root,name)
+            directory=pathlib.Path(location['directory'])
+            if not directory.is_relative_to(self.root) or directory.is_symlink():
+                raise ValueError('native batch location outside registered work')
+            if location['state']=='SEALED':
+                self.campaign_command('parts-verify-retained-slot',self.plan_path,self.root,name)
+                continue
+            if location['state']!='PENDING':raise ValueError('unknown native slot state')
             if not (directory/'slot.json').exists() and max_new_batches is not None and completed>=max_new_batches:
                 print(json.dumps({'state':'CONTROLLED_PAUSE','next_batch':name}),flush=True)
                 return None

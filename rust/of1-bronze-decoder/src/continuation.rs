@@ -445,6 +445,8 @@ fn inspect_slot(
             plan_hash: &decision.plan_hash()?,
             root: &decision.root()?,
             decision_sha256: Some(&decision.hash()?),
+            producer_source_sha256: &crate::source_sha256(),
+            lock_sha256: &sha256(include_bytes!("../Cargo.lock")),
         },
         batch,
         check,

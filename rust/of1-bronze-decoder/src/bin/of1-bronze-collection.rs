@@ -42,6 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ["continuation-seal-slot",decision,id]=>continuation::seal_slot(Path::new(decision),id)?,
         ["continuation-complete",decision]=>continuation::complete(Path::new(decision))?,
         ["parts-inventory",plan,root]=>slot_parts::inventory(Path::new(plan),Path::new(root))?,
+        ["parts-location",plan,root,id]=>slot_parts::location(Path::new(plan),Path::new(root),id)?,
+        ["parts-verify-retained-slot",plan,root,id]=>slot_parts::verify_retained_slot(Path::new(plan),Path::new(root),id)?,
         ["parts-verify",plan,root,id,ordinal,parquet]=>slot_parts::verify_part(Path::new(plan),Path::new(root),id,ordinal.parse()?,parquet.parse()?)?,
         ["parts-seal-slot",plan,root,id]=>slot_parts::seal_slot(Path::new(plan),Path::new(root),id)?,
         ["parts-complete",plan,root]=>slot_parts::complete(Path::new(plan),Path::new(root))?,
@@ -72,7 +74,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             of1_range_recorder::campaign::verify_worker_address_space()?;
             let(p,h)=batch::read_plan(Path::new(plan))?;p.validate_sources()?;
             let(g,s)=batch::campaign_output(&p,&h,Path::new(root),reserve.parse()?)?.ok_or("B7 required")?;
-            serde_json::json!({"state":"WITHIN_EXISTING_LEASE","remaining_ms":g.processing_remaining_ms(&s)?,"deadline_boot_ms":g.processing_deadline_boot_ms(&s)?,"new_authority":false})
+            serde_json::json!({"state":"WITHIN_EXISTING_LEASE","remaining_ms":g.processing_remaining_ms(&s)?,"deadline_boot_ms":g.processing_deadline_boot_ms(&s)?,"evaluation_continuation_generation":g.evaluation_continuation_generation(&s)?,"new_authority":false})
         },
         ["campaign-complete",plan,root]=>{
             let(p,h)=batch::read_plan(Path::new(plan))?;
@@ -127,6 +129,35 @@ fn evaluation(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
                         Path::new(driver),
                         Path::new(python),
                     )?
+                }
+                ["evaluation-continuation-plan", original, decoder, projector] => {
+                    of1_bronze_decoder::evaluation::continuation_plan(
+                        Path::new(original),
+                        decoder,
+                        projector,
+                    )?
+                }
+                ["evaluation-continuation-proposal", plan, driver, python] => {
+                    of1_bronze_decoder::evaluation::continuation_proposal(
+                        Path::new(plan),
+                        Path::new(driver),
+                        Path::new(python),
+                    )?
+                }
+                [
+                    "evaluation-continuation-admit",
+                    plan,
+                    driver,
+                    python,
+                    approval,
+                ] => of1_bronze_decoder::evaluation::admit_continuation(
+                    Path::new(plan),
+                    Path::new(driver),
+                    Path::new(python),
+                    Path::new(approval),
+                )?,
+                ["evaluation-processing-status", plan] => {
+                    of1_bronze_decoder::evaluation::processing_status(Path::new(plan))?
                 }
                 ["evaluation-release-proposal", root, assessment] => {
                     let a = of1_range_recorder::campaign::Guard::evaluation_release_proposal(

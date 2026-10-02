@@ -34,11 +34,21 @@ def run(root, generator, decoder, projector, verifier, phase, acquisition_cli):
             "            if binding['window_ordinal']==4 and not (root/'batch-000/slot.json').exists():\n"
             "                runner.run(max_new_batches=1)\n"
             "                raise RuntimeError('SEALED_SENTINEL_987654321')\n"
+            "            if binding['window_ordinal']==4 and runner.continuation_generation==1 and not (root/'batch-001-continuation-1/slot.json').exists():\n"
+            "                runner.run(max_new_batches=1)\n"
+            "                raise RuntimeError('SEALED_SENTINEL_SECOND_INTERRUPTION')\n"
             "            runner.run()"))
+        scheduler=driver_root/'collection_run.py'
+        original=scheduler.read_text()
+        marker="        result=self.campaign_command('parts-complete',self.plan_path,self.root)"
+        assert original.count(marker)==1
+        scheduler.write_text(original.replace(marker,
+            "        if self.evaluation and self.continuation_generation==2 and self.root.name=='w04':\n"
+            "            raise RuntimeError('SEALED_SENTINEL_AFTER_ALL_SLOTS')\n"+marker))
 
 
-    def native(*args,ok=True):
-        r=subprocess.run([str(verifier),*[str(a) for a in args]],capture_output=True,
+    def native(*args,ok=True,exe=None):
+        r=subprocess.run([str(exe or verifier),*[str(a) for a in args]],capture_output=True,
                          preexec_fn=process_limits,timeout=180)
         assert (r.returncode==0)==ok,(args,r.stdout,r.stderr)
         if not ok:
@@ -46,8 +56,9 @@ def run(root, generator, decoder, projector, verifier, phase, acquisition_cli):
             return r
         return json.loads(r.stdout)
 
-    def sealed(plan,approval=None,ok=True):
-        cmd=[sys.executable,str(driver),str(plan),str(decoder),str(projector),str(verifier)]
+    def sealed(plan,approval=None,ok=True,workers=None):
+        chosen=workers or (decoder,projector,verifier)
+        cmd=[sys.executable,str(driver),str(plan),*[str(w) for w in chosen]]
         if approval is not None:cmd.append(str(approval))
         r=subprocess.run(cmd,capture_output=True,timeout=300)
         assert (r.returncode==0)==ok,(r.returncode,r.stdout,r.stderr)
@@ -56,6 +67,36 @@ def run(root, generator, decoder, projector, verifier, phase, acquisition_cli):
         for k,v in expected.items():assert result[k]==v
         assert set(result)<=set(expected)|{'research_ready'} and r.stderr==b'',(r.stdout,r.stderr)
         return result
+
+    def expire_fixture_processing(work, generation):
+        # Synthetic clock seam only. This fixture has no authority over the
+        # authentic campaign. The real CLI handles every subsequent step.
+        campaign=root/'campaign'
+        head_path=campaign/'head.json'
+        head=json.loads(head_path.read_bytes())
+        record=campaign/'journal'/f"{head['sequence']:010}.json"
+        state=json.loads(record.read_bytes())
+        processing=state['processing']['4']
+        stage=(processing['stage'] if generation==0 else
+               processing['evaluation_continuations'][-1]['stage'])
+        stage['deadline_boot_ms']=0
+        stage['deadline_wall_ms']=0
+        raw=json.dumps(state,separators=(',',':')).encode()
+        record.write_bytes(raw)
+        head['sha256']=hashlib.sha256(raw).hexdigest()
+        head_path.write_text(json.dumps(head,separators=(',',':')))
+        return head['sha256']
+
+    def copied_workers(tag):
+        folder=root/f'workers-{tag}'
+        folder.mkdir()
+        workers=[]
+        for source in (decoder,projector,verifier):
+            target=folder/source.name
+            shutil.copy2(source,target)
+            with target.open('ab') as handle:handle.write(f'\nfixture-worker-{tag}\n'.encode())
+            workers.append(target)
+        return tuple(workers)
 
     evidence=[{'ordinal':i,'manifest_sha256':digest(root/f'campaign/work/w{i:02}/collection.json')} for i in range(phase*4)]
     for ordinal in range(phase*4,(phase+1)*4):
@@ -156,9 +197,103 @@ def run(root, generator, decoder, projector, verifier, phase, acquisition_cli):
                 marker=work/'batch-000/part-0000/parquet/COMPLETE';saved=marker.read_bytes();marker.write_bytes(b'corrupt')
                 sealed(path,ok=False);marker.write_bytes(saved)
                 assert json.loads((root/'campaign/head.json').read_text())==head_before
-                sealed(path)
+                # An unfinished original Parquet directory is retained as
+                # evidence, never treated as a published slot.
+                partial=work/'batch-001/part-0000/parquet'
+                partial.mkdir(parents=True)
+                (partial/'unfinished').write_bytes(b'fixture partial publication')
+                retained_partial=digest(partial/'unfinished')
+                native('parts-verify-retained-slot',path,work,'batch-001',ok=False)
+                old_charge=native('evaluation-processing-status',path)['attempts_reserved']
+                expire_fixture_processing(work,0)
+                old_head=json.loads((root/'campaign/head.json').read_bytes())
+                old_state=json.loads((root/'campaign/journal'/f"{old_head['sequence']:010}.json").read_bytes())
+                sealed(path,ok=False)
+                operation=work/'operation-0001.json';saved_operation=operation.read_bytes()
+                try:
+                    corrupt=json.loads(saved_operation);corrupt.pop('returncode')
+                    operation.write_text(json.dumps(corrupt))
+                    native('evaluation-processing-status',path,ok=False)
+                finally:operation.write_bytes(saved_operation)
+                first_workers=copied_workers('first')
+                plan_result=native('evaluation-continuation-plan',work/'plan.json',digest(first_workers[0]),
+                                   digest(first_workers[1]),exe=first_workers[2])
+                first_plan=pathlib.Path(plan_result['plan_path'])
+                assert plan_result['generation']==1
+                first_proposal=native('evaluation-continuation-proposal',first_plan,driver,sys.executable,
+                                      exe=first_workers[2])
+                first_approval=root/'continuation-first.json'
+                first_approval.write_text(json.dumps(first_proposal['binding']))
+                for field in ['window','previous_ledger_sha256','work_tree_sha256','plan_sha256']:
+                    bad=copy.deepcopy(first_proposal['binding'])
+                    bad[field]=5 if field=='window' else '0'*64
+                    invalid=root/f'invalid-continuation-{field}.json'
+                    invalid.write_text(json.dumps(bad))
+                    sealed(first_plan,invalid,ok=False,workers=first_workers)
+                native('evaluation-continuation-admit',first_plan,driver,sys.executable,first_approval,
+                       ok=False,exe=first_workers[2])  # driver-only native call denied
+                sealed(first_plan,ok=False,workers=first_workers)
+                sealed(first_plan,first_approval,ok=False,workers=first_workers)
+                assert (work/'batch-001-continuation-1/slot.json').is_file()
+                assert not (work/'collection.json').exists()
+                assert not (partial/'slot.json').exists()
+                assert digest(partial/'unfinished')==retained_partial
+                (work/'operation-9999.stdout').write_bytes(b'SEALED_SENTINEL_UNRECEIPTED_OUTPUT')
                 assert before=={str(f.relative_to(work)):digest(f) for f in (work/'batch-000').rglob('*') if f.is_file()}
-                sealed(path,approval,ok=False)  # no budget/lease reset or duplicate
+                first_head=json.loads((root/'campaign/head.json').read_bytes())
+                first_state=json.loads((root/'campaign/journal'/f"{first_head['sequence']:010}.json").read_bytes())
+                assert first_state['processing']['4']['stage']==old_state['processing']['4']['stage']
+                assert (first_state['requests'],first_state['entity'])==(old_state['requests'],old_state['entity'])
+                assert (root/'campaign/journal'/f"{old_head['sequence']:010}.json").read_bytes()==json.dumps(old_state,separators=(',',':')).encode()
+                operational=native('evaluation-processing-status',first_plan,exe=first_workers[2])
+                assert operational['attempts_reserved']==old_charge
+                assert operational['continuation_generation']==1 and operational['processing_complete'] is False
+                assert operational['receipted_operation_count']>0 and operational['unreceipted_operation_count']==1
+                assert operational['last_started_operation']=='9999'
+                assert not any(key in operational for key in ['facts','labels','packages','silver_facts'])
+                assert 'SEALED_SENTINEL' not in json.dumps(operational)
+                native('evaluation-read-window',root/'campaign',4,ok=False,exe=first_workers[2])
+                second_slot={str(f.relative_to(work)):digest(f) for f in
+                             (work/'batch-001-continuation-1').rglob('*') if f.is_file()}
+                expire_fixture_processing(work,1)
+                sealed(first_plan,ok=False,workers=first_workers)
+                second_workers=copied_workers('second')
+                second_result=native('evaluation-continuation-plan',work/'plan.json',digest(second_workers[0]),
+                                     digest(second_workers[1]),exe=second_workers[2])
+                second_plan=pathlib.Path(second_result['plan_path'])
+                assert second_result['generation']==2
+                second_proposal=native('evaluation-continuation-proposal',second_plan,driver,sys.executable,
+                                       exe=second_workers[2])
+                assert second_proposal['sealed_slots_verified']==2
+                second_approval=root/'continuation-second.json'
+                second_approval.write_text(json.dumps(second_proposal['binding']))
+                sealed(second_plan,second_approval,ok=False,workers=second_workers)
+                assert not (work/'collection.json').exists()
+                expire_fixture_processing(work,2)
+                third_workers=copied_workers('third')
+                third_result=native('evaluation-continuation-plan',work/'plan.json',digest(third_workers[0]),
+                                    digest(third_workers[1]),exe=third_workers[2])
+                third_plan=pathlib.Path(third_result['plan_path'])
+                assert third_result['generation']==3
+                third_proposal=native('evaluation-continuation-proposal',third_plan,driver,sys.executable,
+                                      exe=third_workers[2])
+                assert third_proposal['sealed_slots_verified']==16 and third_proposal['remaining_slots']==0
+                third_approval=root/'continuation-third.json'
+                third_approval.write_text(json.dumps(third_proposal['binding']))
+                sealed(third_plan,third_approval,workers=third_workers)
+                assert before=={str(f.relative_to(work)):digest(f) for f in (work/'batch-000').rglob('*') if f.is_file()}
+                assert second_slot=={str(f.relative_to(work)):digest(f) for f in
+                                    (work/'batch-001-continuation-1').rglob('*') if f.is_file()}
+                final_head=json.loads((root/'campaign/head.json').read_bytes())
+                final_state=json.loads((root/'campaign/journal'/f"{final_head['sequence']:010}.json").read_bytes())
+                assert final_state['processing']['4']['stage']==old_state['processing']['4']['stage']
+                assert final_state['processing']['4']['evaluation_continuations'][0]['approval']==first_state['processing']['4']['evaluation_continuations'][0]['approval']
+                assert (final_state['requests'],final_state['entity'])==(old_state['requests'],old_state['entity'])
+                assert digest(partial/'unfinished')==retained_partial
+                final_status=native('evaluation-processing-status',third_plan,exe=third_workers[2])
+                assert final_status['attempts_reserved']==old_charge
+                assert final_status['processing_complete'] is True and final_status['continuation_generation']==3
+                sealed(third_plan,third_approval,ok=False,workers=third_workers)
                 native('evaluation-source',root/'campaign/runs/w04',ok=False)
             else:sealed(path,approval)
             assert not (work/'index.html').exists()

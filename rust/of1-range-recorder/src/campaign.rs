@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
@@ -114,6 +114,8 @@ struct Processing {
     complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continuation: Option<Continuation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    evaluation_continuations: Vec<EvaluationContinuation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sealed_manifest_sha256: Option<String>,
 }
@@ -139,9 +141,39 @@ struct Continuation {
     approval: ContinuationApproval,
     stage: StageRecord,
 }
+/// A separately approved, append-only processing grant for one fixed B7
+/// evaluation window. It binds the existing work tree, not its research result.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluationContinuationApproval {
+    pub authority: Authority,
+    pub window: u64,
+    pub previous_ledger_sha256: String,
+    pub original_processing_sha256: String,
+    pub preceding_continuation_sha256: Option<String>,
+    pub work_tree_sha256: String,
+    pub original_plan_sha256: String,
+    pub plan_sha256: String,
+    pub plan_path: PathBuf,
+    pub original_producer_source_sha256: String,
+    pub original_lock_sha256: String,
+    pub collector_source_sha256: String,
+    pub collector_lock_sha256: String,
+    pub worker_sha256s: Vec<String>,
+    pub evaluation: EvaluationBinding,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct EvaluationContinuation {
+    approval: EvaluationContinuationApproval,
+    stage: StageRecord,
+}
 impl Processing {
     fn active_stage(&self) -> &StageRecord {
-        self.continuation.as_ref().map_or(&self.stage, |c| &c.stage)
+        self.evaluation_continuations.last().map_or_else(
+            || self.continuation.as_ref().map_or(&self.stage, |c| &c.stage),
+            |c| &c.stage,
+        )
     }
 }
 /// Separate phase-two decision, after a named phase-one integrity/resource review.
@@ -283,6 +315,339 @@ fn sealed_worker(binding: &EvaluationBinding) -> StoreResult<()> {
 }
 
 impl Guard {
+    /// Hash the existing bounded work tree without interpreting sealed records.
+    /// This is only a consent binding; native part verification is still required.
+    /// # Errors
+    /// Refuses links, oversized trees and non-regular entries.
+    pub fn evaluation_work_tree_sha256(root: &Path) -> StoreResult<String> {
+        use sha2::Digest;
+        fn walk(
+            base: &Path,
+            dir: &Path,
+            hasher: &mut sha2::Sha256,
+            entries: &mut u64,
+            bytes: &mut u64,
+        ) -> StoreResult<()> {
+            let mut children = fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
+            children.sort_by_key(|entry| entry.file_name());
+            for child in children {
+                *entries += 1;
+                if *entries > 8192 {
+                    return Err(StoreError::Budget);
+                }
+                let path = child.path();
+                let meta = fs::symlink_metadata(&path)?;
+                let relative = path.strip_prefix(base).map_err(|_| StoreError::Identity)?;
+                let name = relative.to_str().ok_or(StoreError::Identity)?.as_bytes();
+                hasher.update((name.len() as u64).to_le_bytes());
+                hasher.update(name);
+                if meta.is_dir() {
+                    hasher.update(b"DIR");
+                    walk(base, &path, hasher, entries, bytes)?;
+                } else if meta.is_file() && meta.nlink() == 1 {
+                    *bytes = bytes.checked_add(meta.len()).ok_or(StoreError::Budget)?;
+                    if *bytes > 4 * 1024 * 1024 * 1024 {
+                        return Err(StoreError::Budget);
+                    }
+                    hasher.update(b"FILE");
+                    hasher.update(meta.len().to_le_bytes());
+                    let mut file = File::open(path)?;
+                    let mut chunk = [0_u8; 64 * 1024];
+                    let mut read = 0_u64;
+                    loop {
+                        let count = file.read(&mut chunk)?;
+                        if count == 0 {
+                            break;
+                        }
+                        read = read
+                            .checked_add(u64::try_from(count).map_err(|_| StoreError::Budget)?)
+                            .ok_or(StoreError::Budget)?;
+                        if read > meta.len() {
+                            return Err(StoreError::Identity);
+                        }
+                        hasher.update(&chunk[..count]);
+                    }
+                    if read != meta.len() || file.metadata()?.len() != meta.len() {
+                        return Err(StoreError::Identity);
+                    }
+                } else {
+                    return Err(StoreError::Identity);
+                }
+            }
+            Ok(())
+        }
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(b"OF1_B7_EVALUATION_WORK_TREE_1");
+        walk(root, root, &mut hasher, &mut 0, &mut 0)?;
+        Ok(format!("{:x}", hasher.finalize()))
+    }
+
+    /// Read-only, window-specific context for a new sealed-processing grant.
+    /// # Errors
+    /// Missing acquisition, an active lease, completion or release fails closed.
+    pub fn evaluation_continuation_context(
+        sample: &SampleIdentity,
+        run_root: &Path,
+    ) -> StoreResult<(Self, serde_json::Value)> {
+        let g = Self::for_recorded(sample, run_root)?;
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        let p = g
+            .state
+            .processing
+            .get(&b.window_ordinal)
+            .ok_or(StoreError::Identity)?;
+        validate_evaluation_binding(sample, p.approval.evaluation.as_ref())?;
+        if b.cohort_role != "RESERVED_EVALUATION"
+            || g.state.evaluation_release.is_some()
+            || p.complete
+            || p.continuation.is_some()
+            || within_stage(p.active_stage(), &SystemClock.sample()?).is_ok()
+        {
+            return Err(StoreError::ReservedEvaluation);
+        }
+        let driver = g
+            .root
+            .join(format!("work/w{:02}/driver.lock", b.window_ordinal));
+        durable::regular(&driver)?;
+        let active = OpenOptions::new().read(true).write(true).open(driver)?;
+        active.try_lock().map_err(|_| StoreError::Locked)?;
+        let previous = p
+            .evaluation_continuations
+            .last()
+            .map(|c| bytes(&(&c.approval, &c.stage)).map(|v| sha256(&v)))
+            .transpose()?;
+        let context = serde_json::json!({
+            "ledger_sha256":g.head_hash,
+            "original_processing_sha256":sha256(&bytes(&(&p.approval,&p.stage))?),
+            "preceding_continuation_sha256":previous,
+            "original_approval":p.approval,
+            "continuation_count":p.evaluation_continuations.len()
+        });
+        Ok((g, context))
+    }
+
+    /// # Errors
+    /// Exact fixed-campaign role, window and software/method binding only.
+    pub fn evaluation_continuation_target(
+        sample: &SampleIdentity,
+        a: &EvaluationContinuationApproval,
+    ) -> StoreResult<String> {
+        sample.validate(978)?;
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        validate_evaluation_binding(sample, Some(&a.evaluation))?;
+        if b.cohort_role != "RESERVED_EVALUATION"
+            || !EVALUATION_WINDOWS.contains(&b.window_ordinal)
+            || a.window != b.window_ordinal
+            || [
+                &a.previous_ledger_sha256,
+                &a.original_processing_sha256,
+                &a.work_tree_sha256,
+                &a.original_plan_sha256,
+                &a.plan_sha256,
+                &a.original_producer_source_sha256,
+                &a.original_lock_sha256,
+                &a.collector_source_sha256,
+                &a.collector_lock_sha256,
+            ]
+            .iter()
+            .any(|h| !hex_hash(h))
+            || a.preceding_continuation_sha256
+                .as_ref()
+                .is_some_and(|h| !hex_hash(h))
+            || a.worker_sha256s.len() != 3
+            || a.worker_sha256s.iter().any(|h| !hex_hash(h))
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(sha256(&bytes(&(
+            "OF1_B7_EVALUATION_CONTINUATION_1",
+            sample,
+            (
+                a.window,
+                &a.previous_ledger_sha256,
+                &a.original_processing_sha256,
+                &a.preceding_continuation_sha256,
+                &a.work_tree_sha256,
+            ),
+            (
+                &a.original_plan_sha256,
+                &a.plan_sha256,
+                &a.plan_path,
+                &a.original_producer_source_sha256,
+                &a.original_lock_sha256,
+            ),
+            (
+                &a.collector_source_sha256,
+                &a.collector_lock_sha256,
+                &a.worker_sha256s,
+                &a.evaluation,
+            ),
+            (1_200_000_u64, 4_u64 * 1024 * 1024 * 1024),
+        ))?))
+    }
+
+    /// Append one separate sealed-processing lease; old authority and charges stay.
+    /// # Errors
+    /// Stale/double approval, changed work/source or exhausted space stops.
+    pub fn admit_evaluation_continuation(
+        &mut self,
+        sample: &SampleIdentity,
+        a: EvaluationContinuationApproval,
+        at: &ClockSample,
+    ) -> StoreResult<()> {
+        let target = Self::evaluation_continuation_target(sample, &a)?;
+        sealed_worker(&a.evaluation)?;
+        let p = self
+            .state
+            .processing
+            .get(&a.window)
+            .ok_or(StoreError::Identity)?;
+        if self.state.evaluation_release.is_some()
+            || p.complete
+            || p.continuation.is_some()
+            || self.head_hash != a.previous_ledger_sha256
+            || p.approval.plan_sha256 != a.original_plan_sha256
+            || a.plan_path
+                != self.root.join(format!(
+                    "proposals/w{:02}/continuation-{}.json",
+                    a.window,
+                    p.evaluation_continuations.len() + 1
+                ))
+            || p.approval.evaluation.as_ref().is_none_or(|old| {
+                old.method_sha256 != a.evaluation.method_sha256
+                    || old.acceptance_sha256 != a.evaluation.acceptance_sha256
+            })
+            || a.evaluation.previous_ledger_sha256 != a.previous_ledger_sha256
+            || sha256(&bytes(&(&p.approval, &p.stage))?) != a.original_processing_sha256
+            || p.evaluation_continuations
+                .last()
+                .map(|c| bytes(&(&c.approval, &c.stage)).map(|v| sha256(&v)))
+                .transpose()?
+                != a.preceding_continuation_sha256
+            || p.evaluation_continuations.first().is_some_and(|first| {
+                first.approval.original_producer_source_sha256 != a.original_producer_source_sha256
+                    || first.approval.original_lock_sha256 != a.original_lock_sha256
+                    || first.approval.original_plan_sha256 != a.original_plan_sha256
+            })
+            || matches!(a.authority, Authority::Fixture) != self.header.fixture
+            || within_stage(p.active_stage(), at).is_ok()
+            || sha256(&durable::read_bounded(&a.plan_path, 1_048_576)?) != a.plan_sha256
+            || Self::evaluation_work_tree_sha256(&self.root.join(format!("work/w{:02}", a.window)))?
+                != a.work_tree_sha256
+        {
+            return Err(StoreError::Identity);
+        }
+        let policy = ClockPolicy::standard();
+        validate_authority(Some(&policy), &a.authority, &target)?;
+        let stage = make_stage(
+            Some(&policy),
+            &a.authority,
+            &StageBudget {
+                max_requests: 1,
+                max_response_entity_bytes_total: 1,
+                max_runtime_ms: 1_200_000,
+            },
+            &a,
+            at,
+        )?;
+        self.space(0)?;
+        let mut next = self.state.clone();
+        next.processing
+            .get_mut(&a.window)
+            .ok_or(StoreError::Identity)?
+            .evaluation_continuations
+            .push(EvaluationContinuation { approval: a, stage });
+        self.commit(next)
+    }
+
+    /// # Errors
+    /// Returns the active sealed continuation only to its registered worker path.
+    pub fn evaluation_continuation(
+        &self,
+        sample: &SampleIdentity,
+    ) -> StoreResult<Option<EvaluationContinuationApproval>> {
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        Ok(self
+            .state
+            .processing
+            .get(&b.window_ordinal)
+            .ok_or(StoreError::Identity)?
+            .evaluation_continuations
+            .last()
+            .map(|c| c.approval.clone()))
+    }
+
+    /// # Errors
+    /// Generation is operational, not a domain count.
+    pub fn evaluation_continuation_generation(
+        &self,
+        sample: &SampleIdentity,
+    ) -> StoreResult<usize> {
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        Ok(self
+            .state
+            .processing
+            .get(&b.window_ordinal)
+            .ok_or(StoreError::Identity)?
+            .evaluation_continuations
+            .len())
+    }
+
+    /// # Errors
+    /// The original and admitted processing plans remain distinct immutable inputs.
+    pub fn evaluation_processing_plans(
+        &self,
+        sample: &SampleIdentity,
+    ) -> StoreResult<
+        Vec<(
+            String,
+            Option<PathBuf>,
+            Vec<String>,
+            Option<String>,
+            Option<String>,
+        )>,
+    > {
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        let p = self
+            .state
+            .processing
+            .get(&b.window_ordinal)
+            .ok_or(StoreError::Identity)?;
+        let mut plans = vec![(
+            p.approval.plan_sha256.clone(),
+            None,
+            p.approval.worker_sha256s.clone(),
+            None,
+            None,
+        )];
+        plans.extend(p.evaluation_continuations.iter().map(|c| {
+            (
+                c.approval.plan_sha256.clone(),
+                Some(c.approval.plan_path.clone()),
+                c.approval.worker_sha256s.clone(),
+                Some(c.approval.collector_source_sha256.clone()),
+                Some(c.approval.collector_lock_sha256.clone()),
+            )
+        }));
+        Ok(plans)
+    }
+    /// # Errors
+    /// Exact append-only grant chain for the final sealed manifest.
+    pub fn evaluation_continuation_records(
+        &self,
+        sample: &SampleIdentity,
+    ) -> StoreResult<Vec<EvaluationContinuationApproval>> {
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        Ok(self
+            .state
+            .processing
+            .get(&b.window_ordinal)
+            .ok_or(StoreError::Identity)?
+            .evaluation_continuations
+            .iter()
+            .map(|c| c.approval.clone())
+            .collect())
+    }
     /// # Errors
     /// Processing consent binds the frozen method in addition to source plan,
     /// cohort, worker binaries and unchanged limits. No implicit authority.
@@ -314,6 +679,38 @@ impl Guard {
             .window_ordinal;
         let p = self.state.processing.get(&i).ok_or(StoreError::Identity)?;
         Ok(p.approval.evaluation.as_ref().map(|_| p.approval.clone()))
+    }
+    /// Operational status only: no facts, diagnoses, counts or worker output.
+    /// # Errors
+    /// Exact registered evaluation source and bounded campaign state required.
+    pub fn evaluation_operational_status(
+        sample: &SampleIdentity,
+        run_root: &Path,
+    ) -> StoreResult<serde_json::Value> {
+        let g = Self::for_recorded(sample, run_root)?;
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        let p = g
+            .state
+            .processing
+            .get(&b.window_ordinal)
+            .ok_or(StoreError::Identity)?;
+        validate_evaluation_binding(sample, p.approval.evaluation.as_ref())?;
+        if b.cohort_role != "RESERVED_EVALUATION" {
+            return Err(StoreError::ReservedEvaluation);
+        }
+        let now = SystemClock.sample()?;
+        let active = within_stage(p.active_stage(), &now).is_ok();
+        Ok(
+            serde_json::json!({"schema":"OF1_B7_SEALED_OPERATIONAL_STATUS_1",
+            "window":b.window_ordinal,"processing_complete":p.complete,
+            "continuation_generation":p.evaluation_continuations.len(),
+            "lease_active":active,"remaining_ms":if active { Some(p.active_stage().deadline_boot_ms.saturating_sub(now.boot_ms)) } else { None },
+            "ledger_sha256":g.head_hash,"attempts_reserved":g.state.requests,
+            "entity_bytes_reserved":g.state.entity,
+            "work_allocated_bytes":durable::disk_charge(&g.root.join(format!("work/w{:02}",b.window_ordinal)))?,
+            "campaign_charge_bytes":durable::disk_charge(&g.root)?+4096,
+            "outcomes_released":g.state.evaluation_release.is_some(),"research_ready":false}),
+        )
     }
     /// # Errors
     /// Fixed final boundary only; proposals contain identities, never outcomes.
@@ -791,6 +1188,9 @@ impl Guard {
                         .continuation
                         .as_ref()
                         .is_some_and(|c| new.continuation.as_ref() != Some(c))
+                    || !new
+                        .evaluation_continuations
+                        .starts_with(&old.evaluation_continuations)
                 {
                     return Err(fail());
                 }
@@ -1226,6 +1626,7 @@ impl Guard {
                 stage,
                 complete: false,
                 continuation: None,
+                evaluation_continuations: Vec::new(),
                 sealed_manifest_sha256: None,
             },
         );
@@ -1505,14 +1906,21 @@ impl Guard {
             .ok_or(StoreError::Identity)?;
         validate_evaluation_binding(sample, p.approval.evaluation.as_ref())?;
         if p.approval.evaluation.is_some() {
-            sealed_worker(p.approval.evaluation.as_ref().ok_or(StoreError::Identity)?)?;
+            sealed_worker(p.evaluation_continuations.last().map_or(
+                p.approval.evaluation.as_ref().ok_or(StoreError::Identity)?,
+                |c| &c.approval.evaluation,
+            ))?;
         }
-        let (active_plan, active_workers) = p
-            .continuation
-            .as_ref()
-            .map_or((&p.approval.plan_sha256, &p.approval.worker_sha256s), |c| {
-                (&c.approval.plan_sha256, &c.approval.worker_sha256s)
-            });
+        let (active_plan, active_workers) = p.evaluation_continuations.last().map_or_else(
+            || {
+                p.continuation
+                    .as_ref()
+                    .map_or((&p.approval.plan_sha256, &p.approval.worker_sha256s), |c| {
+                        (&c.approval.plan_sha256, &c.approval.worker_sha256s)
+                    })
+            },
+            |c| (&c.approval.plan_sha256, &c.approval.worker_sha256s),
+        );
         if g.state.evaluation_release.is_some()
             || p.complete
             || active_plan != plan_sha
@@ -1618,6 +2026,15 @@ impl Guard {
             if v["state"] != "COMPLETE"
                 || v["evaluation_processing"]
                     != serde_json::to_value(&p.approval).map_err(|_| fail())?
+                || (!p.evaluation_continuations.is_empty()
+                    && v["evaluation_continuations"]
+                        != serde_json::to_value(
+                            p.evaluation_continuations
+                                .iter()
+                                .map(|c| &c.approval)
+                                .collect::<Vec<_>>(),
+                        )
+                        .map_err(|_| fail())?)
             {
                 return Err(StoreError::Identity);
             }

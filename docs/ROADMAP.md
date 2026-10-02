@@ -1,19 +1,22 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. The owner accepted the [bounded B4/B5 engineering contracts on 2026-09-23](research/B4_B5_ENGINEERING_ACCEPTANCE_20260923.md). B4/#83 and B5/#84 are complete at `Engineering Validation`; The [2026-09-24 B6 acceptance](research/B6_ENGINEERING_ACCEPTANCE_20260924.md) supports technical completion of the original bounded MVP after protected delivery gates, with `Done / SUPERSEDED / Engineering Validation` metadata; actual Project synchronization is separate. Research Ready remains false. The completed migration ledger and historical source/lease evidence are preserved; four phase-1 B7 DEVELOPMENT windows are complete; the current authority is the bounded offline cohort view described below.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. B4/#83, B5/#84 and B6/#85 have bounded engineering acceptance; Research Ready remains false. Four B7 DEVELOPMENT windows are complete. The first RESERVED_EVALUATION window has complete acquisition and an incomplete, sealed processing checkpoint after its original lease expired. The continuation route below needs a separate exact owner decision before authentic execution. Historical source/lease evidence and dataset classes remain unchanged.
 
 The imported WSL stack retains a bounded [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md): 21,719 Bronze packages, including 1,898 failed transactions, and 22 Silver facts (15 buys / seven sells). Its three-slot research pilot and sixteen post-hoc context slots remain distinct. Rust owns the existing Arrow/Parquet writer; Python reads the sealed manifests. The [VPS integration record](operations/VPS_WSL_INTEGRATION.md) tracks host validation separately. Earlier named run results remain historical evidence; neither migration nor integration promotes B4/B5, Research Ready or execution readiness.
 
-## Current bounded task — 2026-09-28
+## Current bounded task — 2026-10-02
 
-B6/#85 remains completed. The four fixed phase-1 DEVELOPMENT windows contain
-64 slots, 80,541 packages, 9,505 failures and 122 admitted facts. The current
-[cohort increment](research/B7_DEVELOPMENT_COHORT.md) permits only an exact-manifest,
-read-only view of ordinals 0–3 and descriptive aggregation of existing native
-facts. Technical completeness does not establish exhaustive Pump coverage or
-research sufficiency. No evaluation output, further acquisition or B8 authority.
-#86 stays open / Unproven, In Progress / ACTIVE NOW; Research Ready=false.
-Older dated scope and sealed dossiers remain historical evidence.
+B7/#86 remains open / Unproven. The four fixed DEVELOPMENT windows contain
+64 slots, 80,541 packages, 9,505 failures and 122 admitted facts. The
+[cohort view](research/B7_DEVELOPMENT_COHORT.md) and instruction inventory
+remain descriptive and DEVELOPMENT-only. Ordinal 4 has all acquired ranges,
+but sealed processing stopped after slot `422802716`; the unfinished Parquet
+publication is retained. The [bounded continuation route](research/B7_EVALUATION_SHIELD.md)
+can resume only with a new window-specific processing approval after native
+verification. Implementation and fixture evidence are not that approval.
+No evaluation outcome access, further acquisition or B8 authority exists.
+Research Ready remains false. Older dated scope and sealed dossiers are
+historical evidence.
 
 ## Program outcome
 
@@ -52,7 +55,7 @@ The implementation rule is one walking skeleton: one official source, one acquis
 
 After at most three or four engineering PRs without a new user-visible or research-measurable outcome, the next PR must produce one.
 
-The content migration and B2A/B3 closeouts remain historical evidence. B4/#83 and B5/#84 are technically accepted on 2026-09-23 as `Done` / `SUPERSEDED` / `Engineering Validation` within their bounded contracts. B6/#85 now has a criterion-based engineering completion decision, conditional on independent review and mandatory technical delivery checks; the private delivery record records closure and actual Project read-back. B7/#86 is queued `Backlog` / `NEXT` / `Unproven`; this routing does not start B7, and B8 remains `LATER`. Research Ready remains false; no acquisition is authorized. The completed milestones use the existing `SUPERSEDED` routing convention, while their issue close reason is `completed`. On verified B6 completion, #85 becomes `Done / SUPERSEDED / Engineering Validation`; no later item becomes ACTIVE NOW implicitly. B7/#86 is the queued `NEXT`, not started; B8 remains `LATER`. Disposition never authorizes execution. Original criteria, receipts and slice classes are unchanged; see the dated acceptance decision for the #83-before-#84 closeout procedure.
+The content migration and B2A/B3 closeouts remain historical evidence. B4/#83 and B5/#84 were technically accepted on 2026-09-23 as `Done` / `SUPERSEDED` / `Engineering Validation` within their bounded contracts. The subsequent B6/#85 engineering acceptance and B7/#86 start are reflected in the current section above; older queueing language is historical, not current execution authority. B8 remains later. Disposition never authorizes execution. Original criteria, receipts and slice classes are unchanged; see the dated acceptance decision for the #83-before-#84 closeout procedure.
 
 The last pre-B2A main commit is archived by annotated tag `v1-paper-platform-final`: tag object `de5b3850e0527afe8271c54abfdb95098d55e395`, peeled commit `f870621f5df76b935ce828fa9205fb9ff7504f67`. B2A's exact removal, test-classification and retained-invariant inventory is [`../roadmap/b2a-invariant-salvage-manifest.json`](../roadmap/b2a-invariant-salvage-manifest.json).
 

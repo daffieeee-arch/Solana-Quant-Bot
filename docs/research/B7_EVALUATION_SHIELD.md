@@ -1,8 +1,9 @@
 # B7 — accepted method and sealed evaluation processing
 
 > ACTIVE. Fixed campaign only. Software never grants acquisition, processing or
-> visibility authority. The separately dated owner decision below permits only
-> conditional ordinal-4 acquisition and sealed processing; no visibility or B8.
+> visibility authority. Ordinal-4 acquisition is complete and its first sealed
+> processing lease expired incomplete. The continuation implementation grants
+> no authentic lease, visibility or B8 authority.
 
 ## Method acceptance, 2026-09-28
 
@@ -34,12 +35,20 @@ or server permission change is introduced.
   worker binaries, Python executable and four driver modules. It cannot reuse a
   DEVELOPMENT approval. All preceding windows must already be complete.
 * The native ledger appends the approval; it preserves old state serialization,
-  leases, reservations and producers. Resume uses the same absolute deadline,
-  same files and same code. A changed/duplicate/missing authority stops.
+  leases, reservations and producers. Restart within an active stage uses its
+  original absolute deadline. After expiry, an incomplete window can continue
+  only under a separate, window-specific, method/source/ledger/software-bound
+  approval. The old deadline and charges remain; a changed, duplicate or missing
+  approval stops. An implementation of this route does not grant a real lease.
 * Reserved workers require the approved `evaluation_run.py` parent and exact
   interpreter/module identities. Calling a worker or diagnostic directly does
   not acquire that capability. The ordinary scheduler remains DEVELOPMENT-only
   in effect: its process identity cannot use an evaluation permit.
+* A continuation re-verifies every retained complete slot and its original
+  producer, then writes unfinished slots under a new generation. An unfinished
+  Parquet directory remains evidence and cannot count as a complete slot. The
+  native operational-status command returns only timing, stage and resource
+  fields; it never returns facts, labels, worker logs or diagnoses.
 * The sealed wrapper returns only `SEALED_PROCESSING_COMPLETE` or
   `SEALED_PROCESSING_STOPPED`, `outcomes_released=false` and Research Ready=false.
   No per-part progress/count, exception body, subprocess stdout/stderr, result
@@ -95,7 +104,9 @@ The ordinary offline Parquet gate includes `test_evaluation_pipeline.py`: a
 synthetic sixteen-window campaign split into four persistent bounded test stages,
 separate phase-two fixture authority, denied
 wrong/missing method and driver bindings, a deterministic interrupted slot,
-corrupted-publication refusal, same-lease resume, denied direct readers/workers,
+corrupted-publication refusal, same-lease resume and repeated separately
+approved expired-stage continuations including a post-slot/pre-manifest stop,
+denied direct readers/workers,
 early/duplicate release refusal and controlled final manifest release. It reads
 no authentic evaluation inputs. Existing DEVELOPMENT regressions remain active.
 
