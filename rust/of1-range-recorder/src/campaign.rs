@@ -168,6 +168,14 @@ struct EvaluationContinuation {
     approval: EvaluationContinuationApproval,
     stage: StageRecord,
 }
+/// Immutable producer identity for one generation of a sealed processing plan.
+pub struct EvaluationProcessingPlan {
+    pub plan_sha256: String,
+    pub plan_path: Option<PathBuf>,
+    pub worker_sha256s: Vec<String>,
+    pub producer_source_sha256: Option<String>,
+    pub lock_sha256: Option<String>,
+}
 impl Processing {
     fn active_stage(&self) -> &StageRecord {
         self.evaluation_continuations.last().map_or_else(
@@ -329,7 +337,7 @@ impl Guard {
             bytes: &mut u64,
         ) -> StoreResult<()> {
             let mut children = fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
-            children.sort_by_key(|entry| entry.file_name());
+            children.sort_by_key(fs::DirEntry::file_name);
             for child in children {
                 *entries += 1;
                 if *entries > 8192 {
@@ -352,7 +360,7 @@ impl Guard {
                     hasher.update(b"FILE");
                     hasher.update(meta.len().to_le_bytes());
                     let mut file = File::open(path)?;
-                    let mut chunk = [0_u8; 64 * 1024];
+                    let mut chunk = [0_u8; 16 * 1024];
                     let mut read = 0_u64;
                     loop {
                         let count = file.read(&mut chunk)?;
@@ -598,37 +606,31 @@ impl Guard {
     pub fn evaluation_processing_plans(
         &self,
         sample: &SampleIdentity,
-    ) -> StoreResult<
-        Vec<(
-            String,
-            Option<PathBuf>,
-            Vec<String>,
-            Option<String>,
-            Option<String>,
-        )>,
-    > {
+    ) -> StoreResult<Vec<EvaluationProcessingPlan>> {
         let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
         let p = self
             .state
             .processing
             .get(&b.window_ordinal)
             .ok_or(StoreError::Identity)?;
-        let mut plans = vec![(
-            p.approval.plan_sha256.clone(),
-            None,
-            p.approval.worker_sha256s.clone(),
-            None,
-            None,
-        )];
-        plans.extend(p.evaluation_continuations.iter().map(|c| {
-            (
-                c.approval.plan_sha256.clone(),
-                Some(c.approval.plan_path.clone()),
-                c.approval.worker_sha256s.clone(),
-                Some(c.approval.collector_source_sha256.clone()),
-                Some(c.approval.collector_lock_sha256.clone()),
-            )
-        }));
+        let mut plans = vec![EvaluationProcessingPlan {
+            plan_sha256: p.approval.plan_sha256.clone(),
+            plan_path: None,
+            worker_sha256s: p.approval.worker_sha256s.clone(),
+            producer_source_sha256: None,
+            lock_sha256: None,
+        }];
+        plans.extend(
+            p.evaluation_continuations
+                .iter()
+                .map(|c| EvaluationProcessingPlan {
+                    plan_sha256: c.approval.plan_sha256.clone(),
+                    plan_path: Some(c.approval.plan_path.clone()),
+                    worker_sha256s: c.approval.worker_sha256s.clone(),
+                    producer_source_sha256: Some(c.approval.collector_source_sha256.clone()),
+                    lock_sha256: Some(c.approval.collector_lock_sha256.clone()),
+                }),
+        );
         Ok(plans)
     }
     /// # Errors
@@ -2273,6 +2275,7 @@ mod tests {
                 stage,
                 complete: false,
                 continuation: None,
+                evaluation_continuations: Vec::new(),
                 sealed_manifest_sha256: None,
             },
         );

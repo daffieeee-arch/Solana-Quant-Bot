@@ -114,12 +114,12 @@ fn published(
 ) -> io::Result<Option<Published>> {
     let original_batch = original.batch(id)?;
     let history = guard.evaluation_processing_plans(sample).map_err(invalid)?;
-    if history[0].0 != original_hash {
+    if history[0].plan_sha256 != original_hash {
         return Err(invalid("ORIGINAL_PLAN_BINDING"));
     }
     let continuation = guard.evaluation_continuation(sample).map_err(invalid)?;
     let mut found = None;
-    for (generation, (expected_hash, path, workers, source, lock)) in history.iter().enumerate() {
+    for (generation, identity) in history.iter().enumerate() {
         let directory = batch_directory(root, original_batch, generation);
         if !directory.join("slot.json").exists() {
             continue;
@@ -127,30 +127,30 @@ fn published(
         if found.is_some() {
             return Err(invalid("DUPLICATE_SLOT_PUBLICATION"));
         }
-        let (plan, hash) = if let Some(path) = path {
+        let (plan, hash) = if let Some(path) = &identity.plan_path {
             batch::read_plan(path)?
         } else {
             (original.clone(), original_hash.to_owned())
         };
         let mut expected = original.clone();
         expected.workers = plan.workers.clone();
-        if hash != *expected_hash
+        if hash != identity.plan_sha256
             || serde_json::to_value(&plan).map_err(invalid)?
                 != serde_json::to_value(&expected).map_err(invalid)?
-            || workers.first() != Some(&plan.workers.batch_decoder_sha256)
-            || workers.get(1) != Some(&plan.workers.projector_sha256)
+            || identity.worker_sha256s.first() != Some(&plan.workers.batch_decoder_sha256)
+            || identity.worker_sha256s.get(1) != Some(&plan.workers.projector_sha256)
         {
             return Err(invalid("PUBLISHED_PLAN_CHANGED"));
         }
         let (first_source, first_lock) = original_identity(original, root)?;
-        let producer = if let Some(v) = source {
+        let producer = if let Some(v) = &identity.producer_source_sha256 {
             v.clone()
         } else {
             continuation
                 .as_ref()
                 .map_or(first_source, |a| a.original_producer_source_sha256.clone())
         };
-        let lock = if let Some(v) = lock {
+        let lock = if let Some(v) = &identity.lock_sha256 {
             v.clone()
         } else {
             continuation
