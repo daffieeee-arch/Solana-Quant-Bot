@@ -241,6 +241,68 @@ impl Reader {
         }
         Ok(())
     }
+    fn slots_checked_evaluation(
+        &mut self,
+        root: &Path,
+        m: &Value,
+        original: &batch::Plan,
+        original_hash: &str,
+        check: &mut dyn FnMut() -> io::Result<()>,
+    ) -> io::Result<()> {
+        let slots = list(&m["slots"])?;
+        if slots.len() != original.batches.len() {
+            return Err(invalid("RELEASED_SLOT_COUNT"));
+        }
+        let approvals = list(&m["evaluation_continuations"])?;
+        for (batch, descriptor) in original.batches.iter().zip(slots) {
+            check()?;
+            let (slot, _) = pinned(
+                root,
+                text(&descriptor["manifest_path"])?,
+                &descriptor["sha256"],
+            )?;
+            if slot["slot"] != batch.slots[0] || slot["state"] != "ACCOUNTED" {
+                return Err(invalid("RELEASED_SLOT_BINDING"));
+            }
+            let (plan, hash) = if slot["plan_sha256"] == original_hash {
+                (original.clone(), original_hash.to_owned())
+            } else {
+                let approval = approvals
+                    .iter()
+                    .find(|a| a["plan_sha256"] == slot["plan_sha256"])
+                    .ok_or_else(|| invalid("UNAPPROVED_RELEASED_PLAN"))?;
+                let path = Path::new(text(&approval["plan_path"])?);
+                let (version, hash) = batch::read_plan(path)?;
+                let mut expected = original.clone();
+                expected.workers = version.workers.clone();
+                if hash != text(&approval["plan_sha256"])?
+                    || serde_json::to_value(&version).map_err(invalid)?
+                        != serde_json::to_value(&expected).map_err(invalid)?
+                    || version.workers.batch_decoder_sha256 != approval["worker_sha256s"][0]
+                    || version.workers.projector_sha256 != approval["worker_sha256s"][1]
+                    || slot["producer_source_sha256"] != approval["collector_source_sha256"]
+                {
+                    return Err(invalid("RELEASED_PRODUCER_PLAN"));
+                }
+                (version, hash)
+            };
+            let mut physical = plan.batch(&batch.batch_id)?.clone();
+            physical.output_directory = Path::new(text(&descriptor["manifest_path"])?)
+                .parent()
+                .ok_or_else(|| invalid("RELEASED_SLOT_PATH"))?
+                .to_str()
+                .ok_or_else(|| invalid("RELEASED_SLOT_PATH"))?
+                .into();
+            for (i, part) in list(&slot["parts"])?.iter().enumerate() {
+                if part["ordinal"] != i {
+                    return Err(invalid("RELEASED_PART_ORDER"));
+                }
+                self.part(root, part, &plan, &hash, &physical, Some(i))?;
+                check()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 fn plan(value: &Value, hash: &Value) -> io::Result<batch::Plan> {
@@ -410,14 +472,18 @@ pub(crate) fn evaluation_window(
     let counts = json!({"packages":m["layers"]["bronze"]["rows"],"failures":failures,"silver_facts":m["layers"]["silver"]["rows"]});
     let mut reader = Reader::new();
     reader.inventory = Some(crate::instruction_inventory::Inventory::default());
-    reader.slots_checked(
-        root,
-        list(&m["slots"])?,
-        &p,
-        text(&m["plan_sha256"])?,
-        0,
-        check,
-    )?;
+    if m["evaluation_continuations"].is_array() {
+        reader.slots_checked_evaluation(root, m, &p, text(&m["plan_sha256"])?, check)?;
+    } else {
+        reader.slots_checked(
+            root,
+            list(&m["slots"])?,
+            &p,
+            text(&m["plan_sha256"])?,
+            0,
+            check,
+        )?;
+    }
     reader.verify_layers(&m["layers"])?;
     let inventory = reader
         .inventory
