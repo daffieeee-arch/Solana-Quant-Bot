@@ -1,22 +1,26 @@
 # Solana Quant Platform V2 roadmap
 
-> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. B4/#83, B5/#84 and B6/#85 have bounded engineering acceptance; Research Ready remains false. Four B7 DEVELOPMENT windows are complete. The first RESERVED_EVALUATION window has complete acquisition and an incomplete, sealed processing checkpoint after its original lease expired. The continuation route below needs a separate exact owner decision before authentic execution. Historical source/lease evidence and dataset classes remain unchanged.
+> **Document status: ACTIVE.** [GitHub Project #4](https://github.com/users/daffieeee-arch/projects/4) is the central delivery roadmap. B4/#83, B5/#84 and B6/#85 have bounded engineering acceptance; Research Ready remains false. Four B7 DEVELOPMENT windows are complete. The first RESERVED_EVALUATION window is natively complete with outcomes sealed. The approved batch 5→6→7 awaits the bounded metadata repair/integration; its failed ordinal-5 attempt remains charged. Historical source/lease evidence and dataset classes remain unchanged.
 
 The imported WSL stack retains a bounded [nineteen-slot collection](research/B5_PILOT_CONTEXT_COLLECTION.md): 21,719 Bronze packages, including 1,898 failed transactions, and 22 Silver facts (15 buys / seven sells). Its three-slot research pilot and sixteen post-hoc context slots remain distinct. Rust owns the existing Arrow/Parquet writer; Python reads the sealed manifests. The [VPS integration record](operations/VPS_WSL_INTEGRATION.md) tracks host validation separately. Earlier named run results remain historical evidence; neither migration nor integration promotes B4/B5, Research Ready or execution readiness.
 
-## Current bounded task — 2026-10-02
+## Current bounded task — 2026-10-04
 
-B7/#86 remains open / Unproven. The four fixed DEVELOPMENT windows contain
+B7/#86 remains open / Unproven. The four fixed DEVELOPMENT windows retain
 64 slots, 80,541 packages, 9,505 failures and 122 admitted facts. The
-[cohort view](research/B7_DEVELOPMENT_COHORT.md) and instruction inventory
-remain descriptive and DEVELOPMENT-only. Ordinal 4 has all acquired ranges,
-but sealed processing stopped after slot `422802716`; the unfinished Parquet
-publication is retained. The [bounded continuation route](research/B7_EVALUATION_SHIELD.md)
-can resume only with a new window-specific processing approval after native
-verification. Implementation and fixture evidence are not that approval.
-No evaluation outcome access, further acquisition or B8 authority exists.
-Research Ready remains false. Older dated scope and sealed dossiers are
-historical evidence.
+[cohort view](research/B7_DEVELOPMENT_COHORT.md) and inventory remain
+DEVELOPMENT-only. Ordinal 4 is natively COMPLETE, without outcome release;
+its original stop and continuation remain preserved operational evidence.
+
+The fixed batch 5→6→7 stopped on its first metadata attempt. The current
+[handoff](HANDOFF_V2.md) records the separately authorized metadata diagnosis,
+bounded continuation and conditional execution limits. Green protected technical
+delivery must precede resumption; each next window requires native completion
+of its predecessor. The original batch and supplemental owner decisions are
+outside Git under `governance/b7-evaluation-phase1-batch-decision-20261004/`
+and `governance/b7-metadata-continuation-20261004/`. No evaluation insight,
+final release, phase two or B8 is authorized. Research Ready remains false.
+Earlier dated scopes and sealed evidence are not rewritten.
 
 ## Program outcome
 

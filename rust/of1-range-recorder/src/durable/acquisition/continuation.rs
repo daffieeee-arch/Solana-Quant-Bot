@@ -105,7 +105,7 @@ fn inventory_at(root: &Path, at: &Path, files: &mut Vec<RetainedFile>) -> StoreR
     }
     Ok(())
 }
-fn inventory(root: &Path) -> StoreResult<Vec<RetainedFile>> {
+pub(super) fn inventory(root: &Path) -> StoreResult<Vec<RetainedFile>> {
     let mut files = Vec::new();
     inventory_at(root, root, &mut files)?;
     files.sort_by(|a, b| a.path.cmp(&b.path));

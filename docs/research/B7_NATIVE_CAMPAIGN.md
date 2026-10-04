@@ -1,14 +1,14 @@
 # B7 — fixed native sample and campaign boundary
 
-> **Document status: ACTIVE — bounded native campaign; conditional second-window execution.** 2026-09-24. #86 remains open / Unproven; Research Ready=false. No B8 labels, evaluation outcomes or Cohort Explorer expansion.
+> **Document status: ACTIVE — bounded native campaign.** Current execution authority is the dated 2026-10-04 section below and the active handoff; older decisions retain their historical scope. #86 remains open / Unproven; Research Ready=false. No evaluation outcome release or B8.
 
-## Current offline evaluation preparation
+## Initial offline evaluation preparation — 2026-09-28
 
 The 2026-09-28 [accepted method and sealed evaluation route](B7_EVALUATION_SHIELD.md)
 supersede the earlier implementation-time statement that no such route exists.
-Only offline implementation/fixtures are authorized. Acquisition, real evaluation
-processing and final visibility still require separate exact decisions. Earlier
-execution permissions below remain historical and cannot be reused.
+At that delivery, only offline implementation/fixtures were authorized. Acquisition,
+real evaluation processing and final visibility require separate exact decisions.
+Later dated owner decisions govern current execution; they do not grant visibility.
 
 ## Owner decisions, without rewriting the proposal
 
@@ -400,3 +400,49 @@ consent, reservation/publication interruptions, pacing, terminal failure and
 preservation of all historical hashes. The existing sealed end-to-end fixture
 now completes ordinal 4 through this public continuation route before processing.
 These fixtures expose no authentic evaluation outcomes.
+
+## Metadata continuation and bounded transport retry decision — 2026-10-04
+
+The first ordinal-5 metadata attempt retained 80 segments (5,184,000 bytes) but
+published no receipt. That file evidence does not repair the historical failure
+or refund its charge. The original batch decision and failed execution remain
+sealed; the supplemental owner decision is in
+`governance/b7-metadata-continuation-20261004/` outside Git.
+
+The native `metadata-continuation-proposal RUN AGGREGATE OLD_METADATA_LEASE_HASH`
+and `metadata-continuation-admit RUN AGGREGATE OLD_METADATA_LEASE_HASH APPROVAL`
+commands allow one separate metadata grant per incomplete phase-one run of the
+fixed campaign. A proposal grants no permission. Admission rechecks the current
+ledger, exact sample/source pins, original plan/lease/producer, retained-file
+inventory and new executable. It subtracts historical attempts/entity charges
+from the original metadata ceilings and grants at most 600,000 additional ms.
+Old leases/deadlines are never rewritten. An ambiguous intent/journal publication,
+duplicate admission, wrong software/source or conflicting retained bytes stops.
+New metadata must pass ordinary transport and atomic receipt publication; there
+is no hand promotion of segments. Writer, campaign guard and immutable source
+reader preserve old/new producer and continuation binding through later payload.
+
+The metadata performance repair keeps both pre-read and pre-write space
+admission. Within the already admitted bounded segment write, Raw bytes and
+segment receipt are written together using the same create-new/fsync/rename
+operations without two nested, redundant campaign-tree scans. Final verification,
+publication audit, memory/file caps and the 30-second attempt timeout are unchanged.
+The synthetic TLS fixture reports network setup/read, resource admission, durable
+segment writes, verification and publication separately. Historical provider
+latency cannot be inferred from this local fixture.
+
+`capture-stage` still makes no automatic retry. On failure it adds a bounded
+request sequence and typed operational retry classification. Only recognizable
+timeout/connection-reset failures are candidates; that classification itself
+never authorizes dispatch. The separately reviewed batch helper may invoke the
+ordinary native route again only under the owner's explicit amendment, a valid
+unchanged lease, remaining budgets and the recorded 5/15-second local waits.
+Native reservations count every attempt, including the original failure, with
+at most two retries per request. HTTP 429, malformed/truncated responses, source,
+authority, storage/resource and other protocol errors stop. No provider rate-limit
+claim follows from those local waits.
+
+For the authorized resumed batch 5→6→7, every next window still requires native
+completion of the preceding sixteen slots and closed collection manifest.
+Evaluation processing/release authorities remain separate; all outcomes stay
+sealed. #86 remains open/Unproven and Research Ready=false.

@@ -54,7 +54,44 @@ pub enum HttpsError {
     Rate(#[from] RateError),
 }
 
+impl HttpsError {
+    /// Bounded operational classification, never retry authority. The caller must
+    /// separately verify the original active lease, spent attempts and owner
+    /// decision before another invocation. The transport itself never retries.
+    #[must_use]
+    pub fn retry_class(&self) -> &'static str {
+        match self {
+            Self::Deadline | Self::Store(StoreError::Deadline) => "TIMEOUT_RECHECK_LEASE",
+            Self::Io(error) if error.kind() == io::ErrorKind::TimedOut => "TIMEOUT_RECHECK_LEASE",
+            Self::Io(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::BrokenPipe
+                ) =>
+            {
+                "TRANSIENT_CONNECTION_INTERRUPTION"
+            }
+            // A truncated/malformed response, TLS error, local storage I/O, source
+            // conflict, rejected status (including 429) or cap failure is a stop.
+            _ => "STOP",
+        }
+    }
+}
+
 pub type HttpsResult<T> = Result<T, HttpsError>;
+
+/// Operational durations only. They cannot change an attempt or stage deadline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CapturePhase {
+    NetworkSetup,
+    NetworkRead,
+    ResourceAdmission,
+    DurableSegments,
+    Verification,
+    Publication,
+}
 
 /// Optional operational observations, never acquisition authority or accounting.
 /// Implementations must remain bounded/nonblocking; failures cannot affect capture.
@@ -75,6 +112,7 @@ pub trait CaptureObserver {
     fn rate_policy(&mut self, _: &DownloadRate) {}
     fn rate_wait_started(&mut self, _: u64) {}
     fn rate_wait_finished(&mut self, _: u64) {}
+    fn phase_elapsed(&mut self, _: u64, _: CapturePhase, _: Duration) {}
 }
 
 struct NoObservation;
@@ -327,6 +365,7 @@ fn capture_reserved<C: Clock>(
     deadline: Deadline,
     observer: &mut dyn CaptureObserver,
 ) -> HttpsResult<Receipt> {
+    let setup_started = Instant::now();
     let mut limiter = store
         .aggregate_plan()
         .download_rate
@@ -374,14 +413,90 @@ fn capture_reserved<C: Clock>(
             return Err(error.into());
         }
     };
-    let mut remaining = request.entity_length(&head)?;
+    let remaining = request.entity_length(&head)?;
     observer.head(request.sequence, head.status, remaining);
-    store.begin_stream(&permit, head)?;
+    observer.phase_elapsed(
+        request.sequence,
+        CapturePhase::NetworkSetup,
+        setup_started.elapsed(),
+    );
+    measured(
+        observer,
+        request.sequence,
+        CapturePhase::DurableSegments,
+        || store.begin_stream(&permit, head),
+    )?;
+    read_entity_segments(
+        store,
+        &permit,
+        request.sequence,
+        &mut stream,
+        &mut limiter,
+        remaining,
+        observer,
+    )?;
+    // Content-Length (or HEAD's zero-entity semantics) is complete. A TLS peer
+    // closing without close_notify is acceptable ONLY at this exact boundary.
+    // A bounded extra plaintext byte is always rejected; no read-to-end occurs.
+    store.remaining_ms(&permit)?;
+    measured(
+        observer,
+        request.sequence,
+        CapturePhase::NetworkRead,
+        || eof_after_complete_entity(&mut stream),
+    )?;
+    stream.sock.deadline.remaining()?;
+    store.remaining_ms(&permit)?;
+    finish_observed(store, permit, request.sequence, observer)
+}
+
+fn finish_observed<C: Clock>(
+    store: &mut AcquisitionStore<C>,
+    permit: Permit,
+    sequence: u64,
+    observer: &mut dyn CaptureObserver,
+) -> HttpsResult<Receipt> {
+    observer.verifying(sequence);
+    let verifying_started = Instant::now();
+    let mut publishing_started = None;
+    let result = store.finish_stream_observed(permit, || {
+        observer.phase_elapsed(
+            sequence,
+            CapturePhase::Verification,
+            verifying_started.elapsed(),
+        );
+        observer.publishing(sequence);
+        publishing_started = Some(Instant::now());
+    });
+    if let Some(started) = publishing_started {
+        // Includes the required audit after the publication rename and fsyncs.
+        observer.phase_elapsed(sequence, CapturePhase::Publication, started.elapsed());
+    } else {
+        observer.phase_elapsed(
+            sequence,
+            CapturePhase::Verification,
+            verifying_started.elapsed(),
+        );
+    }
+    Ok(result?)
+}
+
+fn read_entity_segments<C: Clock>(
+    store: &mut AcquisitionStore<C>,
+    permit: &Permit,
+    sequence: u64,
+    stream: &mut StreamOwned<ClientConnection, DeadlineTcp>,
+    limiter: &mut Option<RequestRate>,
+    mut remaining: u64,
+    observer: &mut dyn CaptureObserver,
+) -> HttpsResult<()> {
     let mut buffer = vec![0u8; SEGMENT_BYTES].into_boxed_slice();
     while remaining > 0 {
         let limit = usize::try_from(remaining.min(SEGMENT_BYTES as u64))
             .map_err(|_| HttpsError::Truncated)?;
-        store.prepare_stream_read(&permit, limit as u64)?;
+        measured(observer, sequence, CapturePhase::ResourceAdmission, || {
+            store.prepare_stream_read(permit, limit as u64)
+        })?;
         // TCP/TLS fragmentation must not amplify fsync/receipt cost. Preserve
         // complete 64 KiB segments, plus a final or interrupted short segment.
         let mut filled = 0;
@@ -393,28 +508,30 @@ fn capture_reserved<C: Clock>(
                 && let Err(error) = rate.before_read(
                     (limit - filled) as u64,
                     store,
-                    &permit,
+                    permit,
                     &stream.sock.deadline,
                     observer,
                 )
             {
-                retain_partial(store, &permit, &buffer[..filled])?;
+                retain_partial(store, permit, &buffer[..filled])?;
                 return Err(error);
             }
-            match stream.read(&mut buffer[filled..limit]) {
+            match measured(observer, sequence, CapturePhase::NetworkRead, || {
+                stream.read(&mut buffer[filled..limit])
+            }) {
                 Ok(0) => {
-                    finish_rate_read(&mut limiter, 0)?;
-                    retain_partial(store, &permit, &buffer[..filled])?;
+                    finish_rate_read(limiter, 0)?;
+                    retain_partial(store, permit, &buffer[..filled])?;
                     return Err(HttpsError::Truncated);
                 }
                 Ok(count) => {
-                    finish_rate_read(&mut limiter, count as u64)?;
-                    observer.received(request.sequence, count as u64);
+                    finish_rate_read(limiter, count as u64)?;
+                    observer.received(sequence, count as u64);
                     filled += count;
                 }
                 Err(error) => {
-                    finish_rate_read(&mut limiter, 0)?;
-                    retain_partial(store, &permit, &buffer[..filled])?;
+                    finish_rate_read(limiter, 0)?;
+                    retain_partial(store, permit, &buffer[..filled])?;
                     return if error.kind() == io::ErrorKind::UnexpectedEof {
                         Err(HttpsError::Truncated)
                     } else {
@@ -423,18 +540,24 @@ fn capture_reserved<C: Clock>(
                 }
             }
         }
-        store.append_stream(&permit, &buffer[..filled])?;
+        measured(observer, sequence, CapturePhase::DurableSegments, || {
+            store.append_stream(permit, &buffer[..filled])
+        })?;
         remaining -= filled as u64;
     }
-    // Content-Length (or HEAD's zero-entity semantics) is complete. A TLS peer
-    // closing without close_notify is acceptable ONLY at this exact boundary.
-    // A bounded extra plaintext byte is always rejected; no read-to-end occurs.
-    store.remaining_ms(&permit)?;
-    eof_after_complete_entity(&mut stream)?;
-    stream.sock.deadline.remaining()?;
-    store.remaining_ms(&permit)?;
-    observer.verifying(request.sequence);
-    Ok(store.finish_stream_observed(permit, || observer.publishing(request.sequence))?)
+    Ok(())
+}
+
+fn measured<T>(
+    observer: &mut dyn CaptureObserver,
+    sequence: u64,
+    phase: CapturePhase,
+    operation: impl FnOnce() -> T,
+) -> T {
+    let started = Instant::now();
+    let result = operation();
+    observer.phase_elapsed(sequence, phase, started.elapsed());
+    result
 }
 
 fn finish_rate_read(rate: &mut Option<RequestRate>, actual: u64) -> HttpsResult<()> {
@@ -718,6 +841,45 @@ fn parse_resolver_output(bytes: &[u8]) -> HttpsResult<SocketAddr> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_class_never_turns_protocol_storage_or_authority_errors_into_retries() {
+        for error in [
+            HttpsError::Deadline,
+            HttpsError::Store(StoreError::Deadline),
+            HttpsError::Io(io::ErrorKind::TimedOut.into()),
+        ] {
+            assert_eq!(error.retry_class(), "TIMEOUT_RECHECK_LEASE");
+        }
+        for kind in [
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::BrokenPipe,
+        ] {
+            assert_eq!(
+                HttpsError::Io(kind.into()).retry_class(),
+                "TRANSIENT_CONNECTION_INTERRUPTION"
+            );
+        }
+        for error in [
+            HttpsError::Header(HeaderError::Status(429)),
+            HttpsError::Header(HeaderError::Framing),
+            HttpsError::Header(HeaderError::SourceDrift),
+            HttpsError::Store(StoreError::ConflictingBytes),
+            HttpsError::Store(StoreError::Budget),
+            HttpsError::Store(StoreError::Clock),
+            HttpsError::Store(StoreError::Identity),
+            HttpsError::Store(StoreError::Io(io::ErrorKind::TimedOut.into())),
+            HttpsError::Io(io::ErrorKind::PermissionDenied.into()),
+            HttpsError::Io(io::ErrorKind::UnexpectedEof.into()),
+            HttpsError::Truncated,
+            HttpsError::Trailing,
+            HttpsError::Authority,
+            HttpsError::Dns,
+        ] {
+            assert_eq!(error.retry_class(), "STOP");
+        }
+    }
 
     #[test]
     fn eof_exception_is_limited_to_a_completed_entity() {
