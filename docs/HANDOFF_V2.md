@@ -4,6 +4,32 @@
 
 ## Mission and success criterion
 
+**B7 metadata continuation, 2026-10-04:** ordinal 4 is natively COMPLETE;
+its sealed operational proof is `governance/b7-ordinal4-processing-completion-20261003/`.
+The separately approved fixed batch 5 → 6 → 7 stopped during ordinal-5 metadata:
+one charged attempt, zero publications. All 80 retained segments remain failed
+attempt evidence, not a publication receipt. The owner authorized offline diagnosis,
+a minimal native metadata continuation and protected integration before resumption.
+The new decision/evidence is `governance/b7-metadata-continuation-20261004/`;
+the original batch proposal and failed execution stay unchanged.
+
+After green technical delivery, one fresh exact-bound ordinal-5 metadata
+continuation may grant 600 seconds. Remaining batch ceilings are 179 attempts,
+260,802,237 reserved entity bytes, 13,684,277,248 extra storage bytes and 12,600
+new execution seconds; the earlier 46.356 seconds are retained separately.
+Only recognizable attempt timeouts or temporary connection interruptions permit
+at most two retries per request (including the old attempt), with local waits
+of 5 and 15 seconds inside valid leases and budgets. HTTP 429, source/hash,
+authority, protocol and resource failures remain direct stops. Every next
+window requires native completion of its predecessor. Processing retains 900
+seconds and at most one separately approved 1,200-second continuation after
+expiry, within the same total 4-GiB work boundary. No evaluation insight,
+release, phase two or B8 is permitted. #86 remains open / Unproven and Research
+Ready=false. Software delivery and actual execution are recorded separately.
+
+The dated entries below preserve their earlier execution state; the current
+operational decision above supersedes their old window/authorization status.
+
 **B7 sealed-processing continuation, 2026-10-02:** ordinal 4
 `[422802704,422802720)` has complete acquisition but incomplete processing
 after the original 900-second lease expired. The operational diagnosis is
@@ -253,7 +279,7 @@ The owner's [dated B4/B5 engineering acceptance](research/B4_B5_ENGINEERING_ACCE
 - **B4 accepted:** bounded authentic acquisition, budgets, integrity/coverage and clean resume under the same plan identity. Crash/retry evidence remains separately labelled Fixture. B4 domain counts remain `UNAVAILABLE_NOT_DECODED_IN_B4` until offline B5 processing.
 - **B5 accepted:** native Rust Raw → Bronze → Silver and Rust Arrow/Parquet; [#132's walking skeleton](research/B5_RAW_BRONZE_SILVER_WALKING_SKELETON.md), [#133's native order parity](research/B5_NATIVE_ORDER_PARITY.md), and the explicitly accepted lifecycle fragment: 15 mintpackages, five trade facts and 58 balance observations with missing phases visible.
 - **Completed routing:** B4/#83 and B5/#84 use `Done` / `SUPERSEDED` / `Engineering Validation`. This Project label reclassifies no dataset. The original three-slot research pilot and sixteen post-hoc engineering context slots remain distinct; all 22 collection facts and seven Mayhem rejections are preserved.
-- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows and ordinal-4 acquisition are complete. Ordinal-4 sealed processing remains incomplete after the expired lease; authentic continuation awaits a separate exact decision. No evaluation visibility, next window or B8 is authorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
+- **Current phase:** B7/#86, `In Progress / ACTIVE NOW / Unproven`. Four fixed phase-1 DEVELOPMENT windows and sealed ordinal 4 are complete. The separately authorized batch 5 → 6 → 7 is conditional on the current metadata repair and native predecessor verification. Evaluation visibility, phase two and B8 remain unauthorized. B6/#85 is completed at `Done / SUPERSEDED / Engineering Validation`; dataset classes and Research Ready=false remain unchanged.
 - **Still unproven:** creation, completion, migration, full lifetime, historical program activation and actual CPI rights. `research_ready: false`; no executable price, edge or trading readiness follows. B3's original matrix remains Fixture evidence.
 
 ### Preserved pre-acceptance delivery history

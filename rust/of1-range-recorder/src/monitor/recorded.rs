@@ -8,6 +8,9 @@ use super::{
 use crate::durable::acquisition::continuation::{
     CONTINUATION_WAIT_MS, ContinuationRecord, validate_continuation,
 };
+use crate::durable::acquisition::metadata_continuation::{
+    MetadataContinuationRecord, validate_record, verify_metadata_charges,
+};
 use crate::{
     FormatSource, HOST,
     acquisition::read_limited,
@@ -366,6 +369,30 @@ pub(super) fn read_run_context_at(
     } else {
         None
     };
+    let metadata_continuation = if root.join("metadata-continuation.json").exists() {
+        if continuation.is_some() {
+            return Err(invalid("conflicting continuations"));
+        }
+        let (c, bytes): (MetadataContinuationRecord, _) =
+            decode(&root.join("metadata-continuation.json"))?;
+        validate_record(
+            &root,
+            &manifest.plan,
+            &manifest.run_id,
+            &manifest.metadata_stage,
+            &c,
+        )
+        .map_err(invalid)?;
+        artifacts.push(artifact(
+            "metadata-continuation",
+            "Separate metadata continuation",
+            "metadata-continuation.json".into(),
+            &bytes,
+        ));
+        Some(c)
+    } else {
+        None
+    };
     let mut requests = metadata_requests();
     if let Some(payload) = &payload {
         requests.extend_from_slice(payload.prepared.requests());
@@ -379,9 +406,14 @@ pub(super) fn read_run_context_at(
     }
     let stage = continuation.as_ref().map_or_else(
         || {
-            payload
-                .as_ref()
-                .map_or(&manifest.metadata_stage, |p| &p.stage)
+            payload.as_ref().map_or_else(
+                || {
+                    metadata_continuation
+                        .as_ref()
+                        .map_or(&manifest.metadata_stage, |c| &c.stage)
+                },
+                |p| &p.stage,
+            )
         },
         |c| &c.stage,
     );
@@ -399,6 +431,14 @@ pub(super) fn read_run_context_at(
             return Ok(&c.stage);
         }
         if request.sequence < 4 {
+            if let Some(c) = &metadata_continuation
+                && attempt_id >= c.approval.binding.prior_attempts
+            {
+                if lease != c.stage.lease_sha256 {
+                    return Err(invalid("metadata continuation attempt identity"));
+                }
+                return Ok(&c.stage);
+            }
             Ok(&manifest.metadata_stage)
         } else {
             payload
@@ -643,6 +683,10 @@ pub(super) fn read_run_context_at(
             && stop.lease_sha256 == c.stage.lease_sha256
         {
             &c.stage
+        } else if let Some(c) = &metadata_continuation
+            && stop.lease_sha256 == c.stage.lease_sha256
+        {
+            &c.stage
         } else if stop.lease_sha256 == manifest.metadata_stage.lease_sha256 {
             &manifest.metadata_stage
         } else {
@@ -723,6 +767,16 @@ pub(super) fn read_run_context_at(
                 return Err(invalid("continuation after failure"));
             }
         }
+    }
+    if let Some(c) = &metadata_continuation {
+        verify_metadata_charges(
+            &manifest.metadata_lease.budget,
+            c,
+            attempts
+                .iter()
+                .map(|a| (a.request.sequence, a.reserved_entity_bytes)),
+        )
+        .map_err(invalid)?;
     }
     let fixture = matches!(manifest.metadata_lease.authority, Authority::Fixture);
     let complete = operations.iter().all(|o| o.state == "PUBLISHED");

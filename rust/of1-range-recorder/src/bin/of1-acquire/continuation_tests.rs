@@ -51,6 +51,9 @@ fn advance(ms: u64) -> Result<()> {
     Ok(())
 }
 pub(super) fn capture(root: &str, plan: &str, lease: &str) -> Result<()> {
+    if std::env::var_os("OF1_METADATA_CONTINUATION_TEST").is_some() {
+        return metadata_continuation_tests::capture(root, plan, lease);
+    }
     let mut store = open(root, plan, lease)?;
     let mode = std::env::var("OF1_CONTINUATION_TEST_MODE").unwrap_or_default();
     for sequence in 17..20 {

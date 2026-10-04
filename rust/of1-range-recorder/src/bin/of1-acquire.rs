@@ -229,7 +229,7 @@ fn run(args: &[String]) -> Result<()> {
             }
             let plan: AggregatePlan = read(plan)?;
             let lease: MetadataLease = read(lease)?;
-            if !metadata_init_authority(&lease.authority) {
+            if !cli_stage_authority(&lease.authority) {
                 return Err("metadata-init requires a separately approved immutable metadata lease".into());
             }
             if let Some(sample) = plan.sample_identity.as_ref().filter(|s| s.b7.is_some()) {
@@ -241,6 +241,12 @@ fn run(args: &[String]) -> Result<()> {
             }
             print(&AcquisitionStore::create(Path::new(root), plan, lease, SystemClock)?.progress()?)
         }
+        ["metadata-continuation-proposal", root, plan, old_lease] => print(&AcquisitionStore::metadata_continuation_proposal(
+            Path::new(root), &read(plan)?, old_lease, cli_clock())?),
+        ["metadata-continuation-admit", root, plan, old_lease, approval] => {
+            let a: of1_range_recorder::durable::acquisition::metadata_continuation::MetadataContinuation = read(approval)?;
+            print(&AcquisitionStore::admit_metadata_continuation(Path::new(root), &read(plan)?, old_lease, a, cli_clock())?)
+        },
         ["payload-continuation-proposal", root, plan, old_lease] => print(&AcquisitionStore::payload_continuation_proposal(
             Path::new(root), &read(plan)?, old_lease, cli_clock())?),
         ["payload-continuation-admit", root, plan, old_lease, approval] => {
@@ -260,7 +266,7 @@ fn run(args: &[String]) -> Result<()> {
         ["payload-admit", root, plan, current_lease_hash, lease, prepared] => {
             let mut store = open(root, plan, current_lease_hash)?;
             let lease: PayloadLease = read(lease)?;
-            if !matches!(lease.authority, Authority::Approved { .. }) {
+            if !cli_stage_authority(&lease.authority) {
                 return Err("payload-admit requires a separate payload GO".into());
             }
             store.admit_payload(lease, &read::<PreparedPayload>(prepared)?)?;
@@ -302,6 +308,8 @@ fn run(args: &[String]) -> Result<()> {
             "metadata-pilot-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-init ROOT AGGREGATE_JSON METADATA_LEASE_JSON | ",
             "progress ROOT AGGREGATE_JSON LEASE_SHA256 | ",
+            "metadata-continuation-proposal ROOT AGGREGATE_JSON OLD_LEASE_SHA256 | ",
+            "metadata-continuation-admit ROOT AGGREGATE_JSON OLD_LEASE_SHA256 APPROVAL_JSON | ",
             "payload-continuation-proposal ROOT AGGREGATE_JSON OLD_LEASE_SHA256 | ",
             "payload-continuation-admit ROOT AGGREGATE_JSON OLD_LEASE_SHA256 APPROVAL_JSON | ",
             "capture-stage ROOT AGGREGATE_JSON LEASE_SHA256 [--monitor-socket LOCAL_SOCKET] | ",
@@ -314,7 +322,7 @@ fn run(args: &[String]) -> Result<()> {
     }
 }
 
-fn metadata_init_authority(authority: &Authority) -> bool {
+fn cli_stage_authority(authority: &Authority) -> bool {
     // Test binaries alone may exercise the real command dispatcher with the
     // existing offline Fixture store. No feature/env/CLI production override.
     #[cfg(test)]
@@ -332,6 +340,11 @@ mod metadata_init_tests {
 #[cfg(test)]
 mod continuation_tests {
     include!("of1-acquire/continuation_tests.rs");
+}
+
+#[cfg(test)]
+mod metadata_continuation_tests {
+    include!("of1-acquire/metadata_continuation_tests.rs");
 }
 
 #[cfg(not(feature = "network-of1"))]
@@ -430,7 +443,7 @@ fn capture_stage_inner(
                 observer.failed(sequence, &error.to_string());
             }
             print(
-                &serde_json::json!({"stage_capture":"STOPPED", "reason":error.to_string(), "progress":store.progress().ok(), "domain_counts":"UNAVAILABLE_NOT_DECODED_IN_B4", "edge_evaluation":"NOT_EVALUATED_ENGINEERING_SLICE"}),
+                &serde_json::json!({"stage_capture":"STOPPED", "reason":error.to_string(), "request_sequence":sequence, "retry_class":error.retry_class(), "progress":store.progress().ok(), "domain_counts":"UNAVAILABLE_NOT_DECODED_IN_B4", "edge_evaluation":"NOT_EVALUATED_ENGINEERING_SLICE"}),
             )?;
             return Err(error.into());
         }

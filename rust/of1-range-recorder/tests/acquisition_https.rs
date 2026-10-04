@@ -11,13 +11,106 @@ use of1_range_recorder::{
         },
     },
     https::{
-        CaptureObserver, FixtureHttps, HttpsError, OF1_SERVER_NAME,
+        CaptureObserver, CapturePhase, FixtureHttps, HttpsError, OF1_SERVER_NAME,
         fixture::{FixtureServer, ResponseScript},
     },
     rate::DownloadRate,
     sha256,
 };
-use std::{fs, time::Instant};
+use std::{
+    collections::BTreeMap,
+    fs,
+    time::{Duration, Instant},
+};
+
+#[derive(Default)]
+struct PhaseMeasurements(BTreeMap<CapturePhase, Duration>);
+impl CaptureObserver for PhaseMeasurements {
+    fn phase_elapsed(&mut self, sequence: u64, phase: CapturePhase, elapsed: Duration) {
+        assert_eq!(sequence, 0);
+        *self.0.entry(phase).or_default() += elapsed;
+    }
+}
+
+#[test]
+fn realistic_metadata_reports_separate_network_storage_and_publication_times() {
+    let temp = tempfile::tempdir().unwrap();
+    let campaign = temp.path().join("campaign");
+    let root = campaign.join("runs/w00");
+    let (mut plan, mut lease) = plans(30_000);
+    plan.sample_identity = Some(of1_range_recorder::b7::sample(0, &campaign).unwrap());
+    plan.budget.max_slots = 16;
+    plan.budget.max_runtime_ms = 1_800_000;
+    lease.budget.max_runtime_ms = 600_000;
+    lease.budget.max_response_entity_bytes_total = 15_576_576;
+    let mut store = AcquisitionStore::create(&root, plan, lease, SystemClock).unwrap();
+    // Opt-in diagnosis reproduces only an observed filesystem shape, never its
+    // contents. The normal regression remains small and exercises all phases.
+    let (files, directories) = match std::env::var("OF1_METADATA_PROFILE_SHAPE") {
+        Err(std::env::VarError::NotPresent) => (128, 32),
+        Ok(value) if value == "CAMPAIGN_METADATA_20261004" => (18_647, 5_161),
+        _ => panic!("unknown bounded metadata profile shape"),
+    };
+    let filler = campaign.join("work/synthetic-storage-shape");
+    fs::create_dir(&filler).unwrap();
+    for index in 0..directories {
+        fs::create_dir(filler.join(format!("d-{index:05}"))).unwrap();
+    }
+    for index in 0..files {
+        fs::write(
+            filler.join(format!("d-{:05}/f-{index:05}", index % directories)),
+            b"FIXTURE",
+        )
+        .unwrap();
+    }
+    let bytes = vec![0; usize::try_from(SLOTS_PER_EPOCH * RECORD_BYTES).unwrap()];
+    let server = FixtureServer::start(
+        OF1_SERVER_NAME,
+        vec![response(200, bytes.len(), bytes.clone(), true)],
+    )
+    .unwrap();
+    let mut measured = PhaseMeasurements::default();
+    let started = Instant::now();
+    let result = FixtureHttps::new(server.port(), server.root_der())
+        .unwrap()
+        .capture_observed(&mut store, 0, &mut measured);
+    let total = started.elapsed();
+    let timings: BTreeMap<_, _> = measured
+        .0
+        .iter()
+        .map(|(phase, elapsed)| (format!("{phase:?}"), elapsed.as_nanos().to_string()))
+        .collect();
+    println!(
+        "METADATA_PHASE_TIMING {}",
+        serde_json::json!({
+            "schema":"OF1_METADATA_PHASE_TIMING_1", "synthetic":true,
+            "entity_bytes":bytes.len(), "fixture_files":files, "fixture_directories":directories,
+            "total_ns":total.as_nanos().to_string(), "phase_ns":timings,
+            "published":result.is_ok(), "error":result.as_ref().err().map(ToString::to_string),
+            "publication_includes_post_write_verification":true,
+            "attempt_timeout_ms":30_000,
+        })
+    );
+    let receipt = result.unwrap();
+    server.finish().unwrap();
+    assert_eq!(receipt.sha256, sha256(&bytes));
+    assert_eq!(store.progress().unwrap().attempts_reserved, 1);
+    assert_eq!(
+        fs::read(root.join("published/0000000000/raw.bin")).unwrap(),
+        bytes
+    );
+    for phase in [
+        CapturePhase::NetworkSetup,
+        CapturePhase::NetworkRead,
+        CapturePhase::ResourceAdmission,
+        CapturePhase::DurableSegments,
+        CapturePhase::Verification,
+        CapturePhase::Publication,
+    ] {
+        assert!(measured.0[&phase] > Duration::ZERO);
+    }
+    assert!(measured.0.values().copied().sum::<Duration>() <= total);
+}
 
 struct Measurements {
     events: Vec<&'static str>,
@@ -301,19 +394,44 @@ fn tls_truncation_retains_partial_bytes_and_resume_charges_one_new_explicit_atte
 #[test]
 fn tls_response_deadline_does_not_replay_or_publish() {
     let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("run");
     let (plan, lease) = plans(75);
-    let mut store =
-        AcquisitionStore::create(&temp.path().join("run"), plan, lease, SystemClock).unwrap();
+    let mut store = AcquisitionStore::create(&root, plan.clone(), lease, SystemClock).unwrap();
+    let before = store.progress().unwrap();
     let mut script = response(200, 5_184_000, vec![], true);
     script.delay_ms = 250;
     let server = FixtureServer::start(OF1_SERVER_NAME, vec![script]).unwrap();
+    let requests = server.request_byte_counter();
     let connector = FixtureHttps::new(server.port(), server.root_der()).unwrap();
     let started = Instant::now();
-    assert!(connector.capture(&mut store, 0).is_err());
+    let error = connector.capture(&mut store, 0).unwrap_err();
     assert!(started.elapsed().as_secs() < 2);
+    assert!(matches!(
+        &error,
+        HttpsError::Io(error) if error.kind() == std::io::ErrorKind::TimedOut
+    ));
+    assert_eq!(error.retry_class(), "TIMEOUT_RECHECK_LEASE");
     drop(server);
-    assert_eq!(store.progress().unwrap().attempts_reserved, 1);
-    assert_eq!(store.progress().unwrap().published_requests, 0);
+    // The real TLS peer received HTTP before stalling on the response header.
+    assert!(requests.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    let after = store.progress().unwrap();
+    assert_eq!(after.attempts_reserved, 1);
+    assert_eq!(after.charged_entity_bytes, SLOTS_PER_EPOCH * RECORD_BYTES);
+    assert_eq!(after.published_requests, 0);
+    assert_eq!(after.deadline_wall_ms, before.deadline_wall_ms);
+    assert_eq!(after.deadline_boot_ms, before.deadline_boot_ms);
+    drop(store);
+    let resumed =
+        AcquisitionStore::resume(&root, &plan, &before.current_lease_sha256, SystemClock).unwrap();
+    let after_resume = resumed.progress().unwrap();
+    assert_eq!(after_resume.attempts_reserved, after.attempts_reserved);
+    assert_eq!(
+        after_resume.charged_entity_bytes,
+        after.charged_entity_bytes
+    );
+    assert_eq!(after_resume.published_requests, 0);
+    assert_eq!(after_resume.deadline_wall_ms, before.deadline_wall_ms);
+    assert_eq!(after_resume.deadline_boot_ms, before.deadline_boot_ms);
 }
 
 #[test]

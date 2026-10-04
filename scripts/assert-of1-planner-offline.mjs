@@ -39,7 +39,9 @@ const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
 const B7_PROCESS_TEST_HASH = 'ba2e6f6b26ccba29d0afeec561089d30e75cdc7b2b85731a26fadab3e41eaa79';
 const METADATA_INIT_TEST_HASH = '170b213ce35e573688be4063f985f66d35e2387092a8e33ec305d561fe265a84';
-const CONTINUATION_TEST_HASH = 'affa6d7e567c628bd4d8780b8472b19035998f1e98df1d742a9bcb39920a25d0';
+const CONTINUATION_TEST_HASH = '0c8eb20ead882f6aa5b75c5e93831097de9b5f710e2f59c4af6f6d7fef87b3cf';
+const METADATA_CONTINUATION_APPROVED_TEST_HASH = 'a1236769328e42f94de013ae241122f7b0be3ae6b6e4a4cdfd05adfa74012013';
+const METADATA_CONTINUATION_TEST_HASH = '751bb32762261ca4ccfdefbc61ae9aa0ce56f66a911633cb1132498e25af7624';
 const RATE_PROCESS_TEST_HASH = 'a1982e6bf196bc790fbd4689fa6c802b4f947a9b2dfb82d4c4788986e792ccf7';
 // No blanket network/process exception for a directory or Cargo feature. Exact reviewed
 // fixture sources only; their constructors accept a port, never a host/URL/provider config.
@@ -51,9 +53,9 @@ const LOOPBACK_SOURCE_HASHES = {
 // These files alone contain the reviewed production capability / fixture orchestration.
 // An exact source pin is not a network lease; no official request runs in this gate.
 const ACQUISITION_SOURCE_HASHES = {
-  'src/https.rs': '01e08fdabef6be6b3b1b966457ffa57748fc033448f7f551fba4ad5deb36a86e',
+  'src/https.rs': 'f1db7e91a00b18ea8298e43d5ebc09216374969a7a4e23afe1769254963b3f4f',
   'src/https/fixture.rs': 'cbc520a5cc3e8fc3a22eb6e473a104cdc155207a2aaac25f4e8f21e5f5c47360',
-  'tests/acquisition_https.rs': '8612ae55ded39f1c1252de7cda00903adadddb528ff1dfefce0cf9480548890d',
+  'tests/acquisition_https.rs': '0a0b4e8580a4d1b460efc54f072bebd19c1e8624e9de0c10849fff9bb74883c0',
   'tests/acquisition_e2e.rs': 'f535c35a39a7a3069c847017ead8bfe4a347493854deec56a7628a405ca5358e',
   'src/bin/of1-acquisition-fixture-evidence.rs': 'b97f14882816bc65e7c0ce08ebc9c117152e0b9850865cdc8bcff2b35ca9f05f',
 };
@@ -75,6 +77,8 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     const b7Harness = path === 'src/campaign/process_tests.rs';
     const metadataInitHarness = path === 'src/bin/of1-acquire/metadata_init_tests.rs';
     const continuationHarness = path === 'src/bin/of1-acquire/continuation_tests.rs';
+    const metadataContinuationHarness = path === 'src/bin/of1-acquire/metadata_continuation_tests.rs';
+    const metadataApprovedHarness = path === 'src/durable/acquisition/metadata_continuation_approved_tests.rs';
     const fixtureSource = Object.hasOwn(LOOPBACK_SOURCE_HASHES, path);
     const acquisitionSource = Object.hasOwn(ACQUISITION_SOURCE_HASHES, path);
     const monitorSource = Object.hasOwn(MONITOR_SOURCE_HASHES, path);
@@ -89,6 +93,8 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     if (b7Harness && hash(source) !== B7_PROCESS_TEST_HASH) errors.push('unreviewed B7 process-crash harness');
     if (metadataInitHarness && hash(source) !== METADATA_INIT_TEST_HASH) errors.push('unreviewed metadata-init CLI harness');
     if (continuationHarness && hash(source) !== CONTINUATION_TEST_HASH) errors.push('unreviewed continuation CLI harness');
+    if (metadataContinuationHarness && hash(source) !== METADATA_CONTINUATION_TEST_HASH) errors.push('unreviewed metadata continuation CLI harness');
+    if (metadataApprovedHarness && hash(source) !== METADATA_CONTINUATION_APPROVED_TEST_HASH) errors.push('unreviewed metadata continuation APPROVED harness');
     if (rateHarness && hash(source) !== RATE_PROCESS_TEST_HASH) errors.push('unreviewed OF1 rate-process harness');
     if (fixtureSource && hash(source) !== LOOPBACK_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 loopback source: ${path}`);
     if (acquisitionSource && hash(source) !== ACQUISITION_SOURCE_HASHES[path]) errors.push(`unreviewed OF1 acquisition source: ${path}`);
@@ -96,7 +102,7 @@ export function validateOf1PlannerInputs(manifest, lock, sources) {
     if (path === 'build.rs' || /\bunsafe\s*\{|#\s*\[\s*path\s*=/u.test(source)
       || (!fixtureSource && !acquisitionSource && /\b(?:TcpStream|TcpListener|UdpSocket)\b|std::net/u.test(source))
       || (!monitorSource && /\bUnixDatagram\b/u.test(source))
-      || (!crashHarness && !rateHarness && !b7Harness && !metadataInitHarness && !continuationHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
+      || (!crashHarness && !rateHarness && !b7Harness && !metadataInitHarness && !continuationHarness && !metadataContinuationHarness && !metadataApprovedHarness && !fixtureSource && !acquisitionSource && !monitorSource && /\bCommand\b|std::process::Command/u.test(processSource))) {
       errors.push(`unexpected runtime capability in ${path}`);
     }
   }

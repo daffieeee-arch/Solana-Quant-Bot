@@ -71,6 +71,8 @@ struct Run {
     payload_lease: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     payload_continuation: Option<(String, String)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    metadata_continuation: Option<(String, String)>,
     requests: u64,
     entity: u64,
     attempts: BTreeMap<u64, u64>,
@@ -1170,6 +1172,10 @@ impl Guard {
                         .as_ref()
                         .is_some_and(|p| new.payload_lease.as_ref() != Some(p))
                     || old
+                        .metadata_continuation
+                        .as_ref()
+                        .is_some_and(|p| new.metadata_continuation.as_ref() != Some(p))
+                    || old
                         .payload_continuation
                         .as_ref()
                         .is_some_and(|p| new.payload_continuation.as_ref() != Some(p))
@@ -1428,6 +1434,7 @@ impl Guard {
                     metadata_lease: lease.into(),
                     payload_lease: None,
                     payload_continuation: None,
+                    metadata_continuation: None,
                     requests: 0,
                     entity: 0,
                     attempts: BTreeMap::new(),
@@ -1443,6 +1450,9 @@ impl Guard {
             if r.aggregate != aggregate
                 || (r.metadata_lease != lease
                     && r.payload_lease.as_deref() != Some(lease)
+                    && r.metadata_continuation
+                        .as_ref()
+                        .is_none_or(|(h, _)| h != lease)
                     && r.payload_continuation
                         .as_ref()
                         .is_none_or(|(h, _)| h != lease))
@@ -1465,6 +1475,54 @@ impl Guard {
         }
         r.payload_lease = Some(lease.into());
         self.commit(n)
+    }
+    pub(crate) fn metadata_continuation_head(&self, window: u64) -> StoreResult<String> {
+        let r = self.state.runs.get(&window).ok_or(StoreError::Identity)?;
+        if window >= 8
+            || self.state.runs.len() as u64 != window + 1
+            || (0..window).any(|i| self.state.processing.get(&i).is_none_or(|p| !p.complete))
+            || r.requests == 0
+            || r.payload_lease.is_some()
+            || r.metadata_continuation.is_some()
+            || self.state.processing.contains_key(&window)
+            || self.state.evaluation_release.is_some()
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(self.head_hash.clone())
+    }
+    pub(crate) fn admit_metadata_continuation(
+        &mut self,
+        window: u64,
+        previous: &str,
+        lease: &str,
+    ) -> StoreResult<()> {
+        if self.metadata_continuation_head(window)? != previous || !hex_hash(lease) {
+            return Err(StoreError::Identity);
+        }
+        let mut n = self.state.clone();
+        n.runs
+            .get_mut(&window)
+            .ok_or(StoreError::Identity)?
+            .metadata_continuation = Some((lease.into(), previous.into()));
+        self.commit(n)
+    }
+    pub(crate) fn verify_metadata_continuation(
+        &self,
+        window: u64,
+        lease: &str,
+        previous: &str,
+    ) -> StoreResult<()> {
+        if self
+            .state
+            .runs
+            .get(&window)
+            .and_then(|r| r.metadata_continuation.as_ref())
+            != Some(&(lease.into(), previous.into()))
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(())
     }
     pub(crate) fn payload_continuation_head(&self) -> StoreResult<String> {
         let r = self.state.runs.get(&4).ok_or(StoreError::Identity)?;
@@ -1696,6 +1754,20 @@ impl Guard {
                 return Err(StoreError::Identity);
             }
         } else if run_root.join("continuation.json").exists() {
+            return Err(StoreError::Identity);
+        }
+        if let Some(reg) = g
+            .state
+            .runs
+            .get(&b.window_ordinal)
+            .and_then(|r| r.metadata_continuation.as_ref())
+        {
+            let c: crate::durable::acquisition::metadata_continuation::MetadataContinuationRecord =
+                read(&run_root.join("metadata-continuation.json"))?;
+            if c.stage.lease_sha256 != reg.0 || c.approval.binding.previous_ledger_sha256 != reg.1 {
+                return Err(StoreError::Identity);
+            }
+        } else if run_root.join("metadata-continuation.json").exists() {
             return Err(StoreError::Identity);
         }
         Ok(g)

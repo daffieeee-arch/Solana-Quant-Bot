@@ -461,7 +461,14 @@ fn artifact_path(path: &str) -> bool {
     {
         return false;
     }
-    if ["run.json", "payload.json", "continuation.json"].contains(&path) {
+    if [
+        "run.json",
+        "payload.json",
+        "continuation.json",
+        "metadata-continuation.json",
+    ]
+    .contains(&path)
+    {
         return true;
     }
     let parts = path.split('/').collect::<Vec<_>>();

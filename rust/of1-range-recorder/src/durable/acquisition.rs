@@ -21,6 +21,8 @@ use std::{
 
 pub mod continuation;
 use continuation::ContinuationRecord;
+pub mod metadata_continuation;
+use metadata_continuation::MetadataContinuationRecord;
 
 pub const SEGMENT_BYTES: usize = 65_536;
 const RECORD_LIMIT: u64 = 131_072;
@@ -516,6 +518,7 @@ pub struct AcquisitionStore<C: Clock> {
     manifest_bytes: Vec<u8>,
     payload: Option<PayloadRecord>,
     continuation: Option<ContinuationRecord>,
+    metadata_continuation: Option<MetadataContinuationRecord>,
     preparation_only: bool,
     clock: C,
     high_water: ClockSample,
@@ -588,6 +591,7 @@ impl<C: Clock> AcquisitionStore<C> {
             manifest_bytes,
             payload: None,
             continuation: None,
+            metadata_continuation: None,
             preparation_only: false,
             clock,
             high_water: started,
@@ -635,7 +639,18 @@ impl<C: Clock> AcquisitionStore<C> {
         } else {
             None
         };
-        if preparation_only || continuation.is_some() {
+        let metadata_continuation = if root.join("metadata-continuation.json").exists() {
+            Some(decode::<MetadataContinuationRecord>(&read_bounded(
+                &root.join("metadata-continuation.json"),
+                MANIFEST_LIMIT,
+            )?)?)
+        } else {
+            None
+        };
+        if continuation.is_some() && metadata_continuation.is_some() {
+            return Err(StoreError::Identity);
+        }
+        if preparation_only || continuation.is_some() || metadata_continuation.is_some() {
             validate_aggregate_shape(plan)?;
         } else {
             validate_aggregate(plan)?;
@@ -697,6 +712,7 @@ impl<C: Clock> AcquisitionStore<C> {
             manifest_bytes,
             payload,
             continuation,
+            metadata_continuation,
             preparation_only,
             clock,
             cache: Audit::default(),
@@ -711,6 +727,23 @@ impl<C: Clock> AcquisitionStore<C> {
                 .as_ref()
                 .ok_or(StoreError::Identity)?
                 .verify_payload_continuation(
+                    &c.stage.lease_sha256,
+                    &c.approval.binding.previous_ledger_sha256,
+                )?;
+        }
+        if let Some(c) = &store.metadata_continuation {
+            store
+                .campaign
+                .as_ref()
+                .ok_or(StoreError::Identity)?
+                .verify_metadata_continuation(
+                    c.approval
+                        .binding
+                        .sample_identity
+                        .b7
+                        .as_ref()
+                        .ok_or(StoreError::Identity)?
+                        .window_ordinal,
                     &c.stage.lease_sha256,
                     &c.approval.binding.previous_ledger_sha256,
                 )?;
@@ -1201,11 +1234,26 @@ impl<C: Clock> AcquisitionStore<C> {
             sha256: sha256(bytes),
             at: at.clone(),
         };
+        let receipt_bytes = encode(&receipt)?;
+        if receipt_bytes.len() as u64 > RECORD_LIMIT {
+            return Err(StoreError::Budget);
+        }
         let parent = self.stream_path(permit.0.attempt_id);
         let candidate = parent.join(format!("incomplete-{segment:010}"));
         fs::create_dir(&candidate)?;
-        self.write_new(&candidate.join("raw.bin"), bytes)?;
-        self.write_new(&candidate.join("segment.json"), &encode(&receipt)?)?;
+        // prepare_stream_read above admits this complete bounded pair, including
+        // directory/receipt overhead and the later full publication copy. Keep
+        // that pre-write campaign/run scan and the separate pre-network scan;
+        // rescanning the unchanged campaign before each file repeats the same
+        // admission within this single-writer segment transaction.
+        for (name, content) in [("raw.bin", bytes), ("segment.json", &receipt_bytes)] {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(candidate.join(name))?;
+            file.write_all(content)?;
+            file.sync_all()?;
+        }
         sync_dir(&candidate)?;
         self.remaining_ms(permit)?;
         let destination = parent.join(format!("segment-{segment:010}"));
@@ -1409,9 +1457,14 @@ impl<C: Clock> AcquisitionStore<C> {
         if let Some(c) = &self.continuation {
             return &c.stage;
         }
-        self.payload
-            .as_ref()
-            .map_or(&self.manifest.metadata_stage, |p| &p.stage)
+        self.payload.as_ref().map_or_else(
+            || {
+                self.metadata_continuation
+                    .as_ref()
+                    .map_or(&self.manifest.metadata_stage, |c| &c.stage)
+            },
+            |p| &p.stage,
+        )
     }
     fn stage_for_reservation(&self, reservation: &Reservation) -> StoreResult<&StageRecord> {
         if let Some(c) = &self.continuation
@@ -1424,6 +1477,14 @@ impl<C: Clock> AcquisitionStore<C> {
             return Ok(&c.stage);
         }
         if reservation.request.sequence < 4 {
+            if let Some(c) = &self.metadata_continuation
+                && reservation.attempt_id >= c.approval.binding.prior_attempts
+            {
+                if reservation.lease_sha256 != c.stage.lease_sha256 {
+                    return Err(StoreError::Identity);
+                }
+                return Ok(&c.stage);
+            }
             Ok(&self.manifest.metadata_stage)
         } else {
             self.payload
@@ -1658,6 +1719,11 @@ impl<C: Clock> AcquisitionStore<C> {
             let samples = std::iter::once(&self.manifest.metadata_stage.started_at)
                 .chain(self.payload.as_ref().map(|p| &p.stage.started_at))
                 .chain(self.continuation.as_ref().map(|c| &c.stage.started_at))
+                .chain(
+                    self.metadata_continuation
+                        .as_ref()
+                        .map(|c| &c.stage.started_at),
+                )
                 .chain(audit.attempts.iter().map(|a| &a.at))
                 .chain(audit.streams.values().map(|s| &s.latest_at))
                 .chain(audit.published.values().map(|p| &p.receipt.acquired_at))
@@ -1706,6 +1772,12 @@ impl<C: Clock> AcquisitionStore<C> {
             .map_or(self.manifest.plan.executable_sha256.as_str(), |c| {
                 c.approval.binding.continuation_executable_sha256.as_str()
             });
+        let expected_executable = self
+            .metadata_continuation
+            .as_ref()
+            .map_or(expected_executable, |c| {
+                c.approval.binding.continuation_executable_sha256.as_str()
+            });
         if !self.preparation_only && executable_hash()? != expected_executable {
             return Err(StoreError::Identity);
         }
@@ -1731,6 +1803,16 @@ impl<C: Clock> AcquisitionStore<C> {
             }
             if read_bounded(&self.root.join("continuation.json"), MANIFEST_LIMIT)?
                 != encode(self.continuation.as_ref().ok_or(StoreError::Identity)?)?
+            {
+                return Err(StoreError::Corrupt);
+            }
+        }
+        if let Some(c) = &self.metadata_continuation {
+            names.push("metadata-continuation.json");
+            if read_bounded(
+                &self.root.join("metadata-continuation.json"),
+                MANIFEST_LIMIT,
+            )? != encode(c)?
             {
                 return Err(StoreError::Corrupt);
             }
@@ -1796,6 +1878,7 @@ impl<C: Clock> AcquisitionStore<C> {
             .into_iter()
             .chain(self.payload.as_ref().map(|p| &p.stage))
             .chain(self.continuation.as_ref().map(|c| &c.stage))
+            .chain(self.metadata_continuation.as_ref().map(|c| &c.stage))
         {
             let attempts: Vec<_> = audit
                 .attempts
@@ -1818,6 +1901,7 @@ impl<C: Clock> AcquisitionStore<C> {
         }
         self.audit_payload_binding(&audit)?;
         self.audit_continuation(&audit)?;
+        self.audit_metadata_continuation(&audit)?;
         Ok(audit)
     }
 
@@ -1848,6 +1932,24 @@ impl<C: Clock> AcquisitionStore<C> {
         Ok(())
     }
 
+    fn audit_continuation_intent(&self, path: &Path, name: &str) -> StoreResult<bool> {
+        let expected = match name {
+            "metadata-continuation-intent.json" => encode(
+                self.metadata_continuation
+                    .as_ref()
+                    .ok_or(StoreError::Corrupt)?,
+            )?,
+            "continuation-intent.json" => {
+                encode(self.continuation.as_ref().ok_or(StoreError::Corrupt)?)?
+            }
+            _ => return Ok(false),
+        };
+        if read_bounded(path, MANIFEST_LIMIT)? != expected {
+            return Err(StoreError::Corrupt);
+        }
+        Ok(true)
+    }
+
     fn audit_pending(&self, audit: &mut Audit) -> StoreResult<()> {
         let mut payload_intent_seen = false;
         for path in children(
@@ -1868,11 +1970,7 @@ impl<C: Clock> AcquisitionStore<C> {
                 self.audit_clock_stop(&path, name, audit)?;
                 continue;
             }
-            if name == "continuation-intent.json" {
-                let c = self.continuation.as_ref().ok_or(StoreError::Corrupt)?;
-                if read_bounded(&path, MANIFEST_LIMIT)? != encode(c)? {
-                    return Err(StoreError::Corrupt);
-                }
+            if self.audit_continuation_intent(&path, name)? {
                 continue;
             }
             if name == "payload-intent.json" {
@@ -1972,6 +2070,7 @@ impl<C: Clock> AcquisitionStore<C> {
             .into_iter()
             .chain(self.payload.as_ref().map(|p| &p.stage))
             .chain(self.continuation.as_ref().map(|c| &c.stage))
+            .chain(self.metadata_continuation.as_ref().map(|c| &c.stage))
             .find(|stage| stage.lease_sha256 == stop.lease_sha256)
             .ok_or(StoreError::Corrupt)?;
         let attempt = stop

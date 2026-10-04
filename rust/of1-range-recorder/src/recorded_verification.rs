@@ -38,6 +38,7 @@ pub fn source_sha256() -> String {
         include_bytes!("acquisition_http.rs"),
         include_bytes!("durable/acquisition.rs"),
         include_bytes!("durable/acquisition/continuation.rs"),
+        include_bytes!("durable/acquisition/metadata_continuation.rs"),
         include_bytes!("durable.rs"),
         include_bytes!("dataset_location.rs"),
         include_bytes!("lib.rs"),
@@ -88,6 +89,9 @@ pub fn bindings(run: &RecordedRun) -> io::Result<Value> {
     });
     if let Some(h) = find("payload-continuation") {
         result["payload_continuation_sha256"] = json!(h);
+    }
+    if let Some(h) = find("metadata-continuation") {
+        result["metadata_continuation_sha256"] = json!(h);
     }
     if let Some(sample) = &run.aggregate_plan.sample_identity {
         result["sample_identity"] = serde_json::to_value(sample).map_err(invalid)?;
