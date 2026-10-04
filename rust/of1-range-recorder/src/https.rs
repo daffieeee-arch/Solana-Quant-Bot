@@ -722,6 +722,16 @@ impl Deadline {
         self.remaining()
             .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "original attempt deadline"))
     }
+    fn normalize_socket_timeout(&self, error: io::Error) -> io::Error {
+        // Linux blocking socket timeouts can report EAGAIN/WouldBlock. Only
+        // the expired deadline supplied to this socket proves a timeout;
+        // an arbitrary WouldBlock and every other error keep their identity.
+        if error.kind() == io::ErrorKind::WouldBlock && self.remaining().is_err() {
+            io::Error::new(io::ErrorKind::TimedOut, error)
+        } else {
+            error
+        }
+    }
 }
 
 struct DeadlineTcp {
@@ -733,14 +743,18 @@ impl Read for DeadlineTcp {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         self.socket
             .set_read_timeout(Some(self.deadline.remaining_io()?))?;
-        self.socket.read(bytes)
+        self.socket
+            .read(bytes)
+            .map_err(|error| self.deadline.normalize_socket_timeout(error))
     }
 }
 impl Write for DeadlineTcp {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.socket
             .set_write_timeout(Some(self.deadline.remaining_io()?))?;
-        self.socket.write(bytes)
+        self.socket
+            .write(bytes)
+            .map_err(|error| self.deadline.normalize_socket_timeout(error))
     }
     fn flush(&mut self) -> io::Result<()> {
         self.deadline.remaining_io()?;
@@ -870,14 +884,46 @@ mod tests {
             HttpsError::Store(StoreError::Clock),
             HttpsError::Store(StoreError::Identity),
             HttpsError::Store(StoreError::Io(io::ErrorKind::TimedOut.into())),
+            HttpsError::Store(StoreError::Io(io::ErrorKind::WouldBlock.into())),
+            HttpsError::Io(io::ErrorKind::WouldBlock.into()),
             HttpsError::Io(io::ErrorKind::PermissionDenied.into()),
             HttpsError::Io(io::ErrorKind::UnexpectedEof.into()),
+            HttpsError::Io(io::ErrorKind::InvalidData.into()),
+            HttpsError::Tls(rustls::Error::General("fixture TLS failure".into())),
             HttpsError::Truncated,
             HttpsError::Trailing,
             HttpsError::Authority,
             HttpsError::Dns,
         ] {
             assert_eq!(error.retry_class(), "STOP");
+        }
+    }
+
+    #[test]
+    fn socket_would_block_requires_an_expired_deadline_for_timeout_normalization() {
+        let active = Deadline::new(60_000).unwrap();
+        assert_eq!(
+            active
+                .normalize_socket_timeout(io::ErrorKind::WouldBlock.into())
+                .kind(),
+            io::ErrorKind::WouldBlock
+        );
+        let expired = Deadline {
+            ends: Instant::now(),
+        };
+        assert_eq!(
+            expired
+                .normalize_socket_timeout(io::ErrorKind::WouldBlock.into())
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::InvalidData,
+            io::ErrorKind::UnexpectedEof,
+            io::ErrorKind::ConnectionReset,
+        ] {
+            assert_eq!(expired.normalize_socket_timeout(kind.into()).kind(), kind);
         }
     }
 

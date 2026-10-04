@@ -394,19 +394,44 @@ fn tls_truncation_retains_partial_bytes_and_resume_charges_one_new_explicit_atte
 #[test]
 fn tls_response_deadline_does_not_replay_or_publish() {
     let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("run");
     let (plan, lease) = plans(75);
-    let mut store =
-        AcquisitionStore::create(&temp.path().join("run"), plan, lease, SystemClock).unwrap();
+    let mut store = AcquisitionStore::create(&root, plan.clone(), lease, SystemClock).unwrap();
+    let before = store.progress().unwrap();
     let mut script = response(200, 5_184_000, vec![], true);
     script.delay_ms = 250;
     let server = FixtureServer::start(OF1_SERVER_NAME, vec![script]).unwrap();
+    let requests = server.request_byte_counter();
     let connector = FixtureHttps::new(server.port(), server.root_der()).unwrap();
     let started = Instant::now();
-    assert!(connector.capture(&mut store, 0).is_err());
+    let error = connector.capture(&mut store, 0).unwrap_err();
     assert!(started.elapsed().as_secs() < 2);
+    assert!(matches!(
+        &error,
+        HttpsError::Io(error) if error.kind() == std::io::ErrorKind::TimedOut
+    ));
+    assert_eq!(error.retry_class(), "TIMEOUT_RECHECK_LEASE");
     drop(server);
-    assert_eq!(store.progress().unwrap().attempts_reserved, 1);
-    assert_eq!(store.progress().unwrap().published_requests, 0);
+    // The real TLS peer received HTTP before stalling on the response header.
+    assert!(requests.load(std::sync::atomic::Ordering::SeqCst) > 0);
+    let after = store.progress().unwrap();
+    assert_eq!(after.attempts_reserved, 1);
+    assert_eq!(after.charged_entity_bytes, SLOTS_PER_EPOCH * RECORD_BYTES);
+    assert_eq!(after.published_requests, 0);
+    assert_eq!(after.deadline_wall_ms, before.deadline_wall_ms);
+    assert_eq!(after.deadline_boot_ms, before.deadline_boot_ms);
+    drop(store);
+    let resumed =
+        AcquisitionStore::resume(&root, &plan, &before.current_lease_sha256, SystemClock).unwrap();
+    let after_resume = resumed.progress().unwrap();
+    assert_eq!(after_resume.attempts_reserved, after.attempts_reserved);
+    assert_eq!(
+        after_resume.charged_entity_bytes,
+        after.charged_entity_bytes
+    );
+    assert_eq!(after_resume.published_requests, 0);
+    assert_eq!(after_resume.deadline_wall_ms, before.deadline_wall_ms);
+    assert_eq!(after_resume.deadline_boot_ms, before.deadline_boot_ms);
 }
 
 #[test]

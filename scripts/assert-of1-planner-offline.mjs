@@ -53,9 +53,9 @@ const LOOPBACK_SOURCE_HASHES = {
 // These files alone contain the reviewed production capability / fixture orchestration.
 // An exact source pin is not a network lease; no official request runs in this gate.
 const ACQUISITION_SOURCE_HASHES = {
-  'src/https.rs': '96cd3f44a8416daa43c3d4bc6aed78903a8797a058829e29291089470b8a6a29',
+  'src/https.rs': 'f1db7e91a00b18ea8298e43d5ebc09216374969a7a4e23afe1769254963b3f4f',
   'src/https/fixture.rs': 'cbc520a5cc3e8fc3a22eb6e473a104cdc155207a2aaac25f4e8f21e5f5c47360',
-  'tests/acquisition_https.rs': '3df9c7af04611620601d528105d7c0bfefe128b07dc1c5393492c92d27c2e227',
+  'tests/acquisition_https.rs': '0a0b4e8580a4d1b460efc54f072bebd19c1e8624e9de0c10849fff9bb74883c0',
   'tests/acquisition_e2e.rs': 'f535c35a39a7a3069c847017ead8bfe4a347493854deec56a7628a405ca5358e',
   'src/bin/of1-acquisition-fixture-evidence.rs': 'b97f14882816bc65e7c0ce08ebc9c117152e0b9850865cdc8bcff2b35ca9f05f',
 };
