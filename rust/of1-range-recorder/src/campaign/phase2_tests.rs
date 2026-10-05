@@ -1,6 +1,8 @@
 use super::*;
 
-fn completed_phase_one_fixture() -> (tempfile::TempDir, SampleIdentity, ClockSample) {
+fn completed_phase_one_fixture(
+    regular_first_manifest: bool,
+) -> (tempfile::TempDir, SampleIdentity, ClockSample) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("campaign");
     let mut g = Guard::new(
@@ -58,14 +60,14 @@ fn completed_phase_one_fixture() -> (tempfile::TempDir, SampleIdentity, ClockSam
             &at,
         )
         .unwrap();
-        let path = if ordinal == 0 {
+        let path = if ordinal == 0 && !regular_first_manifest {
             root.join("work/w00/continuation-1/collection.json")
         } else {
             root.join(format!("work/w{ordinal:02}/collection.json"))
         };
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let manifest = serde_json::json!({
-            "schema": if ordinal == 0 { "OF1_CONTINUED_BATCH_COLLECTION_1" }
+            "schema": if ordinal == 0 && !regular_first_manifest { "OF1_CONTINUED_BATCH_COLLECTION_1" }
                 else { "OF1_PARTED_BATCH_COLLECTION_1" },
             "sample_identity": b7::sample(index, &root).unwrap(),
             "state": "COMPLETE", "research_ready": false,
@@ -102,7 +104,7 @@ fn completed_phase_one_fixture() -> (tempfile::TempDir, SampleIdentity, ClockSam
 
 #[test]
 fn phase_two_proposal_binds_eight_closed_manifests_and_current_ledger() {
-    let (_dir, sample, at) = completed_phase_one_fixture();
+    let (_dir, sample, at) = completed_phase_one_fixture(false);
     let root = Path::new(&sample.b7.as_ref().unwrap().campaign_root);
     let proposal = Guard::phase2_proposal(&sample).unwrap();
     assert_eq!(
@@ -148,4 +150,12 @@ fn phase_two_proposal_binds_eight_closed_manifests_and_current_ledger() {
     fs::write(&changed_sidecar, original_hash).unwrap();
     Guard::admit_phase2(&sample, approval.clone(), &at).unwrap();
     assert!(Guard::admit_phase2(&sample, approval, &at).is_err());
+}
+
+#[test]
+fn phase_two_fixture_accepts_regular_first_manifest_with_journal_binding() {
+    let (_dir, sample, at) = completed_phase_one_fixture(true);
+    let proposal = Guard::phase2_proposal(&sample).unwrap();
+    let approval: PhaseApproval = serde_json::from_value(proposal["approval"].clone()).unwrap();
+    Guard::admit_phase2(&sample, approval, &at).unwrap();
 }

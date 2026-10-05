@@ -2117,6 +2117,19 @@ impl Guard {
                 return Err(StoreError::Identity);
             }
             p.sealed_manifest_sha256 = Some(sha256(&raw));
+        } else if self.header.fixture {
+            // Fixture campaigns may use the regular DEVELOPMENT writer for
+            // ordinal 0. Record its published manifest so later phase gates
+            // can detect a changed manifest even when its sidecar is changed.
+            let path = self.root.join(format!("work/w{window:02}/collection.json"));
+            if path.exists() {
+                let raw = durable::read_bounded(&path, 2 * 1024 * 1024)?;
+                let v: serde_json::Value = serde_json::from_slice(&raw).map_err(|_| fail())?;
+                if v["state"] != "COMPLETE" {
+                    return Err(StoreError::Identity);
+                }
+                p.sealed_manifest_sha256 = Some(sha256(&raw));
+            }
         }
         p.complete = true;
         self.commit(n)
@@ -2169,6 +2182,24 @@ impl Guard {
         Ok(())
     }
 
+    fn phase_one_manifest_path(&self, ordinal: u64) -> StoreResult<PathBuf> {
+        if ordinal != 0 {
+            return Ok(self
+                .root
+                .join(format!("work/w{ordinal:02}/collection.json")));
+        }
+        let continued = self.root.join("work/w00/continuation-1/collection.json");
+        let ordinary = self.root.join("work/w00/collection.json");
+        if self.header.fixture && ordinary.exists() {
+            if continued.exists() {
+                return Err(StoreError::Identity);
+            }
+            Ok(ordinary)
+        } else {
+            Ok(continued)
+        }
+    }
+
     fn phase_one_evidence(&self) -> StoreResult<serde_json::Value> {
         if self.state.phase2.is_some()
             || self.state.evaluation_release.is_some()
@@ -2203,12 +2234,7 @@ impl Guard {
             {
                 return Err(StoreError::Identity);
             }
-            let path = if ordinal == 0 {
-                self.root.join("work/w00/continuation-1/collection.json")
-            } else {
-                self.root
-                    .join(format!("work/w{ordinal:02}/collection.json"))
-            };
+            let path = self.phase_one_manifest_path(ordinal)?;
             durable::regular(&path)?;
             let raw = durable::read_bounded(&path, 2 * 1024 * 1024)?;
             let hash = sha256(&raw);
@@ -2236,7 +2262,9 @@ impl Guard {
                     slot["slot"] != b7::STARTS[index] + n as u64 || slot["state"] != "ACCOUNTED"
                 })
                 || manifest["schema"]
-                    != if ordinal == 0 {
+                    != if ordinal == 0
+                        && path == self.root.join("work/w00/continuation-1/collection.json")
+                    {
                         "OF1_CONTINUED_BATCH_COLLECTION_1"
                     } else {
                         "OF1_PARTED_BATCH_COLLECTION_1"
