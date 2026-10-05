@@ -90,7 +90,7 @@ fn completed_phase_one_fixture() -> (tempfile::TempDir, SampleIdentity, ClockSam
                 complete: true,
                 continuation: None,
                 evaluation_continuations: Vec::new(),
-                sealed_manifest_sha256: (ordinal >= 4).then_some(hash),
+                sealed_manifest_sha256: Some(hash),
             },
         );
     }
@@ -134,6 +134,18 @@ fn phase_two_proposal_binds_eight_closed_manifests_and_current_ledger() {
     fs::write(&sidecar, b"0".repeat(64)).unwrap();
     assert!(Guard::phase2_proposal(&sample).is_err());
     fs::write(&sidecar, original).unwrap();
+    let changed_path = root.join("work/w01/collection.json");
+    let changed_sidecar = root.join("work/w01/collection.json.sha256");
+    let original_manifest = fs::read(&changed_path).unwrap();
+    let original_hash = fs::read(&changed_sidecar).unwrap();
+    let mut changed: serde_json::Value = serde_json::from_slice(&original_manifest).unwrap();
+    changed["layers"]["bronze"]["ordered_logical_sha256"] = serde_json::json!("0".repeat(64));
+    let changed_bytes = bytes(&changed).unwrap();
+    fs::write(&changed_path, &changed_bytes).unwrap();
+    fs::write(&changed_sidecar, sha256(&changed_bytes)).unwrap();
+    assert!(Guard::phase2_proposal(&sample).is_err());
+    fs::write(&changed_path, original_manifest).unwrap();
+    fs::write(&changed_sidecar, original_hash).unwrap();
     Guard::admit_phase2(&sample, approval.clone(), &at).unwrap();
     assert!(Guard::admit_phase2(&sample, approval, &at).is_err());
 }

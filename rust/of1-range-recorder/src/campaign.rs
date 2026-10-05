@@ -28,6 +28,10 @@ pub const ATTEMPTS: u64 = 960;
 pub const ENTITY_BYTES: u64 = 1_527_045_918;
 pub const HARD_ENTITY_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 pub const DISK_BYTES: u64 = 32 * 1024 * 1024 * 1024;
+// These original DEVELOPMENT collection pins are compiled into the native
+// phase-two gate. Adjacent manifest sidecars are not independent authority.
+const DEVELOPMENT_PINS: &[u8] =
+    include_bytes!("../../of1-bronze-decoder/sources/b7-development-cohort.json");
 pub const FREE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
 const RECORD_BYTES: u64 = 1024 * 1024;
 const MAX_ENTRIES: u64 = 8192;
@@ -2140,11 +2144,47 @@ impl Guard {
             "next_window":8,"research_ready":false}))
     }
 
+    fn check_development_pin(
+        &self,
+        ordinal: u64,
+        index: usize,
+        hash: &str,
+        processing: &Processing,
+        fixed: &[serde_json::Value],
+    ) -> StoreResult<()> {
+        let pin = &fixed[index];
+        let expected_path = if ordinal == 0 {
+            "work/w00/continuation-1/collection.json".to_owned()
+        } else {
+            format!("work/w{ordinal:02}/collection.json")
+        };
+        if pin["ordinal"] != ordinal
+            || pin["relative_manifest"] != expected_path
+            || pin["range"] != serde_json::json!([b7::STARTS[index], b7::STARTS[index] + 16])
+            || (!self.header.fixture && pin["sha256"] != hash)
+            || (self.header.fixture && processing.sealed_manifest_sha256.as_deref() != Some(hash))
+        {
+            return Err(StoreError::Identity);
+        }
+        Ok(())
+    }
+
     fn phase_one_evidence(&self) -> StoreResult<serde_json::Value> {
         if self.state.phase2.is_some()
             || self.state.evaluation_release.is_some()
             || self.state.runs.len() != 8
             || self.state.processing.len() != 8
+        {
+            return Err(StoreError::Identity);
+        }
+        let development: serde_json::Value =
+            serde_json::from_slice(DEVELOPMENT_PINS).map_err(|_| fail())?;
+        let fixed = development["windows"]
+            .as_array()
+            .ok_or(StoreError::Identity)?;
+        if development["schema"] != "OF1_B7_DEVELOPMENT_COHORT_PINS_1"
+            || development["selection_sha256"] != b7::SELECTION_SHA256
+            || fixed.len() != 4
         {
             return Err(StoreError::Identity);
         }
@@ -2172,6 +2212,9 @@ impl Guard {
             durable::regular(&path)?;
             let raw = durable::read_bounded(&path, 2 * 1024 * 1024)?;
             let hash = sha256(&raw);
+            if ordinal < 4 {
+                self.check_development_pin(ordinal, index, &hash, p, fixed)?;
+            }
             let sidecar = PathBuf::from(format!("{}.sha256", path.display()));
             durable::regular(&sidecar)?;
             if durable::read_bounded(&sidecar, 65)? != hash.as_bytes()
@@ -2216,6 +2259,7 @@ impl Guard {
                 "source_fingerprint":b7::SOURCE_FINGERPRINT,
                 "phase_one_ledger_sha256":self.head_hash,
                 "phase_two_executable_sha256":durable::acquisition::current_executable_sha256()?,
+                "original_development_pins_sha256":sha256(DEVELOPMENT_PINS),
                 "closed_manifests":manifests,
                 "phase_two_windows":(8..16_usize).map(|n|serde_json::json!({
                     "ordinal":n,"start_slot":b7::STARTS[n],
