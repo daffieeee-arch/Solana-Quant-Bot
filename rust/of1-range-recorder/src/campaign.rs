@@ -2119,6 +2119,125 @@ impl Guard {
     }
     /// # Errors
     /// Phase two requires a distinct receipt bound to phase-one ledger and evidence.
+    pub fn phase2_proposal(sample: &SampleIdentity) -> StoreResult<serde_json::Value> {
+        sample.validate(978)?;
+        let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
+        if b.window_ordinal != 8 || b.phase != 2 || b.cohort_role != "DEVELOPMENT" {
+            return Err(StoreError::Identity);
+        }
+        let header: Header = read(&Path::new(&b.campaign_root).join("campaign.json"))?;
+        let g = Self::open(Path::new(&b.campaign_root), header.fixture)?;
+        let evidence = g.phase_one_evidence()?;
+        let approval = PhaseApproval {
+            authority: Authority::Fixture,
+            phase_one_evidence_sha256: sha256(&bytes(&evidence)?),
+            phase_one_ledger_sha256: g.head_hash.clone(),
+        };
+        let target = Self::phase2_target(&approval)?;
+        Ok(serde_json::json!({"schema":"OF1_B7_PHASE2_PROPOSAL_1",
+            "approved":false,"network_started":false,"phase_one_evidence":evidence,
+            "approval":approval,"approval_target_sha256":target,
+            "next_window":8,"research_ready":false}))
+    }
+
+    fn phase_one_evidence(&self) -> StoreResult<serde_json::Value> {
+        if self.state.phase2.is_some()
+            || self.state.evaluation_release.is_some()
+            || self.state.runs.len() != 8
+            || self.state.processing.len() != 8
+        {
+            return Err(StoreError::Identity);
+        }
+        let mut manifests = Vec::with_capacity(8);
+        for ordinal in 0..8_u64 {
+            let index = usize::try_from(ordinal).map_err(|_| StoreError::Identity)?;
+            let p = self
+                .state
+                .processing
+                .get(&ordinal)
+                .ok_or(StoreError::Identity)?;
+            if !self.state.runs.contains_key(&ordinal)
+                || !p.complete
+                || p.approval.window != ordinal
+                || p.approval.evaluation.is_some() != (ordinal >= 4)
+            {
+                return Err(StoreError::Identity);
+            }
+            let path = if ordinal == 0 {
+                self.root.join("work/w00/continuation-1/collection.json")
+            } else {
+                self.root
+                    .join(format!("work/w{ordinal:02}/collection.json"))
+            };
+            durable::regular(&path)?;
+            let raw = durable::read_bounded(&path, 2 * 1024 * 1024)?;
+            let hash = sha256(&raw);
+            let sidecar = PathBuf::from(format!("{}.sha256", path.display()));
+            durable::regular(&sidecar)?;
+            if durable::read_bounded(&sidecar, 65)? != hash.as_bytes()
+                || (ordinal >= 4 && p.sealed_manifest_sha256.as_deref() != Some(&hash))
+            {
+                return Err(StoreError::Identity);
+            }
+            let manifest: serde_json::Value = serde_json::from_slice(&raw).map_err(|_| fail())?;
+            let expected = b7::sample(index, &self.root)?;
+            let slots = manifest["slot_outcomes"]
+                .as_array()
+                .ok_or(StoreError::Identity)?;
+            if manifest["sample_identity"] != serde_json::json!(expected)
+                || manifest["state"] != "COMPLETE"
+                || manifest["research_ready"] != false
+                || manifest["completeness"]["all_selected_slots_accounted"] != true
+                || slots.len() != 16
+                || slots.iter().enumerate().any(|(n, slot)| {
+                    slot["slot"] != b7::STARTS[index] + n as u64 || slot["state"] != "ACCOUNTED"
+                })
+                || manifest["schema"]
+                    != if ordinal == 0 {
+                        "OF1_CONTINUED_BATCH_COLLECTION_1"
+                    } else {
+                        "OF1_PARTED_BATCH_COLLECTION_1"
+                    }
+            {
+                return Err(StoreError::Identity);
+            }
+            manifests.push(serde_json::json!({"ordinal":ordinal,
+                "start_slot":b7::STARTS[index],
+                "end_slot_exclusive":b7::STARTS[index]+16,
+                "role":if ordinal < 4 {"DEVELOPMENT"} else {"RESERVED_EVALUATION"},
+                "collection_sha256":hash}));
+        }
+        Ok(
+            serde_json::json!({"schema":"OF1_B7_PHASE1_INTEGRITY_EVIDENCE_1",
+                "campaign_id":self.header.campaign,"selection_sha256":self.header.selection,
+                "accepted_report_sha256":self.header.report,
+                "method_sha256":METHOD_SHA256,"method_acceptance_sha256":METHOD_ACCEPTANCE_SHA256,
+                "source_index_sha256":b7::INDEX_SHA256,
+                "source_fingerprint":b7::SOURCE_FINGERPRINT,
+                "phase_one_ledger_sha256":self.head_hash,
+                "phase_two_executable_sha256":durable::acquisition::current_executable_sha256()?,
+                "closed_manifests":manifests,
+                "phase_two_windows":(8..16_usize).map(|n|serde_json::json!({
+                    "ordinal":n,"start_slot":b7::STARTS[n],
+                    "end_slot_exclusive":b7::STARTS[n]+16,
+                    "role":if n<12 {"DEVELOPMENT"} else {"RESERVED_EVALUATION"},
+                    "unique_planned_payload_bytes":b7::PAYLOAD_BYTES[n]})).collect::<Vec<_>>()
+            }),
+        )
+    }
+
+    fn phase2_target(approval: &PhaseApproval) -> StoreResult<String> {
+        Ok(sha256(&bytes(&(
+            "OF1_B7_PHASE2_APPROVAL_1",
+            b7::REPORT_SHA256,
+            b7::SELECTION_SHA256,
+            &approval.phase_one_ledger_sha256,
+            &approval.phase_one_evidence_sha256,
+        ))?))
+    }
+
+    /// # Errors
+    /// Exact current integrity evidence is required before the separate phase grant.
     pub fn admit_phase2(
         sample: &SampleIdentity,
         approval: PhaseApproval,
@@ -2128,22 +2247,20 @@ impl Guard {
         let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
         let header: Header = read(&Path::new(&b.campaign_root).join("campaign.json"))?;
         let mut g = Self::open(Path::new(&b.campaign_root), header.fixture)?;
-        if g.state.evaluation_release.is_some()
+        if b.window_ordinal != 8
+            || b.phase != 2
+            || b.cohort_role != "DEVELOPMENT"
+            || g.state.evaluation_release.is_some()
             || g.state.phase2.is_some()
             || g.head_hash != approval.phase_one_ledger_sha256
             || !hex_hash(&approval.phase_one_evidence_sha256)
             || (0..8).any(|i| g.state.processing.get(&i).is_none_or(|p| !p.complete))
             || matches!(approval.authority, Authority::Fixture) != g.header.fixture
+            || approval.phase_one_evidence_sha256 != sha256(&bytes(&g.phase_one_evidence()?)?)
         {
             return Err(StoreError::Identity);
         }
-        let target = sha256(&bytes(&(
-            "OF1_B7_PHASE2_APPROVAL_1",
-            b7::REPORT_SHA256,
-            b7::SELECTION_SHA256,
-            &approval.phase_one_ledger_sha256,
-            &approval.phase_one_evidence_sha256,
-        ))?);
+        let target = Self::phase2_target(&approval)?;
         let policy = ClockPolicy::standard();
         validate_authority(Some(&policy), &approval.authority, &target)?;
         make_stage(
@@ -2259,6 +2376,8 @@ fn crash_point(point: &str) {
     }
 }
 
+#[cfg(test)]
+mod phase2_tests;
 #[cfg(test)]
 mod process_tests;
 

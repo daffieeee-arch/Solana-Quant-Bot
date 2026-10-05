@@ -141,6 +141,11 @@ fn run(args: &[String]) -> Result<()> {
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["clock-sample"] => print(&SystemClock.sample()?),
         ["campaign-status",root]=>print(&of1_range_recorder::campaign::Guard::status(Path::new(root))?),
+        ["campaign-phase2-proposal",plan]=> {
+            let plan:AggregatePlan=read(plan)?;
+            let sample=plan.sample_identity.as_ref().ok_or("B7 sample required")?;
+            print(&of1_range_recorder::campaign::Guard::phase2_proposal(sample)?)
+        },
         ["campaign-phase2-admit",plan,approval]=> {
             let plan:AggregatePlan=read(plan)?;
             let sample=plan.sample_identity.as_ref().ok_or("B7 sample required")?;
@@ -308,7 +313,7 @@ fn run(args: &[String]) -> Result<()> {
             "metadata-pilot-proposal ROOT CODE_SHA TOOLCHAIN_SHA256 | ",
             "metadata-init ROOT AGGREGATE_JSON METADATA_LEASE_JSON | ",
             "progress ROOT AGGREGATE_JSON LEASE_SHA256 | ",
-            "metadata-continuation-proposal ROOT AGGREGATE_JSON OLD_LEASE_SHA256 | ",
+            "metadata-continuation-proposal ROOT AGGREGATE_JSON OLD_LEASE_SHA256 | campaign-phase2-proposal AGGREGATE_JSON | ",
             "metadata-continuation-admit ROOT AGGREGATE_JSON OLD_LEASE_SHA256 APPROVAL_JSON | ",
             "payload-continuation-proposal ROOT AGGREGATE_JSON OLD_LEASE_SHA256 | ",
             "payload-continuation-admit ROOT AGGREGATE_JSON OLD_LEASE_SHA256 APPROVAL_JSON | ",

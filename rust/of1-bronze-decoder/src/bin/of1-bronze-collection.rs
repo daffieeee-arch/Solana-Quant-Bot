@@ -33,6 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let value=match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice(){
         ["development-instructions"]=>of1_bronze_decoder::development_cohort::read_instructions()?,
         ["development-cohort"]=>of1_bronze_decoder::development_cohort::read()?,
+        ["development-cohort-phase2",pins]=>of1_bronze_decoder::development_cohort::read_phase2(Path::new(pins))?,
         ["continuation-proposal",plan,checkpoint,decoder,projector]=>continuation::proposal(Path::new(plan),Path::new(checkpoint),decoder,projector)?,
         ["continuation-admit",decision,authority]=>continuation::admit(Path::new(decision),Path::new(authority))?,
         ["continuation-check",decision,reserve]=>continuation::check(Path::new(decision),reserve.parse()?)?,
