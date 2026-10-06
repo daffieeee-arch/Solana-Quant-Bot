@@ -4,6 +4,7 @@ No Raw decoder, Parquet discovery, admission override, labels or evaluation.
 """
 import argparse
 import datetime
+import html
 import json
 import pathlib
 import re
@@ -110,21 +111,32 @@ def native_bytes(value):
     return (json.dumps(value, sort_keys=True, ensure_ascii=False, indent=2) + "\n").encode()
 
 
-def build_report(admission):
-    require(admission['schema'] == 'OF1_B7_DEVELOPMENT_ADMISSION_1'
-            and admission['pins_sha256'] == sha(PINS_BYTES)
-            and admission['selection_sha256'] == PINS['selection_sha256']
+def build_report(admission, pins_bytes=PINS_BYTES):
+    pins = json.loads(pins_bytes, object_pairs_hook=pairs_unique)
+    phase2 = admission['schema'] == 'OF1_B7_DEVELOPMENT_ADMISSION_2'
+    expected = 8 if phase2 else 4
+    require(admission['schema'] in ('OF1_B7_DEVELOPMENT_ADMISSION_1', 'OF1_B7_DEVELOPMENT_ADMISSION_2')
+            and admission['pins_sha256'] == sha(pins_bytes)
+            and admission['selection_sha256'] == pins['selection_sha256']
             and admission['research_ready'] is False, 'native capability identity')
+    if phase2:
+        require(pins['schema'] == 'OF1_B7_DEVELOPMENT_COHORT_PINS_2'
+                and pins['windows'][:4] == PINS['windows']
+                and [p['ordinal'] for p in pins['windows']] == [0, 1, 2, 3, 8, 9, 10, 11],
+                'fixed eight-window phase-two pins')
+    else:
+        require(pins_bytes == PINS_BYTES, 'original four-window pins')
     digest(admission['reader_source_sha256']); digest(admission['reader_binary_sha256'])
-    require(len(admission['windows']) == 4, 'exact four-window set')
+    require(len(admission['windows']) == expected, 'exact DEVELOPMENT window set')
     results, hashes = [], set()
-    for window, pin in zip(admission['windows'], PINS['windows'], strict=True):
+    for window, pin in zip(admission['windows'], pins['windows'], strict=True):
         sample = window['sample_identity']; b7 = sample['b7']
         require(window['ordinal'] == pin['ordinal'] and window['collection_sha256'] == pin['sha256']
                 and window['layers'] == pin['layers'] and window['counts'] == pin['counts'], 'immutable snapshot')
         require(sample['schema'] == 'OF1_B7_WINDOW_SAMPLE_1' and sample['sample_class'] == 'RESEARCH_SAMPLING'
                 and b7['cohort_role'] == 'DEVELOPMENT' and b7['window_ordinal'] == pin['ordinal']
-                and b7['phase'] == 1 and b7['selection_sha256'] == PINS['selection_sha256']
+                and b7['phase'] == (2 if pin['ordinal'] >= 8 else 1)
+                and b7['selection_sha256'] == pins['selection_sha256']
                 and [sample['start_slot'], sample['end_slot_exclusive']] == pin['range'], 'role/range/selection')
         require(window['coverage']['all_selected_slots_accounted'] is True
                 and window['coverage']['missing_selected_raw_slots'] == 0, 'verified coverage')
@@ -135,8 +147,8 @@ def build_report(admission):
                 hashes.add(fact['record_sha256'])
         results.append(result)
     totals = {k: sum(w['counts'][k] for w in results) for k in ('blocks', 'packages', 'failures', 'silver_facts')}
-    return exact({'schema': 'OF1_B7_DEVELOPMENT_COHORT_1', 'state': 'READY', 'research_ready': False,
-        'selection_sha256': PINS['selection_sha256'], 'pins_sha256': sha(PINS_BYTES),
+    return exact({'schema': 'OF1_B7_DEVELOPMENT_COHORT_2' if phase2 else 'OF1_B7_DEVELOPMENT_COHORT_1', 'state': 'READY', 'research_ready': False,
+        'selection_sha256': pins['selection_sha256'], 'pins_sha256': sha(pins_bytes),
         'native_admission_sha256': sha(native_bytes(admission)),
         'producer': {'version': 'DEVELOPMENT_DESCRIPTIVE_PAIRS_1', 'python_sha256': sha(pathlib.Path(__file__).read_bytes()),
                      'native_source_sha256': admission['reader_source_sha256'], 'native_binary_sha256': admission['reader_binary_sha256']},
@@ -145,7 +157,42 @@ def build_report(admission):
         'window_order': 'PREREGISTERED_ORDINAL_NOT_HISTORICAL_TIME', 'evaluation_access': 'DENIED'})
 
 
-def produce(reader, binary_sha256, output):
+def phase2_html(report):
+    require(report['schema'] == 'OF1_B7_DEVELOPMENT_COHORT_2', 'phase-two report required')
+    esc = lambda value: html.escape(str(value), quote=True)
+    rows = []
+    for window in report['windows']:
+        counts = window['counts']
+        rows.append('<tr><td>' + esc(window['ordinal']) + '</td><td>' + esc(window['sample_identity']['start_slot'])
+                    + '–' + esc(window['sample_identity']['end_slot_exclusive']) + '</td><td>'
+                    + esc(counts['packages']) + '</td><td>' + esc(counts['failures']) + '</td><td>'
+                    + esc(counts['silver_facts']) + '</td><td>' + esc(window['observed_pair_mints'])
+                    + '</td><td><code>' + esc(window['collection_sha256']) + '</code></td></tr>')
+    facts = []
+    for window in report['windows']:
+        for mint in window['mints']:
+            for fact in mint['facts']:
+                facts.append('<tr><td>' + esc(window['ordinal']) + '</td><td>' + esc(mint['mint'])
+                             + '</td><td>' + esc(fact['side']) + '</td><td>' + esc(fact['slot'])
+                             + '/' + esc(fact['transaction_index']) + '</td><td><code>'
+                             + esc(fact['record_sha256']) + '</code></td><td><code>'
+                             + esc(fact['package_id']) + '</code></td></tr>')
+    return ('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
+            '<title>B7 DEVELOPMENT cohort · eight fixed windows</title><style>body{font:16px system-ui;max-width:80rem;'
+            'margin:auto;padding:1rem}table{border-collapse:collapse;width:100%}td,th{padding:.45rem;border:1px solid #777;'
+            'text-align:left}code{overflow-wrap:anywhere}section{overflow-x:auto}</style><h1>B7 DEVELOPMENT · eight fixed windows</h1>'
+            '<p>Source-bound admitted observations only. Window is the research unit. No evaluation data or B8 labels.'
+            ' Missing semantic coverage does not mean zero activity. Research Ready: false.</p><p>Manifest pins SHA-256: <code>'
+            + esc(report['pins_sha256']) + '</code></p><section><table><caption>Window counts and source bindings</caption>'
+            '<thead><tr><th>Ordinal</th><th>Slots</th><th>Packages</th><th>Failures</th><th>Silver facts</th>'
+            '<th>Observed pair mints</th><th>Collection SHA-256</th></tr></thead><tbody>' + ''.join(rows)
+            + '</tbody></table></section><h2>Admitted facts</h2><section><table><thead><tr><th>Ordinal</th><th>Mint</th>'
+            '<th>Side</th><th>Chain position</th><th>Fact SHA-256</th><th>Atomic package</th></tr></thead><tbody>'
+            ''.join(facts) + '</tbody></table></section><p>Inspect cohort.json for exact integers, source paths, receipts,'
+            ' coverage, diagnostics and unknowns.</p></html>\n').encode()
+
+
+def produce(reader, binary_sha256, output, phase2_pins=None):
     reader = pathlib.Path(reader)
     require(reader.is_absolute() and reader.resolve() == reader and reader.is_file(), 'literal native executable')
     require(sha(reader.read_bytes()) == digest(binary_sha256), 'native binary pin')
@@ -153,17 +200,21 @@ def produce(reader, binary_sha256, output):
     require(output.is_absolute() and output.resolve() == output and output.is_relative_to(ROOT)
             and not output.exists() and output.parent.is_dir(), 'new external output directory')
     started = datetime.datetime.now(datetime.timezone.utc).isoformat(); t0 = time.monotonic()
-    native = subprocess.run([str(reader), 'development-cohort'], check=True, capture_output=True, timeout=900)
+    pins_bytes = PINS_BYTES if phase2_pins is None else regular_bytes(pathlib.Path(phase2_pins), 32768)
+    command = [str(reader), 'development-cohort'] if phase2_pins is None else [str(reader), 'development-cohort-phase2', str(phase2_pins)]
+    native = subprocess.run(command, check=True, capture_output=True, timeout=900)
     require(len(native.stdout) <= MAX_BYTES and len(native.stderr) <= 256 * 1024, 'bounded native output')
     require(sha(reader.read_bytes()) == binary_sha256, 'binary changed during execution')
     admission = json.loads(native.stdout, object_pairs_hook=pairs_unique)
     require(admission['reader_binary_sha256'] == binary_sha256, 'native execution identity')
-    report = build_report(admission)
+    report = build_report(admission, pins_bytes)
     raw = canonical(report)
     require(len(raw) <= MAX_BYTES, 'bounded report')
     output.mkdir()
     for name, data in [('admission.json', native_bytes(admission)), ('cohort.json', raw)]:
         with (output / name).open('xb') as f: f.write(data)
+    if phase2_pins is not None:
+        with (output / 'cohort.html').open('xb') as f: f.write(phase2_html(report))
     receipt = {'schema': 'OF1_B7_COHORT_EXECUTION_1', 'report_sha256': sha(raw),
                'admission_sha256': sha(native_bytes(admission)), 'reader_binary_sha256': binary_sha256,
                'started_at_utc': started, 'elapsed_seconds': time.monotonic() - t0,
@@ -175,4 +226,5 @@ def produce(reader, binary_sha256, output):
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('reader'); p.add_argument('binary_sha256'); p.add_argument('output')
-    a = p.parse_args(); produce(a.reader, a.binary_sha256, a.output)
+    p.add_argument('--phase2-pins')
+    a = p.parse_args(); produce(a.reader, a.binary_sha256, a.output, a.phase2_pins)

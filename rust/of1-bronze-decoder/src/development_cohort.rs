@@ -1,5 +1,5 @@
-//! Read-only, exact-snapshot capability for four already completed DEVELOPMENT
-//! windows. No caller-selected cohort, root, pin, lease or general B7 override.
+//! Read-only, exact-snapshot DEVELOPMENT capabilities. No caller-selected
+//! cohort, root, lease or general B7 override.
 use crate::{batch, collection, invalid, resources};
 use of1_range_recorder::{b7, sample::SampleIdentity, sha256};
 use serde_json::{Value, json};
@@ -11,6 +11,11 @@ use std::{
 
 const PINS: &[u8] = include_bytes!("../sources/b7-development-cohort.json");
 const MAX_EXPORT: usize = 16 * 1024 * 1024;
+const MAX_PHASE2_PINS: u64 = 32 * 1024;
+
+fn development_ordinal(ordinal: usize) -> bool {
+    ordinal < 4 || (8..12).contains(&ordinal)
+}
 
 fn text(v: &Value) -> io::Result<&str> {
     v.as_str().ok_or_else(|| invalid("COHORT_STRING"))
@@ -51,13 +56,16 @@ fn header(v: &Value, pin: &Value, ordinal: usize) -> io::Result<()> {
     let sample: SampleIdentity =
         serde_json::from_value(v["sample_identity"].clone()).map_err(invalid)?;
     sample.validate(978).map_err(invalid)?;
-    if ordinal >= 4
+    if !development_ordinal(ordinal)
         || pin["ordinal"] != ordinal
         || v["sample_identity"]
             != json!(b7::sample(ordinal, Path::new(b7::PRODUCTION_ROOT)).map_err(invalid)?)
         || v["state"] != "COMPLETE"
         || v["research_ready"] != false
         || v["layers"] != pin["layers"]
+        || pin["counts"]["blocks"] != 16
+        || v["layers"]["silver"]["rows"] != pin["counts"]["silver_facts"]
+        || v["layers"]["bronze"]["rows"] != pin["counts"]["packages"]
         || v["completeness"]["all_selected_slots_accounted"] != true
         || v["transaction_status_counts"]["ERROR"] != pin["counts"]["failures"]
         || list(&v["slot_outcomes"])?.len() != 16
@@ -80,6 +88,7 @@ struct Reader {
     parts: Vec<Value>,
     seen: BTreeSet<PathBuf>,
     fact_hashes: BTreeSet<String>,
+    max_facts: usize,
 }
 impl Reader {
     fn verify_layers(&self, expected: &Value) -> io::Result<()> {
@@ -101,6 +110,9 @@ impl Reader {
         Ok(())
     }
     fn new() -> Self {
+        Self::with_max_facts(122)
+    }
+    fn with_max_facts(max_facts: usize) -> Self {
         Self {
             inventory: None,
             bronze: collection::Logical::default(),
@@ -110,6 +122,7 @@ impl Reader {
             parts: Vec::new(),
             seen: BTreeSet::new(),
             fact_hashes: BTreeSet::new(),
+            max_facts,
         }
     }
 
@@ -173,7 +186,7 @@ impl Reader {
         collection::rows(&decode.join("silver.jsonl"), |raw, record| {
             self.exported_silver.add(raw)?;
             let hash = sha256(raw);
-            if !self.fact_hashes.insert(hash.clone()) || self.facts.len() >= 122 {
+            if !self.fact_hashes.insert(hash.clone()) || self.facts.len() >= self.max_facts {
                 return Err(invalid("COHORT_DUPLICATE_OR_EXCESS_FACT"));
             }
             self.facts.push(
@@ -310,11 +323,12 @@ fn plan(value: &Value, hash: &Value) -> io::Result<batch::Plan> {
     p.validate()?;
     let (sample, _) =
         batch::campaign_sample(&p)?.ok_or_else(|| invalid("COHORT_SAMPLE_REQUIRED"))?;
-    if sample
-        .b7
-        .as_ref()
-        .is_none_or(|s| s.window_ordinal >= 4 || s.cohort_role != "DEVELOPMENT")
-        || text(hash)?.len() != 64
+    if sample.b7.as_ref().is_none_or(|s| {
+        usize::try_from(s.window_ordinal)
+            .ok()
+            .is_none_or(|ordinal| !development_ordinal(ordinal))
+            || s.cohort_role != "DEVELOPMENT"
+    }) || text(hash)?.len() != 64
         || hex::decode(text(hash)?).is_err()
     {
         return Err(invalid("COHORT_PLAN_BINDING"));
@@ -328,30 +342,92 @@ fn plan(value: &Value, hash: &Value) -> io::Result<batch::Plan> {
 /// Any changed snapshot, missing binding/file, duplicate or failed parent denies
 /// the whole result. This function never writes to or resumes the campaign.
 pub fn read() -> io::Result<Value> {
-    read_mode(false)
+    let pins: Value = serde_json::from_slice(PINS).map_err(invalid)?;
+    read_mode(false, &pins, &sha256(PINS), false)
 }
 
 /// The same four-manifest capability, with an existing-record instruction projection.
 /// # Errors
 /// Denies any identity, completeness or fact/instruction binding mismatch.
 pub fn read_instructions() -> io::Result<Value> {
-    read_mode(true)
-}
-fn read_mode(instructions: bool) -> io::Result<Value> {
     let pins: Value = serde_json::from_slice(PINS).map_err(invalid)?;
+    read_mode(true, &pins, &sha256(PINS), false)
+}
+
+/// Eight exact DEVELOPMENT snapshots, separately pinned after phase-two publication.
+/// No evaluation ordinal, generic B7 reader or caller-selected root is accepted.
+/// # Errors
+/// Missing/changed pins, role, collection or child publication deny the whole output.
+pub fn read_phase2(pins_path: &Path) -> io::Result<Value> {
+    let root = Path::new(b7::PRODUCTION_ROOT);
+    let original = fs::symlink_metadata(pins_path)?;
+    let data_root = root
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| invalid("PINS_DATA_ROOT"))?;
+    if !original.is_file()
+        || original.file_type().is_symlink()
+        || original.len() > MAX_PHASE2_PINS
+        || pins_path.canonicalize()? != pins_path
+        || !pins_path.starts_with(data_root.join("governance"))
+    {
+        return Err(invalid("PHASE2_PINS_LOCATION"));
+    }
+    let raw = fs::read(pins_path)?;
+    if raw.len() as u64 > MAX_PHASE2_PINS {
+        return Err(invalid("PHASE2_PINS_SIZE"));
+    }
+    let pins: Value = serde_json::from_slice(&raw).map_err(invalid)?;
+    validate_phase2_pins(&pins)?;
+    read_mode(false, &pins, &sha256(&raw), true)
+}
+
+fn validate_phase2_pins(pins: &Value) -> io::Result<()> {
+    let original: Value = serde_json::from_slice(PINS).map_err(invalid)?;
+    let windows = list(&pins["windows"])?;
+    if pins["schema"] != "OF1_B7_DEVELOPMENT_COHORT_PINS_2"
+        || pins["selection_sha256"] != b7::SELECTION_SHA256
+        || windows.len() != 8
+        || windows[..4] != list(&original["windows"])?[..]
+    {
+        return Err(invalid("PHASE2_PINS_IDENTITY"));
+    }
+    for (i, pin) in windows.iter().enumerate().skip(4) {
+        let ordinal = i + 4;
+        if pin["ordinal"] != ordinal
+            || pin["relative_manifest"] != format!("work/w{ordinal:02}/collection.json")
+            || pin["range"] != serde_json::json!([b7::STARTS[ordinal], b7::STARTS[ordinal] + 16])
+            || text(&pin["sha256"])?.len() != 64
+            || hex::decode(text(&pin["sha256"])?).is_err()
+        {
+            return Err(invalid("PHASE2_PINS_WINDOW"));
+        }
+    }
+    Ok(())
+}
+
+fn read_mode(
+    instructions: bool,
+    pins: &Value,
+    pins_sha256: &str,
+    phase2: bool,
+) -> io::Result<Value> {
     let root = Path::new(b7::PRODUCTION_ROOT);
     if fs::canonicalize(root)? != root {
         return Err(invalid("COHORT_ROOT"));
     }
     let mut windows = Vec::new();
     for (i, pin) in list(&pins["windows"])?.iter().enumerate() {
+        let ordinal = if phase2 && i >= 4 { i + 4 } else { i };
         let (m, base) = pinned(root, text(&pin["relative_manifest"])?, &pin["sha256"])?;
-        header(&m, pin, i)?;
-        let mut reader = Reader::new();
+        header(&m, pin, ordinal)?;
+        let max_facts = usize::try_from(collection::number(&pin["counts"]["silver_facts"])?)
+            .map_err(invalid)?;
+        let mut reader = Reader::with_max_facts(max_facts);
         if instructions {
             reader.inventory = Some(crate::instruction_inventory::Inventory::default());
         }
-        if i == 0 {
+        if ordinal == 0 {
             if m["schema"] != "OF1_CONTINUED_BATCH_COLLECTION_1" {
                 return Err(invalid("COHORT_CONTINUED_REQUIRED"));
             }
@@ -408,7 +484,7 @@ fn read_mode(instructions: bool) -> io::Result<Value> {
             .take()
             .map(|v| v.finish(&pin["counts"]))
             .transpose()?;
-        windows.push(json!({"ordinal":i,"collection_sha256":pin["sha256"],"collection_path":base.join("collection.json"),
+        windows.push(json!({"ordinal":ordinal,"collection_sha256":pin["sha256"],"collection_path":base.join("collection.json"),
             "sample_identity":m["sample_identity"],"counts":pin["counts"],"layers":m["layers"],
             "coverage":m["completeness"],"slot_outcomes":m["slot_outcomes"],"pump_layout_outcomes":m["pump_layout_outcomes"],
             "diagnosis_denominator":m["diagnosis_denominator"],"parts":reader.parts,"facts":if instructions {vec![]}else{reader.facts}}));
@@ -418,7 +494,7 @@ fn read_mode(instructions: bool) -> io::Result<Value> {
                 .ok_or_else(|| invalid("INVENTORY_WINDOW"))?["instruction_inventory"] = inventory;
         }
     }
-    let result = json!({"schema":if instructions {"OF1_B7_DEVELOPMENT_INSTRUCTIONS_ADMISSION_1"}else{"OF1_B7_DEVELOPMENT_ADMISSION_1"},"pins_sha256":sha256(PINS),
+    let result = json!({"schema":if phase2 {"OF1_B7_DEVELOPMENT_ADMISSION_2"}else if instructions {"OF1_B7_DEVELOPMENT_INSTRUCTIONS_ADMISSION_1"}else{"OF1_B7_DEVELOPMENT_ADMISSION_1"},"pins_sha256":pins_sha256,
         "selection_sha256":b7::SELECTION_SHA256,"reader_source_sha256":crate::source_sha256(),
         "reader_binary_sha256":of1_range_recorder::durable::acquisition::current_executable_sha256().map_err(invalid)?,
         "research_ready":false,"windows":windows});
@@ -583,6 +659,44 @@ mod tests {
             missing.as_object_mut().unwrap().remove("sample_identity");
             assert!(header(&missing, &pin, i).is_err());
         }
+    }
+    #[test]
+    fn phase_two_pins_admit_only_four_new_fixed_development_windows() {
+        let mut pins: Value = serde_json::from_slice(PINS).unwrap();
+        pins["schema"] = json!("OF1_B7_DEVELOPMENT_COHORT_PINS_2");
+        for ordinal in 8..12 {
+            let mut pin = pins["windows"][0].clone();
+            pin["ordinal"] = json!(ordinal);
+            pin["relative_manifest"] = json!(format!("work/w{ordinal:02}/collection.json"));
+            pin["range"] = json!([b7::STARTS[ordinal], b7::STARTS[ordinal] + 16]);
+            pins["windows"].as_array_mut().unwrap().push(pin.clone());
+            let mut m = sample_window(0).0;
+            m["sample_identity"] =
+                json!(b7::sample(ordinal, Path::new(b7::PRODUCTION_ROOT)).unwrap());
+            m["slot_outcomes"] = json!(
+                (0..16)
+                    .map(|n| json!({"slot":b7::STARTS[ordinal]+n,"state":"ACCOUNTED"}))
+                    .collect::<Vec<_>>()
+            );
+            header(&m, &pin, ordinal).unwrap();
+            let mut wrong = m.clone();
+            wrong["sample_identity"] =
+                json!(b7::sample(ordinal + 4, Path::new(b7::PRODUCTION_ROOT)).unwrap());
+            assert!(header(&wrong, &pin, ordinal).is_err());
+        }
+        validate_phase2_pins(&pins).unwrap();
+        let mut wrong = pins.clone();
+        wrong["windows"][4]["ordinal"] = json!(12);
+        assert!(validate_phase2_pins(&wrong).is_err());
+        let mut wrong = pins.clone();
+        wrong["windows"][0]["sha256"] = json!("0".repeat(64));
+        assert!(validate_phase2_pins(&wrong).is_err());
+        let mut wrong = pins;
+        wrong["windows"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"ordinal":12}));
+        assert!(validate_phase2_pins(&wrong).is_err());
     }
     #[test]
     fn manifest_hash_and_literal_paths_fail_before_following_children() {

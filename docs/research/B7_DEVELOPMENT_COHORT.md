@@ -3,6 +3,20 @@
 > **Document status: ACTIVE.** Bounded offline #86 increment, 2026-09-28.
 > Research Ready=false. No evaluation visibility, labels or sufficiency verdict.
 
+## Fixed phase-two DEVELOPMENT extension — 2026-10-06
+
+After native completion of ordinals 8–11, a separate private pins file may
+bind exactly the original four manifests plus those four fixed DEVELOPMENT
+manifest hashes, ranges, counts and logical layers. Rust's
+`development-cohort-phase2 PINS` verifies each manifest-listed part and original
+producer before exposing any fact. It rejects evaluation ordinals and changed
+snapshots; the generic readers remain blocked. The Python report layer then
+aggregates the admitted eight-window output into `cohort.json` and a static
+`cohort.html`, preserving window order as preregistered selection order rather
+than historical time. Missing semantic coverage is not zero activity. The
+private pins and generated files belong outside Git under the OF1 governance
+root. This route grants no evaluation release, B8 label or sufficiency verdict.
+
 ## Fixed inputs and authority
 
 The completed phase-1 collections are pinned in

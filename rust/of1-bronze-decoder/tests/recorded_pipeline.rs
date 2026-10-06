@@ -1443,17 +1443,9 @@ fn sealed_evaluation_source_fixture() {
             campaign::{Guard, PhaseApproval},
             durable::{Clock, SystemClock},
         };
-        let status = Guard::status(&campaign).unwrap();
-        Guard::admit_phase2(
-            &sample,
-            PhaseApproval {
-                authority: Authority::Fixture,
-                phase_one_evidence_sha256: "f".repeat(64),
-                phase_one_ledger_sha256: status["ledger_sha256"].as_str().unwrap().into(),
-            },
-            &SystemClock.sample().unwrap(),
-        )
-        .unwrap();
+        let proposal = Guard::phase2_proposal(&sample).unwrap();
+        let approval: PhaseApproval = serde_json::from_value(proposal["approval"].clone()).unwrap();
+        Guard::admit_phase2(&sample, approval, &SystemClock.sample().unwrap()).unwrap();
     }
     let mut h = Harness::new_sample(Some(sample.clone()), None);
     h.fixture_object_bytes = 4 * 1024 * 1024;

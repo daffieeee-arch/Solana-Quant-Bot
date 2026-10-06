@@ -2,6 +2,24 @@
 
 > **Document status: ACTIVE — bounded native campaign.** Current execution authority is the dated 2026-10-04 section below and the active handoff; older decisions retain their historical scope. #86 remains open / Unproven; Research Ready=false. No evaluation outcome release or B8.
 
+## Phase-two preparation — 2026-10-06
+
+The owner conditionally authorized the original ordinals 8–15, in order, after
+phase one became `COMPLETE_SEALED`. `of1-acquire campaign-phase2-proposal
+AGGREGATE_JSON` is read-only: it verifies the current campaign journal and all
+eight closed phase-one collection manifests, retains only their operational
+hashes and identities, and emits an exact phase-two approval target. The
+separate `campaign-phase2-admit` repeats these checks before committing an
+APPROVED phase grant. That grant neither dispatches a request nor replaces the
+fresh, separate metadata, payload and processing authorities for each window.
+The proposal is invalid after an intervening ledger or source change.
+
+Only DEVELOPMENT ordinals 0–3 and 8–11 may later be read through the separate
+manifest-pinned cohort route described in
+[the DEVELOPMENT cohort contract](B7_DEVELOPMENT_COHORT.md). Evaluation
+ordinals remain sealed. Phase-two execution and any resulting cohort report are
+private operational evidence, not completion or research sufficiency claims.
+
 ## Initial offline evaluation preparation — 2026-09-28
 
 The 2026-09-28 [accepted method and sealed evaluation route](B7_EVALUATION_SHIELD.md)

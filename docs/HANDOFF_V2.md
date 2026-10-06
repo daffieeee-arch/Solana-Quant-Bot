@@ -2,6 +2,18 @@
 
 > **Document status: ACTIVE.** This is the first document every coding agent must read. It supersedes [`HANDOFF.md`](HANDOFF.md) and [`CURRENT_STATE.md`](CURRENT_STATE.md) as the compact operational source of truth. When this file conflicts with a historical phase document, this file and the accepted V2 ADR govern.
 
+**Current B7 phase-two decision, 2026-10-06:** phase one is natively
+`COMPLETE_SEALED`. The owner conditionally authorized only the frozen ordinals
+8–15 in native order, with DEVELOPMENT 8–11 before sealed evaluation 12–15.
+The exact per-window phase authorities, budgets and stop rules are recorded in
+the private `governance/b7-phase2-execution-20261006/` dossier. Phase-two
+admission separately verifies the current ledger and eight closed phase-one
+manifests; it is not a network or processing lease. After ordinal 11, publish
+only a source-bound eight-window DEVELOPMENT overview and recheck capacity.
+Evaluation records/outcomes remain sealed; no final release, B8 or Research
+Ready promotion follows. The older dated decisions below are historical and
+do not revoke this newer bounded authorization.
+
 ## Mission and success criterion
 
 **B7 metadata continuation, 2026-10-04:** ordinal 4 is natively COMPLETE;

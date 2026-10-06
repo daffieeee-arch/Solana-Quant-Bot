@@ -3,7 +3,7 @@ import copy
 import json
 import pathlib
 import unittest
-from development_cohort import PINS, PINS_BYTES, build_report, summarize_window, native_bytes
+from development_cohort import PINS, PINS_BYTES, build_report, summarize_window, native_bytes, phase2_html
 from manifest_reader import sha, attach_dataset
 from collection_reader import attach_collection
 from test_collection import plan_fixture
@@ -96,6 +96,39 @@ class CohortTests(unittest.TestCase):
             if variant == 'mixed': wrong['windows'][0]['sample_identity'] = wrong['windows'][1]['sample_identity']
             if variant == 'selection': wrong['selection_sha256'] = '0'*64
             with self.assertRaises(ValueError): build_report(wrong)
+
+    def test_fixed_eight_development_windows_and_private_html(self):
+        pins = copy.deepcopy(PINS)
+        pins['schema'] = 'OF1_B7_DEVELOPMENT_COHORT_PINS_2'
+        a = full_admission()
+        for ordinal in range(8, 12):
+            pin = copy.deepcopy(PINS['windows'][0])
+            pin['ordinal'] = ordinal
+            pin['range'] = [422600000 + ordinal * 16, 422600016 + ordinal * 16]
+            pin['sha256'] = sha(f'fixture-window-{ordinal}'.encode())
+            pins['windows'].append(pin)
+            w = copy.deepcopy(a['windows'][0]); s = w['sample_identity']
+            w['ordinal'] = ordinal; w['collection_sha256'] = pin['sha256']
+            s['start_slot'], s['end_slot_exclusive'] = pin['range']
+            s['b7']['window_ordinal'] = ordinal; s['b7']['phase'] = 2
+            w['facts'] = [fact(s, s['start_slot'], n, n == 0, n) for n in range(pin['counts']['silver_facts'])]
+            a['windows'].append(w)
+        raw = native_bytes(pins)
+        a['schema'] = 'OF1_B7_DEVELOPMENT_ADMISSION_2'; a['pins_sha256'] = sha(raw)
+        report = build_report(a, raw)
+        self.assertEqual([w['ordinal'] for w in report['windows']], ['0','1','2','3','8','9','10','11'])
+        self.assertEqual(len(report['windows']), 8)
+        self.assertEqual(report['evaluation_access'], 'DENIED')
+        page = phase2_html(report)
+        self.assertIn(b'B7 DEVELOPMENT', page)
+        self.assertIn(pin['sha256'].encode(), page)
+        wrong = copy.deepcopy(a); wrong['windows'][-1]['sample_identity']['b7']['cohort_role'] = 'RESERVED_EVALUATION'
+        with self.assertRaises(ValueError): build_report(wrong, raw)
+        wrong = copy.deepcopy(a); wrong['windows'][-1] = wrong['windows'][-2]
+        with self.assertRaises(ValueError): build_report(wrong, raw)
+        wrong_pins = copy.deepcopy(pins); wrong_pins['windows'][0]['sha256'] = '0' * 64
+        wrong = copy.deepcopy(a); wrong['pins_sha256'] = sha(native_bytes(wrong_pins))
+        with self.assertRaises(ValueError): build_report(wrong, native_bytes(wrong_pins))
 
     def test_no_generic_reader_or_export_b7_override(self):
         # Denial precedes any filesystem/DB access, including outcome-bearing exports.
