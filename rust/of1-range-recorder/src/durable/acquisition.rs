@@ -13,7 +13,7 @@ use crate::clock_contract::{ApprovalAnchor, ClockPolicy, check_follows};
 use crate::{FormatSource, HOST, RECORD_BYTES, SLOTS_PER_EPOCH, sha256};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -507,6 +507,7 @@ struct Audit {
     attempts: Vec<Reservation>,
     streams: BTreeMap<u64, StreamRecord>,
     published: BTreeMap<u64, Published>,
+    http_429_stop_leases: BTreeSet<String>,
     clock_stops: Vec<ClockStop>,
 }
 
@@ -933,14 +934,12 @@ impl<C: Clock> AcquisitionStore<C> {
             }
         }
         // Deterministic inventory order: only the first remaining logical request is eligible.
-        let first = if self.payload.is_some() { 4 } else { 0 };
-        if (first..sequence).any(|s| !self.cache.published.contains_key(&s)) {
-            return Err(StoreError::Identity);
-        }
+        self.ensure_inventory_order(sequence)?;
         let allowance = request.allowance();
         let count = self.cache.attempts.len() as u64;
         let budget = &self.manifest.plan.budget;
         let stage = self.stage();
+        self.ensure_no_http_429_stop()?;
         let stage_attempts: Vec<_> = self
             .cache
             .attempts
@@ -1465,6 +1464,23 @@ impl<C: Clock> AcquisitionStore<C> {
             },
             |p| &p.stage,
         )
+    }
+    fn ensure_no_http_429_stop(&self) -> StoreResult<()> {
+        if self
+            .cache
+            .http_429_stop_leases
+            .contains(&self.stage().lease_sha256)
+        {
+            return Err(StoreError::Http429Stop);
+        }
+        Ok(())
+    }
+    fn ensure_inventory_order(&self, sequence: u64) -> StoreResult<()> {
+        let first = if self.payload.is_some() { 4 } else { 0 };
+        if (first..sequence).any(|s| !self.cache.published.contains_key(&s)) {
+            return Err(StoreError::Identity);
+        }
+        Ok(())
     }
     fn stage_for_reservation(&self, reservation: &Reservation) -> StoreResult<&StageRecord> {
         if let Some(c) = &self.continuation
@@ -2100,7 +2116,7 @@ impl<C: Clock> AcquisitionStore<C> {
         Ok(())
     }
 
-    fn audit_rejected(path: &Path, id: usize, audit: &Audit) -> StoreResult<()> {
+    fn audit_rejected(path: &Path, id: usize, audit: &mut Audit) -> StoreResult<()> {
         exact_names(path, &["headers.bin", "failure.json"])?;
         let (a, reason, digest): (Reservation, String, String) =
             decode(&read_bounded(&path.join("failure.json"), RECORD_LIMIT)?)?;
@@ -2114,6 +2130,12 @@ impl<C: Clock> AcquisitionStore<C> {
             || reason.len() > 256
         {
             return Err(StoreError::Corrupt);
+        }
+        // A fresh approval may advance beyond an old 429, but that same lease
+        // cannot silently dispatch another request after its own 429, even after
+        // process restart. The bounded retained header is the durable evidence.
+        if raw.starts_with(b"HTTP/1.1 429 ") {
+            audit.http_429_stop_leases.insert(a.lease_sha256.clone());
         }
         Ok(())
     }

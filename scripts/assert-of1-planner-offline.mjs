@@ -41,7 +41,7 @@ const B7_PROCESS_TEST_HASH = 'ba2e6f6b26ccba29d0afeec561089d30e75cdc7b2b85731a26
 const METADATA_INIT_TEST_HASH = '170b213ce35e573688be4063f985f66d35e2387092a8e33ec305d561fe265a84';
 const CONTINUATION_TEST_HASH = '0c8eb20ead882f6aa5b75c5e93831097de9b5f710e2f59c4af6f6d7fef87b3cf';
 const METADATA_CONTINUATION_APPROVED_TEST_HASH = 'a1236769328e42f94de013ae241122f7b0be3ae6b6e4a4cdfd05adfa74012013';
-const METADATA_CONTINUATION_TEST_HASH = '06ce08ad7ad8b3c5d09166c57e1862e9fc07d00adfd9e2e2397fe9434142209c';
+const METADATA_CONTINUATION_TEST_HASH = 'f2a6c4d490fc4db4dc3a88582ace454c57198ce4fce5cb426d6959ec76eb2145';
 const RATE_PROCESS_TEST_HASH = 'a1982e6bf196bc790fbd4689fa6c802b4f947a9b2dfb82d4c4788986e792ccf7';
 // No blanket network/process exception for a directory or Cargo feature. Exact reviewed
 // fixture sources only; their constructors accept a port, never a host/URL/provider config.

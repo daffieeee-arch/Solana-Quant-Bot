@@ -470,6 +470,7 @@ phase-two DEVELOPMENT window, ordinal 8, after its separate phase-two decision.
 Proposal and admission recheck the eight closed phase-one manifests, the fixed
 selection and source, the original charged attempts, retained receipts and the
 current campaign ledger. They do not grant a retry or alter the old lease. A
-new exact approval remains necessary before any request; HTTP 429 stays a
-terminal stop for that attempt. Other phase-two ordinals are not opened by this
-bounded extension.
+new exact approval remains necessary before any request. A retained HTTP 429
+blocks further dispatch under that same lease across process restarts; only a
+separate future decision can authorize a new lease. Other phase-two ordinals
+are not opened by this bounded extension.

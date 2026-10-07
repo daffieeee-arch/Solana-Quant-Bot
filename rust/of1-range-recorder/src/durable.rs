@@ -65,6 +65,8 @@ pub enum StoreError {
     AlreadyPublished,
     #[error("SOURCE_DRIFT: response total or source validator changed")]
     SourceDrift,
+    #[error("HTTP_429_STOP: this acquisition lease cannot dispatch again")]
+    Http429Stop,
     #[error("CONFLICTING_BYTES: retained same-range overlap disagrees")]
     ConflictingBytes,
     #[error("injected crash seam: {0:?}")]

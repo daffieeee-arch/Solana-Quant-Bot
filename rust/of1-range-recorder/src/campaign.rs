@@ -2455,6 +2455,8 @@ fn crash_point(point: &str) {
     }
 }
 
+#[cfg(any(test, feature = "loopback-fixture"))]
+pub mod phase2_fixture;
 #[cfg(test)]
 mod phase2_tests;
 #[cfg(test)]

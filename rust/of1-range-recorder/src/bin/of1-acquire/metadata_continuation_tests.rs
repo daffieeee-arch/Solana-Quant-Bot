@@ -6,6 +6,8 @@ use of1_range_recorder::{
     durable::{ClockSample, StoreResult, acquisition::RequestKind},
     sha256,
 };
+#[cfg(feature = "loopback-fixture")]
+use of1_range_recorder::campaign;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -33,6 +35,15 @@ pub(super) fn capture(root: &str, plan: &str, lease: &str) -> Result<()> {
     for seq in start..end {
         if store.published(seq)?.is_some() {
             continue;
+        }
+        if mode == "REJECT_429" && seq == 1 {
+            let permit = store.reserve(seq)?;
+            store.reject_response(
+                &permit,
+                b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n",
+                "HTTP_REJECTED",
+            )?;
+            return Err("HTTP_STATUS_UNSUPPORTED: 429".into());
         }
         let request = store.request(seq)?.clone();
         let raw = fs::read(raw_dir.join(format!("{seq}.bin")))?;
@@ -116,18 +127,66 @@ fn fixture_plan(sample: &of1_range_recorder::sample::SampleIdentity) -> Aggregat
     }
 }
 
+fn write_fixture_raw(root: &Path, sample: &of1_range_recorder::sample::SampleIdentity) -> Vec<u8> {
+    let mut index = vec![0u8; 432_000 * 12];
+    for i in 0..16 {
+        let at = usize::try_from(sample.start_slot - 978 * 432_000 + i).unwrap() * 12;
+        index[at..at + 8].copy_from_slice(&(4096 + i * 32).to_le_bytes());
+        index[at + 8..at + 12].copy_from_slice(&32u32.to_le_bytes());
+    }
+    let raw = root.join("raw");
+    fs::create_dir(&raw).unwrap();
+    fs::write(raw.join("0.bin"), &index).unwrap();
+    fs::write(
+        raw.join("1.bin"),
+        format!("{} epoch-978.car\n", "0".repeat(64)),
+    )
+    .unwrap();
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../schemas/acquisition/of1/car-structural-fixture.json"
+    ))
+    .unwrap();
+    fs::write(
+        raw.join("2.bin"),
+        format!("{}\n", fixture["root_cid_base32"].as_str().unwrap()),
+    )
+    .unwrap();
+    fs::write(raw.join("3.bin"), []).unwrap();
+    for i in 4..20 {
+        fs::write(raw.join(format!("{i}.bin")), [42; 32]).unwrap();
+    }
+    index
+}
+
 impl Case {
     fn new() -> Self {
-        Self::build(false)
+        Self::build(false, false)
     }
     fn published_index_then_429() -> Self {
-        Self::build(true)
+        Self::build(true, false)
     }
-    fn build(published_index_then_429: bool) -> Self {
+    #[cfg(feature = "loopback-fixture")]
+    fn phase_two_w08_index_then_429() -> Self {
+        Self::build(true, true)
+    }
+    fn build(published_index_then_429: bool, phase_two_w08: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let campaign = dir.path().join("campaign");
-        let root = campaign.join("runs/w00");
-        let sample = b7::sample(0, &campaign).unwrap();
+        let ordinal = if phase_two_w08 { 8 } else { 0 };
+        let root = campaign.join(format!("runs/w{ordinal:02}"));
+        #[cfg(feature = "loopback-fixture")]
+        if phase_two_w08 {
+            campaign::phase2_fixture::completed_phase_one(&campaign, false).unwrap();
+            let phase_two_sample = b7::sample(8, &campaign).unwrap();
+            let proposal = campaign::Guard::phase2_proposal(&phase_two_sample).unwrap();
+            let approval: campaign::PhaseApproval =
+                serde_json::from_value(proposal["approval"].clone()).unwrap();
+            campaign::Guard::admit_phase2(&phase_two_sample, approval, &SystemClock.sample().unwrap())
+                .unwrap();
+        }
+        #[cfg(not(feature = "loopback-fixture"))]
+        assert!(!phase_two_w08);
+        let sample = b7::sample(ordinal, &campaign).unwrap();
         let plan = fixture_plan(&sample);
         let old = ClockSample {
             wall_ms: 100_000,
@@ -145,33 +204,7 @@ impl Case {
             Fixed(old.clone()),
         )
         .unwrap();
-        let mut index = vec![0u8; 432_000 * 12];
-        for i in 0..16 {
-            let at = usize::try_from(sample.start_slot - 978 * 432_000 + i).unwrap() * 12;
-            index[at..at + 8].copy_from_slice(&(4096 + i * 32).to_le_bytes());
-            index[at + 8..at + 12].copy_from_slice(&32u32.to_le_bytes());
-        }
-        let raw = dir.path().join("raw");
-        fs::create_dir(&raw).unwrap();
-        fs::write(raw.join("0.bin"), &index).unwrap();
-        fs::write(
-            raw.join("1.bin"),
-            format!("{} epoch-978.car\n", "0".repeat(64)),
-        )
-        .unwrap();
-        let fixture: Value = serde_json::from_str(include_str!(
-            "../../../../../schemas/acquisition/of1/car-structural-fixture.json"
-        ))
-        .unwrap();
-        fs::write(
-            raw.join("2.bin"),
-            format!("{}\n", fixture["root_cid_base32"].as_str().unwrap()),
-        )
-        .unwrap();
-        fs::write(raw.join("3.bin"), []).unwrap();
-        for i in 4..20 {
-            fs::write(raw.join(format!("{i}.bin")), [42; 32]).unwrap();
-        }
+        let index = write_fixture_raw(dir.path(), &sample);
         let request = store.request(0).unwrap().clone();
         let permit = store.reserve(0).unwrap();
         let header = format!(
@@ -265,6 +298,9 @@ impl Case {
             .unwrap()
     }
     fn command(&self, op: &str, lease: &str, extra: &[String], ok: bool) -> Value {
+        self.command_mode(op, lease, extra, "", ok)
+    }
+    fn command_mode(&self, op: &str, lease: &str, extra: &[String], mode: &str, ok: bool) -> Value {
         let mut args = vec![
             op.into(),
             self.root.display().to_string(),
@@ -272,7 +308,7 @@ impl Case {
             lease.into(),
         ];
         args.extend_from_slice(extra);
-        self.invoke(&args, "", ok)
+        self.invoke(&args, mode, ok)
     }
     fn proposal(&self) -> Value {
         self.command("metadata-continuation-proposal", &self.old_lease, &[], true)
@@ -435,4 +471,118 @@ fn cli_published_index_and_charged_429_require_exact_one_time_continuation() {
     assert_eq!(after["attempts_reserved"], 5);
     assert_eq!(after["unpublished_attempts"], 1);
     c.unchanged();
+}
+
+#[cfg(feature = "loopback-fixture")]
+#[test]
+fn cli_w08_phase_two_continuation_revalidates_manifest_ledger_and_published_index() {
+    let c = Case::phase_two_w08_index_then_429();
+    let before = c.command("progress", &c.old_lease, &[], true);
+    assert_eq!(before["published_requests"], 1);
+    assert_eq!(before["attempts_reserved"], 2);
+    assert_eq!(before["charged_entity_bytes"], 5_188_096u64);
+    c.command("metadata-continuation-proposal", &"f".repeat(64), &[], false);
+    c.command("capture-stage", &c.old_lease, &[], false);
+
+    let sidecar = c
+        .root
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("work/w07/collection.json.sha256");
+    let original_sidecar = fs::read(&sidecar).unwrap();
+    fs::write(&sidecar, b"0".repeat(64)).unwrap();
+    c.command("metadata-continuation-proposal", &c.old_lease, &[], false);
+    fs::write(&sidecar, &original_sidecar).unwrap();
+    let proposal = c.proposal();
+    assert_eq!(
+        proposal["approval"]["binding"]["sample_identity"]["b7"]["window_ordinal"],
+        8
+    );
+    assert_eq!(proposal["approval"]["binding"]["prior_attempts"], 2);
+    let mut wrong = proposal["approval"].clone();
+    wrong["binding"]["previous_ledger_sha256"] = json!("f".repeat(64));
+    c.admit(&wrong, false);
+    wrong = proposal["approval"].clone();
+    wrong["binding"]["expected_source_fingerprint"] = json!("f".repeat(64));
+    c.admit(&wrong, false);
+    let admitted = c.admit(&proposal["approval"], true);
+    let lease = admitted["current_lease_sha256"].as_str().unwrap();
+    c.admit(&proposal["approval"], false);
+    let finished = c.command("capture-stage", lease, &[], true);
+    assert_eq!(finished["published_requests"], 4);
+    assert_eq!(finished["attempts_reserved"], 5);
+    assert_eq!(finished["unpublished_attempts"], 1);
+    c.unchanged();
+    let status = c.invoke(
+        &[
+            "campaign-status".into(),
+            c.root.parent().unwrap().parent().unwrap().display().to_string(),
+        ],
+        "",
+        true,
+    );
+    assert_eq!(status["registered_windows"], 9);
+    assert_eq!(status["attempts_reserved"], 5);
+}
+
+#[cfg(feature = "loopback-fixture")]
+#[test]
+fn cli_w08_new_429_stops_same_continuation_lease_across_restart() {
+    let c = Case::phase_two_w08_index_then_429();
+    let proposal = c.proposal();
+    let admitted = c.admit(&proposal["approval"], true);
+    let lease = admitted["current_lease_sha256"].as_str().unwrap();
+    c.command_mode("capture-stage", lease, &[], "REJECT_429", false);
+    let stopped = c.command("progress", lease, &[], true);
+    assert_eq!(stopped["attempts_reserved"], 3);
+    assert_eq!(stopped["published_requests"], 1);
+    c.command("capture-stage", lease, &[], false);
+    let after = c.command("progress", lease, &[], true);
+    assert_eq!(after["attempts_reserved"], 3);
+    assert_eq!(after["charged_entity_bytes"], 5_192_192u64);
+    c.unchanged();
+}
+
+#[cfg(feature = "loopback-fixture")]
+#[test]
+fn cli_w08_metadata_init_requires_separate_phase_two_admission() {
+    let dir = tempfile::tempdir().unwrap();
+    let campaign_root = dir.path().join("campaign");
+    campaign::phase2_fixture::completed_phase_one(&campaign_root, false).unwrap();
+    let root = campaign_root.join("runs/w08");
+    let sample = b7::sample(8, &campaign_root).unwrap();
+    let plan = fixture_plan(&sample);
+    let plan_path = dir.path().join("plan.json");
+    fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+    let lease_path = dir.path().join("lease.json");
+    fs::write(
+        &lease_path,
+        serde_json::to_vec(&MetadataLease {
+            schema: "OF1_METADATA_LEASE_1".into(),
+            authority: Authority::Fixture,
+            budget: metadata_budget(false),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let c = Case {
+        dir,
+        root,
+        plan,
+        old_lease: String::new(),
+        old: std::collections::BTreeMap::default(),
+    };
+    c.invoke(
+        &[
+            "metadata-init".into(),
+            c.root.display().to_string(),
+            plan_path.display().to_string(),
+            lease_path.display().to_string(),
+        ],
+        "",
+        false,
+    );
+    assert!(!c.root.exists());
 }
