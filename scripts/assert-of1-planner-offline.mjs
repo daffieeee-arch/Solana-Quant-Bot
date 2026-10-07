@@ -202,6 +202,20 @@ async function run(mode) {
     process.stdout.write(isolated('test.lib.all-features', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--all-features', '--lib']).stdout);
     const tests = isolated('test.default', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--all-targets']);
     process.stdout.write(tests.stdout);
+    // These synthetic w08 CLI cases require the source-pinned fixture feature,
+    // but no socket: run them under the same syscall network denial as default tests.
+    const w08 = isolated('test.w08-metadata-continuation', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline',
+      '--features', 'loopback-fixture', '--bin', 'of1-acquire', 'metadata_continuation_tests::cli_w08_', '--', '--test-threads=1']);
+    const w08Cases = [
+      'cli_w08_phase_two_continuation_revalidates_manifest_ledger_and_published_index',
+      'cli_w08_new_429_stops_same_continuation_lease_across_restart',
+      'cli_w08_metadata_init_requires_separate_phase_two_admission',
+    ];
+    if (!w08.stdout.includes('test result: ok. 3 passed; 0 failed; 0 ignored;')
+      || w08Cases.some(name => !w08.stdout.includes(`test metadata_continuation_tests::${name} ... ok`))) {
+      throw new Error('w08 metadata continuation CLI fixture tests did not all execute');
+    }
+    process.stdout.write(w08.stdout);
     const build = isolated('compile.default-bins', 'cargo', ['+1.97.1', 'build', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
     const artifacts = build.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s));
     const binary = artifacts
