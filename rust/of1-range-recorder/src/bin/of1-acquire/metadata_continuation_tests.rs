@@ -118,6 +118,12 @@ fn fixture_plan(sample: &of1_range_recorder::sample::SampleIdentity) -> Aggregat
 
 impl Case {
     fn new() -> Self {
+        Self::build(false)
+    }
+    fn published_index_then_429() -> Self {
+        Self::build(true)
+    }
+    fn build(published_index_then_429: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let campaign = dir.path().join("campaign");
         let root = campaign.join("runs/w00");
@@ -181,6 +187,17 @@ impl Case {
         // Comparable complete retained response, deliberately without publication.
         for part in index.chunks(65_536) {
             store.append_stream(&permit, part).unwrap();
+        }
+        if published_index_then_429 {
+            store.finish_stream(permit).unwrap();
+            let rejected = store.reserve(1).unwrap();
+            store
+                .reject_response(
+                    &rejected,
+                    b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n",
+                    "HTTP_STATUS_UNSUPPORTED: 429",
+                )
+                .unwrap();
         }
         let old_lease = store.progress().unwrap().current_lease_sha256;
         drop(store);
@@ -379,5 +396,43 @@ fn cli_metadata_continuation_conflicting_retry_is_terminal_and_charged() {
     assert_eq!(fs::read_dir(c.root.join("published")).unwrap().count(), 0);
     c.command("capture-stage", lease, &[], false); // no extra attempt after conflict
     assert_eq!(fs::read_dir(c.root.join("attempts")).unwrap().count(), 2);
+    c.unchanged();
+}
+
+#[test]
+fn cli_published_index_and_charged_429_require_exact_one_time_continuation() {
+    let c = Case::published_index_then_429();
+    let before = c.command("progress", &c.old_lease, &[], true);
+    assert_eq!(before["published_requests"], 1);
+    assert_eq!(before["attempts_reserved"], 2);
+    assert_eq!(before["unpublished_attempts"], 1);
+    assert_eq!(before["charged_entity_bytes"], 5_188_096u64);
+    c.command("progress", &"f".repeat(64), &[], false);
+    c.command("capture-stage", &c.old_lease, &[], false);
+    let proposal = c.proposal();
+    assert_eq!(proposal["approval"]["binding"]["prior_attempts"], 2);
+    assert_eq!(
+        proposal["approval"]["binding"]["remaining_budget"]["max_requests"],
+        10
+    );
+    assert_eq!(
+        proposal["approval"]["binding"]["remaining_budget"]
+            ["max_response_entity_bytes_total"],
+        10_388_480u64
+    );
+    let mut wrong = proposal["approval"].clone();
+    wrong["binding"]["previous_ledger_sha256"] = json!("f".repeat(64));
+    c.admit(&wrong, false);
+    wrong = proposal["approval"].clone();
+    wrong["binding"]["expected_source_fingerprint"] = json!("f".repeat(64));
+    c.admit(&wrong, false);
+    let admitted = c.admit(&proposal["approval"], true);
+    let lease = admitted["current_lease_sha256"].as_str().unwrap();
+    c.admit(&proposal["approval"], false);
+    c.command("metadata-continuation-proposal", &c.old_lease, &[], false);
+    let after = c.command("capture-stage", lease, &[], true);
+    assert_eq!(after["published_requests"], 4);
+    assert_eq!(after["attempts_reserved"], 5);
+    assert_eq!(after["unpublished_attempts"], 1);
     c.unchanged();
 }

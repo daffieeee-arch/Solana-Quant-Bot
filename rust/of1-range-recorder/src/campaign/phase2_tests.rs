@@ -159,3 +159,52 @@ fn phase_two_fixture_accepts_regular_first_manifest_with_journal_binding() {
     let approval: PhaseApproval = serde_json::from_value(proposal["approval"].clone()).unwrap();
     Guard::admit_phase2(&sample, approval, &at).unwrap();
 }
+
+#[test]
+fn w08_metadata_continuation_rechecks_phase_two_and_all_phase_one_manifests() {
+    let (_dir, sample, at) = completed_phase_one_fixture(false);
+    let root = Path::new(&sample.b7.as_ref().unwrap().campaign_root);
+    let proposal = Guard::phase2_proposal(&sample).unwrap();
+    let approval: PhaseApproval = serde_json::from_value(proposal["approval"].clone()).unwrap();
+    Guard::admit_phase2(&sample, approval, &at).unwrap();
+    let mut g = Guard::open(root, true).unwrap();
+    let mut next = g.state.clone();
+    next.runs.insert(
+        8,
+        Run {
+            aggregate: "a".repeat(64),
+            metadata_lease: "b".repeat(64),
+            payload_lease: None,
+            payload_continuation: None,
+            metadata_continuation: None,
+            requests: 2,
+            entity: 5_188_096,
+            attempts: BTreeMap::from([(0, 5_184_000), (1, 4_096)]),
+        },
+    );
+    next.requests += 2;
+    next.entity += 5_188_096;
+    g.commit(next).unwrap();
+    let head = g.metadata_continuation_head(8).unwrap();
+    assert_eq!(head, g.head_hash);
+    assert!(g.metadata_continuation_head(9).is_err());
+    assert!(
+        g.admit_metadata_continuation(8, &"f".repeat(64), &"e".repeat(64))
+            .is_err()
+    );
+
+    let original_phase2 = g.state.phase2.take();
+    assert!(g.metadata_continuation_head(8).is_err());
+    g.state.phase2 = original_phase2;
+
+    let sidecar = root.join("work/w07/collection.json.sha256");
+    let original = fs::read(&sidecar).unwrap();
+    fs::write(&sidecar, b"0".repeat(64)).unwrap();
+    assert!(g.metadata_continuation_head(8).is_err());
+    fs::write(&sidecar, original).unwrap();
+    assert_eq!(g.metadata_continuation_head(8).unwrap(), head);
+
+    g.admit_metadata_continuation(8, &head, &"e".repeat(64))
+        .unwrap();
+    assert!(g.metadata_continuation_head(8).is_err());
+}

@@ -1482,7 +1482,9 @@ impl Guard {
     }
     pub(crate) fn metadata_continuation_head(&self, window: u64) -> StoreResult<String> {
         let r = self.state.runs.get(&window).ok_or(StoreError::Identity)?;
-        if window >= 8
+        if window > 8
+            || (window == 8
+                && (self.state.phase2.is_none() || self.phase_one_manifests()?.len() != 8))
             || self.state.runs.len() as u64 != window + 1
             || (0..window).any(|i| self.state.processing.get(&i).is_none_or(|p| !p.complete))
             || r.requests == 0
@@ -2200,14 +2202,7 @@ impl Guard {
         }
     }
 
-    fn phase_one_evidence(&self) -> StoreResult<serde_json::Value> {
-        if self.state.phase2.is_some()
-            || self.state.evaluation_release.is_some()
-            || self.state.runs.len() != 8
-            || self.state.processing.len() != 8
-        {
-            return Err(StoreError::Identity);
-        }
+    fn phase_one_manifests(&self) -> StoreResult<Vec<serde_json::Value>> {
         let development: serde_json::Value =
             serde_json::from_slice(DEVELOPMENT_PINS).map_err(|_| fail())?;
         let fixed = development["windows"]
@@ -2278,6 +2273,18 @@ impl Guard {
                 "role":if ordinal < 4 {"DEVELOPMENT"} else {"RESERVED_EVALUATION"},
                 "collection_sha256":hash}));
         }
+        Ok(manifests)
+    }
+
+    fn phase_one_evidence(&self) -> StoreResult<serde_json::Value> {
+        if self.state.phase2.is_some()
+            || self.state.evaluation_release.is_some()
+            || self.state.runs.len() != 8
+            || self.state.processing.len() != 8
+        {
+            return Err(StoreError::Identity);
+        }
+        let manifests = self.phase_one_manifests()?;
         Ok(
             serde_json::json!({"schema":"OF1_B7_PHASE1_INTEGRITY_EVIDENCE_1",
                 "campaign_id":self.header.campaign,"selection_sha256":self.header.selection,
