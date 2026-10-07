@@ -464,3 +464,13 @@ For the authorized resumed batch 5→6→7, every next window still requires nat
 completion of the preceding sixteen slots and closed collection manifest.
 Evaluation processing/release authorities remain separate; all outcomes stay
 sealed. #86 remains open/Unproven and Research Ready=false.
+
+The same one-time metadata-continuation contract also admits only the first
+phase-two DEVELOPMENT window, ordinal 8, after its separate phase-two decision.
+Proposal and admission recheck the eight closed phase-one manifests, the fixed
+selection and source, the original charged attempts, retained receipts and the
+current campaign ledger. They do not grant a retry or alter the old lease. A
+new exact approval remains necessary before any request. A retained HTTP 429
+blocks further dispatch under that same lease across process restarts; only a
+separate future decision can authorize a new lease. Other phase-two ordinals
+are not opened by this bounded extension.

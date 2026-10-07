@@ -14,6 +14,18 @@ Evaluation records/outcomes remain sealed; no final release, B8 or Research
 Ready promotion follows. The older dated decisions below are historical and
 do not revoke this newer bounded authorization.
 
+**w08 metadata stop, 2026-10-06:** the index is published, while the next
+metadata request returned HTTP 429 and remains charged without a receipt.
+The original run has no payload or processing output. A later read-only native
+progress check with the original binary, plan and lease under the required
+resource scope validates one publication and two attempts; the exact cause of
+the earlier recorded identity refusal is not recoverable from its retained
+summary. The bounded w08 continuation change rechecks phase-two admission and
+all eight phase-one manifests and still requires a separate exact approval
+after protected delivery. It neither retries HTTP 429 automatically nor opens
+evaluation data. Private operational evidence is in
+`governance/b7-phase2-execution-20261006/` and the new w08 dossier.
+
 ## Mission and success criterion
 
 **B7 metadata continuation, 2026-10-04:** ordinal 4 is natively COMPLETE;

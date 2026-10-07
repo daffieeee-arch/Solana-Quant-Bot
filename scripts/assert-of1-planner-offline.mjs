@@ -41,7 +41,7 @@ const B7_PROCESS_TEST_HASH = 'ba2e6f6b26ccba29d0afeec561089d30e75cdc7b2b85731a26
 const METADATA_INIT_TEST_HASH = '170b213ce35e573688be4063f985f66d35e2387092a8e33ec305d561fe265a84';
 const CONTINUATION_TEST_HASH = '0c8eb20ead882f6aa5b75c5e93831097de9b5f710e2f59c4af6f6d7fef87b3cf';
 const METADATA_CONTINUATION_APPROVED_TEST_HASH = 'a1236769328e42f94de013ae241122f7b0be3ae6b6e4a4cdfd05adfa74012013';
-const METADATA_CONTINUATION_TEST_HASH = '751bb32762261ca4ccfdefbc61ae9aa0ce56f66a911633cb1132498e25af7624';
+const METADATA_CONTINUATION_TEST_HASH = 'f2a6c4d490fc4db4dc3a88582ace454c57198ce4fce5cb426d6959ec76eb2145';
 const RATE_PROCESS_TEST_HASH = 'a1982e6bf196bc790fbd4689fa6c802b4f947a9b2dfb82d4c4788986e792ccf7';
 // No blanket network/process exception for a directory or Cargo feature. Exact reviewed
 // fixture sources only; their constructors accept a port, never a host/URL/provider config.
@@ -202,6 +202,20 @@ async function run(mode) {
     process.stdout.write(isolated('test.lib.all-features', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--all-features', '--lib']).stdout);
     const tests = isolated('test.default', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--all-targets']);
     process.stdout.write(tests.stdout);
+    // These synthetic w08 CLI cases require the source-pinned fixture feature,
+    // but no socket: run them under the same syscall network denial as default tests.
+    const w08 = isolated('test.w08-metadata-continuation', 'cargo', ['+1.97.1', 'test', ...manifest, '--profile', 'ci-test', '--locked', '--offline',
+      '--features', 'loopback-fixture', '--bin', 'of1-acquire', 'metadata_continuation_tests::cli_w08_', '--', '--test-threads=1']);
+    const w08Cases = [
+      'cli_w08_phase_two_continuation_revalidates_manifest_ledger_and_published_index',
+      'cli_w08_new_429_stops_same_continuation_lease_across_restart',
+      'cli_w08_metadata_init_requires_separate_phase_two_admission',
+    ];
+    if (!w08.stdout.includes('test result: ok. 3 passed; 0 failed; 0 ignored;')
+      || w08Cases.some(name => !w08.stdout.includes(`test metadata_continuation_tests::${name} ... ok`))) {
+      throw new Error('w08 metadata continuation CLI fixture tests did not all execute');
+    }
+    process.stdout.write(w08.stdout);
     const build = isolated('compile.default-bins', 'cargo', ['+1.97.1', 'build', ...manifest, '--profile', 'ci-test', '--locked', '--offline', '--bins', '--message-format=json-render-diagnostics']);
     const artifacts = build.stdout.split('\n').filter(Boolean).map(s => JSON.parse(s));
     const binary = artifacts

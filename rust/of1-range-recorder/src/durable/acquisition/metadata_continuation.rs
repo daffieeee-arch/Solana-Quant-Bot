@@ -54,8 +54,8 @@ fn fixed_sample(plan: &AggregatePlan, fixture: bool) -> StoreResult<crate::sampl
     let sample = plan.sample_identity.as_ref().ok_or(StoreError::Identity)?;
     sample.validate(plan.epoch)?;
     let b = sample.b7.as_ref().ok_or(StoreError::Identity)?;
-    if b.phase != 1
-        || b.window_ordinal >= 8
+    if !((b.phase == 1 && b.window_ordinal < 8)
+        || (b.phase == 2 && b.window_ordinal == 8 && b.cohort_role == "DEVELOPMENT"))
         || (!fixture && b.campaign_root != crate::b7::PRODUCTION_ROOT)
         || plan.clock_policy.as_ref() != Some(&ClockPolicy::standard())
     {
