@@ -1,5 +1,7 @@
 # DOCUMENT_STATUS.md — V2 documentation authority map
 
+> **FROZEN on 2026-10-09.** V2 is frozen at tag `v2-frozen-2026-10-09`; active work continues in [`lab/`](../lab/README.md) under the lean rules in [`AGENTS.md`](../AGENTS.md). This document is kept as reference only.
+
 > **Document status: ACTIVE.** This registry prevents historical evidence and cancelled runbooks from being mistaken for current instructions.
 
 ## Status semantics

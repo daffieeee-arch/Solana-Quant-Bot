@@ -1,5 +1,7 @@
 # HANDOFF_V2.md — authoritative V2 handoff
 
+> **FROZEN on 2026-10-09.** V2 is frozen at tag `v2-frozen-2026-10-09`; active work continues in [`lab/`](../lab/README.md) under the lean rules in [`AGENTS.md`](../AGENTS.md). This document is kept as reference only.
+
 > **Document status: ACTIVE.** This is the first document every coding agent must read. It supersedes [`HANDOFF.md`](HANDOFF.md) and [`CURRENT_STATE.md`](CURRENT_STATE.md) as the compact operational source of truth. When this file conflicts with a historical phase document, this file and the accepted V2 ADR govern.
 
 **Bounded B8 DEVELOPMENT prototype, 2026-10-08:** the owner authorized one
