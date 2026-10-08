@@ -2,6 +2,17 @@
 
 > **Document status: ACTIVE.** This is the first document every coding agent must read. It supersedes [`HANDOFF.md`](HANDOFF.md) and [`CURRENT_STATE.md`](CURRENT_STATE.md) as the compact operational source of truth. When this file conflicts with a historical phase document, this file and the accepted V2 ADR govern.
 
+**Bounded B8 DEVELOPMENT prototype, 2026-10-08:** the owner authorized one
+offline baseline preparation over only the already inspected w00–w03 inputs.
+The fixed [baseline method](research/B8_DEVELOPMENT_BASELINE_PROTOTYPE.md)
+uses first-half admitted buys as candidate chain-earlier inputs and later
+admitted pairs only as labels. Four positives without certified negatives or
+an untouched holdout yield `INSUFFICIENT_SAMPLE`, not a B8 acceptance or edge
+claim. Historical observation/actionability and execution remain unavailable;
+#87 and B7/#86 stay open, Research Ready=false. This authorization does not
+resume w08 or release any sealed evaluation outcome. The older dated entries
+below retain their original scope.
+
 **Bounded offline DEVELOPMENT research tooling, 2026-10-08:** the
 [B8 point-in-time walking skeleton](research/B8_DEVELOPMENT_PIT_SKELETON.md)
 uses only the four already inspected B7 DEVELOPMENT windows w00–w03 and their
