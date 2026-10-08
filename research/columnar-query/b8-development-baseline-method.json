@@ -1,0 +1,13 @@
+{
+  "schema": "B8_DEVELOPMENT_BASELINE_METHOD_1",
+  "scope": "FIXED_DEVELOPMENT_W00_W03_ALREADY_INSPECTED",
+  "unit": "one sixteen-slot window",
+  "boundary": "after all atomic packages in the first eight slots, before the ninth slot",
+  "candidate_input": "at least one successful Rust-admitted Silver buy in the first eight slots",
+  "prediction": "one if candidate_input is present, otherwise zero, for a later admitted same-mint buy/sell pair",
+  "comparison": "always predict zero for the same later pair outcome",
+  "label": "one only with a source-bound admitted first-half buy and second-half sell for the same mint in distinct atomic packages; zero only with an independently certified complete negative under the accepted B7 coverage rule; otherwise UNKNOWN",
+  "measure": "Brier mean squared error over independently assessable windows, with unknown labels excluded and counted separately",
+  "assessment": "These four already inspected windows are all positive and have no certified negatives or untouched holdout. Arithmetic scores are descriptive software checks only; the assessment is INSUFFICIENT_SAMPLE.",
+  "causal_limit": "Chain order is not historical observed_at, actionable_at, latency, execution opportunity or fill evidence. Later facts are label-only; operational clocks are never features."
+}
