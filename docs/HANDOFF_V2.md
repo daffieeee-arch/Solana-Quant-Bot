@@ -2,6 +2,17 @@
 
 > **Document status: ACTIVE.** This is the first document every coding agent must read. It supersedes [`HANDOFF.md`](HANDOFF.md) and [`CURRENT_STATE.md`](CURRENT_STATE.md) as the compact operational source of truth. When this file conflicts with a historical phase document, this file and the accepted V2 ADR govern.
 
+**Bounded offline DEVELOPMENT research tooling, 2026-10-08:** the
+[B8 point-in-time walking skeleton](research/B8_DEVELOPMENT_PIT_SKELETON.md)
+uses only the four already inspected B7 DEVELOPMENT windows w00–w03 and their
+fixed native Silver admission. It separates first-half chain-earlier candidates
+from second-half outcome evidence at a proposed boundary, with historical
+observation, actionability, latency and execution still unavailable. This is
+not B7 completion, a B8 baseline verdict or Research Ready. w08 network work
+is paused: its two HTTP-429 attempts, published index, ledger and fatal-clock
+marker remain evidence. A non-mutating progress route and any cross-boot reuse
+need separate decisions; no evaluation data are exposed by this increment.
+
 **Current B7 phase-two decision, 2026-10-06:** phase one is natively
 `COMPLETE_SEALED`. The owner conditionally authorized only the frozen ordinals
 8–15 in native order, with DEVELOPMENT 8–11 before sealed evaluation 12–15.
