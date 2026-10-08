@@ -14,6 +14,8 @@ the existing source-bound pair witness from distinct transaction packages.
 An absent witness is **UNKNOWN** while semantic Pump coverage cannot certify
 a negative. The Brier mean squared error is computed only for known labels;
 its denominator and unknown count are explicit.
+Unpaired first-half candidate mints remain separately visible as unknowns even
+when their window has another mint with a positive witness.
 
 This necessary-condition rule is intentionally simple and can fail when an
 earlier buy has no later admitted sell in a window with certified negative

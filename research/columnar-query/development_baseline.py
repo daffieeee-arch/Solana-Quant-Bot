@@ -65,6 +65,20 @@ def project_window(window):
                 and sell['package_id'] == witness['later_package_id'],
                 'source-bound positive pair remains across distinct packages')
     require(len(witnesses) == len({w['mint'] for w in witnesses}), 'one pair witness per mint')
+    require({s['mint'] for s in window['candidate_mint_snapshots']
+             if s['observed_positive_witness'] is not None} == {w['mint'] for w in witnesses},
+            'candidate snapshots and positive witnesses agree')
+    unknown_mints = []
+    for snapshot in window['candidate_mint_snapshots']:
+        if snapshot['observed_positive_witness'] is not None:
+            continue
+        require(snapshot['negative_state'] == 'UNAVAILABLE_INCOMPLETE_SEMANTIC_COVERAGE'
+                and snapshot['chain_earlier_buy_candidate_hashes'],
+                'unpaired earlier candidate remains an explicit coverage unknown')
+        unknown_mints.append({'mint': snapshot['mint'],
+                              'earlier_buy_fact_sha256': snapshot['chain_earlier_buy_candidate_hashes'],
+                              'later_sell_label_only_sha256': snapshot['later_sell_label_only_hashes'],
+                              'state': snapshot['negative_state']})
     # The current admitted PIT contract has no certified-negative state. A
     # missing witness cannot be converted into a zero label by this prototype.
     require(window['negative_conclusion'] == 'UNAVAILABLE_SEMANTIC_COVERAGE_NOT_ESTABLISHED',
@@ -82,6 +96,7 @@ def project_window(window):
             'outcome': {'label': None if label is None else str(label),
                         'state': 'OBSERVED_ADMITTED_POSITIVE_PAIR' if label else 'UNKNOWN_INCOMPLETE_PUMP_COVERAGE',
                         'positive_witnesses': witnesses,
+                        'unassessable_candidate_mints': unknown_mints,
                         'late_facts_are_label_only': True},
             'first_half_admitted_facts': first, 'second_half_label_only_facts': later,
             'unavailable': {'historical_observed_at': None, 'actionable_at': None,
@@ -150,13 +165,14 @@ def html_report(report):
         earlier = ', '.join(window['feature']['first_half_buy_fact_sha256']) or 'geen toegelaten buy'
         witnesses = '; '.join(f"{x['mint']}: {x['earlier_buy_fact_sha256']} → {x['later_sell_fact_sha256']}"
                               for x in window['outcome']['positive_witnesses']) or 'UNKNOWN'
+        unknowns = '; '.join(x['mint'] for x in window['outcome']['unassessable_candidate_mints']) or 'geen'
         rows.append('<tr>' + ''.join(f'<td>{esc(x)}</td>' for x in
                     (f"w{int(window['ordinal']):02d}", window['sample_identity']['start_slot'],
                      window['decision_boundary']['before_slot'], window['sample_identity']['end_slot_exclusive'],
                      window['counts']['packages'], window['counts']['failures'], window['counts']['silver_facts'],
                      window['feature']['first_half_admitted_buy_count'],
                      window['prediction']['pair_probability'], window['outcome']['state'],
-                     earlier, witnesses, window['source']['collection_sha256'])) + '</tr>')
+                     earlier, witnesses, unknowns, window['source']['collection_sha256'])) + '</tr>')
     return ('<!doctype html><html lang="nl"><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
             '<title>B8 · DEVELOPMENT-baseline</title><style>body{font:16px system-ui;max-width:100rem;margin:auto;padding:1rem}'
             'section{overflow-x:auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #777;padding:.4rem;text-align:left;overflow-wrap:anywhere}'
@@ -172,7 +188,7 @@ def html_report(report):
             'Research Ready: false.</p><section><table><caption>Vaste vensters w00–w03; hashes verwijzen naar bestaande bronfeiten</caption>'
             '<thead><tr><th>Venster</th><th>Startslot</th><th>Grens vóór slot</th><th>Eindslot</th><th>Packages</th><th>Failures</th>'
             '<th>Silver-feiten</th><th>Eerdere buys</th><th>Voorspelling</th><th>Later label</th><th>Eerdere buy-hashes</th>'
-            '<th>Later paarbewijs (buy → sell)</th><th>Collectiehash</th></tr></thead><tbody>'
+            '<th>Later paarbewijs (buy → sell)</th><th>Onbeoordeelbare kandidaat-mints</th><th>Collectiehash</th></tr></thead><tbody>'
             + ''.join(rows) + '</tbody></table></section><p>Volledige fact-, package-, receipt-, manifest- en methodebindingen staan in '
             '<a href="report.json">de reproduceerbare JSON</a>. Operationele klokken staan afzonderlijk in execution.json.</p></html>\n').encode()
 

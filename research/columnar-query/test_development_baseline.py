@@ -26,10 +26,15 @@ class DevelopmentBaselineTests(unittest.TestCase):
         changed = copy.deepcopy(pit)
         changed['observed_positive_witnesses'] = []
         changed['facts'] = [f for f in changed['facts'] if f['pit_role'].startswith('EARLIER_')]
+        changed['candidate_mint_snapshots'][0]['observed_positive_witness'] = None
+        changed['candidate_mint_snapshots'][0]['negative_state'] = 'UNAVAILABLE_INCOMPLETE_SEMANTIC_COVERAGE'
+        changed['candidate_mint_snapshots'][0]['later_sell_label_only_hashes'] = []
         projected = project_window(changed)
         self.assertEqual(projected['prediction'], result['prediction'])
         self.assertIsNone(projected['outcome']['label'])
         self.assertEqual(projected['outcome']['state'], 'UNKNOWN_INCOMPLETE_PUMP_COVERAGE')
+        self.assertEqual(projected['outcome']['unassessable_candidate_mints'][0]['mint'],
+                         changed['candidate_mint_snapshots'][0]['mint'])
 
     def test_multiple_facts_one_package_exact_integer_and_nulls(self):
         sample = window()['sample_identity']; start = sample['start_slot']
