@@ -1,0 +1,235 @@
+<title>Toernooi v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
+<style>
+/* Layout: verdict line, filter chips, ranked table, then small-multiple P&L curves (one per family x variant) against the N2 shadow. */
+:root {
+  --bg: #f5f7f6; --surface: #ffffff; --fg: #17201d; --muted: #5b6a65; --line: #dde4e1; --grid: #e9eeec;
+  --accent: #0f766e; --accent-soft: #e0f2ef; --s1: #2a78d6; --n2: #8a9792;
+  --pos: #15803d; --neg: #b91c1c; --warn: #9a3412; --warn-soft: #fdebdd;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d; --grid: #1f2925;
+  --accent: #5eead4; --accent-soft: #123430; --s1: #3987e5; --n2: #7d8c86; --pos: #4ade80; --neg: #f87171;
+  --warn: #fdba74; --warn-soft: #3a2113; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d; --grid: #1f2925;
+  --accent: #5eead4; --accent-soft: #123430; --s1: #3987e5; --n2: #7d8c86; --pos: #4ade80; --neg: #f87171;
+  --warn: #fdba74; --warn-soft: #3a2113; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 56px; display: grid; gap: 22px; }
+.wrap > * { min-width: 0; }
+h1 { font-size: 1.7rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 1.1rem; font-weight: 600; margin: 0; }
+.sub, .lede { color: var(--muted); margin: 0; max-width: 72ch; }
+.lede { font-size: 0.92rem; }
+.meta { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+section { display: grid; gap: 10px; min-width: 0; }
+.verdict { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 4px; }
+.verdict b { font-variant-numeric: tabular-nums; }
+.verdict.none { border-color: var(--warn); }
+.filters { display: grid; gap: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row .k { font-size: 0.8rem; color: var(--muted); min-width: 6.5rem; }
+.chip { font: inherit; font-size: 0.85rem; border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 3px 11px; border-radius: 999px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chip:focus-visible, th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; max-height: 70vh; }
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+th, td { padding: 7px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+th { font-weight: 500; color: var(--muted); font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface); position: sticky; top: 0; z-index: 1; }
+th button { all: unset; cursor: pointer; }
+td.l, th.l { text-align: left; }
+td.mono { font-family: var(--mono); font-size: 0.8rem; }
+tr.small td { color: var(--muted); }
+.pos { color: var(--pos); } .neg { color: var(--neg); }
+tr:last-child td { border-bottom: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 10px 4px; display: grid; gap: 2px; min-width: 0; }
+.card h3 { margin: 0; font-size: 0.9rem; font-weight: 600; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.card h3 span { font-weight: 400; color: var(--muted); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.chart { height: 190px; width: 100%; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted); }
+.legend i { display: inline-block; width: 18px; height: 0; border-top: 2px solid var(--s1); vertical-align: middle; margin-right: 6px; }
+.legend i.n2 { border-top: 2px dashed var(--n2); }
+ul.notes { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 72ch; }
+footer { color: var(--muted); font-size: 0.82rem; }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:6px">
+    <h1>Toernooi v1</h1>
+    <p class="sub" id="sub"></p>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <div class="verdict" id="verdict"></div>
+
+  <div class="filters" id="filters"></div>
+
+  <section>
+    <h2>Ranglijst</h2>
+    <p class="lede">Gemiddeld rendement per trade na venue-fees, netwerk, huur en mislukte transacties. N2 = dezelfde strategie met een willekeurige instap; "edge" is het verschil. Grijs = minder dan 30 trades: tonen, niet rangschikken.</p>
+    <div class="tablebox"><table id="tbl"></table></div>
+  </section>
+
+  <section>
+    <h2>P&amp;L-curves</h2>
+    <p class="lede">Opgetelde winst of verlies in SOL per trade (op volgorde van uitstap) voor de gekozen grootte, per familie en variant.</p>
+    <div class="legend"><span><i></i>strategie</span><span><i class="n2"></i>N2-schaduw (willekeurige instap)</span></div>
+    <div class="grid" id="curves"></div>
+  </section>
+
+  <section>
+    <h2>Zo lees je dit</h2>
+    <ul class="notes">
+      <li>Alles is ontwikkeldata. De hold-out (laatste week) wordt één keer gebruikt, voor de eindrangschikking.</li>
+      <li>Instap 1–2 slots na het signaal, gevuld tegen de echte reserves inclusief onze eigen koersimpact; latere trades van anderen worden opnieuw afgespeeld.</li>
+      <li>Een strategie telt pas als het betrouwbaarheidsinterval boven nul ligt én ze beter is dan N2. Een positieve N2 zou op een fout in de motor wijzen.</li>
+      <li>De P&amp;L hier is opnieuw uitgerekend uit de losse trades en klopt tot op de lamport met de samenvatting van de toernooirun.</li>
+    </ul>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script id="page-data" type="application/json">/*__DATA__*/null</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("page-data").textContent);
+  if (!D) { document.getElementById("sub").textContent = "Nog geen toernooidata ingebouwd."; return; }
+  const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = String(text); return x; };
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const pct = (v, sign = true) => v == null ? "–" : (sign && v > 0 ? "+" : "") + (v * 100).toLocaleString("nl-NL", { maximumFractionDigits: 2 }) + "%";
+  const solf = v => v == null ? "–" : (v > 0 ? "+" : "") + Number(v).toLocaleString("nl-NL", { maximumFractionDigits: 2 });
+  const N_MIN = 30;
+  const rows = D.summary.map(r => Object.fromEntries(D.columns.map((c, i) => [c, r[i]])));
+  const uniq = k => [...new Set(rows.map(r => r[k]))].sort((a, b) => (typeof a === "number" ? a - b : String(a).localeCompare(String(b))));
+  const SCEN = { optimistic: "optimistisch", base: "basis", pessimistic: "pessimistisch" };
+
+  const st = { scenario: "base", d: uniq("d")[0], tau: uniq("tau")[0], size: uniq("size_sol")[0], sort: "mean_ret", dir: -1 };
+  try { Object.assign(st, JSON.parse(localStorage.getItem("toernooi-v1") || "{}")); } catch (e) {}
+
+  const run = D.run, store = D.store;
+  document.getElementById("sub").textContent =
+    "Run " + run.run_id + " op ontwikkeldata (slots " + Number(store.slot_start).toLocaleString("nl-NL") + "–" +
+    Number(store.slot_end_exclusive - 1).toLocaleString("nl-NL") + "): families " + (run.families || []).join(", ") +
+    ", groottes " + (run.sizes_sol || []).join(" / ") + " SOL, vertraging " + (run.delays || []).join(" / ") + " slots.";
+  document.getElementById("meta").textContent = (run.signals != null ? Number(run.signals).toLocaleString("nl-NL") + " signalen · " : "") +
+    (run.positions != null ? Number(run.positions).toLocaleString("nl-NL") + " posities · " : "") + "pagina " + D.built_at;
+  document.getElementById("foot").textContent = "Gemaakt door sessie LAB ui met lab/ui/pages/build_tournament.py · alleen ontwikkeldata.";
+
+  function filtersUI() {
+    const host = document.getElementById("filters"); host.replaceChildren();
+    const group = (label, key, values, fmt) => {
+      if (values.length < 2 && key !== "scenario") return;
+      const row = el("div", "row"); row.append(el("span", "k", label));
+      for (const v of values) {
+        const b = el("button", "chip", fmt ? fmt(v) : v); b.type = "button"; b.setAttribute("aria-pressed", String(st[key] === v));
+        b.addEventListener("click", () => { st[key] = v; save(); render(); }); row.append(b);
+      }
+      host.append(row);
+    };
+    group("Kosten", "scenario", Object.keys(SCEN), v => SCEN[v]);
+    group("Vertraging", "d", uniq("d"), v => v + " slot" + (v === 1 ? "" : "s"));
+    group("τ (slippage)", "tau", uniq("tau"));
+    group("Grootte", "size", uniq("size_sol"), v => v + " SOL");
+  }
+  function save() { try { localStorage.setItem("toernooi-v1", JSON.stringify(st)); } catch (e) {} }
+
+  function current() {
+    return rows.filter(r => r.scenario === st.scenario && r.d === st.d && r.tau === st.tau && !String(r.family).startsWith("N2_"));
+  }
+
+  function verdict() {
+    const all = current();
+    const good = all.filter(r => r.filled >= N_MIN && r.ci_lo != null && r.ci_lo > 0 && (r.edge_vs_n2 ?? -1) > 0);
+    const v = document.getElementById("verdict"); v.replaceChildren();
+    v.className = "verdict" + (good.length ? "" : " none");
+    v.append(el("div", null, ""));
+    v.firstChild.append(el("b", null, good.length + " van " + all.length),
+      document.createTextNode(" combinaties (familie × variant × grootte, kosten " + SCEN[st.scenario] + ") zijn na kosten winstgevend met het 95%-interval boven nul én beter dan N2."));
+    v.append(el("div", "lede", good.length ? "Kandidaten, nog niet bewezen: de hold-out en paper trading moeten het bevestigen."
+      : "Geen enkele combinatie haalt die lat op ontwikkeldata. Dat is een uitkomst, geen fout."));
+  }
+
+  const COLS = [
+    ["family", "familie", "l mono"], ["variant", "variant", "l mono"], ["size_sol", "SOL", ""], ["filled", "n", ""],
+    ["mean_ret", "gem. na kosten", ""], ["ci", "95%-CI (per dag)", ""], ["win_rate", "win%", ""],
+    ["n2_mean_ret", "N2 gem.", ""], ["edge_vs_n2", "edge vs N2", ""], ["total_pnl_sol", "totaal SOL", ""],
+  ];
+  function table() {
+    const t = document.getElementById("tbl");
+    const thead = el("thead"), tr = el("tr");
+    for (const [k, label, cls] of COLS) {
+      const th = el("th", cls);
+      if (k === "ci") th.textContent = label;
+      else { const b = el("button", null, label + (st.sort === k ? (st.dir < 0 ? " ↓" : " ↑") : "")); b.type = "button";
+        b.addEventListener("click", () => { st.dir = st.sort === k ? -st.dir : -1; st.sort = k; save(); table(); }); th.append(b); }
+      tr.append(th);
+    }
+    thead.append(tr);
+    const data = current().slice().sort((a, b) => {
+      const x = a[st.sort], y = b[st.sort];
+      if (x == null) return 1; if (y == null) return -1;
+      return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * st.dir;
+    });
+    const tb = el("tbody");
+    for (const r of data) {
+      const row = el("tr", r.filled < N_MIN ? "small" : "");
+      const cell = (txt, cls) => row.append(el("td", cls, txt));
+      cell(r.family, "l mono"); cell(r.variant, "l mono"); cell(r.size_sol);
+      cell(Number(r.filled).toLocaleString("nl-NL"));
+      cell(pct(r.mean_ret), r.mean_ret > 0 ? "pos" : "neg");
+      cell(pct(r.ci_lo) + " … " + pct(r.ci_hi));
+      cell(pct(r.win_rate, false)); cell(pct(r.n2_mean_ret));
+      cell(pct(r.edge_vs_n2), r.edge_vs_n2 > 0 ? "pos" : r.edge_vs_n2 < 0 ? "neg" : "");
+      cell(solf(r.total_pnl_sol), r.total_pnl_sol > 0 ? "pos" : "neg");
+      tb.append(row);
+    }
+    t.replaceChildren(thead, tb);
+  }
+
+  let charts = [];
+  function curves() {
+    charts.forEach(c => c.dispose()); charts = [];
+    const host = document.getElementById("curves"); host.replaceChildren();
+    if (!window.echarts) { host.append(el("p", "lede", "De grafiekbibliotheek kon niet laden; de tabel hierboven bevat dezelfde uitkomsten.")); return; }
+    const s1 = css("--s1"), n2c = css("--n2"), muted = css("--muted"), line = css("--line"), surface = css("--surface"), fg = css("--fg");
+    const sel = current().filter(r => r.size_sol === st.size).sort((a, b) => String(a.family + a.variant).localeCompare(String(b.family + b.variant)));
+    for (const r of sel) {
+      const key = (f) => [f, r.variant, r.size_sol, r.d, r.tau, st.scenario].join("|");
+      const own = D.curves[key(r.family)] || [], n2 = D.curves[key("N2_" + r.family)] || [];
+      const card = el("div", "card");
+      const h = el("h3", null, r.family + " " + r.variant);
+      h.append(el("span", null, "n " + r.filled + " · gem. " + pct(r.mean_ret) + " · " + solf(r.total_pnl_sol) + " SOL"));
+      const box = el("div", "chart"); box.setAttribute("role", "img");
+      box.setAttribute("aria-label", "P&L-curve " + r.family + " " + r.variant + " tegen N2");
+      card.append(h, box); host.append(card);
+      const c = echarts.init(box, null, { renderer: "canvas" });
+      c.setOption({
+        animation: false, textStyle: { fontFamily: "IBM Plex Sans, system-ui, sans-serif", color: muted },
+        grid: { left: 46, right: 8, top: 10, bottom: 22 },
+        tooltip: { trigger: "axis", backgroundColor: surface, borderColor: line, textStyle: { color: fg },
+          valueFormatter: v => solf(v) + " SOL" },
+        xAxis: { type: "value", min: 1, axisLine: { lineStyle: { color: line } }, axisLabel: { color: muted }, splitLine: { show: false } },
+        yAxis: { type: "value", axisLabel: { color: muted }, splitLine: { lineStyle: { color: line } } },
+        series: [
+          { name: "N2-schaduw", type: "line", showSymbol: false, data: n2, lineStyle: { width: 2, type: "dashed", color: n2c }, itemStyle: { color: n2c } },
+          { name: "strategie", type: "line", showSymbol: false, data: own, lineStyle: { width: 2, color: s1 }, itemStyle: { color: s1 },
+            markLine: { silent: true, symbol: "none", label: { show: false }, lineStyle: { color: line, type: "solid" }, data: [{ yAxis: 0 }] } },
+        ],
+      });
+      charts.push(c);
+    }
+    if (!sel.length) host.append(el("p", "lede", "Geen combinaties voor deze keuze."));
+  }
+  window.addEventListener("resize", () => charts.forEach(c => c.resize()));
+
+  function render() { filtersUI(); verdict(); table(); curves(); }
+  render();
+})();
+</script>
