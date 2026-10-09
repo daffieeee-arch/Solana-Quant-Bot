@@ -10,9 +10,11 @@
 #
 # Old Faithful rate-limits per client (HTTP 429). Before every chunk one tiny range request
 # checks that the archive answers; while it does not, the script waits LAB_429_PAUSE seconds.
-# The extractor exits with code 75 when 429s pile up during a chunk, and the chunk is retried
-# after the same pause without counting as a failure.
+# The extractor exits with code 75 when 429s pile up during a chunk; the chunk is retried after
+# the same pause (at most LAB_MAX_PAUSES times in a row). Exit code 76 (one slot keeps failing)
+# and 3 (incomplete slot coverage) count as failures; three failures stop the backfill.
 set -euo pipefail
+trap 'echo "interrupted"; exit 130' INT TERM
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/env.sh"
@@ -24,12 +26,15 @@ threads=${4:-4}
 cpu_quota=${LAB_CPU_QUOTA:-700%}
 mem_max=${LAB_MEM_MAX:-11G}
 pause=${LAB_429_PAUSE:-900}
+max_pauses=${LAB_MAX_PAUSES:-16}
 
 bin="$here/../extractor/target/release/lab-extractor"
 [[ -x $bin ]] || { echo "build first: cargo build --release in lab/extractor" >&2; exit 1; }
 out_root="$LAB_DATA_ROOT/events/v1/chunks"
 log_dir="$LAB_DATA_ROOT/logs"
 mkdir -p "$out_root" "$log_dir"
+exec 9>"$out_root/.backfill.lock"
+flock -n 9 || { echo "another backfill is running (lock $out_root/.backfill.lock)" >&2; exit 1; }
 
 wait_for_archive() {
   local epoch=$(($1 / 432000)) code
@@ -50,20 +55,27 @@ for ((s = first; s < end; s += chunk)); do
     continue
   fi
   failures=0
+  pauses=0
   while true; do
     rm -rf "$dir"
     wait_for_archive "$s"
-    echo "$(date -Is) start $s-$e threads=$threads"
+    echo "$(date -Is) start $s-$e threads=$threads" | tee -a "$log_dir/extract-$s-$e.log"
     rc=0
     systemd-run --user --scope --quiet --unit="lab-extract-$s-$(date +%s)" \
       -p CPUQuota="$cpu_quota" -p MemoryMax="$mem_max" -- \
       nice -n 10 "$bin" --out "$dir" --slots "$s:$e" --threads "$threads" \
-      >"$log_dir/extract-$s-$e.log" 2>&1 || rc=$?
+      >>"$log_dir/extract-$s-$e.log" 2>&1 || rc=$?
+    ((rc == 130 || rc == 143)) && { echo "extractor interrupted"; exit 130; }
     status=$(grep -o '"status": "[a-z_]*"' "$dir/_manifest.json" 2>/dev/null || echo '"status": "none"')
     echo "$(date -Is) chunk $s-$e exit=$rc $status"
     [[ $rc == 0 && $status == '"status": "complete"' ]] && break
     if [[ $rc == 75 ]]; then
-      echo "$(date -Is) rate limited; pausing ${pause}s"
+      pauses=$((pauses + 1))
+      if ((pauses > max_pauses)); then
+        echo "still rate limited after $max_pauses pauses on $s-$e; stopping" >&2
+        exit 1
+      fi
+      echo "$(date -Is) rate limited ($pauses/$max_pauses); pausing ${pause}s"
       sleep "$pause"
       continue
     fi

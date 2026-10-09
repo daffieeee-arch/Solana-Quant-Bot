@@ -1,27 +1,31 @@
 """Reserve-continuity check for the lab event dataset.
 
-Trades are put in chain order (slot, tx_index, outer_ix, inner_ix) per bonding curve (mint) and
+Events are put in chain order (slot, tx_index, outer_ix, inner_ix) per bonding curve (mint) and
 per PumpSwap pool. The state after event n must equal the state before event n+1. A mismatch
 means a missing event, a wrong order, a decoding error, or a reserve change without an event.
+Every pair is classified as ok, bad, or unverifiable (an operand is unknown, e.g. after an event
+whose pre- or post-state the IDL does not expose). Bad pairs are reported per chunk, so a local
+loss is not diluted by a global rate.
 
-pump (bonding curve), TradeEvent reserves are POST-trade. Amounts are curve-side, net of fees.
+pump (bonding curve). TradeEvent reserves are POST-trade; amounts are curve-side, net of fees.
   The quote_* fields hold the real values for every quote mint (for SOL pairs they equal sol_*).
   buy:  pre_tokens = post + token_amount,  pre_quote = post - quote_amount
   sell: pre_tokens = post - token_amount,  pre_quote = post + quote_amount
-  Known exception: trades by the Mayhem program's sol vault reset virtual_quote_reserves without
-  an event, so the virtual-quote check skips pairs that involve such a trade.
+  Links: CreateEvent anchors a chain (post = initial reserves, real quote 0);
+  UpdateMayhemVirtualParamsEvent maps old -> new virtual reserves. Trades by the Mayhem program's
+  sol vault reset virtual quote reserves without an event, so the virtual-quote check skips pairs
+  that involve one; the main check uses virtual tokens, real tokens and real quote.
 
-pump_amm (PumpSwap), Buy/SellEvent reserves are PRE-trade. Prices use the effective quote
+pump_amm (PumpSwap). Buy/SellEvent reserves are PRE-trade. Prices use the effective quote
   E = pool_quote_token_reserves + virtual_quote_reserves; fees kept in the pool move Q and V in
-  opposite directions, so E and the base reserve B are the robust invariants:
+  opposite directions and fee sweeps move them back, so (B, E) is the robust invariant:
   buy:  B' = B - base_amount_out,  E' = E + quote_amount_in_with_lp_fee
   sell: B' = B + base_amount_in,   E' = E - quote_amount_out_without_lp_fee
-  deposit / withdraw (assumed pre-operation reserves, reported separately):
-        B' = B +/- base amount,    E' = E +/- quote amount
+  Links: CreatePoolEvent anchors a chain (B, E = pool amounts, V assumed 0); deposits and
+  withdrawals check B only; BoostBuyAndBurnEvent and InitBoostEvent expose only a post-state.
 
-Usage: python continuity.py <chunks_dir> [--report out.json] [--examples N]
-<chunks_dir> holds chunk directories (<start>-<end>/) with a `_manifest.json` each; only chunks
-with status "complete" are used.
+Usage: python continuity.py <chunks_dir> [--expect START:END] [--report out.json] [--examples N]
+Only chunks whose `_manifest.json` has status "complete" are used.
 """
 
 import argparse
@@ -35,13 +39,32 @@ import duckdb
 MAYHEM_AGENT = "BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"
 
 
-def chunks(root):
-    out = []
-    for m in sorted(glob.glob(os.path.join(root, "*", "_manifest.json"))):
+def scan_chunks(root):
+    done, other = [], []
+    for d in sorted(glob.glob(os.path.join(root, "*-*"))):
+        m = os.path.join(d, "_manifest.json")
+        if not os.path.isfile(m):
+            other.append({"dir": os.path.basename(d), "status": "no_manifest"})
+            continue
         with open(m) as f:
             man = json.load(f)
-        out.append((man["slot_start"], man["slot_end_exclusive"], man["status"], os.path.dirname(m)))
-    return sorted(out)
+        row = (man["slot_start"], man["slot_end_exclusive"], man["status"], d)
+        (done if man["status"] == "complete" else other).append(
+            row if man["status"] == "complete" else {"dir": os.path.basename(d), "status": man["status"]})
+    return sorted(done), other
+
+
+def coverage_holes(done, expect):
+    holes = []
+    pos = expect[0] if expect else (done[0][0] if done else 0)
+    stop = expect[1] if expect else (done[-1][1] if done else 0)
+    for s, e, _, _ in done:
+        if s > pos:
+            holes.append([pos, s])
+        pos = max(pos, e)
+    if pos < stop:
+        holes.append([pos, stop])
+    return holes
 
 
 def files(dirs, table):
@@ -58,129 +81,156 @@ def src(paths):
                 FROM read_parquet({lit(paths)}, union_by_name = true))"""
 
 
-def pump_check(con, trade_files, examples):
+H = "::HUGEINT"
+
+
+def pair_stats(con, table, ok_expr, cmp_cols, key, kind_col="kind"):
+    null_any = " OR ".join(f"{c} IS NULL" for c in cmp_cols)
     con.execute(f"""
-      CREATE TEMP TABLE pump AS
-      WITH t AS (
-        SELECT slot, tx_index, outer_ix, inner_ix, signature, mint, is_buy, "user" AS trader,
-               token_amount AS t,
-               COALESCE(quote_amount, sol_amount) AS q,
-               virtual_token_reserves AS vt,
-               COALESCE(virtual_quote_reserves, virtual_sol_reserves) AS vq,
-               real_token_reserves AS rt,
-               COALESCE(real_quote_reserves, real_sol_reserves) AS rq,
-               decode_status
-        FROM {src(trade_files)}
-      )
-      SELECT *,
-        CASE WHEN is_buy THEN vt + t ELSE vt - t END AS pre_vt,
-        CASE WHEN is_buy THEN vq - q ELSE vq + q END AS pre_vq,
-        CASE WHEN is_buy THEN rt + t ELSE rt - t END AS pre_rt,
-        CASE WHEN is_buy THEN rq - q ELSE rq + q END AS pre_rq,
-        LAG(vt) OVER w AS prev_vt, LAG(vq) OVER w AS prev_vq,
-        LAG(rt) OVER w AS prev_rt, LAG(rq) OVER w AS prev_rq,
-        LAG(trader) OVER w AS prev_trader, LAG(slot) OVER w AS prev_slot,
-        ROW_NUMBER() OVER w AS n
-      FROM t
-      WINDOW w AS (PARTITION BY mint ORDER BY slot, tx_index, outer_ix, inner_ix)
-    """)
-    r = con.execute(f"""
-      SELECT count(*), count(DISTINCT mint), count(*) FILTER (WHERE n > 1),
-        count(*) FILTER (WHERE n > 1 AND pre_vt = prev_vt),
-        count(*) FILTER (WHERE n > 1 AND pre_rt = prev_rt),
-        count(*) FILTER (WHERE n > 1 AND pre_rq = prev_rq),
-        count(*) FILTER (WHERE n > 1 AND trader <> '{MAYHEM_AGENT}' AND prev_trader <> '{MAYHEM_AGENT}'),
-        count(*) FILTER (WHERE n > 1 AND trader <> '{MAYHEM_AGENT}' AND prev_trader <> '{MAYHEM_AGENT}' AND pre_vq = prev_vq),
-        count(*) FILTER (WHERE n > 1 AND pre_vt = prev_vt AND pre_rt = prev_rt AND pre_rq = prev_rq)
-      FROM pump""").fetchone()
-    keys = ["trades", "mints", "pairs", "virtual_token_ok", "real_token_ok", "real_quote_ok",
-            "pairs_without_mayhem_agent", "virtual_quote_ok_without_mayhem_agent", "all_three_ok"]
-    res = dict(zip(keys, r))
-    p = res["pairs"] or 1
-    res["rate_all_three"] = res["all_three_ok"] / p
-    res["rate_virtual_quote"] = res["virtual_quote_ok_without_mayhem_agent"] / (res["pairs_without_mayhem_agent"] or 1)
-    res["decode_status"] = dict(con.execute("SELECT decode_status, count(*) FROM pump GROUP BY 1").fetchall())
-    cols = ["mint", "slot", "prev_slot", "signature", "is_buy", "pre_vt", "prev_vt", "pre_rt", "prev_rt", "pre_rq", "prev_rq"]
+      CREATE OR REPLACE TEMP VIEW {table}_pairs AS
+      SELECT *, CASE WHEN n = 1 THEN NULL
+                     WHEN {null_any} THEN 'unverifiable'
+                     WHEN {ok_expr} THEN 'ok' ELSE 'bad' END AS verdict
+      FROM {table}""")
+    r = dict(con.execute(f"SELECT verdict, count(*) FROM {table}_pairs WHERE n > 1 GROUP BY 1").fetchall())
+    out = {"pairs": sum(r.values()), "ok": r.get("ok", 0), "bad": r.get("bad", 0),
+           "unverifiable": r.get("unverifiable", 0)}
+    out["ok_rate_of_verifiable"] = out["ok"] / max(1, out["ok"] + out["bad"])
+    out["by_kind"] = {f"{k}<-{pk}": {"ok": o, "bad": b, "unverifiable": u} for k, pk, o, b, u in con.execute(f"""
+      SELECT {kind_col}, prev_kind, count(*) FILTER (WHERE verdict = 'ok'), count(*) FILTER (WHERE verdict = 'bad'),
+             count(*) FILTER (WHERE verdict = 'unverifiable')
+      FROM {table}_pairs WHERE n > 1 GROUP BY 1, 2 ORDER BY 4 DESC, 3 DESC""").fetchall()}
+    out["bad_by_chunk"] = {f"{s}-{e}": c for s, e, c in con.execute(f"""
+      SELECT c.s, c.e, count(*) FROM {table}_pairs p JOIN chunks c ON p.slot >= c.s AND p.slot < c.e
+      WHERE verdict = 'bad' GROUP BY 1, 2 ORDER BY 1""").fetchall()}
+    gap = con.execute(f"""SELECT quantile_cont(slot - prev_slot, [0.5, 0.9, 0.99]) FROM {table}_pairs
+                          WHERE verdict = 'bad'""").fetchone()[0]
+    out["bad_slot_gap_p50_p90_p99"] = gap
+    out["chains"] = dict(zip(["total", "anchored"], con.execute(f"""
+      SELECT count(DISTINCT {key}), count(DISTINCT {key}) FILTER (WHERE n = 1 AND {kind_col} LIKE 'create%')
+      FROM {table}""").fetchone()))
+    return out
+
+
+def pump_check(con, dirs, examples):
+    trades = files(dirs, "pump/TradeEvent")
+    if not trades:
+        return None
+    parts = [f"""
+      SELECT 'trade' AS kind, slot, tx_index, outer_ix, inner_ix, signature, mint, "user" AS actor,
+        CASE WHEN is_buy THEN virtual_token_reserves{H} + token_amount{H} ELSE virtual_token_reserves{H} - token_amount{H} END AS pre_vt,
+        CASE WHEN is_buy THEN COALESCE(virtual_quote_reserves, virtual_sol_reserves){H} - COALESCE(quote_amount, sol_amount){H}
+             ELSE COALESCE(virtual_quote_reserves, virtual_sol_reserves){H} + COALESCE(quote_amount, sol_amount){H} END AS pre_vq,
+        CASE WHEN is_buy THEN real_token_reserves{H} + token_amount{H} ELSE real_token_reserves{H} - token_amount{H} END AS pre_rt,
+        CASE WHEN is_buy THEN COALESCE(real_quote_reserves, real_sol_reserves){H} - COALESCE(quote_amount, sol_amount){H}
+             ELSE COALESCE(real_quote_reserves, real_sol_reserves){H} + COALESCE(quote_amount, sol_amount){H} END AS pre_rq,
+        virtual_token_reserves{H} AS post_vt, COALESCE(virtual_quote_reserves, virtual_sol_reserves){H} AS post_vq,
+        real_token_reserves{H} AS post_rt, COALESCE(real_quote_reserves, real_sol_reserves){H} AS post_rq,
+        decode_status
+      FROM {src(trades)}"""]
+    creates = files(dirs, "pump/CreateEvent")
+    if creates:
+        parts.append(f"""
+      SELECT 'create', slot, tx_index, outer_ix, inner_ix, signature, mint, "user",
+        NULL, NULL, NULL, NULL,
+        virtual_token_reserves{H}, COALESCE(virtual_quote_reserves, virtual_sol_reserves){H}, real_token_reserves{H}, 0{H},
+        decode_status
+      FROM {src(creates)}""")
+    mayhem = files(dirs, "pump/UpdateMayhemVirtualParamsEvent")
+    if mayhem:
+        parts.append(f"""
+      SELECT 'mayhem_update', slot, tx_index, outer_ix, inner_ix, signature, mint, NULL,
+        virtual_token_reserves{H}, virtual_sol_reserves{H}, real_token_reserves{H}, real_sol_reserves{H},
+        new_virtual_token_reserves{H}, new_virtual_sol_reserves{H}, real_token_reserves{H}, real_sol_reserves{H},
+        decode_status
+      FROM {src(mayhem)}""")
+    con.execute("CREATE TEMP TABLE pump AS WITH ev AS (" + " UNION ALL ".join(parts) + """)
+      SELECT *, LAG(post_vt) OVER w AS prev_vt, LAG(post_vq) OVER w AS prev_vq,
+             LAG(post_rt) OVER w AS prev_rt, LAG(post_rq) OVER w AS prev_rq,
+             LAG(kind) OVER w AS prev_kind, LAG(actor) OVER w AS prev_actor, LAG(slot) OVER w AS prev_slot,
+             ROW_NUMBER() OVER w AS n
+      FROM ev WINDOW w AS (PARTITION BY mint ORDER BY slot, tx_index, outer_ix, inner_ix)""")
+    res = {"events": dict(con.execute("SELECT kind, count(*) FROM pump GROUP BY 1").fetchall()),
+           "decode_status": dict(con.execute("SELECT decode_status, count(*) FROM pump GROUP BY 1").fetchall())}
+    res.update(pair_stats(con, "pump", "pre_vt = prev_vt AND pre_rt = prev_rt AND pre_rq = prev_rq",
+                          ["pre_vt", "prev_vt", "pre_rt", "prev_rt", "pre_rq", "prev_rq"], "mint"))
+    vq = con.execute(f"""
+      SELECT count(*) FILTER (WHERE pre_vq = prev_vq), count(*) FILTER (WHERE pre_vq <> prev_vq)
+      FROM pump WHERE n > 1 AND COALESCE(actor, '') <> '{MAYHEM_AGENT}' AND COALESCE(prev_actor, '') <> '{MAYHEM_AGENT}'""").fetchone()
+    res["virtual_quote_without_mayhem_agent"] = {"ok": vq[0], "bad": vq[1]}
+    cols = ["kind", "prev_kind", "mint", "slot", "prev_slot", "signature", "pre_vt", "prev_vt", "pre_rt", "prev_rt", "pre_rq", "prev_rq"]
     res["bad_examples"] = [dict(zip(cols, row)) for row in con.execute(f"""
-      SELECT {', '.join(cols)} FROM pump
-      WHERE n > 1 AND NOT (pre_vt = prev_vt AND pre_rt = prev_rt AND pre_rq = prev_rq)
-      ORDER BY slot LIMIT {examples}""").fetchall()]
+      SELECT {', '.join(cols)} FROM pump_pairs WHERE verdict = 'bad' ORDER BY slot LIMIT {examples}""").fetchall()]
     return res
 
 
 def amm_check(con, dirs, examples):
-    buy, sell = files(dirs, "pump_amm/BuyEvent"), files(dirs, "pump_amm/SellEvent")
-    dep, wd = files(dirs, "pump_amm/DepositEvent"), files(dirs, "pump_amm/WithdrawEvent")
+    eff = f"(pool_quote_token_reserves{H} + COALESCE(TRY_CAST(virtual_quote_reserves AS HUGEINT), 0))"
+    sources = {
+        "buy": ("pump_amm/BuyEvent", f"""pool_base_token_reserves{H} AS b, {eff} AS e,
+               pool_base_token_reserves{H} - base_amount_out{H} AS b2, {eff} + quote_amount_in_with_lp_fee{H} AS e2"""),
+        "sell": ("pump_amm/SellEvent", f"""pool_base_token_reserves{H} AS b, {eff} AS e,
+               pool_base_token_reserves{H} + base_amount_in{H} AS b2, {eff} - quote_amount_out_without_lp_fee{H} AS e2"""),
+        "deposit": ("pump_amm/DepositEvent", f"""pool_base_token_reserves{H} AS b, NULL::HUGEINT AS e,
+               pool_base_token_reserves{H} + base_amount_in{H} AS b2, NULL::HUGEINT AS e2"""),
+        "withdraw": ("pump_amm/WithdrawEvent", f"""pool_base_token_reserves{H} AS b, NULL::HUGEINT AS e,
+               pool_base_token_reserves{H} - base_amount_out{H} AS b2, NULL::HUGEINT AS e2"""),
+        "create_pool": ("pump_amm/CreatePoolEvent", f"""NULL::HUGEINT AS b, NULL::HUGEINT AS e,
+               pool_base_amount{H} AS b2, pool_quote_amount{H} AS e2"""),
+        "boost_buy_and_burn": ("pump_amm/BoostBuyAndBurnEvent", f"""NULL::HUGEINT AS b, NULL::HUGEINT AS e,
+               base_reserves_after{H} AS b2, real_quote_reserves_after{H} + TRY_CAST(virtual_quote_reserves AS HUGEINT) AS e2"""),
+        "init_boost": ("pump_amm/InitBoostEvent", """NULL::HUGEINT AS b, NULL::HUGEINT AS e,
+               NULL::HUGEINT AS b2, NULL::HUGEINT AS e2"""),
+    }
     parts = []
-    eff = "pool_quote_token_reserves + COALESCE(TRY_CAST(virtual_quote_reserves AS HUGEINT), 0)"
-    if buy:
-        parts.append(f"""SELECT 'buy' AS kind, slot, tx_index, outer_ix, inner_ix, signature, pool,
-            pool_base_token_reserves::HUGEINT AS b, ({eff})::HUGEINT AS e,
-            (pool_base_token_reserves - base_amount_out)::HUGEINT AS b2,
-            ({eff} + quote_amount_in_with_lp_fee)::HUGEINT AS e2 FROM {src(buy)}""")
-    if sell:
-        parts.append(f"""SELECT 'sell', slot, tx_index, outer_ix, inner_ix, signature, pool,
-            pool_base_token_reserves, {eff},
-            pool_base_token_reserves + base_amount_in,
-            {eff} - quote_amount_out_without_lp_fee FROM {src(sell)}""")
-    if dep:
-        parts.append(f"""SELECT 'deposit', slot, tx_index, outer_ix, inner_ix, signature, pool,
-            pool_base_token_reserves, pool_quote_token_reserves,
-            pool_base_token_reserves + base_amount_in, pool_quote_token_reserves + quote_amount_in FROM {src(dep)}""")
-    if wd:
-        parts.append(f"""SELECT 'withdraw', slot, tx_index, outer_ix, inner_ix, signature, pool,
-            pool_base_token_reserves, pool_quote_token_reserves,
-            pool_base_token_reserves - base_amount_out, pool_quote_token_reserves - quote_amount_out FROM {src(wd)}""")
-    if not parts:
+    for kind, (table, expr) in sources.items():
+        fs = files(dirs, table)
+        if fs:
+            parts.append(f"""SELECT '{kind}' AS kind, slot, tx_index, outer_ix, inner_ix, signature, pool, {expr}
+                             FROM {src(fs)}""")
+    if not any(p.startswith("SELECT 'buy'") or p.startswith("SELECT 'sell'") for p in parts):
         return None
-    con.execute("CREATE TEMP TABLE amm AS WITH ev AS (" + " UNION ALL ".join(parts) + """)
+    con.execute("CREATE TEMP TABLE amm AS WITH ev AS (" + " UNION ALL BY NAME ".join(parts) + """)
       SELECT *, LAG(b2) OVER w AS prev_b2, LAG(e2) OVER w AS prev_e2, LAG(kind) OVER w AS prev_kind,
-             ROW_NUMBER() OVER w AS n
+             LAG(slot) OVER w AS prev_slot, ROW_NUMBER() OVER w AS n
       FROM ev WINDOW w AS (PARTITION BY pool ORDER BY slot, tx_index, outer_ix, inner_ix)""")
-    r = con.execute("""
-      SELECT count(*), count(DISTINCT pool), count(*) FILTER (WHERE n > 1),
-        count(*) FILTER (WHERE n > 1 AND b = prev_b2),
-        count(*) FILTER (WHERE n > 1 AND b = prev_b2 AND e = prev_e2),
-        count(*) FILTER (WHERE n > 1 AND kind IN ('buy','sell') AND prev_kind IN ('buy','sell')),
-        count(*) FILTER (WHERE n > 1 AND kind IN ('buy','sell') AND prev_kind IN ('buy','sell') AND b = prev_b2 AND e = prev_e2)
-      FROM amm""").fetchone()
-    keys = ["events", "pools", "pairs", "base_ok", "base_and_effective_quote_ok", "trade_pairs", "trade_pairs_ok"]
-    res = dict(zip(keys, r))
-    res["rate_all_pairs"] = res["base_and_effective_quote_ok"] / (res["pairs"] or 1)
-    res["rate_trade_pairs"] = res["trade_pairs_ok"] / (res["trade_pairs"] or 1)
-    res["bad_by_kind"] = {f"{k}<-{pk}": c for k, pk, c in con.execute("""
-      SELECT kind, prev_kind, count(*) FROM amm WHERE n > 1 AND NOT (b = prev_b2 AND e = prev_e2)
-      GROUP BY 1, 2 ORDER BY 3 DESC""").fetchall()}
-    cols = ["pool", "slot", "kind", "prev_kind", "signature", "b", "prev_b2", "e", "prev_e2"]
+    res = {"events": dict(con.execute("SELECT kind, count(*) FROM amm GROUP BY 1").fetchall())}
+    # Base reserve on every link; effective quote only where both sides expose it.
+    res["base"] = pair_stats(con, "amm", "b = prev_b2", ["b", "prev_b2"], "pool")
+    res["base_and_effective_quote"] = pair_stats(con, "amm", "b = prev_b2 AND e = prev_e2",
+                                                 ["b", "prev_b2", "e", "prev_e2"], "pool")
+    cols = ["kind", "prev_kind", "pool", "slot", "prev_slot", "signature", "b", "prev_b2", "e", "prev_e2"]
     res["bad_examples"] = [dict(zip(cols, row)) for row in con.execute(f"""
-      SELECT {', '.join(cols)} FROM amm WHERE n > 1 AND NOT (b = prev_b2 AND e = prev_e2)
-      ORDER BY slot LIMIT {examples}""").fetchall()]
+      SELECT {', '.join(cols)} FROM amm_pairs WHERE verdict = 'bad' ORDER BY slot LIMIT {examples}""").fetchall()]
     return res
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
+    ap.add_argument("--expect", help="START:END slot range the dataset should cover")
     ap.add_argument("--report")
     ap.add_argument("--examples", type=int, default=5)
     a = ap.parse_args()
 
-    all_chunks = chunks(a.root)
-    usable = [c for c in all_chunks if c[2] == "complete"]
+    done, other = scan_chunks(a.root)
+    expect = tuple(map(int, a.expect.split(":"))) if a.expect else None
     report = {
-        "chunks": [{"start": s, "end": e, "status": st} for s, e, st, _ in all_chunks],
-        "gaps_between_complete_chunks": [
-            (usable[i][1], usable[i + 1][0]) for i in range(len(usable) - 1) if usable[i][1] != usable[i + 1][0]
-        ],
+        "complete_chunks": len(done),
+        "other_chunks": other,
+        "uncovered_slot_ranges": coverage_holes(done, expect),
     }
-    dirs = [c[3] for c in usable]
+    dirs = [c[3] for c in done]
     con = duckdb.connect()
     con.execute("SET threads TO 4")
     con.execute("SET memory_limit = '6GB'")
+    con.execute("CREATE TEMP TABLE chunks (s UBIGINT, e UBIGINT)")
+    if done:
+        con.executemany("INSERT INTO chunks VALUES (?, ?)", [(s, e) for s, e, _, _ in done])
 
-    trades = files(dirs, "pump/TradeEvent")
-    if trades:
-        report["pump"] = pump_check(con, trades, a.examples)
+    pump = pump_check(con, dirs, a.examples)
+    if pump:
+        report["pump"] = pump
     amm = amm_check(con, dirs, a.examples)
     if amm:
         report["pump_amm"] = amm

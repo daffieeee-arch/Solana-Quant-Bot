@@ -22,6 +22,8 @@ use std::time::Instant;
 const SLOTS_PER_EPOCH: u64 = 432_000;
 /// Commit of github.com/pump-fun/pump-public-docs that `idl/` was copied from.
 const IDL_SOURCE_COMMIT: &str = "2293f9a66c654e9fe82dc5e8f4618538f24bb35f";
+/// Keep in sync with the git rev pinned in Cargo.toml.
+const JETSTREAMER_SOURCE: &str = "https://github.com/anza-xyz/jetstreamer@1f9d30600fb479acdd5eb956ea2e19455c903590";
 
 struct Args {
     out: PathBuf,
@@ -62,8 +64,8 @@ fn parse_args() -> Result<Args> {
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = parse_args()?;
-    if args.out.join("_manifest.json").exists() {
-        bail!("{} already has a manifest; refusing to overwrite a finished chunk", args.out.display());
+    if args.out.exists() && std::fs::read_dir(&args.out)?.next().is_some() {
+        bail!("{} is not empty; refusing to mix files from another run", args.out.display());
     }
     std::fs::create_dir_all(&args.out)?;
     // ClickHouse is not used: an empty DSN disables it (and its helper process) entirely.
@@ -89,7 +91,25 @@ fn main() -> Result<()> {
     let elapsed = started.elapsed().as_secs_f64();
     let tables = sink.finish();
 
-    let missing = coverage.missing_ranges();
+    // The firehose does not report skipped slots at the edges of a thread's range. A slot the
+    // epoch's slot index does not contain was skipped on chain, so it is not missing data.
+    // Any other lookup failure keeps the slot missing.
+    let (missing, verified_skipped) = runtime.block_on(async {
+        let mut still_missing = Vec::new();
+        let mut skipped = 0u64;
+        for (a, b) in coverage.missing_ranges() {
+            for slot in a..b {
+                match jetstreamer_firehose::index::slot_to_range(slot).await {
+                    Err(jetstreamer_firehose::index::SlotOffsetIndexError::SlotNotFound(..)) => skipped += 1,
+                    _ => match still_missing.last_mut() {
+                        Some((_, end)) if *end == slot => *end = slot + 1,
+                        _ => still_missing.push((slot, slot + 1)),
+                    },
+                }
+            }
+        }
+        (still_missing, skipped)
+    });
     let missing_slots: u64 = missing.iter().map(|(a, b)| b - a).sum();
     let run_ok = result.is_ok();
     let sink_ok = tables.is_ok() && !fatal.load(Ordering::SeqCst);
@@ -108,7 +128,8 @@ fn main() -> Result<()> {
         "threads": args.threads,
         "started_at_unix": started_at,
         "elapsed_seconds": elapsed,
-        "jetstreamer_version": "0.7.0",
+        "jetstreamer": JETSTREAMER_SOURCE,
+        "extractor_sha256": std::fs::read("/proc/self/exe").map(|b| hex::encode(Sha256::digest(b))).ok(),
         "idl_source": format!("https://github.com/pump-fun/pump-public-docs/tree/{IDL_SOURCE_COMMIT}/idl"),
         "idl_sha256": {
             "pump.json": hex::encode(Sha256::digest(PUMP_IDL.as_bytes())),
@@ -128,18 +149,26 @@ fn main() -> Result<()> {
             "sink_errors": c(&counters.sink_errors),
             "firehose_errors": c(&counters.firehose_errors),
             "http_429": c(&counters.http_429),
+            "missing_meta": c(&counters.missing_meta),
         },
         "coverage": {
             "missing_slots": missing_slots,
+            "skipped_slots_verified_by_index": verified_skipped,
             "missing_ranges": missing.iter().take(50).map(|(a, b)| [a, b]).collect::<Vec<_>>(),
         },
     });
     let tmp = args.out.join("._manifest.json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&manifest)?)?;
-    std::fs::rename(&tmp, args.out.join("_manifest.json"))?;
-    println!("{}", serde_json::to_string(&manifest)?);
-    if status == "failed" {
-        bail!("chunk failed");
+    {
+        let mut f = std::fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut f, &serde_json::to_vec_pretty(&manifest)?)?;
+        f.sync_all()?;
     }
-    Ok(())
+    std::fs::rename(&tmp, args.out.join("_manifest.json"))?;
+    std::fs::File::open(&args.out)?.sync_all()?;
+    println!("{}", serde_json::to_string(&manifest)?);
+    match status {
+        "complete" => Ok(()),
+        "incomplete_coverage" => std::process::exit(3),
+        _ => bail!("chunk failed"),
+    }
 }

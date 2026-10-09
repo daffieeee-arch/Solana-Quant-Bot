@@ -114,8 +114,9 @@ pub fn write_parquet(dir: &Path, table: &str, part: usize, columns: &[(String, K
         .build();
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))?;
     writer.write(&batch)?;
-    writer.close()?;
+    writer.into_inner()?.sync_all()?;
     fs::rename(&tmp_path, &final_path)?;
+    fs::File::open(&out_dir)?.sync_all()?;
     Ok(final_path)
 }
 

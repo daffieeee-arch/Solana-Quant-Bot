@@ -9,6 +9,7 @@ use crate::idl::{DecodeStatus, Idl, Kind, Val, EVENT_IX_TAG};
 use crate::sink::{Columns, Row, Sink};
 use jetstreamer_firehose::firehose::{BlockData, FirehoseErrorContext, TransactionData};
 use jetstreamer_plugin::{Plugin, PluginFuture};
+use solana_message::VersionedMessage;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -35,7 +36,7 @@ const JITO_TIP_ACCOUNTS: [&str; 8] = [
 ];
 
 /// Context columns that precede the IDL fields in every event table.
-pub const EVENT_CONTEXT: [(&str, Kind); 18] = [
+pub const EVENT_CONTEXT: [(&str, Kind); 20] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     ("signature", Kind::Utf8),
@@ -51,12 +52,14 @@ pub const EVENT_CONTEXT: [(&str, Kind); 18] = [
     ("cu_consumed", Kind::U64),
     ("cu_price_micro", Kind::U64),
     ("cu_limit", Kind::U64),
+    ("priority_fee", Kind::U64),
     ("jito_tip", Kind::U64),
+    ("tx_version", Kind::Utf8),
     ("decode_status", Kind::Utf8),
     ("payload_len", Kind::U64),
 ];
 
-const FAILED_COLS: [(&str, Kind); 13] = [
+const FAILED_COLS: [(&str, Kind); 15] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     ("signature", Kind::Utf8),
@@ -65,7 +68,10 @@ const FAILED_COLS: [(&str, Kind); 13] = [
     ("cu_consumed", Kind::U64),
     ("cu_price_micro", Kind::U64),
     ("cu_limit", Kind::U64),
-    ("jito_tip", Kind::U64),
+    ("priority_fee", Kind::U64),
+    // Tip transfers of a failed transaction are rolled back; this is what it tried to pay.
+    ("jito_tip_attempted", Kind::U64),
+    ("tx_version", Kind::Utf8),
     ("touches_pump", Kind::Bool),
     ("touches_amm", Kind::Bool),
     ("top_ix_discs", Kind::Utf8),
@@ -118,15 +124,22 @@ pub struct Counters {
     pub sink_errors: AtomicU64,
     pub firehose_errors: AtomicU64,
     pub http_429: AtomicU64,
+    pub missing_meta: AtomicU64,
 }
 
 /// Exit code used when Old Faithful keeps answering HTTP 429: the caller should pause for a
 /// long time instead of letting every firehose thread reconnect in a loop.
 pub const EXIT_RATE_LIMITED: i32 = 75;
+/// Exit code used when one slot keeps failing: retrying later will not help.
+pub const EXIT_STUCK: i32 = 76;
+/// Base fee per signature in lamports.
+const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
 
 pub struct LabPlugin {
     max_429: u64,
-    max_errors: u64,
+    max_same_slot_errors: u64,
+    /// Per firehose thread: the slot of the last error and how often it failed in a row.
+    last_error: Mutex<HashMap<usize, (u64, u64)>>,
     programs: [ProgramIdl; 2],
     system: Key,
     compute_budget: Key,
@@ -212,7 +225,8 @@ impl LabPlugin {
     pub fn new(sink: Arc<Sink>, coverage: Arc<Coverage>) -> anyhow::Result<Self> {
         Ok(Self {
             max_429: std::env::var("LAB_MAX_429").ok().and_then(|v| v.parse().ok()).unwrap_or(8),
-            max_errors: std::env::var("LAB_MAX_ERRORS").ok().and_then(|v| v.parse().ok()).unwrap_or(60),
+            max_same_slot_errors: std::env::var("LAB_MAX_SAME_SLOT_ERRORS").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
+            last_error: Mutex::new(HashMap::new()),
             programs: [ProgramIdl::new("pump", PUMP_IDL)?, ProgramIdl::new("pump_amm", PUMP_AMM_IDL)?],
             system: key(SYSTEM_PROGRAM),
             compute_budget: key(COMPUTE_BUDGET),
@@ -279,7 +293,13 @@ impl LabPlugin {
         let outer = msg.instructions();
         let inner_groups = meta.inner_instructions.as_deref().unwrap_or(&[]);
 
-        // Costs: compute budget (top level only) and Jito tips (any level).
+        // Costs. Legacy/v0 set the compute budget with ComputeBudget instructions; v1 messages
+        // carry it in their config (the runtime ignores ComputeBudget instructions there).
+        let (tx_version, v1_config) = match msg {
+            VersionedMessage::Legacy(_) => ("legacy", None),
+            VersionedMessage::V0(_) => ("v0", None),
+            VersionedMessage::V1(m) => ("v1", Some(m.config)),
+        };
         let mut cu_price: Option<u64> = None;
         let mut cu_limit: Option<u64> = None;
         let mut jito_tip: u64 = 0;
@@ -305,7 +325,15 @@ impl LabPlugin {
                 scan_transfer(ix.instruction.program_id_index, &ix.instruction.accounts, &ix.instruction.data);
             }
         }
-        for ix in outer {
+        if let Some(cfg) = v1_config {
+            cu_limit = cfg.compute_unit_limit.map(u64::from);
+            if let (Some(fee), Some(limit)) = (cfg.priority_fee, cfg.compute_unit_limit) {
+                if limit > 0 {
+                    cu_price = u64::try_from(u128::from(fee) * 1_000_000 / u128::from(limit)).ok();
+                }
+            }
+        }
+        for ix in outer.iter().filter(|_| v1_config.is_none()) {
             if key_at(usize::from(ix.program_id_index)) != Some(self.compute_budget.as_slice()) {
                 continue;
             }
@@ -317,6 +345,9 @@ impl LabPlugin {
         }
         let opt = |v: Option<u64>| v.map_or(Val::Null, Val::U64);
         let cu_consumed = opt(meta.compute_units_consumed);
+        // Charged fee minus the per-signature base fee = what was paid for priority.
+        let sigs = u64::from(msg.header().num_required_signatures);
+        let priority_fee = meta.fee.saturating_sub(sigs * LAMPORTS_PER_SIGNATURE);
 
         if meta.status.is_err() {
             self.counters.txs_failed_touching.fetch_add(1, Ordering::Relaxed);
@@ -341,7 +372,9 @@ impl LabPlugin {
                     cu_consumed,
                     opt(cu_price),
                     opt(cu_limit),
+                    Val::U64(priority_fee),
                     Val::U64(jito_tip),
+                    Val::Str(tx_version.to_owned()),
                     Val::Bool(touches[0]),
                     Val::Bool(touches[1]),
                     Val::Str(discs.join(",")),
@@ -351,10 +384,20 @@ impl LabPlugin {
         }
 
         let mut rows = Vec::new();
+        if meta.inner_instructions.is_none() {
+            // Old Faithful had no usable metadata for this transaction: events cannot be seen.
+            self.counters.missing_meta.fetch_add(1, Ordering::Relaxed);
+            self.counters.anomalies.fetch_add(1, Ordering::Relaxed);
+            rows.push(self.anomaly(tx, &signature, 0, 0, "", "missing_inner_instructions", "", &[]));
+        }
         let mut event_seq: u64 = 0;
         for group in inner_groups {
             let outer_idx = usize::from(group.index);
-            let Some(outer_ix) = outer.get(outer_idx) else { continue };
+            let Some(outer_ix) = outer.get(outer_idx) else {
+                self.counters.anomalies.fetch_add(1, Ordering::Relaxed);
+                rows.push(self.anomaly(tx, &signature, outer_idx, 0, "", "unresolved_outer_index", "", &[]));
+                continue;
+            };
             let outer_program = key_at(usize::from(outer_ix.program_id_index)).map(b58).unwrap_or_default();
             for (j, inner) in group.instructions.iter().enumerate() {
                 let ix = &inner.instruction;
@@ -362,7 +405,11 @@ impl LabPlugin {
                 if data.len() < 16 || data[..8] != EVENT_IX_TAG {
                     continue;
                 }
-                let Some(pk) = key_at(usize::from(ix.program_id_index)) else { continue };
+                let Some(pk) = key_at(usize::from(ix.program_id_index)) else {
+                    self.counters.anomalies.fetch_add(1, Ordering::Relaxed);
+                    rows.push(self.anomaly(tx, &signature, outer_idx, j, "", "unresolved_program_index", "", data));
+                    continue;
+                };
                 let Some(prog) = self.programs.iter().find(|p| p.id.as_slice() == pk) else { continue };
                 let disc: [u8; 8] = data[8..16].try_into().unwrap();
                 let body = &data[16..];
@@ -370,18 +417,35 @@ impl LabPlugin {
                 // Parent = nearest earlier instruction one level up; the outer instruction when
                 // the event is emitted directly below it.
                 let (parent_program, parent_disc) = {
-                    let sh = inner.stack_height;
-                    let parent = sh.and_then(|h| {
-                        group.instructions[..j].iter().rev().find(|p| p.stack_height == Some(h.saturating_sub(1)))
-                    });
-                    let (pidx, pdata) = match parent {
-                        Some(p) => (p.instruction.program_id_index, &p.instruction.data),
-                        None => (outer_ix.program_id_index, &outer_ix.data),
+                    let earlier = &group.instructions[..j];
+                    let parent = match inner.stack_height {
+                        Some(h) => earlier
+                            .iter()
+                            .rev()
+                            .find(|p| p.stack_height == Some(h.saturating_sub(1)))
+                            .map(|p| (p.instruction.program_id_index, &p.instruction.data)),
+                        // Without stack heights: the nearest earlier non-event instruction of the
+                        // same program, else the outer instruction if it is that program.
+                        None => earlier
+                            .iter()
+                            .rev()
+                            .find(|p| {
+                                key_at(usize::from(p.instruction.program_id_index)) == Some(pk)
+                                    && !p.instruction.data.starts_with(&EVENT_IX_TAG)
+                            })
+                            .map(|p| (p.instruction.program_id_index, &p.instruction.data)),
                     };
-                    (
-                        key_at(usize::from(pidx)).map(b58).unwrap_or_default(),
-                        hex::encode(&pdata[..pdata.len().min(8)]),
-                    )
+                    let parent = parent.or_else(|| {
+                        (inner.stack_height == Some(2) || key_at(usize::from(outer_ix.program_id_index)) == Some(pk))
+                            .then_some((outer_ix.program_id_index, &outer_ix.data))
+                    });
+                    match parent {
+                        Some((pidx, pdata)) => (
+                            key_at(usize::from(pidx)).map_or(Val::Null, |k| Val::Str(b58(k))),
+                            Val::Str(hex::encode(&pdata[..pdata.len().min(8)])),
+                        ),
+                        None => (Val::Null, Val::Null),
+                    }
                 };
 
                 let Some((ev_idx, table, columns)) = prog.tables.get(&disc) else {
@@ -405,14 +469,16 @@ impl LabPlugin {
                     inner.stack_height.map_or(Val::Null, |h| Val::U64(u64::from(h))),
                     Val::U64(event_seq),
                     Val::Str(outer_program.clone()),
-                    Val::Str(parent_program),
-                    Val::Str(parent_disc),
+                    parent_program,
+                    parent_disc,
                     Val::Str(fee_payer.clone()),
                     Val::U64(meta.fee),
                     cu_consumed.clone(),
                     opt(cu_price),
                     opt(cu_limit),
+                    Val::U64(priority_fee),
                     Val::U64(jito_tip),
+                    Val::Str(tx_version.to_owned()),
                     Val::Str(decoded.status.as_str().to_owned()),
                     Val::U64(body.len() as u64),
                 ]);
@@ -492,18 +558,27 @@ impl Plugin for LabPlugin {
         error: &'a FirehoseErrorContext,
     ) -> PluginFuture<'a> {
         Box::pin(async move {
-            let errors = self.counters.firehose_errors.fetch_add(1, Ordering::Relaxed) + 1;
-            if errors >= self.max_errors {
-                // A truncated 429 body mid-stream surfaces as a decode error, not as "429".
-                log::error!("{errors} firehose errors (last: {}); stopping so the caller can pause", error.error_message);
-                std::process::exit(EXIT_RATE_LIMITED);
-            }
-            if error.error_message.contains("429") {
+            self.counters.firehose_errors.fetch_add(1, Ordering::Relaxed);
+            let same_slot = {
+                let mut last = self.last_error.lock().expect("error lock");
+                let entry = last.entry(error.thread_id).or_insert((error.slot, 0));
+                if entry.0 == error.slot {
+                    entry.1 += 1;
+                } else {
+                    *entry = (error.slot, 1);
+                }
+                entry.1
+            };
+            let msg = &error.error_message;
+            if msg.contains("429 Too Many Requests") || msg.contains("(429") {
                 let n = self.counters.http_429.fetch_add(1, Ordering::Relaxed) + 1;
                 if n >= self.max_429 {
                     log::error!("Old Faithful answered HTTP 429 {n} times; stopping so the caller can pause");
                     std::process::exit(EXIT_RATE_LIMITED);
                 }
+            } else if same_slot >= self.max_same_slot_errors {
+                log::error!("slot {} failed {same_slot} times in a row (last: {msg}); giving up on this chunk", error.slot);
+                std::process::exit(EXIT_STUCK);
             }
             Ok(())
         })

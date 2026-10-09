@@ -37,7 +37,7 @@ A Solana trading bot (pump.fun bonding curve and PumpSwap) that is profitable **
 ## Data and resources
 
 - All Old Faithful data on the VPS lives under `/home/chupa/Solana-project/data-old-faithful-one`; lab datasets go to its `lab/` subdirectory (outside Git).
-- Run heavy builds and backfills in a bounded user scope so other services on the VPS stay responsive, for example `systemd-run --user --scope -p CPUQuota=400% -p MemoryMax=8G -- nice -n 10 <command>`.
+- Run heavy builds and backfills in a bounded user scope so other services on the VPS stay responsive, for example `systemd-run --user --scope -p CPUQuota=700% -p MemoryMax=11G -- nice -n 10 <command>` (the VPS has 8 cores, 15 GB RAM and no swap, so a memory cap keeps a runaway process from taking other services down).
 - Do not stop or modify other projects' processes, services or data.
 
 ## Delivery

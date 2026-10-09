@@ -302,12 +302,16 @@ impl Idl {
         if status == DecodeStatus::Ok && cur.remaining() > 0 {
             status = DecodeStatus::Extra;
         }
+        if fields_present == 0 {
+            // An empty body is not an older layout.
+            status = DecodeStatus::Error;
+        }
         Decoded { values, status, fields_present }
     }
 
     fn decode_top(&self, ty: &Ty, cur: &mut Cursor<'_>) -> Option<Val> {
         Some(match ty {
-            Ty::Bool => Val::Bool(cur.u8()? != 0),
+            Ty::Bool => Val::Bool(cur.bool()?),
             Ty::U8 => Val::U64(u64::from(cur.u8()?)),
             Ty::U16 => Val::U64(u64::from(u16::from_le_bytes(cur.array()?))),
             Ty::U32 => Val::U64(u64::from(u32::from_le_bytes(cur.array()?))),
@@ -333,7 +337,7 @@ impl Idl {
             return None;
         }
         Some(match ty {
-            Ty::Bool => J::Bool(cur.u8()? != 0),
+            Ty::Bool => J::Bool(cur.bool()?),
             Ty::U8 => json!(cur.u8()?),
             Ty::U16 => json!(u16::from_le_bytes(cur.array()?)),
             Ty::U32 => json!(u32::from_le_bytes(cur.array()?)),
@@ -427,6 +431,14 @@ impl<'a> Cursor<'a> {
     fn u8(&mut self) -> Option<u8> {
         self.take(1).map(|s| s[0])
     }
+    /// Borsh bool: only 0 and 1 are valid, anything else means a misaligned layout.
+    fn bool(&mut self) -> Option<bool> {
+        match self.u8()? {
+            0 => Some(false),
+            1 => Some(true),
+            _ => None,
+        }
+    }
     fn len_prefix(&mut self) -> Option<usize> {
         let n = usize::try_from(u32::from_le_bytes(self.array()?)).ok()?;
         // A length larger than the remaining bytes can never decode; fail early instead of
@@ -435,8 +447,8 @@ impl<'a> Cursor<'a> {
     }
     fn string(&mut self) -> Option<String> {
         let n = self.len_prefix()?;
-        let bytes = self.take(n)?;
-        Some(String::from_utf8_lossy(bytes).into_owned())
+        // Borsh strings are valid UTF-8; invalid bytes mean a misaligned layout.
+        String::from_utf8(self.take(n)?.to_vec()).ok()
     }
 }
 
@@ -530,6 +542,29 @@ mod tests {
 
         let cut = &full[..full.len() - 3];
         assert_eq!(idl.decode_event(ev, cut).status, DecodeStatus::Error);
+    }
+
+    #[test]
+    fn strict_bool_utf8_and_empty_body() {
+        let idl = Idl::parse(PUMP).unwrap();
+        let ev = idl.event("TradeEvent").unwrap();
+        let is_buy = ev.fields.iter().position(|f| f.name == "is_buy").unwrap();
+        let ix_name = ev.fields.iter().position(|f| f.name == "ix_name").unwrap();
+        let full = encode_trade_prefix(&idl, ev.fields.len());
+
+        // Byte offset of is_buy: mint (32) + sol_amount (8) + token_amount (8).
+        assert_eq!(is_buy, 3);
+        let mut bad_bool = full.clone();
+        bad_bool[48] = 2;
+        assert_eq!(idl.decode_event(ev, &bad_bool).status, DecodeStatus::Error);
+
+        let old = encode_trade_prefix(&idl, ix_name + 1);
+        let mut bad_utf8 = old.clone();
+        let n = bad_utf8.len();
+        bad_utf8[n - 2] = 0xff;
+        assert_eq!(idl.decode_event(ev, &bad_utf8).status, DecodeStatus::Error);
+
+        assert_eq!(idl.decode_event(ev, &[]).status, DecodeStatus::Error);
     }
 
     #[test]
