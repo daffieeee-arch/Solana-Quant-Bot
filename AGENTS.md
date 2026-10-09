@@ -17,13 +17,21 @@ A Solana trading bot (pump.fun bonding curve and PumpSwap) that is profitable **
 
 - One checkpoint per week with a tangible result: a dataset, a backtest table or a paper-trading report. Write it to `lab/reports/`.
 - Week 1: event dataset (pump.fun + PumpSwap) from Old Faithful. Week 2: backtest tournament. Week 3+: paper trading.
-- **Stop rule:** after 4 weeks of paper trading and at least 200 paper trades the strategy must be profitable after costs; otherwise adjust or stop.
+- **Stop rule** (owner decision 2026-10-10): paper trading runs one fixed main candidate with a fixed configuration. After 4 weeks and at least 200 paper trades, measure the net P&L per trade after all costs (venue fees, network fees, tips, failed transactions). Compute its 95% confidence interval with a bootstrap over trading days (resample whole days, 10,000 times).
+  - **GO:** the lower bound is above 0. Only then can real money be discussed (separate owner decision).
+  - **ADJUST:** the mean is above 0 but the lower bound is at or below 0. Paper trading continues; no real money.
+  - **STOP:** the mean is at or below 0.
+  - Fewer than 200 trades after 4 weeks: the clock runs on until 200 trades, at most 6 weeks.
+  - The clock starts no later than 2026-11-02 (target 2026-10-26), with the best candidate available then.
 
 ## Safety rules (unchanged and non-negotiable)
 
 - PAPER ONLY. No private keys, wallet signing, transaction submission or live funds.
 - Triton One is the only Solana data provider: Old Faithful archive files (`files.old-faithful.net`) for history and, later, Triton Yellowstone gRPC for live paper trading. No public RPC, Helius, QuickNode, Birdeye, DexScreener or other providers.
-- Bounded spending: Old Faithful files are free. The Triton prepaid balance is topped up only by the owner, only when paper trading starts; never top up or activate paid services automatically.
+- Bounded spending: Old Faithful files are free. The Triton prepaid balance is topped up only by the owner; never top up or activate paid services automatically.
+  - Owner decision 2026-10-10: an early top-up around 2026-10-14 (minimum deposit $125) is approved for a bounded, filtered live-data measurement (about 1 hour) before paper trading starts.
+  - Every Triton client filters to what the bot needs, counts bytes and stops automatically at its budget.
+  - The monthly budget and daily cap are set by the owner after that measurement.
 - No secrets in Git, logs, prompts or reports.
 - Never claim a strategy is profitable without the after-cost backtest or paper result that shows it.
 
@@ -39,6 +47,12 @@ A Solana trading bot (pump.fun bonding curve and PumpSwap) that is profitable **
 - All Old Faithful data on the VPS lives under `/home/chupa/Solana-project/data-old-faithful-one`; lab datasets go to its `lab/` subdirectory (outside Git).
 - Run heavy builds and backfills in a bounded user scope so other services on the VPS stay responsive, for example `systemd-run --user --scope -p CPUQuota=700% -p MemoryMax=11G -- nice -n 10 <command>` (the VPS has 8 cores, 15 GB RAM and no swap, so a memory cap keeps a runaway process from taking other services down).
 - Do not stop or modify other projects' processes, services or data.
+- **Retention** (owner decision 2026-10-10):
+  - Raw live recorder data is kept for 3 days.
+  - The paper journal, arrival times, 1-minute candles and the trades of tokens with a signal are kept.
+  - Old raw Old Faithful chunks may be deleted, oldest first, after the rebuilt store has been verified and only when the free-disk floor requires it; they can be downloaded again.
+  - The floor (provisionally 50 GB) is fixed after measuring the growth of the other projects on the VPS.
+- New worktrees go under `/home/chupa/Solana-project/worktrees/`. The current plan and session roles are in `data-old-faithful-one/lab/research/plan-week2-8-2026-10-09.md`.
 
 ## Delivery
 
