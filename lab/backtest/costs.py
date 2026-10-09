@@ -47,3 +47,17 @@ def settle(result, scn):
     # Exit attempts that landed and failed on our own slippage limit pay the failed-tx cost.
     net = scn.exit_net(result.proceeds) - max(0, result.exit_attempts - 1) * scn.failed_tx
     return net - cost, net / cost - 1, cost
+
+
+def settle_sql(scn):
+    """(pnl_lamports, return) SQL expressions over results columns: the twin of settle().
+
+    Skipped positions (no transaction) give NULL for both; a failed entry has no return."""
+    a = float(scn.adverse_per_side)
+    refund = scn.ata_rent if scn.rent_mode in ("refunded", "refunded_on_full_exit") else 0
+    cost = f"(CAST(trunc(cost::DOUBLE * {1 + a!r}::DOUBLE) AS BIGINT) + {scn.per_tx() + scn.ata_rent})"
+    net = (f"(CAST(trunc(proceeds::DOUBLE * {1 - a!r}::DOUBLE) AS BIGINT) - {scn.per_tx()} + {refund}"
+           f" - GREATEST(0, COALESCE(exit_attempts, 1) - 1) * {scn.failed_tx})")
+    pnl = f"CASE WHEN skipped THEN NULL WHEN entry_failed THEN {-scn.failed_tx} ELSE {net} - {cost} END"
+    ret = f"CASE WHEN skipped OR entry_failed THEN NULL ELSE {net}::DOUBLE / {cost} - 1 END"
+    return pnl, ret

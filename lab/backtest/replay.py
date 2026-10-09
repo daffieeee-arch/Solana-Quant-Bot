@@ -379,28 +379,33 @@ def _run(r, legs, i, state, hold, rerun, sell, mark_ctx, exit_rule, d, q_frac, t
                 return finish()
         if leg.slot - entry_slot > max_slots:
             break
-        # Re-execute the whole historical transaction atomically.
-        j, tx_state, ok, deltas, failed_leg = i, state, True, [], None
+        # Re-execute the whole historical transaction atomically. Holdings move per leg, so a later
+        # leg of the same transaction (a bot that buys and sells at once) sees the earlier ones;
+        # if any leg fails, the applied legs are rolled back.
+        j, tx_state, ok, applied, failed_leg = i, state, True, [], None
+        diag_before = dict(diag)
         while j < n and legs[j].slot == leg.slot and legs[j].tx == leg.tx:
             res = rerun(tx_state, legs[j], tau, hold, diag)
             if res is None:
                 ok, failed_leg = False, legs[j]
                 break
             tx_state, cf_delta = res
-            deltas.append((legs[j], cf_delta))
+            _apply_hold(hold, legs[j], cf_delta)
+            applied.append((legs[j], cf_delta))
             j += 1
         while j < n and legs[j].slot == leg.slot and legs[j].tx == leg.tx:
             j += 1
         tx_legs = legs[i:j]
         if ok:
             state = tx_state
-            for l, cf_delta in deltas:
-                _apply_hold(hold, l, cf_delta)
         else:
             if failed_leg.direct:
                 r.reverted_direct += 1
             else:
                 r.reverted_router += 1
+            for l, cf_delta in applied:
+                _apply_hold(hold, l, cf_delta, sign=-1)
+            diag.update(diag_before)
             for l in tx_legs:
                 _apply_hold(hold, l, 0)
         i = j
@@ -423,14 +428,15 @@ def _run(r, legs, i, state, hold, rerun, sell, mark_ctx, exit_rule, d, q_frac, t
     return finish()
 
 
-def _apply_hold(hold, leg, cf_delta):
+def _apply_hold(hold, leg, cf_delta, sign=1):
+    """Book a leg's historical and counterfactual token delta (sign=-1 undoes it)."""
     if isinstance(leg, CurveLeg):
         hist = leg.t if leg.is_buy else -leg.t
     elif leg.kind in ("buy", "sell"):
         hist = leg.base if leg.kind == "buy" else -leg.base
     else:
         return
-    hold.apply(leg.trader, hist, cf_delta)
+    hold.apply(leg.trader, sign * hist, sign * cf_delta)
 
 
 def simulate_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots=400_000):

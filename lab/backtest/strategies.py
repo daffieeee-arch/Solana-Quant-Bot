@@ -7,7 +7,11 @@ that looks at other events runs on the PastView, so lookahead is impossible by c
 
 import bisect
 import hashlib
+import sys
+from collections import defaultdict
 from dataclasses import dataclass
+
+import numpy as np
 
 from .costs import LAMPORTS
 
@@ -38,7 +42,7 @@ class PastView:
         return [l for l in self.pool if lo <= l.slot <= hi and l.kind in ("buy", "sell")]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Signal:
     family: str
     variant: str
@@ -47,6 +51,7 @@ class Signal:
     venue: str  # curve | pool
     depth: int  # pre-trade depth at the trigger (curve real SOL or pool Q_eff), lamports
     params: tuple = ()
+    ref: tuple = None  # N2 only: (mint, t) of the family trigger this control is matched to
 
 
 # ----------------------------------------------------------------------------- exit rules
@@ -284,24 +289,63 @@ def n1_candidates(con, cfg, dev_start, dev_end):
     return con.execute(f"SELECT m.mint, m.create_slot FROM mints m WHERE {u} AND m.create_slot BETWEEN {lo} AND {hi}").fetchall()
 
 
-def n2_matches(con, signal, k=5):
-    """k random (mint, slot) matches: same venue, similar depth, same hour (deterministic)."""
-    h0 = signal.t - signal.t % HOUR_SLOTS
-    seed = int(hashlib.sha256(f"{signal.family}{signal.variant}{signal.mint}{signal.t}".encode()).hexdigest()[:8], 16)
-    if signal.venue == "curve":
-        rows = con.execute(f"""
-            SELECT c.mint, c.slot FROM curve c JOIN mints m USING (mint)
-            WHERE c.slot >= ? AND c.slot < ? AND c.mint <> ? AND c.rq BETWEEN ? AND ?
-              AND NOT m.mayhem AND m.quote_mint IN ({",".join(repr(q) for q in SOL_QUOTES)})
-            QUALIFY row_number() OVER (PARTITION BY c.mint ORDER BY hash(c.slot * 1000003 + c.tx_index + ?)) = 1
-            ORDER BY hash(c.mint || ?::VARCHAR) LIMIT ?""",
-            [h0, h0 + HOUR_SLOTS, signal.mint, signal.depth - 5 * SOL, signal.depth + 5 * SOL, seed, seed, k]).fetchall()
-    else:
-        rows = con.execute(f"""
-            SELECT p.mint, e.slot FROM pool e JOIN pools p USING (pool) JOIN mints m ON m.mint = p.mint
-            WHERE e.slot >= ? AND e.slot < ? AND p.mint <> ? AND e.kind IN ('buy','sell') AND e.e BETWEEN ? AND ?
-              AND NOT m.mayhem AND m.quote_mint IN ({",".join(repr(q) for q in SOL_QUOTES)})
-            QUALIFY row_number() OVER (PARTITION BY p.mint ORDER BY hash(e.slot * 1000003 + e.tx_index + ?)) = 1
-            ORDER BY hash(p.mint || ?::VARCHAR) LIMIT ?""",
-            [h0, h0 + HOUR_SLOTS, signal.mint, int(signal.depth * 0.8), int(signal.depth * 1.2), seed, seed, k]).fetchall()
-    return rows
+def _seed(*parts):
+    return int.from_bytes(hashlib.sha256("|".join(map(str, parts)).encode()).digest()[:8], "little")
+
+
+def _mix(x):
+    """splitmix64 finalizer on a uint64 array: a deterministic pseudo-random key."""
+    x = (x ^ (x >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
+    x = (x ^ (x >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
+    return x ^ (x >> np.uint64(31))
+
+
+def n2_matches(con, triggers, k=5):
+    """k random matches per trigger (spec N2), one query per hour and venue.
+
+    triggers: iterable of (family, mint, t, venue, depth). Returns {trigger: [(mint, slot, depth)]}:
+    k different SOL-quoted, non-mayhem tokens with an event in the same hour at a similar depth
+    (curve: real SOL within +-5 SOL; pool: Q_eff within +-20%), each at one of those events drawn
+    at random. The draws are deterministic per trigger."""
+    quotes = ",".join(repr(q) for q in SOL_QUOTES)
+    by_hour = defaultdict(list)
+    for tr in triggers:
+        by_hour[(tr[3], tr[2] - tr[2] % HOUR_SLOTS)].append(tr)
+    out = {}
+    with np.errstate(over="ignore"):
+        for (venue, h0), trs in sorted(by_hour.items()):
+            if venue == "curve":
+                sql = f"""SELECT c.mint, c.slot, c.tx_index, c.rq::DOUBLE AS depth FROM curve c JOIN mints m USING (mint)
+                          WHERE c.slot >= ? AND c.slot < ? AND NOT m.mayhem AND m.quote_mint IN ({quotes})"""
+            else:
+                sql = f"""SELECT p.mint, e.slot, e.tx_index, e.e::DOUBLE AS depth
+                          FROM pool e JOIN pools p USING (pool) JOIN mints m ON m.mint = p.mint
+                          WHERE e.slot >= ? AND e.slot < ? AND e.kind IN ('buy', 'sell')
+                            AND NOT m.mayhem AND m.quote_mint IN ({quotes})"""
+            ev = con.execute(sql, [h0, h0 + HOUR_SLOTS]).fetchnumpy()
+            if not len(ev["slot"]):
+                out.update({tr: [] for tr in trs})
+                continue
+            names, mid = np.unique(np.asarray(ev["mint"], dtype=object), return_inverse=True)
+            mkey = np.array([_seed(m) for m in names], dtype=np.uint64)
+            slots = np.asarray(ev["slot"], dtype=np.int64)
+            pos = slots.astype(np.uint64) * np.uint64(1_000_003) + np.asarray(ev["tx_index"], dtype=np.uint64)
+            depth = np.asarray(ev["depth"], dtype=np.float64)
+            for tr in trs:
+                fam, mint, t, _, dep = tr
+                lo, hi = (dep - 5 * SOL, dep + 5 * SOL) if venue == "curve" else (dep * 0.8, dep * 1.2)
+                own = np.searchsorted(names, mint)
+                own = own if own < len(names) and names[own] == mint else -1
+                idx = np.nonzero((depth >= lo) & (depth <= hi) & (mid != own))[0]
+                if not len(idx):
+                    out[tr] = []
+                    continue
+                seed = np.uint64(_seed(fam, mint, t))
+                order = np.lexsort((_mix(pos[idx] ^ seed), mid[idx]))  # per token, a random event first
+                m_sorted = mid[idx][order]
+                first = np.ones(len(order), dtype=bool)
+                first[1:] = m_sorted[1:] != m_sorted[:-1]
+                pick = idx[order[first]]
+                chosen = pick[np.argsort(_mix(mkey[mid[pick]] ^ seed), kind="stable")[:k]]
+                out[tr] = [(sys.intern(names[mid[j]]), int(slots[j]), int(depth[j])) for j in chosen]
+    return out

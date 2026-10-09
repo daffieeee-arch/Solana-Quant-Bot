@@ -19,7 +19,7 @@ STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithfu
 def ctx():
     if not os.path.exists(STORE):
         pytest.skip("dev store not built")
-    con = streams.open_store(STORE, threads=2, memory="3GB")
+    con = streams.open_store(STORE, threads=2, memory="1GB")
     cfg = load_defaults()
     lo, hi = con.execute("SELECT min(slot), max(slot) + 1 FROM blocks").fetchone()
     return con, cfg, lo, hi
