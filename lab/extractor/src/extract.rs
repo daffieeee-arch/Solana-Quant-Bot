@@ -130,9 +130,15 @@ pub struct Counters {
 /// Old Faithful's storage (Backblaze B2 behind Cloudflare) answers new requests with HTTP 429
 /// when the archive owner's account is over its request limit. This is global and comes and
 /// goes; streams that are already open keep flowing. So a thread that hits a 429 waits here
-/// (1, 2, 4 ... 15 minutes, spread per thread) while the other threads keep streaming.
+/// (1, 2, 4, 5 minutes, spread per thread) while the other threads keep streaming. The cap stays
+/// short because a thread waiting here cannot answer Jetstreamer's work-steal requests.
 const BACKOFF_429_FIRST_SECS: u64 = 60;
-const BACKOFF_429_MAX_SECS: u64 = 900;
+const BACKOFF_429_MAX_SECS: u64 = 300;
+
+/// True only for an HTTP 429 status in the error text (slot numbers can contain "429").
+fn is_http_429(msg: &str) -> bool {
+    msg.contains("429 Too Many Requests") || msg.contains("status: 429") || msg.contains("too_many_requests")
+}
 /// Exit code used when one slot keeps failing: retrying later will not help.
 pub const EXIT_STUCK: i32 = 76;
 /// Base fee per signature in lamports.
@@ -564,7 +570,7 @@ impl Plugin for LabPlugin {
         Box::pin(async move {
             self.counters.firehose_errors.fetch_add(1, Ordering::Relaxed);
             let msg = &error.error_message;
-            if msg.contains("429") {
+            if is_http_429(msg) {
                 self.counters.http_429.fetch_add(1, Ordering::Relaxed);
                 let n = {
                     let mut last = self.last_429.lock().expect("429 lock");
@@ -616,5 +622,19 @@ impl Plugin for LabPlugin {
             self.send(vec![self.block_row(block)]);
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_http_429;
+
+    #[test]
+    fn http_429_detection_ignores_slot_numbers() {
+        assert!(is_http_429(
+            "Error reading header: HTTP status client error (429 Too Many Requests) for url (https://files.old-faithful.net/1051/epoch-1051.car)"
+        ));
+        assert!(!is_http_429("slot 454429001 not found in index https://example/1051"));
+        assert!(!is_http_429("Timeout while waiting for operation: seek_to_slot 454290000"));
     }
 }
