@@ -1,0 +1,128 @@
+<title>Vragenlog</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: question register — status filter row, then one card per question, newest first, SQL folded away. */
+:root {
+  --bg: #f5f7f6; --surface: #ffffff; --fg: #17201d; --muted: #5b6a65; --line: #dde4e1;
+  --accent: #0f766e; --accent-soft: #e0f2ef;
+  --hyp: #8a5a00; --hyp-soft: #fbf0d6; --scr: #5b3fb8; --scr-soft: #ece8fb;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d;
+  --accent: #5eead4; --accent-soft: #123430; --hyp: #fcd34d; --hyp-soft: #33280e; --scr: #c4b5fd; --scr-soft: #261f42; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d;
+  --accent: #5eead4; --accent-soft: #123430; --hyp: #fcd34d; --hyp-soft: #33280e; --scr: #c4b5fd; --scr-soft: #261f42; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 780px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 56px; display: grid; gap: 18px; }
+.wrap > * { min-width: 0; }
+header { display: grid; gap: 4px; }
+h1 { font-size: 1.6rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 0; max-width: 64ch; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.filters button { font: inherit; font-size: 0.85rem; border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 4px 12px; border-radius: 999px; cursor: pointer; }
+.filters button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.filters button:focus-visible, summary:focus-visible, a:focus-visible, .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#list { display: grid; gap: 10px; }
+.q { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 6px; min-width: 0; }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--muted); font-family: var(--mono); }
+.st { font-family: var(--sans); font-size: 0.76rem; font-weight: 500; padding: 1px 9px; border-radius: 999px; }
+.st.antwoord { background: var(--accent-soft); color: var(--accent); }
+.st.hypothese { background: var(--hyp-soft); color: var(--hyp); }
+.st.screen { background: var(--scr-soft); color: var(--scr); }
+.qt { font-weight: 600; font-size: 1.02rem; overflow-wrap: anywhere; }
+.ans { margin: 0; overflow-wrap: anywhere; }
+.q a { color: var(--accent); text-underline-offset: 2px; }
+details summary { cursor: pointer; font-size: 0.85rem; color: var(--muted); }
+pre { font-family: var(--mono); font-size: 0.78rem; line-height: 1.45; overflow-x: auto; margin: 6px 0; white-space: pre; background: var(--bg); padding: 8px 10px; border-radius: 6px; }
+.copy { font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 5px; padding: 2px 8px; cursor: pointer; }
+.empty { color: var(--muted); padding: 18px; border: 1px dashed var(--line); border-radius: 8px; }
+.legend { color: var(--muted); font-size: 0.85rem; display: grid; gap: 2px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Vragenlog</h1>
+    <p class="sub">Elke datavraag aan sessie LAB ui, met het antwoord, de SQL en de status. Een mogelijke "edge" uit een losse vraag is een hypothese tot LAB research hem test.</p>
+  </header>
+  <div class="legend">
+    <span><b>antwoord</b>: feitelijk antwoord uit de data.</span>
+    <span><b>hypothese</b>: een patroon dat nog niet eerlijk getest is.</span>
+    <span><b>naar screen</b>: doorgezet naar LAB research voor een echte test.</span>
+  </div>
+  <div class="filters" id="filters" role="group" aria-label="Filter op status"></div>
+  <div id="list"><p class="empty">Vragen laden…</p></div>
+</div>
+
+<script>
+(function () {
+  const list = document.getElementById("list");
+  const filtersEl = document.getElementById("filters");
+  const STATUS = { "antwoord": "antwoord", "hypothese": "hypothese", "naar screen": "screen" };
+  const fmt = new Intl.DateTimeFormat("nl-NL", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  let all = [], filter = "alle";
+  try { filter = localStorage.getItem("vragenlog-filter") || "alle"; } catch (e) {}
+
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = String(text); return n; };
+  const safeUrl = u => { try { const x = new URL(String(u)); return x.protocol === "https:" ? x.href : null; } catch (e) { return null; } };
+
+  function renderFilters() {
+    filtersEl.replaceChildren();
+    for (const f of ["alle", "antwoord", "hypothese", "naar screen"]) {
+      const count = f === "alle" ? all.length : all.filter(q => q.status === f).length;
+      const b = el("button", null, f + " (" + count + ")"); b.type = "button";
+      b.setAttribute("aria-pressed", String(f === filter));
+      b.addEventListener("click", () => { filter = f; try { localStorage.setItem("vragenlog-filter", f); } catch (e) {} renderFilters(); renderList(); });
+      filtersEl.append(b);
+    }
+  }
+
+  function renderList() {
+    const rows = all.filter(q => filter === "alle" || q.status === filter);
+    if (!rows.length) {
+      list.replaceChildren(el("p", "empty", all.length ? "Geen vragen met deze status." :
+        "Nog geen vragen. Stel een datavraag in sessie LAB ui; het antwoord komt hier te staan met de SQL erbij."));
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const q of rows) {
+      const card = el("article", "q");
+      const top = el("div", "top");
+      const t = Date.parse(String(q.date) + "T00:00:00Z");
+      top.append(el("span", null, isNaN(t) ? String(q.date || "") : fmt.format(new Date(t))));
+      top.append(el("span", "st " + (STATUS[q.status] || "antwoord"), q.status || "antwoord"));
+      if (q.id) top.append(el("span", null, "#" + q.id));
+      card.append(top, el("div", "qt", q.question || ""));
+      if (q.answer) card.append(el("p", "ans", q.answer));
+      const href = safeUrl(q.answer_url);
+      if (href) { const a = el("a", null, "Antwoordpagina openen"); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer"; card.append(a); }
+      if (q.sql) {
+        const det = el("details"); const pre = el("pre", null, q.sql);
+        const btn = el("button", "copy", "Kopieer SQL"); btn.type = "button";
+        btn.addEventListener("click", async () => {
+          try { await navigator.clipboard.writeText(q.sql); btn.textContent = "Gekopieerd"; }
+          catch (e) { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Geselecteerd"; }
+          setTimeout(() => btn.textContent = "Kopieer SQL", 1600);
+        });
+        det.append(el("summary", null, "SQL"), pre, btn); card.append(det);
+      }
+      frag.append(card);
+    }
+    list.replaceChildren(frag);
+  }
+
+  async function start() {
+    renderFilters();
+    const db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if (!db) { list.replaceChildren(el("p", "empty", "De vragen zijn in deze weergave niet beschikbaar. Open de pagina ingelogd op claude.ai.")); return; }
+    db.collection("questions").orderBy("seq", "desc").limit(1000).onSnapshot(snap => {
+      all = snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
+      renderFilters(); renderList();
+    }, () => list.replaceChildren(el("p", "empty", "De vragen konden niet geladen worden. Herlaad de pagina.")));
+  }
+  start();
+})();
+</script>
