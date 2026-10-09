@@ -52,3 +52,23 @@ on `quote_mint` before summing SOL.
   holder-reward coins separately; creator identity = `CreateEvent.user` (`mints.creator`).
 - Graduations in the create slot (`complete_slot = create_slot`, 44% in this window) are never tradeable.
 - `token_eligibility`: created inside the loaded data and after the 1-day burn-in.
+
+## Overview tables (`a`, analytics.duckdb)
+
+Built by `lab/analytics/build.py` from the dev store (heavy job; ~1.5 min, ~450 MB). Build-and-swap; the
+build fails if any slot column holds a hold-out slot (protocol-marker labels in `market_events` excepted)
+or a column lacks a `data_dictionary` entry. Every column is described in `a.data_dictionary` (Dutch).
+
+- `a.data_coverage` — per epoch: slots, blocks, skipped slots, time range, tokens, graduations, trades.
+- `a.token_summary` — one row per mint: flags, lifecycle, curve and pool trade counts, volume (quote),
+  max/last spot price and max market cap per venue. Amounts are in the quote mint; `sol_quote` says when that is SOL.
+- `a.token_candles_1m` — per mint × venue × UTC minute: OHLC of the spot price (quote per token), trades,
+  volume. Market cap = price × `token_summary.supply_tokens`. Curve price is post-trade, pool price pre-trade.
+- `a.graduations` — one row per graduation: time to graduate, `in_create_slot`, trades and traders before,
+  first pool trade, pool trades and volume in the first hour (13,468 slots).
+- `a.wallet_summary` — per trader: trades per venue, tokens, SOL in/out, `net_sol_flow`. **Incomplete**: no
+  transfers, fees or open positions, so it is not profit.
+- `a.market_events` — ticker: graduations, trades ≥ 25 SOL (SOL-quoted), and the two protocol-marker labels.
+- `a.slot_time` — slot → block time.
+
+Example: `lab/bin/q "SELECT symbol, round(seconds_to_graduate/60) AS min FROM a.graduations WHERE NOT in_create_slot ORDER BY 2 LIMIT 5"`.
