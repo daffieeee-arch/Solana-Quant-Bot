@@ -222,8 +222,11 @@ def main():
     }
     dirs = [c[3] for c in done]
     con = duckdb.connect()
-    con.execute("SET threads TO 4")
-    con.execute("SET memory_limit = '6GB'")
+    con.execute(f"SET threads TO {int(os.environ.get('LAB_DUCKDB_THREADS', '4'))}")
+    con.execute(f"SET memory_limit = '{os.environ.get('LAB_DUCKDB_MEM', '6GB')}'")
+    tmp = os.environ.get("LAB_DUCKDB_TMP")
+    if tmp:
+        con.execute(f"SET temp_directory = '{tmp}'")
     con.execute("CREATE TEMP TABLE chunks (s UBIGINT, e UBIGINT)")
     if done:
         con.executemany("INSERT INTO chunks VALUES (?, ?)", [(s, e) for s, e, _, _ in done])

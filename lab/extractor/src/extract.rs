@@ -36,7 +36,7 @@ const JITO_TIP_ACCOUNTS: [&str; 8] = [
 ];
 
 /// Context columns that precede the IDL fields in every event table.
-pub const EVENT_CONTEXT: [(&str, Kind); 20] = [
+pub const EVENT_CONTEXT: [(&str, Kind); 24] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     ("signature", Kind::Utf8),
@@ -57,9 +57,16 @@ pub const EVENT_CONTEXT: [(&str, Kind); 20] = [
     ("tx_version", Kind::Utf8),
     ("decode_status", Kind::Utf8),
     ("payload_len", Kind::U64),
+    // The instruction that emitted the event (e.g. pump buy): IDL name, decoded arguments as
+    // JSON (slippage limits such as max_sol_cost / min_tokens_out) and raw data (hex, capped).
+    ("parent_ix_name", Kind::Utf8),
+    ("parent_ix_args", Kind::Utf8),
+    ("parent_ix_data", Kind::Utf8),
+    // All required signers of the transaction, comma separated (fee payer first).
+    ("signers", Kind::Utf8),
 ];
 
-const FAILED_COLS: [(&str, Kind); 15] = [
+const FAILED_COLS: [(&str, Kind); 21] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     ("signature", Kind::Utf8),
@@ -76,7 +83,17 @@ const FAILED_COLS: [(&str, Kind); 15] = [
     ("touches_amm", Kind::Bool),
     ("top_ix_discs", Kind::Utf8),
     ("error", Kind::Utf8),
+    ("signers", Kind::Utf8),
+    // First pump/PumpSwap instruction in execution order (top level or inner), decoded with the
+    // IDL: which trade was attempted and with which slippage limits.
+    ("ix_program", Kind::Utf8),
+    ("ix_name", Kind::Utf8),
+    ("ix_args", Kind::Utf8),
+    ("ix_data", Kind::Utf8),
+    ("ix_stack_height", Kind::U64),
 ];
+/// Raw instruction data kept per row, in bytes (pump/PumpSwap trade instructions are < 64 bytes).
+const IX_DATA_CAP: usize = 256;
 
 const ANOMALY_COLS: [(&str, Kind); 9] = [
     ("slot", Kind::U64),
@@ -358,6 +375,23 @@ impl LabPlugin {
         // Charged fee minus the per-signature base fee = what was paid for priority.
         let sigs = u64::from(msg.header().num_required_signatures);
         let priority_fee = meta.fee.saturating_sub(sigs * LAMPORTS_PER_SIGNATURE);
+        let signers = static_keys
+            .iter()
+            .take(usize::try_from(sigs).unwrap_or(usize::MAX))
+            .map(|k| b58(k.as_ref()))
+            .collect::<Vec<_>>()
+            .join(",");
+        let ix_hex = |d: &[u8]| hex::encode(&d[..d.len().min(IX_DATA_CAP)]);
+        // Decode an instruction with the IDL of the program it calls, if that is pump/PumpSwap.
+        let decode_ix = |program: Option<&[u8]>, data: &[u8]| -> (Val, Val) {
+            match program.and_then(|k| self.programs.iter().find(|p| p.id.as_slice() == k)) {
+                Some(p) => match p.idl.decode_instruction(data) {
+                    Some((name, args)) => (Val::Str(name.to_owned()), Val::Str(args)),
+                    None => (Val::Null, Val::Null),
+                },
+                None => (Val::Null, Val::Null),
+            }
+        };
 
         if meta.status.is_err() {
             self.counters.txs_failed_touching.fetch_add(1, Ordering::Relaxed);
@@ -370,6 +404,38 @@ impl LabPlugin {
             }
             let mut err = format!("{:?}", meta.status.as_ref().err());
             err.truncate(300);
+            let is_ours = |idx: u8, data: &[u8]| {
+                let k = key_at(usize::from(idx));
+                self.programs.iter().any(|p| Some(p.id.as_slice()) == k) && !data.starts_with(&EVENT_IX_TAG)
+            };
+            // Execution order: each top-level instruction, then its inner instructions.
+            let mut first: Option<(u8, &[u8], u64)> = None;
+            'search: for (i, ix) in outer.iter().enumerate() {
+                if is_ours(ix.program_id_index, &ix.data) {
+                    first = Some((ix.program_id_index, &ix.data, 1));
+                    break;
+                }
+                for group in inner_groups.iter().filter(|g| usize::from(g.index) == i) {
+                    for inner in &group.instructions {
+                        if is_ours(inner.instruction.program_id_index, &inner.instruction.data) {
+                            first = Some((
+                                inner.instruction.program_id_index,
+                                &inner.instruction.data,
+                                inner.stack_height.map_or(0, u64::from),
+                            ));
+                            break 'search;
+                        }
+                    }
+                }
+            }
+            let (ix_program, ix_name, ix_args, ix_data, ix_height) = match first {
+                Some((idx, data, h)) => {
+                    let k = key_at(usize::from(idx));
+                    let (name, args) = decode_ix(k, data);
+                    (k.map_or(Val::Null, |k| Val::Str(b58(k))), name, args, Val::Str(ix_hex(data)), if h == 0 { Val::Null } else { Val::U64(h) })
+                }
+                None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null),
+            };
             return vec![Row {
                 table: self.failed_table.clone(),
                 columns: self.failed_cols.clone(),
@@ -389,6 +455,12 @@ impl LabPlugin {
                     Val::Bool(touches[1]),
                     Val::Str(discs.join(",")),
                     Val::Str(err),
+                    Val::Str(signers),
+                    ix_program,
+                    ix_name,
+                    ix_args,
+                    ix_data,
+                    ix_height,
                 ],
             }];
         }
@@ -426,7 +498,7 @@ impl LabPlugin {
 
                 // Parent = nearest earlier instruction one level up; the outer instruction when
                 // the event is emitted directly below it.
-                let (parent_program, parent_disc) = {
+                let (parent_program, parent_disc, parent_name, parent_args, parent_data) = {
                     let earlier = &group.instructions[..j];
                     let parent = match inner.stack_height {
                         Some(h) => earlier
@@ -450,11 +522,18 @@ impl LabPlugin {
                             .then_some((outer_ix.program_id_index, &outer_ix.data))
                     });
                     match parent {
-                        Some((pidx, pdata)) => (
-                            key_at(usize::from(pidx)).map_or(Val::Null, |k| Val::Str(b58(k))),
-                            Val::Str(hex::encode(&pdata[..pdata.len().min(8)])),
-                        ),
-                        None => (Val::Null, Val::Null),
+                        Some((pidx, pdata)) => {
+                            let pkey = key_at(usize::from(pidx));
+                            let (name, args) = decode_ix(pkey, pdata);
+                            (
+                                pkey.map_or(Val::Null, |k| Val::Str(b58(k))),
+                                Val::Str(hex::encode(&pdata[..pdata.len().min(8)])),
+                                name,
+                                args,
+                                Val::Str(ix_hex(pdata)),
+                            )
+                        }
+                        None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null),
                     }
                 };
 
@@ -491,6 +570,10 @@ impl LabPlugin {
                     Val::Str(tx_version.to_owned()),
                     Val::Str(decoded.status.as_str().to_owned()),
                     Val::U64(body.len() as u64),
+                    parent_name,
+                    parent_args,
+                    parent_data,
+                    Val::Str(signers.clone()),
                 ]);
                 values.extend(decoded.values);
                 event_seq += 1;

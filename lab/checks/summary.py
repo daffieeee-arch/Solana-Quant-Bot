@@ -54,8 +54,11 @@ def main():
     chunks = chunk_dirs(a.root)
     dirs = [d for _, d in chunks]
     con = duckdb.connect()
-    con.execute("SET threads TO 4")
-    con.execute("SET memory_limit = '6GB'")
+    con.execute(f"SET threads TO {int(os.environ.get('LAB_DUCKDB_THREADS', '4'))}")
+    con.execute(f"SET memory_limit = '{os.environ.get('LAB_DUCKDB_MEM', '6GB')}'")
+    tmp = os.environ.get("LAB_DUCKDB_TMP")
+    if tmp:
+        con.execute(f"SET temp_directory = '{tmp}'")
     sol = ", ".join(f"'{q}'" for q in SOL_QUOTES)
     out = {
         "chunks": len(chunks),

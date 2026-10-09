@@ -59,6 +59,13 @@ enum TypeDef {
 }
 
 #[derive(Debug, Clone)]
+pub struct InstructionDef {
+    pub name: String,
+    pub discriminator: [u8; 8],
+    pub args: Vec<Field>,
+}
+
+#[derive(Debug, Clone)]
 pub struct EventDef {
     pub name: String,
     pub discriminator: [u8; 8],
@@ -120,6 +127,8 @@ pub struct Decoded {
 pub struct Idl {
     pub address: String,
     pub events: Vec<EventDef>,
+    pub instructions: Vec<InstructionDef>,
+    instruction_by_disc: HashMap<[u8; 8], usize>,
     types: HashMap<String, TypeDef>,
 }
 
@@ -254,7 +263,52 @@ impl Idl {
             };
             events.push(EventDef { name: ename, discriminator, fields });
         }
-        Ok(Self { address, events, types })
+        let mut instructions = Vec::new();
+        for ix in j["instructions"].as_array().map(Vec::as_slice).unwrap_or(&[]) {
+            let name = ix["name"].as_str().ok_or_else(|| anyhow!("instruction without name"))?.to_owned();
+            let disc: Vec<u8> = ix["discriminator"]
+                .as_array()
+                .ok_or_else(|| anyhow!("instruction {name} without discriminator"))?
+                .iter()
+                .map(|b| b.as_u64().and_then(|v| u8::try_from(v).ok()).ok_or_else(|| anyhow!("bad byte")))
+                .collect::<Result<_>>()?;
+            let Ok(discriminator) = <[u8; 8]>::try_from(disc) else { continue };
+            let args = parse_fields(ix.get("args").unwrap_or(&J::Array(Vec::new())))?;
+            instructions.push(InstructionDef { name, discriminator, args });
+        }
+        let instruction_by_disc = instructions.iter().enumerate().map(|(i, ix)| (ix.discriminator, i)).collect();
+        Ok(Self { address, events, instructions, instruction_by_disc, types })
+    }
+
+    /// Decode an instruction of this program: its IDL name and its arguments as a JSON object.
+    /// Arguments are decoded in order and stop at the end of the data (older layouts had fewer
+    /// trailing arguments); `_decode` records ok / prefix / extra / error.
+    pub fn decode_instruction(&self, data: &[u8]) -> Option<(&str, String)> {
+        let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
+        let ix = &self.instructions[*self.instruction_by_disc.get(&disc)?];
+        let mut cur = Cursor { buf: &data[8..], pos: 0 };
+        let mut map = serde_json::Map::new();
+        let mut status = DecodeStatus::Ok;
+        for arg in &ix.args {
+            if cur.remaining() == 0 {
+                status = DecodeStatus::Prefix;
+                break;
+            }
+            match self.decode_json(&arg.ty, &mut cur, 0) {
+                Some(v) => {
+                    map.insert(arg.name.clone(), v);
+                }
+                None => {
+                    status = DecodeStatus::Error;
+                    break;
+                }
+            }
+        }
+        if status == DecodeStatus::Ok && cur.remaining() > 0 {
+            status = DecodeStatus::Extra;
+        }
+        map.insert("_decode".to_owned(), J::String(status.as_str().to_owned()));
+        Some((ix.name.as_str(), J::Object(map).to_string()))
     }
 
     #[cfg(test)]
@@ -565,6 +619,31 @@ mod tests {
         assert_eq!(idl.decode_event(ev, &bad_utf8).status, DecodeStatus::Error);
 
         assert_eq!(idl.decode_event(ev, &[]).status, DecodeStatus::Error);
+    }
+
+    #[test]
+    fn decodes_trade_instruction_args() {
+        let idl = Idl::parse(PUMP).unwrap();
+        // buy(amount = 1000, max_sol_cost = 2_000_000, track_volume = OptionBool(true))
+        let mut data = vec![0x66, 0x06, 0x3d, 0x12, 0x01, 0xda, 0xeb, 0xea];
+        data.extend_from_slice(&1000u64.to_le_bytes());
+        data.extend_from_slice(&2_000_000u64.to_le_bytes());
+        data.push(1);
+        let (name, args) = idl.decode_instruction(&data).unwrap();
+        assert_eq!(name, "buy");
+        let v: J = serde_json::from_str(&args).unwrap();
+        assert_eq!(v["amount"], 1000);
+        assert_eq!(v["max_sol_cost"], 2_000_000);
+        assert_eq!(v["track_volume"]["_0"], true);
+        assert_eq!(v["_decode"], "prefix"); // partial_fill was added later
+        assert!(idl.decode_instruction(&[0u8; 8]).is_none());
+        let amm = Idl::parse(PUMP_AMM).unwrap();
+        let mut sell = vec![0x33, 0xe6, 0x85, 0xa4, 0x01, 0x7f, 0x83, 0xad];
+        sell.extend_from_slice(&5u64.to_le_bytes());
+        sell.extend_from_slice(&7u64.to_le_bytes());
+        let (name, args) = amm.decode_instruction(&sell).unwrap();
+        assert_eq!(name, "sell");
+        assert!(args.contains("\"min_quote_amount_out\":7") && args.contains("\"_decode\":\"ok\""), "{args}");
     }
 
     #[test]
