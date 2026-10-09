@@ -42,7 +42,7 @@ def net_for_budget(budget, bps_list):
 # ----------------------------------------------------------------------------- curve
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Curve:
     vt: int  # virtual token reserves
     vq: int  # virtual quote reserves
@@ -60,7 +60,7 @@ class Curve:
         return self.vq / self.vt
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Fill:
     tokens: int  # tokens moved (bought or sold)
     curve_quote: int  # quote moving into / out of the venue's pricing state
@@ -111,7 +111,7 @@ def curve_sell(c, t):
 # ----------------------------------------------------------------------------- pool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Pool:
     b: int  # base (token) reserves
     e: int  # effective quote reserves = quote vault + virtual quote reserves
