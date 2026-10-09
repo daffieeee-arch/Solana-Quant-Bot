@@ -40,7 +40,16 @@ def period_chunks(period, cfg):
     hold = cfg["windows"]["holdout"]
     chunks = data.complete_chunks()
     if period == "dev":
-        return [c for c in chunks if c[1] <= hold["start_slot"]]
+        # The contiguous run of complete chunks that ends at the hold-out start (the backfill
+        # grows backwards in time, so older chunks join once the gap to them is filled).
+        out = []
+        edge = hold["start_slot"]
+        for c in sorted((c for c in chunks if c[1] <= hold["start_slot"]), reverse=True):
+            if c[1] != edge:
+                break
+            out.append(c)
+            edge = c[0]
+        return sorted(out)
     if period == "holdout":
         return [c for c in chunks if c[0] >= hold["start_slot"] and c[1] <= hold["end_slot_exclusive"]]
     raise ValueError(period)
@@ -58,7 +67,7 @@ def build(period, out_path, cfg):
     gaps = [(a[1], b[0]) for a, b in zip(chunks, chunks[1:]) if a[1] != b[0]]
     if gaps:
         raise SystemExit(f"period {period} has gaps between complete chunks: {gaps}")
-    tmp = out_path + ".tmp"
+    tmp = out_path + ".building"
     for p in (tmp, tmp + ".wal"):
         if os.path.exists(p):
             os.remove(p)
@@ -92,7 +101,7 @@ def build(period, out_path, cfg):
         t.creator_fee_basis_points::INTEGER AS creator_bps,
         t.virtual_token_reserves{H} AS vt, COALESCE(t.virtual_quote_reserves, t.virtual_sol_reserves){H} AS vq,
         t.real_token_reserves{H} AS rt, COALESCE(t.real_quote_reserves, t.real_sol_reserves){H} AS rq,
-        t."user" AS trader, t.fee_payer, t.priority_fee, t.jito_tip, t.tx_fee,
+        t."user" AS trader, t.fee_payer, t.outer_program, t.priority_fee, t.jito_tip, t.tx_fee,
         COALESCE(t.mayhem_mode, false) AS mayhem_trade,
         {arg('amount')} AS arg_amount,
         COALESCE({arg('spendable_sol_in')}, {arg('spendable_quote_in')}) AS arg_budget,
@@ -111,7 +120,8 @@ def build(period, out_path, cfg):
       QUALIFY row_number() OVER (PARTITION BY p.pool ORDER BY p.slot) = 1""")
 
     eff = f"(pool_quote_token_reserves{H} + COALESCE(TRY_CAST(virtual_quote_reserves AS HUGEINT), 0))"
-    common = "pool, slot, tx_index, outer_ix, inner_ix, \"user\" AS trader, fee_payer, priority_fee, jito_tip, tx_fee, parent_ix_disc"
+    common = ("pool, slot, tx_index, outer_ix, inner_ix, \"user\" AS trader, fee_payer, outer_program, "
+              "priority_fee, jito_tip, tx_fee, parent_ix_disc")
     fees = ("lp_fee_basis_points::INTEGER AS lp_bps, protocol_fee_basis_points::INTEGER AS protocol_bps, "
             "COALESCE(coin_creator_fee_basis_points, 0)::INTEGER AS creator_bps")
     con.execute(f"""
@@ -128,7 +138,7 @@ def build(period, out_path, cfg):
         FROM {P('pump_amm/SellEvent')}
         UNION ALL BY NAME
         SELECT 'boost' AS kind, pool, slot, tx_index, outer_ix, inner_ix, authority AS trader, fee_payer,
-               priority_fee, jito_tip, tx_fee, parent_ix_disc,
+               outer_program, priority_fee, jito_tip, tx_fee, parent_ix_disc,
                base_reserves_after{H} AS b_after, real_quote_reserves_after{H} + TRY_CAST(virtual_quote_reserves AS HUGEINT) AS e_after,
                base_amount_burned{H} AS base, quote_amount_in_used{H} AS quote_gross, boost_vault_remaining{H} AS boost_left
         FROM {P('pump_amm/BoostBuyAndBurnEvent')}

@@ -73,6 +73,8 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals):
         for m, cslot in sorted(cands[:n1_sample], key=lambda c: c[1]):
             for H in (150, 1_500):
                 signals.append(Signal("N1", f"H{H}", m, cslot, "curve", 0, (H,)))
+    # Deterministic order (SQL results come back in no fixed order), then the optional cap.
+    signals.sort(key=lambda s: (s.t, s.mint, s.family, s.variant))
     if max_signals:
         signals = signals[:max_signals]
     if "N2" in families:
@@ -115,7 +117,7 @@ def exit_rule_for(sig, scn, d):
         tp, T = sig.params
         return tp_sl_time(tp, -0.08, T, scn)
     if sig.family in ("F1", "N2_F1"):
-        return f1_exit([None], 4_500)
+        return f1_exit(sig.depth, 4_500)
     if sig.family == "N1":
         return until_slot(sig.t + sig.params[0], d)
     raise ValueError(sig.family)
@@ -144,7 +146,7 @@ def _work(args):
                             continue
                         rule = exit_rule_for(sig, base, d)
                         if sig.venue == "pool":
-                            r = replay.simulate_pool_position(st, sig.t, size, d, q, rule, tol)
+                            r = replay.simulate_pool_position(st, sig.t, size, d, q, rule, tol, tau)
                         else:
                             r = replay.simulate_curve_position(st, sig.t, size, d, q, rule, tol, tau)
                         busy_until[key] = r.exit_slot or sig.t
@@ -153,7 +155,10 @@ def _work(args):
                             "size_sol": size_sol, "d": d, "tau": tau_mode, "entry_failed": r.entry_failed, "skipped": r.skipped,
                             "tokens": r.tokens, "cost": r.cost, "proceeds": r.proceeds, "exit_reason": r.exit_reason,
                             "entry_slot": r.entry_slot, "exit_decision_slot": r.exit_decision_slot, "exit_slot": r.exit_slot,
-                            "cf_graduation": r.cf_graduation, "reverted_txs": r.reverted_txs, "exit_attempts": r.exit_attempts,
+                            "cf_graduation": r.cf_graduation, "seed_pool": r.seed_pool, "exit_attempts": r.exit_attempts,
+                            "reverted_direct": r.reverted_direct, "reverted_router": r.reverted_router,
+                            "sells_dropped": r.sells_dropped, "sells_scaled": r.sells_scaled,
+                            "hist_ret": (r.hist_mid_exit / r.hist_mid_entry - 1) if (r.hist_mid_entry and r.hist_mid_exit) else None,
                         })
         del st
     con.close()

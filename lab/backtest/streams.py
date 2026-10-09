@@ -3,7 +3,7 @@
 import duckdb
 
 from . import venues as V
-from .replay import CurveLeg, PoolLeg, Stream
+from .replay import PUMP, PUMP_AMM, CurveLeg, PoolLeg, Stream
 from .venues import Curve, Pool
 
 
@@ -22,20 +22,20 @@ def open_store(path, threads=2, memory="1500MB"):
 def _curve_legs(rows):
     legs = []
     for (slot, tx, oix, iix, variant, is_buy, t, q, fee, cfee, fbps, cbps, vt, vq, rt, rq, trader,
-         budget, max_cost, min_tokens, min_out) in rows:
+         budget, max_cost, min_tokens, min_out, outer) in rows:
         if is_buy:
             pre = Curve(vt + t, vq - q, rt + t, rq - q, fbps, cbps)
         else:
             pre = Curve(vt - t, vq + q, rt - t, rq + q, fbps, cbps)
         post = Curve(vt, vq, rt, rq, fbps, cbps)
         legs.append(CurveLeg(slot, tx, (slot, tx, oix, iix), is_buy, t, q, fee + cfee, variant, pre, post, trader,
-                             budget, max_cost, min_tokens, min_out))
+                             budget, max_cost, min_tokens, min_out, outer == PUMP))
     return legs
 
 
 def _pool_legs(rows):
     legs = []
-    for (kind, slot, tx, oix, iix, disc, b, e, lpb, pb, cb, base, qg, qn, lq, lb, b_after, e_after, left, trader) in rows:
+    for (kind, slot, tx, oix, iix, disc, b, e, lpb, pb, cb, base, qg, qn, lq, lb, b_after, e_after, left, trader, outer) in rows:
         if kind == "boost":
             pre = Pool(b_after + base, e_after - qg, lpb or 0, pb or 0, cb or 0)
             post = Pool(b_after, e_after, lpb or 0, pb or 0, cb or 0)
@@ -48,14 +48,15 @@ def _pool_legs(rows):
         else:
             f = V.pool_sell(pre, base)
         post = f.state if f else pre
-        legs.append(PoolLeg(slot, tx, (slot, tx, oix, iix), kind, exact_out, base, qn, pre, post, trader, lq, lb))
+        legs.append(PoolLeg(slot, tx, (slot, tx, oix, iix), kind, exact_out, base, qn, pre, post, trader, lq, lb,
+                            direct=outer == PUMP_AMM))
     return legs
 
 
 CURVE_COLS = """slot, tx_index, outer_ix, inner_ix, variant, is_buy, t, q, fee, creator_fee, fee_bps, creator_bps,
-                vt, vq, rt, rq, trader, arg_budget, arg_max_cost, arg_min_tokens, arg_min_quote_out"""
+                vt, vq, rt, rq, trader, arg_budget, arg_max_cost, arg_min_tokens, arg_min_quote_out, outer_program"""
 POOL_COLS = """kind, slot, tx_index, outer_ix, inner_ix, parent_ix_disc, b, e, lp_bps, protocol_bps, creator_bps,
-               base, quote_gross, quote_net, limit_quote, limit_base, b_after, e_after, boost_left, trader"""
+               base, quote_gross, quote_net, limit_quote, limit_base, b_after, e_after, boost_left, trader, outer_program"""
 
 
 def load_streams(con, windows):

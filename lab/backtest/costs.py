@@ -44,5 +44,6 @@ def settle(result, scn):
         loss = scn.failed_tx  # the entry transaction landed and failed on its slippage limit
         return -loss, None, loss
     cost = scn.entry_total(result.cost)
-    net = scn.exit_net(result.proceeds)
+    # Exit attempts that landed and failed on our own slippage limit pay the failed-tx cost.
+    net = scn.exit_net(result.proceeds) - max(0, result.exit_attempts - 1) * scn.failed_tx
     return net - cost, net / cost - 1, cost

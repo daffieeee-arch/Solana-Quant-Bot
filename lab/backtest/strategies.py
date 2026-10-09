@@ -52,35 +52,73 @@ class Signal:
 # ----------------------------------------------------------------------------- exit rules
 
 
-def tp_sl_time(tp, sl, max_slots, scn):
-    def rule(ctx):
-        ret = scn.exit_net(ctx["mark"]) / scn.entry_total(ctx["cost"]) - 1
-        if ret >= tp:
+class ExitRule:
+    """An exit rule: called with a mark context, returns a reason or None. `deadline(entry_slot)`
+    tells the replay at which slot a time condition fires, so it is evaluated inside quiet gaps
+    without trades instead of at the next trade."""
+
+    def deadline(self, entry_slot):
+        return None
+
+
+class TpSlTime(ExitRule):
+    def __init__(self, tp, sl, max_slots, scn):
+        self.tp, self.sl, self.max_slots, self.scn = tp, sl, max_slots, scn
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        ret = self.scn.exit_net(ctx["mark"]) / self.scn.entry_total(ctx["cost"]) - 1
+        if ret >= self.tp:
             return "take_profit"
-        if ret <= sl:
+        if ret <= self.sl:
             return "stop_loss"
-        if ctx["slots_held"] >= max_slots:
+        if ctx["slots_held"] >= self.max_slots:
             return "time"
         return None
-    return rule
+
+
+class UntilSlot(ExitRule):
+    """Sell so that the fill lands at target_slot (decision at target_slot - d)."""
+
+    def __init__(self, target_slot, d):
+        self.target, self.d = target_slot, d
+
+    def deadline(self, entry_slot):
+        return self.target - self.d
+
+    def __call__(self, ctx):
+        return "horizon" if ctx["slot"] + self.d >= self.target else None
+
+
+class F1Exit(ExitRule):
+    """Real SOL fell 10 SOL below its level at the decision slot (before our own buy), or time."""
+
+    def __init__(self, decision_rq, max_slots):
+        self.ref, self.max_slots = decision_rq, max_slots
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        if "curve" in ctx and ctx["curve"].rq <= self.ref - 10 * SOL:
+            return "real_sol_drop"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+def tp_sl_time(tp, sl, max_slots, scn):
+    return TpSlTime(tp, sl, max_slots, scn)
 
 
 def until_slot(target_slot, d):
-    def rule(ctx):
-        return "horizon" if ctx["slot"] + d >= target_slot else None
-    return rule
+    return UntilSlot(target_slot, d)
 
 
-def f1_exit(entry_rq_holder, max_slots):
-    def rule(ctx):
-        if entry_rq_holder[0] is None and "curve" in ctx:
-            entry_rq_holder[0] = ctx["curve"].rq
-        if "curve" in ctx and ctx["curve"].rq <= entry_rq_holder[0] - 10 * SOL:
-            return "real_sol_drop"
-        if ctx["slots_held"] >= max_slots:
-            return "time"
-        return None
-    return rule
+def f1_exit(decision_rq, max_slots):
+    return F1Exit(decision_rq, max_slots)
 
 
 # ----------------------------------------------------------------------------- universe

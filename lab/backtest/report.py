@@ -17,7 +17,7 @@ def _settled(rows, scn):
     out = []
     for r in rows:
         res = Result(r["mint"], r["t"], size=int(r["size_sol"] * LAMPORTS), entry_failed=r["entry_failed"],
-                     cost=r["cost"] or 0, proceeds=r["proceeds"] or 0)
+                     cost=r["cost"] or 0, proceeds=r["proceeds"] or 0, exit_attempts=r.get("exit_attempts") or 1)
         pnl, ret, _ = settle(res, scn)
         out.append((r, pnl, ret))
     return out
@@ -57,7 +57,16 @@ def summarize(rows, cfg):
             rets = [x for _, _, x in filled]
             pnls = [p for _, p, _ in st]
             lo, hi = _day_bootstrap(rets, [r["day"] for r, _, _ in filled])
+            hist = [r["hist_ret"] for r, _, _ in filled if r.get("hist_ret") is not None]
+            sl = [x for r, _, x in filled if r["exit_reason"] == "stop_loss"]
             out.append(dict(zip(KEYS, key), scenario=name, n=len(rs), skipped=skipped.get(key, 0), filled=len(filled),
+                            hist_drift=float(np.mean(hist)) if hist else None,
+                            stop_loss_share=len(sl) / len(filled) if filled else None,
+                            stop_loss_mean=float(np.mean(sl)) if sl else None,
+                            reverted_router=float(np.mean([r.get("reverted_router") or 0 for r in rs])),
+                            reverted_direct=float(np.mean([r.get("reverted_direct") or 0 for r in rs])),
+                            sells_dropped=float(np.mean([r.get("sells_dropped") or 0 for r in rs])),
+                            seed_pool=float(np.mean([bool(r.get("seed_pool")) for r in rs])),
                             fail_rate=1 - len(filled) / len(rs) if rs else None,
                             mean_ret=float(np.mean(rets)) if rets else None,
                             median_ret=float(np.median(rets)) if rets else None,
@@ -92,15 +101,26 @@ def write_report(run_dir, cfg):
              f"Signals {config['signals']}, positions {config['positions']}, {config['seconds']} s.",
              f"Entry/exit delay d, intra-slot position q={config['q']}, own slippage tolerance {config['slippage_tol']}.",
              "", "## Base cost scenario", "",
-             "| family | variant | size SOL | d | tau | n | filled | mean | median | win | 95% CI (day bootstrap) | mean PnL SOL | total PnL SOL | N2 mean | edge vs N2 |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+             "Mean = mean return per filled trade after all costs. Drift = mean historical mid move entry→exit without us; "
+             "mean − drift ≈ our costs and impact. SL = stop-loss exits (share, realized mean).",
+             "",
+             "| family | variant | size SOL | d | tau | n | filled | mean | median | win | 95% CI (day bootstrap) | drift | SL share / mean | total PnL SOL | N2 mean | edge vs N2 |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in base:
         ci = f"{_pct(s['ci_lo'])} … {_pct(s['ci_hi'])}" if s["ci_lo"] is not None else ""
         win = "" if s["win_rate"] is None else f"{s['win_rate'] * 100:.0f}%"
         mean_pnl = "" if s["mean_pnl_sol"] is None else f"{s['mean_pnl_sol']:+.4f}"
+        sl = "" if s["stop_loss_share"] is None else f"{s['stop_loss_share']*100:.0f}% / {_pct(s['stop_loss_mean'])}"
         lines.append(f"| {s['family']} | {s['variant']} | {s['size_sol']} | {s['d']} | {s['tau']} | {s['n']} | {s['filled']} | "
-                     f"{_pct(s['mean_ret'])} | {_pct(s['median_ret'])} | {win} | {ci} | {mean_pnl} | "
+                     f"{_pct(s['mean_ret'])} | {_pct(s['median_ret'])} | {win} | {ci} | {_pct(s['hist_drift'])} | {sl} | "
                      f"{s['total_pnl_sol']:+.2f} | {_pct(s['n2_mean_ret'])} | {_pct(s['edge_vs_n2'])} |")
+    diag = sorted((s for s in base if s["tau"] == base[0]["tau"]), key=lambda s: (s["family"], s["size_sol"]))
+    lines += ["", "## Replay diagnostics (per position, base scenario)", "",
+              "| family | variant | size SOL | d | reverted router txs | reverted direct txs | dropped sells | seed-pool exits |",
+              "|---|---|---|---|---|---|---|---|"]
+    for s in diag:
+        lines.append(f"| {s['family']} | {s['variant']} | {s['size_sol']} | {s['d']} | {s['reverted_router']:.2f} | "
+                     f"{s['reverted_direct']:.2f} | {s['sells_dropped']:.2f} | {s['seed_pool']*100:.1f}% |")
     with open(os.path.join(run_dir, "report.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     return summary

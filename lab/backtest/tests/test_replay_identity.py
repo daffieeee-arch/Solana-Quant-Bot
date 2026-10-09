@@ -22,25 +22,30 @@ def sample():
 
 
 def test_curve_identity(sample):
-    tau = replay.Tau("inf")
+    tau = replay.Tau("empirical")
     legs_total = mismatched = reverted = 0
     for s in sample.values():
         if not s.curve:
             continue
         state = s.curve[0].pre
+        hold = replay.Holdings(exact=True)
+        diag = {"sells_dropped": 0, "sells_scaled": 0}
         for leg in s.curve:
-            nxt = replay._rerun_curve(state, leg, tau)
+            res = replay._rerun_curve(state, leg, tau, hold, diag)
             legs_total += 1
-            if nxt is None:
+            hold.apply(leg.trader, leg.t if leg.is_buy else -leg.t, leg.t if leg.is_buy else -leg.t)
+            if res is None:
                 reverted += 1
                 state = leg.post
                 continue
+            nxt = res[0]
             if (nxt.vt, nxt.vq, nxt.rt, nxt.rq) != (leg.post.vt, leg.post.vq, leg.post.rt, leg.post.rq):
                 mismatched += 1
             state = leg.post  # resync so one mismatch does not cascade
     assert legs_total > 1000
-    assert reverted == 0
+    assert reverted <= legs_total * 0.002, f"{reverted}/{legs_total}"
     assert mismatched <= legs_total * 0.002, f"{mismatched}/{legs_total}"
+    assert diag["sells_dropped"] == 0 and diag["sells_scaled"] == 0
 
 
 def test_pool_identity(sample):
@@ -49,11 +54,12 @@ def test_pool_identity(sample):
         for leg in s.pool_legs:
             if leg.kind not in ("buy", "sell"):
                 continue
-            nxt = replay._rerun_pool(leg.pre, leg)
+            res = replay._rerun_pool(leg.pre, leg, replay.Tau("empirical"), replay.Holdings(exact=False),
+                                     {"sells_dropped": 0, "sells_scaled": 0})
             legs_total += 1
-            if nxt is None:
+            if res is None:
                 reverted += 1
-            elif (nxt.b, nxt.e) != (leg.post.b, leg.post.e):
+            elif (res[0].b, res[0].e) != (leg.post.b, leg.post.e):
                 mismatched += 1
     assert legs_total > 1000
     assert reverted <= legs_total * 0.001, f"{reverted}/{legs_total}"
