@@ -127,19 +127,23 @@ pub struct Counters {
     pub missing_meta: AtomicU64,
 }
 
-/// Exit code used when Old Faithful keeps answering HTTP 429: the caller should pause for a
-/// long time instead of letting every firehose thread reconnect in a loop.
-pub const EXIT_RATE_LIMITED: i32 = 75;
+/// Old Faithful's storage (Backblaze B2 behind Cloudflare) answers new requests with HTTP 429
+/// when the archive owner's account is over its request limit. This is global and comes and
+/// goes; streams that are already open keep flowing. So a thread that hits a 429 waits here
+/// (1, 2, 4 ... 15 minutes, spread per thread) while the other threads keep streaming.
+const BACKOFF_429_FIRST_SECS: u64 = 60;
+const BACKOFF_429_MAX_SECS: u64 = 900;
 /// Exit code used when one slot keeps failing: retrying later will not help.
 pub const EXIT_STUCK: i32 = 76;
 /// Base fee per signature in lamports.
 const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
 
 pub struct LabPlugin {
-    max_429: u64,
     max_same_slot_errors: u64,
     /// Per firehose thread: the slot of the last error and how often it failed in a row.
     last_error: Mutex<HashMap<usize, (u64, u64)>>,
+    /// Per firehose thread: the slot of the last HTTP 429 and how many came in a row.
+    last_429: Mutex<HashMap<usize, (u64, u32)>>,
     programs: [ProgramIdl; 2],
     system: Key,
     compute_budget: Key,
@@ -224,9 +228,9 @@ pub const PUMP_AMM_IDL: &str = include_str!("../idl/pump_amm.json");
 impl LabPlugin {
     pub fn new(sink: Arc<Sink>, coverage: Arc<Coverage>) -> anyhow::Result<Self> {
         Ok(Self {
-            max_429: std::env::var("LAB_MAX_429").ok().and_then(|v| v.parse().ok()).unwrap_or(8),
             max_same_slot_errors: std::env::var("LAB_MAX_SAME_SLOT_ERRORS").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
             last_error: Mutex::new(HashMap::new()),
+            last_429: Mutex::new(HashMap::new()),
             programs: [ProgramIdl::new("pump", PUMP_IDL)?, ProgramIdl::new("pump_amm", PUMP_AMM_IDL)?],
             system: key(SYSTEM_PROGRAM),
             compute_budget: key(COMPUTE_BUDGET),
@@ -559,6 +563,25 @@ impl Plugin for LabPlugin {
     ) -> PluginFuture<'a> {
         Box::pin(async move {
             self.counters.firehose_errors.fetch_add(1, Ordering::Relaxed);
+            let msg = &error.error_message;
+            if msg.contains("429") {
+                self.counters.http_429.fetch_add(1, Ordering::Relaxed);
+                let n = {
+                    let mut last = self.last_429.lock().expect("429 lock");
+                    let entry = last.entry(error.thread_id).or_insert((error.slot, 0));
+                    // Progress since the last 429 resets the backoff.
+                    if entry.0 != error.slot {
+                        *entry = (error.slot, 0);
+                    }
+                    entry.1 = entry.1.saturating_add(1);
+                    entry.1
+                };
+                let base = (BACKOFF_429_FIRST_SECS << (n - 1).min(4)).min(BACKOFF_429_MAX_SECS);
+                let wait = base + (error.thread_id as u64 * 17) % 60;
+                log::warn!("thread {} got HTTP 429 at slot {} ({n} in a row); waiting {wait}s", error.thread_id, error.slot);
+                tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+                return Ok(());
+            }
             let same_slot = {
                 let mut last = self.last_error.lock().expect("error lock");
                 let entry = last.entry(error.thread_id).or_insert((error.slot, 0));
@@ -569,14 +592,7 @@ impl Plugin for LabPlugin {
                 }
                 entry.1
             };
-            let msg = &error.error_message;
-            if msg.contains("429 Too Many Requests") || msg.contains("(429") {
-                let n = self.counters.http_429.fetch_add(1, Ordering::Relaxed) + 1;
-                if n >= self.max_429 {
-                    log::error!("Old Faithful answered HTTP 429 {n} times; stopping so the caller can pause");
-                    std::process::exit(EXIT_RATE_LIMITED);
-                }
-            } else if same_slot >= self.max_same_slot_errors {
+            if same_slot >= self.max_same_slot_errors {
                 log::error!("slot {} failed {same_slot} times in a row (last: {msg}); giving up on this chunk", error.slot);
                 std::process::exit(EXIT_STUCK);
             }

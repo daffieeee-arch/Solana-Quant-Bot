@@ -8,11 +8,12 @@
 # and streamed again. Chunks run one after another inside a systemd user scope with CPU and
 # memory limits so the other services on the VPS stay responsive.
 #
-# Old Faithful rate-limits per client (HTTP 429). Before every chunk one tiny range request
-# checks that the archive answers; while it does not, the script waits LAB_429_PAUSE seconds.
-# The extractor exits with code 75 when 429s pile up during a chunk; the chunk is retried after
-# the same pause (at most LAB_MAX_PAUSES times in a row). Exit code 76 (one slot keeps failing)
-# and 3 (incomplete slot coverage) count as failures; three failures stop the backfill.
+# Old Faithful's storage (Backblaze B2 behind Cloudflare) answers *new* requests with HTTP 429
+# whenever the archive owner's account is over its request limit: global, intermittent, not
+# tied to our IP; open streams keep flowing. The extractor therefore backs off per firehose
+# thread (1 to 15 minutes) instead of stopping, and this script sends no probe requests.
+# Exit code 76 (one slot keeps failing) and 3 (incomplete slot coverage) count as failures;
+# three failures stop the backfill. Exit code 75 is retried after LAB_429_PAUSE seconds.
 #
 # Each epoch's slot-ranges index (5 MB) is downloaded once into $LAB_DATA_ROOT/of1-index and
 # served to Jetstreamer from 127.0.0.1. Otherwise every extractor process, and every thread
@@ -25,7 +26,7 @@ source "$here/env.sh"
 
 first=${1:?first slot}
 end=${2:?end slot (exclusive)}
-chunk=${3:-108000}
+chunk=${3:-216000}
 threads=${4:-4}
 cpu_quota=${LAB_CPU_QUOTA:-700%}
 mem_max=${LAB_MEM_MAX:-11G}
@@ -73,17 +74,6 @@ ensure_index() {
   done
 }
 
-wait_for_archive() {
-  local epoch=$(($1 / 432000)) code
-  while true; do
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -r 0-15 \
-      "https://files.old-faithful.net/$epoch/epoch-$epoch.car" || echo 000)
-    [[ $code == 206 ]] && return 0
-    echo "$(date -Is) archive answered $code for epoch $epoch; pausing ${pause}s"
-    sleep "$pause"
-  done
-}
-
 for ((s = first; s < end; s += chunk)); do
   e=$((s + chunk < end ? s + chunk : end))
   dir="$out_root/$s-$e"
@@ -97,7 +87,6 @@ for ((s = first; s < end; s += chunk)); do
     rm -rf "$dir"
     ensure_index $((s / 432000))
     [[ $(((e - 1) / 432000)) != $((s / 432000)) ]] && ensure_index $(((e - 1) / 432000))
-    wait_for_archive "$s"
     echo "$(date -Is) start $s-$e threads=$threads" | tee -a "$log_dir/extract-$s-$e.log"
     rc=0
     systemd-run --user --scope --quiet --unit="lab-extract-$s-$(date +%s)" \

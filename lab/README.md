@@ -33,7 +33,7 @@ Chain order is `(slot, tx_index, outer_ix, inner_ix)`. Rows inside a file are no
 ```bash
 source lab/scripts/env.sh
 cd lab/extractor && cargo test && cargo build --release && cd ../..
-# one epoch in 4 chunks of 108,000 slots with 4 firehose threads
-lab/scripts/backfill.sh $((1050*432000)) $((1051*432000)) 108000 4
+# one epoch in 2 chunks of 216,000 slots with 6 firehose threads
+lab/scripts/backfill.sh $((1050*432000)) $((1051*432000)) 216000 6
 "$LAB_PY" lab/checks/continuity.py "$LAB_DATA_ROOT/events/v1/chunks"
 ```
