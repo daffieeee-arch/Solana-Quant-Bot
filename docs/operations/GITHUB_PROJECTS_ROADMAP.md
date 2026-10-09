@@ -1,5 +1,7 @@
 # GitHub Project #4 operations
 
+> **Lab reset update, 2026-10-10.** By owner decision, the remaining 19 open V2 issues (#27, #28, #32, #36, #37, #41, #46, #51, #62, #72, #74–#80, #86 and #87) were closed individually as `not planned`, with `v2Disposition: SUPERSEDED` and a successor comment. The active roadmap is the lab issues #159 and #163–#168. Statements below such as "issue #62 stays open" and "Do not bulk-retire anchors" are historical. The Roadmap Sync workflow and its field rules stay in force.
+
 > **Document status: ACTIVE.** This is the operations boundary for [Solana Quant Platform — Roadmap & Cockpit, Project #4](https://github.com/users/daffieeee-arch/projects/4). The V2 data/issue migration is specified separately in [`../PROJECT_V2_REBASE.md`](../PROJECT_V2_REBASE.md).
 
 ## Current post-G0 state
