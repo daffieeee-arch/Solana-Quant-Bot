@@ -59,7 +59,8 @@ describe('security workflow privilege and coverage boundaries', () => {
       original.replace('warn-only: false', 'warn-only: true'),
       original.replace('vulnerability-check: true', 'vulnerability-check: false'),
       original.replace('comment-summary-in-pr: never', 'comment-summary-in-pr: always'),
-      original.replace('license-check: false', 'license-check: false\n          allow-ghsas: GHSA-example-test-only'),
+      original.replace('GHSA-cq8v-f236-94qc', 'GHSA-cq8v-f236-94qc, GHSA-example-test-only'),
+      original.replace(/\n *allow-ghsas:[^\n]*/, '\n          allow-ghsas: GHSA-example-test-only'),
     ]) expect(check(paths[1], mutation).length).toBeGreaterThan(0);
   });
 
