@@ -13,8 +13,12 @@
 # The extractor exits with code 75 when 429s pile up during a chunk; the chunk is retried after
 # the same pause (at most LAB_MAX_PAUSES times in a row). Exit code 76 (one slot keeps failing)
 # and 3 (incomplete slot coverage) count as failures; three failures stop the backfill.
+#
+# Each epoch's slot-ranges index (5 MB) is downloaded once into $LAB_DATA_ROOT/of1-index and
+# served to Jetstreamer from 127.0.0.1. Otherwise every extractor process, and every thread
+# restart that invalidates the cache, fetches it again from Old Faithful and draws 429s.
 set -euo pipefail
-trap 'echo "interrupted"; exit 130' INT TERM
+trap 'echo "interrupted"; exit 130' INT TERM  # the EXIT trap below stops the index server
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$here/env.sh"
@@ -40,6 +44,31 @@ bin="$LAB_DATA_ROOT/bin/lab-extractor-$(sha256sum "$build" | cut -c1-12)"
 [[ -x $bin ]] || cp "$build" "$bin"
 echo "$(date -Is) backfill $first..$end chunk=$chunk threads=$threads bin=$bin"
 
+index_root="$LAB_DATA_ROOT/of1-index"
+index_port=${LAB_INDEX_PORT:-8771}
+mkdir -p "$index_root"
+"$LAB_PY" -m http.server --bind 127.0.0.1 "$index_port" --directory "$index_root" >/dev/null 2>&1 &
+index_server=$!
+trap 'kill $index_server 2>/dev/null' EXIT
+export JETSTREAMER_COMPACT_INDEX_BASE_URL="http://127.0.0.1:$index_port/"
+
+ensure_index() {
+  local epoch=$1 f="$index_root/$1/epoch-$1-slot-ranges.raw" code
+  [[ -f $f && $(stat -c %s "$f") == $((432000 * 12)) ]] && return 0
+  mkdir -p "$index_root/$epoch"
+  while true; do
+    code=$(curl -s -o "$f.tmp" -w '%{http_code}' --max-time 120 \
+      "https://files.old-faithful.net/$epoch/epoch-$epoch-slot-ranges.raw" || echo 000)
+    if [[ $code == 200 && $(stat -c %s "$f.tmp") == $((432000 * 12)) ]]; then
+      mv "$f.tmp" "$f"
+      echo "$(date -Is) cached slot-ranges index for epoch $epoch"
+      return 0
+    fi
+    echo "$(date -Is) slot-ranges index for epoch $epoch answered $code; pausing ${pause}s"
+    sleep "$pause"
+  done
+}
+
 wait_for_archive() {
   local epoch=$(($1 / 432000)) code
   while true; do
@@ -62,6 +91,8 @@ for ((s = first; s < end; s += chunk)); do
   pauses=0
   while true; do
     rm -rf "$dir"
+    ensure_index $((s / 432000))
+    [[ $(((e - 1) / 432000)) != $((s / 432000)) ]] && ensure_index $(((e - 1) / 432000))
     wait_for_archive "$s"
     echo "$(date -Is) start $s-$e threads=$threads" | tee -a "$log_dir/extract-$s-$e.log"
     rc=0
