@@ -98,8 +98,13 @@ export default function Strategies() {
     const series = [];
     if (own) series.push({ name: `${sel.family} ${sel.variant} · ${sel.size_sol} SOL`, type: "line", showSymbol: false, color: cssVar("--s1"), lineStyle: { width: 2 },
       data: own.points.map(([step, , pnl]) => [step, pnl]) });
-    if (n2) series.push({ name: "N2-schaduw (willekeurige instap)", type: "line", showSymbol: false, color: cssVar("--muted"), lineStyle: { width: 2, type: "dashed" },
-      data: n2.points.map(([step, , pnl]) => [step, pnl]) });
+    if (n2) {
+      // Scale N2 to the strategy's trade count so both lines compare per trade.
+      const nOwn = own?.points.at(-1)?.[0] ?? 0, nN2 = n2.points.at(-1)?.[0] ?? 0;
+      const k = nOwn && nN2 ? nOwn / nN2 : 1;
+      series.push({ name: "N2-schaduw (geschaald naar hetzelfde aantal trades)", type: "line", showSymbol: false, color: cssVar("--muted"),
+        lineStyle: { width: 2, type: "dashed" }, data: n2.points.map(([step, , pnl]) => [step * k, pnl * k]) });
+    }
     return {
       ...b, grid: { left: 56, right: 16, top: 36, bottom: 36 },
       tooltip: { ...(b.tooltip as object), axisPointer: { type: "line" }, valueFormatter: (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString("nl-NL", { maximumFractionDigits: 2 })} SOL` },
@@ -114,8 +119,8 @@ export default function Strategies() {
   if (!data.run) return <p className="text-muted">Nog geen afgeronde toernooirun.</p>;
 
   return (
-    <div className="grid gap-6">
-      <div className="grid gap-1">
+    <div className="grid grid-cols-1 gap-6">
+      <div className="grid grid-cols-1 gap-1">
         <h1 className="text-2xl font-semibold m-0 tracking-tight">Strategieën</h1>
         <p className="text-muted text-sm m-0">
           Toernooirun <span className="font-mono">{data.run.run_id}</span> op ontwikkeldata. Rendement per trade na fees, netwerk, huur en mislukte transacties;

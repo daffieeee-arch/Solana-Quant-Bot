@@ -79,7 +79,7 @@ footer { color: var(--muted); font-size: 0.82rem; }
   <section>
     <h2>P&amp;L-curves</h2>
     <p class="lede">Opgetelde winst of verlies in SOL per trade (op volgorde van uitstap) voor de gekozen grootte, per familie en variant.</p>
-    <div class="legend"><span><i></i>strategie</span><span><i class="n2"></i>N2-schaduw (willekeurige instap)</span></div>
+    <div class="legend"><span><i></i>strategie</span><span><i class="n2"></i>N2-schaduw (willekeurige instap, geschaald naar hetzelfde aantal trades)</span></div>
     <div class="grid" id="curves"></div>
   </section>
 
@@ -202,7 +202,11 @@ footer { color: var(--muted); font-size: 0.82rem; }
     const sel = current().filter(r => r.size_sol === st.size).sort((a, b) => String(a.family + a.variant).localeCompare(String(b.family + b.variant)));
     for (const r of sel) {
       const key = (f) => [f, r.variant, r.size_sol, r.d, r.tau, st.scenario].join("|");
-      const own = D.curves[key(r.family)] || [], n2 = D.curves[key("N2_" + r.family)] || [];
+      const own = D.curves[key(r.family)] || [], n2raw = D.curves[key("N2_" + r.family)] || [];
+      // N2 usually has more trades: scale its curve to the strategy's trade count so both lines compare per trade.
+      const nOwn = own.length ? own[own.length - 1][0] : 0, nN2 = n2raw.length ? n2raw[n2raw.length - 1][0] : 0;
+      const k = nOwn && nN2 ? nOwn / nN2 : 1;
+      const n2 = n2raw.map(([x, y]) => [x * k, y * k]);
       const card = el("div", "card");
       const h = el("h3", null, r.family + " " + r.variant);
       h.append(el("span", null, "n " + r.filled + " · gem. " + pct(r.mean_ret) + " · " + solf(r.total_pnl_sol) + " SOL"));

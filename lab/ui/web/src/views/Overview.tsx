@@ -30,7 +30,7 @@ export default function Overview() {
       series: [{ ...bar, name: "nieuwe tokens", color: s1, data: days.map((x) => x.tokens_created) }],
     };
     const grads = {
-      ...b,
+      ...b, grid: { ...(b.grid as object), top: 56 },
       xAxis: { ...b.xAxis, type: "category", data: labels },
       yAxis: { ...b.yAxis, type: "value" },
       series: [
@@ -48,8 +48,8 @@ export default function Overview() {
   const cov = d.coverage;
 
   return (
-    <div className="grid gap-7">
-      <div className="grid gap-1">
+    <div className="grid grid-cols-1 gap-7">
+      <div className="grid grid-cols-1 gap-1">
         <h1 className="text-2xl font-semibold m-0 tracking-tight">Overzicht</h1>
         <p className="text-muted m-0 text-sm">
           pump.fun en PumpSwap, ontwikkeldata epochs {String(cov[0]?.epoch)}–{String(cov[cov.length - 1]?.epoch)} ·{" "}

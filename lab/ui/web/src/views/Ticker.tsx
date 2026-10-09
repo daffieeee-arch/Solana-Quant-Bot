@@ -33,8 +33,8 @@ export default function Ticker() {
   useEffect(() => { setEvents(null); load(); }, [load]);
 
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-1">
+    <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 gap-1">
         <h1 className="text-2xl font-semibold m-0 tracking-tight">On-chain ticker</h1>
         <p className="text-muted text-sm m-0">Marktnieuws uit de ontwikkeldata, nieuwste eerst: graduaties en grote aan- en verkopen in SOL. Live volgt later via de recorder.</p>
       </div>

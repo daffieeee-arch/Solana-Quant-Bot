@@ -1,11 +1,14 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { get, type Meta } from "./api";
 import { go, useRoute } from "./route";
-import Overview from "./views/Overview";
-import Tokens from "./views/Tokens";
-import TokenDetail from "./views/TokenDetail";
 import Ticker from "./views/Ticker";
-import Strategies from "./views/Strategies";
+import { Loading } from "./components/ui";
+
+// Heavy screens load on demand (ECharts, AG Grid, Lightweight Charts) so the first paint on a phone stays small.
+const Overview = lazy(() => import("./views/Overview"));
+const Tokens = lazy(() => import("./views/Tokens"));
+const TokenDetail = lazy(() => import("./views/TokenDetail"));
+const Strategies = lazy(() => import("./views/Strategies"));
 import { unixTime } from "./format";
 
 // Tabs appear only when the API reports data for them (no empty tabs).
@@ -64,7 +67,7 @@ export default function App() {
       </header>
 
       <main className="flex-1 mx-auto w-full max-w-6xl px-4 pt-4 pb-24 md:pb-10 min-w-0">
-        {error ? <p className="text-warn">De data is nu niet bereikbaar: {error}</p> : view}
+        {error ? <p className="text-warn">De data is nu niet bereikbaar: {error}</p> : <Suspense fallback={<Loading what="Scherm" />}>{view}</Suspense>}
       </main>
 
       <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-surface/95 backdrop-blur"

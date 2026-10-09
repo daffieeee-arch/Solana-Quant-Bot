@@ -25,6 +25,15 @@ export const unixClock = (t: number | null | undefined) => (t == null ? "–" : 
 /** Creator-supplied strings: trim control characters and cap length; React escapes the rest. */
 export const label = (s: string | null | undefined, max = 40) => {
   if (!s) return "";
-  const clean = s.replace(/[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g, "").trim();
+  const clean = s.replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
   return clean.length > max ? clean.slice(0, max - 1) + "…" : clean;
+};
+
+/** Compact SOL for narrow tables: 1,7 mln / 45,2k / 812. */
+export const solShort = (v: unknown) => {
+  if (v == null) return "–";
+  const x = Number(v), a = Math.abs(x);
+  if (a >= 1e6) return nf1.format(x / 1e6) + " mln";
+  if (a >= 1e4) return nf1.format(x / 1e3) + "k";
+  return (a >= 100 ? nf0 : nf1).format(x);
 };

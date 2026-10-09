@@ -76,12 +76,16 @@ class TournamentImport(unittest.TestCase):
     def test_settled_pnl_matches_run_summary(self):
         con = duckdb.connect(config={"memory_limit": "900MB", "threads": 2})
         build.strategies.load(con, SMOKE_RUN)  # raises if any group's total differs from summary.parquet
-        n = con.execute("SELECT count(*) FROM strategy_curves").fetchone()[0]
-        self.assertEqual(n, con.execute("SELECT count(*) FROM strategy_results").fetchone()[0])
-        last = con.execute("""SELECT max(abs(c.cum_pnl_sol - s.total_pnl_sol)) FROM strategy_summary s
-                              JOIN (SELECT family, variant, size_sol, d, tau, scenario, arg_max(cum_pnl_sol, step) AS cum_pnl_sol
-                                    FROM strategy_curves GROUP BY ALL) c USING (family, variant, size_sol, d, tau, scenario)""").fetchone()[0]
-        self.assertLess(last, 1e-6)
+        n = con.execute("SELECT count(*) FROM strategy_results").fetchone()[0]
+        self.assertEqual(n, con.execute("SELECT sum(n) FROM strategy_summary WHERE scenario = 'base'").fetchone()[0])
+        groups, worst = con.execute("""SELECT count(*), max(abs(c.cum_pnl_sol - s.total_pnl_sol)) FROM strategy_summary s
+                              JOIN (SELECT family, variant, size_sol, d, tau, scenario, arg_max(cum_pnl_sol, step) AS cum_pnl_sol,
+                                           max(step) AS last, any_value(n) AS n
+                                    FROM strategy_curves GROUP BY ALL) c USING (family, variant, size_sol, d, tau, scenario)
+                              WHERE c.last = c.n""").fetchone()
+        self.assertEqual(groups, con.execute("SELECT count(*) FROM strategy_summary").fetchone()[0])
+        self.assertLess(worst, 1e-6)
+        self.assertLessEqual(con.execute("SELECT max(c) FROM (SELECT count(*) c FROM strategy_curves GROUP BY family, variant, size_sol, d, tau, scenario)").fetchone()[0], 2 * 400 + 2)
         self.assertEqual(build.validate(con, require_tables=False), [])
 
     def test_refuses_holdout_run(self):

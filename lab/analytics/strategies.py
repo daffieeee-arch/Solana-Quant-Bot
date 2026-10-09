@@ -2,9 +2,9 @@
 
 Tables:
   strategy_runs     one row: run id, config, store window
-  strategy_results  one row per position per cost scenario, settled exactly like lab/backtest/costs.py
+  strategy_results  one row per position (base costs), settled exactly like lab/backtest/costs.py
   strategy_summary  the run's own summary.parquet (n, mean, CI, edge vs N2 per family x variant x size x d x tau x scenario)
-  strategy_curves   cumulative P&L per group in exit order (the equity curve), N2 shadows included
+  strategy_curves   cumulative P&L per group and scenario in exit order, thinned to ~400 points (N2 shadows included)
 
 Refuses runs that are unfinished (no summary.parquet) or whose store is not development-only, and checks
 that the re-settled totals equal the run's own summary to the lamport.
@@ -16,6 +16,7 @@ import re
 HOLDOUT_START = 452_304_000
 DEFAULTS = "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml"
 GROUP = ["family", "variant", "size_sol", "d", "tau", "scenario"]
+CURVE_POINTS = 400
 
 
 def read_costs(path):
@@ -62,51 +63,64 @@ def load(con, run_dir, defaults=DEFAULTS):
                 "?::UBIGINT AS store_last_slot",
                 [conf.get("run_id", os.path.basename(run_dir)), json.dumps(conf), store["slot_start"],
                  store["slot_end_exclusive"] - 1])
-    con.execute("CREATE TEMP TABLE scn (scenario VARCHAR, per_tx BIGINT, failed_tx BIGINT, rent BIGINT, "
-                "rent_mode VARCHAR, adverse DOUBLE)")
-    con.executemany("INSERT INTO scn VALUES (?, ?, ?, ?, ?, ?)", scenarios(cfg))
-    # Same arithmetic as costs.settle (Python int() truncates toward zero).
-    con.execute(f"""
-        CREATE TABLE strategy_results AS
-        WITH r AS (SELECT * FROM read_parquet('{results}') WHERE NOT coalesce(skipped, false)),
-             s AS (
-          SELECT r.family, r.variant, r.size_sol, r.d, r.tau, scn.scenario, r.mint, r.venue, r.day,
-                 r.t AS signal_slot, r.entry_slot, r.exit_slot, r.exit_reason, r.entry_failed,
-                 r.cf_graduation, r.hist_ret,
-                 CASE WHEN r.entry_failed THEN NULL
-                      ELSE trunc(coalesce(r.cost, 0) * (1 + scn.adverse))::BIGINT + scn.per_tx + scn.rent END AS cost_total,
-                 CASE WHEN r.entry_failed THEN NULL
-                      ELSE trunc(coalesce(r.proceeds, 0) * (1 - scn.adverse))::BIGINT - scn.per_tx
-                           + CASE WHEN scn.rent_mode IN ('refunded', 'refunded_on_full_exit') THEN scn.rent ELSE 0 END
-                           - greatest(0, coalesce(r.exit_attempts, 1) - 1) * scn.failed_tx END AS net,
-                 scn.failed_tx
-          FROM r CROSS JOIN scn)
-        SELECT family, variant, size_sol, d, tau, scenario, mint, venue, day, signal_slot, entry_slot, exit_slot,
-               exit_reason, entry_failed, cf_graduation, hist_ret,
-               CASE WHEN entry_failed THEN -failed_tx ELSE net - cost_total END / 1e9 AS pnl_sol,
-               CASE WHEN entry_failed THEN NULL ELSE net / cost_total - 1 END AS ret
-        FROM s""")
+    res_cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{results}')").fetchall()}
+    sum_cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{summary}')").fetchall()}
+    keys = [k for k in GROUP if k in sum_cols and (k == "scenario" or k in res_cols)]
+    pos_keys = [k for k in keys if k != "scenario"]
     con.execute(f"CREATE TABLE strategy_summary AS SELECT * FROM read_parquet('{summary}')")
-    con.execute(f"""
-        CREATE TABLE strategy_curves AS
-        SELECT {", ".join(GROUP)},
-               row_number() OVER w AS step,
-               coalesce(exit_slot, entry_slot, signal_slot) AS slot,
-               pnl_sol,
-               sum(pnl_sol) OVER w AS cum_pnl_sol
-        FROM strategy_results
-        WINDOW w AS (PARTITION BY {", ".join(GROUP)}
-                     ORDER BY coalesce(exit_slot, entry_slot, signal_slot), signal_slot, mint
-                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)""")
-    bad = con.execute(f"""
-        SELECT count(*) FROM (
-          SELECT {", ".join(GROUP)}, sum(pnl_sol) AS mine FROM strategy_results GROUP BY ALL) a
-        JOIN strategy_summary b USING ({", ".join(GROUP)})
-        WHERE abs(a.mine - b.total_pnl_sol) > 1e-6""").fetchone()[0]
-    missing = con.execute(f"""
-        SELECT count(*) FROM strategy_summary b
-        ANTI JOIN (SELECT DISTINCT {", ".join(GROUP)} FROM strategy_results) a USING ({", ".join(GROUP)})
-        WHERE b.filled > 0""").fetchone()[0]
-    if bad or missing:
-        raise SystemExit(f"re-settled P&L differs from the run's summary: {bad} groups differ, {missing} missing")
+    con.execute(f"""CREATE TABLE strategy_curves ({", ".join(f'"{k}" {t}' for k, t in
+                    [("family", "VARCHAR"), ("variant", "VARCHAR"), ("size_sol", "DOUBLE"), ("d", "BIGINT"),
+                     ("tau", "VARCHAR"), ("scenario", "VARCHAR")] if k in keys)},
+                    step BIGINT, n BIGINT, slot UBIGINT, cum_pnl_sol DOUBLE)""")
+    k_sql = ", ".join(pos_keys)
+    has_base = "pnl_base_lamports" in res_cols
+    for name, per_tx, failed, rent, rent_mode, adverse in scenarios(cfg):
+        refund = rent if rent_mode in ("refunded", "refunded_on_full_exit") else 0
+        # Same arithmetic as costs.settle (Python int() truncates toward zero), one scenario at a time.
+        con.execute(f"""
+            CREATE OR REPLACE TEMP TABLE settled AS
+            SELECT {k_sql}, mint, venue, day, t AS signal_slot, entry_slot, exit_slot, exit_reason, entry_failed,
+                   cf_graduation, hist_ret,
+                   {"pnl_base_lamports," if has_base else ""}
+                   CASE WHEN entry_failed THEN -{failed}
+                        ELSE (trunc(coalesce(proceeds, 0) * (1 - {adverse}))::BIGINT - {per_tx} + {refund}
+                              - greatest(0, coalesce(exit_attempts, 1) - 1) * {failed})
+                             - (trunc(coalesce(cost, 0) * (1 + {adverse}))::BIGINT + {per_tx} + {rent}) END AS pnl,
+                   CASE WHEN entry_failed THEN NULL
+                        ELSE (trunc(coalesce(proceeds, 0) * (1 - {adverse}))::BIGINT - {per_tx} + {refund}
+                              - greatest(0, coalesce(exit_attempts, 1) - 1) * {failed})
+                             / (trunc(coalesce(cost, 0) * (1 + {adverse}))::BIGINT + {per_tx} + {rent}) - 1 END AS ret
+            FROM read_parquet('{results}') WHERE NOT coalesce(skipped, false)""")
+        if name == "base" and has_base:
+            off = con.execute("SELECT count(*) FROM settled WHERE pnl IS DISTINCT FROM pnl_base_lamports").fetchone()[0]
+            if off:
+                raise SystemExit(f"{off} positions differ from the run's own pnl_base_lamports")
+        bad = con.execute(f"""
+            SELECT count(*) FROM (SELECT {k_sql}, sum(pnl) / 1e9 AS mine FROM settled GROUP BY ALL) a
+            JOIN strategy_summary b USING ({k_sql}) WHERE b.scenario = ? AND abs(a.mine - b.total_pnl_sol) > 1e-6""",
+                          [name]).fetchone()[0]
+        missing = con.execute(f"""
+            SELECT count(*) FROM strategy_summary b ANTI JOIN (SELECT DISTINCT {k_sql} FROM settled) a USING ({k_sql})
+            WHERE b.scenario = ? AND b.filled > 0""", [name]).fetchone()[0]
+        if bad or missing:
+            raise SystemExit(f"scenario {name}: re-settled P&L differs from summary.parquet "
+                             f"({bad} groups differ, {missing} missing)")
+        con.execute(f"""
+            INSERT INTO strategy_curves BY NAME
+            SELECT * EXCLUDE (pnl) FROM (
+              SELECT {k_sql}, '{name}' AS scenario,
+                     row_number() OVER w AS step, count(*) OVER (PARTITION BY {k_sql}) AS n,
+                     coalesce(exit_slot, entry_slot, signal_slot)::UBIGINT AS slot, pnl,
+                     sum(pnl) OVER w / 1e9 AS cum_pnl_sol
+              FROM settled
+              WINDOW w AS (PARTITION BY {k_sql} ORDER BY coalesce(exit_slot, entry_slot, signal_slot), signal_slot, mint
+                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
+            WHERE step = 1 OR step = n OR step % greatest(1, n // {CURVE_POINTS}) = 0""")
+        if name == "base":
+            con.execute(f"""CREATE TABLE strategy_results AS
+                            SELECT {k_sql}, mint, venue, day, signal_slot::UBIGINT AS signal_slot,
+                                   entry_slot::UBIGINT AS entry_slot, exit_slot::UBIGINT AS exit_slot, exit_reason,
+                                   entry_failed, cf_graduation, hist_ret, pnl / 1e9 AS pnl_sol, ret
+                            FROM settled""")
+        con.execute("DROP TABLE settled")
     return conf

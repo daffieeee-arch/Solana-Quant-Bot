@@ -199,17 +199,15 @@ def api_strategies(q):
 
 
 def api_strategy_curve(q):
-    """Equity curves of one family/variant (all sizes) and its N2 shadow, at most ~400 points each."""
+    """Equity curves of one family/variant (all sizes) and its N2 shadow (thinned to ~400 points at build time)."""
     con = connect()
     fam = q.get("family", [""])[0]
     params = [fam, "N2_" + fam, q.get("variant", [""])[0], clamp(q.get("d", [1])[0], 0, 100, 1),
               q.get("tau", ["empirical"])[0], q.get("scenario", ["base"])[0]]
     cur = con.execute("""
-        WITH c AS (SELECT *, count(*) OVER (PARTITION BY family, size_sol) AS n FROM strategy_curves
-                   WHERE family IN (?, ?) AND variant = ? AND d = ? AND tau = ? AND scenario = ?)
         SELECT family, size_sol, step, epoch(st.ts)::BIGINT AS time, cum_pnl_sol
-        FROM c LEFT JOIN slot_time st USING (slot)
-        WHERE step = 1 OR step = n OR step % greatest(1, n // 400) = 0
+        FROM strategy_curves c LEFT JOIN slot_time st USING (slot)
+        WHERE family IN (?, ?) AND variant = ? AND d = ? AND tau = ? AND scenario = ?
         ORDER BY family, size_sol, step""", params)
     out = {}
     for fam_, size, step, t, pnl in cur.fetchall():

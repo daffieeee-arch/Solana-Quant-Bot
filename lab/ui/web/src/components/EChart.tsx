@@ -16,7 +16,7 @@ export function baseOption(): echarts.EChartsCoreOption {
     grid: { left: 48, right: 12, top: 28, bottom: 28 },
     tooltip: { trigger: "axis", backgroundColor: surface, borderColor: line, textStyle: { color: fg }, axisPointer: { type: "shadow" } },
     xAxis: { axisLine: { lineStyle: { color: line } }, axisTick: { show: false }, axisLabel: { color: muted } },
-    yAxis: { splitLine: { lineStyle: { color: line } }, axisLabel: { color: muted } },
+    yAxis: { splitLine: { lineStyle: { color: line } }, axisLabel: { color: muted, formatter: (v: number) => v.toLocaleString("nl-NL") } },
     legend: { top: 0, left: 0, textStyle: { color: muted }, icon: "roundRect", itemWidth: 12, itemHeight: 12 },
   };
 }
@@ -37,5 +37,5 @@ export default function EChart({ option, height = 240, label, onClick }: {
     mq.addEventListener("change", recolor);
     return () => { ro.disconnect(); mq.removeEventListener("change", recolor); chart.dispose(); };
   }, [option, onClick]);
-  return <div ref={el} role="img" aria-label={label} style={{ height, width: "100%" }} />;
+  return <div ref={el} role="img" aria-label={label} style={{ height, width: "100%", minWidth: 0, overflow: "hidden" }} />;
 }

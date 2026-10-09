@@ -302,7 +302,7 @@ DICTIONARY = {
         "family": "Strategiefamilie (F7, F1, N1, N2_… = willekeurige schaduw van die familie).",
         "variant": "Variant uit het vooraf geregistreerde rooster.", "size_sol": "Positiegrootte in SOL.",
         "d": "Vertraging in slots tussen signaal en order.", "tau": "Slippage-instelling van andere handelaren.",
-        "scenario": "Kostenscenario (optimistic, base, pessimistic).", "mint": "Token-adres.",
+        "mint": "Token-adres.",
         "venue": "curve of pool bij instap.", "day": "UTC-dag van het signaal.",
         "signal_slot": "Slot van het signaal.", "entry_slot": "Slot van de instap.", "exit_slot": "Slot van de uitstap.",
         "exit_reason": "Reden van uitstap (bijv. take_profit, stop_loss, time).",
@@ -319,8 +319,9 @@ DICTIONARY = {
     "strategy_curves": {
         "family": "Strategiefamilie.", "variant": "Variant.", "size_sol": "Positiegrootte in SOL.", "d": "Vertraging.",
         "tau": "Slippage-instelling.", "scenario": "Kostenscenario.", "step": "Volgnummer van de trade (op uitstapmoment).",
-        "slot": "Slot van de uitstap (of instap bij een mislukte instap).", "pnl_sol": "P&L van deze trade in SOL.",
-        "cum_pnl_sol": "Opgetelde P&L tot en met deze trade (de equity-curve)."},
+        "n": "Aantal trades in de groep.",
+        "slot": "Slot van de uitstap (of instap bij een mislukte instap).",
+        "cum_pnl_sol": "Opgetelde P&L tot en met deze trade (de equity-curve; uitgedund tot ~400 punten)."},
     "data_dictionary": {
         "table_name": "Tabel.", "column_name": "Kolom.", "description": "Uitleg (Nederlands)."},
 }
@@ -379,6 +380,9 @@ def build(out, slots, memory, threads, tournament=None):
     run = None
     if tournament:
         run = strategies.load(con, tournament).get("run_id")
+        for (c,) in con.execute("SELECT column_name FROM duckdb_columns() WHERE table_name = 'strategy_summary' "
+                                "AND database_name = current_database()").fetchall():
+            DICTIONARY["strategy_summary"].setdefault(c, "Kolom uit summary.parquet van de toernooirun (zie lab/backtest/report.py).")
         for t in ("strategy_results", "strategy_summary", "strategy_curves"):
             counts[t] = con.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
         print(f"tournament {run}: {counts['strategy_results']} settled positions", flush=True)

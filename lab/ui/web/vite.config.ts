@@ -10,6 +10,6 @@ export default defineConfig({
   build: {
     outDir: `${dataRoot}/ui-cache/web`,
     emptyOutDir: true,
-    chunkSizeWarningLimit: 1500,
+    chunkSizeWarningLimit: 1200,
   },
 });

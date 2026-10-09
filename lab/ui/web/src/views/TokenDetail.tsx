@@ -103,7 +103,7 @@ export default function TokenDetail({ mint }: { mint: string }) {
   const markers = useMemo(() => (d ? eventMarkers(d.events, Math.floor(Date.parse(d.token.create_time + "Z") / 1000)) : []), [d]);
 
   const header = (
-    <div className="grid gap-1.5">
+    <div className="grid grid-cols-1 gap-1.5">
       <button type="button" className="text-sm text-accent justify-self-start" onClick={() => go("tokens")}>← Tokens</button>
       {d && (
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -120,8 +120,8 @@ export default function TokenDetail({ mint }: { mint: string }) {
     </div>
   );
 
-  if (err) return <div className="grid gap-3">{header}<p className="text-warn">{err}</p></div>;
-  if (!d) return <div className="grid gap-3">{header}<Loading what="Token" /></div>;
+  if (err) return <div className="grid grid-cols-1 gap-3">{header}<p className="text-warn">{err}</p></div>;
+  if (!d) return <div className="grid grid-cols-1 gap-3">{header}<Loading what="Token" /></div>;
 
   const chartTitle = "Marktwaarde per minuut (SOL, UTC) · ▲▼ trades ≥ 25 SOL";
   const chartEmpty = d.candles.length === 0;
@@ -133,7 +133,7 @@ export default function TokenDetail({ mint }: { mint: string }) {
   };
 
   return (
-    <div className="grid gap-3" ref={containerRef}>
+    <div className="grid grid-cols-1 gap-3" ref={containerRef}>
       {header}
       {mounted && wide ? (
         <ReactGridLayout
@@ -149,7 +149,7 @@ export default function TokenDetail({ mint }: { mint: string }) {
           <div key="tape"><Panel title={`Laatste ${d.tape.length} trades`} drag>{panels.tape}</Panel></div>
         </ReactGridLayout>
       ) : (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <Panel title={chartTitle}>{panels.chart(320)}</Panel>
           <Panel title="Gegevens">{panels.info}</Panel>
           <div style={{ maxHeight: 480 }} className="grid"><Panel title={`Laatste ${d.tape.length} trades`}>{panels.tape}</Panel></div>

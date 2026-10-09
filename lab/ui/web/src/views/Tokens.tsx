@@ -4,7 +4,7 @@ import { themeQuartz, type ColDef, type IDatasource, type GridApi } from "ag-gri
 import { get, type TokenRow } from "../api";
 import { go } from "../route";
 import { Chip } from "../components/ui";
-import { isoTime, label, n0, sol } from "../format";
+import { isoTime, label, n0, solShort } from "../format";
 
 export const gridTheme = themeQuartz.withParams({
   backgroundColor: "var(--surface)", foregroundColor: "var(--fg)", headerBackgroundColor: "var(--surface)",
@@ -32,14 +32,14 @@ export default function Tokens() {
   }, []);
 
   const cols = useMemo<ColDef<TokenRow>[]>(() => [
-    { field: "symbol", headerName: "Symbool", width: 120, pinned: "left", valueFormatter: (p) => label(p.value, 16) },
+    { field: "symbol", headerName: "Symbool", width: narrow ? 110 : 120, pinned: narrow ? undefined : "left", valueFormatter: (p) => label(p.value, 16) },
     { field: "name", headerName: "Naam", flex: 1, minWidth: 150, hide: narrow, valueFormatter: (p) => label(p.value, 48) },
     { field: "create_time", headerName: "Aangemaakt (UTC)", width: 150, hide: narrow, valueFormatter: (p) => isoTime(p.value) },
     { colId: "flags", headerName: "Kenmerken", width: 190, sortable: false, hide: narrow, valueGetter: (p) => (p.data ? flags(p.data) : "") },
     { field: "curve_trades", headerName: "Curve-trades", width: 120, type: "rightAligned", hide: narrow, valueFormatter: (p) => n0(p.value) },
     { field: "pool_trades", headerName: "Pool-trades", width: 115, type: "rightAligned", hide: narrow, valueFormatter: (p) => n0(p.value) },
-    { field: "total_volume_quote", headerName: "Volume", width: 120, type: "rightAligned", sort: "desc", valueFormatter: (p) => sol(p.value) },
-    { colId: "max_mcap", headerName: "Max. mcap", width: 115, type: "rightAligned", valueGetter: (p) => (p.data as unknown as { max_mcap?: number })?.max_mcap, valueFormatter: (p) => sol(p.value) },
+    { field: "total_volume_quote", headerName: "Volume SOL", width: 120, type: "rightAligned", sort: "desc", valueFormatter: (p) => solShort(p.value) },
+    { colId: "max_mcap", headerName: "Max. mcap SOL", width: 125, type: "rightAligned", valueGetter: (p) => (p.data as unknown as { max_mcap?: number })?.max_mcap, valueFormatter: (p) => solShort(p.value) },
   ], [narrow]);
 
   const datasource = useMemo<IDatasource>(() => ({
@@ -60,8 +60,8 @@ export default function Tokens() {
   }, [term]);
 
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-1">
+    <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 gap-1">
         <h1 className="text-2xl font-semibold m-0 tracking-tight">Tokens</h1>
         <p className="text-muted text-sm m-0">Zoek op naam, symbool of mint. Tik op een token voor de grafiek en de trades.</p>
       </div>

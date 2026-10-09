@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 export function Section({ title, note, children, actions }: { title: string; note?: ReactNode; children: ReactNode; actions?: ReactNode }) {
   return (
-    <section className="grid gap-2 min-w-0">
+    <section className="grid grid-cols-1 gap-2 min-w-0">
       <div className="flex items-end gap-3 flex-wrap">
         <h2 className="text-base font-semibold m-0">{title}</h2>
         {actions && <div className="ml-auto flex gap-2">{actions}</div>}
@@ -14,7 +14,7 @@ export function Section({ title, note, children, actions }: { title: string; not
 }
 
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
-  return <div className={`bg-surface border border-line rounded-lg ${className}`}>{children}</div>;
+  return <div className={`bg-surface border border-line rounded-lg min-w-0 ${className}`}>{children}</div>;
 }
 
 export function Tile({ value, label }: { value: ReactNode; label: ReactNode }) {
