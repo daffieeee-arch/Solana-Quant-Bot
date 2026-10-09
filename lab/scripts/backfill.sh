@@ -28,13 +28,17 @@ mem_max=${LAB_MEM_MAX:-11G}
 pause=${LAB_429_PAUSE:-900}
 max_pauses=${LAB_MAX_PAUSES:-16}
 
-bin="$here/../extractor/target/release/lab-extractor"
-[[ -x $bin ]] || { echo "build first: cargo build --release in lab/extractor" >&2; exit 1; }
+build="$here/../extractor/target/release/lab-extractor"
+[[ -x $build ]] || { echo "build first: cargo build --release in lab/extractor" >&2; exit 1; }
 out_root="$LAB_DATA_ROOT/events/v1/chunks"
 log_dir="$LAB_DATA_ROOT/logs"
-mkdir -p "$out_root" "$log_dir"
+mkdir -p "$out_root" "$log_dir" "$LAB_DATA_ROOT/bin"
 exec 9>"$out_root/.backfill.lock"
 flock -n 9 || { echo "another backfill is running (lock $out_root/.backfill.lock)" >&2; exit 1; }
+# Run a frozen copy so a rebuild during the backfill does not change the binary mid-run.
+bin="$LAB_DATA_ROOT/bin/lab-extractor-$(sha256sum "$build" | cut -c1-12)"
+[[ -x $bin ]] || cp "$build" "$bin"
+echo "$(date -Is) backfill $first..$end chunk=$chunk threads=$threads bin=$bin"
 
 wait_for_archive() {
   local epoch=$(($1 / 432000)) code
