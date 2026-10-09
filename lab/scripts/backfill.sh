@@ -51,6 +51,10 @@ mkdir -p "$index_root"
 index_server=$!
 trap 'kill $index_server 2>/dev/null' EXIT
 export JETSTREAMER_COMPACT_INDEX_BASE_URL="http://127.0.0.1:$index_port/"
+# Keep the request count to Old Faithful low: start firehose threads one at a time and do not
+# reconnect threads just because they are slower than the fastest one.
+export JETSTREAMER_SPAWN_PENDING=${JETSTREAMER_SPAWN_PENDING:-1}
+export JETSTREAMER_RECYCLE_PCT=${JETSTREAMER_RECYCLE_PCT:-0}
 
 ensure_index() {
   local epoch=$1 f="$index_root/$1/epoch-$1-slot-ranges.raw" code
