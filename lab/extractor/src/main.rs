@@ -126,6 +126,8 @@ fn main() -> Result<()> {
             "blocks": c(&counters.blocks),
             "skipped_markers": c(&counters.skipped_markers),
             "sink_errors": c(&counters.sink_errors),
+            "firehose_errors": c(&counters.firehose_errors),
+            "http_429": c(&counters.http_429),
         },
         "coverage": {
             "missing_slots": missing_slots,

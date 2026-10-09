@@ -7,7 +7,7 @@
 
 use crate::idl::{DecodeStatus, Idl, Kind, Val, EVENT_IX_TAG};
 use crate::sink::{Columns, Row, Sink};
-use jetstreamer_firehose::firehose::{BlockData, TransactionData};
+use jetstreamer_firehose::firehose::{BlockData, FirehoseErrorContext, TransactionData};
 use jetstreamer_plugin::{Plugin, PluginFuture};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -116,9 +116,17 @@ pub struct Counters {
     pub blocks: AtomicU64,
     pub skipped_markers: AtomicU64,
     pub sink_errors: AtomicU64,
+    pub firehose_errors: AtomicU64,
+    pub http_429: AtomicU64,
 }
 
+/// Exit code used when Old Faithful keeps answering HTTP 429: the caller should pause for a
+/// long time instead of letting every firehose thread reconnect in a loop.
+pub const EXIT_RATE_LIMITED: i32 = 75;
+
 pub struct LabPlugin {
+    max_429: u64,
+    max_errors: u64,
     programs: [ProgramIdl; 2],
     system: Key,
     compute_budget: Key,
@@ -203,6 +211,8 @@ pub const PUMP_AMM_IDL: &str = include_str!("../idl/pump_amm.json");
 impl LabPlugin {
     pub fn new(sink: Arc<Sink>, coverage: Arc<Coverage>) -> anyhow::Result<Self> {
         Ok(Self {
+            max_429: std::env::var("LAB_MAX_429").ok().and_then(|v| v.parse().ok()).unwrap_or(8),
+            max_errors: std::env::var("LAB_MAX_ERRORS").ok().and_then(|v| v.parse().ok()).unwrap_or(60),
             programs: [ProgramIdl::new("pump", PUMP_IDL)?, ProgramIdl::new("pump_amm", PUMP_AMM_IDL)?],
             system: key(SYSTEM_PROGRAM),
             compute_budget: key(COMPUTE_BUDGET),
@@ -471,6 +481,30 @@ impl Plugin for LabPlugin {
             }
             let rows = self.rows_for(transaction);
             self.send(rows);
+            Ok(())
+        })
+    }
+
+    fn on_error<'a>(
+        &'a self,
+        _thread_id: usize,
+        _db: Option<Arc<clickhouse::Client>>,
+        error: &'a FirehoseErrorContext,
+    ) -> PluginFuture<'a> {
+        Box::pin(async move {
+            let errors = self.counters.firehose_errors.fetch_add(1, Ordering::Relaxed) + 1;
+            if errors >= self.max_errors {
+                // A truncated 429 body mid-stream surfaces as a decode error, not as "429".
+                log::error!("{errors} firehose errors (last: {}); stopping so the caller can pause", error.error_message);
+                std::process::exit(EXIT_RATE_LIMITED);
+            }
+            if error.error_message.contains("429") {
+                let n = self.counters.http_429.fetch_add(1, Ordering::Relaxed) + 1;
+                if n >= self.max_429 {
+                    log::error!("Old Faithful answered HTTP 429 {n} times; stopping so the caller can pause");
+                    std::process::exit(EXIT_RATE_LIMITED);
+                }
+            }
             Ok(())
         })
     }

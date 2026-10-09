@@ -6,8 +6,10 @@ publish = false
 description = "Streams pump.fun and PumpSwap events from Old Faithful via Jetstreamer into Parquet"
 
 [dependencies]
-jetstreamer-firehose = "=0.7.0"
-jetstreamer-plugin = "=0.7.0"
+# Jetstreamer main after 0.7.0: Agave 4.2 crates (v1 "0x81" transactions, DeactivatedStake rewards)
+# and the fix for dropped block callbacks after work stealing (#102). 0.7.0 cannot read Sept 2026+ epochs.
+jetstreamer-firehose = { git = "https://github.com/anza-xyz/jetstreamer", rev = "1f9d30600fb479acdd5eb956ea2e19455c903590" }
+jetstreamer-plugin = { git = "https://github.com/anza-xyz/jetstreamer", rev = "1f9d30600fb479acdd5eb956ea2e19455c903590" }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }

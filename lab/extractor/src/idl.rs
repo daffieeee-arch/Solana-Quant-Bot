@@ -13,7 +13,9 @@ use std::collections::HashMap;
 
 /// Anchor `emit_cpi!` prefix: the self-CPI instruction data starts with this tag, followed by
 /// the 8-byte event discriminator and the Borsh-encoded event.
-pub const EVENT_IX_TAG: [u8; 8] = [0xe4, 0x45, 0xa5, 0x2d, 0x51, 0xcb, 0x9a, 0x1d];
+/// Anchor defines it as the u64 `0x1d9acb512ea545e4` (= `sha256("anchor:event")[..8]` read big-endian)
+/// and writes it little-endian.
+pub const EVENT_IX_TAG: [u8; 8] = [0xe4, 0x45, 0xa5, 0x2e, 0x51, 0xcb, 0x9a, 0x1d];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
@@ -454,6 +456,14 @@ mod tests {
                 assert_eq!(ev.discriminator, event_discriminator(&ev.name), "{}", ev.name);
             }
         }
+    }
+
+    #[test]
+    fn event_ix_tag_is_anchor_event_hash() {
+        let mut h: [u8; 8] = Sha256::digest(b"anchor:event")[..8].try_into().unwrap();
+        h.reverse();
+        assert_eq!(h, EVENT_IX_TAG);
+        assert_eq!(u64::from_le_bytes(EVENT_IX_TAG), 0x1d9a_cb51_2ea5_45e4);
     }
 
     #[test]
