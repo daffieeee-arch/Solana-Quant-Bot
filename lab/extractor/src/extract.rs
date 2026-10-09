@@ -61,15 +61,17 @@ pub const EVENT_CONTEXT: [(&str, Kind); 24] = [
     // JSON (slippage limits such as max_sol_cost / min_tokens_out) and raw data (hex, capped).
     ("parent_ix_name", Kind::Utf8),
     ("parent_ix_args", Kind::Utf8),
+    // Raw data only when IDL decoding was not exact (`_decode` other than ok/prefix).
     ("parent_ix_data", Kind::Utf8),
-    // All required signers of the transaction, comma separated (fee payer first).
+    // Required signers, comma separated (fee payer first); null when the fee payer is the only one.
     ("signers", Kind::Utf8),
 ];
 
-const FAILED_COLS: [(&str, Kind); 21] = [
+// No signature column: (slot, tx_index) identifies the transaction, and the 88-character
+// signatures were ~75% of this table's size.
+const FAILED_COLS: [(&str, Kind); 20] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
-    ("signature", Kind::Utf8),
     ("fee_payer", Kind::Utf8),
     ("tx_fee", Kind::U64),
     ("cu_consumed", Kind::U64),
@@ -375,13 +377,23 @@ impl LabPlugin {
         // Charged fee minus the per-signature base fee = what was paid for priority.
         let sigs = u64::from(msg.header().num_required_signatures);
         let priority_fee = meta.fee.saturating_sub(sigs * LAMPORTS_PER_SIGNATURE);
-        let signers = static_keys
-            .iter()
-            .take(usize::try_from(sigs).unwrap_or(usize::MAX))
-            .map(|k| b58(k.as_ref()))
-            .collect::<Vec<_>>()
-            .join(",");
-        let ix_hex = |d: &[u8]| hex::encode(&d[..d.len().min(IX_DATA_CAP)]);
+        let signers = if sigs > 1 {
+            Val::Str(
+                static_keys
+                    .iter()
+                    .take(usize::try_from(sigs).unwrap_or(usize::MAX))
+                    .map(|k| b58(k.as_ref()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        } else {
+            Val::Null
+        };
+        // Raw instruction bytes are kept only when the IDL decode was not exact.
+        let ix_raw = |d: &[u8], args: &Val| match args {
+            Val::Str(a) if a.contains("\"_decode\":\"ok\"") || a.contains("\"_decode\":\"prefix\"") => Val::Null,
+            _ => Val::Str(hex::encode(&d[..d.len().min(IX_DATA_CAP)])),
+        };
         // Decode an instruction with the IDL of the program it calls, if that is pump/PumpSwap.
         let decode_ix = |program: Option<&[u8]>, data: &[u8]| -> (Val, Val) {
             match program.and_then(|k| self.programs.iter().find(|p| p.id.as_slice() == k)) {
@@ -432,7 +444,8 @@ impl LabPlugin {
                 Some((idx, data, h)) => {
                     let k = key_at(usize::from(idx));
                     let (name, args) = decode_ix(k, data);
-                    (k.map_or(Val::Null, |k| Val::Str(b58(k))), name, args, Val::Str(ix_hex(data)), if h == 0 { Val::Null } else { Val::U64(h) })
+                    let raw = ix_raw(data, &args);
+                    (k.map_or(Val::Null, |k| Val::Str(b58(k))), name, args, raw, if h == 0 { Val::Null } else { Val::U64(h) })
                 }
                 None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null),
             };
@@ -442,7 +455,6 @@ impl LabPlugin {
                 values: vec![
                     Val::U64(tx.slot),
                     Val::U64(tx.transaction_slot_index as u64),
-                    Val::Str(signature),
                     Val::Str(fee_payer),
                     Val::U64(meta.fee),
                     cu_consumed,
@@ -455,7 +467,7 @@ impl LabPlugin {
                     Val::Bool(touches[1]),
                     Val::Str(discs.join(",")),
                     Val::Str(err),
-                    Val::Str(signers),
+                    signers,
                     ix_program,
                     ix_name,
                     ix_args,
@@ -525,12 +537,13 @@ impl LabPlugin {
                         Some((pidx, pdata)) => {
                             let pkey = key_at(usize::from(pidx));
                             let (name, args) = decode_ix(pkey, pdata);
+                            let raw = ix_raw(pdata, &args);
                             (
                                 pkey.map_or(Val::Null, |k| Val::Str(b58(k))),
                                 Val::Str(hex::encode(&pdata[..pdata.len().min(8)])),
                                 name,
                                 args,
-                                Val::Str(ix_hex(pdata)),
+                                raw,
                             )
                         }
                         None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null),
@@ -573,7 +586,7 @@ impl LabPlugin {
                     parent_name,
                     parent_args,
                     parent_data,
-                    Val::Str(signers.clone()),
+                    signers.clone(),
                 ]);
                 values.extend(decoded.values);
                 event_seq += 1;
