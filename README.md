@@ -1,5 +1,7 @@
 # Solana Quant Platform
 
+> **FROZEN on 2026-10-09.** V2 is frozen at tag `v2-frozen-2026-10-09`; active work continues in [`lab/`](lab/README.md) under the lean rules in [`AGENTS.md`](AGENTS.md). This document is kept as reference only.
+
 > **Document status: ACTIVE.** This is a data-first, PAPER / RESEARCH ONLY project. Start with [`docs/HANDOFF_V2.md`](docs/HANDOFF_V2.md).
 
 The platform is being cut over from a frozen paper-scanner prototype to a reproducible Solana/Pump research system. It will acquire authentic bounded historical data, preserve protocol and provenance truth, expose evidence through a Research Observatory, and test whether a statistically and economically meaningful edge exists. Profitability is not assumed; falsification is a valid result.

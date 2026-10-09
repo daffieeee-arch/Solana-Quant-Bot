@@ -46,3 +46,6 @@ scripts/generic-test.mjs
 scripts/reinstall-compose-inline.yaml
 scripts/gen-inline-yaml.py
 scripts/reinstall-bot.py
+
+# ── lab/ build output ─────────────────────────────────
+lab/**/target/

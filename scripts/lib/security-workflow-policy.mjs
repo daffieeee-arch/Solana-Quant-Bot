@@ -81,6 +81,8 @@ const workflows = {
               'fail-on-scopes': 'runtime, development, unknown',
               'vulnerability-check': true,
               'license-check': false,
+              // Owner-approved 2026-10-09 for lab/extractor: Agave-pinned crates, no signing.
+              'allow-ghsas': 'GHSA-w5vr-6qhr-36cc, GHSA-x4gp-pqpj-f43q, GHSA-h97m-ww89-6jmq, GHSA-cq8v-f236-94qc',
               'warn-only': false,
               'comment-summary-in-pr': 'never',
               'show-openssf-scorecard': false,

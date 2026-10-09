@@ -28,6 +28,9 @@ jobs:
           fail-on-scopes: runtime, development, unknown
           vulnerability-check: true
           license-check: false
+          # Owner-approved 2026-10-09: advisories in crates pinned by Agave (ed25519-dalek 1.0.1,
+          # curve25519-dalek 3.2.0, idna 0.1.5, rand 0.7.3) used by lab/extractor, which signs nothing.
+          allow-ghsas: GHSA-w5vr-6qhr-36cc, GHSA-x4gp-pqpj-f43q, GHSA-h97m-ww89-6jmq, GHSA-cq8v-f236-94qc
           warn-only: false
           comment-summary-in-pr: never
           show-openssf-scorecard: false
