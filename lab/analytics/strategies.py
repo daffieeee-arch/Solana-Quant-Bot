@@ -9,6 +9,7 @@ Tables:
 Refuses runs that are unfinished (no summary.parquet) or whose store is not development-only, and checks
 that the re-settled totals equal the run's own summary to the lamport.
 """
+import glob
 import json
 import os
 import re
@@ -46,10 +47,18 @@ def scenarios(cfg):
 
 
 def load(con, run_dir, defaults=DEFAULTS):
+    # Positions: results.parquet if the run wrote one, else its per-batch parts (same rows, no
+    # pnl_base_lamports/ret_base). summary.parquet is written last, so it marks a finished run;
+    # every scenario's group totals are checked against it below, which also catches missing or
+    # duplicated parts. Nothing here depends on file order: curves sort explicitly.
     results = os.path.join(run_dir, "results.parquet")
+    if not os.path.exists(results):
+        results = os.path.join(run_dir, "parts", "*.parquet")
+        if not glob.glob(results):
+            raise SystemExit(f"tournament run has no positions: {run_dir}/results.parquet or parts/ missing")
     summary = os.path.join(run_dir, "summary.parquet")
     config = os.path.join(run_dir, "config.json")
-    for p in (results, summary, config):
+    for p in (summary, config):
         if not os.path.exists(p):
             raise SystemExit(f"tournament run not finished: {p} missing")
     with open(config) as f:
