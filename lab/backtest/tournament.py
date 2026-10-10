@@ -29,6 +29,8 @@ from . import overlay, replay, rotation, streams
 from .costs import LAMPORTS, Scenario, settle_sql
 from .store import load_defaults
 from .strategies import (
+    BURN_IN_MS,
+    END_GUARD_MS,
     M1_BUYERS_MS,
     M1_GRID,
     M1_MAX_HOLD_MS,
@@ -157,9 +159,10 @@ def m1_signals(con, cfg, lo, hi, clock):
 
 def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None, slot_range=None):
     lo, hi, _ = store_bounds(con)
-    if slot_range:  # dry runs: signals from part of the store only (positions may run past it)
-        lo, hi = max(lo, slot_range[0]), min(hi, slot_range[1])
     clock = clock or Clock.from_store(con)
+    if slot_range:  # dry runs: decisions in [a, b] only, with the burn-in before a and the end guard after b as data
+        a, b = slot_range
+        lo, hi = max(lo, a - clock.slots(BURN_IN_MS, a)), min(hi, b + clock.slots(END_GUARD_MS, b))
     signals = []
     creators = dict(con.execute("SELECT mint, creator FROM mints").fetchall())
     if "F7" in families:
@@ -489,7 +492,8 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
                 log(f"batch {i + 1}/{len(todo)}: {positions} positions, {time.time() - t0:.0f}s, "
                     f"workers wrote {written / 1e9:.2f} GB")
     con = duckdb.connect()
-    total = con.execute(f"SELECT count(*) FROM read_parquet('{results_glob(out)}')").fetchone()[0]
+    parts = os.listdir(os.path.join(out, "parts"))
+    total = con.execute(f"SELECT count(*) FROM read_parquet('{results_glob(out)}')").fetchone()[0] if parts else 0
     con.close()
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
