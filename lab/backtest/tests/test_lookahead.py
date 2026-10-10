@@ -12,7 +12,7 @@ from backtest import streams
 from backtest.store import load_defaults
 from backtest.strategies import MAYHEM_AGENT, SOL, PastView, f1_signal, f7_signal, f7_signals_sql
 
-STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev.duckdb")
+STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
 
 
 @pytest.fixture(scope="module")
@@ -51,7 +51,34 @@ def test_f7_sql_equals_pastview_reference(ctx):
     ss = streams.load_streams(con, sorted({m for m, _ in raw}))
     creators = dict(con.execute("SELECT mint, creator FROM mints").fetchall())
     py = {(m, t) for m, t in raw if f7_signal(PastView(ss[m], t), "curve", 0, creators[m])}
-    sql = {(m, t) for venue, m, t, _ in f7_signals_sql(con, cfg, lo, hi, only_mints=mints) if venue == "curve"}
+    sql = {(m, t) for venue, m, t, *_ in f7_signals_sql(con, cfg, lo, hi, only_mints=mints) if venue == "curve"}
+    assert py == sql, (len(py), len(sql), sorted(py ^ sql)[:5])
+
+
+def test_f7_pool_sql_equals_pastview_reference(ctx):
+    """Same for the pool venue, normal and reversed pools (SOL-side columns vs PoolLegs)."""
+    from backtest.strategies import decision_bounds, pool_universe_sql
+
+    con, cfg, lo, hi = ctx
+    dlo, dhi = decision_bounds(cfg, lo, hi)
+    raw = con.execute(f"""
+        SELECT e.pool, e.slot, COALESCE(m.creator, p.coin_creator) FROM pool e JOIN pools p USING (pool)
+        LEFT JOIN mints m ON m.mint = p.mint
+        WHERE {pool_universe_sql()} AND p.pool IN (
+            SELECT pool FROM pools p JOIN pool_stats USING (pool)
+            WHERE {pool_universe_sql()} AND n_buy + n_sell < 20000 AND last_vault IS NOT NULL
+            ORDER BY hash(pool) LIMIT 300)
+          AND e.kind IN ('buy', 'sell') AND NOT e.token_buy AND e.sol_depth >= {150 * SOL}
+          AND e.sol_amount >= GREATEST({3 * SOL}, 0.04 * e.sol_depth) AND e.slot BETWEEN {dlo} AND {dhi}
+          AND e.trader <> COALESCE(m.creator, p.coin_creator, '') AND e.trader <> COALESCE(p.coin_creator, '')
+        GROUP BY ALL""").fetchall()
+    assert len(raw) > 30
+    ss = streams.load_pool_streams(con, {p: (0, 2**62) for p in {p for p, _, _ in raw}})
+    assert {s.orientation for s in ss.values()} == {"normal", "reversed"}
+    py = {(p, t) for p, t, c in raw if f7_signal(PastView(ss[p], t), "pool", 0, c)}
+    keys = sorted({ss[p].mint for p, _, _ in raw})
+    sql = {(pool, t) for venue, m, t, _, pool, _ in f7_signals_sql(con, cfg, lo, hi, only_mints=keys)
+           if venue == "pool" and pool in ss}
     assert py == sql, (len(py), len(sql), sorted(py ^ sql)[:5])
 
 

@@ -20,7 +20,8 @@ from .streams import SPILL_DIR
 
 TRIALS = os.environ.get("LAB_TRIALS", "/home/chupa/Solana-project/data-old-faithful-one/lab/trials")
 
-KEYS = ["family", "variant", "size_sol", "d", "tau"]
+KEYS = ["family", "variant", "size_sol", "d", "tau", "segment", "regime"]
+NK = len(KEYS)
 K = ", ".join(KEYS)
 SCENARIOS = ("optimistic", "base", "pessimistic")
 FAMILIES = ("F7", "F1")  # families with an N2 control; N1 is a control itself
@@ -97,19 +98,20 @@ def summarize(results, cfg, con=None):
               avg(sells_dropped) FILTER (WHERE NOT skipped), avg(seed_pool::INT) FILTER (WHERE NOT skipped),
               avg(cf_graduation::INT) FILTER (WHERE NOT skipped), count(DISTINCT day) FILTER (WHERE NOT skipped)
             FROM v GROUP BY ALL""").fetchall()
-        robust = {tuple(r[:5]): r[5:] for r in con.execute(f"""
+        robust = {tuple(r[:NK]): r[NK:] for r in con.execute(f"""
             SELECT {K}, avg(ret) FILTER (WHERE rk > 3), avg(ret) FILTER (WHERE rk > ceil(0.01 * cnt))
             FROM (SELECT {K}, ret, row_number() OVER (PARTITION BY {K} ORDER BY ret DESC) AS rk,
                          count(*) OVER (PARTITION BY {K}) AS cnt FROM v WHERE ret IS NOT NULL)
             GROUP BY ALL""").fetchall()}
         for r in con.execute(f"SELECT {K}, day, sum(ret), count(ret), sum(pnl), count(pnl) FROM v "
                              "WHERE pnl IS NOT NULL GROUP BY ALL").fetchall():
-            if r[7]:
-                daily.setdefault((name, *r[:5]), {})[r[5]] = (r[6], r[7])
-            daily_pnl.setdefault((name, *r[:5]), {})[r[5]] = (r[8] / 1e9, r[9])
+            day, sret, nret, spnl, npnl = r[NK:]
+            if nret:
+                daily.setdefault((name, *r[:NK]), {})[day] = (sret, nret)
+            daily_pnl.setdefault((name, *r[:NK]), {})[day] = (spnl / 1e9, npnl)
         for r in rows:
-            key = tuple(r[:5])
-            o = dict(zip(KEYS, key), scenario=name, **dict(zip(cols, r[5:])))
+            key = tuple(r[:NK])
+            o = dict(zip(KEYS, key), scenario=name, **dict(zip(cols, r[NK:])))
             o["fail_rate"] = 1 - o["filled"] / o["n"] if o["n"] else None
             o["mean_ex_top3"], o["mean_ex_top1pct"] = robust.get(key, (None, None))
             d = daily.get((name, *key), {})
@@ -123,9 +125,9 @@ def summarize(results, cfg, con=None):
             o["verdict"] = verdict(o)
             out.append(o)
     # N2 comparison: same variant / size / d / tau / scenario, CI by resampling days jointly.
-    idx = {(o["scenario"], o["family"], o["variant"], o["size_sol"], o["d"], o["tau"]): o for o in out}
+    idx = {(o["scenario"], *[o[k] for k in KEYS]): o for o in out}
     for o in out:
-        k2 = (o["scenario"], "N2_" + o["family"], o["variant"], o["size_sol"], o["d"], o["tau"])
+        k2 = (o["scenario"], "N2_" + o["family"], *[o[k] for k in KEYS[1:]])
         n2 = idx.get(k2)
         o["n2_n"] = n2["filled"] if n2 else None
         o["n2_mean_ret"] = n2["mean_ret"] if n2 else None
@@ -141,15 +143,16 @@ def trials(summary, config):
     Gate (batch 1, binding): base costs, edge vs N2 > 0 at a size >= 5 SOL for every delay d."""
     base = [s for s in summary if s["scenario"] == "base" and s["family"] in FAMILIES]
     rows = []
-    for fam, var in sorted({(s["family"], s["variant"]) for s in base}):
-        mine = [s for s in base if s["family"] == fam and s["variant"] == var]
+    for fam, var, seg, reg in sorted({(s["family"], s["variant"], s["segment"], s["regime"]) for s in base}):
+        mine = [s for s in base if (s["family"], s["variant"], s["segment"], s["regime"]) == (fam, var, seg, reg)]
         by_size = {}
         for s in mine:
             by_size.setdefault(s["size_sol"], []).append(s)
         gate = any(sz >= 5 and all(x["edge_vs_n2"] is not None and x["edge_vs_n2"] > 0 for x in xs)
                    for sz, xs in by_size.items())
         rows.append({
-            "run_id": config["run_id"], "batch": "tournament_v1", "family": fam, "variant": var,
+            "run_id": config["run_id"], "batch": config.get("batch", "tournament_v1"), "family": fam, "variant": var,
+            "segment": seg, "regime": reg,
             "spec": "week2-strategy-specs.md", "engine_commit": config.get("engine_commit"),
             "slot_start": config["store"]["slot_start"], "slot_end_exclusive": config["store"]["slot_end_exclusive"],
             "sizes_sol": json.dumps(config["sizes_sol"]), "delays": json.dumps(config["delays"]),
@@ -202,7 +205,7 @@ def write_report(run_dir, cfg):
         os.makedirs(TRIALS, exist_ok=True)
         pq.write_table(table, os.path.join(TRIALS, f"{config['run_id']}.parquet"))
     base = sorted((s for s in summary if s["scenario"] == "base"),
-                  key=lambda s: (s["family"], s["variant"], s["size_sol"], s["d"], s["tau"]))
+                  key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["size_sol"], s["d"], s["tau"]))
     lines = [f"# Backtest {config['run_id']}", "",
              f"Store: slots {config['store']['slot_start']}–{config['store']['slot_end_exclusive']} (dev only). "
              f"Engine {config.get('engine_commit', 'unknown')}. Signals {config['signals']}, positions {config['positions']}, "
@@ -212,20 +215,23 @@ def write_report(run_dir, cfg):
              "", "## Deviations from the spec", ""] + [f"- {x}" for x in DEVIATIONS] + [
              "", "## Gate (batch 1): base costs, above N2 at ≥5 SOL for every d", ""]
     for t in tr:
-        lines.append(f"- {t['family']} {t['variant']}: {'PASS' if t['gate_pass'] else 'no'}")
-    fam = sorted((s for s in base if s["family"] in FAMILIES), key=lambda s: (s["family"], s["variant"], s["size_sol"], s["d"]))
+        lines.append(f"- {t['family']} {t['variant']} ({t['segment']}, {t['regime']}): {'PASS' if t['gate_pass'] else 'no'}")
+    fam = sorted((s for s in base if s["family"] in FAMILIES),
+                 key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["size_sol"], s["d"]))
     lines += ["", "## Stop-rule measure per strategy (base costs)", "",
               f"Net P&L per trade in SOL after all costs (failed entries included), 95% CI by day bootstrap. "
               f"GO: CI above 0; ADJUST: mean above 0; STOP: mean ≤ 0; fewer than {MIN_TRADES} trades: no verdict. "
               f"Sizes below {LIVE_MIN_SOL} SOL are informative only (under the live size).",
               "",
-              "| family | variant | size SOL | d | trades | days | net SOL/trade | 95% CI | verdict | mean % | edge vs N2 | edge 95% CI | note |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "| family | segment | regime | variant | size SOL | d | trades | days | net SOL/trade | 95% CI | verdict | mean % | "
+              "edge vs N2 | edge 95% CI | note |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in fam:
         ci = f"{_sol(s['pnl_ci_lo'])} … {_sol(s['pnl_ci_hi'])}" if s["pnl_ci_lo"] is not None else ""
         eci = f"{_pct(s['edge_ci_lo'])} … {_pct(s['edge_ci_hi'])}" if s["edge_ci_lo"] is not None else ""
         note = "informative (under live size)" if s["size_sol"] < LIVE_MIN_SOL else ""
-        lines.append(f"| {s['family']} | {s['variant']} | {s['size_sol']} | {s['d']} | {s['filled']} | {s['days']} | "
+        lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
+                     f"{s['filled']} | {s['days']} | "
                      f"{_sol(s['mean_pnl_sol'])} | {ci} | {s['verdict']} | {_pct(s['mean_ret'])} | "
                      f"{_pct(s['edge_vs_n2'])} | {eci} | {note} |")
     lines += ["", "## Base cost scenario", "",
@@ -234,28 +240,32 @@ def write_report(run_dir, cfg):
               "mean − drift ≈ our costs and impact; the median of (return − drift) per trade is shown as well. SL = stop-loss exits (share, realized mean). "
               "CIs: 95%, bootstrap over days. Ex-top: mean without the best 3 trades / best 1%.",
               "",
-              "| family | variant | size SOL | d | tau | n | filled | mean | median | win | 95% CI | ex-top3 / ex-top1% | "
+              "| family | segment | regime | variant | size SOL | d | tau | n | filled | mean | median | win | 95% CI | "
+              "ex-top3 / ex-top1% | "
               "drift (excluded) | median ret − drift | "
               "SL share / mean | total PnL SOL | N2 mean | edge vs N2 | edge 95% CI |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in base:
         ci = f"{_pct(s['ci_lo'])} … {_pct(s['ci_hi'])}" if s["ci_lo"] is not None else ""
         eci = f"{_pct(s['edge_ci_lo'])} … {_pct(s['edge_ci_hi'])}" if s["edge_ci_lo"] is not None else ""
         win = "" if s["win_rate"] is None else f"{s['win_rate'] * 100:.0f}%"
         sl = "" if s["stop_loss_share"] is None else f"{s['stop_loss_share']*100:.0f}% / {_pct(s['stop_loss_mean'])}"
-        lines.append(f"| {s['family']} | {s['variant']} | {s['size_sol']} | {s['d']} | {s['tau']} | {s['n']} | {s['filled']} | "
+        lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
+                     f"{s['tau']} | {s['n']} | {s['filled']} | "
                      f"{_pct(s['mean_ret'])} | {_pct(s['median_ret'])} | {win} | {ci} | "
                      f"{_pct(s['mean_ex_top3'])} / {_pct(s['mean_ex_top1pct'])} | "
                      f"{_pct(s['hist_drift'])} ({_num(s['drift_excluded'] and s['drift_excluded'] * 100, '.2f')}%) | "
                      f"{_pct(s['median_cost'])} | {sl} | "
                      f"{s['total_pnl_sol']:+.2f} | {_pct(s['n2_mean_ret'])} | {_pct(s['edge_vs_n2'])} | {eci} |")
-    diag = sorted((s for s in base if s["tau"] == base[0]["tau"]), key=lambda s: (s["family"], s["variant"], s["size_sol"], s["d"]))
+    diag = sorted((s for s in base if s["tau"] == base[0]["tau"]),
+                  key=lambda s: (s["family"], s["segment"], s["variant"], s["size_sol"], s["d"]))
     lines += ["", "## Replay diagnostics (per position, base scenario)", "",
-              "| family | variant | size SOL | d | reverted router txs | reverted direct txs | dropped sells | "
+              "| family | segment | variant | size SOL | d | reverted router txs | reverted direct txs | dropped sells | "
               "counterfactual graduation | seed-pool exits |",
-              "|---|---|---|---|---|---|---|---|---|"]
+              "|---|---|---|---|---|---|---|---|---|---|"]
     for s in diag:
-        lines.append(f"| {s['family']} | {s['variant']} | {s['size_sol']} | {s['d']} | {_num(s['reverted_router'], '.2f')} | "
+        lines.append(f"| {s['family']} | {s['segment']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
+                     f"{_num(s['reverted_router'], '.2f')} | "
                      f"{_num(s['reverted_direct'], '.2f')} | {_num(s['sells_dropped'], '.2f')} | "
                      f"{_num(s['cf_graduation'] and s['cf_graduation'] * 100, '.1f')}% | "
                      f"{_num(s['seed_pool'] and s['seed_pool'] * 100, '.1f')}% |")

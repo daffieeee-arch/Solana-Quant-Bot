@@ -28,6 +28,7 @@ from .costs import LAMPORTS, Scenario, settle_sql
 from .store import load_defaults
 from .strategies import (
     F7_GRID,
+    Clock,
     PastView,
     Signal,
     f1_candidates,
@@ -36,6 +37,7 @@ from .strategies import (
     f7_signals_sql,
     n1_candidates,
     n2_matches,
+    ms,
     tp_sl_time,
     until_slot,
 )
@@ -50,9 +52,11 @@ RESULT_SCHEMA = pa.schema([
     ("entry_failed", pa.bool_()), ("skipped", pa.bool_()), ("tokens", pa.int64()), ("cost", pa.int64()),
     ("proceeds", pa.int64()), ("exit_reason", pa.string()), ("entry_slot", pa.int64()),
     ("exit_decision_slot", pa.int64()), ("exit_slot", pa.int64()), ("cf_graduation", pa.bool_()),
-    ("seed_pool", pa.bool_()), ("exit_attempts", pa.int64()), ("reverted_direct", pa.int64()),
+    ("seed_pool", pa.bool_()), ("vault_capped", pa.bool_()), ("exit_attempts", pa.int64()), ("reverted_direct", pa.int64()),
     ("reverted_router", pa.int64()), ("sells_dropped", pa.int64()), ("sells_scaled", pa.int64()),
     ("hist_ret", pa.float64()), ("day", pa.string()),
+    ("pool", pa.string()), ("orientation", pa.string()), ("segment", pa.string()), ("regime", pa.string()),
+    ("d_ms", pa.float64()),
 ])
 
 
@@ -65,26 +69,30 @@ def store_bounds(con):
     return meta["slot_start"], meta["slot_end_exclusive"], meta
 
 
-MAX_HOLD = {"F7": 2_400, "N2_F7": 2_400, "F1": 4_500, "N2_F1": 4_500, "N1": 1_500}
-WINDOW_MARGIN = 6_000  # d, graduation and pool open after the last possible exit decision
-CLUSTER_GAP = 20_000  # signals further apart than this are loaded and simulated separately
+# Windows in milliseconds (v1 slot values at 267.3 ms), converted per epoch by the store's Clock.
+MAX_HOLD_MS = {"F7": ms(2_400), "N2_F7": ms(2_400), "F1": ms(4_500), "N2_F1": ms(4_500), "N1": ms(1_500)}
+WINDOW_MARGIN_MS = ms(6_000)  # d, graduation and pool open after the last possible exit decision
+CLUSTER_GAP_MS = ms(20_000)  # signals further apart than this are loaded and simulated separately
+MAX_WINDOW_MS = ms(50_000)  # cap on one load window (busy pools)
 F1_CHUNK = 200  # tokens per stream load while screening F1 (whole curve histories)
 
 
-def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5):
+def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None):
     lo, hi, _ = store_bounds(con)
+    clock = clock or Clock.from_store(con)
     signals = []
     creators = dict(con.execute("SELECT mint, creator FROM mints").fetchall())
     if "F7" in families:
-        for venue, m, slot, depth in f7_signals_sql(con, cfg, lo, hi):
-            m = sys.intern(m)
+        for venue, m, slot, depth, pool, orientation in f7_signals_sql(con, cfg, lo, hi, clock=clock):
+            m, pool = sys.intern(m), (sys.intern(pool) if pool else None)
             for tp, T in F7_GRID:
-                signals.append(Signal("F7", f"tp{int(tp*100)}_T{T}", m, slot, venue, int(depth), (tp, T)))
+                signals.append(Signal("F7", f"tp{int(tp*100)}_T{T}", m, slot, venue, int(depth), (tp, T),
+                                      pool=pool, orientation=orientation))
         log(f"F7: {len(signals)} signals")
     if "F1" in families:
         cands = defaultdict(list)
         for band in (40, 55, 70):
-            for m, t in f1_candidates(con, cfg, lo, hi, band):
+            for m, t in f1_candidates(con, cfg, lo, hi, band, clock):
                 cands[m].append((band, t))
         mints = sorted(cands)
         n_f1 = 0
@@ -96,70 +104,77 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5):
                     continue
                 for band, t in sorted(cands[m]):
                     v = PastView(ss[m], t)
-                    if v.curve and f1_signal(v, creators.get(m), min(sizes) * LAMPORTS):
+                    if v.curve and f1_signal(v, creators.get(m), min(sizes) * LAMPORTS, clock):
                         signals.append(Signal("F1", f"B{band}", sys.intern(m), t, "curve", int(v.curve[-1].post.rq), (band,)))
                         n_f1 += 1
             del ss
         log(f"F1: {n_f1} signals from {sum(len(c) for c in cands.values())} candidates")
     if "N1" in families:
-        cands = n1_candidates(con, cfg, lo, hi)
+        cands = n1_candidates(con, cfg, lo, hi, clock)
         random.Random(1).shuffle(cands)
         for m, cslot in sorted(cands[:n1_sample], key=lambda c: c[1]):
             for H in (150, 1_500):
                 signals.append(Signal("N1", f"H{H}", sys.intern(m), cslot, "curve", 0, (H,)))
     # Deterministic order (SQL results come back in no fixed order), then the optional cap.
-    signals.sort(key=lambda s: (s.t, s.mint, s.family, s.variant))
+    signals.sort(key=lambda s: (s.t, s.mint, s.pool or "", s.family, s.variant))
     if max_signals:
         signals = signals[:max_signals]
     if "N2" in families:
         by_trigger = defaultdict(list)
         for s in signals:
             if s.family in ("F7", "F1"):
-                by_trigger[(s.family, s.mint, s.t, s.venue, s.depth)].append(s)
+                by_trigger[(s.family, s.pool or s.mint, s.t, s.venue, s.depth, s.orientation)].append(s)
         t0 = time.time()
-        matches = n2_matches(con, list(by_trigger), k=n2_k)
+        matches = n2_matches(con, list(by_trigger), k=n2_k, clock=clock)
+        pool_mint = dict(con.execute("SELECT pool, COALESCE(mint, pool) FROM pools").fetchall())
         n_n2 = 0
         for key, group in by_trigger.items():
             ref = (key[1], key[2])
-            for m, slot, depth in matches[key]:
+            for k, slot, depth in matches[key]:
+                pool, mint = (k, sys.intern(pool_mint.get(k, k))) if key[3] == "pool" else (None, k)
                 for s2 in group:
-                    signals.append(Signal("N2_" + s2.family, s2.variant, m, slot, s2.venue, depth, s2.params, ref))
+                    signals.append(Signal("N2_" + s2.family, s2.variant, mint, slot, s2.venue, depth, s2.params, ref,
+                                          pool=pool, orientation=s2.orientation))
                     n_n2 += 1
         log(f"N2: {n_n2} signals for {len(by_trigger)} triggers in {time.time() - t0:.0f}s")
     return signals
 
 
-def work_items(signals):
-    """Group signals per token into clusters; each cluster has its own load window."""
-    by_mint = defaultdict(list)
+def work_items(signals, clock=None):
+    """Group signals per token (curve) or pool into clusters; each cluster has its own load
+    window, capped in length so a busy pool never loads more than MAX_WINDOW_MS at once."""
+    clock = clock or Clock()
+    by_key = defaultdict(list)
     for s in signals:
-        by_mint[s.mint].append(s)
+        by_key[(s.venue, s.pool if s.venue == "pool" else s.mint)].append(s)
     items = []
-    for m, sigs in by_mint.items():
+    for key, sigs in by_key.items():
         sigs.sort(key=lambda s: s.t)
         cluster = [sigs[0]]
         for s in sigs[1:]:
-            if s.t - cluster[-1].t > CLUSTER_GAP:
-                items.append(cluster)
+            if (s.t - cluster[-1].t > clock.slots(CLUSTER_GAP_MS, s.t)
+                    or s.t - cluster[0].t > clock.slots(MAX_WINDOW_MS, s.t)):
+                items.append((key, cluster))
                 cluster = []
             cluster.append(s)
-        items.append(cluster)
+        items.append((key, cluster))
     out = []
-    for c in items:
+    for (venue, k), c in items:
         lo = c[0].t - 300
-        hi = max(s.t + MAX_HOLD.get(s.family, 4_500) for s in c) + WINDOW_MARGIN
-        out.append((c[0].mint, lo, hi, c))
+        hi = max(s.t + clock.slots(MAX_HOLD_MS.get(s.family, ms(4_500)), s.t) for s in c) + clock.slots(WINDOW_MARGIN_MS, c[-1].t)
+        out.append((venue, k, lo, hi, c))
     return out
 
 
-def exit_rule_for(sig, scn, d):
+def exit_rule_for(sig, scn, d, clock=None):
+    clock = clock or Clock()
     if sig.family in ("F7", "N2_F7"):
         tp, T = sig.params
-        return tp_sl_time(tp, -0.08, T, scn)
+        return tp_sl_time(tp, -0.08, clock.slots(ms(T), sig.t), scn)
     if sig.family in ("F1", "N2_F1"):
-        return f1_exit(sig.depth, 4_500)
+        return f1_exit(sig.depth, clock.slots(ms(4_500), sig.t))
     if sig.family == "N1":
-        return until_slot(sig.t + sig.params[0], d)
+        return until_slot(sig.t + clock.slots(ms(sig.params[0]), sig.t), d)
     raise ValueError(sig.family)
 
 
@@ -182,14 +197,18 @@ def _part_path(out, task_id):
 
 
 def _work(args):
-    task_id, out, items, sizes, delays, taus, q, tol, cfg = args
+    task_id, out, items, sizes, delays, taus, q, tol, cfg, clock = args
     con = streams.open_store(STORE, threads=1, memory="600MB")
     base = Scenario.from_cfg("base", cfg)
     rows = []
-    for mint, lo, hi, sigs in items:
-        st = streams.load_streams(con, {mint: (lo, hi)}).get(mint)
+    for venue, key, lo, hi, sigs in items:
+        if venue == "pool":
+            st = streams.load_pool_streams(con, {key: (lo, hi)}).get(key)
+        else:
+            st = streams.load_streams(con, {key: (lo, hi)}).get(key)
         if st is None:
             continue
+        mint = st.mint
         for size_sol in sizes:
             size = int(size_sol * LAMPORTS)
             for d in delays:
@@ -197,17 +216,17 @@ def _work(args):
                     tau = replay.Tau(tau_mode)
                     busy_until = defaultdict(lambda: -1)
                     for sig in sigs:
-                        key = (sig.family, sig.variant)
-                        if sig.t <= busy_until[key]:
+                        fk = (sig.family, sig.variant)
+                        if sig.t <= busy_until[fk]:
                             continue
                         if sig.family in ("F1", "N2_F1") and size > (85.005 - 1) * LAMPORTS - sig.depth:
                             continue
-                        rule = exit_rule_for(sig, base, d)
+                        rule = exit_rule_for(sig, base, d, clock)
                         if sig.venue == "pool":
                             r = replay.simulate_pool_position(st, sig.t, size, d, q, rule, tol, tau)
                         else:
                             r = replay.simulate_curve_position(st, sig.t, size, d, q, rule, tol, tau)
-                        busy_until[key] = r.exit_slot or sig.t
+                        busy_until[fk] = r.exit_slot or sig.t
                         rows.append({
                             "family": sig.family, "variant": sig.variant, "mint": mint, "t": sig.t, "venue": sig.venue,
                             "depth": sig.depth, "ref_mint": sig.ref[0] if sig.ref else None,
@@ -215,10 +234,14 @@ def _work(args):
                             "size_sol": size_sol, "d": d, "tau": tau_mode, "entry_failed": r.entry_failed, "skipped": r.skipped,
                             "tokens": r.tokens, "cost": r.cost, "proceeds": r.proceeds, "exit_reason": r.exit_reason,
                             "entry_slot": r.entry_slot, "exit_decision_slot": r.exit_decision_slot, "exit_slot": r.exit_slot,
-                            "cf_graduation": r.cf_graduation, "seed_pool": r.seed_pool, "exit_attempts": r.exit_attempts,
+                            "cf_graduation": r.cf_graduation, "seed_pool": r.seed_pool, "vault_capped": r.vault_capped,
+                            "exit_attempts": r.exit_attempts,
                             "reverted_direct": r.reverted_direct, "reverted_router": r.reverted_router,
                             "sells_dropped": r.sells_dropped, "sells_scaled": r.sells_scaled,
                             "hist_ret": (r.hist_mid_exit / r.hist_mid_entry - 1) if (r.hist_mid_entry and r.hist_mid_exit) else None,
+                            "pool": sig.pool, "orientation": sig.orientation,
+                            "segment": "curve" if sig.venue == "curve" else f"pool_{sig.orientation}",
+                            "regime": clock.regime_label(sig.t), "d_ms": round(d * clock.ms_per_slot(sig.t), 1),
                         })
         del st
     for r, day in zip(rows, _days(con, [r["t"] for r in rows])):
@@ -262,12 +285,14 @@ def run(families, sizes, delays, taus, q, tol, workers, n1_sample, max_signals, 
     t0 = time.time()
     con = streams.open_store(STORE, threads=2, memory="1GB")
     lo, hi, meta = store_bounds(con)
-    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k)
+    clock = Clock.from_store(con)
+    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock)
     con.close()
-    items = work_items(signals)
+    items = work_items(signals, clock)
     n_signals = len(signals)
     del signals
-    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, q, tol, cfg) for i, j in enumerate(range(0, len(items), batch))]
+    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, q, tol, cfg, clock)
+             for i, j in enumerate(range(0, len(items), batch))]
     todo = [t for t in tasks if not os.path.exists(_part_path(out, t[0]))]
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
         f"in {time.time() - t0:.0f}s")
