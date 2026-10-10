@@ -27,6 +27,14 @@ Trades F7 on paper from an event feed, with an N2 shadow, and journals everythin
 v0 restarts by replaying deterministically into the same journal; state snapshots come with the
 live feed.
 
+Known differences to the backtest, by design:
+
+- N2 draws its match only from tokens that traded earlier in the trigger's hour. The backtest
+  (`n2_matches`) draws from the whole hour, but live trading cannot look ahead.
+- Risk limits (`risk.yaml`) apply to F7. `--ignore-risk` turns them off for parity runs.
+- The heartbeat runs on event time. A wall-clock heartbeat for `LiveFeed` comes with the
+  recorder.
+
 ```
 python -m paper.engine --from 450142000 --to 450362000 --journal <dir> [--ignore-risk] [--variants 0.04:600]
 python -m paper.parity --from 450144000 --to 450360000 --out <dir>
