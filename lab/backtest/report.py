@@ -299,6 +299,10 @@ DEVIATIONS = [
     "not a uniform slot of the hour.",
     "F6: only the first qualifying trigger of a pool per UTC day is traded (for speed); the spec meant the token-day "
     "as the cluster for the CI, not as a cap on trades.",
+    "M1: the graduation market cap is the pool's opening price (q0 / b0 of its create event); supply is constant, so "
+    "k x market cap equals k x price.",
+    "M1 and F6: flow thresholds are a share of the pool's real SOL depth (vault), not of Q_eff (vault plus virtual "
+    "quote reserves).",
 ]
 
 
