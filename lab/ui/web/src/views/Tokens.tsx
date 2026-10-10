@@ -3,7 +3,7 @@ import { AgGridReact } from "ag-grid-react";
 import { themeQuartz, type ColDef, type IDatasource, type GridApi } from "ag-grid-community";
 import { get, type TokenRow } from "../api";
 import { go } from "../route";
-import { Chip } from "../components/ui";
+import { Chip, DexLink } from "../components/ui";
 import { isoTime, label, n0, solShort } from "../format";
 
 export const gridTheme = themeQuartz.withParams({
@@ -38,8 +38,10 @@ export default function Tokens() {
     { colId: "flags", headerName: "Kenmerken", width: 190, sortable: false, hide: narrow, valueGetter: (p) => (p.data ? flags(p.data) : "") },
     { field: "curve_trades", headerName: "Curve-trades", width: 120, type: "rightAligned", hide: narrow, valueFormatter: (p) => n0(p.value) },
     { field: "pool_trades", headerName: "Pool-trades", width: 115, type: "rightAligned", hide: narrow, valueFormatter: (p) => n0(p.value) },
+    { field: "mint", headerName: "DexScreener", width: 130, sortable: false,
+      cellRenderer: (p: { value: string }) => <DexLink mint={p.value} /> },
     { field: "total_volume_quote", headerName: "Volume SOL", width: 120, type: "rightAligned", sort: "desc", valueFormatter: (p) => solShort(p.value) },
-    { colId: "max_mcap", headerName: "Max. mcap SOL", width: 125, type: "rightAligned", valueGetter: (p) => (p.data as unknown as { max_mcap?: number })?.max_mcap, valueFormatter: (p) => solShort(p.value) },
+    { colId: "max_mcap", headerName: "Max. mcap SOL", width: 125, type: "rightAligned", hide: narrow, valueGetter: (p) => (p.data as unknown as { max_mcap?: number })?.max_mcap, valueFormatter: (p) => solShort(p.value) },
   ], [narrow]);
 
   const datasource = useMemo<IDatasource>(() => ({

@@ -46,3 +46,22 @@ export function Badge({ tone, children }: { tone: "accent" | "warn" | "muted" | 
 export function Loading({ what }: { what: string }) {
   return <p className="text-muted text-sm">{what} laden…</p>;
 }
+
+const MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/** Outbound link to DexScreener for a Solana mint. Only a plain link the owner clicks: no API calls,
+ *  embeds, prefetch or favicons; noreferrer keeps the local UI address private. */
+export function dexUrl(mint: string | null | undefined): string | null {
+  return mint && MINT_RE.test(mint) ? `https://dexscreener.com/solana/${encodeURIComponent(mint)}` : null;
+}
+
+export function DexLink({ mint, children, className = "" }: { mint: string | null | undefined; children?: ReactNode; className?: string }) {
+  const href = dexUrl(mint);
+  if (!href) return <>{children ?? null}</>;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" title={`${mint} op DexScreener`}
+      className={`text-accent underline-offset-2 hover:underline ${className}`} onClick={(e) => e.stopPropagation()}>
+      {children ?? <>{`${mint!.slice(0, 4)}…${mint!.slice(-4)}`} ↗</>}
+    </a>
+  );
+}

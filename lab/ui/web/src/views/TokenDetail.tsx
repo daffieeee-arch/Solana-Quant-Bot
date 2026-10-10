@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import ReactGridLayout, { useContainerWidth, verticalCompactor, type Layout } from "react-grid-layout";
 import { get, type TokenDetail as Detail } from "../api";
 import PriceChart, { eventMarkers } from "../components/PriceChart";
-import { Badge, Card, Loading } from "../components/ui";
+import { Badge, Card, DexLink, Loading } from "../components/ui";
 import { go } from "../route";
 import { isoTime, label, n0, shortAddr, sol, unixClock } from "../format";
 
@@ -36,7 +36,7 @@ function Panel({ title, children, drag }: { title: string; children: ReactNode; 
 function Info({ d }: { d: Detail }) {
   const t = d.token;
   const rows: [string, ReactNode][] = [
-    ["Mint", <span className="font-mono text-xs break-all">{t.mint}</span>],
+    ["Mint", <DexLink mint={t.mint} className="font-mono text-xs break-all">{t.mint} ↗</DexLink>],
     ["Maker", <span className="font-mono text-xs">{shortAddr(t.creator)}</span>],
     ["Aangemaakt", isoTime(t.create_time) + " UTC"],
     ["Graduatie", t.graduated ? (t.grad_in_create_slot ? "in de aanmaak-slot (niet handelbaar)" : `slot ${n0(t.complete_slot)}`) : "nee"],
@@ -115,6 +115,7 @@ export default function TokenDetail({ mint }: { mint: string }) {
             {!d.token.sol_quote && <Badge tone="muted">geen SOL-quote</Badge>}
             {d.token.holder_reward && <Badge tone="muted">holder rewards</Badge>}
           </span>
+          <DexLink mint={d.token.mint} className="text-sm">Bekijk op DexScreener ↗</DexLink>
         </div>
       )}
     </div>

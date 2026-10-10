@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { get, type MarketEvent } from "../api";
-import { Badge, Card, Chip, Loading } from "../components/ui";
+import { Badge, Card, Chip, DexLink, Loading } from "../components/ui";
 import { go } from "../route";
 import { label, n0, shortAddr, sol, unixTime } from "../format";
 
@@ -52,8 +52,8 @@ export default function Ticker() {
         <Card>
           <ul className="m-0 p-0 list-none">
             {events.map((e) => (
-              <li key={`${e.kind}-${e.slot}-${e.tx_index ?? ""}-${e.mint}-${e.sol ?? ""}`} className="border-t border-line first:border-t-0">
-                <button type="button" className="w-full text-left px-3 py-2.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 hover:bg-surface-2" onClick={() => e.mint && go("tokens", e.mint)}>
+              <li key={`${e.kind}-${e.slot}-${e.tx_index ?? ""}-${e.mint}-${e.sol ?? ""}`} className="border-t border-line first:border-t-0 flex items-center">
+                <button type="button" className="flex-1 min-w-0 text-left px-3 py-2.5 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 hover:bg-surface-2" onClick={() => e.mint && go("tokens", e.mint)}>
                   <span className="row-span-2 pt-0.5">
                     <Badge tone={e.kind === "graduation" ? "accent" : e.kind === "large_buy" ? "buy" : "sell"}>
                       {e.kind === "graduation" ? "graduatie" : e.kind === "large_buy" ? "koop" : "verkoop"}
@@ -62,6 +62,7 @@ export default function Ticker() {
                   <span className="min-w-0 truncate"><b>{label(e.symbol, 20) || shortAddr(e.mint)}</b> <span className="text-muted">{label(e.name, 40)}</span></span>
                   <span className="text-sm text-muted min-w-0 truncate">{unixTime(e.time)} UTC · {line(e)}</span>
                 </button>
+                <DexLink mint={e.mint} className="px-3 py-2.5 text-sm whitespace-nowrap shrink-0">Dex ↗</DexLink>
               </li>
             ))}
           </ul>

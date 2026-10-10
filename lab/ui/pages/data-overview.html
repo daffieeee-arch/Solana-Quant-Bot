@@ -54,6 +54,8 @@ th { font-weight: 500; color: var(--muted); font-size: 0.78rem; text-transform: 
 td.l, th.l { text-align: left; }
 tr:last-child td { border-bottom: 0; }
 td.mono { font-family: var(--mono); font-size: 0.8rem; }
+td a { color: var(--accent); text-underline-offset: 2px; }
+td a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 td.name { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
 .partial { color: var(--muted); font-style: italic; }
 .epochs { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
@@ -115,7 +117,7 @@ footer { color: var(--muted); font-size: 0.82rem; }
 
   <section aria-labelledby="h-vb">
     <h2 id="h-vb">Voorbeeldtokens</h2>
-    <p class="lede">De 12 gegradueerde tokens (SOL-gequote, geen mayhem) met het meeste SOL-volume op curve en PumpSwap samen. Namen en symbolen zijn door de makers gekozen.</p>
+    <p class="lede">De 12 gegradueerde tokens (SOL-gequote, geen mayhem) met het meeste SOL-volume op curve en PumpSwap samen. Namen en symbolen zijn door de makers gekozen. Naam en mint openen DexScreener in een nieuw tabblad.</p>
     <div class="tablebox"><table id="t-tokens"></table></div>
   </section>
 
@@ -262,7 +264,15 @@ footer { color: var(--muted); font-size: 0.82rem; }
     for (const r of rows) {
       const row = el("tr");
       if (r._partial) row.className = "partial";
-      for (const c of cols) { const td = el("td", c.cls || "", c.fmt ? c.fmt(r[c.key], r) : r[c.key]); if (c.title) td.title = c.title(r); row.append(td); }
+      for (const c of cols) {
+        const text = c.fmt ? c.fmt(r[c.key], r) : r[c.key];
+        const td = el("td", c.cls || "");
+        const href = c.link ? c.link(r) : null;
+        if (href) { const a = el("a", null, text); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer"; td.append(a); }
+        else td.textContent = text == null ? "" : String(text);
+        if (c.title) td.title = c.title(r);
+        row.append(td);
+      }
       tb.append(row);
     }
     t.replaceChildren(thead, tb);
@@ -296,10 +306,12 @@ footer { color: var(--muted); font-size: 0.82rem; }
   for (const c of D.coverage) { const b = el("div", "ep " + c.state); b.append(el("span", "n", c.epoch), el("span", "s", stateLabel[c.state] || c.state)); epEl.append(b); }
 
   const short = m => m.length > 14 ? m.slice(0, 6) + "…" + m.slice(-4) : m;
+  // Outbound link only (owner clicks it); no requests to DexScreener from this page.
+  const dex = r => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(r.mint || "") ? "https://dexscreener.com/solana/" + encodeURIComponent(r.mint) : null;
   table("t-tokens", [
-    { key: "name", label: "naam", cls: "l name", title: r => r.name },
+    { key: "name", label: "naam", cls: "l name", title: r => r.name + " op DexScreener", link: dex },
     { key: "symbol", label: "symbool", cls: "l mono" },
-    { key: "mint", label: "mint", cls: "l mono", fmt: short, title: r => r.mint },
+    { key: "mint", label: "mint", cls: "l mono", fmt: m => short(m) + " ↗", title: r => r.mint + " op DexScreener", link: dex },
     { key: "created_utc", label: "aangemaakt (UTC)", cls: "l", fmt: v => v.slice(0, 16) },
     { key: "minutes_to_graduate", label: "min. tot graduatie", fmt: v => Number(v).toLocaleString("nl-NL", { maximumFractionDigits: 1 }) },
     { key: "curve_trades", label: "curve-trades", fmt: n },
