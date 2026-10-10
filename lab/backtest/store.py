@@ -47,6 +47,7 @@ STORE_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/store"
 SPILL_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp-duckdb"
 VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 ms slots
 DISK_FLOOR_GB = 50
+POOL_PARTS = 4
 H = "::HUGEINT"
 B = "::BIGINT"
 
@@ -303,15 +304,17 @@ def build(period, out_path, cfg, chunks, log=print):
         trades, other = _pool_trades(c), _pool_other(c)
         src = " UNION ALL BY NAME ".join(x for x in (trades, other) if x)
         if src:
-            sel = f"""
-              SELECT x.*, x.vault + x.vq AS e, p.orientation,
-                CASE WHEN x.kind IN ('buy', 'sell') THEN (x.kind = 'buy') = (p.orientation = 'normal') END AS token_buy,
-                CASE WHEN p.orientation = 'normal' THEN x.quote_user ELSE x.base END AS sol_amount,
-                CASE WHEN p.orientation = 'normal' THEN x.vault ELSE x.b END AS sol_depth
-              FROM ({src}) x JOIN s.pools p USING (pool)
-              WHERE p.quote_class IN ('sol', 'reversed')
-              ORDER BY x.pool, x.slot, x.tx_index, x.outer_ix, x.inner_ix"""
-            con.execute(f"INSERT INTO s.pool BY NAME {sel}")
+            # Sorted inserts in POOL_PARTS slices of the pools, so one sort never holds a whole chunk.
+            for part in range(POOL_PARTS):
+                sel = f"""
+                  SELECT x.*, x.vault + x.vq AS e, p.orientation,
+                    CASE WHEN x.kind IN ('buy', 'sell') THEN (x.kind = 'buy') = (p.orientation = 'normal') END AS token_buy,
+                    CASE WHEN p.orientation = 'normal' THEN x.quote_user ELSE x.base END AS sol_amount,
+                    CASE WHEN p.orientation = 'normal' THEN x.vault ELSE x.b END AS sol_depth
+                  FROM ({src}) x JOIN s.pools p USING (pool)
+                  WHERE p.quote_class IN ('sol', 'reversed') AND p.part = {part}
+                  ORDER BY x.pool, x.slot, x.tx_index, x.outer_ix, x.inner_ix"""
+                con.execute(f"INSERT INTO s.pool BY NAME {sel}")
         sweep = c.src("pump_amm/SweepPoolFeeEvent")
         if sweep:
             con.execute(f"""INSERT INTO s.pool_sweeps SELECT pool, slot, tx_index, outer_ix, inner_ix, amount{B}, bucket::INTEGER
@@ -418,6 +421,9 @@ def _classify_pools(con, P, chunks, log):
         cp.pool IS NOT NULL AS created_in_period
       FROM ev LEFT JOIN cp USING (pool) LEFT JOIN lk USING (pool)""")
     con.execute("UPDATE s.pools SET mint = NULL WHERE mint = ''")
+    con.execute(f"""ALTER TABLE s.pools ADD COLUMN part INTEGER""")
+    con.execute(f"""UPDATE s.pools SET part = q.part FROM (SELECT pool, (ntile({POOL_PARTS}) OVER (ORDER BY pool)) - 1 AS part
+                    FROM s.pools) q WHERE q.pool = s.pools.pool""")
     # Checks against the pools whose create event we have.
     chk = con.execute(f"""
       SELECT count(*) AS n,

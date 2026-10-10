@@ -42,7 +42,7 @@ from .strategies import (
     until_slot,
 )
 
-STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev.duckdb")
+STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
 OUT = os.environ.get("LAB_BACKTESTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/backtests")
 
 RESULT_SCHEMA = pa.schema([
@@ -278,7 +278,8 @@ def merge_results(out, cfg):
     return n
 
 
-def run(families, sizes, delays, taus, q, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40):
+def run(families, sizes, delays, taus, q, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
+        label="tournament_v1"):
     cfg = load_defaults()
     out = os.path.join(OUT, run_id)
     os.makedirs(os.path.join(out, "parts"), exist_ok=True)
@@ -305,7 +306,7 @@ def run(families, sizes, delays, taus, q, tol, workers, n1_sample, max_signals, 
                 log(f"batch {i + 1}/{len(todo)}: {positions} positions, {time.time() - t0:.0f}s")
     total = merge_results(out, cfg)
     log(f"results.parquet: {total} positions")
-    config = {"run_id": run_id, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
+    config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
               "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": q,
               "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
@@ -326,12 +327,13 @@ def main():
     ap.add_argument("--tol", type=float, default=0.05)
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--n2-k", type=int, default=5)
+    ap.add_argument("--batch", default="tournament_v1", help="label for trials.parquet")
     ap.add_argument("--n1-sample", type=int, default=3000)
     ap.add_argument("--max-signals", type=int, default=0)
     ap.add_argument("--run-id", default=time.strftime("%Y%m%dT%H%M%S"))
     a = ap.parse_args()
     run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in a.delays.split(",")],
-        a.tau.split(","), a.q, a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k)
+        a.tau.split(","), a.q, a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch)
 
 
 if __name__ == "__main__":
