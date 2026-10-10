@@ -55,3 +55,32 @@ def test_n4_exit_sells_after_the_next_crank():
     assert r(dict(base, entry_slot=143, slot=144, slots_held=1)) == "after_crank"
     assert r(dict(base, entry_slot=191, slot=500, slots_held=309)) is None
     assert r(dict(base, entry_slot=191, slot=591, slots_held=400)) == "time"
+
+
+def test_s1_score_uses_closes_before_the_hour_only():
+    import numpy as np
+
+    from backtest.rotation import score
+
+    blocks = np.arange(0, 100)
+    prices = np.exp(np.cumsum(np.where(np.arange(100) % 2, 0.02, -0.01)))  # zigzag up
+    r, s = score(blocks, prices, 60, 12)
+    closes = prices[47:60]  # blocks 47..59: 13 closes, the last one before block 60
+    assert abs(r - np.log(closes[-1] / closes[0])) < 1e-12
+    assert s > 0
+    prices2 = prices.copy()
+    prices2[60:] = 1e-9  # the future must not matter
+    assert score(blocks, prices2, 60, 12) == (r, s)
+    assert score(blocks, prices, 5, 12) is None  # no price at the start of the lookback
+
+
+def test_s1_exit_rule():
+    from backtest.rotation import S1Exit
+
+    r = S1Exit(500, 150 * SOL, "normal", 10**9)
+    base = {"pool": P, "cost": 100, "slots_held": 1}  # P has 500 SOL real depth
+    assert r(dict(base, mark=95, slot=100)) is None
+    assert r(dict(base, mark=80, slot=100)) == "stop_loss"
+    assert r(dict(base, mark=95, slot=500)) == "rebalance"
+    thin = S1Exit(500, 1_100 * SOL, "normal", 10**9)  # 500 < 0.5 * 1100
+    assert thin(dict(base, mark=95, slot=100)) == "liquidity"

@@ -24,7 +24,7 @@ KEYS = ["family", "variant", "size_sol", "d", "tau", "segment", "regime", "farm"
 NK = len(KEYS)
 K = ", ".join(KEYS)
 SCENARIOS = ("optimistic", "base", "pessimistic")
-FAMILIES = ("F7", "F1", "F6")  # families with an N2 control; N1 is a control itself
+FAMILIES = ("F7", "F1", "F6", "S1")  # families with an N2 control; N1, N3, N4 are controls
 
 
 def _connect():

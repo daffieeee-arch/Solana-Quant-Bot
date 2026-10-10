@@ -23,7 +23,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from . import replay, streams
+from . import replay, rotation, streams
 from .costs import LAMPORTS, Scenario, settle_sql
 from .store import load_defaults
 from .strategies import (
@@ -83,7 +83,9 @@ def store_bounds(con):
 
 # Windows in milliseconds (v1 slot values at 267.3 ms), converted per epoch by the store's Clock.
 MAX_HOLD_MS = {"F7": ms(2_400), "N2_F7": ms(2_400), "F1": ms(4_500), "N2_F1": ms(4_500), "N1": ms(1_500),
-               "F6": F6_MAX_HOLD_MS, "N2_F6": F6_MAX_HOLD_MS, "N3": N3_HOLD_MS, "N4": ms(N4_MAX_HOLD)}
+               "F6": F6_MAX_HOLD_MS, "N2_F6": F6_MAX_HOLD_MS, "N3": N3_HOLD_MS, "N4": ms(N4_MAX_HOLD),
+               "S1": 86_400_000, "N2_S1": 86_400_000}  # S1: only when no planned exit (end of data)
+S1_OPEN_HOLD = 10**9  # slots: an S1 position without a planned exit runs to the end of the data
 WINDOW_MARGIN_MS = ms(6_000)  # d, graduation and pool open after the last possible exit decision
 CLUSTER_GAP_MS = ms(20_000)  # signals further apart than this are loaded and simulated separately
 MAX_WINDOW_MS = ms(50_000)  # cap on one load window (busy pools)
@@ -111,6 +113,16 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                                       pool=pool, orientation=orientation, flagged=bool(flagged)))
                 n6 += 1
         log(f"F6: {n6} signals")
+    if "S1" in families:
+        info = {p: (m, o) for p, m, o in con.execute("SELECT pool, COALESCE(mint, pool), orientation FROM pools").fetchall()}
+        n_s1 = 0
+        for fam, variant, size, pool, t, exit_t, flagged in rotation.s1_positions(
+                con, lo, hi, n2_k=rotation.N2_K if "N2" in families else 0):
+            m, o = info[pool]
+            signals.append(Signal(fam, variant, sys.intern(m), t, "pool", 0, (size, exit_t), pool=sys.intern(pool),
+                                  orientation=o, flagged=bool(flagged)))
+            n_s1 += 1
+        log(f"S1: {n_s1} positions (S1 and N2_S1)")
     if "N4" in families:
         for m, pool, orientation, t, depth in n4_signals_sql(con, cfg, lo, hi, n1_sample, clock):
             signals.append(Signal("N4", "crank_scalp", sys.intern(m), t, "pool", int(depth or 0), (),
@@ -152,7 +164,7 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
     if "N2" in families:
         by_trigger = defaultdict(list)
         for s in signals:
-            if s.family in ("F7", "F1", "F6"):
+            if s.family in ("F7", "F1", "F6"):  # S1 draws its own N2 controls (rotation.py)
                 by_trigger[(s.family, s.pool or s.mint, s.t, s.venue, s.depth, s.orientation)].append(s)
         t0 = time.time()
         matches = n2_matches(con, list(by_trigger), k=n2_k, clock=clock)
@@ -189,15 +201,23 @@ def work_items(signals, clock=None):
             cluster.append(s)
         items.append((key, cluster))
     out = []
+    def end(s):
+        if s.family in ("S1", "N2_S1") and s.params[1] is not None:
+            return s.params[1]  # the planned rebalance exit
+        return s.t + clock.slots(MAX_HOLD_MS.get(s.family, ms(4_500)), s.t)
+
     for (venue, k), c in items:
         lo = c[0].t - 300
-        hi = max(s.t + clock.slots(MAX_HOLD_MS.get(s.family, ms(4_500)), s.t) for s in c) + clock.slots(WINDOW_MARGIN_MS, c[-1].t)
+        hi = max(end(s) for s in c) + clock.slots(WINDOW_MARGIN_MS, c[-1].t)
         out.append((venue, k, lo, hi, c))
     return out
 
 
 def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None):
     clock = clock or Clock()
+    if sig.family in ("S1", "N2_S1"):
+        size, exit_t = sig.params
+        return rotation.S1Exit(exit_t, f6_min_depth(size), stream.orientation, S1_OPEN_HOLD)
     if sig.family in ("F6", "N2_F6"):
         return F6Exit(sig.params[0], flows if flows is not None else FlowIndex(stream), clock.slots(F6_FLOW_MS, sig.t),
                       clock.slots(F6_MAX_HOLD_MS, sig.t), stream.orientation)
@@ -264,6 +284,8 @@ def _work(args):
                             continue
                         if sig.family == "N2_F6" and sig.depth < f6_min_depth(size_sol):
                             continue
+                        if sig.family in ("S1", "N2_S1") and sig.params[0] != size_sol:
+                            continue  # S1 portfolios are built per size
                         rule = exit_rule_for(sig, base, d, clock, st, flows)
                         if sig.venue == "pool":
                             r = replay.simulate_pool_position(st, sig.t, size, d, q, rule, tol, tau)
