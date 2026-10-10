@@ -32,15 +32,15 @@ export default function Tokens() {
   }, []);
 
   const cols = useMemo<ColDef<TokenRow>[]>(() => [
-    { field: "symbol", headerName: "Symbool", width: narrow ? 110 : 120, pinned: narrow ? undefined : "left", valueFormatter: (p) => label(p.value, 16) },
+    { field: "symbol", headerName: "Symbool", ...(narrow ? { flex: 1, minWidth: 80 } : { width: 120 }), pinned: narrow ? undefined : "left", valueFormatter: (p) => label(p.value, 16) },
     { field: "name", headerName: "Naam", flex: 1, minWidth: 150, hide: narrow, valueFormatter: (p) => label(p.value, 48) },
     { field: "create_time", headerName: "Aangemaakt (UTC)", width: 150, hide: narrow, valueFormatter: (p) => isoTime(p.value) },
     { colId: "flags", headerName: "Kenmerken", width: 190, sortable: false, hide: narrow, valueGetter: (p) => (p.data ? flags(p.data) : "") },
     { field: "curve_trades", headerName: "Curve-trades", width: 120, type: "rightAligned", hide: narrow, valueFormatter: (p) => n0(p.value) },
     { field: "pool_trades", headerName: "Pool-trades", width: 115, type: "rightAligned", hide: narrow, valueFormatter: (p) => n0(p.value) },
-    { field: "mint", headerName: "DexScreener", width: 130, sortable: false,
-      cellRenderer: (p: { value: string }) => <DexLink mint={p.value} /> },
-    { field: "total_volume_quote", headerName: "Volume SOL", width: 120, type: "rightAligned", sort: "desc", valueFormatter: (p) => solShort(p.value) },
+    { field: "mint", headerName: narrow ? "Dex" : "DexScreener", width: narrow ? 100 : 130, sortable: false,
+      cellRenderer: (p: { value: string }) => <DexLink mint={p.value}>{narrow && p.value ? `${p.value.slice(0, 4)}… ↗` : undefined}</DexLink> },
+    { field: "total_volume_quote", headerName: "Volume SOL", width: narrow ? 104 : 120, type: "rightAligned", sort: "desc", valueFormatter: (p) => solShort(p.value) },
     { colId: "max_mcap", headerName: "Max. mcap SOL", width: 125, type: "rightAligned", hide: narrow, valueGetter: (p) => (p.data as unknown as { max_mcap?: number })?.max_mcap, valueFormatter: (p) => solShort(p.value) },
   ], [narrow]);
 

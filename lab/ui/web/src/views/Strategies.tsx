@@ -102,14 +102,14 @@ export default function Strategies() {
       // Scale N2 to the strategy's trade count so both lines compare per trade.
       const nOwn = own?.points.at(-1)?.[0] ?? 0, nN2 = n2.points.at(-1)?.[0] ?? 0;
       const k = nOwn && nN2 ? nOwn / nN2 : 1;
-      series.push({ name: "N2-schaduw (geschaald naar hetzelfde aantal trades)", type: "line", showSymbol: false, color: cssVar("--muted"),
+      series.push({ name: "N2-schaduw (geschaald)", type: "line", showSymbol: false, color: cssVar("--muted"),
         lineStyle: { width: 2, type: "dashed" }, data: n2.points.map(([step, , pnl]) => [step * k, pnl * k]) });
     }
     return {
-      ...b, grid: { left: 56, right: 16, top: 36, bottom: 36 },
+      ...b, grid: { left: 48, right: 16, top: 56, bottom: 36 },
       tooltip: { ...(b.tooltip as object), axisPointer: { type: "line" }, valueFormatter: (v: number) => `${v > 0 ? "+" : ""}${v.toLocaleString("nl-NL", { maximumFractionDigits: 2 })} SOL` },
       xAxis: { ...b.xAxis, type: "value", name: "trade nr.", nameLocation: "middle", nameGap: 24, min: 1 },
-      yAxis: { ...b.yAxis, type: "value", name: "P&L (SOL)", axisLabel: { color: cssVar("--muted") } },
+      yAxis: { ...b.yAxis, type: "value", axisLabel: { color: cssVar("--muted") } },
       series: series.map((s, i) => (i === 0 ? { ...s, markLine: { silent: true, symbol: "none", data: [{ yAxis: 0 }], lineStyle: { color: cssVar("--line") }, label: { show: false } } } : s)),
     };
   }, [curves, sel]);
@@ -133,7 +133,7 @@ export default function Strategies() {
         {taus.length > 1 && taus.map((x) => <Chip key={x} active={tauSel === x} onClick={() => setTau(x)}>{`τ ${x}`}</Chip>)}
       </div>
       {sel && curveChart && (
-        <Section title="P&L-curve" note={`Opgetelde winst/verlies per trade voor ${sel.family} ${sel.variant}, ${sel.size_sol} SOL, tegen de N2-schaduw. Tik een rij in de tabel om te wisselen.`}>
+        <Section title="P&L-curve" note={`Opgetelde winst/verlies in SOL na kosten voor ${sel.family} ${sel.variant}, ${sel.size_sol} SOL, tegen de N2-schaduw (willekeurige instap, geschaald naar hetzelfde aantal trades). Tik een rij in de tabel om te wisselen.`}>
           <Card className="p-3"><EChart option={curveChart} height={300} label="P&L-curve tegen N2" /></Card>
         </Section>
       )}

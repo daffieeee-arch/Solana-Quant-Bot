@@ -76,20 +76,22 @@ def load(con, run_dir, defaults=DEFAULTS):
     has_base = "pnl_base_lamports" in res_cols
     for name, per_tx, failed, rent, rent_mode, adverse in scenarios(cfg):
         refund = rent if rent_mode in ("refunded", "refunded_on_full_exit") else 0
-        # Same arithmetic as costs.settle (Python int() truncates toward zero), one scenario at a time.
+        # Same arithmetic as costs.settle_sql: the factors are Python floats, so multiply as DOUBLE (a bare
+        # 0.995 literal is DECIMAL in DuckDB and truncates differently by one lamport).
+        up, down = f"{1 + adverse!r}::DOUBLE", f"{1 - adverse!r}::DOUBLE"
         con.execute(f"""
             CREATE OR REPLACE TEMP TABLE settled AS
             SELECT {k_sql}, mint, venue, day, t AS signal_slot, entry_slot, exit_slot, exit_reason, entry_failed,
                    cf_graduation, hist_ret,
                    {"pnl_base_lamports," if has_base else ""}
                    CASE WHEN entry_failed THEN -{failed}
-                        ELSE (trunc(coalesce(proceeds, 0) * (1 - {adverse}))::BIGINT - {per_tx} + {refund}
+                        ELSE (trunc(coalesce(proceeds, 0)::DOUBLE * {down})::BIGINT - {per_tx} + {refund}
                               - greatest(0, coalesce(exit_attempts, 1) - 1) * {failed})
-                             - (trunc(coalesce(cost, 0) * (1 + {adverse}))::BIGINT + {per_tx} + {rent}) END AS pnl,
+                             - (trunc(coalesce(cost, 0)::DOUBLE * {up})::BIGINT + {per_tx} + {rent}) END AS pnl,
                    CASE WHEN entry_failed THEN NULL
-                        ELSE (trunc(coalesce(proceeds, 0) * (1 - {adverse}))::BIGINT - {per_tx} + {refund}
+                        ELSE (trunc(coalesce(proceeds, 0)::DOUBLE * {down})::BIGINT - {per_tx} + {refund}
                               - greatest(0, coalesce(exit_attempts, 1) - 1) * {failed})
-                             / (trunc(coalesce(cost, 0) * (1 + {adverse}))::BIGINT + {per_tx} + {rent}) - 1 END AS ret
+                             / (trunc(coalesce(cost, 0)::DOUBLE * {up})::BIGINT + {per_tx} + {rent}) - 1 END AS ret
             FROM read_parquet('{results}') WHERE NOT coalesce(skipped, false)""")
         if name == "base" and has_base:
             off = con.execute("SELECT count(*) FROM settled WHERE pnl IS DISTINCT FROM pnl_base_lamports").fetchone()[0]
