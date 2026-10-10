@@ -3,8 +3,9 @@
   scripts/backtest-run.sh <run_id> --families F7,F1,N1,N2 --sizes 0.5,2,10 --delays 1,2
 
 Results go to $LAB_BACKTESTS/<run_id>/: parts/ (one Parquet file per batch, written by the
-workers, so memory stays flat and an interrupted run resumes where it stopped), then
-results.parquet, summary.parquet, report.md, config.json and trials.parquet.
+workers, so memory stays flat and an interrupted run resumes where it stopped) are the position
+results, written once (no merged copy: the disk's write volume is limited). Then config.json,
+trials.parquet, report.md and, last, summary.parquet: a run is complete when that file exists.
 The hold-out is not reachable from here: this only opens the dev store.
 """
 
@@ -375,20 +376,10 @@ def engine_commit():
     return (sha + "-dirty") if sha and git("status", "--porcelain", "--", here) else (sha or "unknown")
 
 
-def merge_results(out, cfg):
-    """parts/*.parquet -> results.parquet (sorted), with base-scenario P&L columns for dashboards."""
-    pnl, ret = settle_sql(Scenario.from_cfg("base", cfg))
-    con = duckdb.connect()
-    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{streams.SPILL_DIR}'; "
-                "SET max_temp_directory_size = '15GB'")
-    con.execute(f"""COPY (SELECT *, {pnl} AS pnl_base_lamports, {ret} AS ret_base
-                          FROM read_parquet('{out}/parts/part-*.parquet')
-                          ORDER BY family, variant, size_sol, d, tau, t, mint)
-                    TO '{out}/results.parquet.tmp' (FORMAT parquet, COMPRESSION zstd)""")
-    n = con.execute(f"SELECT count(*) FROM read_parquet('{out}/results.parquet.tmp')").fetchone()[0]
-    con.close()
-    os.replace(f"{out}/results.parquet.tmp", f"{out}/results.parquet")
-    return n
+def results_glob(run_dir):
+    """The position results of a run: its parts (older runs also have a merged results.parquet)."""
+    merged = os.path.join(run_dir, "results.parquet")
+    return merged if os.path.exists(merged) else os.path.join(run_dir, "parts", "part-*.parquet")
 
 
 def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
@@ -418,8 +409,10 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
             positions += n
             if i % 50 == 0 or i == len(todo) - 1:
                 log(f"batch {i + 1}/{len(todo)}: {positions} positions, {time.time() - t0:.0f}s")
-    total = merge_results(out, cfg)
-    log(f"results.parquet: {total} positions")
+    con = duckdb.connect()
+    total = con.execute(f"SELECT count(*) FROM read_parquet('{results_glob(out)}')").fetchone()[0]
+    con.close()
+    log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
               "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "f6_trigger_cap": F6_STATS or None,
               "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,

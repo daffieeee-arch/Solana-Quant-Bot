@@ -2,7 +2,8 @@
 
   python -m backtest.report <run_dir>      # (re)writes summary.parquet, report.md, trials.parquet
 
-Runs as DuckDB SQL over results.parquet, so millions of positions fit in bounded memory. The
+Runs as DuckDB SQL over the run's position results (parts/*.parquet), so millions of positions fit
+in bounded memory. The
 settlement is costs.settle_sql, the SQL twin of costs.settle (tests/test_settle_sql.py).
 """
 
@@ -237,9 +238,10 @@ def _report_commit():
 
 
 def write_report(run_dir, cfg):
-    results = os.path.join(run_dir, "results.parquet")
+    from .tournament import results_glob
+
+    results = results_glob(run_dir)
     summary = summarize(results, cfg)
-    pq.write_table(pa.Table.from_pylist(summary), os.path.join(run_dir, "summary.parquet"))
     with open(os.path.join(run_dir, "config.json")) as f:
         config = json.load(f)
     tr = trials(summary, config)
@@ -330,6 +332,9 @@ def write_report(run_dir, cfg):
                          f"{e['veto_share'] * 100:.1f}% | {_sol(e['delta_sol'])} | {ci} |")
     with open(os.path.join(run_dir, "report.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
+    # Last: consumers (LAB ui) treat a run as complete once summary.parquet exists.
+    pq.write_table(pa.Table.from_pylist(summary), os.path.join(run_dir, "summary.parquet.tmp"))
+    os.replace(os.path.join(run_dir, "summary.parquet.tmp"), os.path.join(run_dir, "summary.parquet"))
     return summary
 
 

@@ -35,8 +35,13 @@ def _table(cols, rows):
 
 
 def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
+    from .costs import Scenario, settle_sql
+    from .store import load_defaults
+    from .tournament import results_glob
+
     con = _con()
-    res = f"read_parquet('{run_dir}/results.parquet')"
+    pnl, ret = settle_sql(Scenario.from_cfg("base", load_defaults()))
+    res = f"(SELECT *, {pnl} AS pnl_base_lamports, {ret} AS ret_base FROM read_parquet('{results_glob(run_dir)}'))"
     f7 = f"(SELECT * FROM {res} WHERE family = 'F7' AND segment = '{segment}' AND NOT skipped)"
     lines = [f"# F7 in {segment}: checks", ""]
 
