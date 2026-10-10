@@ -59,10 +59,10 @@ class PoolLeg:
     slot: int
     tx: int
     order: tuple
-    kind: str
+    kind: str  # buy | sell | boost | withdraw | deposit (pool orientation)
     exact_out: bool
     base: int
-    quote_net: int
+    quote_net: int  # quote paid by the trader (buy, fees included) or received (sell); boost: quote used
     pre: Pool
     post: Pool
     trader: str
@@ -70,6 +70,9 @@ class PoolLeg:
     limit_base: int = None
     boost_left: int = None
     direct: bool = True
+    lp_amount: int = None  # withdraw: LP tokens burned; deposit: minted
+    lp_supply: int = None
+    farmer: bool = False  # the trader was volume farming in this pool (store.py, backward-looking)
 
 
 @dataclass
@@ -81,6 +84,8 @@ class Stream:
     pool_legs: list = field(default_factory=list)
     pool_open_slot: int = None
     complete_slot: int = None
+    pool: str = None
+    orientation: str = "normal"  # reversed: WSOL is the pool's base, the token its quote
 
 
 _TAU_TABLE = None
@@ -146,6 +151,7 @@ class Result:
     exit_attempts: int = 0
     cf_graduation: bool = False
     seed_pool: bool = False  # graduated counterfactually with no historical pool: standard seed used
+    vault_capped: bool = False  # the real vault could not pay for all our tokens; the rest was written off
     reverted_direct: int = 0
     reverted_router: int = 0
     sells_dropped: int = 0
@@ -188,8 +194,9 @@ def _hist_state(legs, idx):
 class Holdings:
     """Historical vs counterfactual token holdings of other traders (curve: from the create)."""
 
-    def __init__(self, exact):
+    def __init__(self, exact, enabled=True):
         self.exact = exact
+        self.enabled = enabled  # off in reversed pools: there the sold base is WSOL, not the token
         self.hist = {}
         self.cf = {}
 
@@ -201,6 +208,8 @@ class Holdings:
                 self.cf[l.trader] = self.cf.get(l.trader, 0) + d
 
     def sell_amount(self, trader, a):
+        if not self.enabled:
+            return a
         h = self.hist.get(trader, 0)
         c = self.cf.get(trader, h)
         if c >= h:
@@ -269,13 +278,21 @@ def _rerun_curve(state, leg, tau, hold, diag):
 
 def _rerun_pool(state, leg, tau, hold, diag):
     """Re-execute one historical pool leg; returns (state, cf_token_delta) or None."""
-    state = replace(state, lp_bps=leg.pre.lp_bps, protocol_bps=leg.pre.protocol_bps, creator_bps=leg.pre.creator_bps)
+    pre = leg.pre
+    state = replace(state, lp_bps=pre.lp_bps, protocol_bps=pre.protocol_bps, creator_bps=pre.creator_bps,
+                    cashback_bps=pre.cashback_bps, virt=pre.virt)
     if leg.kind == "boost":
+        # Fee-free buy with the quote the crank actually used; the tokens are burned.
         n = leg.quote_net
         if n is None or n <= 1:
             return state, 0
         b = state.b * (n - 1) // (state.e + n - 1)
-        return Pool(state.b - b, state.e + n, state.lp_bps, state.protocol_bps, state.creator_bps), 0
+        return replace(state, b=state.b - b, e=state.e + n), 0
+    if leg.kind == "withdraw":
+        s = V.pool_withdraw(state, leg.lp_amount, leg.lp_supply)
+        return (s, 0) if s is not None else None
+    if leg.kind == "deposit":
+        return V.pool_deposit(state, leg.base, leg.quote_net), 0
     if leg.kind == "buy":
         if leg.exact_out:
             f = V.pool_buy_exact_out(state, leg.base)
@@ -322,12 +339,23 @@ def _rerun_pool(state, leg, tau, hold, diag):
 
 
 def _price(state):
+    """Token mid price in quote units (curve, normal pool)."""
     if state is None:
         return None
-    return state.vq / state.vt if isinstance(state, Curve) else state.e / state.b
+    if isinstance(state, Curve):
+        return state.vq / state.vt
+    return state.e / state.b if state.b > 0 and state.e > 0 else None
 
 
-def _run(r, legs, i, state, hold, rerun, sell, mark_ctx, exit_rule, d, q_frac, tol, tau, on_complete, max_slots):
+def _price_reversed(state):
+    """Token mid price in SOL for a reversed pool (base WSOL, quote token)."""
+    if state is None or state.b <= 0 or state.e <= 0:
+        return None
+    return state.b / state.e
+
+
+def _run(r, legs, i, state, hold, rerun, sell, mark_ctx, exit_rule, d, q_frac, tol, tau, on_complete, max_slots,
+         price=_price):
     """Shared event loop for curve and pool positions."""
     diag = {"sells_dropped": 0, "sells_scaled": 0}
     entry_slot = r.entry_slot
@@ -353,7 +381,8 @@ def _run(r, legs, i, state, hold, rerun, sell, mark_ctx, exit_rule, d, q_frac, t
         r.exit_attempts += 1
         if f is not None and f.trader_quote >= pending_min:
             r.exit_slot, r.proceeds = fill_slot, f.trader_quote
-            r.hist_mid_exit = _price(_hist_state(legs, _insertion_index(legs, fill_slot, q_frac)))
+            r.vault_capped = f.tokens < r.tokens
+            r.hist_mid_exit = price(_hist_state(legs, _insertion_index(legs, fill_slot, q_frac)))
             return True
         pending = None
         return False
@@ -475,8 +504,9 @@ def simulate_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, t
             r.exit_decision_slot, r.exit_slot = open_slot, open_slot + 1
             idx = _insertion_index(stream.pool_legs, open_slot + 1, q_frac)
             pstate = _hist_state(stream.pool_legs, idx)
-            f = V.pool_sell(pstate, r.tokens)
+            f = V.pool_sell_capped(pstate, r.tokens)
             r.proceeds = f.trader_quote if f else 0
+            r.vault_capped = f is not None and f.tokens < r.tokens
             r.hist_mid_exit = _price(pstate)
         else:
             # No historical pool (or not loaded): sell into a standard seed pool, no other flow.
@@ -497,24 +527,29 @@ def simulate_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, t
 
 
 def simulate_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau=None, max_slots=400_000):
-    """Buy in the pool at decision_slot + d; later pool trades are re-executed with their limits."""
+    """Buy the token in the pool at decision_slot + d; later pool events are re-executed with their
+    limits. In a reversed pool (WSOL base) the token is bought with a pool sell of WSOL and sold
+    with an exact-in pool buy; other traders' holdings are not tracked there."""
     tau = tau or Tau()
     r = Result(stream.mint, decision_slot, size=size, venue="pool")
     legs = stream.pool_legs
     r.entry_slot = decision_slot + d
-    if not legs:
+    if stream.orientation == "reversed":
+        buy, sell, price, hold = V.rev_buy_token, V.rev_sell_token, _price_reversed, Holdings(exact=False, enabled=False)
+    else:
+        buy, sell, price, hold = V.pool_buy_exact_in, V.pool_sell_capped, _price, Holdings(exact=False)
+    s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0)) if legs else None
+    if s_dec is None:
         r.skipped, r.exit_reason = True, "no_pool_state"
         return r
-    s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0))
-    expected = V.pool_buy_exact_in(s_dec, size)
+    expected = buy(s_dec, size)
     i = _insertion_index(legs, r.entry_slot, q_frac)
     state = _hist_state(legs, i)
-    r.hist_mid_entry = _price(state)
-    fill = V.pool_buy_exact_in(state, size)
+    r.hist_mid_entry = price(state)
+    fill = buy(state, size)
     if fill is None or expected is None or fill.tokens < expected.tokens * (1 - tol):
         r.entry_failed, r.exit_reason = True, "entry_slippage"
         return r
     r.tokens, r.cost = fill.tokens, fill.trader_quote
-    hold = Holdings(exact=False)
-    return _run(r, legs, i, fill.state, hold, _rerun_pool, V.pool_sell, lambda s: {"pool": s},
-                exit_rule, d, q_frac, tol, tau, None, max_slots)
+    return _run(r, legs, i, fill.state, hold, _rerun_pool, sell, lambda s: {"pool": s},
+                exit_rule, d, q_frac, tol, tau, None, max_slots, price=price)

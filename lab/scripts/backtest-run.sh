@@ -13,6 +13,11 @@
 set -euo pipefail
 
 run_id=${1:?run_id}
+disk_low=/home/chupa/Solana-project/data-old-faithful-one/lab/locks/disk-low
+if [[ -e $disk_low ]]; then
+  echo "$disk_low exists (disk guard): not starting" >&2
+  exit 3
+fi
 shift
 lab=$(cd "$(dirname "$0")/.." && pwd)
 out=${LAB_BACKTESTS:-/home/chupa/Solana-project/data-old-faithful-one/lab/backtests}/$run_id

@@ -41,3 +41,18 @@ def test_settle_sql_matches_settle():
             assert (r_sql is None) == (r is None)
             if r is not None:
                 assert abs(r_sql - r) < 1e-12, (scn.name, row)
+
+
+def test_capital_sim():
+    from backtest.report import capital_sim
+
+    sol = 10**9
+    # Two overlapping 5 SOL trades fill 10 SOL; the third (overlapping) is skipped for cash.
+    trades = [(100, 200, 5 * sol, 1 * sol, False), (110, 300, 5 * sol, -2 * sol, False), (150, 250, 5 * sol, 0, False),
+              (400, 500, 5 * sol, 0, True)]  # failed entry: pnl 0 here
+    final, mdd, taken, skipped = capital_sim(trades, start=10 * sol, max_positions=5)
+    assert (taken, skipped) == (3, 1)
+    assert final == 9 * sol  # +1 -2
+    assert abs(mdd - (11 - 9) / 11) < 1e-12  # peak 11 after the first exit, then 9
+    final2, _, taken2, skipped2 = capital_sim(trades[:3], start=100 * sol, max_positions=1)
+    assert (taken2, skipped2) == (1, 2) and final2 == 101 * sol
