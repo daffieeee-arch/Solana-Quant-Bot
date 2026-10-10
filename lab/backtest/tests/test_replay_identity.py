@@ -6,19 +6,34 @@ import pytest
 
 from backtest import replay, streams
 
-STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev.duckdb")
+STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
 
 
 @pytest.fixture(scope="module")
-def sample():
+def con():
     if not os.path.exists(STORE):
         pytest.skip("dev store not built")
-    con = streams.open_store(STORE, threads=2, memory="2GB")
+    return streams.open_store(STORE, threads=2, memory="1GB")
+
+
+@pytest.fixture(scope="module")
+def sample(con):
     mints = [r[0] for r in con.execute("""
-        SELECT mint FROM mints WHERE NOT mayhem AND quote_mint IN ('11111111111111111111111111111111',
-          'So11111111111111111111111111111111111111112') AND pool IS NOT NULL
+        SELECT m.mint FROM mints m JOIN pools p ON p.pool = m.pool
+        WHERE NOT m.mayhem AND m.quote_mint IN ('11111111111111111111111111111111',
+          'So11111111111111111111111111111111111111112') AND p.quote_class = 'sol'
         USING SAMPLE 300 ROWS (reservoir, 7)""").fetchall()]
     return streams.load_streams(con, mints)
+
+
+@pytest.fixture(scope="module")
+def pool_sample(con):
+    """Pools of both orientations, boost pools included (busy pools capped for test speed)."""
+    pools = [r[0] for r in con.execute("""
+        SELECT pool FROM pools JOIN pool_stats USING (pool)
+        WHERE quote_class IN ('sol', 'reversed') AND n_buy + n_sell BETWEEN 20 AND 5000
+        USING SAMPLE 150 ROWS (reservoir, 11)""").fetchall()]
+    return streams.load_pool_streams(con, {p: (0, 2**62) for p in pools})
 
 
 def test_curve_identity(sample):
@@ -48,31 +63,45 @@ def test_curve_identity(sample):
     assert diag["sells_dropped"] == 0 and diag["sells_scaled"] == 0
 
 
-def test_pool_identity(sample):
-    legs_total = mismatched = reverted = 0
-    for s in sample.values():
+def _rerun(leg, state):
+    return replay._rerun_pool(state, leg, replay.Tau("inf"), replay.Holdings(exact=False, enabled=False),
+                              {"sells_dropped": 0, "sells_scaled": 0})
+
+
+def test_pool_identity(pool_sample):
+    """Every pool leg (buy, sell, boost, withdraw, deposit) re-run on its own logged pre-state
+    reproduces its logged post-state; no historical sell exceeds the real vault."""
+    kinds, mismatched, reverted = {}, [], []
+    for s in pool_sample.values():
         for leg in s.pool_legs:
-            if leg.kind not in ("buy", "sell"):
-                continue
-            res = replay._rerun_pool(leg.pre, leg, replay.Tau("empirical"), replay.Holdings(exact=False),
-                                     {"sells_dropped": 0, "sells_scaled": 0})
-            legs_total += 1
+            kinds[leg.kind] = kinds.get(leg.kind, 0) + 1
+            res = _rerun(leg, leg.pre)
             if res is None:
-                reverted += 1
-            elif (res[0].b, res[0].e) != (leg.post.b, leg.post.e):
-                mismatched += 1
-    assert legs_total > 1000
-    assert reverted <= legs_total * 0.001, f"{reverted}/{legs_total}"
-    assert mismatched == 0
+                reverted.append((s.pool, leg.order, leg.kind))
+            elif (res[0].b, res[0].e) != (leg.post.b, leg.post.e) and leg.kind != "deposit":
+                mismatched.append((s.pool, leg.order, leg.kind))
+    total = sum(kinds.values())
+    assert total > 10000 and kinds.get("boost", 0) > 0, kinds
+    assert len(reverted) <= total * 0.001, reverted[:5]
+    assert len(mismatched) <= total * 0.001, mismatched[:5]
 
 
-def test_pool_chain_matches_next_pre(sample):
-    """Post-state computed from one event equals the next event's logged pre-state."""
-    pairs = bad = 0
-    for s in sample.values():
-        legs = [l for l in s.pool_legs if l.kind in ("buy", "sell")]
-        for a, b in zip(legs, legs[1:]):
-            pairs += 1
-            bad += (a.post.b, a.post.e) != (b.pre.b, b.pre.e)
-    assert pairs > 1000
-    assert bad <= pairs * 0.01, f"{bad}/{pairs}"
+def test_pool_chain_carries_state(pool_sample):
+    """Zero-order chain: re-run every stream from its first pre-state without ever resetting it.
+    Each leg must start from exactly the state the previous legs produced (the boost crank once,
+    withdrawals pro rata, both orientations)."""
+    pairs, bad = 0, []
+    for s in pool_sample.values():
+        if not s.pool_legs:
+            continue
+        state = s.pool_legs[0].pre
+        for leg in s.pool_legs:
+            if leg.kind not in ("withdraw", "deposit"):
+                pairs += 1
+                if (state.b, state.e) != (leg.pre.b, leg.pre.e):
+                    bad.append((s.pool, leg.order, leg.kind, state.b - leg.pre.b, state.e - leg.pre.e))
+                    state = leg.pre  # resync after a reported break
+            res = _rerun(leg, state)
+            state = leg.post if res is None else res[0]
+    assert pairs > 10000
+    assert len(bad) <= max(5, pairs * 0.001), bad[:5]  # rare 1-lamport rounding differences

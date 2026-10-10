@@ -198,3 +198,24 @@ def pool_withdraw(p, lp_in, lp_supply):
 
 def pool_deposit(p, base_in, quote_in):
     return replace(p, b=p.b + base_in, e=p.e + quote_in)
+
+
+# ----------------------------------------------------------------------------- reversed pools
+# A reversed pool has WSOL as base and the token as quote. Buying the token is a pool sell of
+# WSOL (fees come out of the tokens received); selling it is a pool buy of WSOL paid in tokens.
+# Both return a Fill in token terms: tokens = tokens bought or spent, trader_quote = SOL paid or
+# received.
+
+
+def rev_buy_token(p, sol):
+    f = pool_sell(p, sol)
+    if f is None or f.trader_quote <= 0:
+        return None
+    return Fill(f.trader_quote, f.curve_quote, f.fees, sol, f.state)
+
+
+def rev_sell_token(p, tokens):
+    f = pool_buy_exact_in(p, tokens)
+    if f is None:
+        return None
+    return Fill(f.trader_quote, f.curve_quote, f.fees, f.tokens, f.state)
