@@ -82,8 +82,17 @@ RESULT_SCHEMA = pa.schema([
 ])
 
 
+def io_written():
+    """Bytes this process has written to storage (incl. DuckDB spill), from /proc/self/io."""
+    try:
+        with open("/proc/self/io") as f:
+            return next(int(l.split()[1]) for l in f if l.startswith("write_bytes"))
+    except (OSError, StopIteration):
+        return 0
+
+
 def log(msg):
-    print(f"{time.strftime('%H:%M:%S')} {msg}", flush=True)
+    print(f"{time.strftime('%H:%M:%S')} {msg} [main wrote {io_written() / 1e9:.2f} GB]", flush=True)
 
 
 def store_bounds(con):
@@ -371,6 +380,7 @@ def _insiders(con, st, venue, clock, cache):
 
 def _work(args):
     task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays = args
+    io0 = io_written()
     con = streams.open_store(STORE, threads=1, memory="600MB")
     base = Scenario.from_cfg("base", cfg)
     rows = []
@@ -429,7 +439,7 @@ def _work(args):
     path = _part_path(out, task_id)
     pq.write_table(pa.Table.from_pylist(rows, schema=RESULT_SCHEMA), path + ".tmp")
     os.replace(path + ".tmp", path)
-    return len(rows)
+    return len(rows), io_written() - io0
 
 
 def engine_commit():
@@ -469,12 +479,13 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
         f"in {time.time() - t0:.0f}s")
     del items, tasks
-    positions = 0
+    positions, written = 0, 0
     with mp.get_context("spawn").Pool(workers, maxtasksperchild=20) as pool:
-        for i, n in enumerate(pool.imap_unordered(_work, todo)):
-            positions += n
+        for i, (n, w) in enumerate(pool.imap_unordered(_work, todo)):
+            positions, written = positions + n, written + w
             if i % 50 == 0 or i == len(todo) - 1:
-                log(f"batch {i + 1}/{len(todo)}: {positions} positions, {time.time() - t0:.0f}s")
+                log(f"batch {i + 1}/{len(todo)}: {positions} positions, {time.time() - t0:.0f}s, "
+                    f"workers wrote {written / 1e9:.2f} GB")
     con = duckdb.connect()
     total = con.execute(f"SELECT count(*) FROM read_parquet('{results_glob(out)}')").fetchone()[0]
     con.close()

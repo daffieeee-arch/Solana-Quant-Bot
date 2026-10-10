@@ -118,6 +118,14 @@ class Chunk:
         return f"TRY_CAST(json_extract_string(parent_ix_args, '$.{key}') AS {cast})"
 
 
+def _io_written():
+    try:
+        with open("/proc/self/io") as f:
+            return next(int(l.split()[1]) for l in f if l.startswith("write_bytes"))
+    except (OSError, StopIteration):
+        return 0
+
+
 def _chunk_meta(chunk):
     with open(os.path.join(chunk[2], "_manifest.json")) as f:
         m = json.load(f)
@@ -361,7 +369,7 @@ def build(period, out_path, cfg, chunks, log=print):
         if sweep:
             con.execute(f"""INSERT INTO s.pool_sweeps SELECT pool, slot, tx_index, outer_ix, inner_ix, amount{B}, bucket::INTEGER
                             FROM {sweep} SEMI JOIN s.pools p USING (pool) WHERE p.quote_class IN ('sol', 'reversed')""")
-        log(f"pass 2 {ch[0]} ({time.time() - t0:.0f}s)")
+        log(f"pass 2 {ch[0]} ({time.time() - t0:.0f}s, wrote {_io_written() / 1e9:.1f} GB)")
 
     con.execute("""
       CREATE TABLE s.pool_class_daily AS
