@@ -1,5 +1,6 @@
 """Paper engine on a synthetic feed: F7 trigger and filters, entry and exits (take profit, stop
-loss, time), risk limits and the kill switch, and restart idempotency of the journal."""
+loss, time), the N2 shadow, risk limits and the kill switch, feed gaps with the heartbeat, daily
+report and backup, and restart idempotency of the journal."""
 
 import os
 
@@ -9,9 +10,11 @@ import yaml
 from backtest.replay import CurveLeg
 from backtest.strategies import Clock
 from backtest.venues import Curve, curve_buy_exact_out, curve_sell
+from paper import engine
 from paper.engine import Engine
 from paper.feed import Event, Feed, TokenInfo
 from paper.journal import Journal
+from paper.report import daily_report
 
 SOL = 1_000_000_000
 START = Curve(1_073_000_000_000_000 - 400_000_000_000_000, 30 * SOL + 40 * SOL,
@@ -63,10 +66,10 @@ def risk_file(tmp_path, **over):
     return str(p)
 
 
-def run(tmp_path, tokens, risk, variants=((0.04, 600),), name="j", crash_after=None):
+def run(tmp_path, tokens, risk, variants=((0.04, 600),), name="j", crash_after=None, n2_k=0, backup=False):
     j = Journal(str(tmp_path / name))
-    eng = Engine(Synth(tokens, crash_after), j, risk, variants=list(variants), d=1, q=0.5, n2_k=0, clock=Clock(),
-                 backup=False)
+    eng = Engine(Synth(tokens, crash_after), j, risk, variants=list(variants), d=1, q=0.5, n2_k=n2_k, clock=Clock(),
+                 backup=backup)
     eng.run()
     return j
 
@@ -137,3 +140,41 @@ def test_restart_gives_the_same_journal(tmp_path):
     again = _content(run(tmp_path, toks, risk_file(tmp_path), name="restart"))  # resumed: same journal directory
     assert again == full
     assert full["exits"] and full["positions"] == []
+
+
+def test_n2_shadow_beside_f7(tmp_path):
+    # M2 traded this hour, before the trigger, at a similar curve depth: it is M's N2 match.
+    toks = {"M": trigger_token(after=[(500_100, "W", "buy", 150 * T)]),
+            "M2": ("C2", [(500_020, "X", "buy", T), (500_300, "Y", "buy", T)])}
+    j = run(tmp_path, toks, risk_file(tmp_path, max_open_positions=1), n2_k=1)
+    sig = {(s["family"], s["key"]): (s["t"], s["status"]) for s in j.rows("signals")}
+    assert sig == {("F7", "M"): (500_040, "entered"), ("N2_F7", "M2"): (500_040, "entered")}  # N2 is not risk-limited
+    ex = {x["family"]: x for x in j.rows("exits")}
+    assert ex["N2_F7"]["key"] == "M2" and ex["N2_F7"]["entry_slot"] == 500_041  # filled in a slot without M2 events
+    rows = {r["family"]: r for r in daily_report(j, ex["F7"]["day"])}
+    assert rows["F7"]["vs_n2_sol_per_trade"] == pytest.approx(
+        rows["F7"]["net_sol_per_trade"] - rows["N2_F7"]["net_sol_per_trade"])
+    # A token that only trades after the trigger is not a match (no look-ahead).
+    toks["M2"] = ("C2", [(500_041, "X", "buy", T)])
+    j = run(tmp_path, toks, risk_file(tmp_path), n2_k=1, name="late")
+    assert {s["family"] for s in j.rows("signals")} == {"F7"}
+
+
+def test_feed_gap_heartbeat_report_and_backup(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, "BACKUP", str(tmp_path / "backup"))
+    # No events between slot 500_040 (the trigger) and 501_000: a feed gap of 959 slots (and one of 29
+    # slots before the trigger; gaps of more than GAP_SLOTS are logged).
+    j = run(tmp_path, {"M": trigger_token(after=[(501_000, "Z", "buy", T)])}, risk_file(tmp_path),
+            variants=((0.5, 150),), name="gap", backup=True)
+    beats = j.rows("heartbeat")
+    gaps = [(b["last_slot"], b["gap_slots"], b["note"]) for b in beats if b["note"]]
+    assert gaps == [(500_010, 29, "feed gap 500010..500040"), (500_040, 959, "feed gap 500040..501000")]
+    minute = [b for b in beats if not b["note"] and b["last_slot"] == 500_040]
+    assert len(minute) == 1 and minute[0]["gap_slots"] == 959  # the first event after the gap starts a new minute
+    # The position is not stuck in the gap: its time exit is decided at entry + T on the unchanged state.
+    x = j.rows("exits")[0]
+    assert x["exit_reason"] == "time" and x["exit_decision_slot"] == 500_041 + 150 and x["exit_slot"] < 501_000
+    day = x["day"]
+    assert "feed gaps: 2 (largest 959 slots)" in (tmp_path / "gap" / day / "report.md").read_text()
+    # The day's Parquet files and report are copied to the backup directory.
+    assert sorted(os.listdir(tmp_path / "backup" / "gap" / day)) == sorted(os.listdir(tmp_path / "gap" / day))

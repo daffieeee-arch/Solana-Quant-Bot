@@ -287,8 +287,10 @@ class Engine:
         hour = slot - slot % h
         if hour != self.hour:
             self.hour, self.hour_events = hour, defaultdict(list)
-        if venue == "curve":
-            self.hour_events[("curve", "curve")].append((key, slot, legs[-1].post.rq))
+        if venue == "curve":  # N2 universe as in the backtest: non-mayhem SOL-market tokens
+            tok = self.feed.token(key)
+            if tok is not None and not tok.mayhem and tok.quote_mint in SOL_QUOTES:
+                self.hour_events[("curve", "curve")].append((key, slot, legs[-1].post.rq))
         else:
             p = self.feed.pool(key)
             if p is not None and not p.mayhem:

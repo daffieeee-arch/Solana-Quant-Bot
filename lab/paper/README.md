@@ -7,6 +7,12 @@ Trades F7 on paper from an event feed, with an N2 shadow, and journals everythin
   is a stub until the recorder exists.
 - `engine.py`: slot-synchronous engine. It re-executes later trades against the state with our
   position using the backtest's own `PositionSim`, so paper fills equal the replay's.
+  - N2 shadow: per F7 trigger, `n2_k` (default 1) random tokens of the same venue and pool
+    orientation that traded earlier this hour at a similar depth. They are entered beside F7 and
+    are not limited by the risk file (except the kill switch).
+  - Heartbeat: one journal row per minute of event time. A jump of more than 25 slots between
+    events is also journaled as a feed gap.
+  - Each UTC day is exported, reported and copied to `lab/backup/<journal>/<day>/`.
 - `journal.py`: SQLite (WAL) plus Parquet per UTC day. Writes are idempotent per event or
   signal key, so a restart gives the same journal.
 - `risk.yaml` and `risk.py`: owner-only limits, re-read every minute of event time. An invalid
