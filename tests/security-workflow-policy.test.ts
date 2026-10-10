@@ -46,7 +46,8 @@ describe('security workflow privilege and coverage boundaries', () => {
       original.replace(', rust]', ']'),
       original.replace('timeout-minutes: 30', 'timeout-minutes: 360'),
       original.replace('build-mode: none', 'build-mode: autobuild'),
-      original.replace('max-parallel: 2', 'max-parallel: 4'),
+      original.replace('max-parallel: 4', 'max-parallel: 8'),
+      original.replace("if: matrix.language != 'rust' || github.event_name != 'pull_request'", "if: matrix.language != 'rust'"),
       original.replace("'43 5 * * 1'", "'* * * * *'"),
     ]) expect(check(paths[0], mutation).length).toBeGreaterThan(0);
   });
