@@ -77,7 +77,7 @@ def test_f7_pool_sql_equals_pastview_reference(ctx):
     assert {s.orientation for s in ss.values()} == {"normal", "reversed"}
     py = {(p, t) for p, t, c in raw if f7_signal(PastView(ss[p], t), "pool", 0, c)}
     keys = sorted({ss[p].mint for p, _, _ in raw})
-    sql = {(pool, t) for venue, m, t, _, pool, _ in f7_signals_sql(con, cfg, lo, hi, only_mints=keys)
+    sql = {(pool, t) for venue, m, t, _, pool, *_ in f7_signals_sql(con, cfg, lo, hi, only_mints=keys)
            if venue == "pool" and pool in ss}
     assert py == sql, (len(py), len(sql), sorted(py ^ sql)[:5])
 

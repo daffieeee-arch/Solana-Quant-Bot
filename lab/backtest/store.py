@@ -230,6 +230,9 @@ def build(period, out_path, cfg, chunks, log=print):
     con.execute("SET max_temp_directory_size = '30GB'")
     con.execute(f"ATTACH '{tmp}' AS s")
     t0 = time.time()
+    here = os.path.dirname(os.path.abspath(__file__))
+    git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, cwd=here).stdout.strip()  # noqa: E731
+    commit = git("rev-parse", "HEAD") + ("-dirty" if git("status", "--porcelain", "--", here) else "")  # at the start
     P = lambda t, **k: data.parquet(t, chunks, **k)  # noqa: E731
     ix_case = " ".join(f"WHEN '{d}' THEN '{n}'" for d, n in data.PUMP_IX.items())
 
@@ -387,8 +390,7 @@ def build(period, out_path, cfg, chunks, log=print):
         "ms_per_slot": {int(e): round(v, 2) for e, v in ms},
         "farmer": {"ratio": FARMER_RATIO, "min_trades": FARMER_MIN_TRADES, "window_ms": DAY_MS},
         "unhandled_event_files": unhandled,
-        "git_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
-                                     cwd=os.path.dirname(__file__)).stdout.strip(),
+        "git_commit": commit,
     }
     con.execute("CREATE TABLE s.meta AS SELECT ? AS json", [json.dumps(meta)])
     con.execute("DETACH s")
