@@ -155,8 +155,10 @@ def m1_signals(con, cfg, lo, hi, clock):
     return out
 
 
-def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None):
+def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None, slot_range=None):
     lo, hi, _ = store_bounds(con)
+    if slot_range:  # dry runs: signals from part of the store only (positions may run past it)
+        lo, hi = max(lo, slot_range[0]), min(hi, slot_range[1])
     clock = clock or Clock.from_store(con)
     signals = []
     creators = dict(con.execute("SELECT mint, creator FROM mints").fetchall())
@@ -459,7 +461,7 @@ def results_glob(run_dir):
 
 
 def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
-        label="tournament_v1", segments=None):
+        label="tournament_v1", segments=None, slot_range=None):
     cfg = load_defaults()
     out = os.path.join(OUT, run_id)
     os.makedirs(os.path.join(out, "parts"), exist_ok=True)
@@ -467,7 +469,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con = streams.open_store(STORE, threads=2, memory="1GB")
     lo, hi, meta = store_bounds(con)
     clock = Clock.from_store(con)
-    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock, segments)
+    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock, segments, slot_range)
     con.close()
     items = work_items(signals, clock)
     n_signals = len(signals)
@@ -491,7 +493,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con.close()
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
-              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "f6_trigger_cap": F6_STATS or None,
+              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "f6_trigger_cap": F6_STATS or None,
               "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
     with open(os.path.join(out, "config.json"), "w") as f:
@@ -516,10 +518,12 @@ def main():
     ap.add_argument("--n1-sample", type=int, default=3000)
     ap.add_argument("--max-signals", type=int, default=0)
     ap.add_argument("--run-id", default=time.strftime("%Y%m%dT%H%M%S"))
+    ap.add_argument("--range", default="", help="dry runs: signal slots lo:hi within the store")
     a = ap.parse_args()
     run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in a.delays.split(",")],
         a.tau.split(","), [float(x) for x in a.q.split(",")], a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch,
-        segments=[x for x in a.segments.split(",") if x] or None)
+        segments=[x for x in a.segments.split(",") if x] or None,
+        slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None)
 
 
 if __name__ == "__main__":
