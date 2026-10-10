@@ -24,7 +24,7 @@ N2 should lose about the round-trip cost beyond the historical drift. It does.
 - Fees and network alone at 0.5 SOL are about 2.8 %.
 - F1 and its controls at 0.5 SOL lose 4.0–4.5 pts beyond drift, which is consistent with those costs plus impact.
 
-Drift excludes degenerate historical states only: a mid move above ×16, meaning near-empty pool reserves (share < 0.01 %). An earlier ±100 % clip cut real graduation moves (about +170 % from 40 SOL real to the pool) and made F1 look too good. That flag is resolved.
+Drift excludes degenerate historical states only: a mid move above ×16, meaning near-empty pool reserves (share < 0.01 %). An earlier ±100 % clip cut real graduation moves (about +170 % from 40 SOL real to the pool) and made F1's loss beyond drift look too small. That flag is resolved.
 
 ## Results at base costs
 
