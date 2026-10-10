@@ -25,7 +25,7 @@ KEYS = ["family", "variant", "size_sol", "d", "tau", "q", "segment", "regime", "
 NK = len(KEYS)
 K = ", ".join(KEYS)
 SCENARIOS = ("optimistic", "base", "pessimistic")
-FAMILIES = ("F7", "F1", "F6", "S1")  # families with an N2 control; N1, N3, N4 are controls
+FAMILIES = ("F7", "F1", "F6", "S1", "M1")  # families with an N2 control; N1, N3, N4 are controls
 
 
 def _connect():
@@ -117,8 +117,10 @@ def summarize(results, cfg, con=None):
               avg(cf_graduation::INT) FILTER (WHERE NOT skipped), count(DISTINCT day) FILTER (WHERE NOT skipped)
             FROM v GROUP BY ALL""").fetchall()
         robust = {tuple(r[:NK]): r[NK:] for r in con.execute(f"""
-            SELECT {K}, avg(ret) FILTER (WHERE rk > 3), avg(ret) FILTER (WHERE rk > ceil(0.01 * cnt))
-            FROM (SELECT {K}, ret, row_number() OVER (PARTITION BY {K} ORDER BY ret DESC) AS rk,
+            SELECT {K}, avg(ret) FILTER (WHERE rk > 3), avg(ret) FILTER (WHERE rk > ceil(0.01 * cnt)),
+                   avg(ret) FILTER (WHERE ret > 0) / NULLIF(-avg(ret) FILTER (WHERE ret <= 0), 0),
+                   sum(pnl) FILTER (WHERE rk <= ceil(0.01 * cnt)) / NULLIF(sum(pnl), 0)
+            FROM (SELECT {K}, ret, pnl, row_number() OVER (PARTITION BY {K} ORDER BY ret DESC) AS rk,
                          count(*) OVER (PARTITION BY {K}) AS cnt FROM v WHERE ret IS NOT NULL)
             GROUP BY ALL""").fetchall()}
         for r in con.execute(f"SELECT {K}, day, sum(ret), count(ret), sum(pnl), count(pnl) FROM v "
@@ -131,7 +133,7 @@ def summarize(results, cfg, con=None):
             key = tuple(r[:NK])
             o = dict(zip(KEYS, key), scenario=name, **dict(zip(cols, r[NK:])))
             o["fail_rate"] = 1 - o["filled"] / o["n"] if o["n"] else None
-            o["mean_ex_top3"], o["mean_ex_top1pct"] = robust.get(key, (None, None))
+            o["mean_ex_top3"], o["mean_ex_top1pct"], o["payoff"], o["top1_pnl_share"] = robust.get(key, (None,) * 4)
             d = daily.get((name, *key), {})
             days = sorted(d)
             o["ci_lo"], o["ci_hi"] = _boot(np.array([d[x][0] for x in days], dtype=float),
@@ -346,8 +348,8 @@ def write_report(run_dir, cfg):
               "larger sizes are capacity information only.",
               "",
               "| family | segment | regime | variant | size SOL | d | trades | days | net SOL/trade | 95% CI | verdict | mean % | "
-              "edge vs N2 | edge 95% CI | note |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "win | payoff | top-1% share of P&L | edge vs N2 | edge 95% CI | note |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in fam:
         ci = f"{_sol(s['pnl_ci_lo'])} … {_sol(s['pnl_ci_hi'])}" if s["pnl_ci_lo"] is not None else ""
         eci = f"{_pct(s['edge_ci_lo'])} … {_pct(s['edge_ci_hi'])}" if s["edge_ci_lo"] is not None else ""
@@ -355,6 +357,8 @@ def write_report(run_dir, cfg):
         lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
                      f"{s['filled']} | {s['days']} | "
                      f"{_sol(s['mean_pnl_sol'])} | {ci} | {s['verdict']} | {_pct(s['mean_ret'])} | "
+                     f"{_num(s['win_rate'] and s['win_rate'] * 100, '.0f')}% | {_num(s['payoff'], '.2f')} | "
+                     f"{_num(s['top1_pnl_share'] and s['top1_pnl_share'] * 100, '.0f')}% | "
                      f"{_pct(s['edge_vs_n2'])} | {eci} | {note} |")
     lines += ["", "## Base cost scenario", "",
               "Mean = mean return per filled trade after all costs. Drift = mean historical mid move entry→exit without us, "

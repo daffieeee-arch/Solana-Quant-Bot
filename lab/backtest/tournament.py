@@ -10,6 +10,7 @@ The hold-out is not reachable from here: this only opens the dev store.
 """
 
 import argparse
+import bisect
 import json
 import multiprocessing as mp
 import os
@@ -28,6 +29,13 @@ from . import overlay, replay, rotation, streams
 from .costs import LAMPORTS, Scenario, settle_sql
 from .store import load_defaults
 from .strategies import (
+    M1_BUYERS_MS,
+    M1_GRID,
+    M1_MAX_HOLD_MS,
+    M1_MIN_BUYERS,
+    M1_SIZES,
+    M1Exit,
+    m1_candidates_sql,
     F6_FLOW_MS,
     F6_GRID,
     F6_MAX_HOLD_MS,
@@ -86,7 +94,8 @@ def store_bounds(con):
 # Windows in milliseconds (v1 slot values at 267.3 ms), converted per epoch by the store's Clock.
 MAX_HOLD_MS = {"F7": ms(2_400), "N2_F7": ms(2_400), "F1": ms(4_500), "N2_F1": ms(4_500), "N1": ms(1_500),
                "F6": F6_MAX_HOLD_MS, "N2_F6": F6_MAX_HOLD_MS, "N3": N3_HOLD_MS, "N4": ms(N4_MAX_HOLD),
-               "S1": 86_400_000, "N2_S1": 86_400_000}  # S1: only when no planned exit (end of data)
+               "S1": 86_400_000, "N2_S1": 86_400_000, "M1": M1_MAX_HOLD_MS, "N2_M1": M1_MAX_HOLD_MS}
+FAMILY_SIZES = {"M1": M1_SIZES, "N2_M1": M1_SIZES}  # families with their own size grid  # S1: only when no planned exit (end of data)
 S1_OPEN_HOLD = 10**9  # slots: an S1 position without a planned exit runs to the end of the data
 WINDOW_MARGIN_MS = ms(6_000)  # d, graduation and pool open after the last possible exit decision
 CLUSTER_GAP_MS = ms(20_000)  # signals further apart than this are loaded and simulated separately
@@ -95,6 +104,46 @@ F1_CHUNK = 200  # tokens per stream load while screening F1 (whole curve histori
 
 
 F6_STATS = {}
+
+
+def m1_signals(con, cfg, lo, hi, clock):
+    """M1 triggers: for each young pool and k, the first candidate event (price >= k x graduation
+    price, organic flow) that also has >= 20 distinct organic buyers over the last 15 min and an
+    insider share <= 25% (O7). Returns [(mint, pool, t, depth, k)]."""
+    cands = defaultdict(list)
+    for mint, pool, t, depth, ratio, cslot in m1_candidates_sql(con, cfg, lo, hi, clock):
+        cands[pool].append((mint, t, depth, ratio))
+    out = []
+    pools = sorted(cands)
+    for i in range(0, len(pools), F1_CHUNK):
+        part = pools[i:i + F1_CHUNK]
+        mints = {cands[p][0][0]: max(c[1] for c in cands[p]) for p in part}
+        toks = streams.load_streams(con, {m: (min(c[1] for p in part for c in cands[p] if c[0] == m), t) for m, t in mints.items()})
+        for pool in part:
+            mint = cands[pool][0][0]
+            tok = toks.get(mint)
+            if tok is None:
+                continue
+            ins = overlay.Insiders(tok, clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot))
+            if not ins.known:
+                continue
+            buys = [(l.slot, l.trader) for l in tok.pool_legs if l.kind == "buy" and not l.farmer]
+            bslots = [b[0] for b in buys]
+            todo = {k for k, _ in M1_GRID}
+            for _, t, depth, ratio in cands[pool]:
+                ks = [k for k in sorted(todo) if ratio >= k]
+                if not ks:
+                    continue
+                lo_b = t - clock.slots(M1_BUYERS_MS, t)
+                a, b = bisect.bisect_left(bslots, lo_b), bisect.bisect_right(bslots, t)
+                if len({buys[j][1] for j in range(a, b)}) < M1_MIN_BUYERS or ins.share(t) > overlay.VETO_SHARE:
+                    continue
+                for k in ks:
+                    out.append((mint, pool, t, depth, k))
+                    todo.discard(k)
+                if not todo:
+                    break
+    return out
 
 
 def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None):
@@ -137,6 +186,15 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                                   orientation=o, flagged=bool(flagged)))
             n_s1 += 1
         log(f"S1: {n_s1} positions (S1 and N2_S1)")
+    if "M1" in families:
+        n_m1 = 0
+        for mint, pool, t, depth, k in m1_signals(con, cfg, lo, hi, clock):
+            for kk, trail in M1_GRID:
+                if kk == k:
+                    signals.append(Signal("M1", f"k{k}_trail{int(trail * 100)}", sys.intern(mint), t, "pool", int(depth),
+                                          (k, trail), pool=sys.intern(pool), orientation="normal"))
+                    n_m1 += 1
+        log(f"M1: {n_m1} signals")
     if "N4" in families:
         for m, pool, orientation, t, depth in n4_signals_sql(con, cfg, lo, hi, n1_sample, clock):
             signals.append(Signal("N4", "crank_scalp", sys.intern(m), t, "pool", int(depth or 0), (),
@@ -178,10 +236,12 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
     if "N2" in families:
         by_trigger = defaultdict(list)
         for s in signals:
-            if s.family in ("F7", "F1", "F6"):  # S1 draws its own N2 controls (rotation.py)
+            if s.family in ("F7", "F1", "F6", "M1"):  # S1 draws its own N2 controls (rotation.py)
                 by_trigger[(s.family, s.pool or s.mint, s.t, s.venue, s.depth, s.orientation)].append(s)
         t0 = time.time()
-        matches = n2_matches(con, list(by_trigger), k=n2_k, clock=clock)
+        matches = n2_matches(con, [k for k in by_trigger if k[0] != "M1"], k=n2_k, clock=clock)
+        matches.update(n2_matches(con, [k for k in by_trigger if k[0] == "M1"], k=n2_k, clock=clock,
+                                  max_age_ms=M1_MAX_HOLD_MS))
         pool_mint = dict(con.execute("SELECT pool, COALESCE(mint, pool) FROM pools").fetchall())
         n_n2 = 0
         for key, group in by_trigger.items():
@@ -227,8 +287,11 @@ def work_items(signals, clock=None):
     return out
 
 
-def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None):
+def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None, insiders=None):
     clock = clock or Clock()
+    if sig.family in ("M1", "N2_M1"):
+        rule = M1Exit(sig.params[1], clock.slots(M1_MAX_HOLD_MS, sig.t))
+        return overlay.O7Exit(rule, insiders) if insiders is not None else rule
     if sig.family in ("S1", "N2_S1"):
         size, exit_t = sig.params
         return rotation.S1Exit(exit_t, f6_min_depth(size), stream.orientation, S1_OPEN_HOLD)
@@ -341,8 +404,11 @@ def _work(args):
                                 continue
                             if sig.family in ("S1", "N2_S1") and sig.params[0] != size_sol:
                                 continue  # S1 portfolios are built per size
+                            if sig.family in FAMILY_SIZES and size_sol not in FAMILY_SIZES[sig.family]:
+                                continue
                             sim = replay.simulate_pool_position if sig.venue == "pool" else replay.simulate_curve_position
-                            r = sim(st, sig.t, size, d, q, exit_rule_for(sig, base, d, clock, st, flows), tol, tau)
+                            ins_m1 = _insiders(con, st, sig.venue, clock, ins_cache) if sig.family in ("M1", "N2_M1") else None
+                            r = sim(st, sig.t, size, d, q, exit_rule_for(sig, base, d, clock, st, flows, ins_m1), tol, tau)
                             busy_until[fk] = r.exit_slot or sig.t
                             rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q))
                             # O7 on the same trigger (paired with the base row): V1 veto, V2 exit, V3 both.

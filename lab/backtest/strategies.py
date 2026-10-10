@@ -414,14 +414,17 @@ def _mix(x):
     return x ^ (x >> np.uint64(31))
 
 
-def n2_matches(con, triggers, k=5, clock=None):
+def n2_matches(con, triggers, k=5, clock=None, max_age_ms=None):
     """k random matches per trigger (spec N2), one query per hour, venue and pool orientation.
 
     triggers: iterable of (family, key, t, venue, depth, orientation); key is the mint (curve) or
     the pool (pool). Returns {trigger: [(key, slot, depth)]}: k different SOL-market tokens of the
     same venue (and pool orientation), non-mayhem, with an event in the same hour at a similar real
     SOL depth (curve: within +-5 SOL; pool: within +-20%), each at one of those events drawn at
-    random. The draws are deterministic per trigger."""
+    random. The draws are deterministic per trigger.
+
+    max_age_ms (N2_M1): pool matches are young pools instead (opened at most this long before the
+    event, created in the data), with no depth band."""
     clock = clock or Clock()
     quotes = ",".join(repr(q) for q in SOL_QUOTES)
     by_hour = defaultdict(list)
@@ -436,10 +439,12 @@ def n2_matches(con, triggers, k=5, clock=None):
                           WHERE c.slot >= ? AND c.slot < ? AND NOT m.mayhem AND m.quote_mint IN ({quotes})"""
                 params = [h0, h0 + h]
             else:
+                young = (f" AND p.created_in_period AND e.slot - p.create_slot BETWEEN 0 AND {clock.slots(max_age_ms, h0)}"
+                         if max_age_ms else "")
                 sql = f"""SELECT e.pool AS k, e.slot, e.tx_index, e.sol_depth::DOUBLE AS depth
                           FROM pool e JOIN pools p USING (pool)
                           WHERE e.slot >= ? AND e.slot < ? AND e.kind IN ('buy', 'sell') AND {pool_universe_sql()}
-                            AND p.orientation = ?"""
+                            AND p.orientation = ?{young}"""
                 params = [h0, h0 + h, orientation]
             ev = con.execute(sql, params).fetchnumpy()
             if not len(ev["slot"]):
@@ -452,7 +457,8 @@ def n2_matches(con, triggers, k=5, clock=None):
             depth = np.asarray(ev["depth"], dtype=np.float64)
             for tr in trs:
                 fam, key, t, _, dep, _ = tr
-                lo, hi = (dep - 5 * SOL, dep + 5 * SOL) if venue == "curve" else (dep * 0.8, dep * 1.2)
+                lo, hi = ((dep - 5 * SOL, dep + 5 * SOL) if venue == "curve" else
+                          (-np.inf, np.inf) if max_age_ms else (dep * 0.8, dep * 1.2))
                 own = np.searchsorted(names, key)
                 own = own if own < len(names) and names[own] == key else -1
                 idx = np.nonzero((depth >= lo) & (depth <= hi) & (mid != own))[0]
@@ -647,3 +653,68 @@ class N4Exit(ExitRule):
         if i < len(self.cranks) and self.cranks[i] <= ctx["slot"]:
             return "after_crank"
         return "time" if ctx["slots_held"] >= self.max_slots else None
+
+
+# ----------------------------------------------------------------------------- M1 (owner idea)
+# Fast runner after graduation (week2-specs-M1-2026-10-10.md): the pool's price (market cap)
+# reaches k x its price at graduation within 6 h of the pool opening, with organic buy flow,
+# organic buyers and a small insider share (O7). Normal SOL pools of pump tokens created in the
+# data, no mayhem, no graduation in the create slot.
+
+M1_GRID = [(k, x) for k in (2, 3) for x in (0.20, 0.35)]  # (k x graduation price, trailing stop)
+M1_AGE_MS, M1_FLOW_MS, M1_BUYERS_MS = 6 * 3_600_000, 300_000, 900_000
+M1_MAX_HOLD_MS = 6 * 3_600_000
+M1_FLOW_SHARE, M1_MIN_BUYERS, M1_HARD_STOP = 0.03, 20, -0.25
+M1_SIZES = (0.25, 0.5, 1.0, 2.0)
+
+
+def m1_candidates_sql(con, cfg, dev_start, dev_end, clock=None):
+    """Phase 1 of M1 (cheap windows): events of young normal SOL pools where the post-trade price
+    is >= 2 x the pool's opening price and organic net buy flow over the last 5 min >= 3% of the
+    real SOL depth. Returns (mint, pool, t, depth, ratio, create_slot) sorted by pool and slot."""
+    clock = clock or Clock()
+    lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
+    out = []
+    for rlo, rhi, m in clock.regimes(lo, hi + 1):
+        n_age, n_flow = round(M1_AGE_MS / m), round(M1_FLOW_MS / m)
+        out += con.execute(f"""
+          WITH young AS (
+            SELECT p.pool, p.mint, p.create_slot, p.q0::DOUBLE / p.b0 AS open_price
+            FROM pools p JOIN mints m ON m.mint = p.mint
+            WHERE p.quote_class = 'sol' AND NOT COALESCE(p.mayhem, false) AND p.created_in_period AND p.b0 > 0
+              AND NOT m.mayhem AND COALESCE(m.complete_slot, -1) <> m.create_slot
+              AND p.create_slot BETWEEN {rlo - n_age} AND {rhi - 1}),
+          ev AS (
+            SELECT e.pool, y.mint, y.create_slot, y.open_price, e.slot, e.tx_index, e.outer_ix, e.inner_ix, e.sol_depth,
+                   (e.e + e.e_delta)::DOUBLE / (CASE WHEN e.token_buy THEN e.b - e.base ELSE e.b + e.base END) AS price,
+                   CASE WHEN e.farmer THEN 0 WHEN e.token_buy THEN e.sol_amount ELSE -e.sol_amount END AS dq
+            FROM pool e JOIN young y USING (pool)
+            WHERE e.kind IN ('buy', 'sell') AND e.slot BETWEEN y.create_slot AND y.create_slot + {n_age}),
+          w AS (SELECT *, SUM(dq) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_flow} PRECEDING AND CURRENT ROW) AS inflow
+                FROM ev)
+          SELECT mint, pool, slot, sol_depth, price / open_price AS ratio, create_slot FROM w
+          WHERE slot BETWEEN {max(lo, rlo)} AND {min(hi, rhi - 1)} AND price >= 2 * open_price
+            AND inflow >= {M1_FLOW_SHARE} * sol_depth
+          QUALIFY row_number() OVER (PARTITION BY pool, slot ORDER BY tx_index DESC, outer_ix DESC, inner_ix DESC) = 1
+          ORDER BY pool, slot""").fetchall()
+    return out
+
+
+class M1Exit(ExitRule):
+    """Trailing stop from the peak mark, hard stop at -25% from the entry cost, or time."""
+
+    def __init__(self, trail, max_slots):
+        self.trail, self.max_slots, self.peak = trail, max_slots, 0
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        self.peak = max(self.peak, ctx["mark"])
+        if ctx["mark"] <= ctx["cost"] * (1 + M1_HARD_STOP):
+            return "stop_loss"
+        if ctx["mark"] <= self.peak * (1 - self.trail):
+            return "trailing_stop"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None

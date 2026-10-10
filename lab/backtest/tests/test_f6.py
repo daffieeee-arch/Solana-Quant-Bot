@@ -116,3 +116,15 @@ def test_o7_insiders_and_exit():
     r = O7Exit(Never(), ins)
     assert r({"entry_slot": 250, "slot": 299}) is None
     assert r({"entry_slot": 250, "slot": 300}) == "o7_insider_sell"  # 100 >= 25% of 400
+
+
+def test_m1_exit_rule():
+    from backtest.strategies import M1Exit
+
+    r = M1Exit(0.20, 1000)
+    base = {"pool": P, "cost": 100, "slots_held": 1}
+    assert r(dict(base, mark=150, slot=1)) is None
+    assert r(dict(base, mark=121, slot=2)) is None  # 19.3% below the peak of 150
+    assert r(dict(base, mark=119, slot=3)) == "trailing_stop"
+    assert M1Exit(0.35, 1000)(dict(base, mark=75, slot=1)) == "stop_loss"  # -25% from the cost
+    assert M1Exit(0.35, 1000)(dict(base, mark=100, slot=1, slots_held=1000)) == "time"
