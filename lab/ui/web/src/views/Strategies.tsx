@@ -11,6 +11,7 @@ interface SummaryRow {
   n: number; filled: number; mean_ret: number | null; median_ret: number | null; win_rate: number | null;
   ci_lo: number | null; ci_hi: number | null; total_pnl_sol: number; mean_pnl_sol: number | null;
   n2_mean_ret: number | null; edge_vs_n2: number | null; hist_drift: number | null; fail_rate: number | null;
+  verdict?: string | null; pnl_ci_lo?: number | null; pnl_ci_hi?: number | null;
 }
 interface Curve { family: string; size_sol: number; points: [number, number | null, number][] }
 
@@ -18,6 +19,9 @@ const SCEN: Record<string, string> = { optimistic: "optimistisch", base: "basis"
 const pctf = (v: number | null | undefined, sign = true) =>
   v == null ? "–" : (sign && v > 0 ? "+" : "") + (v * 100).toLocaleString("nl-NL", { maximumFractionDigits: 2 }) + "%";
 const N_MIN = 30;
+// The run's own verdict (report.md): GO = 95%-CI of net SOL per trade above 0, ADJUST = mean above 0, STOP = mean ≤ 0.
+const LIVE_MIN = 5; // sizes below this are informative only (report.md)
+const VERDICT: Record<string, string> = { GO: "GO", ADJUST: "bijstellen", STOP: "stop" };
 
 export default function Strategies() {
   const [scenario, setScenario] = useState("base");
@@ -44,11 +48,18 @@ export default function Strategies() {
       .then((r) => setCurves(r.curves)).catch((e) => setErr(e.message));
   }, [sel?.family, sel?.variant, sel?.d, sel?.tau, scenario]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const hasVerdict = rows.some((r) => r.verdict != null);
+  const live = rows.filter((r) => r.size_sol >= LIVE_MIN);
+  const goLive = live.filter((r) => r.verdict === "GO").length;
+
   const cols = useMemo<ColDef<SummaryRow>[]>(() => [
     { field: "family", headerName: "Familie", width: 90, pinned: "left" },
     { field: "variant", headerName: "Variant", width: 130 },
     { field: "size_sol", headerName: "SOL", width: 75, type: "rightAligned" },
     { field: "filled", headerName: "n", width: 80, type: "rightAligned", cellStyle: (p) => ((p.value ?? 0) < N_MIN ? { color: "var(--muted)" } : null) },
+    { field: "verdict", headerName: "Oordeel", width: 110, hide: !hasVerdict,
+      valueFormatter: (p) => (p.value == null ? "–" : VERDICT[p.value as string] ?? "te weinig trades"),
+      cellStyle: (p) => (p.value === "GO" ? { color: "var(--buy)" } : p.value === "STOP" ? { color: "var(--sell)" } : null) },
     { field: "mean_ret", headerName: "Gem. na kosten", width: 130, type: "rightAligned", valueFormatter: (p) => pctf(p.value),
       cellStyle: (p) => ({ color: (p.value ?? 0) > 0 ? "var(--buy)" : "var(--sell)" }) },
     { colId: "ci", headerName: "95%-CI (per dag)", width: 170, type: "rightAligned", sortable: false,
@@ -57,7 +68,7 @@ export default function Strategies() {
     { field: "edge_vs_n2", headerName: "Edge vs N2", width: 115, type: "rightAligned", valueFormatter: (p) => pctf(p.value) },
     { field: "total_pnl_sol", headerName: "Totaal SOL", width: 115, type: "rightAligned",
       valueFormatter: (p) => (p.value == null ? "–" : (p.value > 0 ? "+" : "") + Number(p.value).toLocaleString("nl-NL", { maximumFractionDigits: 2 })) },
-  ], []);
+  ], [hasVerdict]);
 
   const ciChart = useMemo(() => {
     const b = baseOption() as Record<string, object>;
@@ -126,6 +137,12 @@ export default function Strategies() {
           Toernooirun <span className="font-mono">{data.run.run_id}</span> op ontwikkeldata. Rendement per trade na fees, netwerk, huur en mislukte transacties;
           N2 is dezelfde strategie met willekeurige instap. Onder n = {N_MIN} grijs: rapporteren, niet rangschikken.
         </p>
+        {hasVerdict && (
+          <p className={`text-sm m-0 mt-1 ${goLive ? "" : "text-warn"}`}>
+            <b className="tabular">{goLive} van {live.length}</b> combinaties op live-grootte (≥ {LIVE_MIN} SOL, kosten {SCEN[scenario]}) krijgen GO:
+            netto winst per trade met het 95%-interval boven nul. Kleinere groottes zijn alleen informatief.
+          </p>
+        )}
       </div>
       <div className="flex flex-wrap gap-2 items-center">
         {Object.keys(SCEN).map((s) => <Chip key={s} active={scenario === s} onClick={() => setScenario(s)}>{SCEN[s]}</Chip>)}

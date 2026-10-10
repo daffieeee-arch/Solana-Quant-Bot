@@ -17,7 +17,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 SUMMARY_COLS = ["family", "variant", "size_sol", "d", "tau", "scenario", "n", "filled", "mean_ret", "median_ret",
                 "win_rate", "ci_lo", "ci_hi", "total_pnl_sol", "mean_pnl_sol", "n2_mean_ret", "edge_vs_n2",
-                "hist_drift", "fail_rate", "stop_loss_share", "days"]
+                "hist_drift", "fail_rate", "stop_loss_share", "days", "pnl_ci_lo", "pnl_ci_hi", "verdict",
+                "edge_ci_lo", "edge_ci_hi"]
 POINTS = 160
 
 
