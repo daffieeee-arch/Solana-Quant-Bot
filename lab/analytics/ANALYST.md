@@ -1,0 +1,89 @@
+# Analyst reference: lab development data
+
+Query with `lab/bin/q` (read-only, SELECT only, 500 rows, 5 min, 1 GB). Tables live in the attached
+`dev` database (the default schema); `analytics.duckdb`, once built, is attached as `a`.
+The store file is set in one place, `STORE` in `lab/analytics/labstore.py`. q, build.py and the web server
+read it and refuse a store whose `meta` is not development-only. `SELECT json FROM meta` shows the version.
+
+## Window
+
+- Development data only: slots `450,144,000 … 452,303,999` (epochs 1042–1046, 2026-09-24 21:00 → 2026-10-01 13:40 UTC).
+  The backfill target is epoch 1033; check `SELECT min(slot), max(slot) FROM blocks`.
+- Hold-out: slots `452,304,000 … 454,463,999` (epochs 1047–1051). Never queried here. Fixed protocol markers may
+  appear as labels only: first fee sweep in chunk `452,520,000–452,736,000`, first v3 curve trades at slot `453,800,004`.
+- Epoch = `slot // 432000`. Time = `to_timestamp(blocks.block_time)::TIMESTAMP` (UTC; ~0.267 s per slot here).
+- Chain order is `(slot, tx_index, outer_ix, inner_ix)`.
+
+## Units
+
+| Quantity | Raw unit | Divide by |
+|---|---|---|
+| SOL / wSOL amounts, reserves, fees | lamports | 1e9 |
+| pump.fun token amounts, reserves | raw token | 1e6 (6 decimals) |
+| fees in bps | basis points | 1e4 |
+
+Quote amounts are in the token's quote mint. Not every token is SOL-quoted (USDC and others exist), so filter
+on `quote_mint` before summing SOL.
+
+## Tables (`dev`)
+
+- `mints` — one row per token created in the window: `create_slot`, `creator`, `mayhem`, `quote_mint`, `cashback`,
+  `holder_reward`, `name`, `symbol` (creator-supplied text: escape, never render as HTML), `complete_slot`
+  (curve full), `migrate_slot`, `pool`.
+- `curve` — bonding-curve trades. `t`, `q` = token and quote amount of the trade (quote net of fees);
+  `fee`, `creator_fee` charged on top; `vt`, `vq`, `rt`, `rq` = virtual/real reserves **after** the trade;
+  `variant` from the instruction (`buy`, `sell`, `buy_v2`, `sell_v2`, `buy_exact_sol_in`, `buy_exact_quote_in_v2`);
+  `trader` = user, `arg_*` = slippage arguments (epochs ≤ 1043 only).
+- `pool_trades` (TEMP VIEW, same columns on store v1 and v2) — one row per PumpSwap token trade: `kind`
+  (`buy` = trader buys the token), `mint`, `quote`, `sol` (lamports, NULL if not SOL-quoted), `token_amount`,
+  `price` (SOL per token, pre-trade, orientation handled), `farmer` (v2 only, else false), `orientation`.
+  Prefer it over `pool` for counts, volume and prices.
+- `pool` (store v1) — PumpSwap events for pools created in the window. `kind` ∈ `buy`, `sell`, `boost` (a boost row repeats
+  its buy; exclude it from volume). `b` = base reserve and `e` = Q_eff **before** the trade; `base`, `quote_gross`,
+  `quote_net`; fee bps `lp_bps`, `protocol_bps`, `creator_bps`; `limit_quote`, `limit_base` = slippage limits.
+- `pools` — one row per pool: `mint`, `quote_mint`, `create_slot`, `coin_creator`, `mayhem`, initial `b0`, `q0`.
+- Store v2 (`store/dev2.duckdb`, `store_version` 2) differences:
+  - `pools` holds every active pool, with `quote_class` (`sol` | `reversed` | `other`) and `orientation`.
+  - `pool` holds SOL markets only. A boost is a single `kind = 'boost'` row.
+  - The token side is `token_buy`. The SOL side is `sol_amount` and `sol_depth`.
+  - `quote_user` replaces `quote_gross`/`quote_net`. `e = vault + vq`, and `e_delta` is the change in `e`.
+  - In `reversed` pools base is wSOL, so the token price is `(b / 1e9) / (e / 1e6)`.
+  - `farmer` flags wash farming. It is about 91% of reversed-pool SOL volume, so use `WHERE NOT farmer` for organic numbers.
+  - `curve.fee_payer` is NULL when it equals `trader`. New tables: `pool_stats` (looks ahead; never use it in signals),
+    `pool_sweeps` and `pool_class_daily`.
+- `blocks` — `slot`, `block_time` (unix seconds). Missing slots were skipped by the leader.
+
+## Prices
+
+- Curve: price (quote per token) = `(vq / 1e9) / (vt / 1e6)` on the post-trade reserves. Market cap in SOL =
+  price × supply / 1e6 (`mints.supply`, usually 1e15 raw = 1e9 tokens). Graduation happens when `rt` reaches 0
+  after a buy (~85 SOL raised); no curve fills after `complete_slot`.
+- Pool: price = `(e / 1e9) / (b / 1e6)` on the pre-trade reserves, with `e = Q_eff = quote vault + virtual_quote_reserves`
+  (signed). Fees are per event; never hardcode them.
+
+## Universe filters (backtests)
+
+- Quote mint wSOL `So111…112` or `111…111`; exclude `mayhem` and non-SOL quotes; report cashback and
+  holder-reward coins separately; creator identity = `CreateEvent.user` (`mints.creator`).
+- Graduations in the create slot (`complete_slot = create_slot`, 44% in this window) are never tradeable.
+- `token_eligibility`: created inside the loaded data and after the 1-day burn-in.
+
+## Overview tables (`a`, analytics.duckdb)
+
+Built by `lab/analytics/build.py` from the dev store (heavy job; ~1.5 min, ~450 MB). Build-and-swap; the
+build fails if any slot column holds a hold-out slot (protocol-marker labels in `market_events` excepted)
+or a column lacks a `data_dictionary` entry. Every column is described in `a.data_dictionary` (Dutch).
+
+- `a.data_coverage` — per epoch: slots, blocks, skipped slots, time range, tokens, graduations, trades.
+- `a.token_summary` — one row per mint: flags, lifecycle, curve and pool trade counts, volume (quote),
+  max/last spot price and max market cap per venue. Amounts are in the quote mint; `sol_quote` says when that is SOL.
+- `a.token_candles_1m` — per mint × venue × UTC minute: OHLC of the spot price (quote per token), trades,
+  volume. Market cap = price × `token_summary.supply_tokens`. Curve price is post-trade, pool price pre-trade.
+- `a.graduations` — one row per graduation: time to graduate, `in_create_slot`, trades and traders before,
+  first pool trade, pool trades and volume in the first hour (13,468 slots).
+- `a.wallet_summary` — per trader: trades per venue, tokens, SOL in/out, `net_sol_flow`. **Incomplete**: no
+  transfers, fees or open positions, so it is not profit.
+- `a.market_events` — ticker: graduations, trades ≥ 25 SOL (SOL-quoted, farming excluded), and the two protocol-marker labels.
+- `a.slot_time` — slot → block time.
+
+Example: `lab/bin/q "SELECT symbol, round(seconds_to_graduate/60) AS min FROM a.graduations WHERE NOT in_create_slot ORDER BY 2 LIMIT 5"`.

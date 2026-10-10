@@ -1,0 +1,339 @@
+<title>Wat zit er in de data</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: lab notebook — headline numbers, two day charts, then coverage, tables, example tokens and the SQL behind each block. */
+:root {
+  --bg: #f5f7f6; --surface: #ffffff; --fg: #17201d; --muted: #5b6a65; --line: #dde4e1; --grid: #e9eeec;
+  --accent: #0f766e; --accent-soft: #e0f2ef;
+  --s1: #2a78d6; --s2: #eb6834;
+  --warn: #9a3412; --warn-soft: #fdebdd; --idle: #eef1f0;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d; --grid: #1f2925;
+  --accent: #5eead4; --accent-soft: #123430; --s1: #3987e5; --s2: #d95926;
+  --warn: #fdba74; --warn-soft: #3a2113; --idle: #1c2522; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d; --grid: #1f2925;
+  --accent: #5eead4; --accent-soft: #123430; --s1: #3987e5; --s2: #d95926;
+  --warn: #fdba74; --warn-soft: #3a2113; --idle: #1c2522; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 980px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 56px; display: grid; gap: 28px; }
+.wrap > * { min-width: 0; }
+header { display: grid; gap: 6px; }
+h1 { font-size: 1.7rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 1.1rem; font-weight: 600; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 0; max-width: 68ch; }
+.meta { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); }
+section { display: grid; gap: 10px; min-width: 0; }
+.lede { color: var(--muted); margin: 0; max-width: 68ch; font-size: 0.92rem; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 560px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; display: grid; gap: 2px; }
+.tile .v { font-size: 1.55rem; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.tile .l { font-size: 0.85rem; color: var(--muted); }
+.chart { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 12px 6px; position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart text { fill: var(--muted); font-family: var(--mono); font-size: 11px; }
+.chart .gridline { stroke: var(--grid); stroke-width: 1; }
+.chart .hit { fill: transparent; cursor: default; }
+.chart .hit:focus { outline: none; }
+.chart g.bar:focus-visible .hit, .chart g.bar:hover .hit { fill: var(--grid); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.85rem; color: var(--muted); padding: 2px 4px 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px; font-size: 0.82rem; box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; z-index: 2; }
+.tip b { font-variant-numeric: tabular-nums; }
+.tip .k { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 6px; }
+.tablebox { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+th, td { padding: 7px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+th { font-weight: 500; color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface); position: sticky; top: 0; }
+td.l, th.l { text-align: left; }
+tr:last-child td { border-bottom: 0; }
+td.mono { font-family: var(--mono); font-size: 0.8rem; }
+td a { color: var(--accent); text-underline-offset: 2px; }
+td a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+td.name { max-width: 16rem; overflow: hidden; text-overflow: ellipsis; }
+.partial { color: var(--muted); font-style: italic; }
+.epochs { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
+.ep { border-radius: 6px; padding: 8px 10px; border: 1px solid var(--line); background: var(--idle); display: grid; gap: 1px; }
+.ep .n { font-family: var(--mono); font-weight: 500; font-size: 0.9rem; }
+.ep .s { font-size: 0.78rem; color: var(--muted); }
+.ep.store { background: var(--accent-soft); border-color: transparent; }
+.ep.store .n, .ep.store .s { color: var(--accent); }
+.ep.extracted { background: var(--surface); border-color: var(--accent); }
+.ep.running { background: var(--surface); border-style: dashed; border-color: var(--accent); }
+.ep.holdout { background: var(--warn-soft); border-color: transparent; }
+.ep.holdout .n, .ep.holdout .s { color: var(--warn); }
+ul.notes { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 72ch; color: var(--fg); }
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+summary { cursor: pointer; font-weight: 500; }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+pre { font-family: var(--mono); font-size: 0.78rem; line-height: 1.45; overflow-x: auto; margin: 8px 0 4px; white-space: pre; }
+.copy { font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 5px; padding: 2px 8px; cursor: pointer; }
+.copy:focus-visible { outline: 2px solid var(--accent); }
+footer { color: var(--muted); font-size: 0.82rem; }
+@media (prefers-reduced-motion: no-preference) { .chart g.bar .hit { transition: fill .12s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Wat zit er in de data</h1>
+    <p class="sub" id="sub">Ontwikkeldata van pump.fun (bonding curve) en PumpSwap uit Old Faithful.</p>
+    <div class="meta" id="meta"></div>
+  </header>
+
+  <section aria-labelledby="h-kern">
+    <h2 id="h-kern">Kerngetallen</h2>
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section aria-labelledby="h-tok">
+    <h2 id="h-tok">Nieuwe tokens per dag</h2>
+    <p class="lede">Aantal aangemaakte pump.fun-tokens per UTC-dag. De eerste en laatste dag zijn deels gedekt (lichter).</p>
+    <div class="chart" id="c-tokens"></div>
+  </section>
+
+  <section aria-labelledby="h-grad">
+    <h2 id="h-grad">Graduaties per dag</h2>
+    <p class="lede">Een token "gradueert" als de bonding curve vol is (~85 SOL) en naar PumpSwap gaat. Graduaties in dezelfde slot als de aanmaak zijn voor ons nooit handelbaar.</p>
+    <div class="chart" id="c-grads"></div>
+  </section>
+
+  <section aria-labelledby="h-dag">
+    <h2 id="h-dag">Per dag in cijfers</h2>
+    <div class="tablebox"><table id="t-days"></table></div>
+  </section>
+
+  <section aria-labelledby="h-dek">
+    <h2 id="h-dek">Dekking per epoch</h2>
+    <p class="lede">Eén epoch is 432.000 slots, ongeveer 32 uur. Alleen de epochs in de ontwikkel-store zijn hier geteld; de hold-out (1047–1051) blijft dicht tot de eenmalige eindtest.</p>
+    <div class="epochs" id="epochs"></div>
+    <div class="tablebox"><table id="t-epochs"></table></div>
+  </section>
+
+  <section aria-labelledby="h-vb">
+    <h2 id="h-vb">Voorbeeldtokens</h2>
+    <p class="lede">De 12 gegradueerde tokens (SOL-gequote, geen mayhem) met het meeste SOL-volume op curve en PumpSwap samen. Namen en symbolen zijn door de makers gekozen. Naam en mint openen DexScreener in een nieuw tabblad.</p>
+    <div class="tablebox"><table id="t-tokens"></table></div>
+  </section>
+
+  <section aria-labelledby="h-let">
+    <h2 id="h-let">Let op bij het lezen</h2>
+    <ul class="notes">
+      <li>SOL-volume telt alleen tokens en pools met SOL als quote, zonder fees. Tokens met een andere quote (bijv. USDC) tellen wel mee in de aantallen.</li>
+      <li>PumpSwap-handel is alleen opgenomen voor pools die in deze periode zijn aangemaakt (de gegradueerde tokens). Oudere pools zitten niet in de store.</li>
+      <li>"Mayhem"-tokens zijn een apart pump.fun-type met een handelsagent; ze tellen mee in de aantallen maar staan buiten het strategie-universum.</li>
+      <li>Tijden zijn UTC, uit de bloktijd van elke slot. Een slot duurt hier gemiddeld 0,267 s.</li>
+      <li>Vaste protocol-markers, alleen als label: eerste fee-sweep in stuk 452.520.000–452.736.000 en eerste v3-curvetrades op slot 453.800.004. Beide vallen in de hold-out en zijn niet geopend.</li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="h-sql">
+    <h2 id="h-sql">De SQL</h2>
+    <p class="lede">Elk blok hierboven komt uit één query via <code>lab/bin/q</code> (alleen-lezen, alleen ontwikkeldata).</p>
+    <div id="sql" style="display:grid;gap:8px"></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script id="page-data" type="application/json">/*__DATA__*/null</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById("page-data").textContent);
+  const nf = new Intl.NumberFormat("nl-NL");
+  const n = v => v == null ? "–" : nf.format(Math.round(Number(v)));
+  const pct = (a, b) => (100 * a / b).toLocaleString("nl-NL", { maximumFractionDigits: 1 }) + "%";
+  const mln = v => (Number(v) / 1e6).toLocaleString("nl-NL", { maximumFractionDigits: 1 }) + " mln";
+  const dayFmt = new Intl.DateTimeFormat("nl-NL", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  const dayLabel = d => dayFmt.format(new Date(d + "T00:00:00Z"));
+  const el = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = String(text); return x; };
+  const obj = blk => blk.rows.map(r => Object.fromEntries(blk.columns.map((c, i) => [c, r[i]])));
+  const SVG = "http://www.w3.org/2000/svg";
+  const svgEl = (tag, attrs) => { const x = document.createElementNS(SVG, tag); for (const k in attrs) x.setAttribute(k, attrs[k]); return x; };
+
+  if (!D) { document.getElementById("sub").textContent = "Nog geen gegevens ingebouwd."; return; }
+
+  const S = obj(D.overview_summary)[0];
+  const E = obj(D.overview_epochs);
+  const Dy = obj(D.overview_days);
+  const T = obj(D.overview_tokens);
+  const first = E[0], last = E[E.length - 1];
+
+  document.getElementById("sub").textContent =
+    "Ontwikkeldata van pump.fun (bonding curve) en PumpSwap uit Old Faithful: " +
+    first.first_block_utc.slice(0, 16) + " tot " + last.last_block_utc.slice(0, 16) + " UTC, epochs " +
+    first.epoch + "–" + last.epoch + ".";
+  document.getElementById("meta").textContent = "slots " + n(S.first_slot) + " – " + n(S.last_slot) + " · bijgewerkt " + D.built_at;
+
+  // Tiles
+  const tiles = [
+    [n(S.tokens), "tokens aangemaakt"],
+    [n(S.graduated), "graduaties (" + pct(S.graduated, S.tokens) + " van de tokens)"],
+    [n(S.graduated_in_create_slot), "waarvan in de aanmaak-slot (" + pct(S.graduated_in_create_slot, S.graduated) + "), niet handelbaar"],
+    [mln(S.curve_trades), "trades op de bonding curve"],
+    [mln(S.pool_trades), "trades op PumpSwap"],
+    [n(S.median_curve_trades_per_token), "trades per token (mediaan); " + pct(S.tokens_under_10_trades, S.tokens) + " heeft er minder dan 10"],
+  ];
+  const tilesEl = document.getElementById("tiles");
+  for (const [v, l] of tiles) { const t = el("div", "tile"); t.append(el("div", "v", v), el("div", "l", l)); tilesEl.append(t); }
+
+  // Bar charts
+  const partial = new Set([Dy[0].day, Dy[Dy.length - 1].day]);
+  function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * p >= v) return m * p; return v; }
+
+  function barChart(host, series, legend) {
+    const tip = el("div", "tip"); tip.hidden = true;
+    if (legend) {
+      const lg = el("div", "legend");
+      for (const s of series) { const sp = el("span"); const i = el("i"); i.style.background = "var(" + s.color + ")"; sp.append(i, document.createTextNode(s.label)); lg.append(sp); }
+      host.append(lg);
+    }
+    const holder = el("div"); host.append(holder, tip);
+    function draw() {
+      const W = Math.max(300, holder.clientWidth), H = 200, L = 44, R = 6, Tp = 8, B = 26;
+      const max = niceMax(Math.max(...Dy.map(d => series.reduce((a, s) => a + (Number(d[s.key]) || 0), 0))));
+      const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": series.map(s => s.label).join(", ") + " per dag" });
+      const y = v => Tp + (H - Tp - B) * (1 - v / max);
+      for (let k = 0; k <= 4; k++) {
+        const v = max * k / 4, yy = y(v);
+        svg.append(svgEl("line", { x1: L, x2: W - R, y1: yy, y2: yy, class: "gridline" }));
+        const t = svgEl("text", { x: L - 6, y: yy + 4, "text-anchor": "end" }); t.textContent = nf.format(v); svg.append(t);
+      }
+      const bw = (W - L - R) / Dy.length, gap = Math.min(14, bw * 0.28);
+      Dy.forEach((d, i) => {
+        const x = L + i * bw + gap / 2, w = bw - gap;
+        const g = svgEl("g", { class: "bar", tabindex: "0" });
+        g.append(svgEl("rect", { class: "hit", x: L + i * bw, y: Tp, width: bw, height: H - Tp - B }));
+        let acc = 0;
+        series.forEach((s, si) => {
+          const v = Number(d[s.key]) || 0; if (!v) return;
+          const top = si === series.length - 1;
+          const y0 = y(acc), y1 = y(acc + v); acc += v;
+          const h = Math.max(0, y0 - y1 - (si > 0 ? 2 : 0));
+          const r = top ? Math.min(4, w / 2, h) : 0;
+          const x0 = x, x1 = x + w, yt = y1, yb = yt + h;
+          const p = `M${x0},${yb} L${x0},${yt + r} Q${x0},${yt} ${x0 + r},${yt} L${x1 - r},${yt} Q${x1},${yt} ${x1},${yt + r} L${x1},${yb} Z`;
+          const path = svgEl("path", { d: p, fill: "var(" + s.color + ")" });
+          if (partial.has(d.day)) path.setAttribute("fill-opacity", "0.45");
+          g.append(path);
+        });
+        const lab = svgEl("text", { x: L + i * bw + bw / 2, y: H - 8, "text-anchor": "middle" });
+        lab.textContent = bw >= 72 ? dayLabel(d.day) : (+d.day.slice(8, 10)) + "/" + (+d.day.slice(5, 7));
+        svg.append(g, lab);
+        const show = ev => {
+          tip.replaceChildren();
+          tip.append(el("div", null, dayLabel(d.day) + (partial.has(d.day) ? " (deels)" : "")));
+          for (const s of [...series].reverse()) {
+            const row = el("div"); const k = el("span", "k"); k.style.background = "var(" + s.color + ")";
+            row.append(k, el("b", null, n(d[s.key])), document.createTextNode(" " + s.label)); tip.append(row);
+          }
+          tip.hidden = false;
+          const hb = host.getBoundingClientRect(), gb = g.getBoundingClientRect();
+          let left = gb.left - hb.left + gb.width / 2 - tip.offsetWidth / 2;
+          left = Math.max(4, Math.min(left, hb.width - tip.offsetWidth - 4));
+          tip.style.left = left + "px"; tip.style.top = "4px";
+        };
+        g.addEventListener("pointerenter", show); g.addEventListener("focus", show);
+        g.addEventListener("pointerleave", () => tip.hidden = true); g.addEventListener("blur", () => tip.hidden = true);
+      });
+      holder.replaceChildren(svg);
+    }
+    draw();
+    let t, lastW = holder.clientWidth;
+    new ResizeObserver(() => { if (holder.clientWidth === lastW) return; lastW = holder.clientWidth; clearTimeout(t); t = setTimeout(draw, 80); }).observe(holder);
+  }
+  Dy.forEach(d => d.grad_later = (Number(d.graduations) || 0) - (Number(d.grad_in_create_slot) || 0));
+  barChart(document.getElementById("c-tokens"), [{ key: "tokens_created", label: "nieuwe tokens", color: "--s1" }], false);
+  barChart(document.getElementById("c-grads"), [
+    { key: "grad_later", label: "na de aanmaak-slot (handelbaar)", color: "--s1" },
+    { key: "grad_in_create_slot", label: "in de aanmaak-slot (niet handelbaar)", color: "--s2" },
+  ], true);
+
+  // Tables
+  function table(id, cols, rows) {
+    const t = document.getElementById(id);
+    const thead = el("thead"), tr = el("tr");
+    for (const c of cols) tr.append(el("th", c.cls || "", c.label));
+    thead.append(tr);
+    const tb = el("tbody");
+    for (const r of rows) {
+      const row = el("tr");
+      if (r._partial) row.className = "partial";
+      for (const c of cols) {
+        const text = c.fmt ? c.fmt(r[c.key], r) : r[c.key];
+        const td = el("td", c.cls || "");
+        const href = c.link ? c.link(r) : null;
+        if (href) { const a = el("a", null, text); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer"; td.append(a); }
+        else td.textContent = text == null ? "" : String(text);
+        if (c.title) td.title = c.title(r);
+        row.append(td);
+      }
+      tb.append(row);
+    }
+    t.replaceChildren(thead, tb);
+  }
+  table("t-days", [
+    { key: "day", label: "dag (UTC)", cls: "l", fmt: (v, r) => dayLabel(v) + (partial.has(v) ? " · deels" : "") },
+    { key: "tokens_created", label: "nieuwe tokens", fmt: n },
+    { key: "mayhem_created", label: "waarvan mayhem", fmt: n },
+    { key: "graduations", label: "graduaties", fmt: n },
+    { key: "grad_in_create_slot", label: "in aanmaak-slot", fmt: n },
+    { key: "curve_trades", label: "curve-trades", fmt: n },
+    { key: "curve_sol", label: "curve SOL", fmt: n },
+    { key: "pool_trades", label: "PumpSwap-trades", fmt: n },
+    { key: "pool_sol", label: "PumpSwap SOL", fmt: n },
+  ], Dy.map(d => ({ ...d, _partial: partial.has(d.day) })));
+
+  table("t-epochs", [
+    { key: "epoch", label: "epoch", cls: "l mono" },
+    { key: "first_block_utc", label: "van (UTC)", cls: "l", fmt: v => v.slice(0, 16) },
+    { key: "last_block_utc", label: "tot (UTC)", cls: "l", fmt: v => v.slice(0, 16) },
+    { key: "blocks", label: "blokken", fmt: n },
+    { key: "skipped_slots", label: "lege slots", fmt: n },
+    { key: "tokens_created", label: "nieuwe tokens", fmt: n },
+    { key: "graduations", label: "graduaties", fmt: n },
+    { key: "curve_trades", label: "curve-trades", fmt: n },
+    { key: "pool_trades", label: "PumpSwap-trades", fmt: n },
+  ], E);
+
+  const stateLabel = { store: "in ontwikkel-store", extracted: "uitgepakt, nog niet in store", running: "wordt uitgepakt", planned: "gepland (backfill)", holdout: "hold-out, dicht" };
+  const epEl = document.getElementById("epochs");
+  for (const c of D.coverage) { const b = el("div", "ep " + c.state); b.append(el("span", "n", c.epoch), el("span", "s", stateLabel[c.state] || c.state)); epEl.append(b); }
+
+  const short = m => m.length > 14 ? m.slice(0, 6) + "…" + m.slice(-4) : m;
+  // Outbound link only (owner clicks it); no requests to DexScreener from this page.
+  const dex = r => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(r.mint || "") ? "https://dexscreener.com/solana/" + encodeURIComponent(r.mint) : null;
+  table("t-tokens", [
+    { key: "name", label: "naam", cls: "l name", title: r => r.name + " op DexScreener", link: dex },
+    { key: "symbol", label: "symbool", cls: "l mono" },
+    { key: "mint", label: "mint", cls: "l mono", fmt: m => short(m) + " ↗", title: r => r.mint + " op DexScreener", link: dex },
+    { key: "created_utc", label: "aangemaakt (UTC)", cls: "l", fmt: v => v.slice(0, 16) },
+    { key: "minutes_to_graduate", label: "min. tot graduatie", fmt: v => Number(v).toLocaleString("nl-NL", { maximumFractionDigits: 1 }) },
+    { key: "curve_trades", label: "curve-trades", fmt: n },
+    { key: "curve_sol", label: "curve SOL", fmt: n },
+    { key: "pool_trades", label: "PumpSwap-trades", fmt: n },
+    { key: "pool_sol", label: "PumpSwap SOL", fmt: n },
+  ], T);
+
+  // SQL blocks
+  const sqlHost = document.getElementById("sql");
+  const titles = { overview_summary: "Kerngetallen", overview_days: "Per dag", overview_epochs: "Per epoch", overview_tokens: "Voorbeeldtokens" };
+  for (const k of ["overview_summary", "overview_days", "overview_epochs", "overview_tokens"]) {
+    const det = el("details"); const sum = el("summary", null, titles[k] + " — lab/analytics/sql/" + k + ".sql");
+    const pre = el("pre", null, D[k].sql);
+    const btn = el("button", "copy", "Kopieer SQL"); btn.type = "button";
+    btn.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(D[k].sql); btn.textContent = "Gekopieerd"; }
+      catch (e) { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Geselecteerd"; }
+      setTimeout(() => btn.textContent = "Kopieer SQL", 1600);
+    });
+    det.append(sum, pre, btn); sqlHost.append(det);
+  }
+  document.getElementById("foot").textContent = "Gemaakt door sessie LAB ui met lab/ui/pages/build_data_overview.py · alleen ontwikkeldata (slot < 452.304.000).";
+})();
+</script>
