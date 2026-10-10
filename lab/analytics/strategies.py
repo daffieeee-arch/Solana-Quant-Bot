@@ -16,7 +16,11 @@ import re
 
 HOLDOUT_START = 452_304_000
 DEFAULTS = "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml"
-GROUP = ["family", "variant", "size_sol", "d", "tau", "scenario"]
+# Summary keys. From run v2 on also q, segment, regime, farm and overlay; keys a run lacks are skipped.
+# farm = 'all' in summary.parquet is organic + flagged together (S1/F6): checked as a roll-up, never summed
+# with them. overlay O7* rows are paired variants of the same triggers: separate groups, never added to 'none'.
+GROUP = ["family", "variant", "size_sol", "d", "tau", "q", "segment", "regime", "farm", "overlay", "scenario"]
+ROLLUP = {"farm": "all"}
 CURVE_POINTS = 400
 
 
@@ -73,13 +77,12 @@ def load(con, run_dir, defaults=DEFAULTS):
                 [conf.get("run_id", os.path.basename(run_dir)), json.dumps(conf), store["slot_start"],
                  store["slot_end_exclusive"] - 1])
     res_cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{results}')").fetchall()}
-    sum_cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{summary}')").fetchall()}
+    sum_types = {r[0]: r[1] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{summary}')").fetchall()}
+    sum_cols = set(sum_types)
     keys = [k for k in GROUP if k in sum_cols and (k == "scenario" or k in res_cols)]
     pos_keys = [k for k in keys if k != "scenario"]
     con.execute(f"CREATE TABLE strategy_summary AS SELECT * FROM read_parquet('{summary}')")
-    con.execute(f"""CREATE TABLE strategy_curves ({", ".join(f'"{k}" {t}' for k, t in
-                    [("family", "VARCHAR"), ("variant", "VARCHAR"), ("size_sol", "DOUBLE"), ("d", "BIGINT"),
-                     ("tau", "VARCHAR"), ("scenario", "VARCHAR")] if k in keys)},
+    con.execute(f"""CREATE TABLE strategy_curves ({", ".join(f'"{k}" {sum_types[k]}' for k in keys)},
                     step BIGINT, n BIGINT, slot UBIGINT, cum_pnl_sol DOUBLE)""")
     k_sql = ", ".join(pos_keys)
     has_base = "pnl_base_lamports" in res_cols
@@ -106,13 +109,18 @@ def load(con, run_dir, defaults=DEFAULTS):
             off = con.execute("SELECT count(*) FROM settled WHERE pnl IS DISTINCT FROM pnl_base_lamports").fetchone()[0]
             if off:
                 raise SystemExit(f"{off} positions differ from the run's own pnl_base_lamports")
-        bad = con.execute(f"""
-            SELECT count(*) FROM (SELECT {k_sql}, sum(pnl) / 1e9 AS mine FROM settled GROUP BY ALL) a
-            JOIN strategy_summary b USING ({k_sql}) WHERE b.scenario = ? AND abs(a.mine - b.total_pnl_sol) > 1e-6""",
-                          [name]).fetchone()[0]
-        missing = con.execute(f"""
-            SELECT count(*) FROM strategy_summary b ANTI JOIN (SELECT DISTINCT {k_sql} FROM settled) a USING ({k_sql})
-            WHERE b.scenario = ? AND b.filled > 0""", [name]).fetchone()[0]
+        # Group totals per key, plus roll-ups (farm = 'all'); keys may be NULL, so match IS NOT DISTINCT FROM.
+        mine = [f"SELECT {k_sql}, sum(pnl) AS pnl FROM settled GROUP BY ALL"]
+        for rk, rv in ROLLUP.items():
+            if rk in pos_keys:
+                cols = ", ".join(f"'{rv}' AS {k}" if k == rk else k for k in pos_keys)
+                mine.append(f"SELECT {cols}, sum(pnl) FROM settled GROUP BY ALL")
+        on = " AND ".join(f"a.{k} IS NOT DISTINCT FROM b.{k}" for k in pos_keys)
+        bad, missing = con.execute(f"""
+            WITH a AS ({" UNION ALL ".join(mine)}),
+                 b AS (SELECT * FROM strategy_summary WHERE scenario = ?)
+            SELECT (SELECT count(*) FROM a JOIN b ON {on} WHERE abs(a.pnl / 1e9 - b.total_pnl_sol) > 1e-6),
+                   (SELECT count(*) FROM b ANTI JOIN a ON {on} WHERE b.filled > 0)""", [name]).fetchone()
         if bad or missing:
             raise SystemExit(f"scenario {name}: re-settled P&L differs from summary.parquet "
                              f"({bad} groups differ, {missing} missing)")

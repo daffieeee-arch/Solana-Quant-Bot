@@ -98,6 +98,73 @@ class TournamentImport(unittest.TestCase):
                 build.strategies.load(duckdb.connect(), d)
 
 
+class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
+    """Run layout from v2 on: parts/ only, extra summary keys, farm = 'all' roll-up rows (in memory, tiny files)."""
+
+    KEYS = ["family", "variant", "size_sol", "d", "tau", "q", "segment", "regime", "farm", "overlay"]
+
+    def make_run(self, d, corrupt_all=False):
+        import json
+        import random
+        rnd = random.Random(7)
+        rows = []
+        for farm in ("organic", "flagged"):
+            for overlay in ("none", "O7V1"):
+                for i in range(40):
+                    cost = rnd.randrange(400_000_000, 600_000_000)
+                    rows.append(("F6", "v", 0.5, 1, None, 0.5, "pool_reversed", "270ms", farm, overlay,
+                                 f"m{i}", "pool", "2026-09-30", 451_000_000 + i, 451_000_002 + i, 451_000_100 + i,
+                                 "tp", i % 13 == 0, False, 0.0, int(cost * rnd.uniform(0.7, 1.3)), cost,
+                                 1 + (i % 3 == 0), False))
+        cols = self.KEYS + ["mint", "venue", "day", "t", "entry_slot", "exit_slot", "exit_reason", "entry_failed",
+                            "cf_graduation", "hist_ret", "proceeds", "cost", "exit_attempts", "skipped"]
+        con = duckdb.connect(config={"temp_directory": ""})
+        con.execute("CREATE TABLE p (" + ", ".join(f"{c} {t}" for c, t in zip(cols, [
+            "VARCHAR", "VARCHAR", "DOUBLE", "BIGINT", "VARCHAR", "DOUBLE", "VARCHAR", "VARCHAR", "VARCHAR", "VARCHAR",
+            "VARCHAR", "VARCHAR", "VARCHAR", "BIGINT", "BIGINT", "BIGINT", "VARCHAR", "BOOLEAN", "BOOLEAN", "DOUBLE",
+            "BIGINT", "BIGINT", "BIGINT", "BOOLEAN"])) + ")")
+        con.executemany(f"INSERT INTO p VALUES ({', '.join('?' * len(cols))})", rows)
+        os.makedirs(os.path.join(d, "parts"))
+        for n, half in enumerate(("t % 2 = 0", "t % 2 = 1")):
+            con.execute(f"COPY (SELECT * FROM p WHERE {half}) TO '{d}/parts/part-{n:06d}.parquet' (FORMAT parquet)")
+        summary = []
+        for name, per_tx, failed, rent, mode, adv in build.strategies.scenarios(
+                build.strategies.read_costs(build.strategies.DEFAULTS)):
+            refund = rent if mode in ("refunded", "refunded_on_full_exit") else 0
+            tot = {}
+            for r in rows:
+                pr, co, att, ef = r[20], r[21], r[22], r[17]
+                pnl = -failed if ef else ((int(pr * (1 - adv)) - per_tx + refund - max(0, att - 1) * failed)
+                                          - (int(co * (1 + adv)) + per_tx + rent))
+                for key in (r[:10], r[:8] + ("all",) + r[9:10]):
+                    tot[key] = tot.get(key, 0) + pnl
+            for key, v in tot.items():
+                off = 1.0 if corrupt_all and key[8] == "all" and name == "base" else 0.0
+                summary.append(key + (name, 40, 40, v / 1e9 + off))
+        con.execute("CREATE TABLE s AS SELECT * FROM (VALUES " + ", ".join(
+            "(" + ", ".join("NULL" if x is None else repr(x) for x in r) + ")" for r in summary) + ") v(" +
+            ", ".join(self.KEYS) + ", scenario, n, filled, total_pnl_sol)")
+        con.execute(f"COPY s TO '{d}/summary.parquet' (FORMAT parquet)")
+        with open(os.path.join(d, "config.json"), "w") as f:
+            json.dump({"run_id": "synthetic", "store": {"period": "dev", "slot_start": 450144000,
+                                                        "slot_end_exclusive": 452304000}}, f)
+
+    def test_parts_new_keys_and_rollup(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.make_run(d)
+            con = duckdb.connect(config={"temp_directory": ""})
+            build.strategies.load(con, d)
+            self.assertEqual(con.execute("SELECT count(*) FROM strategy_results").fetchone()[0], 160)
+            groups = con.execute("SELECT count(DISTINCT (farm, overlay)) FROM strategy_curves").fetchone()[0]
+            self.assertEqual(groups, 4)  # organic/flagged x none/O7V1; no curve for the farm = 'all' roll-up
+
+    def test_wrong_rollup_total_is_caught(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.make_run(d, corrupt_all=True)
+            with self.assertRaises(SystemExit):
+                build.strategies.load(duckdb.connect(config={"temp_directory": ""}), d)
+
+
 class ValidatorCatchesHoldout(unittest.TestCase):
     def test_holdout_slot_is_rejected(self):
         con = duckdb.connect()
