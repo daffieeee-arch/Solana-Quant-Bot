@@ -24,9 +24,10 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    # Owner decision 2026-10-10: the ~15 min Rust scan runs on main, weekly and on demand, not on PRs.
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 4
       matrix:
         language: [actions, javascript-typescript, python, rust]
     env:
@@ -40,15 +41,17 @@ jobs:
         with:
           persist-credentials: false
       - name: Prepare pinned Rust toolchain for extraction
-        if: matrix.language == 'rust'
+        if: matrix.language == 'rust' && github.event_name != 'pull_request'
         run: rustup toolchain install 1.97.1 --profile minimal
       - name: Initialize CodeQL
+        if: matrix.language != 'rust' || github.event_name != 'pull_request'
         uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           languages: ${{ matrix.language }}
           build-mode: none
           dependency-caching: false
       - name: Analyze and publish security results
+        if: matrix.language != 'rust' || github.event_name != 'pull_request'
         uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
           category: /language:${{ matrix.language }}

@@ -45,10 +45,56 @@ const CANONICAL_WORKFLOW = {
     ENTRY_SHADOW_MODE: 'true',
   },
   jobs: {
+  "scope": {
+    "name": "scope-policy",
+    "runs-on": "ubuntu-24.04",
+    "timeout-minutes": 10,
+    "outputs": {
+      "v2": "${{ steps.scope.outputs.v2 }}"
+    },
+    "steps": [
+      {
+        "name": "Check out repository",
+        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "with": {
+          "fetch-depth": 0,
+          "persist-credentials": false
+        }
+      },
+      {
+        "name": "Set up Node.js",
+        "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+        "with": {
+          "node-version": "22.23.2",
+          "cache": "npm",
+          "cache-dependency-path": "package-lock.json"
+        }
+      },
+      {
+        "name": "Install locked dependencies",
+        "run": "npm ci"
+      },
+      {
+        "name": "Enforce repository and zero-cost policy",
+        "run": "npm run ci:policy"
+      },
+      {
+        "name": "Classify changed paths",
+        "id": "scope",
+        "env": {
+          "CI_EVENT": "${{ github.event_name }}",
+          "CI_BEFORE": "${{ github.event.before }}"
+        },
+        "run": "node scripts/ci-change-scope.mjs"
+      }
+    ]
+  },
   "quality": {
     "name": "core-offline",
     "runs-on": "ubuntu-24.04",
     "timeout-minutes": 45,
+    "needs": "scope",
+    "if": "${{ needs.scope.outputs.v2 == 'true' }}",
     "steps": [
       {
         "name": "Check out repository",
@@ -192,6 +238,8 @@ const CANONICAL_WORKFLOW = {
     "name": "columnar-offline",
     "runs-on": "ubuntu-24.04",
     "timeout-minutes": 45,
+    "needs": "scope",
+    "if": "${{ needs.scope.outputs.v2 == 'true' }}",
     "steps": [
       {
         "name": "Check out repository",
@@ -278,6 +326,7 @@ const CANONICAL_WORKFLOW = {
     "runs-on": "ubuntu-24.04",
     "timeout-minutes": 5,
     "needs": [
+      "scope",
       "quality",
       "columnar"
     ],
@@ -374,8 +423,8 @@ export function validateWorkflowConfiguration(workflow) {
   if (!isMap(root.jobs) || Object.keys(root.jobs).length === 0) {
     errors.push('workflow jobs must be a non-empty mapping');
   }
-  if (!isMap(root.jobs) || !isDeepStrictEqual(Object.keys(root.jobs), ['quality', 'columnar', 'required'])) {
-    errors.push('workflow must define exactly quality, columnar and required jobs');
+  if (!isMap(root.jobs) || !isDeepStrictEqual(Object.keys(root.jobs), ['scope', 'quality', 'columnar', 'required'])) {
+    errors.push('workflow must define exactly scope, quality, columnar and required jobs');
   }
 
   let checkoutCount = 0;
@@ -463,8 +512,8 @@ export function validateWorkflowConfiguration(workflow) {
       });
     }
   }
-  if (checkoutCount !== 3) {
-    errors.push(`workflow must contain exactly three actions/checkout steps; found ${checkoutCount}`);
+  if (checkoutCount !== 4) {
+    errors.push(`workflow must contain exactly four actions/checkout steps; found ${checkoutCount}`);
   }
 
   walk(root, [], (value, path) => {
