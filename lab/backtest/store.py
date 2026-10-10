@@ -44,7 +44,8 @@ from . import data, pda
 
 DEFAULTS = "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml"
 STORE_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/store"
-SPILL_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp-duckdb"
+SPILL_DIR = os.environ.get("LAB_SPILL_DIR", "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp-duckdb")
+SPILL_MAX = os.environ.get("LAB_SPILL_MAX", "15GB")  # set a small cap while the VPS disk write limit applies
 VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 ms slots
 DISK_FLOOR_GB = 50
 DISK_LOW = "/home/chupa/Solana-project/data-old-faithful-one/lab/locks/disk-low"  # set by ops/disk-guard.sh
@@ -236,7 +237,7 @@ def build(period, out_path, cfg, chunks, log=print):
     os.makedirs(SPILL_DIR, exist_ok=True)
     con = data.connect(threads=int(os.environ.get("LAB_DUCKDB_THREADS", "2")),
                        memory=os.environ.get("LAB_DUCKDB_MEM", "1500MB"), temp=SPILL_DIR)
-    con.execute("SET max_temp_directory_size = '15GB'")
+    con.execute(f"SET max_temp_directory_size = '{SPILL_MAX}'")
     con.execute(f"ATTACH '{tmp}' AS s")
     t0 = time.time()
     here = os.path.dirname(os.path.abspath(__file__))

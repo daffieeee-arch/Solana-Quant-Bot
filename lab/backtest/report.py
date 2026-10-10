@@ -17,7 +17,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .costs import Scenario, settle_sql
-from .streams import SPILL_DIR
+from .streams import SPILL_DIR, SPILL_MAX
 
 TRIALS = os.environ.get("LAB_TRIALS", "/home/chupa/Solana-project/data-old-faithful-one/lab/trials")
 
@@ -30,7 +30,8 @@ FAMILIES = ("F7", "F1", "F6", "S1", "M1")  # families with an N2 control; N1, N3
 
 def _connect():
     con = duckdb.connect()
-    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'; SET max_temp_directory_size = '15GB'")
+    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'; "
+                f"SET max_temp_directory_size = '{SPILL_MAX}'")
     return con
 
 

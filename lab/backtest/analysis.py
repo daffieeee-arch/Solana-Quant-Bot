@@ -17,14 +17,15 @@ import duckdb
 import numpy as np
 
 from .report import _boot
-from .streams import SPILL_DIR
+from .streams import SPILL_DIR, SPILL_MAX
 
 STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 
 
 def _con():
     con = duckdb.connect()
-    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'; SET max_temp_directory_size = '15GB'")
+    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'; "
+                f"SET max_temp_directory_size = '{SPILL_MAX}'")
     return con
 
 
