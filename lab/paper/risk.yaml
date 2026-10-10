@@ -1,0 +1,8 @@
+# Paper-trading risk limits. Changed only by the owner; the engine only reads this file (every
+# minute of event time). An invalid file makes the engine open nothing.
+size_sol: 0.5              # per trade (addendum §6: 0.5-1 SOL of 10 SOL capital)
+max_open_positions: 5
+max_exposure_sol: 2.5      # sum of open positions at entry cost
+daily_loss_limit_sol: 1.0  # realized loss per UTC day; beyond it no new positions that day
+kill_switch: false         # true: open nothing
+families: [F7]

@@ -9,7 +9,12 @@ from .replay import PUMP, PUMP_AMM, CurveLeg, PoolLeg, Stream
 from .venues import Curve, Pool
 
 
-SPILL_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp-duckdb"
+import os
+
+# DuckDB spill. While the VPS disk write limit applies, runs point this at /dev/shm (LAB_SPILL_DIR)
+# with a small cap (LAB_SPILL_MAX).
+SPILL_DIR = os.environ.get("LAB_SPILL_DIR", "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp-duckdb")
+SPILL_MAX = os.environ.get("LAB_SPILL_MAX", "15GB")
 
 
 def open_store(path, threads=2, memory="1500MB"):
@@ -17,7 +22,8 @@ def open_store(path, threads=2, memory="1500MB"):
     con.execute(f"SET threads TO {threads}")
     con.execute(f"SET memory_limit = '{memory}'")
     con.execute(f"SET temp_directory = '{SPILL_DIR}'")
-    con.execute("SET max_temp_directory_size = '15GB'")  # a spill must never fill the disk
+    os.makedirs(SPILL_DIR, exist_ok=True)
+    con.execute(f"SET max_temp_directory_size = '{SPILL_MAX}'")  # a spill must never fill the disk
     con.execute("SET preserve_insertion_order = false")
     return con
 
@@ -36,33 +42,39 @@ def _curve_legs(rows):
     return legs
 
 
+def pool_leg(row, ctx):
+    """One pool leg from a store row. ctx carries the pool's last virtual quote and fee tiers:
+    withdraw and deposit events do not log them, so they take the previous leg's. Post-states come
+    from the logged amounts (the (B, E) chain the continuity check verifies)."""
+    (kind, slot, tx, oix, iix, disc, b, vault, vq, e, lpb, pb, cb, cbb, base, e_delta, quote_user, lq, lb,
+     left, lp_amount, lp_supply, trader, outer, farmer) = row
+    order = (slot, tx, oix, iix)
+    virt, fees = ctx.get("virt", 0), ctx.get("fees", (0, 0, 0, 0))
+    if kind in ("withdraw", "deposit"):
+        pre = Pool(b, vault + virt, *fees, virt=virt)
+        sign = -1 if kind == "withdraw" else 1
+        post = replace(pre, b=b + sign * base, e=pre.e + sign * quote_user)
+        return PoolLeg(slot, tx, order, kind, False, base, quote_user, pre, post, trader,
+                       lp_amount=lp_amount, lp_supply=lp_supply, direct=outer == PUMP_AMM)
+    virt = vq or 0
+    if kind != "boost":
+        fees = (lpb or 0, pb or 0, cb or 0, cbb or 0)
+    ctx["virt"], ctx["fees"] = virt, fees
+    pre = Pool(b, e, *(fees if kind != "boost" else (0, 0, 0, 0)), virt=virt)
+    post = replace(pre, b=b + base if kind == "sell" else b - base, e=e + e_delta)
+    if kind == "boost":
+        return PoolLeg(slot, tx, order, "boost", False, base, e_delta, pre, post, trader, boost_left=left)
+    return PoolLeg(slot, tx, order, kind, disc in data.POOL_EXACT_OUT, base, quote_user, pre, post, trader,
+                   lq, lb, direct=outer == PUMP_AMM, farmer=bool(farmer))
+
+
 def _pool_legs(rows):
-    """Pool legs from store rows. Post-states come from the logged amounts (the (B, E) chain the
-    continuity check verifies), not from re-running the formulas. Withdraw and deposit events do
-    not log the virtual quote reserves, so they take them from the previous leg."""
-    legs = []
-    virt, fees = 0, (0, 0, 0, 0)
-    for (kind, slot, tx, oix, iix, disc, b, vault, vq, e, lpb, pb, cb, cbb, base, e_delta, quote_user, lq, lb,
-         left, lp_amount, lp_supply, trader, outer, farmer) in rows:
-        order = (slot, tx, oix, iix)
-        if kind in ("withdraw", "deposit"):
-            pre = Pool(b, vault + virt, *fees, virt=virt)
-            sign = -1 if kind == "withdraw" else 1
-            post = replace(pre, b=b + sign * base, e=pre.e + sign * quote_user)
-            legs.append(PoolLeg(slot, tx, order, kind, False, base, quote_user, pre, post, trader,
-                                lp_amount=lp_amount, lp_supply=lp_supply, direct=outer == PUMP_AMM))
-            continue
-        virt = vq or 0
-        if kind != "boost":
-            fees = (lpb or 0, pb or 0, cb or 0, cbb or 0)
-        pre = Pool(b, e, *(fees if kind != "boost" else (0, 0, 0, 0)), virt=virt)
-        post = replace(pre, b=b + base if kind == "sell" else b - base, e=e + e_delta)
-        if kind == "boost":
-            legs.append(PoolLeg(slot, tx, order, "boost", False, base, e_delta, pre, post, trader, boost_left=left))
-            continue
-        legs.append(PoolLeg(slot, tx, order, kind, disc in data.POOL_EXACT_OUT, base, quote_user, pre, post, trader,
-                            lq, lb, direct=outer == PUMP_AMM, farmer=bool(farmer)))
-    return legs
+    ctx = {}
+    return [pool_leg(r, ctx) for r in rows]
+
+
+def curve_leg(row):
+    return _curve_legs([row])[0]
 
 
 CURVE_COLS = """slot, tx_index, outer_ix, inner_ix, variant, is_buy, t, q, fee, creator_fee, fee_bps, creator_bps,

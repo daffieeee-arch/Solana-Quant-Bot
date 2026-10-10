@@ -218,12 +218,14 @@ def decision_bounds(cfg, dev_start, dev_end, clock=None):
 # ----------------------------------------------------------------------------- F7
 
 
-def f7_signals_sql(con, cfg, dev_start, dev_end, only_mints=None, buckets=16, clock=None):
+def f7_signals_sql(con, cfg, dev_start, dev_end, only_mints=None, buckets=16, clock=None, trig_range=None):
     """See _f7_bucket; evaluated per slot-time regime and hash bucket of the mint/pool to bound
     memory. Returns (venue, mint, t, depth, pool, orientation, trigger wallet, trigger farmer,
     pool flagged for farming in the hour before t)."""
     clock = clock or Clock()
     lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
+    if trig_range:  # only triggers in [a, b] (paper parity on one chunk)
+        lo, hi = max(lo, trig_range[0]), min(hi, trig_range[1])
     out = []
     mint_r, pool_r = key_ranges(con, "mints", "mint", buckets), key_ranges(con, "pools", "pool", buckets)
     for rlo, rhi, m in clock.regimes(lo, hi + 1):
