@@ -63,7 +63,18 @@ MIN_TRADES = 200  # below this: report, no verdict (stop rule)
 # Historical mid moves above this factor are degenerate pool states (near-empty reserves), not
 # market moves: roughly the largest real move, curve start (vSOL 30) to pool open (vSOL 115).
 MAX_JUMP = 16
-LIVE_MIN_SOL = 5  # sizes below this are informative only (live size is > 10 SOL)
+# Owner decision 2026-10-10 (addendum §6): live capital is > 10 SOL, so trades are 0.5-1 SOL.
+GATE_SIZES = (0.5, 1.0)  # gate and stop rule
+INFO_SIZES = (2.0,)  # informative; larger sizes are capacity information only
+CAPITAL_SOL, MAX_POSITIONS = 10.0, 5
+
+
+def size_note(size):
+    if size in GATE_SIZES:
+        return "gate size"
+    if size in INFO_SIZES or size < min(GATE_SIZES):
+        return "informative"
+    return "capacity only"
 
 
 def verdict(o):
@@ -148,8 +159,9 @@ def summarize(results, cfg, con=None):
 def trials(summary, config):
     """One row per tested family variant (plan: trials.parquet): spec, params, window, commit, outcome.
 
-    Gate (batch 1, binding): base costs, edge vs N2 > 0 at a size >= 5 SOL for every delay d. For F6
-    only organic pools count: an edge that exists only in farming-flagged pools does not pass."""
+    Gate (addendum §6): base costs, edge vs N2 > 0 at 0.5 and 1 SOL, for d = 1 and d = 2 (every gate
+    size and delay present). For pool strategies only organic pools count: an edge that exists
+    only in farming-flagged pools does not pass."""
     base = [s for s in summary if s["scenario"] == "base" and s["family"] in FAMILIES and s["farm"] in ("n/a", "organic")
             and s["overlay"] == "none"]
     rows = []
@@ -158,8 +170,8 @@ def trials(summary, config):
         by_size = {}
         for s in mine:
             by_size.setdefault(s["size_sol"], []).append(s)
-        gate = any(sz >= 5 and all(x["edge_vs_n2"] is not None and x["edge_vs_n2"] > 0 for x in xs)
-                   for sz, xs in by_size.items())
+        gx = [x for sz, xs in by_size.items() if sz in GATE_SIZES for x in xs if x["d"] in (1, 2)]
+        gate = bool(gx) and all(x["edge_vs_n2"] is not None and x["edge_vs_n2"] > 0 for x in gx)
         rows.append({
             "run_id": config["run_id"], "batch": config.get("batch", "tournament_v1"), "family": fam, "variant": var,
             "segment": seg, "regime": reg,
@@ -172,6 +184,65 @@ def trials(summary, config):
             "gate_pass": gate,
         })
     return rows
+
+
+def capital_sim(trades, start=CAPITAL_SOL * 1e9, max_positions=MAX_POSITIONS):
+    """Play the trades of one strategy with one wallet: start capital, a fixed size per trade and at
+    most max_positions open at once. trades: (entry_slot, exit_slot, cost, pnl, failed), all in
+    lamports. A trade that does not fit (positions full or cash short) is skipped. Equity is cash
+    plus open positions at cost. Returns (final, max_drawdown, taken, skipped)."""
+    import heapq
+
+    cash, open_, locked, peak, mdd, taken, skipped = start, [], 0, start, 0.0, 0, 0
+
+    def settle_until(slot):
+        nonlocal cash, locked, peak, mdd
+        while open_ and open_[0][0] <= slot:
+            _, cost, back = heapq.heappop(open_)
+            cash, locked = cash + back, locked - cost
+            eq = cash + locked
+            peak = max(peak, eq)
+            mdd = max(mdd, 1 - eq / peak)
+
+    for entry, exit_, cost, pnl, failed in sorted(trades, key=lambda x: (x[0], x[1] or 0)):
+        settle_until(entry)
+        if len(open_) >= max_positions or (not failed and cash < cost):
+            skipped += 1
+            continue
+        taken += 1
+        if failed:  # the entry landed and failed: pay the failed transaction
+            cash += pnl
+            continue
+        cash, locked = cash - cost, locked + cost
+        heapq.heappush(open_, (exit_ or entry, cost, cost + pnl))
+    settle_until(float("inf"))
+    return cash, mdd, taken, skipped
+
+
+def capital_sims(results, cfg, summary, con=None):
+    """Capital simulation (addendum §6) for the candidates: groups at a gate size with verdict GO or
+    ADJUST, plus the best variant per family and segment at each gate size and d."""
+    con = con or _connect()
+    pnl, _ = settle_sql(Scenario.from_cfg("base", cfg))
+    base = [s for s in summary if s["scenario"] == "base" and s["family"] in FAMILIES and s["size_sol"] in GATE_SIZES
+            and s["overlay"] == "none" and s["farm"] in ("n/a", "organic") and s["mean_ret"] is not None]
+    best = {}
+    for s in base:
+        k = (s["family"], s["segment"], s["size_sol"], s["d"], s["q"], s["farm"])
+        if k not in best or s["mean_ret"] > best[k]["mean_ret"]:
+            best[k] = s
+    picks = {tuple(s[k] for k in KEYS): s for s in base if s["verdict"] in ("GO", "ADJUST")}
+    picks.update({tuple(s[k] for k in KEYS): s for s in best.values()})
+    have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{results}')").fetchall()}
+    out = []
+    for key, s in sorted(picks.items(), key=lambda kv: tuple(str(x) for x in kv[0])):
+        cond = " AND ".join(f"{k} = ?" for k in KEYS if k in have)
+        vals = [s[k] for k in KEYS if k in have]
+        rows = con.execute(f"""SELECT entry_slot, exit_slot, cost, {pnl}, entry_failed FROM read_parquet('{results}')
+                               WHERE NOT skipped AND {cond}""", vals).fetchall()
+        final, mdd, taken, skipped = capital_sim([(e, x, c or 0, p or 0, f) for e, x, c, p, f in rows])
+        out.append(dict(s, final_sol=final / 1e9, max_drawdown=mdd, taken=taken, skipped_capacity=skipped))
+    return out
 
 
 def overlay_effects(results, cfg, con=None):
@@ -263,7 +334,7 @@ def write_report(run_dir, cfg):
              [f"- F6 cap, measured on {c['sampled_pool_days']} sampled pool-days: qualifying triggers per pool-day median "
               f"{c['triggers_median']:.0f}, p90 {c['triggers_p90']:.0f}; {c['dropped_share'] * 100:.0f}% of triggers are not traded."]
              if (c := config.get("f6_trigger_cap")) else []) + [
-             "", "## Gate (batch 1): base costs, above N2 at ≥5 SOL for every d", ""]
+             "", "## Gate: base costs, above N2 at 0.5 and 1 SOL for d = 1 and d = 2", ""]
     for t in tr:
         lines.append(f"- {t['family']} {t['variant']} ({t['segment']}, {t['regime']}): {'PASS' if t['gate_pass'] else 'no'}")
     fam = sorted((s for s in base if s["family"] in FAMILIES),
@@ -271,7 +342,8 @@ def write_report(run_dir, cfg):
     lines += ["", "## Stop-rule measure per strategy (base costs)", "",
               f"Net P&L per trade in SOL after all costs (failed entries included), 95% CI by day bootstrap. "
               f"GO: CI above 0; ADJUST: mean above 0; STOP: mean ≤ 0; fewer than {MIN_TRADES} trades: no verdict. "
-              f"Sizes below {LIVE_MIN_SOL} SOL are informative only (under the live size).",
+              f"Gate sizes: {', '.join(str(x) for x in GATE_SIZES)} SOL (10 SOL capital); 2 SOL is informative and "
+              "larger sizes are capacity information only.",
               "",
               "| family | segment | regime | variant | size SOL | d | trades | days | net SOL/trade | 95% CI | verdict | mean % | "
               "edge vs N2 | edge 95% CI | note |",
@@ -279,7 +351,7 @@ def write_report(run_dir, cfg):
     for s in fam:
         ci = f"{_sol(s['pnl_ci_lo'])} … {_sol(s['pnl_ci_hi'])}" if s["pnl_ci_lo"] is not None else ""
         eci = f"{_pct(s['edge_ci_lo'])} … {_pct(s['edge_ci_hi'])}" if s["edge_ci_lo"] is not None else ""
-        note = "informative (under live size)" if s["size_sol"] < LIVE_MIN_SOL else ""
+        note = size_note(s["size_sol"])
         lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
                      f"{s['filled']} | {s['days']} | "
                      f"{_sol(s['mean_pnl_sol'])} | {ci} | {s['verdict']} | {_pct(s['mean_ret'])} | "
@@ -319,6 +391,17 @@ def write_report(run_dir, cfg):
                      f"{_num(s['reverted_direct'], '.2f')} | {_num(s['sells_dropped'], '.2f')} | "
                      f"{_num(s['cf_graduation'] and s['cf_graduation'] * 100, '.1f')}% | "
                      f"{_num(s['seed_pool'] and s['seed_pool'] * 100, '.1f')}% |")
+    sims = capital_sims(results, cfg, summary)
+    if sims:
+        lines += ["", f"## Capital simulation: {CAPITAL_SOL:g} SOL, fixed size, at most {MAX_POSITIONS} positions (base costs)", "",
+                  "Candidates: GO/ADJUST groups at a gate size plus the best variant per family and segment. Trades that "
+                  "do not fit (positions full or cash short) are skipped. Drawdown on equity at cost.", "",
+                  "| family | segment | farm | variant | size SOL | d | q | trades | skipped | final SOL | return | max drawdown |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for c in sims:
+            lines.append(f"| {c['family']} | {c['segment']} | {c['farm']} | {c['variant']} | {c['size_sol']} | {c['d']} | {c['q']} | "
+                         f"{c['taken']} | {c['skipped_capacity']} | {c['final_sol']:.2f} | "
+                         f"{_pct(c['final_sol'] / CAPITAL_SOL - 1)} | {c['max_drawdown'] * 100:.1f}% |")
     eff = overlay_effects(results, cfg)
     if eff:
         lines += ["", "## O7 insider overlay: paired difference to the base family (base costs)", "",
