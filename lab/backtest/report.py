@@ -20,11 +20,11 @@ from .streams import SPILL_DIR
 
 TRIALS = os.environ.get("LAB_TRIALS", "/home/chupa/Solana-project/data-old-faithful-one/lab/trials")
 
-KEYS = ["family", "variant", "size_sol", "d", "tau", "segment", "regime"]
+KEYS = ["family", "variant", "size_sol", "d", "tau", "segment", "regime", "farm"]
 NK = len(KEYS)
 K = ", ".join(KEYS)
 SCENARIOS = ("optimistic", "base", "pessimistic")
-FAMILIES = ("F7", "F1")  # families with an N2 control; N1 is a control itself
+FAMILIES = ("F7", "F1", "F6")  # families with an N2 control; N1 is a control itself
 
 
 def _connect():
@@ -76,7 +76,12 @@ def verdict(o):
 
 def summarize(results, cfg, con=None):
     con = con or _connect()
-    src = f"read_parquet('{results}')"
+    raw = f"read_parquet('{results}')"
+    have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {raw}").fetchall()}
+    missing = ", ".join(f"'n/a' AS {k}" for k in KEYS if k not in have)  # older runs lack newer keys
+    base_rel = f"(SELECT *{', ' + missing if missing else ''} FROM {raw})"
+    # Farming split (F6): organic and flagged pools, plus both together as 'all'.
+    src = f"(SELECT * FROM {base_rel} UNION ALL BY NAME SELECT * REPLACE ('all' AS farm) FROM {base_rel} WHERE farm IN ('organic', 'flagged'))"
     out, daily, daily_pnl = [], {}, {}
     for name in SCENARIOS:
         pnl, ret = settle_sql(Scenario.from_cfg(name, cfg))
@@ -127,7 +132,8 @@ def summarize(results, cfg, con=None):
     # N2 comparison: same variant / size / d / tau / scenario, CI by resampling days jointly.
     idx = {(o["scenario"], *[o[k] for k in KEYS]): o for o in out}
     for o in out:
-        k2 = (o["scenario"], "N2_" + o["family"], *[o[k] for k in KEYS[1:]])
+        # N2 controls are not split by farming (their pools are random): compare every split with them.
+        k2 = (o["scenario"], "N2_" + o["family"], *[o[k] for k in KEYS[1:-1]], "n/a")
         n2 = idx.get(k2)
         o["n2_n"] = n2["filled"] if n2 else None
         o["n2_mean_ret"] = n2["mean_ret"] if n2 else None
@@ -140,8 +146,9 @@ def summarize(results, cfg, con=None):
 def trials(summary, config):
     """One row per tested family variant (plan: trials.parquet): spec, params, window, commit, outcome.
 
-    Gate (batch 1, binding): base costs, edge vs N2 > 0 at a size >= 5 SOL for every delay d."""
-    base = [s for s in summary if s["scenario"] == "base" and s["family"] in FAMILIES]
+    Gate (batch 1, binding): base costs, edge vs N2 > 0 at a size >= 5 SOL for every delay d. For F6
+    only organic pools count: an edge that exists only in farming-flagged pools does not pass."""
+    base = [s for s in summary if s["scenario"] == "base" and s["family"] in FAMILIES and s["farm"] in ("n/a", "organic")]
     rows = []
     for fam, var, seg, reg in sorted({(s["family"], s["variant"], s["segment"], s["regime"]) for s in base}):
         mine = [s for s in base if (s["family"], s["variant"], s["segment"], s["regime"]) == (fam, var, seg, reg)]

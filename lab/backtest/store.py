@@ -17,7 +17,7 @@ Tables:
                    them in a signal (they look ahead)
   pool             events of SOL-market pools, pre-trade state: buy / sell / boost /
                    withdraw / deposit (the fee-free inner buy of a boost crank is stored once,
-                   as 'boost')
+                   as 'boost'); `farmer` flags volume-farming trades (see FARMER_RATIO)
   pool_sweeps      fee sweeps of those pools (new protocol; (B, E) does not move)
   pool_class_daily pools and events per UTC day and pool class
   meta             period, chunks, counts, ms per slot per epoch
@@ -48,6 +48,12 @@ SPILL_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp-duckdb"
 VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 ms slots
 DISK_FLOOR_GB = 50
 POOL_PARTS = 4
+# Volume farming (coordinator 2026-10-10): a trade's wallet is a farmer in that pool when, over
+# its own trades in the pool in the 24 h before the trade, |net token delta| < FARMER_RATIO x gross
+# token volume, with at least FARMER_MIN_TRADES trades. Backward-looking only.
+FARMER_RATIO = 0.05
+FARMER_MIN_TRADES = 2
+DAY_MS = 86_400_000
 H = "::HUGEINT"
 B = "::BIGINT"
 
@@ -206,7 +212,7 @@ POOL_SCHEMA = """kind VARCHAR, pool VARCHAR, slot UBIGINT, tx_index BIGINT, oute
   parent_ix_disc VARCHAR, b BIGINT, vault BIGINT, vq BIGINT, e BIGINT, lp_bps INTEGER, protocol_bps INTEGER,
   creator_bps INTEGER, cashback_bps INTEGER, base BIGINT, e_delta BIGINT, quote_user BIGINT, limit_quote HUGEINT,
   limit_base HUGEINT, boost_left BIGINT, lp_amount BIGINT, lp_supply BIGINT, orientation VARCHAR, token_buy BOOLEAN,
-  sol_amount BIGINT, sol_depth BIGINT"""
+  sol_amount BIGINT, sol_depth BIGINT, token_amount BIGINT, farmer BOOLEAN"""
 
 
 # ----------------------------------------------------------------------------- build
@@ -247,6 +253,7 @@ def build(period, out_path, cfg, chunks, log=print):
                    n_sell BIGINT, reversed BOOLEAN, can_boost BOOLEAN, coin_creator VARCHAR, last_b BIGINT, last_vault BIGINT)""")
     con.execute("CREATE TEMP TABLE pool_fee (pool VARCHAR, recipient VARCHAR, account VARCHAR)")
     con.execute("CREATE TEMP TABLE pool_day (pool VARCHAR, day DATE, n_buy BIGINT, n_sell BIGINT)")
+    con.execute("CREATE TEMP TABLE pool_day_vol (pool VARCHAR, day DATE, sol_volume BIGINT, organic_sol_volume BIGINT)")
 
     # Pass 1: blocks and per-pool evidence, one chunk at a time.
     for ch in chunks:
@@ -306,17 +313,46 @@ def build(period, out_path, cfg, chunks, log=print):
         trades, other = _pool_trades(c), _pool_other(c)
         src = " UNION ALL BY NAME ".join(x for x in (trades, other) if x)
         if src:
+            ms = con.execute(f"""SELECT (max(block_time) - min(block_time)) * 1000.0 / greatest(max(slot) - min(slot), 1)
+                                 FROM s.blocks WHERE slot >= {ch[0]} AND slot < {ch[1]}""").fetchone()[0] or 267.3
+            h24 = round(DAY_MS / ms)
             # Sorted inserts in POOL_PARTS slices of the pools, so one sort never holds a whole chunk.
             for part in range(POOL_PARTS):
-                sel = f"""
+                cur = f"""
                   SELECT x.*, x.vault + x.vq AS e, p.orientation,
                     CASE WHEN x.kind IN ('buy', 'sell') THEN (x.kind = 'buy') = (p.orientation = 'normal') END AS token_buy,
                     CASE WHEN p.orientation = 'normal' THEN x.quote_user ELSE x.base END AS sol_amount,
-                    CASE WHEN p.orientation = 'normal' THEN x.vault ELSE x.b END AS sol_depth
+                    CASE WHEN p.orientation = 'normal' THEN x.vault ELSE x.b END AS sol_depth,
+                    CASE WHEN x.kind IN ('buy', 'sell') THEN
+                      CASE WHEN p.orientation = 'normal' THEN x.base ELSE x.quote_user END END AS token_amount
                   FROM ({src}) x JOIN s.pools p USING (pool)
-                  WHERE p.quote_class IN ('sol', 'reversed') AND p.part = {part}
-                  ORDER BY x.pool, x.slot, x.tx_index, x.outer_ix, x.inner_ix"""
+                  WHERE p.quote_class IN ('sol', 'reversed') AND p.part = {part}"""
+                # Farmer flag: the wallet's own trades in the pool over the 24 h before each trade,
+                # from earlier chunks (already in s.pool) and this one.
+                sel = f"""
+                  WITH cur AS ({cur}),
+                  tr AS (
+                    SELECT pool, trader, slot, tx_index, outer_ix, inner_ix, token_buy, token_amount, true AS is_cur
+                    FROM cur WHERE kind IN ('buy', 'sell')
+                    UNION ALL
+                    SELECT e.pool, e.trader, e.slot, e.tx_index, e.outer_ix, e.inner_ix, e.token_buy, e.token_amount, false
+                    FROM s.pool e JOIN s.pools p USING (pool)
+                    WHERE p.part = {part} AND e.kind IN ('buy', 'sell') AND e.slot >= {max(0, ch[0] - h24)}),
+                  fl AS (
+                    SELECT pool, slot, tx_index, outer_ix, inner_ix, is_cur,
+                      SUM(CASE WHEN token_buy THEN token_amount ELSE -token_amount END) OVER w AS net,
+                      SUM(token_amount) OVER w AS gross, COUNT(*) OVER w AS n
+                    FROM tr WINDOW w AS (PARTITION BY pool, trader ORDER BY slot RANGE BETWEEN {h24} PRECEDING AND 1 PRECEDING))
+                  SELECT cur.*, COALESCE(fl.n >= {FARMER_MIN_TRADES} AND abs(fl.net) < {FARMER_RATIO} * fl.gross, false) AS farmer
+                  FROM cur LEFT JOIN fl ON fl.is_cur AND fl.pool = cur.pool AND fl.slot = cur.slot AND fl.tx_index = cur.tx_index
+                    AND fl.outer_ix = cur.outer_ix AND fl.inner_ix = cur.inner_ix
+                  ORDER BY cur.pool, cur.slot, cur.tx_index, cur.outer_ix, cur.inner_ix"""
                 con.execute(f"INSERT INTO s.pool BY NAME {sel}")
+            con.execute(f"""INSERT INTO pool_day_vol
+                            SELECT e.pool, epoch_ms(bl.block_time * 1000)::DATE, sum(e.sol_amount),
+                                   sum(e.sol_amount) FILTER (WHERE NOT e.farmer)
+                            FROM s.pool e JOIN s.blocks bl ON bl.slot = e.slot
+                            WHERE e.kind IN ('buy', 'sell') AND e.slot >= {ch[0]} AND e.slot < {ch[1]} GROUP BY ALL""")
         sweep = c.src("pump_amm/SweepPoolFeeEvent")
         if sweep:
             con.execute(f"""INSERT INTO s.pool_sweeps SELECT pool, slot, tx_index, outer_ix, inner_ix, amount{B}, bucket::INTEGER
@@ -325,8 +361,12 @@ def build(period, out_path, cfg, chunks, log=print):
 
     con.execute("""
       CREATE TABLE s.pool_class_daily AS
-      SELECT d.day, p.quote_class, p.mayhem, count(DISTINCT d.pool) AS pools, sum(d.n_buy) AS buys, sum(d.n_sell) AS sells
-      FROM pool_day d JOIN s.pools p USING (pool) GROUP BY ALL ORDER BY ALL""")
+      WITH d AS (SELECT pool, day, sum(n_buy) AS n_buy, sum(n_sell) AS n_sell FROM pool_day GROUP BY ALL),
+           v AS (SELECT pool, day, sum(sol_volume) AS sol_volume, sum(organic_sol_volume) AS organic_sol_volume
+                 FROM pool_day_vol GROUP BY ALL)
+      SELECT d.day, p.quote_class, p.mayhem, count(DISTINCT d.pool) AS pools, sum(d.n_buy) AS buys, sum(d.n_sell) AS sells,
+             sum(v.sol_volume) AS sol_volume, sum(v.organic_sol_volume) AS organic_sol_volume
+      FROM d JOIN s.pools p USING (pool) LEFT JOIN v USING (pool, day) GROUP BY ALL ORDER BY ALL""")
 
     counts = {t: con.execute(f"SELECT count(*) FROM s.{t}").fetchone()[0]
               for t in ("blocks", "mints", "curve", "pools", "pool", "pool_sweeps")}
@@ -345,6 +385,7 @@ def build(period, out_path, cfg, chunks, log=print):
         "pool_classes": {k: {"pools": n, "rows": r} for k, n, r in con.execute(
             "SELECT quote_class, count(*), sum(n_buy + n_sell) FROM s.pools JOIN s.pool_stats USING (pool) GROUP BY 1").fetchall()},
         "ms_per_slot": {int(e): round(v, 2) for e, v in ms},
+        "farmer": {"ratio": FARMER_RATIO, "min_trades": FARMER_MIN_TRADES, "window_ms": DAY_MS},
         "unhandled_event_files": unhandled,
         "git_commit": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                      cwd=os.path.dirname(__file__)).stdout.strip(),

@@ -72,6 +72,7 @@ class PoolLeg:
     direct: bool = True
     lp_amount: int = None  # withdraw: LP tokens burned; deposit: minted
     lp_supply: int = None
+    farmer: bool = False  # the trader was volume farming in this pool (store.py, backward-looking)
 
 
 @dataclass

@@ -108,6 +108,7 @@ class Signal:
     ref: tuple = None  # N2 only: (mint or pool, t) of the family trigger this control is matched to
     pool: str = None  # pool signals: the pool (mint is the token mint when known, else the pool)
     orientation: str = None  # pool signals: normal | reversed
+    flagged: bool = None  # F6: the pool was flagged for volume farming in the hour before t
 
 
 # ----------------------------------------------------------------------------- exit rules
@@ -441,3 +442,111 @@ def n2_matches(con, triggers, k=5, clock=None):
                 chosen = pick[np.argsort(_mix(mkey[mid[pick]] ^ seed), kind="stable")[:k]]
                 out[tr] = [(sys.intern(names[mid[j]]), int(slots[j]), int(depth[j])) for j in chosen]
     return out
+
+
+# ----------------------------------------------------------------------------- F6 (families v2)
+# Trend in deep pools (week2-strategy-specs.md F6). Windows in ms (the spec's slot counts at
+# 267 ms are 1 h, 30 min, 5 min and 4 h). Flow and buyer counts use organic trades only: trades
+# whose wallet was volume farming in the pool are excluded (store.py `farmer`).
+
+F6_HIGH_MS, F6_DEPTH_MS, F6_FLOW_MS, F6_MAX_HOLD_MS = 3_600_000, 1_800_000, 300_000, 14_400_000
+F6_FARM_MS = 3_600_000  # a pool is flagged when farmers made > F6_FARM_SHARE of its SOL volume
+F6_FARM_SHARE = 0.5
+F6_GRID = [0.05, 0.08, 0.12]  # trailing stop from the peak mark
+
+
+def f6_min_depth(size_sol):
+    """Q_min(S): the pool's real SOL depth must stay at least this high over the depth window."""
+    if size_sol <= 5:
+        return 150 * SOL
+    return 254 * SOL if size_sol <= 10 else 603 * SOL
+
+
+def f6_signals_sql(con, cfg, dev_start, dev_end, buckets=16, clock=None, only_pools=None):
+    """F6 triggers with backward-looking windows only. Returns (mint, pool, orientation, t,
+    depth, min_depth, flagged): depth = real SOL at t, min_depth = lowest real SOL depth over
+    [t - 30 min, t] (the size filter is applied per size), flagged = farming share > 0.5 in the
+    hour before t."""
+    clock = clock or Clock()
+    lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
+    out = []
+    for rlo, rhi, m in clock.regimes(lo, hi + 1):
+        n_high, n_depth, n_flow, n_farm = (round(x / m) for x in (F6_HIGH_MS, F6_DEPTH_MS, F6_FLOW_MS, F6_FARM_MS))
+        for b in range(buckets):
+            pu = pool_universe_sql() + f" AND hash(p.pool) % {buckets} = {b}"
+            if only_pools is not None:
+                con.execute("CREATE OR REPLACE TEMP TABLE only_pools (pool VARCHAR)")
+                con.executemany("INSERT INTO only_pools VALUES (?)", [(x,) for x in only_pools])
+                pu += " AND p.pool IN (SELECT pool FROM only_pools)"
+            out += con.execute(f"""
+              WITH ev AS (
+                SELECT e.pool, COALESCE(p.mint, p.pool) AS mint, p.orientation, e.slot, e.tx_index, e.outer_ix, e.inner_ix,
+                       e.trader, e.token_buy, e.farmer, e.sol_amount, e.sol_depth,
+                       CASE WHEN p.orientation = 'normal'
+                            THEN (e.e + e.e_delta)::DOUBLE / (CASE WHEN e.token_buy THEN e.b - e.base ELSE e.b + e.base END)
+                            ELSE (CASE WHEN e.token_buy THEN e.b + e.base ELSE e.b - e.base END)::DOUBLE / (e.e + e.e_delta)
+                       END AS price
+                FROM pool e JOIN pools p USING (pool)
+                WHERE {pu} AND e.kind IN ('buy', 'sell') AND e.slot BETWEEN {rlo - n_high} AND {rhi - 1}),
+              w AS (
+                SELECT *,
+                  MAX(price) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_high} PRECEDING AND 1 PRECEDING) AS high,
+                  MIN(sol_depth) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_depth} PRECEDING AND CURRENT ROW) AS min_depth,
+                  SUM(CASE WHEN farmer THEN 0 WHEN token_buy THEN sol_amount ELSE -sol_amount END)
+                    OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_flow} PRECEDING AND CURRENT ROW) AS inflow,
+                  COUNT(DISTINCT CASE WHEN token_buy AND NOT farmer THEN trader END)
+                    OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_flow} PRECEDING AND CURRENT ROW) AS buyers,
+                  SUM(CASE WHEN farmer THEN sol_amount ELSE 0 END)
+                    OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_farm} PRECEDING AND 1 PRECEDING) AS farm_vol,
+                  SUM(sol_amount) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_farm} PRECEDING AND 1 PRECEDING) AS vol
+                FROM ev),
+              last AS (SELECT * FROM w QUALIFY row_number() OVER (PARTITION BY pool, slot ORDER BY tx_index DESC, outer_ix DESC,
+                                                                                  inner_ix DESC) = 1)
+              SELECT mint, pool, orientation, slot, sol_depth, min_depth,
+                     COALESCE(farm_vol > {F6_FARM_SHARE} * vol, false) AS flagged
+              FROM last
+              WHERE slot BETWEEN {max(lo, rlo)} AND {min(hi, rhi - 1)} AND price > high AND min_depth >= {150 * SOL}
+                AND inflow >= 0.02 * sol_depth AND buyers >= 10""").fetchall()
+    return out
+
+
+class FlowIndex:
+    """Organic net SOL flow of a pool stream over slot windows (prefix sums over the legs)."""
+
+    def __init__(self, stream):
+        self.slots, self.cum = [], [0]
+        for l in stream.pool_legs:
+            if l.kind not in ("buy", "sell"):
+                continue
+            tb, a, _ = sol_side(l, stream.orientation)
+            self.slots.append(l.slot)
+            self.cum.append(self.cum[-1] + (0 if l.farmer else (a if tb else -a)))
+
+    def flow(self, lo, hi):
+        """Net organic SOL inflow over lo <= slot <= hi."""
+        i, j = bisect.bisect_left(self.slots, lo), bisect.bisect_right(self.slots, hi)
+        return self.cum[j] - self.cum[i]
+
+
+class F6Exit(ExitRule):
+    """Trailing stop from the peak mark, organic outflow over the last 5 min, or time."""
+
+    def __init__(self, trail, flows, n_flow, max_slots, orientation):
+        self.trail, self.flows, self.n_flow, self.max_slots = trail, flows, n_flow, max_slots
+        self.orientation, self.peak = orientation, 0
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        self.peak = max(self.peak, ctx["mark"])
+        if ctx["mark"] <= self.peak * (1 - self.trail):
+            return "trailing_stop"
+        pool = ctx.get("pool")
+        if pool is not None:
+            depth = pool.b if self.orientation == "reversed" else pool.real
+            if self.flows.flow(ctx["slot"] - self.n_flow, ctx["slot"]) < -0.01 * depth:
+                return "outflow"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None

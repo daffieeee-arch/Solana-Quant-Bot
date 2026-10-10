@@ -27,13 +27,20 @@ from . import replay, streams
 from .costs import LAMPORTS, Scenario, settle_sql
 from .store import load_defaults
 from .strategies import (
+    F6_FLOW_MS,
+    F6_GRID,
+    F6_MAX_HOLD_MS,
     F7_GRID,
     Clock,
+    F6Exit,
+    FlowIndex,
     PastView,
     Signal,
     f1_candidates,
     f1_exit,
     f1_signal,
+    f6_min_depth,
+    f6_signals_sql,
     f7_signals_sql,
     n1_candidates,
     n2_matches,
@@ -56,6 +63,7 @@ RESULT_SCHEMA = pa.schema([
     ("reverted_router", pa.int64()), ("sells_dropped", pa.int64()), ("sells_scaled", pa.int64()),
     ("hist_ret", pa.float64()), ("day", pa.string()),
     ("pool", pa.string()), ("orientation", pa.string()), ("segment", pa.string()), ("regime", pa.string()),
+    ("farm", pa.string()),
     ("d_ms", pa.float64()),
 ])
 
@@ -70,7 +78,8 @@ def store_bounds(con):
 
 
 # Windows in milliseconds (v1 slot values at 267.3 ms), converted per epoch by the store's Clock.
-MAX_HOLD_MS = {"F7": ms(2_400), "N2_F7": ms(2_400), "F1": ms(4_500), "N2_F1": ms(4_500), "N1": ms(1_500)}
+MAX_HOLD_MS = {"F7": ms(2_400), "N2_F7": ms(2_400), "F1": ms(4_500), "N2_F1": ms(4_500), "N1": ms(1_500),
+               "F6": F6_MAX_HOLD_MS, "N2_F6": F6_MAX_HOLD_MS}
 WINDOW_MARGIN_MS = ms(6_000)  # d, graduation and pool open after the last possible exit decision
 CLUSTER_GAP_MS = ms(20_000)  # signals further apart than this are loaded and simulated separately
 MAX_WINDOW_MS = ms(50_000)  # cap on one load window (busy pools)
@@ -89,6 +98,15 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                 signals.append(Signal("F7", f"tp{int(tp*100)}_T{T}", m, slot, venue, int(depth), (tp, T),
                                       pool=pool, orientation=orientation))
         log(f"F7: {len(signals)} signals")
+    if "F6" in families:
+        n6 = 0
+        for m, pool, orientation, slot, depth, min_depth, flagged in f6_signals_sql(con, cfg, lo, hi, clock=clock):
+            m, pool = sys.intern(m), sys.intern(pool)
+            for trail in F6_GRID:
+                signals.append(Signal("F6", f"trail{int(trail * 100)}", m, slot, "pool", int(depth), (trail, int(min_depth)),
+                                      pool=pool, orientation=orientation, flagged=bool(flagged)))
+                n6 += 1
+        log(f"F6: {n6} signals")
     if "F1" in families:
         cands = defaultdict(list)
         for band in (40, 55, 70):
@@ -122,7 +140,7 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
     if "N2" in families:
         by_trigger = defaultdict(list)
         for s in signals:
-            if s.family in ("F7", "F1"):
+            if s.family in ("F7", "F1", "F6"):
                 by_trigger[(s.family, s.pool or s.mint, s.t, s.venue, s.depth, s.orientation)].append(s)
         t0 = time.time()
         matches = n2_matches(con, list(by_trigger), k=n2_k, clock=clock)
@@ -166,8 +184,11 @@ def work_items(signals, clock=None):
     return out
 
 
-def exit_rule_for(sig, scn, d, clock=None):
+def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None):
     clock = clock or Clock()
+    if sig.family in ("F6", "N2_F6"):
+        return F6Exit(sig.params[0], flows if flows is not None else FlowIndex(stream), clock.slots(F6_FLOW_MS, sig.t),
+                      clock.slots(F6_MAX_HOLD_MS, sig.t), stream.orientation)
     if sig.family in ("F7", "N2_F7"):
         tp, T = sig.params
         return tp_sl_time(tp, -0.08, clock.slots(ms(T), sig.t), scn)
@@ -209,6 +230,7 @@ def _work(args):
         if st is None:
             continue
         mint = st.mint
+        flows = FlowIndex(st) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
         for size_sol in sizes:
             size = int(size_sol * LAMPORTS)
             for d in delays:
@@ -221,7 +243,12 @@ def _work(args):
                             continue
                         if sig.family in ("F1", "N2_F1") and size > (85.005 - 1) * LAMPORTS - sig.depth:
                             continue
-                        rule = exit_rule_for(sig, base, d, clock)
+                        # F6 capacity: the pool's real SOL must have stayed above Q_min(S) (N2: its depth now).
+                        if sig.family == "F6" and sig.params[1] < f6_min_depth(size_sol):
+                            continue
+                        if sig.family == "N2_F6" and sig.depth < f6_min_depth(size_sol):
+                            continue
+                        rule = exit_rule_for(sig, base, d, clock, st, flows)
                         if sig.venue == "pool":
                             r = replay.simulate_pool_position(st, sig.t, size, d, q, rule, tol, tau)
                         else:
@@ -241,6 +268,7 @@ def _work(args):
                             "hist_ret": (r.hist_mid_exit / r.hist_mid_entry - 1) if (r.hist_mid_entry and r.hist_mid_exit) else None,
                             "pool": sig.pool, "orientation": sig.orientation,
                             "segment": "curve" if sig.venue == "curve" else f"pool_{sig.orientation}",
+                            "farm": "n/a" if sig.flagged is None else ("flagged" if sig.flagged else "organic"),
                             "regime": clock.regime_label(sig.t), "d_ms": round(d * clock.ms_per_slot(sig.t), 1),
                         })
         del st

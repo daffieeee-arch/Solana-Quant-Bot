@@ -42,7 +42,7 @@ def _pool_legs(rows):
     legs = []
     virt, fees = 0, (0, 0, 0, 0)
     for (kind, slot, tx, oix, iix, disc, b, vault, vq, e, lpb, pb, cb, cbb, base, e_delta, quote_user, lq, lb,
-         left, lp_amount, lp_supply, trader, outer) in rows:
+         left, lp_amount, lp_supply, trader, outer, farmer) in rows:
         order = (slot, tx, oix, iix)
         if kind in ("withdraw", "deposit"):
             pre = Pool(b, vault + virt, *fees, virt=virt)
@@ -60,7 +60,7 @@ def _pool_legs(rows):
             legs.append(PoolLeg(slot, tx, order, "boost", False, base, e_delta, pre, post, trader, boost_left=left))
             continue
         legs.append(PoolLeg(slot, tx, order, kind, disc in data.POOL_EXACT_OUT, base, quote_user, pre, post, trader,
-                            lq, lb, direct=outer == PUMP_AMM))
+                            lq, lb, direct=outer == PUMP_AMM, farmer=bool(farmer)))
     return legs
 
 
@@ -68,7 +68,7 @@ CURVE_COLS = """slot, tx_index, outer_ix, inner_ix, variant, is_buy, t, q, fee, 
                 vt, vq, rt, rq, trader, arg_budget, arg_max_cost, arg_min_tokens, arg_min_quote_out, outer_program"""
 POOL_COLS = """kind, slot, tx_index, outer_ix, inner_ix, parent_ix_disc, b, vault, vq, e, lp_bps, protocol_bps, creator_bps,
                cashback_bps, base, e_delta, quote_user, limit_quote, limit_base, boost_left, lp_amount, lp_supply, trader,
-               outer_program"""
+               outer_program, farmer"""
 
 
 def _want(con, windows):
