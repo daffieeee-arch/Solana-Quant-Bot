@@ -34,6 +34,9 @@ from .strategies import (
     Clock,
     F6Exit,
     FlowIndex,
+    N3_HOLD_MS,
+    N4_MAX_HOLD,
+    N4Exit,
     PastView,
     Signal,
     f1_candidates,
@@ -44,6 +47,7 @@ from .strategies import (
     f7_signals_sql,
     n1_candidates,
     n2_matches,
+    n4_signals_sql,
     ms,
     tp_sl_time,
     until_slot,
@@ -79,7 +83,7 @@ def store_bounds(con):
 
 # Windows in milliseconds (v1 slot values at 267.3 ms), converted per epoch by the store's Clock.
 MAX_HOLD_MS = {"F7": ms(2_400), "N2_F7": ms(2_400), "F1": ms(4_500), "N2_F1": ms(4_500), "N1": ms(1_500),
-               "F6": F6_MAX_HOLD_MS, "N2_F6": F6_MAX_HOLD_MS}
+               "F6": F6_MAX_HOLD_MS, "N2_F6": F6_MAX_HOLD_MS, "N3": N3_HOLD_MS, "N4": ms(N4_MAX_HOLD)}
 WINDOW_MARGIN_MS = ms(6_000)  # d, graduation and pool open after the last possible exit decision
 CLUSTER_GAP_MS = ms(20_000)  # signals further apart than this are loaded and simulated separately
 MAX_WINDOW_MS = ms(50_000)  # cap on one load window (busy pools)
@@ -107,7 +111,12 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                                       pool=pool, orientation=orientation, flagged=bool(flagged)))
                 n6 += 1
         log(f"F6: {n6} signals")
-    if "F1" in families:
+    if "N4" in families:
+        for m, pool, orientation, t, depth in n4_signals_sql(con, cfg, lo, hi, n1_sample, clock):
+            signals.append(Signal("N4", "crank_scalp", sys.intern(m), t, "pool", int(depth or 0), (),
+                                  pool=sys.intern(pool), orientation=orientation))
+        log(f"N4: {sum(1 for s in signals if s.family == 'N4')} signals")
+    if "F1" in families or "N3" in families:
         cands = defaultdict(list)
         for band in (40, 55, 70):
             for m, t in f1_candidates(con, cfg, lo, hi, band, clock):
@@ -122,9 +131,12 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                     continue
                 for band, t in sorted(cands[m]):
                     v = PastView(ss[m], t)
-                    if v.curve and f1_signal(v, creators.get(m), min(sizes) * LAMPORTS, clock):
+                    if "F1" in families and v.curve and f1_signal(v, creators.get(m), min(sizes) * LAMPORTS, clock):
                         signals.append(Signal("F1", f"B{band}", sys.intern(m), t, "curve", int(v.curve[-1].post.rq), (band,)))
                         n_f1 += 1
+                    if "N3" in families and band == 55 and v.curve and f1_signal(
+                            v, creators.get(m), min(sizes) * LAMPORTS, clock, flow=False):
+                        signals.append(Signal("N3", "B55_hold", sys.intern(m), t, "curve", int(v.curve[-1].post.rq), ()))
             del ss
         log(f"F1: {n_f1} signals from {sum(len(c) for c in cands.values())} candidates")
     if "N1" in families:
@@ -196,6 +208,10 @@ def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None):
         return f1_exit(sig.depth, clock.slots(ms(4_500), sig.t))
     if sig.family == "N1":
         return until_slot(sig.t + clock.slots(ms(sig.params[0]), sig.t), d)
+    if sig.family == "N3":
+        return until_slot(sig.t + d + clock.slots(N3_HOLD_MS, sig.t), d)
+    if sig.family == "N4":
+        return N4Exit(sorted(l.slot for l in stream.pool_legs if l.kind == "boost"), N4_MAX_HOLD)
     raise ValueError(sig.family)
 
 

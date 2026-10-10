@@ -343,10 +343,11 @@ def f1_candidates(con, cfg, dev_start, dev_end, band_sol, clock=None):
 F1_INFLOW_MS = ms(100)
 
 
-def f1_signal(view, creator, size, clock=None):
+def f1_signal(view, creator, size, clock=None, flow=True):
+    """F1 filters; flow=False drops the inflow rule (control N3)."""
     t = view.t
     legs = view.curve
-    if _inflow_curve(view.curve_window(t - (clock or Clock()).slots(F1_INFLOW_MS, t), t)) < 5 * SOL:
+    if flow and _inflow_curve(view.curve_window(t - (clock or Clock()).slots(F1_INFLOW_MS, t), t)) < 5 * SOL:
         return False
     buyers = {l.trader for l in legs if l.is_buy and l.trader != creator and l.trader != MAYHEM_AGENT}
     if len(buyers) < 30:
@@ -550,3 +551,41 @@ class F6Exit(ExitRule):
         if ctx["slots_held"] >= self.max_slots:
             return "time"
         return None
+
+
+# ----------------------------------------------------------------------------- N3 / N4 controls
+
+N3_HOLD_MS = ms(324_000)  # mark to market on the curve after ~1 day if the token has not graduated
+N4_CRANK_GAP = 44  # slots between boost cranks (spec)
+N4_MAX_HOLD = 400  # slots; fallback when no further crank comes
+
+
+def n4_signals_sql(con, cfg, dev_start, dev_end, sample, clock=None):
+    """N4 boost-crank scalp: decide at last crank + 42 so the buy lands just before the expected
+    next crank (d = 1: +43, d = 2: +44); sell right after the next actual crank (N4Exit).
+    A deterministic sample of cranks in SOL-market pools. Returns (mint, pool, orientation, t, depth)."""
+    lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
+    return con.execute(f"""
+        WITH c AS (
+          SELECT e.pool, COALESCE(p.mint, p.pool) AS mint, p.orientation, e.slot, e.vault AS depth
+          FROM pool e JOIN pools p USING (pool)
+          WHERE e.kind = 'boost' AND {pool_universe_sql()} AND e.slot BETWEEN {lo} AND {hi}
+          QUALIFY row_number() OVER (PARTITION BY e.pool, e.slot ORDER BY e.tx_index) = 1)
+        SELECT mint, pool, orientation, slot + {N4_CRANK_GAP - 2} AS t, depth FROM c
+        ORDER BY hash(pool, slot) LIMIT {int(sample)}""").fetchall()
+
+
+class N4Exit(ExitRule):
+    """Sell right after the first boost crank that happens after our entry."""
+
+    def __init__(self, crank_slots, max_slots):
+        self.cranks, self.max_slots = crank_slots, max_slots
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        i = bisect.bisect_right(self.cranks, ctx["entry_slot"])
+        if i < len(self.cranks) and self.cranks[i] <= ctx["slot"]:
+            return "after_crank"
+        return "time" if ctx["slots_held"] >= self.max_slots else None

@@ -44,3 +44,14 @@ def test_exit_rule():
     out = F6Exit(0.08, Flows(-6 * SOL), 1125, 54_000, "normal")  # -1.2% of 500 SOL depth
     assert out(ctx(100, 1, 1)) == "outflow"
     assert F6Exit(0.08, Flows(0), 1125, 54_000, "normal")(ctx(100, 9, 54_000)) == "time"
+
+
+def test_n4_exit_sells_after_the_next_crank():
+    from backtest.strategies import N4Exit
+
+    r = N4Exit([100, 144, 190], 400)
+    base = {"mark": 1, "pool": P}
+    assert r(dict(base, entry_slot=143, slot=143, slots_held=0)) is None  # crank at 144 not seen yet
+    assert r(dict(base, entry_slot=143, slot=144, slots_held=1)) == "after_crank"
+    assert r(dict(base, entry_slot=191, slot=500, slots_held=309)) is None
+    assert r(dict(base, entry_slot=191, slot=591, slots_held=400)) == "time"
