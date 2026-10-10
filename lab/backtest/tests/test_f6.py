@@ -84,3 +84,35 @@ def test_s1_exit_rule():
     assert r(dict(base, mark=95, slot=500)) == "rebalance"
     thin = S1Exit(500, 1_100 * SOL, "normal", 10**9)  # 500 < 0.5 * 1100
     assert thin(dict(base, mark=95, slot=100)) == "liquidity"
+
+
+def test_o7_insiders_and_exit():
+    from backtest.overlay import Insiders, O7Exit
+    from backtest.replay import CurveLeg
+    from backtest.venues import Curve
+
+    C = Curve(1, 1, 1, 1, 95, 30)
+
+    def cl(slot, trader, buy, t):
+        return CurveLeg(slot, 0, (slot, 0, 0, 0), buy, t, 1, 0, "buy" if buy else "sell", C, C, trader)
+
+    legs = [cl(100, "creator", True, 100), cl(105, "early", True, 300), cl(200, "x", True, 600),
+            cl(300, "early", False, 100), cl(400, "y", True, 1000)]
+    st = Stream("M", 100, "creator", legs)
+    ins = Insiders(st, window_slots=37)  # 10 s
+    assert ins.known and ins.insiders == {"creator", "early"}
+    assert abs(ins.share(250) - 400 / 1000) < 1e-12  # 400 of 1000 circulating
+    assert ins.share(450) == 300 / 1900
+    sold, creator_sells = ins.sold_since(250, 350)
+    assert (sold, creator_sells) == (100, 0)
+
+    class Never:
+        def deadline(self, e):
+            return None
+
+        def __call__(self, ctx):
+            return None
+
+    r = O7Exit(Never(), ins)
+    assert r({"entry_slot": 250, "slot": 299}) is None
+    assert r({"entry_slot": 250, "slot": 300}) == "o7_insider_sell"  # 100 >= 25% of 400

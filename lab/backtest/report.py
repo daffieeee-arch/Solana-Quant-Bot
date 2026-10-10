@@ -20,7 +20,7 @@ from .streams import SPILL_DIR
 
 TRIALS = os.environ.get("LAB_TRIALS", "/home/chupa/Solana-project/data-old-faithful-one/lab/trials")
 
-KEYS = ["family", "variant", "size_sol", "d", "tau", "segment", "regime", "farm"]
+KEYS = ["family", "variant", "size_sol", "d", "tau", "segment", "regime", "farm", "overlay"]
 NK = len(KEYS)
 K = ", ".join(KEYS)
 SCENARIOS = ("optimistic", "base", "pessimistic")
@@ -78,7 +78,7 @@ def summarize(results, cfg, con=None):
     con = con or _connect()
     raw = f"read_parquet('{results}')"
     have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {raw}").fetchall()}
-    missing = ", ".join(f"'n/a' AS {k}" for k in KEYS if k not in have)  # older runs lack newer keys
+    missing = ", ".join(f"'{'none' if k == 'overlay' else 'n/a'}' AS {k}" for k in KEYS if k not in have)  # older runs
     base_rel = f"(SELECT *{', ' + missing if missing else ''} FROM {raw})"
     # Farming split (F6): organic and flagged pools, plus both together as 'all'.
     src = f"(SELECT * FROM {base_rel} UNION ALL BY NAME SELECT * REPLACE ('all' AS farm) FROM {base_rel} WHERE farm IN ('organic', 'flagged'))"
@@ -133,7 +133,7 @@ def summarize(results, cfg, con=None):
     idx = {(o["scenario"], *[o[k] for k in KEYS]): o for o in out}
     for o in out:
         # N2 controls are not split by farming (their pools are random): compare every split with them.
-        k2 = (o["scenario"], "N2_" + o["family"], *[o[k] for k in KEYS[1:-1]], "n/a")
+        k2 = (o["scenario"], "N2_" + o["family"], *[o[k] for k in KEYS[1:-2]], "n/a", o["overlay"])
         n2 = idx.get(k2)
         o["n2_n"] = n2["filled"] if n2 else None
         o["n2_mean_ret"] = n2["mean_ret"] if n2 else None
@@ -148,7 +148,8 @@ def trials(summary, config):
 
     Gate (batch 1, binding): base costs, edge vs N2 > 0 at a size >= 5 SOL for every delay d. For F6
     only organic pools count: an edge that exists only in farming-flagged pools does not pass."""
-    base = [s for s in summary if s["scenario"] == "base" and s["family"] in FAMILIES and s["farm"] in ("n/a", "organic")]
+    base = [s for s in summary if s["scenario"] == "base" and s["family"] in FAMILIES and s["farm"] in ("n/a", "organic")
+            and s["overlay"] == "none"]
     rows = []
     for fam, var, seg, reg in sorted({(s["family"], s["variant"], s["segment"], s["regime"]) for s in base}):
         mine = [s for s in base if (s["family"], s["variant"], s["segment"], s["regime"]) == (fam, var, seg, reg)]
@@ -169,6 +170,40 @@ def trials(summary, config):
             "gate_pass": gate,
         })
     return rows
+
+
+def overlay_effects(results, cfg, con=None):
+    """O7: paired difference per trigger (overlay minus base), base costs. A vetoed trade counts as
+    0 P&L. Mean difference in SOL per trade with a day-bootstrap CI, and the share vetoed."""
+    con = con or _connect()
+    pnl, _ = settle_sql(Scenario.from_cfg("base", cfg))
+    src = f"read_parquet('{results}')"
+    if "overlay" not in {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}:
+        return []
+    k = "family, variant, size_sol, d, tau, mint, t, COALESCE(pool, '')"
+    rows = con.execute(f"""
+        WITH r AS (SELECT *, {pnl} AS pnl FROM {src}),
+        b AS (SELECT {k} AS key, pnl FROM r WHERE overlay = 'none' AND NOT skipped),
+        o AS (SELECT {k} AS key, family, size_sol, d, overlay, day, exit_reason = 'o7_veto' AS vetoed,
+                     CASE WHEN exit_reason = 'o7_veto' THEN 0 ELSE pnl END AS pnl
+              FROM r WHERE overlay <> 'none')
+        SELECT o.family, o.size_sol, o.d, o.overlay, o.day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(o.vetoed::INT)
+        FROM o JOIN b USING (key) WHERE o.pnl IS NOT NULL GROUP BY ALL""").fetchall()
+    groups = {}
+    for fam, size, d, ov, day, dsum, n, nveto in rows:
+        g = groups.setdefault((fam, size, d, ov), {"days": {}, "n": 0, "veto": 0})
+        g["days"][day] = (dsum, n)
+        g["n"] += n
+        g["veto"] += nveto
+    out = []
+    for (fam, size, d, ov), g in sorted(groups.items()):
+        days = sorted(g["days"])
+        sums = np.array([g["days"][x][0] for x in days], dtype=float)
+        cnts = np.array([g["days"][x][1] for x in days], dtype=float)
+        lo, hi = _boot(sums, cnts)
+        out.append({"family": fam, "size_sol": size, "d": d, "overlay": ov, "n": g["n"], "veto_share": g["veto"] / g["n"],
+                    "delta_sol": float(sums.sum() / cnts.sum()), "ci_lo": lo, "ci_hi": hi})
+    return out
 
 
 def _pct(x):
@@ -211,7 +246,7 @@ def write_report(run_dir, cfg):
         pq.write_table(table, os.path.join(run_dir, "trials.parquet"))
         os.makedirs(TRIALS, exist_ok=True)
         pq.write_table(table, os.path.join(TRIALS, f"{config['run_id']}.parquet"))
-    base = sorted((s for s in summary if s["scenario"] == "base"),
+    base = sorted((s for s in summary if s["scenario"] == "base" and s["overlay"] == "none"),
                   key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["size_sol"], s["d"], s["tau"]))
     lines = [f"# Backtest {config['run_id']}", "",
              f"Store: slots {config['store']['slot_start']}–{config['store']['slot_end_exclusive']} (dev only). "
@@ -276,6 +311,17 @@ def write_report(run_dir, cfg):
                      f"{_num(s['reverted_direct'], '.2f')} | {_num(s['sells_dropped'], '.2f')} | "
                      f"{_num(s['cf_graduation'] and s['cf_graduation'] * 100, '.1f')}% | "
                      f"{_num(s['seed_pool'] and s['seed_pool'] * 100, '.1f')}% |")
+    eff = overlay_effects(results, cfg)
+    if eff:
+        lines += ["", "## O7 insider overlay: paired difference to the base family (base costs)", "",
+                  "Per trigger: overlay P&L minus base P&L (a vetoed trade counts as 0), mean in SOL per trade, "
+                  "95% CI by day bootstrap. O7 is useful when the difference is above 0 with the CI above 0 at F7, "
+                  "for d = 1 and d = 2. Limitation: transfers are invisible.", "",
+                  "| family | size SOL | d | overlay | trades | vetoed | Δ SOL/trade | 95% CI |", "|---|---|---|---|---|---|---|---|"]
+        for e in eff:
+            ci = f"{_sol(e['ci_lo'])} … {_sol(e['ci_hi'])}" if e["ci_lo"] is not None else ""
+            lines.append(f"| {e['family']} | {e['size_sol']} | {e['d']} | {e['overlay']} | {e['n']} | "
+                         f"{e['veto_share'] * 100:.1f}% | {_sol(e['delta_sol'])} | {ci} |")
     with open(os.path.join(run_dir, "report.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     return summary
