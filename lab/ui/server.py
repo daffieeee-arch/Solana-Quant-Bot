@@ -20,9 +20,11 @@ from urllib.parse import parse_qs, urlparse
 
 import duckdb
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "analytics"))
+import labstore  # noqa: E402
+
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 ANALYTICS = os.path.join(DATA, "analytics", "analytics.duckdb")
-DEV = os.path.join(DATA, "store", "dev.duckdb")
 ALLOWED_HOSTS = {"127.0.0.1", "100.112.193.63"}
 FORBIDDEN_PORTS = {3000, 443, 8443, 8787, 8771}
 SECURITY_HEADERS = {
@@ -39,7 +41,7 @@ def connect(with_dev=False):
     con = duckdb.connect(":memory:", config={"memory_limit": "512MB", "threads": 2})
     con.execute(f"ATTACH '{ANALYTICS}' AS a (READ_ONLY)")
     if with_dev:
-        con.execute(f"ATTACH '{DEV}' AS dev (READ_ONLY)")
+        labstore.attach(con, DATA)  # READ_ONLY, development-only meta check, TEMP VIEW pool_trades
     con.execute("USE a")
     con.execute("SET temp_directory=''; SET enable_progress_bar=false; SET TimeZone='UTC'")
     con.execute("SET autoinstall_known_extensions=false; SET autoload_known_extensions=false")
@@ -164,11 +166,10 @@ def api_token(q):
           FROM dev.curve c JOIN dev.blocks b USING (slot) WHERE c.mint = ?
           UNION ALL
           SELECT 'pool', p.slot, p.tx_index, b.block_time, p.kind,
-                 p.quote_gross::DOUBLE / 1e9, p.base::DOUBLE / 1e6,
-                 p.e::DOUBLE / NULLIF(p.b::DOUBLE, 0) / 1000, p.trader
-          FROM dev.pool p JOIN dev.blocks b USING (slot)
-          WHERE p.pool = ? AND p.kind IN ('buy', 'sell'))
-        ORDER BY slot DESC, tx_index DESC LIMIT 300""", [mint, s.get("pool") or ""])
+                 p.quote::DOUBLE / 1e9, p.token_amount::DOUBLE / 1e6, p.price, p.trader
+          FROM pool_trades p JOIN dev.blocks b USING (slot)
+          WHERE p.mint = ?)
+        ORDER BY slot DESC, tx_index DESC LIMIT 300""", [mint, mint])
     return {"token": s, "candles": candles, "events": events, "tape": tape}
 
 

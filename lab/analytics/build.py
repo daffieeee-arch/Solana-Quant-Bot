@@ -24,27 +24,26 @@ import sys
 import duckdb
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import labstore  # noqa: E402
 import strategies  # noqa: E402
 
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
-HOLDOUT_START = 452_304_000
-SOL_QUOTES = ("So11111111111111111111111111111111111111112", "11111111111111111111111111111111")
+HOLDOUT_START = labstore.HOLDOUT_START
 LARGE_TRADE_SOL = 25
 # Fixed protocol markers: labels only (slot numbers), never hold-out content.
 PROTOCOL_MARKERS = [
     (452_520_000, "Eerste fee-sweep (stuk 452.520.000–452.736.000)"),
     (453_800_004, "Eerste v3-curvetrades / PumpSwap v2"),
 ]
-SOL_IN = "(" + ", ".join(f"'{q}'" for q in SOL_QUOTES) + ")"
+SOL_IN = labstore.SOL_IN
 # Spot price in quote per whole token: quote raw / 1e9 per token raw / 1e6.
 CURVE_PRICE = "(vq::DOUBLE / NULLIF(vt::DOUBLE, 0) / 1000)"
-POOL_PRICE = "(e::DOUBLE / NULLIF(b::DOUBLE, 0) / 1000)"
 ORDER = "(slot, tx_index, outer_ix, inner_ix)"
 
 
 def tables(lo, hi):
     w_curve = f"c.slot >= {lo} AND c.slot < {hi}"
-    w_pool = f"p.slot >= {lo} AND p.slot < {hi} AND p.kind IN ('buy', 'sell')"
+    w_pool = f"p.slot >= {lo} AND p.slot < {hi}"  # pool_trades: token trades only (labstore.pool_trades_sql)
     return {
         "slot_time": f"""
             SELECT slot, block_time, to_timestamp(block_time)::TIMESTAMP AS ts
@@ -60,7 +59,7 @@ def tables(lo, hi):
                        WHERE complete_slot >= {lo} AND complete_slot < {hi} GROUP BY 1),
                  c AS (SELECT slot // 432000 AS epoch, count(*) AS curve_trades FROM dev.curve c
                        WHERE {w_curve} GROUP BY 1),
-                 p AS (SELECT slot // 432000 AS epoch, count(*) AS pool_trades FROM dev.pool p
+                 p AS (SELECT slot // 432000 AS epoch, count(*) AS pool_trades FROM pool_trades p
                        WHERE {w_pool} GROUP BY 1)
             SELECT epoch, first_slot, last_slot, blocks, (last_slot - first_slot + 1) - blocks AS skipped_slots,
                    first_time, last_time, coalesce(tokens_created, 0) AS tokens_created,
@@ -81,12 +80,13 @@ def tables(lo, hi):
                        arg_max({CURVE_PRICE}, {ORDER}) AS curve_last_price
                 FROM dev.curve c WHERE {w_curve} GROUP BY 1),
                  pv AS (
-                SELECT ps.mint, count(*) AS pool_trades,
-                       sum(p.quote_gross)::DOUBLE / 1e9 AS pool_volume_quote,
+                SELECT p.mint, count(*) AS pool_trades,
+                       sum(p.quote)::DOUBLE / 1e9 AS pool_volume_quote,
+                       coalesce(sum(p.quote) FILTER (WHERE NOT p.farmer), 0)::DOUBLE / 1e9 AS pool_volume_organic,
                        count(DISTINCT p.trader) AS pool_traders, min(p.slot) AS pool_first_slot,
-                       max(p.slot) AS pool_last_slot, max({POOL_PRICE}) AS pool_max_price,
-                       arg_max({POOL_PRICE}, (p.slot, p.tx_index, p.outer_ix, p.inner_ix)) AS pool_last_price
-                FROM dev.pool p JOIN dev.pools ps USING (pool) WHERE {w_pool} GROUP BY 1)
+                       max(p.slot) AS pool_last_slot, max(p.price) AS pool_max_price,
+                       arg_max(p.price, (p.slot, p.tx_index, p.outer_ix, p.inner_ix)) AS pool_last_price
+                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL GROUP BY 1)
             SELECT m.mint, m.name, m.symbol, m.creator, m.create_slot, st.ts AS create_time,
                    m.quote_mint, m.quote_mint IN {SOL_IN} AS sol_quote, m.mayhem, m.cashback, m.holder_reward,
                    m.supply::DOUBLE / 1e6 AS supply_tokens,
@@ -102,6 +102,7 @@ def tables(lo, hi):
                    cv.curve_max_price * m.supply::DOUBLE / 1e6 AS curve_max_mcap,
                    coalesce(pv.pool_trades, 0) AS pool_trades,
                    coalesce(pv.pool_volume_quote, 0) AS pool_volume_quote,
+                   coalesce(pv.pool_volume_organic, 0) AS pool_volume_organic,
                    coalesce(pv.pool_traders, 0) AS pool_traders, pv.pool_first_slot, pv.pool_last_slot,
                    pv.pool_max_price, pv.pool_last_price,
                    pv.pool_max_price * m.supply::DOUBLE / 1e6 AS pool_max_mcap,
@@ -119,9 +120,9 @@ def tables(lo, hi):
                        c.q::DOUBLE / 1e9 AS quote, {CURVE_PRICE} AS price
                 FROM dev.curve c WHERE {w_curve}
                 UNION ALL
-                SELECT 'pool', ps.mint, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind = 'buy',
-                       p.quote_gross::DOUBLE / 1e9, {POOL_PRICE}
-                FROM dev.pool p JOIN dev.pools ps USING (pool) WHERE {w_pool})
+                SELECT 'pool', p.mint, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind = 'buy',
+                       p.quote::DOUBLE / 1e9, p.price
+                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL)
             SELECT t.mint, t.venue, time_bucket(INTERVAL 1 minute, st.ts) AS minute,
                    arg_min(price, {ORDER}) AS open, max(price) AS high, min(price) AS low,
                    arg_max(price, {ORDER}) AS close,
@@ -140,11 +141,11 @@ def tables(lo, hi):
                 FROM dev.curve c JOIN dev.mints m USING (mint)
                 WHERE {w_curve} AND c.slot <= m.complete_slot GROUP BY 1),
                  after AS (
-                SELECT ps.mint, min(p.slot) AS pool_first_trade_slot,
-                       count(*) FILTER (WHERE p.slot < ps.create_slot + 13468) AS pool_trades_first_hour,
-                       coalesce(sum(p.quote_gross) FILTER (WHERE p.slot < ps.create_slot + 13468), 0)::DOUBLE / 1e9
+                SELECT p.mint, min(p.slot) AS pool_first_trade_slot,
+                       count(*) FILTER (WHERE p.slot < p.pool_create_slot + 13468) AS pool_trades_first_hour,
+                       coalesce(sum(p.quote) FILTER (WHERE p.slot < p.pool_create_slot + 13468), 0)::DOUBLE / 1e9
                          AS pool_volume_first_hour
-                FROM dev.pool p JOIN dev.pools ps USING (pool) WHERE {w_pool} GROUP BY 1)
+                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL GROUP BY 1)
             SELECT m.mint, m.name, m.symbol, m.creator, m.quote_mint, m.quote_mint IN {SOL_IN} AS sol_quote,
                    m.mayhem, m.cashback, m.holder_reward,
                    m.create_slot, sc.ts AS create_time, m.complete_slot, sg.ts AS complete_time,
@@ -169,9 +170,8 @@ def tables(lo, hi):
                        CASE WHEN m.quote_mint IN {SOL_IN} THEN c.q::DOUBLE / 1e9 END AS sol
                 FROM dev.curve c JOIN dev.mints m USING (mint) WHERE {w_curve}
                 UNION ALL
-                SELECT p.trader, 'pool', ps.mint, p.slot, p.kind = 'buy',
-                       CASE WHEN ps.quote_mint IN {SOL_IN} THEN p.quote_gross::DOUBLE / 1e9 END
-                FROM dev.pool p JOIN dev.pools ps USING (pool) WHERE {w_pool}),
+                SELECT p.trader, 'pool', p.mint, p.slot, p.kind = 'buy', p.sol::DOUBLE / 1e9
+                FROM pool_trades p WHERE {w_pool}),
                  created AS (SELECT creator AS trader, count(*) AS tokens_created FROM dev.mints
                              WHERE create_slot >= {lo} AND create_slot < {hi} GROUP BY 1)
             SELECT trader AS wallet,
@@ -203,11 +203,11 @@ def tables(lo, hi):
                 WHERE {w_curve} AND m.quote_mint IN {SOL_IN} AND c.q >= {LARGE_TRADE_SOL} * 1e9
                 UNION ALL
                 SELECT p.slot, p.tx_index, st.ts,
-                       CASE WHEN p.kind = 'buy' THEN 'large_buy' ELSE 'large_sell' END, ps.mint, m.symbol, m.name,
-                       'pool', p.kind, p.quote_gross::DOUBLE / 1e9, p.trader, NULL
-                FROM dev.pool p JOIN dev.pools ps USING (pool) LEFT JOIN dev.mints m ON m.mint = ps.mint
+                       CASE WHEN p.kind = 'buy' THEN 'large_buy' ELSE 'large_sell' END, p.mint, m.symbol, m.name,
+                       'pool', p.kind, p.sol::DOUBLE / 1e9, p.trader, NULL
+                FROM pool_trades p LEFT JOIN dev.mints m ON m.mint = p.mint
                 JOIN slot_time st ON st.slot = p.slot
-                WHERE {w_pool} AND ps.quote_mint IN {SOL_IN} AND p.quote_gross >= {LARGE_TRADE_SOL} * 1e9
+                WHERE {w_pool} AND p.mint IS NOT NULL AND NOT p.farmer AND p.sol >= {LARGE_TRADE_SOL} * 1e9
                 UNION ALL
                 SELECT * FROM (VALUES {", ".join(
                     f"({s}::UBIGINT, NULL::UBIGINT, NULL::TIMESTAMP, 'protocol_marker', NULL, NULL, NULL, NULL, "
@@ -248,7 +248,8 @@ DICTIONARY = {
         "curve_last_price": "Laatste spotprijs op de curve.",
         "curve_max_mcap": "Hoogste marktwaarde op de curve (quote).",
         "pool_trades": "Koop- en verkooptrades op PumpSwap.",
-        "pool_volume_quote": "Quote-volume op PumpSwap (quote_gross).",
+        "pool_volume_quote": "Quote-volume op PumpSwap (store v1: quote_gross; v2: sol_amount).",
+        "pool_volume_organic": "PumpSwap-volume zonder farming-trades (store v2: farmer = false; v1: alles).",
         "pool_traders": "Unieke handelaren op PumpSwap.", "pool_first_slot": "Eerste pooltrade.",
         "pool_last_slot": "Laatste pooltrade.",
         "pool_max_price": "Hoogste spotprijs in de pool (quote per token, vóór de trade).",
@@ -292,7 +293,7 @@ DICTIONARY = {
         "kind": "graduation, large_buy, large_sell of protocol_marker.",
         "mint": "Token-adres.", "symbol": "Symbool (escapen).", "name": "Naam (escapen).",
         "venue": "curve of pool.", "side": "buy of sell.",
-        "sol": f"Bedrag in SOL (alleen trades van ten minste {LARGE_TRADE_SOL} SOL, SOL-gequote).",
+        "sol": f"Bedrag in SOL (alleen trades van ten minste {LARGE_TRADE_SOL} SOL, SOL-gequote, zonder farming-trades).",
         "wallet": "Handelaar.",
         "note": "Toelichting. Protocol-markers zijn alleen een label met een slotnummer; geen hold-out-inhoud."},
     "strategy_runs": {
@@ -353,7 +354,6 @@ def validate(con, require_tables=True):
 
 
 def build(out, slots, memory, threads, tournament=None):
-    dev = os.path.join(DATA, "store", "dev.duckdb")
     building = out + ".building"
     for p in (building, building + ".wal"):
         if os.path.exists(p):
@@ -364,11 +364,8 @@ def build(out, slots, memory, threads, tournament=None):
     con = duckdb.connect(building, config={"memory_limit": memory, "threads": threads,
                                            "temp_directory": tmp_dir, "preserve_insertion_order": False})
     con.execute("SET enable_progress_bar=false; SET TimeZone='UTC'")
-    con.execute(f"ATTACH '{dev}' AS dev (READ_ONLY)")
-    src = json.loads(con.execute("SELECT json FROM dev.meta").fetchone()[0])
+    src = labstore.attach(con, DATA)  # READ_ONLY, development-only check, TEMP VIEW pool_trades
     src_lo, src_hi = src["slot_start"], src["slot_end_exclusive"]
-    if src_hi > HOLDOUT_START or src.get("period") != "dev":
-        raise SystemExit(f"source store is not development-only: {src}")
     lo, hi = slots or (src_lo, src_hi)
     lo, hi = max(lo, src_lo), min(hi, src_hi, HOLDOUT_START)
     counts = {}

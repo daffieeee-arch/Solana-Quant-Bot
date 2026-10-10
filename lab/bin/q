@@ -7,15 +7,17 @@
 #
 # Formats: --table (default), --md, --csv, --json.  Max 500 rows, 5-minute timeout.
 # Each run gets its own systemd user scope (MemoryMax=2G) and a hardened DuckDB session:
-# dev.duckdb (and analytics.duckdb if present) attached READ_ONLY, memory_limit 1GB, 2 threads,
+# the development store (lab/analytics/labstore.py: STORE) and analytics.duckdb attached READ_ONLY, memory_limit 1GB, 2 threads,
 # no temp directory, no file or network access, no extensions, configuration locked, SELECT only.
-# Only development data is attached (slots < 452,304,000); the hold-out is never opened.
+# Only development data is attached (slots < 452,304,000; checked in the store meta); the hold-out is never opened.
+# TEMP VIEW pool_trades: PumpSwap token trades in one shape for store v1 and v2 (see labstore.py).
 set -euo pipefail
 
 LAB_DATA_ROOT="${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}"
 T="${SOLANA_TOOLCHAIN_ROOT:-$HOME/.local/share/solana-quant/toolchains}"
 LAB_PY="${LAB_PY:-$T/columnar-query-313-duckdb155/bin/python}"
 Q_TIMEOUT="${Q_TIMEOUT:-300}"
+LAB_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../analytics" && pwd)"
 
 fmt=table sql=""
 while [ $# -gt 0 ]; do
@@ -37,9 +39,10 @@ read -r -d '' PYCODE <<'PY' || true
 import csv, json, os, sys
 import duckdb
 
-data_root, fmt, sql = sys.argv[1], sys.argv[2], sys.argv[3]
+data_root, fmt, sql, lib = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+sys.path.insert(0, lib)
+import labstore
 MAX_ROWS = 500
-dev = os.path.join(data_root, "store", "dev.duckdb")
 analytics = os.path.join(data_root, "analytics", "analytics.duckdb")
 
 def sq(s):
@@ -47,7 +50,7 @@ def sq(s):
 
 con = duckdb.connect(":memory:", config={"memory_limit": "1GB", "threads": 2})
 try:
-    con.execute(f"ATTACH {sq(dev)} AS dev (READ_ONLY)")
+    labstore.attach(con, data_root)  # READ_ONLY + development-only meta check + TEMP VIEW pool_trades
     if os.path.exists(analytics):
         con.execute(f"ATTACH {sq(analytics)} AS a (READ_ONLY)")
 except duckdb.Error as e:
@@ -64,7 +67,7 @@ con.execute("SET lock_configuration=true")
 
 # Only SELECT statements (incl. WITH, FROM-first, SHOW, DESCRIBE, SUMMARIZE). Anything else is
 # refused before it runs: DuckDB allows the path of an attached database even with external access
-# off, so DETACH + ATTACH or COPY TO could otherwise reopen dev.duckdb writable or overwrite it.
+# off, so DETACH + ATTACH or COPY TO could otherwise reopen the store writable or overwrite it.
 try:
     stmts = con.extract_statements(sql)
     bad = [str(s.type).split(".")[-1] for s in stmts if s.type != duckdb.StatementType.SELECT]
@@ -123,4 +126,4 @@ else:
 PY
 
 exec systemd-run --user --scope --quiet --collect -p MemoryMax=2G -- \
-  timeout --kill-after=10 "$Q_TIMEOUT" "$LAB_PY" -I -c "$PYCODE" "$LAB_DATA_ROOT" "$fmt" "$sql"
+  timeout --kill-after=10 "$Q_TIMEOUT" "$LAB_PY" -I -c "$PYCODE" "$LAB_DATA_ROOT" "$fmt" "$sql" "$LAB_LIB"

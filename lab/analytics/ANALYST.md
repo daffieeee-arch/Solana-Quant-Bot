@@ -2,6 +2,8 @@
 
 Query with `lab/bin/q` (read-only, SELECT only, 500 rows, 5 min, 1 GB). Tables live in the attached
 `dev` database (the default schema); `analytics.duckdb`, once built, is attached as `a`.
+The store file is set in one place, `STORE` in `lab/analytics/labstore.py`. q, build.py and the web server
+read it and refuse a store whose `meta` is not development-only. `SELECT json FROM meta` shows the version.
 
 ## Window
 
@@ -32,10 +34,23 @@ on `quote_mint` before summing SOL.
   `fee`, `creator_fee` charged on top; `vt`, `vq`, `rt`, `rq` = virtual/real reserves **after** the trade;
   `variant` from the instruction (`buy`, `sell`, `buy_v2`, `sell_v2`, `buy_exact_sol_in`, `buy_exact_quote_in_v2`);
   `trader` = user, `arg_*` = slippage arguments (epochs ≤ 1043 only).
-- `pool` — PumpSwap events for pools created in the window. `kind` ∈ `buy`, `sell`, `boost` (a boost row repeats
+- `pool_trades` (TEMP VIEW, same columns on store v1 and v2) — one row per PumpSwap token trade: `kind`
+  (`buy` = trader buys the token), `mint`, `quote`, `sol` (lamports, NULL if not SOL-quoted), `token_amount`,
+  `price` (SOL per token, pre-trade, orientation handled), `farmer` (v2 only, else false), `orientation`.
+  Prefer it over `pool` for counts, volume and prices.
+- `pool` (store v1) — PumpSwap events for pools created in the window. `kind` ∈ `buy`, `sell`, `boost` (a boost row repeats
   its buy; exclude it from volume). `b` = base reserve and `e` = Q_eff **before** the trade; `base`, `quote_gross`,
   `quote_net`; fee bps `lp_bps`, `protocol_bps`, `creator_bps`; `limit_quote`, `limit_base` = slippage limits.
 - `pools` — one row per pool: `mint`, `quote_mint`, `create_slot`, `coin_creator`, `mayhem`, initial `b0`, `q0`.
+- Store v2 (`store/dev2.duckdb`, `store_version` 2) differences:
+  - `pools` holds every active pool, with `quote_class` (`sol` | `reversed` | `other`) and `orientation`.
+  - `pool` holds SOL markets only. A boost is a single `kind = 'boost'` row.
+  - The token side is `token_buy`. The SOL side is `sol_amount` and `sol_depth`.
+  - `quote_user` replaces `quote_gross`/`quote_net`. `e = vault + vq`, and `e_delta` is the change in `e`.
+  - In `reversed` pools base is wSOL, so the token price is `(b / 1e9) / (e / 1e6)`.
+  - `farmer` flags wash farming. It is about 91% of reversed-pool SOL volume, so use `WHERE NOT farmer` for organic numbers.
+  - `curve.fee_payer` is NULL when it equals `trader`. New tables: `pool_stats` (looks ahead; never use it in signals),
+    `pool_sweeps` and `pool_class_daily`.
 - `blocks` — `slot`, `block_time` (unix seconds). Missing slots were skipped by the leader.
 
 ## Prices
@@ -68,7 +83,7 @@ or a column lacks a `data_dictionary` entry. Every column is described in `a.dat
   first pool trade, pool trades and volume in the first hour (13,468 slots).
 - `a.wallet_summary` — per trader: trades per venue, tokens, SOL in/out, `net_sol_flow`. **Incomplete**: no
   transfers, fees or open positions, so it is not profit.
-- `a.market_events` — ticker: graduations, trades ≥ 25 SOL (SOL-quoted), and the two protocol-marker labels.
+- `a.market_events` — ticker: graduations, trades ≥ 25 SOL (SOL-quoted, farming excluded), and the two protocol-marker labels.
 - `a.slot_time` — slot → block time.
 
 Example: `lab/bin/q "SELECT symbol, round(seconds_to_graduate/60) AS min FROM a.graduations WHERE NOT in_create_slot ORDER BY 2 LIMIT 5"`.

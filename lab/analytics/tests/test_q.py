@@ -6,12 +6,24 @@ import json
 import os
 import subprocess
 import tempfile
+import sys
 import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import labstore  # noqa: E402
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 Q = os.path.join(REPO, "lab", "bin", "q")
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 HOLDOUT_START = 452_304_000
+STORE = labstore.path(DATA)
+FAKE_STORE_SQL = """
+    CREATE TABLE meta AS SELECT '{meta}' AS json;
+    CREATE TABLE mints(i INT);
+    CREATE TABLE pools(pool VARCHAR, mint VARCHAR, quote_mint VARCHAR, create_slot UBIGINT);
+    CREATE TABLE pool(kind VARCHAR, pool VARCHAR, slot UBIGINT, tx_index UBIGINT, outer_ix UBIGINT,
+                      inner_ix UBIGINT, trader VARCHAR, b HUGEINT, e HUGEINT, base HUGEINT, quote_gross HUGEINT)"""
+DEV_META = '{"period": "dev", "slot_start": 450144000, "slot_end_exclusive": 452304000}'
 
 
 def q(sql, *args, env=None):
@@ -77,10 +89,10 @@ class MustFail(unittest.TestCase):
             self.assertRefused(f"ATTACH '{d}/other.duckdb' AS other")
 
     def test_attach_dev_writable(self):
-        self.assertRefused(f"ATTACH '{DATA}/store/dev.duckdb' AS rw")
+        self.assertRefused(f"ATTACH '{STORE}' AS rw")
 
     def test_detach_and_reattach(self):
-        self.assertRefused(f"USE memory; DETACH dev; ATTACH '{DATA}/store/dev.duckdb' AS dev")
+        self.assertRefused(f"USE memory; DETACH dev; ATTACH '{STORE}' AS dev")
 
     def test_install_httpfs(self):
         self.assertRefused("INSTALL httpfs")
@@ -115,10 +127,10 @@ class MustNotTouchTheStore(unittest.TestCase):
     def setUp(self):
         import duckdb  # run with $LAB_PY
         self.tmp = tempfile.TemporaryDirectory()
-        os.makedirs(os.path.join(self.tmp.name, "store"))
-        self.db = os.path.join(self.tmp.name, "store", "dev.duckdb")
+        self.db = labstore.path(self.tmp.name)
+        os.makedirs(os.path.dirname(self.db))
         con = duckdb.connect(self.db)
-        con.execute("CREATE TABLE mints(i INT)")
+        con.execute(FAKE_STORE_SQL.format(meta=DEV_META))
         con.close()
         self.duckdb = duckdb
 
@@ -136,18 +148,43 @@ class MustNotTouchTheStore(unittest.TestCase):
         r = q(sql, env={"LAB_DATA_ROOT": self.tmp.name})
         self.assertNotEqual(r.returncode, 0, f"should have failed: {sql}\n{r.stdout}")
 
+    def test_fake_store_is_usable(self):
+        # Otherwise the refusals below could pass only because q cannot open the copy at all.
+        r = q("SELECT count(*) FROM mints UNION ALL SELECT count(*) FROM pool_trades", "--json",
+              env={"LAB_DATA_ROOT": self.tmp.name})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["rows"], [[0], [0]])
+
     def test_reattach_writable(self):
         self.run_q(f"USE memory; DETACH dev; ATTACH '{self.db}' AS dev; CREATE TABLE dev.pwn(i INT)")
-        self.assertEqual(self.tables(), ["mints"])
+        self.assertEqual(self.tables(), ["meta", "mints", "pool", "pools"])
 
     def test_copy_over_the_store(self):
         self.run_q(f"COPY (SELECT 1) TO '{self.db}' (FORMAT csv)")
-        self.assertEqual(self.tables(), ["mints"])
+        self.assertEqual(self.tables(), ["meta", "mints", "pool", "pools"])
 
     def test_explain_wrapped_copy(self):
         self.run_q(f"EXPLAIN ANALYZE COPY (SELECT 1) TO '{self.db}' (FORMAT csv)")
-        self.assertEqual(self.tables(), ["mints"])
+        self.assertEqual(self.tables(), ["meta", "mints", "pool", "pools"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RefusesANonDevStore(unittest.TestCase):
+    """If STORE ever points at a store whose meta is not development-only, q must not open it."""
+
+    def test_holdout_meta(self):
+        import duckdb
+        for meta in ('{"period": "holdout", "slot_start": 452304000, "slot_end_exclusive": 454464000}',
+                     '{"period": "dev", "slot_start": 450144000, "slot_end_exclusive": 452400000}'):
+            with tempfile.TemporaryDirectory() as d:
+                db = labstore.path(d)
+                os.makedirs(os.path.dirname(db))
+                con = duckdb.connect(db)
+                con.execute(FAKE_STORE_SQL.format(meta=meta))
+                con.close()
+                r = q("SELECT count(*) FROM mints", env={"LAB_DATA_ROOT": d})
+                self.assertNotEqual(r.returncode, 0, r.stdout)
+                self.assertIn("not development-only", r.stderr)

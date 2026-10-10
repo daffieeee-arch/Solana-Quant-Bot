@@ -7,7 +7,7 @@ WITH b AS (SELECT slot // 432000 AS epoch, count(*) AS blocks,
      g AS (SELECT complete_slot // 432000 AS epoch, count(*) AS graduations
            FROM mints WHERE complete_slot IS NOT NULL GROUP BY 1),
      c AS (SELECT slot // 432000 AS epoch, count(*) AS curve_trades FROM curve GROUP BY 1),
-     p AS (SELECT slot // 432000 AS epoch, count(*) AS pool_trades FROM pool WHERE kind IN ('buy', 'sell') GROUP BY 1)
+     p AS (SELECT slot // 432000 AS epoch, count(*) AS pool_trades FROM pool_trades GROUP BY 1)
 SELECT epoch, blocks, skipped_slots, first_block_utc, last_block_utc,
        tokens_created, graduations, curve_trades, pool_trades
 FROM b LEFT JOIN m USING (epoch) LEFT JOIN g USING (epoch) LEFT JOIN c USING (epoch) LEFT JOIN p USING (epoch)
