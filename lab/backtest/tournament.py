@@ -67,7 +67,8 @@ RESULT_SCHEMA = pa.schema([
     ("reverted_router", pa.int64()), ("sells_dropped", pa.int64()), ("sells_scaled", pa.int64()),
     ("hist_ret", pa.float64()), ("day", pa.string()),
     ("pool", pa.string()), ("orientation", pa.string()), ("segment", pa.string()), ("regime", pa.string()),
-    ("farm", pa.string()), ("overlay", pa.string()),
+    ("farm", pa.string()), ("overlay", pa.string()), ("q", pa.float64()), ("trigger_trader", pa.string()),
+    ("trigger_farmer", pa.bool_()),
     ("d_ms", pa.float64()),
 ])
 
@@ -92,17 +93,21 @@ MAX_WINDOW_MS = ms(50_000)  # cap on one load window (busy pools)
 F1_CHUNK = 200  # tokens per stream load while screening F1 (whole curve histories)
 
 
-def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None):
+def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None):
     lo, hi, _ = store_bounds(con)
     clock = clock or Clock.from_store(con)
     signals = []
     creators = dict(con.execute("SELECT mint, creator FROM mints").fetchall())
     if "F7" in families:
-        for venue, m, slot, depth, pool, orientation in f7_signals_sql(con, cfg, lo, hi, clock=clock):
+        for venue, m, slot, depth, pool, orientation, trader, tfarmer, flagged in f7_signals_sql(con, cfg, lo, hi, clock=clock):
+            if segments and ("curve" if venue == "curve" else f"pool_{orientation}") not in segments:
+                continue
             m, pool = sys.intern(m), (sys.intern(pool) if pool else None)
             for tp, T in F7_GRID:
                 signals.append(Signal("F7", f"tp{int(tp*100)}_T{T}", m, slot, venue, int(depth), (tp, T),
-                                      pool=pool, orientation=orientation))
+                                      pool=pool, orientation=orientation, trigger=trader,
+                                      trigger_farmer=None if tfarmer is None else bool(tfarmer),
+                                      flagged=None if flagged is None else bool(flagged)))
         log(f"F7: {len(signals)} signals")
     if "F6" in families:
         n6 = 0
@@ -256,7 +261,7 @@ def _part_path(out, task_id):
 O7_FAMILIES = ("F7", "N2_F7", "F1", "N2_F1")
 
 
-def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none"):
+def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5):
     return {
         "family": sig.family, "variant": sig.variant, "mint": mint, "t": sig.t, "venue": sig.venue,
         "depth": sig.depth, "ref_mint": sig.ref[0] if sig.ref else None, "ref_t": sig.ref[1] if sig.ref else None,
@@ -271,6 +276,7 @@ def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none"):
         "segment": "curve" if sig.venue == "curve" else f"pool_{sig.orientation}",
         "farm": "n/a" if sig.flagged is None else ("flagged" if sig.flagged else "organic"),
         "regime": clock.regime_label(sig.t), "d_ms": round(d * clock.ms_per_slot(sig.t), 1), "overlay": ov,
+        "q": q, "trigger_trader": sig.trigger, "trigger_farmer": sig.trigger_farmer,
     }
 
 
@@ -292,7 +298,7 @@ def _insiders(con, st, venue, clock, cache):
 
 
 def _work(args):
-    task_id, out, items, sizes, delays, taus, q, tol, cfg, clock, overlays = args
+    task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays = args
     con = streams.open_store(STORE, threads=1, memory="600MB")
     base = Scenario.from_cfg("base", cfg)
     rows = []
@@ -309,37 +315,38 @@ def _work(args):
         for size_sol in sizes:
             size = int(size_sol * LAMPORTS)
             for d in delays:
-                for tau_mode in taus:
-                    tau = replay.Tau(tau_mode)
-                    busy_until = defaultdict(lambda: -1)
-                    for sig in sigs:
-                        fk = (sig.family, sig.variant)
-                        if sig.t <= busy_until[fk]:
-                            continue
-                        if sig.family in ("F1", "N2_F1") and size > (85.005 - 1) * LAMPORTS - sig.depth:
-                            continue
-                        # F6 capacity: the pool's real SOL must have stayed above Q_min(S) (N2: its depth now).
-                        if sig.family == "F6" and sig.params[1] < f6_min_depth(size_sol):
-                            continue
-                        if sig.family == "N2_F6" and sig.depth < f6_min_depth(size_sol):
-                            continue
-                        if sig.family in ("S1", "N2_S1") and sig.params[0] != size_sol:
-                            continue  # S1 portfolios are built per size
-                        sim = replay.simulate_pool_position if sig.venue == "pool" else replay.simulate_curve_position
-                        r = sim(st, sig.t, size, d, q, exit_rule_for(sig, base, d, clock, st, flows), tol, tau)
-                        busy_until[fk] = r.exit_slot or sig.t
-                        rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock))
-                        # O7 on the same trigger (paired with the base row): V1 veto, V2 exit, V3 both.
-                        if overlays and sig.family in O7_FAMILIES:
-                            ins = _insiders(con, st, sig.venue, clock, ins_cache)
-                            if ins is None:
+                for q in qs:
+                    for tau_mode in taus:
+                        tau = replay.Tau(tau_mode)
+                        busy_until = defaultdict(lambda: -1)
+                        for sig in sigs:
+                            fk = (sig.family, sig.variant)
+                            if sig.t <= busy_until[fk]:
                                 continue
-                            vetoed = ins.share(sig.t) > overlay.VETO_SHARE
-                            veto = replay.Result(mint, sig.t, size=size, venue=sig.venue, skipped=True, exit_reason="o7_veto")
-                            r2 = sim(st, sig.t, size, d, q, overlay.O7Exit(exit_rule_for(sig, base, d, clock, st, flows), ins),
-                                     tol, tau)
-                            for ov, res in (("O7V1", veto if vetoed else r), ("O7V2", r2), ("O7V3", veto if vetoed else r2)):
-                                rows.append(_row(sig, res, mint, size_sol, d, tau_mode, clock, ov))
+                            if sig.family in ("F1", "N2_F1") and size > (85.005 - 1) * LAMPORTS - sig.depth:
+                                continue
+                            # F6 capacity: the pool's real SOL must have stayed above Q_min(S) (N2: its depth now).
+                            if sig.family == "F6" and sig.params[1] < f6_min_depth(size_sol):
+                                continue
+                            if sig.family == "N2_F6" and sig.depth < f6_min_depth(size_sol):
+                                continue
+                            if sig.family in ("S1", "N2_S1") and sig.params[0] != size_sol:
+                                continue  # S1 portfolios are built per size
+                            sim = replay.simulate_pool_position if sig.venue == "pool" else replay.simulate_curve_position
+                            r = sim(st, sig.t, size, d, q, exit_rule_for(sig, base, d, clock, st, flows), tol, tau)
+                            busy_until[fk] = r.exit_slot or sig.t
+                            rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q))
+                            # O7 on the same trigger (paired with the base row): V1 veto, V2 exit, V3 both.
+                            if overlays and sig.family in O7_FAMILIES:
+                                ins = _insiders(con, st, sig.venue, clock, ins_cache)
+                                if ins is None:
+                                    continue
+                                vetoed = ins.share(sig.t) > overlay.VETO_SHARE
+                                veto = replay.Result(mint, sig.t, size=size, venue=sig.venue, skipped=True, exit_reason="o7_veto")
+                                r2 = sim(st, sig.t, size, d, q, overlay.O7Exit(exit_rule_for(sig, base, d, clock, st, flows), ins),
+                                         tol, tau)
+                                for ov, res in (("O7V1", veto if vetoed else r), ("O7V2", r2), ("O7V3", veto if vetoed else r2)):
+                                    rows.append(_row(sig, res, mint, size_sol, d, tau_mode, clock, ov, q=q))
         del st
     for r, day in zip(rows, _days(con, [r["t"] for r in rows])):
         r["day"] = day
@@ -375,8 +382,8 @@ def merge_results(out, cfg):
     return n
 
 
-def run(families, sizes, delays, taus, q, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
-        label="tournament_v1"):
+def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
+        label="tournament_v1", segments=None):
     cfg = load_defaults()
     out = os.path.join(OUT, run_id)
     os.makedirs(os.path.join(out, "parts"), exist_ok=True)
@@ -384,13 +391,13 @@ def run(families, sizes, delays, taus, q, tol, workers, n1_sample, max_signals, 
     con = streams.open_store(STORE, threads=2, memory="1GB")
     lo, hi, meta = store_bounds(con)
     clock = Clock.from_store(con)
-    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock)
+    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock, segments)
     con.close()
     items = work_items(signals, clock)
     n_signals = len(signals)
     del signals
     overlays = "O7" in families
-    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, q, tol, cfg, clock, overlays)
+    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, qs, tol, cfg, clock, overlays)
              for i, j in enumerate(range(0, len(items), batch))]
     todo = [t for t in tasks if not os.path.exists(_part_path(out, t[0]))]
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
@@ -405,7 +412,7 @@ def run(families, sizes, delays, taus, q, tol, workers, n1_sample, max_signals, 
     total = merge_results(out, cfg)
     log(f"results.parquet: {total} positions")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
-              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": q,
+              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments,
               "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
     with open(os.path.join(out, "config.json"), "w") as f:
@@ -421,7 +428,8 @@ def main():
     ap.add_argument("--sizes", default="0.5,2,5,10,25")
     ap.add_argument("--delays", default="1,2")
     ap.add_argument("--tau", default="empirical")
-    ap.add_argument("--q", type=float, default=0.5)
+    ap.add_argument("--q", default="0.5", help="intra-slot position(s) of our order, comma separated")
+    ap.add_argument("--segments", default="", help="F7 only: keep these segments (curve,pool_normal,pool_reversed)")
     ap.add_argument("--tol", type=float, default=0.05)
     ap.add_argument("--workers", type=int, default=2)
     ap.add_argument("--n2-k", type=int, default=5)
@@ -431,7 +439,8 @@ def main():
     ap.add_argument("--run-id", default=time.strftime("%Y%m%dT%H%M%S"))
     a = ap.parse_args()
     run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in a.delays.split(",")],
-        a.tau.split(","), a.q, a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch)
+        a.tau.split(","), [float(x) for x in a.q.split(",")], a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch,
+        segments=[x for x in a.segments.split(",") if x] or None)
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ from .streams import SPILL_DIR
 
 TRIALS = os.environ.get("LAB_TRIALS", "/home/chupa/Solana-project/data-old-faithful-one/lab/trials")
 
-KEYS = ["family", "variant", "size_sol", "d", "tau", "segment", "regime", "farm", "overlay"]
+KEYS = ["family", "variant", "size_sol", "d", "tau", "q", "segment", "regime", "farm", "overlay"]  # farm, overlay last
 NK = len(KEYS)
 K = ", ".join(KEYS)
 SCENARIOS = ("optimistic", "base", "pessimistic")
@@ -78,7 +78,8 @@ def summarize(results, cfg, con=None):
     con = con or _connect()
     raw = f"read_parquet('{results}')"
     have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {raw}").fetchall()}
-    missing = ", ".join(f"'{'none' if k == 'overlay' else 'n/a'}' AS {k}" for k in KEYS if k not in have)  # older runs
+    defaults = {"overlay": "'none'", "q": "0.5"}
+    missing = ", ".join(f"{defaults.get(k, repr('n/a'))} AS {k}" for k in KEYS if k not in have)  # older runs
     base_rel = f"(SELECT *{', ' + missing if missing else ''} FROM {raw})"
     # Farming split (F6): organic and flagged pools, plus both together as 'all'.
     src = f"(SELECT * FROM {base_rel} UNION ALL BY NAME SELECT * REPLACE ('all' AS farm) FROM {base_rel} WHERE farm IN ('organic', 'flagged'))"

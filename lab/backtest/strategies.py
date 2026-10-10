@@ -38,6 +38,8 @@ HOUR_MS = 3_600_000
 BURN_IN_MS = ms(324_000)  # ~1 day without entries while token state warms up
 END_GUARD_MS = ms(20_000)  # no decisions this close to the end of the data
 F7_INFLOW_MS, F7_CREATOR_MS, F7_GAP_MS = ms(50), ms(200), ms(20)
+F6_FARM_MS = 3_600_000  # a pool is flagged when farmers made > F6_FARM_SHARE of its SOL volume in this window
+F6_FARM_SHARE = 0.5
 
 
 class Clock:
@@ -108,7 +110,9 @@ class Signal:
     ref: tuple = None  # N2 only: (mint or pool, t) of the family trigger this control is matched to
     pool: str = None  # pool signals: the pool (mint is the token mint when known, else the pool)
     orientation: str = None  # pool signals: normal | reversed
-    flagged: bool = None  # F6: the pool was flagged for volume farming in the hour before t
+    flagged: bool = None  # pool signals: the pool was flagged for volume farming in the hour before t
+    trigger: str = None  # F7: the wallet whose sell triggered the signal
+    trigger_farmer: bool = None  # F7 pools: that wallet was volume farming in the pool
 
 
 # ----------------------------------------------------------------------------- exit rules
@@ -208,12 +212,13 @@ def decision_bounds(cfg, dev_start, dev_end, clock=None):
 
 def f7_signals_sql(con, cfg, dev_start, dev_end, only_mints=None, buckets=16, clock=None):
     """See _f7_bucket; evaluated per slot-time regime and hash bucket of the mint/pool to bound
-    memory. Returns (venue, mint, t, depth, pool, orientation)."""
+    memory. Returns (venue, mint, t, depth, pool, orientation, trigger wallet, trigger farmer,
+    pool flagged for farming in the hour before t)."""
     clock = clock or Clock()
     lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
     out = []
     for rlo, rhi, m in clock.regimes(lo, hi + 1):
-        win = (round(F7_INFLOW_MS / m), round(F7_CREATOR_MS / m), round(F7_GAP_MS / m))
+        win = (round(F7_INFLOW_MS / m), round(F7_CREATOR_MS / m), round(F7_GAP_MS / m), round(F6_FARM_MS / m))
         for b in range(buckets):
             out += _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, (rlo, rhi - 1), win, clock)
     return out
@@ -226,7 +231,7 @@ def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range,
     net SOL inflow over [t-w1, t) > 0; no creator sell in [t-w2, t]; no other trigger-sized sell
     in [t-w3, t). Curve inflow = change of virtual quote; pool inflow = SOL paid by token buyers
     minus SOL received by token sellers."""
-    n_in, n_cr, n_gap = win
+    n_in, n_cr, n_gap, n_farm = win
     t_lo, t_hi = trig_range
     u = universe_sql(cfg, dev_start, dev_end, clock) + f" AND hash(m.mint) % {buckets} = {b}"
     pu = pool_universe_sql() + f" AND hash(p.pool) % {buckets} = {b}"
@@ -236,6 +241,7 @@ def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range,
         u += " AND m.mint IN (SELECT mint FROM only_mints)"
         pu += " AND COALESCE(p.mint, p.pool) IN (SELECT mint FROM only_mints)"
     span = f"slot BETWEEN {t_lo - n_cr} AND {t_hi}"
+    pspan = f"slot BETWEEN {t_lo - max(n_cr, n_farm)} AND {t_hi}"
     curve = con.execute(f"""
         WITH ev AS (
           SELECT c.mint, c.slot, c.tx_index, c.outer_ix, c.inner_ix, c.trader, m.creator, c.rq + c.q AS pre_rq,
@@ -249,7 +255,7 @@ def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range,
             SUM(creator_sell::INT) OVER (PARTITION BY mint ORDER BY slot RANGE BETWEEN {n_cr} PRECEDING AND CURRENT ROW) AS csell,
             SUM(trig_size::INT) OVER (PARTITION BY mint ORDER BY slot RANGE BETWEEN {n_gap} PRECEDING AND 1 PRECEDING) AS trig_before
           FROM ev)
-        SELECT 'curve', mint, slot, pre_rq, NULL, NULL FROM w
+        SELECT 'curve', mint, slot, pre_rq, NULL, NULL, trader, NULL, NULL FROM w
         WHERE trig_size AND trader <> creator AND trader <> '{MAYHEM_AGENT}'
           AND pre_rq BETWEEN {20 * SOL} AND {75 * SOL} AND slot BETWEEN {t_lo} AND {t_hi}
           AND COALESCE(inflow, 0) > 0 AND COALESCE(csell, 0) = 0 AND COALESCE(trig_before, 0) = 0
@@ -258,19 +264,24 @@ def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range,
     pool = con.execute(f"""
         WITH ev AS (
           SELECT e.pool, COALESCE(p.mint, p.pool) AS mint, p.orientation, e.slot, e.tx_index, e.outer_ix, e.inner_ix,
-                 e.trader, COALESCE(m.creator, p.coin_creator) AS creator, p.coin_creator, e.sol_depth,
+                 e.trader, COALESCE(m.creator, p.coin_creator) AS creator, p.coin_creator, e.sol_depth, e.farmer,
+                 e.sol_amount,
                  CASE WHEN e.token_buy THEN e.sol_amount ELSE -e.sol_amount END AS dq,
                  (NOT e.token_buy AND e.sol_amount >= GREATEST({3 * SOL}, 0.04 * e.sol_depth)) AS trig_size,
                  (NOT e.token_buy AND e.trader = COALESCE(m.creator, p.coin_creator)) AS creator_sell
           FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
-          WHERE {pu} AND e.kind IN ('buy', 'sell') AND e.{span}),
+          WHERE {pu} AND e.kind IN ('buy', 'sell') AND e.{pspan}),
         w AS (
           SELECT *,
             SUM(dq) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_in} PRECEDING AND 1 PRECEDING) AS inflow,
             SUM(creator_sell::INT) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_cr} PRECEDING AND CURRENT ROW) AS csell,
-            SUM(trig_size::INT) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_gap} PRECEDING AND 1 PRECEDING) AS trig_before
+            SUM(trig_size::INT) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_gap} PRECEDING AND 1 PRECEDING) AS trig_before,
+            SUM(CASE WHEN farmer THEN sol_amount ELSE 0 END)
+              OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_farm} PRECEDING AND 1 PRECEDING) AS farm_vol,
+            SUM(sol_amount) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_farm} PRECEDING AND 1 PRECEDING) AS vol
           FROM ev)
-        SELECT 'pool', mint, slot, sol_depth, pool, orientation FROM w
+        SELECT 'pool', mint, slot, sol_depth, pool, orientation, trader, farmer,
+               COALESCE(farm_vol > {F6_FARM_SHARE} * vol, false) FROM w
         WHERE trig_size AND trader <> COALESCE(creator, '') AND trader <> COALESCE(coin_creator, '')
           AND sol_depth >= {150 * SOL} AND slot BETWEEN {t_lo} AND {t_hi}
           AND COALESCE(inflow, 0) > 0 AND COALESCE(csell, 0) = 0 AND COALESCE(trig_before, 0) = 0
@@ -451,8 +462,6 @@ def n2_matches(con, triggers, k=5, clock=None):
 # whose wallet was volume farming in the pool are excluded (store.py `farmer`).
 
 F6_HIGH_MS, F6_DEPTH_MS, F6_FLOW_MS, F6_MAX_HOLD_MS = 3_600_000, 1_800_000, 300_000, 14_400_000
-F6_FARM_MS = 3_600_000  # a pool is flagged when farmers made > F6_FARM_SHARE of its SOL volume
-F6_FARM_SHARE = 0.5
 F6_GRID = [0.05, 0.08, 0.12]  # trailing stop from the peak mark
 
 
