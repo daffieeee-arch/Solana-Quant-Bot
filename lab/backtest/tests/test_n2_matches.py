@@ -22,11 +22,12 @@ def test_matches_satisfy_the_spec(con):
     lo, hi = con.execute("SELECT min(slot), max(slot) FROM blocks").fetchone()
     mid = (lo + hi) // 2
     curve = con.execute(f"SELECT mint, slot, rq + q FROM curve WHERE slot BETWEEN {mid} AND {mid + 3 * HOUR_SLOTS} "
-                        "AND rq BETWEEN 20e9 AND 70e9 USING SAMPLE 12 ROWS").fetchall()
+                        "AND rq BETWEEN 20e9 AND 70e9 ORDER BY hash(mint, slot) LIMIT 12").fetchall()
     pool = con.execute(f"""SELECT e.pool, e.slot, e.sol_depth, p.orientation FROM pool e JOIN pools p USING (pool)
                            WHERE e.slot BETWEEN {mid} AND {mid + 3 * HOUR_SLOTS} AND e.kind IN ('buy', 'sell')
                              AND NOT e.token_buy AND e.sol_depth >= 150e9 AND p.quote_class IN ('sol', 'reversed')
-                           USING SAMPLE 16 ROWS""").fetchall()
+                             AND NOT COALESCE(p.mayhem, false)
+                           QUALIFY row_number() OVER (PARTITION BY p.orientation ORDER BY hash(e.pool, e.slot)) <= 8""").fetchall()
     triggers = ([("F7", m, s, "curve", int(d), None) for m, s, d in curve]
                 + [("F7", p, s, "pool", int(d), o) for p, s, d, o in pool])
     got = n2_matches(con, triggers, k=5)

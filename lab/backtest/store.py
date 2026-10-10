@@ -147,7 +147,9 @@ def _pool_trades(c, evidence=False):
                  "coin_creator, base_supply, can_boost, " if evidence else "")
               + f"pool_base_token_reserves{B} AS b, pool_quote_token_reserves{B} AS vault, "
               "lp_fee_basis_points::INTEGER AS lp_bps, protocol_fee_basis_points::INTEGER AS protocol_bps, "
-              "COALESCE(coin_creator_fee_basis_points, 0)::INTEGER AS creator_bps")
+              # Pools without a coin creator (default key) are charged no creator fee.
+              f"CASE WHEN coin_creator = '{pda.DEFAULT_KEY}' THEN 0 ELSE COALESCE(coin_creator_fee_basis_points, 0) END::INTEGER "
+              "AS creator_bps")
     exact_out = ",".join(f"'{d}'" for d in data.POOL_EXACT_OUT)
     parts = []
     if buy:

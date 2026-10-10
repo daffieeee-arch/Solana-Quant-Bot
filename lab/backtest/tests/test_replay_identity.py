@@ -23,7 +23,8 @@ def sample(con):
         WHERE NOT m.mayhem AND m.quote_mint IN ('11111111111111111111111111111111',
           'So11111111111111111111111111111111111111112') AND p.quote_class = 'sol'
         USING SAMPLE 300 ROWS (reservoir, 7)""").fetchall()]
-    return streams.load_streams(con, mints)
+    # Curve legs only: an empty pool window (busy migration pools have millions of events).
+    return streams.load_streams(con, {m: (2**62, 2**62) for m in mints})
 
 
 @pytest.fixture(scope="module")
