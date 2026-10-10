@@ -84,7 +84,7 @@ def summarize(results, cfg, con=None):
             SELECT {K},
               count(*) FILTER (WHERE skipped), count(*) FILTER (WHERE NOT skipped), count(ret),
               avg(ret), median(ret), avg((ret > 0)::INT), avg(pnl) / 1e9, COALESCE(sum(pnl), 0) / 1e9,
-              avg(hist_ret) FILTER (WHERE ret IS NOT NULL),
+              avg(LEAST(GREATEST(hist_ret, -1), 1)) FILTER (WHERE ret IS NOT NULL),
               (count(*) FILTER (WHERE ret IS NOT NULL AND exit_reason = 'stop_loss'))::DOUBLE / NULLIF(count(ret), 0),
               avg(ret) FILTER (WHERE exit_reason = 'stop_loss'),
               avg(reverted_router) FILTER (WHERE NOT skipped), avg(reverted_direct) FILTER (WHERE NOT skipped),
@@ -223,7 +223,8 @@ def write_report(run_dir, cfg):
                      f"{_sol(s['mean_pnl_sol'])} | {ci} | {s['verdict']} | {_pct(s['mean_ret'])} | "
                      f"{_pct(s['edge_vs_n2'])} | {eci} | {note} |")
     lines += ["", "## Base cost scenario", "",
-              "Mean = mean return per filled trade after all costs. Drift = mean historical mid move entry→exit without us; "
+              "Mean = mean return per filled trade after all costs. Drift = mean historical mid move entry→exit without us, "
+              "clipped to ±100% per trade (a few historical pool states have near-empty reserves and absurd mid prices); "
               "mean − drift ≈ our costs and impact. SL = stop-loss exits (share, realized mean). "
               "CIs: 95%, bootstrap over days. Ex-top: mean without the best 3 trades / best 1%.",
               "",
