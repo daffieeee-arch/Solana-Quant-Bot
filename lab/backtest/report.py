@@ -58,6 +58,9 @@ def _boot_diff(a, b, n=1000, seed=7):
 
 
 MIN_TRADES = 200  # below this: report, no verdict (stop rule)
+# Historical mid moves above this factor are degenerate pool states (near-empty reserves), not
+# market moves: roughly the largest real move, curve start (vSOL 30) to pool open (vSOL 115).
+MAX_JUMP = 16
 LIVE_MIN_SOL = 5  # sizes below this are informative only (live size is > 10 SOL)
 
 
@@ -78,13 +81,16 @@ def summarize(results, cfg, con=None):
         pnl, ret = settle_sql(Scenario.from_cfg(name, cfg))
         con.execute(f"CREATE OR REPLACE TEMP VIEW v AS SELECT *, {pnl} AS pnl, {ret} AS ret FROM {src}")
         cols = ["skipped", "n", "filled", "mean_ret", "median_ret", "win_rate", "mean_pnl_sol", "total_pnl_sol",
-                "hist_drift", "stop_loss_share", "stop_loss_mean", "reverted_router", "reverted_direct",
+                "hist_drift", "drift_excluded", "median_cost", "stop_loss_share", "stop_loss_mean", "reverted_router", "reverted_direct",
                 "sells_dropped", "seed_pool", "cf_graduation", "days"]
         rows = con.execute(f"""
             SELECT {K},
               count(*) FILTER (WHERE skipped), count(*) FILTER (WHERE NOT skipped), count(ret),
               avg(ret), median(ret), avg((ret > 0)::INT), avg(pnl) / 1e9, COALESCE(sum(pnl), 0) / 1e9,
-              avg(LEAST(GREATEST(hist_ret, -1), 1)) FILTER (WHERE ret IS NOT NULL),
+              avg(hist_ret) FILTER (WHERE ret IS NOT NULL AND hist_ret <= {MAX_JUMP} - 1),
+              (count(*) FILTER (WHERE ret IS NOT NULL AND hist_ret > {MAX_JUMP} - 1))::DOUBLE
+                / NULLIF(count(hist_ret) FILTER (WHERE ret IS NOT NULL), 0),
+              median(ret - hist_ret) FILTER (WHERE ret IS NOT NULL AND hist_ret <= {MAX_JUMP} - 1),
               (count(*) FILTER (WHERE ret IS NOT NULL AND exit_reason = 'stop_loss'))::DOUBLE / NULLIF(count(ret), 0),
               avg(ret) FILTER (WHERE exit_reason = 'stop_loss'),
               avg(reverted_router) FILTER (WHERE NOT skipped), avg(reverted_direct) FILTER (WHERE NOT skipped),
@@ -224,13 +230,14 @@ def write_report(run_dir, cfg):
                      f"{_pct(s['edge_vs_n2'])} | {eci} | {note} |")
     lines += ["", "## Base cost scenario", "",
               "Mean = mean return per filled trade after all costs. Drift = mean historical mid move entry→exit without us, "
-              "clipped to ±100% per trade (a few historical pool states have near-empty reserves and absurd mid prices); "
-              "mean − drift ≈ our costs and impact. SL = stop-loss exits (share, realized mean). "
+              f"excluding degenerate states (mid move above ×{MAX_JUMP}: near-empty pool reserves; share shown); "
+              "mean − drift ≈ our costs and impact; the median of (return − drift) per trade is shown as well. SL = stop-loss exits (share, realized mean). "
               "CIs: 95%, bootstrap over days. Ex-top: mean without the best 3 trades / best 1%.",
               "",
-              "| family | variant | size SOL | d | tau | n | filled | mean | median | win | 95% CI | ex-top3 / ex-top1% | drift | "
+              "| family | variant | size SOL | d | tau | n | filled | mean | median | win | 95% CI | ex-top3 / ex-top1% | "
+              "drift (excluded) | median ret − drift | "
               "SL share / mean | total PnL SOL | N2 mean | edge vs N2 | edge 95% CI |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in base:
         ci = f"{_pct(s['ci_lo'])} … {_pct(s['ci_hi'])}" if s["ci_lo"] is not None else ""
         eci = f"{_pct(s['edge_ci_lo'])} … {_pct(s['edge_ci_hi'])}" if s["edge_ci_lo"] is not None else ""
@@ -238,7 +245,9 @@ def write_report(run_dir, cfg):
         sl = "" if s["stop_loss_share"] is None else f"{s['stop_loss_share']*100:.0f}% / {_pct(s['stop_loss_mean'])}"
         lines.append(f"| {s['family']} | {s['variant']} | {s['size_sol']} | {s['d']} | {s['tau']} | {s['n']} | {s['filled']} | "
                      f"{_pct(s['mean_ret'])} | {_pct(s['median_ret'])} | {win} | {ci} | "
-                     f"{_pct(s['mean_ex_top3'])} / {_pct(s['mean_ex_top1pct'])} | {_pct(s['hist_drift'])} | {sl} | "
+                     f"{_pct(s['mean_ex_top3'])} / {_pct(s['mean_ex_top1pct'])} | "
+                     f"{_pct(s['hist_drift'])} ({_num(s['drift_excluded'] and s['drift_excluded'] * 100, '.2f')}%) | "
+                     f"{_pct(s['median_cost'])} | {sl} | "
                      f"{s['total_pnl_sol']:+.2f} | {_pct(s['n2_mean_ret'])} | {_pct(s['edge_vs_n2'])} | {eci} |")
     diag = sorted((s for s in base if s["tau"] == base[0]["tau"]), key=lambda s: (s["family"], s["variant"], s["size_sol"], s["d"]))
     lines += ["", "## Replay diagnostics (per position, base scenario)", "",
