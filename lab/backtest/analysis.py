@@ -24,7 +24,7 @@ STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 
 def _con():
     con = duckdb.connect()
-    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'")
+    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'; SET max_temp_directory_size = '15GB'")
     return con
 
 

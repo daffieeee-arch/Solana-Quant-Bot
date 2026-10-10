@@ -17,6 +17,7 @@ def open_store(path, threads=2, memory="1500MB"):
     con.execute(f"SET threads TO {threads}")
     con.execute(f"SET memory_limit = '{memory}'")
     con.execute(f"SET temp_directory = '{SPILL_DIR}'")
+    con.execute("SET max_temp_directory_size = '15GB'")  # a spill must never fill the disk
     con.execute("SET preserve_insertion_order = false")
     return con
 

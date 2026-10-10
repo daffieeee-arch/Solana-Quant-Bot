@@ -197,6 +197,14 @@ def universe_sql(cfg, dev_start, dev_end, clock=None):
             f"AND m.create_slot < {dev_end}")
 
 
+def key_ranges(con, table, col, n):
+    """n contiguous [lo, hi] ranges of the sorted distinct keys. The event tables are stored
+    sorted by mint / pool, so a range predicate lets DuckDB skip row groups (a hash bucket
+    would read the whole table for every bucket)."""
+    return con.execute(f"""SELECT min(k), max(k) FROM (SELECT k, ntile({n}) OVER (ORDER BY k) AS b
+                           FROM (SELECT DISTINCT {col} AS k FROM {table})) GROUP BY b ORDER BY 1""").fetchall()
+
+
 def pool_universe_sql():
     """SOL markets of either orientation, mayhem pools excluded (pools of any age)."""
     return "p.quote_class IN ('sol', 'reversed') AND NOT COALESCE(p.mayhem, false)"
@@ -217,14 +225,17 @@ def f7_signals_sql(con, cfg, dev_start, dev_end, only_mints=None, buckets=16, cl
     clock = clock or Clock()
     lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
     out = []
+    mint_r, pool_r = key_ranges(con, "mints", "mint", buckets), key_ranges(con, "pools", "pool", buckets)
     for rlo, rhi, m in clock.regimes(lo, hi + 1):
         win = (round(F7_INFLOW_MS / m), round(F7_CREATOR_MS / m), round(F7_GAP_MS / m), round(F6_FARM_MS / m))
-        for b in range(buckets):
-            out += _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, (rlo, rhi - 1), win, clock)
+        for b in range(max(len(mint_r), len(pool_r))):
+            mr = mint_r[b] if b < len(mint_r) else None
+            pr = pool_r[b] if b < len(pool_r) else None
+            out += _f7_bucket(con, cfg, dev_start, dev_end, only_mints, mr, pr, (rlo, rhi - 1), win, clock)
     return out
 
 
-def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range, win, clock):
+def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, mint_range, pool_range, trig_range, win, clock):
     """F7 triggers that pass every filter, computed with backward-looking SQL windows only.
 
     Equivalent to f7_signal() on a PastView (tests/test_lookahead.py checks this on a sample):
@@ -233,8 +244,11 @@ def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range,
     minus SOL received by token sellers."""
     n_in, n_cr, n_gap, n_farm = win
     t_lo, t_hi = trig_range
-    u = universe_sql(cfg, dev_start, dev_end, clock) + f" AND hash(m.mint) % {buckets} = {b}"
-    pu = pool_universe_sql() + f" AND hash(p.pool) % {buckets} = {b}"
+    u = universe_sql(cfg, dev_start, dev_end, clock) + (
+        f" AND m.mint BETWEEN '{mint_range[0]}' AND '{mint_range[1]}'" if mint_range else " AND false")
+    pu = pool_universe_sql() + (f" AND p.pool BETWEEN '{pool_range[0]}' AND '{pool_range[1]}'" if pool_range else " AND false")
+    crange = f" AND c.mint BETWEEN '{mint_range[0]}' AND '{mint_range[1]}'" if mint_range else ""
+    prange = f" AND e.pool BETWEEN '{pool_range[0]}' AND '{pool_range[1]}'" if pool_range else ""
     if only_mints is not None:
         con.execute("CREATE OR REPLACE TEMP TABLE only_mints (mint VARCHAR)")
         con.executemany("INSERT INTO only_mints VALUES (?)", [(m,) for m in only_mints])
@@ -248,7 +262,7 @@ def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range,
                  CASE WHEN c.is_buy THEN c.q ELSE -c.q END AS dq,
                  (NOT c.is_buy AND c.q >= GREATEST({3 * SOL}, 0.04 * (c.vq + c.q))) AS trig_size,
                  (NOT c.is_buy AND c.trader = m.creator) AS creator_sell
-          FROM curve c JOIN mints m USING (mint) WHERE {u} AND c.{span}),
+          FROM curve c JOIN mints m USING (mint) WHERE {u} AND c.{span}{crange}),
         w AS (
           SELECT *,
             SUM(dq) OVER (PARTITION BY mint ORDER BY slot RANGE BETWEEN {n_in} PRECEDING AND 1 PRECEDING) AS inflow,
@@ -270,7 +284,7 @@ def _f7_bucket(con, cfg, dev_start, dev_end, only_mints, b, buckets, trig_range,
                  (NOT e.token_buy AND e.sol_amount >= GREATEST({3 * SOL}, 0.04 * e.sol_depth)) AS trig_size,
                  (NOT e.token_buy AND e.trader = COALESCE(m.creator, p.coin_creator)) AS creator_sell
           FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
-          WHERE {pu} AND e.kind IN ('buy', 'sell') AND e.{pspan}),
+          WHERE {pu} AND e.kind IN ('buy', 'sell') AND e.{pspan}{prange}),
         w AS (
           SELECT *,
             SUM(dq) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_in} PRECEDING AND 1 PRECEDING) AS inflow,
@@ -463,6 +477,10 @@ def n2_matches(con, triggers, k=5, clock=None):
 
 F6_HIGH_MS, F6_DEPTH_MS, F6_FLOW_MS, F6_MAX_HOLD_MS = 3_600_000, 1_800_000, 300_000, 14_400_000
 F6_GRID = [0.05, 0.08, 0.12]  # trailing stop from the peak mark
+# Deviation (speed): only the first qualifying trigger of a pool per UTC day is traded. On a fixed
+# sample of pool-days every qualifying trigger is counted, to report what the cap leaves out.
+F6_SAMPLE_EVERY = 20
+F6_DAY_COUNTS = []
 
 
 def f6_min_depth(size_sol):
@@ -480,43 +498,74 @@ def f6_signals_sql(con, cfg, dev_start, dev_end, buckets=16, clock=None, only_po
     clock = clock or Clock()
     lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
     out = []
+    F6_DAY_COUNTS.clear()
+    pool_r = key_ranges(con, "pools", "pool", buckets)
     for rlo, rhi, m in clock.regimes(lo, hi + 1):
         n_high, n_depth, n_flow, n_farm = (round(x / m) for x in (F6_HIGH_MS, F6_DEPTH_MS, F6_FLOW_MS, F6_FARM_MS))
-        for b in range(buckets):
-            pu = pool_universe_sql() + f" AND hash(p.pool) % {buckets} = {b}"
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE f6_deep AS SELECT DISTINCT pool FROM pool
+                        WHERE sol_depth >= {150 * SOL} AND slot BETWEEN {rlo} AND {rhi - 1}""")
+        for plo, phi in pool_r:
+            rng = f"BETWEEN '{plo}' AND '{phi}'"
+            pu = pool_universe_sql() + f" AND p.pool {rng}"
             if only_pools is not None:
                 con.execute("CREATE OR REPLACE TEMP TABLE only_pools (pool VARCHAR)")
                 con.executemany("INSERT INTO only_pools VALUES (?)", [(x,) for x in only_pools])
                 pu += " AND p.pool IN (SELECT pool FROM only_pools)"
-            out += con.execute(f"""
+            # Phase 1: cheap windows (price high, depth, organic inflow, farming share) per pool.
+            con.execute(f"""
+              CREATE OR REPLACE TEMP TABLE f6_cand AS
               WITH ev AS (
                 SELECT e.pool, COALESCE(p.mint, p.pool) AS mint, p.orientation, e.slot, e.tx_index, e.outer_ix, e.inner_ix,
-                       e.trader, e.token_buy, e.farmer, e.sol_amount, e.sol_depth,
+                       e.token_buy, e.farmer, e.sol_amount, e.sol_depth,
                        CASE WHEN p.orientation = 'normal'
                             THEN (e.e + e.e_delta)::DOUBLE / (CASE WHEN e.token_buy THEN e.b - e.base ELSE e.b + e.base END)
                             ELSE (CASE WHEN e.token_buy THEN e.b + e.base ELSE e.b - e.base END)::DOUBLE / (e.e + e.e_delta)
                        END AS price
                 FROM pool e JOIN pools p USING (pool)
-                WHERE {pu} AND e.kind IN ('buy', 'sell') AND e.slot BETWEEN {rlo - n_high} AND {rhi - 1}),
+                WHERE {pu} AND e.kind IN ('buy', 'sell') AND e.slot BETWEEN {rlo - n_high} AND {rhi - 1}
+                  AND e.pool {rng} AND e.pool IN (SELECT pool FROM f6_deep)),
               w AS (
                 SELECT *,
                   MAX(price) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_high} PRECEDING AND 1 PRECEDING) AS high,
                   MIN(sol_depth) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_depth} PRECEDING AND CURRENT ROW) AS min_depth,
                   SUM(CASE WHEN farmer THEN 0 WHEN token_buy THEN sol_amount ELSE -sol_amount END)
                     OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_flow} PRECEDING AND CURRENT ROW) AS inflow,
-                  COUNT(DISTINCT CASE WHEN token_buy AND NOT farmer THEN trader END)
-                    OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_flow} PRECEDING AND CURRENT ROW) AS buyers,
                   SUM(CASE WHEN farmer THEN sol_amount ELSE 0 END)
                     OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_farm} PRECEDING AND 1 PRECEDING) AS farm_vol,
                   SUM(sol_amount) OVER (PARTITION BY pool ORDER BY slot RANGE BETWEEN {n_farm} PRECEDING AND 1 PRECEDING) AS vol
                 FROM ev),
               last AS (SELECT * FROM w QUALIFY row_number() OVER (PARTITION BY pool, slot ORDER BY tx_index DESC, outer_ix DESC,
                                                                                   inner_ix DESC) = 1)
-              SELECT mint, pool, orientation, slot, sol_depth, min_depth,
-                     COALESCE(farm_vol > {F6_FARM_SHARE} * vol, false) AS flagged
+              SELECT mint, pool, orientation, slot, sol_depth, min_depth, COALESCE(farm_vol > {F6_FARM_SHARE} * vol, false) AS flagged
               FROM last
-              WHERE slot BETWEEN {max(lo, rlo)} AND {min(hi, rhi - 1)} AND price > high AND min_depth >= {150 * SOL}
-                AND inflow >= 0.02 * sol_depth AND buyers >= 10""").fetchall()
+              WHERE slot BETWEEN {max(lo, rlo)} AND {min(hi, rhi - 1)} AND price > high
+                AND min_depth >= {150 * SOL} AND inflow >= 0.02 * sol_depth""")
+            # Phase 2: distinct organic buyers over [t - 5 min, t], only for the candidates, per pool.
+            # The unit is the token-day (spec): the first trigger of a pool per UTC day.
+            cands = defaultdict(list)
+            # (the UTC day is looked up afterwards: joining blocks inside the window query is very slow)
+            for row in con.execute("""SELECT c.mint, c.pool, c.orientation, c.slot, c.sol_depth, c.min_depth, c.flagged,
+                                             epoch_ms(b.block_time * 1000)::DATE
+                                      FROM f6_cand c JOIN blocks b ON b.slot = c.slot ORDER BY c.pool, c.slot""").fetchall():
+                cands[row[1]].append(row)
+            for pool_id, rows in cands.items():
+                ts = [r[3] for r in rows]
+                ev = con.execute(f"""SELECT slot, trader FROM pool WHERE pool = ? AND kind IN ('buy', 'sell') AND token_buy
+                                       AND NOT farmer AND slot BETWEEN ? AND ? ORDER BY slot""",
+                                 [pool_id, min(ts) - n_flow, max(ts)]).fetchall()
+                slots, done, counts = [x[0] for x in ev], set(), defaultdict(int)
+                for r in rows:
+                    sampled = _seed("f6-day", pool_id, r[7]) % F6_SAMPLE_EVERY == 0  # full count on a fixed sample
+                    if r[7] in done and not sampled:
+                        continue
+                    i, j = bisect.bisect_left(slots, r[3] - n_flow), bisect.bisect_right(slots, r[3])
+                    if len({ev[k][1] for k in range(i, j)}) >= 10:
+                        if r[7] not in done:
+                            out.append(r[:7])
+                            done.add(r[7])
+                        if sampled:
+                            counts[r[7]] += 1
+                F6_DAY_COUNTS.extend(counts.values())
     return out
 
 

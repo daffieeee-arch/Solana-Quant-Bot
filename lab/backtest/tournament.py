@@ -93,6 +93,9 @@ MAX_WINDOW_MS = ms(50_000)  # cap on one load window (busy pools)
 F1_CHUNK = 200  # tokens per stream load while screening F1 (whole curve histories)
 
 
+F6_STATS = {}
+
+
 def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None):
     lo, hi, _ = store_bounds(con)
     clock = clock or Clock.from_store(con)
@@ -118,6 +121,11 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                                       pool=pool, orientation=orientation, flagged=bool(flagged)))
                 n6 += 1
         log(f"F6: {n6} signals")
+        from .strategies import F6_DAY_COUNTS
+        if F6_DAY_COUNTS:
+            c = np.array(F6_DAY_COUNTS)
+            F6_STATS.update(sampled_pool_days=len(c), triggers_median=float(np.median(c)), triggers_p90=float(np.percentile(c, 90)),
+                            dropped_share=float(1 - len(c) / c.sum()))
     if "S1" in families:
         info = {p: (m, o) for p, m, o in con.execute("SELECT pool, COALESCE(mint, pool), orientation FROM pools").fetchall()}
         n_s1 = 0
@@ -371,7 +379,8 @@ def merge_results(out, cfg):
     """parts/*.parquet -> results.parquet (sorted), with base-scenario P&L columns for dashboards."""
     pnl, ret = settle_sql(Scenario.from_cfg("base", cfg))
     con = duckdb.connect()
-    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{streams.SPILL_DIR}'")
+    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{streams.SPILL_DIR}'; "
+                "SET max_temp_directory_size = '15GB'")
     con.execute(f"""COPY (SELECT *, {pnl} AS pnl_base_lamports, {ret} AS ret_base
                           FROM read_parquet('{out}/parts/part-*.parquet')
                           ORDER BY family, variant, size_sol, d, tau, t, mint)
@@ -412,7 +421,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     total = merge_results(out, cfg)
     log(f"results.parquet: {total} positions")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
-              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments,
+              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "f6_trigger_cap": F6_STATS or None,
               "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
     with open(os.path.join(out, "config.json"), "w") as f:

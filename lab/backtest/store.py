@@ -47,6 +47,7 @@ STORE_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/store"
 SPILL_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp-duckdb"
 VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 ms slots
 DISK_FLOOR_GB = 50
+DISK_LOW = "/home/chupa/Solana-project/data-old-faithful-one/lab/locks/disk-low"  # set by ops/disk-guard.sh
 POOL_PARTS = 4
 # Volume farming (coordinator 2026-10-10): a trade's wallet is a farmer in that pool when, over
 # its own trades in the pool in the 24 h before the trade, |net token delta| < FARMER_RATIO x gross
@@ -227,7 +228,7 @@ def build(period, out_path, cfg, chunks, log=print):
     os.makedirs(SPILL_DIR, exist_ok=True)
     con = data.connect(threads=int(os.environ.get("LAB_DUCKDB_THREADS", "2")),
                        memory=os.environ.get("LAB_DUCKDB_MEM", "1500MB"), temp=SPILL_DIR)
-    con.execute("SET max_temp_directory_size = '30GB'")
+    con.execute("SET max_temp_directory_size = '15GB'")
     con.execute(f"ATTACH '{tmp}' AS s")
     t0 = time.time()
     here = os.path.dirname(os.path.abspath(__file__))
@@ -491,6 +492,8 @@ def main():
     ap.add_argument("--out-dir", default=os.environ.get("LAB_STORE_DIR", STORE_DIR))
     a = ap.parse_args()
     cfg = load_defaults()
+    if os.path.exists(DISK_LOW):
+        raise SystemExit(f"{DISK_LOW} exists (disk guard): not starting a store build")
     os.makedirs(a.out_dir, exist_ok=True)
     if a.period == "holdout":
         lock = os.path.join(a.out_dir, "holdout.lock")
