@@ -10,6 +10,8 @@ Research code of the "LAB research" session. Paper and research only; read-only 
 | 1 | `episodes.py` | leader episodes: one per wallet × token position opened by a buy ≥ 1 SOL, with the leader's own realized and marked return and hold |
 | 1 | `follow.py` | the follower's return per episode: our buy at t0 + d through the backtest replay (own size, costs, price impact), sold when the leader sold (W_half: half, W_full: 90%) or after 4 h |
 | 1 | `score.py` | the point-in-time score for one day: window [D − 7 d, D), only positions closed before D; empirical-Bayes shrinkage, minimum n, Benjamini–Hochberg q-values; labels |
+| 1b | `runners.py`, `runners_report.py` | graduations with open-based outcomes and features at + 5 / + 15 min; base rates, quintile lifts, walk-forward AUC |
+| 1b | `cases.py`, `cases_report.py` | case lists from our own data (trending 24 h, dumpers, 7-day stayers / collapsed, each with an `_organic` twin without dev bundles: create-slot graduation or ≤ 5 curve buyers); per-token aggregates are saved, so `--reselect` rebuilds the lists without the store, `--reselect --timelines` adds the missing timelines |
 
 Run order for a period: `episodes` → `follow` (needs the store-v2 engine: `LAB_ENGINE=<dir with backtest/>`) → `score --day D` for each day. Tests: `pytest -q lab/wallets/tests` (the follow tests need `LAB_ENGINE`).
 

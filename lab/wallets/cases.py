@@ -14,8 +14,12 @@ Over a range (--seven --from-slot A --to-slot B; graduations with 7 days of data
 
 Each case gets a timeline (create, graduation, peak, end), the runner features at graduation
 + 5 / + 15 min (runners.py), the insider share and creator sells, and the five biggest sells
-in the first 24 h with their timing. The report (--report) renders Markdown with a DexScreener
+in the first 24 h with their timing. cases_report.py renders Markdown with a DexScreener
 link per mint for the owner; no other data source is used.
+
+The per-token aggregates of every day (daily-agg-<day>.parquet) and of the 7-day window
+(weekly-agg-<from>.parquet) are saved, so --reselect rebuilds the lists with a changed rule
+without touching the store; --reselect --timelines adds the timelines of the new cases.
 """
 
 import argparse
@@ -26,7 +30,7 @@ import os
 import sys
 import time
 
-import pyarrow as pa
+import duckdb
 import pyarrow.parquet as pq
 
 from . import runners
@@ -37,6 +41,15 @@ MIN_VOLUME_SOL = 300
 MIN_TRADERS = 100
 DAY_MS = 86_400_000
 TOP_DAY, TOP_WEEK, TOP_SELLERS = 5, 10, 5
+
+# Self-funded structure / dev bundle (coordinator, 2026-10-11; sharpened twice after the full runs): the
+# token graduated in its create slot, or at most MAX_BUNDLE_CURVE_BUYERS wallets bought the whole curve.
+# "> 50% of the pool buys by one party" caught 46 of 100 trending tokens, "create slot and <= 2 curve
+# buyers" 85, but the same operators also use 3-5 curve wallets (all 10 "organic" 7-day collapses of the
+# second run had exactly 4, and 35 of the 100 "organic" risers graduated in their create slot).
+# curve_buyers is NULL for a token whose curve lies before the store; such a token is not flagged.
+MAX_BUNDLE_CURVE_BUYERS = 5
+SELF_FUNDED_SQL = f"COALESCE(grad_in_create OR curve_buyers <= {MAX_BUNDLE_CURVE_BUYERS}, false)"
 
 
 def day_slots(con, day):
@@ -88,21 +101,25 @@ def daily_cases(con, day, lo, hi):
           INSERT INTO tb
           SELECT key, max(bs) / sum(bs) FROM (SELECT key, trader, sum(sol) AS bs FROM ({trades_sql(lo, hi)})
                                              WHERE token_buy AND hash(key) % {BUCKETS} = {b} GROUP BY key, trader) GROUP BY key""")
-    # Self-funded structure (coordinator, 2026-10-11; sharpened after the full run): one buyer graduated
-    # the token in its create slot (the whole curve, 85 SOL). The pool buys that follow are spread over
-    # several wallets, so a "> 50% by one party" rule caught only 46 of 100 trending tokens; the
-    # create-slot + <= 2 curve buyers rule is the flag, top_buyer_share stays as information.
-    con.execute(f"""
+    # top_buyer_share stays as information (the pool buys of a structure are spread over several wallets).
+    con.execute("""
       CREATE OR REPLACE TEMP TABLE d2 AS
       SELECT d.* EXCLUDE (top_buyer_share), tb.top_buyer_share, COALESCE(m.complete_slot = m.create_slot, false) AS grad_in_create,
-             cb.curve_buyers,
-             COALESCE(m.complete_slot = m.create_slot AND cb.curve_buyers <= 2, false) AS self_funded
+             cb.curve_buyers, false AS self_funded
       FROM d LEFT JOIN tb USING (key) LEFT JOIN mints m ON m.mint = d.mint
       LEFT JOIN (SELECT c.mint, count(DISTINCT c.trader) AS curve_buyers FROM curve c SEMI JOIN d ON d.mint = c.mint
                  WHERE c.is_buy GROUP BY c.mint) cb ON cb.mint = d.mint""")
     con.execute("CREATE OR REPLACE TEMP TABLE d AS SELECT * FROM d2")
+    sel = daily_select(con, day)
     # All tokens of the day with their aggregates: re-selection with other rules needs no store scan.
     daily_agg = con.execute(f"SELECT '{day}' AS day, * FROM d ORDER BY volume_sol DESC").to_arrow_table()
+    return sel, daily_agg
+
+
+def daily_select(con, day):
+    """The three daily lists from temp table d (the day's per-token aggregates; `self_funded` is recomputed
+    from grad_in_create and curve_buyers, so a saved daily-agg file can be re-selected with a new rule)."""
+    con.execute(f"CREATE OR REPLACE TEMP TABLE d AS SELECT * REPLACE ({SELF_FUNDED_SQL} AS self_funded) FROM d")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sel AS
       SELECT * FROM (
@@ -121,7 +138,7 @@ def daily_cases(con, day, lo, hi):
         SELECT 'dumpers_24h' AS list, row_number() OVER (ORDER BY volume_sol DESC) AS rank, d.*,
                p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
         FROM d WHERE p_last <= 0.1 * p_max AND volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS}) WHERE rank <= {TOP_DAY}""")
-    return con.execute(f"SELECT '{day}' AS day, * FROM sel ORDER BY list, rank").to_arrow_table(), daily_agg
+    return con.execute(f"SELECT '{day}' AS day, * FROM sel ORDER BY list, rank").to_arrow_table()
 
 
 def weekly_cases(con, lo, hi, clock):
@@ -144,8 +161,14 @@ def weekly_cases(con, lo, hi, clock):
             AND e.slot >= g.open_slot AND e.slot < g.open_slot + {n7}
           WHERE hash(g.pool) % {BUCKETS} = {b}
           GROUP BY ALL""")
-    con.execute("""CREATE OR REPLACE TEMP TABLE w2 AS SELECT w.*, gcb.curve_buyers,
-                   COALESCE(w.grad_in_create AND gcb.curve_buyers <= 2, false) AS self_funded FROM w LEFT JOIN gcb USING (mint)""")
+    con.execute("CREATE OR REPLACE TEMP TABLE w2 AS SELECT w.*, gcb.curve_buyers, false AS self_funded FROM w LEFT JOIN gcb USING (mint)")
+    sel = weekly_select(con)
+    return sel, con.execute("SELECT * FROM w2 ORDER BY p_peak * supply DESC").to_arrow_table()
+
+
+def weekly_select(con):
+    """The 7-day lists from temp table w2 (graduations with their 7-day aggregates; `self_funded` recomputed)."""
+    con.execute(f"CREATE OR REPLACE TEMP TABLE w2 AS SELECT * REPLACE ({SELF_FUNDED_SQL} AS self_funded) FROM w2")
     lists = []
     for suffix, extra in (("", ""), ("_organic", " AND NOT self_funded")):
         lists.append(f"""
@@ -196,6 +219,15 @@ def timelines(con, mints, clock):
     return out
 
 
+def write_timelines(path, meta, new):
+    """Merge new timelines into an existing timelines file (re-selection keeps the ones already computed)."""
+    old = json.load(open(path))["timelines"] if os.path.exists(path) else {}
+    old.update(new)
+    with open(path, "w") as f:
+        json.dump({**meta, "timelines": old}, f, indent=1, default=str)
+    return old
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--day", help="UTC day for the daily lists")
@@ -203,22 +235,39 @@ def main():
     ap.add_argument("--from-slot", type=int)
     ap.add_argument("--to-slot", type=int)
     ap.add_argument("--symbols", help="comma-separated symbols: timelines of these tokens (the most-traded mint per symbol)")
+    ap.add_argument("--reselect", action="store_true",
+                    help="re-select the lists from the saved daily-agg / weekly-agg files in --out (no store scan); "
+                         "timelines only with --timelines, and only for mints that have none yet")
+    ap.add_argument("--timelines", action="store_true", help="with --reselect: compute the missing timelines from the store")
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "cases-v1"))
     a = ap.parse_args()
-    con = connect(memory=os.environ.get("LAB_CASES_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1000MB")))
-    clock = Clock.from_store(con)
+    need_store = not a.reselect or a.timelines or a.symbols
+    con = connect(memory=os.environ.get("LAB_CASES_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1000MB"))) if need_store \
+        else duckdb.connect()
+    clock = Clock.from_store(con) if need_store else None
     os.makedirs(a.out, exist_ok=True)
     t0 = time.time()
     if a.day:
-        lo, hi = day_slots(con, a.day)
-        guard(hi)
-        sel, agg = daily_cases(con, a.day, lo, hi)
-        tl = timelines(con, [m for m in sel.column("mint").to_pylist() if m], clock)
+        agg_path, tl_path = os.path.join(a.out, f"daily-agg-{a.day}.parquet"), os.path.join(a.out, f"timelines-{a.day}.json")
+        if a.reselect:
+            con.execute("CREATE OR REPLACE TEMP TABLE d AS SELECT * EXCLUDE (day) FROM read_parquet(?)", [agg_path])
+            sel = daily_select(con, a.day)
+        else:
+            lo, hi = day_slots(con, a.day)
+            guard(hi)
+            sel, agg = daily_cases(con, a.day, lo, hi)
+            pq.write_table(agg, agg_path)
+        mints = [m for m in sel.column("mint").to_pylist() if m]
+        if a.reselect and not a.timelines:
+            tl = {}
+        else:
+            have = json.load(open(tl_path))["timelines"] if a.reselect and os.path.exists(tl_path) else {}
+            tl = timelines(con, [m for m in mints if m not in have], clock)
         pq.write_table(sel, os.path.join(a.out, f"cases-{a.day}.parquet"))
-        pq.write_table(agg, os.path.join(a.out, f"daily-agg-{a.day}.parquet"))
-        with open(os.path.join(a.out, f"timelines-{a.day}.json"), "w") as f:
-            json.dump({"day": a.day, "commit": git_commit(), "timelines": tl}, f, indent=1, default=str)
-        print(f"{a.day}: {sel.num_rows} cases, {len(tl)} timelines, {time.time() - t0:.0f}s", file=sys.stderr)
+        if tl or not a.reselect:
+            write_timelines(tl_path, {"day": a.day, "commit": git_commit()}, tl)
+        print(f"{a.day}: {sel.num_rows} cases, {len(tl)} new timelines, {time.time() - t0:.0f}s"
+              + (" (re-selected from daily-agg)" if a.reselect else ""), file=sys.stderr)
     if a.symbols:
         syms = [x.strip().lower() for x in a.symbols.split(",") if x.strip()]
         rows = con.execute("""
@@ -233,13 +282,24 @@ def main():
         print(f"symbols: {len(found)} found, missing {[x for x in syms if x not in found]}, {time.time() - t0:.0f}s", file=sys.stderr)
     if a.seven:
         guard(a.to_slot)
-        sel = weekly_cases(con, a.from_slot, a.to_slot, clock)
-        tl = timelines(con, sel.column("mint").to_pylist(), clock)
+        agg_path, tl_path = os.path.join(a.out, f"weekly-agg-{a.from_slot}.parquet"), os.path.join(a.out, f"timelines-7d-{a.from_slot}.json")
+        if a.reselect:
+            con.execute("CREATE OR REPLACE TEMP TABLE w2 AS SELECT * FROM read_parquet(?)", [agg_path])
+            sel = weekly_select(con)
+        else:
+            sel, agg = weekly_cases(con, a.from_slot, a.to_slot, clock)
+            pq.write_table(agg, agg_path)
+        mints = sel.column("mint").to_pylist()
+        if a.reselect and not a.timelines:
+            tl = {}
+        else:
+            have = json.load(open(tl_path))["timelines"] if a.reselect and os.path.exists(tl_path) else {}
+            tl = timelines(con, [m for m in mints if m not in have], clock)
         pq.write_table(sel, os.path.join(a.out, f"cases-7d-{a.from_slot}.parquet"))
-        with open(os.path.join(a.out, f"timelines-7d-{a.from_slot}.json"), "w") as f:
-            json.dump({"from_slot": a.from_slot, "to_slot": a.to_slot, "commit": git_commit(), "timelines": tl}, f, indent=1,
-                      default=str)
-        print(f"7d {a.from_slot}-{a.to_slot}: {sel.num_rows} cases, {time.time() - t0:.0f}s", file=sys.stderr)
+        if tl or not a.reselect:
+            write_timelines(tl_path, {"from_slot": a.from_slot, "to_slot": a.to_slot, "commit": git_commit()}, tl)
+        print(f"7d {a.from_slot}-{a.to_slot}: {sel.num_rows} cases, {len(tl)} new timelines, {time.time() - t0:.0f}s"
+              + (" (re-selected from weekly-agg)" if a.reselect else ""), file=sys.stderr)
 
 
 if __name__ == "__main__":

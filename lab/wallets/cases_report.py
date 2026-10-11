@@ -28,7 +28,7 @@ def fmt(x, p=2):
     return str(x)
 
 
-def load(cases_dir):
+def load(cases_dir, store=None):
     con = duckdb.connect()
     con.execute("SET memory_limit = '300MB'; SET threads TO 1")
     daily = sorted(glob.glob(os.path.join(cases_dir, "cases-2*.parquet")))
@@ -36,6 +36,17 @@ def load(cases_dir):
     tls = {}
     for f in sorted(glob.glob(os.path.join(cases_dir, "timelines-*.json"))):
         tls.update(json.load(open(f))["timelines"])
+    # A re-selected case without a timeline yet still gets its symbol (a small lookup in the store's mints table).
+    if store and os.path.exists(store) and daily:
+        missing = [m for (m,) in con.execute(f"SELECT DISTINCT mint FROM read_parquet({daily!r}, union_by_name = true)").fetchall()
+                   if m and m not in tls]
+        if missing:
+            scon = duckdb.connect(store, read_only=True)
+            scon.execute("SET memory_limit = '300MB'; SET threads TO 1")
+            for mint, symbol, name in scon.execute("SELECT mint, symbol, name FROM mints WHERE mint IN (SELECT unnest(?))",
+                                                   [missing]).fetchall():
+                tls[mint] = {"mint": mint, "symbol": symbol, "name": name, "dexscreener": f"https://dexscreener.com/solana/{mint}",
+                             "symbol_only": True}
     return con, daily, weekly, tls
 
 
@@ -74,8 +85,10 @@ def compare(tls, risers, dumpers):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--cases", required=True)
+    ap.add_argument("--store", default=os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"),
+                    help="store for the symbols of cases without a timeline (empty: none)")
     a = ap.parse_args()
-    con, daily, weekly, tls = load(a.cases)
+    con, daily, weekly, tls = load(a.cases, a.store)
     print("# Casussen uit eigen data (Triton/OF1), ontwikkelperiode\n")
     print("Alleen adressen; labels zijn waarschijnlijkheden. Links openen DexScreener voor de eigenaar; het is geen databron.\n")
     risers, dumpers = [], []
@@ -83,8 +96,9 @@ def main():
         rows = con.execute(f"SELECT day, list, rank, mint, volume_sol, ret_24h, peak_mult, end_of_peak, traders, vault_end, "
                            f"COALESCE(self_funded, false), top_buyer_share FROM read_parquet({daily!r}, union_by_name = true) ORDER BY day, list, rank").fetchall()
         print("## Per dag: trending 24 u (met en zonder zelffinanciering) en pumpers/dumpers\n")
-        print("Zelfgefinancierd = één koper graduateerde de token in de create-slot én één partij deed > 50% van de pool-kopen van de dag. "
-              "`trending_24h_organic` is dezelfde lijst zonder die tokens.\n")
+        print("Zelfgefinancierd (dev-bundel) = de token graduateerde in zijn create-slot, of hoogstens 5 wallets kochten de hele curve. "
+              "`trending_24h_organic` is dezelfde lijst zonder die tokens; 'grootste koper' is het aandeel van één wallet in de pool-kopen "
+              "van de dag (informatie, geen filter).\n")
         print("| dag | lijst | # | token | zelfgefin. | grootste koper | volume SOL | 24-u-rendement | piek × | eind t.o.v. piek | traders | SOL in pool (eind) |")
         print("|---|---|---|---|---|---|---|---|---|---|---|---|")
         for day, lst, rank, mint, vol, ret, peak, eop, tr, va, sf, tb in rows:
@@ -112,6 +126,8 @@ def main():
         print()
     print("## Tijdlijnen\n")
     for mint, tl in tls.items():
+        if tl.get("symbol_only"):
+            continue
         print(case_block(tl))
         print()
 
