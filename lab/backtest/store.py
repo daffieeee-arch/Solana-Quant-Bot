@@ -49,7 +49,12 @@ SPILL_MAX = os.environ.get("LAB_SPILL_MAX", "15GB")  # set a small cap while the
 VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 ms slots
 DISK_FLOOR_GB = 50
 DISK_LOW = "/home/chupa/Solana-project/data-old-faithful-one/lab/locks/disk-low"  # set by ops/disk-guard.sh
-POOL_PARTS = 4
+POOL_PARTS = int(os.environ.get("LAB_POOL_PARTS", "4"))  # pool slices per chunk in pass 2 (smaller sorts)
+# Hard stop on disk writes (coordinator, 2026-10-11): a chunk that writes more than this many GB
+# pauses the build (LAB_BUILD_WRITE_ACTION=pause: until PAUSE_FLAG is removed) or aborts it.
+MAX_CHUNK_WRITE_GB = float(os.environ.get("LAB_BUILD_MAX_CHUNK_GB", "0") or 0)
+WRITE_ACTION = os.environ.get("LAB_BUILD_WRITE_ACTION", "pause")
+PAUSE_FLAG = "/home/chupa/Solana-project/data-old-faithful-one/lab/locks/store-build-paused"
 # Volume farming (coordinator 2026-10-10): a trade's wallet is a farmer in that pool when, over
 # its own trades in the pool in the 24 h before the trade, |net token delta| < FARMER_RATIO x gross
 # token volume, with at least FARMER_MIN_TRADES trades. Backward-looking only.
@@ -117,6 +122,21 @@ class Chunk:
         if "parent_ix_args" not in (data.columns(table, self.chunk) if data.files(table, self.chunk) else set()):
             return f"NULL::{cast}"
         return f"TRY_CAST(json_extract_string(parent_ix_args, '$.{key}') AS {cast})"
+
+
+def _write_check(what, written, log):
+    """Hard stop when one chunk wrote more than MAX_CHUNK_WRITE_GB."""
+    if not MAX_CHUNK_WRITE_GB or written / 1e9 <= MAX_CHUNK_WRITE_GB:
+        return
+    msg = f"{what} wrote {written / 1e9:.1f} GB > limit {MAX_CHUNK_WRITE_GB:g} GB"
+    if WRITE_ACTION == "abort":
+        raise SystemExit(f"write limit: {msg}")
+    with open(PAUSE_FLAG, "w") as f:
+        f.write(msg + "\n")
+    log(f"PAUSED (write limit): {msg}; remove {PAUSE_FLAG} to continue")
+    while os.path.exists(PAUSE_FLAG):
+        time.sleep(60)
+    log("resumed")
 
 
 def _io_written():
@@ -271,6 +291,7 @@ def build(period, out_path, cfg, chunks, log=print):
     # Pass 1: blocks and per-pool evidence, one chunk at a time.
     for ch in chunks:
         health.wait_ok(log, f"pass 1 chunk {ch[0]}")
+        w0 = _io_written()
         c = Chunk(ch)
         con.execute(f"INSERT INTO s.blocks SELECT slot, any_value(block_time) FROM {c.src('blocks')} "
                     "WHERE NOT skipped GROUP BY slot ORDER BY slot")
@@ -286,7 +307,8 @@ def build(period, out_path, cfg, chunks, log=print):
                           count(*) FILTER (WHERE tr.kind = 'buy'), count(*) FILTER (WHERE tr.kind = 'sell')
                         FROM ({trades}) tr JOIN s.blocks bl ON bl.slot = tr.slot
                         WHERE bl.slot >= {ch[0]} AND bl.slot < {ch[1]} GROUP BY ALL""")
-        log(f"pass 1 {ch[0]} ({time.time() - t0:.0f}s)")
+        log(f"pass 1 {ch[0]} ({time.time() - t0:.0f}s, chunk wrote {(_io_written() - w0) / 1e9:.2f} GB)")
+        _write_check(f"pass 1 chunk {ch[0]}", _io_written() - w0, log)
 
     _classify_pools(con, P, chunks, log)
     log(f"pools classified ({time.time() - t0:.0f}s): "
@@ -299,6 +321,7 @@ def build(period, out_path, cfg, chunks, log=print):
     first = True
     for ch in chunks:
         health.wait_ok(log, f"pass 2 chunk {ch[0]}")
+        w0 = _io_written()
         c = Chunk(ch)
         T = "pump/TradeEvent"
         trade = c.src(T)
@@ -372,7 +395,9 @@ def build(period, out_path, cfg, chunks, log=print):
         if sweep:
             con.execute(f"""INSERT INTO s.pool_sweeps SELECT pool, slot, tx_index, outer_ix, inner_ix, amount{B}, bucket::INTEGER
                             FROM {sweep} SEMI JOIN s.pools p USING (pool) WHERE p.quote_class IN ('sol', 'reversed')""")
-        log(f"pass 2 {ch[0]} ({time.time() - t0:.0f}s, wrote {_io_written() / 1e9:.1f} GB)")
+        log(f"pass 2 {ch[0]} ({time.time() - t0:.0f}s, chunk wrote {(_io_written() - w0) / 1e9:.2f} GB, "
+            f"total {_io_written() / 1e9:.1f} GB)")
+        _write_check(f"pass 2 chunk {ch[0]}", _io_written() - w0, log)
 
     con.execute("""
       CREATE TABLE s.pool_class_daily AS
