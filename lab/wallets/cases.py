@@ -75,23 +75,27 @@ def daily_cases(con, day, lo, hi):
     con.execute("""CREATE OR REPLACE TEMP TABLE d (key VARCHAR, mint VARCHAR, trades BIGINT, traders BIGINT, volume_sol DOUBLE,
                    p_first DOUBLE, p_last DOUBLE, p_max DOUBLE, peak_slot BIGINT, first_slot BIGINT, last_slot BIGINT,
                    vault_end DOUBLE, buy_sol DOUBLE, top_buyer_share DOUBLE)""")
+    con.execute("CREATE OR REPLACE TEMP TABLE tb (key VARCHAR, top_buyer_share DOUBLE)")
     for b in range(BUCKETS):
         con.execute(f"""
           INSERT INTO d
           SELECT key, any_value(mint), count(*), count(DISTINCT trader), sum(sol) / {SOL},
                  arg_min(px, slot * 1048576 + tx_index), arg_max(px, slot * 1048576 + tx_index),
                  max(px), arg_max(slot, px), min(slot), max(slot), arg_max(vault, slot * 1048576 + tx_index) / {SOL},
-                 sum(sol) FILTER (WHERE token_buy) / {SOL},
-                 max(buyer_sol) / NULLIF(sum(sol) FILTER (WHERE token_buy), 0)
-          FROM (SELECT *, sum(sol) FILTER (WHERE token_buy) OVER (PARTITION BY key, trader) AS buyer_sol
-                FROM ({trades_sql(lo, hi)}) WHERE hash(key) % {BUCKETS} = {b}) GROUP BY key""")
+                 sum(sol) FILTER (WHERE token_buy) / {SOL}, NULL
+          FROM ({trades_sql(lo, hi)}) WHERE hash(key) % {BUCKETS} = {b} GROUP BY key""")
+        con.execute(f"""
+          INSERT INTO tb
+          SELECT key, max(bs) / sum(bs) FROM (SELECT key, trader, sum(sol) AS bs FROM ({trades_sql(lo, hi)})
+                                             WHERE token_buy AND hash(key) % {BUCKETS} = {b} GROUP BY key, trader) GROUP BY key""")
     # Self-funded structure: one buyer graduated the token in its create slot and one party made more
     # than half of the day's pool buys (coordinator, 2026-10-11). Shown as a flag; lists with and without.
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE d2 AS
-      SELECT d.*, COALESCE(m.complete_slot = m.create_slot, false) AS grad_in_create, cb.curve_buyers,
-             COALESCE(m.complete_slot = m.create_slot AND cb.curve_buyers <= 2 AND d.top_buyer_share > 0.5, false) AS self_funded
-      FROM d LEFT JOIN mints m ON m.mint = d.mint
+      SELECT d.* EXCLUDE (top_buyer_share), tb.top_buyer_share, COALESCE(m.complete_slot = m.create_slot, false) AS grad_in_create,
+             cb.curve_buyers,
+             COALESCE(m.complete_slot = m.create_slot AND cb.curve_buyers <= 2 AND tb.top_buyer_share > 0.5, false) AS self_funded
+      FROM d LEFT JOIN tb USING (key) LEFT JOIN mints m ON m.mint = d.mint
       LEFT JOIN (SELECT mint, count(DISTINCT trader) AS curve_buyers FROM curve WHERE is_buy GROUP BY mint) cb ON cb.mint = d.mint""")
     con.execute("CREATE OR REPLACE TEMP TABLE d AS SELECT * FROM d2")
     con.execute(f"""
