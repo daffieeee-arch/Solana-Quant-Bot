@@ -20,6 +20,10 @@ median leader hold <= HF_HOLD_S), farmer (>= half of the wallet's pool trades fl
 one_shot (one episode), bundler (>= BUNDLER_MIN memberships of cluster events, clusters.py) and
 split_buyer (>= 2 `tx` cluster buys in normal pools: the structure that held in step 0).
 
+Copyability (coordinator, 2026-10-11): per wallet the share of our exits caused by the leader's
+sale, the share where the leader sold within FAST_SLOTS of our entry (we were the exit liquidity)
+and the median slots until the leader sold; `copyable` = >= MIN_N positions and <= 25% fast sales.
+
   python -m wallets.score --day 2026-09-27 --episodes DIR --follow DIR [--clusters DIR] [--out DIR]
 
 Writes scores-<D>.parquet (long: wallet x variant x size x d) and leaderboard-<D>.parquet (one
@@ -50,6 +54,7 @@ FDR_Q = 0.10
 HF_PER_DAY, HF_HOLD_S = 100, 60
 BUNDLER_MIN = 3
 LEADER_VARIANT, LEADER_SIZE = "W_half", 0.5
+FAST_SLOTS = 10  # the leader sold within this many slots after our entry: we were the exit liquidity
 
 
 def day_bounds(con, day):
@@ -104,10 +109,12 @@ def score_positions(con, follow_dir, lo, hi, d_slot, cfg):
       SELECT wallet, variant, size_sol, d, any_value(control) AS control, count(*) AS n, count(ret) AS filled,
              avg(ret) AS mean_ret, stddev_samp(ret) AS sd_ret, avg(pnl) / 1e9 AS mean_pnl_sol, avg((ret > 0)::INT) AS win,
              median(exit_slot - entry_slot) AS median_hold_slots,
-             avg((exit_reason = 'leader_sold')::INT) AS leader_exit_share, avg(entry_failed::INT) AS failed_share
+             avg((exit_reason = 'leader_sold')::INT) AS leader_exit_share, avg(entry_failed::INT) AS failed_share,
+             avg((exit_reason = 'leader_sold' AND exit_decision_slot - entry_slot <= {FAST_SLOTS})::INT) AS leader_sold_fast_share,
+             median(exit_decision_slot - entry_slot) FILTER (WHERE exit_reason = 'leader_sold') AS median_slots_to_leader_sell
       FROM p GROUP BY ALL""").fetchall()
     cols = ["wallet", "variant", "size_sol", "d", "control", "n", "filled", "mean_ret", "sd_ret", "mean_pnl_sol", "win",
-            "median_hold_slots", "leader_exit_share", "failed_share"]
+            "median_hold_slots", "leader_exit_share", "failed_share", "leader_sold_fast_share", "median_slots_to_leader_sell"]
     out = [dict(zip(cols, r)) for r in rows]
     groups = {}
     for r in out:
@@ -204,7 +211,12 @@ def leaderboard(day, scores, leaders, creators, farmer, memberships, split, days
                     "follow_shrunk_d1": (f1 or {}).get("shrunk_ret"), "q_d2": (f2 or {}).get("q_value"),
                     "q_d1": (f1 or {}).get("q_value"), "top_d2": (f2 or {}).get("top", False),
                     "follow_median_hold_slots": (f2 or {}).get("median_hold_slots"),
-                    "leader_exit_share_d2": (f2 or {}).get("leader_exit_share"), "rank_d2": (f2 or {}).get("rank")})
+                    "leader_exit_share_d2": (f2 or {}).get("leader_exit_share"),
+                    "leader_sold_fast_share_d2": (f2 or {}).get("leader_sold_fast_share"),
+                    "median_slots_to_leader_sell_d2": (f2 or {}).get("median_slots_to_leader_sell"),
+                    "copyable": ((f2 or {}).get("leader_exit_share") is not None and (f2 or {}).get("filled", 0) >= MIN_N
+                                 and (f2 or {}).get("leader_sold_fast_share", 1) <= 0.25),
+                    "rank_d2": (f2 or {}).get("rank")})
     out.sort(key=lambda r: (r["rank_d2"] is None, r["rank_d2"] or 0, -(r["leader_ret_marked"] or 0)))
     return out
 

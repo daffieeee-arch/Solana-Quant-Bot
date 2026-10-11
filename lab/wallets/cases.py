@@ -74,14 +74,26 @@ BUCKETS = 8  # per-key aggregation in hash buckets of the key: bounded working s
 def daily_cases(con, day, lo, hi):
     con.execute("""CREATE OR REPLACE TEMP TABLE d (key VARCHAR, mint VARCHAR, trades BIGINT, traders BIGINT, volume_sol DOUBLE,
                    p_first DOUBLE, p_last DOUBLE, p_max DOUBLE, peak_slot BIGINT, first_slot BIGINT, last_slot BIGINT,
-                   vault_end DOUBLE)""")
+                   vault_end DOUBLE, buy_sol DOUBLE, top_buyer_share DOUBLE)""")
     for b in range(BUCKETS):
         con.execute(f"""
           INSERT INTO d
           SELECT key, any_value(mint), count(*), count(DISTINCT trader), sum(sol) / {SOL},
                  arg_min(px, slot * 1048576 + tx_index), arg_max(px, slot * 1048576 + tx_index),
-                 max(px), arg_max(slot, px), min(slot), max(slot), arg_max(vault, slot * 1048576 + tx_index) / {SOL}
-          FROM ({trades_sql(lo, hi)}) WHERE hash(key) % {BUCKETS} = {b} GROUP BY key""")
+                 max(px), arg_max(slot, px), min(slot), max(slot), arg_max(vault, slot * 1048576 + tx_index) / {SOL},
+                 sum(sol) FILTER (WHERE token_buy) / {SOL},
+                 max(buyer_sol) / NULLIF(sum(sol) FILTER (WHERE token_buy), 0)
+          FROM (SELECT *, sum(sol) FILTER (WHERE token_buy) OVER (PARTITION BY key, trader) AS buyer_sol
+                FROM ({trades_sql(lo, hi)}) WHERE hash(key) % {BUCKETS} = {b}) GROUP BY key""")
+    # Self-funded structure: one buyer graduated the token in its create slot and one party made more
+    # than half of the day's pool buys (coordinator, 2026-10-11). Shown as a flag; lists with and without.
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE d2 AS
+      SELECT d.*, COALESCE(m.complete_slot = m.create_slot, false) AS grad_in_create, cb.curve_buyers,
+             COALESCE(m.complete_slot = m.create_slot AND cb.curve_buyers <= 2 AND d.top_buyer_share > 0.5, false) AS self_funded
+      FROM d LEFT JOIN mints m ON m.mint = d.mint
+      LEFT JOIN (SELECT mint, count(DISTINCT trader) AS curve_buyers FROM curve WHERE is_buy GROUP BY mint) cb ON cb.mint = d.mint""")
+    con.execute("CREATE OR REPLACE TEMP TABLE d AS SELECT * FROM d2")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sel AS
       SELECT * FROM (
@@ -89,6 +101,12 @@ def daily_cases(con, day, lo, hi):
                p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
         FROM d WHERE volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS} AND p_last > p_first
           AND vault_end >= {MIN_VAULT_DAY_SOL}) WHERE rank <= {TOP_DAY}
+      UNION ALL
+      SELECT * FROM (
+        SELECT 'trending_24h_organic' AS list, row_number() OVER (ORDER BY (p_last / p_first - 1) * volume_sol DESC) AS rank, d.*,
+               p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
+        FROM d WHERE volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS} AND p_last > p_first
+          AND vault_end >= {MIN_VAULT_DAY_SOL} AND NOT self_funded) WHERE rank <= {TOP_DAY}
       UNION ALL
       SELECT * FROM (
         SELECT 'dumpers_24h' AS list, row_number() OVER (ORDER BY volume_sol DESC) AS rank, d.*,

@@ -32,6 +32,7 @@ Run order for a period: `episodes` → `follow` (needs the store-v2 engine: `LAB
 | `q_d1`, `q_d2`, `top_d2` | FDR q-values; `top_d2` = q < 0.10 at d = 2 |
 | `follow_n`, `control` | replayed positions; `control` = the wallet is in the random N2-wallet control group |
 | `follow_median_hold_slots`, `leader_exit_share_d2` | our median hold; share of exits caused by the leader selling (rest: 4 h time stop) |
+| `leader_sold_fast_share_d2`, `median_slots_to_leader_sell_d2`, `copyable` | share of positions where the leader sold within 10 slots of our entry (we were its exit liquidity); median slots until the leader sold; `copyable` = ≥ 5 positions and ≤ 25% fast sales |
 | `rank_d2` | rank by `follow_shrunk_d2` (W_half, 0.5 SOL) |
 
 `scores-v1/scores-<D>.parquet` is the long form (wallet × variant × size × d) with `n`, `filled`, `mean_ret`, `sd_ret`, `mean_pnl_sol`, `win`, `shrunk_ret`, `prior`, `k`, `p_value`, `q_value`, `top`, `rank`.

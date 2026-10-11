@@ -80,16 +80,22 @@ def main():
     print("Alleen adressen; labels zijn waarschijnlijkheden. Links openen DexScreener voor de eigenaar; het is geen databron.\n")
     risers, dumpers = [], []
     if daily:
-        rows = con.execute(f"SELECT day, list, rank, mint, volume_sol, ret_24h, peak_mult, end_of_peak, traders, vault_end FROM read_parquet({daily!r}) ORDER BY day, list, rank").fetchall()
-        print("## Per dag: trending 24 u en pumpers/dumpers\n")
-        print("| dag | lijst | # | token | volume SOL | 24-u-rendement | piek × | eind t.o.v. piek | traders | SOL in pool (eind) |")
-        print("|---|---|---|---|---|---|---|---|---|---|")
-        for day, lst, rank, mint, vol, ret, peak, eop, tr, va in rows:
+        rows = con.execute(f"SELECT day, list, rank, mint, volume_sol, ret_24h, peak_mult, end_of_peak, traders, vault_end, "
+                           f"COALESCE(self_funded, false), top_buyer_share FROM read_parquet({daily!r}, union_by_name = true) ORDER BY day, list, rank").fetchall()
+        print("## Per dag: trending 24 u (met en zonder zelffinanciering) en pumpers/dumpers\n")
+        print("Zelfgefinancierd = één koper graduateerde de token in de create-slot én één partij deed > 50% van de pool-kopen van de dag. "
+              "`trending_24h_organic` is dezelfde lijst zonder die tokens.\n")
+        print("| dag | lijst | # | token | zelfgefin. | grootste koper | volume SOL | 24-u-rendement | piek × | eind t.o.v. piek | traders | SOL in pool (eind) |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+        for day, lst, rank, mint, vol, ret, peak, eop, tr, va, sf, tb in rows:
             tl = tls.get(mint, {})
             sym = tl.get("symbol") or (mint[:6] if mint else "?")
             link = f"[{sym}](https://dexscreener.com/solana/{mint})" if mint else "?"
-            print(f"| {day} | {lst} | {rank} | {link} | {vol:,.0f} | {ret:+.0%} | {peak:.1f} | {eop:.0%} | {tr} | {va:,.0f} |")
-            (risers if lst == "trending_24h" else dumpers).append(mint)
+            print(f"| {day} | {lst} | {rank} | {link} | {'ja' if sf else 'nee'} | {fmt(tb)} | {vol:,.0f} | {ret:+.0%} | {peak:.1f} | {eop:.0%} | {tr} | {va:,.0f} |")
+            if lst == "trending_24h_organic":
+                risers.append(mint)
+            elif lst == "dumpers_24h":
+                dumpers.append(mint)
         print()
     if weekly:
         rows = con.execute(f"SELECT list, rank, mint, symbol, mcap_7d_sol, mcap_peak_sol, end_of_peak, volume_7d, traders_7d, vault_7d FROM read_parquet({weekly!r}) ORDER BY list, rank").fetchall()
@@ -100,7 +106,7 @@ def main():
             print(f"| {lst} | {rank} | [{sym}](https://dexscreener.com/solana/{mint}) | {m7:,.0f} | {mp:,.0f} | {eop:.0%} | {vol:,.0f} | {tr} | {va:,.0f} |")
         print()
     if risers or dumpers:
-        print("## Stijgers tegenover dumpers in de eerste 15 minuten\n")
+        print("## Organische stijgers tegenover dumpers in de eerste 15 minuten\n")
         print(compare(tls, risers, dumpers))
         print()
     print("## Tijdlijnen\n")
