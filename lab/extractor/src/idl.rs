@@ -63,6 +63,21 @@ pub struct InstructionDef {
     pub name: String,
     pub discriminator: [u8; 8],
     pub args: Vec<Field>,
+    /// Account names in the order the instruction takes them (nested groups flattened).
+    pub accounts: Vec<String>,
+}
+
+/// Instruction accounts that also get their own column, where the variant has them.
+pub const FIXED_ACCOUNTS: [&str; 5] = ["pool", "user", "global_config", "base_mint", "quote_mint"];
+
+/// An instruction's accounts by IDL name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NamedAccounts {
+    /// JSON object {name: key}. Keys beyond the IDL list (remaining accounts) are under "_extra";
+    /// "_missing" counts IDL names without a key when the instruction has fewer accounts.
+    pub json: String,
+    /// The FIXED_ACCOUNTS in order; None where the variant has no account of that name.
+    pub fixed: [Option<String>; 5],
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +200,18 @@ fn parse_ty(j: &J) -> Result<Ty> {
     bail!("unsupported IDL type {j}")
 }
 
+/// Account names of an instruction in order, nested account groups flattened.
+fn account_names(j: &J) -> Vec<String> {
+    let mut out = Vec::new();
+    for a in j.as_array().map(Vec::as_slice).unwrap_or(&[]) {
+        match a.get("accounts") {
+            Some(inner) => out.extend(account_names(inner)),
+            None => out.push(a["name"].as_str().unwrap_or("?").to_owned()),
+        }
+    }
+    out
+}
+
 fn parse_fields(j: &J) -> Result<Vec<Field>> {
     j.as_array()
         .ok_or_else(|| anyhow!("fields must be an array"))?
@@ -274,7 +301,8 @@ impl Idl {
                 .collect::<Result<_>>()?;
             let Ok(discriminator) = <[u8; 8]>::try_from(disc) else { continue };
             let args = parse_fields(ix.get("args").unwrap_or(&J::Array(Vec::new())))?;
-            instructions.push(InstructionDef { name, discriminator, args });
+            let accounts = account_names(ix.get("accounts").unwrap_or(&J::Null));
+            instructions.push(InstructionDef { name, discriminator, args, accounts });
         }
         let instruction_by_disc = instructions.iter().enumerate().map(|(i, ix)| (ix.discriminator, i)).collect();
         Ok(Self { address, events, instructions, instruction_by_disc, types })
@@ -309,6 +337,26 @@ impl Idl {
         }
         map.insert("_decode".to_owned(), J::String(status.as_str().to_owned()));
         Some((ix.name.as_str(), J::Object(map).to_string()))
+    }
+
+    /// The accounts of an instruction of this program by IDL name, from its account keys in
+    /// order (None for a key the transaction could not resolve). None when the discriminator is
+    /// not in the IDL.
+    pub fn named_accounts(&self, data: &[u8], keys: &[Option<String>]) -> Option<NamedAccounts> {
+        let disc: [u8; 8] = data.get(..8)?.try_into().ok()?;
+        let ix = &self.instructions[*self.instruction_by_disc.get(&disc)?];
+        let key_json = |k: &Option<String>| k.as_ref().map_or(J::Null, |k| J::String(k.clone()));
+        let mut map = serde_json::Map::new();
+        for (name, key) in ix.accounts.iter().zip(keys) {
+            map.insert(name.clone(), key_json(key));
+        }
+        if keys.len() > ix.accounts.len() {
+            map.insert("_extra".to_owned(), J::Array(keys[ix.accounts.len()..].iter().map(key_json).collect()));
+        } else if keys.len() < ix.accounts.len() {
+            map.insert("_missing".to_owned(), J::from(ix.accounts.len() - keys.len()));
+        }
+        let fixed = FIXED_ACCOUNTS.map(|n| map.get(n).and_then(J::as_str).map(str::to_owned));
+        Some(NamedAccounts { json: J::Object(map).to_string(), fixed })
     }
 
     #[cfg(test)]
@@ -530,6 +578,122 @@ mod tests {
         h.reverse();
         assert_eq!(h, EVENT_IX_TAG);
         assert_eq!(u64::from_le_bytes(EVENT_IX_TAG), 0x1d9a_cb51_2ea5_45e4);
+    }
+
+    /// Instruction data that only carries the discriminator (enough to pick the instruction).
+    fn ix_data(idl: &Idl, name: &str) -> Vec<u8> {
+        idl.instructions.iter().find(|i| i.name == name).unwrap_or_else(|| panic!("no instruction {name}")).discriminator.to_vec()
+    }
+
+    /// Account keys in the instruction's IDL order: the known keys by name, a placeholder otherwise.
+    fn keys_for(idl: &Idl, name: &str, known: &[(&str, &str)]) -> Vec<Option<String>> {
+        let ix = idl.instructions.iter().find(|i| i.name == name).unwrap();
+        ix.accounts
+            .iter()
+            .enumerate()
+            .map(|(i, a)| Some(known.iter().find(|(n, _)| *n == a.as_str()).map_or(format!("other{i}"), |(_, k)| (*k).to_owned())))
+            .collect()
+    }
+
+    // Keys from the dataset: a PumpSwap buy (slot 451000002, tx 301; pool, user, the pool's mints)
+    // and a pump.fun buy_v2 (slot 451000049, tx 719; mint and user). The IDL gives no fixed address
+    // for global_config, so that key is a placeholder.
+    const AMM_POOL: &str = "2DeW4HVXmwmQonkBHMnA3ujGJUmsgh5fWT8KPLsS5DWA";
+    const AMM_USER: &str = "7GoKr1AsbNySih44zWpMJVfv911dnHbQGBfPCnCMQP3u";
+    const AMM_MINT: &str = "8TC93eg35bVJShh7CAcoXNhDCKWnmsdLN39z9Ywkpump";
+    const WSOL: &str = "So11111111111111111111111111111111111111112";
+    const CURVE_MINT: &str = "2c7AzoxqEF8o9wuTJwdGrhhbqEa32FtdRybEWaxEpump";
+    const CURVE_USER: &str = "HgEM6iXuf5Pt2yHh1cuN8MoziC4W1FVKvoqe4H9aww7T";
+    const GLOBAL_CONFIG: &str = "global-config-key";
+
+    #[test]
+    fn instruction_accounts_follow_the_idl_order() {
+        for text in [PUMP, PUMP_AMM] {
+            let idl = Idl::parse(text).unwrap();
+            let j: J = serde_json::from_str(text).unwrap();
+            for ix in j["instructions"].as_array().unwrap() {
+                let Some(def) = idl.instructions.iter().find(|d| d.name == ix["name"].as_str().unwrap()) else { continue };
+                let names: Vec<&str> =
+                    ix["accounts"].as_array().map(Vec::as_slice).unwrap_or(&[]).iter().map(|a| a["name"].as_str().unwrap()).collect();
+                assert_eq!(def.accounts, names, "{}", def.name);
+            }
+        }
+    }
+
+    /// Account positions differ per variant (e.g. deposit has global_config before user, the sweeps
+    /// have the pool third, pump v2/v3 put the mints right after global); mapping is by name.
+    #[test]
+    fn named_accounts_per_variant() {
+        let amm = Idl::parse(PUMP_AMM).unwrap();
+        let known = [("pool", AMM_POOL), ("user", AMM_USER), ("global_config", GLOBAL_CONFIG), ("base_mint", AMM_MINT), ("quote_mint", WSOL)];
+        let all = [Some(AMM_POOL), Some(AMM_USER), Some(GLOBAL_CONFIG), Some(AMM_MINT), Some(WSOL)];
+        let no_user = [Some(AMM_POOL), None, Some(GLOBAL_CONFIG), Some(AMM_MINT), Some(WSOL)];
+        let sweep = [Some(AMM_POOL), None, Some(GLOBAL_CONFIG), None, Some(WSOL)];
+        for (name, expect) in [
+            ("buy", all),
+            ("buy_v2", all),
+            ("buy_exact_quote_in", all),
+            ("buy_exact_quote_in_v2", all),
+            ("sell", all),
+            ("sell_v2", all),
+            ("deposit", all),
+            ("withdraw", all),
+            ("boost_buy_and_burn", no_user),
+            ("create_pool", no_user),
+            ("sweep_protocol_fee", sweep),
+            ("sweep_creator_fee", sweep),
+        ] {
+            let n = amm.named_accounts(&ix_data(&amm, name), &keys_for(&amm, name, &known)).unwrap();
+            assert_eq!(n.fixed, expect.map(|k| k.map(str::to_owned)), "pump_amm {name}");
+            let j: J = serde_json::from_str(&n.json).unwrap();
+            assert_eq!(j["pool"], AMM_POOL, "pump_amm {name}");
+            assert!(j.get("_extra").is_none() && j.get("_missing").is_none(), "pump_amm {name}");
+        }
+        let pump = Idl::parse(PUMP).unwrap();
+        let known = [("user", CURVE_USER), ("base_mint", CURVE_MINT), ("mint", CURVE_MINT), ("quote_mint", WSOL)];
+        let v1 = [None, Some(CURVE_USER), None, None, None];
+        let v23 = [None, Some(CURVE_USER), None, Some(CURVE_MINT), Some(WSOL)];
+        let sweep = [None, None, None, Some(CURVE_MINT), Some(WSOL)];
+        for (name, expect) in [
+            ("buy", v1),
+            ("sell", v1),
+            ("buy_exact_sol_in", v1),
+            ("buy_v2", v23),
+            ("sell_v2", v23),
+            ("buy_exact_quote_in_v2", v23),
+            ("buy_v3", v23),
+            ("sell_v3", v23),
+            ("buy_exact_quote_in_v3", v23),
+            ("sweep_protocol_fee", sweep),
+            ("sweep_creator_fee", sweep),
+        ] {
+            let n = pump.named_accounts(&ix_data(&pump, name), &keys_for(&pump, name, &known)).unwrap();
+            assert_eq!(n.fixed, expect.map(|k| k.map(str::to_owned)), "pump {name}");
+            let j: J = serde_json::from_str(&n.json).unwrap();
+            let mint = if expect[3].is_some() { &j["base_mint"] } else { &j["mint"] };
+            assert_eq!(mint, CURVE_MINT, "pump {name}");
+        }
+    }
+
+    #[test]
+    fn named_accounts_extra_missing_unresolved_and_unknown() {
+        let amm = Idl::parse(PUMP_AMM).unwrap();
+        let data = ix_data(&amm, "buy");
+        let mut keys = keys_for(&amm, "buy", &[("pool", AMM_POOL)]);
+        keys.push(Some("remaining-1".to_owned()));
+        let j: J = serde_json::from_str(&amm.named_accounts(&data, &keys).unwrap().json).unwrap();
+        assert_eq!(j["_extra"], json!(["remaining-1"]));
+        keys.truncate(3);
+        let n = amm.named_accounts(&data, &keys).unwrap();
+        let j: J = serde_json::from_str(&n.json).unwrap();
+        assert_eq!(j["_missing"], json!(20));
+        assert_eq!(n.fixed[3], None); // base_mint is the fourth account
+        keys[1] = None; // a key the transaction could not resolve
+        let n = amm.named_accounts(&data, &keys).unwrap();
+        assert_eq!(n.fixed[1], None);
+        assert_eq!(serde_json::from_str::<J>(&n.json).unwrap()["user"], J::Null);
+        assert!(amm.named_accounts(&[0u8; 8], &keys).is_none());
+        assert!(amm.named_accounts(&[1, 2], &keys).is_none());
     }
 
     #[test]
