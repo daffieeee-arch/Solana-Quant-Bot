@@ -148,6 +148,7 @@ def main():
     ap.add_argument("--seven", action="store_true", help="the 7-day lists over --from-slot/--to-slot")
     ap.add_argument("--from-slot", type=int)
     ap.add_argument("--to-slot", type=int)
+    ap.add_argument("--symbols", help="comma-separated symbols: timelines of these tokens (the most-traded mint per symbol)")
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "cases-v1"))
     a = ap.parse_args()
     con = connect(memory="1000MB")
@@ -163,6 +164,18 @@ def main():
         with open(os.path.join(a.out, f"timelines-{a.day}.json"), "w") as f:
             json.dump({"day": a.day, "commit": git_commit(), "timelines": tl}, f, indent=1, default=str)
         print(f"{a.day}: {sel.num_rows} cases, {len(tl)} timelines, {time.time() - t0:.0f}s", file=sys.stderr)
+    if a.symbols:
+        syms = [x.strip().lower() for x in a.symbols.split(",") if x.strip()]
+        rows = con.execute("""
+          SELECT lower(m.symbol) AS s, m.mint, COALESCE(ps.n_buy + ps.n_sell, 0) AS n
+          FROM mints m LEFT JOIN pool_stats ps ON ps.pool = m.pool WHERE lower(m.symbol) IN (SELECT unnest(?))
+          QUALIFY row_number() OVER (PARTITION BY lower(m.symbol) ORDER BY n DESC, m.create_slot) = 1""", [syms]).fetchall()
+        found = {r[0]: r[1] for r in rows}
+        tl = timelines(con, list(found.values()), clock) if found else {}
+        with open(os.path.join(a.out, "timelines-symbols.json"), "w") as f:
+            json.dump({"symbols": syms, "found": found, "missing": [x for x in syms if x not in found], "commit": git_commit(),
+                       "timelines": tl}, f, indent=1, default=str)
+        print(f"symbols: {len(found)} found, missing {[x for x in syms if x not in found]}, {time.time() - t0:.0f}s", file=sys.stderr)
     if a.seven:
         guard(a.to_slot)
         sel = weekly_cases(con, a.from_slot, a.to_slot, clock)
