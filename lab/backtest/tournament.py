@@ -25,7 +25,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from . import overlay, replay, rotation, streams
+from . import health, overlay, replay, rotation, streams
 from .costs import LAMPORTS, Scenario, settle_sql
 from .store import load_defaults
 from .strategies import (
@@ -341,6 +341,31 @@ def _days(con, slots):
     return np.datetime_as_string((bt[i] // 86_400).astype("datetime64[D]")).tolist()
 
 
+def parse_only(specs):
+    """--only rules, e.g. ["size=0.25:M1,N2_M1", "d=3:F7/pool_reversed,N2_F7/pool_reversed"]: that size,
+    d or q is simulated only for the listed families (and segment, when given)."""
+    out = {}
+    for spec in specs or ():
+        dim_val, fams = spec.split(":")
+        dim, val = dim_val.split("=")
+        if dim not in ("size", "d", "q"):
+            raise SystemExit(f"--only: unknown dimension {dim}")
+        out[(dim, float(val))] = [tuple(f.split("/")) if "/" in f else (f, None) for f in fams.split(",")]
+    return out
+
+
+def _segment(sig):
+    return "curve" if sig.venue == "curve" else f"pool_{sig.orientation}"
+
+
+def _allowed(only, sig, **dims):
+    for dim, val in dims.items():
+        rule = only.get((dim, float(val)))
+        if rule is not None and not any(f == sig.family and (g is None or g == _segment(sig)) for f, g in rule):
+            return False
+    return True
+
+
 def _part_path(out, task_id):
     return os.path.join(out, "parts", f"part-{task_id:06d}.parquet")
 
@@ -360,7 +385,7 @@ def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5):
         "sells_dropped": r.sells_dropped, "sells_scaled": r.sells_scaled,
         "hist_ret": (r.hist_mid_exit / r.hist_mid_entry - 1) if (r.hist_mid_entry and r.hist_mid_exit) else None,
         "pool": sig.pool, "orientation": sig.orientation,
-        "segment": "curve" if sig.venue == "curve" else f"pool_{sig.orientation}",
+        "segment": _segment(sig),
         "farm": "n/a" if sig.flagged is None else ("flagged" if sig.flagged else "organic"),
         "regime": clock.regime_label(sig.t), "d_ms": round(d * clock.ms_per_slot(sig.t), 1), "overlay": ov,
         "q": q, "trigger_trader": sig.trigger, "trigger_farmer": sig.trigger_farmer,
@@ -385,7 +410,8 @@ def _insiders(con, st, venue, clock, cache):
 
 
 def _work(args):
-    task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays = args
+    task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays, only = args
+    health.wait_ok(log, f"batch {task_id}")
     io0 = io_written()
     con = streams.open_store(STORE, threads=1, memory="600MB")
     base = Scenario.from_cfg("base", cfg)
@@ -408,6 +434,8 @@ def _work(args):
                         tau = replay.Tau(tau_mode)
                         busy_until = defaultdict(lambda: -1)
                         for sig in sigs:
+                            if only and not _allowed(only, sig, size=size_sol, d=d, q=q):
+                                continue
                             fk = (sig.family, sig.variant)
                             if sig.t <= busy_until[fk]:
                                 continue
@@ -465,7 +493,7 @@ def results_glob(run_dir):
 
 
 def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
-        label="tournament_v1", segments=None, slot_range=None):
+        label="tournament_v1", segments=None, slot_range=None, only=None):
     cfg = load_defaults()
     out = os.path.join(OUT, run_id)
     os.makedirs(os.path.join(out, "parts"), exist_ok=True)
@@ -479,7 +507,8 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     n_signals = len(signals)
     del signals
     overlays = "O7" in families
-    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, qs, tol, cfg, clock, overlays)
+    only_rules = parse_only(only)
+    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, qs, tol, cfg, clock, overlays, only_rules)
              for i, j in enumerate(range(0, len(items), batch))]
     todo = [t for t in tasks if not os.path.exists(_part_path(out, t[0]))]
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
@@ -498,13 +527,20 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con.close()
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
-              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "f6_trigger_cap": F6_STATS or None,
+              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
     with open(os.path.join(out, "config.json"), "w") as f:
         json.dump(config, f, indent=1)
     from .report import write_report
     write_report(out, cfg)
+    if "F7" in families and (not segments or "pool_reversed" in segments):
+        from .analysis import f7_reversed
+        with open(f7_reversed(out, STORE)) as f:
+            checks = f.read()
+        with open(os.path.join(out, "report.md"), "a") as f:
+            f.write("\n" + checks.replace("# F7 in", "## F7 in", 1).replace("\n## ", "\n### "))
+        log("F7 reversed checks appended to the report")
     log(f"done: {out}")
 
 
@@ -524,11 +560,12 @@ def main():
     ap.add_argument("--max-signals", type=int, default=0)
     ap.add_argument("--run-id", default=time.strftime("%Y%m%dT%H%M%S"))
     ap.add_argument("--range", default="", help="dry runs: signal slots lo:hi within the store")
+    ap.add_argument("--only", action="append", help="e.g. size=0.25:M1,N2_M1 or d=3:F7/pool_reversed (repeatable)")
     a = ap.parse_args()
     run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in a.delays.split(",")],
         a.tau.split(","), [float(x) for x in a.q.split(",")], a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch,
         segments=[x for x in a.segments.split(",") if x] or None,
-        slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None)
+        slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None, only=a.only)
 
 
 if __name__ == "__main__":

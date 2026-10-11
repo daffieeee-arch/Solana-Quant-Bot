@@ -42,8 +42,12 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
 
     con = _con()
     pnl, ret = settle_sql(Scenario.from_cfg("base", load_defaults()))
-    res = f"(SELECT *, {pnl} AS pnl_base_lamports, {ret} AS ret_base FROM read_parquet('{results_glob(run_dir)}'))"
-    f7 = f"(SELECT * FROM {res} WHERE family = 'F7' AND segment = '{segment}' AND NOT skipped)"
+    src = f"read_parquet('{results_glob(run_dir)}')"
+    res = f"(SELECT *, {pnl} AS pnl_base_lamports, {ret} AS ret_base FROM {src})"
+    # Base rows only: O7 overlay rows repeat each trigger (runs without O7 have no overlay column).
+    has_overlay = "overlay" in {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+    f7 = (f"(SELECT * FROM {res} WHERE family = 'F7' AND segment = '{segment}' AND NOT skipped"
+          + (" AND overlay = 'none')" if has_overlay else ")"))
     lines = [f"# F7 in {segment}: checks", ""]
 
     lines += ["## c) Latency (base costs)", ""]

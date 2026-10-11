@@ -40,7 +40,7 @@ import time
 
 import yaml
 
-from . import data, pda
+from . import data, health, pda
 
 DEFAULTS = "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml"
 STORE_DIR = "/home/chupa/Solana-project/data-old-faithful-one/lab/store"
@@ -270,6 +270,7 @@ def build(period, out_path, cfg, chunks, log=print):
 
     # Pass 1: blocks and per-pool evidence, one chunk at a time.
     for ch in chunks:
+        health.wait_ok(log, f"pass 1 chunk {ch[0]}")
         c = Chunk(ch)
         con.execute(f"INSERT INTO s.blocks SELECT slot, any_value(block_time) FROM {c.src('blocks')} "
                     "WHERE NOT skipped GROUP BY slot ORDER BY slot")
@@ -297,6 +298,7 @@ def build(period, out_path, cfg, chunks, log=print):
                    amount BIGINT, bucket INTEGER)""")
     first = True
     for ch in chunks:
+        health.wait_ok(log, f"pass 2 chunk {ch[0]}")
         c = Chunk(ch)
         T = "pump/TradeEvent"
         trade = c.src(T)
