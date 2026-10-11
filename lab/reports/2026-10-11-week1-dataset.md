@@ -46,7 +46,7 @@ The PumpSwap columns count base reserves, and base plus effective quote (vault p
 
 ### The 233 bad PumpSwap pairs
 
-Every bad pair is dumped (`reports/continuity-bad-pairs-446256000-454464000.parquet`, from `continuity.py --dump-bad`) and split by what changed between the post-state of event n and the pre-state of event n+1.
+Every bad pair is dumped (`reports/continuity-bad-pairs-446256000-454464000.parquet`, from `continuity.py --dump-bad`) and split by what changed between the post-state of event n and the pre-state of event n+1. The table is reproduced by `lab/checks/bad_pairs.py <dump> --store store/dev2.duckdb` (output: `reports/continuity-bad-pairs-by-cause.md`).
 - dB is base reserves in raw units; dE is effective quote. In SOL pools dE is lamports.
 - Pool class comes from the development store:
   - **sol** and **reversed** are the backtest universe;
