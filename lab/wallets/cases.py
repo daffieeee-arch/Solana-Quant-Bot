@@ -186,6 +186,8 @@ def weekly_select(con):
 
 def timelines(con, mints, clock):
     """Per mint: create, graduation, peak and end of the first 24 h, runner features, big sellers."""
+    if not mints:  # a re-selection with nothing new: executemany rejects an empty parameter list
+        return {}
     con.execute("CREATE OR REPLACE TEMP TABLE want_m (mint VARCHAR)")
     con.executemany("INSERT INTO want_m VALUES (?)", [(m,) for m in mints])
     rows = con.execute("""SELECT m.mint, m.create_slot, m.complete_slot, m.migrate_slot, m.pool, m.creator, m.symbol, m.name, m.supply

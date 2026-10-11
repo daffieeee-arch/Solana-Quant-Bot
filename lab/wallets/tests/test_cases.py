@@ -65,3 +65,11 @@ def test_weekly_select_from_saved_aggregate():
     assert lists["collapsed_7d"] == ["C", "D"]
     assert lists["collapsed_7d_organic"] == ["D"]
     assert cases.SELF_FUNDED_SQL.endswith("<= 5, false)")
+
+
+def test_timelines_of_no_mints_is_empty_without_touching_the_store():
+    class NoStore:
+        def execute(self, *a, **k):
+            raise AssertionError("the store must not be queried for an empty mint list")
+
+    assert cases.timelines(NoStore(), [], None) == {}
