@@ -48,6 +48,7 @@ import duckdb
 
 MAYHEM_AGENT = "BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"
 BUCKETS = int(os.environ.get("LAB_CONTINUITY_BUCKETS", "16"))
+DUMP_BAD = None  # --dump-bad: Parquet with every bad PumpSwap pair
 H = "::HUGEINT"
 POS = "slot, tx_index, outer_ix, inner_ix"
 
@@ -250,6 +251,10 @@ def amm_check(con, done, examples):
     base, both = Pairs(), Pairs()
     cols = ["kind", "prev_kind", "pool", "slot", "prev_slot", "tx_index", "b", "prev_b2", "e", "prev_e2"]
     first = True
+    if DUMP_BAD:
+        con.execute("""CREATE OR REPLACE TEMP TABLE amm_bad (pool VARCHAR, kind VARCHAR, prev_kind VARCHAR, slot UBIGINT,
+          tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, prev_slot UBIGINT, prev_tx_index BIGINT, prev_outer_ix BIGINT,
+          prev_inner_ix BIGINT, b HUGEINT, prev_b2 HUGEINT, e HUGEINT, prev_e2 HUGEINT, d_b HUGEINT, d_e HUGEINT)""")
     for chunk in done:
         if not _amm_view(con, [chunk[3]]):
             continue
@@ -262,7 +267,8 @@ def amm_check(con, done, examples):
         for bk in range(BUCKETS):
             con.execute(f"""CREATE OR REPLACE TEMP TABLE ab AS
               SELECT *, LAG(b2) OVER w AS prev_b2, LAG(e2) OVER w AS prev_e2, LAG(kind) OVER w AS prev_kind,
-                     LAG(slot) OVER w AS prev_slot, ROW_NUMBER() OVER w AS n
+                     LAG(slot) OVER w AS prev_slot, LAG(tx_index) OVER w AS prev_tx_index,
+                     LAG(outer_ix) OVER w AS prev_outer_ix, LAG(inner_ix) OVER w AS prev_inner_ix, ROW_NUMBER() OVER w AS n
               FROM (SELECT *, false AS carried, NULL::BOOLEAN AS anchored
                     FROM (SELECT * FROM amm_ev WHERE bk = {bk} QUALIFY row_number() OVER (PARTITION BY {POS}) = 1)
                     UNION ALL BY NAME
@@ -271,7 +277,13 @@ def amm_check(con, done, examples):
             base.add_bucket(con, "ab", "b = prev_b2", ["b", "prev_b2"], "pool", examples, cols, count_chains=False)
             both.add_bucket(con, "ab", "b = prev_b2 AND e = prev_e2", ["b", "prev_b2", "e", "prev_e2"], "pool", examples,
                             cols, count_chains=False)
-            _carry_step(con, "(SELECT * EXCLUDE (prev_b2, prev_e2, prev_kind, prev_slot) FROM ab)", "pool", _desc(POS), "amm_carry")
+            if DUMP_BAD:  # every bad pair, for the per-cause explanation
+                con.execute("""INSERT INTO amm_bad SELECT pool, kind, prev_kind, slot, tx_index, outer_ix, inner_ix,
+                                 prev_slot, prev_tx_index, prev_outer_ix, prev_inner_ix, b, prev_b2, e, prev_e2,
+                                 b - prev_b2 AS d_b, e - prev_e2 AS d_e
+                               FROM ab WHERE n > 1 AND ((b <> prev_b2) OR (e <> prev_e2 AND b = prev_b2))""")
+            _carry_step(con, "(SELECT * EXCLUDE (prev_b2, prev_e2, prev_kind, prev_slot, prev_tx_index, prev_outer_ix, "
+                        "prev_inner_ix) FROM ab)", "pool", _desc(POS), "amm_carry")
             con.execute(f"DELETE FROM amm_carry WHERE bk = {bk}")
             con.execute("INSERT INTO amm_carry BY NAME SELECT * FROM carry_new")
     if first:
@@ -281,6 +293,9 @@ def amm_check(con, done, examples):
     chains = dict(zip(("total", "anchored"), con.execute(
         "SELECT count(*), count(*) FILTER (WHERE anchored) FROM amm_carry").fetchone()))
     res["base"]["chains"] = res["base_and_effective_quote"]["chains"] = chains
+    if DUMP_BAD:
+        con.execute(f"COPY (SELECT * FROM amm_bad ORDER BY slot, tx_index, outer_ix, inner_ix) TO '{DUMP_BAD}' (FORMAT parquet)")
+        res["bad_pairs_dump"] = DUMP_BAD
     return res
 
 
@@ -322,7 +337,10 @@ def main():
     ap.add_argument("--expect", help="START:END slot range the dataset should cover")
     ap.add_argument("--report")
     ap.add_argument("--examples", type=int, default=5)
+    ap.add_argument("--dump-bad", help="write every bad PumpSwap pair (base or base+effective quote) to this Parquet file")
     a = ap.parse_args()
+    global DUMP_BAD
+    DUMP_BAD = a.dump_bad
 
     done, other = scan_chunks(a.root)
     if a.slots:
