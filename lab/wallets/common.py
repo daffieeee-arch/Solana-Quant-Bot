@@ -27,7 +27,8 @@ def connect(store=STORE, memory="1GB", threads=2):
     con = duckdb.connect(store, read_only=True)
     spill = f"/dev/shm/lab-wallets-{os.getpid()}"
     con.execute(f"SET threads TO {threads}; SET memory_limit = '{memory}'; SET temp_directory = '{spill}'; "
-                "SET max_temp_directory_size = '1GB'; SET preserve_insertion_order = false")
+                "SET max_temp_directory_size = '1GB'; SET preserve_insertion_order = false; "
+                "SET enable_progress_bar = false")
     return con
 
 
