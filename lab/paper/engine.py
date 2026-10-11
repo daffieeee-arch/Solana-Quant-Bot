@@ -210,11 +210,24 @@ class Engine:
                        gap_slots=max(0, gap), note="")
             self.minute = minute
             self._load_risk()
+            self._live_minute(minute)
             self.j.commit()
         if self.last_slot is not None and slot - self.last_slot > GAP_SLOTS:
             self.j.put("heartbeat", minute=minute, day=day, last_slot=self.last_slot, last_event=self.last_event,
                        events=self.events_seen, open_positions=sum(len(v) for v in self.open.values()),
                        gap_slots=slot - self.last_slot - 1, note=f"feed gap {self.last_slot}..{slot}")
+
+    def _live_minute(self, minute):
+        """Live feeds: journal the recorder's data usage, and keep the pools of open positions on
+        the recorder's watchlist (the watchlist itself comes from LAB research's builder)."""
+        if hasattr(self.feed, "drain_usage"):
+            for u in self.feed.drain_usage():
+                m = u.get("minute", minute)
+                self.j.put("usage", minute=m, day=_day(m * 60), stream=u.get("stream"), bytes=u.get("bytes"),
+                           messages=u.get("messages"), seq=u.get("seq"), note=u.get("note"))
+        if hasattr(self.feed, "keep_pools"):
+            self.feed.keep_pools(sorted({o.p.key for v in self.open.values() for o in v if o.p.venue == "pool"}
+                                        | {p for p in self.grad_wait}))
 
     def _load_risk(self):
         if self.ignore_risk:
@@ -516,8 +529,9 @@ def main():
     from .feed import ReplayFeed
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--from", dest="lo", type=int, required=True)
-    ap.add_argument("--to", dest="hi", type=int, required=True)
+    ap.add_argument("--from", dest="lo", type=int, help="replay: first slot")
+    ap.add_argument("--to", dest="hi", type=int, help="replay: end slot (exclusive)")
+    ap.add_argument("--live", help="live: the recorder's output directory (LiveFeed; tokens and pools from --store)")
     ap.add_argument("--journal", required=True)
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--store", default="/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
@@ -527,8 +541,15 @@ def main():
     ap.add_argument("--ignore-risk", action="store_true", help="no limits (parity runs)")
     ap.add_argument("--no-backup", action="store_true")
     a = ap.parse_args()
-    feed = ReplayFeed(a.store, a.lo, a.hi)
-    clock = Clock.from_store(feed.con)
+    if a.live:
+        from .live import LiveFeed
+
+        feed = LiveFeed(a.live, store=a.store, follow=True)
+    elif a.lo is None or a.hi is None:
+        raise SystemExit("give --from and --to (replay) or --live <recorder dir>")
+    else:
+        feed = ReplayFeed(a.store, a.lo, a.hi)
+    clock = feed.clock if a.live else Clock.from_store(feed.con)
     variants = [tuple(float(x) if i == 0 else int(x) for i, x in enumerate(v.split(":"))) for v in a.variants.split(",")
                 if v] or F7_GRID
     eng = Engine(feed, Journal(a.journal), a.risk, variants=variants, d=a.d, q=a.q, ignore_risk=a.ignore_risk,

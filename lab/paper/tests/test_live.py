@@ -145,3 +145,21 @@ def test_live_feed_never_returns_unfinished_segments(tmp_path):
 
 def test_event_type_is_shared():
     assert Event.__module__ == "paper.feed"
+
+
+def test_engine_on_the_live_feed(setup, tmp_path):
+    """The engine journals the recorder's usage per minute and writes the open-position pools for
+    the recorder; the live clock measures the epoch's slot time from the block times."""
+    from paper.engine import Engine
+    from paper.journal import Journal
+
+    root, h24, hist, _ = setup
+    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB")
+    feed.farmers.seed(hist)
+    j = Journal(str(tmp_path / "journal"))
+    Engine(feed, j, None, ignore_risk=True, n2_k=0, clock=feed.clock, backup=False).run()
+    usage = j.rows("usage")
+    assert sorted(u["bytes"] for u in usage) == [1000, 2000, 3000, 4000]
+    with open(os.path.join(root, "open-pools.json")) as f:
+        assert isinstance(json.load(f)["pools"], list)
+    assert 250 < feed.clock.per_epoch[LO // 432_000] < 300  # epoch 1043: ~268 ms per slot

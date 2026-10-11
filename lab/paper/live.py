@@ -31,6 +31,7 @@ import duckdb
 import pyarrow as pa
 
 from backtest import data, pda, streams
+from backtest.strategies import Clock
 from backtest.store import (DAY_MS, FARMER_MIN_TRADES, FARMER_RATIO, H, POOL_SCHEMA, Chunk, _pool_other,
                             _pool_trades)
 
@@ -163,6 +164,9 @@ class LiveFeed(Feed):
         self.curve_hist = defaultdict(list)  # mint -> curve legs seen live (curve_history), pruned after a quiet day
         self.usage = []  # recorder usage rows not yet handed to the engine
         self.ms_window = deque(maxlen=200)  # (slot, block_time) samples for the slot time
+        # The engine's Clock: ms per slot per epoch, measured from the block times received.
+        self.clock = Clock()
+        self.epoch_span = {}  # epoch -> [(first slot, time), (last slot, time)]
         self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0}
         self.meta_bounds = meta_bounds or (0, 2**63 - 1)
 
@@ -196,6 +200,15 @@ class LiveFeed(Feed):
 
     def curve_history(self, mint, upto_slot):
         return [l for l in self.curve_hist.get(mint, ()) if l.slot <= upto_slot]
+
+    def keep_pools(self, pools):
+        """Pools with an open paper position: written for the recorder, which keeps them on its
+        transaction filter next to the watchlist (open-pools.json, replaced atomically)."""
+        path = os.path.join(self.root, "open-pools.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"written_unix": int(time.time()), "pools": list(pools)}, f)
+        os.replace(tmp, path)
 
     def drain_usage(self):
         out, self.usage = self.usage, []
@@ -264,6 +277,10 @@ class LiveFeed(Feed):
                 bt[slot] = t
                 if t is not None:
                     self.ms_window.append((slot, t))
+                    span = self.epoch_span.setdefault(slot // 432_000, [(slot, t), (slot, t)])
+                    span[1] = (slot, t)
+                    if span[1][0] - span[0][0] >= 1000:
+                        self.clock.per_epoch[slot // 432_000] = (span[1][1] - span[0][1]) * 1000.0 / (span[1][0] - span[0][0])
         h24 = self._h24()
         out = []
         sql = curve_select(c, "live_mints")

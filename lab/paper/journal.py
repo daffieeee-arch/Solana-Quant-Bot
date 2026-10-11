@@ -25,11 +25,14 @@ TABLES = {
               "family, variant, key, t"),
     "heartbeat": ("minute INTEGER, day TEXT, last_slot INTEGER, last_event TEXT, events INTEGER, open_positions INTEGER, "
                   "gap_slots INTEGER, note TEXT", "minute, note"),
+    # Live data usage per minute and recorder stream (bytes received from Triton), from the recorder.
+    "usage": ("minute INTEGER, day TEXT, stream TEXT, bytes INTEGER, messages INTEGER, seq INTEGER, note TEXT",
+              "minute, stream"),
     "positions": ("family TEXT, variant TEXT, key TEXT, t INTEGER, entry_slot INTEGER, cost INTEGER, tokens INTEGER, "
                   "status TEXT", "family, variant, key, t"),
     "state": ("k TEXT, v TEXT", "k"),
 }
-DAILY = ("signals", "orders", "fills", "exits", "heartbeat")
+DAILY = ("signals", "orders", "fills", "exits", "heartbeat", "usage")
 
 
 class Journal:
