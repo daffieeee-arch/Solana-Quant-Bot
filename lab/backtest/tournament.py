@@ -193,8 +193,9 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
     if "S1" in families:
         info = {p: (m, o) for p, m, o in con.execute("SELECT pool, COALESCE(mint, pool), orientation FROM pools").fetchall()}
         n_s1 = 0
+        # The run's sizes (owner gate 2026-10-10: 0.5 and 1 SOL), not S1's own spec grid.
         for fam, variant, size, pool, t, exit_t, flagged in rotation.s1_positions(
-                con, lo, hi, n2_k=rotation.N2_K if "N2" in families else 0):
+                con, lo, hi, sizes=tuple(sizes), n2_k=rotation.N2_K if "N2" in families else 0):
             m, o = info[pool]
             signals.append(Signal(fam, variant, sys.intern(m), t, "pool", 0, (size, exit_t), pool=sys.intern(pool),
                                   orientation=o, flagged=bool(flagged)))
