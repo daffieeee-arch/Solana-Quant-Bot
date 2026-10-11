@@ -1,0 +1,36 @@
+[package]
+name = "lab-recorder"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Live recorder: Triton Dragon's Mouth (Yellowstone gRPC) to the extractor's event rows, in rolling segments for paper.live.LiveFeed"
+
+[dependencies]
+# The extractor's decoding is compiled in from ../extractor/src (#[path] modules in main.rs), so
+# its dependencies are the extractor's, at the same versions: Cargo.lock started as a copy of
+# ../extractor/Cargo.lock (Agave 4.2 crates via Jetstreamer, solana-message 4.4.1, ...).
+jetstreamer-firehose = { git = "https://github.com/anza-xyz/jetstreamer", rev = "1f9d30600fb479acdd5eb956ea2e19455c903590" }
+jetstreamer-plugin = { git = "https://github.com/anza-xyz/jetstreamer", rev = "1f9d30600fb479acdd5eb956ea2e19455c903590" }
+clickhouse = "0.15"
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
+arrow-array = "60"
+arrow-schema = "60"
+sha2 = "0.10"
+bs58 = "0.5"
+hex = "0.4"
+log = "0.4"
+env_logger = "0.11"
+serde_json = "1"
+solana-message = "4"
+solana-transaction = "4"
+solana-transaction-status = "4"
+futures = "0.3"
+# Yellowstone gRPC, pinned exactly: client 14.0.1 speaks proto 13.0.0 (Dragon's Mouth; tonic 0.14
+# and prost 0.14, already in the extractor's tree). No solana-* crates beyond solana-pubkey ^4.
+yellowstone-grpc-client = "=14.0.1"
+yellowstone-grpc-proto = { version = "=13.0.0", default-features = false, features = ["tonic", "tonic-compression"] }
+
+[profile.release]
+debug = 0
