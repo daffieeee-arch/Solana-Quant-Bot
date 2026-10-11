@@ -326,11 +326,12 @@ def write_report(run_dir, cfg):
         config = json.load(f)
     tr = trials(summary, config)
     if tr:
-        # The run's rows, and the same file in the shared trials/ dataset (one file per run).
+        # The run's rows, and the same file in the shared trials/ dataset (one file per run, not for dry runs).
         table = pa.Table.from_pylist(tr)
         pq.write_table(table, os.path.join(run_dir, "trials.parquet"))
-        os.makedirs(TRIALS, exist_ok=True)
-        pq.write_table(table, os.path.join(TRIALS, f"{config['run_id']}.parquet"))
+        if not config.get("slot_range"):  # dry runs are not trials
+            os.makedirs(TRIALS, exist_ok=True)
+            pq.write_table(table, os.path.join(TRIALS, f"{config['run_id']}.parquet"))
     base = sorted((s for s in summary if s["scenario"] == "base" and s["overlay"] == "none"),
                   key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["size_sol"], s["d"], s["tau"]))
     lines = [f"# Backtest {config['run_id']}", "",
