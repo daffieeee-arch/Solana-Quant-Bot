@@ -234,9 +234,10 @@ def replay_batch(job):
         before = len(rows)
         run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows)
         n_busy += (len(rows) > before and rows[-1]["exit_reason"] == "busy_pool") * len(group)
-    tmp = path + ".tmp"
-    pq.write_table(pa.Table.from_pylist(rows), tmp)
-    os.replace(tmp, path)
+    if rows:  # an empty part is not written (a parquet file without columns cannot be read back)
+        tmp = path + ".tmp"
+        pq.write_table(pa.Table.from_pylist(rows), tmp)
+        os.replace(tmp, path)
     return sum(len(g) for g in groups.values()), n_busy, len(rows)
 
 
