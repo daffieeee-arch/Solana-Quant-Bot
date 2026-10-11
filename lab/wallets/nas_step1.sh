@@ -68,7 +68,7 @@ con.execute("""COPY (
   cand AS (SELECT wallet, false AS control FROM c WHERE n >= $MIN_N),
   ctrl AS (SELECT wallet, true FROM c WHERE n BETWEEN 2 AND $MIN_N - 1 ORDER BY hash(wallet || 'control-v1') LIMIT $CONTROL)
   SELECT * FROM cand UNION ALL SELECT * FROM ctrl) TO '$FO/wallets.csv.tmp' (HEADER)""")
-print("candidates:", con.sql("SELECT control, count(*) FROM '$FO/wallets.csv.tmp' GROUP BY 1 ORDER BY 1").fetchall())
+print("candidates:", con.sql("SELECT control, count(*) FROM read_csv('$FO/wallets.csv.tmp', header=true) GROUP BY 1 ORDER BY 1").fetchall())
 EOF
   mv "$FO/wallets.csv.tmp" "$FO/wallets.csv"
 fi
