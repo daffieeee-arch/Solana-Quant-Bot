@@ -1,7 +1,7 @@
 <title>Toernooi</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.1/echarts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.5.0/echarts.min.js"></script>
 <style>
 /* Layout: verdict line, filter chips, ranked table, then small-multiple P&L curves (one per family x variant) against the N2 shadow. */
 :root {
@@ -252,9 +252,25 @@ footer { color: var(--muted); font-size: 0.82rem; }
   }
 
   let charts = [];
+  // Large runs keep the curves in a separate file next to the page (curves_file), loaded on the first tap so the
+  // page itself stays small on a phone.
+  let CURVES = D.curves || null, loading = false;
+  function loadCurves(host) {
+    const b = el("button", "chip", "Toon P&L-curves" + (D.curves_kb ? " (" + (D.curves_kb / 1024).toFixed(1).replace(".", ",") + " MB)" : ""));
+    b.type = "button";
+    b.addEventListener("click", () => {
+      if (loading) return;
+      loading = true; b.textContent = "Curves laden…";
+      fetch(D.curves_file).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(c => { CURVES = c; curves(); })
+        .catch(() => { loading = false; b.textContent = "Laden mislukt, tik om opnieuw te proberen"; });
+    });
+    host.append(b);
+  }
   function curves() {
     charts.forEach(c => c.dispose()); charts = [];
     const host = document.getElementById("curves"); host.replaceChildren();
+    if (!CURVES) { if (D.curves_file) loadCurves(host); else host.append(el("p", "lede", "Geen curves in deze pagina.")); return; }
     if (!window.echarts) { host.append(el("p", "lede", "De grafiekbibliotheek kon niet laden; de tabel hierboven bevat dezelfde uitkomsten.")); return; }
     const s1 = css("--s1"), n2c = css("--n2"), muted = css("--muted"), line = css("--line"), surface = css("--surface"), fg = css("--fg");
     const sel = current().filter(r => r.size_sol === st.size).sort((a, b) => String(a.family + a.variant).localeCompare(String(b.family + b.variant)));
@@ -263,8 +279,8 @@ footer { color: var(--muted); font-size: 0.82rem; }
       const kv = KEYS.map(k => r[k]);
       // The N2 shadow may not split by a key the strategy splits by (N2_F7 has farm 'n/a'): fall back to 'n/a'.
       const n2key = [kv, ...KEYS.map((_, i) => kv.map((v, j) => (j === i ? "n/a" : v))), kv.map(() => "n/a")]
-        .map(x => key("N2_" + r.family, x)).find(x => D.curves[x]);
-      const own = D.curves[key(r.family, kv)] || [], n2raw = (n2key && D.curves[n2key]) || [];
+        .map(x => key("N2_" + r.family, x)).find(x => CURVES[x]);
+      const own = CURVES[key(r.family, kv)] || [], n2raw = (n2key && CURVES[n2key]) || [];
       // N2 usually has more trades: scale its curve to the strategy's trade count so both lines compare per trade.
       const nOwn = own.length ? own[own.length - 1][0] : 0, nN2 = n2raw.length ? n2raw[n2raw.length - 1][0] : 0;
       const k = nOwn && nN2 ? nOwn / nN2 : 1;

@@ -5,7 +5,8 @@
 First load the finished development run with `lab/analytics/build.py --tournament <run>` (heavy job): that
 re-settles every position like lab/backtest/costs.py and checks it against the run's own numbers. This
 script only reads the result and writes $LAB_DATA_ROOT/ui-cache/pages/toernooi-<version>.html, where the
-version is the run id up to "-dev" (v1-dev-1042-1046 -> toernooi-v1.html, page title "Toernooi v1").
+version is the run id up to "-dev" (v1-dev-1042-1046 -> toernooi-v1.html, page title "Toernooi v1"). A large run's
+curves go to toernooi-<version>.curves.json, to be published as the artifact's file "curves.json".
 """
 import datetime as dt
 import html
@@ -26,6 +27,9 @@ SUMMARY_COLS = ["family", "variant", "size_sol", "d", "tau", "scenario", "n", "f
 RUN_KEYS = ["q", "segment", "regime", "farm", "overlay"]
 # Points per curve: at most 160, fewer when a run has many groups, so the page stays a few MB (artifact limit 16 MB).
 POINTS, MIN_POINTS, POINT_BUDGET = 160, 24, 250_000
+# Above this many KiB the curves go to a separate <page>.curves.json, published as "curves.json" next to the page and
+# fetched on a tap (the table and verdict load first; a phone does not parse megabytes it may never show).
+SPLIT_KB = 1536
 
 
 def js(v):
@@ -74,14 +78,25 @@ def main(db=os.path.join(DATA, "analytics", "analytics.duckdb"), out_name=None):
     data["run"]["run_id"] = data["run"]["run_id"] or run[0]
     version = data["run"]["run_id"].split("-dev")[0]
     title = html.escape("Toernooi " + version)
+    curves_blob = json.dumps(curves, separators=(",", ":"), default=str)
+    out = os.path.join(DATA, "ui-cache", "pages", out_name or f"toernooi-{version}.html")
+    curves_out = out[:-5] + ".curves.json" if out.endswith(".html") else out + ".curves.json"
+    if len(curves_blob) // 1024 > SPLIT_KB:
+        data.update(curves=None, curves_file="curves.json", curves_kb=len(curves_blob) // 1024)
+        with open(curves_out + ".tmp", "w") as f:
+            f.write(curves_blob)
+        os.replace(curves_out + ".tmp", curves_out)
+    elif os.path.exists(curves_out):
+        os.remove(curves_out)
     blob = json.dumps(data, ensure_ascii=False, default=str)
     blob = blob.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     tpl = open(os.path.join(HERE, "tournament.html")).read()
     tpl = tpl.replace("<title>Toernooi</title>", f"<title>{title}</title>", 1).replace("<h1>Toernooi</h1>", f"<h1>{title}</h1>", 1)
-    out = os.path.join(DATA, "ui-cache", "pages", out_name or f"toernooi-{version}.html")
     with open(out + ".tmp", "w") as f:
         f.write(tpl.replace("/*__DATA__*/null", blob, 1))
     os.replace(out + ".tmp", out)
+    if data.get("curves_file"):
+        print(f"curves split off: {curves_out} ({data['curves_kb']} KiB) -> publish with files={{'curves.json': that path}}")
     print(out, len(blob) // 1024, "KiB data;", len(cols), "summary columns present; run keys", keys,
           f"; {groups} curves at <= {points} points")
 
