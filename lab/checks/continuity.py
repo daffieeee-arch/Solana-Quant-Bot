@@ -177,7 +177,9 @@ def pump_check(con, done, examples):
             res["decode_status"][k] += c
         res["duplicate_events"] += con.execute(f"SELECT count(*) - count(DISTINCT ({POS})) FROM pump_ev").fetchone()[0]
         if first:
-            con.execute("CREATE OR REPLACE TEMP TABLE pump_carry AS SELECT *, NULL::BOOLEAN AS anchored FROM pump_ev LIMIT 0")
+            # One carry table per bucket, replaced whole each time (a DELETE would leave dead rows behind).
+            for b in range(BUCKETS):
+                con.execute(f"CREATE OR REPLACE TEMP TABLE pump_carry_{b} AS SELECT *, NULL::BOOLEAN AS anchored FROM pump_ev LIMIT 0")
             first = False
         for b in range(BUCKETS):
             con.execute(f"""CREATE OR REPLACE TEMP TABLE pb AS
@@ -186,7 +188,7 @@ def pump_check(con, done, examples):
               FROM (SELECT *, false AS carried, NULL::BOOLEAN AS anchored
                     FROM (SELECT * FROM pump_ev WHERE b = {b} QUALIFY row_number() OVER (PARTITION BY {POS}) = 1)
                     UNION ALL BY NAME
-                    SELECT *, true AS carried FROM pump_carry WHERE b = {b})
+                    SELECT *, true AS carried FROM pump_carry_{b})
               WINDOW w AS (PARTITION BY mint ORDER BY {POS})""")
             pairs.add_bucket(con, "pb", "pre_vt = prev_vt AND pre_rt = prev_rt AND pre_rq = prev_rq",
                              ["pre_vt", "prev_vt", "pre_rt", "prev_rt", "pre_rq", "prev_rq"], "mint", examples,
@@ -198,13 +200,13 @@ def pump_check(con, done, examples):
             vq_ok, vq_bad = vq_ok + o, vq_bad + x
             _carry_step(con, "(SELECT * EXCLUDE (" + ", ".join("prev_" + (c[5:] if c.startswith("post_") else c) for c in lag_cols)
                         + ") FROM pb)", "mint", _desc(POS), "pump_carry")
-            con.execute(f"DELETE FROM pump_carry WHERE b = {b}")
-            con.execute("INSERT INTO pump_carry BY NAME SELECT * FROM carry_new")
+            con.execute(f"CREATE OR REPLACE TEMP TABLE pump_carry_{b} AS SELECT * FROM carry_new")
     if first:
         return None
     res.update(pairs.report())
     res["chains"] = dict(zip(("total", "anchored"), con.execute(
-        "SELECT count(*), count(*) FILTER (WHERE anchored) FROM pump_carry").fetchone()))
+        "SELECT count(*), count(*) FILTER (WHERE anchored) FROM ("
+        + " UNION ALL ".join(f"SELECT anchored FROM pump_carry_{b}" for b in range(BUCKETS)) + ")").fetchone()))
     res["virtual_quote_without_mayhem_agent"] = {"ok": vq_ok, "bad": vq_bad}
     res["events"], res["decode_status"] = dict(res["events"]), dict(res["decode_status"])
     return res
@@ -262,7 +264,8 @@ def amm_check(con, done, examples):
             res["events"][k] += c
         res["duplicate_events"] += con.execute(f"SELECT count(*) - count(DISTINCT ({POS})) FROM amm_ev").fetchone()[0]
         if first:
-            con.execute("CREATE OR REPLACE TEMP TABLE amm_carry AS SELECT *, NULL::BOOLEAN AS anchored FROM amm_ev LIMIT 0")
+            for bk in range(BUCKETS):
+                con.execute(f"CREATE OR REPLACE TEMP TABLE amm_carry_{bk} AS SELECT *, NULL::BOOLEAN AS anchored FROM amm_ev LIMIT 0")
             first = False
         for bk in range(BUCKETS):
             con.execute(f"""CREATE OR REPLACE TEMP TABLE ab AS
@@ -272,7 +275,7 @@ def amm_check(con, done, examples):
               FROM (SELECT *, false AS carried, NULL::BOOLEAN AS anchored
                     FROM (SELECT * FROM amm_ev WHERE bk = {bk} QUALIFY row_number() OVER (PARTITION BY {POS}) = 1)
                     UNION ALL BY NAME
-                    SELECT *, true AS carried FROM amm_carry WHERE bk = {bk})
+                    SELECT *, true AS carried FROM amm_carry_{bk})
               WINDOW w AS (PARTITION BY pool ORDER BY {POS})""")
             base.add_bucket(con, "ab", "b = prev_b2", ["b", "prev_b2"], "pool", examples, cols, count_chains=False)
             both.add_bucket(con, "ab", "b = prev_b2 AND e = prev_e2", ["b", "prev_b2", "e", "prev_e2"], "pool", examples,
@@ -284,14 +287,14 @@ def amm_check(con, done, examples):
                                FROM ab WHERE n > 1 AND ((b <> prev_b2) OR (e <> prev_e2 AND b = prev_b2))""")
             _carry_step(con, "(SELECT * EXCLUDE (prev_b2, prev_e2, prev_kind, prev_slot, prev_tx_index, prev_outer_ix, "
                         "prev_inner_ix) FROM ab)", "pool", _desc(POS), "amm_carry")
-            con.execute(f"DELETE FROM amm_carry WHERE bk = {bk}")
-            con.execute("INSERT INTO amm_carry BY NAME SELECT * FROM carry_new")
+            con.execute(f"CREATE OR REPLACE TEMP TABLE amm_carry_{bk} AS SELECT * FROM carry_new")
     if first:
         return None
     res["events"] = dict(res["events"])
     res["base"], res["base_and_effective_quote"] = base.report(), both.report()
     chains = dict(zip(("total", "anchored"), con.execute(
-        "SELECT count(*), count(*) FILTER (WHERE anchored) FROM amm_carry").fetchone()))
+        "SELECT count(*), count(*) FILTER (WHERE anchored) FROM ("
+        + " UNION ALL ".join(f"SELECT anchored FROM amm_carry_{bk}" for bk in range(BUCKETS)) + ")").fetchone()))
     res["base"]["chains"] = res["base_and_effective_quote"]["chains"] = chains
     if DUMP_BAD:
         con.execute(f"COPY (SELECT * FROM amm_bad ORDER BY slot, tx_index, outer_ix, inner_ix) TO '{DUMP_BAD}' (FORMAT parquet)")
