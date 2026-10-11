@@ -72,7 +72,9 @@ Limitations: two days; the insider share can exceed 1 when sells exceed visible 
 
 ## 3. Case selection from our own data
 
-See the section appended below (`cases.py`, `cases_report.py`): per day the top-5 "trending 24 h" (return × volume, ≥ 300 SOL) and top-5 pumpers/dumpers (volume, ended ≤ 10% of the peak), and over the period the top-10 stayers and collapsed tokens 7 days after graduation, each with a timeline, the +5/+15 min features, insider share, creator sells and the five biggest sells. DexScreener links are for the owner to look; it is not a data source.
+`cases.py` / `cases_report.py`; the Dutch report with the tables is `lab/reports/2026-10-11-casussen-trending.md`. Per day the top-5 "trending 24 h" (return × volume, ≥ 300 SOL, ≥ 100 traders, ≥ 5 SOL real liquidity at the end) and top-5 pumpers/dumpers (volume, ended ≤ 10% of the peak); over the period the top-10 stayers and collapsed tokens 7 days after graduation; each with a timeline, the +5/+15 min features, insider share, creator sells and the five biggest sells.
+
+Finding: the "trending" winners are a self-funded structure — create-slot graduation by one buyer (the whole curve, 85 SOL), then 8–27k SOL deposited into the pool by the same party (price ×10⁴–10⁵ over the open), dumped within a day in one 10.5–10.8k SOL sale, often by the creator; the same names (AROS, VSOF, USDF, WOFI, WSOS) recur with new mints. The organic hype tokens (2,900–13,900 traders, 33–66k SOL in a day) are the dumpers: peak 90–450× the open, end at 0–10% of the peak. Real 7-day survivors are a handful (PAID with 88k traders, JEANPHIL, MCAT, WEPE, MINESTOCK). At +15 min the two groups differ only in *who* buys (1 buyer vs a crowd; insider share 0.79 vs 0.78, same inflow, no creator sells, no split-buyer bundles), which separates the two kinds of failure, not success from failure. A trending list from our data needs a self-funded filter first (create-slot graduation and ≤ 2 curve buyers).
 
 ## Resource notes
 
