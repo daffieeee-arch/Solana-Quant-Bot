@@ -14,6 +14,7 @@ Pool signals work on the SOL side of a pool (token_buy, sol_amount, sol_depth), 
 import bisect
 import hashlib
 import json
+import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
@@ -197,6 +198,10 @@ def universe_sql(cfg, dev_start, dev_end, clock=None):
             f"AND m.create_slot < {dev_end}")
 
 
+# Range buckets per signal query: more buckets, smaller working sets (bounded spill on long periods).
+SQL_BUCKETS = int(os.environ.get("LAB_SQL_BUCKETS", "16"))
+
+
 def key_ranges(con, table, col, n):
     """n contiguous [lo, hi] ranges of the sorted distinct keys. The event tables are stored
     sorted by mint / pool, so a range predicate lets DuckDB skip row groups (a hash bucket
@@ -218,7 +223,7 @@ def decision_bounds(cfg, dev_start, dev_end, clock=None):
 # ----------------------------------------------------------------------------- F7
 
 
-def f7_signals_sql(con, cfg, dev_start, dev_end, only_mints=None, buckets=16, clock=None, trig_range=None):
+def f7_signals_sql(con, cfg, dev_start, dev_end, only_mints=None, buckets=None, clock=None, trig_range=None):
     """See _f7_bucket; evaluated per slot-time regime and hash bucket of the mint/pool to bound
     memory. Returns (venue, mint, t, depth, pool, orientation, trigger wallet, trigger farmer,
     pool flagged for farming in the hour before t)."""
@@ -227,6 +232,7 @@ def f7_signals_sql(con, cfg, dev_start, dev_end, only_mints=None, buckets=16, cl
     if trig_range:  # only triggers in [a, b] (paper parity on one chunk)
         lo, hi = max(lo, trig_range[0]), min(hi, trig_range[1])
     out = []
+    buckets = buckets or SQL_BUCKETS
     mint_r, pool_r = key_ranges(con, "mints", "mint", buckets), key_ranges(con, "pools", "pool", buckets)
     for rlo, rhi, m in clock.regimes(lo, hi + 1):
         win = (round(F7_INFLOW_MS / m), round(F7_CREATOR_MS / m), round(F7_GAP_MS / m), round(F6_FARM_MS / m))
@@ -498,7 +504,7 @@ def f6_min_depth(size_sol):
     return 254 * SOL if size_sol <= 10 else 603 * SOL
 
 
-def f6_signals_sql(con, cfg, dev_start, dev_end, buckets=16, clock=None, only_pools=None):
+def f6_signals_sql(con, cfg, dev_start, dev_end, buckets=None, clock=None, only_pools=None):
     """F6 triggers with backward-looking windows only. Returns (mint, pool, orientation, t,
     depth, min_depth, flagged): depth = real SOL at t, min_depth = lowest real SOL depth over
     [t - 30 min, t] (the size filter is applied per size), flagged = farming share > 0.5 in the
@@ -507,7 +513,7 @@ def f6_signals_sql(con, cfg, dev_start, dev_end, buckets=16, clock=None, only_po
     lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
     out = []
     F6_DAY_COUNTS.clear()
-    pool_r = key_ranges(con, "pools", "pool", buckets)
+    pool_r = key_ranges(con, "pools", "pool", buckets or SQL_BUCKETS)
     for rlo, rhi, m in clock.regimes(lo, hi + 1):
         n_high, n_depth, n_flow, n_farm = (round(x / m) for x in (F6_HIGH_MS, F6_DEPTH_MS, F6_FLOW_MS, F6_FARM_MS))
         con.execute(f"""CREATE OR REPLACE TEMP TABLE f6_deep AS SELECT DISTINCT pool FROM pool
