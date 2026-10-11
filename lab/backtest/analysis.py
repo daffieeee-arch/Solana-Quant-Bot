@@ -118,14 +118,171 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
     return path
 
 
+def _ci_row(con, sql_days):
+    """(trades, mean %, 'lo … hi') from per-day (sum ret, count ret) rows."""
+    days = con.execute(sql_days).fetchall()
+    sums = np.array([x[1] for x in days], dtype=float)
+    cnts = np.array([x[2] for x in days], dtype=float)
+    if not cnts.sum():
+        return 0, None, ""
+    lo, hi = _boot(sums, cnts)
+    return int(cnts.sum()), round(sums.sum() / cnts.sum() * 100, 2), "" if lo is None else f"{lo * 100:+.2f} … {hi * 100:+.2f}"
+
+
+def f7_candidate(run_dir, store=STORE, segment="pool_reversed", size=0.5):
+    """Coordinator checks on F7 in reversed pools as a candidate (2026-10-11): cost scenarios and the
+    break-even tip, latency grid with d in ms per regime, the capital simulation with daily P&L,
+    the sandwich flag (V > f x X, prep note 5c) and stability per regime and week. Base rows only."""
+    from .costs import Scenario, settle_sql
+    from .report import CAPITAL_SOL, MAX_POSITIONS
+    from .store import load_defaults
+    from .tournament import results_glob
+
+    cfg = load_defaults()
+    con = _con()
+    src = f"read_parquet('{results_glob(run_dir)}')"
+    cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+    base_f = f"family = 'F7' AND segment = '{segment}' AND NOT skipped" + (" AND overlay = 'none'" if "overlay" in cols else "")
+    scn = {n: Scenario.from_cfg(n, cfg) for n in ("optimistic", "base", "pessimistic")}
+    exprs = ", ".join(f"{p} AS pnl_{n}, {r} AS ret_{n}" for n, (p, r) in ((n, settle_sql(x)) for n, x in scn.items()))
+    keep = "variant, size_sol, d, q, regime, day, d_ms, entry_slot, exit_slot, cost, proceeds, entry_failed, depth, pool, t, farm"
+    con.execute(f"CREATE TEMP TABLE f AS SELECT {keep}, {exprs} FROM {src} WHERE {base_f}")
+    lines = [f"# F7 in {segment}: candidate checks ({size:g} SOL unless stated)", ""]
+
+    # 1. Cost scenarios and break-even tip.
+    lines += ["## 1. Cost scenarios and break-even tip", "",
+              "Break-even tip: the tip per transaction at which the mean P&L per trade is 0, from the base scenario "
+              "(a filled trade pays the tip twice, a failed entry not at all).", ""]
+    rows = []
+    for d, q in con.execute(f"SELECT DISTINCT d, q FROM f WHERE size_sol = {size} ORDER BY ALL").fetchall():
+        w = f"size_sol = {size} AND d = {d} AND q = {q}"
+        out = [d, q]
+        for n in scn:
+            n_, m, ci = _ci_row(con, f"SELECT day, sum(ret_{n}), count(ret_{n}) FROM f WHERE {w} AND ret_{n} IS NOT NULL GROUP BY day")
+            out += [m, ci]
+        mean_pnl, filled = con.execute(f"SELECT avg(pnl_base), avg((NOT entry_failed)::INT) FROM f WHERE {w}").fetchone()
+        be = scn["base"].tip + mean_pnl / (2 * filled) if filled else None
+        out += [n_, None if be is None else f"{be / 1e9:.5f}"]
+        rows.append(out)
+    lines += _table(["d", "q", "optimistic %", "CI", "base %", "CI", "pessimistic %", "CI", "trades", "break-even tip SOL/tx"], rows) + [""]
+
+    # 2. Latency grid with d in ms per regime.
+    lines += ["## 2. Latency: d and q per regime (base costs)", ""]
+    rows = []
+    for reg, d, q in con.execute(f"SELECT DISTINCT regime, d, q FROM f WHERE size_sol = {size} ORDER BY ALL").fetchall():
+        w = f"size_sol = {size} AND regime = '{reg}' AND d = {d} AND q = {q}"
+        d_ms = con.execute(f"SELECT round(avg(d_ms)) FROM f WHERE {w}").fetchone()[0]
+        n_, m, ci = _ci_row(con, f"SELECT day, sum(ret_base), count(ret_base) FROM f WHERE {w} AND ret_base IS NOT NULL GROUP BY day")
+        rows.append((reg, d, d_ms, q, n_, m, ci))
+    lines += _table(["regime", "d", "d in ms", "q", "trades", "mean %", "95% CI (days)"], rows) + [""]
+
+    # 3. Capital simulation per variant with daily P&L.
+    lines += [f"## 3. Capital simulation: {CAPITAL_SOL:g} SOL, {size:g} SOL per trade, at most {MAX_POSITIONS} positions (base costs, q = 0.5)", ""]
+    lines += ["Path matters: a run of total losses (section 6) can empty the account, after which no position fits "
+              "(cash below the size) and every later signal is skipped.", ""]
+    rows = []
+    for pools, pf in (("all", "true"), ("organic", "farm = 'organic'")):
+        for var, d in con.execute(f"SELECT DISTINCT variant, d FROM f WHERE size_sol = {size} AND q = 0.5 ORDER BY ALL").fetchall():
+            trades = con.execute(f"""SELECT entry_slot, exit_slot, cost, pnl_base, entry_failed, day FROM f
+                                     WHERE size_sol = {size} AND q = 0.5 AND variant = '{var}' AND d = {d} AND {pf}
+                                     ORDER BY entry_slot, exit_slot""").fetchall()
+            rows.append((pools, var, d) + _capital_days(trades, CAPITAL_SOL * 1e9, MAX_POSITIONS))
+    lines += _table(["pools", "variant", "d", "signals", "taken", "skipped", "final SOL", "max drawdown %", "days",
+                     "positive days", "worst day SOL", "mean day SOL"], rows) + [""]
+
+    # 4. Sandwich flag: V > f x X, f = the pool's fee per side at the trigger, X = SOL depth before the fill.
+    lines += ["## 4. Sandwich flag (V > f x X, base costs)", "",
+              "f: LP + protocol + creator fee of the pool's trigger-slot events; X: real SOL depth at the trigger.", ""]
+    con.execute(f"ATTACH '{store}' AS st (READ_ONLY)")
+    con.execute("CREATE TEMP TABLE trig AS SELECT DISTINCT pool, t FROM f")
+    con.execute("""CREATE TEMP TABLE fee AS SELECT e.pool, e.slot AS t, max(e.lp_bps + e.protocol_bps + e.creator_bps) / 1e4 AS f
+                   FROM st.pool e SEMI JOIN trig g ON e.pool = g.pool AND e.slot = g.t
+                   WHERE e.kind IN ('buy', 'sell') GROUP BY ALL""")
+    rows = []
+    for sz, d in con.execute("SELECT DISTINCT size_sol, d FROM f WHERE q = 0.5 AND size_sol <= 1 ORDER BY ALL").fetchall():
+        w = f"r.size_sol = {sz} AND r.d = {d} AND r.q = 0.5"
+        flag = f"r.size_sol * 1e9 > fee.f * r.depth"
+        share, n_fee = con.execute(f"""SELECT avg(({flag})::INT), count(fee.f) FROM f r LEFT JOIN fee USING (pool, t) WHERE {w}""").fetchone()
+        n_, m_all, _ = _ci_row(con, f"SELECT day, sum(ret_base), count(ret_base) FROM f r WHERE {w} AND ret_base IS NOT NULL GROUP BY day")
+        n2, m_wo, ci_wo = _ci_row(con, f"""SELECT r.day, sum(r.ret_base), count(r.ret_base) FROM f r LEFT JOIN fee USING (pool, t)
+                                          WHERE {w} AND r.ret_base IS NOT NULL AND NOT COALESCE({flag}, false) GROUP BY r.day""")
+        rows.append((sz, d, n_, None if share is None else round(share * 100, 1), m_all, n2, m_wo, ci_wo))
+    lines += _table(["size SOL", "d", "trades", "flagged %", "mean % all", "trades not flagged", "mean % not flagged",
+                     "95% CI"], rows) + [""]
+
+    # 5. Stability per regime and per week.
+    lines += ["## 5. Stability (base costs, d = 1 and 2, q = 0.5)", ""]
+    rows = []
+    for d in (1, 2):
+        for key, label in (("regime", "regime"), ("strftime(CAST(day AS DATE), '%G-W%V')", "week")):
+            for (k,) in con.execute(f"SELECT DISTINCT {key} FROM f WHERE size_sol = {size} AND d = {d} ORDER BY 1").fetchall():
+                w = f"size_sol = {size} AND d = {d} AND q = 0.5 AND {key} = '{k}'"
+                n_, m, ci = _ci_row(con, f"SELECT day, sum(ret_base), count(ret_base) FROM f WHERE {w} AND ret_base IS NOT NULL GROUP BY day")
+                rows.append((d, label, k, n_, m, ci))
+    lines += _table(["d", "by", "value", "trades", "mean %", "95% CI (days)"], rows) + [""]
+    # 6. Total losses: the exit returns less than 10% of the entry (the pool's SOL side drained).
+    lines += ["## 6. Total losses (exit proceeds below 10% of the entry cost)", ""]
+    rows = con.execute(f"""SELECT d, farm, count(*) AS trades, round(avg((NOT entry_failed AND proceeds < 0.1 * cost)::INT) * 100, 2),
+                                  round(sum(pnl_base) FILTER (WHERE NOT entry_failed AND proceeds < 0.1 * cost) / 1e9, 1),
+                                  round(sum(pnl_base) / 1e9, 1)
+                           FROM f WHERE size_sol = {size} AND q = 0.5 GROUP BY ALL ORDER BY ALL""").fetchall()
+    lines += _table(["d", "farm", "trades", "total-loss %", "their P&L SOL", "all P&L SOL"], rows) + [""]
+    rows = con.execute(f"""SELECT day, count(*) FILTER (WHERE NOT entry_failed AND proceeds < 0.1 * cost) AS n,
+                                  count(DISTINCT pool) FILTER (WHERE NOT entry_failed AND proceeds < 0.1 * cost) AS pools
+                           FROM f WHERE size_sol = {size} AND q = 0.5 AND d = 1 GROUP BY day ORDER BY n DESC LIMIT 5""").fetchall()
+    lines += ["Days with the most total losses (d = 1, all variants):", ""] + _table(["day", "total losses", "pools"], rows) + [""]
+    path = os.path.join(run_dir, "f7_reversed_candidate.md")
+    with open(path, "w") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return path
+
+
+def _capital_days(trades, start, max_positions):
+    """capital_sim with the P&L of taken trades per trigger day: (signals, taken, skipped, final SOL,
+    max drawdown %, days, positive days, worst day SOL, mean day SOL)."""
+    import heapq
+    from collections import defaultdict
+
+    cash, open_, locked, peak, mdd, taken, skipped = start, [], 0, start, 0.0, 0, 0
+    per_day = defaultdict(float)
+
+    def settle_until(slot):
+        nonlocal cash, locked, peak, mdd
+        while open_ and open_[0][0] <= slot:
+            _, cost, back = heapq.heappop(open_)
+            cash, locked = cash + back, locked - cost
+            peak = max(peak, cash + locked)
+            mdd = max(mdd, 1 - (cash + locked) / peak)
+
+    days = set()
+    for entry, exit_, cost, pnl, failed, day in trades:
+        days.add(day)
+        settle_until(entry)
+        cost, pnl = cost or 0, pnl or 0
+        if len(open_) >= max_positions or (not failed and cash < cost):
+            skipped += 1
+            continue
+        taken += 1
+        per_day[day] += pnl / 1e9
+        if failed:
+            cash += pnl
+            continue
+        cash, locked = cash - cost, locked + cost
+        heapq.heappush(open_, (exit_ or entry, cost, cost + pnl))
+    settle_until(float("inf"))
+    vals = [per_day.get(d, 0.0) for d in sorted(days)]
+    return (len(trades), taken, skipped, round(cash / 1e9, 3), round(mdd * 100, 1), len(vals), sum(v > 0 for v in vals),
+            round(min(vals), 3) if vals else None, round(sum(vals) / len(vals), 3) if vals else None)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["f7rev"])
+    ap.add_argument("what", choices=["f7rev", "f7cand"])
     ap.add_argument("run_dir")
     ap.add_argument("--store", default=STORE)
     ap.add_argument("--segment", default="pool_reversed")
     a = ap.parse_args()
-    print(f7_reversed(a.run_dir, a.store, a.segment))
+    print(f7_reversed(a.run_dir, a.store, a.segment) if a.what == "f7rev" else f7_candidate(a.run_dir, a.store, a.segment))
 
 
 if __name__ == "__main__":
