@@ -95,8 +95,11 @@ fi
 
 run() {  # run_id, then backtest.tournament arguments
   local id=$1; shift
+  # MemoryMax per run, read at its start (default 4G; 7G is allowed for a tournament with >= 9 GB available).
+  local mem; mem=$(cat "$STATE.run-memmax" 2>/dev/null || echo 4G)
+  log "run $id with MemoryMax=$mem"
   mkdir -p "/dev/shm/$id"
-  systemd-run --user --scope -q -p MemoryMax=4G -p CPUQuota=200% -- \
+  systemd-run --user --scope -q -p MemoryMax="$mem" -p CPUQuota=200% -- \
     env LAB_SPILL_DIR="/dev/shm/$id" LAB_SPILL_MAX=2GB LAB_SQL_BUCKETS=64 nice -n 10 scripts/backtest-run.sh "$id" "$@" >> "$LOG" 2>&1 \
     || fail "run $id (see $LAB/backtests/$id/run.log)"
   rm -rf "/dev/shm/$id"
