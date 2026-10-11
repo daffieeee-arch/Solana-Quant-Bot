@@ -96,7 +96,8 @@ def daily_cases(con, day, lo, hi):
              cb.curve_buyers,
              COALESCE(m.complete_slot = m.create_slot AND cb.curve_buyers <= 2 AND tb.top_buyer_share > 0.5, false) AS self_funded
       FROM d LEFT JOIN tb USING (key) LEFT JOIN mints m ON m.mint = d.mint
-      LEFT JOIN (SELECT mint, count(DISTINCT trader) AS curve_buyers FROM curve WHERE is_buy GROUP BY mint) cb ON cb.mint = d.mint""")
+      LEFT JOIN (SELECT c.mint, count(DISTINCT c.trader) AS curve_buyers FROM curve c SEMI JOIN d ON d.mint = c.mint
+                 WHERE c.is_buy GROUP BY c.mint) cb ON cb.mint = d.mint""")
     con.execute("CREATE OR REPLACE TEMP TABLE d AS SELECT * FROM d2")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sel AS
