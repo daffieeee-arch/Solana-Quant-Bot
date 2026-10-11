@@ -5,6 +5,8 @@
       flock -n "$LAB_DATA_ROOT/locks/heavy.lock" "$LAB_PY" lab/analytics/build.py
     # add a finished development tournament run as strategy_* tables:
     #   ... lab/analytics/build.py --tournament "$LAB_DATA_ROOT/backtests/<run>"
+    # the same, keeping the overview tables of the current build (minutes instead of ~75 min on store v2):
+    #   ... lab/analytics/build.py --base-from "$LAB_DATA_ROOT/analytics/analytics.duckdb" --tournament ...
     # light smoke run on a few hours of slots, to a scratch file:
     "$LAB_PY" lab/analytics/build.py --slots 450144000:450180000 --out /tmp/x.duckdb --memory 900MB
 
@@ -351,6 +353,19 @@ DICTIONARY = {
 }
 
 
+# Run keys from tournament run v2 on (strategies.GROUP): the same meaning in every strategy_* table.
+RUN_KEY_TEXT = {
+    "q": "Kwantiel-instelling van de variant (q).",
+    "segment": "Marktsegment: curve, pool_normal (token/SOL-pool) of pool_reversed (SOL/token-pool).",
+    "regime": "Slotduur-regime van de periode (bijv. 320ms in epochs 1033-1036, 270ms vanaf 1037).",
+    "farm": "Handel: organic, flagged (wash farming) of all (beide samen, alleen als optelsom); n/a = niet gesplitst.",
+    "overlay": "Overlay: none of een O7-variant van dezelfde signalen (aparte groep, nooit optellen bij none).",
+}
+for _t in ("strategy_results", "strategy_summary", "strategy_curves"):
+    for _k, _v in RUN_KEY_TEXT.items():
+        DICTIONARY[_t].setdefault(_k, _v)
+
+
 def git_commit():
     r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                        cwd=os.path.dirname(os.path.abspath(__file__)))
@@ -376,7 +391,8 @@ def validate(con, require_tables=True):
     return errors
 
 
-def build(out, slots, memory, threads, tournament=None, temp_dir=None, max_temp=None, parts=1, strategies_from=None):
+def build(out, slots, memory, threads, tournament=None, temp_dir=None, max_temp=None, parts=1, strategies_from=None,
+          base_from=None):
     building = out + ".building"
     for p in (building, building + ".wal"):
         if os.path.exists(p):
@@ -394,14 +410,30 @@ def build(out, slots, memory, threads, tournament=None, temp_dir=None, max_temp=
     lo, hi = slots or (src_lo, src_hi)
     lo, hi = max(lo, src_lo), min(hi, src_hi, HOLDOUT_START)
     counts = {}
+    if base_from:
+        # Reuse the overview tables of an earlier build of the same store (a tournament import then takes
+        # minutes instead of the full ~75 min rebuild). Its window replaces --slots.
+        con.execute(f"ATTACH '{os.path.abspath(base_from)}' AS base (READ_ONLY)")
+        bmeta = json.loads(con.execute("SELECT json FROM base.meta").fetchone()[0])
+        same = ("store_version", "period", "slot_start", "slot_end_exclusive")
+        if any(bmeta["source"].get(k) != src.get(k) for k in same):
+            raise SystemExit(f"--base-from was built from another store: {[bmeta['source'].get(k) for k in same]}")
+        lo, hi = bmeta["slot_start"], bmeta["slot_end_exclusive"]
     for name in tables(lo, hi):
         t1 = time.time()
+        if base_from:
+            con.execute(f'CREATE TABLE "{name}" AS SELECT * FROM base."{name}"')
+            counts[name] = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
+            print(f"{name}: {counts[name]} rows copied in {time.time() - t1:.0f}s", flush=True)
+            continue
         n = parts * PARTED.get(name, 1) if parts > 1 and name in PARTED else 1
         for i in range(n):
             sql = tables(lo, hi, n, i)[name]
             con.execute(f'CREATE TABLE "{name}" AS {sql}' if i == 0 else f'INSERT INTO "{name}" {sql}')
         counts[name] = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
         print(f"{name}: {counts[name]} rows in {time.time() - t1:.0f}s" + (f" ({n} parts)" if n > 1 else ""), flush=True)
+    if base_from:
+        con.execute("DETACH base")
     run = None
     if strategies_from:
         # Keep an earlier import as is (a re-import may not fit the memory limit while the heavy lock is taken).
@@ -411,7 +443,7 @@ def build(out, slots, memory, threads, tournament=None, temp_dir=None, max_temp=
         run = con.execute("SELECT run_id FROM strategy_runs").fetchone()[0]
         con.execute("DETACH prev")
     elif tournament:
-        run = strategies.load(con, tournament).get("run_id")
+        run = strategies.load(con, tournament, stage_dir=tmp_dir).get("run_id")
     if run:
         for (c,) in con.execute("SELECT column_name FROM duckdb_columns() WHERE table_name = 'strategy_summary' "
                                 "AND database_name = current_database()").fetchall():
@@ -449,13 +481,17 @@ def main():
     ap.add_argument("--parts", type=int, default=1,
                     help="build the big aggregates in hash parts (x weight per table, see PARTED); store v2 at 1 GB: 8")
     ap.add_argument("--strategies-from", help="copy the strategy_* tables of an earlier analytics.duckdb instead of --tournament")
+    ap.add_argument("--base-from", help="copy the overview tables of an earlier analytics.duckdb (same store) instead of "
+                                        "rebuilding them, e.g. with --tournament")
     a = ap.parse_args()
     if a.strategies_from and a.tournament:
         ap.error("--strategies-from and --tournament exclude each other")
+    if a.base_from and (a.slots or a.parts > 1):
+        ap.error("--base-from copies a finished build; --slots and --parts do not apply")
     slots = tuple(int(x) for x in a.slots.split(":")) if a.slots else None
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     build(os.path.abspath(a.out), slots, a.memory, a.threads, a.tournament, a.temp_dir, a.max_temp, a.parts,
-          a.strategies_from)
+          a.strategies_from, a.base_from)
 
 
 if __name__ == "__main__":

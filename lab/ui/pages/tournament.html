@@ -114,9 +114,10 @@ footer { color: var(--muted); font-size: 0.82rem; }
   // Run keys (segment, farm, ...) split a family x variant into separate groups. One value per key is shown at a
   // time, so nothing is counted twice: farm 'all' is organic + flagged together, overlay O7* are paired variants.
   const KEYS = D.keys || [];
-  const KEY_LABEL = { q: "q", segment: "Segment", regime: "Regime", farm: "Handel", overlay: "Overlay" };
+  const KEY_LABEL = { q: "q", segment: "Segment", regime: "Slotduur", farm: "Handel", overlay: "Overlay" };
   const KEY_TEXT = { segment: { curve: "curve", pool_normal: "normale pool", pool_reversed: "omgekeerde pool" },
-                     farm: { all: "alle handel", organic: "organisch", flagged: "farming" }, overlay: { none: "geen overlay" } };
+                     farm: { all: "alle handel", organic: "organisch", flagged: "farming" }, overlay: { none: "geen overlay" },
+                     regime: { "320ms": "~320 ms (1033–1036)", "270ms": "~270 ms (vanaf 1037)" } };
   const PREFER = { farm: "all", overlay: "none" };
   // 'n/a': the group does not split by this key (farm for M1, or for F7 on the curve); it passes every choice.
   const NA = v => v == null || v === "n/a";

@@ -59,13 +59,15 @@ def main(db=os.path.join(DATA, "analytics", "analytics.duckdb"), out_name=None):
         # Must match the page's curve key: family|variant|size|d|tau|<run keys>|scenario.
         key = "|".join([fam, var, js(float(size)), str(d), js(t), *map(js, kv), scn])
         curves.setdefault(key, []).append([step, pnl])
+    # Six significant digits are plenty for a page that shows at most four; it keeps a run with ~15k groups small.
+    summary = [[float(f"{v:.6g}") if isinstance(v, float) else v for v in r] for r in summary]
     data = {
         "run": {k: conf.get(k) for k in ("run_id", "families", "sizes_sol", "delays", "tau", "q", "slippage_tol",
                                          "signals", "positions", "seconds")},
         "store": conf.get("store", {}),
         "columns": columns,
         "keys": keys,
-        "summary": [list(r) for r in summary],
+        "summary": summary,
         "curves": curves,
         "built_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     }

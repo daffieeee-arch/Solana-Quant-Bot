@@ -98,6 +98,23 @@ class Api(unittest.TestCase):
         if s["keys"]:
             self.assertEqual(self.get(base + f"&{s['keys'][0]}=no-such-value")["curves"], [])
 
+    def test_cases_read_from_files_dev_only(self):
+        idx = self.get("/api/cases")
+        if not idx["days"] and not idx["windows"]:
+            self.skipTest("no cases-v1 files")
+        self.assertIn("cases", self.get("/api/meta")["tabs"])
+        for key, param in ((idx["days"][0], "day"), (idx["windows"][0], "window")) if idx["windows"] else ((idx["days"][0], "day"),):
+            d = self.get(f"/api/cases?{param}={key}")
+            self.assertTrue(d["rows"] and d["lists"])
+            for r in d["rows"]:
+                self.assertTrue(all(v < HOLDOUT_START for k, v in r.items() if "slot" in k and isinstance(v, int)))
+                self.assertIn(r["list"], d["lists"])
+            self.assertIn("self_funded", d["flags"])
+        c = self.get(f"/api/candles?mint={d['rows'][0]['mint']}")
+        self.assertTrue(c["candles"])
+        self.assertEqual(self.req("/api/cases?day=../../etc/passwd")[0], 404)
+        self.assertEqual(self.req("/api/cases?window=7d-1")[0], 404)
+
     def test_bad_input(self):
         self.assertEqual(self.req("/api/token?mint=../../etc/passwd")[0], 404)
         self.assertEqual(self.req("/api/nope")[0], 404)
@@ -113,6 +130,26 @@ class Api(unittest.TestCase):
         _, h, _ = self.req("/api/meta")
         self.assertIn("default-src 'self'", h["Content-Security-Policy"])
         self.assertEqual(h["X-Content-Type-Options"], "nosniff")
+
+
+class CasesGuards(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.dirname(SERVER))
+        import server
+        cls.server = server
+
+    def test_dev_only(self):
+        self.assertTrue(self.server.dev_only({"peak_slot": HOLDOUT_START - 1, "trades": HOLDOUT_START + 5}))
+        self.assertFalse(self.server.dev_only({"last_slot": HOLDOUT_START}))
+        self.assertFalse(self.server.dev_only({"t15_t_dec": HOLDOUT_START + 1}))
+
+    def test_cases_connection_reads_only_the_cases_dir(self):
+        con = self.server.cases_con()
+        with self.assertRaises(Exception):
+            con.execute("SELECT * FROM read_csv('/etc/passwd')").fetchall()
+        with self.assertRaises(Exception):
+            con.execute("SET enable_external_access=true")
 
 
 class Binding(unittest.TestCase):

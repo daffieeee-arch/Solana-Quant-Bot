@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-// Hash routes: #/overzicht, #/tokens, #/tokens/<mint>, #/ticker, #/strategieen
+// Hash routes: #/overzicht, #/tokens, #/tokens/<mint>, #/ticker, #/strategieen, #/casussen, #/casussen/<dag of 7d-venster>
 export interface Route { tab: string; arg?: string }
 
 function parse(): Route {

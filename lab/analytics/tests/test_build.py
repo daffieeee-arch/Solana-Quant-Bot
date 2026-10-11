@@ -161,6 +161,24 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
             n_all = con.execute("SELECT max(n) FROM strategy_curves WHERE farm = 'all'").fetchone()[0]
             self.assertEqual(n_all, 80)  # organic + flagged positions together
 
+    def test_base_from_keeps_overview_and_adds_run(self):
+        with tempfile.TemporaryDirectory() as d:
+            run = os.path.join(d, "run")
+            os.makedirs(run)
+            self.make_run(run)
+            base, out = os.path.join(d, "base.duckdb"), os.path.join(d, "out.duckdb")
+            script = os.path.join(os.path.dirname(HERE), "build.py")
+            for args in (["--slots", SLICE, "--out", base], ["--base-from", base, "--tournament", run, "--out", out]):
+                r = subprocess.run([sys.executable, script, *args, "--memory", "900MB"], capture_output=True, text=True, timeout=300)
+                self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertIn("rows copied", r.stdout)
+            with duckdb.connect(base, read_only=True) as b, duckdb.connect(out, read_only=True) as o:
+                for t in ("token_summary", "token_candles_1m", "graduations", "wallet_summary", "market_events"):
+                    self.assertEqual(b.execute(f"SELECT count(*) FROM {t}").fetchone(), o.execute(f"SELECT count(*) FROM {t}").fetchone())
+                self.assertEqual(o.execute("SELECT count(*) FROM strategy_results").fetchone()[0], 160)
+                self.assertEqual(build.validate(o), [])
+            self.assertEqual([f for f in os.listdir(os.path.join(d, "tmp")) if f.startswith("strategy-stage")], [])
+
     def test_wrong_rollup_total_is_caught(self):
         with tempfile.TemporaryDirectory() as d:
             self.make_run(d, corrupt_all=True)

@@ -13,6 +13,7 @@ import decimal
 import json
 import mimetypes
 import os
+import re
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -35,6 +36,7 @@ SECURITY_HEADERS = {
                                 "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
 MAX_ROWS = 2000
+HOLDOUT_START = labstore.HOLDOUT_START
 
 
 def connect(with_dev=False):
@@ -81,6 +83,8 @@ def api_meta(q):
     con = connect()
     meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
     tabs = ["overview", "tokens", "ticker"]
+    if any(cases_files()):
+        tabs.insert(0, "cases")
     if has_table(con, "strategy_summary") and con.execute("SELECT count(*) FROM strategy_summary").fetchone()[0]:
         tabs.insert(0, "strategies")
     return {"meta": meta, "tabs": tabs}
@@ -188,6 +192,90 @@ def api_ticker(q):
     return {"events": events, "markers": markers}
 
 
+def api_candles(q):
+    """A token's 1-minute candles and market events only (no trade tape): the light chart for Casussen."""
+    mint = (q.get("mint", [""])[0] or "").strip()
+    if not (32 <= len(mint) <= 44 and mint.isalnum()):
+        raise ValueError("unknown mint")
+    con = connect()
+    t = rows(con, "SELECT mint, symbol, name, supply_tokens, create_time FROM token_summary WHERE mint = ?", [mint])
+    if not t:
+        raise LookupError("token not in the development data")
+    return {"token": t[0],
+            "candles": rows(con, """SELECT venue, epoch(minute)::BIGINT AS time, open, high, low, close, trades,
+                                           volume_quote, buy_quote
+                                    FROM token_candles_1m WHERE mint = ? ORDER BY minute, venue""", [mint]),
+            "events": rows(con, """SELECT slot, epoch(time)::BIGINT AS time, kind, venue, side, sol, wallet, note
+                                   FROM market_events WHERE mint = ? ORDER BY slot LIMIT 500""", [mint])}
+
+
+# ---- Casussen: lab/wallets/cases-v1 (written by another session; read on every request, so a re-run that
+# replaces the files shows up without a restart). Only the cases directory is readable from this connection.
+CASES = os.path.join(DATA, "wallets", "cases-v1")
+DAY_FILE = re.compile(r"^cases-(\d{4}-\d{2}-\d{2})\.parquet$")
+WINDOW_FILE = re.compile(r"^cases-(7d-\d{9})\.parquet$")
+SLOTISH = re.compile(r"slot|_t_dec$")
+
+
+def cases_files():
+    try:
+        names = os.listdir(CASES)
+    except FileNotFoundError:
+        return {}, {}
+    days = {m.group(1): n for n in names if (m := DAY_FILE.match(n))}
+    windows = {m.group(1): n for n in names if (m := WINDOW_FILE.match(n))}
+    return days, windows
+
+
+def cases_con():
+    con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+    con.execute("SET enable_progress_bar=false; SET autoinstall_known_extensions=false; SET autoload_known_extensions=false")
+    con.execute("SET allowed_directories=[?]", [CASES.rstrip("/") + "/"])
+    con.execute("SET enable_external_access=false; SET lock_configuration=true")
+    return con
+
+
+def dev_only(d):
+    """False if any slot-like field reaches the hold-out (the cases are development-only; this is the guard)."""
+    return not any(SLOTISH.search(k) and isinstance(v, int) and v >= HOLDOUT_START for k, v in d.items())
+
+
+def api_cases(q):
+    days, windows = cases_files()
+    key = q.get("day", [""])[0] or q.get("window", [""])[0]
+    if not key:
+        mt = [os.path.getmtime(os.path.join(CASES, n)) for n in (*days.values(), *windows.values())]
+        return {"days": sorted(days), "windows": sorted(windows), "updated_unix": int(max(mt)) if mt else None}
+    name = days.get(key) or windows.get(key)
+    if not name:
+        raise LookupError("geen casussen voor deze periode")
+    con = cases_con()
+    cur = con.execute("SELECT * FROM read_parquet(?)", [os.path.join(CASES, name)])
+    cols = [d[0] for d in cur.description]
+    types = {d[0]: str(d[1]) for d in cur.description}
+    data = [dict(zip(cols, r)) for r in cur.fetchmany(MAX_ROWS)]
+    dropped = sum(not dev_only(r) for r in data)
+    data = [r for r in data if dev_only(r)]
+    tl_path = os.path.join(CASES, "timelines-" + key + ".json")
+    timelines = {}
+    if os.path.isfile(tl_path):
+        with open(tl_path) as f:
+            timelines = {m: t for m, t in (json.load(f).get("timelines") or {}).items() if isinstance(t, dict) and dev_only(t)}
+    # Symbol and name: the case row, else its timeline, else token_summary (the day lists carry neither).
+    missing = [r["mint"] for r in data if not r.get("symbol") and r.get("mint") not in timelines]
+    known = {}
+    if missing:
+        known = {r["mint"]: r for r in rows(connect(), "SELECT mint, symbol, name FROM token_summary WHERE mint IN "
+                                                         "(SELECT unnest(?))", [missing])}
+    for r in data:
+        src = timelines.get(r.get("mint")) or known.get(r.get("mint")) or {}
+        r.setdefault("symbol", src.get("symbol"))
+        r.setdefault("name", src.get("name"))
+    lists = list(dict.fromkeys(r["list"] for r in data))
+    flags = [c for c in cols if types[c] == "BOOLEAN" and c != "grad_in_create"]
+    return {"key": key, "lists": lists, "flags": flags, "rows": data, "timelines": timelines, "dropped_holdout": dropped}
+
+
 # Run keys beyond family/variant/size/d/tau that a tournament run may split its groups by (strategies.GROUP).
 RUN_KEYS = ("q", "segment", "regime", "farm", "overlay")
 
@@ -235,7 +323,7 @@ def api_strategy_curve(q):
 
 ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": api_tokens,
           "/api/token": api_token, "/api/ticker": api_ticker, "/api/strategies": api_strategies,
-          "/api/strategy_curve": api_strategy_curve}
+          "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases}
 
 
 class Handler(BaseHTTPRequestHandler):

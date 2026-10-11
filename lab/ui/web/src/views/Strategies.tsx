@@ -31,6 +31,7 @@ const KEY_TEXT: Record<string, Record<string, string>> = {
   segment: { curve: "curve", pool_normal: "normale pool", pool_reversed: "omgekeerde pool" },
   farm: { all: "alle handel", organic: "organisch", flagged: "farming" },
   overlay: { none: "geen overlay" },
+  regime: { "320ms": "slots ~320 ms (1033–1036)", "270ms": "slots ~270 ms (vanaf 1037)" },
 };
 const keyText = (k: string, v: string) => KEY_TEXT[k]?.[v] ?? (k === "q" ? `q ${v}` : k === "regime" ? `regime ${v}` : v);
 const PREFER: Record<string, string> = { farm: "all", overlay: "none" };

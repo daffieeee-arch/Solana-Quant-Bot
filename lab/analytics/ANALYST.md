@@ -90,7 +90,8 @@ or a column lacks a `data_dictionary` entry. Every column is described in `a.dat
 - `a.market_events` — ticker: graduations, trades ≥ 25 SOL (SOL-quoted, farming excluded), and the two protocol-marker labels.
 - `a.slot_time` — slot → block time.
 - `a.strategy_runs`, `a.strategy_summary`, `a.strategy_results`, `a.strategy_curves` — one finished tournament run
-  (`build.py --tournament`, see `strategies.py`), re-settled and checked against the run to the lamport. A group is
+  (`build.py --base-from <current analytics.duckdb> --tournament <run>`, see `strategies.py`; settled per family ×
+  variant), re-settled and checked against the run to the lamport. A group is
   family × variant × size × d × tau plus, from run v2 on, `q`, `segment`, `regime`, `farm`, `overlay`. Pick one value
   per key: `farm = 'all'` is organic + flagged together, `overlay` O7* are paired variants of the same triggers, and
   `'n/a'` means the group does not split by that key (N2_F7 for farm).

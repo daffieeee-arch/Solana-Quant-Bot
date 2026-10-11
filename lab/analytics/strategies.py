@@ -7,6 +7,9 @@ Tables:
   strategy_curves   cumulative P&L per group and scenario in exit order, thinned to ~400 points (N2 shadows and
                     farm 'all' roll-ups included)
 
+Positions are settled one family x variant at a time from a hive-partitioned copy in stage_dir (build.py passes
+its temp dir), so a run of ~80M positions fits the heavy-job memory limit.
+
 Refuses runs that are unfinished (no summary.parquet) or whose store is not development-only, and checks
 that the re-settled totals equal the run's own summary to the lamport.
 """
@@ -14,6 +17,8 @@ import glob
 import json
 import os
 import re
+import shutil
+import tempfile
 
 HOLDOUT_START = 452_304_000
 DEFAULTS = "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml"
@@ -51,11 +56,14 @@ def scenarios(cfg):
     return out
 
 
-def load(con, run_dir, defaults=DEFAULTS):
+def load(con, run_dir, defaults=DEFAULTS, stage_dir=None):
     # Positions: results.parquet if the run wrote one, else its per-batch parts (same rows, no
     # pnl_base_lamports/ret_base). summary.parquet is written last, so it marks a finished run;
     # every scenario's group totals are checked against it below, which also catches missing or
     # duplicated parts. Nothing here depends on file order: curves sort explicitly.
+    # A large run (families-v2: ~80M positions, 83% in N2_F7) is settled one family x variant at a time:
+    # one pass copies the needed columns into hive partitions under stage_dir, then each chunk reads only
+    # its own partition. Every group key includes family and variant, so no group spans two chunks.
     results = os.path.join(run_dir, "results.parquet")
     if not os.path.exists(results):
         results = os.path.join(run_dir, "parts", "*.parquet")
@@ -87,6 +95,50 @@ def load(con, run_dir, defaults=DEFAULTS):
                     step BIGINT, n BIGINT, slot UBIGINT, cum_pnl_sol DOUBLE)""")
     k_sql = ", ".join(pos_keys)
     has_base = "pnl_base_lamports" in res_cols
+    need = [*pos_keys, "mint", "venue", "day", "t", "entry_slot", "exit_slot", "exit_reason", "entry_failed",
+            "cf_graduation", "hist_ret", "proceeds", "cost", "exit_attempts"] + (["pnl_base_lamports"] if has_base else [])
+    sel = ", ".join(c if c in res_cols else f"NULL AS {c}" for c in need)
+    if stage_dir:
+        os.makedirs(stage_dir, exist_ok=True)
+    stage = tempfile.mkdtemp(prefix="strategy-stage-", dir=stage_dir)
+    try:
+        con.execute(f"""COPY (SELECT {sel} FROM read_parquet('{results}') WHERE NOT coalesce(skipped, false))
+                        TO '{stage}/pos' (FORMAT parquet, PARTITION_BY (family, variant), OVERWRITE_OR_IGNORE)""")
+        if not glob.glob(os.path.join(stage, "pos", "*", "*", "*.parquet")):
+            raise SystemExit(f"tournament run has no positions that were not skipped: {run_dir}")
+        staged = f"read_parquet('{stage}/pos/*/*/*.parquet', hive_partitioning = true, hive_types_autocast = false)"
+        chunks = con.execute("SELECT DISTINCT family, variant FROM strategy_summary ORDER BY ALL").fetchall()
+        extra = con.execute(f"SELECT DISTINCT family, variant FROM {staged} EXCEPT "
+                            "SELECT DISTINCT family, variant FROM strategy_summary").fetchall()
+        if extra:
+            raise SystemExit(f"positions for family x variant missing from summary.parquet: {extra[:5]}")
+        for fam, var in chunks:
+            where = f"family = {sql_str(fam)} AND variant = {sql_str(var)}"
+            con.execute(f"CREATE OR REPLACE TEMP TABLE pos AS SELECT * FROM {staged} WHERE {where}")
+            settle_chunk(con, cfg, pos_keys, k_sql, where, has_base)
+        con.execute("DROP TABLE IF EXISTS pos")
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    on_s = " AND ".join(f"c.{k} IS NOT DISTINCT FROM s.{k}" for k in pos_keys)
+    for name, *_ in scenarios(cfg):
+        off = con.execute(f"""
+            SELECT count(*) FROM strategy_summary s
+            LEFT JOIN (SELECT * FROM strategy_curves WHERE step = n AND scenario = ?) c ON {on_s}
+            WHERE s.scenario = ? AND s.n > 0
+              AND (c.n IS DISTINCT FROM s.n OR abs(c.cum_pnl_sol - s.total_pnl_sol) > 1e-6
+                   OR c.cum_pnl_sol IS NULL)""", [name, name]).fetchone()[0]
+        if off:
+            raise SystemExit(f"scenario {name}: {off} summary groups have no curve ending at their n and total")
+    return conf
+
+
+def sql_str(v):
+    return "NULL" if v is None else "'" + str(v).replace("'", "''") + "'"
+
+
+def settle_chunk(con, cfg, pos_keys, k_sql, where, has_base):
+    """Settle temp table `pos` (one family x variant) under every cost scenario, check its group totals
+    against strategy_summary, and append its curves (and, for base, its positions to strategy_results)."""
     for name, per_tx, failed, rent, rent_mode, adverse in scenarios(cfg):
         refund = rent if rent_mode in ("refunded", "refunded_on_full_exit") else 0
         # Same arithmetic as costs.settle_sql: the factors are Python floats, so multiply as DOUBLE (a bare
@@ -105,11 +157,11 @@ def load(con, run_dir, defaults=DEFAULTS):
                         ELSE (trunc(coalesce(proceeds, 0)::DOUBLE * {down})::BIGINT - {per_tx} + {refund}
                               - greatest(0, coalesce(exit_attempts, 1) - 1) * {failed})
                              / (trunc(coalesce(cost, 0)::DOUBLE * {up})::BIGINT + {per_tx} + {rent}) - 1 END AS ret
-            FROM read_parquet('{results}') WHERE NOT coalesce(skipped, false)""")
+            FROM pos""")
         if name == "base" and has_base:
             off = con.execute("SELECT count(*) FROM settled WHERE pnl IS DISTINCT FROM pnl_base_lamports").fetchone()[0]
             if off:
-                raise SystemExit(f"{off} positions differ from the run's own pnl_base_lamports")
+                raise SystemExit(f"{off} positions differ from the run's own pnl_base_lamports ({where})")
         # Group totals per key, plus roll-ups (farm = 'all'); keys may be NULL, so match IS NOT DISTINCT FROM.
         mine = [f"SELECT {k_sql}, sum(pnl) AS pnl FROM settled GROUP BY ALL"]
         for rk, rv in ROLLUP.items():
@@ -119,12 +171,12 @@ def load(con, run_dir, defaults=DEFAULTS):
         on = " AND ".join(f"a.{k} IS NOT DISTINCT FROM b.{k}" for k in pos_keys)
         bad, missing = con.execute(f"""
             WITH a AS ({" UNION ALL ".join(mine)}),
-                 b AS (SELECT * FROM strategy_summary WHERE scenario = ?)
+                 b AS (SELECT * FROM strategy_summary WHERE scenario = ? AND {where})
             SELECT (SELECT count(*) FROM a JOIN b ON {on} WHERE abs(a.pnl / 1e9 - b.total_pnl_sol) > 1e-6),
                    (SELECT count(*) FROM b ANTI JOIN a ON {on} WHERE b.filled > 0)""", [name]).fetchone()
         if bad or missing:
             raise SystemExit(f"scenario {name}: re-settled P&L differs from summary.parquet "
-                             f"({bad} groups differ, {missing} missing)")
+                             f"({bad} groups differ, {missing} missing; {where})")
         # Curves per group, and per roll-up group the summary has (farm 'all': all positions of the other keys).
         sources = [("settled", "")]
         for rk, rv in ROLLUP.items():
@@ -144,20 +196,12 @@ def load(con, run_dir, defaults=DEFAULTS):
                   WINDOW w AS (PARTITION BY {k_sql} ORDER BY coalesce(exit_slot, entry_slot, signal_slot), signal_slot, mint
                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
                 WHERE step = 1 OR step = n OR step % greatest(1, n // {CURVE_POINTS}) = 0""")
-        on_s = " AND ".join(f"c.{k} IS NOT DISTINCT FROM s.{k}" for k in pos_keys)
-        off = con.execute(f"""
-            SELECT count(*) FROM strategy_summary s
-            LEFT JOIN (SELECT * FROM strategy_curves WHERE step = n AND scenario = ?) c ON {on_s}
-            WHERE s.scenario = ? AND s.n > 0
-              AND (c.n IS DISTINCT FROM s.n OR abs(c.cum_pnl_sol - s.total_pnl_sol) > 1e-6
-                   OR c.cum_pnl_sol IS NULL)""", [name, name]).fetchone()[0]
-        if off:
-            raise SystemExit(f"scenario {name}: {off} summary groups have no curve ending at their n and total")
         if name == "base":
-            con.execute(f"""CREATE TABLE strategy_results AS
+            exists = con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'strategy_results' "
+                                 "AND NOT temporary AND database_name = current_database()").fetchone()[0]
+            con.execute(f"""{"INSERT INTO strategy_results" if exists else "CREATE TABLE strategy_results AS"}
                             SELECT {k_sql}, mint, venue, day, signal_slot::UBIGINT AS signal_slot,
                                    entry_slot::UBIGINT AS entry_slot, exit_slot::UBIGINT AS exit_slot, exit_reason,
                                    entry_failed, cf_graduation, hist_ret, pnl / 1e9 AS pnl_sol, ret
                             FROM settled""")
         con.execute("DROP TABLE settled")
-    return conf
