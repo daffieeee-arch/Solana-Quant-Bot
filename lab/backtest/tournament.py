@@ -112,6 +112,7 @@ WINDOW_MARGIN_MS = ms(6_000)  # d, graduation and pool open after the last possi
 CLUSTER_GAP_MS = ms(20_000)  # signals further apart than this are loaded and simulated separately
 MAX_WINDOW_MS = ms(50_000)  # cap on one load window (busy pools)
 F1_CHUNK = 200  # tokens per stream load while screening F1 (whole curve histories)
+M1_CHUNK = int(os.environ.get("LAB_M1_CHUNK", "25"))  # young pools per stream load (busy pools: many legs)
 
 
 F6_STATS = {}
@@ -126,8 +127,8 @@ def m1_signals(con, cfg, lo, hi, clock):
         cands[pool].append((mint, t, depth, ratio))
     out = []
     pools = sorted(cands)
-    for i in range(0, len(pools), F1_CHUNK):
-        part = pools[i:i + F1_CHUNK]
+    for i in range(0, len(pools), M1_CHUNK):
+        part = pools[i:i + M1_CHUNK]
         mints = {cands[p][0][0]: max(c[1] for c in cands[p]) for p in part}
         toks = streams.load_streams(con, {m: (min(c[1] for p in part for c in cands[p] if c[0] == m), t) for m, t in mints.items()})
         for pool in part:
