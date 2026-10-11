@@ -192,7 +192,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "runners-v1"))
     a = ap.parse_args()
     guard(a.to_slot)
-    con = connect(memory="1000MB")  # the /dev/shm spill (<= 1 GB) counts in the same 2 GB scope
+    con = connect(memory=os.environ.get("LAB_RUNNERS_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1000MB")))  # VPS: spill + limit fit a 2 GB scope
     clock = Clock.from_store(con)
     guard(a.to_slot + clock.slots(DAY_MS, a.to_slot))
     t0 = time.time()

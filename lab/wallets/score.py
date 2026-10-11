@@ -231,7 +231,7 @@ def main():
     a = ap.parse_args()
     with open(DEFAULTS) as f:
         cfg = yaml.safe_load(f)
-    con = connect()
+    con = connect(memory=os.environ.get("LAB_SCORE_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1GB")))
     clock = Clock.from_store(con)
     d_slot, lo = day_bounds(con, a.day)
     scores = score_positions(con, a.follow, lo, d_slot, d_slot, cfg)

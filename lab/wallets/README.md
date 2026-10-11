@@ -36,3 +36,7 @@ Run order for a period: `episodes` → `follow` (needs the store-v2 engine: `LAB
 | `rank_d2` | rank by `follow_shrunk_d2` (W_half, 0.5 SOL) |
 
 `scores-v1/scores-<D>.parquet` is the long form (wallet × variant × size × d) with `n`, `filled`, `mean_ret`, `sd_ret`, `mean_pnl_sol`, `win`, `shrunk_ret`, `prior`, `k`, `p_value`, `q_value`, `top`, `rank`.
+
+## Memory limits (DuckDB) per module
+
+VPS defaults fit a 2 GB scope; on the NAS raise them per module: `LAB_EPISODES_MEMORY` (640MB), `LAB_FOLLOW_MEMORY` (1GB, main process) and `LAB_WORKER_MEMORY` (800MB per worker), `LAB_SCORE_MEMORY` (1GB), `LAB_RUNNERS_MEMORY` and `LAB_CASES_MEMORY` (1000MB); `LAB_WALLETS_MEMORY` sets all of them at once. Spill: `LAB_SPILL_DIR` / `LAB_SPILL_MAX`.

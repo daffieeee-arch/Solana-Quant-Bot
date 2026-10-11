@@ -205,7 +205,7 @@ def main():
     ap.add_argument("--symbols", help="comma-separated symbols: timelines of these tokens (the most-traded mint per symbol)")
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "cases-v1"))
     a = ap.parse_args()
-    con = connect(memory="1000MB")
+    con = connect(memory=os.environ.get("LAB_CASES_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1000MB")))
     clock = Clock.from_store(con)
     os.makedirs(a.out, exist_ok=True)
     t0 = time.time()

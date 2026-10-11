@@ -50,7 +50,8 @@ MAX_HOLD_MS = EPISODE_MS
 # every position would re-execute all of them (minutes per episode). Its episodes are recorded as
 # skipped ('busy_pool') and counted, not replayed.
 MAX_LEGS = 150_000
-WORKER_MEM = "800MB"  # DuckDB limit per worker process; expect ~1.3 GB RSS per worker
+WORKER_MEM = os.environ.get("LAB_WORKER_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "800MB"))  # DuckDB per worker; ~1.3 GB RSS
+MAIN_MEM = os.environ.get("LAB_FOLLOW_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1GB"))  # DuckDB in the main process
 VARIANTS = {"W_half": 0.5, "W_full": 0.1}
 Q_FRAC, TOL = 0.5, 0.05  # intra-slot position and own slippage tolerance (week2-defaults)
 STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
@@ -140,7 +141,7 @@ def read_wallets(path):
 def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, wallets_file=None, max_per_wallet=0,
         workers=1):
     guard(hi)
-    con = streams.open_store(store, threads=2, memory="1GB")
+    con = streams.open_store(store, threads=2, memory=MAIN_MEM)
     con.execute("SET enable_progress_bar = false")
     clock = Clock.from_store(con)
     max_slots = clock.slots(MAX_HOLD_MS, lo)
