@@ -11,6 +11,7 @@
 """
 
 import argparse
+import json
 import os
 
 import duckdb
@@ -74,19 +75,27 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
                      "mean % without top-10 pools", "trades without"], rows) + [""]
 
     lines += ["## e) Mechanism: does the trigger seller buy back within T?", ""]
+    from .strategies import Clock, ms
+
     con.execute(f"ATTACH '{store}' AS st (READ_ONLY)")
-    con.execute(f"""CREATE TEMP TABLE trig AS
-        SELECT DISTINCT pool, t, trigger_trader, TRY_CAST(split_part(variant, '_T', 2) AS BIGINT) AS T FROM {f7}""")
+    clock = Clock(json.loads(con.execute("SELECT json FROM st.meta").fetchone()[0]).get("ms_per_slot"))
+    # T of the variant is in v1 slot units (267.3 ms); the window in slots follows each epoch's slot time.
+    # (Column names are case-insensitive: the window must not be called "T" next to the trigger slot "t".)
+    trig = con.execute(f"""SELECT DISTINCT pool, t, trigger_trader, TRY_CAST(split_part(variant, '_T', 2) AS BIGINT)
+                           FROM {f7}""").fetchall()
+    con.execute("CREATE TEMP TABLE trig (pool VARCHAR, t BIGINT, trigger_trader VARCHAR, var_t BIGINT, horizon BIGINT)")
+    con.executemany("INSERT INTO trig VALUES (?, ?, ?, ?, ?)",
+                    [(p, t, w, v, clock.slots(ms(v), t)) for p, t, w, v in trig])
     con.execute("""CREATE TEMP TABLE back AS
-        SELECT g.pool, g.t, g.T, bool_or(e.slot IS NOT NULL) AS bought_back
+        SELECT g.pool, g.t, g.var_t, bool_or(e.slot IS NOT NULL) AS bought_back
         FROM trig g LEFT JOIN st.pool e ON e.pool = g.pool AND e.trader = g.trigger_trader AND e.token_buy
-             AND e.slot > g.t AND e.slot <= g.t + g.T
+             AND e.slot > g.t AND e.slot <= g.t + g.horizon
         GROUP BY ALL""")
     rows = con.execute(f"""
         SELECT r.size_sol, r.d, r.q, b.bought_back, count(*) AS n, round(avg(r.ret_base) * 100, 2) AS mean_pct,
                round(avg(r.pnl_base_lamports) / 1e9, 4) AS sol_per_trade,
                round(avg(r.trigger_farmer::INT) * 100, 1) AS trigger_farmer_pct
-        FROM {f7} r JOIN back b ON b.pool = r.pool AND b.t = r.t AND b.T = TRY_CAST(split_part(r.variant, '_T', 2) AS BIGINT)
+        FROM {f7} r JOIN back b ON b.pool = r.pool AND b.t = r.t AND b.var_t = TRY_CAST(split_part(r.variant, '_T', 2) AS BIGINT)
         WHERE r.ret_base IS NOT NULL GROUP BY r.size_sol, r.d, r.q, b.bought_back ORDER BY ALL""").fetchall()
     lines += _table(["size SOL", "d", "q", "seller bought back", "trades", "mean %", "SOL/trade", "trigger seller farmer %"],
                     rows) + [""]
