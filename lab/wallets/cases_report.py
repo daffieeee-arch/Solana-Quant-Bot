@@ -98,12 +98,13 @@ def main():
                 dumpers.append(mint)
         print()
     if weekly:
-        rows = con.execute(f"SELECT list, rank, mint, symbol, mcap_7d_sol, mcap_peak_sol, end_of_peak, volume_7d, traders_7d, vault_7d FROM read_parquet({weekly!r}) ORDER BY list, rank").fetchall()
-        print("## 7 dagen: blijvers en instorters\n")
-        print("| lijst | # | token | mcap na 7 d (SOL) | piek-mcap (SOL) | eind t.o.v. piek | volume 7 d | traders | SOL in pool (7 d) |")
-        print("|---|---|---|---|---|---|---|---|---|")
-        for lst, rank, mint, sym, m7, mp, eop, vol, tr, va in rows:
-            print(f"| {lst} | {rank} | [{sym}](https://dexscreener.com/solana/{mint}) | {m7:,.0f} | {mp:,.0f} | {eop:.0%} | {vol:,.0f} | {tr} | {va:,.0f} |")
+        rows = con.execute(f"SELECT list, rank, mint, symbol, mcap_7d_sol, mcap_peak_sol, end_of_peak, volume_7d, traders_7d, vault_7d, "
+                           f"COALESCE(self_funded, grad_in_create) FROM read_parquet({weekly!r}, union_by_name = true) ORDER BY list, rank").fetchall()
+        print("## 7 dagen: blijvers en instorters (met en zonder zelffinanciering)\n")
+        print("| lijst | # | token | zelfgefin. | mcap na 7 d (SOL) | piek-mcap (SOL) | eind t.o.v. piek | volume 7 d | traders | SOL in pool (7 d) |")
+        print("|---|---|---|---|---|---|---|---|---|---|")
+        for lst, rank, mint, sym, m7, mp, eop, vol, tr, va, sf in rows:
+            print(f"| {lst} | {rank} | [{sym}](https://dexscreener.com/solana/{mint}) | {'ja' if sf else 'nee'} | {m7:,.0f} | {mp:,.0f} | {eop:.0%} | {vol:,.0f} | {tr} | {va:,.0f} |")
         print()
     if risers or dumpers:
         print("## Organische stijgers tegenover organische dumpers in de eerste 15 minuten\n")

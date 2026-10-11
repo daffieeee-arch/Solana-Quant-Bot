@@ -88,17 +88,21 @@ def daily_cases(con, day, lo, hi):
           INSERT INTO tb
           SELECT key, max(bs) / sum(bs) FROM (SELECT key, trader, sum(sol) AS bs FROM ({trades_sql(lo, hi)})
                                              WHERE token_buy AND hash(key) % {BUCKETS} = {b} GROUP BY key, trader) GROUP BY key""")
-    # Self-funded structure: one buyer graduated the token in its create slot and one party made more
-    # than half of the day's pool buys (coordinator, 2026-10-11). Shown as a flag; lists with and without.
+    # Self-funded structure (coordinator, 2026-10-11; sharpened after the full run): one buyer graduated
+    # the token in its create slot (the whole curve, 85 SOL). The pool buys that follow are spread over
+    # several wallets, so a "> 50% by one party" rule caught only 46 of 100 trending tokens; the
+    # create-slot + <= 2 curve buyers rule is the flag, top_buyer_share stays as information.
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE d2 AS
       SELECT d.* EXCLUDE (top_buyer_share), tb.top_buyer_share, COALESCE(m.complete_slot = m.create_slot, false) AS grad_in_create,
              cb.curve_buyers,
-             COALESCE(m.complete_slot = m.create_slot AND cb.curve_buyers <= 2 AND tb.top_buyer_share > 0.5, false) AS self_funded
+             COALESCE(m.complete_slot = m.create_slot AND cb.curve_buyers <= 2, false) AS self_funded
       FROM d LEFT JOIN tb USING (key) LEFT JOIN mints m ON m.mint = d.mint
       LEFT JOIN (SELECT c.mint, count(DISTINCT c.trader) AS curve_buyers FROM curve c SEMI JOIN d ON d.mint = c.mint
                  WHERE c.is_buy GROUP BY c.mint) cb ON cb.mint = d.mint""")
     con.execute("CREATE OR REPLACE TEMP TABLE d AS SELECT * FROM d2")
+    # All tokens of the day with their aggregates: re-selection with other rules needs no store scan.
+    daily_agg = con.execute(f"SELECT '{day}' AS day, * FROM d ORDER BY volume_sol DESC").to_arrow_table()
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sel AS
       SELECT * FROM (
@@ -117,7 +121,7 @@ def daily_cases(con, day, lo, hi):
         SELECT 'dumpers_24h' AS list, row_number() OVER (ORDER BY volume_sol DESC) AS rank, d.*,
                p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
         FROM d WHERE p_last <= 0.1 * p_max AND volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS}) WHERE rank <= {TOP_DAY}""")
-    return con.execute(f"SELECT '{day}' AS day, * FROM sel ORDER BY list, rank").to_arrow_table()
+    return con.execute(f"SELECT '{day}' AS day, * FROM sel ORDER BY list, rank").to_arrow_table(), daily_agg
 
 
 def weekly_cases(con, lo, hi, clock):
@@ -127,6 +131,8 @@ def weekly_cases(con, lo, hi, clock):
     con.execute("""CREATE OR REPLACE TEMP TABLE w (mint VARCHAR, pool VARCHAR, open_slot BIGINT, create_slot BIGINT, grad_in_create BOOLEAN,
                    p_open DOUBLE, supply BIGINT, symbol VARCHAR, name VARCHAR, p_peak DOUBLE, peak_slot BIGINT, p_7d DOUBLE,
                    volume_7d DOUBLE, traders_7d BIGINT, vault_7d DOUBLE)""")
+    con.execute(f"CREATE OR REPLACE TEMP TABLE gcb AS SELECT c.mint, count(DISTINCT c.trader) AS curve_buyers FROM curve c "
+                f"SEMI JOIN g ON g.mint = c.mint WHERE c.is_buy GROUP BY c.mint")
     for b in range(BUCKETS):
         con.execute(f"""
           INSERT INTO w
@@ -138,17 +144,21 @@ def weekly_cases(con, lo, hi, clock):
             AND e.slot >= g.open_slot AND e.slot < g.open_slot + {n7}
           WHERE hash(g.pool) % {BUCKETS} = {b}
           GROUP BY ALL""")
-    return con.execute(f"""
-      SELECT * FROM (
-        SELECT 'stayers_7d' AS list, row_number() OVER (ORDER BY p_7d * supply DESC) AS rank, w.*,
-               p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
-        FROM w WHERE volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS} AND vault_7d >= {MIN_VAULT_WEEK_SOL}) WHERE rank <= {TOP_WEEK}
-      UNION ALL
-      SELECT * FROM (
-        SELECT 'collapsed_7d' AS list, row_number() OVER (ORDER BY p_peak * supply DESC) AS rank, w.*,
-               p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
-        FROM w WHERE p_7d <= 0.05 * p_peak AND volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS}) WHERE rank <= {TOP_WEEK}
-      ORDER BY list, rank""").to_arrow_table()
+    con.execute("""CREATE OR REPLACE TEMP TABLE w2 AS SELECT w.*, gcb.curve_buyers,
+                   COALESCE(w.grad_in_create AND gcb.curve_buyers <= 2, false) AS self_funded FROM w LEFT JOIN gcb USING (mint)""")
+    lists = []
+    for suffix, extra in (("", ""), ("_organic", " AND NOT self_funded")):
+        lists.append(f"""
+          SELECT * FROM (
+            SELECT 'stayers_7d{suffix}' AS list, row_number() OVER (ORDER BY p_7d * supply DESC) AS rank, w2.*,
+                   p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
+            FROM w2 WHERE volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS} AND vault_7d >= {MIN_VAULT_WEEK_SOL}{extra}) WHERE rank <= {TOP_WEEK}
+          UNION ALL
+          SELECT * FROM (
+            SELECT 'collapsed_7d{suffix}' AS list, row_number() OVER (ORDER BY p_peak * supply DESC) AS rank, w2.*,
+                   p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
+            FROM w2 WHERE p_7d <= 0.05 * p_peak AND volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS}{extra}) WHERE rank <= {TOP_WEEK}""")
+    return con.execute(" UNION ALL ".join(lists) + " ORDER BY list, rank").to_arrow_table()
 
 
 def timelines(con, mints, clock):
@@ -202,9 +212,10 @@ def main():
     if a.day:
         lo, hi = day_slots(con, a.day)
         guard(hi)
-        sel = daily_cases(con, a.day, lo, hi)
+        sel, agg = daily_cases(con, a.day, lo, hi)
         tl = timelines(con, [m for m in sel.column("mint").to_pylist() if m], clock)
         pq.write_table(sel, os.path.join(a.out, f"cases-{a.day}.parquet"))
+        pq.write_table(agg, os.path.join(a.out, f"daily-agg-{a.day}.parquet"))
         with open(os.path.join(a.out, f"timelines-{a.day}.json"), "w") as f:
             json.dump({"day": a.day, "commit": git_commit(), "timelines": tl}, f, indent=1, default=str)
         print(f"{a.day}: {sel.num_rows} cases, {len(tl)} timelines, {time.time() - t0:.0f}s", file=sys.stderr)

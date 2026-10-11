@@ -1,41 +1,325 @@
-# Casussen uit eigen data: "trending", dumpers en blijvers (2026-10-11)
+# Casussen uit eigen data: "trending", dumpers en blijvers (2026-10-11, bijgewerkt met de volledige ontwikkelperiode)
 
-Op verzoek van de eigenaar, via de coördinator. Alleen ontwikkeldata (vóór de hold-out), alleen pump-tokens met SOL-quote in hun eigen migratiepool; reversed pools en andere pools doen niet mee (dat zijn farming-plekken). Selectie en tijdlijnen: `lab/wallets/cases.py`, rapport: `lab/wallets/cases_report.py`. Ruwe output: `data-old-faithful-one/lab/wallets/cases-v1-sample/`. De DexScreener-links zijn om zelf te kijken; het is geen databron.
+Op verzoek van de eigenaar, via de coördinator. Alleen ontwikkeldata (11–30 september 2026 UTC, vóór de hold-out), alleen pump-tokens met SOL-quote in hun eigen migratiepool; reversed pools en andere pools doen niet mee (farming-plekken). Koers = reserve-prijs van de pool (e/b, incl. virtuele reserves bij boost-pools; dezelfde koers die een koersdienst toont). Lijsten eisen ≥ 100 handelaren, ≥ 300 SOL volume en echte liquiditeit op het meetmoment (≥ 5 SOL per dag, ≥ 10 SOL na 7 dagen). Code: `lab/wallets/cases.py`, `cases_report.py`; ruwe output met tijdlijnen per casus: `data-old-faithful-one/lab/wallets/cases-v1/` (`report.md` daar bevat alle 300 tijdlijnen). De DexScreener-links zijn om zelf te kijken; het is geen databron.
 
 ## Wat je ziet, in gewoon Nederlands
 
-1. **"Trending 24 u" (top-5 op 24-uurs-rendement × volume) is bijna helemaal nep.** De winnaars op 25 en 26 september zijn tokens die in hun eigen create-slot gradueerden: één koper (de maker zelf) kocht de hele curve (85 SOL), en daarna stortte dezelfde partij 8.000–27.000 SOL in de pool, waardoor de koers ×10.000 tot ×100.000 boven de openingsprijs kwam. Het zijn steeds dezelfde namen (AROS, VSOF, USDF, WOFI, WSOS) met telkens een nieuwe mint, en ze worden binnen een dag weer leeggehaald: de grootste verkopen zijn 10.500–10.800 SOL in één klap na ~1.000 minuten, vaak door de creator zelf. Een "mcap" van tientallen miljoenen SOL is hier een rekenartefact van een leeggekochte pool: niemand kan er tegen die prijs uit.
-2. **De echte hype-tokens staan bij de dumpers.** SOLRISING, IMU, PEEP, SHIBA (25 sept) en Cream, DEBT, act/acc, P(DOOM) (26 sept) hadden 2.900–13.900 handelaren en 33.000–66.000 SOL volume op een dag, piekten op 90–450× de openingsprijs en eindigden op 0–10% van hun piek. Dit is het beeld dat de eigenaar in Phantom ziet: hype, piek, instorting.
-3. **Na 7 dagen blijven er weinig over.** PAID (88.000 handelaren, 1,3 mln SOL volume, nog ~116.000 SOL mcap na een week op een derde van zijn piek), JEANPHIL (52.000 handelaren), MCAT, WEPE en MINESTOCK zijn echte overlevers. WSOS, FAIR en fomo in diezelfde lijst zijn weer de zelfgefinancierde structuur (145–2.300 handelaren, koers nooit bewogen). De "instorters" met een piek-mcap van 15–42 miljoen SOL zijn allemaal AROS/USDF/VSOF/WOFI-kopieën: dezelfde operatie.
-4. **Wat stijgers en dumpers in de eerste 15 minuten onderscheidt — en wat niet.** De mediaan van de "stijgers" heeft 1 koper op de curve, 100% grote kopers en een insider-aandeel van 0,79; de dumpers hebben 28 curve-kopers, 2.148 pool-traders in een kwartier en een insider-aandeel dat net zo hoog is (0,78). Netto instroom op de curve (85 SOL, de hele curve) en creator-verkopen (0) zijn gelijk. Het enige harde verschil is dus *wie* koopt: één partij tegenover een menigte. Dat voorspelt geen succes; het voorspelt welke van de twee soorten mislukking je krijgt. Geen van beide groepen had split-buyer-bundels in de eerste 15 minuten.
-5. **Gevolg voor het onderzoek.** Een "trending"-lijst op koers × volume uit eigen data moet eerst de zelfgefinancierde structuur eruit filteren (graduatie in de create-slot én ≤ 2 curve-kopers, of één wallet die de pool voor > 50% vult). Dat filter is nu niet in de lijst gezet, zodat je ziet hoe dominant het is. In het runner-onderzoek (1b) zitten deze tokens apart ("graduatie in de create-slot": 879 van 1.622 graduaties op twee dagen).
+1. **"Trending 24 u" (top-5 per dag op 24-uurs-rendement × volume) is over 20 dagen voor 85% nep.** 85 van de 100 toppers zijn tokens die in hun eigen create-slot gradueerden met één koper (de maker koopt de hele curve voor 85 SOL), waarna 8.000–27.000 SOL in de pool wordt gestort en de koers ×10.000 tot ×100.000 boven de openingsprijs komt. Steeds dezelfde namen (AROS, VSOF, USDF, WOFI, WSOS) met nieuwe mints, mediaan 2.049 "handelaren", binnen een dag leeggehaald met één verkoop van ~10.500 SOL, vaak door de creator. De "mcap" van tientallen miljoenen SOL is een rekenartefact van een leeggekochte pool.
+2. **Het zelffinancieringsfilter zoals eerst gedefinieerd (één partij > 50% van de pool-kopen) vangt maar 46 van die 85:** de operators spreiden de pool-kopen over meerdere wallets. Het juiste filter is "graduatie in de create-slot met ≤ 2 curve-kopers". Dat staat nu in de code; de lijst `trending_24h_organic` hieronder is nog met het oude filter gemaakt en bevat daardoor nog 53 zelfgefinancierde tokens. Herselectie met het scherpe filter draai ik zodra de store weer vrij is (nu pauzeert zwaar leeswerk de families-v2-run); de dagaggregaten worden vanaf nu bewaard zodat dat licht is.
+3. **Met het scherpe filter blijven 47 echte organische stijgers over** (mediaan 10.070 handelaren, 32.500 SOL volume op de dag, piek 630× de dagopening — meestal vanaf de curve — en aan het eind van de dag nog 60% van de piek). Voorbeelden: e/acc (35.777 handelaren, 456.000 SOL op 26 sept, einde 41% van de piek), PAID (23.944 handelaren op 15 sept), JEANPHIL, KARDASHEV, DDOS. Dit zijn de tokens die de eigenaar in Phantom ziet stijgen.
+4. **De dumpers (top-5 per dag op volume die ≤ 10% van hun piek eindigden) zijn voor 74% organisch**: mediaan 6.771 handelaren, 36.000 SOL volume, piek 247× en einde op 1% van de piek, met nog 20 SOL in de pool. Hype, piek, instorting — op dezelfde dag.
+5. **Na 7 dagen blijven weinig tokens over.** Van de top-10 "blijvers" op mcap zijn 7 weer de zelfgefinancierde structuur (WSOS, FAIR, fomo, MCAT, WEPE, MINESTOCK: 145–2.300 handelaren, koers nooit bewogen). Echt zijn PAID (88.126 handelaren, 1,28 mln SOL volume, ~116.000 SOL mcap na een week op een derde van de piek), JEANPHIL (52.568 handelaren, 60% van de piek) en USDF-DRMn (3.204 handelaren). Alle 10 "instorters" met een piek-mcap van 15–42 miljoen SOL zijn create-slot-structuren.
+6. **Wat organische stijgers en dumpers in de eerste 15 minuten onderscheidt — en wat niet** (op de twee voorbeelddagen; de 20-daagse vergelijking wordt na de herselectie toegevoegd): de stijgers gradueerden langzamer (2,3 min tegen 2 s), met veel meer curve-kopers (229 tegen 28), een insider-aandeel van 0,00 tegen 0,78 en een klein aandeel grote kopers (2% tegen 32%); netto curve-instroom (de hele curve, 85 SOL), koers op +15 min (×7 tegen ×8), pool-volume en bundel-events verschilden niet. Het sluit aan bij onderzoek 1b over 18 dagen: insider-aandeel hoog = 5× minder kans op een runner, koers/instroom op +15 min = 2× meer; hype aan de create voorspelt niets.
+7. **Gevolg.** Een trending-lijst uit eigen data begint met het zelffinancieringsfilter; daarna is de lijst bruikbaar als casusselectie. Voor handelen zegt dit niets: of een 2×-filter netto iets oplevert staat in de spec M1+ voor LAB backtest.
 
-Beperkingen: twee dagen voor de daglijsten; de 7-dagen-lijst loopt over de hele ontwikkelperiode. De koers is de reserve-prijs van de pool (incl. virtuele reserves bij boost-pools), dezelfde die een koersdienst toont. Labels van kopers (wallet-score) komen pas na de NAS-run.
+Beperkingen: 20 dagen (1 oktober is een halve dag en valt af); de 7-dagen-lijst loopt over de hele periode; labels van kopers (wallet-score) komen pas na de NAS-run van stap 1.
 
-## Per dag: trending 24 u en pumpers/dumpers
+## Per dag: trending 24 u (met en zonder zelffinanciering) en pumpers/dumpers
 
-| dag | lijst | # | token | volume SOL | 24-u-rendement | piek × | eind t.o.v. piek | traders | SOL in pool (eind) |
-|---|---|---|---|---|---|---|---|---|---|
-| 2026-09-25 | dumpers_24h | 1 | [SOLRISING](https://dexscreener.com/solana/93Q1FohrzWzsvJXJujLW7PrZLZtpCPmviKyWKEX3pump) | 43,669 | -60% | 90.9 | 0% | 3332 | 10 |
-| 2026-09-25 | dumpers_24h | 2 | [AROS](https://dexscreener.com/solana/Xc4WkwXwNmMApMmxvwT8994tLMUziPCgxBmmPC4pump) | 43,499 | -95% | 53517.5 | 0% | 3129 | 2 |
-| 2026-09-25 | dumpers_24h | 3 | [PEEP](https://dexscreener.com/solana/jU7hpVbGfLPFzfHB1iy74hPA379iubPqVQwLGBepump) | 41,460 | +231% | 158.1 | 2% | 2889 | 31 |
-| 2026-09-25 | dumpers_24h | 4 | [IMU](https://dexscreener.com/solana/33owuxq97P85XaV2oXvBFmMoykb3ZjLH5wdAV4uDpump) | 40,006 | -81% | 114.0 | 0% | 3319 | 12 |
-| 2026-09-25 | dumpers_24h | 5 | [SHIBA](https://dexscreener.com/solana/3V43dHnk3kkU3w8RnxEsmbJcHQppGjTJ3Mni3owDpump) | 33,171 | -67% | 88.7 | 0% | 3199 | 7 |
-| 2026-09-25 | trending_24h | 1 | [USDF](https://dexscreener.com/solana/qhyWQAfBWW8pmDUiNWVwq4e4SZWeMgEvJ3KRRespump) | 20,615 | +3892045% | 38936.3 | 100% | 3273 | 16,780 |
-| 2026-09-25 | trending_24h | 2 | [VSOF](https://dexscreener.com/solana/mRRHbeK6G5kmT8wc3AwkSeijAQWEnzS69vmbQ1Gpump) | 15,869 | +2535837% | 25373.7 | 100% | 3030 | 13,548 |
-| 2026-09-25 | trending_24h | 3 | [VSOF](https://dexscreener.com/solana/BYPmzwqUT8NcDTWeGFbMQqafg7JHvLxfepjfF4Ahpump) | 17,574 | +1991614% | 19917.1 | 100% | 132 | 12,007 |
-| 2026-09-25 | trending_24h | 4 | [AROS](https://dexscreener.com/solana/QcakAHiP7BgZqzFupUEH5RzcpmoaYn9hWuBih62pump) | 14,102 | +1957655% | 19577.6 | 100% | 3102 | 11,893 |
-| 2026-09-25 | trending_24h | 5 | [AROS](https://dexscreener.com/solana/57LVTCfaFUZ9tMM7vhJDgF3oebWt7GTzdrhRK5fqpump) | 14,275 | +1914340% | 19144.4 | 100% | 2763 | 11,761 |
-| 2026-09-26 | dumpers_24h | 1 | [Cream](https://dexscreener.com/solana/CMuvWQ6qQbSt7NUQdPGcVKCoDgETieuqS68qu6BaeVgR) | 66,182 | +2760% | 296.6 | 10% | 12559 | 190 |
-| 2026-09-26 | dumpers_24h | 2 | [DEBT](https://dexscreener.com/solana/FYM6PhwAS3QwTBwvgLj8JYeMgpNfKsWtW3hGxPM9eFkt) | 61,916 | +656% | 225.8 | 3% | 13887 | 77 |
-| 2026-09-26 | dumpers_24h | 3 | [act/acc](https://dexscreener.com/solana/3gLCmbKsF2eps3JpFLykgVhkzi8Vh2wLAco7FUnvpump) | 53,060 | +9% | 454.0 | 0% | 3583 | 10 |
-| 2026-09-26 | dumpers_24h | 4 | [AROS](https://dexscreener.com/solana/DsJDVBeNnUYvsJEaLyhNm6xrULzVDzuAPCVCHKRCpump) | 44,477 | -95% | 55994.4 | 0% | 2684 | 2 |
-| 2026-09-26 | dumpers_24h | 5 | [P(DOOM)](https://dexscreener.com/solana/ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem) | 37,916 | +2522% | 325.8 | 8% | 8628 | 124 |
-| 2026-09-26 | trending_24h | 1 | [AROS](https://dexscreener.com/solana/kFWgzdFBd6DERYGSWUrT3ZUUjoREcv14rHJCBSbpump) | 30,673 | +10101265% | 101024.8 | 100% | 3056 | 27,045 |
-| 2026-09-26 | trending_24h | 2 | [VSOF](https://dexscreener.com/solana/ehegfG1UQEFSYKcV6ReiMupjheDm22FoQQukiDspump) | 30,512 | +8763512% | 87636.1 | 100% | 3076 | 25,183 |
-| 2026-09-26 | trending_24h | 3 | [AROS](https://dexscreener.com/solana/82w6YGQD7cb7SypvkoQrRTHG3qNzmVTNUcZ6njNRpump) | 10,219 | +914806% | 9149.1 | 100% | 2758 | 8,126 |
-| 2026-09-26 | trending_24h | 4 | [manifest](https://dexscreener.com/solana/8vdJA3MYhUhirZZzjZ5i8jXhNkHgrCnirCrqDG23pump) | 21,834 | +282120% | 3306.6 | 85% | 2035 | 1,243 |
-| 2026-09-26 | trending_24h | 5 | [XBC](https://dexscreener.com/solana/12ppTUnBWHbGy11h3QsXiat2sydhLAgjevu55jYzpump) | 8,070 | +712364% | 7125.2 | 100% | 3051 | 7,167 |
+Zelfgefinancierd = één koper graduateerde de token in de create-slot én één partij deed > 50% van de pool-kopen van de dag. `trending_24h_organic` is dezelfde lijst zonder die tokens.
+
+| dag | lijst | # | token | zelfgefin. | grootste koper | volume SOL | 24-u-rendement | piek × | eind t.o.v. piek | traders | SOL in pool (eind) |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2026-09-11 | dumpers_24h | 1 | [WOFI](https://dexscreener.com/solana/FdCXKB3o2ThJ4go3qfDUaRL1HA814FxQbEzshnaUpump) | ja | 0.71 | 8,469 | -96% | 2183.1 | 0% | 858 | 0 |
+| 2026-09-11 | dumpers_24h | 2 | [HOOD](https://dexscreener.com/solana/hDPhFfYTr2CHvZ8w3HuVG23fF1oVWWxNHoJUUtJpump) | ja | 0.64 | 5,904 | -96% | 1047.9 | 0% | 2637 | 0 |
+| 2026-09-11 | dumpers_24h | 3 | [minecat](https://dexscreener.com/solana/E48e1En3hWSBE8LgNDkDaKFvxDgjHHk83AwSxqicpump) | nee | 0.04 | 4,593 | -30% | 62.9 | 1% | 8802 | 3 |
+| 2026-09-11 | dumpers_24h | 4 | [BULLBRAIN](https://dexscreener.com/solana/Hy3q5X2iaL9idGZ9f89JJC1MbGXEnup1zhtWc12epump) | nee | 0.04 | 4,519 | -16% | 50.5 | 2% | 1161 | 4 |
+| 2026-09-11 | dumpers_24h | 5 | [MrBeast](https://dexscreener.com/solana/RFGkQxMHbNw7nmG4x6euoCmkxQXh3TovGa32F7xpump) | ja | 0.70 | 4,431 | -96% | 609.0 | 0% | 3874 | 0 |
+| 2026-09-11 | trending_24h | 1 | [$1](https://dexscreener.com/solana/wEcST4bnx6yxqn3Eb9Nmu7u8vrHYVaYY3GP31Tjpump) | ja | 0.52 | 3,648 | +79659% | 797.7 | 100% | 3564 | 2,388 |
+| 2026-09-11 | trending_24h | 2 | [GTA 6](https://dexscreener.com/solana/hwvkLWd1xMP2jZiPMmV1uHKnQyDMkgQSWc95UJJpump) | ja | 0.84 | 2,301 | +68330% | 684.3 | 100% | 1532 | 2,208 |
+| 2026-09-11 | trending_24h | 3 | [ClaudeAI](https://dexscreener.com/solana/Eq9qMbuZMCd8wkCJFcb6mETPtLZPYLteNZ7vLJ9vpump) | ja | 0.58 | 2,139 | +52263% | 523.6 | 100% | 2467 | 1,930 |
+| 2026-09-11 | trending_24h | 4 | [BARRON](https://dexscreener.com/solana/ZyNRXJfwNWUJCTZU9c2XU6Zdrg2k96pWY8tv7gHpump) | nee | 0.50 | 1,846 | +36112% | 362.1 | 100% | 2418 | 1,603 |
+| 2026-09-11 | trending_24h | 5 | [OpenClaw](https://dexscreener.com/solana/EsBo9HQ89QbHtuy5nYCU72TrhJ9uGmgpHTU9Pz7pump) | ja | 0.71 | 1,710 | +34831% | 349.3 | 100% | 1284 | 1,573 |
+| 2026-09-11 | trending_24h_organic | 1 | [BARRON](https://dexscreener.com/solana/ZyNRXJfwNWUJCTZU9c2XU6Zdrg2k96pWY8tv7gHpump) | nee | 0.50 | 1,846 | +36112% | 362.1 | 100% | 2418 | 1,603 |
+| 2026-09-11 | trending_24h_organic | 2 | [STONK](https://dexscreener.com/solana/FtjCvB7KUBmEMh5GR2vMsjkgbMLM2LBQgijQDsVbpump) | nee | 0.04 | 3,667 | +10479% | 113.2 | 93% | 4540 | 230 |
+| 2026-09-11 | trending_24h_organic | 3 | [MetaMask](https://dexscreener.com/solana/onYqVbL2HSePgTgcozWPRzqpptWvJKDjquLmH48pump) | nee | 0.47 | 1,366 | +19490% | 195.9 | 100% | 2720 | 1,174 |
+| 2026-09-11 | trending_24h_organic | 4 | [Coca Cola](https://dexscreener.com/solana/AmLUsT8gk4dPeaEYqkimj8THyrv9p6a1G8HCm75ypump) | nee | 0.50 | 1,254 | +7653% | 77.5 | 100% | 4322 | 732 |
+| 2026-09-11 | trending_24h_organic | 5 | [MEME](https://dexscreener.com/solana/Hg8nQ7JfZAtojKzBk8q3XLej9wJntYKjsoaSv1f2pump) | nee | 0.49 | 916 | +6878% | 69.8 | 100% | 424 | 694 |
+| 2026-09-12 | dumpers_24h | 1 | [ALLDOG](https://dexscreener.com/solana/AZu5n7foTz4rRfii2DLCbDM76ZmCQeaeEC9icfPPpump) | nee | 0.01 | 27,610 | -22% | 398.2 | 0% | 10376 | 5 |
+| 2026-09-12 | dumpers_24h | 2 | [WOFI](https://dexscreener.com/solana/DtkfCLLjatm2V72DHuUuBBHJcDnH4PBMs8SD9j6pump) | ja | 0.90 | 24,222 | -96% | 18580.1 | 0% | 1945 | 1 |
+| 2026-09-12 | dumpers_24h | 3 | [WOFI](https://dexscreener.com/solana/sKGHsS36WfUJydnr7ksLFC6YPm6NBuznEV7ZzZopump) | ja | 0.93 | 23,553 | -96% | 18049.8 | 0% | 1940 | 0 |
+| 2026-09-12 | dumpers_24h | 4 | [WOFI](https://dexscreener.com/solana/12bNr4f9DyHMC5drzXooJVqkRrskktjn1Bfxw8j1pump) | ja | 0.98 | 22,368 | -96% | 17042.5 | 0% | 934 | 0 |
+| 2026-09-12 | dumpers_24h | 5 | [LAPTOP](https://dexscreener.com/solana/ujV4LLitcy7XeCL6JDKGJV1j5vvawKDa9b1EDT2pump) | nee | 0.11 | 22,275 | -34% | 3401.7 | 0% | 3448 | 1 |
+| 2026-09-12 | trending_24h | 1 | [WOFI](https://dexscreener.com/solana/BygcY6mmCNMJRppvbvG6LPr9U6zY1PKtNixzAR5Vpump) | nee | 0.65 | 15,168 | +6056560% | 60566.6 | 100% | 1555 | 9,353 |
+| 2026-09-12 | trending_24h | 2 | [WOFI](https://dexscreener.com/solana/VEY71Uj9G6oZiVHR3dDjhMVrVAXfaTNatTjt226pump) | ja | 0.55 | 23,716 | +3665321% | 36669.8 | 100% | 1988 | 16,287 |
+| 2026-09-12 | trending_24h | 3 | [WOFI](https://dexscreener.com/solana/baeHvY89kRnrYoHreyeENbtREirurwMzanzih4wpump) | ja | 0.62 | 17,452 | +2185019% | 21851.2 | 100% | 1966 | 12,569 |
+| 2026-09-12 | trending_24h | 4 | [WOFI](https://dexscreener.com/solana/sHYAHJRQj1gCyZDgJf6GdQRyBrcMaMb5W64Rrw2pump) | nee | 0.33 | 19,643 | +1924208% | 19243.1 | 100% | 1995 | 11,806 |
+| 2026-09-12 | trending_24h | 5 | [WOTF](https://dexscreener.com/solana/LVC9prkf2S17isxQSorJSxAN4X89WrmkmKYD8nLpump) | nee | 0.43 | 14,518 | +1052711% | 10528.1 | 100% | 1982 | 8,725 |
+| 2026-09-12 | trending_24h_organic | 1 | [WOFI](https://dexscreener.com/solana/BygcY6mmCNMJRppvbvG6LPr9U6zY1PKtNixzAR5Vpump) | nee | 0.65 | 15,168 | +6056560% | 60566.6 | 100% | 1555 | 9,353 |
+| 2026-09-12 | trending_24h_organic | 2 | [WOFI](https://dexscreener.com/solana/sHYAHJRQj1gCyZDgJf6GdQRyBrcMaMb5W64Rrw2pump) | nee | 0.33 | 19,643 | +1924208% | 19243.1 | 100% | 1995 | 11,806 |
+| 2026-09-12 | trending_24h_organic | 3 | [WOTF](https://dexscreener.com/solana/LVC9prkf2S17isxQSorJSxAN4X89WrmkmKYD8nLpump) | nee | 0.43 | 14,518 | +1052711% | 10528.1 | 100% | 1982 | 8,725 |
+| 2026-09-12 | trending_24h_organic | 4 | [TNT](https://dexscreener.com/solana/QRBEYQ5yXsTqFBzGJ9767zpuHiRxPCiqbMRSryxpump) | nee | 0.39 | 9,860 | +447587% | 4482.3 | 100% | 1981 | 5,684 |
+| 2026-09-12 | trending_24h_organic | 5 | [TWINE](https://dexscreener.com/solana/CNWxmoBSQZo2Sgp5KSAK5m9FwSqDbXQRP4CNMuoe78Gm) | nee | 0.17 | 82,577 | +18149% | 630.3 | 29% | 8381 | 500 |
+| 2026-09-13 | dumpers_24h | 1 | [Mizzy](https://dexscreener.com/solana/2HFakYaUp8au5oZThEvZ8wvSqoTreTQAvqtvoKarpump) | nee | 0.00 | 30,522 | -19% | 375.0 | 0% | 10187 | 5 |
+| 2026-09-13 | dumpers_24h | 2 | [GROK](https://dexscreener.com/solana/rhobiM4oS4piCBNqAMH9BesnvQMKiRJ2xwjaNC5pump) | nee | 0.24 | 25,296 | -95% | 4522.0 | 0% | 3230 | 1 |
+| 2026-09-13 | dumpers_24h | 3 | [WOFI](https://dexscreener.com/solana/VEY71Uj9G6oZiVHR3dDjhMVrVAXfaTNatTjt226pump) | nee | 0.48 | 24,782 | -100% | 1.3 | 0% | 1947 | 5 |
+| 2026-09-13 | dumpers_24h | 4 | [WOFI](https://dexscreener.com/solana/4N7fcsLHFCdUuMHu9LcFfBBvEr5B8hp8dg17Wf26pump) | nee | 0.40 | 24,614 | -96% | 12505.7 | 0% | 792 | 0 |
+| 2026-09-13 | dumpers_24h | 5 | [WOFI](https://dexscreener.com/solana/vbvtJZrWdNDdi9MmGAypVDP76HHxv6FUw6ZphuXpump) | ja | 0.74 | 24,116 | -96% | 15831.2 | 0% | 1963 | 1 |
+| 2026-09-13 | trending_24h | 1 | [WOFI](https://dexscreener.com/solana/F2reRYPQUPkagQy7t5VaZgtiHqXNFQ91ej15GRypump) | ja | 0.54 | 23,205 | +4030184% | 40302.8 | 100% | 2015 | 17,079 |
+| 2026-09-13 | trending_24h | 2 | [WOFI](https://dexscreener.com/solana/CHbodGeNZW5Fh12XLvobHAYzxwQjCWKk55kstzdYpump) | nee | 0.85 | 9,991 | +5304463% | 53051.4 | 100% | 1536 | 8,746 |
+| 2026-09-13 | trending_24h | 3 | [WOFI](https://dexscreener.com/solana/izUd2DKhKefxT44NCCNpVvaRb963MYeWFsubGVSpump) | ja | 0.55 | 19,340 | +2414524% | 24146.2 | 100% | 1976 | 13,216 |
+| 2026-09-13 | trending_24h | 4 | [WOTF](https://dexscreener.com/solana/fKMMqSi9hhBBvGKx2eHtSC9HH7YAektw8GxbxGFpump) | nee | 0.40 | 15,654 | +1157135% | 11572.4 | 100% | 1995 | 9,149 |
+| 2026-09-13 | trending_24h | 5 | [NTDA](https://dexscreener.com/solana/6agyG6m21AwAabMdm8W5Y8htPCf45a8AhTxsKVTpump) | nee | 0.35 | 10,836 | +509941% | 5100.4 | 100% | 2011 | 6,069 |
+| 2026-09-13 | trending_24h_organic | 1 | [WOFI](https://dexscreener.com/solana/CHbodGeNZW5Fh12XLvobHAYzxwQjCWKk55kstzdYpump) | nee | 0.85 | 9,991 | +5304463% | 53051.4 | 100% | 1536 | 8,746 |
+| 2026-09-13 | trending_24h_organic | 2 | [WOTF](https://dexscreener.com/solana/fKMMqSi9hhBBvGKx2eHtSC9HH7YAektw8GxbxGFpump) | nee | 0.40 | 15,654 | +1157135% | 11572.4 | 100% | 1995 | 9,149 |
+| 2026-09-13 | trending_24h_organic | 3 | [NTDA](https://dexscreener.com/solana/6agyG6m21AwAabMdm8W5Y8htPCf45a8AhTxsKVTpump) | nee | 0.35 | 10,836 | +509941% | 5100.4 | 100% | 2011 | 6,069 |
+| 2026-09-13 | trending_24h_organic | 4 | [WOFI](https://dexscreener.com/solana/JA4hkTx9NfjghaeAh4VeEqLcsU3aiKWf7yajimnrpump) | nee | 0.24 | 8,505 | +77693% | 778.1 | 100% | 1272 | 2,365 |
+| 2026-09-13 | trending_24h_organic | 5 | [NINA](https://dexscreener.com/solana/H22aquDouZNFyfykwnXmY5Y9z5sMQtLFy5tUKR99pump) | nee | 0.04 | 55,193 | +9679% | 349.2 | 28% | 14232 | 275 |
+| 2026-09-14 | dumpers_24h | 1 | [BRAIN](https://dexscreener.com/solana/9LuwgFQemAoV9rgVBBtwbRSxBmamcRRbysEK8yL2pump) | nee | 0.04 | 39,210 | +3254% | 396.0 | 8% | 9823 | 131 |
+| 2026-09-14 | dumpers_24h | 2 | [WHEEL TYSON](https://dexscreener.com/solana/6XV1bfWhSZfmeZgfRzJHSZ51df31BNVzNE8Xxr2Kpump) | nee | 0.00 | 34,482 | -14% | 556.8 | 0% | 10947 | 7 |
+| 2026-09-14 | dumpers_24h | 3 | [WOFI](https://dexscreener.com/solana/izUd2DKhKefxT44NCCNpVvaRb963MYeWFsubGVSpump) | nee | 0.50 | 33,714 | -100% | 2.1 | 0% | 1979 | 37 |
+| 2026-09-14 | dumpers_24h | 4 | [MEMEBACK](https://dexscreener.com/solana/GogsSnkXwke5FEUxyV6FmR4eczFK1KJDVsaJNaNspump) | nee | 0.00 | 30,946 | -19% | 449.8 | 0% | 10822 | 6 |
+| 2026-09-14 | dumpers_24h | 5 | [TWINE](https://dexscreener.com/solana/CNWxmoBSQZo2Sgp5KSAK5m9FwSqDbXQRP4CNMuoe78Gm) | nee | 0.08 | 29,367 | -98% | 1.2 | 1% | 5282 | 130 |
+| 2026-09-14 | trending_24h | 1 | [WOFI](https://dexscreener.com/solana/RdSJAdbWBBgKejj8GDzmqcQPdpnhMPYBTNog77Qpump) | nee | 0.37 | 22,232 | +3365798% | 33659.0 | 100% | 1996 | 15,621 |
+| 2026-09-14 | trending_24h | 2 | [WOFI](https://dexscreener.com/solana/CeUfw3D5TUvfGu5ohSryU6JjY3gzkRVE9MbZwGuhpump) | nee | 0.86 | 10,065 | +4986767% | 49868.7 | 100% | 1532 | 8,480 |
+| 2026-09-14 | trending_24h | 3 | [World Wate](https://dexscreener.com/solana/otsy54Ji8vPqkBEQudeEeTApm69juBvgVctNjBXpump) | nee | 0.35 | 10,698 | +542950% | 5430.5 | 100% | 1988 | 6,263 |
+| 2026-09-14 | trending_24h | 4 | [KIBA](https://dexscreener.com/solana/n5NhHM8QBhNBFGL9K751mTa9iCYTZnQjMuYeBxypump) | nee | 0.40 | 9,516 | +432498% | 4326.0 | 100% | 2091 | 5,587 |
+| 2026-09-14 | trending_24h | 5 | [WOFI](https://dexscreener.com/solana/74zzesdirYG2DiA2a914c3xNjYSi5HdJyJwH9YLpump) | ja | 0.76 | 7,093 | +498899% | 4995.7 | 100% | 1972 | 5,995 |
+| 2026-09-14 | trending_24h_organic | 1 | [WOFI](https://dexscreener.com/solana/RdSJAdbWBBgKejj8GDzmqcQPdpnhMPYBTNog77Qpump) | nee | 0.37 | 22,232 | +3365798% | 33659.0 | 100% | 1996 | 15,621 |
+| 2026-09-14 | trending_24h_organic | 2 | [WOFI](https://dexscreener.com/solana/CeUfw3D5TUvfGu5ohSryU6JjY3gzkRVE9MbZwGuhpump) | nee | 0.86 | 10,065 | +4986767% | 49868.7 | 100% | 1532 | 8,480 |
+| 2026-09-14 | trending_24h_organic | 3 | [World Wate](https://dexscreener.com/solana/otsy54Ji8vPqkBEQudeEeTApm69juBvgVctNjBXpump) | nee | 0.35 | 10,698 | +542950% | 5430.5 | 100% | 1988 | 6,263 |
+| 2026-09-14 | trending_24h_organic | 4 | [KIBA](https://dexscreener.com/solana/n5NhHM8QBhNBFGL9K751mTa9iCYTZnQjMuYeBxypump) | nee | 0.40 | 9,516 | +432498% | 4326.0 | 100% | 2091 | 5,587 |
+| 2026-09-14 | trending_24h_organic | 5 | [bikecate](https://dexscreener.com/solana/3nkVw4JwdDLGM23Wzqpy2ptAPV5YgMnokEBgijDBpump) | nee | 0.01 | 57,740 | +14517% | 720.8 | 20% | 14482 | 295 |
+| 2026-09-15 | dumpers_24h | 1 | [DOOM](https://dexscreener.com/solana/GE2j19bLPf4hKHWhFP4VXS5x86aHt5pnkdWmudrvdoom) | nee | 0.04 | 38,794 | +836% | 243.8 | 4% | 8476 | 77 |
+| 2026-09-15 | dumpers_24h | 2 | [CAT](https://dexscreener.com/solana/AdgZULsSbgvopxu9Avv53F8dtrZasPpEdXXZUAdWTdyT) | nee | 0.03 | 36,778 | +1938% | 287.6 | 7% | 10584 | 111 |
+| 2026-09-15 | dumpers_24h | 3 | [bruh](https://dexscreener.com/solana/6tRotGypA5QJKwmfgGFe4yp36eNQ4Vz7m8MNNpBnpYmq) | nee | 0.05 | 35,644 | +879% | 358.2 | 3% | 8195 | 62 |
+| 2026-09-15 | dumpers_24h | 4 | [WOFI](https://dexscreener.com/solana/nnadFcf81yR2P3MAAXD9dPySRTVnBCHja3vPbJNpump) | ja | 0.52 | 34,900 | -95% | 27631.5 | 0% | 1991 | 2 |
+| 2026-09-15 | dumpers_24h | 5 | [WOHUHCAT](https://dexscreener.com/solana/AQdPS6ByMt7aZhB49VT44C6vAqDFFQvvgqm5A2NKpump) | nee | 0.02 | 31,444 | +2% | 114.4 | 1% | 1947 | 10 |
+| 2026-09-15 | trending_24h | 1 | [PAID](https://dexscreener.com/solana/98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump) | nee | 0.05 | 232,933 | +213436% | 4100.3 | 52% | 23944 | 1,375 |
+| 2026-09-15 | trending_24h | 2 | [WOTF](https://dexscreener.com/solana/Zd8xgiFB1AGYTmZ78MS5APSXmDTNTLUJKuSGUD7pump) | ja | 0.76 | 15,542 | +2414936% | 24150.4 | 100% | 1852 | 13,210 |
+| 2026-09-15 | trending_24h | 3 | [WOFI](https://dexscreener.com/solana/Z7zAsKeEahmBMd4VDQRQLZD77E3FVkrRpmQMB9upump) | nee | 0.34 | 20,167 | +1712318% | 17134.8 | 100% | 1990 | 11,138 |
+| 2026-09-15 | trending_24h | 4 | [KIBA](https://dexscreener.com/solana/zp9PDZfkMidthG6gjeZ1NjtSALpd5wpQB6x5mRopump) | nee | 0.33 | 19,273 | +1570920% | 15710.2 | 100% | 2129 | 10,667 |
+| 2026-09-15 | trending_24h | 5 | [ECTF](https://dexscreener.com/solana/Va1Jg8sD31wks9zXeESnnSxBAz2p2h6Rs5mSwNQpump) | nee | 0.40 | 15,389 | +1263592% | 12645.8 | 100% | 2002 | 9,561 |
+| 2026-09-15 | trending_24h_organic | 1 | [PAID](https://dexscreener.com/solana/98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump) | nee | 0.05 | 232,933 | +213436% | 4100.3 | 52% | 23944 | 1,375 |
+| 2026-09-15 | trending_24h_organic | 2 | [WOFI](https://dexscreener.com/solana/Z7zAsKeEahmBMd4VDQRQLZD77E3FVkrRpmQMB9upump) | nee | 0.34 | 20,167 | +1712318% | 17134.8 | 100% | 1990 | 11,138 |
+| 2026-09-15 | trending_24h_organic | 3 | [KIBA](https://dexscreener.com/solana/zp9PDZfkMidthG6gjeZ1NjtSALpd5wpQB6x5mRopump) | nee | 0.33 | 19,273 | +1570920% | 15710.2 | 100% | 2129 | 10,667 |
+| 2026-09-15 | trending_24h_organic | 4 | [ECTF](https://dexscreener.com/solana/Va1Jg8sD31wks9zXeESnnSxBAz2p2h6Rs5mSwNQpump) | nee | 0.40 | 15,389 | +1263592% | 12645.8 | 100% | 2002 | 9,561 |
+| 2026-09-15 | trending_24h_organic | 5 | [WOTF](https://dexscreener.com/solana/8MUcwPafbMA432mTgRFM4vjD7kbKcmEiwjdpzmN8pump) | nee | 0.27 | 35,764 | +251324% | 15113.1 | 17% | 2289 | 4,267 |
+| 2026-09-16 | dumpers_24h | 1 | [HYPED](https://dexscreener.com/solana/G2KDX81e31T6pZbkrJLPKAXqKcd8VoE3UEp83rRtpump) | nee | 0.04 | 71,518 | +452% | 637.7 | 1% | 12771 | 49 |
+| 2026-09-16 | dumpers_24h | 2 | [TRUMP](https://dexscreener.com/solana/AL44bCBjmdXQzdzSacvsaMRNM8kkdA9hmymjb7eGSCeW) | nee | 0.09 | 41,299 | +1569% | 236.6 | 7% | 10933 | 123 |
+| 2026-09-16 | dumpers_24h | 3 | [BOAR](https://dexscreener.com/solana/Hk8Uiq8CeNdmZzu1aPaT7MhvujtJifFS9kKhfpXmpaid) | nee | 0.04 | 36,316 | +193% | 34.1 | 9% | 5229 | 164 |
+| 2026-09-16 | dumpers_24h | 4 | [WIFELON](https://dexscreener.com/solana/ChuxPtvuk8BGAtyBm6vd3ZNQaqWuTJXiNRguXvXqpump) | nee | 0.02 | 27,274 | +0% | 90.1 | 1% | 3487 | 9 |
+| 2026-09-16 | dumpers_24h | 5 | [WOTF](https://dexscreener.com/solana/NnLz6wXfB3c41KwPWPvk9Rz75zR5enTGtYmsELrpump) | nee | 0.50 | 25,949 | -100% | 3.6 | 0% | 1964 | 1 |
+| 2026-09-16 | trending_24h | 1 | [ELON](https://dexscreener.com/solana/eqUvaqyXr3a2Rcmh2pxp2tJt3cpKrEhft1w7gJSpump) | nee | 0.33 | 19,242 | +1544113% | 15442.1 | 100% | 1999 | 10,576 |
+| 2026-09-16 | trending_24h | 2 | [WOFI](https://dexscreener.com/solana/YuEFCTBvg8WgiZrgTS59fZMSKmXtSeVGS2qV6m4pump) | ja | 0.83 | 13,697 | +1939762% | 19408.9 | 100% | 1970 | 11,836 |
+| 2026-09-16 | trending_24h | 3 | [ECTF](https://dexscreener.com/solana/JGLw4v2fNcXF4ybtsvx5WWNce4qaryR36sQoZJLpump) | nee | 0.36 | 17,259 | +1467856% | 14689.2 | 100% | 1995 | 10,308 |
+| 2026-09-16 | trending_24h | 4 | [WOTF](https://dexscreener.com/solana/CjeHX5YjMAzYTvdk544UpaM4gSo1ZrqGcHudZdXmpump) | nee | 0.67 | 6,023 | +2450757% | 24508.6 | 100% | 1564 | 5,940 |
+| 2026-09-16 | trending_24h | 5 | [WOFI](https://dexscreener.com/solana/g48ZQAQAy4wKEKyiDZn9y6qbgQXHTDfwPpkMmRBpump) | nee | 0.49 | 11,773 | +1026501% | 10266.0 | 100% | 1999 | 8,612 |
+| 2026-09-16 | trending_24h_organic | 1 | [ELON](https://dexscreener.com/solana/eqUvaqyXr3a2Rcmh2pxp2tJt3cpKrEhft1w7gJSpump) | nee | 0.33 | 19,242 | +1544113% | 15442.1 | 100% | 1999 | 10,576 |
+| 2026-09-16 | trending_24h_organic | 2 | [ECTF](https://dexscreener.com/solana/JGLw4v2fNcXF4ybtsvx5WWNce4qaryR36sQoZJLpump) | nee | 0.36 | 17,259 | +1467856% | 14689.2 | 100% | 1995 | 10,308 |
+| 2026-09-16 | trending_24h_organic | 3 | [WOTF](https://dexscreener.com/solana/CjeHX5YjMAzYTvdk544UpaM4gSo1ZrqGcHudZdXmpump) | nee | 0.67 | 6,023 | +2450757% | 24508.6 | 100% | 1564 | 5,940 |
+| 2026-09-16 | trending_24h_organic | 4 | [WOFI](https://dexscreener.com/solana/g48ZQAQAy4wKEKyiDZn9y6qbgQXHTDfwPpkMmRBpump) | nee | 0.49 | 11,773 | +1026501% | 10266.0 | 100% | 1999 | 8,612 |
+| 2026-09-16 | trending_24h_organic | 5 | [WOFI](https://dexscreener.com/solana/9HXERDkXzAN8PiipookZAr7Wt99ENP1Z8tHT7Fvrpump) | nee | 0.38 | 21,096 | +310015% | 19306.9 | 16% | 1298 | 4,733 |
+| 2026-09-17 | dumpers_24h | 1 | [KEVIN](https://dexscreener.com/solana/GZik7vJSnDAao9tbbcLrMGKfxLu7VCjoAtkDhsv8A3iE) | nee | 0.05 | 72,483 | +3760% | 411.8 | 9% | 13827 | 181 |
+| 2026-09-17 | dumpers_24h | 2 | [SUUB](https://dexscreener.com/solana/CrrcQsPD5zNW2hEKhBy5ARP1haGBKAmoqsgD8dqPpump) | nee | 0.04 | 49,189 | +2571% | 327.3 | 8% | 12017 | 123 |
+| 2026-09-17 | dumpers_24h | 3 | [SEND](https://dexscreener.com/solana/2XuQnYQ1q3oTjPL9j4PfhV1AEqcZ6Hq2PzPzuxaASEND) | nee | 0.06 | 35,751 | +2119% | 384.2 | 6% | 10985 | 102 |
+| 2026-09-17 | dumpers_24h | 4 | [WANG](https://dexscreener.com/solana/JoBxYVvPhPSkiZNiUjZdty1uR6TaNneuQvE3zZ2pump) | nee | 0.07 | 35,671 | +2398% | 287.7 | 9% | 10244 | 110 |
+| 2026-09-17 | dumpers_24h | 5 | [ECTF](https://dexscreener.com/solana/fudW5f1NCktzbjASfP2q12YQ39p5Hy1RVyTgjLWpump) | nee | 0.34 | 33,504 | -95% | 21279.2 | 0% | 2019 | 1 |
+| 2026-09-17 | trending_24h | 1 | [WOTF](https://dexscreener.com/solana/DRWUnUkFbvA5T6DchUmdtZTLxpj6sdFFUHJxHucxpump) | nee | 0.51 | 7,932 | +4280623% | 42807.2 | 100% | 1556 | 7,859 |
+| 2026-09-17 | trending_24h | 2 | [WOTF](https://dexscreener.com/solana/Yrp7FkbrXijJX1NC7ZpEAGvcpEUi46YH1XSzgprpump) | nee | 0.40 | 15,803 | +1183762% | 11838.6 | 100% | 1996 | 9,254 |
+| 2026-09-17 | trending_24h | 3 | [ECTF](https://dexscreener.com/solana/AV9ZWwVsBRuyQXrd7n6k764rQck3K85PeEPLGh1pump) | ja | 0.56 | 10,535 | +711804% | 7125.8 | 100% | 1729 | 7,168 |
+| 2026-09-17 | trending_24h | 4 | [WOFI](https://dexscreener.com/solana/be56wxStyKGxEtRoveKAd4FPcAQG6NG1Z4apfygpump) | ja | 0.60 | 9,729 | +654197% | 6543.0 | 100% | 1675 | 6,870 |
+| 2026-09-17 | trending_24h | 5 | [NTDA](https://dexscreener.com/solana/99UZLCcstv32wmWr1D4BHbYxvTc1LYcFYmGF9UR9pump) | ja | 0.71 | 7,643 | +572301% | 5724.0 | 100% | 2711 | 6,423 |
+| 2026-09-17 | trending_24h_organic | 1 | [WOTF](https://dexscreener.com/solana/DRWUnUkFbvA5T6DchUmdtZTLxpj6sdFFUHJxHucxpump) | nee | 0.51 | 7,932 | +4280623% | 42807.2 | 100% | 1556 | 7,859 |
+| 2026-09-17 | trending_24h_organic | 2 | [WOTF](https://dexscreener.com/solana/Yrp7FkbrXijJX1NC7ZpEAGvcpEUi46YH1XSzgprpump) | nee | 0.40 | 15,803 | +1183762% | 11838.6 | 100% | 1996 | 9,254 |
+| 2026-09-17 | trending_24h_organic | 3 | [Tilcayo](https://dexscreener.com/solana/AyYNfPtftg2zDP4ZbgcoQMggQtwLh4zpfVVmUJs2thto) | nee | 0.04 | 66,101 | +54498% | 674.2 | 81% | 11695 | 708 |
+| 2026-09-17 | trending_24h_organic | 4 | [USDF](https://dexscreener.com/solana/is9nT9KhEdqAZdfT499i3uzjBJk37q9siMaNXTfpump) | nee | 0.47 | 7,802 | +327227% | 3273.3 | 100% | 1670 | 4,856 |
+| 2026-09-17 | trending_24h_organic | 5 | [PERK](https://dexscreener.com/solana/7qVyANei9jYf173z4FBKcmKp3nXDDBKiXAWh7aT2perk) | nee | 0.03 | 45,729 | +48199% | 695.8 | 69% | 4644 | 550 |
+| 2026-09-18 | dumpers_24h | 1 | [POT](https://dexscreener.com/solana/4R2vepDVY7Gdcm2VKuAy6EbBfWsYSEsDJou1QGKuMfnf) | nee | 0.07 | 45,750 | +62% | 34.0 | 5% | 6402 | 221 |
+| 2026-09-18 | dumpers_24h | 2 | [PERK](https://dexscreener.com/solana/7qVyANei9jYf173z4FBKcmKp3nXDDBKiXAWh7aT2perk) | nee | 0.11 | 29,143 | -97% | 1.5 | 2% | 6408 | 81 |
+| 2026-09-18 | dumpers_24h | 3 | [ECTF](https://dexscreener.com/solana/pRq66LWX2A7saEhFpHn65TAMC89rXcHE1EzXRwwpump) | nee | 0.36 | 27,212 | -90% | 13297.4 | 0% | 2006 | 9 |
+| 2026-09-18 | dumpers_24h | 4 | [Norman](https://dexscreener.com/solana/4PYVWqC358kpvKYDrwbniVAeUXUq6dULa27Z2TCVpump) | nee | 0.01 | 25,650 | -22% | 421.1 | 0% | 9629 | 5 |
+| 2026-09-18 | dumpers_24h | 5 | [WOTF](https://dexscreener.com/solana/VT7qCKfuAwxKWBibCxRWwaawEL4cQ3tevv276Wbpump) | nee | 0.40 | 24,139 | -92% | 11063.5 | 0% | 2017 | 7 |
+| 2026-09-18 | trending_24h | 1 | [USDF](https://dexscreener.com/solana/stncqgk9GpXpcRUfaAYu3LPJMMAfsiZ5PrEYh8Xpump) | nee | 0.36 | 17,660 | +1375161% | 13752.6 | 100% | 2014 | 9,978 |
+| 2026-09-18 | trending_24h | 2 | [TDOF](https://dexscreener.com/solana/7U5NzDtMd6BYEtXZi1y4LR625zkpgHtpXK37s3mpump) | nee | 0.36 | 17,497 | +1361586% | 13625.4 | 100% | 2012 | 9,928 |
+| 2026-09-18 | trending_24h | 3 | [TIGRINO](https://dexscreener.com/solana/91ryaCo5yGpYZM3bs6GUPs97VWJQj7RozBmqPULgpump) | nee | 0.06 | 114,199 | +109550% | 1514.2 | 72% | 15964 | 884 |
+| 2026-09-18 | trending_24h | 4 | [WOFI](https://dexscreener.com/solana/V8A3PSmDPE2n1F2vdfmqboGr5zfn8rw27an6dWnpump) | nee | 0.35 | 13,352 | +698270% | 6983.7 | 100% | 2010 | 7,108 |
+| 2026-09-18 | trending_24h | 5 | [NTDA](https://dexscreener.com/solana/xohnfeLoVuDkd1Qr2oA1UPNrLgyJcvGokJDps9kpump) | ja | 0.53 | 11,391 | +777518% | 7780.2 | 100% | 2033 | 7,493 |
+| 2026-09-18 | trending_24h_organic | 1 | [USDF](https://dexscreener.com/solana/stncqgk9GpXpcRUfaAYu3LPJMMAfsiZ5PrEYh8Xpump) | nee | 0.36 | 17,660 | +1375161% | 13752.6 | 100% | 2014 | 9,978 |
+| 2026-09-18 | trending_24h_organic | 2 | [TDOF](https://dexscreener.com/solana/7U5NzDtMd6BYEtXZi1y4LR625zkpgHtpXK37s3mpump) | nee | 0.36 | 17,497 | +1361586% | 13625.4 | 100% | 2012 | 9,928 |
+| 2026-09-18 | trending_24h_organic | 3 | [TIGRINO](https://dexscreener.com/solana/91ryaCo5yGpYZM3bs6GUPs97VWJQj7RozBmqPULgpump) | nee | 0.06 | 114,199 | +109550% | 1514.2 | 72% | 15964 | 884 |
+| 2026-09-18 | trending_24h_organic | 4 | [WOFI](https://dexscreener.com/solana/V8A3PSmDPE2n1F2vdfmqboGr5zfn8rw27an6dWnpump) | nee | 0.35 | 13,352 | +698270% | 6983.7 | 100% | 2010 | 7,108 |
+| 2026-09-18 | trending_24h_organic | 5 | [WOTF](https://dexscreener.com/solana/25vDtFACaScGXszJ4AnqJq7LogwtrjHPRo75WmyEpump) | nee | 0.97 | 4,107 | +1149388% | 11494.9 | 100% | 831 | 4,061 |
+| 2026-09-19 | dumpers_24h | 1 | [BIDDY](https://dexscreener.com/solana/biddm3N7RjyjfcnzmjgrQJ24QKooBGUy1RYP1aEgtzW) | nee | 0.07 | 44,275 | +477% | 101.9 | 6% | 10728 | 115 |
+| 2026-09-19 | dumpers_24h | 2 | [NIUMAJAK](https://dexscreener.com/solana/GmLqBMbe4ffg7BZjdqRh1zE5d8EzZjS7p72QjmXKpump) | nee | 0.01 | 35,012 | +18% | 108.7 | 1% | 2666 | 12 |
+| 2026-09-19 | dumpers_24h | 3 | [Pigeon](https://dexscreener.com/solana/53rZTtfGghxqdd6qTeDdfS8MBqg2CTyQeLW1LHCRpump) | nee | 0.08 | 34,101 | +1167% | 187.9 | 7% | 9359 | 92 |
+| 2026-09-19 | dumpers_24h | 4 | [NTDA](https://dexscreener.com/solana/9pKW3aw8MpekCbUb2txMsB6xDVdAkmHb7aq3rJyJpump) | ja | 0.74 | 26,840 | -96% | 24487.6 | 0% | 1183 | 0 |
+| 2026-09-19 | dumpers_24h | 5 | [WORMSOL](https://dexscreener.com/solana/3mCs98j1Hjr6KoNMQTmBf6RoQcUVBCnARvHyrk2Lpump) | nee | 0.02 | 20,988 | +12% | 76.5 | 1% | 1867 | 10 |
+| 2026-09-19 | trending_24h | 1 | [NTDA](https://dexscreener.com/solana/FfK9fj41K98EuNZK2oQDRWuoyT9vb4d4jR412HcMpump) | ja | 0.75 | 20,031 | +3395836% | 33959.4 | 100% | 2761 | 15,669 |
+| 2026-09-19 | trending_24h | 2 | [TDOF](https://dexscreener.com/solana/14GhrktpeZFPyNUEqyas68MKo9kTXEikeorpszv2pump) | nee | 0.37 | 17,231 | +1323498% | 13236.0 | 100% | 2014 | 9,788 |
+| 2026-09-19 | trending_24h | 3 | [WOTF](https://dexscreener.com/solana/13JxdD21ufLZEuamFDRppFG1nr1irYGRugg4jBKApump) | nee | 0.38 | 16,375 | +1330949% | 13310.5 | 100% | 2013 | 9,814 |
+| 2026-09-19 | trending_24h | 4 | [USDF](https://dexscreener.com/solana/bAxbrMB1UqRNneWQ5yUbBVuJLoMcYRf1GbaCWyupump) | nee | 0.41 | 15,404 | +1174068% | 11741.7 | 100% | 2161 | 9,216 |
+| 2026-09-19 | trending_24h | 5 | [NTDA](https://dexscreener.com/solana/13MxrpxYECHvsxUXw3c5v5VDk7L4ctdaXEMB9mpbpump) | ja | 0.52 | 11,520 | +784923% | 7850.2 | 100% | 2056 | 7,529 |
+| 2026-09-19 | trending_24h_organic | 1 | [TDOF](https://dexscreener.com/solana/14GhrktpeZFPyNUEqyas68MKo9kTXEikeorpszv2pump) | nee | 0.37 | 17,231 | +1323498% | 13236.0 | 100% | 2014 | 9,788 |
+| 2026-09-19 | trending_24h_organic | 2 | [WOTF](https://dexscreener.com/solana/13JxdD21ufLZEuamFDRppFG1nr1irYGRugg4jBKApump) | nee | 0.38 | 16,375 | +1330949% | 13310.5 | 100% | 2013 | 9,814 |
+| 2026-09-19 | trending_24h_organic | 3 | [USDF](https://dexscreener.com/solana/bAxbrMB1UqRNneWQ5yUbBVuJLoMcYRf1GbaCWyupump) | nee | 0.41 | 15,404 | +1174068% | 11741.7 | 100% | 2161 | 9,216 |
+| 2026-09-19 | trending_24h_organic | 4 | [JEANPHIL](https://dexscreener.com/solana/GTBxUiw6wJdmmkCGZgRHLyYxqu1vG4KtRpeox6yDpump) | nee | 0.08 | 76,190 | +105842% | 1678.3 | 63% | 12149 | 819 |
+| 2026-09-19 | trending_24h_organic | 5 | [FLEX](https://dexscreener.com/solana/fvHLJUwsynVHJrssbZ8MLNyku9jt2izUspbBD4Spump) | nee | 0.08 | 77,253 | +64569% | 2123.8 | 30% | 8495 | 633 |
+| 2026-09-20 | dumpers_24h | 1 | [DUMBCOIN](https://dexscreener.com/solana/GgT4FpomaanrjKCvSeQzix8TiPXNQKWwfAANFm8282Vf) | nee | 0.04 | 32,766 | +1062% | 603.3 | 2% | 5386 | 70 |
+| 2026-09-20 | dumpers_24h | 2 | [TYLER](https://dexscreener.com/solana/95pCcNPexz8rg1Sazi2GscfAGSFy3NXSPDL9TdEMZE2V) | nee | 0.09 | 31,189 | +2509% | 319.8 | 8% | 9881 | 122 |
+| 2026-09-20 | dumpers_24h | 3 | [INU](https://dexscreener.com/solana/EfzQM5Lmh67umxFJqS67VQWybVhajo8m259NqNqppump) | nee | 0.02 | 23,210 | -57% | 37.9 | 1% | 2464 | 11 |
+| 2026-09-20 | dumpers_24h | 4 | [Stryker](https://dexscreener.com/solana/G9QZfEPHtZrUF1arcUFvZgYn6zSQLZdvcjCuyhKrpump) | nee | 0.01 | 22,882 | -99% | 2.9 | 0% | 10129 | 18 |
+| 2026-09-20 | dumpers_24h | 5 | [FOMONKEY](https://dexscreener.com/solana/5cfpcH6HQyHwqwB1oax4aQg17y3wKZyCuQ4UBsuJpump) | nee | 0.02 | 21,841 | -54% | 43.7 | 1% | 3080 | 12 |
+| 2026-09-20 | trending_24h | 1 | [USDF](https://dexscreener.com/solana/T8sjUditwkQD2BtmkcRN3MdxegHh494LcJaV7v2pump) | nee | 0.34 | 18,214 | +1641610% | 16428.1 | 100% | 2068 | 10,902 |
+| 2026-09-20 | trending_24h | 2 | [ECTF](https://dexscreener.com/solana/kPbqndJpHgEMjrrmp3aXuVxTqqqE2G145G7TrMopump) | nee | 0.35 | 18,106 | +1404229% | 14043.3 | 100% | 2033 | 10,083 |
+| 2026-09-20 | trending_24h | 3 | [WOTF](https://dexscreener.com/solana/2EmpacsA5czi6MKS9QKkbkoAAZdbyN5KQktcqzpEpump) | nee | 0.59 | 6,768 | +3129411% | 31295.1 | 100% | 1557 | 6,716 |
+| 2026-09-20 | trending_24h | 4 | [USDF](https://dexscreener.com/solana/CzkoFiK1LW2jFEaZNK7x8i9asSebHT9CWyPj7jKapump) | nee | 0.44 | 12,588 | +1340309% | 13404.1 | 100% | 2782 | 9,843 |
+| 2026-09-20 | trending_24h | 5 | [TDOF](https://dexscreener.com/solana/usS7cmTLPgmfvH9E11y2RNzAspaARXENYjPVRMbpump) | ja | 0.51 | 11,794 | +812282% | 8123.8 | 100% | 2023 | 7,659 |
+| 2026-09-20 | trending_24h_organic | 1 | [USDF](https://dexscreener.com/solana/T8sjUditwkQD2BtmkcRN3MdxegHh494LcJaV7v2pump) | nee | 0.34 | 18,214 | +1641610% | 16428.1 | 100% | 2068 | 10,902 |
+| 2026-09-20 | trending_24h_organic | 2 | [ECTF](https://dexscreener.com/solana/kPbqndJpHgEMjrrmp3aXuVxTqqqE2G145G7TrMopump) | nee | 0.35 | 18,106 | +1404229% | 14043.3 | 100% | 2033 | 10,083 |
+| 2026-09-20 | trending_24h_organic | 3 | [WOTF](https://dexscreener.com/solana/2EmpacsA5czi6MKS9QKkbkoAAZdbyN5KQktcqzpEpump) | nee | 0.59 | 6,768 | +3129411% | 31295.1 | 100% | 1557 | 6,716 |
+| 2026-09-20 | trending_24h_organic | 4 | [USDF](https://dexscreener.com/solana/CzkoFiK1LW2jFEaZNK7x8i9asSebHT9CWyPj7jKapump) | nee | 0.44 | 12,588 | +1340309% | 13404.1 | 100% | 2782 | 9,843 |
+| 2026-09-20 | trending_24h_organic | 5 | [USDF](https://dexscreener.com/solana/21La252xiAfugNfaa7B7MTRaR2AQ97wvzmvixznMpump) | nee | 0.30 | 12,594 | +721319% | 7214.2 | 100% | 1944 | 7,222 |
+| 2026-09-21 | dumpers_24h | 1 | [FAMILY](https://dexscreener.com/solana/FvMLDEUDKUr9C34e8Nynz5Aqfdk34a2RBKQxygLpfomo) | nee | 0.07 | 64,314 | +6232% | 1096.3 | 6% | 13769 | 195 |
+| 2026-09-21 | dumpers_24h | 2 | [MCAT](https://dexscreener.com/solana/4FtEnXqwFUc3negW4HhjLVN92p6W1ejE97jNNiNQpump) | nee | 0.02 | 29,855 | +78% | 249.2 | 1% | 6565 | 19 |
+| 2026-09-21 | dumpers_24h | 3 | [ZEBRA](https://dexscreener.com/solana/EqFG72Z35r8cAV8mKu3UK2L8NUTR1ZNyMr88E4BnwN8Q) | nee | 0.10 | 27,021 | -96% | 1.2 | 3% | 7177 | 101 |
+| 2026-09-21 | dumpers_24h | 4 | [INU](https://dexscreener.com/solana/Wb33GwzjQLvvVhV2XB3YonQZQFM9zhXiU7AZB931Uts) | nee | 0.10 | 24,943 | -99% | 1.1 | 1% | 6092 | 40 |
+| 2026-09-21 | dumpers_24h | 5 | [AWARDED](https://dexscreener.com/solana/5wZDE8f5uKHbVaHAyz84Lgz7xefAkCpvcwoWYaRCrfn) | nee | 0.08 | 24,378 | -37% | 70.9 | 1% | 7612 | 18 |
+| 2026-09-21 | trending_24h | 1 | [WSOS](https://dexscreener.com/solana/6ZW53aH72GH6m26YJSmSbz49yrvsGzYonB6DBvc8pump) | nee | 0.03 | 5,827 | +400674% | 4008.2 | 100% | 3513 | 5,386 |
+| 2026-09-21 | trending_24h | 2 | [CLIP](https://dexscreener.com/solana/9DdHxVe1BSPaTy3iGEwvWsooRchNLK61XFAvzot59FwD) | nee | 0.07 | 69,909 | +20212% | 469.0 | 43% | 15282 | 392 |
+| 2026-09-21 | trending_24h | 3 | [WOTF](https://dexscreener.com/solana/CsB8XjUPBfPX7h5qLDne7agm2gAE8ss81eC8XKAzpump) | ja | 0.62 | 5,230 | +266967% | 2670.7 | 100% | 2674 | 4,386 |
+| 2026-09-21 | trending_24h | 4 | [LOOONGCAT](https://dexscreener.com/solana/5tYcEEKvN63RrzpomgF2jWMxJMHmr4Zo19RX1mXipump) | nee | 0.01 | 17,302 | +27373% | 321.1 | 86% | 10254 | 400 |
+| 2026-09-21 | trending_24h | 5 | [FAMILY](https://dexscreener.com/solana/FvMLDEUDKUr9C34e8Nynz5Aqfdk34a2RBKQxygLpfomo) | nee | 0.07 | 64,314 | +6232% | 1096.3 | 6% | 13769 | 195 |
+| 2026-09-21 | trending_24h_organic | 1 | [WSOS](https://dexscreener.com/solana/6ZW53aH72GH6m26YJSmSbz49yrvsGzYonB6DBvc8pump) | nee | 0.03 | 5,827 | +400674% | 4008.2 | 100% | 3513 | 5,386 |
+| 2026-09-21 | trending_24h_organic | 2 | [CLIP](https://dexscreener.com/solana/9DdHxVe1BSPaTy3iGEwvWsooRchNLK61XFAvzot59FwD) | nee | 0.07 | 69,909 | +20212% | 469.0 | 43% | 15282 | 392 |
+| 2026-09-21 | trending_24h_organic | 3 | [LOOONGCAT](https://dexscreener.com/solana/5tYcEEKvN63RrzpomgF2jWMxJMHmr4Zo19RX1mXipump) | nee | 0.01 | 17,302 | +27373% | 321.1 | 86% | 10254 | 400 |
+| 2026-09-21 | trending_24h_organic | 4 | [FAMILY](https://dexscreener.com/solana/FvMLDEUDKUr9C34e8Nynz5Aqfdk34a2RBKQxygLpfomo) | nee | 0.07 | 64,314 | +6232% | 1096.3 | 6% | 13769 | 195 |
+| 2026-09-21 | trending_24h_organic | 5 | [TDOF](https://dexscreener.com/solana/Yyfz255TFjwMbfgCqyQYUFTMShVSbTuwjbNgvXKpump) | nee | 0.47 | 3,895 | +74034% | 741.4 | 100% | 1440 | 2,302 |
+| 2026-09-22 | dumpers_24h | 1 | [CATEWALK](https://dexscreener.com/solana/BLSuVTxKYDL4vm4XmG3oEJfsSGfJZF3cgy98ri68pump) | nee | 0.00 | 42,775 | +3750% | 456.3 | 8% | 20321 | 140 |
+| 2026-09-22 | dumpers_24h | 2 | [LOOONGCAT](https://dexscreener.com/solana/5tYcEEKvN63RrzpomgF2jWMxJMHmr4Zo19RX1mXipump) | nee | 0.00 | 34,502 | -100% | 1.4 | 0% | 16510 | 10 |
+| 2026-09-22 | dumpers_24h | 3 | [AROS](https://dexscreener.com/solana/AyijV7rdzfHi3PkzX2V1NjnuqaU3PqQT3Bc63tMpump) | nee | 0.40 | 28,692 | -92% | 22501.3 | 0% | 2012 | 6 |
+| 2026-09-22 | dumpers_24h | 4 | [twh](https://dexscreener.com/solana/jbS3hKYmEn4Rh2Zrvyv9xExC6UvdcUKYxRZrQ8Ypump) | nee | 0.01 | 27,989 | -10% | 271.8 | 0% | 2794 | 6 |
+| 2026-09-22 | dumpers_24h | 5 | [JEANBEAN](https://dexscreener.com/solana/EV9qfjb2bGMXByQiS6vZ4n53HHCAcWdGzrbGXE8Wpump) | nee | 0.02 | 25,963 | -13% | 249.8 | 0% | 2829 | 5 |
+| 2026-09-22 | trending_24h | 1 | [AROS](https://dexscreener.com/solana/uNXUUn5u2WbbR2ZnJyXdkRCpa2dMyWgHWx9P2Uqpump) | ja | 0.62 | 16,549 | +3363973% | 33647.0 | 100% | 1949 | 15,596 |
+| 2026-09-22 | trending_24h | 2 | [AROS](https://dexscreener.com/solana/33wRsdRCcJkYBdXvGisAdgD7ef8koLP5sTqykzejpump) | nee | 0.44 | 15,760 | +3188128% | 31883.7 | 100% | 2039 | 15,196 |
+| 2026-09-22 | trending_24h | 3 | [WSOS](https://dexscreener.com/solana/2Xy8hfogaKmCJdyuciMS9kjPwkDkigWCd5J1ZKuypump) | nee | 0.64 | 6,245 | +2665633% | 26657.3 | 100% | 1556 | 6,196 |
+| 2026-09-22 | trending_24h | 4 | [AROS](https://dexscreener.com/solana/4M3gYZ2dQ39KuBuJYVmQi5qrtFfMpMWHpJhhx7Wapump) | nee | 0.28 | 12,874 | +753764% | 7538.6 | 100% | 113 | 7,383 |
+| 2026-09-22 | trending_24h | 5 | [VSOF](https://dexscreener.com/solana/HwVyzxBVE68x7aZub6UG78i6RQLTEoy9cQuxMq4ppump) | nee | 0.36 | 9,162 | +771949% | 7720.9 | 100% | 2778 | 7,467 |
+| 2026-09-22 | trending_24h_organic | 1 | [AROS](https://dexscreener.com/solana/33wRsdRCcJkYBdXvGisAdgD7ef8koLP5sTqykzejpump) | nee | 0.44 | 15,760 | +3188128% | 31883.7 | 100% | 2039 | 15,196 |
+| 2026-09-22 | trending_24h_organic | 2 | [WSOS](https://dexscreener.com/solana/2Xy8hfogaKmCJdyuciMS9kjPwkDkigWCd5J1ZKuypump) | nee | 0.64 | 6,245 | +2665633% | 26657.3 | 100% | 1556 | 6,196 |
+| 2026-09-22 | trending_24h_organic | 3 | [AROS](https://dexscreener.com/solana/4M3gYZ2dQ39KuBuJYVmQi5qrtFfMpMWHpJhhx7Wapump) | nee | 0.28 | 12,874 | +753764% | 7538.6 | 100% | 113 | 7,383 |
+| 2026-09-22 | trending_24h_organic | 4 | [VSOF](https://dexscreener.com/solana/HwVyzxBVE68x7aZub6UG78i6RQLTEoy9cQuxMq4ppump) | nee | 0.36 | 9,162 | +771949% | 7720.9 | 100% | 2778 | 7,467 |
+| 2026-09-22 | trending_24h_organic | 5 | [TDOF](https://dexscreener.com/solana/tZQ8QSnPVg864CZLLKQNtVuqinyzsUnWMys93Hrpump) | nee | 0.33 | 9,900 | +712365% | 7124.6 | 100% | 1975 | 7,174 |
+| 2026-09-23 | dumpers_24h | 1 | [EPEP](https://dexscreener.com/solana/2ekqDh2VNP5mfMUh7fngof1APUBmkAsJJATmDZBapump) | nee | 0.01 | 40,823 | +11% | 276.9 | 0% | 2692 | 10 |
+| 2026-09-23 | dumpers_24h | 2 | [based](https://dexscreener.com/solana/4wYd4vPhzaUQs5vqUrEJ7CPtKg1qzXHhauERuh4MiNMB) | nee | 0.08 | 34,219 | +1129% | 208.8 | 6% | 11069 | 84 |
+| 2026-09-23 | dumpers_24h | 3 | [MADVULT](https://dexscreener.com/solana/MadVLQYW7VUzfMdMDHuS3UVgJSNUQGwvobYgYZxpqp6) | nee | 0.06 | 32,060 | -4% | 221.7 | 0% | 3331 | 7 |
+| 2026-09-23 | dumpers_24h | 4 | [APEZCAT](https://dexscreener.com/solana/D5Sd6RGFcsyCg4UgKMTax22ZYjBrivQXAAGAVAaQpump) | nee | 0.02 | 30,643 | +1% | 64.9 | 2% | 1613 | 11 |
+| 2026-09-23 | dumpers_24h | 5 | [MOUSE](https://dexscreener.com/solana/8MPLzMvudX7ehD8VjKSDDWCS9bAu1N6KK3Ubg5xypump) | nee | 0.03 | 29,108 | +33% | 181.0 | 1% | 3226 | 12 |
+| 2026-09-23 | trending_24h | 1 | [AROS](https://dexscreener.com/solana/12PUFAUzgLj1onv3wSqX9ZagZBiaxofEjTd24CnQpump) | ja | 0.67 | 24,962 | +6194609% | 61947.1 | 100% | 2041 | 21,170 |
+| 2026-09-23 | trending_24h | 2 | [VSOF](https://dexscreener.com/solana/gBiiUhaYjAj4zCGSzKJa1S23ZgB9U7w8k3epbbQpump) | ja | 0.61 | 19,625 | +3614636% | 36153.4 | 100% | 1987 | 16,169 |
+| 2026-09-23 | trending_24h | 3 | [VSOF](https://dexscreener.com/solana/2dfyCX3hJs6uzzXH2KPgHduDgsXCTP57mQf3E1nFpump) | nee | 0.67 | 5,963 | +2428644% | 24287.4 | 100% | 1561 | 5,913 |
+| 2026-09-23 | trending_24h | 4 | [USDF](https://dexscreener.com/solana/tTthNiywcdw5KApjD7c6JfFnFW3KdgMBBKgzc14pump) | nee | 0.34 | 12,297 | +1034827% | 10349.3 | 100% | 2075 | 8,653 |
+| 2026-09-23 | trending_24h | 5 | [VSOF](https://dexscreener.com/solana/H1vNzAivJt1rjeEFNfCmGcDwUEoLmYAcCAYYysnVpump) | ja | 0.54 | 10,382 | +918274% | 9183.7 | 100% | 2765 | 8,143 |
+| 2026-09-23 | trending_24h_organic | 1 | [VSOF](https://dexscreener.com/solana/2dfyCX3hJs6uzzXH2KPgHduDgsXCTP57mQf3E1nFpump) | nee | 0.67 | 5,963 | +2428644% | 24287.4 | 100% | 1561 | 5,913 |
+| 2026-09-23 | trending_24h_organic | 2 | [USDF](https://dexscreener.com/solana/tTthNiywcdw5KApjD7c6JfFnFW3KdgMBBKgzc14pump) | nee | 0.34 | 12,297 | +1034827% | 10349.3 | 100% | 2075 | 8,653 |
+| 2026-09-23 | trending_24h_organic | 3 | [familiars](https://dexscreener.com/solana/2PENPmfgJfq6CG3k4byj4oWwHf8SerqakmYHMkUupump) | nee | 0.06 | 18,337 | +26988% | 306.3 | 88% | 4861 | 381 |
+| 2026-09-23 | trending_24h_organic | 4 | [BLUF](https://dexscreener.com/solana/c4AtfqMRbC9FuHtVEHDhCm453tytU9E34MXXrp6bLuf) | nee | 0.08 | 45,432 | +9008% | 432.2 | 21% | 11654 | 233 |
+| 2026-09-23 | trending_24h_organic | 5 | [ARCHIBROWN](https://dexscreener.com/solana/HaYRgD7rjwj1AwoWjafokj4196sufYm4vKFamLZVpump) | nee | 0.07 | 23,012 | +8553% | 232.9 | 37% | 6561 | 243 |
+| 2026-09-24 | dumpers_24h | 1 | [MCNAP](https://dexscreener.com/solana/23d5EtiLeT1t6seccoNNADa82yUeKrch8g6ei9tVpump) | nee | 0.02 | 48,271 | +25% | 133.5 | 1% | 2868 | 14 |
+| 2026-09-24 | dumpers_24h | 2 | [NERD](https://dexscreener.com/solana/5kdbTqWKajFMwTc2Mg1EiAeFzndWN7bX79BykGhNpump) | nee | 0.03 | 44,267 | +32% | 112.7 | 1% | 2844 | 15 |
+| 2026-09-24 | dumpers_24h | 3 | [PINF](https://dexscreener.com/solana/MLdXKXUGXoYSDx5pcDWMrCdLP2AyxzxaQd3QvFMpump) | nee | 0.03 | 38,138 | +13% | 171.4 | 1% | 2591 | 11 |
+| 2026-09-24 | dumpers_24h | 4 | [AROS](https://dexscreener.com/solana/12PUFAUzgLj1onv3wSqX9ZagZBiaxofEjTd24CnQpump) | nee | 0.48 | 36,880 | -100% | 1.6 | 0% | 3067 | 2 |
+| 2026-09-24 | dumpers_24h | 5 | [PLOP](https://dexscreener.com/solana/F8BTnFMCaajnrRYfmVGqJrvm4PYcFb1AiTwLxCpSpump) | nee | 0.02 | 28,095 | -4% | 110.9 | 1% | 2461 | 8 |
+| 2026-09-24 | trending_24h | 1 | [USDF](https://dexscreener.com/solana/Ufwjn7mtvgUfRG4nMSxRS84ewXHzdHLJRGzMDBMpump) | nee | 0.41 | 40,740 | +4346481% | 43473.6 | 100% | 3445 | 17,759 |
+| 2026-09-24 | trending_24h | 2 | [AROS](https://dexscreener.com/solana/DQz5ucSjjWMXKaCPB35zvJFCvc7sULYhQKvLxbnpump) | ja | 0.66 | 11,092 | +1356461% | 13565.6 | 100% | 2970 | 9,897 |
+| 2026-09-24 | trending_24h | 3 | [AROS](https://dexscreener.com/solana/2DznHsR5j6XHARnTVGubwAXxfmF9aQ8Pwwu3TN7ppump) | ja | 0.77 | 8,207 | +750181% | 7502.8 | 100% | 2668 | 7,355 |
+| 2026-09-24 | trending_24h | 4 | [VSOF](https://dexscreener.com/solana/4m9Y1o568PXrWuunpMoN3sHaZKcVUbuRyGcjbBzNpump) | ja | 0.65 | 8,911 | +592656% | 5927.6 | 100% | 106 | 6,537 |
+| 2026-09-24 | trending_24h | 5 | [AROS](https://dexscreener.com/solana/3DQbzaaQtDpNyeKY3ZQFWbqZxr8FV1FwGMxf1WpVpump) | nee | 0.98 | 4,094 | +1143418% | 11435.2 | 100% | 1445 | 4,051 |
+| 2026-09-24 | trending_24h_organic | 1 | [USDF](https://dexscreener.com/solana/Ufwjn7mtvgUfRG4nMSxRS84ewXHzdHLJRGzMDBMpump) | nee | 0.41 | 40,740 | +4346481% | 43473.6 | 100% | 3445 | 17,759 |
+| 2026-09-24 | trending_24h_organic | 2 | [AROS](https://dexscreener.com/solana/3DQbzaaQtDpNyeKY3ZQFWbqZxr8FV1FwGMxf1WpVpump) | nee | 0.98 | 4,094 | +1143418% | 11435.2 | 100% | 1445 | 4,051 |
+| 2026-09-24 | trending_24h_organic | 3 | [VWA](https://dexscreener.com/solana/BbMmgDNZyp8jEBUpMmSG1L1aqtLvu1ZKZiLNuHXDpump) | nee | 0.49 | 7,239 | +328768% | 3288.7 | 100% | 2745 | 4,867 |
+| 2026-09-24 | trending_24h_organic | 4 | [NPC](https://dexscreener.com/solana/7GUnr7krtQhJwd6ASY2VUprd9t4c64zcgCsjdmZepump) | nee | 0.08 | 45,347 | +25753% | 277.6 | 93% | 14497 | 664 |
+| 2026-09-24 | trending_24h_organic | 5 | [SI](https://dexscreener.com/solana/82ezhRLKdKwkSC9jkM3js1yf93VbmvLXNMPkBmompump) | nee | 0.08 | 29,625 | +4590% | 161.5 | 29% | 10070 | 206 |
+| 2026-09-25 | dumpers_24h | 1 | [SOLRISING](https://dexscreener.com/solana/93Q1FohrzWzsvJXJujLW7PrZLZtpCPmviKyWKEX3pump) | nee | 0.01 | 43,669 | -60% | 90.9 | 0% | 3332 | 10 |
+| 2026-09-25 | dumpers_24h | 2 | [AROS](https://dexscreener.com/solana/Xc4WkwXwNmMApMmxvwT8994tLMUziPCgxBmmPC4pump) | ja | 0.69 | 43,499 | -95% | 53517.5 | 0% | 3129 | 2 |
+| 2026-09-25 | dumpers_24h | 3 | [PEEP](https://dexscreener.com/solana/jU7hpVbGfLPFzfHB1iy74hPA379iubPqVQwLGBepump) | nee | 0.04 | 41,460 | +231% | 158.1 | 2% | 2889 | 31 |
+| 2026-09-25 | dumpers_24h | 4 | [IMU](https://dexscreener.com/solana/33owuxq97P85XaV2oXvBFmMoykb3ZjLH5wdAV4uDpump) | nee | 0.01 | 40,006 | -81% | 114.0 | 0% | 3319 | 12 |
+| 2026-09-25 | dumpers_24h | 5 | [SHIBA](https://dexscreener.com/solana/3V43dHnk3kkU3w8RnxEsmbJcHQppGjTJ3Mni3owDpump) | nee | 0.01 | 33,171 | -67% | 88.7 | 0% | 3199 | 7 |
+| 2026-09-25 | trending_24h | 1 | [USDF](https://dexscreener.com/solana/qhyWQAfBWW8pmDUiNWVwq4e4SZWeMgEvJ3KRRespump) | ja | 0.59 | 20,615 | +3892045% | 38936.3 | 100% | 3273 | 16,780 |
+| 2026-09-25 | trending_24h | 2 | [VSOF](https://dexscreener.com/solana/mRRHbeK6G5kmT8wc3AwkSeijAQWEnzS69vmbQ1Gpump) | nee | 0.34 | 15,869 | +2535837% | 25373.7 | 100% | 3030 | 13,548 |
+| 2026-09-25 | trending_24h | 3 | [VSOF](https://dexscreener.com/solana/BYPmzwqUT8NcDTWeGFbMQqafg7JHvLxfepjfF4Ahpump) | nee | 0.34 | 17,574 | +1991614% | 19917.1 | 100% | 132 | 12,007 |
+| 2026-09-25 | trending_24h | 4 | [AROS](https://dexscreener.com/solana/QcakAHiP7BgZqzFupUEH5RzcpmoaYn9hWuBih62pump) | ja | 0.68 | 14,102 | +1957655% | 19577.6 | 100% | 3102 | 11,893 |
+| 2026-09-25 | trending_24h | 5 | [AROS](https://dexscreener.com/solana/57LVTCfaFUZ9tMM7vhJDgF3oebWt7GTzdrhRK5fqpump) | ja | 0.69 | 14,275 | +1914340% | 19144.4 | 100% | 2763 | 11,761 |
+| 2026-09-25 | trending_24h_organic | 1 | [VSOF](https://dexscreener.com/solana/mRRHbeK6G5kmT8wc3AwkSeijAQWEnzS69vmbQ1Gpump) | nee | 0.34 | 15,869 | +2535837% | 25373.7 | 100% | 3030 | 13,548 |
+| 2026-09-25 | trending_24h_organic | 2 | [VSOF](https://dexscreener.com/solana/BYPmzwqUT8NcDTWeGFbMQqafg7JHvLxfepjfF4Ahpump) | nee | 0.34 | 17,574 | +1991614% | 19917.1 | 100% | 132 | 12,007 |
+| 2026-09-25 | trending_24h_organic | 3 | [e/acc](https://dexscreener.com/solana/CbcyNo7m1amFWqEQm2m4PLv1UNvpcL3C1Ujm6AkzpKoU) | nee | 0.06 | 50,666 | +24661% | 320.1 | 77% | 12106 | 453 |
+| 2026-09-25 | trending_24h_organic | 4 | [YAP](https://dexscreener.com/solana/jLz71QZfjnZZMLjUaCBw7KmUyftkkNq8NkWi2u9dyap) | nee | 0.05 | 31,850 | +19912% | 390.4 | 51% | 8414 | 343 |
+| 2026-09-25 | trending_24h_organic | 5 | [Bagwork](https://dexscreener.com/solana/5NhN6zzDkzwXFGPFqtpTopV4ttBeZ6CWy1oRL9Rkpump) | nee | 0.06 | 47,206 | +12132% | 682.2 | 18% | 12168 | 273 |
+| 2026-09-26 | dumpers_24h | 1 | [Cream](https://dexscreener.com/solana/CMuvWQ6qQbSt7NUQdPGcVKCoDgETieuqS68qu6BaeVgR) | nee | 0.09 | 66,182 | +2760% | 296.6 | 10% | 12559 | 190 |
+| 2026-09-26 | dumpers_24h | 2 | [DEBT](https://dexscreener.com/solana/FYM6PhwAS3QwTBwvgLj8JYeMgpNfKsWtW3hGxPM9eFkt) | nee | 0.09 | 61,916 | +656% | 225.8 | 3% | 13887 | 77 |
+| 2026-09-26 | dumpers_24h | 3 | [act/acc](https://dexscreener.com/solana/3gLCmbKsF2eps3JpFLykgVhkzi8Vh2wLAco7FUnvpump) | nee | 0.01 | 53,060 | +9% | 454.0 | 0% | 3583 | 10 |
+| 2026-09-26 | dumpers_24h | 4 | [AROS](https://dexscreener.com/solana/DsJDVBeNnUYvsJEaLyhNm6xrULzVDzuAPCVCHKRCpump) | ja | 0.59 | 44,477 | -95% | 55994.4 | 0% | 2684 | 2 |
+| 2026-09-26 | dumpers_24h | 5 | [P(DOOM)](https://dexscreener.com/solana/ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem) | nee | 0.08 | 37,916 | +2522% | 325.8 | 8% | 8628 | 124 |
+| 2026-09-26 | trending_24h | 1 | [AROS](https://dexscreener.com/solana/kFWgzdFBd6DERYGSWUrT3ZUUjoREcv14rHJCBSbpump) | ja | 0.52 | 30,673 | +10101265% | 101024.8 | 100% | 3056 | 27,045 |
+| 2026-09-26 | trending_24h | 2 | [VSOF](https://dexscreener.com/solana/ehegfG1UQEFSYKcV6ReiMupjheDm22FoQQukiDspump) | ja | 0.72 | 30,512 | +8763512% | 87636.1 | 100% | 3076 | 25,183 |
+| 2026-09-26 | trending_24h | 3 | [AROS](https://dexscreener.com/solana/82w6YGQD7cb7SypvkoQrRTHG3qNzmVTNUcZ6njNRpump) | ja | 0.65 | 10,219 | +914806% | 9149.1 | 100% | 2758 | 8,126 |
+| 2026-09-26 | trending_24h | 4 | [manifest](https://dexscreener.com/solana/8vdJA3MYhUhirZZzjZ5i8jXhNkHgrCnirCrqDG23pump) | nee | 0.02 | 21,834 | +282120% | 3306.6 | 85% | 2035 | 1,243 |
+| 2026-09-26 | trending_24h | 5 | [XBC](https://dexscreener.com/solana/12ppTUnBWHbGy11h3QsXiat2sydhLAgjevu55jYzpump) | ja | 0.77 | 8,070 | +712364% | 7125.2 | 100% | 3051 | 7,167 |
+| 2026-09-26 | trending_24h_organic | 1 | [manifest](https://dexscreener.com/solana/8vdJA3MYhUhirZZzjZ5i8jXhNkHgrCnirCrqDG23pump) | nee | 0.02 | 21,834 | +282120% | 3306.6 | 85% | 2035 | 1,243 |
+| 2026-09-26 | trending_24h_organic | 2 | [KARDASHEV](https://dexscreener.com/solana/5wW9mhbwq1HTFh341iimpmrqBB4mfxdXiYhdYBL7hUnp) | nee | 0.10 | 85,890 | +20982% | 979.3 | 22% | 14165 | 431 |
+| 2026-09-26 | trending_24h_organic | 3 | [MUNKIEAI](https://dexscreener.com/solana/2nJpGnrkX6pDPstr4JELcWnGsjiN57vajfR89iZkpump) | nee | 0.01 | 29,906 | +24966% | 525.1 | 48% | 3245 | 369 |
+| 2026-09-26 | trending_24h_organic | 4 | [DDOS](https://dexscreener.com/solana/HSnCtWsw5YmfAkJo9S3eetWtGHPMrc2pAxvCu24AnQEa) | nee | 0.09 | 68,872 | +7742% | 428.9 | 18% | 13385 | 260 |
+| 2026-09-26 | trending_24h_organic | 5 | [e/acc](https://dexscreener.com/solana/CbcyNo7m1amFWqEQm2m4PLv1UNvpcL3C1Ujm6AkzpKoU) | nee | 0.06 | 456,244 | +1061% | 28.0 | 41% | 35777 | 2,059 |
+| 2026-09-27 | dumpers_24h | 1 | [MPAID](https://dexscreener.com/solana/Ab6CVmhqD3x1bvMZBnjJBJqeTLMm7tAapcZwSU6apump) | nee | 0.02 | 111,227 | +70% | 354.9 | 0% | 6976 | 23 |
+| 2026-09-27 | dumpers_24h | 2 | [JACK](https://dexscreener.com/solana/J1yxV53EmVRmt9RUj6PPufMfdAYUbtgwXCuNYTBTsYzJ) | nee | 0.10 | 107,867 | +1948% | 819.9 | 2% | 20664 | 196 |
+| 2026-09-27 | dumpers_24h | 3 | [CAKE](https://dexscreener.com/solana/DAemPFNc3RtibBDKkUA4eL2Ns11q9VRdbpptmqm8DGqN) | nee | 0.06 | 95,556 | +1694% | 267.1 | 7% | 14346 | 229 |
+| 2026-09-27 | dumpers_24h | 4 | [GENO](https://dexscreener.com/solana/6XBj4xjqJeF7R4aqfrSdyyx6TUHgKEjUkCttmoECpump) | nee | 0.01 | 63,018 | -81% | 116.1 | 0% | 3198 | 12 |
+| 2026-09-27 | dumpers_24h | 5 | [fomonpc](https://dexscreener.com/solana/9Qa71JpzkwD94Ghs7DYsJNuXF1SJdSSHJQDgmbCcpump) | nee | 0.02 | 56,913 | +35% | 295.3 | 0% | 3327 | 15 |
+| 2026-09-27 | trending_24h | 1 | [JEANPHIL](https://dexscreener.com/solana/xQ9npAUWQFHrK2SUSoDgzHzsRjMgBvsJ1j6AK3Ypump) | nee | 0.43 | 13,098 | +1355082% | 13551.8 | 100% | 3047 | 9,898 |
+| 2026-09-27 | trending_24h | 2 | [USDF](https://dexscreener.com/solana/Y49yTFUyBiim3HQEiVnVKiiRPqTY2nNrJyvxsi4pump) | ja | 0.55 | 9,937 | +903724% | 9038.2 | 100% | 3073 | 8,077 |
+| 2026-09-27 | trending_24h | 3 | [VSOF](https://dexscreener.com/solana/wQK5ZserCHkhUCJQJxLL7NKg4N3o3R9VTEqJFqfpump) | ja | 0.59 | 9,245 | +791686% | 7920.1 | 100% | 3021 | 7,558 |
+| 2026-09-27 | trending_24h | 4 | [AROS](https://dexscreener.com/solana/12mHDRzSgf5xo8NPyVQY2nZ3XarQuYUEShaVTgAFpump) | ja | 0.65 | 8,518 | +630017% | 6301.2 | 100% | 180 | 6,740 |
+| 2026-09-27 | trending_24h | 5 | [VSOF](https://dexscreener.com/solana/3CA4RGSFWAu7ePYr2rmCndNqgoYuMj97m5vAn6Zqpump) | ja | 0.80 | 6,668 | +464492% | 4645.9 | 100% | 103 | 5,784 |
+| 2026-09-27 | trending_24h_organic | 1 | [JEANPHIL](https://dexscreener.com/solana/xQ9npAUWQFHrK2SUSoDgzHzsRjMgBvsJ1j6AK3Ypump) | nee | 0.43 | 13,098 | +1355082% | 13551.8 | 100% | 3047 | 9,898 |
+| 2026-09-27 | trending_24h_organic | 2 | [MARTIANS](https://dexscreener.com/solana/HgoScXAo4zFv5kDb6axGrwuz95FaVEcLskyDVZfo297z) | nee | 0.13 | 26,089 | +36324% | 610.5 | 60% | 6868 | 454 |
+| 2026-09-27 | trending_24h_organic | 3 | [moin](https://dexscreener.com/solana/8DXqVUopcdviLvujTcpwEqkKzB43Arp6E1axzsEE5Btq) | nee | 0.06 | 35,584 | +17804% | 387.6 | 46% | 10928 | 344 |
+| 2026-09-27 | trending_24h_organic | 4 | [INSTA](https://dexscreener.com/solana/6UhUkSBc9RBB9gVJcjCWtcQv4t771rQF7bdn2qK7pump) | nee | 0.04 | 12,998 | +20784% | 266.1 | 78% | 2677 | 333 |
+| 2026-09-27 | trending_24h_organic | 5 | [VAULT](https://dexscreener.com/solana/7tEsDuij7aj4b2jLUAS5oXcp6B3zWratYVmviS5zpump) | nee | 0.07 | 39,309 | +6070% | 300.6 | 21% | 10693 | 222 |
+| 2026-09-28 | dumpers_24h | 1 | [SOLFROG](https://dexscreener.com/solana/TTwA29nT5v7Vti9xdvYrhMnHxo7mXNbx8aLcFLjpump) | nee | 0.01 | 159,996 | +102% | 479.4 | 0% | 6110 | 30 |
+| 2026-09-28 | dumpers_24h | 2 | [hippo/acc](https://dexscreener.com/solana/CGfVJX4D35wE8kviKKE1XyKU9EHRXe4Zsw3R55ABpump) | nee | 0.02 | 107,915 | +137% | 662.7 | 0% | 5782 | 29 |
+| 2026-09-28 | dumpers_24h | 3 | [XPAD](https://dexscreener.com/solana/FFzTy32bZbPA8zRLbbiWoNzW2emGv86tUxaoqhz1pump) | nee | 0.00 | 58,304 | +239% | 609.7 | 1% | 13277 | 31 |
+| 2026-09-28 | dumpers_24h | 4 | [peptober](https://dexscreener.com/solana/9VXMEkhYKcj9s4dvzz3GF4ZfHGc5oAURiSY7ftPpump) | nee | 0.01 | 53,809 | +50% | 435.9 | 0% | 5225 | 15 |
+| 2026-09-28 | dumpers_24h | 5 | [AROS](https://dexscreener.com/solana/kFWgzdFBd6DERYGSWUrT3ZUUjoREcv14rHJCBSbpump) | nee | 0.49 | 40,047 | -100% | 1.1 | 0% | 3000 | 4 |
+| 2026-09-28 | trending_24h | 1 | [AROS](https://dexscreener.com/solana/XU438yQcHEf5bGAZ3pHqXhbZPqotoapdanjnhj1pump) | nee | 0.45 | 12,366 | +1285607% | 12857.1 | 100% | 3011 | 9,640 |
+| 2026-09-28 | trending_24h | 2 | [COLLECT](https://dexscreener.com/solana/hAvfbtSG3ZTH9wwHQLEERJbiyHypu9Q7JefzhrEpump) | ja | 0.59 | 9,461 | +791877% | 7919.8 | 100% | 2968 | 7,560 |
+| 2026-09-28 | trending_24h | 3 | [JEANPHIL](https://dexscreener.com/solana/14cmYsjbqAHh1DW7iC5cQ2tiAaarbBxvTRHS8K1Tpump) | ja | 0.59 | 9,282 | +787230% | 7875.9 | 100% | 2911 | 7,537 |
+| 2026-09-28 | trending_24h | 4 | [NTDA](https://dexscreener.com/solana/JQhbwzFJKUBPYVR1JSfRyyKP2sypPXSBJguxc8Npump) | ja | 0.86 | 5,825 | +421824% | 4219.2 | 100% | 2937 | 5,510 |
+| 2026-09-28 | trending_24h | 5 | [WSOS](https://dexscreener.com/solana/EthghzCFZNvTUbUeHsTZCWXZ4HXjzszSPs9bwvJpump) | ja | 0.94 | 5,332 | +379646% | 3797.9 | 100% | 2568 | 5,226 |
+| 2026-09-28 | trending_24h_organic | 1 | [AROS](https://dexscreener.com/solana/XU438yQcHEf5bGAZ3pHqXhbZPqotoapdanjnhj1pump) | nee | 0.45 | 12,366 | +1285607% | 12857.1 | 100% | 3011 | 9,640 |
+| 2026-09-28 | trending_24h_organic | 2 | [FROINK](https://dexscreener.com/solana/2yu92oYzBWLAdVpu8BoaLzmM1oxPsHoboay2BXmeDDZr) | nee | 0.06 | 82,494 | +20359% | 668.1 | 31% | 15162 | 378 |
+| 2026-09-28 | trending_24h_organic | 3 | [swordcat](https://dexscreener.com/solana/5tCju6YNxHq5zrA6tGndr6F7TK42mpUFmeE31cSFpump) | nee | 0.06 | 40,694 | +13801% | 375.8 | 37% | 12169 | 354 |
+| 2026-09-28 | trending_24h_organic | 4 | [INUINK](https://dexscreener.com/solana/9k7NgXqiJ7tvLtiB6HXdJHnKZZynFz46AB6Eg4Uwpump) | nee | 0.02 | 10,082 | +46467% | 569.7 | 82% | 11048 | 481 |
+| 2026-09-28 | trending_24h_organic | 5 | [BOB](https://dexscreener.com/solana/E4vwseNWpkBxzNxyv3msVLCzYHU5SXrj1QWXEycypump) | nee | 0.07 | 32,478 | +11317% | 202.1 | 56% | 11315 | 258 |
+| 2026-09-29 | dumpers_24h | 1 | [SI](https://dexscreener.com/solana/7Wh6rxVWUBFCNCWCz7nLaV7z3SDr2M6rFTjjWP6aE8p1) | nee | 0.05 | 55,066 | +4241% | 482.8 | 9% | 12862 | 176 |
+| 2026-09-29 | dumpers_24h | 2 | [cNFTs](https://dexscreener.com/solana/A71Uf3jwg57fNedSao9eFwm9eKSLYFbVJ85T4fuXpump) | nee | 0.10 | 45,270 | +1185% | 303.1 | 4% | 11749 | 79 |
+| 2026-09-29 | dumpers_24h | 3 | [INUINK](https://dexscreener.com/solana/9k7NgXqiJ7tvLtiB6HXdJHnKZZynFz46AB6Eg4Uwpump) | nee | 0.00 | 42,418 | -100% | 1.4 | 0% | 19716 | 10 |
+| 2026-09-29 | dumpers_24h | 4 | [PFSOL](https://dexscreener.com/solana/5DzdcJUwovmAUXMfrWgbhKmJ3RWmEtXwf7EEtuHRpump) | nee | 0.02 | 25,192 | -6% | 203.9 | 0% | 1665 | 7 |
+| 2026-09-29 | dumpers_24h | 5 | [NTDA](https://dexscreener.com/solana/xtzSskqY2PSSUiq7pBvtK48HikcL2pRUvtseHSTpump) | ja | 0.79 | 20,181 | -94% | 13132.8 | 0% | 2945 | 4 |
+| 2026-09-29 | trending_24h | 1 | [NTDA](https://dexscreener.com/solana/3aDDk7wDuNvujvr4AqsVfYZcoKQn5EkXAVqXcdxhpump) | ja | 0.73 | 13,184 | +1800217% | 18003.2 | 100% | 2751 | 11,403 |
+| 2026-09-29 | trending_24h | 2 | [NTDA](https://dexscreener.com/solana/GGf4EX9qbzxuboefDTEvqHdysHqtZSQC7Sahprjpump) | ja | 0.61 | 12,365 | +1500010% | 15001.1 | 100% | 3033 | 10,410 |
+| 2026-09-29 | trending_24h | 3 | [UDR](https://dexscreener.com/solana/uEMVScZfPPfSGeoKkPCQ82oRedJn6u1dQvDEo8qpump) | nee | 0.44 | 12,866 | +1286583% | 12866.8 | 100% | 3212 | 9,644 |
+| 2026-09-29 | trending_24h | 4 | [VSOF](https://dexscreener.com/solana/erZo4bdwE1wZ4E2D8RQzCMdxypL5kVWC7Du6zdCpump) | nee | 0.45 | 12,564 | +1263669% | 12640.9 | 100% | 3041 | 9,557 |
+| 2026-09-29 | trending_24h | 5 | [DOTF](https://dexscreener.com/solana/jSh3qi3qf7b3gWtCdpfMzSH2WFR1Qp6gyw1Xc3Npump) | nee | 0.46 | 12,389 | +1223023% | 12233.9 | 100% | 2985 | 9,402 |
+| 2026-09-29 | trending_24h_organic | 1 | [UDR](https://dexscreener.com/solana/uEMVScZfPPfSGeoKkPCQ82oRedJn6u1dQvDEo8qpump) | nee | 0.44 | 12,866 | +1286583% | 12866.8 | 100% | 3212 | 9,644 |
+| 2026-09-29 | trending_24h_organic | 2 | [VSOF](https://dexscreener.com/solana/erZo4bdwE1wZ4E2D8RQzCMdxypL5kVWC7Du6zdCpump) | nee | 0.45 | 12,564 | +1263669% | 12640.9 | 100% | 3041 | 9,557 |
+| 2026-09-29 | trending_24h_organic | 3 | [DOTF](https://dexscreener.com/solana/jSh3qi3qf7b3gWtCdpfMzSH2WFR1Qp6gyw1Xc3Npump) | nee | 0.46 | 12,389 | +1223023% | 12233.9 | 100% | 2985 | 9,402 |
+| 2026-09-29 | trending_24h_organic | 4 | [NTDA](https://dexscreener.com/solana/3PCs6fbgGs2axaB2oDWLFEUJSE8mQiWSqD734UYupump) | nee | 0.71 | 5,611 | +2151292% | 21513.9 | 100% | 1539 | 5,564 |
+| 2026-09-29 | trending_24h_organic | 5 | [NTDA](https://dexscreener.com/solana/Dtr3CM3QhEJufMfFJbWtGsjYME2i58auzUe6oAm5pump) | nee | 0.26 | 7,347 | +656856% | 6569.6 | 100% | 2285 | 6,887 |
+| 2026-09-30 | dumpers_24h | 1 | [AIRPAD](https://dexscreener.com/solana/6ZG6fMHaE7NpubJr16G8nFLBg91rH5kU5SVpqUmQpump) | nee | 0.00 | 87,746 | +96% | 667.8 | 0% | 13014 | 22 |
+| 2026-09-30 | dumpers_24h | 2 | [Saw](https://dexscreener.com/solana/9twiuSdTVkwtAC9XQDG57dFRhF4iqPih461HJfMZKci9) | nee | 0.06 | 62,702 | +2478% | 412.9 | 6% | 15654 | 141 |
+| 2026-09-30 | dumpers_24h | 3 | [UDR](https://dexscreener.com/solana/BwzpbM9DHpCh9qu9WosyUxjKw9ZLCyHWYeKts6TKpump) | nee | 0.27 | 46,560 | -94% | 54330.2 | 0% | 2438 | 3 |
+| 2026-09-30 | dumpers_24h | 4 | [UDR](https://dexscreener.com/solana/NkpbN7shUNdkvt24F33oai9Cf9rXDzJ4E8Sx2mNpump) | ja | 0.71 | 44,599 | -91% | 63701.6 | 0% | 3228 | 9 |
+| 2026-09-30 | dumpers_24h | 5 | [Mitch ](https://dexscreener.com/solana/FutN7pjfoJjEsfRG8BMtam2jtWdbg2up9HMa7dYwpump) | nee | 0.04 | 28,421 | -10% | 190.8 | 0% | 1554 | 7 |
+| 2026-09-30 | trending_24h | 1 | [UDR](https://dexscreener.com/solana/PEYMPE7pk4KJmRn51KZsTgXPUh1zVMRxWbsWygapump) | ja | 0.81 | 25,519 | +7804354% | 78044.5 | 100% | 3023 | 23,758 |
+| 2026-09-30 | trending_24h | 2 | [GOIF](https://dexscreener.com/solana/m6JwPCoxzsM2f7jiSdXLnFEQzEcug2SXTzBb1zopump) | ja | 0.89 | 15,407 | +3083588% | 30836.9 | 100% | 2948 | 14,926 |
+| 2026-09-30 | trending_24h | 3 | [GOIF](https://dexscreener.com/solana/3bNwW6PrQJBGXTiE6peXL3org95Eiheqy9Nsci4fpump) | ja | 0.58 | 14,460 | +2287376% | 22874.8 | 100% | 2277 | 12,858 |
+| 2026-09-30 | trending_24h | 4 | [VSOF](https://dexscreener.com/solana/CnrPtHUeeM6QtHjkEArLF68B2pf2TvhJfSvShaQpump) | nee | 0.39 | 14,519 | +1603364% | 16034.6 | 100% | 3091 | 10,770 |
+| 2026-09-30 | trending_24h | 5 | [AROS](https://dexscreener.com/solana/GC9GWsd9mQhj4GWpUQBxw7peBEimGjgpUrGgkWBpump) | nee | 0.41 | 14,009 | +1512047% | 15121.5 | 100% | 3054 | 10,458 |
+| 2026-09-30 | trending_24h_organic | 1 | [VSOF](https://dexscreener.com/solana/CnrPtHUeeM6QtHjkEArLF68B2pf2TvhJfSvShaQpump) | nee | 0.39 | 14,519 | +1603364% | 16034.6 | 100% | 3091 | 10,770 |
+| 2026-09-30 | trending_24h_organic | 2 | [AROS](https://dexscreener.com/solana/GC9GWsd9mQhj4GWpUQBxw7peBEimGjgpUrGgkWBpump) | nee | 0.41 | 14,009 | +1512047% | 15121.5 | 100% | 3054 | 10,458 |
+| 2026-09-30 | trending_24h_organic | 3 | [SARP](https://dexscreener.com/solana/st57oas5yPVfDsEc6Md55CXv7i3Uhp9kg6PFGp4pump) | nee | 0.39 | 8,762 | +584343% | 5844.4 | 100% | 3028 | 6,495 |
+| 2026-09-30 | trending_24h_organic | 4 | [BANDIT](https://dexscreener.com/solana/JCX5nDG99k1CWB9AttJ3U57NmjSgnCoagFaZhqfEf7Ah) | nee | 0.07 | 78,771 | +15932% | 568.2 | 28% | 16376 | 342 |
+| 2026-09-30 | trending_24h_organic | 5 | [Meridian](https://dexscreener.com/solana/GjrhXcr8YzUZBbu5rifdqM5CPBS4LFJveq3ZiY2u3g5G) | nee | 0.07 | 21,189 | +13316% | 295.9 | 45% | 7133 | 307 |
 
 ## 7 dagen: blijvers en instorters
 
@@ -62,248 +346,18 @@ Beperkingen: twee dagen voor de daglijsten; de 7-dagen-lijst loopt over de hele 
 | stayers_7d | 9 | [WEPE](https://dexscreener.com/solana/EL6Urf21PoPesMrbYSRc1yqqHjhk6DGUR63VZDmmpump) | 38,101 | 124,752 | 31% | 9,886 | 1601 | 809 |
 | stayers_7d | 10 | [MINESTOCK](https://dexscreener.com/solana/9a8PquAAAoo51TABtasHSXMbm3CPSRnkxZfn6F8Dpump) | 33,805 | 55,755 | 61% | 5,865 | 384 | 760 |
 
-## Stijgers tegenover dumpers in de eerste 15 minuten
+## Organische stijgers tegenover organische dumpers in de eerste 15 minuten
 
 | kenmerk op +15 min | stijgers (mediaan) | dumpers (mediaan) |
 |---|---|---|
-| min. tot graduatie | 0.00 (n=10) | 0.03 (n=10) |
-| unieke kopers curve | 1.00 (n=10) | 28.50 (n=10) |
-| aandeel kopers ≥ 5 SOL | 1.00 (n=10) | 0.32 (n=10) |
-| netto instroom curve (SOL) | 85.01 (n=10) | 85.01 (n=10) |
-| insider-aandeel | 0.79 (n=10) | 0.78 (n=10) |
-| creator-verkopen | 0.00 (n=10) | 0.00 (n=10) |
-| traders pool | 676.50 (n=10) | 2148.00 (n=10) |
-| organisch volume pool (SOL) | 8244.75 (n=10) | 9207.98 (n=10) |
-| prijs t.o.v. open | 9416.72 (n=10) | 7.60 (n=10) |
-| split-buyer-events | 0.00 (n=10) | 0.00 (n=10) |
-
-## Tijdlijnen
-
-**AROS** — American Reserved Oil Supply · [DexScreener](https://dexscreener.com/solana/Xc4WkwXwNmMApMmxvwT8994tLMUziPCgxBmmPC4pump) · `Xc4WkwXwNmMApMmxvwT8994tLMUziPCgxBmmPC4pump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 53530.5× de open-prijs (990 min na creatie), eind 24 u op 0.05× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 360 / 935; organisch volume pool (SOL) 15242.31 / 16320.08; prijs t.o.v. open 31547.82 / 32796.57; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 10780 SOL na 992 min, 3146 SOL na 992 min, 1501 SOL na 992 min, 879 SOL na 992 min, 577 SOL na 992 min
-
-**IMU** — IMU · [DexScreener](https://dexscreener.com/solana/33owuxq97P85XaV2oXvBFmMoykb3ZjLH5wdAV4uDpump) · `33owuxq97P85XaV2oXvBFmMoykb3ZjLH5wdAV4uDpump`
-
-- Tijdlijn: graduatie 0.9 min na creatie, piek in de eerste 24 u op 55.7× de open-prijs (188 min na creatie), eind 24 u op 0.10×
-- Op +5 / +15 min: min. tot graduatie 0.90 / 0.90; unieke kopers curve 54 / 54; aandeel kopers ≥ 5 SOL 0.02 / 0.02; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.46 / 0.00; creator-verkopen 0 / 0; traders pool 195 / 2435; organisch volume pool (SOL) 491.94 / 1643.59; prijs t.o.v. open 2.03 / 2.53; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 49 SOL na 219 min, 48 SOL na 170 min, 48 SOL na 186 min, 46 SOL na 188 min, 45 SOL na 178 min
-
-**USDF** — United States Dividend Fund · [DexScreener](https://dexscreener.com/solana/qhyWQAfBWW8pmDUiNWVwq4e4SZWeMgEvJ3KRRespump) · `qhyWQAfBWW8pmDUiNWVwq4e4SZWeMgEvJ3KRRespump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 43000.6× de open-prijs (1216 min na creatie), eind 24 u op 42995.31× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 1232 / 2366; organisch volume pool (SOL) 11267.01 / 11840.23; prijs t.o.v. open 17157.02 / 17718.26; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 8 SOL na 1211 min, 5 SOL na 770 min, 5 SOL na 9 min, 5 SOL na 6 min, 5 SOL na 7 min
-
-**AROS** — AROS · [DexScreener](https://dexscreener.com/solana/57LVTCfaFUZ9tMM7vhJDgF3oebWt7GTzdrhRK5fqpump) · `57LVTCfaFUZ9tMM7vhJDgF3oebWt7GTzdrhRK5fqpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 21381.6× de open-prijs (1330 min na creatie), eind 24 u op 0.05× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 132 / 330; organisch volume pool (SOL) 9023.52 / 9076.84; prijs t.o.v. open 11254.91 / 11326.34; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 10503 SOL na 1333 min (creator), 664 SOL na 1333 min, 321 SOL na 1333 min, 189 SOL na 1333 min, 124 SOL na 1333 min
-
-**VSOF** — VSOF · [DexScreener](https://dexscreener.com/solana/BYPmzwqUT8NcDTWeGFbMQqafg7JHvLxfepjfF4Ahpump) · `BYPmzwqUT8NcDTWeGFbMQqafg7JHvLxfepjfF4Ahpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 22133.6× de open-prijs (1437 min na creatie), eind 24 u op 22133.59× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 81 / 90; organisch volume pool (SOL) 5060.54 / 7412.66; prijs t.o.v. open 3570.36 / 7507.10; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 4 SOL na 632 min, 3 SOL na 199 min, 2 SOL na 10 min, 2 SOL na 20 min, 2 SOL na 1342 min
-
-**VSOF** — VSOF · [DexScreener](https://dexscreener.com/solana/mRRHbeK6G5kmT8wc3AwkSeijAQWEnzS69vmbQ1Gpump) · `mRRHbeK6G5kmT8wc3AwkSeijAQWEnzS69vmbQ1Gpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 29027.1× de open-prijs (1052 min na creatie), eind 24 u op 0.06× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 322 / 897; organisch volume pool (SOL) 5045.84 / 5193.31; prijs t.o.v. open 3567.09 / 3735.29; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 6534 SOL na 1054 min, 2473 SOL na 1054 min, 1301 SOL na 1054 min, 802 SOL na 1054 min, 544 SOL na 1054 min
-
-**SHIBA** — SHIBA · [DexScreener](https://dexscreener.com/solana/3V43dHnk3kkU3w8RnxEsmbJcHQppGjTJ3Mni3owDpump) · `3V43dHnk3kkU3w8RnxEsmbJcHQppGjTJ3Mni3owDpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 16.6× de open-prijs (6 min na creatie), eind 24 u op 0.06× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 6 / 6; aandeel kopers ≥ 5 SOL 0.67 / 0.67; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.83 / 0.85; creator-verkopen 0 / 0; traders pool 1197 / 2367; organisch volume pool (SOL) 5682.60 / 15275.20; prijs t.o.v. open 12.77 / 7.80; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 15 SOL na 11 min, 15 SOL na 14 min, 15 SOL na 14 min, 14 SOL na 22 min, 13 SOL na 14 min
-
-**SOLRISING** — SOL Rising · [DexScreener](https://dexscreener.com/solana/93Q1FohrzWzsvJXJujLW7PrZLZtpCPmviKyWKEX3pump) · `93Q1FohrzWzsvJXJujLW7PrZLZtpCPmviKyWKEX3pump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 17.0× de open-prijs (7 min na creatie), eind 24 u op 0.07× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 6 / 6; aandeel kopers ≥ 5 SOL 0.67 / 0.67; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.85 / 0.85; creator-verkopen 0 / 0; traders pool 982 / 2320; organisch volume pool (SOL) 5021.61 / 15248.44; prijs t.o.v. open 7.36 / 8.47; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 25 SOL na 5 min, 19 SOL na 9 min, 19 SOL na 8 min, 19 SOL na 28 min, 19 SOL na 29 min
-
-**PEEP** — PEEP · [DexScreener](https://dexscreener.com/solana/jU7hpVbGfLPFzfHB1iy74hPA379iubPqVQwLGBepump) · `jU7hpVbGfLPFzfHB1iy74hPA379iubPqVQwLGBepump`
-
-- Tijdlijn: graduatie 0.1 min na creatie, piek in de eerste 24 u op 10.8× de open-prijs (22 min na creatie), eind 24 u op 0.07×
-- Op +5 / +15 min: min. tot graduatie 0.05 / 0.05; unieke kopers curve 48 / 48; aandeel kopers ≥ 5 SOL 0.08 / 0.08; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.83 / 0.83; creator-verkopen 0 / 0; traders pool 647 / 1676; organisch volume pool (SOL) 2539.69 / 8959.31; prijs t.o.v. open 5.83 / 5.70; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 33 SOL na 68 min, 30 SOL na 43 min, 29 SOL na 64 min, 29 SOL na 33 min, 28 SOL na 66 min
-
-**AROS** — American Reserved Oil Supply · [DexScreener](https://dexscreener.com/solana/QcakAHiP7BgZqzFupUEH5RzcpmoaYn9hWuBih62pump) · `QcakAHiP7BgZqzFupUEH5RzcpmoaYn9hWuBih62pump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 21347.5× de open-prijs (429 min na creatie), eind 24 u op 0.06× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 326 / 767; organisch volume pool (SOL) 9042.76 / 9581.25; prijs t.o.v. open 11199.93 / 11805.67; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 3897 SOL na 430 min, 2035 SOL na 430 min, 1251 SOL na 430 min, 846 SOL na 430 min, 611 SOL na 430 min
-
-**Cream** — Cream · [DexScreener](https://dexscreener.com/solana/CMuvWQ6qQbSt7NUQdPGcVKCoDgETieuqS68qu6BaeVgR) · `CMuvWQ6qQbSt7NUQdPGcVKCoDgETieuqS68qu6BaeVgR`
-
-- Tijdlijn: graduatie 0.2 min na creatie, piek in de eerste 24 u op 39.3× de open-prijs (260 min na creatie), eind 24 u op 4.63×
-- Op +5 / +15 min: min. tot graduatie 0.20 / 0.20; unieke kopers curve 178 / 178; aandeel kopers ≥ 5 SOL 0.01 / 0.01; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.05 / 0.05; creator-verkopen 34 / 34; traders pool 2410 / 3362; organisch volume pool (SOL) 5068.36 / 8178.67; prijs t.o.v. open 3.84 / 0.77; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 57 SOL na 66 min, 48 SOL na 209 min, 43 SOL na 255 min, 40 SOL na 545 min, 37 SOL na 390 min
-
-**AROS** — AROS · [DexScreener](https://dexscreener.com/solana/DsJDVBeNnUYvsJEaLyhNm6xrULzVDzuAPCVCHKRCpump) · `DsJDVBeNnUYvsJEaLyhNm6xrULzVDzuAPCVCHKRCpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 56008.1× de open-prijs (178 min na creatie), eind 24 u op 0.05× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 558 / 687; organisch volume pool (SOL) 6008.86 / 7445.77; prijs t.o.v. open 5053.22 / 2963.49; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 7287 SOL na 178 min, 3413 SOL na 178 min, 1980 SOL na 178 min, 1293 SOL na 178 min, 911 SOL na 178 min
-
-**AROS** — AROS · [DexScreener](https://dexscreener.com/solana/kFWgzdFBd6DERYGSWUrT3ZUUjoREcv14rHJCBSbpump) · `kFWgzdFBd6DERYGSWUrT3ZUUjoREcv14rHJCBSbpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 103320.1× de open-prijs (1437 min na creatie), eind 24 u op 103320.13× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 146 / 586; organisch volume pool (SOL) 15071.81 / 15230.01; prijs t.o.v. open 31122.66 / 31661.97; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 9 SOL na 921 min, 4 SOL na 1070 min, 4 SOL na 985 min, 3 SOL na 127 min, 3 SOL na 269 min
-
-**VSOF** — VSOF · [DexScreener](https://dexscreener.com/solana/ehegfG1UQEFSYKcV6ReiMupjheDm22FoQQukiDspump) · `ehegfG1UQEFSYKcV6ReiMupjheDm22FoQQukiDspump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 92246.5× de open-prijs (1334 min na creatie), eind 24 u op 0.06× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 276 / 792; organisch volume pool (SOL) 20526.14 / 21578.64; prijs t.o.v. open 55739.57 / 56359.32; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 15317 SOL na 1337 min, 3885 SOL na 1337 min, 1774 SOL na 1337 min, 1016 SOL na 1337 min, 659 SOL na 1337 min
-
-**XBC** — Xpress Bridge Currency · [DexScreener](https://dexscreener.com/solana/12ppTUnBWHbGy11h3QsXiat2sydhLAgjevu55jYzpump) · `12ppTUnBWHbGy11h3QsXiat2sydhLAgjevu55jYzpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 7951.6× de open-prijs (1437 min na creatie), eind 24 u op 7951.61× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 104 / 406; organisch volume pool (SOL) 5912.26 / 5971.19; prijs t.o.v. open 4879.76 / 4934.12; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 15 SOL na 1388 min, 13 SOL na 1199 min, 4 SOL na 986 min, 3 SOL na 943 min, 2 SOL na 1185 min
-
-**P(DOOM)** — p(doom) · [DexScreener](https://dexscreener.com/solana/ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem) · `ARPwPPWbaj3FYBf6k1Lt2jqRkv9JJUg3Hxav5aHKTEem`
-
-- Tijdlijn: graduatie 3.2 min na creatie, piek in de eerste 24 u op 25.2× de open-prijs (72 min na creatie), eind 24 u op 1.38×
-- Op +5 / +15 min: min. tot graduatie 3.25 / 3.25; unieke kopers curve 309 / 309; aandeel kopers ≥ 5 SOL 0.00 / 0.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.14 / 0.12; creator-verkopen 2 / 2; traders pool 937 / 1690; organisch volume pool (SOL) 1665.73 / 3472.27; prijs t.o.v. open 3.94 / 4.24; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 53 SOL na 98 min, 53 SOL na 138 min, 46 SOL na 156 min, 46 SOL na 62 min, 42 SOL na 156 min
-
-**AROS** — AROS · [DexScreener](https://dexscreener.com/solana/82w6YGQD7cb7SypvkoQrRTHG3qNzmVTNUcZ6njNRpump) · `82w6YGQD7cb7SypvkoQrRTHG3qNzmVTNUcZ6njNRpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 11187.6× de open-prijs (1163 min na creatie), eind 24 u op 0.04× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 130 / 329; organisch volume pool (SOL) 6020.48 / 6070.75; prijs t.o.v. open 5062.99 / 5110.10; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 5701 SOL na 1166 min, 1018 SOL na 1166 min, 427 SOL na 1166 min, 415 SOL na 1166 min, 387 SOL na 1166 min
-
-**act/acc** — ACT I: Effective Accelerationism · [DexScreener](https://dexscreener.com/solana/3gLCmbKsF2eps3JpFLykgVhkzi8Vh2wLAco7FUnvpump) · `3gLCmbKsF2eps3JpFLykgVhkzi8Vh2wLAco7FUnvpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 31.0× de open-prijs (16 min na creatie), eind 24 u op 0.07×
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 9 / 9; aandeel kopers ≥ 5 SOL 0.56 / 0.56; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.78 / 0.77; creator-verkopen 0 / 0; traders pool 606 / 1976; organisch volume pool (SOL) 3146.33 / 14939.08; prijs t.o.v. open 10.38 / 23.28; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 33 SOL na 7 min, 30 SOL na 34 min, 28 SOL na 21 min, 26 SOL na 14 min, 26 SOL na 16 min
-
-**DEBT** — DEBT COIN · [DexScreener](https://dexscreener.com/solana/FYM6PhwAS3QwTBwvgLj8JYeMgpNfKsWtW3hGxPM9eFkt) · `FYM6PhwAS3QwTBwvgLj8JYeMgpNfKsWtW3hGxPM9eFkt`
-
-- Tijdlijn: graduatie 0.6 min na creatie, piek in de eerste 24 u op 23.4× de open-prijs (37 min na creatie), eind 24 u op 0.63×
-- Op +5 / +15 min: min. tot graduatie 0.62 / 0.62; unieke kopers curve 206 / 206; aandeel kopers ≥ 5 SOL 0.00 / 0.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.03 / 0.00; creator-verkopen 8 / 8; traders pool 1997 / 3553; organisch volume pool (SOL) 4130.84 / 9456.66; prijs t.o.v. open 8.55 / 7.39; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 66 SOL na 67 min, 49 SOL na 37 min, 48 SOL na 70 min, 39 SOL na 143 min, 35 SOL na 115 min
-
-**manifest** — manifest getting paid · [DexScreener](https://dexscreener.com/solana/8vdJA3MYhUhirZZzjZ5i8jXhNkHgrCnirCrqDG23pump) · `8vdJA3MYhUhirZZzjZ5i8jXhNkHgrCnirCrqDG23pump`
-
-- Tijdlijn: graduatie 2.3 min na creatie, piek in de eerste 24 u op 293.3× de open-prijs (197 min na creatie), eind 24 u op 0.09×
-- Op +5 / +15 min: min. tot graduatie 2.32 / 2.32; unieke kopers curve 229 / 229; aandeel kopers ≥ 5 SOL 0.02 / 0.02; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.03 / 0.00; creator-verkopen 0 / 0; traders pool 588 / 808; organisch volume pool (SOL) 752.00 / 1467.47; prijs t.o.v. open 1.27 / 3.87; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 85 SOL na 228 min, 81 SOL na 212 min, 75 SOL na 105 min, 73 SOL na 150 min, 65 SOL na 219 min
-
-**FAIR** — Federal AI Reserve · [DexScreener](https://dexscreener.com/solana/QbPr1ponxN4J7ozvkdh1dNzqc4zgdkE1RGygHeKpump) · `QbPr1ponxN4J7ozvkdh1dNzqc4zgdkE1RGygHeKpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 445.4× de open-prijs (1216 min na creatie), eind 24 u op 445.37× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 55 / 120; organisch volume pool (SOL) 1604.67 / 1616.07; prijs t.o.v. open 393.51 / 394.69; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 1 SOL na 1121 min, 1 SOL na 6 min, 0 SOL na 6 min, 0 SOL na 207 min, 0 SOL na 681 min
-
-**MCAT** — Mooncat · [DexScreener](https://dexscreener.com/solana/7EA8EStQETtKkqFW8rqj77nfkiLEniVag8Y2jNUTpump) · `7EA8EStQETtKkqFW8rqj77nfkiLEniVag8Y2jNUTpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 121.5× de open-prijs (1148 min na creatie), eind 24 u op 109.20× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.81 / 0.81; creator-verkopen 0 / 0; traders pool 25 / 120; organisch volume pool (SOL) 732.36 / 739.49; prijs t.o.v. open 93.66 / 94.63; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 10 SOL na 823 min, 10 SOL na 982 min, 10 SOL na 437 min, 10 SOL na 1363 min, 9 SOL na 1363 min
-
-**NTDA** — NTDA · [DexScreener](https://dexscreener.com/solana/FfK9fj41K98EuNZK2oQDRWuoyT9vb4d4jR412HcMpump) · `FfK9fj41K98EuNZK2oQDRWuoyT9vb4d4jR412HcMpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 39440.0× de open-prijs (1216 min na creatie), eind 24 u op 0.06× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 127 / 324; organisch volume pool (SOL) 13528.21 / 13589.76; prijs t.o.v. open 25129.75 / 25274.15; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 91 SOL na 305 min, 86 SOL na 305 min, 84 SOL na 305 min, 82 SOL na 305 min, 82 SOL na 305 min
-
-**JEANPHIL** — Jean Phil · [DexScreener](https://dexscreener.com/solana/GTBxUiw6wJdmmkCGZgRHLyYxqu1vG4KtRpeox6yDpump) · `GTBxUiw6wJdmmkCGZgRHLyYxqu1vG4KtRpeox6yDpump`
-
-- Tijdlijn: graduatie 51.2 min na creatie, piek in de eerste 24 u op 267.7× de open-prijs (1127 min na creatie), eind 24 u op 135.97×
-- Op +5 / +15 min: min. tot graduatie 51.09 / 51.09; unieke kopers curve 374 / 374; aandeel kopers ≥ 5 SOL 0.01 / 0.01; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.02 / 0.02; creator-verkopen 0 / 0; traders pool 440 / 737; organisch volume pool (SOL) 506.23 / 986.87; prijs t.o.v. open 2.57 / 2.23; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 79 SOL na 447 min, 77 SOL na 910 min, 75 SOL na 217 min, 69 SOL na 86 min, 68 SOL na 178 min
-
-**WSOS** — World Strategic Oil Supply🔥 · [DexScreener](https://dexscreener.com/solana/6dWQ7YC1k5sydiAij5bdc8F5jGjnE6TFN5GSoYvdpump) · `6dWQ7YC1k5sydiAij5bdc8F5jGjnE6TFN5GSoYvdpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 230.8× de open-prijs (1216 min na creatie), eind 24 u op 230.60× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.81 / 0.81; creator-verkopen 0 / 0; traders pool 40 / 46; organisch volume pool (SOL) 933.05 / 1022.10; prijs t.o.v. open 138.21 / 141.29; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 1 SOL na 900 min, 1 SOL na 20 min, 1 SOL na 1 min, 1 SOL na 16 min, 1 SOL na 5 min
-
-**AROS** — American Reserved Oil Supply · [DexScreener](https://dexscreener.com/solana/12PUFAUzgLj1onv3wSqX9ZagZBiaxofEjTd24CnQpump) · `12PUFAUzgLj1onv3wSqX9ZagZBiaxofEjTd24CnQpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 63034.0× de open-prijs (1216 min na creatie), eind 24 u op 63013.24× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 310 / 878; organisch volume pool (SOL) 15647.78 / 15714.95; prijs t.o.v. open 33486.83 / 33666.87; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 4 SOL na 594 min, 4 SOL na 592 min, 4 SOL na 609 min, 4 SOL na 611 min, 3 SOL na 604 min
-
-**VSOF** — VSOF · [DexScreener](https://dexscreener.com/solana/gBiiUhaYjAj4zCGSzKJa1S23ZgB9U7w8k3epbbQpump) · `gBiiUhaYjAj4zCGSzKJa1S23ZgB9U7w8k3epbbQpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 39105.4× de open-prijs (1216 min na creatie), eind 24 u op 39098.74× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 325 / 895; organisch volume pool (SOL) 11031.57 / 11095.75; prijs t.o.v. open 16744.03 / 16864.41; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 4 SOL na 483 min, 4 SOL na 474 min, 4 SOL na 472 min, 4 SOL na 485 min, 4 SOL na 489 min
-
-**WOFI** — WOFI · [DexScreener](https://dexscreener.com/solana/izUd2DKhKefxT44NCCNpVvaRb963MYeWFsubGVSpump) · `izUd2DKhKefxT44NCCNpVvaRb963MYeWFsubGVSpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 33154.5× de open-prijs (1216 min na creatie), eind 24 u op 33154.52× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 315 / 900; organisch volume pool (SOL) 9068.67 / 9177.37; prijs t.o.v. open 11308.51 / 11428.77; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 7 SOL na 1299 min, 7 SOL na 617 min, 4 SOL na 478 min, 4 SOL na 54 min, 4 SOL na 841 min
-
-**WOFI** — WOFI · [DexScreener](https://dexscreener.com/solana/F2reRYPQUPkagQy7t5VaZgtiHqXNFQ91ej15GRypump) · `F2reRYPQUPkagQy7t5VaZgtiHqXNFQ91ej15GRypump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 53665.6× de open-prijs (1001 min na creatie), eind 24 u op 0.06× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 309 / 907; organisch volume pool (SOL) 11090.86 / 11205.68; prijs t.o.v. open 16892.45 / 17046.72; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 16792 SOL na 1185 min, 1340 SOL na 1185 min, 496 SOL na 1185 min, 258 SOL na 1185 min, 158 SOL na 1186 min
-
-**USDF** — United States Dividend Fund  · [DexScreener](https://dexscreener.com/solana/DRMnFyekQiCTMrajtgsTycqp4ie6r1tZnh6qpAGjpump) · `DRMnFyekQiCTMrajtgsTycqp4ie6r1tZnh6qpAGjpump`
-
-- Tijdlijn: graduatie 0.8 min na creatie, piek in de eerste 24 u op 19.8× de open-prijs (1124 min na creatie), eind 24 u op 19.64×
-- Op +5 / +15 min: min. tot graduatie 0.95 / 0.95; unieke kopers curve 16 / 16; aandeel kopers ≥ 5 SOL 0.12 / 0.12; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.94 / 0.98; creator-verkopen 0 / 0; traders pool 61 / 64; organisch volume pool (SOL) 34.57 / 46.45; prijs t.o.v. open 1.01 / 0.79; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 15 SOL na 1327 min, 14 SOL na 134 min, 13 SOL na 134 min, 12 SOL na 91 min, 11 SOL na 1193 min
-
-**WOFI** — WOFI · [DexScreener](https://dexscreener.com/solana/RdSJAdbWBBgKejj8GDzmqcQPdpnhMPYBTNog77Qpump) · `RdSJAdbWBBgKejj8GDzmqcQPdpnhMPYBTNog77Qpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 39514.8× de open-prijs (904 min na creatie), eind 24 u op 0.06× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 315 / 912; organisch volume pool (SOL) 5266.35 / 5632.70; prijs t.o.v. open 3816.65 / 4206.19; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 13968 SOL na 1068 min (creator), 1337 SOL na 1070 min, 505 SOL na 1070 min, 265 SOL na 1070 min, 163 SOL na 1070 min
-
-**fomo** — Fomo · [DexScreener](https://dexscreener.com/solana/UNHwuKaSGKP7qmYMFS5aSJdqifHj6CiXWvtoeYNpump) · `UNHwuKaSGKP7qmYMFS5aSJdqifHj6CiXWvtoeYNpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 123.4× de open-prijs (1216 min na creatie), eind 24 u op 123.41× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.81 / 0.81; creator-verkopen 0 / 0; traders pool 19 / 32; organisch volume pool (SOL) 760.00 / 770.31; prijs t.o.v. open 100.08 / 101.34; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 1 SOL na 695 min, 1 SOL na 397 min, 1 SOL na 651 min, 1 SOL na 6 min, 0 SOL na 1360 min
-
-**WOTF** — WOTF · [DexScreener](https://dexscreener.com/solana/Zd8xgiFB1AGYTmZ78MS5APSXmDTNTLUJKuSGUD7pump) · `Zd8xgiFB1AGYTmZ78MS5APSXmDTNTLUJKuSGUD7pump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 37887.8× de open-prijs (941 min na creatie), eind 24 u op 0.05× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 136 / 386; organisch volume pool (SOL) 11099.74 / 11348.25; prijs t.o.v. open 16821.06 / 17205.47; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 14933 SOL na 1114 min, 770 SOL na 1114 min, 274 SOL na 1114 min, 140 SOL na 1114 min, 85 SOL na 1114 min
-
-**PAID** — Paid · [DexScreener](https://dexscreener.com/solana/98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump) · `98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump`
-
-- Tijdlijn: graduatie 1.8 min na creatie, piek in de eerste 24 u op 527.1× de open-prijs (295 min na creatie), eind 24 u op 256.56×
-- Op +5 / +15 min: min. tot graduatie 2.07 / 2.07; unieke kopers curve 226 / 226; aandeel kopers ≥ 5 SOL 0.00 / 0.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.16 / 0.16; creator-verkopen 0 / 0; traders pool 2171 / 3141; organisch volume pool (SOL) 4530.71 / 7918.80; prijs t.o.v. open 9.73 / 5.70; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 373 SOL na 346 min, 272 SOL na 346 min, 270 SOL na 1406 min, 260 SOL na 1406 min, 255 SOL na 1406 min
-
-**MINESTOCK** — MINESTOCK · [DexScreener](https://dexscreener.com/solana/9a8PquAAAoo51TABtasHSXMbm3CPSRnkxZfn6F8Dpump) · `9a8PquAAAoo51TABtasHSXMbm3CPSRnkxZfn6F8Dpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 118.4× de open-prijs (1216 min na creatie), eind 24 u op 76.41× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.81 / 0.81; creator-verkopen 0 / 0; traders pool 59 / 136; organisch volume pool (SOL) 612.52 / 616.57; prijs t.o.v. open 68.65 / 69.65; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 1 SOL na 891 min, 0 SOL na 6 min, 0 SOL na 4 min, 0 SOL na 279 min, 0 SOL na 1059 min
-
-**USDF** — United States Dividend Fund · [DexScreener](https://dexscreener.com/solana/Ufwjn7mtvgUfRG4nMSxRS84ewXHzdHLJRGzMDBMpump) · `Ufwjn7mtvgUfRG4nMSxRS84ewXHzdHLJRGzMDBMpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 48271.8× de open-prijs (1216 min na creatie), eind 24 u op 0.05× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.79 / 0.79; creator-verkopen 0 / 0; traders pool 305 / 1950; organisch volume pool (SOL) 12025.88 / 12104.73; prijs t.o.v. open 19879.18 / 20028.75; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 13 SOL na 594 min, 11 SOL na 998 min, 10 SOL na 1190 min, 10 SOL na 1208 min, 9 SOL na 1155 min
-
-**WSOS** — World Strategic Oil Supply · [DexScreener](https://dexscreener.com/solana/sEkKnqHR8KKrjMjFqurrzdyTn4hiivmM8JHKWmopump) · `sEkKnqHR8KKrjMjFqurrzdyTn4hiivmM8JHKWmopump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 296.6× de open-prijs (1215 min na creatie), eind 24 u op 296.47× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.80 / 0.80; creator-verkopen 0 / 0; traders pool 394 / 1352; organisch volume pool (SOL) 1155.44 / 1165.04; prijs t.o.v. open 212.65 / 214.16; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 1 SOL na 2 min, 0 SOL na 433 min, 0 SOL na 433 min, 0 SOL na 433 min, 0 SOL na 433 min
-
-**WEPE** — WEPE · [DexScreener](https://dexscreener.com/solana/EL6Urf21PoPesMrbYSRc1yqqHjhk6DGUR63VZDmmpump) · `EL6Urf21PoPesMrbYSRc1yqqHjhk6DGUR63VZDmmpump`
-
-- Tijdlijn: graduatie 0.0 min na creatie, piek in de eerste 24 u op 146.0× de open-prijs (681 min na creatie), eind 24 u op 139.98× — graduatie in de create-slot
-- Op +5 / +15 min: min. tot graduatie 0.00 / 0.00; unieke kopers curve 1 / 1; aandeel kopers ≥ 5 SOL 1.00 / 1.00; netto instroom curve (SOL) 85.01 / 85.01; insider-aandeel 0.81 / 0.81; creator-verkopen 0 / 0; traders pool 106 / 239; organisch volume pool (SOL) 843.29 / 852.29; prijs t.o.v. open 120.40 / 122.50; split-buyer-events 0 / 0
-- Grootste verkopers (eerste 24 u): 14 SOL na 242 min, 14 SOL na 882 min, 14 SOL na 242 min, 13 SOL na 683 min, 13 SOL na 242 min
+| min. tot graduatie | 0.00 (n=100) | 0.00 (n=87) |
+| unieke kopers curve | 1.00 (n=100) | 9 (n=87) |
+| aandeel kopers ≥ 5 SOL | 1.00 (n=100) | 0.50 (n=87) |
+| netto instroom curve (SOL) | 85.01 (n=100) | 85.01 (n=87) |
+| insider-aandeel | 0.80 (n=100) | 0.47 (n=87) |
+| creator-verkopen | 0.00 (n=100) | 0 (n=87) |
+| traders pool | 884.00 (n=100) | 1690 (n=87) |
+| organisch volume pool (SOL) | 5064.45 (n=100) | 5260.98 (n=87) |
+| prijs t.o.v. open | 1366.02 (n=100) | 5.95 (n=87) |
+| split-buyer-events | 0.00 (n=100) | 0 (n=87) |
 
