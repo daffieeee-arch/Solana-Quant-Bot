@@ -1,7 +1,11 @@
 """Descriptive summary of the lab event dataset (input for the weekly checkpoint report).
 
-Usage: python summary.py <chunks_dir> [--json out.json]
+Usage: python summary.py <chunks_dir> [--json out.json] [--bounded]
 Only chunks whose `_manifest.json` has status "complete" are used.
+
+--bounded (large datasets, bounded memory and spill): rows are not de-duplicated (continuity.py
+counts duplicate events per chunk) and quantiles are t-digest estimates (approx_quantile). Counts,
+distinct counts and sums stay exact.
 """
 
 import argparse
@@ -30,13 +34,21 @@ def files(dirs, table):
     return sorted(f for d in dirs for f in glob.glob(os.path.join(d, table, "*.parquet")))
 
 
+BOUNDED = False
+
+
 def view(con, name, paths):
     if not paths:
         return False
     lit = "[" + ",".join("'" + p.replace("'", "''") + "'" for p in paths) + "]"
+    dedup = "" if BOUNDED else "DISTINCT ON (signature, outer_ix, inner_ix) "
     con.execute(f"""CREATE OR REPLACE TEMP VIEW {name} AS
-      SELECT DISTINCT ON (signature, outer_ix, inner_ix) * FROM read_parquet({lit}, union_by_name = true)""")
+      SELECT {dedup}* FROM read_parquet({lit}, union_by_name = true)""")
     return True
+
+
+def med(x, q=0.5):
+    return f"approx_quantile({x}, {q})" if BOUNDED else (f"median({x})" if q == 0.5 else f"quantile_cont({x}, {q})")
 
 
 def one(con, sql):
@@ -49,7 +61,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
     ap.add_argument("--json")
+    ap.add_argument("--bounded", action="store_true", help="no de-duplication, approximate quantiles (large datasets)")
     a = ap.parse_args()
+    global BOUNDED
+    BOUNDED = a.bounded
 
     chunks = chunk_dirs(a.root)
     dirs = [d for _, d in chunks]
@@ -59,8 +74,11 @@ def main():
     tmp = os.environ.get("LAB_DUCKDB_TMP")
     if tmp:
         con.execute(f"SET temp_directory = '{tmp}'")
+        con.execute(f"SET max_temp_directory_size = '{os.environ.get('LAB_DUCKDB_TMP_MAX', '2GB')}'")
+    con.execute("SET preserve_insertion_order = false")
     sol = ", ".join(f"'{q}'" for q in SOL_QUOTES)
     out = {
+        "mode": "bounded (no de-duplication; approximate quantiles)" if BOUNDED else "exact",
         "chunks": len(chunks),
         "slots": sum(m["slot_end_exclusive"] - m["slot_start"] for m, _ in chunks),
         "extract_seconds": round(sum(m["elapsed_seconds"] for m, _ in chunks)),
@@ -79,14 +97,14 @@ def main():
             count(DISTINCT mint) AS mints_traded, count(DISTINCT "user") AS traders,
             round(sum(COALESCE(quote_amount, sol_amount)) FILTER (WHERE COALESCE(quote_mint, '{SOL_QUOTES[0]}') IN ({sol})) / {LAMPORTS}, 1) AS sol_volume,
             count(*) FILTER (WHERE COALESCE(quote_mint, '{SOL_QUOTES[0]}') NOT IN ({sol})) AS non_sol_quote_trades,
-            median(fee_basis_points) AS fee_bps_median, median(creator_fee_basis_points) AS creator_fee_bps_median,
+            {med('fee_basis_points')} AS fee_bps_median, {med('creator_fee_basis_points')} AS creator_fee_bps_median,
             count(*) FILTER (WHERE mayhem_mode) AS mayhem_trades
             FROM trades""")
         out["pump_trades_per_mint"] = one(con, """SELECT quantile_disc(n, 0.5) AS p50, quantile_disc(n, 0.9) AS p90,
             quantile_disc(n, 0.99) AS p99, max(n) AS max FROM (SELECT mint, count(*) AS n FROM trades GROUP BY 1)""")
-        out["pump_costs"] = one(con, f"""SELECT median(priority_fee) / {LAMPORTS} AS priority_fee_sol_p50,
-            quantile_cont(priority_fee, 0.9) / {LAMPORTS} AS priority_fee_sol_p90,
-            avg((jito_tip > 0)::INT) AS share_with_jito_tip, median(jito_tip) FILTER (WHERE jito_tip > 0) / {LAMPORTS} AS jito_tip_sol_p50,
+        out["pump_costs"] = one(con, f"""SELECT {med('priority_fee')} / {LAMPORTS} AS priority_fee_sol_p50,
+            {med('priority_fee', 0.9)} / {LAMPORTS} AS priority_fee_sol_p90,
+            avg((jito_tip > 0)::INT) AS share_with_jito_tip, {med('jito_tip')} FILTER (WHERE jito_tip > 0) / {LAMPORTS} AS jito_tip_sol_p50,
             avg((tx_version = 'v1')::INT) AS share_v1_tx
             FROM trades""")
     if view(con, "creates", files(dirs, "pump/CreateEvent")):
@@ -95,7 +113,7 @@ def main():
         out["pump_completes"] = one(con, "SELECT count(*) AS graduations FROM completes")
     if view(con, "amm_buys", files(dirs, "pump_amm/BuyEvent")) and view(con, "amm_sells", files(dirs, "pump_amm/SellEvent")):
         out["pumpswap"] = one(con, """SELECT (SELECT count(*) FROM amm_buys) AS buys, (SELECT count(*) FROM amm_sells) AS sells,
-            (SELECT count(DISTINCT pool) FROM (SELECT pool FROM amm_buys UNION ALL SELECT pool FROM amm_sells)) AS pools""")
+            (SELECT count(*) FROM (SELECT DISTINCT pool FROM amm_buys UNION SELECT DISTINCT pool FROM amm_sells)) AS pools""")
     failed = files(dirs, "failed_txs")
     if failed:
         lit = "[" + ",".join(f"'{p}'" for p in failed) + "]"
