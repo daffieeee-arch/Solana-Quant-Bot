@@ -4,6 +4,8 @@
 #      then the file is deleted right before the build.
 #   2. validate: the counts against the old store, plus the backtest and paper tests on the new
 #      store. test_reversed_fills is check b: exact replay of reversed fills, fee tier included.
+#   2b. week1: the week-1 checks (continuity on 1033-1039, summary). They run
+#       $LAB/logs/week1-checks.sh, which the chain waits for (prepared separately).
 #   3. f7rev: F7 in reversed pools at 0.5/1/2 SOL, d 1/2 (check a, plus the c-e tables).
 #   4. full: the families v2 run.
 # Each step must pass, and a failure stops the chain. A rerun skips the steps already done.
@@ -48,10 +50,14 @@ if ! done_ build; then
   gate "store build"
   rm -f "$STORE" "$STORE.wal"
   log "old dev2.duckdb deleted; building"
+  # Measured 2026-10-11 (coordinator OK): 16 pool slices, DuckDB 3GB and spill in /dev/shm capped
+  # at 2GB keep disk writes at the store itself (~1.7 GB per chunk); a chunk above 3.5 GB pauses.
+  mkdir -p /dev/shm/lab-store-build
   systemd-run --user --scope -q -p MemoryMax=7G -p CPUQuota=200% -- \
-    env LAB_SPILL_DIR="$LAB/tmp-duckdb" LAB_SPILL_MAX=15GB LAB_DUCKDB_MEM=3GB \
+    env LAB_SPILL_DIR=/dev/shm/lab-store-build LAB_SPILL_MAX=2GB LAB_DUCKDB_MEM=3GB LAB_POOL_PARTS=16 \
+    LAB_BUILD_MAX_CHUNK_GB=3.5 LAB_BUILD_WRITE_ACTION=pause \
     nice -n 10 "$PY" -m backtest.store dev --out "$STORE" >> "$LOG" 2>&1 || fail "store build"
-  rm -rf "$LAB/tmp-duckdb"
+  rm -rf /dev/shm/lab-store-build
   mark build
 fi
 
@@ -64,6 +70,13 @@ if ! done_ validate; then
     "$PY" -m pytest -q -p no:cacheprovider backtest/tests paper/tests >> "$LOG" 2>&1 || fail "tests on the new store"
   rm -rf /dev/shm/lab-chain-tests
   mark validate
+fi
+
+if ! done_ week1; then
+  for i in $(seq 72); do [[ -e $LAB/logs/week1-checks.sh ]] && break; log "waiting for $LAB/logs/week1-checks.sh"; sleep 300; done
+  [[ -e $LAB/logs/week1-checks.sh ]] || fail "week1-checks.sh not provided within 6 h"
+  bash "$LAB/logs/week1-checks.sh" >> "$LOG" 2>&1 || fail "week-1 checks"
+  mark week1
 fi
 
 run() {  # run_id, then backtest.tournament arguments

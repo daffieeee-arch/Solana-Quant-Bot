@@ -5,6 +5,8 @@
 
 check requires:
 - the new store tiles its period with every epoch present (blocks, curve and pool rows, ms/slot);
+- curve and pool rows in storage order are sorted per insert (one insert per chunk, pool slices in
+  pool order): at most one order break per chunk, so the range buckets stay valid;
 - on the epochs of the old store: the same blocks per epoch, the same curve rows for mints created
   in the old period (the new store also has trades of mints created before it), and pool rows at
   least the old count and at most 2% more (pools first seen earlier can be classified now).
@@ -14,6 +16,8 @@ import json
 import sys
 
 import duckdb
+import pyarrow as pa
+import pyarrow.compute as pc
 
 EPOCH = 432_000
 POOL_TOLERANCE = 0.02
@@ -36,6 +40,24 @@ def counts(path, mint_from=None):
     out["pool_classes"] = dict(con.execute("SELECT quote_class, count(*) FROM pools GROUP BY 1").fetchall())
     con.close()
     return out
+
+
+def order_breaks(path, table, key):
+    """Rows whose (key, slot) is below the previous row's, in storage order (streamed)."""
+    con = _con(path)
+    con.execute("SET threads TO 1; SET preserve_insertion_order = true")
+    prev, breaks = None, 0
+    for b in con.execute(f"SELECT {key}, slot FROM {table}").fetch_record_batch(2_000_000):
+        k, s = b.column(0), b.column(1).cast(pa.int64())
+        if prev is not None:
+            k = pa.concat_arrays([pa.array([prev[0]], k.type), k])
+            s = pa.concat_arrays([pa.array([prev[1]], pa.int64()), s])
+        a, b_, sa, sb = k.slice(1), k.slice(0, len(k) - 1), s.slice(1), s.slice(0, len(s) - 1)
+        lt = pc.or_(pc.less(a, b_), pc.and_(pc.equal(a, b_), pc.less(sa, sb)))
+        breaks += pc.sum(lt).as_py() or 0
+        prev = (k[-1].as_py(), s[-1].as_py())
+    con.close()
+    return breaks
 
 
 def check(new_path, before):
@@ -65,6 +87,11 @@ def check(new_path, before):
                 bad.append(f"epoch {e}: pool rows {p} outside [old {op}, +{POOL_TOLERANCE:.0%}]")
         lines.append(f"| {e} | {ms} | {b} | {c} | {p} | {'' if ob is None else ob} | {'' if oc is None else oc} | "
                      f"{nc if ob is not None else ''} | {'' if op is None else op} |")
+    for table, key in (("curve", "mint"), ("pool", "pool")):
+        n = order_breaks(new_path, table, key)
+        lines.append(f"Order breaks in {table} (storage order): {n} (at most {m['chunks']}).")
+        if n > m["chunks"]:
+            bad.append(f"{table}: {n} order breaks > {m['chunks']} chunks (sorted inserts not preserved)")
     lines += ["", f"Pool classes: {new['pool_classes']} (old: {before['pool_classes']})", "",
               "Result: " + ("**PASS**" if not bad else "**FAIL**")] + [f"- {x}" for x in bad]
     return not bad, "\n".join(lines) + "\n"
