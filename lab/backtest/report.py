@@ -30,9 +30,17 @@ FAMILIES = ("F7", "F1", "F6", "S1", "M1")  # families with an N2 control; N1, N3
 
 def _connect():
     con = duckdb.connect()
-    con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'; "
-                f"SET max_temp_directory_size = '{SPILL_MAX}'")
+    con.execute(f"SET memory_limit = '{os.environ.get('LAB_REPORT_MEM', '1GB')}'; SET threads TO 2; "
+                f"SET temp_directory = '{SPILL_DIR}'; SET max_temp_directory_size = '{SPILL_MAX}'")
+    con.execute("SET preserve_insertion_order = false")
     return con
+
+
+def _partitions(con, src):
+    """(family, size_sol, d) slices of a run. Every statistic is per group within one slice, so
+    computing slice by slice gives the same result in bounded memory (tens of millions of rows)."""
+    return [f"family = '{f}' AND size_sol = {s!r} AND d = {d}"
+            for f, s, d in con.execute(f"SELECT DISTINCT family, size_sol, d FROM {src} ORDER BY ALL").fetchall()]
 
 
 def _boot(sums, cnts, n=1000, seed=7):
@@ -97,9 +105,10 @@ def summarize(results, cfg, con=None):
     # Farming split (F6): organic and flagged pools, plus both together as 'all'.
     src = f"(SELECT * FROM {base_rel} UNION ALL BY NAME SELECT * REPLACE ('all' AS farm) FROM {base_rel} WHERE farm IN ('organic', 'flagged'))"
     out, daily, daily_pnl = [], {}, {}
-    for name in SCENARIOS:
+    parts = _partitions(con, raw)
+    for name, part in ((n, p) for n in SCENARIOS for p in parts):
         pnl, ret = settle_sql(Scenario.from_cfg(name, cfg))
-        con.execute(f"CREATE OR REPLACE TEMP VIEW v AS SELECT *, {pnl} AS pnl, {ret} AS ret FROM {src}")
+        con.execute(f"CREATE OR REPLACE TEMP VIEW v AS SELECT *, {pnl} AS pnl, {ret} AS ret FROM {src} WHERE {part}")
         cols = ["skipped", "n", "filled", "mean_ret", "median_ret", "win_rate", "mean_pnl_sol", "total_pnl_sol",
                 "hist_drift", "drift_excluded", "median_cost", "stop_loss_share", "stop_loss_mean", "reverted_router", "reverted_direct",
                 "sells_dropped", "seed_pool", "cf_graduation", "days"]
@@ -145,6 +154,7 @@ def summarize(results, cfg, con=None):
                                                    np.array([dp[x][1] for x in sorted(dp)], dtype=float))
             o["verdict"] = verdict(o)
             out.append(o)
+    out.sort(key=lambda o: (SCENARIOS.index(o["scenario"]), *[str(o[k]) for k in KEYS]))  # deterministic order
     # N2 comparison: same variant / size / d / tau / scenario, CI by resampling days jointly.
     idx = {(o["scenario"], *[o[k] for k in KEYS]): o for o in out}
     for o in out:
@@ -259,14 +269,16 @@ def overlay_effects(results, cfg, con=None):
         return []
     # One trigger and configuration: the base row and its overlay rows share this key (pk: pool or '').
     key = "family, variant, size_sol, d, tau, " + ("q, " if "q" in have else "") + "mint, t, pk"
-    rows = con.execute(f"""
-        WITH r AS (SELECT *, COALESCE(pool, '') AS pk, {pnl} AS pnl FROM {src}),
-        b AS (SELECT {key}, pnl FROM r WHERE overlay = 'none' AND NOT skipped),
-        o AS (SELECT {key}, overlay, day, exit_reason = 'o7_veto' AS vetoed,
-                     CASE WHEN exit_reason = 'o7_veto' THEN 0 ELSE pnl END AS pnl
-              FROM r WHERE overlay <> 'none')
-        SELECT family, size_sol, d, overlay, day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(vetoed::INT)
-        FROM o JOIN b USING ({key}) WHERE o.pnl IS NOT NULL GROUP BY ALL""").fetchall()
+    rows = []
+    for part in _partitions(con, f"(SELECT * FROM {src} WHERE overlay <> 'none')"):
+        rows += con.execute(f"""
+            WITH r AS (SELECT *, COALESCE(pool, '') AS pk, {pnl} AS pnl FROM {src} WHERE {part}),
+            b AS (SELECT {key}, pnl FROM r WHERE overlay = 'none' AND NOT skipped),
+            o AS (SELECT {key}, overlay, day, exit_reason = 'o7_veto' AS vetoed,
+                         CASE WHEN exit_reason = 'o7_veto' THEN 0 ELSE pnl END AS pnl
+                  FROM r WHERE overlay <> 'none')
+            SELECT family, size_sol, d, overlay, day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(vetoed::INT)
+            FROM o JOIN b USING ({key}) WHERE o.pnl IS NOT NULL GROUP BY ALL""").fetchall()
     groups = {}
     for fam, size, d, ov, day, dsum, n, nveto in rows:
         g = groups.setdefault((fam, size, d, ov), {"days": {}, "n": 0, "veto": 0})
