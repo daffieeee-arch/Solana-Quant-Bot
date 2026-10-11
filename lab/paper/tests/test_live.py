@@ -1,0 +1,147 @@
+"""LiveFeed over recorder segments gives exactly the replay's events.
+
+The fixture cuts 4,000 slots of an OF1 chunk into four segments in the recorder's layout (the
+recorder writes the extractor's own rows, so OF1 rows are what it would have written), with the
+store's tokens and pools as the snapshot and the store's farmer history of the day before. The
+events must equal ReplayFeed's over the same slots: venue, key, position and the whole leg.
+"""
+
+import glob
+import json
+import os
+
+import pytest
+
+from backtest import data, streams
+from backtest.store import DAY_MS
+from paper.feed import Event, ReplayFeed
+from paper.live import FarmerFlags, LiveFeed, segment_dirs
+
+STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
+LO, HI, SEG = 450700000, 450702000, 500
+
+
+def make_segments(chunk, root, lo=LO, hi=HI, seg=SEG, usage=True):
+    """Copy every table of the chunk for [lo, hi) into segments of `seg` slots under root."""
+    con = data.connect(threads=1, memory="700MB")
+    tables = sorted({os.path.relpath(os.path.dirname(f), chunk[2]) for f in glob.glob(os.path.join(chunk[2], "**", "*.parquet"),
+                                                                                       recursive=True)})
+    for seq, a in enumerate(range(lo, hi, seg)):
+        b = min(a + seg, hi)
+        d = os.path.join(root, "segments", f"{seq:09d}")
+        for t in tables:
+            src = data.parquet(t, [chunk], missing_ok=True)
+            n = con.execute(f"SELECT count(*) FROM {src} WHERE slot >= {a} AND slot < {b}").fetchone()[0]
+            if n:
+                os.makedirs(os.path.join(d, t), exist_ok=True)
+                con.execute(f"COPY (SELECT * FROM {src} WHERE slot >= {a} AND slot < {b}) "
+                            f"TO '{os.path.join(d, t, 'part-0.parquet')}' (FORMAT parquet)")
+        meta = {"seq": seq, "first_slot": a, "last_slot": b - 1, "complete": True,
+                "usage": [{"minute": 29_000_000 + seq, "stream": "watchlist_tx", "bytes": 1000 * (seq + 1), "messages": 10}]
+                if usage else []}
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "_segment.json"), "w") as f:
+            json.dump(meta, f)
+    con.close()
+
+
+@pytest.fixture(scope="module")
+def setup(tmp_path_factory):
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    if not chunk or not os.path.exists(STORE):
+        pytest.skip("dev store or its chunk not available")
+    root = str(tmp_path_factory.mktemp("rec"))
+    make_segments(chunk[0], root)
+    con = streams.open_store(STORE, threads=2, memory="1GB")
+    a, b = chunk[0][0], chunk[0][1]
+    # The store's farmer window of this chunk (store.build: from the chunk's block times).
+    ms = con.execute(f"""SELECT (max(block_time) - min(block_time)) * 1000.0 / greatest(max(slot) - min(slot), 1)
+                         FROM blocks WHERE slot >= {a} AND slot < {b}""").fetchone()[0]
+    h24 = round(DAY_MS / ms)
+    # The farmer flag of a trade needs only its own wallet's history in its pool: seed those pairs.
+    con.execute(f"""CREATE TEMP TABLE want_pairs AS SELECT DISTINCT pool, trader FROM pool
+                    WHERE slot >= {LO} AND slot < {HI} AND kind IN ('buy', 'sell')""")
+    hist = con.execute(f"""SELECT pool, trader, slot, token_buy, token_amount FROM pool SEMI JOIN want_pairs USING (pool, trader)
+                           WHERE kind IN ('buy', 'sell') AND slot >= {LO - h24} AND slot < {LO}
+                           ORDER BY slot, tx_index, outer_ix, inner_ix""").fetchall()
+    replay = [key(e) for e in ReplayFeed(STORE, LO, HI, con=con).events()]
+    con.close()
+    return root, h24, hist, replay
+
+
+def live_events(root, h24, hist, **kw):
+    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB", **kw)
+    feed.farmers.seed(hist)
+    return feed, [key(e) for e in feed.events()]
+
+
+def key(e):
+    return (e.venue, e.key, e.order, e.block_time, e.leg)
+
+
+def test_live_events_equal_the_replay(setup):
+    root, h24, hist, replay = setup
+    feed, live = live_events(root, h24, hist)
+    assert len(live) == len(replay) > 1000
+    diffs = [(a, b) for a, b in zip(live, replay) if a != b]
+    assert not diffs, diffs[:3]
+    assert feed.stats == {"segments": 4, "late_rows": 0, "unknown_pools": 0}
+    assert sum(1 for k in live if k[0] == "pool" and k[4].farmer) > 0  # the farmer flag was exercised
+
+
+def test_segment_boundaries_and_order_do_not_matter(setup, tmp_path):
+    """Segments of another size give the same events (a slot is never released early)."""
+    root, h24, hist, replay = setup
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]][0]
+    make_segments(chunk, str(tmp_path), seg=173, usage=False)
+    _, live = live_events(str(tmp_path), h24, hist)
+    assert live == replay
+
+
+def test_usage_rows_reach_the_engine(setup):
+    root, h24, hist, _ = setup
+    feed, _ = live_events(root, h24, hist)
+    usage = feed.drain_usage()
+    assert [u["bytes"] for u in usage] == [1000, 2000, 3000, 4000] and feed.drain_usage() == []
+
+
+def test_new_pools_are_classified_like_the_store(setup):
+    """A pool created inside the segments is classified from its CreatePoolEvent as the store does."""
+    root, h24, hist, _ = setup
+    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB")
+    created = []
+    for _, seg, meta in segment_dirs(root):
+        f = glob.glob(os.path.join(seg, "pump_amm", "CreatePoolEvent", "*.parquet"))
+        if f:
+            created += [r[0] for r in feed.con.execute(f"SELECT pool FROM read_parquet('{f[0]}')").fetchall()]
+    if not created:
+        pytest.skip("no pool created in the fixture slots")
+    snapshot = {p: feed.pools.get(p) for p in created}
+    for p in created:  # forget them, as if they were created after the snapshot
+        feed.pools.pop(p, None)
+        feed.pool_class.pop(p, None)
+    feed.con.execute("DELETE FROM live_pools WHERE pool IN (SELECT unnest(?))", [created])
+    list(feed.events())
+    for p in created:
+        assert feed.pools.get(p) == snapshot[p], p
+
+
+def test_farmer_flags_window():
+    f = FarmerFlags()
+    f.add("P", "W", 100, True, 10)
+    f.add("P", "W", 101, False, 10)
+    assert f.flag("P", "W", 102, 1000)  # two trades, net 0
+    assert not f.flag("P", "W", 101, 1000)  # same-slot trades do not count: one earlier trade
+    assert not f.flag("P", "W", 1101, 1000)  # slot 100 left the window: one trade
+    assert not f.flag("P", "X", 102, 1000)
+
+
+def test_live_feed_never_returns_unfinished_segments(tmp_path):
+    d = tmp_path / "segments" / "000000000"
+    d.mkdir(parents=True)
+    (d / "_segment.json").write_text(json.dumps({"seq": 0, "first_slot": 1, "last_slot": 2, "complete": False}))
+    assert segment_dirs(str(tmp_path)) == []
+
+
+def test_event_type_is_shared():
+    assert Event.__module__ == "paper.feed"
