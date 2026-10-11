@@ -62,13 +62,19 @@ def trades_sql(lo, hi):
         AND p.quote_class IN ('sol', 'reversed') AND NOT COALESCE(p.mayhem, false)"""
 
 
+BUCKETS = 8  # per-key aggregation in hash buckets of the key: bounded working set
+
+
 def daily_cases(con, day, lo, hi):
-    con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE d AS
-      SELECT key, any_value(mint) AS mint, count(*) AS trades, count(DISTINCT trader) AS traders, sum(sol) / {SOL} AS volume_sol,
-             arg_min(px, slot * 1048576 + tx_index) AS p_first, arg_max(px, slot * 1048576 + tx_index) AS p_last,
-             max(px) AS p_max, arg_max(slot, px) AS peak_slot, min(slot) AS first_slot, max(slot) AS last_slot
-      FROM ({trades_sql(lo, hi)}) GROUP BY key""")
+    con.execute("""CREATE OR REPLACE TEMP TABLE d (key VARCHAR, mint VARCHAR, trades BIGINT, traders BIGINT, volume_sol DOUBLE,
+                   p_first DOUBLE, p_last DOUBLE, p_max DOUBLE, peak_slot BIGINT, first_slot BIGINT, last_slot BIGINT)""")
+    for b in range(BUCKETS):
+        con.execute(f"""
+          INSERT INTO d
+          SELECT key, any_value(mint), count(*), count(DISTINCT trader), sum(sol) / {SOL},
+                 arg_min(px, slot * 1048576 + tx_index), arg_max(px, slot * 1048576 + tx_index),
+                 max(px), arg_max(slot, px), min(slot), max(slot)
+          FROM ({trades_sql(lo, hi)}) WHERE hash(key) % {BUCKETS} = {b} GROUP BY key""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sel AS
       SELECT * FROM (
@@ -86,15 +92,20 @@ def weekly_cases(con, lo, hi, clock):
     """Graduations in [lo, hi - 7 d): market cap at + 7 d and the peak inside those 7 days."""
     n7 = clock.slots(7 * DAY_MS, lo)
     con.execute(f"CREATE OR REPLACE TEMP TABLE g AS {runners.grads_sql(lo, hi - n7)}")
-    con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE w AS
-      SELECT g.mint, g.pool, g.open_slot, g.create_slot, g.grad_in_create, g.p_open, m.supply, m.symbol, m.name,
-             max(e.e::DOUBLE / e.b) AS p_peak, arg_max(e.slot, e.e::DOUBLE / e.b) AS peak_slot,
-             arg_max(e.e::DOUBLE / e.b, e.slot::BIGINT * 1048576 + e.tx_index) AS p_7d,
-             sum(e.sol_amount) / {SOL} AS volume_7d, count(DISTINCT e.trader) AS traders_7d
-      FROM g JOIN mints m USING (mint) JOIN pool e ON e.pool = g.pool AND e.kind IN ('buy', 'sell') AND e.b > 0
-        AND e.slot >= g.open_slot AND e.slot < g.open_slot + {n7}
-      GROUP BY ALL""")
+    con.execute("""CREATE OR REPLACE TEMP TABLE w (mint VARCHAR, pool VARCHAR, open_slot BIGINT, create_slot BIGINT, grad_in_create BOOLEAN,
+                   p_open DOUBLE, supply BIGINT, symbol VARCHAR, name VARCHAR, p_peak DOUBLE, peak_slot BIGINT, p_7d DOUBLE,
+                   volume_7d DOUBLE, traders_7d BIGINT)""")
+    for b in range(BUCKETS):
+        con.execute(f"""
+          INSERT INTO w
+          SELECT g.mint, g.pool, g.open_slot, g.create_slot, g.grad_in_create, g.p_open, m.supply, m.symbol, m.name,
+                 max(e.e::DOUBLE / e.b), arg_max(e.slot, e.e::DOUBLE / e.b),
+                 arg_max(e.e::DOUBLE / e.b, e.slot::BIGINT * 1048576 + e.tx_index),
+                 sum(e.sol_amount) / {SOL}, count(DISTINCT e.trader)
+          FROM g JOIN mints m USING (mint) JOIN pool e ON e.pool = g.pool AND e.kind IN ('buy', 'sell') AND e.b > 0
+            AND e.slot >= g.open_slot AND e.slot < g.open_slot + {n7}
+          WHERE hash(g.pool) % {BUCKETS} = {b}
+          GROUP BY ALL""")
     return con.execute(f"""
       SELECT * FROM (
         SELECT 'stayers_7d' AS list, row_number() OVER (ORDER BY p_7d * supply DESC) AS rank, w.*,

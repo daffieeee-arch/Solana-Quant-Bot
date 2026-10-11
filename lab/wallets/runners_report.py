@@ -38,8 +38,14 @@ def base_rates(con):
       FROM r GROUP BY 1 ORDER BY 1""").fetchall()
 
 
+def target_col(decision, target):
+    """Open-based targets (runner3/runner10) are one column; forward targets (fwd3/fwd10) are per decision."""
+    return f"{decision}_{target}" if target.startswith("fwd") else target
+
+
 def lifts(con, decision, target):
     out = []
+    target = target_col(decision, target)
     for f in FEATURES:
         col = f"{decision}_{f}"
         rows = con.execute(f"""
@@ -88,6 +94,7 @@ def fit_logistic(X, y, l2=1.0, steps=25):
 
 
 def walk_forward(con, decision, target):
+    target = target_col(decision, target)
     cols = [f"{decision}_{f}" for f in FEATURES]
     rows = con.execute(f"SELECT day, {', '.join(cols)}, {target}::INT FROM r WHERE NOT grad_in_create ORDER BY day").fetchall()
     days = sorted({r[0] for r in rows})
@@ -111,9 +118,10 @@ def walk_forward(con, decision, target):
 
 
 def examples(con, decision, target, n=5):
+    target = target_col(decision, target)
     hype = f"{decision}_buyers DESC, {decision}_organic_sol DESC"
     cols = f"symbol, name, mint, day, {decision}_buyers AS buyers, {decision}_organic_sol AS organic_sol, " \
-           f"{decision}_insider_share AS insider_share, {decision}_px_mult AS px_mult, max_mult, end_mult"
+           f"{decision}_insider_share AS insider_share, {decision}_px_mult AS px_mult, {decision}_fwd_max_mult, {decision}_fwd_end_mult"
     runners = con.execute(f"SELECT {cols} FROM r WHERE NOT grad_in_create AND {target} ORDER BY {hype} LIMIT {n}").fetchall()
     duds = con.execute(f"SELECT {cols} FROM r WHERE NOT grad_in_create AND NOT {target} AND max_mult IS NOT NULL "
                        f"ORDER BY {hype} LIMIT {n}").fetchall()
@@ -138,6 +146,13 @@ def main():
     print("|---|---|---|---|---|---|---|---|")
     for g, n, r3, r10, mm, me, e3, nt in base_rates(con):
         print(f"| {'yes' if g else 'no'} | {n} | {r3:.1%} | {r10:.1%} | {fmt(mm)} | {fmt(me)} | {e3:.1%} | {nt} |")
+    print("\nForward from the decision moment (graduations outside the create slot):\n")
+    print("| decision | ≥3× after | ≥10× after | median max × after | median end × after |")
+    print("|---|---|---|---|---|")
+    for dec in ("t5", "t15"):
+        r = con.execute(f"SELECT avg({dec}_fwd3::INT), avg({dec}_fwd10::INT), median({dec}_fwd_max_mult), median({dec}_fwd_end_mult) "
+                        f"FROM r WHERE NOT grad_in_create AND {dec}_fwd_max_mult IS NOT NULL").fetchone()
+        print(f"| {dec} | {r[0]:.1%} | {r[1]:.1%} | {fmt(r[2])} | {fmt(r[3])} |")
     print(f"\n## Lift per feature at {a.decision}, target {a.target} (graduations outside the create slot)\n")
     print("| feature | base | Q1 (low) | Q2 | Q3 | Q4 | Q5 (high) | Q5 range |")
     print("|---|---|---|---|---|---|---|---|")
@@ -155,7 +170,7 @@ def main():
         print(f"\nLast fit weights (standardised log1p features): {wf[-1]['weights']}")
     print(f"\n## Examples: strongest hype signals at {a.decision}\n")
     runners, duds = examples(con, a.decision, a.target)
-    print("| outcome | symbol | day | buyers | organic SOL | insider share | price × at decision | max × 24 h | end × |")
+    print("| outcome | symbol | day | buyers | organic SOL | insider share | price × at decision | max × after decision | end × after decision |")
     print("|---|---|---|---|---|---|---|---|---|")
     for label, rows in (("runner", runners), ("no runner", duds)):
         for sym, name, mint, day, b, org, ins, px, mx, en in rows:

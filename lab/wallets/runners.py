@@ -8,6 +8,10 @@ price multiple is a market-cap multiple).
 Outcomes over the 24 h after the pool opened (pre-trade price e / b of every pool trade):
   max_mult   highest price / opening price        runner10 = max_mult >= 10, runner3 = >= 3
   end_mult   last price before +24 h / opening    (most peaks collapse)
+  and, per decision moment, the forward outcome a buyer at that moment would see: fwd_max_mult
+  and fwd_end_mult (peak after the decision and price at +24 h, over the price at the decision),
+  fwd3 / fwd10 = fwd_max_mult >= 3 / 10. The open-based outcome counts the first minutes, which
+  the decision already sees; the forward outcome is the one a strategy can act on.
 
 Features at two decision moments, pool open + 5 min and + 15 min, using only events with
 slot <= the decision slot:
@@ -106,7 +110,9 @@ def build(con, lo, hi, clock, clusters_dir=None):
             COALESCE(pf.n_trades, 0) AS pool_trades, COALESCE(pf.traders, 0) AS pool_traders,
             COALESCE(pf.organic_sol, 0) AS organic_sol, COALESCE(pf.net_sol, 0) AS net_sol,
             pf.px_last / g.p_open AS px_mult, pf.px_max / g.p_open AS max_mult_so_far,
-            COALESCE(sb.n, 0) AS split_events
+            COALESCE(sb.n, 0) AS split_events,
+            fw.px_max / pf.px_last AS fwd_max_mult, fw.px_end / pf.px_last AS fwd_end_mult,
+            COALESCE(fw.px_max / pf.px_last >= 3, false) AS fwd3, COALESCE(fw.px_max / pf.px_last >= 10, false) AS fwd10
           FROM g
           LEFT JOIN (SELECT mint, count(DISTINCT trader) FILTER (WHERE is_buy) AS buyers,
                             count(DISTINCT trader) FILTER (WHERE is_buy AND q >= {BIG_BUY})::DOUBLE
@@ -126,6 +132,9 @@ def build(con, lo, hi, clock, clusters_dir=None):
                             arg_max(pt.px, pt.slot * 1048576 + pt.tx_index) AS px_last, max(pt.px) AS px_max
                      FROM pt JOIN g g2 ON g2.pool = pt.pool
                      WHERE pt.slot >= g2.open_slot AND pt.slot <= g2.open_slot + {n_dec} GROUP BY g2.mint) pf USING (mint)
+          LEFT JOIN (SELECT g2.mint, max(pt.px) AS px_max, arg_max(pt.px, pt.slot * 1048576 + pt.tx_index) AS px_end
+                     FROM pt JOIN g g2 ON g2.pool = pt.pool
+                     WHERE pt.slot > g2.open_slot + {n_dec} AND pt.slot < g2.open_slot + {n_day} GROUP BY g2.mint) fw USING (mint)
           LEFT JOIN (SELECT g2.mint, count(*) AS n FROM {split_events_sql(clusters_dir)} e JOIN g g2
                        ON (e.venue = 'curve' AND e.key = g2.mint) OR (e.venue = 'pool' AND e.key = g2.pool)
                      WHERE e.slot <= g2.open_slot + {n_dec} GROUP BY g2.mint) sb USING (mint)""")
