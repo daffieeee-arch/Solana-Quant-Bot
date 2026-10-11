@@ -94,7 +94,7 @@ def main():
             print(f"| {day} | {lst} | {rank} | {link} | {'ja' if sf else 'nee'} | {fmt(tb)} | {vol:,.0f} | {ret:+.0%} | {peak:.1f} | {eop:.0%} | {tr} | {va:,.0f} |")
             if lst == "trending_24h_organic":
                 risers.append(mint)
-            elif lst == "dumpers_24h":
+            elif lst == "dumpers_24h" and not sf:
                 dumpers.append(mint)
         print()
     if weekly:
@@ -106,7 +106,7 @@ def main():
             print(f"| {lst} | {rank} | [{sym}](https://dexscreener.com/solana/{mint}) | {m7:,.0f} | {mp:,.0f} | {eop:.0%} | {vol:,.0f} | {tr} | {va:,.0f} |")
         print()
     if risers or dumpers:
-        print("## Organische stijgers tegenover dumpers in de eerste 15 minuten\n")
+        print("## Organische stijgers tegenover organische dumpers in de eerste 15 minuten\n")
         print(compare(tls, risers, dumpers))
         print()
     print("## Tijdlijnen\n")
