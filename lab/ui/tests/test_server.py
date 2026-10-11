@@ -83,6 +83,21 @@ class Api(unittest.TestCase):
         self.assertTrue(all(e["slot"] < HOLDOUT_START for e in d["events"]))
         self.assertEqual({m["slot"] for m in d["markers"]}, {452520000, 453800004})
 
+    def test_strategy_curve_narrows_by_run_keys(self):
+        s = self.get("/api/strategies")
+        if not s["summary"]:
+            self.skipTest("no tournament run loaded")
+        r = next(x for x in s["summary"] if not x["family"].startswith("N2_") and x["filled"])
+        base = f"/api/strategy_curve?family={r['family']}&variant={r['variant']}&d={r['d']}&tau={r['tau']}"
+        keys = "".join(f"&{k}={r[k]}" for k in s["keys"] if r[k] is not None)
+        own = [c for c in self.get(base + keys)["curves"] if c["family"] == r["family"] and c["size_sol"] == r["size_sol"]]
+        self.assertEqual(len(own), 1)
+        self.assertEqual(own[0]["points"][-1][0], r["n"], "one group: the curve ends at the summary's trade count")
+        # A key the run does not have is ignored, an unknown value of one it has matches nothing.
+        self.get(base + "&overlay=none")
+        if s["keys"]:
+            self.assertEqual(self.get(base + f"&{s['keys'][0]}=no-such-value")["curves"], [])
+
     def test_bad_input(self):
         self.assertEqual(self.req("/api/token?mint=../../etc/passwd")[0], 404)
         self.assertEqual(self.req("/api/nope")[0], 404)

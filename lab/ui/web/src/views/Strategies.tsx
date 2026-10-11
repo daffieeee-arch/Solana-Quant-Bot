@@ -12,7 +12,9 @@ interface SummaryRow {
   ci_lo: number | null; ci_hi: number | null; total_pnl_sol: number; mean_pnl_sol: number | null;
   n2_mean_ret: number | null; edge_vs_n2: number | null; hist_drift: number | null; fail_rate: number | null;
   verdict?: string | null; pnl_ci_lo?: number | null; pnl_ci_hi?: number | null;
+  q?: number | null; segment?: string | null; regime?: string | null; farm?: string | null; overlay?: string | null;
 }
+type RunKey = "q" | "segment" | "regime" | "farm" | "overlay";
 interface Curve { family: string; size_sol: number; points: [number, number | null, number][] }
 
 const SCEN: Record<string, string> = { optimistic: "optimistisch", base: "basis", pessimistic: "pessimistisch" };
@@ -22,10 +24,23 @@ const N_MIN = 30;
 // The run's own verdict (report.md): GO = 95%-CI of net SOL per trade above 0, ADJUST = mean above 0, STOP = mean ≤ 0.
 const LIVE_MIN = 5; // sizes below this are informative only (report.md)
 const VERDICT: Record<string, string> = { GO: "GO", ADJUST: "bijstellen", STOP: "stop" };
+// Run keys that split a family x variant into separate groups (lab/analytics/strategies.py GROUP). One value per key
+// is shown at a time, so no group is counted twice: farm 'all' is organic + flagged together, overlay O7* are
+// paired variants of the same triggers.
+const KEY_TEXT: Record<string, Record<string, string>> = {
+  segment: { curve: "curve", pool_normal: "normale pool", pool_reversed: "omgekeerde pool" },
+  farm: { all: "alle handel", organic: "organisch", flagged: "farming" },
+  overlay: { none: "geen overlay" },
+};
+const keyText = (k: string, v: string) => KEY_TEXT[k]?.[v] ?? (k === "q" ? `q ${v}` : k === "regime" ? `regime ${v}` : v);
+const PREFER: Record<string, string> = { farm: "all", overlay: "none" };
+// 'n/a': the group does not split by this key (farm for M1, or for F7 on the curve); treated like no value.
+const keyVal = (r: SummaryRow, k: RunKey) => (r[k] == null || r[k] === "n/a" ? null : String(r[k]));
 
 export default function Strategies() {
   const [scenario, setScenario] = useState("base");
-  const [data, setData] = useState<{ run: { run_id: string; config: Record<string, unknown> } | null; summary: SummaryRow[] } | null>(null);
+  const [data, setData] = useState<{ run: { run_id: string; config: Record<string, unknown> } | null; summary: SummaryRow[]; keys?: RunKey[] } | null>(null);
+  const [keySel, setKeySel] = useState<Partial<Record<RunKey, string>>>({});
   const [d, setD] = useState<number | null>(null);
   const [tau, setTau] = useState<string | null>(null);
   const [pick, setPick] = useState<SummaryRow | null>(null);
@@ -37,16 +52,25 @@ export default function Strategies() {
   const ds = useMemo(() => [...new Set((data?.summary ?? []).map((r) => r.d))].sort((a, b) => a - b), [data]);
   const taus = useMemo(() => [...new Set((data?.summary ?? []).map((r) => r.tau))].sort(), [data]);
   const dSel = d ?? ds[0], tauSel = tau ?? taus[0];
-  const rows = useMemo(() => (data?.summary ?? []).filter((r) => r.d === dSel && r.tau === tauSel && !r.family.startsWith("N2_")), [data, dSel, tauSel]);
+  const keyOpts = useMemo(() => (data?.keys ?? []).map((k) => {
+    const vals = [...new Set((data?.summary ?? []).map((r) => keyVal(r, k)).filter((v): v is string => v != null))].sort();
+    return { k, vals, def: vals.includes(PREFER[k]) ? PREFER[k] : vals[0] };
+  }).filter((o) => o.vals.length > 0), [data]);
+  const keyNow = useMemo(() => Object.fromEntries(keyOpts.map((o) => [o.k, keySel[o.k] ?? o.def])) as Partial<Record<RunKey, string>>, [keyOpts, keySel]);
+  // A row without a value for a key (e.g. farm on a family that does not split by it) always passes.
+  const keyOk = (r: SummaryRow) => keyOpts.every((o) => { const v = keyVal(r, o.k); return v == null || v === keyNow[o.k]; });
+  const rows = useMemo(() => (data?.summary ?? []).filter((r) => r.d === dSel && r.tau === tauSel && !r.family.startsWith("N2_") && keyOk(r)), [data, dSel, tauSel, keyNow]); // eslint-disable-line react-hooks/exhaustive-deps
   const ranked = useMemo(() => [...rows].filter((r) => r.mean_ret != null).sort((a, b) => (b.mean_ret ?? 0) - (a.mean_ret ?? 0)), [rows]);
   const sel = pick && rows.find((r) => r.family === pick.family && r.variant === pick.variant && r.size_sol === pick.size_sol) || ranked[0] || null;
 
+  const selKeys = sel ? Object.fromEntries(keyOpts.map((o) => [o.k, keyVal(sel, o.k) ?? undefined])) : {};
+  const selKeyStr = JSON.stringify(selKeys);
   useEffect(() => {
     if (!sel) return;
     setCurves(null);
-    get<{ curves: Curve[] }>("strategy_curve", { family: sel.family, variant: sel.variant, d: sel.d, tau: sel.tau, scenario })
+    get<{ curves: Curve[] }>("strategy_curve", { family: sel.family, variant: sel.variant, d: sel.d, tau: sel.tau, scenario, ...selKeys })
       .then((r) => setCurves(r.curves)).catch((e) => setErr(e.message));
-  }, [sel?.family, sel?.variant, sel?.d, sel?.tau, scenario]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sel?.family, sel?.variant, sel?.d, sel?.tau, scenario, selKeyStr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasVerdict = rows.some((r) => r.verdict != null);
   const live = rows.filter((r) => r.size_sol >= LIVE_MIN);
@@ -139,7 +163,7 @@ export default function Strategies() {
         </p>
         {hasVerdict && (
           <p className={`text-sm m-0 mt-1 ${goLive ? "" : "text-warn"}`}>
-            <b className="tabular">{goLive} van {live.length}</b> combinaties op live-grootte (≥ {LIVE_MIN} SOL, kosten {SCEN[scenario]}) krijgen GO:
+            <b className="tabular">{goLive} van {live.length}</b> combinaties op live-grootte (≥ {LIVE_MIN} SOL, kosten {SCEN[scenario]}{keyOpts.some((o) => o.vals.length > 1) ? ", deze selectie" : ""}) krijgen GO:
             netto winst per trade met het 95%-interval boven nul. Kleinere groottes zijn alleen informatief.
           </p>
         )}
@@ -149,6 +173,13 @@ export default function Strategies() {
         {ds.length > 1 && ds.map((x) => <Chip key={`d${x}`} active={dSel === x} onClick={() => setD(x)}>{`vertraging ${x}`}</Chip>)}
         {taus.length > 1 && taus.map((x) => <Chip key={x} active={tauSel === x} onClick={() => setTau(x)}>{`τ ${x}`}</Chip>)}
       </div>
+      {keyOpts.filter((o) => o.vals.length > 1).map((o) => (
+        <div key={o.k} className="flex flex-wrap gap-2 items-center -mt-4">
+          {o.vals.map((v) => (
+            <Chip key={v} active={keyNow[o.k] === v} onClick={() => { setKeySel((s) => ({ ...s, [o.k]: v })); setPick(null); }}>{keyText(o.k, v)}</Chip>
+          ))}
+        </div>
+      ))}
       {sel && curveChart && (
         <Section title="P&L-curve" note={`Opgetelde winst/verlies in SOL na kosten voor ${sel.family} ${sel.variant}, ${sel.size_sol} SOL, tegen de N2-schaduw (willekeurige instap, geschaald naar hetzelfde aantal trades). Tik een rij in de tabel om te wisselen.`}>
           <Card className="p-3"><EChart option={curveChart} height={300} label="P&L-curve tegen N2" /></Card>

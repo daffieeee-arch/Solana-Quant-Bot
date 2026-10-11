@@ -131,16 +131,17 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
         for name, per_tx, failed, rent, mode, adv in build.strategies.scenarios(
                 build.strategies.read_costs(build.strategies.DEFAULTS)):
             refund = rent if mode in ("refunded", "refunded_on_full_exit") else 0
-            tot = {}
+            tot, cnt = {}, {}
             for r in rows:
                 pr, co, att, ef = r[20], r[21], r[22], r[17]
                 pnl = -failed if ef else ((int(pr * (1 - adv)) - per_tx + refund - max(0, att - 1) * failed)
                                           - (int(co * (1 + adv)) + per_tx + rent))
                 for key in (r[:10], r[:8] + ("all",) + r[9:10]):
                     tot[key] = tot.get(key, 0) + pnl
+                    cnt[key] = cnt.get(key, 0) + 1
             for key, v in tot.items():
                 off = 1.0 if corrupt_all and key[8] == "all" and name == "base" else 0.0
-                summary.append(key + (name, 40, 40, v / 1e9 + off))
+                summary.append(key + (name, cnt[key], cnt[key], v / 1e9 + off))
         con.execute("CREATE TABLE s AS SELECT * FROM (VALUES " + ", ".join(
             "(" + ", ".join("NULL" if x is None else repr(x) for x in r) + ")" for r in summary) + ") v(" +
             ", ".join(self.KEYS) + ", scenario, n, filled, total_pnl_sol)")
@@ -156,7 +157,9 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
             build.strategies.load(con, d)
             self.assertEqual(con.execute("SELECT count(*) FROM strategy_results").fetchone()[0], 160)
             groups = con.execute("SELECT count(DISTINCT (farm, overlay)) FROM strategy_curves").fetchone()[0]
-            self.assertEqual(groups, 4)  # organic/flagged x none/O7V1; no curve for the farm = 'all' roll-up
+            self.assertEqual(groups, 6)  # organic/flagged/all x none/O7V1: the roll-up gets its own curve
+            n_all = con.execute("SELECT max(n) FROM strategy_curves WHERE farm = 'all'").fetchone()[0]
+            self.assertEqual(n_all, 80)  # organic + flagged positions together
 
     def test_wrong_rollup_total_is_caught(self):
         with tempfile.TemporaryDirectory() as d:

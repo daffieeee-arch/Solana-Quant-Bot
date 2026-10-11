@@ -4,7 +4,8 @@ Tables:
   strategy_runs     one row: run id, config, store window
   strategy_results  one row per position (base costs), settled exactly like lab/backtest/costs.py
   strategy_summary  the run's own summary.parquet (n, mean, CI, edge vs N2 per family x variant x size x d x tau x scenario)
-  strategy_curves   cumulative P&L per group and scenario in exit order, thinned to ~400 points (N2 shadows included)
+  strategy_curves   cumulative P&L per group and scenario in exit order, thinned to ~400 points (N2 shadows and
+                    farm 'all' roll-ups included)
 
 Refuses runs that are unfinished (no summary.parquet) or whose store is not development-only, and checks
 that the re-settled totals equal the run's own summary to the lamport.
@@ -124,17 +125,34 @@ def load(con, run_dir, defaults=DEFAULTS):
         if bad or missing:
             raise SystemExit(f"scenario {name}: re-settled P&L differs from summary.parquet "
                              f"({bad} groups differ, {missing} missing)")
-        con.execute(f"""
-            INSERT INTO strategy_curves BY NAME
-            SELECT * EXCLUDE (pnl) FROM (
-              SELECT {k_sql}, '{name}' AS scenario,
-                     row_number() OVER w AS step, count(*) OVER (PARTITION BY {k_sql}) AS n,
-                     coalesce(exit_slot, entry_slot, signal_slot)::UBIGINT AS slot, pnl,
-                     sum(pnl) OVER w / 1e9 AS cum_pnl_sol
-              FROM settled
-              WINDOW w AS (PARTITION BY {k_sql} ORDER BY coalesce(exit_slot, entry_slot, signal_slot), signal_slot, mint
-                           ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
-            WHERE step = 1 OR step = n OR step % greatest(1, n // {CURVE_POINTS}) = 0""")
+        # Curves per group, and per roll-up group the summary has (farm 'all': all positions of the other keys).
+        sources = [("settled", "")]
+        for rk, rv in ROLLUP.items():
+            if rk in pos_keys:
+                sources.append((f"(SELECT * REPLACE ('{rv}' AS {rk}) FROM settled)",
+                                f"SEMI JOIN (SELECT {k_sql} FROM strategy_summary WHERE {rk} = '{rv}' AND scenario = '{name}') b "
+                                f"ON {' AND '.join(f's.{k} IS NOT DISTINCT FROM b.{k}' for k in pos_keys)}"))
+        for src, only in sources:
+            con.execute(f"""
+                INSERT INTO strategy_curves BY NAME
+                SELECT * EXCLUDE (pnl) FROM (
+                  SELECT {k_sql}, '{name}' AS scenario,
+                         row_number() OVER w AS step, count(*) OVER (PARTITION BY {k_sql}) AS n,
+                         coalesce(exit_slot, entry_slot, signal_slot)::UBIGINT AS slot, pnl,
+                         sum(pnl) OVER w / 1e9 AS cum_pnl_sol
+                  FROM {src} s {only}
+                  WINDOW w AS (PARTITION BY {k_sql} ORDER BY coalesce(exit_slot, entry_slot, signal_slot), signal_slot, mint
+                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
+                WHERE step = 1 OR step = n OR step % greatest(1, n // {CURVE_POINTS}) = 0""")
+        on_s = " AND ".join(f"c.{k} IS NOT DISTINCT FROM s.{k}" for k in pos_keys)
+        off = con.execute(f"""
+            SELECT count(*) FROM strategy_summary s
+            LEFT JOIN (SELECT * FROM strategy_curves WHERE step = n AND scenario = ?) c ON {on_s}
+            WHERE s.scenario = ? AND s.n > 0
+              AND (c.n IS DISTINCT FROM s.n OR abs(c.cum_pnl_sol - s.total_pnl_sol) > 1e-6
+                   OR c.cum_pnl_sol IS NULL)""", [name, name]).fetchone()[0]
+        if off:
+            raise SystemExit(f"scenario {name}: {off} summary groups have no curve ending at their n and total")
         if name == "base":
             con.execute(f"""CREATE TABLE strategy_results AS
                             SELECT {k_sql}, mint, venue, day, signal_slot::UBIGINT AS signal_slot,

@@ -188,27 +188,44 @@ def api_ticker(q):
     return {"events": events, "markers": markers}
 
 
+# Run keys beyond family/variant/size/d/tau that a tournament run may split its groups by (strategies.GROUP).
+RUN_KEYS = ("q", "segment", "regime", "farm", "overlay")
+
+
+def run_keys(con, table):
+    have = {r[0] for r in con.execute(f"DESCRIBE {table}").fetchall()}
+    return [k for k in RUN_KEYS if k in have]
+
+
 def api_strategies(q):
     con = connect()
     if not has_table(con, "strategy_summary"):
-        return {"run": None, "summary": []}
+        return {"run": None, "summary": [], "keys": []}
     scenario = q.get("scenario", ["base"])[0]
     run = rows(con, "SELECT run_id, config_json FROM strategy_runs")[0]
-    return {"run": {"run_id": run["run_id"], "config": json.loads(run["config_json"])},
-            "summary": rows(con, "SELECT * FROM strategy_summary WHERE scenario = ? ORDER BY family, variant, size_sol, d, tau",
-                            [scenario])}
+    keys = run_keys(con, "strategy_summary")
+    order = ", ".join(["family", "variant", "size_sol", "d", "tau", *keys])
+    return {"run": {"run_id": run["run_id"], "config": json.loads(run["config_json"])}, "keys": keys,
+            "summary": rows(con, f"SELECT * FROM strategy_summary WHERE scenario = ? ORDER BY {order}", [scenario])}
 
 
 def api_strategy_curve(q):
-    """Equity curves of one family/variant (all sizes) and its N2 shadow (thinned to ~400 points at build time)."""
+    """Equity curves of one family/variant (all sizes) and its N2 shadow (thinned to ~400 points at build time).
+    Run keys (segment, farm, ...) narrow it to one group; a key left out of the query is not filtered, and a
+    group whose value is 'n/a' (it does not split by that key, like N2_F7 for farm) always matches."""
     con = connect()
     fam = q.get("family", [""])[0]
     params = [fam, "N2_" + fam, q.get("variant", [""])[0], clamp(q.get("d", [1])[0], 0, 100, 1),
               q.get("tau", ["empirical"])[0], q.get("scenario", ["base"])[0]]
-    cur = con.execute("""
+    extra = ""
+    for k in run_keys(con, "strategy_curves"):
+        if k in q:
+            extra += f" AND ({k}::VARCHAR IS NOT DISTINCT FROM ? OR {k}::VARCHAR = 'n/a')"
+            params.append(q[k][0] or None)
+    cur = con.execute(f"""
         SELECT family, size_sol, step, epoch(st.ts)::BIGINT AS time, cum_pnl_sol
         FROM strategy_curves c LEFT JOIN slot_time st USING (slot)
-        WHERE family IN (?, ?) AND variant = ? AND d = ? AND tau = ? AND scenario = ?
+        WHERE family IN (?, ?) AND variant = ? AND d = ? AND tau = ? AND scenario = ?{extra}
         ORDER BY family, size_sol, step""", params)
     out = {}
     for fam_, size, step, t, pnl in cur.fetchall():

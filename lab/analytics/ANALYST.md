@@ -85,5 +85,10 @@ or a column lacks a `data_dictionary` entry. Every column is described in `a.dat
   transfers, fees or open positions, so it is not profit.
 - `a.market_events` — ticker: graduations, trades ≥ 25 SOL (SOL-quoted, farming excluded), and the two protocol-marker labels.
 - `a.slot_time` — slot → block time.
+- `a.strategy_runs`, `a.strategy_summary`, `a.strategy_results`, `a.strategy_curves` — one finished tournament run
+  (`build.py --tournament`, see `strategies.py`), re-settled and checked against the run to the lamport. A group is
+  family × variant × size × d × tau plus, from run v2 on, `q`, `segment`, `regime`, `farm`, `overlay`. Pick one value
+  per key: `farm = 'all'` is organic + flagged together, `overlay` O7* are paired variants of the same triggers, and
+  `'n/a'` means the group does not split by that key (N2_F7 for farm).
 
 Example: `lab/bin/q "SELECT symbol, round(seconds_to_graduate/60) AS min FROM a.graduations WHERE NOT in_create_slot ORDER BY 2 LIMIT 5"`.
