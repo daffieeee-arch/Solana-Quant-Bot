@@ -10,6 +10,7 @@ import glob
 import json
 import os
 
+import pyarrow as pa
 import pytest
 
 from backtest import data, streams
@@ -163,3 +164,38 @@ def test_engine_on_the_live_feed(setup, tmp_path):
     with open(os.path.join(root, "open-pools.json")) as f:
         assert isinstance(json.load(f)["pools"], list)
     assert 250 < feed.clock.per_epoch[LO // 432_000] < 300  # epoch 1043: ~268 ms per slot
+
+
+def test_reconcile_finds_nothing_then_every_kind_of_difference(setup, tmp_path):
+    """Recorder segments cut from OF1 reconcile to zero; a dropped row is a gap, an extra row is
+    extra, and a changed reserve is a mismatch on that column."""
+    import pyarrow.parquet as pq
+
+    from paper import reconcile
+
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]][0]
+    root = str(tmp_path / "rec")
+    make_segments(chunk, root, usage=False)
+    first = os.path.join(root, "segments", "000000000")
+    buys = pq.read_table(glob.glob(os.path.join(first, "pump_amm", "BuyEvent", "*.parquet"))[0])
+    pools = sorted(set(buys.column("pool").to_pylist()))[:20]
+    for _, seg, _ in segment_dirs(root):
+        with open(os.path.join(seg, "watchlist.json"), "w") as f:
+            json.dump({"pools": [{"pool": p} for p in pools], "wallets": []}, f)
+    clean = reconcile.run(root, os.path.dirname(chunk[2]))
+    assert clean["ok"] and clean["totals"]["segments_checked"] == 4, clean["totals"]
+    assert sum(t["live"] for s in clean["segments"] for t in s["tables"].values()) > 0
+    # Damage the first segment's buys of the watched pools: drop one, change a reserve of another,
+    # and add a buy of a watched pool that OF1 does not have.
+    rows = buys.to_pylist()
+    idx = [i for i, r in enumerate(rows) if r["pool"] in pools]
+    dropped, changed = idx[0], idx[1]
+    rows[changed]["pool_base_token_reserves"] += 1
+    extra = dict(rows[changed], inner_ix=rows[changed]["inner_ix"] + 1000)
+    rows = [r for i, r in enumerate(rows) if i != dropped] + [extra]
+    pq.write_table(pa.Table.from_pylist(rows, schema=buys.schema), glob.glob(os.path.join(first, "pump_amm", "BuyEvent", "*.parquet"))[0])
+    bad = reconcile.run(root, os.path.dirname(chunk[2]))
+    assert not bad["ok"]
+    t = bad["segments"][0]["tables"]["pump_amm/BuyEvent"]
+    assert (t["missing"], t["extra"], t["mismatched"]) == (1, 1, 1), t
+    assert t["columns"] == {"pool_base_token_reserves": 1}
