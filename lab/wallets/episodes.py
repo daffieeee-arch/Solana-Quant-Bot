@@ -52,7 +52,12 @@ POOL_KEY = "CASE WHEN p.pool = m.pool THEN p.mint ELSE e.pool END"
 
 def legs_sql(lo, hi, bucket):
     """Token-side legs of SOL markets in [lo, hi) for wallets in one hash bucket, chain order.
-    (wallet, key, venue, orientation, slot, pos, tokens, sol, token_buy, trigger, create_slot, pool)
+    (wallet, key, venue, orientation, slot, pos, tokens, sol, token_buy, trigger, create_slot, pool, outer_ix, inner_ix)
+
+    The order must be total: walk() is order-sensitive (exit share, time cap), and two legs of one
+    wallet and key in one transaction (buy and sell in one tx, several events) tie on pos. The
+    instruction position in the transaction (outer_ix, inner_ix) breaks the tie, then the leg's
+    content; without it a rerun of the same slice differed in ~0.4% of the episodes (NAS, 2026-10-11).
 
     The key joins a token's curve with its canonical migration pool (mints.pool), so a curve buyer
     who sells after graduation is followed into the pool; any other pool of the mint is its own key
@@ -62,18 +67,20 @@ def legs_sql(lo, hi, bucket):
       SELECT * FROM (
         SELECT c.trader AS wallet, c.mint AS key, 'curve' AS venue, 'curve' AS orientation, c.slot::BIGINT AS slot,
                c.slot::BIGINT * {POS} + c.tx_index AS pos, c.t::BIGINT AS tokens, c.q::BIGINT AS sol, c.is_buy AS token_buy,
-               c.is_buy AND c.q >= {TRIGGER_SOL} AS trigger, c.slot = m.create_slot AS create_slot, NULL::VARCHAR AS pool
+               c.is_buy AND c.q >= {TRIGGER_SOL} AS trigger, c.slot = m.create_slot AS create_slot, NULL::VARCHAR AS pool,
+               c.outer_ix::BIGINT AS outer_ix, c.inner_ix::BIGINT AS inner_ix
         FROM curve c JOIN mints m USING (mint)
         WHERE c.slot >= {lo} AND c.slot < {hi} AND NOT m.mayhem AND m.quote_mint IN ({quotes})
         UNION ALL
         SELECT e.trader, {POOL_KEY}, 'pool', p.orientation, e.slot::BIGINT, e.slot::BIGINT * {POS} + e.tx_index,
                e.token_amount, e.sol_amount, e.token_buy,
-               e.token_buy AND e.sol_amount >= {TRIGGER_SOL} AND NOT e.farmer, false, e.pool
+               e.token_buy AND e.sol_amount >= {TRIGGER_SOL} AND NOT e.farmer, false, e.pool,
+               e.outer_ix::BIGINT, e.inner_ix::BIGINT
         FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
         WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell')
           AND p.quote_class IN ('sol', 'reversed') AND NOT COALESCE(p.mayhem, false))
       WHERE hash(wallet) % {BUCKETS} = {bucket}
-      ORDER BY wallet, key, pos"""
+      ORDER BY wallet, key, pos, outer_ix, inner_ix, venue, token_buy DESC, tokens, sol"""
 
 
 FIELDS = ["wallet", "key", "venue", "orientation", "t0", "t0_pos", "trigger_sol", "cost_sol", "proceeds_sol",
@@ -88,7 +95,8 @@ def walk(rows, lo, hi, episode_slots):
         if ep.pop("emit"):  # episodes opened before lo are walked (their top-ups are not triggers) but not emitted
             out.append(ep)
 
-    for wallet, key, venue, orientation, slot, pos, tokens, sol, token_buy, trigger, create_slot, pool in rows:
+    for row in rows:
+        wallet, key, venue, orientation, slot, pos, tokens, sol, token_buy, trigger, create_slot, pool = row[:12]
         if ep is not None and slot > ep["end_slot"]:
             close(ep)  # time cap: closed at end_slot, remaining tokens marked there
             ep = None
@@ -160,14 +168,15 @@ def run(lo, hi, out_dir, store=None):
     out = con.execute(f"""
       WITH px AS (
         SELECT key, slot, sol::DOUBLE / tokens AS price FROM (
-          SELECT c.mint AS key, c.slot::BIGINT AS slot, c.tx_index, c.q AS sol, c.t AS tokens FROM curve c
+          SELECT c.mint AS key, c.slot::BIGINT AS slot, c.tx_index, c.outer_ix, c.inner_ix, c.q AS sol, c.t AS tokens FROM curve c
           WHERE c.slot >= {lo} AND c.slot < {hi + n_ep} AND c.t > 0 AND c.q >= {MARK_MIN_SOL}
           UNION ALL
-          SELECT {POOL_KEY}, e.slot::BIGINT, e.tx_index, e.sol_amount, e.token_amount
+          SELECT {POOL_KEY}, e.slot::BIGINT, e.tx_index, e.outer_ix, e.inner_ix, e.sol_amount, e.token_amount
           FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
           WHERE e.slot >= {lo} AND e.slot < {hi + n_ep} AND e.kind IN ('buy', 'sell') AND e.token_amount > 0
             AND e.sol_amount >= {MARK_MIN_SOL})
-        QUALIFY row_number() OVER (PARTITION BY key, slot ORDER BY tx_index DESC) = 1),
+        -- the last trade of the slot: a total order (tx, then instruction position) keeps the mark reproducible
+        QUALIFY row_number() OVER (PARTITION BY key, slot ORDER BY tx_index DESC, outer_ix DESC, inner_ix DESC, sol DESC) = 1),
       d AS (SELECT slot, strftime(make_timestamp(block_time * 1000000), '%Y-%m-%d') AS day FROM blocks
             WHERE slot >= {lo} AND slot < {hi}),
       m AS (SELECT ep.*, px.price AS last_price, ep.cost_sol::DOUBLE / ep.max_tokens AS avg_buy_price, d.day
