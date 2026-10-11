@@ -20,7 +20,10 @@ The engine is `backtest` from LAB_ENGINE (a directory holding backtest/), defaul
 Store v2 needs the store-v2 engine (the tournament run's engine/ snapshot records its commit).
 
   python -m wallets.follow --episodes DIR --from-slot A --to-slot B [--out DIR] [--sizes 0.5]
-                           [--delays 1,2] [--min-n 5] [--control 300] [--wallets wallets.csv]
+                           [--delays 1,2] [--min-n 5] [--control 300] [--wallets wallets.csv] [--workers N]
+
+Output: follow-<A>-partNNNNN.parquet per batch of tokens (resumable; identical for any worker
+count) and run-follow-<A>-<B>.json.
 """
 
 import argparse
@@ -47,6 +50,7 @@ MAX_HOLD_MS = EPISODE_MS
 # every position would re-execute all of them (minutes per episode). Its episodes are recorded as
 # skipped ('busy_pool') and counted, not replayed.
 MAX_LEGS = 150_000
+WORKER_MEM = "800MB"  # DuckDB limit per worker process; expect ~1.3 GB RSS per worker
 VARIANTS = {"W_half": 0.5, "W_full": 0.1}
 Q_FRAC, TOL = 0.5, 0.05  # intra-slot position and own slippage tolerance (week2-defaults)
 STORE = os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
@@ -133,7 +137,8 @@ def read_wallets(path):
     return out
 
 
-def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, wallets_file=None, max_per_wallet=0):
+def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, wallets_file=None, max_per_wallet=0,
+        workers=1):
     guard(hi)
     con = streams.open_store(store, threads=2, memory="1GB")
     con.execute("SET enable_progress_bar = false")
@@ -158,44 +163,81 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
     for e in eps:
         by_key.setdefault((e["venue"], e["pool"] if e["venue"] == "pool" else e["key"]), []).append(e)
     os.makedirs(out_dir, exist_ok=True)
-    rows, t_start, n_done, n_busy = [], time.time(), 0, 0
-    tau = Tau("empirical")
+    t_start = time.time()
     keys = sorted(by_key)
     # Streams are loaded in batches (one query per batch): curve tokens are small, pools can be big.
     # Curve legs come from the create (load_streams); pool legs only from the first trigger on,
-    # because a busy pool has millions of legs before it.
+    # because a busy pool has millions of legs before it. A batch is the unit of work for the
+    # workers; every batch writes its own part, so the result does not depend on the worker count.
     batches = []
     for venue, size in (("curve", 200), ("pool", 25)):
         ks = [k for v, k in keys if v == venue]
         batches += [(venue, ks[i:i + size]) for i in range(0, len(ks), size)]
-    for venue, ks in batches:
-        win = {k: (min(e["t0"] for e in by_key[(venue, k)]) - 1,
-                   max(e["t0"] for e in by_key[(venue, k)]) + max_slots + 2 * max(delays) + 2) for k in ks}
-        loaded = streams.load_streams(con, win) if venue == "curve" else streams.load_pool_streams(con, win)
-        sim = replay.simulate_curve_position if venue == "curve" else replay.simulate_pool_position
-        for key in ks:
-            st, group = loaded.get(key), by_key[(venue, key)]
-            if st is None:
-                continue
-            rows_before = len(rows)
-            run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows)
-            n_busy += (len(rows) > rows_before and rows[-1]["exit_reason"] == "busy_pool") * len(group)
-            n_done += len(group)
-            if n_done % 200 < len(group):
-                print(f"{n_done}/{len(eps)} episodes, {len(rows)} positions, {time.time() - t_start:.0f}s",
+    tail = max_slots + 2 * max(delays) + 2
+    jobs = [(i, venue, {k: by_key[(venue, k)] for k in ks}, tail, cands, sizes, delays, max_slots,
+             os.path.join(out_dir, f"follow-{lo}-part{i:05d}.parquet")) for i, (venue, ks) in enumerate(batches)]
+    con.close()
+    n_done = n_busy = n_rows = 0
+    if workers > 1:
+        import multiprocessing as mp
+        with mp.get_context("forkserver").Pool(workers, initializer=_init_worker, initargs=(store,)) as pool:
+            results = pool.imap_unordered(replay_batch, jobs)
+            for i, (n_ep, n_b, n_r) in enumerate(results):
+                n_done, n_busy, n_rows = n_done + n_ep, n_busy + n_b, n_rows + n_r
+                if i % 20 == 0:
+                    print(f"{n_done}/{len(eps)} episodes, {n_rows} positions, {time.time() - t_start:.0f}s",
+                          file=sys.stderr, flush=True)
+    else:
+        _init_worker(store)
+        for i, job in enumerate(jobs):
+            n_ep, n_b, n_r = replay_batch(job)
+            n_done, n_busy, n_rows = n_done + n_ep, n_busy + n_b, n_rows + n_r
+            if i % 20 == 0:
+                print(f"{n_done}/{len(eps)} episodes, {n_rows} positions, {time.time() - t_start:.0f}s",
                       file=sys.stderr, flush=True)
-        loaded.clear()
-    tbl = pa.Table.from_pylist(rows)
-    pq.write_table(tbl, os.path.join(out_dir, f"follow-{lo}.parquet"))
     with open(os.path.join(out_dir, f"run-follow-{lo}-{hi}.json"), "w") as f:
         json.dump({"from_slot": lo, "to_slot": hi, "commit": git_commit(), "engine": os.path.dirname(replay.__file__),
                    "sizes": sizes, "delays": delays, "variants": VARIANTS, "min_n": min_n, "control": n_control,
-                   "wallets_file": wallets_file, "max_per_wallet": max_per_wallet, "candidates": len(cands),
-                   "episodes": len(eps), "episodes_busy_pool": n_busy, "positions": len(rows),
+                   "wallets_file": wallets_file, "max_per_wallet": max_per_wallet, "workers": workers, "parts": len(jobs),
+                   "candidates": len(cands), "episodes": len(eps), "episodes_busy_pool": n_busy, "positions": n_rows,
                    "max_hold_ms": MAX_HOLD_MS, "max_legs": MAX_LEGS, "q": Q_FRAC, "tol": TOL,
                    "seconds": round(time.time() - t_start)}, f, indent=1)
-    print(f"{lo}-{hi}: {len(cands)} wallets, {len(eps)} episodes ({n_busy} in busy pools, skipped), {len(rows)} positions, "
-          f"{time.time() - t_start:.0f}s", file=sys.stderr)
+    print(f"{lo}-{hi}: {len(cands)} wallets, {len(eps)} episodes ({n_busy} in busy pools, skipped), {n_rows} positions, "
+          f"{len(jobs)} parts, {time.time() - t_start:.0f}s", file=sys.stderr)
+
+
+_W = {}
+
+
+def _init_worker(store):
+    """Per process: its own read-only store connection and tau table."""
+    _W["con"] = streams.open_store(store, threads=1, memory=WORKER_MEM)
+    _W["con"].execute("SET enable_progress_bar = false")
+    _W["tau"] = Tau("empirical")
+
+
+def replay_batch(job):
+    """Replay one batch of tokens and write its part: (episodes, episodes in busy pools, positions)."""
+    i, venue, groups, tail, cands, sizes, delays, max_slots, path = job
+    if os.path.exists(path):  # resumable
+        t = pq.read_metadata(path)
+        return sum(len(g) for g in groups.values()), 0, t.num_rows
+    con, tau = _W["con"], _W["tau"]
+    win = {k: (min(e["t0"] for e in g) - 1, max(e["t0"] for e in g) + tail) for k, g in groups.items()}
+    loaded = streams.load_streams(con, win) if venue == "curve" else streams.load_pool_streams(con, win)
+    sim = replay.simulate_curve_position if venue == "curve" else replay.simulate_pool_position
+    rows, n_busy = [], 0
+    for key, group in groups.items():
+        st = loaded.get(key)
+        if st is None:
+            continue
+        before = len(rows)
+        run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows)
+        n_busy += (len(rows) > before and rows[-1]["exit_reason"] == "busy_pool") * len(group)
+    tmp = path + ".tmp"
+    pq.write_table(pa.Table.from_pylist(rows), tmp)
+    os.replace(tmp, path)
+    return sum(len(g) for g in groups.values()), n_busy, len(rows)
 
 
 def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows):
@@ -234,9 +276,14 @@ def main():
     ap.add_argument("--store", default=STORE)
     ap.add_argument("--wallets", help="CSV wallet,control: the candidates (overrides --min-n/--control)")
     ap.add_argument("--max-per-wallet", type=int, default=0, help="replay at most this many episodes per wallet in the range (0: all)")
+    ap.add_argument("--workers", type=int, default=1, help="worker processes (each ~1.3 GB RSS); parts are identical for any N")
+    ap.add_argument("--variants", default=",".join(VARIANTS), help="exit variants to replay (W_half,W_full)")
     a = ap.parse_args()
+    for v in list(VARIANTS):
+        if v not in a.variants.split(","):
+            del VARIANTS[v]
     run(a.episodes, a.from_slot, a.to_slot, a.out, [float(s) for s in a.sizes.split(",")],
-        [int(d) for d in a.delays.split(",")], a.min_n, a.control, a.store, a.wallets, a.max_per_wallet)
+        [int(d) for d in a.delays.split(",")], a.min_n, a.control, a.store, a.wallets, a.max_per_wallet, a.workers)
 
 
 if __name__ == "__main__":
