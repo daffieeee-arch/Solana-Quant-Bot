@@ -70,7 +70,7 @@ export default function Overview() {
       <Section title="Graduaties per dag" note="Graduaties in de aanmaak-slot zelf zijn voor ons nooit handelbaar.">
         <Card className="p-3"><EChart option={charts.grads} height={260} label="Graduaties per dag, gestapeld" /></Card>
       </Section>
-      <Section title="Dekking per epoch" note="Eén epoch is 432.000 slots, ongeveer 32 uur.">
+      <Section title="Dekking per epoch" note="Eén epoch is 432.000 slots: ongeveer 38 uur in 1033–1036 (langere slots), ongeveer 32 uur vanaf 1037.">
         <Card className="overflow-x-auto">
           <table className="w-full text-sm tabular">
             <thead>

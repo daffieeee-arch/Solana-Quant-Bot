@@ -7,11 +7,13 @@ read it and refuse a store whose `meta` is not development-only. `SELECT json FR
 
 ## Window
 
-- Development data only: slots `450,144,000 … 452,303,999` (epochs 1042–1046, 2026-09-24 21:00 → 2026-10-01 13:40 UTC).
-  The backfill target is epoch 1033; check `SELECT min(slot), max(slot) FROM blocks`.
+- Development data only: store v2 (`store/dev2.duckdb`), slots `446,256,000 … 452,303,999` (epochs 1033–1046,
+  2026-09-11 21:12 → 2026-10-01 13:40 UTC).
 - Hold-out: slots `452,304,000 … 454,463,999` (epochs 1047–1051). Never queried here. Fixed protocol markers may
   appear as labels only: first fee sweep in chunk `452,520,000–452,736,000`, first v3 curve trades at slot `453,800,004`.
-- Epoch = `slot // 432000`. Time = `to_timestamp(blocks.block_time)::TIMESTAMP` (UTC; ~0.267 s per slot here).
+- Epoch = `slot // 432000`. Time = `to_timestamp(blocks.block_time)::TIMESTAMP` (UTC). Slot duration differs by epoch
+  (~0.316 s in 1033–1036, ~0.267 s from 1037; `meta.ms_per_slot`), so convert slot spans to time via block times,
+  never a fixed factor.
 - Chain order is `(slot, tx_index, outer_ix, inner_ix)`.
 
 ## Units
@@ -70,7 +72,8 @@ on `quote_mint` before summing SOL.
 
 ## Overview tables (`a`, analytics.duckdb)
 
-Built by `lab/analytics/build.py` from the dev store (heavy job; ~1.5 min, ~450 MB). Build-and-swap; the
+Built by `lab/analytics/build.py` from the dev store (heavy job; on dev2 ~75 min with `--parts 8 --memory 900MB --threads 1`,
+spill in `--temp-dir /dev/shm/... --max-temp 1GB`, under MemoryMax=2G). Build-and-swap; the
 build fails if any slot column holds a hold-out slot (protocol-marker labels in `market_events` excepted)
 or a column lacks a `data_dictionary` entry. Every column is described in `a.data_dictionary` (Dutch).
 
@@ -80,7 +83,8 @@ or a column lacks a `data_dictionary` entry. Every column is described in `a.dat
 - `a.token_candles_1m` — per mint × venue × UTC minute: OHLC of the spot price (quote per token), trades,
   volume. Market cap = price × `token_summary.supply_tokens`. Curve price is post-trade, pool price pre-trade.
 - `a.graduations` — one row per graduation: time to graduate, `in_create_slot`, trades and traders before,
-  first pool trade, pool trades and volume in the first hour (13,468 slots).
+  first pool trade, pool trades and volume in the first clock hour (slots per hour from that epoch's block
+  times: ~11,400 in 1033–1036, ~13,470 from 1037).
 - `a.wallet_summary` — per trader: trades per venue, tokens, SOL in/out, `net_sol_flow`. **Incomplete**: no
   transfers, fees or open positions, so it is not profit.
 - `a.market_events` — ticker: graduations, trades ≥ 25 SOL (SOL-quoted, farming excluded), and the two protocol-marker labels.

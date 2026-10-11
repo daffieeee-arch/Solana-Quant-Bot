@@ -6,7 +6,7 @@ Every reader checks the store's meta (period 'dev', slot_end_exclusive <= hold-o
 import json
 import os
 
-STORE = "store/dev.duckdb"  # relative to LAB_DATA_ROOT; LAB backtest's v2 store is "store/dev2.duckdb"
+STORE = "store/dev2.duckdb"  # relative to LAB_DATA_ROOT; store v2, epochs 1033-1046 (validated 2026-10-11)
 
 HOLDOUT_START = 452_304_000
 SOL_QUOTES = ("So11111111111111111111111111111111111111112", "11111111111111111111111111111111")

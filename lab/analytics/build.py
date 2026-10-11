@@ -41,9 +41,18 @@ CURVE_PRICE = "(vq::DOUBLE / NULLIF(vt::DOUBLE, 0) / 1000)"
 ORDER = "(slot, tx_index, outer_ix, inner_ix)"
 
 
-def tables(lo, hi):
+# Tables built in hash parts with --parts N (part count = N x weight), keyed so that every output row comes from
+# one part: an aggregate over all of store v2 at once does not fit a 1 GB DuckDB memory limit.
+PARTED = {"token_summary": 1, "token_candles_1m": 2, "wallet_summary": 4}
+
+
+def tables(lo, hi, n=1, i=0):
+    """SQL per table; with n > 1 the PARTED tables select only part i of n (hash of the mint or the trader)."""
     w_curve = f"c.slot >= {lo} AND c.slot < {hi}"
     w_pool = f"p.slot >= {lo} AND p.slot < {hi}"  # pool_trades: token trades only (labstore.pool_trades_sql)
+
+    def part(col):
+        return "TRUE" if n == 1 else f"hash(coalesce({col}, '')) % {n} = {i}"
     return {
         "slot_time": f"""
             SELECT slot, block_time, to_timestamp(block_time)::TIMESTAMP AS ts
@@ -78,7 +87,7 @@ def tables(lo, hi):
                        count(DISTINCT trader) AS curve_traders, min(slot) AS curve_first_slot,
                        max(slot) AS curve_last_slot, max({CURVE_PRICE}) AS curve_max_price,
                        arg_max({CURVE_PRICE}, {ORDER}) AS curve_last_price
-                FROM dev.curve c WHERE {w_curve} GROUP BY 1),
+                FROM dev.curve c WHERE {w_curve} AND {part("c.mint")} GROUP BY 1),
                  pv AS (
                 SELECT p.mint, count(*) AS pool_trades,
                        sum(p.quote)::DOUBLE / 1e9 AS pool_volume_quote,
@@ -86,7 +95,7 @@ def tables(lo, hi):
                        count(DISTINCT p.trader) AS pool_traders, min(p.slot) AS pool_first_slot,
                        max(p.slot) AS pool_last_slot, max(p.price) AS pool_max_price,
                        arg_max(p.price, (p.slot, p.tx_index, p.outer_ix, p.inner_ix)) AS pool_last_price
-                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL GROUP BY 1)
+                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL AND {part("p.mint")} GROUP BY 1)
             SELECT m.mint, m.name, m.symbol, m.creator, m.create_slot, st.ts AS create_time,
                    m.quote_mint, m.quote_mint IN {SOL_IN} AS sol_quote, m.mayhem, m.cashback, m.holder_reward,
                    m.supply::DOUBLE / 1e6 AS supply_tokens,
@@ -111,18 +120,18 @@ def tables(lo, hi):
             FROM dev.mints m
             JOIN slot_time st ON st.slot = m.create_slot
             LEFT JOIN cv USING (mint) LEFT JOIN pv USING (mint)
-            WHERE m.create_slot >= {lo} AND m.create_slot < {hi}
+            WHERE m.create_slot >= {lo} AND m.create_slot < {hi} AND {part("m.mint")}
             ORDER BY m.create_slot""",
 
         "token_candles_1m": f"""
             WITH t AS (
                 SELECT 'curve' AS venue, c.mint, c.slot, c.tx_index, c.outer_ix, c.inner_ix, c.is_buy,
                        c.q::DOUBLE / 1e9 AS quote, {CURVE_PRICE} AS price
-                FROM dev.curve c WHERE {w_curve}
+                FROM dev.curve c WHERE {w_curve} AND {part("c.mint")}
                 UNION ALL
                 SELECT 'pool', p.mint, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind = 'buy',
                        p.quote::DOUBLE / 1e9, p.price
-                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL)
+                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL AND {part("p.mint")})
             SELECT t.mint, t.venue, time_bucket(INTERVAL 1 minute, st.ts) AS minute,
                    arg_min(price, {ORDER}) AS open, max(price) AS high, min(price) AS low,
                    arg_max(price, {ORDER}) AS close,
@@ -140,12 +149,21 @@ def tables(lo, hi):
                        max(c.rq)::DOUBLE / 1e9 AS quote_raised
                 FROM dev.curve c JOIN dev.mints m USING (mint)
                 WHERE {w_curve} AND c.slot <= m.complete_slot GROUP BY 1),
+                 -- slots per clock hour, per epoch, from the block times: slot duration differs by epoch
+                 -- (1033-1036 ~316 ms, 1037+ ~267 ms); outside the window fall back to 267 ms.
+                 hs AS (
+                SELECT slot // 432000 AS epoch,
+                       round(3600.0 * (max(slot) - min(slot)) / nullif(max(block_time) - min(block_time), 0))::BIGINT
+                         AS hour_slots
+                FROM slot_time GROUP BY 1),
                  after AS (
                 SELECT p.mint, min(p.slot) AS pool_first_trade_slot,
-                       count(*) FILTER (WHERE p.slot < p.pool_create_slot + 13468) AS pool_trades_first_hour,
-                       coalesce(sum(p.quote) FILTER (WHERE p.slot < p.pool_create_slot + 13468), 0)::DOUBLE / 1e9
-                         AS pool_volume_first_hour
-                FROM pool_trades p WHERE {w_pool} AND p.mint IS NOT NULL GROUP BY 1)
+                       count(*) FILTER (WHERE p.slot < p.pool_create_slot + coalesce(hs.hour_slots, 13468))
+                         AS pool_trades_first_hour,
+                       coalesce(sum(p.quote) FILTER (WHERE p.slot < p.pool_create_slot + coalesce(hs.hour_slots, 13468)),
+                                0)::DOUBLE / 1e9 AS pool_volume_first_hour
+                FROM pool_trades p LEFT JOIN hs ON hs.epoch = p.pool_create_slot // 432000
+                WHERE {w_pool} AND p.mint IS NOT NULL GROUP BY 1)
             SELECT m.mint, m.name, m.symbol, m.creator, m.quote_mint, m.quote_mint IN {SOL_IN} AS sol_quote,
                    m.mayhem, m.cashback, m.holder_reward,
                    m.create_slot, sc.ts AS create_time, m.complete_slot, sg.ts AS complete_time,
@@ -168,23 +186,28 @@ def tables(lo, hi):
             WITH t AS (
                 SELECT c.trader, 'curve' AS venue, c.mint, c.slot, c.is_buy,
                        CASE WHEN m.quote_mint IN {SOL_IN} THEN c.q::DOUBLE / 1e9 END AS sol
-                FROM dev.curve c JOIN dev.mints m USING (mint) WHERE {w_curve}
+                FROM dev.curve c JOIN dev.mints m USING (mint) WHERE {w_curve} AND {part("c.trader")}
                 UNION ALL
                 SELECT p.trader, 'pool', p.mint, p.slot, p.kind = 'buy', p.sol::DOUBLE / 1e9
-                FROM pool_trades p WHERE {w_pool}),
+                FROM pool_trades p WHERE {w_pool} AND {part("p.trader")}),
                  created AS (SELECT creator AS trader, count(*) AS tokens_created FROM dev.mints
-                             WHERE create_slot >= {lo} AND create_slot < {hi} GROUP BY 1)
+                             WHERE create_slot >= {lo} AND create_slot < {hi} AND {part("creator")} GROUP BY 1),
+                 -- per trader x mint first, then per trader (same result as count(DISTINCT mint), less memory).
+                 tm AS (SELECT trader, mint,
+                               count(*) FILTER (WHERE venue = 'curve') AS ct, count(*) FILTER (WHERE venue = 'pool') AS pt,
+                               sum(sol) FILTER (WHERE is_buy) AS b, sum(sol) FILTER (WHERE NOT is_buy) AS s,
+                               min(slot) AS f, max(slot) AS l
+                        FROM t GROUP BY trader, mint)
             SELECT trader AS wallet,
-                   count(*) FILTER (WHERE venue = 'curve') AS curve_trades,
-                   count(*) FILTER (WHERE venue = 'pool') AS pool_trades,
-                   count(DISTINCT mint) AS tokens_traded,
-                   coalesce(sum(sol) FILTER (WHERE is_buy), 0) AS buy_sol,
-                   coalesce(sum(sol) FILTER (WHERE NOT is_buy), 0) AS sell_sol,
-                   coalesce(sum(sol) FILTER (WHERE NOT is_buy), 0) - coalesce(sum(sol) FILTER (WHERE is_buy), 0)
-                     AS net_sol_flow,
-                   min(slot) AS first_slot, max(slot) AS last_slot,
+                   sum(ct)::BIGINT AS curve_trades,
+                   sum(pt)::BIGINT AS pool_trades,
+                   count(mint) AS tokens_traded,
+                   coalesce(sum(b), 0) AS buy_sol,
+                   coalesce(sum(s), 0) AS sell_sol,
+                   coalesce(sum(s), 0) - coalesce(sum(b), 0) AS net_sol_flow,
+                   min(f) AS first_slot, max(l) AS last_slot,
                    coalesce(any_value(cr.tokens_created), 0) AS tokens_created
-            FROM t LEFT JOIN created cr USING (trader)
+            FROM tm LEFT JOIN created cr USING (trader)
             GROUP BY trader""",
 
         "market_events": f"""
@@ -221,7 +244,7 @@ DICTIONARY = {
     "slot_time": {
         "slot": "Slotnummer.", "block_time": "Bloktijd (unix-seconden).", "ts": "Bloktijd als UTC-tijdstempel."},
     "data_coverage": {
-        "epoch": "Epoch = slot // 432.000 (ongeveer 32 uur).", "first_slot": "Eerste slot met een blok.",
+        "epoch": "Epoch = slot // 432.000 (ongeveer 38 uur in 1033–1036, 32 uur vanaf 1037; zie first_time/last_time).", "first_slot": "Eerste slot met een blok.",
         "last_slot": "Laatste slot met een blok.", "blocks": "Aantal geproduceerde blokken.",
         "skipped_slots": "Slots zonder blok (overgeslagen door de leader).",
         "first_time": "Tijd van het eerste blok (UTC).", "last_time": "Tijd van het laatste blok (UTC).",
@@ -277,7 +300,7 @@ DICTIONARY = {
         "curve_traders_before": "Unieke handelaren tot en met de graduatie.",
         "quote_raised": "Hoogste echte quote-reserve op de curve (≈ opgehaald bedrag).",
         "pool_first_trade_slot": "Eerste trade in de pool.",
-        "pool_trades_first_hour": "Pooltrades in het eerste uur na het aanmaken van de pool (13.468 slots).",
+        "pool_trades_first_hour": "Pooltrades in het eerste klokuur na het aanmaken van de pool (slots per uur uit de bloktijden van die epoch).",
         "pool_volume_first_hour": "Poolvolume (quote) in dat eerste uur."},
     "wallet_summary": {
         "wallet": "Handelaar (trade-user, niet de fee-payer).",
@@ -353,30 +376,43 @@ def validate(con, require_tables=True):
     return errors
 
 
-def build(out, slots, memory, threads, tournament=None):
+def build(out, slots, memory, threads, tournament=None, temp_dir=None, max_temp=None, parts=1, strategies_from=None):
     building = out + ".building"
     for p in (building, building + ".wal"):
         if os.path.exists(p):
             os.remove(p)
-    tmp_dir = os.path.join(os.path.dirname(out), "tmp")
+    tmp_dir = temp_dir or os.path.join(os.path.dirname(out), "tmp")
     os.makedirs(tmp_dir, exist_ok=True)
     t0 = time.time()
-    con = duckdb.connect(building, config={"memory_limit": memory, "threads": threads,
-                                           "temp_directory": tmp_dir, "preserve_insertion_order": False})
+    cfg = {"memory_limit": memory, "threads": threads, "temp_directory": tmp_dir, "preserve_insertion_order": False}
+    if max_temp:
+        cfg["max_temp_directory_size"] = max_temp
+    con = duckdb.connect(building, config=cfg)
     con.execute("SET enable_progress_bar=false; SET TimeZone='UTC'")
     src = labstore.attach(con, DATA)  # READ_ONLY, development-only check, TEMP VIEW pool_trades
     src_lo, src_hi = src["slot_start"], src["slot_end_exclusive"]
     lo, hi = slots or (src_lo, src_hi)
     lo, hi = max(lo, src_lo), min(hi, src_hi, HOLDOUT_START)
     counts = {}
-    for name, sql in tables(lo, hi).items():
+    for name in tables(lo, hi):
         t1 = time.time()
-        con.execute(f'CREATE TABLE "{name}" AS {sql}')
+        n = parts * PARTED.get(name, 1) if parts > 1 and name in PARTED else 1
+        for i in range(n):
+            sql = tables(lo, hi, n, i)[name]
+            con.execute(f'CREATE TABLE "{name}" AS {sql}' if i == 0 else f'INSERT INTO "{name}" {sql}')
         counts[name] = con.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0]
-        print(f"{name}: {counts[name]} rows in {time.time() - t1:.0f}s", flush=True)
+        print(f"{name}: {counts[name]} rows in {time.time() - t1:.0f}s" + (f" ({n} parts)" if n > 1 else ""), flush=True)
     run = None
-    if tournament:
+    if strategies_from:
+        # Keep an earlier import as is (a re-import may not fit the memory limit while the heavy lock is taken).
+        con.execute(f"ATTACH '{os.path.abspath(strategies_from)}' AS prev (READ_ONLY)")
+        for t in ("strategy_runs", "strategy_summary", "strategy_results", "strategy_curves"):
+            con.execute(f'CREATE TABLE "{t}" AS SELECT * FROM prev."{t}"')
+        run = con.execute("SELECT run_id FROM strategy_runs").fetchone()[0]
+        con.execute("DETACH prev")
+    elif tournament:
         run = strategies.load(con, tournament).get("run_id")
+    if run:
         for (c,) in con.execute("SELECT column_name FROM duckdb_columns() WHERE table_name = 'strategy_summary' "
                                 "AND database_name = current_database()").fetchall():
             DICTIONARY["strategy_summary"].setdefault(c, "Kolom uit summary.parquet van de toernooirun (zie lab/backtest/report.py).")
@@ -408,10 +444,18 @@ def main():
     ap.add_argument("--memory", default="2GB")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--tournament", help="finished development run dir (backtests/<run>) to load as strategy_* tables")
+    ap.add_argument("--temp-dir", help="DuckDB spill directory (default: tmp/ next to --out), e.g. /dev/shm/lab-analytics")
+    ap.add_argument("--max-temp", help="cap on spill size, e.g. 1GB; the build fails instead of spilling more")
+    ap.add_argument("--parts", type=int, default=1,
+                    help="build the big aggregates in hash parts (x weight per table, see PARTED); store v2 at 1 GB: 8")
+    ap.add_argument("--strategies-from", help="copy the strategy_* tables of an earlier analytics.duckdb instead of --tournament")
     a = ap.parse_args()
+    if a.strategies_from and a.tournament:
+        ap.error("--strategies-from and --tournament exclude each other")
     slots = tuple(int(x) for x in a.slots.split(":")) if a.slots else None
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
-    build(os.path.abspath(a.out), slots, a.memory, a.threads, a.tournament)
+    build(os.path.abspath(a.out), slots, a.memory, a.threads, a.tournament, a.temp_dir, a.max_temp, a.parts,
+          a.strategies_from)
 
 
 if __name__ == "__main__":
