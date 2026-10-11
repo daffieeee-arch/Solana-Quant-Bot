@@ -80,24 +80,24 @@ def main():
     print("Alleen adressen; labels zijn waarschijnlijkheden. Links openen DexScreener voor de eigenaar; het is geen databron.\n")
     risers, dumpers = [], []
     if daily:
-        rows = con.execute(f"SELECT day, list, rank, mint, volume_sol, ret_24h, peak_mult, end_of_peak, traders FROM read_parquet({daily!r}) ORDER BY day, list, rank").fetchall()
+        rows = con.execute(f"SELECT day, list, rank, mint, volume_sol, ret_24h, peak_mult, end_of_peak, traders, vault_end FROM read_parquet({daily!r}) ORDER BY day, list, rank").fetchall()
         print("## Per dag: trending 24 u en pumpers/dumpers\n")
-        print("| dag | lijst | # | token | volume SOL | 24-u-rendement | piek × | eind t.o.v. piek | traders |")
-        print("|---|---|---|---|---|---|---|---|---|")
-        for day, lst, rank, mint, vol, ret, peak, eop, tr in rows:
+        print("| dag | lijst | # | token | volume SOL | 24-u-rendement | piek × | eind t.o.v. piek | traders | SOL in pool (eind) |")
+        print("|---|---|---|---|---|---|---|---|---|---|")
+        for day, lst, rank, mint, vol, ret, peak, eop, tr, va in rows:
             tl = tls.get(mint, {})
             sym = tl.get("symbol") or (mint[:6] if mint else "?")
             link = f"[{sym}](https://dexscreener.com/solana/{mint})" if mint else "?"
-            print(f"| {day} | {lst} | {rank} | {link} | {vol:,.0f} | {ret:+.0%} | {peak:.1f} | {eop:.0%} | {tr} |")
+            print(f"| {day} | {lst} | {rank} | {link} | {vol:,.0f} | {ret:+.0%} | {peak:.1f} | {eop:.0%} | {tr} | {va:,.0f} |")
             (risers if lst == "trending_24h" else dumpers).append(mint)
         print()
     if weekly:
-        rows = con.execute(f"SELECT list, rank, mint, symbol, mcap_7d_sol, mcap_peak_sol, end_of_peak, volume_7d, traders_7d FROM read_parquet({weekly!r}) ORDER BY list, rank").fetchall()
+        rows = con.execute(f"SELECT list, rank, mint, symbol, mcap_7d_sol, mcap_peak_sol, end_of_peak, volume_7d, traders_7d, vault_7d FROM read_parquet({weekly!r}) ORDER BY list, rank").fetchall()
         print("## 7 dagen: blijvers en instorters\n")
-        print("| lijst | # | token | mcap na 7 d (SOL) | piek-mcap (SOL) | eind t.o.v. piek | volume 7 d | traders |")
-        print("|---|---|---|---|---|---|---|---|")
-        for lst, rank, mint, sym, m7, mp, eop, vol, tr in rows:
-            print(f"| {lst} | {rank} | [{sym}](https://dexscreener.com/solana/{mint}) | {m7:,.0f} | {mp:,.0f} | {eop:.0%} | {vol:,.0f} | {tr} |")
+        print("| lijst | # | token | mcap na 7 d (SOL) | piek-mcap (SOL) | eind t.o.v. piek | volume 7 d | traders | SOL in pool (7 d) |")
+        print("|---|---|---|---|---|---|---|---|---|")
+        for lst, rank, mint, sym, m7, mp, eop, vol, tr, va in rows:
+            print(f"| {lst} | {rank} | [{sym}](https://dexscreener.com/solana/{mint}) | {m7:,.0f} | {mp:,.0f} | {eop:.0%} | {vol:,.0f} | {tr} | {va:,.0f} |")
         print()
     if risers or dumpers:
         print("## Stijgers tegenover dumpers in de eerste 15 minuten\n")

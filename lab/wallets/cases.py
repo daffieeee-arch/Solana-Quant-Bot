@@ -1,7 +1,7 @@
 """Onderzoek 1b, casusselectie: a "trending" list from our own data (owner request, 2026-10-11).
 
-Only development slots, SOL-quote tokens (curve and pools of a mint together; a pool without a
-known mint is its own token). Prices are reserve prices (curve: virtual quote / virtual token; pool: e / b, or
+Only development slots, pump tokens with a SOL quote (curve and canonical migration pool; reversed
+and other pools are farming venues and are left out). Prices are reserve prices (curve: virtual quote / virtual token; pool: e / b, or
 b / e in a reversed pool), so dust trades cannot distort them; the market cap is price x total
 supply, in SOL. Lists require >= MIN_TRADERS traders and >= MIN_VOLUME_SOL volume.
 
@@ -50,39 +50,45 @@ def day_slots(con, day):
 
 
 def trades_sql(lo, hi):
+    """pump tokens only: the curve and the canonical normal migration pool (reserve price e / b;
+    `vault` is the real SOL in the pool, or the curve's real SOL reserves)."""
     quotes = ",".join(f"'{q}'" for q in SOL_QUOTES)
     return f"""
       SELECT c.mint AS key, c.mint, c.slot::BIGINT AS slot, c.tx_index, c.trader, c.is_buy AS token_buy,
-             c.q::DOUBLE AS sol, c.vq::DOUBLE / c.vt AS px
+             c.q::DOUBLE AS sol, c.vq::DOUBLE / c.vt AS px, c.rq::DOUBLE AS vault
       FROM curve c JOIN mints m USING (mint)
       WHERE c.slot >= {lo} AND c.slot < {hi} AND c.vt > 0 AND NOT m.mayhem AND m.quote_mint IN ({quotes})
       UNION ALL
-      SELECT {POOL_KEY}, p.mint, e.slot::BIGINT, e.tx_index, e.trader, e.token_buy, e.sol_amount::DOUBLE,
-             CASE WHEN p.orientation = 'reversed' THEN e.b::DOUBLE / e.e ELSE e.e::DOUBLE / e.b END
-      FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
-      WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell') AND e.b > 0 AND e.e > 0 AND p.mint IS NOT NULL
-        AND p.quote_class IN ('sol', 'reversed') AND NOT COALESCE(p.mayhem, false)"""
+      SELECT m.mint, m.mint, e.slot::BIGINT, e.tx_index, e.trader, e.token_buy, e.sol_amount::DOUBLE,
+             e.e::DOUBLE / e.b, e.vault::DOUBLE
+      FROM pool e JOIN pools p USING (pool) JOIN mints m ON m.mint = p.mint AND m.pool = p.pool
+      WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell') AND e.b > 0 AND e.e > 0
+        AND p.quote_class = 'sol' AND p.orientation = 'normal' AND NOT COALESCE(p.mayhem, false) AND NOT m.mayhem"""
 
+
+MIN_VAULT_DAY_SOL, MIN_VAULT_WEEK_SOL = 5, 10  # real SOL in the pool at the valuation moment
 
 BUCKETS = 8  # per-key aggregation in hash buckets of the key: bounded working set
 
 
 def daily_cases(con, day, lo, hi):
     con.execute("""CREATE OR REPLACE TEMP TABLE d (key VARCHAR, mint VARCHAR, trades BIGINT, traders BIGINT, volume_sol DOUBLE,
-                   p_first DOUBLE, p_last DOUBLE, p_max DOUBLE, peak_slot BIGINT, first_slot BIGINT, last_slot BIGINT)""")
+                   p_first DOUBLE, p_last DOUBLE, p_max DOUBLE, peak_slot BIGINT, first_slot BIGINT, last_slot BIGINT,
+                   vault_end DOUBLE)""")
     for b in range(BUCKETS):
         con.execute(f"""
           INSERT INTO d
           SELECT key, any_value(mint), count(*), count(DISTINCT trader), sum(sol) / {SOL},
                  arg_min(px, slot * 1048576 + tx_index), arg_max(px, slot * 1048576 + tx_index),
-                 max(px), arg_max(slot, px), min(slot), max(slot)
+                 max(px), arg_max(slot, px), min(slot), max(slot), arg_max(vault, slot * 1048576 + tx_index) / {SOL}
           FROM ({trades_sql(lo, hi)}) WHERE hash(key) % {BUCKETS} = {b} GROUP BY key""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sel AS
       SELECT * FROM (
         SELECT 'trending_24h' AS list, row_number() OVER (ORDER BY (p_last / p_first - 1) * volume_sol DESC) AS rank, d.*,
                p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
-        FROM d WHERE volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS} AND p_last > p_first) WHERE rank <= {TOP_DAY}
+        FROM d WHERE volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS} AND p_last > p_first
+          AND vault_end >= {MIN_VAULT_DAY_SOL}) WHERE rank <= {TOP_DAY}
       UNION ALL
       SELECT * FROM (
         SELECT 'dumpers_24h' AS list, row_number() OVER (ORDER BY volume_sol DESC) AS rank, d.*,
@@ -97,14 +103,14 @@ def weekly_cases(con, lo, hi, clock):
     con.execute(f"CREATE OR REPLACE TEMP TABLE g AS {runners.grads_sql(lo, hi - n7)}")
     con.execute("""CREATE OR REPLACE TEMP TABLE w (mint VARCHAR, pool VARCHAR, open_slot BIGINT, create_slot BIGINT, grad_in_create BOOLEAN,
                    p_open DOUBLE, supply BIGINT, symbol VARCHAR, name VARCHAR, p_peak DOUBLE, peak_slot BIGINT, p_7d DOUBLE,
-                   volume_7d DOUBLE, traders_7d BIGINT)""")
+                   volume_7d DOUBLE, traders_7d BIGINT, vault_7d DOUBLE)""")
     for b in range(BUCKETS):
         con.execute(f"""
           INSERT INTO w
           SELECT g.mint, g.pool, g.open_slot, g.create_slot, g.grad_in_create, g.p_open, m.supply, m.symbol, m.name,
                  max(e.e::DOUBLE / e.b), arg_max(e.slot, e.e::DOUBLE / e.b),
                  arg_max(e.e::DOUBLE / e.b, e.slot::BIGINT * 1048576 + e.tx_index),
-                 sum(e.sol_amount) / {SOL}, count(DISTINCT e.trader)
+                 sum(e.sol_amount) / {SOL}, count(DISTINCT e.trader), arg_max(e.vault, e.slot::BIGINT * 1048576 + e.tx_index) / {SOL}
           FROM g JOIN mints m USING (mint) JOIN pool e ON e.pool = g.pool AND e.kind IN ('buy', 'sell') AND e.b > 0
             AND e.slot >= g.open_slot AND e.slot < g.open_slot + {n7}
           WHERE hash(g.pool) % {BUCKETS} = {b}
@@ -113,7 +119,7 @@ def weekly_cases(con, lo, hi, clock):
       SELECT * FROM (
         SELECT 'stayers_7d' AS list, row_number() OVER (ORDER BY p_7d * supply DESC) AS rank, w.*,
                p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
-        FROM w WHERE volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS}) WHERE rank <= {TOP_WEEK}
+        FROM w WHERE volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS} AND vault_7d >= {MIN_VAULT_WEEK_SOL}) WHERE rank <= {TOP_WEEK}
       UNION ALL
       SELECT * FROM (
         SELECT 'collapsed_7d' AS list, row_number() OVER (ORDER BY p_peak * supply DESC) AS rank, w.*,
