@@ -46,7 +46,7 @@ log "step 1 episodes: ${#slices[@]} slices, $todo to do, $PAR parallel"
 printf '%s\n' "${slices[@]}" | while read -r a b; do
   [ -f "$EP/episodes-$a.parquet" ] && continue
   echo "$a $b"
-done | xargs -P "$PAR" -L 1 bash -c '
+done | xargs -r -P "$PAR" -L 1 bash -c '
   a=$0; b=$1
   if nice -n 10 '"$PY"' -m wallets.episodes --from-slot "$a" --to-slot "$b" --out "'"$EP"'" > "'"$LOG"'/episodes-$a.log" 2>&1; then
     echo "$(date +%FT%T) episodes $a-$b ok: $(tail -1 "'"$LOG"'/episodes-$a.log")"
