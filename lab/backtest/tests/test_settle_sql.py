@@ -80,3 +80,29 @@ def test_overlay_effects_pairs_each_trigger_with_its_own_base(tmp_path):
                     Scenario.from_cfg("base", load_defaults()))[0]
     b_diff = 0.1  # same fees on both sides
     assert abs(o["delta_sol"] - ((0 - a_base) / sol + b_diff) / 2) < 1e-9
+
+
+def test_summary_compares_s1_with_its_own_farm_split_of_n2(tmp_path):
+    """N2_S1 is split by farming like S1 (its controls are drawn per pool); other N2 controls are
+    'n/a' and compared with every split."""
+    import pyarrow.parquet as pq
+
+    from backtest.report import summarize
+    from backtest.store import load_defaults
+
+    sol = 1_000_000_000
+    rows = []
+    for fam, farm, back in (("S1", "organic", 0.6), ("N2_S1", "organic", 0.5), ("F7", "organic", 0.55), ("N2_F7", "n/a", 0.5)):
+        for day in ("2026-09-01", "2026-09-02"):
+            rows.append(dict(family=fam, variant="L4h" if "S1" in fam else "tp4_T600", size_sol=0.5, d=1, tau="empirical",
+                             q=0.5, segment="pool_normal", regime="270ms", farm=farm, overlay="none", day=day,
+                             skipped=False, entry_failed=False, cost=int(0.5 * sol), proceeds=int(back * sol), exit_attempts=1,
+                             hist_ret=0.0, exit_reason="time", reverted_router=0, reverted_direct=0, sells_dropped=0,
+                             seed_pool=False, cf_graduation=False))
+    pq.write_table(pa.Table.from_pylist(rows), tmp_path / "r.parquet")
+    out = {(o["family"], o["farm"]): o for o in summarize(str(tmp_path / "r.parquet"), load_defaults())
+           if o["scenario"] == "base"}
+    for fam in ("S1", "F7"):
+        assert out[(fam, "organic")]["edge_vs_n2"] is not None
+        assert abs(out[(fam, "organic")]["edge_vs_n2"]
+                   - (out[(fam, "organic")]["mean_ret"] - out[("N2_" + fam, "organic" if fam == "S1" else "n/a")]["mean_ret"])) < 1e-12

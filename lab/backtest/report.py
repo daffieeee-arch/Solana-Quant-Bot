@@ -158,8 +158,11 @@ def summarize(results, cfg, con=None):
     # N2 comparison: same variant / size / d / tau / scenario, CI by resampling days jointly.
     idx = {(o["scenario"], *[o[k] for k in KEYS]): o for o in out}
     for o in out:
-        # N2 controls are not split by farming (their pools are random): compare every split with them.
+        # N2 controls are mostly not split by farming (their pools are random): compare every split
+        # with them. S1 draws its controls per pool and flags them: then compare the same split.
         k2 = (o["scenario"], "N2_" + o["family"], *[o[k] for k in KEYS[1:-2]], "n/a", o["overlay"])
+        if k2 not in idx:
+            k2 = k2[:-2] + (o["farm"], o["overlay"])
         n2 = idx.get(k2)
         o["n2_n"] = n2["filled"] if n2 else None
         o["n2_mean_ret"] = n2["mean_ret"] if n2 else None
