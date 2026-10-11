@@ -118,7 +118,10 @@ Cost: Old Faithful files only. No paid Triton service was used ($0).
 ## Open points
 
 - **Epoch 1052.** It is extracted next with the account columns of the newest extractor, for the mechanical replay validation after the hold-out. It runs after the families v2 tournament (the shared heavy-job lock).
-- **Bad PumpSwap pairs.** The 233 pairs are classified, but causes A–C stay open until the targeted Old Faithful scan of vault transfers, described under Continuity, has run.
+- **Bad PumpSwap pairs.** The 233 pairs are classified. Causes A–C are open but not blocking (coordinator review, 2026-10-11).
+  - The replay takes each event's recorded pre-state, so a transfer between two events enters the state at the next event.
+  - The only effect is a small counterfactual difference inside one of our positions, between those two events: dust, or twice less than 2 SOL in SOL pools.
+  - The targeted Old Faithful scan of vault transfers is in the backlog.
 - **VPS limits** (netcup RS 2000 G12).
   - The network is throttled to 300 Mbit/s after 3 TB per 24 h.
   - Disk writes stalled twice (cause not known).
