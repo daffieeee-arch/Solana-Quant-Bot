@@ -135,6 +135,10 @@ fn main() -> Result<()> {
             "pump.json": hex::encode(Sha256::digest(PUMP_IDL.as_bytes())),
             "pump_amm.json": hex::encode(Sha256::digest(PUMP_AMM_IDL.as_bytes())),
         },
+        // Event-table context columns of this build (the parent instruction's named accounts
+        // since ix_accounts; earlier chunks do not have them).
+        "event_context": extract::EVENT_CONTEXT.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+        "ix_accounts_json": std::env::var("LAB_IX_ACCOUNTS_JSON").map_or(true, |v| v != "0"),
         "error": result.as_ref().err().map(|e| e.to_string()),
         "sink_error": tables.as_ref().err().map(|e| format!("{e:#}")),
         "rows": tables.as_ref().ok(),
