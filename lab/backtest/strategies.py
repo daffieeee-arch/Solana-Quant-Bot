@@ -679,11 +679,13 @@ M1_SIZES = (0.25, 0.5, 1.0, 2.0)
 def m1_candidates_sql(con, cfg, dev_start, dev_end, clock=None):
     """Phase 1 of M1 (cheap windows): events of young normal SOL pools where the post-trade price
     is >= 2 x the pool's opening price and organic net buy flow over the last 5 min >= 3% of the
-    real SOL depth. Returns (mint, pool, t, depth, ratio, create_slot) sorted by pool and slot."""
+    real SOL depth. Returns (mint, pool, t, depth, ratio, create_slot) sorted by pool and slot.
+    Computed per pool range bucket (everything is per pool), in bounded memory."""
     clock = clock or Clock()
     lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
     out = []
-    for rlo, rhi, m in clock.regimes(lo, hi + 1):
+    pool_r = key_ranges(con, "pools", "pool", SQL_BUCKETS)
+    for (rlo, rhi, m), (plo, phi) in ((r, pr) for r in clock.regimes(lo, hi + 1) for pr in pool_r):
         n_age, n_flow = round(M1_AGE_MS / m), round(M1_FLOW_MS / m)
         out += con.execute(f"""
           WITH young AS (
@@ -691,7 +693,7 @@ def m1_candidates_sql(con, cfg, dev_start, dev_end, clock=None):
             FROM pools p JOIN mints m ON m.mint = p.mint
             WHERE p.quote_class = 'sol' AND NOT COALESCE(p.mayhem, false) AND p.created_in_period AND p.b0 > 0
               AND NOT m.mayhem AND COALESCE(m.complete_slot, -1) <> m.create_slot
-              AND p.create_slot BETWEEN {rlo - n_age} AND {rhi - 1}),
+              AND p.create_slot BETWEEN {rlo - n_age} AND {rhi - 1} AND p.pool BETWEEN '{plo}' AND '{phi}'),
           ev AS (
             SELECT e.pool, y.mint, y.create_slot, y.open_price, e.slot, e.tx_index, e.outer_ix, e.inner_ix, e.sol_depth,
                    (e.e + e.e_delta)::DOUBLE / (CASE WHEN e.token_buy THEN e.b - e.base ELSE e.b + e.base END) AS price,
