@@ -68,7 +68,26 @@ So the owner's "≥ 10× in 24 h" is ~3.5% of graduations when measured from whe
 - A logistic baseline on all features, fitted on day 1 and applied to day 2 (walk-forward): AUC 0.60 for "≥ 3× after +5 min", top decile 28% vs base 19%. For "≥ 10×" the one-day AUC of 0.87 comes from an outcome that included the first 5 minutes (the open-based target) and is not usable; the forward target has too few events (23) for a fit.
 - Examples (two days): the five tokens with the most buyers and organic volume at +5 min that ran (IP, Desk, CateBrain, >_, TTP: 3–8× after the decision, four of five ending at 0.06–0.13×) and the five with the same hype that did not (tinycat with 2,049 buyers: 1.8×; MONETIZED, Ecat, MAXWELL, 𝕏/ACC: 1.0–1.9×, ending at 0.05–0.11×). Same signals, opposite outcomes; the survivors are rare either way.
 
-Limitations: two days; the insider share can exceed 1 when sells exceed visible buys (transfers are invisible) — it is a noisy feature; features are at fixed minutes after the pool opened, not at a trading decision of a tested strategy. The full run (18.7 days, per-day walk-forward) is cheap: ~12 s per 4 h slice.
+### Full development period (added later the same day; `runners-v1/`, 106 slices up to slot 451,964,100 so that every 24 h outcome window stays before the hold-out)
+
+14,391 graduations: 8,910 in the create slot (dev bundles, apart), **5,481 outside**. Of those, 24.8% peak ≥ 3× the open in 24 h and 4.8% ≥ 10×; median end 0.06×. Forward from the decision: at +5 min 15.2% still make ≥ 3× and 3.6% ≥ 10× (median end 0.10×); at +15 min 9.6% and 2.1% (median end 0.68×: by then most dumps have happened).
+
+| top quintile vs base | +5 min, ≥ 3× | +5 min, ≥ 10× | +15 min, ≥ 3× |
+|---|---|---|---|
+| price at decision / open | 1.2× (bottom quintile 0.3×) | 1.1× (bottom 0.4×) | **2.2×** (21.4%; bottom 0.1×) |
+| net SOL flow into the pool | 1.2× (bottom 0.3×) | 1.0× (bottom 0.4×) | **2.2×** (20.6%; bottom 0.1×) |
+| minutes to graduation (slow) | 1.1× | 0.9× | 1.5× (fast graduations 0.4×) |
+| unique curve buyers (hype) | 0.7× | 0.5× | 1.0× (few buyers 0.4×) |
+| insider share (O7) | 1.0× | 1.1× | **0.2×** |
+| share of buyers ≥ 5 SOL | 1.0× | 0.9× | 0.5× |
+| creator sells | 0.9× | 0.8× | 1.3× |
+| split-buyer events | 0.8× | 0.6× | 0.9× |
+
+Walk-forward per day over 18 days (ridge logistic on all features, fitted on earlier days): mean AUC 0.61 at +5 min and **0.74 at +15 min** for "≥ 3× after the decision"; top decile of the predictions 22% at +5 min (base 15%) and 21% at +15 min (base 9.5%). For "≥ 10×": AUC 0.60, top decile 7.4% vs 3.6%.
+
+So over 18 days the picture of the two-day pilot holds: at +5 min nothing separates runners from the rest; at +15 min early momentum and net inflow, a slower graduation and a low insider share give a 2× lift, and the bottom quintiles (price below open, insiders still holding > 0.5) almost never run. Hype at the create (buyers, big buyers, bundles) carries no positive signal. A 2× lift on a 10% base is not a strategy; it is a filter candidate (coordinator: this is the M1 idea plus a hype veto).
+
+Limitations: the insider share can exceed 1 when sells exceed visible buys (transfers are invisible) — it is a noisy feature; features are at fixed minutes after the pool opened, not at a trading decision of a tested strategy; one regime split not yet applied (316 ms vs 267 ms epochs).
 
 ## 3. Case selection from our own data
 
