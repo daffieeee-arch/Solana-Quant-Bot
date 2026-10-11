@@ -83,7 +83,8 @@ def daily_cases(con, day, lo, hi):
         FROM d WHERE volume_sol >= {MIN_VOLUME_SOL} AND p_last > p_first) WHERE rank <= {TOP_DAY}
       UNION ALL
       SELECT * FROM (
-        SELECT 'dumpers_24h', row_number() OVER (ORDER BY volume_sol DESC), d.*, p_last / p_first - 1, p_max / p_first, p_last / p_max
+        SELECT 'dumpers_24h' AS list, row_number() OVER (ORDER BY volume_sol DESC) AS rank, d.*,
+               p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
         FROM d WHERE p_last <= 0.1 * p_max AND volume_sol >= {MIN_VOLUME_SOL}) WHERE rank <= {TOP_DAY}""")
     return con.execute(f"SELECT '{day}' AS day, * FROM sel ORDER BY list, rank").to_arrow_table()
 
@@ -113,7 +114,8 @@ def weekly_cases(con, lo, hi, clock):
         FROM w) WHERE rank <= {TOP_WEEK}
       UNION ALL
       SELECT * FROM (
-        SELECT 'collapsed_7d', row_number() OVER (ORDER BY p_peak * supply DESC), w.*, p_7d * supply / {SOL}, p_peak * supply / {SOL}, p_7d / p_peak
+        SELECT 'collapsed_7d' AS list, row_number() OVER (ORDER BY p_peak * supply DESC) AS rank, w.*,
+               p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
         FROM w WHERE p_7d <= 0.05 * p_peak) WHERE rank <= {TOP_WEEK}
       ORDER BY list, rank""").to_arrow_table()
 
