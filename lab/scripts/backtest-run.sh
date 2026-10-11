@@ -19,6 +19,16 @@ if [[ -e $disk_low ]]; then
   exit 3
 fi
 shift
+# Free memory before a run (coordinator 2026-10-11): MemAvailable must exceed this scope's memory
+# limit by 2 GB (7G needs >= 9 GB, as AGENTS.md requires for a tournament); otherwise wait and log.
+limit=$(cat "/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max" 2>/dev/null || echo max)
+if [[ $limit =~ ^[0-9]+$ ]]; then
+  need_kb=$(( limit / 1024 + 2 * 1024 * 1024 ))
+  until (( $(awk '/MemAvailable/ {print $2}' /proc/meminfo) >= need_kb )); do
+    echo "$(date -Is) waiting: MemAvailable below $(( need_kb / 1048576 )) GB for a $(( limit / 1073741824 ))G run" >&2
+    sleep 600
+  done
+fi
 lab=$(cd "$(dirname "$0")/.." && pwd)
 out=${LAB_BACKTESTS:-/home/chupa/Solana-project/data-old-faithful-one/lab/backtests}/$run_id
 py=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
