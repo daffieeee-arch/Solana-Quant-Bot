@@ -6,6 +6,7 @@
 #      store. test_reversed_fills is check b: exact replay of reversed fills, fee tier included.
 #   2b. week1: the week-1 checks (continuity on 1033-1039, summary). They run
 #       $LAB/logs/week1-checks.sh, which the chain waits for (prepared separately).
+#   2c. badpairs: continuity over 1033-1051 with every bad PumpSwap pair dumped (week-1 checkpoint).
 #   3. f7rev: F7 in reversed pools at 0.5/1/2 SOL, d 1/2 (check a, plus the c-e tables).
 #   4. full: the families v2 run.
 # Each step must pass, and a failure stops the chain. A rerun skips the steps already done.
@@ -79,11 +80,24 @@ if ! done_ week1; then
   mark week1
 fi
 
+if ! done_ badpairs; then
+  W=/home/chupa/Solana-project/worktrees/lab-week1-report
+  gate "badpairs"
+  mkdir -p /dev/shm/lab-badpairs
+  systemd-run --user --scope -q -p MemoryMax=5G -p CPUQuota=200% -- \
+    env LAB_DUCKDB_TMP=/dev/shm/lab-badpairs LAB_DUCKDB_TMP_MAX=2GB LAB_DUCKDB_MEM=2GB LAB_DUCKDB_THREADS=2 nice -n 10 \
+    "$PY" -I $W/lab/checks/continuity.py $LAB/events/v1/chunks --slots 446256000:454464000 --expect 446256000:454464000 \
+    --report $LAB/reports/continuity-446256000-454464000.json --dump-bad $LAB/reports/continuity-bad-pairs-446256000-454464000.parquet \
+    --examples 20 > /dev/null 2>> "$LOG" || fail "continuity with bad-pair dump"
+  rm -rf /dev/shm/lab-badpairs
+  mark badpairs
+fi
+
 run() {  # run_id, then backtest.tournament arguments
   local id=$1; shift
   mkdir -p "/dev/shm/$id"
   systemd-run --user --scope -q -p MemoryMax=4G -p CPUQuota=200% -- \
-    env LAB_SPILL_DIR="/dev/shm/$id" LAB_SPILL_MAX=2GB nice -n 10 scripts/backtest-run.sh "$id" "$@" >> "$LOG" 2>&1 \
+    env LAB_SPILL_DIR="/dev/shm/$id" LAB_SPILL_MAX=2GB LAB_SQL_BUCKETS=64 nice -n 10 scripts/backtest-run.sh "$id" "$@" >> "$LOG" 2>&1 \
     || fail "run $id (see $LAB/backtests/$id/run.log)"
   rm -rf "/dev/shm/$id"
 }
