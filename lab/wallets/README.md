@@ -39,6 +39,31 @@ Run order for a period: `episodes` → `follow` (needs the store-v2 engine: `LAB
 
 `scores-v1/scores-<D>.parquet` is the long form (wallet × variant × size × d) with `n`, `filled`, `mean_ret`, `sd_ret`, `mean_pnl_sol`, `win`, `shrunk_ret`, `prior`, `k`, `p_value`, `q_value`, `top`, `rank`.
 
+## Watchlist for live paper trading (`watchlist.py`, triton-edge §6)
+
+The recorder asks Triton for full transactions only for pools we can trade and wallets we follow. `Watchlist` is one state machine for the recorder and for the batch measurement; everything it decides for minute m + 1 uses data through minute m.
+
+| rule | pool | enters | leaves |
+|---|---|---|---|
+| `f7_rev` | reversed PumpSwap pool, not mayhem | last real SOL depth ≥ 150 SOL and organic (farmers ≤ 50 % of the SOL volume in the trailing 60 min, judged when that volume ≥ 1 SOL) | depth < 120 SOL, the hour turns farming, or 6 h without a trade |
+| `m1` | normal SOL-quote pool, not mayhem, graduation outside the create slot | at pool creation | age > 6 h, or 60 min without a trade (a trade inside the 6 h brings it back) |
+| wallets | followed wallets | fixed list (`--wallets` CSV) until the step-1 scores exist | — |
+
+A pool with an open paper position stays on the list until the position closes; the paper engine adds those itself.
+
+**Interface for the recorder** (`Watchlist.snapshot()`, JSON, written by whoever runs the state machine, read by the recorder every minute):
+
+```json
+{"version": 1, "valid_for_minute": 29870000, "valid_from_slot": 451000123, "generated_slot": 451000120,
+ "pools": [{"pool": "<pool address>", "mint": "<mint>", "rules": ["f7_rev"]}, {"pool": "...", "mint": "...", "rules": ["m1"]}],
+ "wallets": [{"wallet": "<address>", "source": "fixed"}],
+ "counts": {"pools": 2, "f7_rev": 1, "m1": 1, "wallets": 1}}
+```
+
+The recorder feeds `Watchlist.step(minute, rows)` with per-(pool, minute) aggregates `(pool, trades, sol, farmer_sol, depth_last_sol)` from its own stream (vault account updates give the depth of silent pools) and `add_pool(PoolInfo(...))` when a new pool appears. `valid_for_minute` is `block_time // 60`.
+
+**Measurement over the development period** (NAS): `nas_watchlist.sh` runs `python -m wallets.watchlist --from-slot A --to-slot B --out DIR [--triggers <tournament run>] [--wallets CSV]` per UTC day (6 h warm-up carried in) and writes `watchlist-<lo>.parquet` (minute, pool, f7_rev, m1), `watchlist-stats-<lo>.json` (per day: members per minute median / p95 / max, events on the list vs all pool events, F7 candidate-sell coverage, coverage of the tournament's F7 triggers, M1 decision points at open + 15 min, M1 trades ≤ 6 h) and, with `--report`, `report.md` with the GB/day estimate at 3 KB (full transaction) and 1 KB (raw) per event.
+
 ## Memory limits (DuckDB) per module
 
-VPS defaults fit a 2 GB scope; on the NAS raise them per module: `LAB_EPISODES_MEMORY` (640MB), `LAB_FOLLOW_MEMORY` (1GB, main process) and `LAB_WORKER_MEMORY` (800MB per worker), `LAB_SCORE_MEMORY` (1GB), `LAB_RUNNERS_MEMORY` and `LAB_CASES_MEMORY` (1000MB); `LAB_WALLETS_MEMORY` sets all of them at once. Spill: `LAB_SPILL_DIR` / `LAB_SPILL_MAX`.
+VPS defaults fit a 2 GB scope; on the NAS raise them per module: `LAB_EPISODES_MEMORY` (640MB), `LAB_FOLLOW_MEMORY` (1GB, main process) and `LAB_WORKER_MEMORY` (800MB per worker), `LAB_SCORE_MEMORY` (1GB), `LAB_RUNNERS_MEMORY`, `LAB_CASES_MEMORY` and `LAB_WATCHLIST_MEMORY` (1000MB); `LAB_WALLETS_MEMORY` sets all of them at once. Spill: `LAB_SPILL_DIR` / `LAB_SPILL_MAX`.

@@ -1,0 +1,413 @@
+"""Dynamic watchlist for live paper trading (owner request via the coordinator, 2026-10-12 night).
+
+Triton delivers full transactions only for pools and wallets we can actually trade or follow
+(triton-edge-2026-10-11.md §6); the size of that list drives the cost per day. This module holds
+the point-in-time rules per strategy, one state machine that both the recorder and the batch
+measurement use, and the measurement over the development period.
+
+Rules (everything decided from data strictly before the minute the list is valid for):
+  F7-reversed  reversed PumpSwap pool, not mayhem. Enters when the last seen real SOL depth is
+               >= 150 SOL (the F7 pool venue threshold) and the pool is organic: farmers made
+               <= 50 % of its SOL volume over the trailing 60 min (addendum §5; judged only when
+               that volume is >= 1 SOL, otherwise the previous verdict stands). Leaves when the
+               depth drops below 120 SOL (hysteresis), when the trailing hour turns farming, or
+               after 6 h without a trade.
+  M1 / M1+     normal SOL-quote PumpSwap pool, not mayhem, graduation outside the create slot
+               (dev bundles never trigger M1). Enters when the pool is created (the new-pool
+               account stream), leaves at 6 h of age (M1 universe) or after 60 min without a trade;
+               a trade (or vault update) inside the 6 h brings it back.
+  wallets      followed wallets: a fixed list for now (the step-1 scores fill it later).
+A pool with an open paper position must stay on the list until the position is closed; that
+is the paper engine's job (it knows its positions), so it is not modelled here.
+
+Time steps are UTC minutes (block_time // 60). The list computed after minute m is valid for
+minute m + 1: `Watchlist.step(m, rows)` returns the members for m + 1.
+
+Batch (the NAS measurement, python -m wallets.watchlist --from-slot A --to-slot B --out DIR):
+per-(pool, minute) aggregates from the store (one scan of the pool table), the same state
+machine, then per UTC day: members per minute (median / p95 / max), the events that land on
+the list, the F7 and M1 coverage. --report renders the Markdown over all day files.
+"""
+
+import argparse
+import collections
+import dataclasses
+import glob
+import json
+import os
+import statistics
+import sys
+import time
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard
+
+POS = 1 << 20
+WARMUP_MINUTES = int(os.environ.get("LAB_WATCHLIST_WARMUP_MINUTES", 6 * 60))  # state carried into a day: the longest look-back
+TX_BYTES = {"full_tx_3kb": 3072, "deshred_1kb": 1024}  # §6: full transaction with logs ~3 KB; raw ~1 KB
+
+
+@dataclasses.dataclass(frozen=True)
+class Rules:
+    f7_depth_enter_sol: float = 150.0
+    f7_depth_exit_sol: float = 120.0
+    farmer_share_max: float = 0.50
+    organic_min_sol: float = 1.0
+    organic_window_minutes: int = 60
+    f7_idle_minutes: int = 6 * 60
+    m1_max_age_minutes: int = 6 * 60
+    m1_idle_minutes: int = 60
+
+
+@dataclasses.dataclass
+class PoolInfo:
+    pool: str
+    mint: str
+    quote_class: str      # 'sol' | 'reversed' | 'other'
+    orientation: str      # 'normal' | 'reversed'
+    mayhem: bool
+    create_minute: int | None   # None: created before the data we have (older than any look-back)
+    grad_in_create: bool
+
+    @property
+    def f7_eligible(self):
+        return self.quote_class == "reversed" and not self.mayhem
+
+    @property
+    def m1_eligible(self):
+        return self.quote_class == "sol" and self.orientation == "normal" and not self.mayhem and not self.grad_in_create
+
+
+@dataclasses.dataclass
+class _State:
+    depth: float = 0.0
+    last_trade: int | None = None
+    organic: bool | None = None          # last verdict with enough volume
+    window: collections.deque = dataclasses.field(default_factory=collections.deque)  # (minute, sol, farmer_sol)
+    win_sol: float = 0.0
+    win_farmer: float = 0.0
+    f7: bool = False
+    m1: bool = False
+
+
+class Watchlist:
+    """One state machine for the recorder and the batch measurement."""
+
+    def __init__(self, rules=None, wallets=()):
+        self.rules = rules or Rules()
+        self.pools = {}
+        self.state = {}
+        self.wallets = list(dict.fromkeys(wallets))
+        self.minute = None
+        self.members = {}  # pool -> ("f7_rev", "m1") tags, valid for self.minute + 1
+
+    def add_pool(self, info):
+        self.pools[info.pool] = info
+        self.state.setdefault(info.pool, _State())
+
+    def step(self, minute, rows):
+        """Apply the aggregates of `minute` (iterable of (pool, trades, sol, farmer_sol, depth_last_sol))
+        and return the members valid for minute + 1 as {pool: tags}."""
+        r = self.rules
+        touched = set()
+        for pool, trades, sol, farmer_sol, depth in rows:
+            if pool not in self.pools:
+                continue
+            s = self.state[pool]
+            if trades:
+                s.last_trade = minute
+                s.depth = float(depth)
+                s.window.append((minute, float(sol), float(farmer_sol)))
+                s.win_sol += float(sol)
+                s.win_farmer += float(farmer_sol)
+            touched.add(pool)
+        members = {}
+        for pool, info in self.pools.items():
+            s = self.state[pool]
+            # trailing organic window
+            while s.window and s.window[0][0] <= minute - r.organic_window_minutes:
+                _, a, b = s.window.popleft()
+                s.win_sol -= a
+                s.win_farmer -= b
+            if s.win_sol >= r.organic_min_sol:
+                s.organic = s.win_farmer / s.win_sol <= r.farmer_share_max
+            tags = []
+            if info.f7_eligible:
+                idle = s.last_trade is None or minute - s.last_trade >= r.f7_idle_minutes
+                if s.f7:
+                    s.f7 = s.depth >= r.f7_depth_exit_sol and s.organic is not False and not idle
+                else:
+                    s.f7 = s.depth >= r.f7_depth_enter_sol and s.organic is True and not idle
+                if s.f7:
+                    tags.append("f7_rev")
+            if info.m1_eligible and info.create_minute is not None:
+                age = minute + 1 - info.create_minute
+                fresh = s.last_trade is not None and minute - s.last_trade < r.m1_idle_minutes
+                s.m1 = 0 <= age <= r.m1_max_age_minutes and (fresh or age <= r.m1_idle_minutes)
+                if s.m1:
+                    tags.append("m1")
+            if tags:
+                members[pool] = tuple(tags)
+        self.minute = minute
+        self.members = members
+        return members
+
+    def snapshot(self, valid_from_slot=None, generated_slot=None):
+        """The list for the recorder: pools with their rule tags, the followed wallets, counts."""
+        return {"version": 1, "valid_for_minute": None if self.minute is None else self.minute + 1,
+                "valid_from_slot": valid_from_slot, "generated_slot": generated_slot,
+                "pools": [{"pool": p, "mint": self.pools[p].mint, "rules": list(t)} for p, t in sorted(self.members.items())],
+                "wallets": [{"wallet": w, "source": "fixed"} for w in self.wallets],
+                "counts": {"pools": len(self.members),
+                           **{tag: sum(1 for t in self.members.values() if tag in t) for tag in ("f7_rev", "m1")},
+                           "wallets": len(self.wallets)}}
+
+
+# ----------------------------------------------------------------------------- batch over the store
+
+
+def pools_sql(lo, hi):
+    """Pools with an event in [lo, hi) or created in it, with what the rules need to know."""
+    return f"""
+      WITH active AS (SELECT DISTINCT pool FROM pool WHERE slot >= {lo} AND slot < {hi} AND kind IN ('buy', 'sell')
+                      UNION SELECT pool FROM pools WHERE create_slot >= {lo} AND create_slot < {hi})
+      SELECT p.pool, p.mint, p.quote_class, p.orientation, COALESCE(p.mayhem, false) OR COALESCE(m.mayhem, false) AS mayhem,
+             p.create_slot, COALESCE(m.complete_slot = m.create_slot, false) AS grad_in_create
+      FROM pools p SEMI JOIN active USING (pool) LEFT JOIN mints m ON m.mint = p.mint"""
+
+
+def aggregates_sql(lo, hi):
+    """Per (pool, UTC minute): trades, SOL volume, farmer SOL volume, last pre-trade real SOL depth."""
+    return f"""
+      SELECT e.pool, b.block_time // 60 AS minute, count(*) AS trades, sum(e.sol_amount) / {SOL} AS sol,
+             COALESCE(sum(e.sol_amount) FILTER (WHERE e.farmer), 0) / {SOL} AS farmer_sol,
+             arg_max(e.sol_depth, e.slot * {POS} + e.tx_index) / {SOL} AS depth_last,
+             min(e.slot) AS first_slot
+      FROM pool e JOIN blocks b USING (slot)
+      WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell')
+      GROUP BY 1, 2 ORDER BY 2, 1"""
+
+
+def f7_candidates_sql(lo, hi):
+    """Sells that could be an F7 trigger in a reversed pool: >= max(3 SOL, 4 % of the real SOL depth),
+    depth >= 150 SOL (the inflow / creator filters come on top, so this is a superset)."""
+    return f"""
+      SELECT e.pool, e.slot, b.block_time // 60 AS minute
+      FROM pool e JOIN blocks b USING (slot) JOIN pools p USING (pool)
+      WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind = 'sell' AND p.quote_class = 'reversed'
+        AND e.sol_depth >= {150 * SOL} AND e.sol_amount >= GREATEST({3 * SOL}, 0.04 * e.sol_depth)"""
+
+
+def minute_of_slot(con, slots):
+    rows = con.execute("SELECT slot, block_time // 60 FROM blocks WHERE slot IN (SELECT unnest(?))", [list(slots)]).fetchall()
+    return dict(rows)
+
+
+def load_triggers(trigger_dir, con, lo, hi):
+    """F7 pool triggers of a tournament run (parts/*.parquet) with t in [lo, hi): distinct (pool, t, farm) of one
+    variant / size / d (the trigger set is the same for every variant)."""
+    files = sorted(glob.glob(os.path.join(trigger_dir, "parts", "part-*.parquet")))
+    if not files:
+        return []
+    return con.execute(f"""
+      SELECT DISTINCT pool, t, farm FROM read_parquet({files!r}, union_by_name = true)
+      WHERE family = 'F7' AND venue = 'pool' AND size_sol = 0.5 AND d = 1 AND t >= {lo} AND t < {hi}
+        AND variant = (SELECT min(variant) FROM read_parquet({files!r}, union_by_name = true) WHERE family = 'F7')""").fetchall()
+
+
+def pct(xs, p):
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(round(p * (len(xs) - 1))))]
+
+
+def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None):
+    """Measure [lo, hi): members per minute, events on the list, coverage. State warms up over the 6 h before lo."""
+    t0 = time.time()
+    clock = clock or Clock.from_store(con)
+    warm_lo = max(lo - clock.slots(WARMUP_MINUTES * 60_000, lo), 0)
+    pools = con.execute(pools_sql(warm_lo, hi)).fetchall()
+    create_min = minute_of_slot(con, {r[5] for r in pools if r[5] is not None and r[5] >= warm_lo})
+    wl = Watchlist(rules, wallets)
+    for pool, mint, qc, orient, mayhem, cslot, gic in pools:
+        wl.add_pool(PoolInfo(pool, mint, qc, orient, bool(mayhem), create_min.get(cslot), bool(gic)))
+    first_minute = con.execute(f"SELECT min(block_time) // 60 FROM blocks WHERE slot >= {lo}").fetchone()[0]
+    agg = con.execute(aggregates_sql(warm_lo, hi)).to_arrow_table()
+    cands = con.execute(f7_candidates_sql(lo, hi)).fetchall()
+    cand_by_minute = collections.defaultdict(list)
+    for pool, slot, minute in cands:
+        cand_by_minute[minute].append(pool)
+    trig = load_triggers(trigger_dir, con, lo, hi) if trigger_dir else []
+    trig_minute = minute_of_slot(con, {t for _, t, _ in trig}) if trig else {}
+    trig_by_minute = collections.defaultdict(list)
+    for pool, t, farm in trig:
+        if t in trig_minute:
+            trig_by_minute[trig_minute[t]].append((pool, farm))
+    # M1 decision points: open + 15 min of every eligible pool created in [lo, hi)
+    m1_points = collections.defaultdict(list)
+    for p in wl.pools.values():
+        if p.m1_eligible and p.create_minute is not None and p.create_minute >= first_minute:
+            m1_points[p.create_minute + 15].append(p.pool)
+
+    cols = {k: agg.column(k).to_pylist() for k in ("pool", "minute", "trades", "sol", "farmer_sol", "depth_last")}
+    n = agg.num_rows
+    i = 0
+    day_stats = collections.defaultdict(lambda: {"minutes": 0, "members": [], "f7_rev": [], "m1": [],
+                                                 "events_all": 0, "events_on_list": 0, "events_f7_rev": 0, "events_m1": 0,
+                                                 "events_reversed_all": 0, "events_normal_all": 0,
+                                                 "f7_cand": 0, "f7_cand_covered": 0,
+                                                 "f7_trig": 0, "f7_trig_covered": 0, "f7_trig_organic": 0, "f7_trig_organic_covered": 0,
+                                                 "m1_points": 0, "m1_points_covered": 0, "m1_events_young": 0, "m1_events_young_covered": 0})
+    members_rows = []
+    # every minute is stepped, also a silent one: the idle rules count minutes without trades
+    # (a decision point or trigger beyond the last minute with data is not stepped: it belongs to the next range)
+    minutes = range(min(cols["minute"]), max(cols["minute"]) + 1) if n else []
+    members = {}
+    for m in minutes:
+        rows = []
+        while i < n and cols["minute"][i] == m:
+            rows.append((cols["pool"][i], cols["trades"][i], cols["sol"][i], cols["farmer_sol"][i], cols["depth_last"][i]))
+            i += 1
+        if m >= first_minute:  # the list valid for m was decided after m - 1
+            day = time.strftime("%Y-%m-%d", time.gmtime(m * 60))
+            d = day_stats[day]
+            d["minutes"] += 1
+            d["members"].append(len(members))
+            d["f7_rev"].append(sum(1 for t in members.values() if "f7_rev" in t))
+            d["m1"].append(sum(1 for t in members.values() if "m1" in t))
+            for pool, trades, _, _, _ in rows:
+                info = wl.pools.get(pool)
+                d["events_all"] += trades
+                if info is not None and info.quote_class == "reversed":
+                    d["events_reversed_all"] += trades
+                elif info is not None and info.quote_class == "sol":
+                    d["events_normal_all"] += trades
+                tags = members.get(pool)
+                if tags:
+                    d["events_on_list"] += trades
+                    if "f7_rev" in tags:
+                        d["events_f7_rev"] += trades
+                    if "m1" in tags:
+                        d["events_m1"] += trades
+                if info is not None and info.m1_eligible and info.create_minute is not None \
+                        and 0 <= m - info.create_minute <= rules.m1_max_age_minutes:
+                    d["m1_events_young"] += trades
+                    if tags and "m1" in tags:
+                        d["m1_events_young_covered"] += trades
+            for pool in cand_by_minute.get(m, ()):
+                d["f7_cand"] += 1
+                d["f7_cand_covered"] += "f7_rev" in members.get(pool, ())
+            for pool, farm in trig_by_minute.get(m, ()):
+                d["f7_trig"] += 1
+                cov = "f7_rev" in members.get(pool, ())
+                d["f7_trig_covered"] += cov
+                if farm == "organic":
+                    d["f7_trig_organic"] += 1
+                    d["f7_trig_organic_covered"] += cov
+            for pool in m1_points.get(m, ()):
+                d["m1_points"] += 1
+                d["m1_points_covered"] += "m1" in members.get(pool, ())
+            for pool, tags in members.items():
+                members_rows.append((m, pool, "f7_rev" in tags, "m1" in tags))
+        members = wl.step(m, rows)
+    os.makedirs(out_dir, exist_ok=True)
+    tbl = pa.table({"minute": pa.array([r[0] for r in members_rows], pa.int64()),
+                    "pool": pa.array([r[1] for r in members_rows], pa.string()),
+                    "f7_rev": pa.array([r[2] for r in members_rows], pa.bool_()),
+                    "m1": pa.array([r[3] for r in members_rows], pa.bool_())})
+    pq.write_table(tbl, os.path.join(out_dir, f"watchlist-{lo}.parquet"))
+    out = {"from_slot": lo, "to_slot": hi, "commit": git_commit(), "rules": dataclasses.asdict(rules), "wallets": len(wallets),
+           "pools_seen": len(wl.pools), "trigger_dir": trigger_dir, "seconds": round(time.time() - t0), "days": {}}
+    for day, d in sorted(day_stats.items()):
+        out["days"][day] = {k: v for k, v in d.items() if not isinstance(v, list)}
+        for k in ("members", "f7_rev", "m1"):
+            out["days"][day][k] = {"median": statistics.median(d[k]) if d[k] else None, "p95": pct(d[k], 0.95), "max": max(d[k]) if d[k] else None}
+    with open(os.path.join(out_dir, f"watchlist-stats-{lo}.json"), "w") as f:
+        json.dump(out, f, indent=1)
+    return out
+
+
+def report(out_dir):
+    """Markdown over all watchlist-stats-*.json files."""
+    days = {}
+    for f in sorted(glob.glob(os.path.join(out_dir, "watchlist-stats-*.json"))):
+        j = json.load(open(f))
+        for day, d in j["days"].items():
+            if d["minutes"] >= 1000:  # whole days only (a range boundary leaves a partial day in two files)
+                days[day] = d
+            elif day in days:
+                pass
+            else:
+                days.setdefault("_partial", {})[day] = d
+    partial = days.pop("_partial", {})
+    lines = ["# Watchlist over de ontwikkelperiode: omvang, dekking en inname per dag", "",
+             "Lijst per minuut uit data vóór die minuut (`lab/wallets/watchlist.py`). F7-reversed: reversed pools, "
+             "reële SOL-diepte ≥ 150 SOL (uit < 120), organisch (farmers ≤ 50 % van het SOL-volume in het laatste uur). "
+             "M1: normale pools ≤ 6 u oud, graduatie buiten de create-slot, niet 60 min stil.", "",
+             "| dag | pools op de lijst (mediaan / p95 / max) | F7-rev | M1 | events/dag op de lijst | van alle pool-events | "
+             "F7-kandidaatsells gedekt | F7-triggers (toernooi) gedekt, organisch | M1 +15 min gedekt | M1-trades ≤ 6 u gedekt | GB/dag (3 KB/tx) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|"]
+    tot = collections.Counter()
+    for day, d in sorted(days.items()):
+        def cov(a, b):
+            return f"{d[a] / d[b]:.1%} ({d[b]})" if d[b] else "–"
+        m = d["members"]
+        lines.append(f"| {day} | {m['median']:.0f} / {m['p95']} / {m['max']} | {d['f7_rev']['median']:.0f} / {d['f7_rev']['max']} | "
+                     f"{d['m1']['median']:.0f} / {d['m1']['max']} | {d['events_on_list']:,} | "
+                     f"{d['events_on_list'] / d['events_all']:.1%} | {cov('f7_cand_covered', 'f7_cand')} | "
+                     f"{cov('f7_trig_covered', 'f7_trig')}, {cov('f7_trig_organic_covered', 'f7_trig_organic')} | "
+                     f"{cov('m1_points_covered', 'm1_points')} | {cov('m1_events_young_covered', 'm1_events_young')} | "
+                     f"{d['events_on_list'] * TX_BYTES['full_tx_3kb'] / 1e9:.2f} |")
+        for k in ("events_on_list", "events_all", "f7_cand", "f7_cand_covered", "f7_trig", "f7_trig_covered", "f7_trig_organic",
+                  "f7_trig_organic_covered", "m1_points", "m1_points_covered", "m1_events_young", "m1_events_young_covered"):
+            tot[k] += d[k]
+    lines.append("")
+    if days:
+        n = len(days)
+        lines.append(f"**Totaal over {n} dagen:** {tot['events_on_list']:,} events op de lijst van {tot['events_all']:,} pool-events "
+                     f"({tot['events_on_list'] / max(tot['events_all'], 1):.1%}); gemiddeld {tot['events_on_list'] / n:,.0f} events/dag = "
+                     f"{tot['events_on_list'] / n * TX_BYTES['full_tx_3kb'] / 1e9:.2f} GB/dag als volledige transacties (3 KB), "
+                     f"{tot['events_on_list'] / n * TX_BYTES['deshred_1kb'] / 1e9:.2f} GB/dag als ruwe transacties (1 KB). "
+                     f"Dekking F7-kandidaatsells {tot['f7_cand_covered'] / max(tot['f7_cand'], 1):.1%} ({tot['f7_cand']:,}); "
+                     f"toernooi-triggers {tot['f7_trig_covered'] / max(tot['f7_trig'], 1):.1%} ({tot['f7_trig']:,}), organisch "
+                     f"{tot['f7_trig_organic_covered'] / max(tot['f7_trig_organic'], 1):.1%} ({tot['f7_trig_organic']:,}); "
+                     f"M1-beslismomenten {tot['m1_points_covered'] / max(tot['m1_points'], 1):.1%} ({tot['m1_points']:,}); "
+                     f"M1-trades ≤ 6 u {tot['m1_events_young_covered'] / max(tot['m1_events_young'], 1):.1%}.")
+        lines.append("")
+        lines.append("Niet meegeteld: account-updates van de vault-balansen van alle pools (§6 regel 2, ~8 bytes data per update), "
+                     "de curve en de gevolgde wallets (nog een vaste lijst). Een pool met een open positie blijft bij de paper-engine op de lijst; "
+                     "dat zit niet in deze telling.")
+    if partial:
+        lines.append(f"\nGedeeltelijke dagen weggelaten: {', '.join(sorted(partial))}.")
+    return "\n".join(lines)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--from-slot", type=int)
+    ap.add_argument("--to-slot", type=int)
+    ap.add_argument("--out", default=os.path.join(OUT_ROOT, "watchlist-v1"))
+    ap.add_argument("--triggers", help="tournament run directory with parts/ (F7 pool triggers for the coverage check)")
+    ap.add_argument("--wallets", help="CSV with a `wallet` column: the followed wallets (fixed list for now)")
+    ap.add_argument("--report", action="store_true", help="render the Markdown over the stats files in --out")
+    a = ap.parse_args()
+    if a.report:
+        print(report(a.out))
+        return
+    guard(a.to_slot)
+    con = connect(memory=os.environ.get("LAB_WATCHLIST_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1000MB")))
+    wallets = []
+    if a.wallets:
+        wallets = [r[0] for r in con.execute(f"SELECT wallet FROM read_csv({a.wallets!r}, header = true)").fetchall()]
+    out = run(con, a.from_slot, a.to_slot, a.out, Rules(), wallets, a.triggers)
+    days = out["days"]
+    print(f"{a.from_slot}-{a.to_slot}: {out['pools_seen']} pools seen, days {list(days)}, "
+          + "; ".join(f"{d}: median {v['members']['median']} pools, {v['events_on_list']:,}/{v['events_all']:,} events" for d, v in days.items())
+          + f", {out['seconds']}s", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
