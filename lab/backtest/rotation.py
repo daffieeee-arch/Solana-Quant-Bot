@@ -20,7 +20,8 @@ from collections import defaultdict
 
 import numpy as np
 
-from .strategies import ExitRule, _mix, _seed, f6_min_depth, pool_universe_sql
+from . import strategies
+from .strategies import ExitRule, _mix, _seed, f6_min_depth, key_ranges, pool_universe_sql
 
 HOUR_S, BLOCK_S = 3600, 300
 LOOKBACKS = {"L1h": 12, "L4h": 48, "L24h": 288}  # in 5-minute blocks
@@ -30,9 +31,9 @@ N2_K = 3
 S1_SIZES = (0.5, 2, 5, 10, 25)
 
 
-def _ev_sql(lo, hi):
+def _ev_sql(lo, hi, rng=None):
     """Buy/sell events of pools that ever reach the smallest Q_min, with block time and the
-    post-trade token price in SOL (both orientations)."""
+    post-trade token price in SOL (both orientations). rng: (first, last) pool of a range bucket."""
     return f"""
         SELECT e.pool, b.block_time, e.slot, e.tx_index, e.outer_ix, e.inner_ix, e.trader, e.token_buy, e.farmer,
                e.sol_amount, e.sol_depth,
@@ -41,7 +42,13 @@ def _ev_sql(lo, hi):
                     ELSE (CASE WHEN e.token_buy THEN e.b + e.base ELSE e.b - e.base END)::DOUBLE / (e.e + e.e_delta) END AS price
         FROM pool e JOIN pools p USING (pool) JOIN blocks b ON b.slot = e.slot
         WHERE {pool_universe_sql()} AND e.kind IN ('buy', 'sell') AND e.slot >= {lo} AND e.slot < {hi}
-          AND e.pool IN (SELECT pool FROM s1_pools)"""
+          AND e.pool IN (SELECT pool FROM s1_pools)""" + (f" AND e.pool BETWEEN '{rng[0]}' AND '{rng[1]}'" if rng else "")
+
+
+def _ranges(con):
+    """Pool range buckets of s1_pools: every feature is per pool, so computing them bucket by
+    bucket gives the same result in bounded memory (LAB_SQL_BUCKETS)."""
+    return key_ranges(con, "s1_pools", "pool", strategies.SQL_BUCKETS)
 
 
 def _prepare(con, lo, hi):
@@ -53,8 +60,15 @@ def _prepare(con, lo, hi):
 def hourly_features(con, lo, hi):
     """{(pool, h): (first_hour, min real SOL depth, organic SOL volume, farming share of the last
     hour)} for decision hours h (features over hours h-24 .. h-1), on a full hour grid per pool."""
+    out = {}
+    for rng in _ranges(con):
+        out.update(_hourly_features(con, lo, hi, rng))
+    return out
+
+
+def _hourly_features(con, lo, hi, rng):
     rows = con.execute(f"""
-        WITH ev AS ({_ev_sql(lo, hi)}),
+        WITH ev AS ({_ev_sql(lo, hi, rng)}),
         agg AS (
           SELECT pool, block_time // {HOUR_S} AS hr, min(sol_depth) AS min_depth,
                  sum(sol_amount) FILTER (WHERE NOT farmer) AS org_vol, sum(sol_amount) FILTER (WHERE farmer) AS farm_vol,
@@ -74,8 +88,15 @@ def wallet_counts(con, lo, hi):
     """{pool: (hours, counts)}: distinct organic wallets over the 24 h before each hour, as a step
     function. A wallet's trading hours form islands (gaps <= 24 h); each island covers the decision
     hours [first + 1, last + 24]."""
+    out = {}
+    for rng in _ranges(con):
+        out.update(_wallet_counts(con, lo, hi, rng))
+    return out
+
+
+def _wallet_counts(con, lo, hi, rng):
     rows = con.execute(f"""
-        WITH ev AS ({_ev_sql(lo, hi)}),
+        WITH ev AS ({_ev_sql(lo, hi, rng)}),
         tw AS (SELECT DISTINCT pool, trader, block_time // {HOUR_S} AS hr FROM ev WHERE NOT farmer),
         isl AS (SELECT *, SUM(CASE WHEN prev IS NULL OR hr - prev > 24 THEN 1 ELSE 0 END)
                             OVER (PARTITION BY pool, trader ORDER BY hr) AS island
@@ -98,9 +119,16 @@ def _wallets_at(steps, h):
 
 def candles(con, lo, hi):
     """{pool: (5-min block indices, closing prices)} for blocks with trades."""
+    res = {}
+    for rng in _ranges(con):
+        res.update(_candles(con, lo, hi, rng))
+    return res
+
+
+def _candles(con, lo, hi, rng):
     out = defaultdict(lambda: ([], []))
     for pool, blk, price in con.execute(f"""
-            WITH ev AS ({_ev_sql(lo, hi)})
+            WITH ev AS ({_ev_sql(lo, hi, rng)})
             SELECT pool, block_time // {BLOCK_S} AS blk, arg_max(price, (slot, tx_index, outer_ix, inner_ix))
             FROM ev GROUP BY ALL ORDER BY pool, blk""").fetchall():
         out[pool][0].append(blk)
