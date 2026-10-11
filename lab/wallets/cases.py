@@ -1,8 +1,9 @@
 """Onderzoek 1b, casusselectie: a "trending" list from our own data (owner request, 2026-10-11).
 
 Only development slots, SOL-quote tokens (curve and pools of a mint together; a pool without a
-known mint is its own token). Prices are trade prices (SOL per token); the market cap is price x
-total supply (pump tokens: 1e9 tokens), in SOL.
+known mint is its own token). Prices are reserve prices (curve: virtual quote / virtual token; pool: e / b, or
+b / e in a reversed pool), so dust trades cannot distort them; the market cap is price x total
+supply, in SOL. Lists require >= MIN_TRADERS traders and >= MIN_VOLUME_SOL volume.
 
 Per UTC day (python -m wallets.cases --day D):
   1. trending 24 h: top-5 by (24 h return x SOL volume), volume >= MIN_VOLUME_SOL;
@@ -33,6 +34,7 @@ from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard
 from .episodes import POOL_KEY, SOL_QUOTES
 
 MIN_VOLUME_SOL = 300
+MIN_TRADERS = 100
 DAY_MS = 86_400_000
 TOP_DAY, TOP_WEEK, TOP_SELLERS = 5, 10, 5
 
@@ -51,14 +53,14 @@ def trades_sql(lo, hi):
     quotes = ",".join(f"'{q}'" for q in SOL_QUOTES)
     return f"""
       SELECT c.mint AS key, c.mint, c.slot::BIGINT AS slot, c.tx_index, c.trader, c.is_buy AS token_buy,
-             c.q::DOUBLE AS sol, c.q::DOUBLE / c.t AS px
+             c.q::DOUBLE AS sol, c.vq::DOUBLE / c.vt AS px
       FROM curve c JOIN mints m USING (mint)
-      WHERE c.slot >= {lo} AND c.slot < {hi} AND c.t > 0 AND NOT m.mayhem AND m.quote_mint IN ({quotes})
+      WHERE c.slot >= {lo} AND c.slot < {hi} AND c.vt > 0 AND NOT m.mayhem AND m.quote_mint IN ({quotes})
       UNION ALL
       SELECT {POOL_KEY}, p.mint, e.slot::BIGINT, e.tx_index, e.trader, e.token_buy, e.sol_amount::DOUBLE,
-             e.sol_amount::DOUBLE / e.token_amount
+             CASE WHEN p.orientation = 'reversed' THEN e.b::DOUBLE / e.e ELSE e.e::DOUBLE / e.b END
       FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
-      WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell') AND e.token_amount > 0 AND e.sol_amount > 0
+      WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell') AND e.b > 0 AND e.e > 0 AND p.mint IS NOT NULL
         AND p.quote_class IN ('sol', 'reversed') AND NOT COALESCE(p.mayhem, false)"""
 
 
@@ -80,12 +82,12 @@ def daily_cases(con, day, lo, hi):
       SELECT * FROM (
         SELECT 'trending_24h' AS list, row_number() OVER (ORDER BY (p_last / p_first - 1) * volume_sol DESC) AS rank, d.*,
                p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
-        FROM d WHERE volume_sol >= {MIN_VOLUME_SOL} AND p_last > p_first) WHERE rank <= {TOP_DAY}
+        FROM d WHERE volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS} AND p_last > p_first) WHERE rank <= {TOP_DAY}
       UNION ALL
       SELECT * FROM (
         SELECT 'dumpers_24h' AS list, row_number() OVER (ORDER BY volume_sol DESC) AS rank, d.*,
                p_last / p_first - 1 AS ret_24h, p_max / p_first AS peak_mult, p_last / p_max AS end_of_peak
-        FROM d WHERE p_last <= 0.1 * p_max AND volume_sol >= {MIN_VOLUME_SOL}) WHERE rank <= {TOP_DAY}""")
+        FROM d WHERE p_last <= 0.1 * p_max AND volume_sol >= {MIN_VOLUME_SOL} AND traders >= {MIN_TRADERS}) WHERE rank <= {TOP_DAY}""")
     return con.execute(f"SELECT '{day}' AS day, * FROM sel ORDER BY list, rank").to_arrow_table()
 
 
@@ -111,12 +113,12 @@ def weekly_cases(con, lo, hi, clock):
       SELECT * FROM (
         SELECT 'stayers_7d' AS list, row_number() OVER (ORDER BY p_7d * supply DESC) AS rank, w.*,
                p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
-        FROM w) WHERE rank <= {TOP_WEEK}
+        FROM w WHERE volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS}) WHERE rank <= {TOP_WEEK}
       UNION ALL
       SELECT * FROM (
         SELECT 'collapsed_7d' AS list, row_number() OVER (ORDER BY p_peak * supply DESC) AS rank, w.*,
                p_7d * supply / {SOL} AS mcap_7d_sol, p_peak * supply / {SOL} AS mcap_peak_sol, p_7d / p_peak AS end_of_peak
-        FROM w WHERE p_7d <= 0.05 * p_peak) WHERE rank <= {TOP_WEEK}
+        FROM w WHERE p_7d <= 0.05 * p_peak AND volume_7d >= {MIN_VOLUME_SOL} AND traders_7d >= {MIN_TRADERS}) WHERE rank <= {TOP_WEEK}
       ORDER BY list, rank""").to_arrow_table()
 
 
