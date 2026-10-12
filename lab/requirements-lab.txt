@@ -1,13 +1,68 @@
 # The lab Python toolchain (lab-py: CPython 3.13, built with uv), fully pinned including transitive
 # packages so pip-audit can check it with --no-deps. Keep in step with the toolchain:
-#   "$LAB_PY" -m pip list --format=freeze   (or: ls lab-py/lib/python3.13/site-packages/*.dist-info)
+#   uv pip list --python "$LAB_PY"   (or: ls lab-py/lib/python3.13/site-packages/*.dist-info)
+# Re-resolve after a change with:
+#   uv pip compile <top-level list> --python-version 3.13 --python-platform x86_64-manylinux_2_28
 # Checked weekly and on change by .github/workflows/dependency-audit.yml.
+
+# Data and tests
 duckdb==1.5.5
 numpy==2.5.3
 pyarrow==26.0.0
 pyyaml==6.0.3
 pytest==9.1.1
+
+# Notebooks and statistics (owner approval 2026-10-12): marimo Apache-2.0, lifelines MIT,
+# statsmodels BSD-3, lightgbm MIT, networkx BSD-3
+marimo==0.25.0
+lifelines==0.30.3
+statsmodels==0.15.0
+lightgbm==4.7.0
+networkx==3.7
+
+# Transitive (licenses checked 2026-10-12: MIT, BSD, Apache-2.0, PSF, MIT-CMU, Public Domain;
+# docutils' GPL-3 part is only tools/editors/emacs/rst.el, which the wheel does not ship)
+anyio==4.15.1
+autograd==1.9.1
+autograd-gamma==0.5.0
+click==8.5.0
+contourpy==1.4.0
+cycler==0.12.1
+docutils==0.23
+fonttools==4.66.0
+formulaic==1.2.2
+h11==0.16.0
+idna==3.20
 iniconfig==2.3.1
+interface-meta==2.0.1
+itsdangerous==2.2.0
+jedi==0.20.0
+kiwisolver==1.5.1
+loro==1.16.2
+markdown==3.11
+matplotlib==3.11.2
+msgspec==0.21.1
+narwhals==2.26.0
 packaging==26.3
+pandas==2.3.3
+parso==0.8.7
+patsy==1.0.3
+pillow==12.3.0
 pluggy==1.6.0
+psutil==7.2.2
 pygments==2.21.0
+pymdown-extensions==11.0.2
+pyparsing==3.3.3
+python-dateutil==2.9.0.post0
+python-multipart==0.0.32
+pytz==2026.4
+pyzmq==27.2.0
+scipy==1.18.1
+six==1.17.0
+starlette==1.7.0
+tomlkit==0.15.1
+typing-extensions==4.16.0
+tzdata==2026.4
+uvicorn==0.54.0
+websockets==17.1
+wrapt==2.5.0
