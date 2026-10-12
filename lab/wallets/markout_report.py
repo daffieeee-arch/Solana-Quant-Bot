@@ -4,8 +4,9 @@ horizon and block (days 1-9, days 10-18, all), gross and net:
   n, median, mean, 1 %-trimmed mean (0.5 % each side), share > 0, and the 95 % day-bootstrap CI of
   the trimmed mean (whole UTC days resampled BOOT times, seed 7; the trimmed mean of a resample is
   the weighted trimmed mean over the globally sorted values with the days' multiplicities as weights);
-  the N2 twin paired per trigger (N2 rows carry ref_mint / ref_t; a trigger's N2 value is the mean of
-  its matched entries) with the paired difference and its day CI;
+  the N2 twin paired per trigger (N2 rows carry ref_mint / ref_t, the trigger's venue key, i.e. its pool
+  for pool signals and its mint for curve signals; a trigger's N2 value is the mean of its matched
+  entries) with the paired difference and its day CI, informative only;
   K1 / K2 (F7 pool_reversed, organic pools) and K3 (all pools) as their own rows, with the first
   horizon that meets the spec's section 5 ("advantage at h": trimmed net > 0 with CI > 0 on days
   10-18 and the N2 twin without it);
@@ -30,8 +31,9 @@ BOOT = 10_000
 TRIM = 0.005
 GROSS_CAP = 10.0  # gross markouts are capped at +1000 % for the trimmed mean: a drained pool's mid runs to infinity
 DEAD = -0.99  # net <= -99 %: the venue could not pay for the tokens (drained pool, completed curve)
-SPLIT_DAY = "2026-09-20"
-BLOCKS = (("days 1-9", f"day < '{SPLIT_DAY}'"), ("days 10-18", f"day >= '{SPLIT_DAY}'"), ("all days", "TRUE"))
+SPLIT_DAY, LAST_DAY = "2026-09-20", "2026-09-30"  # the binding window of the M1x report: 2026-09-20 … 2026-09-30
+BLOCKS = (("days 1-9", f"day < '{SPLIT_DAY}'"), ("days 10-18", f"day BETWEEN '{SPLIT_DAY}' AND '{LAST_DAY}'"), ("all days", "TRUE"),
+          ("316ms", "regime = '316ms'"), ("267ms", "regime = '267ms'"))
 H_ORDER = ("1s", "10s", "1m", "5m", "15m", "1h", "6h")
 K_ROWS = (("K1/K2 (F7 pool_reversed, organic)", "family = 'F7' AND segment = 'pool_reversed' AND farm = 'organic'"),
           ("K3 (F7 pool_reversed, all pools)", "family = 'F7' AND segment = 'pool_reversed'"))
@@ -97,14 +99,17 @@ def load(con, markout_dir):
         raise SystemExit(f"no markout-*.parquet in {markout_dir}")
     lit = "[" + ",".join(f"'{f}'" for f in files) + "]"
     con.execute(f"CREATE OR REPLACE TABLE m AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h <> ''")
+    con.execute(f"CREATE OR REPLACE TABLE entries AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h = ''")
+    if "regime" not in [c[0] for c in con.execute("SELECT * FROM m LIMIT 0").description]:
+        con.execute("ALTER TABLE m ADD COLUMN regime VARCHAR DEFAULT '267ms'")
     con.execute("""
       CREATE OR REPLACE TABLE pairs AS
-      SELECT t.family, t.segment, t.mint, t.t, t.d, t.h, t.day, t.farm, t.gross, t.net,
+      SELECT t.family, t.segment, t.mint, t.t, t.d, t.h, t.day, t.regime, t.farm, t.gross, t.net,
              n.n2_gross, n.n2_net, n.n_n2
       FROM m t JOIN (
         SELECT substr(family, 4) AS family, ref_mint, ref_t, d, h, avg(gross) AS n2_gross, avg(net) AS n2_net, count(*) AS n_n2
         FROM m WHERE family LIKE 'N2\\_%' ESCAPE '\\' AND ref_mint IS NOT NULL GROUP BY ALL) n
-      ON n.family = t.family AND n.ref_mint = t.mint AND n.ref_t = t.t AND n.d = t.d AND n.h = t.h
+      ON n.family = t.family AND (n.ref_mint = t.mint OR n.ref_mint = t.pool) AND n.ref_t = t.t AND n.d = t.d AND n.h = t.h
       WHERE t.family NOT LIKE 'N2\\_%' ESCAPE '\\'""")
     return len(files)
 
@@ -118,8 +123,11 @@ def stats(con, where, col, boot):
         v = np.minimum(v, GROSS_CAP)
     days = np.array([r[1] for r in rows])
     lo, hi = day_ci(v, days, boot)
+    alive = v > DEAD
+    lo_ex, hi_ex = day_ci(v[alive], days[alive], boot) if alive.sum() else (None, None)
     return {"n": len(v), "median": float(np.median(v)), "mean": float(v.mean()), "trim": trimmed_mean(v), "lo": lo, "hi": hi,
-            "pos": float((v > 0).mean()), "dead": float((v <= DEAD).mean()),
+            "pos": float((v > 0).mean()), "dead": float((~alive).mean()),
+            "trim_ex": trimmed_mean(v[alive]) if alive.sum() else float("nan"), "lo_ex": lo_ex, "hi_ex": hi_ex,
             "cut": con.execute(f"SELECT avg(cut::INT) FROM m WHERE {where}").fetchone()[0]}
 
 
@@ -138,10 +146,19 @@ def groups(con):
     return con.execute("SELECT DISTINCT family, segment, d FROM m WHERE family NOT LIKE 'N2\\_%' ESCAPE '\\' ORDER BY 1, 2, 3").fetchall()
 
 
-def table(con, label, where, boot, blocks=BLOCKS):
+def n2_where(where):
+    """The N2 twin family of a trigger filter: family = 'N2_<fam>' with the same d / h / block (segment and farm free)."""
+    return where.replace("family = '", "family = 'N2_", 1)
+
+
+def table(con, label, where, boot, blocks=BLOCKS, n2=None):
+    """One group's table. The advantage verdict (days 10-18, spec section 5) uses the conservative net
+    (dead rows counted at their loss): trigger net trim > 0 with its day CI > 0, and the N2 twin's own
+    net trim NOT > 0 with its own CI > 0 on the same horizon. The paired Δ is shown, not a criterion."""
+    n2 = n2 if n2 is not None else n2_where(where)
     L = [f"### {label}\n",
-         "| block | h | n | cut | dead | gross median | gross trim (cap 10×) | net median | net mean | **net trim** | 95% CI (days) | > 0 | N2 net trim (paired) | Δ vs N2 | 95% CI | advantage |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+         "| block | h | n | cut | dead | gross median | gross trim (cap 10×) | net median | **net trim** | 95% CI (days) | net trim ex dead | 95% CI ex dead | > 0 | N2 own net trim | N2 95% CI | Δ vs N2 (paired) | 95% CI | advantage |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     verdicts = {}
     for bname, bwhere in blocks:
         for h in H_ORDER:
@@ -149,29 +166,37 @@ def table(con, label, where, boot, blocks=BLOCKS):
             g = stats(con, w, "gross", boot)
             n = stats(con, w, "net", boot)
             p = paired(con, w, "net", boot)
+            q = stats(con, f"({n2}) AND h = '{h}' AND ({bwhere})", "net", boot)
             if not n:
                 continue
-            adv = (n["trim"] > 0 and n["lo"] is not None and n["lo"] > 0
-                   and (p is None or not (p["n2_trim"] > 0 and p["diff"] is not None)))
-            if p is not None and n["trim"] > 0 and n["lo"] is not None and n["lo"] > 0:
-                adv = p["n2_trim"] <= 0 or p["lo"] is None or p["lo"] > 0  # N2 not positive, or the trigger clearly above it
+            trig_ok = n["trim"] > 0 and n["lo"] is not None and n["lo"] > 0
+            n2_ok = q is not None and q["trim"] > 0 and q["lo"] is not None and q["lo"] > 0
+            adv = trig_ok and not n2_ok
             if bname == "days 10-18":
                 verdicts[h] = adv
             L.append(f"| {bname} | {h} | {fmt(n['n'])} | {fmt(n['cut'], 0, pct=True)} | {fmt(n['dead'], 0, pct=True)} | {fmt(g['median'], 1, True, True)} | {fmt(g['trim'], 1, True, True)} | "
-                     f"{fmt(n['median'], 1, True, True)} | {fmt(n['mean'], 1, True, True)} | **{fmt(n['trim'], 1, True, True)}** | "
-                     f"{fmt(n['lo'], 1, True, True)} … {fmt(n['hi'], 1, True, True)} | {fmt(n['pos'], 0, True)} | "
-                     + (f"{fmt(p['n2_trim'], 1, True, True)} ({fmt(p['n'])}) | {fmt(p['diff'], 1, True, True)} | {fmt(p['lo'], 1, True, True)} … {fmt(p['hi'], 1, True, True)} |" if p else "– | – | – |")
+                     f"{fmt(n['median'], 1, True, True)} | **{fmt(n['trim'], 1, True, True)}** | {fmt(n['lo'], 1, True, True)} … {fmt(n['hi'], 1, True, True)} | "
+                     f"{fmt(n['trim_ex'], 1, True, True)} | {fmt(n['lo_ex'], 1, True, True)} … {fmt(n['hi_ex'], 1, True, True)} | {fmt(n['pos'], 0, True)} | "
+                     + (f"{fmt(q['trim'], 1, True, True)} ({fmt(q['n'])}) | {fmt(q['lo'], 1, True, True)} … {fmt(q['hi'], 1, True, True)} |" if q else "– | – |")
+                     + (f" {fmt(p['diff'], 1, True, True)} ({fmt(p['n'])}) | {fmt(p['lo'], 1, True, True)} … {fmt(p['hi'], 1, True, True)} |" if p else " – | – |")
                      + (f" **{'yes' if adv else 'no'}** |" if bname == "days 10-18" else " |"))
     first = next((h for h in H_ORDER if verdicts.get(h)), None)
+    imp = con.execute(f"SELECT avg((impact > 0.05)::INT), count(*) FROM entries WHERE ({where}) AND impact IS NOT NULL").fetchone()
     L.append("")
-    L.append(f"Days 10-18 verdict (spec section 5): " + (f"advantage first at **{first}**" if first else "no horizon with an advantage") + ".")
+    L.append(f"Days 10-18 verdict (spec section 5, conservative net with dead rows): "
+             + (f"advantage first at **{first}**" if first else "no horizon with an advantage") + "."
+             + (f" Entry impact > 5 % at 0.5 SOL: {fmt(imp[0], 1, True)} of {fmt(imp[1])} entries." if imp and imp[0] is not None else ""))
     L.append("")
     return "\n".join(L)
 
 
-def exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot):
+MS = {"316ms": 316.4, "267ms": 267.1}
+
+
+def exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot=None):
     """Realized net per position (variant, d, 0.5 SOL, q 0.5) against the net markout at the horizon
-    nearest the variant's median hold, on the same signals."""
+    nearest the variant's median hold, on the same signals, per slot-time regime (the regime of the
+    signal in the markout rows; the hold in ms uses that regime's ms per slot)."""
     from wallets.markout import engine
     import yaml
     _, costs = engine()
@@ -185,43 +210,47 @@ def exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot):
       SELECT family, variant, segment, mint, t, d, day, {ret} AS ret, (exit_slot - entry_slot) AS hold_slots
       FROM read_parquet({lit}, union_by_name = true)
       WHERE NOT skipped AND NOT entry_failed AND size_sol = 0.5 AND q = 0.5 AND family NOT LIKE 'N2\\_%' ESCAPE '\\'""")
-    rows = con.execute("SELECT family, variant, segment, d, median(hold_slots), count(*) FROM pos GROUP BY ALL ORDER BY ALL").fetchall()
-    L = ["### Exit-rule cost: realized net per position vs the net markout at the median hold (0.5 SOL, base, q = 0.5)\n",
-         "| family | variant | segment | d | positions | median hold | nearest h | realized net (trim) | markout net (trim) | Δ realized − markout | 95% CI (days) | best h afterwards (trim) |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    con.execute("""
+      CREATE OR REPLACE TABLE posm AS
+      SELECT p.*, m.regime, m.h, m.net FROM pos p JOIN m ON m.family = p.family AND m.segment = p.segment AND m.mint = p.mint AND m.t = p.t AND m.d = p.d
+      WHERE m.net IS NOT NULL""")
+    rows = con.execute("SELECT family, variant, segment, d, regime, median(hold_slots), count(DISTINCT (mint, t)) FROM posm GROUP BY ALL ORDER BY ALL").fetchall()
+    L = ["### Exit-rule cost: realized net per position vs the net markout at the median hold (0.5 SOL, base, q = 0.5), per regime\n",
+         "| family | variant | segment | d | regime | positions | median hold | nearest h | realized net (trim) | markout net (trim) | Δ realized − markout | 95% CI (days) | best h afterwards (trim) |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     hs = dict(zip(H_ORDER, (1_000, 10_000, 60_000, 300_000, 900_000, 3_600_000, 21_600_000)))
-    for fam, var, seg, d, hold, n in rows:
-        hold_ms = (hold or 0) * ms_per_slot
+    for fam, var, seg, d, reg, hold, n in rows:
+        hold_ms = (hold or 0) * (ms_per_slot or MS.get(reg, 267.1))
         h = min(H_ORDER, key=lambda k: abs(hs[k] - hold_ms))
-        pr = con.execute(f"""
-          SELECT p.ret - m.net, p.ret, m.net, p.day FROM pos p JOIN m ON m.family = p.family AND m.segment = p.segment AND m.mint = p.mint AND m.t = p.t AND m.d = p.d
-          WHERE p.family = ? AND p.variant = ? AND p.segment = ? AND p.d = ? AND m.h = ? AND m.net IS NOT NULL""", [fam, var, seg, d, h]).fetchall()
+        pr = con.execute("SELECT ret - net, ret, net, day FROM posm WHERE family = ? AND variant = ? AND segment = ? AND d = ? AND regime = ? AND h = ?",
+                         [fam, var, seg, d, reg, h]).fetchall()
         if not pr:
             continue
         diff = np.array([r[0] for r in pr]); re = np.array([r[1] for r in pr]); mk = np.array([r[2] for r in pr]); days = np.array([r[3] for r in pr])
         lo, hi = day_ci(diff, days, boot)
-        best = con.execute(f"""
-          SELECT h, net FROM (SELECT m.h, m.net FROM pos p JOIN m ON m.family = p.family AND m.segment = p.segment AND m.mint = p.mint AND m.t = p.t AND m.d = p.d
-                              WHERE p.family = ? AND p.variant = ? AND p.segment = ? AND p.d = ? AND m.net IS NOT NULL)""", [fam, var, seg, d]).fetchall()
+        best = con.execute("SELECT h, net FROM posm WHERE family = ? AND variant = ? AND segment = ? AND d = ? AND regime = ?", [fam, var, seg, d, reg]).fetchall()
         by_h = {}
         for hh, v in best:
             by_h.setdefault(hh, []).append(v)
         bh = max(by_h, key=lambda k: trimmed_mean(by_h[k])) if by_h else None
-        L.append(f"| {fam} | {var} | {seg} | {d} | {fmt(len(pr))} | {fmt(hold_ms / 1000, 0)} s | {h} | {fmt(trimmed_mean(re), 1, True, True)} | "
+        L.append(f"| {fam} | {var} | {seg} | {d} | {reg} | {fmt(len(pr))} | {fmt(hold_ms / 1000, 0)} s | {h} | {fmt(trimmed_mean(re), 1, True, True)} | "
                  f"{fmt(trimmed_mean(mk), 1, True, True)} | **{fmt(trimmed_mean(diff), 1, True, True)}** | {fmt(lo, 1, True, True)} … {fmt(hi, 1, True, True)} | "
                  f"{bh}: {fmt(trimmed_mean(by_h[bh]), 1, True, True) if bh else '–'} |")
     L.append("")
     return "\n".join(L)
 
 
-def render(con, markout_dir, boot, parts_dir=None, cfg_path=None, ms_per_slot=267.0):
+def render(con, markout_dir, boot, parts_dir=None, cfg_path=None, ms_per_slot=None):
     runs = sorted(glob.glob(os.path.join(markout_dir, "run-markout-*.json")))
     infos = [json.load(open(r)) for r in runs]
     L = [f"## Markout curves ({', '.join(i['run'] for i in infos)})\n",
          f"Signals {sum(i['signals'] for i in infos):,}; 0.5 SOL round trip at base costs; gross = mid_h / mid_entry − 1, net = SOL back / (0.5 + 2 × order cost) − 1; "
          f"trimmed = 1 % trimmed mean; CI = day bootstrap of the trimmed mean ({boot:,}×); N2 paired per trigger (mean of its matched entries); "
-         "cut = share of rows past the store end or the venue's last leg (last known state); dead = share with net ≤ −99 % (the venue cannot pay: drained pool, completed curve); "
-         "gross is capped at +1000 % for the trimmed mean. Advantage (days 10-18, spec §5): net trimmed > 0 with CI > 0 and the N2 twin not.\n"]
+         "cut = share of rows past the store end or the venue's last leg (last known state); dead = share with net ≤ −99 % (the venue cannot pay: a drained pool; "
+         "a completed curve is valued on its migration pool, not dead); gross is capped at +1000 % for the trimmed mean; 'ex dead' leaves the dead rows out. "
+         f"Blocks: days 1-9 (< {SPLIT_DAY}), days 10-18 ({SPLIT_DAY} … {LAST_DAY}, the binding window), all days, and the two slot-time regimes (316ms / 267ms, all days). "
+         "Advantage (days 10-18, spec §5, on the conservative net that counts dead rows): the trigger's net trimmed mean > 0 with its day CI > 0, and the N2 twin's own "
+         "net trimmed mean not > 0 with its own CI > 0 on the same horizon; the paired Δ is informative, not a criterion.\n"]
     for fam, seg, d in groups(con):
         L.append(table(con, f"{fam} · {seg} · d = {d}", f"family = '{fam}' AND segment = '{seg}' AND d = {d}", boot))
     for label, where in K_ROWS:
@@ -238,12 +267,16 @@ def main():
     ap.add_argument("--markout", required=True)
     ap.add_argument("--parts")
     ap.add_argument("--cfg", default=os.environ.get("LAB_DEFAULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml"))
-    ap.add_argument("--ms-per-slot", type=float, default=267.0, help="for the median hold in the exit-cost table")
+    ap.add_argument("--ms-per-slot", type=float, help="override the per-regime ms per slot for the median hold in the exit-cost table")
     ap.add_argument("--boot", type=int, default=BOOT)
     ap.add_argument("--out")
     a = ap.parse_args()
     con = duckdb.connect()
     con.execute(f"SET memory_limit = '{os.environ.get('LAB_WALLETS_MEMORY', '1500MB')}'; SET threads TO 2")
+    spill = os.environ.get("LAB_SPILL_DIR")
+    if spill:
+        os.makedirs(spill, exist_ok=True)
+        con.execute(f"SET temp_directory = '{spill}'; SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'")
     load(con, a.markout)
     md = render(con, a.markout, a.boot, a.parts, a.cfg, a.ms_per_slot)
     if a.out:

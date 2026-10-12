@@ -14,7 +14,15 @@ entry state (pool_buy_exact_in / rev_buy_token / curve_buy_exact_in) and a sell 
 received at the horizon state (pool_sell_capped / rev_sell_token / curve_sell), each against
 the real reserves of its moment, plus the network cost of the costs.py scenario (base) on both
 legs. A horizon past the store end or past the venue's last leg keeps the last known state and
-is flagged `cut`; a horizon with no state at all gives NULL.
+is flagged `cut`; a horizon with no state at all gives NULL. Pool post-states per slot follow
+`streams.pool_leg` of the engine (buy / sell / boost: b -/+ base and e + e_delta; withdraw /
+deposit: vault + the last virtual quote -/+ quote_user), taken after the slot's last leg.
+
+Graduation is not death: a curve signal whose curve is complete at the entry or at a horizon is
+valued on the mint's migration pool (its SOL-quote PumpSwap pool, the state after the pool's last
+leg <= that slot, bought or sold through the pool's own fill functions); before the pool has a
+state there is no market and the row is NULL. The `regime` column is the slot-time regime of the
+signal's epoch (316ms: epochs at >= 300 ms per slot, 267ms otherwise; spec section 3).
 
 Signals are deduplicated over exit variants (tp4 / tp6, trail20 / trail35 share their trigger);
 `variants` keeps the list. N2 rows carry ref_mint / ref_t so the report can pair them with
@@ -76,7 +84,7 @@ SIG_COLS = ("family", "segment", "venue", "orientation", "mint", "pool", "t", "d
 
 # --- signals from the parts -----------------------------------------------------------------------
 
-def load_signals(con, parts_dir, families=None, lo=None, hi=None):
+def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
     """One row per distinct signal; `variants` lists the exit variants that share it."""
     files = sorted(glob.glob(os.path.join(parts_dir, "*.parquet")))
     if not files:
@@ -89,9 +97,11 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None):
         where.append(f"t >= {lo}")
     if hi is not None:
         where.append(f"t < {hi}")
+    slow = [e for e, ms in clock.per_epoch.items() if ms >= 300] if clock else []
+    regime = f"CASE WHEN t // {EPOCH} IN ({','.join(str(e) for e in slow)}) THEN '316ms' ELSE '267ms' END" if slow else "'267ms'"
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sig AS
-      SELECT row_number() OVER (ORDER BY family, segment, mint, t, pool) AS sid, *
+      SELECT row_number() OVER (ORDER BY family, segment, mint, t, pool) AS sid, *, {regime} AS regime
       FROM (SELECT family, segment, venue, orientation, mint, pool, t, any_value(day) AS day, any_value(farm) AS farm,
                    any_value(ref_mint) AS ref_mint, any_value(ref_t) AS ref_t,
                    list_sort(list_distinct(list(variant))) AS variants,
@@ -118,9 +128,14 @@ def build_states(con, lo=0, hi=2**62):
     streams.pool_leg: buy/sell/boost e + e_delta and b -/+ base, withdraw/deposit vault + last virt -/+
     quote_user (the virt and fee tiers carried from the last trade before `lo` are read from one extra
     trade before the range)."""
+    con.execute("""
+      CREATE OR REPLACE TEMP TABLE grad_pool AS
+      SELECT mint, arg_min(pool, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS pool,
+             arg_min(orientation, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS orientation
+      FROM pools WHERE quote_class IN ('sol', 'reversed') AND mint IN (SELECT DISTINCT key FROM sig WHERE venue = 'curve') GROUP BY mint""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE pool_states AS
-      WITH keys AS (SELECT DISTINCT key FROM sig WHERE venue = 'pool'),
+      WITH keys AS (SELECT DISTINCT key FROM sig WHERE venue = 'pool' UNION SELECT pool FROM grad_pool),
       legs AS (
         SELECT p.pool AS key, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, p.vq, p.base, p.e_delta, p.quote_user,
                p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps
@@ -188,11 +203,16 @@ def build_targets(con, clock, end_slot):
       SELECT tg.sid, tg.d, tg.h, tg.h_ms, tg.target, s.venue, s.orientation, s.key,
              ps.slot AS p_slot, ps.b, ps.e, ps.virt, ps.lp_bps, ps.protocol_bps, ps.creator_bps, ps.cashback_bps,
              cs.slot AS c_slot, cs.vt, cs.vq, cs.rt, cs.rq, cs.fee_bps AS c_fee_bps, cs.creator_bps AS c_creator_bps,
-             (tg.target >= {end_slot} OR tg.target > vl.last_slot) AS cut
+             gp.orientation AS g_orientation, gs.slot AS g_slot, gs.b AS g_b, gs.e AS g_e, gs.virt AS g_virt, gs.lp_bps AS g_lp_bps,
+             gs.protocol_bps AS g_protocol_bps, gs.creator_bps AS g_creator_bps, gs.cashback_bps AS g_cashback_bps,
+             (tg.target >= {end_slot} OR tg.target > greatest(vl.last_slot, COALESCE(gl.last_slot, 0))) AS cut
       FROM targets tg JOIN sig s ON s.sid = tg.sid
       LEFT JOIN venue_last vl ON vl.key = s.key
+      LEFT JOIN grad_pool gp ON s.venue = 'curve' AND gp.mint = s.key
+      LEFT JOIN venue_last gl ON gl.key = gp.pool
       ASOF LEFT JOIN pool_states ps ON s.venue = 'pool' AND ps.key = s.key AND tg.target >= ps.slot
-      ASOF LEFT JOIN curve_states cs ON s.venue = 'curve' AND cs.key = s.key AND tg.target >= cs.slot""")
+      ASOF LEFT JOIN curve_states cs ON s.venue = 'curve' AND cs.key = s.key AND tg.target >= cs.slot
+      ASOF LEFT JOIN pool_states gs ON s.venue = 'curve' AND gs.key = gp.pool AND tg.target >= gs.slot""")
     return len(rows)
 
 
@@ -206,39 +226,59 @@ def _curve(r):
     return V.Curve(int(r["vt"]), int(r["vq"]), int(r["rt"]), int(r["rq"]), int(r["c_fee_bps"]), int(r["c_creator_bps"]))
 
 
-def mid(venue, orientation, r):
+def resolve(venue, orientation, r):
+    """The venue that prices the signal at this row: ('curve', None, state) while the curve is live; ('pool',
+    orientation, state) on a pool, or on the migration pool once the curve is complete; None without a market."""
     if venue == "curve":
-        return None if r["vt"] is None or r["vt"] <= 0 else r["vq"] / r["vt"]
+        if r["vt"] is not None and r["rt"] is not None and r["rt"] > 0:
+            return ("curve", None, r)
+        if r["g_b"] is not None and r["g_b"] > 0 and r["g_e"] > 0:  # graduated: the migration pool
+            g = {"b": r["g_b"], "e": r["g_e"], "virt": r["g_virt"], "lp_bps": r["g_lp_bps"], "protocol_bps": r["g_protocol_bps"],
+                 "creator_bps": r["g_creator_bps"], "cashback_bps": r["g_cashback_bps"]}
+            return ("pool", r["g_orientation"], g)
+        return None
     if r["b"] is None or r["b"] <= 0 or r["e"] <= 0:
         return None
-    return r["b"] / r["e"] if orientation == "reversed" else r["e"] / r["b"]
+    return ("pool", orientation, r)
+
+
+def mid(venue, orientation, r):
+    v = resolve(venue, orientation, r)
+    if v is None:
+        return None
+    kind, ori, st = v
+    if kind == "curve":
+        return None if st["vt"] <= 0 else st["vq"] / st["vt"]
+    return st["b"] / st["e"] if ori == "reversed" else st["e"] / st["b"]
 
 
 def buy(venue, orientation, r, size):
     """Tokens received for `size` quote at state r; None when the venue cannot fill."""
-    if venue == "curve":
-        if r["vt"] is None or r["rt"] is None or r["rt"] <= 0:
-            return None
-        f = V.curve_buy_exact_in(_curve(r), size)
-    elif orientation == "reversed":
-        f = V.rev_buy_token(_pool(r), size)
+    v = resolve(venue, orientation, r)
+    if v is None:
+        return None
+    kind, ori, st = v
+    if kind == "curve":
+        f = V.curve_buy_exact_in(_curve(st), size)
+    elif ori == "reversed":
+        f = V.rev_buy_token(_pool(st), size)
     else:
-        f = V.pool_buy_exact_in(_pool(r), size)
+        f = V.pool_buy_exact_in(_pool(st), size)
     return None if f is None else f.tokens
 
 
 def sell(venue, orientation, r, tokens):
-    """Quote received for `tokens` at state r (capped at what the venue can pay); None when no state."""
-    if venue == "curve":
-        if r["vt"] is None or r["rt"] is None:
-            return None
-        if r["rt"] <= 0:
-            return 0  # the curve completed: tokens are worth 0 there (the pool is a different venue)
-        f = V.curve_sell(_curve(r), tokens)
-    elif orientation == "reversed":
-        f = V.rev_sell_token(_pool(r), tokens)
+    """Quote received for `tokens` at state r (capped at what the venue can pay); None when there is no market."""
+    v = resolve(venue, orientation, r)
+    if v is None:
+        return None
+    kind, ori, st = v
+    if kind == "curve":
+        f = V.curve_sell(_curve(st), tokens)
+    elif ori == "reversed":
+        f = V.rev_sell_token(_pool(st), tokens)
     else:
-        f = V.pool_sell_capped(_pool(r), tokens)
+        f = V.pool_sell_capped(_pool(st), tokens)
     return 0 if f is None else f.trader_quote  # rev_sell_token already puts the WSOL received in trader_quote
 
 
@@ -286,14 +326,14 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     V, costs = engine()
     scn = costs.Scenario.from_cfg("base", cfg)
     per_order = scn.per_tx()
-    n_sig = load_signals(con, parts_dir, families, lo, hi)
+    n_sig = load_signals(con, parts_dir, families, lo, hi, clock)
     n_pool, n_curve = build_states(con, *slot_bounds(con, clock))
     n_targets = build_targets(con, clock, end_slot)
     rows = round_trips(con, per_order)
     con.execute("CREATE OR REPLACE TEMP TABLE mk (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT, cut BOOLEAN, mid DOUBLE, gross DOUBLE, net DOUBLE, impact DOUBLE)")
     con.executemany("INSERT INTO mk VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     table = con.execute("""
-      SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.farm, s.ref_mint, s.ref_t, s.variants,
+      SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
              m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact
       FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms""").fetch_arrow_table()
     os.makedirs(out_dir, exist_ok=True)
