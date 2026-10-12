@@ -128,6 +128,25 @@ M1_CHUNK = int(os.environ.get("LAB_M1_CHUNK", "25"))  # young pools per stream l
 F6_STATS = {}
 
 
+def token_insiders(con, tok, lo, clock):
+    """overlay.Insiders of a token stream loaded with pool legs from `lo` on, over the token's whole
+    history: the pool's trades before lo enter as offsets summed in SQL (busy pools have millions of
+    events; the legs are not loaded). Without them insider sells before the window were invisible and
+    the share depended on where the caller's window started."""
+    w = clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot)
+    ins = overlay.Insiders(tok, w)
+    if not ins.known or tok.pool is None or tok.orientation != "normal":
+        return ins
+    con.register("ins_w", pa.table({"w": sorted(ins.insiders)}))
+    h0, c0, s0 = con.execute("""
+        SELECT COALESCE(sum(CASE WHEN trader IN (SELECT w FROM ins_w) THEN d END), 0), COALESCE(sum(d), 0),
+               count(*) FILTER (WHERE trader = ? AND d < 0)
+        FROM (SELECT trader, CASE WHEN kind = 'buy' THEN base ELSE -base END AS d FROM pool
+              WHERE pool = ? AND kind IN ('buy', 'sell') AND slot < ?)""", [tok.creator, tok.pool, lo]).fetchone()
+    con.unregister("ins_w")
+    return overlay.Insiders(tok, w, before=(int(h0), int(c0), int(s0))) if (h0 or c0 or s0) else ins
+
+
 def m1_signals(con, cfg, lo, hi, clock):
     """M1 triggers: for each young pool and k, the first candidate event (price >= k x graduation
     price, organic flow) that also has >= 20 distinct organic buyers over the last 15 min and an
@@ -140,13 +159,14 @@ def m1_signals(con, cfg, lo, hi, clock):
     for i in range(0, len(pools), M1_CHUNK):
         part = pools[i:i + M1_CHUNK]
         mints = {cands[p][0][0]: max(c[1] for c in cands[p]) for p in part}
-        toks = streams.load_streams(con, {m: (min(c[1] for p in part for c in cands[p] if c[0] == m), t) for m, t in mints.items()})
+        los = {m: min(c[1] for p in part for c in cands[p] if c[0] == m) for m in mints}
+        toks = streams.load_streams(con, {m: (los[m], t) for m, t in mints.items()})
         for pool in part:
             mint = cands[pool][0][0]
             tok = toks.get(mint)
             if tok is None:
                 continue
-            ins = overlay.Insiders(tok, clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot))
+            ins = token_insiders(con, tok, los[mint], clock)
             if not ins.known:
                 continue
             buys = [(l.slot, l.trader) for l in tok.pool_legs if l.kind == "buy" and not l.farmer]
@@ -448,19 +468,29 @@ def _token_info(con, st, venue, clock, cache):
     """(O7 insider index or None, distinct curve buyers or None) of the token behind a stream."""
     if st.mint in cache:
         return cache[st.mint]
-    tok = st
+    tok, lo = st, 0
     if venue == "pool":
         lo, hi = (st.pool_legs[0].slot, st.pool_legs[-1].slot) if st.pool_legs else (0, 0)
         tok = streams.load_streams(con, {st.mint: (lo, hi)}).get(st.mint)
+    elif st.pool_legs:
+        lo = st.pool_legs[0].slot
     ins = buyers = None
     if tok is not None and tok.create_slot is not None:
-        ins = overlay.Insiders(tok, clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot))
+        ins = token_insiders(con, tok, lo, clock)  # the whole history: the same share for every caller
         if not ins.known:
             ins = None
         else:
             buyers = len({l.trader for l in tok.curve if l.is_buy})
     cache[st.mint] = (ins, buyers)
     return cache[st.mint]
+
+
+def f6_flows(con, pool, sigs, hi, clock):
+    """F6Exit's organic flow index from the pool's legs since min(t) - the flow window: the position's
+    stream starts at t - 300, which cut the window of the first ~800 slots of every F6 position."""
+    lo = min(s.t - clock.slots(F6_FLOW_MS, s.t) for s in sigs) - 1
+    st = streams.load_pool_streams(con, {pool: (max(0, lo), hi)}).get(pool)
+    return FlowIndex(st) if st is not None else None
 
 
 def _work(args):
@@ -479,7 +509,7 @@ def _work(args):
         if st is None:
             continue
         mint = st.mint
-        flows = FlowIndex(st) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
+        flows = f6_flows(con, key, sigs, hi, clock) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
         ins_cache = {}
         for size_sol in sizes:
             size = int(size_sol * LAMPORTS)

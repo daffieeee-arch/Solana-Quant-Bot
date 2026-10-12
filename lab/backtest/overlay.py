@@ -25,9 +25,14 @@ VARIANTS = ("O7V1", "O7V2", "O7V3")
 
 
 class Insiders:
-    """Insider holdings of one token stream as prefix sums over its curve and pool legs."""
+    """Insider holdings of one token stream as prefix sums over its curve and pool legs.
 
-    def __init__(self, stream, window_slots):
+    The stream must hold the token's history up to the slots asked: curve legs from the create on
+    (streams.load_streams does), pool legs from the pool's start, or `before` = (insider net tokens,
+    everybody's net tokens, creator sells) of the pool trades before the stream's pool window
+    (tournament.token_insiders). A later window start alone hides earlier insider sells."""
+
+    def __init__(self, stream, window_slots, before=None):
         c = stream.create_slot
         legs = []
         for l in stream.curve:
@@ -39,7 +44,8 @@ class Insiders:
         legs.sort(key=lambda x: x[0])
         self.known = c is not None and bool(stream.curve) and stream.curve[0].slot <= c + window_slots
         self.insiders = {stream.creator} | {w for s, w, d in legs if c is not None and s <= c + window_slots and d > 0}
-        self.slots, self.h_ins, self.circ, self.creator_sold = [], [0], [0], [0]
+        h0, c0, s0 = before or (0, 0, 0)
+        self.slots, self.h_ins, self.circ, self.creator_sold = [], [h0], [c0], [s0]
         for s, w, d in legs:
             self.slots.append(s)
             self.h_ins.append(self.h_ins[-1] + (d if w in self.insiders else 0))
