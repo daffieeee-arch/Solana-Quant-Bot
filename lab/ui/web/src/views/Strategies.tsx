@@ -22,7 +22,8 @@ const pctf = (v: number | null | undefined, sign = true) =>
   v == null ? "–" : (sign && v > 0 ? "+" : "") + (v * 100).toLocaleString("nl-NL", { maximumFractionDigits: 2 }) + "%";
 const N_MIN = 30;
 // The run's own verdict (report.md): GO = 95%-CI of net SOL per trade above 0, ADJUST = mean above 0, STOP = mean ≤ 0.
-const LIVE_MIN = 5; // sizes below this are informative only (report.md)
+// Only the run's gate sizes count (run.gate_sizes from its report.md); other sizes are informative. Unknown: all count.
+const sizesTxt = (xs: number[]) => xs.map((x) => x.toLocaleString("nl-NL")).join(xs.length > 2 ? ", " : " en ") + " SOL";
 const VERDICT: Record<string, string> = { GO: "GO", ADJUST: "bijstellen", STOP: "stop" };
 // Run keys that split a family x variant into separate groups (lab/analytics/strategies.py GROUP). One value per key
 // is shown at a time, so no group is counted twice: farm 'all' is organic + flagged together, overlay O7* are
@@ -40,7 +41,7 @@ const keyVal = (r: SummaryRow, k: RunKey) => (r[k] == null || r[k] === "n/a" ? n
 
 export default function Strategies() {
   const [scenario, setScenario] = useState("base");
-  const [data, setData] = useState<{ run: { run_id: string; config: Record<string, unknown> } | null; summary: SummaryRow[]; keys?: RunKey[] } | null>(null);
+  const [data, setData] = useState<{ run: { run_id: string; config: Record<string, unknown>; gate_sizes?: number[] | null } | null; summary: SummaryRow[]; keys?: RunKey[] } | null>(null);
   const [keySel, setKeySel] = useState<Partial<Record<RunKey, string>>>({});
   const [d, setD] = useState<number | null>(null);
   const [tau, setTau] = useState<string | null>(null);
@@ -74,7 +75,8 @@ export default function Strategies() {
   }, [sel?.family, sel?.variant, sel?.d, sel?.tau, scenario, selKeyStr]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasVerdict = rows.some((r) => r.verdict != null);
-  const live = rows.filter((r) => r.size_sol >= LIVE_MIN);
+  const gates = data?.run?.gate_sizes ?? null;
+  const live = rows.filter((r) => !gates || gates.includes(r.size_sol));
   const goLive = live.filter((r) => r.verdict === "GO").length;
 
   const cols = useMemo<ColDef<SummaryRow>[]>(() => [
@@ -164,8 +166,8 @@ export default function Strategies() {
         </p>
         {hasVerdict && (
           <p className={`text-sm m-0 mt-1 ${goLive ? "" : "text-warn"}`}>
-            <b className="tabular">{goLive} van {live.length}</b> combinaties op live-grootte (≥ {LIVE_MIN} SOL, kosten {SCEN[scenario]}{keyOpts.some((o) => o.vals.length > 1) ? ", deze selectie" : ""}) krijgen GO:
-            netto winst per trade met het 95%-interval boven nul. Kleinere groottes zijn alleen informatief.
+            <b className="tabular">{goLive} van {live.length}</b> combinaties {gates ? `op de beoordeelde groottes (${sizesTxt(gates)}, ` : "("}kosten {SCEN[scenario]}{keyOpts.some((o) => o.vals.length > 1) ? ", deze selectie" : ""}) krijgen GO:
+            netto winst per trade met het 95%-interval boven nul. {gates ? "Andere groottes zijn alleen informatief." : "Het rapport noemt geen beoordeelde groottes; alle groottes tellen mee."}
           </p>
         )}
       </div>

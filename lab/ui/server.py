@@ -290,10 +290,12 @@ def api_strategies(q):
     if not has_table(con, "strategy_summary"):
         return {"run": None, "summary": [], "keys": []}
     scenario = q.get("scenario", ["base"])[0]
-    run = rows(con, "SELECT run_id, config_json FROM strategy_runs")[0]
+    gates = "gate_sizes" if "gate_sizes" in {r[0] for r in con.execute("DESCRIBE strategy_runs").fetchall()} else "NULL"
+    run = rows(con, f"SELECT run_id, config_json, {gates} AS gate_sizes FROM strategy_runs")[0]
     keys = run_keys(con, "strategy_summary")
     order = ", ".join(["family", "variant", "size_sol", "d", "tau", *keys])
-    return {"run": {"run_id": run["run_id"], "config": json.loads(run["config_json"])}, "keys": keys,
+    return {"run": {"run_id": run["run_id"], "config": json.loads(run["config_json"]), "gate_sizes": run["gate_sizes"]},
+            "keys": keys,
             "summary": rows(con, f"SELECT * FROM strategy_summary WHERE scenario = ? ORDER BY {order}", [scenario])}
 
 

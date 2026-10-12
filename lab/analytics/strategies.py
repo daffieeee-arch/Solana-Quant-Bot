@@ -1,7 +1,7 @@
 """Load a finished development tournament run into analytics.duckdb (used by build.py --tournament).
 
 Tables:
-  strategy_runs     one row: run id, config, store window
+  strategy_runs     one row: run id, config, store window, gate sizes (from the run's report.md)
   strategy_results  one row per position (base costs), settled exactly like lab/backtest/costs.py
   strategy_summary  the run's own summary.parquet (n, mean, CI, edge vs N2 per family x variant x size x d x tau x scenario)
   strategy_curves   cumulative P&L per group and scenario in exit order, thinned to ~400 points (N2 shadows and
@@ -56,6 +56,18 @@ def scenarios(cfg):
     return out
 
 
+def gate_sizes(report, sizes):
+    """The sizes the run's verdict is judged at, from the fixed sentence in its report.md (None if it has none).
+    v2 reports: "Gate sizes: 0.5, 1.0 SOL (...)"; v1 reports: "Sizes below 5 SOL are informative only"."""
+    m = re.search(r"Gate sizes: ([0-9][0-9., ]*?) SOL", report)
+    if m:
+        return [float(x) for x in m.group(1).split(",")]
+    m = re.search(r"Sizes below ([0-9.]+) SOL are informative only", report)
+    if m:
+        return [s for s in sizes if s >= float(m.group(1))]
+    return None
+
+
 def load(con, run_dir, defaults=DEFAULTS, stage_dir=None):
     # Positions: results.parquet if the run wrote one, else its per-batch parts (same rows, no
     # pnl_base_lamports/ret_base). summary.parquet is written last, so it marks a finished run;
@@ -81,10 +93,15 @@ def load(con, run_dir, defaults=DEFAULTS, stage_dir=None):
         raise SystemExit(f"refusing a tournament run that is not development-only: {store}")
     cfg = read_costs(defaults)
 
+    report = os.path.join(run_dir, "report.md")
+    gates = None
+    if os.path.exists(report):
+        with open(report) as f:
+            gates = gate_sizes(f.read(), conf.get("sizes_sol") or [])
     con.execute("CREATE TABLE strategy_runs AS SELECT ? AS run_id, ? AS config_json, ?::UBIGINT AS store_first_slot, "
-                "?::UBIGINT AS store_last_slot",
+                "?::UBIGINT AS store_last_slot, ?::DOUBLE[] AS gate_sizes",
                 [conf.get("run_id", os.path.basename(run_dir)), json.dumps(conf), store["slot_start"],
-                 store["slot_end_exclusive"] - 1])
+                 store["slot_end_exclusive"] - 1, gates])
     res_cols = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{results}')").fetchall()}
     sum_types = {r[0]: r[1] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet('{summary}')").fetchall()}
     sum_cols = set(sum_types)

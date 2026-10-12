@@ -323,7 +323,8 @@ DICTIONARY = {
         "note": "Toelichting. Protocol-markers zijn alleen een label met een slotnummer; geen hold-out-inhoud."},
     "strategy_runs": {
         "run_id": "Naam van de toernooirun.", "config_json": "Instellingen van de run (JSON).",
-        "store_first_slot": "Eerste slot van de gebruikte store.", "store_last_slot": "Laatste slot van de gebruikte store."},
+        "store_first_slot": "Eerste slot van de gebruikte store.", "store_last_slot": "Laatste slot van de gebruikte store.",
+        "gate_sizes": "Groottes in SOL waarop het oordeel van de run telt (uit report.md); andere groottes zijn informatief. Leeg als het rapport ze niet noemt."},
     "strategy_results": {
         "family": "Strategiefamilie (F7, F1, N1, N2_… = willekeurige schaduw van die familie).",
         "variant": "Variant uit het vooraf geregistreerde rooster.", "size_sol": "Positiegrootte in SOL.",

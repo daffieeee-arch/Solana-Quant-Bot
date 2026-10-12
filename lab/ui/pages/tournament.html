@@ -173,9 +173,12 @@ footer { color: var(--muted); font-size: 0.82rem; }
   }
 
   // The run's own verdict (report.md): GO = 95%-CI of net SOL per trade above 0; ADJUST = mean above 0;
-  // STOP = mean at most 0; under 200 trades no verdict. Sizes under 5 SOL are informative only.
+  // STOP = mean at most 0; under 200 trades no verdict. Only the run's gate sizes count (run.gate_sizes, from its
+  // report.md: v1 sizes of 5 SOL and up, v2 0.5 and 1 SOL); other sizes are informative. Unknown: all sizes count.
   const HAS_VERDICT = D.columns.includes("verdict") && rows.some(r => r.verdict != null);
-  const LIVE_MIN = 5;
+  const GATES = D.run.gate_sizes || null;
+  const isGate = r => !GATES || GATES.includes(r.size_sol);
+  const sizesTxt = xs => xs.map(x => String(x).replace(".", ",")).join(xs.length > 2 ? ", " : " en ") + " SOL";
   const VERD = { GO: "GO", ADJUST: "bijstellen", STOP: "stop" };
   const verdictOf = r => r.verdict == null ? null : (VERD[r.verdict] || "te weinig trades");
 
@@ -184,16 +187,17 @@ footer { color: var(--muted); font-size: 0.82rem; }
     const v = document.getElementById("verdict"); v.replaceChildren();
     const head = el("div");
     if (HAS_VERDICT) {
-      const live = all.filter(r => r.size_sol >= LIVE_MIN);
+      const gate = all.filter(isGate), other = all.filter(r => !isGate(r));
       const count = (xs, k) => xs.filter(r => r.verdict === k).length;
-      const go = count(live, "GO");
+      const go = count(gate, "GO");
       v.className = "verdict" + (go ? "" : " none");
-      head.append(el("b", null, go + " van " + live.length),
-        document.createTextNode(" combinaties op live-grootte (≥ " + LIVE_MIN + " SOL, kosten " + scenName() + ", vertraging " + st.d + (multiKey ? ", deze selectie" : "") + ") krijgen GO: netto winst per trade na kosten met het 95%-interval boven nul."));
+      head.append(el("b", null, go + " van " + gate.length),
+        document.createTextNode(" combinaties " + (GATES ? "op de beoordeelde groottes (" + sizesTxt(GATES) + ", " : "(") + "kosten " + scenName() +
+          ", vertraging " + st.d + (multiKey ? ", deze selectie" : "") + ") krijgen GO: netto winst per trade na kosten met het 95%-interval boven nul."));
       v.append(head);
-      v.append(el("div", "lede", "Op live-grootte: " + count(live, "ADJUST") + " × bijstellen (gemiddelde boven nul, interval niet) en " +
-        count(live, "STOP") + " × stop. Onder " + LIVE_MIN + " SOL (alleen informatief): " + count(all.filter(r => r.size_sol < LIVE_MIN), "GO") + " × GO, " +
-        count(all.filter(r => r.size_sol < LIVE_MIN), "ADJUST") + " × bijstellen."));
+      v.append(el("div", "lede", (GATES ? "Op die groottes: " : "") + count(gate, "ADJUST") + " × bijstellen (gemiddelde boven nul, interval niet) en " +
+        count(gate, "STOP") + " × stop." + (GATES ? " Andere groottes (alleen informatief): " + count(other, "GO") + " × GO, " + count(other, "ADJUST") + " × bijstellen."
+          : " Het rapport van deze run noemt geen beoordeelde groottes; alle groottes tellen mee.")));
       v.append(el("div", "lede", go ? "Kandidaten, nog niet bewezen: de hold-out en paper trading moeten het bevestigen."
         : "Geen enkele combinatie haalt die lat op ontwikkeldata. Dat is een uitkomst, geen fout."));
       return;

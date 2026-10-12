@@ -41,7 +41,8 @@ def js(v):
 
 def main(db=os.path.join(DATA, "analytics", "analytics.duckdb"), out_name=None):
     con = duckdb.connect(db, read_only=True, config={"memory_limit": "900MB", "threads": 2})
-    run = con.execute("SELECT run_id, config_json FROM strategy_runs").fetchone()
+    has_gates = "gate_sizes" in {r[0] for r in con.execute("DESCRIBE strategy_runs").fetchall()}
+    run = con.execute(f"SELECT run_id, config_json, {'gate_sizes' if has_gates else 'NULL'} FROM strategy_runs").fetchone()
     conf = json.loads(run[1])
     have = {r[0] for r in con.execute("DESCRIBE strategy_summary").fetchall()}
     have_c = {r[0] for r in con.execute("DESCRIBE strategy_curves").fetchall()}
@@ -67,7 +68,7 @@ def main(db=os.path.join(DATA, "analytics", "analytics.duckdb"), out_name=None):
     summary = [[float(f"{v:.6g}") if isinstance(v, float) else v for v in r] for r in summary]
     data = {
         "run": {k: conf.get(k) for k in ("run_id", "families", "sizes_sol", "delays", "tau", "q", "slippage_tol",
-                                         "signals", "positions", "seconds")},
+                                         "signals", "positions", "seconds")} | {"gate_sizes": run[2]},
         "store": conf.get("store", {}),
         "columns": columns,
         "keys": keys,

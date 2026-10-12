@@ -161,6 +161,22 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
             n_all = con.execute("SELECT max(n) FROM strategy_curves WHERE farm = 'all'").fetchone()[0]
             self.assertEqual(n_all, 80)  # organic + flagged positions together
 
+    def test_gate_sizes_from_report(self):
+        g = build.strategies.gate_sizes
+        self.assertEqual(g("Gate sizes: 0.5, 1.0 SOL (10 SOL capital); 2 SOL is informative.", [0.25, 0.5, 1, 2]), [0.5, 1.0])
+        self.assertEqual(g("no verdict. Sizes below 5 SOL are informative only (under the live size).", [0.5, 2, 5, 25]), [5, 25])
+        self.assertIsNone(g("no such sentence", [1]))
+        with tempfile.TemporaryDirectory() as d:
+            self.make_run(d)
+            con = duckdb.connect(config={"temp_directory": ""})
+            build.strategies.load(con, d)
+            self.assertIsNone(con.execute("SELECT gate_sizes FROM strategy_runs").fetchone()[0])
+            with open(os.path.join(d, "report.md"), "w") as f:
+                f.write("# r\n\nGO: CI above 0. Gate sizes: 0.5, 1.0 SOL (10 SOL capital).\n")
+            con = duckdb.connect(config={"temp_directory": ""})
+            build.strategies.load(con, d)
+            self.assertEqual(con.execute("SELECT gate_sizes FROM strategy_runs").fetchone()[0], [0.5, 1.0])
+
     def test_base_from_keeps_overview_and_adds_run(self):
         with tempfile.TemporaryDirectory() as d:
             run = os.path.join(d, "run")
