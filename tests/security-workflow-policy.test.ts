@@ -71,10 +71,15 @@ describe('security workflow privilege and coverage boundaries', () => {
     expect(audit.permissions).toEqual({ contents: 'read' });
     for (const job of Object.values(audit.jobs) as any[]) expect(job.permissions).toBeUndefined();
     for (const mutation of [
-      original.replace(' --optional lab/recorder/Cargo.lock', ''),
+      original.replace(' lab/recorder/Cargo.lock', ''),
+      original.replace(' lab/recorder/Cargo.lock', ' --optional lab/recorder/Cargo.lock'),
       original.replace(' --version 0.22.2 --locked', ''),
       original.replace('pip-audit==2.10.1', 'pip-audit'),
       original.replace('npm lab/ui/web', 'npm lab/ui/web || true'),
+      original.replace(' rust/of1-range-recorder/Cargo.lock', ''),
+      original.replace('npm . --include-dev', 'npm .'),
+      original.replace('      - package-lock.json\n', ''),
+      original.replace('      - rust/*/Cargo.lock\n', ''),
       original.replace('      - lab/ui/web/package-lock.json\n', ''),
       original.replace("'29 6 * * 1'", "'29 6 1 1 *'"),
       original.replace('  workflow_dispatch: {}\n', ''),

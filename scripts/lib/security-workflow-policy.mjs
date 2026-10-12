@@ -96,7 +96,8 @@ const workflows = {
       },
     },
   },
-  // Owner-approved 2026-10-12: weekly and on-change RustSec, PyPI and npm advisory audit of lab/.
+  // Owner-approved 2026-10-12: weekly and on-change RustSec, PyPI and npm advisory audit of lab/
+  // and the frozen V2 lockfiles (root package-lock, rust/*/Cargo.lock).
   // Read-only; fail rule and the ignore list with reasons live in lab/security/.
   '.github/workflows/dependency-audit.yml': {
     name: 'Dependency audit',
@@ -113,6 +114,10 @@ const workflows = {
           'lab/requirements-lab.txt',
           'lab/ui/web/package.json',
           'lab/ui/web/package-lock.json',
+          'package.json',
+          'package-lock.json',
+          'rust/*/Cargo.lock',
+          'rust/*/Cargo.toml',
         ],
       },
       schedule: [{ cron: '29 6 * * 1' }],
@@ -131,8 +136,9 @@ const workflows = {
           { name: 'Install pinned Rust toolchain', run: 'rustup toolchain install 1.97.1 --profile minimal' },
           { name: 'Install cargo-audit', run: 'cargo install cargo-audit --version 0.22.2 --locked' },
           {
-            name: 'Audit Rust lockfiles against RustSec',
-            run: 'python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock --optional lab/recorder/Cargo.lock',
+            name: 'Audit lab and frozen V2 Rust lockfiles against RustSec',
+            // One invocation, so an ignore entry is only reported stale when no lockfile uses it.
+            run: 'python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock lab/recorder/Cargo.lock rust/of1-range-recorder/Cargo.lock rust/of1-bronze-decoder/Cargo.lock rust/of1-parquet-projection/Cargo.lock rust/old-faithful-pump-reducer/Cargo.lock rust/pump-protocol-v2/Cargo.lock',
           },
         ],
       },
@@ -165,6 +171,7 @@ const workflows = {
             with: { 'node-version': '22.23.2' },
           },
           { name: 'Audit lab/ui/web production dependencies', run: 'python3 lab/security/dependency_audit.py npm lab/ui/web' },
+          { name: 'Audit root (V2) dependencies including dev tooling', run: 'python3 lab/security/dependency_audit.py npm . --include-dev' },
         ],
       },
     },

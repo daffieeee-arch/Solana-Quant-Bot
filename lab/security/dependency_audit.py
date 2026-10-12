@@ -1,4 +1,4 @@
-"""Dependency audit for lab/: runs cargo-audit, pip-audit or npm audit, applies audit-ignore.toml and
+"""Dependency audit for lab/ and the frozen V2 lockfiles: runs cargo-audit, pip-audit or npm audit, applies audit-ignore.toml and
 decides pass or fail. Used by .github/workflows/dependency-audit.yml; standard library only.
 
 Fail rule:
@@ -7,14 +7,15 @@ Fail rule:
   decision 2026-10-12: no known problem stays silent). Unmaintained and yanked warnings are printed,
   never fatal.
 - pip:   every finding (pip-audit reports no severity, so each one counts as unknown).
-- npm:   advisories with severity high or critical, as `npm audit --omit=dev --audit-level=high`.
+- npm:   advisories with severity high or critical, as `npm audit --omit=dev --audit-level=high`;
+         with --include-dev the dev dependencies count too (the root lock: its test tooling).
 An ignore entry (with reason, evidence that no compatible patched version exists, date and review
 date) turns a failing finding into a printed "ignored" line. A tool error or unreadable output always fails.
 
 Usage:
   dependency_audit.py cargo LOCKFILE... [--optional LOCKFILE]...
   dependency_audit.py pip REQUIREMENTS [--tool PATH-TO-pip-audit]
-  dependency_audit.py npm DIR
+  dependency_audit.py npm DIR [--include-dev]
 Exit: 0 pass, 1 failing findings, 2 tool or input error.
 """
 import argparse
@@ -241,8 +242,9 @@ def _line(f):
     return f"{f['id']} {f['package']} {f['version']} [{f['severity']}{score}] {f['title']}"
 
 
-def report(label, ecosystem, findings, ignores, warnings=(), today=None, out=sys.stdout):
+def report(label, ecosystem, findings, ignores, warnings=(), today=None, out=None):
     today = today or datetime.date.today()
+    out = out or sys.stdout
     failing, ignored, info, expired = decide(findings, ignores, ecosystem, today)
     p = lambda s="": print(s, file=out)  # noqa: E731
     p(f"== {label}: {len(findings)} advisories, {len(failing)} failing, {len(ignored)} ignored, "
@@ -301,6 +303,7 @@ def main(argv=None):
     p.add_argument("--tool", default="pip-audit")
     n = sub.add_parser("npm")
     n.add_argument("dir")
+    n.add_argument("--include-dev", action="store_true", help="audit dev dependencies too")
     a = ap.parse_args(argv)
 
     try:
@@ -328,7 +331,8 @@ def main(argv=None):
             findings_all = parse_pip(run_json(cmd))
             failing = report(a.requirements, "pip", findings_all, ignores)
         else:
-            findings_all = parse_npm(run_json(["npm", "audit", "--omit=dev", "--json"], cwd=a.dir))
+            cmd = ["npm", "audit", "--json"] + ([] if a.include_dev else ["--omit=dev"])
+            findings_all = parse_npm(run_json(cmd, cwd=a.dir))
             failing = report(a.dir, "npm", findings_all, ignores)
         for e in stale_ignores(findings_all, ignores, a.ecosystem):
             print(f"::warning title=stale ignore::{e['id']} {e['package']} in audit-ignore.toml matched nothing")
