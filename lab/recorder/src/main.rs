@@ -211,6 +211,9 @@ struct SessionState {
     subscribed: bool,
     /// At least one update arrived on the main stream.
     got_data: bool,
+    /// The server refused the main subscription while it asked for from_slot (a resume rejected
+    /// at subscribe time counts like an accepted resume without data).
+    resume_rejected: bool,
 }
 
 /// One connection: subscribe (resuming after the last closed slot when `resume`), then process
@@ -255,7 +258,14 @@ async fn session(
         }
     }
     log::info!("subscribing: {} from slot {:?}", rec.active.summary(), main_req.from_slot);
-    let (mut sink, mut stream) = client.subscribe_with_request(Some(main_req)).await.context("subscribe")?;
+    let resuming = main_req.from_slot.is_some();
+    let (mut sink, mut stream) = match client.subscribe_with_request(Some(main_req)).await {
+        Ok(subscription) => subscription,
+        Err(e) => {
+            st.resume_rejected = resuming;
+            return Err(e).context("subscribe");
+        }
+    };
     // The vault stream is its own subscription on the same connection (its own data slice).
     let (mut vsink, mut vstream) = client.subscribe_with_request(Some(vault_req)).await.context("subscribe vaults")?;
     st.subscribed = true;
@@ -452,14 +462,15 @@ async fn run(a: Args) -> Result<i32> {
 
 /// Bookkeeping after a session that broke off. Data resets both counts (backoff 2 s). A session
 /// without data adds to `failures`; it adds to `resume_failures` only when its resume subscription
-/// was accepted, so transport errors (connect, DNS, TLS, a refused subscribe) never cost from_slot.
+/// was accepted, or refused by the server at subscribe time; transport errors before that (connect,
+/// DNS, TLS) never cost from_slot.
 fn count_session(st: &SessionState, resume: bool, failures: &mut u32, resume_failures: &mut u32) {
     if st.got_data {
         *failures = 1;
         *resume_failures = 0;
     } else {
         *failures += 1;
-        if st.subscribed && resume {
+        if (st.subscribed || st.resume_rejected) && resume {
             *resume_failures += 1;
         }
     }
@@ -483,14 +494,15 @@ mod tests {
         let (mut failures, mut resume_failures) = (0, 0);
         for &(subscribed, got_data) in states {
             let resume = resume_failures < 3;
-            count_session(&SessionState { subscribed, got_data }, resume, &mut failures, &mut resume_failures);
+            let st = SessionState { subscribed, got_data, resume_rejected: false };
+            count_session(&st, resume, &mut failures, &mut resume_failures);
         }
         (failures, resume_failures)
     }
 
     #[test]
     fn transport_errors_never_cost_the_resume() {
-        // A long outage: connect or subscribe fails 15 times in a row; from_slot stays.
+        // A long outage: the connection fails 15 times in a row; from_slot stays.
         let (failures, resume_failures) = after(&[(false, false); 15]);
         assert_eq!((failures, resume_failures), (15, 0));
     }
@@ -501,5 +513,21 @@ mod tests {
         assert_eq!(after(&[(true, false), (true, false), (true, true)]), (1, 0));
         // Once from_slot is dropped (resume = false), live sessions without data do not count again.
         assert_eq!(after(&[(true, false); 5]).1, 3);
+    }
+
+    #[test]
+    fn a_resume_refused_at_subscribe_counts_and_the_recorder_goes_live() {
+        // The replay info failed and the server refuses from_slot at subscribe time, every time:
+        // after three such sessions the recorder resumes without from_slot instead of giving up.
+        let (mut failures, mut resume_failures) = (0, 0);
+        let mut resumes = Vec::new();
+        for _ in 0..5 {
+            let resume = resume_failures < 3;
+            resumes.push(resume);
+            let st = SessionState { subscribed: false, got_data: false, resume_rejected: resume };
+            count_session(&st, resume, &mut failures, &mut resume_failures);
+        }
+        assert_eq!(resumes, vec![true, true, true, false, false]);
+        assert_eq!((failures, resume_failures), (5, 3));
     }
 }
