@@ -110,10 +110,16 @@ def load_ignores(path=IGNORE_FILE):
     return entries
 
 
+def pep503(name):
+    """PyPI's normalized project name (PEP 503): typing_extensions == Typing.Extensions == typing-extensions."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
 def match_ignore(finding, ignores, ecosystem):
     ids = {finding["id"], *finding.get("aliases", [])}
+    same = (lambda a, b: pep503(a) == pep503(b)) if ecosystem == "pip" else (lambda a, b: a == b)
     for e in ignores:
-        if e["ecosystem"] == ecosystem and e["package"] == finding["package"] and e["id"] in ids:
+        if e["ecosystem"] == ecosystem and same(e["package"], finding["package"]) and e["id"] in ids:
             return e
     return None
 
@@ -156,7 +162,7 @@ def parse_pip(report):
             raise AuditError(f"pip-audit skipped {d.get('name')}: {d['skip_reason']}")
         for v in d.get("vulns", []):
             findings.append({
-                "id": v["id"], "aliases": v.get("aliases") or [], "package": d["name"].lower(),
+                "id": v["id"], "aliases": v.get("aliases") or [], "package": pep503(d["name"]),
                 "version": d["version"], "title": (v.get("description") or "").split("\n")[0][:120],
                 "severity": "unknown", "score": None,
             })
@@ -263,7 +269,7 @@ def check_pinned(path):
             m = re.fullmatch(r"([A-Za-z0-9][A-Za-z0-9._-]*)==([A-Za-z0-9.+!-]+)", line)
             if not m:
                 raise AuditError(f"{path}: '{line}' is not an exact name==version pin")
-            names.append(m.group(1).lower())
+            names.append(pep503(m.group(1)))
     if not names:
         raise AuditError(f"{path}: no requirements")
     return names

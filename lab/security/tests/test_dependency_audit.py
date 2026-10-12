@@ -114,6 +114,14 @@ class Pip(unittest.TestCase):
         ok, _ = run_report(findings, [ignore(id="CVE-1", ecosystem="pip", package="pyyaml")], "pip")
         self.assertEqual(ok, [])
 
+    def test_names_normalized_per_pep503(self):
+        findings = da.parse_pip({"dependencies": [
+            {"name": "Typing_Extensions", "version": "4.0", "vulns": [{"id": "PYSEC-2", "aliases": [], "description": "x"}]}]})
+        self.assertEqual(findings[0]["package"], "typing-extensions")
+        for name in ("typing_extensions", "Typing.Extensions", "typing-extensions"):
+            ok, _ = run_report(findings, [ignore(id="PYSEC-2", ecosystem="pip", package=name)], "pip")
+            self.assertEqual(ok, [], name)
+
     def test_skipped_dependency_is_an_error(self):
         with self.assertRaises(da.AuditError):
             da.parse_pip({"dependencies": [{"name": "x", "skip_reason": "not on PyPI"}]})
