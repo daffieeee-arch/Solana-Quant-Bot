@@ -1,8 +1,11 @@
+import { AnimatePresence, motion } from "motion/react";
 import { Suspense, lazy, useEffect, useState } from "react";
 import { get, type Meta } from "./api";
-import { go, useRoute } from "./route";
+import { useRoute } from "./route";
 import Ticker from "./views/Ticker";
 import { Loading } from "./components/ui";
+import { Shell, type Tab } from "./components/Shell";
+import { PaperProvider, applyAccent } from "./live";
 
 // Heavy screens load on demand (ECharts, AG Grid, Lightweight Charts) so the first paint on a phone stays small.
 const Overview = lazy(() => import("./views/Overview"));
@@ -11,25 +14,16 @@ const TokenDetail = lazy(() => import("./views/TokenDetail"));
 const Strategies = lazy(() => import("./views/Strategies"));
 const Cases = lazy(() => import("./views/Cases"));
 const Paper = lazy(() => import("./views/Paper"));
-import { unixTime } from "./format";
 
-// Tabs appear only when the API reports data for them (no empty tabs).
-const TABS: Record<string, { slug: string; label: string; icon: string }> = {
-  paper: { slug: "paper", label: "Paper", icon: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6" },
-  strategies: { slug: "strategieen", label: "Strategieën", icon: "M4 19V9m6 10V5m6 14v-7m4 7H2" },
-  cases: { slug: "casussen", label: "Casussen", icon: "M9 5h10M9 12h10M9 19h10M4 5h.01M4 12h.01M4 19h.01" },
-  tokens: { slug: "tokens", label: "Tokens", icon: "M11 4a7 7 0 1 0 4.9 12l4.6 4.6M11 4a7 7 0 0 1 4.9 12" },
-  overview: { slug: "overzicht", label: "Overzicht", icon: "M3 13h4v7H3zm7-9h4v16h-4zm7 5h4v11h-4z" },
-  ticker: { slug: "ticker", label: "Ticker", icon: "M4 6h16M4 12h10M4 18h13" },
+// Tabs appear only when the API reports data for them (no empty tabs). Order = desktop nav order.
+const TABS: Record<string, { slug: string; label: string; short?: string }> = {
+  paper: { slug: "paper", label: "Paper" },
+  strategies: { slug: "strategieen", label: "Strategieën", short: "Strategie" },
+  tokens: { slug: "tokens", label: "Tokens" },
+  cases: { slug: "casussen", label: "Casussen" },
+  overview: { slug: "overzicht", label: "Overzicht" },
+  ticker: { slug: "ticker", label: "Ticker" },
 };
-
-function Icon({ d }: { d: string }) {
-  return (
-    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={d} />
-    </svg>
-  );
-}
 
 export default function App() {
   const route = useRoute();
@@ -37,11 +31,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    applyAccent();
     get<Meta>("meta").then(setMeta).catch((e) => setError(String(e.message ?? e)));
   }, []);
 
-  const tabs = (meta?.tabs ?? ["overview", "tokens", "ticker"]).map((t) => ({ key: t, ...TABS[t] })).filter((t) => t.slug);
-  const active = tabs.find((t) => t.slug === route.tab) ?? tabs.find((t) => t.key === "overview")!;
+  const have = meta?.tabs ?? ["overview", "tokens", "ticker"];
+  const tabs: Tab[] = Object.keys(TABS).filter((k) => have.includes(k)).map((k) => ({ key: k, ...TABS[k] }));
+  const fallback = tabs.find((t) => t.key === "paper") ?? tabs.find((t) => t.key === "overview")!;
+  const active = tabs.find((t) => t.slug === route.tab) ?? fallback;
 
   let view;
   if (active.key === "tokens" && route.arg) view = <TokenDetail mint={route.arg} />;
@@ -53,42 +50,17 @@ export default function App() {
   else view = <Overview />;
 
   return (
-    <div className="min-h-full flex flex-col">
-      <header className="sticky top-0 z-20 border-b border-line bg-bg/95 backdrop-blur" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
-        <div className="mx-auto max-w-6xl px-4 h-12 flex items-center gap-6">
-          <a href="#/overzicht" className="font-semibold tracking-tight text-fg no-underline">Solana-lab</a>
-          <nav className="hidden md:flex gap-1" aria-label="Hoofdmenu">
-            {tabs.map((t) => (
-              <button key={t.key} type="button" onClick={() => go(t.slug)}
-                className={`px-3 py-1.5 rounded-md text-sm ${t.key === active.key ? "bg-accent-soft text-accent font-medium" : "text-muted hover:text-fg"}`}
-                aria-current={t.key === active.key ? "page" : undefined}>
-                {t.label}
-              </button>
-            ))}
-          </nav>
-          <span className="ml-auto text-xs text-muted font-mono hidden sm:inline">
-            {meta ? `ontwikkeldata · build ${unixTime(meta.meta.built_at_unix)} UTC` : ""}
-          </span>
-        </div>
-      </header>
-
-      <main className="flex-1 mx-auto w-full max-w-6xl px-4 pt-4 pb-24 md:pb-10 min-w-0">
-        {error ? <p className="text-warn">De data is nu niet bereikbaar: {error}</p> : <Suspense fallback={<Loading what="Scherm" />}>{view}</Suspense>}
-      </main>
-
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 border-t border-line bg-surface/95 backdrop-blur"
-        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }} aria-label="Tabbalk">
-        <div className="grid" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
-          {tabs.map((t) => (
-            <button key={t.key} type="button" onClick={() => go(t.slug)}
-              className={`flex flex-col items-center gap-0.5 py-2 text-[11px] ${t.key === active.key ? "text-accent" : "text-muted"}`}
-              aria-current={t.key === active.key ? "page" : undefined}>
-              <Icon d={t.icon} />
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </nav>
-    </div>
+    <PaperProvider enabled={have.includes("paper")}>
+      <Shell tabs={tabs} active={active.key}>
+        {error ? <p className="text-warn">De data is nu niet bereikbaar: {error}</p> : (
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div key={active.key + (route.arg ?? "")} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+              <Suspense fallback={<Loading what="Scherm" />}>{view}</Suspense>
+            </motion.div>
+          </AnimatePresence>
+        )}
+      </Shell>
+    </PaperProvider>
   );
 }

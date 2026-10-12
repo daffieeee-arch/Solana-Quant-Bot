@@ -43,7 +43,7 @@ export default function PriceChart({ candles, supply, markers, height = 360 }: {
     const up = cssVar("--buy"), down = cssVar("--sell"), muted = cssVar("--muted"), line = cssVar("--line");
     const chart = createChart(el.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: cssVar("--surface") }, textColor: muted, attributionLogo: true, fontFamily: "IBM Plex Sans, system-ui, sans-serif" },
+      layout: { background: { type: ColorType.Solid, color: cssVar("--surface") }, textColor: muted, attributionLogo: true, fontFamily: "JetBrains Mono Variable, ui-monospace, monospace" },
       grid: { vertLines: { color: line }, horzLines: { color: line } },
       rightPriceScale: { borderColor: line },
       timeScale: { borderColor: line, timeVisible: true, secondsVisible: false },

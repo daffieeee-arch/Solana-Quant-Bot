@@ -17,6 +17,7 @@ last digit; mean, trades and verdict are the same.
 Slots of the hold-out window (epochs 1047-1051) are never shown: a journal row that touches one is dropped
 and counted, as is any recorder usage of such a segment.
 """
+import calendar
 import glob
 import heapq
 import json
@@ -166,6 +167,21 @@ def group_stats(xs):
             "win_rate": sum(1 for x in filled if (x["pnl"] or 0) > 0) / len(filled) if filled else None}
 
 
+def range_stats(xs, shadow):
+    """Hero card for one period: net SOL, trades, win rate, return per trade (net / invested) and the difference
+    to the N2 shadow in percentage points, plus the cumulative net SOL in exit order."""
+    g = group_stats(xs)
+    ret = lambda ys: (sum(y["pnl"] or 0 for y in ys) / sum(y["cost"] or 0 for y in ys if y["tokens"])  # noqa: E731
+                      if any(y["tokens"] and y["cost"] for y in ys) else None)
+    own, sh = ret(xs), ret(shadow)
+    cum, curve = 0, []
+    for x in sorted(xs, key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0)):
+        cum += x["pnl"] or 0
+        curve.append(round(cum / 1e9, 4))
+    return {**g, "ret_per_trade": own, "vs_n2_pt": (own - sh) * 100 if own is not None and sh is not None else None,
+            "curve": thin(curve, 120)}
+
+
 def utc_day(unix):
     return time.strftime("%Y-%m-%d", time.gmtime(unix))
 
@@ -208,18 +224,22 @@ def journal_view(path, now):
     traded_today = [x for (f, _), xs in by_group.items() if not f.startswith("N2_") for x in xs]
     totals = {"open": sum(n for (f, _), n in open_by.items() if not f.startswith("N2_")), **group_stats(traded_today)}
 
+    last_slot = last["last_slot"] if last else None
+
     def pos_row(p, x=None):
         s = signals.get((p["family"], p["variant"], p["key"], p["t"]), {})
         r = {"family": p["family"], "variant": p["variant"], "key": p["key"], "venue": s.get("venue"),
              "orientation": s.get("orientation"), "signal_slot": p["t"], "entry_slot": p["entry_slot"],
              "cost_sol": (p["cost"] or 0) / 1e9 if p.get("cost") is not None else None}
         if x is None:  # open: the engine journals no mark yet; shown when it does
+            r["slots"] = (last_slot - p["entry_slot"]) if last_slot and p.get("entry_slot") else None
             mark = p.get("mark_proceeds")
             r.update(status="open", mark_sol=mark / 1e9 if mark is not None else None, mark_slot=p.get("mark_slot"),
                      pnl_sol=(mark - p["cost"]) / 1e9 if mark is not None and p.get("cost") else None)
         else:
             r.update(status=x["exit_reason"], exit_slot=x["exit_slot"], pnl_sol=(x["pnl"] or 0) / 1e9, ret=x["ret"],
-                     failed=not x["tokens"])
+                     failed=not x["tokens"],
+                     slots=x["exit_slot"] - x["entry_slot"] if x["exit_slot"] and x["entry_slot"] else None)
         return r
 
     closed = sorted((x for x in traded_today), key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
@@ -227,6 +247,12 @@ def journal_view(path, now):
     pos += [pos_row(x, x) for x in closed[:POSITIONS_SHOWN]]
 
     traded = [x for x in exits if not x["family"].startswith("N2_")]
+    shadow_all = [x for x in exits if x["family"].startswith("N2_")]
+    week = utc_day(calendar.timegm(time.strptime(day, "%Y-%m-%d")) - 6 * 86_400)
+    ranges = {"1d": range_stats([x for x in traded if x["day"] == day], [x for x in shadow_all if x["day"] == day]),
+              "7d": range_stats([x for x in traded if week <= x["day"] <= day], [x for x in shadow_all if week <= x["day"] <= day]),
+              "all": range_stats(traded, shadow_all)}
+    ticker = [{"key": x["key"], "ret": x["ret"], "failed": not x["tokens"]} for x in closed[:12]]
     by_day = defaultdict(list)
     for x in traded:
         by_day[x["day"]].append(x["pnl"] or 0)
@@ -254,7 +280,7 @@ def journal_view(path, now):
 
     return {"journal": run, "test_run": run.startswith("parity"), "day": day, "is_today": day == today,
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
-            "capital": capital, "n2": n2, "journal_usage_rows": len(usage), "holdout_rows_dropped": j.dropped}
+            "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "journal_usage_rows": len(usage), "holdout_rows_dropped": j.dropped}
 
 
 def recorder_view(now):

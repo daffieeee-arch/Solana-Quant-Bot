@@ -41,6 +41,9 @@ SECURITY_HEADERS = {
                                 "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
 MAX_ROWS = 2000
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("font/woff2", ".woff2")
+MIN_TRADES = 200  # stop rule: below this a group is reported, not ranked
 HOLDOUT_START = labstore.HOLDOUT_START
 
 
@@ -306,7 +309,47 @@ def run_note(run_id):
         return None
     with open(p) as f:
         n = json.load(f)
-    return {"holdout": str(n.get("holdout") or ""), "points": [str(x) for x in n.get("points") or []]}
+    num = lambda v: float(v) if isinstance(v, (int, float)) else None  # noqa: E731
+    cands = [{"id": str(c.get("id", "")), "name": str(c.get("name", "")), "variant": str(c.get("variant", "")),
+              "farm": str(c.get("farm", "")), "role": str(c.get("role", "")),
+              **{k: num(c.get(k)) for k in ("ev", "ci_lo", "ci_hi", "d1_q09", "d2_q05", "d3_q09")}}
+             for c in n.get("candidates") or [] if isinstance(c, dict)]
+    return {"holdout": str(n.get("holdout") or ""), "points": [str(x) for x in n.get("points") or []],
+            "phase": str(n.get("phase") or ""), "candidates": cands, "candidates_source": str(n.get("candidates_source") or "")}
+
+
+def api_strategy_overview(q):
+    """Phone overview: the run, its note (pre-registered candidates) and the best variant per family and segment
+    (d = 1, q = 0.5, 0.5 SOL, base costs, no overlay, all trades; per slot regime, at least MIN_TRADES)."""
+    con = connect()
+    if not has_table(con, "strategy_summary"):
+        return {"run": None}
+    run = rows(con, "SELECT run_id, config_json FROM strategy_runs")[0]
+    conf = json.loads(run["config_json"])
+    have = {r[0] for r in con.execute("DESCRIBE strategy_summary").fetchall()}
+    regime = clamp_str(q.get("regime", [""])[0], {r[0] for r in con.execute("SELECT DISTINCT regime FROM strategy_summary").fetchall()}) \
+        if "regime" in have else None
+    cond = ["scenario = 'base'", "d = 1", "size_sol = 0.5", "NOT starts_with(family, 'N2_')", f"n >= {MIN_TRADES}", "mean_ret IS NOT NULL"]
+    cond += [c for k, c in (("q", "q = 0.5"), ("overlay", "overlay = 'none'"), ("farm", "farm IN ('all', 'n/a')")) if k in have]
+    params = []
+    if regime:
+        cond.append("regime = ?")
+        params.append(regime)
+    seg = "segment" if "segment" in have else "NULL"
+    fams = rows(con, f"""SELECT family, {seg} AS segment, arg_max(variant, mean_ret) AS variant, max(mean_ret) AS mean_ret,
+                                arg_max(ci_lo, mean_ret) AS ci_lo, arg_max(ci_hi, mean_ret) AS ci_hi, arg_max(n, mean_ret) AS n
+                         FROM strategy_summary WHERE {" AND ".join(cond)} GROUP BY ALL ORDER BY mean_ret DESC""", params)
+    regimes = sorted(r[0] for r in con.execute("SELECT DISTINCT regime FROM strategy_summary").fetchall()) if "regime" in have else []
+    return {"run": {"run_id": run["run_id"], "positions": conf.get("positions"), "store": conf.get("store", {}),
+                    "note": run_note(run["run_id"])},
+            "regime": regime, "regimes": regimes, "families": fams}
+
+
+def clamp_str(v, allowed):
+    """A query value from a fixed set, else the set's first value in sort order ('270ms', the current regime)."""
+    if v in allowed:
+        return v
+    return sorted(allowed)[0] if allowed else None
 
 
 def api_strategies(q):
@@ -366,7 +409,8 @@ def api_strategy_curve(q):
 ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": api_tokens,
           "/api/token": api_token, "/api/ticker": api_ticker, "/api/strategies": api_strategies,
           "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases,
-          "/api/paper": api_paper}
+          "/api/paper": api_paper,
+          "/api/strategy_overview": api_strategy_overview}
 
 
 class Handler(BaseHTTPRequestHandler):

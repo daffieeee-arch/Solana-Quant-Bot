@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef } from "ag-grid-community";
+import StrategyOverview from "./StrategyOverview";
 import { get } from "../api";
 import EChart, { baseOption, cssVar } from "../components/EChart";
 import { Card, Chip, Loading, Section } from "../components/ui";
@@ -158,21 +159,15 @@ export default function Strategies() {
   // Always on top: in-sample development data, not proof of profit; the run's note adds the hold-out plan.
   const store = (data.run.config.store ?? {}) as { slot_start?: number; slot_end_exclusive?: number };
   const epoch = (s?: number) => (s == null ? "?" : Math.floor(s / 432000));
-  const note = data.run.note;
 
   return (
     <div className="grid grid-cols-1 gap-6">
-      <div className="grid grid-cols-1 gap-1.5 rounded-lg border-2 border-warn bg-warn-soft px-3.5 py-3 text-sm">
-        <p className="m-0">
-          Ontwikkeldata (epochs {epoch(store.slot_start)}–{epoch(store.slot_end_exclusive == null ? undefined : store.slot_end_exclusive - 1)}), in-sample,{" "}
-          {scenario === "base" ? "basiskosten" : `kosten ${SCEN[scenario]}`}. <b className="text-warn">Dit is geen winstbewijs.</b>{note?.holdout ? ` ${note.holdout}` : ""}
-        </p>
-        {!!note?.points.length && <ul className="m-0 pl-5 list-disc">{note.points.map((p) => <li key={p}>{p}</li>)}</ul>}
-      </div>
-      <div className="grid grid-cols-1 gap-1">
-        <h1 className="text-2xl font-semibold m-0 tracking-tight">Strategieën</h1>
+      <StrategyOverview />
+      <div className="grid grid-cols-1 gap-1 pt-2 border-t border-line-soft">
+        <h2 className="text-lg font-extrabold m-0 tracking-tight">Alle combinaties</h2>
         <p className="text-muted text-sm m-0">
-          Toernooirun <span className="font-mono">{data.run.run_id}</span> op ontwikkeldata. Rendement per trade na fees, netwerk, huur en mislukte transacties;
+          Toernooirun <span className="font-mono">{data.run.run_id}</span>, epochs {epoch(store.slot_start)}–{epoch(store.slot_end_exclusive == null ? undefined : store.slot_end_exclusive - 1)}, in-sample,
+          kosten {SCEN[scenario]}. Rendement per trade na fees, netwerk, huur en mislukte transacties;
           N2 is dezelfde strategie met willekeurige instap. Onder n = {N_MIN} grijs: rapporteren, niet rangschikken.
         </p>
         {hasVerdict && (

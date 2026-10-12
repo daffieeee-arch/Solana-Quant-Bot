@@ -1,11 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
+import "@fontsource-variable/manrope";
+import "@fontsource-variable/jetbrains-mono";
 import "react-grid-layout/css/styles.css";
 import "./styles.css";
 import App from "./App";
-
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

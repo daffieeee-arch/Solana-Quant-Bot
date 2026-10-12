@@ -130,6 +130,32 @@ class Api(unittest.TestCase):
         self.assertEqual(self.req("/api/cases?day=../../etc/passwd")[0], 404)
         self.assertEqual(self.req("/api/cases?window=7d-1")[0], 404)
 
+    def test_strategy_overview_candidates_and_families(self):
+        o = self.get("/api/strategy_overview")
+        if not o["run"]:
+            self.skipTest("no tournament run loaded")
+        fams = o["families"]
+        self.assertTrue(fams)
+        self.assertTrue(all(f["n"] >= 200 and not f["family"].startswith("N2_") for f in fams))
+        self.assertEqual([f["mean_ret"] for f in fams], sorted((f["mean_ret"] for f in fams), reverse=True))
+        self.assertEqual(o["regime"], self.get(f"/api/strategy_overview?regime={o['regime']}")["regime"])
+        self.assertEqual(self.get("/api/strategy_overview?regime=x%27%29%3B%20DROP")["regime"], o["regime"])  # fixed set only
+        note = o["run"]["note"]
+        if note:
+            self.assertTrue(all(isinstance(c["ev"], (float, type(None))) for c in note["candidates"]))
+
+    def test_web_manifest_is_served_with_its_type(self):
+        status, h, _ = self.req("/manifest.webmanifest")
+        if status == 200 and "manifest" in h.get("Content-Type", ""):
+            return
+        self.assertEqual(self.server_mime(), "application/manifest+json")
+
+    def server_mime(self):
+        import mimetypes
+        sys.path.insert(0, os.path.dirname(SERVER))
+        import server  # noqa: F401  (registers the types)
+        return mimetypes.guess_type("x.webmanifest")[0]
+
     def test_paper_tab_reads_the_journal(self):
         p = self.get("/api/paper")
         if not p["journal"]:

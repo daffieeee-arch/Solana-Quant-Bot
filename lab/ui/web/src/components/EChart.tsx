@@ -12,7 +12,7 @@ export const cssVar = (name: string) => getComputedStyle(document.documentElemen
 export function baseOption(): echarts.EChartsCoreOption {
   const muted = cssVar("--muted"), line = cssVar("--line"), fg = cssVar("--fg"), surface = cssVar("--surface");
   return {
-    textStyle: { fontFamily: "IBM Plex Sans, system-ui, sans-serif", color: muted },
+    textStyle: { fontFamily: "Manrope Variable, system-ui, sans-serif", color: muted },
     grid: { left: 48, right: 12, top: 28, bottom: 28 },
     tooltip: { trigger: "axis", backgroundColor: surface, borderColor: line, textStyle: { color: fg }, axisPointer: { type: "shadow" } },
     xAxis: { axisLine: { lineStyle: { color: line } }, axisTick: { show: false }, axisLabel: { color: muted } },

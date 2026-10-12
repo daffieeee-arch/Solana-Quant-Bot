@@ -1,225 +1,275 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { get } from "../api";
-import { Badge, Card, DexLink, Loading, Section, Tile } from "../components/ui";
-import { n0, n1, shortAddr, sol, unixTime } from "../format";
+import { AnimatePresence, motion } from "motion/react";
+import { useState, type ReactNode } from "react";
+import { Badge, DexLink, Loading } from "../components/ui";
+import { Button } from "../components/Button";
+import { Change, Num } from "../components/Num";
+import { Segmented } from "../components/Segmented";
+import { usePaper } from "../live";
+import { cn } from "../lib/utils";
+import { n0, n1, shortAddr, unixTime } from "../format";
+import type { PaperJournal, PaperPosition, PaperRecorder } from "../paperTypes";
 
-// Paper tab: the paper engine's journal and the live recorder's meter (lab/ui/paper.py, read-only).
-// Numbers mirror the engine's daily report (lab/paper/report.py); nothing here sends or signs anything.
-interface Status {
-  running: boolean; last_heartbeat_unix: number | null; last_slot: number | null; open_positions: number | null;
-  gaps_today: number; largest_gap_slots: number | null; last_gap: string | null;
-}
-interface Group { trades: number; entry_failed: number; net_sol: number; net_sol_per_trade: number | null; win_rate: number | null; open: number }
-interface Position {
-  family: string; variant: string; key: string; venue: string | null; orientation: string | null; entry_slot: number;
-  cost_sol: number | null; status: string; pnl_sol: number | null; ret?: number | null; mark_sol?: number | null; failed?: boolean;
-}
-interface Journal {
-  journal: string; test_run: boolean; day: string; is_today: boolean; status: Status; totals: Group;
-  variants: (Group & { family: string; variant: string })[]; positions: Position[];
-  stop_rule: { trades: number; days: number; min_trades: number; min_days_ci: number; mean_sol_per_trade: number | null; ci_lo: number | null; ci_hi: number | null; verdict: string };
-  capital: { start_sol: number; max_positions: number; final_sol: number; max_drawdown: number; taken: number; skipped: number; curve: number[] };
-  n2: { family: string; variant: string; has_shadow: boolean; own_sol_per_trade: number | null; n2_sol_per_trade: number | null; diff_all: number | null; diff_today: number | null; n2_trades: number }[];
-  holdout_rows_dropped: number;
-}
-interface Recorder {
-  sample: boolean; day: string; is_today: boolean; streams: { stream: string; gb: number; messages: number }[];
-  spent_gb: number | null; cap_gb: number; usd_per_gb: number; budget_usd: number; stopped: boolean; budget_day: string | null;
-  level: number | null; dropped: string[]; last_segment_unix: number | null; segments_today: number; reconnects: number;
-  notes: { unix: number; note: string }[];
-}
-interface PaperData { journal: Journal | null; recorder: Recorder | null; now_unix: number }
-
-const REFRESH_MS = 30_000;
+// Paper tab (design v1, "Paper — iPhone"): the paper engine's journal and the recorder's meter, read-only
+// (lab/ui/paper.py). Numbers mirror the engine's daily report; nothing here sends or signs anything.
 const EXIT: Record<string, string> = {
-  take_profit: "winst genomen", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data", open: "open",
+  take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data", open: "open",
 };
 const VERDICT: Record<string, { text: string; tone: "buy" | "warn" | "sell" }> = {
   GO: { text: "GO", tone: "buy" }, ADJUST: { text: "BIJSTELLEN", tone: "warn" }, STOP: { text: "STOP", tone: "sell" },
 };
-const signed = (v: number | null | undefined, digits = 4) =>
-  v == null ? "–" : (v > 0 ? "+" : "") + v.toLocaleString("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: digits }) + " SOL";
-const pctOf = (v: number | null | undefined) => (v == null ? "–" : n0(v * 100) + "%");
+const AVATARS = ["#F5A524", "#FF7AB6", "#5B8CFF", "#22C3A6", "#8B6CFF", "#FF8A4C", "#4CC9F0", "#C084FC"];
+const avatar = (key: string) => AVATARS[[...key].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % AVATARS.length];
 const tone = (v: number | null | undefined) => (v == null ? "" : v > 0 ? "text-buy" : v < 0 ? "text-sell" : "");
-const gb = (v: number) => (v >= 0.1 ? n1(v) : v.toLocaleString("nl-NL", { maximumFractionDigits: 3 })) + " GB";
 const ago = (secs: number) => (secs < 90 ? `${Math.round(secs)} s` : secs < 5400 ? `${Math.round(secs / 60)} min` : secs < 172800 ? `${n1(secs / 3600)} uur` : `${n0(secs / 86400)} dagen`);
+const RANGES = [{ value: "1d", label: "1D" }, { value: "7d", label: "7D" }, { value: "all", label: "Alles" }] as const;
+type RangeKey = (typeof RANGES)[number]["value"];
 
-function Spark({ ys }: { ys: number[] }) {
-  if (ys.length < 2) return null;
-  const lo = Math.min(...ys), hi = Math.max(...ys), w = 300, h = 60;
-  const pts = ys.map((y, i) => `${(i / (ys.length - 1)) * w},${h - ((y - lo) / (hi - lo || 1)) * h}`).join(" ");
+function Panel({ children, className = "" }: { children: ReactNode; className?: string }) {
+  return <section className={cn("rounded-2xl p-3.5 bg-surface border border-line min-w-0", className)}>{children}</section>;
+}
+
+function Line({ k, children }: { k: ReactNode; children: ReactNode }) {
+  return <div className="flex justify-between gap-3 py-1.5 border-b border-line-soft last:border-0 text-sm"><span className="text-muted">{k}</span><span className="num text-right">{children}</span></div>;
+}
+
+function Area({ ys, id }: { ys: number[]; id: string }) {
+  if (ys.length < 2) return <div className="h-16" />;
+  const lo = Math.min(0, ...ys), hi = Math.max(0, ...ys), w = 320, h = 64;
+  const y = (v: number) => h - 4 - ((v - lo) / (hi - lo || 1)) * (h - 8);
+  const pts = ys.map((v, i) => `${((i / (ys.length - 1)) * w).toFixed(1)} ${y(v).toFixed(1)}`);
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-16" preserveAspectRatio="none" role="img" aria-label="Verloop van het kapitaal">
-      <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+    <svg width="100%" height="64" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label="Verloop van de netto winst">
+      <defs><linearGradient id={id} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="var(--accent)" stopOpacity="0.45" /><stop offset="1" stopColor="var(--accent)" stopOpacity="0" /></linearGradient></defs>
+      <line x1="0" x2={w} y1={y(0)} y2={y(0)} stroke="var(--track)" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />
+      <path d={`M${pts.join(" L")} L${w} ${h} L0 ${h} Z`} fill={`url(#${id})`} />
+      <path d={`M${pts.join(" L")}`} fill="none" stroke="var(--accent)" strokeWidth="2.2" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }
 
-function Row({ k, children }: { k: ReactNode; children: ReactNode }) {
-  return <div className="flex justify-between gap-3 py-1 border-b border-line last:border-0"><span className="text-muted">{k}</span><span className="tabular text-right">{children}</span></div>;
+function Stat({ k, children }: { k: string; children: ReactNode }) {
+  return <div className="flex flex-col gap-0.5"><span className="text-[11px] text-muted">{k}</span><span className="text-[15px] font-semibold">{children}</span></div>;
+}
+
+function Hero({ j }: { j: PaperJournal }) {
+  const [range, setRange] = useState<RangeKey>("1d");
+  const r = j.ranges[range];
+  const title = range === "1d" ? (j.is_today ? "Netto vandaag" : `Netto ${j.day}`) : range === "7d" ? "Netto 7 dagen" : "Netto alles";
+  return (
+    <section className="hero rounded-[20px] p-[18px] grid gap-2.5 min-w-0">
+      <div className="flex justify-between items-center gap-2">
+        <span className="text-[13px] text-fg-2 font-semibold">{title}</span>
+        <Segmented label="Periode" value={range} options={[...RANGES]} onChange={setRange} />
+      </div>
+      <div className="flex items-baseline gap-2.5 flex-wrap">
+        <Num value={r.net_sol} signed format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} className={cn("text-[40px] leading-none font-semibold tracking-[-1.5px]", tone(r.net_sol))} />
+        <span className="text-base text-fg-2 font-bold">SOL</span>
+        <span className="ml-auto" title="Netto rendement per trade (winst gedeeld door inleg)"><Change value={r.ret_per_trade == null ? null : r.ret_per_trade * 100} unit="% /trade" /></span>
+      </div>
+      <Area ys={r.curve} id={`g-${range}`} />
+      <div className="grid grid-cols-3 gap-2">
+        <Stat k="Trades"><Num value={r.trades} /></Stat>
+        <Stat k="Winrate"><Num value={r.win_rate == null ? null : r.win_rate * 100} format={{ maximumFractionDigits: 0 }} suffix="%" /></Stat>
+        <Stat k="vs N2"><Num value={r.vs_n2_pt} signed format={{ maximumFractionDigits: 1 }} suffix=" pt" className={tone(r.vs_n2_pt)} /></Stat>
+      </div>
+    </section>
+  );
+}
+
+function Ring({ part }: { part: number }) {
+  const c = 2 * Math.PI * 19;
+  return (
+    <svg width="46" height="46" viewBox="0 0 46 46" aria-hidden="true" className="shrink-0">
+      <circle cx="23" cy="23" r="19" stroke="var(--track)" strokeWidth="6" fill="none" />
+      <circle cx="23" cy="23" r="19" stroke="var(--accent)" strokeWidth="6" fill="none" strokeLinecap="round"
+        strokeDasharray={`${(Math.min(1, part) * c).toFixed(1)} ${c.toFixed(1)}`} transform="rotate(-90 23 23)" />
+    </svg>
+  );
+}
+
+function StopCard({ j }: { j: PaperJournal }) {
+  const s = j.stop_rule, early = s.trades < s.min_trades, v = VERDICT[s.verdict];
+  return (
+    <Panel className="flex items-center gap-3">
+      <Ring part={s.trades / s.min_trades} />
+      <div className="flex flex-col gap-0.5 min-w-0 items-start">
+        <span className="text-[11px] text-muted">Stopregel</span>
+        <span className="num text-[15px] font-semibold">{n0(s.trades)} / {s.min_trades}</span>
+        {early ? <span className="text-[11px] text-fg-2">te vroeg</span> : <Badge tone={v?.tone ?? "muted"}>{v?.text ?? s.verdict}</Badge>}
+      </div>
+    </Panel>
+  );
+}
+
+function TritonCard({ r }: { r: PaperRecorder }) {
+  const usd = (r.spent_gb ?? 0) * r.usd_per_gb;
+  return (
+    <Panel className="flex flex-col gap-2">
+      <div className="flex justify-between gap-1"><span className="text-[11px] text-muted">Triton-data</span>
+        <span className="text-[11px] text-fg-2 num">${usd.toFixed(2).replace(".", ",")} / ${r.budget_usd.toFixed(0)}</span></div>
+      <Num value={r.spent_gb} format={{ minimumFractionDigits: 1, maximumFractionDigits: 1 }} suffix=" GB" className="text-[15px] font-semibold" />
+      <div className="h-1.5 rounded-sm bg-track overflow-hidden">
+        <div className={cn("h-1.5", r.stopped ? "bg-sell-strong" : "bg-accent")} style={{ width: `${Math.min(100, (100 * (r.spent_gb ?? 0)) / (r.cap_gb || 1))}%` }} />
+      </div>
+      {r.sample && <span className="text-[10px] font-bold text-warn">voorbeelddata</span>}
+    </Panel>
+  );
+}
+
+function PositionRow({ p, lastSlot }: { p: PaperPosition; lastSlot: number | null }) {
+  const open = p.status === "open";
+  const kind = p.venue === "pool" ? (p.orientation === "reversed" ? "REVERSED" : "POOL") : (p.venue ?? "–").toUpperCase();
+  const slots = p.slots ?? (open && lastSlot ? lastSlot - p.entry_slot : null);
+  const ret = open ? (p.mark_sol != null && p.cost_sol ? (p.mark_sol - p.cost_sol) / p.cost_sol : null) : p.ret ?? null;
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-[14px] bg-surface border border-line min-w-0">
+      <span className="w-9 h-9 rounded-full inline-flex items-center justify-center text-xs font-extrabold text-on-accent shrink-0" style={{ background: avatar(p.key) }} aria-hidden="true">
+        {p.key.slice(0, 2).toUpperCase()}
+      </span>
+      <div className="flex flex-col gap-0.5 grow min-w-0">
+        <div className="flex gap-1.5 items-center min-w-0">
+          <span className="font-bold text-sm truncate">{shortAddr(p.key)}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-2 text-fg-2 font-bold">{kind}</span>
+        </div>
+        <span className="text-[11px] text-muted truncate">
+          <span className="num">{p.cost_sol == null ? "–" : p.cost_sol.toLocaleString("nl-NL", { minimumFractionDigits: 2 })} SOL{slots != null ? ` · ${n0(slots)} slots` : ""} · {p.variant.split("_")[0]}</span>
+          {" · "}<DexLink mint={p.key}>Dex ↗</DexLink>
+        </span>
+      </div>
+      <div className="flex flex-col items-end gap-0.5 shrink-0">
+        <span className={cn("num text-sm font-semibold", tone(ret))}>
+          {p.failed ? "mislukt" : ret == null ? "–" : `${ret > 0 ? "+" : ret < 0 ? "−" : ""}${n1(Math.abs(ret * 100))}%`}
+        </span>
+        <span className="text-[11px] text-muted whitespace-nowrap">
+          {open ? (p.mark_sol == null ? "open · geen stand" : "open") : EXIT[p.status] ?? p.status}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export default function Paper() {
-  const [data, setData] = useState<PaperData | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const { data, error } = usePaper();
   const [shown, setShown] = useState(20);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () => { if (document.visibilityState === "visible") get<PaperData>("paper").then((d) => { if (alive) { setData(d); setErr(null); } }).catch((e) => alive && setErr(e.message)); };
-    load();
-    const id = setInterval(load, REFRESH_MS);
-    document.addEventListener("visibilitychange", load);
-    return () => { alive = false; clearInterval(id); document.removeEventListener("visibilitychange", load); };
-  }, []);
-
-  if (err && !data) return <p className="text-warn">{err}</p>;
+  if (error && !data) return <p className="text-warn">{error}</p>;
   if (!data) return <Loading what="Paper" />;
   const j = data.journal, r = data.recorder;
-  const meter = r && (
-        <Section title="Recorder-meter" note={`Data van Triton per stream, ${r.is_today ? "vandaag" : r.day} (UTC). Budget ${r.budget_usd.toLocaleString("nl-NL", { style: "currency", currency: "USD" })} per dag ≈ ${n0(r.cap_gb)} GB.`}
-          actions={r.sample ? <Badge tone="warn">voorbeelddata</Badge> : undefined}>
-          <Card className="px-3.5 py-3 grid gap-2 text-sm">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="tabular font-semibold text-lg">{n1(r.spent_gb)} / {n0(r.cap_gb)} GB</span>
-              <span className="text-muted">≈ ${((r.spent_gb ?? 0) * r.usd_per_gb).toFixed(2)}</span>
-              <span className="ml-auto">{r.stopped ? <Badge tone="sell">gestopt: budget op</Badge> : r.level ? <Badge tone="warn">afgeschaald, niveau {r.level}</Badge> : <Badge tone="buy">alle streams aan</Badge>}</span>
-            </div>
-            <div className="h-2 rounded-full bg-surface-2 overflow-hidden">
-              <div className={`h-full ${r.stopped ? "bg-sell" : r.level ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, (100 * (r.spent_gb ?? 0)) / (r.cap_gb || 1))}%` }} />
-            </div>
-            {r.streams.map((s) => (
-              <div key={s.stream} className="grid grid-cols-[8.5rem_1fr_4rem] items-center gap-2">
-                <span className="font-mono text-xs truncate">{s.stream}</span>
-                <div className="h-1.5 rounded-full bg-surface-2 overflow-hidden"><div className="h-full bg-accent" style={{ width: `${Math.min(100, (100 * s.gb) / Math.max(...r.streams.map((x) => x.gb), 1e-9))}%` }} /></div>
-                <span className="tabular text-right">{gb(s.gb)}</span>
-              </div>
-            ))}
-            {!!r.dropped.length && <Row k="Uitgezet">{r.dropped.join(", ")}</Row>}
-            <Row k="Laatste segment">{unixTime(r.last_segment_unix)}</Row>
-            <Row k="Herverbindingen">{r.reconnects}</Row>
-            {r.notes.map((n) => <p key={n.unix} className="m-0 text-xs text-muted"><span className="tabular">{unixTime(n.unix)}</span> · {n.note}</p>)}
-          </Card>
-        </Section>
-  );
-
+  const nOpen = j?.positions.filter((p) => p.status === "open").length ?? 0;
 
   return (
-    <div className="grid grid-cols-1 gap-6">
-      <div className="rounded-lg border-2 border-warn bg-warn-soft px-3.5 py-3 text-sm grid gap-1">
-        <p className="m-0 font-semibold">Paper trading: er wordt niets verstuurd, geen echt geld.</p>
-        {j?.test_run && (
-          <p className="m-0">Testdata: dit is de pariteitsrun op ontwikkeldata ({j.journal}), geen live run. De echte paper-run verschijnt hier vanzelf.</p>
-        )}
+    <div className="grid gap-3.5">
+      <div className="flex flex-wrap gap-2">
+        <span className="px-2.5 py-1.5 rounded-lg bg-warn-soft border border-warn-line text-warn text-[11px] font-bold">Paper trading: er wordt niets verstuurd, geen echt geld.</span>
+        {j?.test_run && <span className="px-2.5 py-1.5 rounded-lg bg-accent-soft text-accent-fg text-[11px] font-semibold">Testdata · pariteitsrun op ontwikkeldata ({j.journal})</span>}
       </div>
 
-      <div className="grid grid-cols-1 gap-1">
-        <h1 className="text-2xl font-semibold m-0 tracking-tight">Paper</h1>
-        <p className="text-muted text-sm m-0">Ververst elke 30 seconden. Tijden in UTC.</p>
-      </div>
-
-      {!j ? <><p className="text-muted">Nog geen paper-journaal.</p>{meter}</> : (
-        <>
-          <Card className="px-3.5 py-3 grid gap-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <Badge tone={j.status.running ? "buy" : "sell"}>{j.status.running ? "draait" : "gestopt"}</Badge>
-              <span className="text-sm text-muted">journaal <span className="font-mono">{j.journal}</span></span>
+      {!j ? <p className="text-muted">Nog geen paper-journaal.</p> : (
+        <div className="grid gap-3.5 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
+          <div className="grid gap-3.5 min-w-0">
+            <Hero j={j} />
+            <div className="grid grid-cols-2 gap-2.5 lg:hidden">
+              <StopCard j={j} />
+              {r && <TritonCard r={r} />}
             </div>
-            <div className="text-sm">
-              <Row k="Laatste heartbeat">{j.status.last_heartbeat_unix == null ? "–" : `${unixTime(j.status.last_heartbeat_unix)} (${ago(data.now_unix - j.status.last_heartbeat_unix)} geleden)`}</Row>
-              <Row k="Laatste slot">{n0(j.status.last_slot)}</Row>
-              <Row k={`Feed-gaten ${j.is_today ? "vandaag" : j.day}`}>
-                <span className={j.status.gaps_today ? "text-warn" : ""}>{j.status.gaps_today}{j.status.largest_gap_slots != null ? ` (grootste ${n0(j.status.largest_gap_slots)} slots)` : ""}</span>
-              </Row>
-            </div>
-          </Card>
 
-          <Section title={j.is_today ? "Vandaag" : `Laatste dag met data: ${j.day}`}>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <Tile value={n0(j.totals.trades)} label={`trades${j.totals.entry_failed ? ` (+${j.totals.entry_failed} mislukte instap)` : ""}`} />
-              <Tile value={<span className={tone(j.totals.net_sol)}>{signed(j.totals.net_sol, 2)}</span>} label="netto na kosten" />
-              <Tile value={pctOf(j.totals.win_rate)} label="winrate" />
-              <Tile value={n0(j.totals.open)} label="open posities" />
-            </div>
-            {j.variants.length > 1 && (
-              <Card className="px-3.5 py-2 text-sm">
-                {j.variants.map((v) => <Row key={v.family + v.variant} k={`${v.family} ${v.variant}`}>{v.trades} trades · <span className={tone(v.net_sol)}>{signed(v.net_sol, 2)}</span></Row>)}
-              </Card>
-            )}
-          </Section>
-
-          <Section title="Stopregel-teller" note={`Alle paper-dagen samen, zonder N2. Een oordeel pas vanaf ${j.stop_rule.min_trades} trades; het 95%-interval (bootstrap per dag) vanaf ${j.stop_rule.min_days_ci} dagen.`}>
-            <Card className="px-3.5 py-3 grid gap-2 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="tabular font-semibold text-lg">{n0(j.stop_rule.trades)} / {j.stop_rule.min_trades}</span>
-                <span className="text-muted">trades · {j.stop_rule.days} {j.stop_rule.days === 1 ? "dag" : "dagen"}</span>
-                <span className="ml-auto">{j.stop_rule.trades < j.stop_rule.min_trades ? <Badge tone="muted">te vroeg</Badge>
-                  : <Badge tone={VERDICT[j.stop_rule.verdict]?.tone ?? "muted"}>{VERDICT[j.stop_rule.verdict]?.text ?? j.stop_rule.verdict}</Badge>}</span>
+            <section className="grid gap-2 min-w-0">
+              <div className="flex justify-between items-baseline">
+                <h2 className="m-0 text-base font-extrabold">Posities</h2>
+                <span className="text-xs text-muted">{nOpen} open · {j.positions.length - nOpen} gesloten</span>
               </div>
-              <div className="h-2 rounded-full bg-surface-2 overflow-hidden" role="progressbar" aria-valuemin={0} aria-valuemax={j.stop_rule.min_trades} aria-valuenow={Math.min(j.stop_rule.trades, j.stop_rule.min_trades)}>
-                <div className="h-full bg-accent" style={{ width: `${Math.min(100, (100 * j.stop_rule.trades) / j.stop_rule.min_trades)}%` }} />
-              </div>
-              <Row k="Netto per trade"><span className={tone(j.stop_rule.mean_sol_per_trade)}>{signed(j.stop_rule.mean_sol_per_trade)}</span></Row>
-              <Row k="95%-interval">{j.stop_rule.ci_lo == null ? `vanaf ${j.stop_rule.min_days_ci} dagen` : `${signed(j.stop_rule.ci_lo)} … ${signed(j.stop_rule.ci_hi)}`}</Row>
-            </Card>
-          </Section>
+              {!j.positions.length ? <p className="text-muted text-sm m-0">Geen posities.</p> : (
+                <div className="grid gap-2">
+                  <AnimatePresence initial={false}>
+                    {j.positions.slice(0, shown).map((p) => (
+                      <motion.div key={`${p.family}|${p.key}|${p.entry_slot}`} layout initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                        <PositionRow p={p} lastSlot={j.status.last_slot} />
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+              {j.positions.length > shown && (
+                <Button type="button" onClick={() => setShown(shown + 50)} className="justify-self-start">
+                  Toon meer ({j.positions.length - shown} over)
+                </Button>
+              )}
+            </section>
+          </div>
 
-          <Section title="Kapitaalsimulatie" note={`${n0(j.capital.start_sol)} SOL, vaste grootte per trade, hoogstens ${j.capital.max_positions} posities tegelijk; wat niet past wordt overgeslagen.`}>
-            <Card className="px-3.5 py-3 grid gap-2 text-sm">
-              <div className={tone(j.capital.final_sol - j.capital.start_sol)}><Spark ys={j.capital.curve} /></div>
-              <Row k="Eindstand"><span className={tone(j.capital.final_sol - j.capital.start_sol)}>{sol(j.capital.final_sol)}</span></Row>
-              <Row k="Grootste daling">{n1(j.capital.max_drawdown * 100)}%</Row>
-              <Row k="Trades genomen / overgeslagen">{n0(j.capital.taken)} / {n0(j.capital.skipped)}</Row>
-            </Card>
-          </Section>
-
-          <Section title="Verschil met N2" note="N2 is de schaduw-controle: dezelfde strategie met een willekeurige instap op een vergelijkbare token. Positief = beter dan toeval.">
-            <Card className="px-3.5 py-2 text-sm">
-              {j.n2.map((x) => !x.has_shadow
-                ? <Row key={x.family + x.variant} k={`${x.family} ${x.variant}`}><span className="text-muted">geen N2-schaduw in dit journaal</span></Row>
-                : (
-                  <div key={x.family + x.variant} className="py-1">
-                    <div className="font-medium">{x.family} {x.variant}</div>
-                    <Row k="Per trade: strategie / N2">{signed(x.own_sol_per_trade)} / {signed(x.n2_sol_per_trade)}</Row>
-                    <Row k="Verschil, alle dagen"><span className={tone(x.diff_all)}>{signed(x.diff_all)}</span></Row>
-                    <Row k={j.is_today ? "Verschil vandaag" : `Verschil ${j.day}`}><span className={tone(x.diff_today)}>{signed(x.diff_today)}</span></Row>
-                  </div>
-                ))}
-            </Card>
-          </Section>
-          {meter}
-
-          <Section title="Posities" note="Open posities eerst, dan de afgesloten trades van die dag (nieuwste eerst). Netto na alle kosten.">
-            {!j.positions.length ? <p className="text-muted text-sm m-0">Geen posities.</p> : (
-              <Card className="divide-y divide-line">
-                {j.positions.slice(0, shown).map((p) => (
-                  <div key={`${p.family}|${p.key}|${p.entry_slot}`} className="px-3.5 py-2.5 grid gap-0.5 text-sm">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Badge tone={p.status === "open" ? "accent" : "muted"}>{p.failed ? "instap mislukt" : EXIT[p.status] ?? p.status}</Badge>
-                      <span className="font-mono">{shortAddr(p.key)}</span>
-                      <DexLink mint={p.key}>DexScreener ↗</DexLink>
-                      <span className={`ml-auto tabular font-medium ${tone(p.pnl_sol)}`}>
-                        {p.status === "open" ? (p.mark_sol != null ? signed(p.pnl_sol) : "nog geen koersstand") : signed(p.pnl_sol)}
-                        {p.ret != null ? ` (${(p.ret > 0 ? "+" : "") + n1(p.ret * 100)}%)` : ""}
-                      </span>
-                    </div>
-                    <div className="text-muted text-xs">
-                      {p.family} {p.variant} · {p.venue === "pool" ? `pool${p.orientation === "reversed" ? " (omgekeerd)" : ""}` : p.venue ?? "–"} · instap {sol(p.cost_sol)} op slot {n0(p.entry_slot)}
-                    </div>
-                  </div>
-                ))}
-              </Card>
-            )}
-            {j.positions.length > shown && (
-              <button type="button" onClick={() => setShown(shown + 50)} className="justify-self-start text-sm px-3 py-1.5 rounded-md border border-line bg-surface">
-                Toon meer ({j.positions.length - shown} over)
-              </button>
-            )}
-          </Section>
-
-        </>
+          <aside className="grid gap-3.5 min-w-0">
+            <div className="hidden lg:grid gap-3.5">
+              <StopCard j={j} />
+              {r && <TritonCard r={r} />}
+            </div>
+            <Details j={j} r={r} now={data.now_unix} />
+          </aside>
+        </div>
       )}
-
     </div>
+  );
+}
+
+function Details({ j, r, now }: { j: PaperJournal; r: PaperRecorder | null; now: number }) {
+  const s = j.stop_rule, c = j.capital;
+  return (
+    <>
+      <Panel>
+        <h2 className="m-0 mb-1 text-[13px] font-extrabold">Status</h2>
+        <Line k="Laatste heartbeat">{j.status.last_heartbeat_unix == null ? "–" : `${unixTime(j.status.last_heartbeat_unix)} (${ago(now - j.status.last_heartbeat_unix)} geleden)`}</Line>
+        <Line k="Laatste slot">{n0(j.status.last_slot)}</Line>
+        <Line k={`Feed-gaten ${j.is_today ? "vandaag" : j.day}`}><span className={j.status.gaps_today ? "text-warn" : ""}>{j.status.gaps_today}{j.status.largest_gap_slots != null ? ` (grootste ${n0(j.status.largest_gap_slots)} slots)` : ""}</span></Line>
+      </Panel>
+
+      <Panel>
+        <h2 className="m-0 mb-1 text-[13px] font-extrabold">Stopregel-teller</h2>
+        <p className="m-0 mb-1 text-xs text-muted">Alle paper-dagen, zonder N2. Oordeel vanaf {s.min_trades} trades; 95%-interval (per dag) vanaf {s.min_days_ci} dagen.</p>
+        <Line k="Trades · dagen">{n0(s.trades)} · {s.days}</Line>
+        <Line k="Netto per trade"><Num value={s.mean_sol_per_trade} signed format={{ minimumFractionDigits: 4, maximumFractionDigits: 4 }} suffix=" SOL" className={tone(s.mean_sol_per_trade)} /></Line>
+        <Line k="95%-interval">{s.ci_lo == null ? `vanaf ${s.min_days_ci} dagen` : `${s.ci_lo.toFixed(4)} … ${s.ci_hi?.toFixed(4)} SOL`}</Line>
+      </Panel>
+
+      <Panel>
+        <h2 className="m-0 mb-1 text-[13px] font-extrabold">Kapitaalsimulatie</h2>
+        <p className="m-0 mb-1 text-xs text-muted">{n0(c.start_sol)} SOL, vaste grootte, hoogstens {c.max_positions} posities tegelijk.</p>
+        <Area ys={c.curve} id="g-cap" />
+        <Line k="Eindstand"><span className={tone(c.final_sol - c.start_sol)}>{c.final_sol.toLocaleString("nl-NL", { maximumFractionDigits: 2 })} SOL</span></Line>
+        <Line k="Grootste daling">{n1(c.max_drawdown * 100)}%</Line>
+        <Line k="Genomen / overgeslagen">{n0(c.taken)} / {n0(c.skipped)}</Line>
+      </Panel>
+
+      <Panel>
+        <h2 className="m-0 mb-1 text-[13px] font-extrabold">Verschil met N2</h2>
+        <p className="m-0 mb-1 text-xs text-muted">N2: dezelfde strategie met een willekeurige instap. Positief = beter dan toeval.</p>
+        {j.n2.map((x) => !x.has_shadow
+          ? <Line key={x.family + x.variant} k={`${x.family} ${x.variant}`}><span className="text-muted font-sans">geen N2-schaduw in dit journaal</span></Line>
+          : (
+            <div key={x.family + x.variant}>
+              <Line k={`${x.family} ${x.variant} · alle dagen`}><span className={tone(x.diff_all)}>{x.diff_all == null ? "–" : `${x.diff_all > 0 ? "+" : ""}${x.diff_all.toFixed(4)} SOL/trade`}</span></Line>
+              <Line k={j.is_today ? "vandaag" : j.day}><span className={tone(x.diff_today)}>{x.diff_today == null ? "–" : `${x.diff_today > 0 ? "+" : ""}${x.diff_today.toFixed(4)} SOL/trade`}</span></Line>
+            </div>
+          ))}
+      </Panel>
+
+      {r && (
+        <Panel>
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="m-0 text-[13px] font-extrabold">Recorder · {r.is_today ? "vandaag" : r.day}</h2>
+            {r.sample ? <Badge tone="warn">voorbeelddata</Badge> : r.stopped ? <Badge tone="sell">gestopt</Badge> : r.level ? <Badge tone="warn">afgeschaald {r.level}</Badge> : <Badge tone="buy">alle streams</Badge>}
+          </div>
+          <div className="grid gap-1.5 py-1">
+            {r.streams.map((st) => (
+              <div key={st.stream} className="grid grid-cols-[110px_minmax(0,1fr)_64px] items-center gap-2.5">
+                <span className="num text-xs text-fg-2 truncate">{st.stream}</span>
+                <div className="h-1.5 rounded-sm bg-surface-3 overflow-hidden"><div className="h-1.5 bg-accent" style={{ width: `${Math.min(100, (100 * st.gb) / Math.max(...r.streams.map((x) => x.gb), 1e-9))}%` }} /></div>
+                <span className="num text-xs text-right">{st.gb >= 0.1 ? n1(st.gb) : st.gb.toLocaleString("nl-NL", { maximumFractionDigits: 3 })} GB</span>
+              </div>
+            ))}
+          </div>
+          {!!r.dropped.length && <Line k="Uitgezet">{r.dropped.join(", ")}</Line>}
+          <Line k="Herverbindingen">{r.reconnects}</Line>
+          {r.notes.slice(0, 3).map((n) => <p key={n.unix} className="m-0 mt-1 text-[11px] text-muted"><span className="num">{unixTime(n.unix)}</span> · {n.note}</p>)}
+        </Panel>
+      )}
+    </>
   );
 }

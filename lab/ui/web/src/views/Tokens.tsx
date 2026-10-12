@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { themeQuartz, type ColDef, type IDatasource, type GridApi } from "ag-grid-community";
+import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef, type IDatasource, type GridApi } from "ag-grid-community";
 import { get, type TokenRow } from "../api";
 import { go } from "../route";
 import { Chip, DexLink } from "../components/ui";
 import { isoTime, label, n0, solShort } from "../format";
 
+// AG Grid loads with the screens that use it (Tokens, Strategieën), not with the app shell.
+ModuleRegistry.registerModules([AllCommunityModule]);
+
 export const gridTheme = themeQuartz.withParams({
   backgroundColor: "var(--surface)", foregroundColor: "var(--fg)", headerBackgroundColor: "var(--surface)",
   headerTextColor: "var(--muted)", borderColor: "var(--line)", rowHoverColor: "var(--surface-2)",
-  accentColor: "var(--accent)", fontFamily: "inherit", fontSize: 13, headerFontSize: 12, wrapperBorderRadius: 8,
+  accentColor: "var(--accent)", fontFamily: "inherit", fontSize: 13, headerFontSize: 12, wrapperBorderRadius: 14,
+  oddRowBackgroundColor: "var(--surface)", selectedRowBackgroundColor: "var(--accent-soft)",
   rowHeight: 40, headerHeight: 36,
 });
 
