@@ -91,9 +91,18 @@ Only after the owner's OK for this step. Run by the coordinator.
 - for the RPC route also `lab-token-meta-rpc` and `rm ~/.config/solana-lab/token-meta-rpc.approved`.
 
 **Disk guard.** At its emergency level (< 20 GB free) `ops/disk-guard.sh` also stops
-`lab-paper.service`, `lab-token-meta-rpc.service` and `lab-recorder.service`, in that order. They
-are not restarted automatically; the restart command is in its log. At `disk-low` the recorder
-does not start, and retention keeps 1 day.
+`lab-paper.service`, `lab-token-meta-rpc.service` and `lab-recorder.service`, in that order, and
+writes `<lab>/locks/disk-stopped` first. The three units have `ConditionPathExists=!` on that file:
+while it exists no timer (or reboot) starts them again, even after `disk-low` is gone, so they do not
+flap around the threshold (coordinator decision 2026-10-13). Only the coordinator removes the file,
+after checking the disk and the journal; then `systemctl --user start lab-recorder lab-paper`. A
+skipped condition is not a failure (it does not count toward the start limit). At `disk-low` the
+recorder does not start, and retention keeps 1 day.
+
+**Timer ticks and the recorder.** `lab-paper.service` `Requires=` the recorder, so every
+`lab-paper.timer` tick that starts the engine also starts the recorder. After a budget stop the
+recorder exits 75 at once (the day's budget is spent): harmless, but visible in the logs every
+15 minutes until 00:05 UTC.
 
 ### Known limitation: a restart replays, there are no state snapshots
 

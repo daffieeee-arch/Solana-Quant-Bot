@@ -184,6 +184,7 @@ class ShadowRecorder:
         self.recv = []  # (pool, lo, hi, source): what was received, for the comparison
         self.totals = Counter()
         self.t_start = time.time()
+        self.sizes = None  # set by run(): sizes of the engine's and LiveFeed's long-lived state, for the progress lines
         self.signature = {"from_slot": lo, "to_slot": hi, "probes": probes_on, "watch_warmup_minutes": watch_warmup_minutes,
                           "chunks": [c[2] for c in chunks], "pools": len({p for w in self.watch.values() for p in w}),
                           "probe_pools": len(self.probes), "version": 2}
@@ -413,7 +414,7 @@ class ShadowRecorder:
                             "backfill_txs": n_back, **{STREAMS[s]: n for s, n in per.items()}})
         if seq % 100 == 0:
             self.log(f"segment {seq}/{len(self.ranges)}: {len(watch)} on the list, {len(opened)} open, {rows} rows, "
-                     f"rss {_rss_mb()} MB, {time.time() - self.t_start:.0f}s")
+                     f"rss {_rss_mb()} MB, {time.time() - self.t_start:.0f}s" + (f", state {self.sizes()}" if self.sizes else ""))
         return seq, d, meta
 
     def coverage(self):
@@ -421,6 +422,15 @@ class ShadowRecorder:
 
     def gap_segments(self):
         return {i for i, (_, a, b) in enumerate(self.ranges) if any(ga < b and a < gb for ga, gb in self.gaps)}
+
+
+def _state_sizes(feed, eng):
+    """Sizes of the long-lived structures of a live run: what grows, if anything, shows here."""
+    return {"recent_keys": len(eng.recent), "recent_legs": sum(len(v) for v in eng.recent.values()),
+            "last_state": len(eng.last_state), "curve_hist_legs": sum(len(v) for v in feed.curve_hist.values()),
+            "farmer_entries": sum(len(v) for v in feed.farmers.hist.values()), "seen_keys": len(feed.seen_keys),
+            "tokens": len(feed.tokens), "pools": len(feed.pools), "busy": len(eng.busy),
+            "watch_pools": len(eng.watch.wl.pools) if eng.watch is not None else 0}
 
 
 def _rss_mb():
@@ -691,8 +701,11 @@ def run(a, log=print):
     from .watchlist_live import LiveWatchlist
 
     watch = LiveWatchlist(feed, root)
-    Engine(feed, Journal(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
-           dev_bounds=(blo, bhi), watchlist=watch).run()
+    eng = Engine(feed, Journal(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+                 dev_bounds=(blo, bhi), watchlist=watch)
+    rec.sizes = lambda: _state_sizes(feed, eng)
+    eng.run()
+    rec.sizes = None
     info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
     info["livefeed"] = dict(feed.stats)
     info["recorder"] = dict(rec.totals)

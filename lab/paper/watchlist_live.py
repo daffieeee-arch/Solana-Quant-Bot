@@ -51,7 +51,10 @@ class LiveWatchlist:
         return None
 
     def _add(self, pool):
-        if pool in self.added:
+        """Put a pool in the state machine. A pool it pruned stays known while archived (a trade there
+        restores its verdict); once its archive entry expired it is added again with a fresh state,
+        as the batch measurement re-adds it (wallets.watchlist, #211)."""
+        if pool in self.added and (pool in self.wl.pools or pool in getattr(self.wl, "archive", ())):
             return True
         p = self.feed.pool(pool)
         if p is None or p.quote_class not in ("sol", "reversed"):

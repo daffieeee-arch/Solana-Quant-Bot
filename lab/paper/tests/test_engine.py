@@ -358,6 +358,46 @@ def test_live_needs_a_readable_store(tmp_path, capsys):
         assert e.value.code == 2 and "--live needs a readable --store" in capsys.readouterr().err
 
 
+def test_daily_report_has_the_live_watchlist_counts(tmp_path):
+    from paper.report import watchlist_lines
+
+    day0 = 1_790_035_200 // 60  # a UTC midnight (1_790_035_200 % 86_400 == 0)
+    day1 = day0 + 1440
+    log = tmp_path / "watchlist-log.jsonl"
+    rows = [(day0 + 10, 5, 100, 3, 10, 2), (day0 + 1400, 6, 120, 4, 25, 3),
+            (day1 + 5, 7, 130, 6, 27, 3), (day1 + 1000, 4, 90, 9, 60, 8)]
+    log.write_text("".join(json.dumps({"minute": m, "counts": {"pools": p, "tracked": t, "archived": a, "pruned_total": pr,
+                                                               "restored_total": rs}}) + "\n" for m, p, t, a, pr, rs in rows))
+    d1 = engine._day(day1 * 60)
+    assert watchlist_lines(str(log), d1)[-1] == "- end of day: 4 on the list, 90 tracked, 9 archived; pruned 35, restored 5 this day"
+    d0 = engine._day(day0 * 60)
+    assert watchlist_lines(str(log), d0)[-1].endswith("pruned 25, restored 3 this day")  # no day before: since the start
+    assert watchlist_lines(str(tmp_path / "missing.jsonl"), d1)[-1] == "- no watchlist log"
+
+
+def test_signals_carry_whether_the_farm_label_had_full_history(tmp_path):
+    """Live: farm_complete = 1 from LiveFeed's complete_from on, 0 before; replay: NULL. The daily
+    report counts the triggers labelled before it."""
+    from paper.report import farm_lines
+
+    def run_with(seed):
+        class Seeded(Synth):
+            farm_seed = seed
+
+        j = Journal(str(tmp_path / f"j{len(os.listdir(tmp_path))}"))
+        Engine(Seeded({"M": trigger_token()}), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0,
+               clock=Clock(), backup=False).run()
+        return j
+
+    before = run_with({"complete_from": 500_041})
+    s = before.rows("signals")[0]
+    assert (s["t"], s["farm_complete"]) == (500_040, 0)
+    assert farm_lines(before, s["day"])[-1] == "- 1 of 1 triggers before the farmer history was complete (journal state farmer_seed)"
+    assert run_with({"complete_from": 500_040}).rows("signals")[0]["farm_complete"] == 1
+    replay = run_with(None)
+    assert replay.rows("signals")[0]["farm_complete"] is None and farm_lines(replay, s["day"]) == []
+
+
 class Graduating(Synth):
     """Synth whose token migrates to pool POOL (open at pool_open); the feed learns the pool at
     `learn_at` (a later segment, live) instead of at the start."""

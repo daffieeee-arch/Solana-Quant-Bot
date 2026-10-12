@@ -7,6 +7,9 @@ Description=Solana lab: live recorder (Triton Dragon's Mouth to segments), paper
 Documentation=file:%h/Solana-project/worktrees/paper-run/lab/ops/README.md
 After=network-online.target
 Wants=network-online.target
+# Not after a disk-guard emergency stop: ops/disk-guard.sh writes this file when it stops the live units;
+# only the coordinator removes it, after a check (no automatic restart around the threshold).
+ConditionPathExists=!%h/Solana-project/data-old-faithful-one/lab/locks/disk-stopped
 StartLimitIntervalSec=1h
 StartLimitBurst=5
 
