@@ -1,6 +1,6 @@
 """Uitslagen: hold-out, M1+/M1-early (M1x) and the paired exact-in measurement, read from the run
 files under $LAB_DATA_ROOT/backtests. Read-only: it opens JSON files only and writes nothing.
-Served with `marimo run` (app mode, code hidden); see lab/ops/lab-notebooks.service.
+Served with `marimo run` (app mode, code hidden); see lab/ops/systemd/lab-notebooks.service.
 """
 
 import marimo

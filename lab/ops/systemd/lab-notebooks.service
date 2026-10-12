@@ -1,17 +1,25 @@
 # Solana-lab notebooks for the owner: `marimo run` (app mode; code hidden, cannot be edited or run
-# from the browser), bound to the Tailscale IP only, with token auth. Install (after merge):
+# from the browser), bound to the Tailscale IP only, with token auth. It serves the pinned deploy
+# worktree worktrees/lab-notebooks (detached on a main commit), never a working tree.
+# Install or deploy (after merge; <commit> = the main commit to serve):
+#   git -C ~/Solana-project/Solana-bot fetch origin
+#   git -C ~/Solana-project/Solana-bot worktree add --detach ~/Solana-project/worktrees/lab-notebooks <commit>
+#     (later deploys: git -C ~/Solana-project/worktrees/lab-notebooks checkout --detach <commit>)
 #   umask 077; mkdir -p ~/.config/lab-notebooks
 #   python3 -c 'import secrets; print(secrets.token_urlsafe(24))' > ~/.config/lab-notebooks/token
-#   cp lab/ops/lab-notebooks.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   cp lab/ops/systemd/lab-notebooks.service ~/.config/systemd/user/ && systemctl --user daemon-reload
 #   systemctl --user enable --now lab-notebooks
 # Open: http://100.112.193.63:8502/?access_token=<token>  (the token is never logged: stdout is
 # discarded because marimo prints the URL with the token there).
 [Unit]
 Description=Solana-lab notebooks (marimo run, read-only, Tailscale only)
+Documentation=file:%h/Solana-project/worktrees/lab-notebooks/lab/notebooks/README.md
+StartLimitIntervalSec=1h
+StartLimitBurst=5
 
 [Service]
 Type=simple
-WorkingDirectory=%h/Solana-project/worktrees/lab-ui
+WorkingDirectory=%h/Solana-project/worktrees/lab-notebooks
 Environment=LAB_DATA_ROOT=%h/Solana-project/data-old-faithful-one/lab
 Environment=MARIMO_SKIP_UPDATE_CHECK=1
 ExecStartPre=/usr/bin/test -s %h/.config/lab-notebooks/token

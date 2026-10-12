@@ -16,7 +16,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NB = os.path.dirname(HERE)
-UNIT = os.path.join(NB, "..", "ops", "lab-notebooks.service")
+UNIT = os.path.join(NB, "..", "ops", "systemd", "lab-notebooks.service")
 sys.path.insert(0, NB)
 
 
@@ -112,6 +112,14 @@ class Unit(unittest.TestCase):
         self.assertNotIn(port, (3000, 8443, 8787, 8771, 8501))
         self.assertIn("--token --token-password-file %h/.config/lab-notebooks/token", self.exec)
         self.assertRegex(self.text, r"(?m)^StandardOutput=null$")  # marimo prints the URL with the token
+
+    def test_serves_pinned_deploy_worktree(self):
+        self.assertRegex(self.text, r"(?m)^WorkingDirectory=%h/Solana-project/worktrees/lab-notebooks$")
+        self.assertNotIn("worktrees/lab-ui", self.text)
+
+    def test_start_limit(self):
+        self.assertRegex(self.text, r"(?m)^StartLimitIntervalSec=1h$")
+        self.assertRegex(self.text, r"(?m)^StartLimitBurst=5$")
 
     def test_resource_limits(self):
         mem = re.search(r"(?m)^MemoryMax=(\d+)([MG])$", self.text)
