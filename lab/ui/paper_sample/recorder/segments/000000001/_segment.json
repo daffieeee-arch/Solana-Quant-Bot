@@ -1,0 +1,111 @@
+{
+ "seq": 1,
+ "first_slot": 457920150,
+ "last_slot": 457920299,
+ "slots_closed": 150,
+ "rows": {
+  "pump/TradeEvent": 812,
+  "pump_amm/SellEvent": 1290,
+  "blocks": 150
+ },
+ "written_unix": 1791795659,
+ "usage": [
+  {
+   "minute": 29863260,
+   "stream": "tx_pools",
+   "bytes": 633333333,
+   "messages": 287878
+  },
+  {
+   "minute": 29863260,
+   "stream": "tx_probes",
+   "bytes": 800000000,
+   "messages": 363636
+  },
+  {
+   "minute": 29863260,
+   "stream": "backfill",
+   "bytes": 116666666,
+   "messages": 53030
+  },
+  {
+   "minute": 29863260,
+   "stream": "new_vaults",
+   "bytes": 70000000,
+   "messages": 31818
+  },
+  {
+   "minute": 29863260,
+   "stream": "tx_wallets",
+   "bytes": 200000000,
+   "messages": 90909
+  },
+  {
+   "minute": 29863260,
+   "stream": "blocks",
+   "bytes": 140000000,
+   "messages": 63636
+  },
+  {
+   "minute": 29863260,
+   "stream": "slots",
+   "bytes": 16666666,
+   "messages": 7575
+  },
+  {
+   "minute": 29863260,
+   "stream": "tx_new_pools",
+   "bytes": 666666,
+   "messages": 303
+  },
+  {
+   "minute": 29863260,
+   "stream": "pool_creations",
+   "bytes": 26666666,
+   "messages": 12121
+  }
+ ],
+ "budget": {
+  "day": 20738,
+  "spent_bytes": 4007999994,
+  "cap_bytes": 25000000000,
+  "spent_gb": 4.007999994,
+  "stopped": false,
+  "wire_ratio": 1.0
+ },
+ "filter": {
+  "level": 0,
+  "dropped": [],
+  "tx_pools": 41,
+  "tx_probes": 6,
+  "tx_wallets": 120,
+  "vaults": 0,
+  "new_vaults": 18,
+  "pool_accounts": false,
+  "pool_creations": true,
+  "new_reversed": false,
+  "new_pools": true,
+  "backfill": true,
+  "truncated": false
+ },
+ "reconnects": [
+  {
+   "unix": 1791795612,
+   "after_slot": 457920149,
+   "dropped_pending_slots": 0,
+   "reason": "sample: stream reset"
+  }
+ ],
+ "totals": {
+  "late_rows": 0,
+  "unconfirmed_slots": 0,
+  "failed_dropped": 0,
+  "convert_errors": 0,
+  "short_accounts": 0,
+  "backfills_skipped": 0,
+  "txs_touching": 5120,
+  "events": 4870,
+  "anomalies": 0
+ },
+ "complete": true
+}

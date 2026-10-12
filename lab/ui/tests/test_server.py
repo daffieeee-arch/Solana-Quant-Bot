@@ -130,6 +130,14 @@ class Api(unittest.TestCase):
         self.assertEqual(self.req("/api/cases?day=../../etc/passwd")[0], 404)
         self.assertEqual(self.req("/api/cases?window=7d-1")[0], 404)
 
+    def test_paper_tab_reads_the_journal(self):
+        p = self.get("/api/paper")
+        if not p["journal"]:
+            self.skipTest("no paper journal")
+        self.assertIn("paper", self.get("/api/meta")["tabs"])
+        self.assertTrue(all(not (HOLDOUT_START <= r["entry_slot"] < 454_464_000) for r in p["journal"]["positions"]))
+        self.assertIn(p["journal"]["stop_rule"]["verdict"], ("GO", "ADJUST", "STOP", "too few trades"))
+
     def test_bad_input(self):
         self.assertEqual(self.req("/api/token?mint=../../etc/passwd")[0], 404)
         self.assertEqual(self.req("/api/nope")[0], 404)

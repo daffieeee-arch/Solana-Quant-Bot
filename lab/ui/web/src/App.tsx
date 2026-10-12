@@ -10,10 +10,12 @@ const Tokens = lazy(() => import("./views/Tokens"));
 const TokenDetail = lazy(() => import("./views/TokenDetail"));
 const Strategies = lazy(() => import("./views/Strategies"));
 const Cases = lazy(() => import("./views/Cases"));
+const Paper = lazy(() => import("./views/Paper"));
 import { unixTime } from "./format";
 
 // Tabs appear only when the API reports data for them (no empty tabs).
 const TABS: Record<string, { slug: string; label: string; icon: string }> = {
+  paper: { slug: "paper", label: "Paper", icon: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6" },
   strategies: { slug: "strategieen", label: "Strategieën", icon: "M4 19V9m6 10V5m6 14v-7m4 7H2" },
   cases: { slug: "casussen", label: "Casussen", icon: "M9 5h10M9 12h10M9 19h10M4 5h.01M4 12h.01M4 19h.01" },
   tokens: { slug: "tokens", label: "Tokens", icon: "M11 4a7 7 0 1 0 4.9 12l4.6 4.6M11 4a7 7 0 0 1 4.9 12" },
@@ -47,6 +49,7 @@ export default function App() {
   else if (active.key === "ticker") view = <Ticker />;
   else if (active.key === "strategies") view = <Strategies />;
   else if (active.key === "cases") view = <Cases period={route.arg} />;
+  else if (active.key === "paper") view = <Paper />;
   else view = <Overview />;
 
   return (

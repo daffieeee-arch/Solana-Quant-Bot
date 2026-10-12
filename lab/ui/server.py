@@ -15,6 +15,7 @@ import json
 import mimetypes
 import os
 import re
+import sqlite3
 import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,6 +25,9 @@ import duckdb
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "analytics"))
 import labstore  # noqa: E402
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paper  # noqa: E402
 
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 ANALYTICS = os.path.join(DATA, "analytics", "analytics.duckdb")
@@ -86,6 +90,8 @@ def api_meta(q):
     tabs = ["overview", "tokens", "ticker"]
     if any(cases_files()):
         tabs.insert(0, "cases")
+    if paper.available():
+        tabs.insert(0, "paper")
     if has_table(con, "strategy_summary") and con.execute("SELECT count(*) FROM strategy_summary").fetchone()[0]:
         tabs.insert(0, "strategies")
     return {"meta": meta, "tabs": tabs}
@@ -328,6 +334,11 @@ def api_strategies(q):
             "summary": summary}
 
 
+def api_paper(q):
+    """Paper engine journal and recorder meter (lab/ui/paper.py); read-only, per request."""
+    return paper.view()
+
+
 def api_strategy_curve(q):
     """Equity curves of one family/variant (all sizes) and its N2 shadow (thinned to ~400 points at build time).
     Run keys (segment, farm, ...) narrow it to one group; a key left out of the query is not filtered, and a
@@ -354,7 +365,8 @@ def api_strategy_curve(q):
 
 ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": api_tokens,
           "/api/token": api_token, "/api/ticker": api_ticker, "/api/strategies": api_strategies,
-          "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases}
+          "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases,
+          "/api/paper": api_paper}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -395,6 +407,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(HTTPStatus.OK, fn(parse_qs(url.query)))
             except (ValueError, LookupError) as e:
                 return self.send_json(HTTPStatus.NOT_FOUND, {"error": str(e)})
+            except sqlite3.Error as e:
+                self.log_error("sqlite: %s", e)
+                return self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "journaal niet beschikbaar"})
             except duckdb.Error as e:
                 self.log_error("duckdb: %s", e)
                 return self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "database niet beschikbaar"})

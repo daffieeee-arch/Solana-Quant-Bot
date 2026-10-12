@@ -1,0 +1,113 @@
+{
+ "seq": 2,
+ "first_slot": 457920300,
+ "last_slot": 457920449,
+ "slots_closed": 150,
+ "rows": {
+  "pump/TradeEvent": 812,
+  "pump_amm/SellEvent": 1290,
+  "blocks": 150
+ },
+ "written_unix": 1791802859,
+ "usage": [
+  {
+   "minute": 29863380,
+   "stream": "tx_pools",
+   "bytes": 633333333,
+   "messages": 287878
+  },
+  {
+   "minute": 29863380,
+   "stream": "tx_probes",
+   "bytes": 800000000,
+   "messages": 363636
+  },
+  {
+   "minute": 29863380,
+   "stream": "backfill",
+   "bytes": 116666666,
+   "messages": 53030
+  },
+  {
+   "minute": 29863380,
+   "stream": "new_vaults",
+   "bytes": 70000000,
+   "messages": 31818
+  },
+  {
+   "minute": 29863380,
+   "stream": "tx_wallets",
+   "bytes": 200000000,
+   "messages": 90909
+  },
+  {
+   "minute": 29863380,
+   "stream": "blocks",
+   "bytes": 140000000,
+   "messages": 63636
+  },
+  {
+   "minute": 29863380,
+   "stream": "slots",
+   "bytes": 16666666,
+   "messages": 7575
+  },
+  {
+   "minute": 29863380,
+   "stream": "tx_new_pools",
+   "bytes": 666666,
+   "messages": 303
+  },
+  {
+   "minute": 29863380,
+   "stream": "pool_creations",
+   "bytes": 26666666,
+   "messages": 12121
+  },
+  {
+   "minute": 29863380,
+   "stream": "budget",
+   "bytes": 0,
+   "messages": 0,
+   "note": "projected 26.10 GB today at 0.024 GB/min > cap 25.00 GB: downscale to level 1 (pool_accounts off)"
+  }
+ ],
+ "budget": {
+  "day": 20738,
+  "spent_bytes": 6011999991,
+  "cap_bytes": 25000000000,
+  "spent_gb": 6.011999991,
+  "stopped": false,
+  "wire_ratio": 1.0
+ },
+ "filter": {
+  "level": 1,
+  "dropped": [
+   "pool_accounts"
+  ],
+  "tx_pools": 41,
+  "tx_probes": 6,
+  "tx_wallets": 120,
+  "vaults": 0,
+  "new_vaults": 18,
+  "pool_accounts": false,
+  "pool_creations": false,
+  "new_reversed": false,
+  "new_pools": true,
+  "backfill": true,
+  "truncated": false
+ },
+ "reconnects": [],
+ "totals": {
+  "late_rows": 0,
+  "unconfirmed_slots": 0,
+  "failed_dropped": 0,
+  "convert_errors": 0,
+  "short_accounts": 0,
+  "backfills_skipped": 0,
+  "txs_touching": 5120,
+  "events": 4870,
+  "anomalies": 0
+ },
+ "complete": true
+}
