@@ -393,8 +393,9 @@ impl Recorder {
                     Err(e) => {
                         self.stats.convert_errors += 1;
                         if self.stats.convert_errors <= 10 {
-                            // A fixed category only: nothing from the update itself (CodeQL #9).
-                            log::error!("slot {} tx {}: cannot convert: {}", t.slot, info.index, e.0);
+                            // A fixed category and the count only: nothing derived from the update, not even
+                            // its slot or index (CodeQL #9 taints the whole update, account updates included).
+                            log::error!("cannot convert a transaction update: {} ({} so far)", e.0, self.stats.convert_errors);
                         }
                     }
                 }
@@ -767,7 +768,7 @@ mod tests {
     static LINES: Lines = Lines(std::sync::Mutex::new(Vec::new()));
 
     #[test]
-    fn a_conversion_error_is_counted_and_logs_only_slot_index_and_category() {
+    fn a_conversion_error_is_counted_and_logs_only_its_category() {
         let _ = log::set_logger(&LINES);
         log::set_max_level(log::LevelFilter::Error);
         let root = tmp("rec-convert-error");
@@ -779,8 +780,8 @@ mod tests {
         r.on_update(u, 1).unwrap();
         assert_eq!(r.stats.convert_errors, 1);
         let lines = LINES.0.lock().unwrap();
-        let mine: Vec<_> = lines.iter().filter(|l| l.starts_with("slot 1000 tx 4:")).collect();
-        assert_eq!(mine, ["slot 1000 tx 4: cannot convert: address of the wrong length"]);
+        let mine: Vec<_> = lines.iter().filter(|l| l.starts_with("cannot convert")).collect();
+        assert_eq!(mine, ["cannot convert a transaction update: address of the wrong length (1 so far)"]);
         drop(lines);
         std::fs::remove_dir_all(&root).unwrap();
     }
