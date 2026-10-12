@@ -46,7 +46,18 @@ def run_note(run_id):
         return None
     with open(p) as f:
         n = json.load(f)
-    return {"holdout": str(n.get("holdout") or ""), "points": [str(x) for x in n.get("points") or []]}
+    holdout = str(n.get("holdout") or "")
+    # Once Lab Backtest's hold-out evaluation exists, the banner states its decision and points to the report.
+    ev = os.path.realpath(os.path.join(DATA, str(n.get("holdout_eval") or "")))
+    if n.get("holdout_eval") and ev.startswith(os.path.realpath(os.path.join(DATA, "backtests")) + os.sep) and os.path.isfile(ev):
+        with open(ev) as f:
+            pick = (json.load(f).get("decision") or {}).get("pick")
+        report = str(n.get("holdout_report") or "")
+        holdout = ("Hold-out gedraaid: geen kandidaat geslaagd" if not pick else f"Hold-out gedraaid: {pick} geslaagd") + \
+            (f", zie {report}." if report else ".")
+        if n.get("owner_decision"):
+            holdout += " " + str(n["owner_decision"])
+    return {"holdout": holdout, "points": [str(x) for x in n.get("points") or []]}
 
 
 def main(db=os.path.join(DATA, "analytics", "analytics.duckdb"), out_name=None):
