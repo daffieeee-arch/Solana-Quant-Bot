@@ -1,0 +1,51 @@
+{
+  "holdout": "De eenmalige hold-out-test (epochs 1047–1051) met 3 vooraf vastgelegde kandidaten volgt.",
+  "points": [
+    "F7 in omgekeerde pools, tp4_T600 in organische pools op 0,5 SOL: de robuuste maat (de slechtste van vertraging 2 met q 0,5 en vertraging 1 met q 0,9) is +0,75% per trade.",
+    "Bij vertraging 3 is die voorsprong weg (≈ 0): F7-reversed werkt alleen als de order binnen 2 slots (~540 ms) gevuld wordt.",
+    "Bron: review-summary-2026-10-12.md bij deze run."
+  ],
+  "phase": "Hold-out vastgelegd",
+  "candidates_source": "holdout-preregistration-2026-10-12.md §2 en review-summary-2026-10-12.md §4 (beide regimes samen, 0,5 SOL, basiskosten, CI per dag)",
+  "candidates": [
+    {
+      "id": "K1",
+      "name": "tp4 · organisch",
+      "variant": "tp4_T600",
+      "farm": "organic",
+      "role": "hoofdkandidaat",
+      "ev": 0.75,
+      "ci_lo": 0.23,
+      "ci_hi": 1.15,
+      "d1_q09": 1.56,
+      "d2_q05": 0.75,
+      "d3_q09": -0.07
+    },
+    {
+      "id": "K2",
+      "name": "tp6 · organisch",
+      "variant": "tp6_T600",
+      "farm": "organic",
+      "role": "variant (robuuster bij 316 ms)",
+      "ev": 0.72,
+      "ci_lo": 0.26,
+      "ci_hi": 1.05,
+      "d1_q09": 1.35,
+      "d2_q05": 0.72,
+      "d3_q09": -0.11
+    },
+    {
+      "id": "K3",
+      "name": "tp4 · alle pools",
+      "variant": "tp4_T600",
+      "farm": "all",
+      "role": "controle-arm",
+      "ev": 0.41,
+      "ci_lo": -0.01,
+      "ci_hi": 0.7,
+      "d1_q09": 1.18,
+      "d2_q05": 0.41,
+      "d3_q09": -0.18
+    }
+  ]
+}
