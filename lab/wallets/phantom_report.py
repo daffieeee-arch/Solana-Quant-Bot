@@ -233,7 +233,9 @@ def render(runs, syms, chosen, alts, tls):
         if s in chosen:
             L.append(token_block(s, tls[chosen[s][0]], chosen[s][2]))
     L.append("## Beperkingen\n")
-    L.append("- Forward-data van één tot twee epochs; een token dat vóór de store is aangemaakt of erna gradueerde, is onvolledig.")
+    L.append("- Elke store is één epoch (≈ 2 dagen) en kent alleen zijn eigen events: een token dat in de vorige epoch is aangemaakt en in deze "
+             "gradueerde, mist hier zijn curve en aanmaak (geen curve-kopers, geen dev-bundel-vlag, insiders onbekend); de keuze op \"meeste handel\" "
+             "pakt dan de epoch met de pool. Dat staat per token bij de store-tag.")
     L.append("- De F7- en M1-regels zijn de definities van het toernooi (triggers), zonder replay: geen vulling, kosten of exit, dus geen P&L.")
     L.append("- Transfers zijn onzichtbaar: een insider-aandeel boven 100 % betekent dat insiders meer verkochten dan ze zichtbaar kochten.")
     return "\n".join(L) + "\n"
