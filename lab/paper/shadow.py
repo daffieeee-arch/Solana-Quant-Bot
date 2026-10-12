@@ -149,7 +149,7 @@ class ShadowRecorder:
     """Writes the recorder's segments for [lo, hi) from the chunks, one at a time (write(seq))."""
 
     def __init__(self, scon, chunks, root, lo, hi, clock, window, probes_on=True, gaps=3, reconnects=6, seed=1052,
-                 watch_warmup_minutes=0, work=None, memory="2GB", log=print):
+                 watch_warmup_minutes=0, work=None, memory="1GB", log=print, reuse=False):
         self.root, self.lo, self.hi, self.clock, self.log = root, lo, hi, clock, log
         os.makedirs(os.path.join(root, "segments"), exist_ok=True)
         t0 = time.time()
@@ -179,11 +179,15 @@ class ShadowRecorder:
         self.gaps.sort()
         self.recv = []  # (pool, lo, hi, source): what was received, for the comparison
         self.totals = Counter()
-        self._prepare(chunks, work or os.path.join(os.path.dirname(root.rstrip("/")), "work"), memory)
+        self.t_start = time.time()
+        self.signature = {"from_slot": lo, "to_slot": hi, "probes": probes_on, "watch_warmup_minutes": watch_warmup_minutes,
+                          "chunks": [c[2] for c in chunks], "pools": len({p for w in self.watch.values() for p in w}),
+                          "probe_pools": len(self.probes), "version": 2}
+        self._prepare(chunks, work or os.path.join(os.path.dirname(root.rstrip("/")), "work"), memory, reuse)
         log(f"recorder input ready ({time.time() - t0:.0f}s): {len(self.ranges)} segments, gaps {self.gaps}, "
             f"reconnects after {[r['after_slot'] for r in self.reconnects.values()]}")
 
-    def _prepare(self, chunks, work, memory):
+    def _prepare(self, chunks, work, memory, reuse=False):
         """The pools of every transaction (txu), and every row of the transactions a segment will
         most likely take (pools ever on the list or probed, the other pools of their transactions,
         graduations, reversed creations) in a work database, so a segment is a few small copies.
@@ -191,7 +195,25 @@ class ShadowRecorder:
         loads them from the chunks for its own slots (_load)."""
         os.makedirs(work, exist_ok=True)
         path = os.path.join(work, "shadow-rows.duckdb")
-        for p in (path, path + ".wal"):
+        ready = os.path.join(work, "READY.json")
+        self.chunks = chunks
+        self.loads = 0
+        if reuse and os.path.exists(ready) and os.path.exists(path):
+            with open(ready) as f:
+                done = json.load(f)
+            if done.get("signature") == self.signature:
+                con = self.con = data.connect(threads=2, memory=memory, temp=os.path.join(work, "spill"))
+                con.execute(f"ATTACH '{path}' AS w")
+                con.execute("USE w")
+                self.tables = done["tables"]
+                self.all_tables = list(self.tables)
+                con.execute("CREATE OR REPLACE TABLE segr (seq INTEGER, a UBIGINT, b UBIGINT)")
+                con.executemany("INSERT INTO segr VALUES (?, ?, ?)", [(i, a, b) for i, (_, a, b) in enumerate(self.ranges)])
+                self._index_rows()
+                self.log(f"reusing the work database {path} (built {done.get('built')})")
+                return
+            self.log("work database signature differs: rebuilding")
+        for p in (path, path + ".wal", ready):
             if os.path.exists(p):
                 os.remove(p)
         con = self.con = data.connect(threads=2, memory=memory, temp=os.path.join(work, "spill"))
@@ -206,12 +228,15 @@ class ShadowRecorder:
         tables = sorted({os.path.relpath(os.path.dirname(f), c[2]) for c in chunks
                          for f in glob.glob(os.path.join(c[2], "pump*", "*", "*.parquet"))})
         self.tables = {}
-        self.chunks, self.all_tables = chunks, tables
-        con.execute("CREATE TABLE txu (slot UBIGINT, tx_index BIGINT, pool VARCHAR)")
-        for t in tables:
-            if "pool" in data.columns(t, chunks):
-                con.execute(f"INSERT INTO txu SELECT DISTINCT slot, tx_index, pool FROM {data.parquet(t, chunks)} "
-                            f"WHERE {span} AND pool IS NOT NULL")
+        self.all_tables = tables
+        # Every table is written in slot order: a segment's copy reads only its own slots (zonemaps);
+        # unordered (preserve_insertion_order = false) each copy scanned whole tables.
+        sels = [f"SELECT DISTINCT slot::UBIGINT AS slot, tx_index::BIGINT AS tx_index, pool FROM {data.parquet(t, chunks)} "
+                f"WHERE {span} AND pool IS NOT NULL" for t in tables if "pool" in data.columns(t, chunks)]
+        if sels:
+            con.execute(f"CREATE TABLE txu AS SELECT * FROM ({' UNION ALL '.join(sels)}) ORDER BY slot, tx_index")
+        else:
+            con.execute("CREATE TABLE txu (slot UBIGINT, tx_index BIGINT, pool VARCHAR)")
         mig = data.parquet("pump/CompletePumpAmmMigrationEvent", chunks, missing_ok=True)
         con.execute(f"CREATE TABLE grad AS SELECT DISTINCT slot, tx_index FROM {mig} WHERE {span}" if mig else
                     "CREATE TABLE grad (slot UBIGINT, tx_index BIGINT)")
@@ -220,7 +245,7 @@ class ShadowRecorder:
             mayhem = "COALESCE(is_mayhem_mode, false)" if "is_mayhem_mode" in data.columns("pump_amm/CreatePoolEvent", chunks) \
                 else "false"
             con.execute(f"""CREATE TABLE pc AS SELECT slot, tx_index, pool, base_mint, quote_mint, coin_creator,
-                                   {mayhem} AS is_mayhem_mode FROM {cp} WHERE {span}""")
+                                   {mayhem} AS is_mayhem_mode FROM {cp} WHERE {span} ORDER BY slot, tx_index""")
         else:
             con.execute("""CREATE TABLE pc (slot UBIGINT, tx_index BIGINT, pool VARCHAR, base_mint VARCHAR,
                                             quote_mint VARCHAR, coin_creator VARCHAR, is_mayhem_mode BOOLEAN)""")
@@ -235,18 +260,26 @@ class ShadowRecorder:
                        (SELECT slot, tx_index FROM txu WHERE pool IN (SELECT pool FROM u)
                         UNION ALL SELECT * FROM grad UNION ALL SELECT * FROM crev)""")
         self.loads = 0
-        con.execute(f"CREATE TABLE blocks_t AS SELECT * FROM {data.parquet('blocks', chunks)} WHERE {span}")
+        con.execute(f"CREATE TABLE blocks_t AS SELECT * FROM {data.parquet('blocks', chunks)} WHERE {span} ORDER BY slot")
         con.execute("CREATE TABLE segr (seq INTEGER, a UBIGINT, b UBIGINT)")
         con.executemany("INSERT INTO segr VALUES (?, ?, ?)", [(i, a, b) for i, (_, a, b) in enumerate(self.ranges)])
-        self.with_rows = {}
         for i, t in enumerate(tables):
             name = f"t{i}"
             con.execute(f"""CREATE TABLE {name} AS SELECT x.* FROM {data.parquet(t, chunks)} x
-                            SEMI JOIN allkeys k ON x.slot = k.slot AND x.tx_index = k.tx_index WHERE x.{span}""")
+                            SEMI JOIN allkeys k ON x.slot = k.slot AND x.tx_index = k.tx_index WHERE x.{span}
+                            ORDER BY x.slot, x.tx_index""")
             self.tables[t] = name
-            self.with_rows[t] = {r[0] for r in con.execute(f"""SELECT DISTINCT s.seq FROM (SELECT DISTINCT slot FROM {name}) x
+        self._index_rows()
+        con.execute("CHECKPOINT")
+        with open(ready + ".tmp", "w") as f:
+            json.dump({"signature": self.signature, "tables": self.tables, "built": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
+        os.replace(ready + ".tmp", ready)
+
+    def _index_rows(self):
+        """Per table, the segments that have rows (a segment copies only those tables)."""
+        self.with_rows = {t: {r[0] for r in self.con.execute(f"""SELECT DISTINCT s.seq FROM (SELECT DISTINCT slot FROM {name}) x
                                                                 JOIN segr s ON x.slot >= s.a AND x.slot < s.b""").fetchall()}
-        self.n_rows = {t: con.execute(f"SELECT count(*) FROM {n}").fetchone()[0] for t, n in self.tables.items()}
+                          for t, name in self.tables.items()}
 
     def _load(self, seq, a, b):
         """Rows of this segment's transactions that are not in the work database yet, from the
@@ -366,7 +399,8 @@ class ShadowRecorder:
         self.totals.update({"segments": 1, "rows": rows, "slots": n_slots, "pool_creations": n_pc, "backfills": len(backfills),
                             "backfill_txs": n_back, **{STREAMS[s]: n for s, n in per.items()}})
         if seq % 100 == 0:
-            self.log(f"segment {seq}/{len(self.ranges)}: {len(watch)} on the list, {len(opened)} open, {rows} rows")
+            self.log(f"segment {seq}/{len(self.ranges)}: {len(watch)} on the list, {len(opened)} open, {rows} rows, "
+                     f"rss {_rss_mb()} MB, {time.time() - self.t_start:.0f}s")
         return seq, d, meta
 
     def coverage(self):
@@ -374,6 +408,15 @@ class ShadowRecorder:
 
     def gap_segments(self):
         return {i for i, (_, a, b) in enumerate(self.ranges) if any(ga < b and a < gb for ga, gb in self.gaps)}
+
+
+def _rss_mb():
+    """This process's resident memory in MB (Linux), for the progress lines."""
+    try:
+        with open("/proc/self/status") as f:
+            return next(int(line.split()[1]) // 1024 for line in f if line.startswith("VmRSS:"))
+    except (OSError, StopIteration, ValueError):
+        return -1
 
 
 class ShadowFeed(LiveFeed):
@@ -565,9 +608,21 @@ def summarize(rows):
 # ----------------------------------------------------------------------------- run
 
 
+def _status(out, step, **kw):
+    """<out>/STATUS.json: the last finished step (a run that stops early shows where)."""
+    path = os.path.join(out, "STATUS.json")
+    with open(path + ".tmp", "w") as f:
+        json.dump({"step": step, "time": time.strftime("%Y-%m-%dT%H:%M:%S"), **kw}, f)
+    os.replace(path + ".tmp", path)
+
+
 def run(a, log=print):
+    """The five steps. With a.resume, a finished replay (replay/DONE.json with the same settings) and
+    a finished work database (work/READY.json with the same signature) are reused; the live run,
+    engine --live, the comparison and the reconciliation always run again."""
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
+    resume = getattr(a, "resume", False)
     scon = streams.open_store(a.store, threads=2, memory=a.memory)
     clock = Clock.from_store(scon)
     blo, bhi = scon.execute("SELECT min(slot), max(slot) + 1 FROM blocks").fetchone()
@@ -589,11 +644,21 @@ def run(a, log=print):
     # 1. replay
     t0 = time.time()
     rdir = os.path.join(out, "replay")
-    shutil.rmtree(rdir, ignore_errors=True)
-    rfeed = ReplayFeed(a.store, lo, hi, con=scon)
-    Engine(rfeed, Journal(rdir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
-           dev_bounds=(blo, bhi)).run()
-    log(f"replay done ({time.time() - t0:.0f}s)")
+    replay_key = {"store": os.path.abspath(a.store), "from_slot": lo, "to_slot": hi, "variants": info["variants"],
+                  "d": a.d, "q": a.q}
+    done_path = os.path.join(rdir, "DONE.json")
+    if resume and os.path.exists(done_path) and json.load(open(done_path)).get("key") == replay_key:
+        log(f"replay reused ({done_path})")
+    else:
+        shutil.rmtree(rdir, ignore_errors=True)
+        rfeed = ReplayFeed(a.store, lo, hi, con=scon)
+        Engine(rfeed, Journal(rdir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+               dev_bounds=(blo, bhi)).run()
+        del rfeed
+        with open(done_path, "w") as f:
+            json.dump({"key": replay_key, "seconds": round(time.time() - t0)}, f)
+        log(f"replay done ({time.time() - t0:.0f}s)")
+    _status(out, "replay")
 
     # 2. recorder + live
     t0 = time.time()
@@ -601,7 +666,10 @@ def run(a, log=print):
     shutil.rmtree(root, ignore_errors=True)
     rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
                          gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
-                         work=os.path.join(out, "work"), memory=a.memory, log=log)
+                         work=os.path.join(out, "work"), memory=a.memory, log=log, reuse=resume)
+    _status(out, "recorder input")
+    scon.close()  # not needed while live runs (its cache would hold memory); reopened for the comparison
+    gc.collect()
     ldir = os.path.join(out, "live")
     shutil.rmtree(ldir, ignore_errors=True)
     feed = ShadowFeed(rec, store=a.store, snapshot_before=lo, h24=h24, meta_bounds=(blo, bhi), memory=a.memory)
@@ -623,8 +691,10 @@ def run(a, log=print):
     info["estimated_gb_per_day"] = round(sum(rec.totals[s] for s in list(STREAMS.values()) + ["backfill_txs"])
                                          * TX_BYTES / 1e9 / days, 2)
     log(f"live done ({time.time() - t0:.0f}s): {dict(rec.totals)}")
+    _status(out, "live", segments=rec.totals.get("segments", 0))
 
     # 3. compare
+    scon = streams.open_store(a.store, threads=2, memory=a.memory)
     rows = compare(rdir, ldir, rec.coverage(), scon, root, d=a.d, hour_slots=clock.slots(HOUR_MS, lo))
     info["summary"] = summarize(rows)
     info["unexplained"] = sum(1 for r in rows if r["cause"] == "unexplained")
@@ -632,6 +702,8 @@ def run(a, log=print):
     import pyarrow.parquet as pq
 
     pq.write_table(pa_rows, os.path.join(out, "compare.parquet"))
+    scon.close()
+    _status(out, "compare")
 
     # 4. engine --live as it runs live (risk limits, live clock), with its daily reports
     t0 = time.time()
@@ -645,6 +717,7 @@ def run(a, log=print):
     info["live_risk_reports"] = sorted(os.path.relpath(os.path.join(dp, f), out) for dp, _, fs in os.walk(rdir2)
                                        for f in fs if f == "report.md")
     log(f"engine --live with risk limits done ({time.time() - t0:.0f}s)")
+    _status(out, "engine --live")
 
     # 5. reconcile a sample of segments (every one with a reconnect or gap)
     t0 = time.time()
@@ -666,6 +739,7 @@ def run(a, log=print):
         json.dump(info, f, indent=1, default=str)
     with open(os.path.join(out, "compare.md"), "w") as f:
         f.write(render(info, rows))
+    _status(out, "done", unexplained=info["unexplained"])
     return info
 
 
@@ -763,9 +837,13 @@ def main():
     ap.add_argument("--watch-warmup", type=int, default=0, help="watchlist warm-up minutes before --from (inside the store)")
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--reconcile-every", type=int, default=30)
-    ap.add_argument("--memory", default=os.environ.get("LAB_DUCKDB_MEM", "2GB"))
+    ap.add_argument("--memory", default=os.environ.get("LAB_DUCKDB_MEM", "1GB"), help="per DuckDB connection")
+    ap.add_argument("--resume", action="store_true",
+                    help="reuse a finished replay and work database of the same settings (the rest runs again)")
     a = ap.parse_args()
     info = run(a, log=lambda m: print(time.strftime("%H:%M:%S"), m, flush=True))
+    if not os.path.exists(os.path.join(os.path.abspath(a.out), "compare.json")):
+        raise SystemExit("shadow: compare.json was not written")  # never a silent success
     print(json.dumps({k: info[k] for k in ("summary", "unexplained", "estimated_gb_per_day", "reconcile")}, indent=1, default=str))
 
 
