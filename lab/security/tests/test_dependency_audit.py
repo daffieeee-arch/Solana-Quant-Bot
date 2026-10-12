@@ -70,12 +70,23 @@ class Cargo(unittest.TestCase):
             cargo_vuln("RUSTSEC-3", "nocvss"),
             warnings={"unmaintained": [{"advisory": {"id": "RUSTSEC-4", "title": "gone"},
                                         "package": {"name": "old", "version": "0.1.0"}}],
+                      "unsound": [{"kind": "unsound", "advisory": {"id": "RUSTSEC-5", "title": "ub", "aliases": ["GHSA-u"]},
+                                   "package": {"name": "unsafe", "version": "0.7.3"}}],
                       "yanked": [{"advisory": None, "package": {"name": "y", "version": "0.2.0"}}]}))
         failing, out = run_report(findings, [], "cargo")
-        self.assertEqual(sorted(f["package"] for f in failing), ["crit", "nocvss"])
+        self.assertEqual(sorted(f["package"] for f in failing), ["crit", "nocvss", "unsafe"])
         self.assertEqual(len(warnings), 2)
         self.assertIn("::error", out)
         self.assertIn("info     RUSTSEC-2 med", out)
+
+    def test_unsound_can_be_ignored_like_a_vulnerability(self):
+        findings, warnings = da.parse_cargo(cargo_report(warnings={"unsound": [
+            {"advisory": {"id": "RUSTSEC-2099-0001", "title": "ub"}, "package": {"name": "foo", "version": "1.0.0"}}]}))
+        self.assertEqual((len(findings), warnings), (1, []))
+        self.assertEqual(len(run_report(findings, [], "cargo")[0]), 1)
+        failing, out = run_report(findings, [ignore()], "cargo")
+        self.assertEqual(failing, [])
+        self.assertIn("ignored  RUSTSEC-2099-0001 foo 1.0.0 [unsound]", out)
 
     def test_ignore_by_alias_is_printed_with_reason(self):
         findings, _ = da.parse_cargo(cargo_report(cargo_vuln("RUSTSEC-2099-0002", "foo", aliases=["GHSA-aaaa"])))

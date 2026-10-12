@@ -3,12 +3,13 @@ decides pass or fail. Used by .github/workflows/dependency-audit.yml; standard l
 
 Fail rule:
 - cargo: a vulnerability whose CVSS v3 score is high (>= 7.0) or critical, or that has no usable CVSS
-  (RustSec often has none; unknown is treated as high). Warnings (unmaintained, unsound, yanked) are
-  printed, never fatal.
+  (RustSec often has none; unknown is treated as high), and every "unsound" advisory (coordinator
+  decision 2026-10-12: no known problem stays silent). Unmaintained and yanked warnings are printed,
+  never fatal.
 - pip:   every finding (pip-audit reports no severity, so each one counts as unknown).
 - npm:   advisories with severity high or critical, as `npm audit --omit=dev --audit-level=high`.
-An ignore entry (with reason, evidence that no compatible patched version exists, date and review date) turns a failing finding into a printed "ignored"
-line. A tool error or unreadable output always fails.
+An ignore entry (with reason, evidence that no compatible patched version exists, date and review
+date) turns a failing finding into a printed "ignored" line. A tool error or unreadable output always fails.
 
 Usage:
   dependency_audit.py cargo LOCKFILE... [--optional LOCKFILE]...
@@ -29,7 +30,7 @@ import tomllib
 HERE = os.path.dirname(os.path.abspath(__file__))
 IGNORE_FILE = os.path.join(HERE, "audit-ignore.toml")
 IGNORE_FIELDS = ("id", "ecosystem", "package", "reason", "evidence", "approved", "approved_by", "review_by")
-FAILING = {"high", "critical", "unknown"}
+FAILING = {"high", "critical", "unknown", "unsound"}
 
 
 class AuditError(Exception):
@@ -146,6 +147,13 @@ def parse_cargo(report):
     for kind, items in warn_groups.items():
         for w in items or []:
             adv = w.get("advisory") or {}
+            if kind == "unsound":
+                findings.append({
+                    "id": adv["id"], "aliases": adv.get("aliases") or [], "package": w["package"]["name"],
+                    "version": w["package"]["version"], "title": adv.get("title", ""),
+                    "severity": "unsound", "score": None,
+                })
+                continue
             warnings.append({"kind": kind, "id": adv.get("id", "-"), "package": w["package"]["name"],
                              "version": w["package"]["version"], "title": adv.get("title", kind)})
     return findings, warnings
@@ -321,7 +329,7 @@ def main(argv=None):
         print(f"::error title=dependency audit ({a.ecosystem})::{exc}")
         return 2
     if failing:
-        print(f"FAIL: {len(failing)} high, critical or unknown-severity advisories without a valid ignore entry")
+        print(f"FAIL: {len(failing)} high, critical, unknown-severity or unsound advisories without a valid ignore entry")
         return 1
     print("PASS")
     return 0
