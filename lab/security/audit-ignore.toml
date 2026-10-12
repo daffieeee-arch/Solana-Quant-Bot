@@ -10,7 +10,7 @@
 # printed with their reason; an entry that no longer matches anything is printed as stale.
 
 # Crates pinned by Agave (solana-runtime and friends) in lab/extractor and lab/recorder. Neither binary
-# signs, verifies signatures for funds or parses untrusted hostnames; no compatible patched version exists$
+# signs, verifies signatures for funds or parses untrusted hostnames; no compatible patched version exists
 # (see evidence). GitHub rates these low/medium; RustSec gives no CVSS, so the audit treats them as unknown.
 # Evidence checked 2026-10-12 against lab/extractor/Cargo.lock; Lab Backtest re-checks the parent chains.
 [[ignore]]
