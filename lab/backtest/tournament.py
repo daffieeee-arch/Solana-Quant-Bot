@@ -27,6 +27,7 @@ import pyarrow.parquet as pq
 
 from . import health, overlay, replay, rotation, streams
 from .costs import LAMPORTS, Scenario, settle_sql
+from .report import GATE_SIZES
 from .store import load_defaults
 from .strategies import (
     BURN_IN_MS,
@@ -36,8 +37,13 @@ from .strategies import (
     M1_MAX_HOLD_MS,
     M1_MIN_BUYERS,
     M1_SIZES,
+    M1X,
+    M1X_TRAILS,
     M1Exit,
     m1_candidates_sql,
+    m1x_candidates_sql,
+    m1x_variant,
+    m1x_vetoed,
     F6_FLOW_MS,
     F6_GRID,
     F6_MAX_HOLD_MS,
@@ -81,6 +87,8 @@ RESULT_SCHEMA = pa.schema([
     ("farm", pa.string()), ("overlay", pa.string()), ("q", pa.float64()), ("trigger_trader", pa.string()),
     ("trigger_farmer", pa.bool_()),
     ("d_ms", pa.float64()),
+    # M1+ / M1-early (and their N2): the veto inputs at t and the highest mark before the exit (/ cost - 1).
+    ("ins_share", pa.float64()), ("curve_buyers", pa.int64()), ("peak_ret", pa.float64()),
 ])
 
 
@@ -105,8 +113,10 @@ def store_bounds(con):
 # Windows in milliseconds (v1 slot values at 267.3 ms), converted per epoch by the store's Clock.
 MAX_HOLD_MS = {"F7": ms(2_400), "N2_F7": ms(2_400), "F1": ms(4_500), "N2_F1": ms(4_500), "N1": ms(1_500),
                "F6": F6_MAX_HOLD_MS, "N2_F6": F6_MAX_HOLD_MS, "N3": N3_HOLD_MS, "N4": ms(N4_MAX_HOLD),
-               "S1": 86_400_000, "N2_S1": 86_400_000, "M1": M1_MAX_HOLD_MS, "N2_M1": M1_MAX_HOLD_MS}
-FAMILY_SIZES = {"M1": M1_SIZES, "N2_M1": M1_SIZES}  # families with their own size grid  # S1: only when no planned exit (end of data)
+               "S1": 86_400_000, "N2_S1": 86_400_000, "M1": M1_MAX_HOLD_MS, "N2_M1": M1_MAX_HOLD_MS,
+               **{f: M1_MAX_HOLD_MS for f in ("M1P", "N2_M1P", "M1E", "N2_M1E")}}
+M1_LIKE = ("M1", "N2_M1", "M1P", "N2_M1P", "M1E", "N2_M1E")  # trailing / hard / time stop with the O7 exit
+FAMILY_SIZES = {f: M1_SIZES for f in M1_LIKE}  # families with their own size grid  # S1: only when no planned exit (end of data)
 S1_OPEN_HOLD = 10**9  # slots: an S1 position without a planned exit runs to the end of the data
 WINDOW_MARGIN_MS = ms(6_000)  # d, graduation and pool open after the last possible exit decision
 CLUSTER_GAP_MS = ms(20_000)  # signals further apart than this are loaded and simulated separately
@@ -156,6 +166,30 @@ def m1_signals(con, cfg, lo, hi, clock):
                 if not todo:
                     break
     return out
+
+
+def m1x_signals(con, cfg, lo, hi, clock, family):
+    """M1+ (family 'M1P') or M1-early ('M1E') triggers: every (pool, moment, k) whose state at
+    t = open + moment meets the trigger, for tokens whose insiders are known (as M1). Returns
+    [(mint, pool, moment_ms, t, depth, k)]."""
+    spec = M1X[family]
+    cands = defaultdict(list)
+    for mint, pool, moment, t, depth, ratio, flow, buyers in m1x_candidates_sql(con, cfg, lo, hi, spec["moments_ms"], clock):
+        if flow > 0 and buyers >= M1_MIN_BUYERS and ratio >= min(spec["ks"]):
+            cands[pool].append((mint, moment, t, depth, ratio))
+    out = []
+    pools = sorted(cands)
+    for i in range(0, len(pools), M1_CHUNK):
+        part = pools[i:i + M1_CHUNK]
+        mints = {cands[p][0][0]: max(c[2] for c in cands[p]) for p in part}
+        toks = streams.load_streams(con, {m: (min(c[2] for p in part for c in cands[p] if c[0] == m), t) for m, t in mints.items()})
+        for pool in part:
+            tok = toks.get(cands[pool][0][0])
+            if tok is None or not overlay.Insiders(tok, clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot)).known:
+                continue
+            for mint, moment, t, depth, ratio in cands[pool]:
+                out += [(mint, pool, moment, t, depth, k) for k in spec["ks"] if ratio >= k]
+    return sorted(out, key=lambda x: (x[3], x[1], x[2], x[5]))
 
 
 def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None, slot_range=None):
@@ -211,6 +245,15 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                                           (k, trail), pool=sys.intern(pool), orientation="normal"))
                     n_m1 += 1
         log(f"M1: {n_m1} signals")
+    for fam in ("M1P", "M1E"):
+        if fam in families:
+            n_x = 0
+            for mint, pool, moment, t, depth, k in m1x_signals(con, cfg, lo, hi, clock, fam):
+                for trail in M1X_TRAILS:
+                    signals.append(Signal(fam, m1x_variant(fam, moment, k, trail), sys.intern(mint), t, "pool", int(depth or 0),
+                                          (k, trail, moment), pool=sys.intern(pool), orientation="normal"))
+                    n_x += 1
+            log(f"{fam}: {n_x} signals")
     if "N4" in families:
         for m, pool, orientation, t, depth in n4_signals_sql(con, cfg, lo, hi, n1_sample, clock):
             signals.append(Signal("N4", "crank_scalp", sys.intern(m), t, "pool", int(depth or 0), (),
@@ -252,12 +295,14 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
     if "N2" in families:
         by_trigger = defaultdict(list)
         for s in signals:
-            if s.family in ("F7", "F1", "F6", "M1"):  # S1 draws its own N2 controls (rotation.py)
+            if s.family in ("F7", "F1", "F6", "M1", "M1P", "M1E"):  # S1 draws its own N2 controls (rotation.py)
                 by_trigger[(s.family, s.pool or s.mint, s.t, s.venue, s.depth, s.orientation)].append(s)
         t0 = time.time()
-        matches = n2_matches(con, [k for k in by_trigger if k[0] != "M1"], k=n2_k, clock=clock)
-        matches.update(n2_matches(con, [k for k in by_trigger if k[0] == "M1"], k=n2_k, clock=clock,
-                                  max_age_ms=M1_MAX_HOLD_MS))
+        # M1 families: young pools of the same age class (M1, M1+: <= 6 h; M1-early: <= 10 min).
+        ages = {"M1": M1_MAX_HOLD_MS, **{f: v["n2_age_ms"] for f, v in M1X.items()}}
+        matches = n2_matches(con, [k for k in by_trigger if k[0] not in ages], k=n2_k, clock=clock)
+        for fam, age in ages.items():
+            matches.update(n2_matches(con, [k for k in by_trigger if k[0] == fam], k=n2_k, clock=clock, max_age_ms=age))
         pool_mint = dict(con.execute("SELECT pool, COALESCE(mint, pool) FROM pools").fetchall())
         n_n2 = 0
         for key, group in by_trigger.items():
@@ -305,7 +350,7 @@ def work_items(signals, clock=None):
 
 def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None, insiders=None):
     clock = clock or Clock()
-    if sig.family in ("M1", "N2_M1"):
+    if sig.family in M1_LIKE:
         rule = M1Exit(sig.params[1], clock.slots(M1_MAX_HOLD_MS, sig.t))
         return overlay.O7Exit(rule, insiders) if insiders is not None else rule
     if sig.family in ("S1", "N2_S1"):
@@ -374,8 +419,9 @@ def _part_path(out, task_id):
 O7_FAMILIES = ("F7", "N2_F7", "F1", "N2_F1")
 
 
-def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5):
+def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5, ins_share=None, curve_buyers=None, peak_ret=None):
     return {
+        "ins_share": ins_share, "curve_buyers": curve_buyers, "peak_ret": peak_ret,
         "family": sig.family, "variant": sig.variant, "mint": mint, "t": sig.t, "venue": sig.venue,
         "depth": sig.depth, "ref_mint": sig.ref[0] if sig.ref else None, "ref_t": sig.ref[1] if sig.ref else None,
         "size_sol": size_sol, "d": d, "tau": tau_mode, "entry_failed": r.entry_failed, "skipped": r.skipped,
@@ -395,19 +441,26 @@ def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5):
 
 def _insiders(con, st, venue, clock, cache):
     """O7 insider index of the token behind a stream (pool streams need the token's curve)."""
+    return _token_info(con, st, venue, clock, cache)[0]
+
+
+def _token_info(con, st, venue, clock, cache):
+    """(O7 insider index or None, distinct curve buyers or None) of the token behind a stream."""
     if st.mint in cache:
         return cache[st.mint]
     tok = st
     if venue == "pool":
         lo, hi = (st.pool_legs[0].slot, st.pool_legs[-1].slot) if st.pool_legs else (0, 0)
         tok = streams.load_streams(con, {st.mint: (lo, hi)}).get(st.mint)
-    ins = None
+    ins = buyers = None
     if tok is not None and tok.create_slot is not None:
         ins = overlay.Insiders(tok, clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot))
         if not ins.known:
             ins = None
-    cache[st.mint] = ins
-    return ins
+        else:
+            buyers = len({l.trader for l in tok.curve if l.is_buy})
+    cache[st.mint] = (ins, buyers)
+    return cache[st.mint]
 
 
 def _work(args):
@@ -453,9 +506,25 @@ def _work(args):
                             if sig.family in FAMILY_SIZES and size_sol not in FAMILY_SIZES[sig.family]:
                                 continue
                             sim = replay.simulate_pool_position if sig.venue == "pool" else replay.simulate_curve_position
-                            ins_m1 = _insiders(con, st, sig.venue, clock, ins_cache) if sig.family in ("M1", "N2_M1") else None
-                            r = sim(st, sig.t, size, d, q, exit_rule_for(sig, base, d, clock, st, flows, ins_m1), tol, tau)
+                            ins_m1 = _insiders(con, st, sig.venue, clock, ins_cache) if sig.family in M1_LIKE else None
+                            rule = exit_rule_for(sig, base, d, clock, st, flows, ins_m1)
+                            r = sim(st, sig.t, size, d, q, rule, tol, tau)
                             busy_until[fk] = r.exit_slot or sig.t
+                            fam_x = sig.family.removeprefix("N2_")
+                            if fam_x in M1X:
+                                # M1+ / M1-early: the vetoes as paired rows (a vetoed trade counts as 0, as O7).
+                                ins, buyers = _token_info(con, st, sig.venue, clock, ins_cache)
+                                share = ins.share(sig.t) if ins is not None else None
+                                peak = getattr(getattr(rule, "base", rule), "peak", None)
+                                pr = peak / r.cost - 1 if (peak and r.cost and not r.skipped) else None
+                                rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q, ins_share=share,
+                                                 curve_buyers=buyers, peak_ret=pr))
+                                for veto in M1X[fam_x]["vetoes"]:
+                                    res = (replay.Result(mint, sig.t, size=size, venue=sig.venue, skipped=True, exit_reason="veto")
+                                           if m1x_vetoed(veto, share, buyers) else r)
+                                    rows.append(_row(sig, res, mint, size_sol, d, tau_mode, clock, veto, q=q, ins_share=share,
+                                                     curve_buyers=buyers, peak_ret=pr if res is r else None))
+                                continue
                             rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q))
                             # O7 on the same trigger (paired with the base row): V1 veto, V2 exit, V3 both.
                             if overlays and sig.family in O7_FAMILIES:
@@ -532,7 +601,8 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
               "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
-              "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,
+              "gate_sizes": list(GATE_SIZES), "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k,
+              "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
     with open(os.path.join(out, "config.json"), "w") as f:
         json.dump(config, f, indent=1)
@@ -545,6 +615,9 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
         with open(os.path.join(out, "report.md"), "a") as f:
             f.write("\n" + checks.replace("# F7 in", "## F7 in", 1).replace("\n## ", "\n### "))
         log("F7 reversed checks appended to the report")
+    if any(f in families for f in ("M1P", "M1E")):
+        from .analysis import m1x
+        log(f"M1+ / M1-early evaluation: {m1x(out, STORE)}")
     log(f"done: {out}")
 
 

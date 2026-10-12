@@ -25,7 +25,7 @@ KEYS = ["family", "variant", "size_sol", "d", "tau", "q", "segment", "regime", "
 NK = len(KEYS)
 K = ", ".join(KEYS)
 SCENARIOS = ("optimistic", "base", "pessimistic")
-FAMILIES = ("F7", "F1", "F6", "S1", "M1")  # families with an N2 control; N1, N3, N4 are controls
+FAMILIES = ("F7", "F1", "F6", "S1", "M1", "M1P", "M1E")  # families with an N2 control; N1, N3, N4 are controls
 
 
 def _connect():
@@ -277,8 +277,8 @@ def overlay_effects(results, cfg, con=None):
         rows += con.execute(f"""
             WITH r AS (SELECT *, COALESCE(pool, '') AS pk, {pnl} AS pnl FROM {src} WHERE {part}),
             b AS (SELECT {key}, pnl FROM r WHERE overlay = 'none' AND NOT skipped),
-            o AS (SELECT {key}, overlay, day, exit_reason = 'o7_veto' AS vetoed,
-                         CASE WHEN exit_reason = 'o7_veto' THEN 0 ELSE pnl END AS pnl
+            o AS (SELECT {key}, overlay, day, exit_reason IN ('o7_veto', 'veto') AS vetoed,
+                         CASE WHEN exit_reason IN ('o7_veto', 'veto') THEN 0 ELSE pnl END AS pnl
                   FROM r WHERE overlay <> 'none')
             SELECT family, size_sol, d, overlay, day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(vetoed::INT)
             FROM o JOIN b USING ({key}) WHERE o.pnl IS NOT NULL GROUP BY ALL""").fetchall()

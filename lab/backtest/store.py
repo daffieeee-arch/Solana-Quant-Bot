@@ -188,6 +188,40 @@ def _disk_check(out_dir, chunks):
 # ----------------------------------------------------------------------------- per-chunk SQL
 
 
+def _curve_trades(c, mints="s.mints"):
+    """Curve trade rows of one chunk for the mints in `mints` (None: all), sorted per mint.
+
+    Only the direct-call arguments are mapped. multi_hop_curve_swap (amount_in, hop_fees) leaves
+    them NULL on purpose: its amount_in is the route input, shared by every hop of the
+    instruction, so a hop's own budget is its logged q + fee (see replay.EXACT_IN_CURVE)."""
+    T = "pump/TradeEvent"
+    trade = c.src(T)
+    if not trade:
+        return None
+    ix_case = " ".join(f"WHEN '{d}' THEN '{n}'" for d, n in data.PUMP_IX.items())
+    join = f"SEMI JOIN {mints} m ON m.mint = t.mint" if mints else ""
+    return f"""
+      SELECT t.mint, t.slot, t.tx_index, t.outer_ix, t.inner_ix,
+        CASE t.parent_ix_disc {ix_case} ELSE 'other' END AS variant,
+        t.is_buy, t.token_amount{H} AS t, COALESCE(t.quote_amount, t.sol_amount){H} AS q,
+        t.fee{H} AS fee, t.creator_fee{H} AS creator_fee, t.fee_basis_points::INTEGER AS fee_bps,
+        t.creator_fee_basis_points::INTEGER AS creator_bps,
+        COALESCE({c.col(T, 'cashback_fee_basis_points', 'INTEGER')}, 0) AS cashback_bps,
+        t.virtual_token_reserves{H} AS vt, COALESCE(t.virtual_quote_reserves, t.virtual_sol_reserves){H} AS vq,
+        t.real_token_reserves{H} AS rt, COALESCE(t.real_quote_reserves, t.real_sol_reserves){H} AS rq,
+        t."user" AS trader, NULLIF(t.fee_payer, t."user") AS fee_payer, t.outer_program, t.priority_fee,
+        t.jito_tip, t.tx_fee,
+        COALESCE(t.mayhem_mode, false) AS mayhem_trade,
+        {c.arg(T, 'amount')} AS arg_amount,
+        COALESCE({c.arg(T, 'spendable_sol_in')}, {c.arg(T, 'spendable_quote_in')}) AS arg_budget,
+        {c.arg(T, 'max_sol_cost')} AS arg_max_cost,
+        {c.arg(T, 'min_tokens_out')} AS arg_min_tokens,
+        {c.arg(T, 'min_sol_output')} AS arg_min_quote_out,
+        {c.arg(T, 'partial_fill', 'BOOLEAN')} AS arg_partial_fill
+      FROM {trade} t {join}
+      ORDER BY t.mint, t.slot, t.tx_index, t.outer_ix, t.inner_ix"""
+
+
 def _pool_trades(c, evidence=False):
     """Buy and sell rows of one chunk in pool orientation (boost-crank inner buys excluded).
     evidence=True adds the columns used to classify pools."""
@@ -281,7 +315,6 @@ def build(period, out_path, cfg, chunks, log=print):
     git = lambda *a: subprocess.run(["git", *a], capture_output=True, text=True, cwd=here).stdout.strip()  # noqa: E731
     commit = git("rev-parse", "HEAD") + ("-dirty" if git("status", "--porcelain", "--", here) else "")  # at the start
     P = lambda t, **k: data.parquet(t, chunks, **k)  # noqa: E731
-    ix_case = " ".join(f"WHEN '{d}' THEN '{n}'" for d, n in data.PUMP_IX.items())
 
     # Mints and their lifecycle: small tables, read over the whole period.
     con.execute(f"""
@@ -340,29 +373,8 @@ def build(period, out_path, cfg, chunks, log=print):
         health.wait_ok(log, f"pass 2 chunk {ch[0]}")
         w0 = _io_written()
         c = Chunk(ch)
-        T = "pump/TradeEvent"
-        trade = c.src(T)
-        if trade:
-            sql = f"""
-              SELECT t.mint, t.slot, t.tx_index, t.outer_ix, t.inner_ix,
-                CASE t.parent_ix_disc {ix_case} ELSE 'other' END AS variant,
-                t.is_buy, t.token_amount{H} AS t, COALESCE(t.quote_amount, t.sol_amount){H} AS q,
-                t.fee{H} AS fee, t.creator_fee{H} AS creator_fee, t.fee_basis_points::INTEGER AS fee_bps,
-                t.creator_fee_basis_points::INTEGER AS creator_bps,
-                COALESCE({c.col(T, 'cashback_fee_basis_points', 'INTEGER')}, 0) AS cashback_bps,
-                t.virtual_token_reserves{H} AS vt, COALESCE(t.virtual_quote_reserves, t.virtual_sol_reserves){H} AS vq,
-                t.real_token_reserves{H} AS rt, COALESCE(t.real_quote_reserves, t.real_sol_reserves){H} AS rq,
-                t."user" AS trader, NULLIF(t.fee_payer, t."user") AS fee_payer, t.outer_program, t.priority_fee,
-                t.jito_tip, t.tx_fee,
-                COALESCE(t.mayhem_mode, false) AS mayhem_trade,
-                {c.arg(T, 'amount')} AS arg_amount,
-                COALESCE({c.arg(T, 'spendable_sol_in')}, {c.arg(T, 'spendable_quote_in')}) AS arg_budget,
-                {c.arg(T, 'max_sol_cost')} AS arg_max_cost,
-                {c.arg(T, 'min_tokens_out')} AS arg_min_tokens,
-                {c.arg(T, 'min_sol_output')} AS arg_min_quote_out,
-                {c.arg(T, 'partial_fill', 'BOOLEAN')} AS arg_partial_fill
-              FROM {trade} t SEMI JOIN s.mints m ON m.mint = t.mint
-              ORDER BY t.mint, t.slot, t.tx_index, t.outer_ix, t.inner_ix"""
+        sql = _curve_trades(c)
+        if sql:
             con.execute(f"CREATE TABLE s.curve AS {sql}" if first else f"INSERT INTO s.curve BY NAME {sql}")
             first = False
         trades, other = _pool_trades(c), _pool_other(c)

@@ -11,7 +11,7 @@ writes rolling segments in the OF1 chunk layout, one directory per segment:
     _segment.json             written last: seq, first_slot, last_slot, usage, budget, complete
 
 LiveFeed turns each segment's raw rows into the dev store's rows with the store's own SQL
-(store.Chunk, _pool_trades, _pool_other; the curve select and the pool join mirror store.build),
+(store.Chunk, _curve_trades, _pool_trades, _pool_other; the pool join mirrors store.build),
 computes the farmer flag from its own 24 h history exactly as the store does (window [t - 24 h,
 t - 1 slot] per pool and wallet), and yields Events in chain order. Rows of a slot are only
 released once a later slot was seen (lag), so a segment boundary inside a slot cannot reorder
@@ -30,9 +30,9 @@ from collections import defaultdict, deque
 import duckdb
 import pyarrow as pa
 
-from backtest import data, pda, streams
+from backtest import pda, streams
 from backtest.strategies import Clock
-from backtest.store import (DAY_MS, FARMER_MIN_TRADES, FARMER_RATIO, H, POOL_SCHEMA, Chunk, _pool_other,
+from backtest.store import (DAY_MS, FARMER_MIN_TRADES, FARMER_RATIO, POOL_SCHEMA, Chunk, _curve_trades, _pool_other,
                             _pool_trades)
 
 from .feed import Event, Feed, PoolInfo, TokenInfo
@@ -54,30 +54,7 @@ def segment_dirs(root):
 
 def curve_select(c, mints_table):
     """store.build's curve rows for one chunk or segment (mints created in the data only)."""
-    T = "pump/TradeEvent"
-    trade = c.src(T)
-    if not trade:
-        return None
-    ix_case = " ".join(f"WHEN '{d}' THEN '{n}'" for d, n in data.PUMP_IX.items())
-    return f"""
-      SELECT t.mint, t.slot, t.tx_index, t.outer_ix, t.inner_ix,
-        CASE t.parent_ix_disc {ix_case} ELSE 'other' END AS variant,
-        t.is_buy, t.token_amount{H} AS t, COALESCE(t.quote_amount, t.sol_amount){H} AS q,
-        t.fee{H} AS fee, t.creator_fee{H} AS creator_fee, t.fee_basis_points::INTEGER AS fee_bps,
-        t.creator_fee_basis_points::INTEGER AS creator_bps,
-        COALESCE({c.col(T, 'cashback_fee_basis_points', 'INTEGER')}, 0) AS cashback_bps,
-        t.virtual_token_reserves{H} AS vt, COALESCE(t.virtual_quote_reserves, t.virtual_sol_reserves){H} AS vq,
-        t.real_token_reserves{H} AS rt, COALESCE(t.real_quote_reserves, t.real_sol_reserves){H} AS rq,
-        t."user" AS trader, NULLIF(t.fee_payer, t."user") AS fee_payer, t.outer_program, t.priority_fee,
-        t.jito_tip, t.tx_fee,
-        COALESCE(t.mayhem_mode, false) AS mayhem_trade,
-        {c.arg(T, 'amount')} AS arg_amount,
-        COALESCE({c.arg(T, 'spendable_sol_in')}, {c.arg(T, 'spendable_quote_in')}) AS arg_budget,
-        {c.arg(T, 'max_sol_cost')} AS arg_max_cost,
-        {c.arg(T, 'min_tokens_out')} AS arg_min_tokens,
-        {c.arg(T, 'min_sol_output')} AS arg_min_quote_out,
-        {c.arg(T, 'partial_fill', 'BOOLEAN')} AS arg_partial_fill
-      FROM {trade} t SEMI JOIN {mints_table} m ON m.mint = t.mint"""
+    return _curve_trades(c, mints=mints_table)
 
 
 # The raw columns of the store's pool table, typed: a segment without e.g. withdraw or boost

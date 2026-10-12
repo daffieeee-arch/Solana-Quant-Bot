@@ -1,0 +1,15 @@
+{
+ "source": "smoke extract of epoch 1054 (lab/nas-results/smoke-1054/chunk)",
+ "source_manifest_sha256": "f8ce20afada0e8773f3adead1f66792d0cb4fb9e9a509e57536ddb861523c546",
+ "extractor_sha256": "ae3deb0cee596ee645f4decd7dfcef7389b69640aa4a2536d51d33a4e602edad",
+ "slots": [
+  455328000,
+  455329000
+ ],
+ "selection": "pump TradeEvent: all multi_hop_curve_swap hops, 20 buy_exact_quote_in_v3 and 10 buy_v3 (ORDER BY hash(signature, outer_ix, inner_ix)); pump_amm Buy/SellEvent: all multi_hop_swap hops",
+ "rows": {
+  "pump/TradeEvent": 53,
+  "pump_amm/BuyEvent": 20,
+  "pump_amm/SellEvent": 17
+ }
+}

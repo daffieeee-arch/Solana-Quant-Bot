@@ -87,3 +87,22 @@ def test_engine_live_with_risk_limits_writes_daily_reports(run):
     with open(os.path.join(out, "compare.md")) as f:
         text = f.read()
     assert "development data" in text and "Unexplained differences: 0" in text
+
+
+def test_resume_reuses_replay_and_work_database_with_the_same_result(run):
+    """A rerun with resume (e.g. after a kill during the live step) reuses the finished replay and
+    work database, runs the rest again and gives the same comparison; STATUS.json says done."""
+    out, info = run
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    logs = []
+    a = argparse.Namespace(store=STORE, out=out, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
+                           d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
+                           risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB",
+                           resume=True)
+    again = shadow.run(a, log=logs.append)
+    assert any(m.startswith("replay reused") for m in logs)
+    assert any(m.startswith("reusing the work database") for m in logs)
+    assert again["summary"] == info["summary"] and again["unexplained"] == info["unexplained"]
+    assert again["recorder"]["rows"] == info["recorder"]["rows"]
+    with open(os.path.join(out, "STATUS.json")) as f:
+        assert json.load(f)["step"] == "done"
