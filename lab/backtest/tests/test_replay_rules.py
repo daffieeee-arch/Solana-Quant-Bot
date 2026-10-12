@@ -143,3 +143,20 @@ def test_no_entry_at_or_after_the_window_end():
     finally:
         replay.set_window_end(old)
     assert r.skipped and r.exit_reason == "after_window_end" and not r.cost
+
+
+def test_a_graduation_sale_past_the_window_closes_on_its_last_slot():
+    """Our buy completes the curve on the window's last slot: the sale (seed pool, completion + 1)
+    falls at the window end, so the position closes on W - 1 like a deadline past the window."""
+    s = BASE
+    l, s = leg_buy(s, 100, 0, "A", s.rt - 1_000_000_000)  # a whale leaves 1e9 tokens on the curve
+    stream = Stream("M", 0, "C", [l])
+    free = simulate_curve_position(stream, 100, SOL, 1, 0.5, TpSlTime(10.0, -10.0, 150, scenario()), 0.05, Tau("inf"))
+    assert (free.exit_reason, free.seed_pool, free.exit_slot) == ("graduation", True, 102)
+    old = _window(102)
+    try:
+        r = simulate_curve_position(stream, 100, SOL, 1, 0.5, TpSlTime(10.0, -10.0, 150, scenario()), 0.05, Tau("inf"))
+    finally:
+        replay.set_window_end(old)
+    assert (r.exit_reason, r.exit_decision_slot, r.exit_slot, r.seed_pool) == ("window_end", 101, 101, True)
+    assert r.proceeds == free.proceeds  # the same seed-pool sale, decided inside the window

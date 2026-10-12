@@ -356,3 +356,69 @@ def test_live_needs_a_readable_store(tmp_path, capsys):
         with pytest.raises(SystemExit) as e:
             engine.main(["--live", str(tmp_path), "--store", store, "--journal", str(tmp_path / "j")])
         assert e.value.code == 2 and "--live needs a readable --store" in capsys.readouterr().err
+
+
+class Graduating(Synth):
+    """Synth whose token migrates to pool POOL (open at pool_open); the feed learns the pool at
+    `learn_at` (a later segment, live) instead of at the start."""
+
+    def __init__(self, tokens, pool_open, learn_at=0):
+        super().__init__(tokens)
+        self.pool_open, self.learn_at, self.learned = pool_open, learn_at, learn_at == 0
+
+    def token(self, mint):
+        t = self.tok.get(mint)
+        if t is None or mint != "M" or not self.learned:
+            return t
+        return TokenInfo(t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint, t.complete_slot, "POOL")
+
+    def pool(self, pool):
+        from paper.feed import PoolInfo
+
+        return PoolInfo("POOL", "M", "normal", "sol", False, None, self.pool_open) if pool == "POOL" and self.learned else None
+
+    def events(self):
+        for e in super().events():
+            if e.slot >= self.learn_at:
+                self.learned = True
+            yield e
+
+
+def whale_completes_after(trades_before, at, size_left=1_000_000_000):
+    """A whale buy at slot `at` (tx 0) that leaves `size_left` tokens on the curve, then a small buy
+    (tx 1): our order (q = 0.5) lands between them."""
+    s = START
+    for slot, trader, side, t in trades_before:
+        s = (curve_buy_exact_out(s, t) if side == "buy" else curve_sell(s, t)).state
+    return [(at, "WHALE", "buy", s.rt - size_left), (at, "Y", "buy", 1)]
+
+
+def test_own_buy_completes_the_curve_and_waits_for_its_pool(tmp_path):
+    """Our buy completes the curve: the position has no PositionSim and waits for its pool; later
+    events of the token must not touch it (it crashed with AttributeError), and it is sold at open + 1."""
+    _, trades = trigger_token()
+    # Right after the trigger sell a whale leaves 1e9 tokens: the decision expects that rest, our buy takes it.
+    trades = trades + whale_completes_after(trades, 500_040)[:1]
+    other = ("C", [(500_100, "Z", "buy", T), (500_200, "Z2", "buy", T)])  # time goes on (step 5 touched every open)
+    j = Journal(str(tmp_path / "j"))
+    Engine(Graduating({"M": ("C", trades), "N": other}, pool_open=500_060), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5,
+           n2_k=0, clock=Clock(), backup=False).run()
+    o = j.rows("orders")[0]
+    x = j.rows("exits")[0]
+    assert o["status"] == "filled" and x["exit_reason"] == "graduation" and x["exit_slot"] == 500_061 and not x["seed_pool"]
+
+
+def test_completion_uses_what_the_feed_knows_then(tmp_path):
+    """The migration pool is learned after the entry (a later segment): the completion while holding
+    sells in that pool at open + 1, not in the synthetic seed pool."""
+    _, trades = trigger_token()
+    # The entry (500_041) is decided when the event of 500_043 arrives; the pool is learned only with the
+    # whale's event at 500_050 (a later segment), whose buy then completes the curve while we hold.
+    trades = trades + [(500_041, "Q", "buy", T), (500_043, "Q2", "buy", T)]
+    trades = trades + whale_completes_after(trades, 500_050, 0)[:1]
+    other = ("C", [(500_100, "Z", "buy", T), (500_200, "Z2", "buy", T)])
+    j = Journal(str(tmp_path / "j"))
+    Engine(Graduating({"M": ("C", trades), "N": other}, pool_open=500_070, learn_at=500_050), j, risk_file(tmp_path),
+           variants=[(0.04, 600)], d=1, q=0.5, n2_k=0, clock=Clock(), backup=False).run()
+    x = j.rows("exits")[0]
+    assert x["exit_reason"] == "graduation" and not x["seed_pool"] and x["exit_slot"] == 500_071

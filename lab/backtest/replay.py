@@ -590,6 +590,15 @@ def _graduation_exit(r, stream, q_frac):
             f = V.pool_sell(SEED_POOL, r.tokens)
             r.proceeds = f.trader_quote if f else 0
             r.hist_mid_exit = _price(SEED_POOL)
+        if WINDOW_END is not None and r.exit_slot >= WINDOW_END:
+            # The sale falls at or after the window end: not decided there (as PositionSim.end). The
+            # position closes on the window's last slot; the pool has no state inside the window, so
+            # it is valued in the standard seed pool (flagged).
+            r.exit_reason, r.seed_pool = "window_end", True
+            r.exit_decision_slot = r.exit_slot = WINDOW_END - 1
+            f = V.pool_sell(SEED_POOL, r.tokens)
+            r.proceeds, r.vault_capped = (f.trader_quote if f else 0), False
+            r.hist_mid_exit = _price(SEED_POOL)
         r.exit_attempts += 1
         return finish()
 

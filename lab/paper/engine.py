@@ -188,6 +188,8 @@ class Engine:
         # 1. open positions on tokens with events in this slot
         for (venue, key), legs in by_key.items():
             for o in list(self.open.get(key, ())):
+                if o.sim is None:  # graduated on our own buy: waits for its pool (grad_wait)
+                    continue
                 if o.opened < slot:
                     o.sim.on_slot(slot, legs)
                     self._settle_if_done(o, slot)
@@ -229,7 +231,7 @@ class Engine:
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
             for o in list(opens):
-                if key not in active and o.opened < slot:
+                if key not in active and o.opened < slot and o.sim is not None:
                     o.sim.advance(slot)
                     self._settle_if_done(o, slot)
         for pool in list(self.grad_wait):
@@ -582,10 +584,13 @@ class Engine:
 
         def on_complete(slot, finish):
             r = finish()  # the position's Result (finish closes the PositionSim)
-            if tok is None or tok.complete_slot is None or slot < tok.complete_slot:
+            # What the feed knows now: a completion or migration learned after the entry (live, a
+            # later segment) must not send the sale into the seed pool.
+            tok_now = self.feed.token(p.key) or tok
+            if tok_now is None or tok_now.complete_slot is None or slot < tok_now.complete_slot:
                 r.cf_graduation = True
             r.exit_reason = "graduation"
-            pool = tok.pool if tok else None
+            pool = tok_now.pool if tok_now else None
             info = self.feed.pool(pool) if pool else None
             if info is None or info.create_slot is None:
                 r.seed_pool, r.exit_decision_slot, r.exit_slot = True, slot, slot + 1
@@ -699,8 +704,9 @@ class Engine:
         self._quiet_entries(float("inf"))
         for key, opens in list(self.open.items()):
             for o in list(opens):
-                o.sim.end()
-                self._settle_if_done(o, self.last_slot)
+                if o.sim is not None:  # a position waiting for its pool is settled below
+                    o.sim.end()
+                    self._settle_if_done(o, self.last_slot)
         for pool, waiting in list(self.grad_wait.items()):
             for o in list(waiting):
                 r = o.r
