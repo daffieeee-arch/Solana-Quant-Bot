@@ -17,6 +17,7 @@ last digit; mean, trades and verdict are the same.
 Slots of the hold-out window (epochs 1047-1051) are never shown: a journal row that touches one is dropped
 and counted, as is any recorder usage of such a segment.
 """
+import bisect
 import calendar
 import glob
 import heapq
@@ -81,6 +82,27 @@ def token_names(keys):
         finally:
             con.close()
     return {k: _names.get(k, {}) for k in keys}
+
+
+def slot_clock(beats):
+    """slot -> unix seconds, interpolated between heartbeats (minute of event time, last slot seen then).
+    The heartbeat runs on block time, so this works for replay and live alike; resolution is about a minute."""
+    pts = sorted({(b["last_slot"], b["minute"] * 60) for b in beats if b["last_slot"] and not b["note"]})
+    if not pts:
+        return lambda slot: None
+    slots = [p[0] for p in pts]
+
+    def at(slot):
+        if slot is None:
+            return None
+        i = bisect.bisect_left(slots, slot)
+        if i == 0:
+            return pts[0][1]
+        if i >= len(pts):
+            return pts[-1][1]
+        (s0, t0), (s1, t1) = pts[i - 1], pts[i]
+        return int(t0 + (t1 - t0) * (slot - s0) / (s1 - s0)) if s1 > s0 else t0
+    return at
 
 
 def in_holdout(row):
@@ -255,19 +277,22 @@ def journal_view(path, now):
     totals = {"open": sum(n for (f, _), n in open_by.items() if not f.startswith("N2_")), **group_stats(traded_today)}
 
     last_slot = last["last_slot"] if last else None
+    clock = slot_clock(beats)
 
     def pos_row(p, x=None):
         s = signals.get((p["family"], p["variant"], p["key"], p["t"]), {})
         r = {"family": p["family"], "variant": p["variant"], "key": p["key"], "venue": s.get("venue"),
              "orientation": s.get("orientation"), "signal_slot": p["t"], "entry_slot": p["entry_slot"],
-             "cost_sol": (p["cost"] or 0) / 1e9 if p.get("cost") is not None else None}
+             "cost_sol": (p["cost"] or 0) / 1e9 if p.get("cost") is not None else None,
+             "entry_time": clock(p["entry_slot"])}
         if x is None:  # open: the engine journals no mark yet; shown when it does
             r["slots"] = (last_slot - p["entry_slot"]) if last_slot and p.get("entry_slot") else None
             mark = p.get("mark_proceeds")
             r.update(status="open", mark_sol=mark / 1e9 if mark is not None else None, mark_slot=p.get("mark_slot"),
                      pnl_sol=(mark - p["cost"]) / 1e9 if mark is not None and p.get("cost") else None)
         else:
-            r.update(status=x["exit_reason"], exit_slot=x["exit_slot"], pnl_sol=(x["pnl"] or 0) / 1e9, ret=x["ret"],
+            r.update(status=x["exit_reason"], exit_slot=x["exit_slot"], exit_time=clock(x["exit_slot"]),
+                     pnl_sol=(x["pnl"] or 0) / 1e9, ret=x["ret"],
                      failed=not x["tokens"],
                      slots=x["exit_slot"] - x["entry_slot"] if x["exit_slot"] and x["entry_slot"] else None)
         return r
@@ -275,8 +300,11 @@ def journal_view(path, now):
     closed = sorted((x for x in traded_today), key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
     pos = [pos_row(p) for p in positions if not p["family"].startswith("N2_")]
     pos += [pos_row(x, x) for x in closed[:POSITIONS_SHOWN]]
-    names = token_names([r["key"] for r in pos])
-    for r in pos:
+    shadow_today = sorted((x for (f, _), xs in by_group.items() if f.startswith("N2_") for x in xs),
+                          key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
+    shadow_rows = [pos_row(x, x) for x in shadow_today[:POSITIONS_SHOWN]]
+    names = token_names([r["key"] for r in pos + shadow_rows])
+    for r in pos + shadow_rows:
         r.update(names.get(r["key"], {}))
 
     traded = [x for x in exits if not x["family"].startswith("N2_")]
@@ -316,7 +344,38 @@ def journal_view(path, now):
 
     return {"journal": run, "test_run": run.startswith("parity"), "day": day, "is_today": day == today,
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
-            "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "journal_usage_rows": len(usage), "holdout_rows_dropped": j.dropped}
+            "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows, "journal_usage_rows": len(usage), "holdout_rows_dropped": j.dropped}
+
+
+def key_trades(key):
+    """The bot's entries and exits on one key (mint or pool), all days, with their time: chart markers."""
+    path = journal_path()
+    if not path:
+        return None
+    j = Journal(path)
+    try:
+        beats = j.rows("heartbeat")
+        exits = j.rows("exits", "key = ?", (key,))
+        opens = j.rows("positions", "key = ? AND status = 'open'", (key,))
+        signals = {(s["family"], s["variant"], s["t"]): s for s in j.rows("signals", "key = ?", (key,))}
+    finally:
+        j.close()
+    clock = slot_clock(beats)
+    out = []
+    for x in exits:
+        if not x["tokens"]:
+            continue
+        out.append({"family": x["family"], "variant": x["variant"], "side": "entry", "slot": x["entry_slot"],
+                    "time": clock(x["entry_slot"]), "sol": (x["cost"] or 0) / 1e9})
+        out.append({"family": x["family"], "variant": x["variant"], "side": "exit", "slot": x["exit_slot"],
+                    "time": clock(x["exit_slot"]), "ret": x["ret"], "reason": x["exit_reason"], "pnl_sol": (x["pnl"] or 0) / 1e9})
+    for p in opens:
+        out.append({"family": p["family"], "variant": p["variant"], "side": "entry", "slot": p["entry_slot"],
+                    "time": clock(p["entry_slot"]), "sol": (p["cost"] or 0) / 1e9, "open": True})
+    venue = next((s.get("venue") for s in signals.values()), None)
+    orient = next((s.get("orientation") for s in signals.values()), None)
+    return {"key": key, "venue": venue, "orientation": orient, **token_names([key]).get(key, {}),
+            "trades": sorted(out, key=lambda t: t["slot"] or 0)}
 
 
 def recorder_view(now):

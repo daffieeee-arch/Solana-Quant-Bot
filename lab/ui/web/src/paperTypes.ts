@@ -13,11 +13,11 @@ export interface PaperRange {
 export interface PaperPosition {
   family: string; variant: string; key: string; venue: string | null; orientation: string | null; entry_slot: number;
   cost_sol: number | null; status: string; pnl_sol: number | null; ret?: number | null; mark_sol?: number | null;
-  failed?: boolean; slots?: number | null; mint?: string | null; symbol?: string | null; name?: string | null;
+  failed?: boolean; slots?: number | null; entry_time?: number | null; exit_time?: number | null; mint?: string | null; symbol?: string | null; name?: string | null;
 }
 export interface PaperJournal {
   journal: string; test_run: boolean; day: string; is_today: boolean; status: PaperStatus; totals: PaperGroup;
-  variants: (PaperGroup & { family: string; variant: string })[]; positions: PaperPosition[];
+  variants: (PaperGroup & { family: string; variant: string })[]; positions: PaperPosition[]; shadow_positions: PaperPosition[];
   ranges: Record<"1d" | "7d" | "all", PaperRange>;
   ticker: { key: string; ret: number | null; failed: boolean; symbol?: string | null; mint?: string | null }[];
   stop_rule: { trades: number; days: number; min_trades: number; min_days_ci: number; mean_sol_per_trade: number | null; ci_lo: number | null; ci_hi: number | null; verdict: string };

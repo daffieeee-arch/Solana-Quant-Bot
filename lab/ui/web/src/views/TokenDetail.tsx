@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import ReactGridLayout, { useContainerWidth, verticalCompactor, type Layout } from "react-grid-layout";
 import { get, type TokenDetail as Detail } from "../api";
-import PriceChart, { eventMarkers } from "../components/PriceChart";
+import PriceChart, { eventMarkers, type ChartMarker } from "../components/PriceChart";
 import { Badge, Card, DexLink, Loading } from "../components/ui";
 import { go } from "../route";
 import { isoTime, label, n0, shortAddr, sol, unixClock } from "../format";
@@ -100,14 +100,28 @@ export default function TokenDetail({ mint }: { mint: string }) {
     return () => ac.abort();
   }, [mint]);
 
-  const markers = useMemo(() => (d ? eventMarkers(d.events, Math.floor(Date.parse(d.token.create_time + "Z") / 1000)) : []), [d]);
+  // The paper bot's own entries and exits on this token (journal), beside the market events.
+  const [bot, setBot] = useState<{ side: "entry" | "exit"; time: number | null; ret?: number | null; family: string }[]>([]);
+  useEffect(() => {
+    const ac = new AbortController();
+    setBot([]);
+    get<{ trades: typeof bot }>("paper_trades", { mint }, ac.signal).then((r) => setBot(r.trades)).catch(() => {});
+    return () => ac.abort();
+  }, [mint]);
+  const markers = useMemo(() => {
+    if (!d) return [];
+    const own = bot.filter((t) => t.time != null && !t.family.startsWith("N2_"));
+    const botMarks: ChartMarker[] = own.map((t) => (t.side === "entry" ? { time: t.time!, kind: "entry", text: own.length <= 12 ? "in" : "" }
+      : { time: t.time!, kind: "exit", win: (t.ret ?? 0) > 0, text: own.length <= 12 && t.ret != null ? `uit ${t.ret > 0 ? "+" : "−"}${Math.abs(t.ret * 100).toLocaleString("nl-NL", { maximumFractionDigits: 1 })}%` : "" }));
+    return [...eventMarkers(d.events, Math.floor(Date.parse(d.token.create_time + "Z") / 1000)), ...botMarks];
+  }, [d, bot]);
 
   const header = (
     <div className="grid grid-cols-1 gap-1.5">
       <button type="button" className="text-sm text-accent justify-self-start" onClick={() => go("tokens")}>← Tokens</button>
       {d && (
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h1 className="text-2xl font-semibold m-0 tracking-tight break-all">{label(d.token.symbol, 24) || "?"}</h1>
+          <h1 className="text-[22px] font-extrabold m-0 tracking-tight break-all">{label(d.token.symbol, 24) || "?"}</h1>
           <span className="text-muted break-all">{label(d.token.name, 60)}</span>
           <span className="flex gap-1.5 flex-wrap">
             {d.token.graduated && <Badge tone={d.token.grad_in_create_slot ? "warn" : "accent"}>{d.token.grad_in_create_slot ? "graduatie in aanmaak-slot" : "gegradueerd"}</Badge>}
@@ -124,7 +138,7 @@ export default function TokenDetail({ mint }: { mint: string }) {
   if (err) return <div className="grid grid-cols-1 gap-3">{header}<p className="text-warn">{err}</p></div>;
   if (!d) return <div className="grid grid-cols-1 gap-3">{header}<Loading what="Token" /></div>;
 
-  const chartTitle = "Marktwaarde per minuut (SOL, UTC) · ▲▼ trades ≥ 25 SOL";
+  const chartTitle = `Marktwaarde per minuut (SOL, UTC) · ▲▼ trades ≥ 25 SOL${bot.length ? ` · paper-bot: ${bot.filter((t) => t.side === "exit" && !t.family.startsWith("N2_")).length}× in en uit` : ""}`;
   const chartEmpty = d.candles.length === 0;
   const panels = {
     chart: (h: number) => chartEmpty ? <p className="p-3 text-muted text-sm">Geen trades in de ontwikkeldata.</p>

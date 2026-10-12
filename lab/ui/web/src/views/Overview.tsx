@@ -50,7 +50,7 @@ export default function Overview() {
   return (
     <div className="grid grid-cols-1 gap-7">
       <div className="grid grid-cols-1 gap-1">
-        <h1 className="text-2xl font-semibold m-0 tracking-tight">Overzicht</h1>
+        <h1 className="text-[22px] font-extrabold m-0 tracking-[-0.4px]">Overzicht</h1>
         <p className="text-muted m-0 text-sm">
           pump.fun en PumpSwap, ontwikkeldata epochs {String(cov[0]?.epoch)}–{String(cov[cov.length - 1]?.epoch)} ·{" "}
           {isoTime(cov[0]?.first_time as string)} tot {isoTime(cov[cov.length - 1]?.last_time as string)} UTC. De hold-out blijft dicht.

@@ -2,11 +2,12 @@ import { AnimatePresence, motion } from "motion/react";
 import { useState, type ReactNode } from "react";
 import { Badge, DexLink, Loading } from "../components/ui";
 import { Button } from "../components/Button";
+import PaperChart from "../components/PaperChart";
 import { Change, Num } from "../components/Num";
 import { Segmented } from "../components/Segmented";
 import { usePaper } from "../live";
 import { cn } from "../lib/utils";
-import { label, n0, n1, shortAddr, unixTime } from "../format";
+import { label, n0, n1, shortAddr, unixClock, unixTime } from "../format";
 import type { PaperJournal, PaperPosition, PaperRecorder } from "../paperTypes";
 
 // Paper tab (design v1, "Paper — iPhone"): the paper engine's journal and the recorder's meter, read-only
@@ -149,13 +150,73 @@ function PositionRow({ p, lastSlot }: { p: PaperPosition; lastSlot: number | nul
   );
 }
 
+const dur = (p: PaperPosition) => {
+  const secs = p.entry_time != null && p.exit_time != null ? p.exit_time - p.entry_time : p.slots != null ? p.slots * 0.4 : null;
+  if (secs == null) return "–";
+  return secs < 90 ? `${Math.max(1, Math.round(secs))} s` : secs < 5400 ? `${Math.round(secs / 60)} min` : `${n1(secs / 3600)} u`;
+};
+const retOf = (p: PaperPosition) => (p.status === "open" ? (p.mark_sol != null && p.cost_sol ? (p.mark_sol - p.cost_sol) / p.cost_sol : null) : p.ret ?? null);
+const pctTxt = (v: number | null) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${n1(Math.abs(v * 100))}%`);
+const FILTERS = [{ value: "all", label: "Alles" }, { value: "open", label: "Open" }, { value: "shadow", label: "N2-schaduw" }] as const;
+type Filter = (typeof FILTERS)[number]["value"];
+
+function PositionsTable({ rows, sel, onSel }: { rows: PaperPosition[]; sel: string | null; onSel: (k: string) => void }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[860px] border-collapse text-[13px]">
+        <thead>
+          <tr className="text-muted text-left">
+            {["Token", "Strategie", "Instap", "Grootte", "Duur", "P&L", "Netto", "Status"].map((h, i) => (
+              <th key={h} className={cn("px-2 py-2.5 font-semibold border-b border-line", i >= 3 && i <= 6 && "text-right")}>{h}</th>
+            ))}
+            <th className="px-2 py-2.5 border-b border-line"><span className="sr-only">Link</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => {
+            const ret = retOf(p), sym = label(p.symbol, 16) || shortAddr(p.key), on = sel === p.key;
+            return (
+              <tr key={`${p.family}|${p.key}|${p.entry_slot}`} onClick={() => onSel(p.key)} aria-selected={on}
+                className={cn("border-b border-[#161D2A] cursor-pointer hover:bg-surface-2/50", on && "bg-accent-soft")}>
+                <td className="px-2 py-2.5">
+                  <span className="inline-flex items-center gap-2.5">
+                    <span className="w-[26px] h-[26px] rounded-full inline-flex items-center justify-center text-[10px] font-extrabold text-on-accent" style={{ background: avatar(p.key) }} aria-hidden="true">{(sym || p.key).slice(0, 2).toUpperCase()}</span>
+                    <span className="font-bold" title={label(p.name, 40) || p.key}>{sym}</span>
+                  </span>
+                </td>
+                <td className="px-2 py-2.5 text-fg-2">{p.family} {p.variant}</td>
+                <td className="px-2 py-2.5 num text-fg-2">{p.entry_time != null ? unixClock(p.entry_time).slice(0, 5) : "–"}</td>
+                <td className="px-2 py-2.5 num text-right">{p.cost_sol == null ? "–" : p.cost_sol.toLocaleString("nl-NL", { minimumFractionDigits: 2 })}</td>
+                <td className="px-2 py-2.5 num text-right text-fg-2">{dur(p)}</td>
+                <td className={cn("px-2 py-2.5 num text-right", tone(ret))}>{p.failed ? "mislukt" : pctTxt(ret)}</td>
+                <td className={cn("px-2 py-2.5 num text-right", tone(p.pnl_sol))}>{p.pnl_sol == null ? "–" : `${p.pnl_sol > 0 ? "+" : ""}${p.pnl_sol.toLocaleString("nl-NL", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`}</td>
+                <td className="px-2 py-2.5">
+                  <Badge tone={p.status === "open" ? "accent" : p.status === "take_profit" ? "buy" : p.status === "stop_loss" || p.failed ? "sell" : "muted"}>
+                    {p.failed ? "instap mislukt" : EXIT[p.status] ?? p.status}
+                  </Badge>
+                </td>
+                <td className="px-2 py-2.5"><DexLink mint={p.mint ?? p.key}>Dex ↗</DexLink></td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function Paper() {
   const { data, error } = usePaper();
   const [shown, setShown] = useState(20);
+  const [open, setOpen] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(null);
+  const [filter, setFilter] = useState<Filter>("all");
   if (error && !data) return <p className="text-warn">{error}</p>;
   if (!data) return <Loading what="Paper" />;
   const j = data.journal, r = data.recorder;
   const nOpen = j?.positions.filter((p) => p.status === "open").length ?? 0;
+  const chartKey = sel ?? j?.positions[0]?.key ?? null;
+  const tableRows = !j ? [] : filter === "shadow" ? j.shadow_positions : filter === "open" ? j.positions.filter((p) => p.status === "open") : j.positions;
 
   return (
     <div className="grid gap-3.5">
@@ -165,14 +226,43 @@ export default function Paper() {
       </div>
 
       {!j ? <p className="text-muted">Nog geen paper-journaal.</p> : (
-        <div className="grid gap-3.5 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
-          <div className="grid gap-3.5 min-w-0">
+        <>
+          {/* Desktop dashboard: chart of the selected position beside the hero and cards, the positions table below. */}
+          <div className="hidden lg:flex flex-wrap gap-[18px]">
+            <section className="flex-[999_1_640px] min-w-0 rounded-[18px] bg-surface-alt border border-line p-[18px]">
+              {chartKey ? <PaperChart k={chartKey} height={400} /> : <p className="text-muted m-0">Nog geen posities.</p>}
+            </section>
+            <aside className="flex-[1_1_340px] min-w-0 grid gap-3.5 content-start">
+              <Hero j={j} />
+              <StopCard j={j} />
+              {r && <TritonCard r={r} />}
+            </aside>
+          </div>
+          <section className="hidden lg:grid rounded-[18px] bg-surface-alt border border-line p-[18px] gap-3">
+            <div className="flex flex-wrap gap-2.5 items-center">
+              <h2 className="m-0 text-base font-extrabold">Posities</h2>
+              <span className="text-xs text-muted">{nOpen} open · {j.positions.length - nOpen} gesloten {j.is_today ? "vandaag" : j.day}</span>
+              <div className="ml-auto flex gap-1.5">
+                {FILTERS.map((f) => (
+                  <button key={f.value} type="button" onClick={() => setFilter(f.value)} aria-pressed={filter === f.value}
+                    className={cn("min-h-9 px-3 rounded-lg border text-xs", filter === f.value ? "border-accent-line bg-accent-soft text-accent-fg font-bold" : "border-track text-[#A3ADBF] font-semibold")}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {tableRows.length ? <PositionsTable rows={tableRows.slice(0, shown * 2)} sel={chartKey} onSel={setSel} />
+              : <p className="text-sm text-muted m-0">{filter === "shadow" ? "Geen N2-schaduw in dit journaal." : "Geen posities."}</p>}
+            {tableRows.length > shown * 2 && <Button type="button" onClick={() => setShown(shown + 25)} className="justify-self-start">Toon meer ({tableRows.length - shown * 2} over)</Button>}
+          </section>
+
+          {/* Phone: hero, two cards, positions as a list; a tap opens the position's chart. */}
+          <div className="grid gap-3.5 lg:hidden">
             <Hero j={j} />
-            <div className="grid grid-cols-2 gap-2.5 lg:hidden">
+            <div className="grid grid-cols-2 gap-2.5">
               <StopCard j={j} />
               {r && <TritonCard r={r} />}
             </div>
-
             <section className="grid gap-2 min-w-0">
               <div className="flex justify-between items-baseline">
                 <h2 className="m-0 text-base font-extrabold">Posities</h2>
@@ -181,11 +271,22 @@ export default function Paper() {
               {!j.positions.length ? <p className="text-muted text-sm m-0">Geen posities.</p> : (
                 <div className="grid gap-2">
                   <AnimatePresence initial={false}>
-                    {j.positions.slice(0, shown).map((p) => (
-                      <motion.div key={`${p.family}|${p.key}|${p.entry_slot}`} layout initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-                        <PositionRow p={p} lastSlot={j.status.last_slot} />
-                      </motion.div>
-                    ))}
+                    {j.positions.slice(0, shown).map((p) => {
+                      const id = `${p.family}|${p.key}|${p.entry_slot}`;
+                      return (
+                        <motion.div key={id} layout initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                          {/* A div, not a button: the row holds the DexScreener link. */}
+                          <div role="button" tabIndex={0} className="cursor-pointer" aria-expanded={open === id}
+                            onClick={() => setOpen(open === id ? null : id)}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(open === id ? null : id); } }}>
+                            <PositionRow p={p} lastSlot={j.status.last_slot} />
+                          </div>
+                          {open === id && (
+                            <div className="mt-2 rounded-[14px] bg-surface-alt border border-line p-3"><PaperChart k={p.key} height={240} /></div>
+                          )}
+                        </motion.div>
+                      );
+                    })}
                   </AnimatePresence>
                 </div>
               )}
@@ -197,14 +298,10 @@ export default function Paper() {
             </section>
           </div>
 
-          <aside className="grid gap-3.5 min-w-0">
-            <div className="hidden lg:grid gap-3.5">
-              <StopCard j={j} />
-              {r && <TritonCard r={r} />}
-            </div>
+          <div className="grid gap-3.5 lg:grid-cols-3 lg:items-start">
             <Details j={j} r={r} now={data.now_unix} />
-          </aside>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

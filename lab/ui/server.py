@@ -43,6 +43,7 @@ SECURITY_HEADERS = {
 MAX_ROWS = 2000
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("font/woff2", ".woff2")
+PAPER_CHART_PAD = 40_000  # slots (~3 h) of price around a paper position's trades
 MIN_TRADES = 200  # stop rule: below this a group is reported, not ranked
 HOLDOUT_START = labstore.HOLDOUT_START
 
@@ -382,6 +383,55 @@ def api_paper(q):
     return paper.view()
 
 
+def api_paper_chart(q):
+    """One paper position's chart: the bot's entries and exits on that key (journal) and the token's 1-minute
+    candles from the development data when it has them (a live token newer than the store has none yet)."""
+    key = (q.get("key", [""])[0] or "").strip()
+    if not (32 <= len(key) <= 44 and key.isalnum()):
+        raise ValueError("unknown key")
+    t = paper.key_trades(key)
+    if t is None or not t["trades"]:
+        raise LookupError("no paper trades on this key")
+    mint = t.get("mint") or key
+    out = {**t, "token": None, "candles": [], "events": [], "unit": "mcap"}
+    try:
+        out.update(api_candles({"mint": [mint]}))
+    except LookupError:
+        pass
+    slots = [x["slot"] for x in t["trades"] if x["slot"]]
+    if not out["candles"] and t.get("venue") == "pool" and slots and max(slots) < HOLDOUT_START:
+        # A token without pump.fun data (most reversed pools): price candles straight from the store's pool
+        # trades, three hours around the bot's trades (slot-filtered, so a zone-map scan, not the whole table).
+        lo, hi = max(0, min(slots) - PAPER_CHART_PAD), min(HOLDOUT_START, max(slots) + PAPER_CHART_PAD)
+        con = connect(with_dev=True)
+        out["candles"] = rows(con, """
+            SELECT 'pool' AS venue, epoch(time_bucket(INTERVAL 1 minute, st.ts))::BIGINT AS time,
+                   arg_min(price, (p.slot, p.tx_index, p.outer_ix, p.inner_ix)) AS open, max(price) AS high, min(price) AS low,
+                   arg_max(price, (p.slot, p.tx_index, p.outer_ix, p.inner_ix)) AS "close", count(*) AS trades,
+                   sum(p.quote) / 1e9 AS volume_quote, coalesce(sum(p.quote) FILTER (WHERE p.kind = 'buy'), 0) / 1e9 AS buy_quote
+            FROM pool_trades p JOIN slot_time st USING (slot)
+            WHERE p.pool = ? AND p.slot >= ? AND p.slot < ? AND p.price > 0 GROUP BY 2 ORDER BY 2""", [key, lo, hi])
+        out["unit"] = "price"
+    return out
+
+
+def api_paper_trades(q):
+    """The paper bot's entries and exits on one token, for its token page: the mint itself (curve trades) and
+    every pool of that mint in the development store (pool trades)."""
+    mint = (q.get("mint", [""])[0] or "").strip()
+    if not (32 <= len(mint) <= 44 and mint.isalnum()):
+        raise ValueError("unknown mint")
+    if not paper.available():
+        return {"trades": []}
+    con = connect(with_dev=True)
+    keys = [mint] + [r[0] for r in con.execute("SELECT pool FROM dev.pools WHERE mint = ?", [mint]).fetchall()]
+    trades = []
+    for k in keys:
+        t = paper.key_trades(k)
+        trades += (t or {}).get("trades", [])
+    return {"trades": sorted(trades, key=lambda x: x["slot"] or 0)}
+
+
 def api_strategy_curve(q):
     """Equity curves of one family/variant (all sizes) and its N2 shadow (thinned to ~400 points at build time).
     Run keys (segment, farm, ...) narrow it to one group; a key left out of the query is not filtered, and a
@@ -410,7 +460,8 @@ ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": a
           "/api/token": api_token, "/api/ticker": api_ticker, "/api/strategies": api_strategies,
           "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases,
           "/api/paper": api_paper,
-          "/api/strategy_overview": api_strategy_overview}
+          "/api/strategy_overview": api_strategy_overview, "/api/paper_chart": api_paper_chart,
+          "/api/paper_trades": api_paper_trades}
 
 
 class Handler(BaseHTTPRequestHandler):

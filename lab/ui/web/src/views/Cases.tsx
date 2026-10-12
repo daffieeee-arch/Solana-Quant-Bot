@@ -83,7 +83,7 @@ export default function Cases({ period }: { period?: string }) {
   return (
     <div className="grid grid-cols-1 gap-5">
       <div className="grid grid-cols-1 gap-1">
-        <h1 className="text-2xl font-semibold m-0 tracking-tight">Casussen</h1>
+        <h1 className="text-[22px] font-extrabold m-0 tracking-[-0.4px]">Casussen</h1>
         <p className="text-muted text-sm m-0 max-w-prose">
           Tokens die opvielen in de eigen data (Old Faithful, ontwikkelperiode): per dag de stijgers en dumpers, en over 7 dagen de
           blijvers en instorters. Labels zijn waarschijnlijkheden, geen oordeel. Tik op een token voor de koers en de tijdlijn.

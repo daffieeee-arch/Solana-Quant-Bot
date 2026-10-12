@@ -68,7 +68,7 @@ export default function Tokens() {
   return (
     <div className="grid grid-cols-1 gap-4">
       <div className="grid grid-cols-1 gap-1">
-        <h1 className="text-2xl font-semibold m-0 tracking-tight">Tokens</h1>
+        <h1 className="text-[22px] font-extrabold m-0 tracking-[-0.4px]">Tokens</h1>
         <p className="text-muted text-sm m-0">Zoek op naam, symbool of mint. Tik op een token voor de grafiek en de trades.</p>
       </div>
       <div className="flex flex-wrap gap-2 items-center">

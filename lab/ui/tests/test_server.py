@@ -164,6 +164,25 @@ class Api(unittest.TestCase):
         self.assertTrue(all(not (HOLDOUT_START <= r["entry_slot"] < 454_464_000) for r in p["journal"]["positions"]))
         self.assertIn(p["journal"]["stop_rule"]["verdict"], ("GO", "ADJUST", "STOP", "too few trades"))
 
+    def test_paper_chart_markers_and_candles(self):
+        p = self.get("/api/paper")
+        if not p["journal"] or not p["journal"]["positions"]:
+            self.skipTest("no paper journal")
+        pos = p["journal"]["positions"]
+        c = self.get(f"/api/paper_chart?key={pos[0]['key']}")
+        self.assertTrue(c["trades"])
+        self.assertTrue(all(t["slot"] < HOLDOUT_START and t["time"] for t in c["trades"]))
+        self.assertTrue(all(x["time"] for x in c["candles"]))
+        rev = next((x for x in pos if x.get("orientation") == "reversed"), None)
+        if rev:  # no pump.fun history: price candles from the store's pool trades
+            r = self.get(f"/api/paper_chart?key={rev['key']}")
+            self.assertEqual(r["unit"], "price")
+        if c.get("mint"):
+            t = self.get(f"/api/paper_trades?mint={c['mint']}")["trades"]
+            self.assertGreaterEqual(len(t), len([x for x in c["trades"]]))
+        self.assertEqual(self.req("/api/paper_chart?key=../../x")[0], 404)
+        self.assertEqual(self.req("/api/paper_trades?mint=x%27%20OR%201%3D1")[0], 404)
+
     def test_bad_input(self):
         self.assertEqual(self.req("/api/token?mint=../../etc/passwd")[0], 404)
         self.assertEqual(self.req("/api/nope")[0], 404)
