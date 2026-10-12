@@ -102,3 +102,25 @@ def test_off_by_default_and_the_url_is_never_printed(tmp_path):
     with pytest.raises(RuntimeError) as e:
         R.rpc_accounts("https://secret-token.example.invalid/abc", ["x"], timeout=1)
     assert "secret-token" not in str(e.value)
+
+
+def test_requests_carry_an_explicit_user_agent(monkeypatch):
+    seen = {}
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b'{"result": {"value": [null]}}'
+
+    def fake_urlopen(req, timeout):
+        seen["ua"] = req.get_header("User-agent")
+        return Resp()
+
+    monkeypatch.setattr(R.urllib.request, "urlopen", fake_urlopen)
+    assert R.rpc_accounts("https://example.invalid", ["x"]) == {"x": None}
+    assert seen["ua"] == "solana-lab/0.1"

@@ -34,6 +34,9 @@ WSOL = "So11111111111111111111111111111111111111112"
 METAPLEX = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
 TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
 TOKEN_METADATA_EXT = 19  # spl-token-2022 ExtensionType::TokenMetadata
+# An explicit User-Agent: Old Faithful answered 403 to urllib's default one, so a provider's UA
+# filter would otherwise fail quietly.
+USER_AGENT = "solana-lab/0.1"
 B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 SCHEMA = pa.schema([("slot", pa.uint64()), ("tx_index", pa.uint64()), ("signature", pa.string()), ("outer_ix", pa.uint64()),
                     ("inner_ix", pa.uint64()), ("source", pa.string()), ("mint", pa.string()), ("name", pa.string()),
@@ -138,7 +141,7 @@ def rpc_accounts(url, keys, timeout=20):
     """getMultipleAccounts (base64): {key: (owner, data bytes) or None}. Errors never contain the URL."""
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "getMultipleAccounts",
                        "params": [keys, {"encoding": "base64", "commitment": "confirmed"}]}).encode()
-    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             res = json.loads(r.read())
