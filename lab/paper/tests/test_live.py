@@ -127,6 +127,25 @@ def test_new_pools_are_classified_like_the_store(setup):
         assert feed.pools.get(p) == snapshot[p], p
 
 
+def test_pools_from_the_recorders_pool_account_streams(tmp_path):
+    """A pool the recorder only saw on its pool account stream (pool_creations) is known to
+    LiveFeed with the CreatePoolEvent's classification: reversed when the base is WSOL."""
+    import pyarrow.parquet as pq
+
+    from paper.live import WSOL
+
+    d = tmp_path / "segments" / "000000000"
+    (d / "pool_creations").mkdir(parents=True)
+    rows = {"slot": [101, 105], "pool": ["P1", "P1"], "base_mint": [WSOL, WSOL], "quote_mint": ["M1", "M1"],
+            "coin_creator": ["C1", "C1"], "is_mayhem_mode": [False, False]}
+    pq.write_table(pa.table(rows), str(d / "pool_creations" / "part-00000.parquet"))
+    (d / "_segment.json").write_text(json.dumps({"seq": 0, "first_slot": 100, "last_slot": 110, "complete": True}))
+    feed = LiveFeed(str(tmp_path), follow=False, h24=1000, memory="200MB")
+    assert list(feed.events()) == []
+    p = feed.pools["P1"]
+    assert (p.mint, p.orientation, p.quote_class, p.create_slot) == ("M1", "reversed", "reversed", 101)
+
+
 def test_farmer_flags_window():
     f = FarmerFlags()
     f.add("P", "W", 100, True, 10)

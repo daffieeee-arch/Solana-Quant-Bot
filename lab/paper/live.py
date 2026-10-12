@@ -238,12 +238,18 @@ class LiveFeed(Feed):
                 t = self.tokens.get(mint)
                 if t and t.pool is None:
                     self.tokens[mint] = TokenInfo(t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint, t.complete_slot, pool)
-        cp = c.src("pump_amm/CreatePoolEvent")
-        if cp:
-            rows = self.con.execute(f"""
+        # New pools: from their CreatePoolEvent, else from the recorder's pool account streams
+        # (pool_creations, pool_accounts: the same mints and coin creator, slot = first seen).
+        for table, sql in (("pump_amm/CreatePoolEvent", """
               SELECT pool, base_mint, quote_mint, slot, coin_creator, COALESCE(is_mayhem_mode, false)
-              FROM {cp} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1""").fetchall()
-            for pool, base, quote, slot, creator, mayhem in rows:
+              FROM {src} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1"""),
+                           ("pool_creations", None), ("pool_accounts", None)):
+            src = c.src(table)
+            if not src:
+                continue
+            sql = sql or """SELECT pool, any_value(base_mint), any_value(quote_mint), min(slot), any_value(coin_creator),
+                                   bool_or(COALESCE(is_mayhem_mode, false)) FROM {src} GROUP BY pool"""
+            for pool, base, quote, slot, creator, mayhem in self.con.execute(sql.format(src=src)).fetchall():
                 if pool in self.pool_class:
                     continue
                 cls, orient = (("reversed", "reversed") if base == WSOL else ("sol", "normal") if quote == WSOL
