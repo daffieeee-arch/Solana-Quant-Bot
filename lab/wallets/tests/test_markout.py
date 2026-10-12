@@ -44,6 +44,10 @@ def _store(path):
         ("buy", "P", A, 5, 0, 0, 10**12, 100 * SOL, 100 * SOL, 0, 5 * 10**10, 5 * SOL, 5 * SOL, 20, 5, 0, 0),      # post b 9.5e11, e 105
         ("buy", "P", A + 3, 1, 0, 0, 95 * 10**10, 105 * SOL, 105 * SOL, 0, 5 * 10**10, 6 * SOL, 6 * SOL, 20, 5, 0, 0),  # post b 9e11, e 111
         ("sell", "P", A + 20, 1, 0, 0, 9 * 10**11, 111 * SOL, 111 * SOL, 0, 2 * 10**11, -25 * SOL, 25 * SOL, 20, 5, 0, 0),  # post b 1.1e12, e 86
+        # a boost at A + 30 adds 10 SOL of virtual quote (post b 1.1e12, e 96, virt 10); the LP withdraw at A + 40 (1/11 of the tokens, 7.818 SOL)
+        # must take that virt: post b 1.0e12, e = vault 86 + virt 10 - 7.818 = 88.182 (with virt from the last trade it would be 78.182)
+        ("boost", "P", A + 30, 1, 0, 0, 11 * 10**11, 86 * SOL, 86 * SOL, 10 * SOL, 0, 10 * SOL, None, None, None, None, None),
+        ("withdraw", "P", A + 40, 1, 0, 0, 11 * 10**11, 86 * SOL, 86 * SOL, None, 10**11, None, 7_818_000_000, None, None, None, None),
         # reversed pool R (base WSOL, quote token): a token buy is a pool sell of WSOL: b + base, e + e_delta (negative)
         ("sell", "R", B, 2, 0, 0, 100 * SOL, 10**15, 10**15, 0, 10 * SOL, -9 * 10**13, 9 * 10**13, 25, 5, 0, 0),        # post b 110, e 9.1e14
         ("sell", "R", B + 3, 1, 0, 0, 110 * SOL, 91 * 10**13, 91 * 10**13, 0, 10 * SOL, -8 * 10**13, 8 * 10**13, 25, 5, 0, 0),  # post b 120, e 8.3e14
@@ -102,8 +106,11 @@ def test_markouts_on_the_mini_store(tmp_path):
     assert m1["net"] is not None and 0 < m1["net"] < m1["gross"] and not m1["cut"]
     m10 = next(r for r in R if r["pool"] == "P" and r["family"] == "F7" and r["d"] == 1 and r["h"] == "10s")
     assert m10["gross"] < 0  # the sell in A + 20 pushed the price below the entry
+    m1m = next(r for r in R if r["pool"] == "P" and r["family"] == "F7" and r["d"] == 1 and r["h"] == "1m")
+    assert abs(m1m["mid"] - 88_182_000_000 / 1.0e12) < 1e-15  # after the boost and the LP withdraw: virt carried over the boost
+    assert m1m["net"] is not None and m1m["net"] > -0.99  # the pool can still pay (fee tiers from the last trade)
     m6 = next(r for r in R if r["pool"] == "P" and r["family"] == "F7" and r["d"] == 1 and r["h"] == "6h")
-    assert m6["cut"] and abs(m6["mid"] - m10["mid"]) < 1e-18  # past the venue's last leg: last known state, flagged
+    assert m6["cut"] and abs(m6["mid"] - m1m["mid"]) < 1e-18  # past the venue's last leg: last known state, flagged
     # reversed pool: mid = b / e; the token buys (pool sells of WSOL) raised it, so the long-token markout is positive
     r0 = next(r for r in R if r["pool"] == "R" and r["d"] == 1 and r["h"] == "")
     assert abs(r0["mid"] - 110 * SOL / 9.1e14) < 1e-18 and r0["impact"] is not None and r0["impact"] > 0

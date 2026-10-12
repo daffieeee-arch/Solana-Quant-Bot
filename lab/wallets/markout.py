@@ -129,7 +129,8 @@ def pool_legs_sql(lo, hi):
     """Post-states of the pool legs of the signals' pools (and migration pools) in [lo, hi], per leg, following
     streams.pool_leg: buy / sell from the row (b -/+ base, e + e_delta, virt = vq, the row's fee tiers); boost
     (b - base, e + e_delta, virt = vq) and withdraw / deposit (vault + virt -/+ quote_user, b -/+ base) take the
-    fee tiers (and, for the LP legs, the virtual quote) from the last trade at or before them."""
+    fee tiers from the last buy / sell at or before them, and the LP legs their virtual quote from the last buy,
+    sell or boost (pool_leg carries ctx["virt"] over a boost too)."""
     return f"""
       WITH keys AS (SELECT DISTINCT key FROM sig WHERE venue = 'pool' UNION SELECT pool FROM grad_pool),
       raw AS (
@@ -141,17 +142,20 @@ def pool_legs_sql(lo, hi):
                COALESCE(vq, 0) AS virt, COALESCE(lp_bps, 0) AS lp_bps, COALESCE(protocol_bps, 0) AS protocol_bps,
                COALESCE(creator_bps, 0) AS creator_bps, COALESCE(cashback_bps, 0) AS cashback_bps
         FROM raw WHERE kind IN ('buy', 'sell')),
+      virts AS (  -- the virtual quote after every buy, sell or boost (the LP legs take the last one)
+        SELECT key, slot, tx_index, COALESCE(vq, 0) AS virt FROM raw WHERE kind IN ('buy', 'sell', 'boost')),
       others AS (
         SELECT o.key, o.slot, o.tx_index, o.outer_ix, o.inner_ix,
                CASE WHEN o.kind = 'deposit' THEN o.b + o.base ELSE o.b - o.base END AS b,
                CASE WHEN o.kind = 'boost' THEN o.e + o.e_delta
-                    WHEN o.kind = 'withdraw' THEN o.vault + COALESCE(t.virt, 0) - o.quote_user
-                    ELSE o.vault + COALESCE(t.virt, 0) + o.quote_user END AS e,
-               CASE WHEN o.kind = 'boost' THEN COALESCE(o.vq, 0) ELSE COALESCE(t.virt, 0) END AS virt,
+                    WHEN o.kind = 'withdraw' THEN o.vault + COALESCE(v.virt, 0) - o.quote_user
+                    ELSE o.vault + COALESCE(v.virt, 0) + o.quote_user END AS e,
+               CASE WHEN o.kind = 'boost' THEN COALESCE(o.vq, 0) ELSE COALESCE(v.virt, 0) END AS virt,
                COALESCE(t.lp_bps, 0) AS lp_bps, COALESCE(t.protocol_bps, 0) AS protocol_bps, COALESCE(t.creator_bps, 0) AS creator_bps,
                COALESCE(t.cashback_bps, 0) AS cashback_bps
         FROM (SELECT * FROM raw WHERE kind IN ('boost', 'withdraw', 'deposit')) o
-        ASOF LEFT JOIN trades t ON t.key = o.key AND o.slot >= t.slot)
+        ASOF LEFT JOIN trades t ON t.key = o.key AND o.slot >= t.slot
+        ASOF LEFT JOIN virts v ON v.key = o.key AND o.slot >= v.slot)
       SELECT * FROM trades UNION ALL SELECT * FROM others"""
 
 
