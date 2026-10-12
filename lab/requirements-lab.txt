@@ -1,0 +1,13 @@
+# The lab Python toolchain (lab-py: CPython 3.13, built with uv), fully pinned including transitive
+# packages so pip-audit can check it with --no-deps. Keep in step with the toolchain:
+#   "$LAB_PY" -m pip list --format=freeze   (or: ls lab-py/lib/python3.13/site-packages/*.dist-info)
+# Checked weekly and on change by .github/workflows/dependency-audit.yml.
+duckdb==1.5.5
+numpy==2.5.3
+pyarrow==26.0.0
+pyyaml==6.0.3
+pytest==9.1.1
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.6.0
+pygments==2.21.0

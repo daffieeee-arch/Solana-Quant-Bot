@@ -96,6 +96,79 @@ const workflows = {
       },
     },
   },
+  // Owner-approved 2026-10-12: weekly and on-change RustSec, PyPI and npm advisory audit of lab/.
+  // Read-only; fail rule and the ignore list with reasons live in lab/security/.
+  '.github/workflows/dependency-audit.yml': {
+    name: 'Dependency audit',
+    on: {
+      pull_request: {
+        branches: ['main'],
+        paths: [
+          '.github/workflows/dependency-audit.yml',
+          'lab/security/**',
+          'lab/extractor/Cargo.lock',
+          'lab/extractor/Cargo.toml',
+          'lab/recorder/Cargo.lock',
+          'lab/recorder/Cargo.toml',
+          'lab/requirements-lab.txt',
+          'lab/ui/web/package.json',
+          'lab/ui/web/package-lock.json',
+        ],
+      },
+      schedule: [{ cron: '29 6 * * 1' }],
+      workflow_dispatch: {},
+    },
+    permissions: { contents: 'read' },
+    concurrency: { group: 'dependency-audit-${{ github.ref }}', 'cancel-in-progress': true },
+    jobs: {
+      cargo: {
+        name: 'dependency-audit (cargo)',
+        'runs-on': 'ubuntu-24.04',
+        'timeout-minutes': 30,
+        env: { RUSTUP_TOOLCHAIN: '1.97.1' },
+        steps: [
+          checkout,
+          { name: 'Install pinned Rust toolchain', run: 'rustup toolchain install 1.97.1 --profile minimal' },
+          { name: 'Install cargo-audit', run: 'cargo install cargo-audit --version 0.22.2 --locked' },
+          {
+            name: 'Audit Rust lockfiles against RustSec',
+            run: 'python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock --optional lab/recorder/Cargo.lock',
+          },
+        ],
+      },
+      pip: {
+        name: 'dependency-audit (pip)',
+        'runs-on': 'ubuntu-24.04',
+        'timeout-minutes': 10,
+        steps: [
+          checkout,
+          { name: 'Test the audit script', run: 'python3 lab/security/tests/test_dependency_audit.py' },
+          {
+            name: 'Install pip-audit',
+            run: 'python3 -m venv "$RUNNER_TEMP/pip-audit" && "$RUNNER_TEMP/pip-audit/bin/pip" install --disable-pip-version-check pip-audit==2.10.1',
+          },
+          {
+            name: 'Audit the lab Python toolchain',
+            run: 'python3 lab/security/dependency_audit.py pip lab/requirements-lab.txt --tool "$RUNNER_TEMP/pip-audit/bin/pip-audit"',
+          },
+        ],
+      },
+      npm: {
+        name: 'dependency-audit (npm)',
+        'runs-on': 'ubuntu-24.04',
+        'timeout-minutes': 10,
+        steps: [
+          checkout,
+          {
+            name: 'Set up Node.js',
+            uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+            with: { 'node-version': '22.23.2' },
+          },
+          { name: 'Audit lab/ui/web production dependencies', run: 'python3 lab/security/dependency_audit.py npm lab/ui/web' },
+        ],
+      },
+    },
+  },
 };
 
 export const SECURITY_WORKFLOW_PATHS = Object.freeze(Object.keys(workflows));
