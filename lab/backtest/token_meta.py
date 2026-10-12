@@ -8,7 +8,8 @@ Sources, free, from the data we already extract:
                    transaction that creates its pool.
 Reversed-pool tokens are not pump.fun mints (0 of 54,027 in the dev store), so their names come
 only from the second source, when the mint was created inside the data and in such a transaction;
-otherwise from a getAccountInfo of the metadata account (Triton RPC, off by default: owner's OK).
+otherwise through the RPC route (backtest.token_meta_rpc: Triton getMultipleAccounts, off by default,
+owner's OK), whose rows under <recorder>/rpc/token_meta/ are read with --recorder.
 
 One row per mint: the first record by slot, pump_create before the others at the same slot.
 
@@ -25,10 +26,13 @@ OUT = "/home/chupa/Solana-project/data-old-faithful-one/lab/token_meta/token_met
 COLS = "mint, name, symbol, uri, source, slot"
 
 
-def _sources(con, chunks, recorder=None):
+def _sources(chunks, recorder=None):
     """SQL selects (mint, name, symbol, uri, source, slot) over the chunks and recorder segments."""
     out = []
-    places = [chunks] + ([[(0, 2**63 - 1, d) for d in sorted(glob.glob(os.path.join(recorder, "segments", "*")))]] if recorder else [])
+    places = [chunks]
+    if recorder:  # the recorder's segments, and the RPC route's output (backtest.token_meta_rpc)
+        places.append([(0, 2**63 - 1, d) for d in sorted(glob.glob(os.path.join(recorder, "segments", "*")))]
+                      + [(0, 2**63 - 1, os.path.join(recorder, "rpc"))])
     for chs in places:
         if data.files("pump/CreateEvent", chs):
             out.append(f"SELECT mint, name, symbol, uri, 'pump_create' AS source, slot FROM {data.parquet('pump/CreateEvent', chs)} "
@@ -42,7 +46,7 @@ def build(chunks=None, recorder=None, out=OUT, memory="1GB"):
     """Write token_meta.parquet; returns {source: mints}."""
     con = data.connect(threads=2, memory=memory)
     chunks = data.complete_chunks() if chunks is None else chunks
-    sels = _sources(con, chunks, recorder)
+    sels = _sources(chunks, recorder)
     if not sels:
         raise SystemExit("no pump/CreateEvent or token_meta rows found")
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
