@@ -14,9 +14,12 @@ entry state (pool_buy_exact_in / rev_buy_token / curve_buy_exact_in) and a sell 
 received at the horizon state (pool_sell_capped / rev_sell_token / curve_sell), each against
 the real reserves of its moment, plus the network cost of the costs.py scenario (base) on both
 legs. A horizon past the store end or past the venue's last leg keeps the last known state and
-is flagged `cut`; a horizon with no state at all gives NULL. Pool post-states per slot follow
+is flagged `cut`; a horizon with no state at all gives NULL. Pool post-states follow
 `streams.pool_leg` of the engine (buy / sell / boost: b -/+ base and e + e_delta; withdraw /
-deposit: vault + the last virtual quote -/+ quote_user), taken after the slot's last leg.
+deposit: vault + the last virtual quote -/+ quote_user), taken after the last leg at or before the
+target slot. States are computed only at the target slots (each leg is mapped to the first target
+at or after it, one aggregation per pool x target, a forward fill over the targets): no state per
+slot is materialised and no window runs over all legs (the first NAS run spilled 7 GB there).
 
 Graduation is not death: a curve signal whose curve is complete at the entry or at a horizon is
 valued on the mint's migration pool (its SOL-quote PumpSwap pool, the state after the pool's last
@@ -122,63 +125,102 @@ def slot_bounds(con, clock):
     return int(lo), int(hi) + max(DELAYS) + horizon_slots(ms, HORIZONS_MS[-1][1]) + 1
 
 
-def build_states(con, lo=0, hi=2**62):
-    """End-of-slot post-states of every venue a signal touches, for slots in [lo, hi]: pool (b, e, fees,
-    virt) and curve (vt, vq, rt, rq, fees). Pool rows hold pre-trade reserves; the post-state follows
-    streams.pool_leg: buy/sell/boost e + e_delta and b -/+ base, withdraw/deposit vault + last virt -/+
-    quote_user (the virt and fee tiers carried from the last trade before `lo` are read from one extra
-    trade before the range)."""
+def pool_legs_sql(lo, hi):
+    """Post-states of the pool legs of the signals' pools (and migration pools) in [lo, hi], per leg, following
+    streams.pool_leg: buy / sell from the row (b -/+ base, e + e_delta, virt = vq, the row's fee tiers); boost
+    (b - base, e + e_delta, virt = vq) and withdraw / deposit (vault + virt -/+ quote_user, b -/+ base) take the
+    fee tiers (and, for the LP legs, the virtual quote) from the last trade at or before them."""
+    return f"""
+      WITH keys AS (SELECT DISTINCT key FROM sig WHERE venue = 'pool' UNION SELECT pool FROM grad_pool),
+      raw AS (
+        SELECT p.pool AS key, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, p.vq, p.base, p.e_delta, p.quote_user,
+               p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps
+        FROM pool p SEMI JOIN keys k ON k.key = p.pool WHERE p.slot BETWEEN {lo} AND {hi}),
+      trades AS (
+        SELECT key, slot, tx_index, outer_ix, inner_ix, CASE WHEN kind = 'sell' THEN b + base ELSE b - base END AS b, e + e_delta AS e,
+               COALESCE(vq, 0) AS virt, COALESCE(lp_bps, 0) AS lp_bps, COALESCE(protocol_bps, 0) AS protocol_bps,
+               COALESCE(creator_bps, 0) AS creator_bps, COALESCE(cashback_bps, 0) AS cashback_bps
+        FROM raw WHERE kind IN ('buy', 'sell')),
+      others AS (
+        SELECT o.key, o.slot, o.tx_index, o.outer_ix, o.inner_ix,
+               CASE WHEN o.kind = 'deposit' THEN o.b + o.base ELSE o.b - o.base END AS b,
+               CASE WHEN o.kind = 'boost' THEN o.e + o.e_delta
+                    WHEN o.kind = 'withdraw' THEN o.vault + COALESCE(t.virt, 0) - o.quote_user
+                    ELSE o.vault + COALESCE(t.virt, 0) + o.quote_user END AS e,
+               CASE WHEN o.kind = 'boost' THEN COALESCE(o.vq, 0) ELSE COALESCE(t.virt, 0) END AS virt,
+               COALESCE(t.lp_bps, 0) AS lp_bps, COALESCE(t.protocol_bps, 0) AS protocol_bps, COALESCE(t.creator_bps, 0) AS creator_bps,
+               COALESCE(t.cashback_bps, 0) AS cashback_bps
+        FROM (SELECT * FROM raw WHERE kind IN ('boost', 'withdraw', 'deposit')) o
+        ASOF LEFT JOIN trades t ON t.key = o.key AND o.slot >= t.slot)
+      SELECT * FROM trades UNION ALL SELECT * FROM others"""
+
+
+def match_states(con, lo, hi):
+    """The venue state at every target slot, without materialising a state per slot: each leg is mapped to the
+    first target slot at or after it (ASOF), the last leg per (key, target) wins (one aggregation), and targets
+    without a leg since the previous target carry the previous state forward (a window over the targets only).
+    Writes pool_at (pools and migration pools), curve_at and venue_last."""
     con.execute("""
       CREATE OR REPLACE TEMP TABLE grad_pool AS
       SELECT mint, arg_min(pool, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS pool,
              arg_min(orientation, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS orientation
       FROM pools WHERE quote_class IN ('sol', 'reversed') AND mint IN (SELECT DISTINCT key FROM sig WHERE venue = 'curve') GROUP BY mint""")
-    con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE pool_states AS
-      WITH keys AS (SELECT DISTINCT key FROM sig WHERE venue = 'pool' UNION SELECT pool FROM grad_pool),
-      legs AS (
-        SELECT p.pool AS key, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, p.vq, p.base, p.e_delta, p.quote_user,
-               p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps
-        FROM pool p SEMI JOIN keys s ON s.key = p.pool WHERE p.slot BETWEEN {lo} AND {hi}
-        UNION ALL
-        SELECT key, slot, tx_index, outer_ix, inner_ix, kind, b, e, vault, vq, base, e_delta, quote_user, lp_bps, protocol_bps, creator_bps, cashback_bps FROM (
-          SELECT p.pool AS key, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, p.vq, p.base, p.e_delta, p.quote_user,
-                 p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps,
-                 row_number() OVER (PARTITION BY p.pool ORDER BY p.slot DESC, p.tx_index DESC, p.outer_ix DESC, p.inner_ix DESC) AS rn
-          FROM pool p SEMI JOIN keys s ON s.key = p.pool WHERE p.slot < {lo}) WHERE rn = 1),
-      ctx AS (
-        SELECT *,
-               last_value(CASE WHEN kind IN ('buy', 'sell', 'boost') THEN COALESCE(vq, 0) END IGNORE NULLS)
-                 OVER w AS virt,
-               last_value(CASE WHEN kind IN ('buy', 'sell') THEN lp_bps END IGNORE NULLS) OVER w AS lpb,
-               last_value(CASE WHEN kind IN ('buy', 'sell') THEN protocol_bps END IGNORE NULLS) OVER w AS pb,
-               last_value(CASE WHEN kind IN ('buy', 'sell') THEN creator_bps END IGNORE NULLS) OVER w AS cb,
-               last_value(CASE WHEN kind IN ('buy', 'sell') THEN cashback_bps END IGNORE NULLS) OVER w AS cbb
-        FROM legs WINDOW w AS (PARTITION BY key ORDER BY slot, tx_index, outer_ix, inner_ix ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)),
-      post AS (
-        SELECT key, slot, tx_index, outer_ix, inner_ix,
-               CASE WHEN kind = 'sell' THEN b + base WHEN kind = 'withdraw' THEN b - base WHEN kind = 'deposit' THEN b + base ELSE b - base END AS b_post,
-               CASE WHEN kind IN ('buy', 'sell', 'boost') THEN e + e_delta
-                    WHEN kind = 'withdraw' THEN vault + COALESCE(virt, 0) - quote_user
-                    ELSE vault + COALESCE(virt, 0) + quote_user END AS e_post,
-               COALESCE(virt, 0) AS virt, COALESCE(lpb, 0) AS lp_bps, COALESCE(pb, 0) AS protocol_bps,
-               COALESCE(cb, 0) AS creator_bps, COALESCE(cbb, 0) AS cashback_bps
-        FROM ctx)
-      SELECT key, slot, b_post AS b, e_post AS e, virt, lp_bps, protocol_bps, creator_bps, cashback_bps
-      FROM (SELECT *, row_number() OVER (PARTITION BY key, slot ORDER BY tx_index DESC, outer_ix DESC, inner_ix DESC) AS rn FROM post)
-      WHERE rn = 1""")
-    con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE curve_states AS
-      SELECT key, slot, vt, vq, rt, rq, fee_bps, creator_bps
-      FROM (SELECT c.mint AS key, c.slot, c.vt, c.vq, c.rt, c.rq, c.fee_bps, c.creator_bps,
-                   row_number() OVER (PARTITION BY c.mint, c.slot ORDER BY c.tx_index DESC, c.outer_ix DESC, c.inner_ix DESC) AS rn
-            FROM curve c SEMI JOIN (SELECT DISTINCT key FROM sig WHERE venue = 'curve') s ON s.key = c.mint
-            WHERE c.slot BETWEEN {lo} AND {hi})
-      WHERE rn = 1""")
     con.execute("""
+      CREATE OR REPLACE TEMP TABLE pool_targets AS
+      SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'pool'
+      UNION
+      SELECT DISTINCT gp.pool, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid JOIN grad_pool gp ON gp.mint = s.key WHERE s.venue = 'curve'""")
+    con.execute("""
+      CREATE OR REPLACE TEMP TABLE curve_targets AS
+      SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'curve'""")
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE pool_at AS
+      WITH legs AS ({pool_legs_sql(lo, hi)}),
+      hit AS (
+        SELECT kt.key, kt.target, arg_max(l.slot, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS slot,
+               arg_max(l.b, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS b, arg_max(l.e, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS e,
+               arg_max(l.virt, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS virt,
+               arg_max(l.lp_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS lp_bps,
+               arg_max(l.protocol_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS protocol_bps,
+               arg_max(l.creator_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS creator_bps,
+               arg_max(l.cashback_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS cashback_bps
+        FROM legs l ASOF JOIN pool_targets kt ON kt.key = l.key AND l.slot <= kt.target GROUP BY kt.key, kt.target),
+      filled AS (
+        SELECT kt.key, kt.target,
+               last_value(h.slot IGNORE NULLS) OVER w AS slot, last_value(h.b IGNORE NULLS) OVER w AS b, last_value(h.e IGNORE NULLS) OVER w AS e,
+               last_value(h.virt IGNORE NULLS) OVER w AS virt, last_value(h.lp_bps IGNORE NULLS) OVER w AS lp_bps,
+               last_value(h.protocol_bps IGNORE NULLS) OVER w AS protocol_bps, last_value(h.creator_bps IGNORE NULLS) OVER w AS creator_bps,
+               last_value(h.cashback_bps IGNORE NULLS) OVER w AS cashback_bps
+        FROM pool_targets kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
+        WINDOW w AS (PARTITION BY kt.key ORDER BY kt.target ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
+      SELECT * FROM filled WHERE slot IS NOT NULL""")
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE curve_at AS
+      WITH legs AS (
+        SELECT c.mint AS key, c.slot, c.tx_index, c.outer_ix, c.inner_ix, c.vt, c.vq, c.rt, c.rq, c.fee_bps, c.creator_bps
+        FROM curve c SEMI JOIN (SELECT DISTINCT key FROM sig WHERE venue = 'curve') s ON s.key = c.mint WHERE c.slot BETWEEN {lo} AND {hi}),
+      hit AS (
+        SELECT kt.key, kt.target, arg_max(l.slot, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS slot,
+               arg_max(l.vt, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS vt, arg_max(l.vq, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS vq,
+               arg_max(l.rt, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS rt, arg_max(l.rq, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS rq,
+               arg_max(l.fee_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS fee_bps,
+               arg_max(l.creator_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS creator_bps
+        FROM legs l ASOF JOIN curve_targets kt ON kt.key = l.key AND l.slot <= kt.target GROUP BY kt.key, kt.target),
+      filled AS (
+        SELECT kt.key, kt.target, last_value(h.slot IGNORE NULLS) OVER w AS slot, last_value(h.vt IGNORE NULLS) OVER w AS vt,
+               last_value(h.vq IGNORE NULLS) OVER w AS vq, last_value(h.rt IGNORE NULLS) OVER w AS rt, last_value(h.rq IGNORE NULLS) OVER w AS rq,
+               last_value(h.fee_bps IGNORE NULLS) OVER w AS fee_bps, last_value(h.creator_bps IGNORE NULLS) OVER w AS creator_bps
+        FROM curve_targets kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
+        WINDOW w AS (PARTITION BY kt.key ORDER BY kt.target ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
+      SELECT * FROM filled WHERE slot IS NOT NULL""")
+    con.execute(f"""
       CREATE OR REPLACE TEMP TABLE venue_last AS
-      SELECT key, max(slot) AS last_slot FROM (SELECT key, slot FROM pool_states UNION ALL SELECT key, slot FROM curve_states) GROUP BY key""")
-    return (con.execute("SELECT count(*) FROM pool_states").fetchone()[0], con.execute("SELECT count(*) FROM curve_states").fetchone()[0])
+      SELECT key, max(slot) AS last_slot FROM (
+        SELECT p.pool AS key, p.slot FROM pool p SEMI JOIN (SELECT key FROM pool_targets) k ON k.key = p.pool WHERE p.slot BETWEEN {lo} AND {hi}
+        UNION ALL
+        SELECT c.mint, c.slot FROM curve c SEMI JOIN (SELECT key FROM curve_targets) k ON k.key = c.mint WHERE c.slot BETWEEN {lo} AND {hi})
+      GROUP BY key""")
+    return (con.execute("SELECT count(*) FROM pool_at").fetchone()[0], con.execute("SELECT count(*) FROM curve_at").fetchone()[0])
 
 
 def horizon_slots(ms_per_slot, h_ms):
@@ -198,6 +240,12 @@ def build_targets(con, clock, end_slot):
     con.execute("CREATE OR REPLACE TEMP TABLE targets (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT)")
     if rows:
         con.executemany("INSERT INTO targets VALUES (?, ?, ?, ?, ?)", rows)
+    return len(rows)
+
+
+def build_matched(con, end_slot):
+    """targets x signals with the venue state at each target (pool_at / curve_at), the migration pool's state for
+    curve signals, and the cut flag (past the store end or the venue's last leg)."""
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE matched AS
       SELECT tg.sid, tg.d, tg.h, tg.h_ms, tg.target, s.venue, s.orientation, s.key,
@@ -210,10 +258,9 @@ def build_targets(con, clock, end_slot):
       LEFT JOIN venue_last vl ON vl.key = s.key
       LEFT JOIN grad_pool gp ON s.venue = 'curve' AND gp.mint = s.key
       LEFT JOIN venue_last gl ON gl.key = gp.pool
-      ASOF LEFT JOIN pool_states ps ON s.venue = 'pool' AND ps.key = s.key AND tg.target >= ps.slot
-      ASOF LEFT JOIN curve_states cs ON s.venue = 'curve' AND cs.key = s.key AND tg.target >= cs.slot
-      ASOF LEFT JOIN pool_states gs ON s.venue = 'curve' AND gs.key = gp.pool AND tg.target >= gs.slot""")
-    return len(rows)
+      LEFT JOIN pool_at ps ON s.venue = 'pool' AND ps.key = s.key AND ps.target = tg.target
+      LEFT JOIN curve_at cs ON s.venue = 'curve' AND cs.key = s.key AND cs.target = tg.target
+      LEFT JOIN pool_at gs ON s.venue = 'curve' AND gs.key = gp.pool AND gs.target = tg.target""")
 
 
 # --- round trips with the engine -----------------------------------------------------------------------
@@ -327,8 +374,9 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     scn = costs.Scenario.from_cfg("base", cfg)
     per_order = scn.per_tx()
     n_sig = load_signals(con, parts_dir, families, lo, hi, clock)
-    n_pool, n_curve = build_states(con, *slot_bounds(con, clock))
     n_targets = build_targets(con, clock, end_slot)
+    n_pool, n_curve = match_states(con, *slot_bounds(con, clock))
+    build_matched(con, end_slot)
     rows = round_trips(con, per_order)
     con.execute("CREATE OR REPLACE TEMP TABLE mk (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT, cut BOOLEAN, mid DOUBLE, gross DOUBLE, net DOUBLE, impact DOUBLE)")
     con.executemany("INSERT INTO mk VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
@@ -339,7 +387,7 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     os.makedirs(out_dir, exist_ok=True)
     pq.write_table(table, os.path.join(out_dir, f"markout-{run_name}.parquet"))
     info = {"run": run_name, "parts": parts_dir, "families": families, "slots": [lo, hi], "signals": n_sig, "pool_states": n_pool,
-            "curve_states": n_curve, "targets": n_targets, "rows": len(rows), "size_sol": SIZE / SOL, "per_order_lamports": per_order,
+            "curve_states": n_curve, "states": "at target slots only", "targets": n_targets, "rows": len(rows), "size_sol": SIZE / SOL, "per_order_lamports": per_order,
             "delays": list(DELAYS), "horizons": dict(HORIZONS_MS), "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
     with open(os.path.join(out_dir, f"run-markout-{run_name}.json"), "w") as f:
         json.dump(info, f, indent=1)
