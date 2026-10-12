@@ -27,7 +27,11 @@ from dataclasses import dataclass, field, replace
 from . import venues as V
 from .venues import Curve, Pool
 
-EXACT_IN_CURVE = {"buy_exact_sol_in", "buy_exact_quote_in_v2", "other"}
+# Curve buys that spend a quote budget (IDL args spendable_sol_in / spendable_quote_in / amount_in).
+# buy, buy_v2 and buy_v3 (amount + max_sol_cost) fix the token amount instead; an unknown
+# instruction ('other') counts as exact-in. A multi-hop hop spends its logged q + fee: the
+# instruction's amount_in is the route input, shared by all of its hops, so it is not a hop budget.
+EXACT_IN_CURVE = {"buy_exact_sol_in", "buy_exact_quote_in_v2", "buy_exact_quote_in_v3", "multi_hop_curve_swap", "other"}
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 PUMP_AMM = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
 # Standard PumpSwap seed after migration (median of all dev-period pools) and its fee tier.
