@@ -24,6 +24,7 @@ import json
 import os
 import random
 import sqlite3
+import sys
 import time
 from collections import defaultdict
 
@@ -37,6 +38,7 @@ USD_PER_GB, BUDGET_USD = 0.08, 2.0  # recorder defaults (--usd-per-gb, --budget-
 POSITIONS_SHOWN = 300
 SLOT_COLS = ("t", "entry_slot", "exit_slot", "exit_decision_slot", "slot", "last_slot")
 _segments = {}  # _segment.json path -> parsed (complete segments do not change)
+_names = {}  # journal key (mint or pool) -> {"mint", "symbol", "name"}; names do not change
 
 
 def journal_path():
@@ -51,6 +53,34 @@ def journal_path():
 def recorder_root():
     root = os.environ.get("LAB_RECORDER_ROOT") or os.path.join(DATA, "recorder")
     return (root, False) if os.path.isfile(os.path.join(root, "budget.json")) else (SAMPLE_RECORDER, True)
+
+
+def token_names(keys):
+    """Symbol and name per journal key: a curve key is the mint, a pool key is looked up in the dev store's pools.
+    Read-only DuckDB on analytics.duckdb and the store; keys found nowhere (tokens newer than the dev data) keep
+    no name, and the page shows the address. Cached per process."""
+    todo = [k for k in set(keys) if k and k not in _names]
+    if todo:
+        import duckdb
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "analytics"))
+        import labstore
+        con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+        try:
+            con.execute("SET enable_progress_bar=false")
+            con.execute(f"ATTACH '{os.path.join(DATA, 'analytics', 'analytics.duckdb')}' AS a (READ_ONLY)")
+            labstore.attach(con, DATA)
+            con.execute("CREATE TEMP TABLE k (key VARCHAR)")
+            con.executemany("INSERT INTO k VALUES (?)", [[x] for x in todo])
+            for key, mint, sym, name in con.execute("""
+                    SELECT k.key, coalesce(t1.mint, p.mint), coalesce(t1.symbol, t2.symbol), coalesce(t1.name, t2.name)
+                    FROM k LEFT JOIN a.token_summary t1 ON t1.mint = k.key
+                    LEFT JOIN dev.pools p ON p.pool = k.key LEFT JOIN a.token_summary t2 ON t2.mint = p.mint""").fetchall():
+                _names[key] = {"mint": mint, "symbol": sym, "name": name}
+        except (duckdb.Error, SystemExit):
+            return {k: _names.get(k, {}) for k in keys}
+        finally:
+            con.close()
+    return {k: _names.get(k, {}) for k in keys}
 
 
 def in_holdout(row):
@@ -245,6 +275,9 @@ def journal_view(path, now):
     closed = sorted((x for x in traded_today), key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
     pos = [pos_row(p) for p in positions if not p["family"].startswith("N2_")]
     pos += [pos_row(x, x) for x in closed[:POSITIONS_SHOWN]]
+    names = token_names([r["key"] for r in pos])
+    for r in pos:
+        r.update(names.get(r["key"], {}))
 
     traded = [x for x in exits if not x["family"].startswith("N2_")]
     shadow_all = [x for x in exits if x["family"].startswith("N2_")]
@@ -253,6 +286,9 @@ def journal_view(path, now):
               "7d": range_stats([x for x in traded if week <= x["day"] <= day], [x for x in shadow_all if week <= x["day"] <= day]),
               "all": range_stats(traded, shadow_all)}
     ticker = [{"key": x["key"], "ret": x["ret"], "failed": not x["tokens"]} for x in closed[:12]]
+    tnames = token_names([t["key"] for t in ticker])
+    for t in ticker:
+        t.update(symbol=tnames[t["key"]].get("symbol"), mint=tnames[t["key"]].get("mint"))
     by_day = defaultdict(list)
     for x in traded:
         by_day[x["day"]].append(x["pnl"] or 0)

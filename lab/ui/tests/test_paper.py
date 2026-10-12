@@ -69,6 +69,10 @@ class ParityJournal(unittest.TestCase):
                          (0.466, 95.2, 736, 2220))
         self.assertFalse(v["status"]["running"])
         self.assertTrue(v["test_run"])
+        # Coin names instead of addresses: curve keys are mints, pool keys go through the store's pools.
+        named = [p for p in v["positions"] if p.get("symbol")]
+        self.assertGreater(len(named), len(v["positions"]) // 2)
+        self.assertTrue(any(p["venue"] == "pool" and p.get("mint") and p["mint"] != p["key"] for p in named))
 
 
 class Synthetic(unittest.TestCase):

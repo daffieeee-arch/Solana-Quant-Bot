@@ -6,7 +6,7 @@ import { Change, Num } from "../components/Num";
 import { Segmented } from "../components/Segmented";
 import { usePaper } from "../live";
 import { cn } from "../lib/utils";
-import { n0, n1, shortAddr, unixTime } from "../format";
+import { label, n0, n1, shortAddr, unixTime } from "../format";
 import type { PaperJournal, PaperPosition, PaperRecorder } from "../paperTypes";
 
 // Paper tab (design v1, "Paper — iPhone"): the paper engine's journal and the recorder's meter, read-only
@@ -120,20 +120,21 @@ function PositionRow({ p, lastSlot }: { p: PaperPosition; lastSlot: number | nul
   const open = p.status === "open";
   const kind = p.venue === "pool" ? (p.orientation === "reversed" ? "REVERSED" : "POOL") : (p.venue ?? "–").toUpperCase();
   const slots = p.slots ?? (open && lastSlot ? lastSlot - p.entry_slot : null);
+  const sym = label(p.symbol, 16), name = label(p.name, 40);
   const ret = open ? (p.mark_sol != null && p.cost_sol ? (p.mark_sol - p.cost_sol) / p.cost_sol : null) : p.ret ?? null;
   return (
     <div className="flex items-center gap-3 p-3 rounded-[14px] bg-surface border border-line min-w-0">
       <span className="w-9 h-9 rounded-full inline-flex items-center justify-center text-xs font-extrabold text-on-accent shrink-0" style={{ background: avatar(p.key) }} aria-hidden="true">
-        {p.key.slice(0, 2).toUpperCase()}
+        {(sym || p.key).slice(0, 2).toUpperCase()}
       </span>
       <div className="flex flex-col gap-0.5 grow min-w-0">
         <div className="flex gap-1.5 items-center min-w-0">
-          <span className="font-bold text-sm truncate">{shortAddr(p.key)}</span>
+          <span className="font-bold text-sm truncate" title={name || p.key}>{sym || shortAddr(p.key)}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-2 text-fg-2 font-bold">{kind}</span>
         </div>
         <span className="text-[11px] text-muted truncate">
           <span className="num">{p.cost_sol == null ? "–" : p.cost_sol.toLocaleString("nl-NL", { minimumFractionDigits: 2 })} SOL{slots != null ? ` · ${n0(slots)} slots` : ""} · {p.variant.split("_")[0]}</span>
-          {" · "}<DexLink mint={p.key}>Dex ↗</DexLink>
+          {" · "}<DexLink mint={p.mint ?? p.key}>Dex ↗</DexLink>
         </span>
       </div>
       <div className="flex flex-col items-end gap-0.5 shrink-0">
