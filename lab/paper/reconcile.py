@@ -95,12 +95,15 @@ def reconcile_segment(con, seg, meta, chunks):
     return out
 
 
-def run(root, chunks_root=None):
+def run(root, chunks_root=None, seqs=None):
+    """seqs: only these segments (a sample of a long run)."""
     chunks = data.complete_chunks(chunks_root)
     con = data.connect(threads=2, memory=os.environ.get("LAB_DUCKDB_MEM", "1GB"))
     report = {"segments": [], "totals": {"missing": 0, "extra": 0, "mismatched": 0, "segments_checked": 0,
                                          "segments_waiting": 0}}
     for seq, seg, meta in segment_dirs(root):
+        if seqs is not None and seq not in seqs:
+            continue
         lo, hi = meta["first_slot"], meta["last_slot"]
         cover = [c for c in chunks if c[0] <= hi and lo < c[1]]
         if not cover or cover[0][0] > lo or cover[-1][1] <= hi:

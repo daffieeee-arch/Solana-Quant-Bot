@@ -158,7 +158,7 @@ class LiveFeed(Feed):
     slots were seen."""
 
     def __init__(self, root, store=None, follow=True, poll_s=1.0, h24=None, lag_slots=1, from_seq=0,
-                 memory="1GB", meta_bounds=None):
+                 memory="1GB", meta_bounds=None, snapshot_before=None):
         self.root, self.follow, self.poll_s, self.fixed_h24, self.lag = root, follow, poll_s, h24, lag_slots
         self.next_seq = from_seq
         self.con = duckdb.connect()
@@ -168,7 +168,7 @@ class LiveFeed(Feed):
         self.con.execute("CREATE TABLE live_pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR)")
         self.tokens, self.pools, self.pool_class = {}, {}, {}
         if store:
-            self._load_snapshot(store)
+            self._load_snapshot(store, snapshot_before)
         self.farmers = FarmerFlags()
         self.ctx = {}  # per pool: pool_leg context (last virtual quote, fee tiers)
         self.curve_hist = defaultdict(list)  # mint -> curve legs seen live (curve_history), pruned after a quiet day
@@ -186,12 +186,21 @@ class LiveFeed(Feed):
 
     # ------------------------------------------------------------------ metadata
 
-    def _load_snapshot(self, store):
+    def _load_snapshot(self, store, before=None):
+        """Tokens and pools of a store. before: only what was known before that slot (a live start
+        there): tokens and pools created earlier, without a later graduation."""
         con = streams.open_store(store, threads=2, memory="1GB")
         for r in con.execute("SELECT mint, create_slot, creator, mayhem, quote_mint, complete_slot, pool FROM mints").fetchall():
+            if before is not None:
+                if r[1] is not None and r[1] >= before:
+                    continue
+                if r[5] is not None and r[5] >= before:
+                    r = r[:5] + (None, None)
             self.tokens[r[0]] = TokenInfo(*r)
         rows = con.execute("""SELECT pool, COALESCE(mint, pool), orientation, quote_class, COALESCE(mayhem, false),
                                      coin_creator, create_slot FROM pools""").fetchall()
+        if before is not None:
+            rows = [r for r in rows if r[6] is None or r[6] < before]
         con.close()
         for r in rows:
             self.pool_class[r[0]] = (r[3], r[2])
@@ -386,13 +395,18 @@ class LiveFeed(Feed):
                 del self.curve_hist[m]
         return out
 
+    def _segments(self):
+        """Complete segments from next_seq on (the shadow recorder writes them one by one instead)."""
+        return [s for s in segment_dirs(self.root) if s[0] >= self.next_seq]
+
     def events(self):
         """Events of all complete segments in chain order; with follow, keep polling for new ones.
         A slot is released once a later slot has been seen (lag_slots), the rest at the end."""
         heap, last_out, top = [], None, None
         while True:
-            segs = [s for s in segment_dirs(self.root) if s[0] >= self.next_seq]
-            for seq, seg, meta in segs:
+            n = 0
+            for seq, seg, meta in self._segments():
+                n += 1
                 for e in self.segment_events(seq, seg, meta):
                     if last_out is not None and e.slot < last_out:
                         self.stats["late_rows"] += 1  # arrived after its slot was released
@@ -406,7 +420,7 @@ class LiveFeed(Feed):
                     yield e
             if not self.follow:
                 break
-            if not segs:
+            if not n:
                 time.sleep(self.poll_s)
         while heap:
             yield heapq.heappop(heap)[3]

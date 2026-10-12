@@ -15,7 +15,8 @@ from dataclasses import dataclass
 
 from backtest import streams
 
-HOLDOUT_START = 452304000  # never replay the hold-out or later
+HOLDOUT_START = 452304000  # never replay the hold-out [HOLDOUT_START, HOLDOUT_END)
+HOLDOUT_END = 454464000    # epoch 1052 on (validation, forward): after the hold-out, replay allowed
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,11 +80,11 @@ class LiveFeed(Feed):
 
 
 class ReplayFeed(Feed):
-    """Events of the dev store for slots [lo, hi), in chain order. hi must not reach the hold-out."""
+    """Events of a store for slots [lo, hi), in chain order. [lo, hi) must not touch the hold-out."""
 
     def __init__(self, store, lo, hi, batch=200_000, con=None):
-        if hi > HOLDOUT_START:
-            raise ValueError(f"ReplayFeed never reads the hold-out (slot >= {HOLDOUT_START})")
+        if lo < HOLDOUT_END and hi > HOLDOUT_START:
+            raise ValueError(f"ReplayFeed never reads the hold-out [{HOLDOUT_START}, {HOLDOUT_END})")
         self.lo, self.hi, self.batch = lo, hi, batch
         self.con = con or streams.open_store(store, threads=2, memory="1GB")
         self.tokens = {r[0]: TokenInfo(*r) for r in self.con.execute(

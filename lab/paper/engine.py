@@ -126,6 +126,7 @@ class Engine:
         self.day, self.day_loss = None, 0
         self.minute, self.events_seen, self.last_event, self.last_slot = None, 0, None, None
         self.grad_wait = defaultdict(list)  # pool -> [Open] waiting for open + 1
+        self.kept = None  # the pools last written for the recorder
 
     # ------------------------------------------------------------------ main loop
 
@@ -191,6 +192,7 @@ class Engine:
             if ("pool", pool) not in by_key:
                 self._graduation_exits(pool, slot, [])
         self.last_slot = slot
+        self._keep_pools()
 
     # ------------------------------------------------------------------ clock, risk, heartbeat
 
@@ -225,9 +227,19 @@ class Engine:
                 m = u.get("minute", minute)
                 self.j.put("usage", minute=m, day=_day(m * 60), stream=u.get("stream"), bytes=u.get("bytes"),
                            messages=u.get("messages"), seq=u.get("seq"), note=u.get("note"))
-        if hasattr(self.feed, "keep_pools"):
-            self.feed.keep_pools(sorted({o.p.key for v in self.open.values() for o in v if o.p.venue == "pool"}
-                                        | {p for p in self.grad_wait}))
+        self._keep_pools(force=True)
+
+    def _keep_pools(self, force=False):
+        """Pools of open and pending positions for the recorder (open-pools.json): every minute and
+        as soon as the set changes, so a pool leaving the watchlist keeps its transactions."""
+        if not hasattr(self.feed, "keep_pools"):
+            return
+        pools = sorted({o.p.key for v in self.open.values() for o in v if o.p.venue == "pool"}
+                       | {p.key for v in self.pending.values() for p in v if p.venue == "pool"}
+                       | set(self.grad_wait))
+        if force or pools != self.kept:
+            self.kept = pools
+            self.feed.keep_pools(pools)
 
     def _load_risk(self):
         if self.ignore_risk:
@@ -532,6 +544,7 @@ def main():
     ap.add_argument("--from", dest="lo", type=int, help="replay: first slot")
     ap.add_argument("--to", dest="hi", type=int, help="replay: end slot (exclusive)")
     ap.add_argument("--live", help="live: the recorder's output directory (LiveFeed; tokens and pools from --store)")
+    ap.add_argument("--catch-up", action="store_true", help="live: stop after the last complete segment")
     ap.add_argument("--journal", required=True)
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--store", default="/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
@@ -544,7 +557,7 @@ def main():
     if a.live:
         from .live import LiveFeed
 
-        feed = LiveFeed(a.live, store=a.store, follow=True)
+        feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up)
     elif a.lo is None or a.hi is None:
         raise SystemExit("give --from and --to (replay) or --live <recorder dir>")
     else:
