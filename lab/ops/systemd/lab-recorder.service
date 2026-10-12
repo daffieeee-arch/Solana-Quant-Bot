@@ -1,0 +1,33 @@
+# Solana lab live recorder (lab/recorder): Triton Dragon's Mouth -> segments. Paper only.
+# Not installed by the repo: see lab/ops/README.md ("Installeren en starten"), only after the
+# owner's OK. Exit 75 = the UTC day's budget is spent: no restart; lab-recorder.timer starts it
+# again at 00:05 UTC.
+[Unit]
+Description=Solana lab: live recorder (Triton Dragon's Mouth to segments), paper only
+Documentation=file:%h/Solana-project/worktrees/paper-run/lab/ops/README.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=5
+
+[Service]
+Type=simple
+# Non-secret settings (RECORDER_ARGS, PAPER_STORE): lab/ops/live.env.example.
+EnvironmentFile=%h/.config/solana-lab/live.env
+# LAB_TRITON_GRPC_ENDPOINT and LAB_TRITON_X_TOKEN: chmod 600, never in the repo, never logged.
+EnvironmentFile=%h/.config/solana-lab/recorder.env
+# No start while the disk guard says the disk is low.
+ExecStartPre=/usr/bin/test ! -e %h/Solana-project/data-old-faithful-one/lab/locks/disk-low
+ExecStart=%h/Solana-project/data-old-faithful-one/lab/bin/lab-recorder --root %h/Solana-project/data-old-faithful-one/lab/recorder $RECORDER_ARGS
+Restart=on-failure
+RestartSec=30
+RestartPreventExitStatus=75
+MemoryMax=2G
+CPUQuota=100%
+Nice=5
+NoNewPrivileges=yes
+StandardOutput=append:%h/Solana-project/data-old-faithful-one/lab/logs/recorder.log
+StandardError=inherit
+
+[Install]
+WantedBy=default.target

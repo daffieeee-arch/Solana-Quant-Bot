@@ -1,0 +1,130 @@
+"""F6 building blocks: organic flow ignores farmers and reads both pool orientations; the exit
+rule fires on the trailing stop, organic outflow and time."""
+
+from backtest.replay import PoolLeg, Stream
+from backtest.strategies import F6Exit, FlowIndex
+from backtest.venues import Pool
+
+SOL = 1_000_000_000
+P = Pool(1_000_000 * 10**6, 500 * SOL, 2, 93, 30)
+
+
+def leg(slot, kind, base, quote, farmer=False):
+    return PoolLeg(slot, 0, (slot, 0, 0, 0), kind, False, base, quote, P, P, "w", farmer=farmer)
+
+
+def test_flow_ignores_farmers_and_reads_orientation():
+    legs = [leg(10, "buy", 1, 5 * SOL), leg(11, "sell", 1, 2 * SOL), leg(12, "buy", 1, 50 * SOL, farmer=True)]
+    normal = FlowIndex(Stream("M", 0, "C", [], legs))
+    assert normal.flow(0, 100) == 3 * SOL  # +5 -2, the farmer's 50 ignored
+    assert normal.flow(11, 11) == -2 * SOL
+    # Reversed pool: a pool sell is a token buy and its SOL amount is the base (WSOL).
+    rev = [leg(10, "sell", 7 * SOL, 1), leg(11, "buy", 3 * SOL, 1)]
+    assert FlowIndex(Stream("M", 0, "C", [], rev, orientation="reversed")).flow(0, 100) == 4 * SOL
+
+
+class Flows:
+    def __init__(self, value):
+        self.value = value
+
+    def flow(self, lo, hi):
+        return self.value
+
+
+def ctx(mark, slot, held):
+    return {"mark": mark, "slot": slot, "slots_held": held, "pool": P}
+
+
+def test_exit_rule():
+    r = F6Exit(0.08, Flows(0), 1125, 54_000, "normal")
+    assert r(ctx(100, 1, 1)) is None
+    assert r(ctx(120, 2, 2)) is None
+    assert r(ctx(111, 3, 3)) is None  # 7.5% below the peak
+    assert r(ctx(110, 4, 4)) == "trailing_stop"  # 8.3% below
+    out = F6Exit(0.08, Flows(-6 * SOL), 1125, 54_000, "normal")  # -1.2% of 500 SOL depth
+    assert out(ctx(100, 1, 1)) == "outflow"
+    assert F6Exit(0.08, Flows(0), 1125, 54_000, "normal")(ctx(100, 9, 54_000)) == "time"
+
+
+def test_n4_exit_sells_after_the_next_crank():
+    from backtest.strategies import N4Exit
+
+    r = N4Exit([100, 144, 190], 400)
+    base = {"mark": 1, "pool": P}
+    assert r(dict(base, entry_slot=143, slot=143, slots_held=0)) is None  # crank at 144 not seen yet
+    assert r(dict(base, entry_slot=143, slot=144, slots_held=1)) == "after_crank"
+    assert r(dict(base, entry_slot=191, slot=500, slots_held=309)) is None
+    assert r(dict(base, entry_slot=191, slot=591, slots_held=400)) == "time"
+
+
+def test_s1_score_uses_closes_before_the_hour_only():
+    import numpy as np
+
+    from backtest.rotation import score
+
+    blocks = np.arange(0, 100)
+    prices = np.exp(np.cumsum(np.where(np.arange(100) % 2, 0.02, -0.01)))  # zigzag up
+    r, s = score(blocks, prices, 60, 12)
+    closes = prices[47:60]  # blocks 47..59: 13 closes, the last one before block 60
+    assert abs(r - np.log(closes[-1] / closes[0])) < 1e-12
+    assert s > 0
+    prices2 = prices.copy()
+    prices2[60:] = 1e-9  # the future must not matter
+    assert score(blocks, prices2, 60, 12) == (r, s)
+    assert score(blocks, prices, 5, 12) is None  # no price at the start of the lookback
+
+
+def test_s1_exit_rule():
+    from backtest.rotation import S1Exit
+
+    r = S1Exit(500, 150 * SOL, "normal", 10**9)
+    base = {"pool": P, "cost": 100, "slots_held": 1}  # P has 500 SOL real depth
+    assert r(dict(base, mark=95, slot=100)) is None
+    assert r(dict(base, mark=80, slot=100)) == "stop_loss"
+    assert r(dict(base, mark=95, slot=500)) == "rebalance"
+    thin = S1Exit(500, 1_100 * SOL, "normal", 10**9)  # 500 < 0.5 * 1100
+    assert thin(dict(base, mark=95, slot=100)) == "liquidity"
+
+
+def test_o7_insiders_and_exit():
+    from backtest.overlay import Insiders, O7Exit
+    from backtest.replay import CurveLeg
+    from backtest.venues import Curve
+
+    C = Curve(1, 1, 1, 1, 95, 30)
+
+    def cl(slot, trader, buy, t):
+        return CurveLeg(slot, 0, (slot, 0, 0, 0), buy, t, 1, 0, "buy" if buy else "sell", C, C, trader)
+
+    legs = [cl(100, "creator", True, 100), cl(105, "early", True, 300), cl(200, "x", True, 600),
+            cl(300, "early", False, 100), cl(400, "y", True, 1000)]
+    st = Stream("M", 100, "creator", legs)
+    ins = Insiders(st, window_slots=37)  # 10 s
+    assert ins.known and ins.insiders == {"creator", "early"}
+    assert abs(ins.share(250) - 400 / 1000) < 1e-12  # 400 of 1000 circulating
+    assert ins.share(450) == 300 / 1900
+    sold, creator_sells = ins.sold_since(250, 350)
+    assert (sold, creator_sells) == (100, 0)
+
+    class Never:
+        def deadline(self, e):
+            return None
+
+        def __call__(self, ctx):
+            return None
+
+    r = O7Exit(Never(), ins)
+    assert r({"entry_slot": 250, "slot": 299}) is None
+    assert r({"entry_slot": 250, "slot": 300}) == "o7_insider_sell"  # 100 >= 25% of 400
+
+
+def test_m1_exit_rule():
+    from backtest.strategies import M1Exit
+
+    r = M1Exit(0.20, 1000)
+    base = {"pool": P, "cost": 100, "slots_held": 1}
+    assert r(dict(base, mark=150, slot=1)) is None
+    assert r(dict(base, mark=121, slot=2)) is None  # 19.3% below the peak of 150
+    assert r(dict(base, mark=119, slot=3)) == "trailing_stop"
+    assert M1Exit(0.35, 1000)(dict(base, mark=75, slot=1)) == "stop_loss"  # -25% from the cost
+    assert M1Exit(0.35, 1000)(dict(base, mark=100, slot=1, slots_held=1000)) == "time"

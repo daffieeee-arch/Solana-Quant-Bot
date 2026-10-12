@@ -1,0 +1,140 @@
+{
+ "name": "holdout-1047-1051",
+ "preregistration": "data-old-faithful-one/lab/research/holdout-preregistration-draft-2026-10-12.md",
+ "window": [
+  452304000,
+  454464000
+ ],
+ "parts": {
+  "A": [
+   452304000,
+   452660736
+  ],
+  "B": [
+   452660736,
+   453800004
+  ],
+  "C": [
+   453800004,
+   454464000
+  ]
+ },
+ "combined": {
+  "B+C": [
+   "B",
+   "C"
+  ]
+ },
+ "decision_group": "B+C",
+ "decision_rule": "pre-registration §4, applied by analysis._holdout_decision on the decision group: the main or variant candidate with the highest CI lower bound of the main measure among those with a mean > 0; the control (K3) only if its lower bound > 0, its lower bound > that of every eligible K1/K2, and its mean >= the highest eligible mean; a candidate positive in part A but not in the decision group drops out; no candidate with a mean > 0: none picked (the highest mean is reported)",
+ "candidates": [
+  {
+   "id": "K1",
+   "role": "main",
+   "family": "F7",
+   "segment": "pool_reversed",
+   "variant": "tp4_T600",
+   "farm": "organic",
+   "size_sol": 0.5,
+   "overlay": "none"
+  },
+  {
+   "id": "K2",
+   "role": "variant",
+   "family": "F7",
+   "segment": "pool_reversed",
+   "variant": "tp6_T600",
+   "farm": "organic",
+   "size_sol": 0.5,
+   "overlay": "none"
+  },
+  {
+   "id": "K3",
+   "role": "control",
+   "family": "F7",
+   "segment": "pool_reversed",
+   "variant": "tp4_T600",
+   "farm": "all",
+   "size_sol": 0.5,
+   "overlay": "none"
+  }
+ ],
+ "reference": {
+  "family": "N2_F7",
+  "note": "N2 entries matched to the candidate's own triggers (same farm), same exit rule"
+ },
+ "main_measure": {
+  "points": [
+   [
+    2,
+    0.5
+   ],
+   [
+    1,
+    0.9
+   ]
+  ],
+  "statistic": "the point with the lower mean return per filled trade after base costs (settle_sql ret, base scenario); 95% day-bootstrap CI (report._boot, seed 7)"
+ },
+ "also_points": [
+  [
+   1,
+   0.5
+  ],
+  [
+   3,
+   0.9
+  ]
+ ],
+ "risk_rules": {
+  "capital_sol": 10,
+  "max_positions": 5,
+  "one_position_per_pool": true,
+  "daily_loss_sol": 1,
+  "pool_cooldown_h": 24
+ },
+ "dev_trials": {
+  "run_id": "families-v2-1033-1046",
+  "batch": "families_v2",
+  "keys": [
+   {
+    "family": "F7",
+    "variant": "tp4_T600",
+    "segment": "pool_reversed",
+    "regime": "270ms"
+   },
+   {
+    "family": "F7",
+    "variant": "tp4_T600",
+    "segment": "pool_reversed",
+    "regime": "320ms"
+   },
+   {
+    "family": "F7",
+    "variant": "tp6_T600",
+    "segment": "pool_reversed",
+    "regime": "270ms"
+   },
+   {
+    "family": "F7",
+    "variant": "tp6_T600",
+    "segment": "pool_reversed",
+    "regime": "320ms"
+   }
+  ],
+  "dev_ev": {
+   "K1": "+0.75% [+0.23, +1.15]",
+   "K2": "+0.72% [+0.26, +1.05]",
+   "K3": "+0.41% [-0.01, +0.70]"
+  }
+ },
+ "run": {
+  "workdir": "Solana-bot/lab (the frozen commit)",
+  "1_store": "systemd-run --user --scope -p MemoryMax=7G -p CPUQuota=200% -- flock -n ../../data-old-faithful-one/lab/locks/heavy.lock env LAB_SPILL_DIR=/dev/shm/lab-store-build LAB_SPILL_MAX=2GB LAB_DUCKDB_MEM=3GB LAB_POOL_PARTS=16 nice -n 10 $LAB_PY -m backtest.store holdout --final",
+  "1_store_note": "builds store/holdout.duckdb over [451872000, 454464000): epoch 1046 (dev) as warm-up for the 24 h burn-in, then the hold-out; holdout.lock refuses a second build",
+  "2_tournament": "systemd-run --user --scope -p MemoryMax=7G -p CPUQuota=200% -- flock -n ../../data-old-faithful-one/lab/locks/heavy.lock env LAB_STORE=../../data-old-faithful-one/lab/store/holdout.duckdb LAB_SPILL_DIR=/dev/shm/holdout-1047-1051 LAB_SPILL_MAX=2GB LAB_SQL_BUCKETS=64 nice -n 10 scripts/backtest-run.sh holdout-1047-1051 --families F7,N2 --segments pool_reversed --sizes 0.5 --delays 1,2,3 --q 0.5,0.9 --decide 452304000:454464000 --workers 2 --batch holdout_final",
+  "2_tournament_note": "all nine F7 pool_reversed variants are simulated (the engine has no variant filter); only K1-K3 and N2_F7 are evaluated, the other variants' numbers are not read",
+  "3_evaluation": "$LAB_PY -m backtest.analysis holdout ../../data-old-faithful-one/lab/backtests/holdout-1047-1051 --config backtest/prereg/holdout-candidates-2026-10-12.json --store ../../data-old-faithful-one/lab/store/holdout.duckdb",
+  "3_evaluation_note": "writes holdout_eval.md and holdout_eval.json in the run directory; the report lab/reports/<date>-holdout.md is holdout_eval.md plus the run's report.md header"
+ }
+}

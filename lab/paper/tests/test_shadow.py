@@ -1,0 +1,126 @@
+"""Shadow live end to end on 2,000 dev slots: the simulated recorder's segments, the engine on them
+(ShadowFeed) against its replay, engine --live with risk limits, and the reconciliation. Every
+difference between live and replay has a cause other than 'unexplained'."""
+
+import argparse
+import json
+import os
+
+import duckdb
+import pytest
+
+from backtest import data
+from paper import shadow
+from paper.feed import HOLDOUT_END, HOLDOUT_START, ReplayFeed
+from paper.live import segment_dirs
+
+STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
+LO, HI = 450700000, 450702000
+
+
+def test_coverage_intervals_and_gaps():
+    cov = shadow.Coverage([("P", 10, 20, "tx_watchlist"), ("P", 20, 30, "tx_watchlist"), ("P", 40, 50, "tx_probes")],
+                          [(25, 27)])
+    assert cov.iv["P"] == [[10, 30], [40, 50]]
+    assert cov.seen("P", 10) and cov.seen("P", 24) and not cov.seen("P", 25) and cov.seen("P", 27)
+    assert not cov.seen("P", 30) and cov.seen("P", 45) and not cov.seen("Q", 15)
+    assert cov.gap_overlaps(0, 25) and not cov.gap_overlaps(27, 40)
+
+
+def test_replay_feed_never_touches_the_holdout():
+    for lo, hi in ((HOLDOUT_START - 10, HOLDOUT_START + 1), (HOLDOUT_START, HOLDOUT_END), (HOLDOUT_END - 1, HOLDOUT_END + 10)):
+        with pytest.raises(ValueError, match="hold-out"):
+            ReplayFeed(STORE, lo, hi)
+
+
+@pytest.fixture(scope="module")
+def run(tmp_path_factory):
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    if not chunk or not os.path.exists(STORE):
+        pytest.skip("dev store or its chunk not available")
+    out = str(tmp_path_factory.mktemp("shadow"))
+    a = argparse.Namespace(store=STORE, out=out, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
+                           d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
+                           risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB")
+    window = shadow.WINDOW_SLOTS
+    shadow.WINDOW_SLOTS = 300  # the work tables are built in 7 slot windows
+    yield out, shadow.run(a, log=lambda m: None)
+    shadow.WINDOW_SLOTS = window
+
+
+def test_segments_follow_the_minutes_with_reconnects_and_a_gap(run):
+    out, info = run
+    segs = segment_dirs(os.path.join(out, "rec"))
+    assert len(segs) == info["recorder"]["segments"] >= 8  # ~9 minutes
+    firsts = [m["first_slot"] for _, _, m in segs]
+    lasts = [m["last_slot"] for _, _, m in segs]
+    assert firsts[0] == LO and lasts[-1] == HI - 1 and all(b + 1 == a for a, b in zip(firsts[1:], lasts))  # contiguous
+    reasons = [r["reason"] for _, _, m in segs for r in m.get("reconnects", ())]
+    assert sum("with from_slot" in r for r in reasons) == 2 and sum("without from_slot" in r for r in reasons) == 1
+    (ga, gb), = info["gaps"]
+    for _, seg, m in segs:  # no slot of the gap was written
+        f = os.path.join(seg, "blocks", "part-00000.parquet")
+        if os.path.exists(f):
+            con = data.connect(threads=1, memory="200MB")
+            assert con.execute(f"SELECT count(*) FROM '{f}' WHERE slot >= {ga} AND slot < {gb}").fetchone()[0] == 0
+        with open(os.path.join(seg, "watchlist.json")) as fh:
+            w = json.load(fh)
+        assert w["new_pools"] and isinstance(w["pools"], list)
+    assert info["recorder"].get("tx_watchlist", 0) > 0 and info["estimated_gb_per_day"] > 0
+
+
+def test_live_against_replay_has_no_unexplained_difference(run):
+    out, info = run
+    assert info["unexplained"] == 0, [r for r in info["summary"].items()]
+    f7 = {k: g for k, g in info["summary"].items() if k.startswith("F7 pool")}
+    assert sum(g["triggers_both"] for g in f7.values()) > 0, info["summary"]  # live traded the replay's triggers
+    assert info["livefeed"]["late_rows"] == 0
+
+
+def test_reconcile_clean_outside_the_gap(run):
+    _, info = run
+    rc = info["reconcile"]
+    assert rc["segments_checked"] >= 8 and rc["others_clean"], rc
+    assert rc["gap_segments"] and all(v["extra"] == v["mismatched"] == 0 for v in rc["gap_segments"].values())
+    assert sum(v["missing"] for v in rc["gap_segments"].values()) > 0
+
+
+def test_engine_live_with_risk_limits_writes_daily_reports(run):
+    out, info = run
+    assert info["live_risk_reports"], info
+    with open(os.path.join(out, "compare.md")) as f:
+        text = f.read()
+    assert "development data" in text and "Unexplained differences: 0" in text
+
+
+def test_work_tables_are_in_slot_order_across_windows(run):
+    out, _ = run
+    assert shadow.WINDOW_SLOTS < HI - LO
+    con = duckdb.connect(os.path.join(out, "work", "shadow-rows.duckdb"), read_only=True)
+    tables = [r[0] for r in con.execute("""SELECT table_name FROM duckdb_tables()
+                                           WHERE table_name IN ('txu', 'pc') OR regexp_matches(table_name, '^t[0-9]+$')""").fetchall()]
+    assert "txu" in tables and len(tables) > 2
+    for t in tables:
+        back = con.execute(f"""SELECT count(*) FILTER (WHERE slot < prev)
+                               FROM (SELECT slot, lag(slot) OVER (ORDER BY rowid) AS prev FROM {t})""").fetchone()[0]
+        assert back == 0, t
+    con.close()
+
+
+def test_resume_reuses_replay_and_work_database_with_the_same_result(run):
+    """A rerun with resume (e.g. after a kill during the live step) reuses the finished replay and
+    work database, runs the rest again and gives the same comparison; STATUS.json says done."""
+    out, info = run
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    logs = []
+    a = argparse.Namespace(store=STORE, out=out, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
+                           d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
+                           risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB",
+                           resume=True)
+    again = shadow.run(a, log=logs.append)
+    assert any(m.startswith("replay reused") for m in logs)
+    assert any(m.startswith("reusing the work database") for m in logs)
+    assert again["summary"] == info["summary"] and again["unexplained"] == info["unexplained"]
+    assert again["recorder"]["rows"] == info["recorder"]["rows"]
+    with open(os.path.join(out, "STATUS.json")) as f:
+        assert json.load(f)["step"] == "done"

@@ -27,7 +27,23 @@ from dataclasses import dataclass, field, replace
 from . import venues as V
 from .venues import Curve, Pool
 
-EXACT_IN_CURVE = {"buy_exact_sol_in", "buy_exact_quote_in_v2", "other"}
+# The end of the data window (exclusive slot), set by the tournament from its store. No entry is made
+# at or after it, and a position still open when the window ends is closed on its last slot,
+# W - 1, with exit_reason "window_end": the window's data cannot say what happened later, so a
+# deadline past it is not decided. The proceeds are those of the last state in the window.
+WINDOW_END = None
+
+
+def set_window_end(slot):
+    global WINDOW_END
+    WINDOW_END = slot
+
+
+# Curve buys that spend a quote budget (IDL args spendable_sol_in / spendable_quote_in / amount_in).
+# buy, buy_v2 and buy_v3 (amount + max_sol_cost) fix the token amount instead; an unknown
+# instruction ('other') counts as exact-in. A multi-hop hop spends its logged q + fee: the
+# instruction's amount_in is the route input, shared by all of its hops, so it is not a hop budget.
+EXACT_IN_CURVE = {"buy_exact_sol_in", "buy_exact_quote_in_v2", "buy_exact_quote_in_v3", "multi_hop_curve_swap", "other"}
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 PUMP_AMM = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
 # Standard PumpSwap seed after migration (median of all dev-period pools) and its fee tier.
@@ -59,10 +75,10 @@ class PoolLeg:
     slot: int
     tx: int
     order: tuple
-    kind: str
+    kind: str  # buy | sell | boost | withdraw | deposit (pool orientation)
     exact_out: bool
     base: int
-    quote_net: int
+    quote_net: int  # quote paid by the trader (buy, fees included) or received (sell); boost: quote used
     pre: Pool
     post: Pool
     trader: str
@@ -70,6 +86,9 @@ class PoolLeg:
     limit_base: int = None
     boost_left: int = None
     direct: bool = True
+    lp_amount: int = None  # withdraw: LP tokens burned; deposit: minted
+    lp_supply: int = None
+    farmer: bool = False  # the trader was volume farming in this pool (store.py, backward-looking)
 
 
 @dataclass
@@ -81,6 +100,8 @@ class Stream:
     pool_legs: list = field(default_factory=list)
     pool_open_slot: int = None
     complete_slot: int = None
+    pool: str = None
+    orientation: str = "normal"  # reversed: WSOL is the pool's base, the token its quote
 
 
 _TAU_TABLE = None
@@ -146,6 +167,7 @@ class Result:
     exit_attempts: int = 0
     cf_graduation: bool = False
     seed_pool: bool = False  # graduated counterfactually with no historical pool: standard seed used
+    vault_capped: bool = False  # the real vault could not pay for all our tokens; the rest was written off
     reverted_direct: int = 0
     reverted_router: int = 0
     sells_dropped: int = 0
@@ -188,8 +210,9 @@ def _hist_state(legs, idx):
 class Holdings:
     """Historical vs counterfactual token holdings of other traders (curve: from the create)."""
 
-    def __init__(self, exact):
+    def __init__(self, exact, enabled=True):
         self.exact = exact
+        self.enabled = enabled  # off in reversed pools: there the sold base is WSOL, not the token
         self.hist = {}
         self.cf = {}
 
@@ -201,6 +224,8 @@ class Holdings:
                 self.cf[l.trader] = self.cf.get(l.trader, 0) + d
 
     def sell_amount(self, trader, a):
+        if not self.enabled:
+            return a
         h = self.hist.get(trader, 0)
         c = self.cf.get(trader, h)
         if c >= h:
@@ -269,13 +294,21 @@ def _rerun_curve(state, leg, tau, hold, diag):
 
 def _rerun_pool(state, leg, tau, hold, diag):
     """Re-execute one historical pool leg; returns (state, cf_token_delta) or None."""
-    state = replace(state, lp_bps=leg.pre.lp_bps, protocol_bps=leg.pre.protocol_bps, creator_bps=leg.pre.creator_bps)
+    pre = leg.pre
+    state = replace(state, lp_bps=pre.lp_bps, protocol_bps=pre.protocol_bps, creator_bps=pre.creator_bps,
+                    cashback_bps=pre.cashback_bps, virt=pre.virt)
     if leg.kind == "boost":
+        # Fee-free buy with the quote the crank actually used; the tokens are burned.
         n = leg.quote_net
         if n is None or n <= 1:
             return state, 0
         b = state.b * (n - 1) // (state.e + n - 1)
-        return Pool(state.b - b, state.e + n, state.lp_bps, state.protocol_bps, state.creator_bps), 0
+        return replace(state, b=state.b - b, e=state.e + n), 0
+    if leg.kind == "withdraw":
+        s = V.pool_withdraw(state, leg.lp_amount, leg.lp_supply)
+        return (s, 0) if s is not None else None
+    if leg.kind == "deposit":
+        return V.pool_deposit(state, leg.base, leg.quote_net), 0
     if leg.kind == "buy":
         if leg.exact_out:
             f = V.pool_buy_exact_out(state, leg.base)
@@ -322,110 +355,203 @@ def _rerun_pool(state, leg, tau, hold, diag):
 
 
 def _price(state):
+    """Token mid price in quote units (curve, normal pool)."""
     if state is None:
         return None
-    return state.vq / state.vt if isinstance(state, Curve) else state.e / state.b
+    if isinstance(state, Curve):
+        return state.vq / state.vt
+    return state.e / state.b if state.b > 0 and state.e > 0 else None
 
 
-def _run(r, legs, i, state, hold, rerun, sell, mark_ctx, exit_rule, d, q_frac, tol, tau, on_complete, max_slots):
-    """Shared event loop for curve and pool positions."""
-    diag = {"sells_dropped": 0, "sells_scaled": 0}
-    entry_slot = r.entry_slot
-    deadline = exit_rule.deadline(entry_slot) if hasattr(exit_rule, "deadline") else None
-    pending, pending_min = None, None
-    last_slot = entry_slot
-    n = len(legs)
+def _price_reversed(state):
+    """Token mid price in SOL for a reversed pool (base WSOL, quote token)."""
+    if state is None or state.b <= 0 or state.e <= 0:
+        return None
+    return state.b / state.e
 
-    def decide(slot):
-        nonlocal pending, pending_min
-        f = sell(state, r.tokens)
+
+class PositionSim:
+    """One open position, advanced slot by slot: the shared core of the replay and the paper engine.
+
+    on_slot(slot, legs) re-executes the token's historical events of one complete slot (all legs of
+    that slot for the token, in order; `start` skips the legs before our own entry). advance(slot)
+    tells the position that the token had no events up to and including `slot`, so time-based
+    decisions and pending exits in quiet gaps happen when the clock passes them. end() closes the
+    position when the data ends. Feeding a token's slots with on_slot in order (with advance calls
+    in between, or not) gives exactly the result of the batch replay `_run`.
+    """
+
+    def __init__(self, r, state, hold, rerun, sell, mark_ctx, exit_rule, d, q_frac, tol, tau, on_complete, max_slots,
+                 price=_price, hist_state=None):
+        self.r, self.state, self.hold, self.rerun, self.sell = r, state, hold, rerun, sell
+        self.mark_ctx, self.exit_rule, self.d, self.q_frac, self.tol, self.tau = mark_ctx, exit_rule, d, q_frac, tol, tau
+        self.on_complete, self.max_slots, self.price = on_complete, max_slots, price
+        self.hist_state = hist_state  # slot -> historical state at our insertion point (for hist_mid_exit)
+        self.diag = {"sells_dropped": 0, "sells_scaled": 0}
+        self.entry_slot = r.entry_slot
+        self.deadline = exit_rule.deadline(self.entry_slot) if hasattr(exit_rule, "deadline") else None
+        self.pending, self.pending_min = None, None
+        self.last_slot = self.entry_slot
+        self.decided_for = None  # last_slot already decided at a slot change
+        self.deadline_done = False
+        self.done = False
+
+    # -- decisions and exits ------------------------------------------------------------------
+
+    def _decide(self, slot):
+        r = self.r
+        f = self.sell(self.state, r.tokens)
         mark = f.trader_quote if f else 0
         r.marks.append((slot, mark))
-        reason = exit_rule(dict(mark_ctx(state), slot=slot, mark=mark, cost=r.cost, entry_slot=entry_slot,
-                                slots_held=slot - entry_slot))
+        reason = self.exit_rule(dict(self.mark_ctx(self.state), slot=slot, mark=mark, cost=r.cost,
+                                     entry_slot=self.entry_slot, slots_held=slot - self.entry_slot))
         if reason:
             r.exit_decision_slot, r.exit_reason = slot, reason
-            pending, pending_min = slot + d, int(mark * (1 - tol))
+            self.pending, self.pending_min = slot + self.d, int(mark * (1 - self.tol))
 
-    def try_exit(fill_slot):
-        nonlocal pending
-        f = sell(state, r.tokens)
+    def _try_exit(self, fill_slot, slot_legs=None):
+        r = self.r
+        f = self.sell(self.state, r.tokens)
         r.exit_attempts += 1
-        if f is not None and f.trader_quote >= pending_min:
+        if f is not None and f.trader_quote >= self.pending_min:
             r.exit_slot, r.proceeds = fill_slot, f.trader_quote
-            r.hist_mid_exit = _price(_hist_state(legs, _insertion_index(legs, fill_slot, q_frac)))
-            return True
-        pending = None
+            r.vault_capped = f.tokens < r.tokens
+            r.hist_mid_exit = self.price(self.hist_state(fill_slot, slot_legs)) if self.hist_state else None
+            return self._finish()
+        self.pending = None
         return False
 
-    def finish():
-        r.sells_dropped, r.sells_scaled = diag["sells_dropped"], diag["sells_scaled"]
-        return r
+    def _finish(self):
+        self.r.sells_dropped, self.r.sells_scaled = self.diag["sells_dropped"], self.diag["sells_scaled"]
+        self.done = True
+        return True
 
-    while i < n:
-        leg = legs[i]
-        if leg.slot != last_slot:
-            if pending is None and not getattr(state, "complete", False):
-                decide(last_slot)
-            # A time deadline inside the quiet gap before this leg.
-            if pending is None and deadline is not None and last_slot < deadline < leg.slot:
-                decide(deadline)
-            if pending is not None and pending < leg.slot:
-                if try_exit(pending):
-                    return finish()
-            last_slot = leg.slot
-        if pending is not None and leg.slot == pending and i >= _insertion_index(legs, pending, q_frac):
-            if try_exit(pending):
-                return finish()
-        if leg.slot - entry_slot > max_slots:
-            break
-        # Re-execute the whole historical transaction atomically. Holdings move per leg, so a later
-        # leg of the same transaction (a bot that buys and sells at once) sees the earlier ones;
-        # if any leg fails, the applied legs are rolled back.
-        j, tx_state, ok, applied, failed_leg = i, state, True, [], None
-        diag_before = dict(diag)
-        while j < n and legs[j].slot == leg.slot and legs[j].tx == leg.tx:
-            res = rerun(tx_state, legs[j], tau, hold, diag)
-            if res is None:
-                ok, failed_leg = False, legs[j]
-                break
-            tx_state, cf_delta = res
-            _apply_hold(hold, legs[j], cf_delta)
-            applied.append((legs[j], cf_delta))
-            j += 1
-        while j < n and legs[j].slot == leg.slot and legs[j].tx == leg.tx:
-            j += 1
-        tx_legs = legs[i:j]
-        if ok:
-            state = tx_state
-        else:
-            if failed_leg.direct:
-                r.reverted_direct += 1
+    def _complete(self, slot):
+        self.on_complete(slot, lambda: self.r)
+        return self._finish()
+
+    def _slot_change(self, slot):
+        """The replay's steps when the token's next event is at `slot` (> last_slot)."""
+        if self.pending is None and not getattr(self.state, "complete", False) and self.decided_for != self.last_slot:
+            self._decide(self.last_slot)
+            self.decided_for = self.last_slot
+        # A time deadline inside the quiet gap before this slot.
+        if (self.pending is None and not self.deadline_done and self.deadline is not None
+                and self.last_slot < self.deadline < slot):
+            self._decide(self.deadline)
+            self.deadline_done = True
+        if self.pending is not None and self.pending < slot:
+            return self._try_exit(self.pending)
+        return False
+
+    # -- feeding --------------------------------------------------------------------------------
+
+    def advance(self, upto_slot):
+        """No events of the token in (last_slot, upto_slot]."""
+        if not self.done and upto_slot > self.last_slot:
+            self._slot_change(upto_slot + 1)
+
+    def on_slot(self, slot, legs, start=0):
+        """Re-execute the token's events of one complete slot (legs[start:]); True when closed."""
+        if self.done:
+            return True
+        if slot != self.last_slot:
+            if self._slot_change(slot):
+                return True
+            self.last_slot = slot
+        n, i = len(legs), start
+        ins = _insertion_index(legs, self.pending, self.q_frac) if self.pending == slot else None
+        while i < n:
+            leg = legs[i]
+            if self.pending is not None and slot == self.pending:
+                if ins is None:
+                    ins = _insertion_index(legs, self.pending, self.q_frac)
+                if i >= ins and self._try_exit(self.pending, legs):
+                    return True
+            if slot - self.entry_slot > self.max_slots:
+                return self.end()
+            # Re-execute the whole historical transaction atomically. Holdings move per leg, so a
+            # later leg of the same transaction (a bot that buys and sells at once) sees the
+            # earlier ones; if any leg fails, the applied legs are rolled back.
+            j, tx_state, ok, applied, failed_leg = i, self.state, True, [], None
+            diag_before = dict(self.diag)
+            while j < n and legs[j].tx == leg.tx:
+                res = self.rerun(tx_state, legs[j], self.tau, self.hold, self.diag)
+                if res is None:
+                    ok, failed_leg = False, legs[j]
+                    break
+                tx_state, cf_delta = res
+                _apply_hold(self.hold, legs[j], cf_delta)
+                applied.append((legs[j], cf_delta))
+                j += 1
+            while j < n and legs[j].tx == leg.tx:
+                j += 1
+            if ok:
+                self.state = tx_state
             else:
-                r.reverted_router += 1
-            for l, cf_delta in applied:
-                _apply_hold(hold, l, cf_delta, sign=-1)
-            diag.update(diag_before)
-            for l in tx_legs:
-                _apply_hold(hold, l, 0)
-        i = j
-        if getattr(state, "complete", False):
-            return on_complete(leg.slot, finish)
+                if failed_leg.direct:
+                    self.r.reverted_direct += 1
+                else:
+                    self.r.reverted_router += 1
+                for l, cf_delta in applied:
+                    _apply_hold(self.hold, l, cf_delta, sign=-1)
+                self.diag.update(diag_before)
+                for l in legs[i:j]:
+                    _apply_hold(self.hold, l, 0)
+            i = j
+            if getattr(self.state, "complete", False):
+                return self._complete(leg.slot)
+        return False
 
-    # Stream ended while holding.
-    if getattr(state, "complete", False):
-        return on_complete(last_slot, finish)
-    if pending is None:
-        decide(last_slot)
-    if pending is None and deadline is not None and deadline > last_slot:
-        decide(deadline)
-    if pending is None:
-        r.exit_decision_slot, r.exit_reason = last_slot, r.exit_reason or "end_of_data"
-        pending, pending_min = last_slot + d, 0
-    if not try_exit(pending):
-        f = sell(state, r.tokens)
-        r.exit_slot, r.proceeds = pending, f.trader_quote if f else 0
-    return finish()
+    def end(self):
+        """The data ended (or the hold limit passed) while holding. A deadline or fill at or after
+        the window end (WINDOW_END) is not decided: the position closes on the window's last slot."""
+        if self.done:
+            return True
+        r = self.r
+        if getattr(self.state, "complete", False):
+            return self._complete(self.last_slot)
+        if self.pending is None and self.decided_for != self.last_slot:
+            self._decide(self.last_slot)
+        w = WINDOW_END
+        beyond = w is not None and self.deadline is not None and self.deadline + self.d >= w
+        if self.pending is None and not self.deadline_done and self.deadline is not None and self.deadline > self.last_slot \
+                and not beyond:
+            self._decide(self.deadline)
+        if self.pending is None and beyond:
+            r.exit_decision_slot, r.exit_reason = w - 1, "window_end"
+            self.pending, self.pending_min = w - 1, 0
+        if self.pending is None:
+            r.exit_decision_slot, r.exit_reason = self.last_slot, r.exit_reason or "end_of_data"
+            self.pending, self.pending_min = self.last_slot + self.d, 0
+        if w is not None and self.pending >= w:
+            self.pending, self.pending_min = w - 1, 0
+            r.exit_decision_slot, r.exit_reason = min(r.exit_decision_slot, w - 1), "window_end"
+        if not self._try_exit(self.pending):
+            f = self.sell(self.state, r.tokens)
+            r.exit_slot, r.proceeds = self.pending, f.trader_quote if f else 0
+            self._finish()
+        return True
+
+
+def _batch_hist_state(legs, q_frac):
+    return lambda slot, _slot_legs: _hist_state(legs, _insertion_index(legs, slot, q_frac))
+
+
+def feed_batch(sim, legs, i):
+    """Feed a token's legs from index i (our insertion point) slot by slot, then end the data."""
+    n = len(legs)
+    while i < n and not sim.done:
+        slot = legs[i].slot
+        a = _insertion_index(legs, slot, 0.0)  # first leg of the slot
+        j = i
+        while j < n and legs[j].slot == slot:
+            j += 1
+        sim.on_slot(slot, legs[a:j], start=i - a)
+        i = j
+    if not sim.done:
+        sim.end()
+    return sim.r
 
 
 def _apply_hold(hold, leg, cf_delta, sign=1):
@@ -439,32 +565,9 @@ def _apply_hold(hold, leg, cf_delta, sign=1):
     hold.apply(leg.trader, sign * hist, sign * cf_delta)
 
 
-def simulate_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots=400_000):
-    """Buy `size` lamports on the curve at decision_slot + d and run until the exit rule sells."""
-    r = Result(stream.mint, decision_slot, size=size, venue="curve")
-    legs = stream.curve
-    r.entry_slot = decision_slot + d
-    s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0))
-    if s_dec is None or s_dec.complete:
-        r.skipped, r.exit_reason = True, "no_curve_state"
-        return r
-    expected = V.curve_buy_exact_in(s_dec, size)
-    if expected is None:
-        r.skipped, r.exit_reason = True, "no_fill"
-        return r
-    i = _insertion_index(legs, r.entry_slot, q_frac)
-    state = _hist_state(legs, i)
-    if state.complete:
-        r.skipped, r.exit_reason = True, "curve_complete"
-        return r
-    r.hist_mid_entry = _price(state)
-    fill = V.curve_buy_exact_in(state, size)
-    if fill is None or fill.tokens < expected.tokens * (1 - tol):
-        r.entry_failed, r.exit_reason = True, "entry_slippage"
-        return r
-    r.tokens, r.cost = fill.tokens, fill.trader_quote
-    hold = Holdings(exact=True)
-    hold.seed(legs[:i])
+def _graduation_exit(r, stream, q_frac):
+    """on_complete for curve positions in the batch replay: sell at pool open + 1 in the historical
+    pool, or in a standard seed pool when there is none."""
 
     def on_complete(slot, finish):
         if stream.complete_slot is None or slot < stream.complete_slot:
@@ -475,8 +578,9 @@ def simulate_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, t
             r.exit_decision_slot, r.exit_slot = open_slot, open_slot + 1
             idx = _insertion_index(stream.pool_legs, open_slot + 1, q_frac)
             pstate = _hist_state(stream.pool_legs, idx)
-            f = V.pool_sell(pstate, r.tokens)
+            f = V.pool_sell_capped(pstate, r.tokens)
             r.proceeds = f.trader_quote if f else 0
+            r.vault_capped = f is not None and f.tokens < r.tokens
             r.hist_mid_exit = _price(pstate)
         else:
             # No historical pool (or not loaded): sell into a standard seed pool, no other flow.
@@ -489,32 +593,98 @@ def simulate_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, t
         r.exit_attempts += 1
         return finish()
 
+    return on_complete
+
+
+def open_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots=400_000,
+                        on_complete=None, hist_state=None):
+    """Our buy on the curve at decision_slot + d. stream.curve must hold the token's legs from its
+    create up to (at least) the entry slot. Returns (Result, PositionSim or None, i): None when no
+    position is open (skipped, failed entry, or graduated at once); i is our insertion index."""
+    r = Result(stream.mint, decision_slot, size=size, venue="curve")
+    legs = stream.curve
+    r.entry_slot = decision_slot + d
+    if WINDOW_END is not None and r.entry_slot >= WINDOW_END:
+        r.skipped, r.exit_reason = True, "after_window_end"
+        return r, None, None
+    s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0))
+    if s_dec is None or s_dec.complete:
+        r.skipped, r.exit_reason = True, "no_curve_state"
+        return r, None, None
+    expected = V.curve_buy_exact_in(s_dec, size)
+    if expected is None:
+        r.skipped, r.exit_reason = True, "no_fill"
+        return r, None, None
+    i = _insertion_index(legs, r.entry_slot, q_frac)
+    state = _hist_state(legs, i)
+    if state.complete:
+        r.skipped, r.exit_reason = True, "curve_complete"
+        return r, None, None
+    r.hist_mid_entry = _price(state)
+    fill = V.curve_buy_exact_in(state, size)
+    if fill is None or fill.tokens < expected.tokens * (1 - tol):
+        r.entry_failed, r.exit_reason = True, "entry_slippage"
+        return r, None, None
+    r.tokens, r.cost = fill.tokens, fill.trader_quote
+    hold = Holdings(exact=True)
+    hold.seed(legs[:i])
+    on_complete = on_complete or _graduation_exit(r, stream, q_frac)
     if fill.completes:
         r.cf_graduation = True
-        return on_complete(r.entry_slot, lambda: r)
-    return _run(r, legs, i, fill.state, hold, _rerun_curve, V.curve_sell, lambda s: {"curve": s},
-                exit_rule, d, q_frac, tol, tau, on_complete, max_slots)
+        on_complete(r.entry_slot, lambda: r)
+        return r, None, i
+    sim = PositionSim(r, fill.state, hold, _rerun_curve, V.curve_sell, lambda s: {"curve": s}, exit_rule, d, q_frac,
+                      tol, tau, on_complete, max_slots, hist_state=hist_state or _batch_hist_state(legs, q_frac))
+    return r, sim, i
 
 
-def simulate_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau=None, max_slots=400_000):
-    """Buy in the pool at decision_slot + d; later pool trades are re-executed with their limits."""
+def simulate_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots=400_000):
+    """Buy `size` lamports on the curve at decision_slot + d and run until the exit rule sells."""
+    r, sim, i = open_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots)
+    return feed_batch(sim, stream.curve, i) if sim else r
+
+
+def pool_venue(orientation):
+    """(buy, sell, price, holdings) for our position in a pool of this orientation."""
+    if orientation == "reversed":
+        return V.rev_buy_token, V.rev_sell_token, _price_reversed, Holdings(exact=False, enabled=False)
+    return V.pool_buy_exact_in, V.pool_sell_capped, _price, Holdings(exact=False)
+
+
+def open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau=None, max_slots=400_000,
+                       hist_state=None):
+    """Our token buy in the pool at decision_slot + d; stream.pool_legs must cover the decision and
+    entry slots. In a reversed pool (WSOL base) the token is bought with a pool sell of WSOL and
+    sold with an exact-in pool buy; other traders' holdings are not tracked there.
+    Returns (Result, PositionSim or None, i)."""
     tau = tau or Tau()
     r = Result(stream.mint, decision_slot, size=size, venue="pool")
     legs = stream.pool_legs
     r.entry_slot = decision_slot + d
-    if not legs:
+    if WINDOW_END is not None and r.entry_slot >= WINDOW_END:
+        r.skipped, r.exit_reason = True, "after_window_end"
+        return r, None, None
+    buy, sell, price, hold = pool_venue(stream.orientation)
+    s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0)) if legs else None
+    if s_dec is None:
         r.skipped, r.exit_reason = True, "no_pool_state"
-        return r
-    s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0))
-    expected = V.pool_buy_exact_in(s_dec, size)
+        return r, None, None
+    expected = buy(s_dec, size)
     i = _insertion_index(legs, r.entry_slot, q_frac)
     state = _hist_state(legs, i)
-    r.hist_mid_entry = _price(state)
-    fill = V.pool_buy_exact_in(state, size)
+    r.hist_mid_entry = price(state)
+    fill = buy(state, size)
     if fill is None or expected is None or fill.tokens < expected.tokens * (1 - tol):
         r.entry_failed, r.exit_reason = True, "entry_slippage"
-        return r
+        return r, None, None
     r.tokens, r.cost = fill.tokens, fill.trader_quote
-    hold = Holdings(exact=False)
-    return _run(r, legs, i, fill.state, hold, _rerun_pool, V.pool_sell, lambda s: {"pool": s},
-                exit_rule, d, q_frac, tol, tau, None, max_slots)
+    sim = PositionSim(r, fill.state, hold, _rerun_pool, sell, lambda s: {"pool": s}, exit_rule, d, q_frac, tol, tau,
+                      None, max_slots, price, hist_state=hist_state or _batch_hist_state(legs, q_frac))
+    return r, sim, i
+
+
+def simulate_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau=None, max_slots=400_000):
+    """Buy the token in the pool at decision_slot + d; later pool events are re-executed with their
+    limits (see open_pool_position)."""
+    r, sim, i = open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots)
+    return feed_batch(sim, stream.pool_legs, i) if sim else r

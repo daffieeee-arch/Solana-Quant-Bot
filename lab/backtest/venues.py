@@ -15,7 +15,9 @@ Curve: q is the curve-side quote amount. A buyer pays q + protocol fee + creator
 receives q - protocol fee - creator fee. Virtual and real reserves move by t and q only.
 Pool: E = quote vault + virtual quote reserves. The LP fee stays in the pool; protocol and
 creator fees leave it. Fees kept in the pool by v2 trades move vault and virtual reserves in
-opposite directions and leave E unchanged, so (B, E) is the pricing state.
+opposite directions and leave E unchanged, so (B, E) is the pricing state. The virtual part
+(`virt`, a boost) only sets the price: a sell can never pay out more than the real vault E - virt
+(program error 6063), so such a sell fails.
 """
 
 from dataclasses import dataclass, replace
@@ -118,41 +120,102 @@ class Pool:
     lp_bps: int
     protocol_bps: int
     creator_bps: int
+    cashback_bps: int = 0
+    virt: int = 0  # pricing-only quote (boost); the real vault is e - virt
 
     def price(self):
         return self.e / self.b
 
     @property
+    def real(self):
+        return self.e - self.virt
+
+    @property
     def fee_list(self):
-        return [self.lp_bps, self.protocol_bps, self.creator_bps]
+        return [self.lp_bps, self.protocol_bps, self.creator_bps, self.cashback_bps]
+
+
+def _fees(p, x):
+    lp = fee(x, p.lp_bps)
+    return lp, lp + fee(x, p.protocol_bps) + fee(x, p.creator_bps) + fee(x, p.cashback_bps)
 
 
 def pool_buy_exact_in(p, budget):
     """Spend at most `budget` quote (fees included), like buy_exact_quote_in."""
+    if p.b <= 0 or p.e <= 0:
+        return None
     n = net_for_budget(budget, p.fee_list)
     if n <= 1:
         return None
     b = p.b * (n - 1) // (p.e + n - 1)
     if b <= 0 or b >= p.b:
         return None
-    lp = fee(n, p.lp_bps)
-    f = lp + fee(n, p.protocol_bps) + fee(n, p.creator_bps)
+    lp, f = _fees(p, n)
     return Fill(b, n, f, n + f, replace(p, b=p.b - b, e=p.e + n + lp))
 
 
 def pool_buy_exact_out(p, b):
-    if b <= 0 or b >= p.b:
+    if b <= 0 or b >= p.b or p.e <= 0:
         return None
     q = -(-p.e * b // (p.b - b))
-    lp = fee(q, p.lp_bps)
-    f = lp + fee(q, p.protocol_bps) + fee(q, p.creator_bps)
+    lp, f = _fees(p, q)
     return Fill(b, q, f, q + f, replace(p, b=p.b - b, e=p.e + q + lp))
 
 
 def pool_sell(p, a):
-    if a <= 0:
+    """Sell `a` tokens; None if the payout exceeds the real vault (the program rejects it)."""
+    if a <= 0 or p.b <= 0 or p.e <= 0:
         return None
     gross = p.e * a // (p.b + a)
-    lp = fee(gross, p.lp_bps)
-    f = lp + fee(gross, p.protocol_bps) + fee(gross, p.creator_bps)
+    if gross > p.real:
+        return None
+    lp, f = _fees(p, gross)
     return Fill(a, gross, f, max(0, gross - f), replace(p, b=p.b + a, e=p.e - (gross - lp)))
+
+
+def pool_sell_capped(p, a):
+    """Our own exit: sell as many of `a` tokens as the real vault can pay out (the rest stays
+    unsold and is written off by the caller). Fill.tokens tells how many were sold."""
+    f = pool_sell(p, a)
+    if f is not None or a <= 0 or p.b <= 0 or p.e <= 0 or p.virt <= 0:
+        return f
+    lo, hi = 0, a  # largest k with gross(k) <= real; gross is increasing in k
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if p.e * mid // (p.b + mid) <= p.real:
+            lo = mid
+        else:
+            hi = mid - 1
+    return pool_sell(p, lo) if lo > 0 else None
+
+
+def pool_withdraw(p, lp_in, lp_supply):
+    """Remove liquidity: base and real quote leave pro rata; virtual quote stays."""
+    if lp_supply <= 0:
+        return None
+    return replace(p, b=p.b - p.b * lp_in // lp_supply, e=p.e - p.real * lp_in // lp_supply)
+
+
+def pool_deposit(p, base_in, quote_in):
+    return replace(p, b=p.b + base_in, e=p.e + quote_in)
+
+
+# ----------------------------------------------------------------------------- reversed pools
+# A reversed pool has WSOL as base and the token as quote. Buying the token is a pool sell of
+# WSOL (fees come out of the tokens received); selling it is a pool buy of WSOL paid in tokens.
+# Both return a Fill in token terms: tokens = tokens bought or spent, trader_quote = SOL paid or
+# received.
+
+
+def rev_buy_token(p, sol):
+    f = pool_sell(p, sol)
+    if f is None or f.trader_quote <= 0:
+        return None
+    return Fill(f.trader_quote, f.curve_quote, f.fees, sol, f.state)
+
+
+def rev_sell_token(p, tokens):
+    f = pool_buy_exact_in(p, tokens)
+    if f is None:
+        return None
+    return Fill(f.trader_quote, f.curve_quote, f.fees, f.tokens, f.state)

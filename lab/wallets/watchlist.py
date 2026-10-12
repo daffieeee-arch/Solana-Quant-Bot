@@ -167,6 +167,23 @@ class Watchlist:
         self.members = members
         return members
 
+    def add_history(self, pool, minute, trades, sol, farmer_sol):
+        """Trades of an earlier minute that arrive after that minute was stepped (live: a recorder
+        backfill of a new probe pool). They enter the trailing organic window where they belong and
+        count as activity; the depth stays the last stepped one (newer). Next step() uses them."""
+        if pool not in self.pools or not trades or self.minute is None:
+            return
+        s = self.state[pool]
+        if minute <= self.minute - self.rules.organic_window_minutes:
+            return  # already outside the window
+        i = len(s.window)
+        while i and s.window[i - 1][0] > minute:
+            i -= 1
+        s.window.insert(i, (minute, float(sol), float(farmer_sol)))
+        s.win_sol += float(sol)
+        s.win_farmer += float(farmer_sol)
+        s.last_trade = minute if s.last_trade is None else max(s.last_trade, minute)
+
     def snapshot(self, valid_from_slot=None, generated_slot=None):
         """The list for the recorder: pools with their rule tags, the followed wallets, counts."""
         return {"version": 1, "valid_for_minute": None if self.minute is None else self.minute + 1,
