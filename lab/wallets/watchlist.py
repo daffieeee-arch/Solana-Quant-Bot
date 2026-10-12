@@ -642,7 +642,9 @@ def main():
     wallets = []
     if a.wallets:
         wallets = [r[0] for r in con.execute(f"SELECT wallet FROM read_csv({a.wallets!r}, header = true)").fetchall()]
-    out = run(con, a.from_slot, a.to_slot, a.out, Rules(), wallets, a.triggers, history=a.history)
+    rules = Rules(f7_depth_enter_sol=float(os.environ.get("LAB_WATCHLIST_F7_ENTER", Rules.f7_depth_enter_sol)),
+                  f7_depth_exit_sol=float(os.environ.get("LAB_WATCHLIST_F7_EXIT", Rules.f7_depth_exit_sol)))
+    out = run(con, a.from_slot, a.to_slot, a.out, rules, wallets, a.triggers, history=a.history)
     days = out["days"]
     print(f"{a.from_slot}-{a.to_slot}: {out['pools_seen']} pools seen, days {list(days)}, "
           + "; ".join(f"{d}: median {v['members']['median']} pools, {v['events_on_list']:,}/{v['events_all']:,} events" for d, v in days.items())
