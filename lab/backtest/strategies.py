@@ -710,6 +710,85 @@ def m1_candidates_sql(con, cfg, dev_start, dev_end, clock=None):
     return out
 
 
+# ----------------------------------------------------------------------------- M1+ and M1-early
+# M1 at a fixed moment after the pool opens (week3-specs-M1plus-2026-10-11.md, week3-specs-M1early-
+# 2026-10-12.md, both pre-registered before any replay): at t = open + moment, with information up to
+# and including slot t only, the pool's price (reserve price e/b after the last trade) is >= k x its
+# opening price q0/b0, the organic net SOL buy flow over [open, t] is > 0 and >= 20 distinct organic
+# buyers bought in [open, t]. The M1 universe; no insider condition in the trigger: the vetoes are
+# paired variants of the same triggers (tournament: overlay rows).
+M1X_TRAILS = (0.20, 0.35)
+M1X = {
+    "M1P": {"moments_ms": (900_000,), "ks": (1.5, 2.0), "vetoes": ("V_ins", "V_ins+V_hype"), "n2_age_ms": M1_AGE_MS},
+    "M1E": {"moments_ms": (60_000, 120_000, 300_000), "ks": (1.5,), "vetoes": ("V_ins+V_bundle",), "n2_age_ms": 600_000},
+}
+M1X_INS_VETO = 0.90   # V_ins: insider share (O7 definition) at t above this
+M1X_HYPE_VETO = 585   # V_hype (M1+): distinct curve buyers above this
+M1X_BUNDLE_MAX = 5    # V_bundle (M1-early): at most this many distinct curve buyers (wallets/cases.py)
+
+
+def m1x_variant(family, moment_ms, k, trail):
+    if family == "M1E":
+        return f"m{moment_ms // 60_000}_trail{int(trail * 100)}"
+    return f"k{int(round(k * 10))}_trail{int(trail * 100)}"
+
+
+def m1x_vetoed(veto, ins_share, curve_buyers):
+    """A veto overlay ('V_ins', 'V_ins+V_hype', 'V_ins+V_bundle') on one position: True when any
+    part applies. Unknown inputs (None) never veto (the rows carry them, so they are counted)."""
+    out = False
+    for part in veto.split("+"):
+        if part == "V_ins":
+            out |= ins_share is not None and ins_share > M1X_INS_VETO
+        elif part == "V_hype":
+            out |= curve_buyers is not None and curve_buyers > M1X_HYPE_VETO
+        elif part == "V_bundle":
+            out |= curve_buyers is not None and curve_buyers <= M1X_BUNDLE_MAX
+        else:
+            raise ValueError(part)
+    return out
+
+
+def m1x_candidates_sql(con, cfg, dev_start, dev_end, moments_ms, clock=None):
+    """M1+ / M1-early: for every pool of the M1 universe and moment, its state at t = create_slot +
+    moment (in slots at the ms/slot of the epoch the pool opened in): the price ratio to the opening price, the organic net SOL buy flow and
+    the distinct organic buyers over [open, t], the real SOL depth before the last trade. Pools without
+    a trade in [open, t] have no row. Returns [(mint, pool, moment_ms, t, depth, ratio, flow, buyers)]."""
+    clock = clock or Clock()
+    lo, hi = decision_bounds(cfg, dev_start, dev_end, clock)
+    out = []
+    pool_r = key_ranges(con, "pools", "pool", SQL_BUCKETS)
+    # The moment in slots with the measured ms/slot of the epoch the pool opened in (addendum §2).
+    max_n = max(clock.slots(mo, e * EPOCH_SLOTS) for mo in moments_ms
+                for e in range((lo - 1) // EPOCH_SLOTS - 1, hi // EPOCH_SLOTS + 1))
+    epochs = range(max(0, lo - max_n) // EPOCH_SLOTS, hi // EPOCH_SLOTS + 1)
+    for e, (plo, phi), moment in ((e, pr, mo) for e in epochs for pr in pool_r for mo in moments_ms):
+        n = round(moment / clock.ms_per_slot(e * EPOCH_SLOTS))
+        out += con.execute(f"""
+          WITH young AS (
+            SELECT p.pool, p.mint, p.create_slot, p.create_slot + {n} AS t, p.q0::DOUBLE / p.b0 AS open_price
+            FROM pools p JOIN mints m ON m.mint = p.mint
+            WHERE p.quote_class = 'sol' AND NOT COALESCE(p.mayhem, false) AND p.created_in_period AND p.b0 > 0
+              AND NOT m.mayhem AND COALESCE(m.complete_slot, -1) <> m.create_slot
+              AND p.create_slot BETWEEN {e * EPOCH_SLOTS} AND {(e + 1) * EPOCH_SLOTS - 1}
+              AND p.create_slot + {n} BETWEEN {lo} AND {hi}
+              AND p.pool BETWEEN '{plo}' AND '{phi}'),
+          ev AS (
+            SELECT e.pool, e.slot, e.tx_index, e.outer_ix, e.inner_ix, e.sol_depth, e.trader, e.token_buy, e.farmer,
+                   (e.e + e.e_delta)::DOUBLE / (CASE WHEN e.token_buy THEN e.b - e.base ELSE e.b + e.base END) AS price,
+                   CASE WHEN e.farmer THEN 0 WHEN e.token_buy THEN e.sol_amount ELSE -e.sol_amount END AS dq
+            FROM pool e JOIN young y USING (pool)
+            WHERE e.kind IN ('buy', 'sell') AND e.slot BETWEEN y.create_slot AND y.t)
+          SELECT y.mint, y.pool, {moment}, y.t,
+                 arg_max(ev.sol_depth, (ev.slot, ev.tx_index, ev.outer_ix, ev.inner_ix)),
+                 arg_max(ev.price, (ev.slot, ev.tx_index, ev.outer_ix, ev.inner_ix)) / y.open_price,
+                 sum(ev.dq), count(DISTINCT ev.trader) FILTER (WHERE ev.token_buy AND NOT ev.farmer)
+          FROM young y JOIN ev USING (pool)
+          GROUP BY y.mint, y.pool, y.t, y.open_price
+          ORDER BY y.pool, y.t""").fetchall()
+    return out
+
+
 class M1Exit(ExitRule):
     """Trailing stop from the peak mark, hard stop at -25% from the entry cost, or time."""
 
