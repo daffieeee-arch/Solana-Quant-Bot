@@ -566,9 +566,223 @@ def _holdout_md(out, c):
     return "\n".join(lines) + "\n"
 
 
+# ----------------------------------------------------------------------------- M1+ and M1-early
+
+M1X_PERIODS = {"days 1-9": ("2026-09-11", "2026-09-19"), "days 10-18": ("2026-09-20", "2026-09-30")}
+M1X_BINDING = "days 10-18"  # the walk-forward test; days 1-9 fixed the thresholds (specs §9)
+M1X_GATE = (0.5, 1.0)
+
+
+def _m1x_stats(con, where):
+    """Per-trade figures of one group of table m (filled base rows): trades, mean ret, CI, SOL/trade,
+    win rate, payoff, top-1% P&L share, the capital simulation (10 SOL, <= 5 positions)."""
+    from .report import capital_sim
+
+    n, mean, lo, hi = _ci_num(con, f"SELECT day, sum(ret), count(ret) FROM m WHERE {where} AND ret IS NOT NULL GROUP BY day")
+    if not n:
+        return None
+    sol, win, payoff = con.execute(f"""SELECT avg(pnl) / 1e9, avg((ret > 0)::INT),
+                                              avg(ret) FILTER (WHERE ret > 0) / NULLIF(-avg(ret) FILTER (WHERE ret <= 0), 0)
+                                       FROM m WHERE {where} AND ret IS NOT NULL""").fetchone()
+    top = con.execute(f"""SELECT sum(pnl) FILTER (WHERE rk <= ceil(0.01 * cnt)) / NULLIF(sum(pnl), 0) FROM (
+                            SELECT pnl, row_number() OVER (ORDER BY ret DESC) AS rk, count(*) OVER () AS cnt
+                            FROM m WHERE {where} AND ret IS NOT NULL)""").fetchone()[0]
+    trades = con.execute(f"SELECT entry_slot, exit_slot, cost, pnl, entry_failed FROM m WHERE {where} ORDER BY entry_slot").fetchall()
+    final, mdd, taken, _ = capital_sim([(e, x, c or 0, p or 0, f) for e, x, c, p, f in trades])
+    return {"trades": n, "mean": mean, "lo": lo, "hi": hi, "sol_per_trade": sol, "win": win, "payoff": payoff,
+            "top1_share": top, "capital_final_sol": final / 1e9, "capital_max_dd": mdd, "capital_taken": taken}
+
+
+def _m1x_delta(con, fam, veto, size, d, period):
+    """Paired veto effect (as report.overlay_effects): per trigger and variant, veto row P&L (0 when
+    vetoed) minus the base row's, mean SOL per trade with a day-bootstrap CI; and the share vetoed."""
+    key = "family, variant, size_sol, d, q, mint, t, COALESCE(pool, '')"
+    rows = sorted(con.execute(f"""
+        WITH b AS (SELECT {key} AS k, pnl FROM m WHERE overlay = 'none' AND NOT skipped),
+        o AS (SELECT {key} AS k, day, exit_reason = 'veto' AS vetoed, CASE WHEN exit_reason = 'veto' THEN 0 ELSE pnl END AS pnl
+              FROM m WHERE overlay = '{veto}' AND family = '{fam}' AND size_sol = {size} AND d = {d} AND period = '{period}')
+        SELECT day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(vetoed::INT) FROM o JOIN b USING (k)
+        WHERE o.pnl IS NOT NULL AND b.pnl IS NOT NULL GROUP BY day""").fetchall())
+    if not rows:
+        return None
+    sums = np.array([r[1] for r in rows], dtype=float)
+    cnts = np.array([r[2] for r in rows], dtype=float)
+    lo, hi = _boot(sums, cnts)
+    return {"pairs": int(cnts.sum()), "veto_share": sum(r[3] for r in rows) / cnts.sum(), "delta_sol": float(sums.sum() / cnts.sum()),
+            "lo": lo, "hi": hi}
+
+
+def m1x(run_dir, store=STORE):
+    """M1+ (M1P) and M1-early (M1E) after the pre-registered specs (week3-specs-M1plus-2026-10-11.md,
+    week3-specs-M1early-2026-10-12.md): per family, variant, size and d at base costs, days 1-9 and
+    10-18 apart (only 10-18 binds): trades, net return per trade with a day-bootstrap CI, SOL/trade,
+    win rate, payoff, the top-1% P&L share, the capital simulation and N2; per veto the share vetoed
+    (M1-early also per part) and the paired difference, at the family and at N2; the exit reasons with
+    the median hold and the median highest mark before the exit; per slot-time regime; the specs'
+    usefulness rule (§10). Writes <run_dir>/m1x.md and m1x.json."""
+    from .costs import Scenario, settle_sql
+    from .store import load_defaults
+    from .strategies import M1X, M1X_BUNDLE_MAX, M1X_INS_VETO
+    from .tournament import results_glob
+
+    cfg = load_defaults()
+    con = _con()
+    pnl, ret = settle_sql(Scenario.from_cfg("base", cfg))
+    period = "CASE " + " ".join(f"WHEN day BETWEEN '{a}' AND '{b}' THEN '{k}'" for k, (a, b) in M1X_PERIODS.items()) + " ELSE 'other' END"
+    fams = [f for f in M1X] + ["N2_" + f for f in M1X]
+    con.execute(f"""CREATE TEMP TABLE m AS
+        SELECT family, variant, size_sol, d, q, overlay, regime, day, {period} AS period, t, mint, pool, entry_slot, exit_slot,
+               cost, proceeds, skipped, entry_failed, exit_reason, ins_share, curve_buyers, peak_ret, d_ms, {pnl} AS pnl, {ret} AS ret
+        FROM read_parquet('{results_glob(run_dir)}', union_by_name = true) WHERE family IN ({",".join(f"'{f}'" for f in fams)})""")
+    out = {"run_dir": run_dir, "periods": M1X_PERIODS, "binding": M1X_BINDING, "families": {}}
+    for fam, spec in M1X.items():
+        variants = [r[0] for r in con.execute(f"SELECT DISTINCT variant FROM m WHERE family = '{fam}' ORDER BY 1").fetchall()]
+        if not variants:
+            continue
+        delays = [r[0] for r in con.execute(f"SELECT DISTINCT d FROM m WHERE family = '{fam}' ORDER BY 1").fetchall()]
+        sizes = [r[0] for r in con.execute(f"SELECT DISTINCT size_sol FROM m WHERE family = '{fam}' ORDER BY 1").fetchall()]
+        f = {"variants": variants, "delays": delays, "sizes": sizes, "groups": [], "vetoes": [], "veto_parts": [], "exits": [],
+             "regimes": []}
+        for per in M1X_PERIODS:
+            for ov in ("none",) + spec["vetoes"]:
+                for v in variants:
+                    for size in sizes:
+                        for d in delays:
+                            w = (f"overlay = '{ov}' AND variant = '{v}' AND size_sol = {size} AND d = {d} AND period = '{per}' "
+                                 "AND NOT skipped")
+                            st = _m1x_stats(con, f"family = '{fam}' AND {w}")
+                            if st is None:
+                                continue
+                            n2 = _m1x_stats(con, f"family = 'N2_{fam}' AND {w}")
+                            f["groups"].append({"period": per, "overlay": ov, "variant": v, "size": size, "d": d, **st,
+                                                "n2": n2, "vs_n2": None if (n2 is None or st["mean"] is None or n2["mean"] is None)
+                                                else st["mean"] - n2["mean"]})
+            for veto in spec["vetoes"]:
+                for size in sizes:
+                    for d in delays:
+                        for g in (fam, "N2_" + fam):
+                            x = _m1x_delta(con, g, veto, size, d, per)
+                            if x:
+                                f["vetoes"].append({"period": per, "family": g, "veto": veto, "size": size, "d": d, **x})
+            # Which part of a combined veto refuses (base rows, one per trigger: first variant, 0.5 SOL, d = 1).
+            for g in (fam, "N2_" + fam):
+                r = con.execute(f"""SELECT count(*), count(*) FILTER (WHERE ins_share > {M1X_INS_VETO}),
+                                           count(*) FILTER (WHERE ins_share > 1), count(*) FILTER (WHERE ins_share IS NULL),
+                                           count(*) FILTER (WHERE curve_buyers > {585}),
+                                           count(*) FILTER (WHERE curve_buyers <= {M1X_BUNDLE_MAX})
+                                    FROM m WHERE family = '{g}' AND overlay = 'none' AND variant = '{variants[0]}'
+                                      AND size_sol = 0.5 AND d = 1 AND period = '{per}'""").fetchone()
+                f["veto_parts"].append({"period": per, "family": g, "triggers": r[0], "V_ins": r[1], "ins_share_above_1": r[2],
+                                        "ins_unknown": r[3], "V_hype": r[4], "V_bundle": r[5]})
+            for v in variants:
+                rows = con.execute(f"""SELECT exit_reason, count(*), median((exit_slot - entry_slot) * d_ms / d) / 60000,
+                                              median(peak_ret)
+                                       FROM m WHERE family = '{fam}' AND overlay = 'none' AND variant = '{v}' AND size_sol = 0.5 AND d = 1
+                                         AND period = '{per}' AND NOT skipped AND NOT entry_failed GROUP BY 1 ORDER BY 2 DESC""").fetchall()
+                tot = sum(r[1] for r in rows)
+                for reason, n, hold, peak in rows:
+                    f["exits"].append({"period": per, "variant": v, "exit_reason": reason, "share": n / tot, "n": n,
+                                       "median_hold_min": hold, "median_peak_ret": peak})
+        for v in variants:
+            for reg, n, mean in con.execute(f"""SELECT regime, count(ret), avg(ret) FROM m WHERE family = '{fam}' AND overlay = 'none'
+                                                  AND variant = '{v}' AND size_sol = 0.5 AND d = 1 AND NOT skipped AND ret IS NOT NULL
+                                                GROUP BY 1 ORDER BY 1""").fetchall():
+                f["regimes"].append({"variant": v, "regime": reg, "trades": n, "mean": mean})
+        f["verdict"] = _m1x_verdict(fam, f)
+        out["families"][fam] = f
+    with open(os.path.join(run_dir, "m1x.json"), "w") as fh:
+        json.dump(out, fh, indent=1, default=str)
+    path = os.path.join(run_dir, "m1x.md")
+    with open(path, "w") as fh:
+        fh.write(_m1x_md(out))
+    return path
+
+
+def _m1x_verdict(fam, f):
+    """The specs' §10 on days 10-18 at 0.5 SOL, d = 1 and d = 2.
+    M1P: useful when the V_ins difference is > 0 with its CI above 0 at both d, and smaller at N2_M1P.
+    M1E: useful when the base or the veto variant has a net return per trade > 0 with its CI above 0 at
+    both d for some variant, and N2 at the same variant does not."""
+    per, ds = M1X_BINDING, (1, 2)
+    if fam == "M1P":
+        def delta(g, d):
+            return next((x for x in f["vetoes"] if x["period"] == per and x["family"] == g and x["veto"] == "V_ins"
+                         and x["size"] == 0.5 and x["d"] == d), None)
+        rows = {d: (delta("M1P", d), delta("N2_M1P", d)) for d in ds}
+        ok = all(a is not None and a["delta_sol"] > 0 and a["lo"] is not None and a["lo"] > 0
+                 and (b is None or b["delta_sol"] < a["delta_sol"]) for a, b in rows.values())
+        return {"useful": ok, "rule": "Δ(V_ins) > 0 with CI > 0 at 0.5 SOL for d = 1 and d = 2 on days 10-18, and smaller at N2_M1P",
+                "per_d": {d: {"M1P": a, "N2_M1P": b} for d, (a, b) in rows.items()}}
+    hits = []
+    for g in f["groups"]:
+        if g["period"] != per or g["size"] != 0.5 or g["d"] not in ds:
+            continue
+        good = g["mean"] is not None and g["mean"] > 0 and g["lo"] is not None and g["lo"] > 0
+        n2 = g["n2"]
+        n2_good = n2 is not None and n2["mean"] is not None and n2["mean"] > 0 and n2["lo"] is not None and n2["lo"] > 0
+        hits.append(((g["variant"], g["overlay"]), g["d"], good and not n2_good))
+    by = {}
+    for k, d, ok in hits:
+        by.setdefault(k, {})[d] = ok
+    useful = sorted(f"{v} ({ov})" for (v, ov), x in by.items() if all(x.get(d) for d in ds))
+    return {"useful": bool(useful), "variants": useful,
+            "rule": "base or veto variant with net return per trade > 0 and CI > 0 at 0.5 SOL for d = 1 and d = 2 on days 10-18, N2 not"}
+
+
+def _m1x_md(out):
+    names = {"M1P": "M1+ (+15 min, week3-specs-M1plus-2026-10-11.md)", "M1E": "M1-early (+1/+2/+5 min, week3-specs-M1early-2026-10-12.md)"}
+    L = [f"# M1+ and M1-early on dev ({os.path.basename(out['run_dir'])})", "",
+         "Pre-registered specs; base costs; a vetoed trade counts as 0. Days 1-9 fixed the thresholds; **only days 10-18 "
+         "(2026-09-20 … 2026-09-30) bind**. Net return per filled trade with a 95% day-bootstrap CI. Capital: 10 SOL, at most "
+         "5 positions. Development data only; the hold-out is never used.", ""]
+    num = lambda x, fmt: "" if x is None else format(x, fmt)  # noqa: E731
+    for fam, f in out["families"].items():
+        v = f["verdict"]
+        L += [f"## {names.get(fam, fam)}", "",
+              f"**§10 on days 10-18: {'useful' if v['useful'] else 'not useful'}** — {v['rule']}."
+              + (f" Variants: {', '.join(v['variants'])}." if v.get("variants") else ""), ""]
+        for per in M1X_PERIODS:
+            L += [f"### {per}{' (binding)' if per == M1X_BINDING else ' (threshold check)'}: gate sizes", "",
+                  "| veto | variant | size | d | trades | mean | 95% CI | SOL/trade | win | payoff | top-1% P&L | capital end SOL, max DD | N2 trades | N2 mean | vs N2 |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+            for g in f["groups"]:
+                if g["period"] != per or g["size"] not in M1X_GATE:
+                    continue
+                ci = "" if g["lo"] is None else f"{_pct(g['lo'])} … {_pct(g['hi'])}"
+                n2 = g["n2"] or {}
+                L.append(f"| {g['overlay']} | {g['variant']} | {g['size']} | {g['d']} | {g['trades']} | {_pct(g['mean'])} | {ci} | "
+                         f"{num(g['sol_per_trade'], '+.4f')} | {num(g['win'] and g['win'] * 100, '.0f')}% | {num(g['payoff'], '.2f')} | "
+                         f"{num(g['top1_share'] and g['top1_share'] * 100, '.0f')}% | {g['capital_final_sol']:.2f}, "
+                         f"{g['capital_max_dd'] * 100:.0f}% | {n2.get('trades', '')} | {_pct(n2.get('mean'))} | {_pct(g['vs_n2'])} |")
+            info = [g for g in f["groups"] if g["period"] == per and g["size"] not in M1X_GATE and g["overlay"] == "none"]
+            if info:
+                L += ["", "Informative sizes (no veto): " + "; ".join(
+                    f"{g['variant']} {g['size']} SOL d{g['d']}: {_pct(g['mean'])} ({g['trades']})" for g in info) + "."]
+            L += ["", f"Vetoes ({per}), paired per trigger and variant:", "",
+                  "| family | veto | size | d | pairs | vetoed | Δ SOL/trade | 95% CI |", "|---|---|---|---|---|---|---|---|"]
+            for x in f["vetoes"]:
+                if x["period"] == per:
+                    ci = "" if x["lo"] is None else f"{x['lo']:+.4f} … {x['hi']:+.4f}"
+                    L.append(f"| {x['family']} | {x['veto']} | {x['size']} | {x['d']} | {x['pairs']} | {x['veto_share'] * 100:.0f}% | "
+                             f"{x['delta_sol']:+.4f} | {ci} |")
+            L += ["", "Veto parts (one row per trigger: first variant, 0.5 SOL, d = 1): " + "; ".join(
+                f"{x['family']}: {x['triggers']} triggers, V_ins {x['V_ins']} (share > 1: {x['ins_share_above_1']}, unknown "
+                f"{x['ins_unknown']}), V_hype {x['V_hype']}, V_bundle {x['V_bundle']}" for x in f["veto_parts"] if x["period"] == per) + ".", "",
+                  f"Exits ({per}, 0.5 SOL, d = 1, no veto):", "", "| variant | exit | share | n | median hold min | median peak before exit |",
+                  "|---|---|---|---|---|---|"]
+            for x in f["exits"]:
+                if x["period"] == per:
+                    L.append(f"| {x['variant']} | {x['exit_reason']} | {x['share'] * 100:.0f}% | {x['n']} | "
+                             f"{num(x['median_hold_min'], '.1f')} | {_pct(x['median_peak_ret'])} |")
+            L.append("")
+        L += ["Per slot-time regime (all days, 0.5 SOL, d = 1, no veto): " + "; ".join(
+            f"{x['variant']} {x['regime']}: {_pct(x['mean'])} ({x['trades']})" for x in f["regimes"]) + ".", ""]
+    return "\n".join(L) + "\n"
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["f7rev", "f7cand", "f7comp", "holdout"])
+    ap.add_argument("what", choices=["f7rev", "f7cand", "f7comp", "holdout", "m1x"])
     ap.add_argument("run_dir")
     ap.add_argument("--store", default=STORE)
     ap.add_argument("--segment", default="pool_reversed")
@@ -578,6 +792,9 @@ def main():
         if not a.config:
             raise SystemExit("holdout needs --config (the frozen candidates file)")
         print(holdout(a.run_dir, a.config, a.store))
+        return
+    if a.what == "m1x":
+        print(m1x(a.run_dir, a.store))
         return
     fn = {"f7rev": f7_reversed, "f7cand": f7_candidate, "f7comp": f7_competition}[a.what]
     print(fn(a.run_dir, a.store, a.segment))
