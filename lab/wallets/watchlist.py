@@ -211,8 +211,9 @@ def f7_candidates_sql(lo, hi):
 
 
 def pool_history_sql(lo, hi):
-    """Per reversed pool: the minute it was created (NULL: before the store) and, over events in [lo, hi), the first
-    minute it traded and the first minute it showed >= 50 / >= 150 SOL real depth. One scan per measurement."""
+    """Per reversed pool: the minute it was created (NULL: before the store), the SOL it was created with (the WSOL side
+    of a reversed pool is its base reserve b0), and, over events in [lo, hi), the first minute it traded and the first
+    minute it showed >= 50 / >= 150 SOL real depth. One scan per measurement."""
     return f"""
       WITH ev AS (
         SELECT e.pool, min(b.block_time) // 60 AS first_minute,
@@ -222,7 +223,8 @@ def pool_history_sql(lo, hi):
         WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell')
           AND e.pool IN (SELECT pool FROM pools WHERE quote_class = 'reversed')
         GROUP BY 1)
-      SELECT p.pool, cb.block_time // 60 AS create_minute, ev.first_minute, ev.deep50_minute, ev.deep150_minute
+      SELECT p.pool, cb.block_time // 60 AS create_minute, ev.first_minute, ev.deep50_minute, ev.deep150_minute,
+             CASE WHEN p.orientation = 'reversed' THEN p.b0 ELSE p.q0 END / {SOL} AS sol_create
       FROM pools p LEFT JOIN blocks cb ON cb.slot = p.create_slot LEFT JOIN ev USING (pool)
       WHERE p.quote_class = 'reversed'"""
 
@@ -237,10 +239,14 @@ def build_history(con, lo, hi, path):
 
 
 def load_history(path):
-    """{pool: {0: create_minute, 50: deep50_minute, 150: deep150_minute}} (None: never / before the store)."""
+    """{pool: {0: create_minute, 50: deep50_minute, 150: deep150_minute, "sol_create": SOL at creation}} (None: never /
+    before the store)."""
     t = pq.read_table(path)
-    cols = {k: t.column(k).to_pylist() for k in ("pool", "create_minute", "deep50_minute", "deep150_minute")}
-    return {p: {0: c, 50: d50, 150: d150} for p, c, d50, d150 in zip(cols["pool"], cols["create_minute"], cols["deep50_minute"], cols["deep150_minute"])}
+    names = t.schema.names
+    cols = {k: t.column(k).to_pylist() if k in names else [None] * t.num_rows
+            for k in ("pool", "create_minute", "deep50_minute", "deep150_minute", "sol_create")}
+    return {p: {0: c, 50: d50, 150: d150, "sol_create": sc} for p, c, d50, d150, sc
+            in zip(cols["pool"], cols["create_minute"], cols["deep50_minute"], cols["deep150_minute"], cols["sol_create"])}
 
 
 def in_universe(minute, lag, qualifying_minute, unknown_is_in=False):
@@ -291,6 +297,26 @@ def _universe_counters():
     return {f"d-{lag}": {str(depth): collections.Counter() for depth in UNIVERSE_DEPTHS} for lag in UNIVERSE_LAGS}
 
 
+def pool_origin(h, deep_sol=150.0):
+    """How a pool reached the F7 depth: 'at_create' (created with >= 150 SOL), 'later' (created shallower, deep later),
+    'prestore' (created before the store), 'unknown' (no creation SOL / never deep in the history)."""
+    if h is None or h[0] is None:
+        return "prestore"
+    if h["sol_create"] is not None and h["sol_create"] >= deep_sol:
+        return "at_create"
+    if h[150] is not None:
+        return "later"
+    return "unknown"
+
+
+def _note_origin(d, later_minutes, hist, kind, pool):
+    h = hist.get(pool)
+    origin = pool_origin(h)
+    d["origin"][kind][origin] += 1
+    if origin == "later" and pool not in later_minutes[kind]:
+        later_minutes[kind][pool] = h[150] - h[0]
+
+
 def _note_first_age(first_age, hist, kind, pool, minute, day):
     """Minutes between the pool's creation and its first event of this kind (pools created inside the store only)."""
     h = hist.get(pool)
@@ -321,6 +347,7 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
     t0 = time.time()
     hist = load_history(history) if history else None
     first_age = {"cand": {}, "trig": {}, "trig_organic": {}}  # pool -> (day, minutes after creation) of its first event
+    later_minutes = {"cand": {}, "trig": {}, "trig_organic": {}}  # pool -> minutes from creation to >= 150 SOL (pools created shallower)
     clock = clock or Clock.from_store(con)
     warm_lo = max(lo - clock.slots(WARMUP_MINUTES * 60_000, lo), 0)
     pools = con.execute(pools_sql(warm_lo, hi)).fetchall()
@@ -355,7 +382,8 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
                                                  "f7_cand": 0, "f7_cand_covered": 0,
                                                  "f7_trig": 0, "f7_trig_covered": 0, "f7_trig_organic": 0, "f7_trig_organic_covered": 0,
                                                  "m1_points": 0, "m1_points_covered": 0, "m1_events_young": 0, "m1_events_young_covered": 0,
-                                                 "universe": _universe_counters()})
+                                                 "universe": _universe_counters(),
+                                                 "origin": {k: collections.Counter() for k in ("cand", "trig", "trig_organic")}})
     members_rows = []
     # every minute is stepped, also a silent one: the idle rules count minutes without trades
     # (a decision point or trigger beyond the last minute with data is not stepped: it belongs to the next range)
@@ -399,6 +427,7 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
                 if hist is not None:
                     _count_universe(d, hist, pool, m, cov, "cand")
                     _note_first_age(first_age, hist, "cand", pool, m, day)
+                    _note_origin(d, later_minutes, hist, "cand", pool)
             for pool, farm in trig_by_minute.get(m, ()):
                 d["f7_trig"] += 1
                 cov = "f7_rev" in members.get(pool, ())
@@ -409,8 +438,10 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
                 if hist is not None:
                     _count_universe(d, hist, pool, m, cov, "trig", organic=(farm == "organic"))
                     _note_first_age(first_age, hist, "trig", pool, m, day)
+                    _note_origin(d, later_minutes, hist, "trig", pool)
                     if farm == "organic":
                         _note_first_age(first_age, hist, "trig_organic", pool, m, day)
+                        _note_origin(d, later_minutes, hist, "trig_organic", pool)
             for pool in m1_points.get(m, ()):
                 d["m1_points"] += 1
                 d["m1_points_covered"] += "m1" in members.get(pool, ())
@@ -429,12 +460,16 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
     out = {"from_slot": lo, "to_slot": hi, "commit": git_commit(), "rules": dataclasses.asdict(rules), "wallets": len(wallets),
            "pools_seen": len(wl.pools), "trigger_dir": trigger_dir, "history": history, "store_first_day": store_first_day,
            "seconds": round(time.time() - t0), "days": {}}
+    last = max(day_stats, default=None)  # the pools that became deep later go in once, on the last day (the report sums them)
+    out_later = {k: sorted(v.values()) for k, v in later_minutes.items()}
     for day, d in sorted(day_stats.items()):
-        out["days"][day] = {k: v for k, v in d.items() if not isinstance(v, list) and k != "universe"}
+        out["days"][day] = {k: v for k, v in d.items() if not isinstance(v, list) and k not in ("universe", "origin")}
         if hist is not None:
             out["days"][day]["universe"] = d["universe"]
+            out["days"][day]["origin"] = d["origin"]
             out["days"][day]["first_age_minutes"] = {
                 kind: sorted(age for dd, age in ages.values() if dd == day) for kind, ages in first_age.items()}
+            out["days"][day]["deep_later_minutes"] = out_later if day == last else {k: [] for k in later_minutes}
         for k in ("members", "f7_rev", "m1"):
             out["days"][day][k] = {"median": statistics.median(d[k]) if d[k] else None, "p95": pct(d[k], 0.95), "max": max(d[k]) if d[k] else None}
     with open(os.path.join(out_dir, f"watchlist-stats-{lo}.json"), "w") as f:
@@ -552,6 +587,22 @@ def universe_section(days, store_first_day):
         if xs:
             lines.append(f"Minuten tussen aanmaak van de pool en zijn {label_age[k]} (pools aangemaakt binnen de store, n={len(xs):,}): "
                          f"p10 {pct(xs, 0.10):,.0f}, p25 {pct(xs, 0.25):,.0f}, mediaan {statistics.median(xs):,.0f}, p75 {pct(xs, 0.75):,.0f}, p90 {pct(xs, 0.90):,.0f}.")
+    origin = {k: collections.Counter() for k in ("cand", "trig", "trig_organic")}
+    later = {k: [] for k in origin}
+    for day, d in days.items():
+        for k, c in d.get("origin", {}).items():
+            origin[k].update(c)
+        for k, xs in d.get("deep_later_minutes", {}).items():
+            later[k] += xs
+    label_kind = {"cand": "kandidaatsells", "trig": "toernooi-triggers", "trig_organic": "organische triggers"}
+    for k, c in origin.items():
+        n = sum(c.values())
+        if n:
+            lines.append(f"Hoe de pool diep werd, {label_kind[k]} (n={n:,}): aangemaakt met ≥ 150 SOL {c['at_create'] / n:.1%}, "
+                         f"later diep geworden {c['later'] / n:.1%}, pool van vóór de store {c['prestore'] / n:.1%}"
+                         + (f", onbekend {c['unknown'] / n:.1%}" if c["unknown"] else "") + "."
+                         + (f" Later-diepe pools: minuten van aanmaak tot ≥ 150 SOL (n={len(later[k]):,}) p10 {pct(later[k], 0.10):,.0f}, "
+                            f"mediaan {statistics.median(later[k]):,.0f}, p90 {pct(later[k], 0.90):,.0f}." if later[k] else ""))
     lines.append("")
     lines += ["| universum | F7-kandidaatsells | … ook op de lijst | toernooi-triggers | … ook op de lijst | organische triggers | … ook op de lijst | F7-pool-minuten op de lijst |",
               "|---|---|---|---|---|---|---|---|"]

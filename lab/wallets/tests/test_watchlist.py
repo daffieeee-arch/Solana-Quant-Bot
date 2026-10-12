@@ -155,7 +155,9 @@ def test_report_universe_section_and_store_start_bias(tmp_path):
     json.dump({"store_first_day": "2026-09-11",
                "days": {"2026-09-11": dict(base, universe=counters(5, 2)),      # store start: depth criteria biased
                         "2026-09-13": dict(base, universe=counters(8, 4),
-                                           first_age_minutes={"cand": [3, 10, 400], "trig": [5, 7], "trig_organic": []})}},
+                                           first_age_minutes={"cand": [3, 10, 400], "trig": [5, 7], "trig_organic": []},
+                                           origin={"cand": {"at_create": 6, "later": 3, "prestore": 1}, "trig": {"at_create": 4}, "trig_organic": {}},
+                                           deep_later_minutes={"cand": [2, 9, 30], "trig": [], "trig_organic": []})}},
               open(tmp_path / "watchlist-stats-1.json", "w"))
     md = W.report(str(tmp_path))
     assert "## Universum met ververs-vertraging" in md
@@ -168,3 +170,16 @@ def test_report_universe_section_and_store_start_bias(tmp_path):
     assert "Op de dag van aanmaak zelf (niet in het D−1-universum 'bestond'): 25.0% van de toernooi-triggers, 50.0% van de organische, 35.0% van de kandidaatsells." in md
     assert "eerste toernooi-trigger (pools aangemaakt binnen de store, n=2): p10 5, p25 5, mediaan 6, p75 7, p90 7." in md
     assert "eerste organische trigger" not in md
+    assert ("Hoe de pool diep werd, kandidaatsells (n=10): aangemaakt met ≥ 150 SOL 60.0%, later diep geworden 30.0%, pool van vóór de store 10.0%. "
+            "Later-diepe pools: minuten van aanmaak tot ≥ 150 SOL (n=3) p10 2, mediaan 9, p90 30.") in md
+    assert "Hoe de pool diep werd, toernooi-triggers (n=4): aangemaakt met ≥ 150 SOL 100.0%, later diep geworden 0.0%, pool van vóór de store 0.0%." in md
+
+
+def test_pool_origin():
+    from wallets.watchlist import pool_origin
+
+    assert pool_origin(None) == "prestore" and pool_origin({0: None, 150: 5, "sol_create": 200.0}) == "prestore"
+    assert pool_origin({0: 10, 150: 10, "sol_create": 168.0}) == "at_create"
+    assert pool_origin({0: 10, 150: 40, "sol_create": 84.99}) == "later"
+    assert pool_origin({0: 10, 150: None, "sol_create": 84.99}) == "unknown"
+    assert pool_origin({0: 10, 150: 12, "sol_create": None}) == "later"
