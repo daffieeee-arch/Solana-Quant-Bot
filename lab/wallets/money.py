@@ -29,7 +29,8 @@ rule), creators.parquet (wallet, mint, create slot and day)
 lp_legs.parquet (every LP deposit / withdraw leg of a SOL-priced pool with the SOL moved and the depth before and after:
 the report's LP-drain section) and venue_flows.parquet (per venue kind: venue fees that left in SOL, network fees, the traders' net cash, SOL in
 the venues at the start and the end, and the SOL that entered from outside the trades (LP deposits minus
-withdrawals; a pool's opening deposit is the pre-depth of its first trade); the zero-sum identity is cash_all + venue_fees + (sol_end - sol_start) - external_in = 0). Slots stay before the hold-out. Heavy: NAS.
+withdrawals; a pool's opening deposit is the pre-depth of its first trade); network fees are not split per
+venue (they are per transaction and already summed per wallet x day); the zero-sum identity is cash_all + venue_fees + (sol_end - sol_start) - external_in = 0). Slots stay before the hold-out. Heavy: NAS.
 """
 
 import argparse
@@ -46,12 +47,14 @@ DUST = SOL // 1000  # 0.001 SOL
 SOL_QUOTES = ("11111111111111111111111111111111", "So11111111111111111111111111111111111111112")
 
 
-def legs_sql(lo, hi, bucket=None, buckets=1):
-    """Every trade leg in [lo, hi) on a SOL-priced venue, user side, with the per-transaction fee on one leg."""
+def legs_sql(lo, hi, bucket=None, buckets=1, fees=True):
+    """Every trade leg in [lo, hi) on a SOL-priced venue, user side, with the per-transaction fee on one leg
+    (fees=False: no fee window, for the marks and the side tables that do not need it; the first NAS run
+    spilled 15 GB on that window under the marks query)."""
     b = f"AND hash(trader) % {buckets} = {bucket}" if bucket is not None else ""
     return f"""
       WITH pl AS (
-        SELECT p.trader AS wallet, po.mint, 'pool' AS venue, p.slot, p.tx_index, p.token_buy AS is_buy,
+        SELECT p.trader AS wallet, po.mint, 'pool' AS venue, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.token_buy AS is_buy,
                p.sol_amount::BIGINT AS sol, p.token_amount::BIGINT AS tokens, p.farmer,
                p.tx_fee::BIGINT AS tx_fee, COALESCE(p.priority_fee, 0)::BIGINT AS prio, COALESCE(p.jito_tip, 0)::BIGINT AS tip, p.fee_payer,
                CASE WHEN po.orientation = 'reversed' THEN p.b + CASE WHEN p.kind = 'sell' THEN p.base ELSE -p.base END
@@ -65,14 +68,14 @@ def legs_sql(lo, hi, bucket=None, buckets=1):
         WHERE p.slot >= {lo} AND p.slot < {hi} AND p.kind IN ('buy', 'sell') AND po.quote_class IN ('sol', 'reversed') AND po.mint IS NOT NULL
               AND p.e + p.e_delta > 0 {b}),
       cl AS (
-        SELECT c.trader AS wallet, c.mint, 'curve' AS venue, c.slot, c.tx_index, c.is_buy,
+        SELECT c.trader AS wallet, c.mint, 'curve' AS venue, c.slot, c.tx_index, c.outer_ix, c.inner_ix, c.is_buy,
                (c.q + CASE WHEN c.is_buy THEN c.fee + c.creator_fee ELSE -(c.fee + c.creator_fee) END)::BIGINT AS sol, c.t::BIGINT AS tokens, false AS farmer,
                c.tx_fee::BIGINT AS tx_fee, COALESCE(c.priority_fee, 0)::BIGINT AS prio, COALESCE(c.jito_tip, 0)::BIGINT AS tip, c.fee_payer,
                c.rq AS depth_post, c.vq::DOUBLE / c.vt AS price_post, (c.fee + c.creator_fee)::BIGINT AS venue_fee, m.create_slot
         FROM curve c LEFT JOIN mints m ON m.mint = c.mint
         WHERE c.slot >= {lo} AND c.slot < {hi} AND c.vt > 0 AND m.quote_mint IN ({",".join(f"'{q}'" for q in SOL_QUOTES)}) {b}),
       legs AS (SELECT * FROM pl UNION ALL SELECT * FROM cl)
-      SELECT *, CASE WHEN row_number() OVER (PARTITION BY slot, tx_index, wallet ORDER BY venue, mint) = 1 THEN tx_fee + prio + tip ELSE 0 END AS fee_once,
+      SELECT *, {"CASE WHEN row_number() OVER (PARTITION BY slot, tx_index, wallet ORDER BY venue, mint) = 1 THEN tx_fee + prio + tip ELSE 0 END" if fees else "0::BIGINT"} AS fee_once,
              fee_payer IS NOT NULL AND fee_payer <> wallet AS paid_by_other
       FROM legs"""
 
@@ -101,7 +104,7 @@ def lp_sql(lo, hi):
     """Deposit / withdraw legs of SOL-priced pools: no trade, but the venue's SOL depth changes (a reversed pool is
     usually emptied by its LP after the last trade), with the price after the leg and the SOL moved."""
     return f"""
-      SELECT po.mint, po.pool, 'pool' AS venue, p.slot, p.tx_index, p.kind,
+      SELECT po.mint, po.pool, 'pool' AS venue, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind,
              CASE WHEN po.orientation = 'reversed' THEN p.b ELSE p.vault END AS depth_pre,
              CASE WHEN po.orientation = 'reversed' THEN p.b + CASE WHEN p.kind = 'deposit' THEN p.base ELSE -p.base END
                   ELSE p.vault + CASE WHEN p.kind = 'deposit' THEN p.quote_user ELSE -p.quote_user END END AS depth_post,
@@ -120,11 +123,10 @@ def build_marks(con, lo, hi, days):
     depth at the day's end (any wallet, curve and pool together), carried forward over days without a trade."""
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE marks_raw AS
-      SELECT mint, day, arg_max(price_post, (slot, tx_index)) AS price, arg_max(depth_post, (slot, tx_index)) AS depth,
-             arg_max(venue, (slot, tx_index)) AS venue, max(slot) AS last_slot
-      FROM (SELECT mint, venue, slot, tx_index, price_post, depth_post, day FROM ({dated(legs_sql(lo, hi))})
+      SELECT mint, day, arg_max(price_post, ord) AS price, arg_max(depth_post, ord) AS depth, arg_max(venue, ord) AS venue, max(slot) AS last_slot
+      FROM (SELECT mint, venue, slot, (slot, tx_index, outer_ix, inner_ix) AS ord, price_post, depth_post, day FROM ({dated(legs_sql(lo, hi, fees=False))})
             UNION ALL
-            SELECT mint, venue, slot, tx_index, price_post, depth_post, day FROM ({dated(lp_sql(lo, hi))}) WHERE price_post IS NOT NULL)
+            SELECT mint, venue, slot, (slot, tx_index, outer_ix, inner_ix), price_post, depth_post, day FROM ({dated(lp_sql(lo, hi))}) WHERE price_post IS NOT NULL)
       GROUP BY mint, day""")
     con.execute("""
       CREATE OR REPLACE TEMP TABLE marks AS
@@ -142,7 +144,7 @@ def build_bucket(con, lo, hi, bucket, buckets, days):
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE pos_legs AS
       WITH seqd AS (
-        SELECT *, row_number() OVER (PARTITION BY wallet, mint ORDER BY slot, tx_index, venue, is_buy DESC) AS seq FROM legs),
+        SELECT *, row_number() OVER (PARTITION BY wallet, mint ORDER BY slot, tx_index, outer_ix, inner_ix, venue, is_buy DESC) AS seq FROM legs),
       ordered AS (
         SELECT *, sum(CASE WHEN is_buy THEN tokens ELSE 0 END) OVER w AS cum_b, sum(CASE WHEN is_buy THEN 0 ELSE tokens END) OVER w AS cum_s
         FROM seqd WINDOW w AS (PARTITION BY wallet, mint ORDER BY seq ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)),
@@ -220,7 +222,7 @@ def build_side_tables(con, lo, hi):
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE payers AS
       SELECT fee_payer, wallet, mint, count(*) AS n, min(slot) AS first_slot, min(day) AS first_day
-      FROM ({dated(legs_sql(lo, hi))}) WHERE fee_payer IS NOT NULL AND fee_payer <> wallet GROUP BY ALL""")
+      FROM ({dated(legs_sql(lo, hi, fees=False))}) WHERE fee_payer IS NOT NULL AND fee_payer <> wallet GROUP BY ALL""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE lp_legs AS
       SELECT l.pool, l.mint, po.orientation, l.slot, l.tx_index, l.kind, l.sol_in, l.depth_pre, l.depth_post
@@ -232,7 +234,7 @@ def build_side_tables(con, lo, hi):
       ASOF JOIN day_bounds db ON c.create_slot >= db.from_slot""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE venue_flows AS
-      WITH l AS (SELECT * FROM ({legs_sql(lo, hi)})),
+      WITH l AS (SELECT * FROM ({legs_sql(lo, hi, fees=False)})),
       sol AS (
         SELECT 'pool' AS venue, sum(s0) AS sol_start, sum(s1) AS sol_end FROM (
         SELECT key, arg_min(depth_pre, (slot, tx_index)) AS s0, arg_max(depth_post, (slot, tx_index)) AS s1
@@ -257,8 +259,8 @@ def build_side_tables(con, lo, hi):
         -- at migration, after its last trade)
         SELECT 'pool' AS venue, sum(sol_in) AS external_in FROM ({lp_sql(lo, hi)})
         UNION ALL SELECT 'curve', 0)
-      SELECT f.venue, f.venue_fees, f.network_fees, f.legs, f.gross_sol, f.cash_all, s.sol_start, s.sol_end, COALESCE(e.external_in, 0) AS external_in
-      FROM (SELECT venue, sum(venue_fee) AS venue_fees, sum(fee_once) AS network_fees, count(*) AS legs, sum(sol) AS gross_sol,
+      SELECT f.venue, f.venue_fees, NULL::BIGINT AS network_fees, f.legs, f.gross_sol, f.cash_all, s.sol_start, s.sol_end, COALESCE(e.external_in, 0) AS external_in
+      FROM (SELECT venue, sum(venue_fee) AS venue_fees, count(*) AS legs, sum(sol) AS gross_sol,
                    sum(CASE WHEN is_buy THEN -sol ELSE sol END) AS cash_all FROM l GROUP BY venue) f
       LEFT JOIN (SELECT venue, sum(sol_start) AS sol_start, sum(sol_end) AS sol_end FROM sol GROUP BY venue) s ON s.venue = f.venue
       LEFT JOIN ext e ON e.venue = f.venue""")

@@ -28,7 +28,7 @@ def _store(path):
     con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'T', ?, 10**12, 100 * 10**9), ('O', 'other', 'normal', 'U', ?, 10**12, 0)", [SLOT0 + 50, SLOT0 + 60])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, trader VARCHAR, fee_payer VARCHAR, token_buy BOOLEAN, "
                 "sol_amount BIGINT, token_amount BIGINT, farmer BOOLEAN, b BIGINT, e BIGINT, vault BIGINT, base BIGINT, e_delta BIGINT, lp_bps BIGINT, "
-                "tx_fee BIGINT, priority_fee BIGINT, jito_tip BIGINT, quote_user BIGINT, vq BIGINT)")
+                "tx_fee BIGINT, priority_fee BIGINT, jito_tip BIGINT, quote_user BIGINT, vq BIGINT, outer_ix BIGINT, inner_ix BIGINT)")
     d1 = SLOT0 + DAY_SLOTS
     rows = [
         # day 1: W1 buys 1 SOL of T in pool P (pre b 1e12, e 100 SOL), two legs in one tx (fee counted once), pool fee 1 %
@@ -42,15 +42,15 @@ def _store(path):
         # pool with another quote: no SOL price, left out
         ("buy", "O", SLOT0 + 300, 1, "W1", None, True, 0, 10**9, False, 10**12, 0, 0, 10**9, 0, 20, 5000, 0, 0),
     ]
-    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)", [r + (r[7],) for r in rows])  # quote_user = sol_amount, vq 0
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)", [r + (r[7], i) for i, r in enumerate(rows)])  # quote_user = sol_amount, vq 0, inner_ix = row order
     # day 3: the LP of P withdraws 20 SOL (proportional) after the last trade, from the day-2 post state (b 1.48e12, vault 41.471 SOL):
     # the mark's depth falls to 21.471 SOL, the price stays 0.028, external_in = -20
-    con.execute("INSERT INTO pool VALUES ('withdraw', 'P', ?, 1, 'LP', NULL, false, 0, 0, false, 1480 * 10**9, 41471 * 10**6, 41471 * 10**6, 713750 * 10**6, NULL, 20, 5000, 0, 0, 20 * 10**9, 0)",
+    con.execute("INSERT INTO pool VALUES ('withdraw', 'P', ?, 1, 'LP', NULL, false, 0, 0, false, 1480 * 10**9, 41471 * 10**6, 41471 * 10**6, 713750 * 10**6, NULL, 20, 5000, 0, 0, 20 * 10**9, 0, 0, 0)",
                 [d1 + DAY_SLOTS + 10])
     con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, trader VARCHAR, fee_payer VARCHAR, is_buy BOOLEAN, t BIGINT, q BIGINT, fee BIGINT, "
-                "creator_fee BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, tx_fee BIGINT, priority_fee BIGINT, jito_tip BIGINT)")
+                "creator_fee BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, tx_fee BIGINT, priority_fee BIGINT, jito_tip BIGINT, outer_ix BIGINT DEFAULT 0, inner_ix BIGINT DEFAULT 0)")
     # day 1: sniper S buys U on the curve 2 slots after the create (paid q + fees), day 2 sells half
-    con.executemany("INSERT INTO curve VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+    con.executemany("INSERT INTO curve (mint, slot, tx_index, trader, fee_payer, is_buy, t, q, fee, creator_fee, vt, vq, rt, rq, tx_fee, priority_fee, jito_tip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
         ("U", SLOT0 + 22, 1, "S", None, True, 10**12, 2 * SOL, 20_000_000, 6_000_000, 10**15, 32 * SOL, 79 * 10**13, 2 * SOL, 5000, 0, 1000),
         ("U", d1 + 10, 1, "S", None, False, 5 * 10**11, 15 * SOL // 10, 15_000_000, 4_500_000, 10005 * 10**11, 305 * SOL // 10, 7905 * 10**11, SOL // 2, 5000, 0, 0)])
     con.close()
@@ -93,7 +93,8 @@ def test_money_on_the_mini_store(tmp_path):
     assert side == [("X", "W2", "T", 2, SLOT0 + 200, "2026-09-11")]
     assert con.execute(f"SELECT wallet, day FROM '{tmp_path / 'out' / 'creators.parquet'}' ORDER BY 1").fetchall() == [("CR", "2026-09-11"), ("CR2", "2026-09-11")]
     flows = dict((r[0], r) for r in con.execute(f"SELECT venue, venue_fees, network_fees, cash_all, sol_start, sol_end, external_in FROM '{tmp_path / 'out' / 'venue_flows.parquet'}'").fetchall())
-    assert flows["curve"][1] == 26_000_000 + 19_500_000 and flows["pool"][2] == 6000 + 5000 + 5000 + 5000
+    assert flows["curve"][1] == 26_000_000 + 19_500_000 and flows["pool"][2] is None  # network fees live in the wallet-days (once per tx)
+    assert con.execute(f"SELECT sum(fees) FROM '{tmp_path / 'out' / 'wallet-day-0.parquet'}'").fetchone()[0] == 6000 + 10000 + 5000 + 6000 + 5000
     v, c, s0, s1, ext = flows["pool"][1], flows["pool"][3], flows["pool"][4], flows["pool"][5], flows["pool"][6]
     assert ext == -20 * SOL and s0 == 100 * SOL and s1 == 21471 * 10**6  # the opening deposit is the first trade's pre-depth; the LP withdrawal is external
     assert abs(c + v + (s1 - s0) - ext) < 1e-6  # the books close on P

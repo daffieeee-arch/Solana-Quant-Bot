@@ -327,7 +327,7 @@ def zero_sum(con):
     out = []
     for venue, vfee, nfee, legs, gross, cash, s0, s1, ext in rows:
         resid = (cash or 0) + (vfee or 0) + ((s1 or 0) - (s0 or 0)) - (ext or 0)
-        out.append({"venue": venue, "cash": cash / 1e9, "venue_fees": vfee / 1e9, "network_fees": nfee / 1e9, "d_sol": ((s1 or 0) - (s0 or 0)) / 1e9,
+        out.append({"venue": venue, "cash": cash / 1e9, "venue_fees": vfee / 1e9, "network_fees": None if nfee is None else nfee / 1e9, "d_sol": ((s1 or 0) - (s0 or 0)) / 1e9,
                     "external": (ext or 0) / 1e9, "resid": resid / 1e9, "resid_share": resid / gross if gross else None, "gross": gross / 1e9, "legs": legs})
     return out
 
@@ -388,15 +388,15 @@ def render(con, boot, draws, do_placebo=True, parts_dir=None):
         r = con.execute(f"""SELECT count(*), sum(creator_any::INT), sum(sniper_any::INT), sum(bundler_any::INT), sum(farmer_any::INT), sum(bot_any::INT), sum(whale_any::INT)
                             FROM labels WHERE label = '{g}' AND wallet IN (SELECT DISTINCT wallet FROM meas)""").fetchone()
         L.append(f"| {g} | " + " | ".join(fmt(int(x or 0)) for x in r) + " |")
-    real_, marked = con.execute(f"SELECT sum(cash - fees) / 1e9, sum(CASE WHEN day = (SELECT max(day) FROM wd) THEN value_end ELSE 0 END) / 1e9 FROM wd").fetchone()
+    real_, marked, netfees = con.execute(f"SELECT sum(cash - fees) / 1e9, sum(CASE WHEN day = (SELECT max(day) FROM wd) THEN value_end ELSE 0 END) / 1e9, sum(fees) / 1e9 FROM wd").fetchone()
     L += ["", "Zero-sum check. The conservation law the data allow is on cash: every SOL a trader pays goes into the venue, every SOL received comes out of it, "
           "so Σ traders' cash + venue fees that left in SOL + Δ SOL in the venues − SOL that entered from outside the trades (LP deposits − withdrawals) = 0 "
           "when every leg is captured. Spec §6 wrote it with the marked inventory on the left; marks are a valuation, not a flow, so they cannot close the "
           "books and are shown separately: realised Σ (cash − network fees) over the period "
-          f"{fmt(real_, 0, sign=True)} SOL, marked Σ value_end on the last day {fmt(marked, 0)} SOL.", "",
-          "| venue | legs | gross SOL | Σ cash | venue fees | network fees | Δ SOL in venues | external in | **residual** | residual / gross |", "|---|---|---|---|---|---|---|---|---|---|"]
+          f"{fmt(real_, 0, sign=True)} SOL, marked Σ value_end on the last day {fmt(marked, 0)} SOL; network fees (all venues, once per transaction, from the wallet-days) {fmt(netfees, 0)} SOL.", "",
+          "| venue | legs | gross SOL | Σ cash | venue fees | Δ SOL in venues | external in | **residual** | residual / gross |", "|---|---|---|---|---|---|---|---|---|"]
     for z in zero_sum(con):
-        L.append(f"| {z['venue']} | {fmt(z['legs'])} | {fmt(z['gross'], 0)} | {fmt(z['cash'], 1, sign=True)} | {fmt(z['venue_fees'], 1)} | {fmt(z['network_fees'], 1)} | "
+        L.append(f"| {z['venue']} | {fmt(z['legs'])} | {fmt(z['gross'], 0)} | {fmt(z['cash'], 1, sign=True)} | {fmt(z['venue_fees'], 1)} | "
                  f"{fmt(z['d_sol'], 1, sign=True)} | {fmt(z['external'], 1, sign=True)} | **{fmt(z['resid'], 1, sign=True)}** | {fmt(z['resid_share'], 2, True)} |")
     L.append("")
     L.append("A residual above 1 % of the gross turnover means the books do not close; the group table is then not to be published before the cause is found (spec §6).")
