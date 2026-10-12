@@ -22,6 +22,12 @@ fn key(b58: &str) -> Key {
 }
 
 const SYSTEM_PROGRAM: &str = "11111111111111111111111111111111";
+const METAPLEX_METADATA: &str = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+const TOKEN_2022: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+/// spl-token-metadata-interface Initialize: sha256("spl_token_metadata_interface:initialize_account")[..8].
+const TOKEN_METADATA_INIT: [u8; 8] = [210, 225, 30, 162, 88, 184, 77, 141];
+/// Longest name, symbol or uri accepted from instruction data (Metaplex allows 32 / 10 / 200).
+const META_STR_MAX: usize = 1024;
 const COMPUTE_BUDGET: &str = "ComputeBudget111111111111111111111111111111";
 /// Jito tip accounts (tips to other relays are not counted).
 const JITO_TIP_ACCOUNTS: [&str; 8] = [
@@ -36,7 +42,7 @@ const JITO_TIP_ACCOUNTS: [&str; 8] = [
 ];
 
 /// Context columns that precede the IDL fields in every event table.
-pub const EVENT_CONTEXT: [(&str, Kind); 24] = [
+pub const EVENT_CONTEXT: [(&str, Kind); 30] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     ("signature", Kind::Utf8),
@@ -65,6 +71,16 @@ pub const EVENT_CONTEXT: [(&str, Kind); 24] = [
     ("parent_ix_data", Kind::Utf8),
     // Required signers, comma separated (fee payer first); null when the fee payer is the only one.
     ("signers", Kind::Utf8),
+    // The parent instruction's accounts by IDL name (JSON {name: key}; "_extra" holds remaining
+    // accounts beyond the IDL list). Null when LAB_IX_ACCOUNTS_JSON=0 or the parent is unknown.
+    ("ix_accounts", Kind::Utf8),
+    // The same for five accounts as their own columns, null where the instruction variant has no
+    // account of that name. Prefixed because events have their own pool/user/mint fields.
+    ("ix_pool", Kind::Utf8),
+    ("ix_user", Kind::Utf8),
+    ("ix_global_config", Kind::Utf8),
+    ("ix_base_mint", Kind::Utf8),
+    ("ix_quote_mint", Kind::Utf8),
 ];
 
 // No signature column: (slot, tx_index) identifies the transaction, and the 88-character
@@ -108,6 +124,61 @@ const ANOMALY_COLS: [(&str, Kind); 9] = [
     ("event", Kind::Utf8),
     ("payload_hex", Kind::Utf8),
 ];
+
+/// Token metadata created in a transaction the plugin reads (it touches pump.fun or PumpSwap): a
+/// Metaplex Token Metadata create instruction or Token-2022's metadata Initialize, top level or
+/// inner. inner_ix is 0 for the top-level instruction itself and j + 1 for its j-th inner one.
+const TOKEN_META_COLS: [(&str, Kind); 11] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("signature", Kind::Utf8),
+    ("outer_ix", Kind::U64),
+    ("inner_ix", Kind::U64),
+    ("source", Kind::Utf8),
+    ("mint", Kind::Utf8),
+    ("name", Kind::Utf8),
+    ("symbol", Kind::Utf8),
+    ("uri", Kind::Utf8),
+    ("update_authority", Kind::Utf8),
+];
+
+/// (source, account position of the mint, of the update authority, name, symbol, uri) of a token
+/// metadata create instruction, or None. Borsh strings: u32 length, then UTF-8 bytes.
+pub fn decode_token_metadata(metaplex: bool, token2022: bool, data: &[u8]) -> Option<(&'static str, usize, usize, String, String, String)> {
+    fn string(d: &[u8], pos: &mut usize) -> Option<String> {
+        let len = u32::from_le_bytes(d.get(*pos..*pos + 4)?.try_into().ok()?) as usize;
+        if len > META_STR_MAX {
+            return None;
+        }
+        let s = d.get(*pos + 4..*pos + 4 + len)?;
+        *pos += 4 + len;
+        Some(String::from_utf8_lossy(s).trim_end_matches('\0').to_owned())
+    }
+    let three = |start: usize| -> Option<(String, String, String)> {
+        let mut p = start;
+        Some((string(data, &mut p)?, string(data, &mut p)?, string(data, &mut p)?))
+    };
+    if metaplex {
+        // MetadataInstruction: 0 CreateMetadataAccount, 16 V2, 33 V3 (accounts: metadata, mint,
+        // mint authority, payer, update authority); 42 Create with CreateArgs::V1 (metadata,
+        // master edition, mint, authority, payer, update authority). All start with name, symbol, uri.
+        let (source, mint, ua, start) = match *data.first()? {
+            0 => ("metaplex_v1", 1, 4, 1),
+            16 => ("metaplex_v2", 1, 4, 1),
+            33 => ("metaplex_v3", 1, 4, 1),
+            42 if data.get(1) == Some(&0) => ("metaplex_create", 2, 5, 2),
+            _ => return None,
+        };
+        let (n, s, u) = three(start)?;
+        return Some((source, mint, ua, n, s, u));
+    }
+    if token2022 && data.len() > 8 && data[..8] == TOKEN_METADATA_INIT {
+        // Accounts: metadata, update authority, mint, mint authority.
+        let (n, s, u) = three(8)?;
+        return Some(("token2022", 2, 1, n, s, u));
+    }
+    None
+}
 
 const BLOCK_COLS: [(&str, Kind); 7] = [
     ("slot", Kind::U64),
@@ -165,6 +236,8 @@ const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
 
 pub struct LabPlugin {
     max_same_slot_errors: u64,
+    /// Write the ix_accounts JSON column (LAB_IX_ACCOUNTS_JSON=0 keeps only the fixed columns).
+    ix_accounts_json: bool,
     /// Per firehose thread: the slot of the last error and how often it failed in a row.
     last_error: Mutex<HashMap<usize, (u64, u64)>>,
     /// Per firehose thread: the slot of the last HTTP 429 and how many came in a row.
@@ -176,6 +249,10 @@ pub struct LabPlugin {
     failed_cols: Columns,
     anomaly_cols: Columns,
     block_cols: Columns,
+    token_meta_cols: Columns,
+    token_meta_table: Arc<str>,
+    metaplex: Key,
+    token2022: Key,
     failed_table: Arc<str>,
     anomaly_table: Arc<str>,
     block_table: Arc<str>,
@@ -254,6 +331,7 @@ impl LabPlugin {
     pub fn new(sink: Arc<Sink>, coverage: Arc<Coverage>) -> anyhow::Result<Self> {
         Ok(Self {
             max_same_slot_errors: std::env::var("LAB_MAX_SAME_SLOT_ERRORS").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
+            ix_accounts_json: std::env::var("LAB_IX_ACCOUNTS_JSON").map_or(true, |v| v != "0"),
             last_error: Mutex::new(HashMap::new()),
             last_429: Mutex::new(HashMap::new()),
             programs: [ProgramIdl::new("pump", PUMP_IDL)?, ProgramIdl::new("pump_amm", PUMP_AMM_IDL)?],
@@ -263,6 +341,10 @@ impl LabPlugin {
             failed_cols: cols(&FAILED_COLS),
             anomaly_cols: cols(&ANOMALY_COLS),
             block_cols: cols(&BLOCK_COLS),
+            token_meta_cols: cols(&TOKEN_META_COLS),
+            token_meta_table: Arc::from("token_meta"),
+            metaplex: key(METAPLEX_METADATA),
+            token2022: key(TOKEN_2022),
             failed_table: Arc::from("failed_txs"),
             anomaly_table: Arc::from("anomalies"),
             block_table: Arc::from("blocks"),
@@ -405,6 +487,22 @@ impl LabPlugin {
             }
         };
 
+        // The parent instruction's accounts by IDL name: [ix_accounts, ix_pool, ix_user,
+        // ix_global_config, ix_base_mint, ix_quote_mint].
+        let parent_accounts = |program: Option<&[u8]>, data: &[u8], accounts: &[u8]| -> [Val; 6] {
+            let named = program.and_then(|k| self.programs.iter().find(|p| p.id.as_slice() == k)).and_then(|p| {
+                let keys: Vec<Option<String>> = accounts.iter().map(|&a| key_at(usize::from(a)).map(b58)).collect();
+                p.idl.named_accounts(data, &keys)
+            });
+            match named {
+                Some(n) => {
+                    let [a, b, c, d, e] = n.fixed.map(|v| v.map_or(Val::Null, Val::Str));
+                    [if self.ix_accounts_json { Val::Str(n.json) } else { Val::Null }, a, b, c, d, e]
+                }
+                None => std::array::from_fn(|_| Val::Null),
+            }
+        };
+
         if meta.status.is_err() {
             self.counters.txs_failed_touching.fetch_add(1, Ordering::Relaxed);
             let mut discs = Vec::new();
@@ -510,14 +608,14 @@ impl LabPlugin {
 
                 // Parent = nearest earlier instruction one level up; the outer instruction when
                 // the event is emitted directly below it.
-                let (parent_program, parent_disc, parent_name, parent_args, parent_data) = {
+                let (parent_program, parent_disc, parent_name, parent_args, parent_data, parent_accts) = {
                     let earlier = &group.instructions[..j];
                     let parent = match inner.stack_height {
                         Some(h) => earlier
                             .iter()
                             .rev()
                             .find(|p| p.stack_height == Some(h.saturating_sub(1)))
-                            .map(|p| (p.instruction.program_id_index, &p.instruction.data)),
+                            .map(|p| (p.instruction.program_id_index, &p.instruction.data, &p.instruction.accounts)),
                         // Without stack heights: the nearest earlier non-event instruction of the
                         // same program, else the outer instruction if it is that program.
                         None => earlier
@@ -527,14 +625,14 @@ impl LabPlugin {
                                 key_at(usize::from(p.instruction.program_id_index)) == Some(pk)
                                     && !p.instruction.data.starts_with(&EVENT_IX_TAG)
                             })
-                            .map(|p| (p.instruction.program_id_index, &p.instruction.data)),
+                            .map(|p| (p.instruction.program_id_index, &p.instruction.data, &p.instruction.accounts)),
                     };
                     let parent = parent.or_else(|| {
                         (inner.stack_height == Some(2) || key_at(usize::from(outer_ix.program_id_index)) == Some(pk))
-                            .then_some((outer_ix.program_id_index, &outer_ix.data))
+                            .then_some((outer_ix.program_id_index, &outer_ix.data, &outer_ix.accounts))
                     });
                     match parent {
-                        Some((pidx, pdata)) => {
+                        Some((pidx, pdata, paccounts)) => {
                             let pkey = key_at(usize::from(pidx));
                             let (name, args) = decode_ix(pkey, pdata);
                             let raw = ix_raw(pdata, &args);
@@ -544,9 +642,10 @@ impl LabPlugin {
                                 name,
                                 args,
                                 raw,
+                                parent_accounts(pkey, pdata, paccounts),
                             )
                         }
-                        None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null),
+                        None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null, std::array::from_fn(|_| Val::Null)),
                     }
                 };
 
@@ -588,10 +687,45 @@ impl LabPlugin {
                     parent_data,
                     signers.clone(),
                 ]);
+                values.extend(parent_accts);
                 values.extend(decoded.values);
                 event_seq += 1;
                 self.counters.events.fetch_add(1, Ordering::Relaxed);
                 rows.push(Row { table: table.clone(), columns: columns.clone(), values });
+            }
+        }
+        // Token metadata created in this transaction, top level and inner, in execution order.
+        let inner_of = |i: usize| inner_groups.iter().find(|g| usize::from(g.index) == i).map(|g| g.instructions.as_slice()).unwrap_or(&[]);
+        for (i, ix) in outer.iter().enumerate() {
+            let calls = std::iter::once((0usize, ix.program_id_index, ix.accounts.as_slice(), ix.data.as_slice())).chain(
+                inner_of(i).iter().enumerate().map(|(j, x)| (j + 1, x.instruction.program_id_index, x.instruction.accounts.as_slice(), x.instruction.data.as_slice())),
+            );
+            for (inner_i, program_idx, accounts, data) in calls {
+                let program = key_at(usize::from(program_idx));
+                let (mp, t22) = (program == Some(self.metaplex.as_slice()), program == Some(self.token2022.as_slice()));
+                if !mp && !t22 {
+                    continue;
+                }
+                let Some((source, mint_pos, ua_pos, name, symbol, uri)) = decode_token_metadata(mp, t22, data) else { continue };
+                let account = |pos: usize| accounts.get(pos).and_then(|a| key_at(usize::from(*a))).map(b58);
+                let Some(mint) = account(mint_pos) else { continue };
+                rows.push(Row {
+                    table: self.token_meta_table.clone(),
+                    columns: self.token_meta_cols.clone(),
+                    values: vec![
+                        Val::U64(tx.slot),
+                        Val::U64(tx.transaction_slot_index as u64),
+                        Val::Str(signature.clone()),
+                        Val::U64(i as u64),
+                        Val::U64(inner_i as u64),
+                        Val::Str(source.to_owned()),
+                        Val::Str(mint),
+                        Val::Str(name),
+                        Val::Str(symbol),
+                        Val::Str(uri),
+                        account(ua_pos).map_or(Val::Null, Val::Str),
+                    ],
+                });
             }
         }
         rows
@@ -723,7 +857,36 @@ impl Plugin for LabPlugin {
 
 #[cfg(test)]
 mod tests {
-    use super::is_http_429;
+    use super::{decode_token_metadata, is_http_429, TOKEN_METADATA_INIT};
+
+    fn borsh(parts: &[&str]) -> Vec<u8> {
+        parts.iter().flat_map(|p| (p.len() as u32).to_le_bytes().into_iter().chain(p.bytes())).collect()
+    }
+
+    #[test]
+    fn token_metadata_from_metaplex_and_token2022() {
+        let mut v3 = vec![33u8];
+        v3.extend(borsh(&["Pepper", "PEPPER", "https://ipfs.io/x"]));
+        v3.extend([0xf4, 0x01, 0, 0, 0, 1, 0]); // seller fee, no creators/collection/uses, is_mutable, no details
+        assert_eq!(
+            decode_token_metadata(true, false, &v3),
+            Some(("metaplex_v3", 1, 4, "Pepper".to_owned(), "PEPPER".to_owned(), "https://ipfs.io/x".to_owned()))
+        );
+        let mut create = vec![42u8, 0];
+        create.extend(borsh(&["A", "B", "C"]));
+        assert_eq!(decode_token_metadata(true, false, &create).map(|x| (x.0, x.1, x.2)), Some(("metaplex_create", 2, 5)));
+        let mut t22 = TOKEN_METADATA_INIT.to_vec();
+        t22.extend(borsh(&["Coin", "CN", ""]));
+        assert_eq!(decode_token_metadata(false, true, &t22).map(|x| (x.0, x.1, x.3)), Some(("token2022", 2, "Coin".to_owned())));
+        // Other instructions, the wrong program, a cut-off string or an absurd length: nothing.
+        assert_eq!(decode_token_metadata(true, false, &[1, 0, 0, 0, 0]), None);
+        assert_eq!(decode_token_metadata(false, false, &v3), None);
+        assert_eq!(decode_token_metadata(true, false, &v3[..8]), None);
+        let mut long = vec![33u8];
+        long.extend(u32::MAX.to_le_bytes());
+        assert_eq!(decode_token_metadata(true, false, &long), None);
+        assert_eq!(decode_token_metadata(false, true, &[3, 0, 0, 0]), None); // an ordinary Token-2022 instruction
+    }
 
     #[test]
     fn http_429_detection_ignores_slot_numbers() {

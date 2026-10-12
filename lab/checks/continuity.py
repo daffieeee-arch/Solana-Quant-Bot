@@ -24,12 +24,15 @@ pump_amm (PumpSwap). Buy/SellEvent reserves are PRE-trade. Prices use the effect
   Links: CreatePoolEvent anchors a chain (B, E = pool amounts, V assumed 0); deposits and
   withdrawals check B only; BoostBuyAndBurnEvent and InitBoostEvent expose only a post-state.
 
-Scale: the projection is first written to an on-disk DuckDB file, then chains are checked per
-hash bucket of mint/pool (a chain never spans buckets, so the result is exact). Duplicates from
-firehose restarts are removed on the integer event position (slot, tx_index, outer_ix, inner_ix).
+Scale: chunks are read one at a time, straight from their Parquet files (nothing is materialized
+on disk), and checked per hash bucket of mint/pool (a chain never spans buckets). A small carry
+table keeps the last event of every chain seen so far, so the pair across a chunk boundary is
+checked exactly as within a chunk. Duplicates from firehose restarts are removed on the integer
+event position (slot, tx_index, outer_ix, inner_ix); they never span chunks.
 
-Usage: python continuity.py <chunks_dir> [--expect START:END] [--report out.json] [--examples N]
-Env: LAB_DUCKDB_THREADS, LAB_DUCKDB_MEM, LAB_DUCKDB_TMP (directory for the work database).
+Usage: python continuity.py <chunks_dir> [--slots START:END] [--expect START:END] [--report out.json] [--examples N]
+  --slots: only the complete chunks inside [START, END).
+Env: LAB_DUCKDB_THREADS, LAB_DUCKDB_MEM, LAB_DUCKDB_TMP (spill directory), LAB_DUCKDB_TMP_MAX (spill cap).
 Only chunks whose `_manifest.json` has status "complete" are used.
 """
 
@@ -45,6 +48,7 @@ import duckdb
 
 MAYHEM_AGENT = "BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"
 BUCKETS = int(os.environ.get("LAB_CONTINUITY_BUCKETS", "16"))
+DUMP_BAD = None  # --dump-bad: Parquet with every bad PumpSwap pair
 H = "::HUGEINT"
 POS = "slot, tx_index, outer_ix, inner_ix"
 
@@ -101,7 +105,7 @@ class Pairs:
         self.chains = 0
         self.anchored = 0
 
-    def add_bucket(self, con, table, ok_expr, cmp_cols, key, examples, example_cols):
+    def add_bucket(self, con, table, ok_expr, cmp_cols, key, examples, example_cols, count_chains=True):
         null_any = " OR ".join(f"{c} IS NULL" for c in cmp_cols)
         verdict = f"""CASE WHEN {null_any} THEN 'unverifiable' WHEN {ok_expr} THEN 'ok' ELSE 'bad' END"""
         for k, pk, v, c in con.execute(f"""
@@ -118,10 +122,11 @@ class Pairs:
             self.examples += [dict(zip(example_cols, r)) for r in con.execute(f"""
                 SELECT {cols} FROM {table} WHERE n > 1 AND {verdict} = 'bad' ORDER BY slot
                 LIMIT {examples - len(self.examples)}""").fetchall()]
-        t, a = con.execute(f"""SELECT count(DISTINCT {key}),
-            count(DISTINCT {key}) FILTER (WHERE n = 1 AND kind LIKE 'create%') FROM {table}""").fetchone()
-        self.chains += t
-        self.anchored += a
+        if count_chains:
+            t, a = con.execute(f"""SELECT count(DISTINCT {key}),
+                count(DISTINCT {key}) FILTER (WHERE n = 1 AND kind LIKE 'create%') FROM {table}""").fetchone()
+            self.chains += t
+            self.anchored += a
 
     def report(self):
         tot = Counter()
@@ -140,10 +145,78 @@ class Pairs:
         return out
 
 
-def pump_check(con, dirs, examples):
+def _carry_step(con, table, key, pos_order, carry):
+    """Replace the bucket's carry rows by the last event of each chain in `table`; a chain keeps the
+    anchored flag of its first event ever (a create event)."""
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE carry_new AS
+      SELECT l.* EXCLUDE (n, carried, anchored), f.anch AS anchored
+      FROM (SELECT * FROM {table} QUALIFY row_number() OVER (PARTITION BY {key} ORDER BY {pos_order}) = 1) l
+      JOIN (SELECT {key}, CASE WHEN carried THEN anchored ELSE kind LIKE 'create%' END AS anch FROM {table} WHERE n = 1) f
+      USING ({key})""")
+
+
+def _desc(cols):
+    return ", ".join(f"{c} DESC" for c in cols.split(", "))
+
+
+def pump_check(con, done, examples):
+    if not files([c[3] for c in done], "pump/TradeEvent"):
+        return None
+    res = {"events": Counter(), "decode_status": Counter(), "duplicate_events": 0}
+    pairs = Pairs()
+    vq_ok = vq_bad = 0
+    lag_cols = ["post_vt", "post_vq", "post_rt", "post_rq", "kind", "actor", "slot"]
+    first = True
+    for chunk in done:
+        n_ev = _pump_view(con, [chunk[3]])
+        if not n_ev:
+            continue
+        for k, c in con.execute("SELECT kind, count(*) FROM pump_ev GROUP BY 1").fetchall():
+            res["events"][k] += c
+        for k, c in con.execute("SELECT decode_status, count(*) FROM pump_ev GROUP BY 1").fetchall():
+            res["decode_status"][k] += c
+        res["duplicate_events"] += con.execute(f"SELECT count(*) - count(DISTINCT ({POS})) FROM pump_ev").fetchone()[0]
+        if first:
+            # One carry table per bucket, replaced whole each time (a DELETE would leave dead rows behind).
+            for b in range(BUCKETS):
+                con.execute(f"CREATE OR REPLACE TEMP TABLE pump_carry_{b} AS SELECT *, NULL::BOOLEAN AS anchored FROM pump_ev LIMIT 0")
+            first = False
+        for b in range(BUCKETS):
+            con.execute(f"""CREATE OR REPLACE TEMP TABLE pb AS
+              SELECT *, {", ".join(f"LAG({c}) OVER w AS prev_{c[5:] if c.startswith('post_') else c}" for c in lag_cols)},
+                     ROW_NUMBER() OVER w AS n
+              FROM (SELECT *, false AS carried, NULL::BOOLEAN AS anchored
+                    FROM (SELECT * FROM pump_ev WHERE b = {b} QUALIFY row_number() OVER (PARTITION BY {POS}) = 1)
+                    UNION ALL BY NAME
+                    SELECT *, true AS carried FROM pump_carry_{b})
+              WINDOW w AS (PARTITION BY mint ORDER BY {POS})""")
+            pairs.add_bucket(con, "pb", "pre_vt = prev_vt AND pre_rt = prev_rt AND pre_rq = prev_rq",
+                             ["pre_vt", "prev_vt", "pre_rt", "prev_rt", "pre_rq", "prev_rq"], "mint", examples,
+                             ["kind", "prev_kind", "mint", "slot", "prev_slot", "tx_index", "pre_vt", "prev_vt",
+                              "pre_rt", "prev_rt", "pre_rq", "prev_rq"], count_chains=False)
+            o, x = con.execute(f"""
+              SELECT count(*) FILTER (WHERE pre_vq = prev_vq), count(*) FILTER (WHERE pre_vq <> prev_vq)
+              FROM pb WHERE n > 1 AND COALESCE(actor, '') <> '{MAYHEM_AGENT}' AND COALESCE(prev_actor, '') <> '{MAYHEM_AGENT}'""").fetchone()
+            vq_ok, vq_bad = vq_ok + o, vq_bad + x
+            _carry_step(con, "(SELECT * EXCLUDE (" + ", ".join("prev_" + (c[5:] if c.startswith("post_") else c) for c in lag_cols)
+                        + ") FROM pb)", "mint", _desc(POS), "pump_carry")
+            con.execute(f"CREATE OR REPLACE TEMP TABLE pump_carry_{b} AS SELECT * FROM carry_new")
+    if first:
+        return None
+    res.update(pairs.report())
+    res["chains"] = dict(zip(("total", "anchored"), con.execute(
+        "SELECT count(*), count(*) FILTER (WHERE anchored) FROM ("
+        + " UNION ALL ".join(f"SELECT anchored FROM pump_carry_{b}" for b in range(BUCKETS)) + ")").fetchone()))
+    res["virtual_quote_without_mayhem_agent"] = {"ok": vq_ok, "bad": vq_bad}
+    res["events"], res["decode_status"] = dict(res["events"]), dict(res["decode_status"])
+    return res
+
+
+def _pump_view(con, dirs):
+    """pump_ev: the projection of one chunk as a view over its Parquet files (number of sources)."""
     trades = files(dirs, "pump/TradeEvent")
     if not trades:
-        return None
+        return 0
     quote_amt = "COALESCE(quote_amount, sol_amount)"
     vq, rq = "COALESCE(virtual_quote_reserves, virtual_sol_reserves)", "COALESCE(real_quote_reserves, real_sol_reserves)"
     parts = [f"""
@@ -168,35 +241,69 @@ def pump_check(con, dirs, examples):
         virtual_token_reserves{H}, virtual_sol_reserves{H}, real_token_reserves{H}, real_sol_reserves{H},
         new_virtual_token_reserves{H}, new_virtual_sol_reserves{H}, real_token_reserves{H}, real_sol_reserves{H}, decode_status
       FROM {rp(mayhem)}""")
-    con.execute(f"CREATE OR REPLACE TABLE pump_ev AS SELECT *, hash(mint) % {BUCKETS} AS b FROM ("
+    con.execute(f"CREATE OR REPLACE TEMP VIEW pump_ev AS SELECT *, hash(mint) % {BUCKETS} AS b FROM ("
                 + " UNION ALL ".join(parts) + ")")
-    res = {"events": dict(con.execute("SELECT kind, count(*) FROM pump_ev GROUP BY 1").fetchall()),
-           "decode_status": dict(con.execute("SELECT decode_status, count(*) FROM pump_ev GROUP BY 1").fetchall()),
-           "duplicate_events": con.execute(f"SELECT count(*) - count(DISTINCT ({POS})) FROM pump_ev").fetchone()[0]}
-    pairs = Pairs()
-    vq_ok = vq_bad = 0
-    for b in range(BUCKETS):
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE pb AS
-          SELECT *, LAG(post_vt) OVER w AS prev_vt, LAG(post_vq) OVER w AS prev_vq,
-                 LAG(post_rt) OVER w AS prev_rt, LAG(post_rq) OVER w AS prev_rq,
-                 LAG(kind) OVER w AS prev_kind, LAG(actor) OVER w AS prev_actor, LAG(slot) OVER w AS prev_slot,
-                 ROW_NUMBER() OVER w AS n
-          FROM (SELECT * FROM pump_ev WHERE b = {b} QUALIFY row_number() OVER (PARTITION BY {POS}) = 1)
-          WINDOW w AS (PARTITION BY mint ORDER BY {POS})""")
-        pairs.add_bucket(con, "pb", "pre_vt = prev_vt AND pre_rt = prev_rt AND pre_rq = prev_rq",
-                         ["pre_vt", "prev_vt", "pre_rt", "prev_rt", "pre_rq", "prev_rq"], "mint", examples,
-                         ["kind", "prev_kind", "mint", "slot", "prev_slot", "tx_index", "pre_vt", "prev_vt",
-                          "pre_rt", "prev_rt", "pre_rq", "prev_rq"])
-        o, x = con.execute(f"""
-          SELECT count(*) FILTER (WHERE pre_vq = prev_vq), count(*) FILTER (WHERE pre_vq <> prev_vq)
-          FROM pb WHERE n > 1 AND COALESCE(actor, '') <> '{MAYHEM_AGENT}' AND COALESCE(prev_actor, '') <> '{MAYHEM_AGENT}'""").fetchone()
-        vq_ok, vq_bad = vq_ok + o, vq_bad + x
-    res.update(pairs.report())
-    res["virtual_quote_without_mayhem_agent"] = {"ok": vq_ok, "bad": vq_bad}
+    return len(parts)
+
+
+def amm_check(con, done, examples):
+    if not any(files([c[3] for c in done], t) for t in ("pump_amm/BuyEvent", "pump_amm/SellEvent")):
+        return None
+    res = {"events": Counter(), "duplicate_events": 0}
+    base, both = Pairs(), Pairs()
+    cols = ["kind", "prev_kind", "pool", "slot", "prev_slot", "tx_index", "b", "prev_b2", "e", "prev_e2"]
+    first = True
+    if DUMP_BAD:
+        con.execute("""CREATE OR REPLACE TEMP TABLE amm_bad (pool VARCHAR, kind VARCHAR, prev_kind VARCHAR, slot UBIGINT,
+          tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, prev_slot UBIGINT, prev_tx_index BIGINT, prev_outer_ix BIGINT,
+          prev_inner_ix BIGINT, b HUGEINT, prev_b2 HUGEINT, e HUGEINT, prev_e2 HUGEINT, d_b HUGEINT, d_e HUGEINT)""")
+    for chunk in done:
+        if not _amm_view(con, [chunk[3]]):
+            continue
+        for k, c in con.execute("SELECT kind, count(*) FROM amm_ev GROUP BY 1").fetchall():
+            res["events"][k] += c
+        res["duplicate_events"] += con.execute(f"SELECT count(*) - count(DISTINCT ({POS})) FROM amm_ev").fetchone()[0]
+        if first:
+            for bk in range(BUCKETS):
+                con.execute(f"CREATE OR REPLACE TEMP TABLE amm_carry_{bk} AS SELECT *, NULL::BOOLEAN AS anchored FROM amm_ev LIMIT 0")
+            first = False
+        for bk in range(BUCKETS):
+            con.execute(f"""CREATE OR REPLACE TEMP TABLE ab AS
+              SELECT *, LAG(b2) OVER w AS prev_b2, LAG(e2) OVER w AS prev_e2, LAG(kind) OVER w AS prev_kind,
+                     LAG(slot) OVER w AS prev_slot, LAG(tx_index) OVER w AS prev_tx_index,
+                     LAG(outer_ix) OVER w AS prev_outer_ix, LAG(inner_ix) OVER w AS prev_inner_ix, ROW_NUMBER() OVER w AS n
+              FROM (SELECT *, false AS carried, NULL::BOOLEAN AS anchored
+                    FROM (SELECT * FROM amm_ev WHERE bk = {bk} QUALIFY row_number() OVER (PARTITION BY {POS}) = 1)
+                    UNION ALL BY NAME
+                    SELECT *, true AS carried FROM amm_carry_{bk})
+              WINDOW w AS (PARTITION BY pool ORDER BY {POS})""")
+            base.add_bucket(con, "ab", "b = prev_b2", ["b", "prev_b2"], "pool", examples, cols, count_chains=False)
+            both.add_bucket(con, "ab", "b = prev_b2 AND e = prev_e2", ["b", "prev_b2", "e", "prev_e2"], "pool", examples,
+                            cols, count_chains=False)
+            if DUMP_BAD:  # every bad pair, for the per-cause explanation
+                con.execute("""INSERT INTO amm_bad SELECT pool, kind, prev_kind, slot, tx_index, outer_ix, inner_ix,
+                                 prev_slot, prev_tx_index, prev_outer_ix, prev_inner_ix, b, prev_b2, e, prev_e2,
+                                 b - prev_b2 AS d_b, e - prev_e2 AS d_e
+                               FROM ab WHERE n > 1 AND ((b <> prev_b2) OR (e <> prev_e2 AND b = prev_b2))""")
+            _carry_step(con, "(SELECT * EXCLUDE (prev_b2, prev_e2, prev_kind, prev_slot, prev_tx_index, prev_outer_ix, "
+                        "prev_inner_ix) FROM ab)", "pool", _desc(POS), "amm_carry")
+            con.execute(f"CREATE OR REPLACE TEMP TABLE amm_carry_{bk} AS SELECT * FROM carry_new")
+    if first:
+        return None
+    res["events"] = dict(res["events"])
+    res["base"], res["base_and_effective_quote"] = base.report(), both.report()
+    chains = dict(zip(("total", "anchored"), con.execute(
+        "SELECT count(*), count(*) FILTER (WHERE anchored) FROM ("
+        + " UNION ALL ".join(f"SELECT anchored FROM amm_carry_{bk}" for bk in range(BUCKETS)) + ")").fetchone()))
+    res["base"]["chains"] = res["base_and_effective_quote"]["chains"] = chains
+    if DUMP_BAD:
+        con.execute(f"COPY (SELECT * FROM amm_bad ORDER BY slot, tx_index, outer_ix, inner_ix) TO '{DUMP_BAD}' (FORMAT parquet)")
+        res["bad_pairs_dump"] = DUMP_BAD
     return res
 
 
-def amm_check(con, dirs, examples):
+def _amm_view(con, dirs):
+    """amm_ev: the projection of one chunk as a view over its Parquet files (number of sources)."""
     eff = f"(pool_quote_token_reserves{H} + COALESCE(TRY_CAST(virtual_quote_reserves AS HUGEINT), 0))"
     sources = {
         "buy": ("pump_amm/BuyEvent", f"""pool_base_token_reserves{H} AS b, {eff} AS e,
@@ -220,35 +327,29 @@ def amm_check(con, dirs, examples):
         if fs:
             parts.append(f"SELECT '{kind}' AS kind, {POS}, pool, {expr} FROM {rp(fs)}")
     if not files(dirs, "pump_amm/BuyEvent") and not files(dirs, "pump_amm/SellEvent"):
-        return None
-    con.execute(f"CREATE OR REPLACE TABLE amm_ev AS SELECT *, hash(pool) % {BUCKETS} AS bk FROM ("
+        return 0
+    con.execute(f"CREATE OR REPLACE TEMP VIEW amm_ev AS SELECT *, hash(pool) % {BUCKETS} AS bk FROM ("
                 + " UNION ALL BY NAME ".join(parts) + ")")
-    res = {"events": dict(con.execute("SELECT kind, count(*) FROM amm_ev GROUP BY 1").fetchall()),
-           "duplicate_events": con.execute(f"SELECT count(*) - count(DISTINCT ({POS})) FROM amm_ev").fetchone()[0]}
-    base, both = Pairs(), Pairs()
-    cols = ["kind", "prev_kind", "pool", "slot", "prev_slot", "tx_index", "b", "prev_b2", "e", "prev_e2"]
-    for bk in range(BUCKETS):
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE ab AS
-          SELECT *, LAG(b2) OVER w AS prev_b2, LAG(e2) OVER w AS prev_e2, LAG(kind) OVER w AS prev_kind,
-                 LAG(slot) OVER w AS prev_slot, ROW_NUMBER() OVER w AS n
-          FROM (SELECT * FROM amm_ev WHERE bk = {bk} QUALIFY row_number() OVER (PARTITION BY {POS}) = 1)
-          WINDOW w AS (PARTITION BY pool ORDER BY {POS})""")
-        base.add_bucket(con, "ab", "b = prev_b2", ["b", "prev_b2"], "pool", examples, cols)
-        both.add_bucket(con, "ab", "b = prev_b2 AND e = prev_e2", ["b", "prev_b2", "e", "prev_e2"], "pool", examples, cols)
-    res["base"] = base.report()
-    res["base_and_effective_quote"] = both.report()
-    return res
+    return len(parts)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
+    ap.add_argument("--slots", help="START:END: only the complete chunks inside this range")
     ap.add_argument("--expect", help="START:END slot range the dataset should cover")
     ap.add_argument("--report")
     ap.add_argument("--examples", type=int, default=5)
+    ap.add_argument("--dump-bad", help="write every bad PumpSwap pair (base or base+effective quote) to this Parquet file")
     a = ap.parse_args()
+    global DUMP_BAD
+    DUMP_BAD = a.dump_bad
 
     done, other = scan_chunks(a.root)
+    if a.slots:
+        lo, hi = map(int, a.slots.split(":"))
+        done = [c for c in done if c[0] >= lo and c[1] <= hi]
+        other = [o for o in other if lo <= int(o["dir"].split("-")[0]) < hi]
     expect = tuple(map(int, a.expect.split(":"))) if a.expect else None
     report = {
         "complete_chunks": len(done),
@@ -258,21 +359,21 @@ def main():
     dirs = [c[3] for c in done]
     work_dir = os.environ.get("LAB_DUCKDB_TMP") or tempfile.gettempdir()
     os.makedirs(work_dir, exist_ok=True)
-    db_path = os.path.join(work_dir, f"continuity-{os.getpid()}.duckdb")
-    con = duckdb.connect(db_path)
+    con = duckdb.connect()  # in memory: chunks are read from Parquet, only per-bucket work tables spill
     try:
         con.execute(f"SET threads TO {int(os.environ.get('LAB_DUCKDB_THREADS', '4'))}")
         con.execute(f"SET memory_limit = '{os.environ.get('LAB_DUCKDB_MEM', '6GB')}'")
         con.execute(f"SET temp_directory = '{work_dir}'")
+        con.execute(f"SET max_temp_directory_size = '{os.environ.get('LAB_DUCKDB_TMP_MAX', '2GB')}'")
         con.execute("SET preserve_insertion_order = false")
         con.execute("CREATE TEMP TABLE chunks (chunk_s UBIGINT, chunk_e UBIGINT)")
         if done:
             con.executemany("INSERT INTO chunks VALUES (?, ?)", [(s, e) for s, e, _, _ in done])
 
-        pump = pump_check(con, dirs, a.examples)
+        pump = pump_check(con, done, a.examples)
         if pump:
             report["pump"] = pump
-        amm = amm_check(con, dirs, a.examples)
+        amm = amm_check(con, done, a.examples)
         if amm:
             report["pump_amm"] = amm
         anomalies = files(dirs, "anomalies")
@@ -281,9 +382,6 @@ def main():
               SELECT program, kind, event, count(*) FROM {rp(anomalies)} GROUP BY ALL ORDER BY 4 DESC""").fetchall()}
     finally:
         con.close()
-        for suffix in ("", ".wal"):
-            if os.path.exists(db_path + suffix):
-                os.remove(db_path + suffix)
 
     out = json.dumps(report, indent=2, default=str)
     if a.report:

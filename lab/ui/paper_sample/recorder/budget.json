@@ -1,0 +1,9 @@
+{
+ "day": 20738,
+ "spent_bytes": 5975958176,
+ "cap_bytes": 25000000000,
+ "spent_gb": 5.975958176,
+ "stopped": false,
+ "wire_ratio": 1.0,
+ "_sample": "Voorbeeld in het formaat van lab/recorder (meter.rs state); geen echte data."
+}

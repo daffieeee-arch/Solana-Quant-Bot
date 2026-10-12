@@ -11,7 +11,7 @@ Project #4 exists and is the central delivery roadmap. It is reconciled by:
 - `.github/workflows/roadmap-sync.yml`;
 - `scripts/github-projects/sync.mjs`;
 - `roadmap/project-config.json`;
-- `tests/github-projects-sync.test.ts`.
+- `tests/github-projects-sync.test.ts` (and the other `tests/github-projects-*.test.ts`).
 
 PR #69 was squash-merged as `05c3d885943c2319d6317b43546daca4b5918074`. Its post-merge main CI passed. The main-push Roadmap Sync run was superseded by an issue-state event temporally associated with that merge; the exact initiating mechanism is unproven, and the successor ordinary reconciliation passed. The exact run identities and immutable pre-G0 export receipt are recorded in [`PROJECT_V2_G0_PREFLIGHT.md`](PROJECT_V2_G0_PREFLIGHT.md).
 
@@ -60,7 +60,16 @@ mutate once
 → accept only exact convergence; otherwise fail closed
 ```
 
-The fixed verification reads occur immediately and then after `500`, `1,000`, `2,000` and `4,000` milliseconds: five reads with at most `7,500` milliseconds total waiting per changed logical operation. The schedule has no jitter, environment override or unbounded fallback. Mutation errors and GraphQL/read errors are not retried because their commit state can be ambiguous.
+The fixed verification reads occur immediately and then after `500`, `1,000`, `2,000` and `4,000` milliseconds: five reads with at most `7,500` milliseconds total waiting per changed logical operation.
+
+**Item visibility window.** Item visibility after `ADD_ITEM`, and in the final item audit, has a longer window (`PROJECT_ITEM_VISIBILITY_DELAYS_MS`). It starts with the same reads, then continues with `8,000`, `16,000`, `32,000`, `60,000` and `60,000` milliseconds: ten reads with at most `183,500` milliseconds (~3 minutes) of waiting. The Project's item list can lag behind an added item.
+- Within that window, an item the run added and that the list still does not show is also read directly by its node id. This starts from the read after the standard five.
+- A directly read item counts only when it belongs to this Project.
+- The verification schedules have no environment override or unbounded fallback.
+
+**Transient errors on queries.** A read-only GraphQL query (`query …`, for example the issue, pull-request and Project-item lists) that fails transiently is repeated after `2,000`, `4,000`, `8,000`, `16,000` and `30,000` milliseconds, each plus up to 25% jitter. Transient means HTTP 5xx or 429, a non-JSON body such as a 504 gateway page, or a network error or timeout. That is six attempts at most: 60 s of delays plus up to 25% jitter, so 75 s of waiting at most, plus the 30 s request timeout of each attempt. When a transient reply carries a `retry-after` header (seconds or an HTTP date; GitHub sends it with rate limits), the wait is that long instead if it is longer, at most 60 s. Each retry is logged with its label, reason code and wait.
+- Client errors (4xx) and GraphQL errors with HTTP 200 are not retried.
+- Mutations are never retried: their commit state can be ambiguous.
 
 Verifier outcomes are:
 
@@ -203,6 +212,7 @@ node scripts/github-projects/sync.mjs --dry-run
 npm test -- --run tests/github-projects-sync.test.ts
 npm test -- --run tests/github-projects-lifecycle.test.ts
 npm test -- --run tests/github-projects-routing.test.ts tests/github-projects-verification.test.ts tests/github-projects-managed-field-clearing.test.ts
+npm test -- --run tests/github-projects-resilience.test.ts
 ```
 
 Do not manually dispatch Roadmap Sync from a feature branch. Normal main-push/daily reconciliation must be allowed to finish; issue/PR edits no longer start it. Do not overlap it with a manual reconciliation or place a token on a command line.

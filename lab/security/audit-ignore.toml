@@ -1,0 +1,89 @@
+# Known advisories that dependency_audit.py reports but does not fail on.
+#
+# Rule (owner, 2026-10-12): fix first. An entry is only allowed when no patched version exists that is
+# compatible with the parent's version requirement; `evidence` shows that (the advisory's patched range
+# plus the parent's requirement, from crates.io / PyPI / npm and the advisory), and the owner decides.
+#
+# Every entry needs: id (the advisory id or one of its aliases), ecosystem (cargo, pip or npm), package,
+# reason (why it cannot be fixed), risk (the risk for our use: do we sign, is the affected code called),
+# evidence, approved (YYYY-MM-DD), approved_by and review_by (YYYY-MM-DD). Optional: version, so the
+# entry covers only that exact version (another, still affected version fails again). After review_by
+# the entry stops applying and the check fails again until someone re-decides. Ignored findings are
+# always printed with their reason and risk; an entry that no longer matches anything is printed as stale.
+
+# Six temporary exceptions in the Agave 4.2 tree that lab/extractor and lab/recorder get through
+# Jetstreamer. The owner approved them on 2026-10-12 ("Ja, ik ben akkoord met deze zes tijdelijke
+# uitzonderingen"), with evidence from Lab Backtest (#193) and LAB review, re-checked on crates.io.
+# Re-review at every Agave or Jetstreamer upgrade, and by review_by at the latest.
+
+[[ignore]]
+id = "RUSTSEC-2022-0093"
+ecosystem = "cargo"
+package = "ed25519-dalek"
+version = "1.0.1"
+reason = "Agave pins ed25519-dalek 1.0.1 exactly; the patched 2.x is not allowed by the parent. GHSA-w5vr-6qhr-36cc."
+risk = "None: the signing oracle needs signing with an attacker-chosen public key. We hold no keys and never sign (paper only)."
+evidence = "Patched >= 2.0.0. agave-precompiles requires ed25519-dalek =1.0.1 in every 4.x release (4.2.2 in the lock, newest 4.3.0); solana-runtime 4.2.2 pins agave-precompiles =4.2.2. 1.0.1 is the last 1.x."
+approved = "2026-10-12"
+approved_by = "owner (fix-first rule, decision via coordinator)"
+review_by = "2026-11-12"
+
+[[ignore]]
+id = "RUSTSEC-2024-0344"
+ecosystem = "cargo"
+package = "curve25519-dalek"
+version = "3.2.0"
+reason = "Only through ed25519-dalek 1.0.1 (above), which requires curve25519-dalek ^3; every 3.x is affected. GHSA-x4gp-pqpj-f43q."
+risk = "None: a timing side channel on secret scalars, and we hold no secret keys."
+evidence = "Patched >= 4.1.3. ed25519-dalek 1.0.1 requires ^3; the last 3.x (3.2.1) is still affected. The patched 4.1.3 is already in the lock through other parents."
+approved = "2026-10-12"
+approved_by = "owner (fix-first rule, decision via coordinator)"
+review_by = "2026-11-12"
+
+[[ignore]]
+id = "RUSTSEC-2024-0421"
+ecosystem = "cargo"
+package = "idna"
+version = "0.1.5"
+reason = "idna 0.1.5 comes through url 1.7.2 in jsonrpc-client-transports 18.0.0, the last release of an unmaintained crate. GHSA-h97m-ww89-6jmq."
+risk = "None: the jsonrpc client is compiled in through solana-rpc but never called. OF1 goes through Jetstreamer's HTTP client (url 2.x), Triton through tonic."
+evidence = "Patched >= 1.0.0. url 1.7.2 requires idna ^0.1.0 (last 0.1.x is 0.1.5); jsonrpc-client-transports 18.0.0 (last release, via jsonrpc-core-client 18.0.0) requires url ^1.7, whose last release is 1.7.2."
+approved = "2026-10-12"
+approved_by = "owner (fix-first rule, decision via coordinator)"
+review_by = "2026-11-12"
+
+[[ignore]]
+id = "RUSTSEC-2026-0097"
+ecosystem = "cargo"
+package = "rand"
+version = "0.7.3"
+reason = "rand 0.7.3 comes through ed25519-dalek 1.0.1 and jsonrpc-pubsub 18.0.0 (last release), both ^0.7; the 0.7 line has no patched release. GHSA-cq8v-f236-94qc."
+risk = "None: unsound only with a custom logger that itself uses rand; ours is env_logger."
+evidence = "Patched 0.8.6 / 0.9.3 / 0.10.1, nothing in 0.7.x (last 0.7.3). ed25519-dalek 1.0.1 and jsonrpc-pubsub 18.0.0 require rand ^0.7. rand 0.8.6, 0.9.4 and 0.10.2 in the lock are patched."
+approved = "2026-10-12"
+approved_by = "owner (fix-first rule, decision via coordinator)"
+review_by = "2026-11-12"
+
+[[ignore]]
+id = "RUSTSEC-2026-0186"
+ecosystem = "cargo"
+package = "memmap2"
+version = "0.5.10"
+reason = "memmap2 0.5.10 comes through solana-genesis-config, which asks ^0.5.10 in every release; the 0.5 line has no patched release. The 0.9 line is fixed (0.9.11, #193)."
+risk = "Negligible: advise_range/flush_range are not called with untrusted ranges, and the binaries load no genesis."
+evidence = "Patched >= 0.9.11, nothing in 0.5.x (last 0.5.10). solana-genesis-config 4.0.0 (in the lock; the Agave 4.2.2 crates ask ^4.0.0), 4.1.0 and 5.0.0 all require memmap2 ^0.5.10."
+approved = "2026-10-12"
+approved_by = "owner (fix-first rule, decision via coordinator)"
+review_by = "2026-11-12"
+
+[[ignore]]
+id = "RUSTSEC-2026-0253"
+ecosystem = "cargo"
+package = "lru"
+version = "0.7.8"
+reason = "lru 0.7.8 comes through reed-solomon-erasure 6.0.0 (its last release, via solana-ledger), which asks ^0.7.8; the 0.7 line has no patched release."
+risk = "Negligible: it needs a cache key whose Drop panics; erasure keys are plain values, and we do no shred recovery."
+evidence = "Patched >= 0.18.2, nothing in 0.7.x (last 0.7.8). reed-solomon-erasure 6.0.0 (newest) requires lru ^0.7.8."
+approved = "2026-10-12"
+approved_by = "owner (fix-first rule, decision via coordinator)"
+review_by = "2026-11-12"

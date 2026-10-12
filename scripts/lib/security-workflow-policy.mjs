@@ -27,7 +27,7 @@ const workflows = {
         permissions: { contents: 'read', 'security-events': 'write' },
         strategy: {
           'fail-fast': false,
-          'max-parallel': 2,
+          'max-parallel': 4,
           matrix: { language: ['actions', 'javascript-typescript', 'python', 'rust'] },
         },
         env: {
@@ -40,11 +40,12 @@ const workflows = {
           checkout,
           {
             name: 'Prepare pinned Rust toolchain for extraction',
-            if: "matrix.language == 'rust'",
+            if: "matrix.language == 'rust' && github.event_name != 'pull_request'",
             run: 'rustup toolchain install 1.97.1 --profile minimal',
           },
           {
             name: 'Initialize CodeQL',
+            if: "matrix.language != 'rust' || github.event_name != 'pull_request'",
             uses: 'github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd',
             with: {
               languages: '${{ matrix.language }}',
@@ -54,6 +55,7 @@ const workflows = {
           },
           {
             name: 'Analyze and publish security results',
+            if: "matrix.language != 'rust' || github.event_name != 'pull_request'",
             uses: 'github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd',
             with: { category: '/language:${{ matrix.language }}' },
           },
@@ -90,6 +92,79 @@ const workflows = {
               'retry-on-snapshot-warnings-timeout': 60,
             },
           },
+        ],
+      },
+    },
+  },
+  // Owner-approved 2026-10-12: weekly and on-change RustSec, PyPI and npm advisory audit of lab/.
+  // Read-only; fail rule and the ignore list with reasons live in lab/security/.
+  '.github/workflows/dependency-audit.yml': {
+    name: 'Dependency audit',
+    on: {
+      pull_request: {
+        branches: ['main'],
+        paths: [
+          '.github/workflows/dependency-audit.yml',
+          'lab/security/**',
+          'lab/extractor/Cargo.lock',
+          'lab/extractor/Cargo.toml',
+          'lab/recorder/Cargo.lock',
+          'lab/recorder/Cargo.toml',
+          'lab/requirements-lab.txt',
+          'lab/ui/web/package.json',
+          'lab/ui/web/package-lock.json',
+        ],
+      },
+      schedule: [{ cron: '29 6 * * 1' }],
+      workflow_dispatch: {},
+    },
+    permissions: { contents: 'read' },
+    concurrency: { group: 'dependency-audit-${{ github.ref }}', 'cancel-in-progress': true },
+    jobs: {
+      cargo: {
+        name: 'dependency-audit (cargo)',
+        'runs-on': 'ubuntu-24.04',
+        'timeout-minutes': 30,
+        env: { RUSTUP_TOOLCHAIN: '1.97.1' },
+        steps: [
+          checkout,
+          { name: 'Install pinned Rust toolchain', run: 'rustup toolchain install 1.97.1 --profile minimal' },
+          { name: 'Install cargo-audit', run: 'cargo install cargo-audit --version 0.22.2 --locked' },
+          {
+            name: 'Audit Rust lockfiles against RustSec',
+            run: 'python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock --optional lab/recorder/Cargo.lock',
+          },
+        ],
+      },
+      pip: {
+        name: 'dependency-audit (pip)',
+        'runs-on': 'ubuntu-24.04',
+        'timeout-minutes': 10,
+        steps: [
+          checkout,
+          { name: 'Test the audit script', run: 'python3 lab/security/tests/test_dependency_audit.py' },
+          {
+            name: 'Install pip-audit',
+            run: 'python3 -m venv "$RUNNER_TEMP/pip-audit" && "$RUNNER_TEMP/pip-audit/bin/pip" install --disable-pip-version-check pip-audit==2.10.1',
+          },
+          {
+            name: 'Audit the lab Python toolchain',
+            run: 'python3 lab/security/dependency_audit.py pip lab/requirements-lab.txt --tool "$RUNNER_TEMP/pip-audit/bin/pip-audit"',
+          },
+        ],
+      },
+      npm: {
+        name: 'dependency-audit (npm)',
+        'runs-on': 'ubuntu-24.04',
+        'timeout-minutes': 10,
+        steps: [
+          checkout,
+          {
+            name: 'Set up Node.js',
+            uses: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+            with: { 'node-version': '22.23.2' },
+          },
+          { name: 'Audit lab/ui/web production dependencies', run: 'python3 lab/security/dependency_audit.py npm lab/ui/web' },
         ],
       },
     },
