@@ -54,8 +54,8 @@
     "recharts": "^3.10.1"
   },
   "overrides": {
-    "jayson": {
-      "uuid": "11.1.1"
+    "@solana/web3.js": {
+      "jayson": "5.0.0"
     }
   }
 }
