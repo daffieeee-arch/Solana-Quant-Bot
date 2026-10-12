@@ -400,8 +400,9 @@ def build(period, out_path, cfg, chunks, log=print):
                             WHERE e.kind IN ('buy', 'sell') AND e.slot >= {ch[0]} AND e.slot < {ch[1]} GROUP BY ALL""")
         sweep = c.src("pump_amm/SweepPoolFeeEvent")
         if sweep:
+            # (A SEMI JOIN's right side cannot be filtered in the WHERE: the pool filter is a subquery.)
             con.execute(f"""INSERT INTO s.pool_sweeps SELECT pool, slot, tx_index, outer_ix, inner_ix, amount{B}, bucket::INTEGER
-                            FROM {sweep} SEMI JOIN s.pools p USING (pool) WHERE p.quote_class IN ('sol', 'reversed')""")
+                            FROM {sweep} WHERE pool IN (SELECT pool FROM s.pools WHERE quote_class IN ('sol', 'reversed'))""")
         log(f"pass 2 {ch[0]} ({time.time() - t0:.0f}s, chunk wrote {(_io_written() - w0) / 1e9:.2f} GB, "
             f"total {_io_written() / 1e9:.1f} GB)")
         _write_check(f"pass 2 chunk {ch[0]}", _io_written() - w0, log)
