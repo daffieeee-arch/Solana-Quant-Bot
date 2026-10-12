@@ -80,6 +80,10 @@ GAP_SLOTS = (150, 600, 2400)     # simulated gaps: ~40 s, ~2.5 min, ~10 min at 2
 RECONNECT_SLOTS = (40, 200)      # lossless reconnects: a segment's last slots come with the next one
 STREAMS = {1: "tx_watchlist", 2: "tx_probes", 3: "tx_new_pools", 4: "tx_new_reversed"}
 FAMILIES = ("F7", "N2_F7")
+# Work tables are written one slot window at a time, each window sorted: the tables end up in slot
+# order (a segment's copy reads only its own slots via zonemaps) while no sort holds more than one
+# window. One sort over a whole epoch's txu ran out of a 1 GB connection (shadow-1052-db9a9c9).
+WINDOW_SLOTS = 20_000
 
 
 # ----------------------------------------------------------------------------- inputs from the store
@@ -231,10 +235,11 @@ class ShadowRecorder:
         self.all_tables = tables
         # Every table is written in slot order: a segment's copy reads only its own slots (zonemaps);
         # unordered (preserve_insertion_order = false) each copy scanned whole tables.
-        sels = [f"SELECT DISTINCT slot::UBIGINT AS slot, tx_index::BIGINT AS tx_index, pool FROM {data.parquet(t, chunks)} "
-                f"WHERE {span} AND pool IS NOT NULL" for t in tables if "pool" in data.columns(t, chunks)]
-        if sels:
-            con.execute(f"CREATE TABLE txu AS SELECT * FROM ({' UNION ALL '.join(sels)}) ORDER BY slot, tx_index")
+        with_pool = [t for t in tables if "pool" in data.columns(t, chunks)]
+        if with_pool:
+            self._ordered("txu", lambda a, b: " UNION ALL ".join(
+                f"SELECT DISTINCT slot::UBIGINT AS slot, tx_index::BIGINT AS tx_index, pool FROM {data.parquet(t, chunks)} "
+                f"WHERE slot >= {a} AND slot < {b} AND pool IS NOT NULL" for t in with_pool))
         else:
             con.execute("CREATE TABLE txu (slot UBIGINT, tx_index BIGINT, pool VARCHAR)")
         mig = data.parquet("pump/CompletePumpAmmMigrationEvent", chunks, missing_ok=True)
@@ -244,8 +249,8 @@ class ShadowRecorder:
         if cp:
             mayhem = "COALESCE(is_mayhem_mode, false)" if "is_mayhem_mode" in data.columns("pump_amm/CreatePoolEvent", chunks) \
                 else "false"
-            con.execute(f"""CREATE TABLE pc AS SELECT slot, tx_index, pool, base_mint, quote_mint, coin_creator,
-                                   {mayhem} AS is_mayhem_mode FROM {cp} WHERE {span} ORDER BY slot, tx_index""")
+            self._ordered("pc", lambda a, b: f"""SELECT slot, tx_index, pool, base_mint, quote_mint, coin_creator,
+                                   {mayhem} AS is_mayhem_mode FROM {cp} WHERE slot >= {a} AND slot < {b}""")
         else:
             con.execute("""CREATE TABLE pc (slot UBIGINT, tx_index BIGINT, pool VARCHAR, base_mint VARCHAR,
                                             quote_mint VARCHAR, coin_creator VARCHAR, is_mayhem_mode BOOLEAN)""")
@@ -265,15 +270,23 @@ class ShadowRecorder:
         con.executemany("INSERT INTO segr VALUES (?, ?, ?)", [(i, a, b) for i, (_, a, b) in enumerate(self.ranges)])
         for i, t in enumerate(tables):
             name = f"t{i}"
-            con.execute(f"""CREATE TABLE {name} AS SELECT x.* FROM {data.parquet(t, chunks)} x
-                            SEMI JOIN allkeys k ON x.slot = k.slot AND x.tx_index = k.tx_index WHERE x.{span}
-                            ORDER BY x.slot, x.tx_index""")
+            src = data.parquet(t, chunks)
+            self._ordered(name, lambda a, b: f"""SELECT x.* FROM {src} x
+                            SEMI JOIN (SELECT slot, tx_index FROM allkeys WHERE slot >= {a} AND slot < {b}) k
+                              ON x.slot = k.slot AND x.tx_index = k.tx_index
+                            WHERE x.slot >= {a} AND x.slot < {b}""")
             self.tables[t] = name
         self._index_rows()
         con.execute("CHECKPOINT")
         with open(ready + ".tmp", "w") as f:
             json.dump({"signature": self.signature, "tables": self.tables, "built": time.strftime("%Y-%m-%dT%H:%M:%S")}, f)
         os.replace(ready + ".tmp", ready)
+
+    def _ordered(self, name, select):
+        """CREATE TABLE name from select(a, b), the rows of slots [a, b), one sorted window at a time."""
+        for i, a in enumerate(range(self.lo, self.hi, WINDOW_SLOTS) or [self.lo]):
+            sql = f"SELECT * FROM ({select(a, min(a + WINDOW_SLOTS, self.hi))}) ORDER BY slot, tx_index"
+            self.con.execute(f"CREATE TABLE {name} AS {sql}" if i == 0 else f"INSERT INTO {name} {sql}")
 
     def _index_rows(self):
         """Per table, the segments that have rows (a segment copies only those tables)."""
