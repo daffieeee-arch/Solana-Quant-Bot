@@ -15,7 +15,7 @@
 //!                [--new-reversed] [--pool-creations] [--probe-depth-sol 120] [--probe-minutes 180]
 //!                [--fresh-vault-minutes 60] [--no-backfill] [--backfill-wait-secs 20]
 //!                [--reload-secs 10] [--min-update-secs 60] [--from-slot N] [--max-runtime-secs N]
-//!                [--dry-run]
+//!                [--no-downscale] [--dry-run]
 //!
 //! The endpoint can also come from LAB_TRITON_GRPC_ENDPOINT; the token only from
 //! LAB_TRITON_X_TOKEN (never logged). Exit code 75: the day's budget is spent.
@@ -86,6 +86,7 @@ struct Args {
     min_update_secs: u64,
     from_slot: Option<u64>,
     max_runtime_secs: u64,
+    no_downscale: bool,
     dry_run: bool,
 }
 
@@ -117,6 +118,7 @@ fn parse_args() -> Result<Args> {
         min_update_secs: 60,
         from_slot: None,
         max_runtime_secs: 0,
+        no_downscale: false,
         dry_run: false,
     };
     let (mut watchlist, mut open_pools) = (None, None);
@@ -148,6 +150,7 @@ fn parse_args() -> Result<Args> {
             "--from-slot" => a.from_slot = Some(val()?.parse()?),
             "--max-runtime-secs" => a.max_runtime_secs = val()?.parse()?,
             "--dry-run" => a.dry_run = true,
+            "--no-downscale" => a.no_downscale = true,
             other => bail!("unknown argument {other}"),
         }
     }
@@ -311,7 +314,9 @@ async fn session(rec: &mut Recorder, a: &Args, files: &mut Files, endpoint: &str
 async fn run(a: Args) -> Result<i32> {
     std::fs::create_dir_all(&a.root)?;
     let cap = (a.budget_usd / a.usd_per_gb * GB) as u64;
-    let meter = Meter::load(&a.root, cap, a.wire_ratio, unix())?;
+    let mut meter = Meter::load(&a.root, cap, a.wire_ratio, unix())?;
+    // A measuring run keeps every stream on; --budget-usd stays the hard stop.
+    meter.no_downscale = a.no_downscale;
     let mut files = Files::new(a.watchlist.clone(), a.open_pools.clone());
     let watch = files.reload().unwrap_or_default();
     if a.dry_run {

@@ -41,6 +41,8 @@ pub struct Meter {
     pub stopped: bool,
     recent: VecDeque<u64>,
     last_downscale_unix: u64,
+    /// Measuring runs (`--no-downscale`): no projected or spike downscale, only the hard stop at the cap.
+    pub no_downscale: bool,
 }
 
 const RECENT_MINUTES: usize = 5;
@@ -68,6 +70,7 @@ impl Meter {
             stopped: false,
             recent: VecDeque::new(),
             last_downscale_unix: 0,
+            no_downscale: false,
         };
         if let Some(v) = std::fs::read(&m.path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
             if v["day"].as_u64() == Some(m.day) {
@@ -143,6 +146,9 @@ impl Meter {
         }
         if restore {
             return Ok(Decision::Restore);
+        }
+        if self.no_downscale {
+            return Ok(Decision::Continue);
         }
         // At most one downscale per 30 s, so the dropped stream's last bytes do not count twice.
         if now_unix < self.last_downscale_unix + 30 {
@@ -222,6 +228,20 @@ mod tests {
         // The next UTC day starts from zero.
         let next = Meter::load(&root, cap, 1.0, T0 + 86_400).unwrap();
         assert!(!next.stopped && next.spent == 0);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_measuring_run_never_downscales_but_stops_at_the_cap() {
+        let root = tmp("meter-measure");
+        let cap = 1_440_000;
+        let mut m = Meter::load(&root, cap, 1.0, T0).unwrap();
+        m.no_downscale = true;
+        m.add("pool_creations", 25_000); // a spike and a projection far above the cap
+        assert_eq!(m.tick(T0 + 5).unwrap(), Decision::Continue);
+        assert_eq!(m.tick(T0 + 60).unwrap(), Decision::Continue);
+        m.add("tx_new_reversed", 1_500_000);
+        assert!(matches!(m.tick(T0 + 120).unwrap(), Decision::Stop(_)));
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -67,6 +67,11 @@ rate downscales at once. At the cap the recorder writes its last segment and exi
 it refuses to start again the same day. A new UTC day restores all streams. Every decision is a
 `budget` usage row with a note, which the engine journals (`usage` table).
 
+`--no-downscale` (measuring runs, e.g. the first measuring hour): no projected or spike downscale,
+every stream stays on; the cap is only the hard stop. Without it a small `--budget-usd` (0.5 is a
+cap of 6.25 GB/day) would drop `pool_creations` and `tx_new_reversed` within minutes, because an
+hour's rate is projected over the rest of the day.
+
 ## Inputs
 
 - `--watchlist` (default `<root>/watchlist-current.json`): the watchlist builder's snapshot,
