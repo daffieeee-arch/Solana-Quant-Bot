@@ -12,7 +12,6 @@ import datetime as dt
 import decimal
 import gzip
 import json
-import mimetypes
 import os
 import re
 import sqlite3
@@ -43,8 +42,13 @@ SECURITY_HEADERS = {
                                 "script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"),
 }
 MAX_ROWS = 2000
-mimetypes.add_type("application/manifest+json", ".webmanifest")
-mimetypes.add_type("font/woff2", ".woff2")
+# Static files: content type from a fixed table by extension, never from the request (no header injection).
+STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8", ".webmanifest": "application/manifest+json; charset=utf-8",
+    ".map": "application/json; charset=utf-8", ".txt": "text/plain; charset=utf-8", ".svg": "image/svg+xml",
+    ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2", ".woff": "font/woff",
+}
 PAPER_CHART_PAD = 40_000  # slots (~3 h) of price around a paper position's trades
 STREAM_SLOTS = threading.BoundedSemaphore(8)  # concurrent SSE connections
 STREAM_SECS = 600
@@ -488,6 +492,8 @@ class Handler(BaseHTTPRequestHandler):
     static_root = None
 
     def send(self, status, body, ctype, cache="no-store"):
+        if any(c in str(v) for v in (ctype, cache) for c in "\r\n"):
+            raise ValueError("header value with a line break")
         gz = len(body) > 32_768 and ctype.startswith("application/json") and "gzip" in self.headers.get("Accept-Encoding", "")
         if gz:
             body = gzip.compress(body, 5)
@@ -569,9 +575,7 @@ class Handler(BaseHTTPRequestHandler):
             full = os.path.join(root, "index.html")  # SPA fallback
             if not os.path.isfile(full):
                 return self.send(HTTPStatus.NOT_FOUND, b"frontend not built", "text/plain; charset=utf-8")
-        ctype = mimetypes.guess_type(full)[0] or "application/octet-stream"
-        if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
-            ctype += "; charset=utf-8"
+        ctype = STATIC_TYPES.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
         cache = "public, max-age=31536000, immutable" if "/assets/" in full else "no-cache"
         with open(full, "rb") as f:
             self.send(HTTPStatus.OK, f.read(), ctype, cache)
