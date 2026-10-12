@@ -49,6 +49,14 @@ filtered during the whole segment: what every filter inside it had), `backfill/`
 and `_segment.json`, written last: seq, first/last slot, row counts, usage rows per minute and
 stream, the budget state, the filter level, reconnects, late rows and totals.
 
+**Live `tx_ctx/` is partial until MEV phase 1** (#206). Since the extractor writes `tx_ctx` (MEV
+phase 0, a measurement on OF1 history), the recorder writes it too, through the same `rows_for`.
+`convert.rs` does not fill the pre/post token balances and sets every status to Ok, and failed
+transactions are not subscribed. So live rows have no `signer_token_deltas` (always null) and
+never `failed = true`. Fee payer, costs, `programs`, `venues`, `n_dex` and `signer_sol_delta` are
+complete. Filling the token balances and status from the Yellowstone proto is part of phase 1
+(paper MEV live).
+
 A segment closes after `--segment-slots` (150) slots or `--segment-secs` (60), once no backfill
 is running (it waits at most `--backfill-wait-secs`, 20). A filter change does not close it: its
 `watchlist.json` lists the pools and wallets that every filter inside the segment had. Only whole confirmed slots are written; rows of a slot that is already written are

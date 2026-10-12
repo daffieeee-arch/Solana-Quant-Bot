@@ -205,13 +205,16 @@ const TX_CTX_COLS: [(&str, Kind); 15] = [
     ("cu_limit", Kind::U64),
     ("cu_price_micro", Kind::U64),
     ("priority_fee", Kind::U64),
-    // Transfers to the 8 Jito tip accounts; of a failed transaction what it tried to pay.
+    // Transfers to the 8 Jito tip accounts from any account of the transaction (not only the fee
+    // payer); of a failed transaction what it tried to pay.
     ("jito_tip", Kind::U64),
     // Invoked programs in execution order, "depth:label" separated by ';' (top level = 1, inner =
     // stack height), a run of the same call as "depth:label*n"; known programs by name (see
     // PROGRAM_LABELS), others by their id. The pump/PumpSwap event self-CPIs are left out.
     ("programs", Kind::Utf8),
-    // The DEXes and routers among them, sorted and comma separated; null when none.
+    // The DEXes and routers among them, sorted and comma separated; null when none. n_dex counts
+    // distinct DEX programs: two pools of one DEX (e.g. PumpSwap normal and reversed) count once;
+    // pools per transaction come from the event tables (pool / mint).
     ("venues", Kind::Utf8),
     ("n_dex", Kind::U64),
     // Fee payer: lamports after minus before (the fee included), and the net change of its token
@@ -621,6 +624,8 @@ impl LabPlugin {
                         Some((name, class)) => ((*name).to_owned(), Some(*class)),
                         None => (b58(kk.as_slice()), None),
                     },
+                    // A program index outside the account keys: impossible in a valid transaction
+                    // (the runtime rejects it); kept visible as "?" rather than dropped.
                     None => ("?".to_owned(), None),
                 }
             };
