@@ -45,6 +45,19 @@ const GITHUB_LOGIN_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,38})(?:\[bot\])?$/i;
 const RETENTION_ITEM_KINDS = new Set(['Issue', 'PullRequest']);
 const DAY_MS = 24 * 60 * 60 * 1_000;
 export const PROJECT_VERIFICATION_DELAYS_MS = Object.freeze([0, 500, 1_000, 2_000, 4_000]);
+// Item visibility after ADD_ITEM and in the final item audit: the Project's item list can lag well
+// behind the mutation (PROJECT_VERIFICATION_EXHAUSTED ... ITEM_NOT_VISIBLE). Same start as
+// PROJECT_VERIFICATION_DELAYS_MS, then exponential up to ~3 minutes in total.
+export const PROJECT_ITEM_VISIBILITY_DELAYS_MS = Object.freeze([
+  0, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 60_000, 60_000,
+]);
+// A read-only GraphQL query that hits a transient failure (HTTP 5xx or 429, a non-JSON body such as
+// a 504 gateway page, a network error or timeout) is repeated after these delays, each plus up to
+// 25% jitter. Mutations are never repeated.
+export const GITHUB_QUERY_RETRY_DELAYS_MS = Object.freeze([2_000, 4_000, 8_000, 16_000, 30_000]);
+// A transient reply with a retry-after header (seconds or an HTTP date; GitHub sends it with rate
+// limits) waits that long instead when it is longer than the backoff, at most this long.
+export const GITHUB_RETRY_AFTER_MAX_MS = 60_000;
 export const PROJECT_VERIFICATION_OUTCOMES = Object.freeze({
   CONVERGED: 'CONVERGED',
   NOT_YET_CONVERGED: 'NOT_YET_CONVERGED',
@@ -127,17 +140,21 @@ export async function verifyProjectProjection({
   classify,
   sleep = projectVerificationSleep,
   log = (entry) => console.log(JSON.stringify(entry)),
+  delays = PROJECT_VERIFICATION_DELAYS_MS,
 }) {
   const operation = boundedString(operationType, 'verification operation type', 64);
   const target = boundedString(identity, 'verification identity', 128);
+  assert(Array.isArray(delays) && delays.length > 0 && delays[0] === 0
+    && delays.every((delay) => Number.isInteger(delay) && delay >= 0 && delay <= 60_000),
+  'verification delays must start at 0 and stay within 0..60000 ms');
   assert(typeof read === 'function', 'verification read function is required');
   assert(typeof classify === 'function', 'verification classifier is required');
   assert(typeof sleep === 'function', 'verification sleep function is required');
   assert(typeof log === 'function', 'verification log function is required');
 
   let finalResult;
-  for (let attempt = 0; attempt < PROJECT_VERIFICATION_DELAYS_MS.length; attempt += 1) {
-    const waitMilliseconds = PROJECT_VERIFICATION_DELAYS_MS[attempt];
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    const waitMilliseconds = delays[attempt];
     if (waitMilliseconds > 0) await sleep(waitMilliseconds);
     const snapshot = await read();
     const result = classify(snapshot);
@@ -179,7 +196,7 @@ export async function verifyProjectProjection({
     });
   }
 
-  throw new Error(`PROJECT_VERIFICATION_EXHAUSTED operation=${operation} identity=${target} attempts=${PROJECT_VERIFICATION_DELAYS_MS.length} reason=${finalResult.reason} expected=${finalResult.expected} finalObserved=${finalResult.observed}`);
+  throw new Error(`PROJECT_VERIFICATION_EXHAUSTED operation=${operation} identity=${target} attempts=${delays.length} reason=${finalResult.reason} expected=${finalResult.expected} finalObserved=${finalResult.observed}`);
 }
 
 function assertExactKeys(value, allowed, name) {
@@ -1532,34 +1549,99 @@ export function evaluateItemFieldClearProjection({
   );
 }
 
-class GitHubGraphQL {
-  constructor(token) {
+class TransientGitHubError extends Error {
+  constructor(message, reason, retryAfterMilliseconds = undefined) {
+    super(message);
+    this.reason = reason;
+    this.retryAfterMilliseconds = retryAfterMilliseconds;
+  }
+}
+
+/** Milliseconds of a retry-after header (delta seconds or an HTTP date), or undefined. */
+export function retryAfterMilliseconds(value, now = Date.now()) {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const text = value.trim();
+  if (/^\d+$/.test(text)) return Number(text) * 1_000;
+  const at = Date.parse(text);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
+}
+
+const githubRetrySleep = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+
+export class GitHubGraphQL {
+  constructor(token, {
+    fetchImpl = (...args) => fetch(...args),
+    sleep = githubRetrySleep,
+    random = Math.random,
+    now = () => Date.now(),
+    log = (entry) => console.log(JSON.stringify(entry)),
+    retryDelays = GITHUB_QUERY_RETRY_DELAYS_MS,
+  } = {}) {
     this.token = token;
+    this.fetchImpl = fetchImpl;
+    this.sleep = sleep;
+    this.random = random;
+    this.now = now;
+    this.log = log;
+    this.retryDelays = retryDelays;
   }
 
+  /**
+   * One GraphQL request. A query (read-only) that fails transiently is repeated with backoff and
+   * jitter; a mutation is sent once, so a retry can never replay it.
+   */
   async request(query, variables = {}, label = 'GitHub GraphQL request') {
-    const response = await fetch(GRAPHQL_URL, {
-      method: 'POST',
-      headers: {
-        accept: 'application/vnd.github+json',
-        authorization: `Bearer ${this.token}`,
-        'content-type': 'application/json',
-        'x-github-api-version': API_VERSION,
-        'user-agent': 'solana-paper-scanner-roadmap-sync',
-      },
-      body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const readOnly = /^\s*query\b/.test(query);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.requestOnce(query, variables, label);
+      } catch (error) {
+        if (!(error instanceof TransientGitHubError)) throw error;
+        if (!readOnly) throw new Error(error.message);
+        if (attempt >= this.retryDelays.length) {
+          throw new Error(`${error.message} after ${attempt + 1} attempts`);
+        }
+        const backoff = Math.round(this.retryDelays[attempt] * (1 + 0.25 * this.random()));
+        const asked = Math.min(error.retryAfterMilliseconds ?? 0, GITHUB_RETRY_AFTER_MAX_MS);
+        const waitMilliseconds = Math.max(backoff, asked);
+        this.log({ event: 'github_request_retry', label, attempt: attempt + 1, reason: error.reason, waitMilliseconds });
+        await this.sleep(waitMilliseconds);
+      }
+    }
+  }
+
+  async requestOnce(query, variables, label) {
+    let response;
+    try {
+      response = await this.fetchImpl(GRAPHQL_URL, {
+        method: 'POST',
+        headers: {
+          accept: 'application/vnd.github+json',
+          authorization: `Bearer ${this.token}`,
+          'content-type': 'application/json',
+          'x-github-api-version': API_VERSION,
+          'user-agent': 'solana-paper-scanner-roadmap-sync',
+        },
+        body: JSON.stringify({ query, variables }),
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (error) {
+      // Network failure or timeout. Only the error's class: a message could carry request details.
+      throw new TransientGitHubError(`${label} network error ${error?.name ?? 'Error'}`, 'NETWORK');
+    }
     const text = await response.text();
+    const retryAfter = retryAfterMilliseconds(response.headers?.get?.('retry-after') ?? undefined, this.now());
     let payload;
     try {
       payload = JSON.parse(text);
     } catch {
-      throw new Error(`${label} returned non-JSON HTTP ${response.status}`);
+      throw new TransientGitHubError(`${label} returned non-JSON HTTP ${response.status}`, `NON_JSON_HTTP_${response.status}`, retryAfter);
     }
     if (!response.ok || payload.errors?.length) {
       const messages = (payload.errors ?? []).map((error) => error.message).join('; ');
-      throw new Error(`${label} failed (HTTP ${response.status}): ${messages || 'unknown error'}`);
+      const message = `${label} failed (HTTP ${response.status}): ${messages || 'unknown error'}`;
+      if (response.status >= 500 || response.status === 429) throw new TransientGitHubError(message, `HTTP_${response.status}`, retryAfter);
+      throw new Error(message);
     }
     return payload.data;
   }
@@ -2506,16 +2588,7 @@ async function listRepositoryPullRequests(api, owner, name) {
   return items;
 }
 
-async function listProjectItems(api, projectId) {
-  const items = [];
-  let after = null;
-  do {
-    const data = await api.request(`
-      query ProjectItems($projectId: ID!, $after: String) {
-        node(id: $projectId) {
-          ... on ProjectV2 {
-            items(first: 100, after: $after, archivedStates: [ARCHIVED, NOT_ARCHIVED]) {
-              nodes {
+const PROJECT_ITEM_FIELDS = `
                 id
                 isArchived
                 updatedAt
@@ -2542,7 +2615,62 @@ async function listProjectItems(api, projectId) {
                     }
                   }
                   pageInfo { hasNextPage endCursor }
-                }
+                }`;
+
+/** One Project item read directly by its node id, or undefined when it is not (yet) readable there. */
+async function readProjectItem(api, projectId, itemId) {
+  const data = await api.request(`
+    query ProjectItem($itemId: ID!) {
+      node(id: $itemId) {
+        ... on ProjectV2Item {
+          project { id }
+          ${PROJECT_ITEM_FIELDS}
+        }
+      }
+    }
+  `, { itemId }, 'read project item');
+  const node = data?.node;
+  if (!node?.id || node.project?.id !== projectId) return undefined;
+  const { project, ...item } = node;
+  return item;
+}
+
+/**
+ * The Project's item list, and from the second read after the standard verification window on also
+ * a direct node read of every item this run added that the list does not show yet. The list can lag
+ * behind the item itself; both are reads of the same Project, so an item counts as visible when
+ * either shows it (deduplicated by item id).
+ */
+export function itemListWithAddedItems(api, projectId, addedItemIds, directFromRead = PROJECT_VERIFICATION_DELAYS_MS.length + 1) {
+  let reads = 0;
+  return async () => {
+    reads += 1;
+    const items = await listProjectItems(api, projectId);
+    if (reads < directFromRead) return items;
+    const seen = new Set(items.map((item) => item.id));
+    for (const itemId of addedItemIds) {
+      if (seen.has(itemId)) continue;
+      const direct = await readProjectItem(api, projectId, itemId);
+      if (direct) {
+        items.push(direct);
+        seen.add(itemId);
+      }
+    }
+    return items;
+  };
+}
+
+async function listProjectItems(api, projectId) {
+  const items = [];
+  let after = null;
+  do {
+    const data = await api.request(`
+      query ProjectItems($projectId: ID!, $after: String) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            items(first: 100, after: $after, archivedStates: [ARCHIVED, NOT_ARCHIVED]) {
+              nodes {
+                ${PROJECT_ITEM_FIELDS}
               }
               pageInfo { hasNextPage endCursor }
             }
@@ -3079,10 +3207,11 @@ export async function reconcileItems(
       projectionLagEligibleItemIds.add(itemId);
       executed.added += 1;
       const projection = await verifyProjectProjection({
+        delays: PROJECT_ITEM_VISIBILITY_DELAYS_MS,
         ...verificationOptions,
         operationType: 'ADD_ITEM',
         identity: `${content.kind} #${content.number}`,
-        read: () => listProjectItems(api, project.id),
+        read: itemListWithAddedItems(api, project.id, [itemId]),
         classify: (items) => evaluateItemLifecycleProjection({
           items,
           targetItemId: itemId,
@@ -3259,7 +3388,12 @@ export async function reconcileItems(
     }
   }
   let useCapturedSnapshot = true;
+  // Its first call is the audit's second read (the first is the captured snapshot), so the direct
+  // read joins at the audit's sixth read, as in ADD_ITEM.
+  const readFinalItems = itemListWithAddedItems(api, project.id, [...projectionLagEligibleItemIds],
+    PROJECT_VERIFICATION_DELAYS_MS.length);
   const finalProjection = await verifyProjectProjection({
+    delays: PROJECT_ITEM_VISIBILITY_DELAYS_MS,
     ...verificationOptions,
     operationType: 'FINAL_ITEM_AUDIT',
     identity: `Project #${project.number}`,
@@ -3268,7 +3402,7 @@ export async function reconcileItems(
         useCapturedSnapshot = false;
         return lastObservedItems;
       }
-      return listProjectItems(api, project.id);
+      return readFinalItems();
     },
     classify: (items) => evaluateFinalItemProjection({
       items,
