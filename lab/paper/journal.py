@@ -18,7 +18,10 @@ TABLES = {
                 # simulated d (engine._latency): block time of t, receive time, the server's created_at,
                 # receive - block time, the segment's close and close - block time, d in ms.
                 "block_time INTEGER, received_unix_ns INTEGER, created_unix_ns INTEGER, latency_ms INTEGER, "
-                "segment_written_unix INTEGER, segment_lag_ms INTEGER, d_ms INTEGER", "family, variant, key, t"),
+                "segment_written_unix INTEGER, segment_lag_ms INTEGER, d_ms INTEGER, "
+                # Live only: 1 when the farmer history behind the farm label was complete at t (LiveFeed's
+                # farm_seed complete_from), 0 before; NULL in replay (the store's labels).
+                "farm_complete INTEGER", "family, variant, key, t"),
     "orders": ("family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, size INTEGER, status TEXT, "
                "reason TEXT", "family, variant, key, t"),
     "fills": ("family TEXT, variant TEXT, key TEXT, t INTEGER, side TEXT, day TEXT, slot INTEGER, tokens INTEGER, "

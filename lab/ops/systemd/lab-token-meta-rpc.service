@@ -6,6 +6,9 @@ Description=Solana lab: token names through Triton RPC (paid; only with the owne
 Documentation=file:%h/Solana-project/worktrees/paper-run/lab/ops/README.md
 After=lab-recorder.service
 ConditionPathExists=%h/.config/solana-lab/token-meta-rpc.approved
+# Not after a disk-guard emergency stop: ops/disk-guard.sh writes this file when it stops the live units;
+# only the coordinator removes it, after a check (no automatic restart around the threshold).
+ConditionPathExists=!%h/Solana-project/data-old-faithful-one/lab/locks/disk-stopped
 
 [Service]
 Type=simple

@@ -20,7 +20,7 @@ import json
 import os
 from collections import defaultdict
 
-from backtest.strategies import sol_side
+from backtest.strategies import Clock, sol_side
 from wallets import watchlist as W
 
 SOL = 1e9
@@ -40,6 +40,7 @@ class LiveWatchlist:
         self._pending = []  # pools learned by the feed, added at their creation slot
         self._static = None  # feeds that know all pools up front (replay): (create_slot, pool) sorted
         self._new_seen = 0
+        self.history_dropped = 0  # backfill legs with no minute at all (before any slot was seen)
 
     # ------------------------------------------------------------------ pools
 
@@ -50,7 +51,10 @@ class LiveWatchlist:
         return None
 
     def _add(self, pool):
-        if pool in self.added:
+        """Put a pool in the state machine. A pool it pruned stays known while archived (a trade there
+        restores its verdict); once its archive entry expired it is added again with a fresh state,
+        as the batch measurement re-adds it (wallets.watchlist, #211)."""
+        if pool in self.added and (pool in self.wl.pools or pool in getattr(self.wl, "archive", ())):
             return True
         p = self.feed.pool(pool)
         if p is None or p.quote_class not in ("sol", "reversed"):
@@ -117,6 +121,21 @@ class LiveWatchlist:
             r[2] += a / SOL if l.farmer else 0
             if r[4] is None or l.order > r[4]:
                 r[3], r[4] = depth / SOL, l.order
+
+    def history(self, pool, legs):
+        """Trades the recorder delivered after their minute (a probe's backfill), each in its own
+        minute: a minute already stepped goes to the watchlist's history, a later one to its rows.
+        A leg from before the first slot seen has no known block time: its minute is estimated
+        back from the first one with the clock's slot time. Never the current minute by default."""
+        clock = self.clock or Clock()
+        for l in legs:
+            m = self._minute_of(l.slot)
+            if m is None:
+                if not self.slots:
+                    self.history_dropped += 1
+                    continue
+                m = self.minutes[0] - int((self.slots[0] - l.slot) * clock.ms_per_slot(l.slot) // 60_000)
+            self.trades(pool, m, [l], late=True)
 
     def minute(self, minute, slot):
         """Minute `minute` begins (at `slot`): step every minute before it and write the list for it."""

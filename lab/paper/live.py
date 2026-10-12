@@ -22,7 +22,9 @@ Parity with ReplayFeed on the same slots is tested (tests/test_live.py).
 
 import glob
 import heapq
+import itertools
 import json
+import logging
 import os
 import time
 from collections import defaultdict, deque
@@ -39,6 +41,11 @@ from .feed import Event, Feed, PoolInfo, TokenInfo
 
 WSOL = pda.WSOL
 SOL_MARKETS = ("sol", "reversed")
+# Row keys (pool or mint, slot, tx, outer, inner) of the last this many slots are remembered, so a
+# row that comes twice counts once: a probe's backfill delivered after its first recorded rows (the
+# overlap is a few hundred slots: backfill margin plus wait), or slots recorded again after a restart.
+SEEN_KEEP_SLOTS = 3_000
+log = logging.getLogger("paper.live")
 
 
 def segment_dirs(root):
@@ -135,8 +142,12 @@ class LiveFeed(Feed):
     slots were seen."""
 
     def __init__(self, root, store=None, follow=True, poll_s=1.0, h24=None, lag_slots=1, from_seq=0,
-                 memory="1GB", meta_bounds=None, snapshot_before=None):
+                 memory="1GB", meta_bounds=None, snapshot_before=None, seed_farmers=False):
         self.root, self.follow, self.poll_s, self.fixed_h24, self.lag = root, follow, poll_s, h24, lag_slots
+        self.store = store
+        # The farmer window before the first live slot from the store, per pool when it first trades
+        # live (_seed_pool); farm_seed records the range and from which slot the labels are complete.
+        self.seed_farmers, self.seed_con, self.farm_seed, self.seeded = bool(seed_farmers and store), None, None, set()
         self.next_seq = from_seq
         self.con = duckdb.connect()
         self.con.execute(f"SET memory_limit = '{memory}'; SET threads TO 2")
@@ -154,7 +165,10 @@ class LiveFeed(Feed):
         # The engine's Clock: ms per slot per epoch, measured from the block times received.
         self.clock = Clock()
         self.epoch_span = {}  # epoch -> [(first slot, time), (last slot, time)]
-        self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "backfill_rows": 0, "backfill_duplicates": 0}
+        self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "unknown_pool_rows": 0, "backfill_rows": 0,
+                      "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0}
+        self.unknown_seen = set()  # pools whose trades were dropped (not in the snapshot, creation not received)
+        self.seen_keys, self.seen_order, self.seen_hi = {}, deque(), 0  # key -> "rec" | "hist" (SEEN_KEEP_SLOTS)
         # Pools with a backfill: positions of their trades already in the farmer history, so the
         # backfill's overlap with the recorded transactions counts once.
         self.farm_keys = defaultdict(set)
@@ -265,6 +279,75 @@ class LiveFeed(Feed):
 
     # ------------------------------------------------------------------ events
 
+    def _seen(self, key, slot, source):
+        """How a row key was first seen in the last SEEN_KEEP_SLOTS slots: "rec" (a recorded row, an
+        event) or "hist" (a backfill row, history only); None the first time (then remembered as source)."""
+        prev = self.seen_keys.get(key)
+        if prev is not None:
+            return prev
+        if slot >= self.seen_hi - SEEN_KEEP_SLOTS:
+            self.seen_keys[key] = source
+            self.seen_order.append((slot, key))
+            if slot > self.seen_hi:
+                self.seen_hi = slot
+                while self.seen_order and self.seen_order[0][0] < slot - SEEN_KEEP_SLOTS:
+                    self.seen_keys.pop(self.seen_order.popleft()[1], None)
+        return None
+
+    def close(self):
+        """Close the feed's DuckDB connections (its own and the seed store's)."""
+        self.con.close()
+        if self.seed_con is not None:
+            self.seed_con.close()
+            self.seed_con = None
+
+    def _init_seed(self, first_slot, h24):
+        """Seed window at the first live slot: [first_slot - h24, first_slot), as far as the store
+        reaches. The farm labels are complete from first_slot when it reaches it, else a day later."""
+        self.seed_con = streams.open_store(self.store, threads=1, memory="256MB")
+        start, end = self.seed_con.execute("SELECT min(slot), max(slot) + 1 FROM pool").fetchone()
+        start, end = start or 0, end or 0
+        lo, hi = max(first_slot - h24, start), min(first_slot, end)
+        # Complete once the window [t - h24, t) holds no slot without history: from the store's start
+        # on when it reaches the first live slot, else from the first live slot on.
+        complete = max(first_slot, start + h24) if end >= first_slot else first_slot + h24
+        self.farm_seed = {"store": os.path.abspath(self.store), "lo": int(lo), "hi": int(max(lo, hi)), "h24": int(h24),
+                          "first_live_slot": int(first_slot), "complete_from": int(complete)}
+        log.info("farmer history seeded from the store over [%d, %d), complete from slot %d",
+                 self.farm_seed["lo"], self.farm_seed["hi"], self.farm_seed["complete_from"])
+
+    def _seed_pool(self, pool):
+        """The pool's trades in the seed window, into the farmer history (once per pool)."""
+        if self.farm_seed is None or pool in self.seeded:
+            return
+        self.seeded.add(pool)
+        lo, hi = self.farm_seed["lo"], self.farm_seed["hi"]
+        if hi <= lo:
+            return
+        for trader, slot, tb, amount in self.seed_con.execute(
+                """SELECT trader, slot, token_buy, token_amount FROM pool WHERE pool = ? AND kind IN ('buy', 'sell')
+                   AND slot >= ? AND slot < ? ORDER BY slot, tx_index, outer_ix, inner_ix""", [pool, lo, hi]).fetchall():
+            self.farmers.add(pool, trader, slot, tb, amount)
+        self.stats["seeded_pools"] += 1
+
+    def _unknown_pools(self, c, seq):
+        """Count (and log the new) pools whose trades pool_select drops: not in the snapshot and their
+        creation not received (a store that ends long before the recorder started)."""
+        trades = _pool_trades(c)
+        if not trades:
+            return
+        new = 0
+        for pool, n in self.con.execute(f"SELECT pool, count(*) FROM ({trades}) x ANTI JOIN live_pools USING (pool) GROUP BY pool").fetchall():
+            self.stats["unknown_pool_rows"] += n
+            if pool not in self.unknown_seen:
+                new += 1
+                self.stats["unknown_pools"] += 1
+                if len(self.unknown_seen) < 1_000_000:
+                    self.unknown_seen.add(pool)
+        if new:
+            log.warning("segment %d: %d new unknown pools, their trades dropped (%d unknown pools, %d rows so far)",
+                        seq, new, self.stats["unknown_pools"], self.stats["unknown_pool_rows"])
+
     def _h24(self):
         if self.fixed_h24:
             return self.fixed_h24
@@ -295,9 +378,10 @@ class LiveFeed(Feed):
         """A backfill trade: farmer history and the pool's leg context, no event; the engine gets
         it for the pool's farming window (drain_history). Counted once."""
         key = (row[1], row[2], row[3], row[4])
-        if key in self.farm_keys[pool]:
+        if key in self.farm_keys[pool] or self._seen(("p", pool) + key, row[1], "hist") is not None:
             self.stats["backfill_duplicates"] += 1
             return
+        self._seed_pool(pool)
         self.farm_keys[pool].add(key)
         self.stats["backfill_rows"] += 1
         farmer = False
@@ -338,11 +422,17 @@ class LiveFeed(Feed):
                     if span[1][0] - span[0][0] >= 1000:
                         self.clock.per_epoch[slot // 432_000] = (span[1][1] - span[0][1]) * 1000.0 / (span[1][0] - span[0][0])
         h24 = self._h24()
+        if self.seed_farmers and self.farm_seed is None:
+            self._init_seed(meta["first_slot"], h24)
+        self._unknown_pools(c, seq)
         out = []
         sql = curve_select(c, "live_mints")
         if sql:
             for r in self.con.execute(f"SELECT mint, {streams.CURVE_COLS} FROM ({sql}) "
                                       "ORDER BY slot, tx_index, outer_ix, inner_ix").fetchall():
+                if self._seen(("c", r[0], r[1], r[2], r[3], r[4]), r[1], "rec") is not None:
+                    self.stats["duplicate_rows"] += 1  # recorded twice (e.g. a restart below the last segment)
+                    continue
                 leg = streams.curve_leg(r[1:])
                 self.curve_hist[r[0]].append(leg)
                 out.append(Event(r[1], r[2], r[3], r[4], bt.get(r[1]), "curve", r[0], leg, arrival(r[1], r[2])))
@@ -364,11 +454,16 @@ class LiveFeed(Feed):
                     self._history(pool, token_buy, token_amount, row)
                     continue
                 kind, slot, trader = row[0], row[1], row[22]
+                prev = self._seen(("p", pool, slot, row[2], row[3], row[4]), slot, "rec")
+                if prev == "rec":
+                    self.stats["duplicate_rows"] += 1  # recorded twice (e.g. a restart below the last segment)
+                    continue
+                self._seed_pool(pool)
                 farmer = False
-                seen = False
+                seen = prev == "hist"  # a backfill delivered it first: in the farmer history already
                 if pool in self.farm_keys:  # a backfilled pool: its overlap with the backfill counts once
                     key = (slot, row[2], row[3], row[4])
-                    seen = key in self.farm_keys[pool]
+                    seen = seen or key in self.farm_keys[pool]
                     self.farm_keys[pool].add(key)
                 if kind in ("buy", "sell"):
                     farmer = self.farmers.flag(pool, trader, slot, h24)
@@ -421,6 +516,8 @@ class LiveFeed(Feed):
         """Events of all complete segments in chain order; with follow, keep polling for new ones.
         A slot is released once a later slot has been seen (lag_slots), the rest at the end."""
         heap, last_out, top = [], None, None
+        tie, queued = itertools.count(), set()  # equal (order, venue, key) never compare the Events
+        out_keys = set()  # keys released at slot last_out: one coming again there is a duplicate too
         while True:
             n = 0
             for seq, seg, meta in self._segments():
@@ -429,11 +526,21 @@ class LiveFeed(Feed):
                     if last_out is not None and e.slot < last_out:
                         self.stats["late_rows"] += 1  # arrived after its slot was released
                         continue
-                    heapq.heappush(heap, (e.order, e.venue, e.key, e))
+                    k = (e.order, e.venue, e.key)
+                    if k in queued or (e.slot == last_out and k in out_keys):
+                        self.stats["duplicate_rows"] += 1
+                        continue
+                    queued.add(k)
+                    heapq.heappush(heap, (e.order, e.venue, e.key, next(tie), e))
                     top = e.slot if top is None else max(top, e.slot)
                 self.next_seq = seq + 1
                 while heap and heap[0][0][0] <= top - self.lag:
-                    e = heapq.heappop(heap)[3]
+                    e = heapq.heappop(heap)[4]
+                    k = (e.order, e.venue, e.key)
+                    queued.discard(k)
+                    if e.slot != last_out:
+                        out_keys.clear()
+                    out_keys.add(k)
                     last_out = e.slot
                     yield e
             if not self.follow:
@@ -441,4 +548,4 @@ class LiveFeed(Feed):
             if not n:
                 time.sleep(self.poll_s)
         while heap:
-            yield heapq.heappop(heap)[3]
+            yield heapq.heappop(heap)[4]

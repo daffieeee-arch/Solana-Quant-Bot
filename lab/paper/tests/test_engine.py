@@ -2,6 +2,7 @@
 loss, time), the N2 shadow, risk limits and the kill switch, feed gaps with the heartbeat, daily
 report and backup, and restart idempotency of the journal."""
 
+import json
 import os
 
 import pytest
@@ -292,3 +293,106 @@ def test_ignore_risk_is_refused_for_paper_runs(tmp_path, capsys):
         assert "--ignore-risk is for replay parity runs only" in capsys.readouterr().err
     assert not (tmp_path / "j").exists()  # refused before anything was opened
 
+
+
+class FlipRisk(Synth):
+    """Rewrites the risk file when the first event of `at` (or later) is handed out: after the signal
+    at an earlier slot, before its entry."""
+
+    def __init__(self, tokens, path, at, text):
+        super().__init__(tokens)
+        self.path, self.at, self.text, self.done = path, at, text, False
+
+    def events(self):
+        for e in super().events():
+            if not self.done and e.slot >= self.at:
+                with open(self.path, "w") as f:
+                    f.write(self.text)
+                self.done = True
+            yield e
+
+
+def test_risk_rechecked_at_entry(tmp_path):
+    """The kill switch, or a risk file that turned invalid, between the signal and the entry opens nothing."""
+    toks = {"M": trigger_token(after=[(500_041, "Z", "buy", T), (500_100, "W", "buy", 150 * T)])}
+    for name, text, why in (("kill", None, "at entry: kill switch"), ("bad", "size_sol: -1\n", "at entry: risk config")):
+        path = risk_file(tmp_path)
+        if text is None:
+            text = open(path).read().replace("kill_switch: false", "kill_switch: true")
+        j = Journal(str(tmp_path / name))
+        Engine(FlipRisk(toks, path, 500_041, text), j, path, variants=[(0.04, 600)], d=1, q=0.5, n2_k=0, clock=Clock(),
+               backup=False).run()
+        assert [(s["status"]) for s in j.rows("signals")] == ["entered"]  # the file was fine at the signal
+        o = j.rows("orders")[0]
+        assert o["status"] == "skipped" and o["reason"].startswith(why) and o["size"] == 0
+        assert j.rows("fills") == [] and j.rows("exits") == []
+
+
+def test_quiet_token_history_is_swept_hourly(tmp_path):
+    """recent / last_state / last_seen of a token without events for an hour (and nothing open) are dropped."""
+    toks = {"A": ("C", [(500_000, "A1", "buy", T), (500_010, "A2", "buy", T)]),
+            "B": ("C", [(600_000, "B1", "buy", T), (600_010, "B2", "buy", T)])}
+    eng = Engine(Synth(toks), Journal(str(tmp_path / "j")), risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5,
+                 n2_k=0, clock=Clock(), backup=False)
+    eng.run()
+    assert "A" not in eng.last_seen and "A" not in eng.last_state and "A" not in eng.recent
+    assert eng.last_seen["B"] == 600_010 and eng.recent["B"]
+
+
+def test_farmer_seed_range_is_journaled(tmp_path):
+    seed = {"store": "/x/fwd.duckdb", "lo": 1, "hi": 2, "h24": 1, "first_live_slot": 2, "complete_from": 2}
+
+    class Seeded(Synth):
+        farm_seed = seed
+
+    j = Journal(str(tmp_path / "j"))
+    Engine(Seeded({"M": trigger_token()}), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0,
+           clock=Clock(), backup=False).run()
+    assert json.loads(j.state("farmer_seed")) == seed
+
+
+def test_live_needs_a_readable_store(tmp_path, capsys):
+    for store in ("", str(tmp_path / "missing.duckdb")):
+        with pytest.raises(SystemExit) as e:
+            engine.main(["--live", str(tmp_path), "--store", store, "--journal", str(tmp_path / "j")])
+        assert e.value.code == 2 and "--live needs a readable --store" in capsys.readouterr().err
+
+
+def test_daily_report_has_the_live_watchlist_counts(tmp_path):
+    from paper.report import watchlist_lines
+
+    day0 = 1_790_035_200 // 60  # a UTC midnight (1_790_035_200 % 86_400 == 0)
+    day1 = day0 + 1440
+    log = tmp_path / "watchlist-log.jsonl"
+    rows = [(day0 + 10, 5, 100, 3, 10, 2), (day0 + 1400, 6, 120, 4, 25, 3),
+            (day1 + 5, 7, 130, 6, 27, 3), (day1 + 1000, 4, 90, 9, 60, 8)]
+    log.write_text("".join(json.dumps({"minute": m, "counts": {"pools": p, "tracked": t, "archived": a, "pruned_total": pr,
+                                                               "restored_total": rs}}) + "\n" for m, p, t, a, pr, rs in rows))
+    d1 = engine._day(day1 * 60)
+    assert watchlist_lines(str(log), d1)[-1] == "- end of day: 4 on the list, 90 tracked, 9 archived; pruned 35, restored 5 this day"
+    d0 = engine._day(day0 * 60)
+    assert watchlist_lines(str(log), d0)[-1].endswith("pruned 25, restored 3 this day")  # no day before: since the start
+    assert watchlist_lines(str(tmp_path / "missing.jsonl"), d1)[-1] == "- no watchlist log"
+
+
+def test_signals_carry_whether_the_farm_label_had_full_history(tmp_path):
+    """Live: farm_complete = 1 from LiveFeed's complete_from on, 0 before; replay: NULL. The daily
+    report counts the triggers labelled before it."""
+    from paper.report import farm_lines
+
+    def run_with(seed):
+        class Seeded(Synth):
+            farm_seed = seed
+
+        j = Journal(str(tmp_path / f"j{len(os.listdir(tmp_path))}"))
+        Engine(Seeded({"M": trigger_token()}), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0,
+               clock=Clock(), backup=False).run()
+        return j
+
+    before = run_with({"complete_from": 500_041})
+    s = before.rows("signals")[0]
+    assert (s["t"], s["farm_complete"]) == (500_040, 0)
+    assert farm_lines(before, s["day"])[-1] == "- 1 of 1 triggers before the farmer history was complete (journal state farmer_seed)"
+    assert run_with({"complete_from": 500_040}).rows("signals")[0]["farm_complete"] == 1
+    replay = run_with(None)
+    assert replay.rows("signals")[0]["farm_complete"] is None and farm_lines(replay, s["day"]) == []

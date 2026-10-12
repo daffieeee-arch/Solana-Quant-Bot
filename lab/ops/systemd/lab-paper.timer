@@ -1,0 +1,13 @@
+# Starts the paper engine again every 15 minutes if it is not running: after five failures within an
+# hour systemd's start limit (lab-paper.service) leaves it stopped, and nothing else would restart it
+# during a weeks-long paper run. Starting a running engine does nothing. To stop the engine on
+# purpose, stop this timer first (lab/ops/README.md).
+[Unit]
+Description=Solana lab: restart the paper engine after a start-limit stop (every 15 min)
+
+[Timer]
+OnCalendar=*:0/15
+Unit=lab-paper.service
+
+[Install]
+WantedBy=timers.target

@@ -106,3 +106,36 @@ def test_equal_to_the_batch_measurement_on_complete_data(tmp_path):
     assert all(p in live[m + 1] for m, p in creation_minute if m + 1 in live and p in batch.get(m + 1, {}))
     assert sum(len(batch[m]) for m in common) > 100  # the lists are not empty
     assert sum(1 for m in common for t in batch[m].values() if "f7_rev" in t) > 0
+
+
+def test_backfill_from_before_the_first_slot_gets_its_own_minute(tmp_path):
+    """A probe's backfill from before the first slot seen has no known block time: its minute is
+    estimated back with the clock, never the open minute (it used to count as this minute's trades)."""
+    from backtest.strategies import Clock
+
+    w = LiveWatchlist(Pools(), str(tmp_path), clock=Clock({0: 400.0}))
+    w.slot(100_000, 5_000)  # the first slot seen: minute 5000
+    w.history("P", [leg(100_000 - 9_000, 20, 120, farmer=True)])  # 9,000 slots x 400 ms: an hour before
+    assert ("P", 5_000) not in w.rows and w.rows[("P", 4_940)][0] == 1
+    w.history("P", [leg(100_000, 1, 130)])  # a slot that was seen: its own minute, the open one
+    assert w.rows[("P", 5_000)][0] == 1
+    # Without a clock the default slot time estimates it; still not the open minute.
+    w2 = LiveWatchlist(Pools(), str(tmp_path / "b"))
+    w2.slot(100_000, 5_000)
+    w2.history("P", [leg(100_000 - 9_000, 20, 120)])
+    assert ("P", 5_000) not in w2.rows and len(w2.rows) == 1
+
+
+def test_a_pruned_pool_whose_archive_expired_is_added_again(tmp_path):
+    """wallets.watchlist (#211) prunes quiet pools and archives their verdict; once the archive entry
+    expired the pool is unknown there. Its next trade must add it again (as the batch re-add does),
+    not be ignored because the live watchlist added it once."""
+    w = LiveWatchlist(Pools(), str(tmp_path))
+    w.slot(100, 1000)
+    w.trades("P", 1000, [leg(100, 3, 130)])
+    assert "P" in w.wl.pools
+    w.wl.pools.pop("P")  # what pruning plus an expired archive leave behind
+    w.wl.state.pop("P")
+    getattr(w.wl, "archive", {}).pop("P", None)
+    w.trades("P", 1001, [leg(400, 3, 130)])
+    assert "P" in w.wl.pools and w.rows[("P", 1001)][0] == 1

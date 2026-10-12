@@ -6,6 +6,7 @@ N2 shadow; the stop-rule counter (trades, days, GO / ADJUST / STOP, with a day-b
 latency of the live F7 triggers next to the simulated d.
 """
 
+import json
 import os
 from collections import defaultdict
 
@@ -59,7 +60,53 @@ def latency_lines(journal, day):
     return lines
 
 
-def daily_report(journal, day):
+def watchlist_lines(log_path, day):
+    """The live watchlist at the end of `day` from watchlist-log.jsonl (one line per minute): pools
+    tracked and archived, and how many were pruned and restored during the day."""
+    from .engine import _day
+
+    lines = ["", "## Live watchlist", ""]
+    if not log_path or not os.path.exists(log_path):
+        return lines + ["- no watchlist log"]
+    before = last = None
+    with open(log_path) as f:
+        for raw in f:
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            d = _day(row["minute"] * 60)
+            if d < day:
+                before = row
+            elif d == day:
+                last = row
+    if last is None:
+        return lines + ["- no watchlist minute this day"]
+    c, c0 = last.get("counts", {}), (before or {}).get("counts", {})
+    if "tracked" not in c:
+        return lines + [f"- end of day: {c.get('pools', 0)} pools on the list (no pruning counts in this log)"]
+
+    def today(k):  # the totals count since the engine started: a restart during the day starts them at 0
+        return c[k] - c0.get(k, 0) if c[k] >= c0.get(k, 0) else c[k]
+
+    return lines + [f"- end of day: {c.get('pools', 0)} on the list, {c['tracked']} tracked, {c['archived']} archived; "
+                    f"pruned {today('pruned_total')}, restored {today('restored_total')} this day"]
+
+
+def farm_lines(journal, day):
+    """How many of the day's live F7 triggers had a farm label from incomplete farmer history (before
+    LiveFeed's complete_from): those labels are not comparable with the backtest's."""
+    trig = {}
+    for r in journal.rows("signals", "day = ? AND family = 'F7' AND farm_complete IS NOT NULL", (day,)):
+        trig.setdefault((r["key"], r["t"]), r["farm_complete"])
+    if not trig:
+        return []
+    n0 = sum(1 for v in trig.values() if not v)
+    return ["", "## Farm labels", "",
+            f"- {n0} of {len(trig)} triggers before the farmer history was complete (journal state farmer_seed)"]
+
+
+def daily_report(journal, day, watch_log=None):
     """Write <journal>/<day>/report.md and report.parquet; returns the summary rows."""
     exits = journal.rows("exits")
     orders = journal.rows("orders")
@@ -114,6 +161,9 @@ def daily_report(journal, day):
               f"- minutes with a heartbeat: {sum(1 for b in beats if not b['note'])}; feed gaps: {len(gaps)}"
               + (f" (largest {max(b['gap_slots'] for b in gaps)} slots)" if gaps else "")]
     lines += latency_lines(journal, day)
+    lines += farm_lines(journal, day)
+    if watch_log is not None:
+        lines += watchlist_lines(watch_log, day)
     out = os.path.join(journal.dir, day)
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "report.md"), "w") as fh:
