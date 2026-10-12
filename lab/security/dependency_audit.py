@@ -29,7 +29,7 @@ import tomllib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IGNORE_FILE = os.path.join(HERE, "audit-ignore.toml")
-IGNORE_FIELDS = ("id", "ecosystem", "package", "reason", "evidence", "approved", "approved_by", "review_by")
+IGNORE_FIELDS = ("id", "ecosystem", "package", "reason", "risk", "evidence", "approved", "approved_by", "review_by")
 FAILING = {"high", "critical", "unknown", "unsound"}
 
 
@@ -246,7 +246,8 @@ def report(label, ecosystem, findings, ignores, warnings=(), today=None, out=sys
     for f, e in expired:
         p(f"::error title=ignore expired::{f['id']} {f['package']}: review_by {e['review_by']} has passed")
     for f, e in ignored:
-        p(f"  ignored  {_line(f)}\n           reason: {e['reason']} (approved {e['approved']} by {e['approved_by']}, review by {e['review_by']})")
+        p(f"  ignored  {_line(f)}\n           reason: {e['reason']}\n           risk:   {e['risk']}"
+          f"\n           (approved {e['approved']} by {e['approved_by']}, review by {e['review_by']})")
     for f in info:
         p(f"  info     {_line(f)}")
     for w in warnings:

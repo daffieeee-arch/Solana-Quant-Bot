@@ -5,7 +5,8 @@
 # plus the parent's requirement, from crates.io / PyPI / npm and the advisory), and the owner decides.
 #
 # Every entry needs: id (the advisory id or one of its aliases), ecosystem (cargo, pip or npm), package,
-# reason, evidence, approved (YYYY-MM-DD), approved_by and review_by (YYYY-MM-DD). After review_by the
+# reason (why it cannot be fixed), risk (the risk for our use: do we sign, is the affected code called),
+# evidence, approved (YYYY-MM-DD), approved_by and review_by (YYYY-MM-DD). After review_by the
 # entry stops applying and the check fails again until someone re-decides. Ignored findings are always
 # printed with their reason; an entry that no longer matches anything is printed as stale.
 
@@ -17,7 +18,8 @@
 id = "RUSTSEC-2022-0093"
 ecosystem = "cargo"
 package = "ed25519-dalek"
-reason = "Agave-pinned ed25519-dalek 1.0.1; signing oracle needs a signer API we never call (no keys, paper only). GHSA-w5vr-6qhr-36cc."
+reason = "Agave pins ed25519-dalek 1.0.1 exactly; the patched 2.x is not allowed by the parent. GHSA-w5vr-6qhr-36cc."
+risk = "Signing oracle: needs a signing key and the signer API. We hold no keys and never sign (paper only)."
 evidence = "Patched >= 2.0.0 (RUSTSEC-2022-0093); agave-precompiles 4.2.2 requires ed25519-dalek =1.0.1, and 1.0.1 is the last 1.x."
 approved = "2026-10-09"
 approved_by = "owner (allow-ghsas in dependency-review.yml)"
@@ -27,7 +29,8 @@ review_by = "2027-01-12"
 id = "RUSTSEC-2024-0344"
 ecosystem = "cargo"
 package = "curve25519-dalek"
-reason = "Agave-pinned curve25519-dalek 3.2.0; timing side channel on secret scalars, and we hold no secrets. GHSA-x4gp-pqpj-f43q."
+reason = "Agave-pinned curve25519-dalek 3.2.0 via ed25519-dalek 1.0.1; every 3.x is affected. GHSA-x4gp-pqpj-f43q."
+risk = "Timing side channel on secret scalars. We hold no secret keys and do no signing, so there is nothing to leak."
 evidence = "Patched >= 4.1.3 (RUSTSEC-2024-0344); ed25519-dalek 1.0.1 requires curve25519-dalek ^3, and the last 3.x (3.2.1) is still affected."
 approved = "2026-10-09"
 approved_by = "owner (allow-ghsas in dependency-review.yml)"
@@ -37,7 +40,8 @@ review_by = "2027-01-12"
 id = "RUSTSEC-2024-0421"
 ecosystem = "cargo"
 package = "idna"
-reason = "Agave-pinned idna 0.1.5; Punycode confusion only matters for hostname checks on untrusted input, which we do not do. GHSA-h97m-ww89-6jmq."
+reason = "Agave tree pins idna 0.1.5 via url 1.7.2 (jsonrpc-client-transports 18.0.0, the last release). GHSA-h97m-ww89-6jmq."
+risk = "Punycode confusion only matters for hostname checks on untrusted input. We connect only to configured OF1/Triton hosts."
 evidence = "Patched >= 1.0.0 (RUSTSEC-2024-0421); url 1.7.2 requires idna ^0.1.0 (last 0.1.x is 0.1.5); url 1.7.2 comes from jsonrpc-client-transports 18.0.0 (url ^1.7) in the Agave tree."
 approved = "2026-10-09"
 approved_by = "owner (allow-ghsas in dependency-review.yml)"
