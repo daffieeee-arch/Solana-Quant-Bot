@@ -125,18 +125,19 @@ function TritonCard({ r }: { r: PaperRecorder }) {
 function PositionRow({ p, lastSlot }: { p: PaperPosition; lastSlot: number | null }) {
   const open = p.status === "open";
   const kind = p.venue === "pool" ? (p.orientation === "reversed" ? "REVERSED" : "POOL") : (p.venue ?? "–").toUpperCase();
-  const slots = p.slots ?? (open && lastSlot ? lastSlot - p.entry_slot : null);
+  const slots = p.slots ?? (open && lastSlot && lastSlot >= p.entry_slot ? lastSlot - p.entry_slot : null);
   const sym = label(p.symbol, 16), name = label(p.name, 40);
-  const ret = open ? (p.mark_sol != null && p.cost_sol ? (p.mark_sol - p.cost_sol) / p.cost_sol : null) : p.ret ?? null;
+  const ret = p.ret ?? null; // open: mark_pnl / cost from the engine's mark (after all costs)
   return (
     <div className="flex items-center gap-3 p-3 rounded-[14px] bg-surface border border-line min-w-0">
       <span className="w-9 h-9 rounded-full inline-flex items-center justify-center text-xs font-extrabold text-on-accent shrink-0" style={{ background: avatar(p.key) }} aria-hidden="true">
         {(sym || p.key).slice(0, 2).toUpperCase()}
       </span>
       <div className="flex flex-col gap-0.5 grow min-w-0">
-        <div className="flex gap-1.5 items-center min-w-0">
-          <span className="font-bold text-sm truncate" title={name || p.key}>{sym || shortAddr(p.key)}</span>
+        <div className="flex flex-wrap gap-x-1.5 gap-y-0.5 items-center min-w-0">
+          <span className="font-bold text-sm truncate max-w-full" title={name || p.key}>{sym || shortAddr(p.key)}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-2 text-fg-2 font-bold">{kind}</span>
+          {p.farm && p.farm !== "n/a" && <span className={cn("text-[10px] px-1.5 py-0.5 rounded-md font-bold", p.farm === "organic" ? "bg-buy-soft text-buy" : "bg-warn-soft text-warn")}>{p.farm === "organic" ? "organisch" : "farming"}</span>}
         </div>
         <span className="text-[11px] text-muted truncate">
           <span className="num">{p.cost_sol == null ? "–" : p.cost_sol.toLocaleString("nl-NL", { minimumFractionDigits: 2 })} SOL{slots != null ? ` · ${n0(slots)} slots` : ""} · {p.variant.split("_")[0]}</span>
@@ -148,7 +149,7 @@ function PositionRow({ p, lastSlot }: { p: PaperPosition; lastSlot: number | nul
           {p.failed ? "mislukt" : ret == null ? "–" : `${ret > 0 ? "+" : ret < 0 ? "−" : ""}${n1(Math.abs(ret * 100))}%`}
         </span>
         <span className="text-[11px] text-muted whitespace-nowrap">
-          {open ? (p.mark_sol == null ? "open · geen stand" : "open") : EXIT[p.status] ?? p.status}
+          {open ? (p.pnl_sol == null ? "open · geen stand" : "open") : EXIT[p.status] ?? p.status}
         </span>
       </div>
     </div>
@@ -160,7 +161,7 @@ const dur = (p: PaperPosition) => {
   if (secs == null) return "–";
   return secs < 90 ? `${Math.max(1, Math.round(secs))} s` : secs < 5400 ? `${Math.round(secs / 60)} min` : `${n1(secs / 3600)} u`;
 };
-const retOf = (p: PaperPosition) => (p.status === "open" ? (p.mark_sol != null && p.cost_sol ? (p.mark_sol - p.cost_sol) / p.cost_sol : null) : p.ret ?? null);
+const retOf = (p: PaperPosition) => p.ret ?? null;
 const pctTxt = (v: number | null) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${n1(Math.abs(v * 100))}%`);
 const FILTERS = [{ value: "all", label: "Alles" }, { value: "open", label: "Open" }, { value: "shadow", label: "N2-schaduw" }] as const;
 type Filter = (typeof FILTERS)[number]["value"];
@@ -320,6 +321,7 @@ function Details({ j, r, now }: { j: PaperJournal; r: PaperRecorder | null; now:
         <h2 className="m-0 mb-1 text-[13px] font-extrabold">Status</h2>
         <Line k="Laatste heartbeat">{j.status.last_heartbeat_unix == null ? "–" : `${unixTime(j.status.last_heartbeat_unix)} (${ago(now - j.status.last_heartbeat_unix)} geleden)`}</Line>
         <Line k="Laatste slot">{n0(j.status.last_slot)}</Line>
+        {j.status.config && <Line k="Config"><span title={`sha256 ${j.status.config_sha256 ?? "–"}`}>{j.status.config}{j.status.config_sha256 ? ` · ${j.status.config_sha256.slice(0, 8)}` : ""}</span></Line>}
         <Line k={`Feed-gaten ${j.is_today ? "vandaag" : j.day}`}><span className={j.status.gaps_today ? "text-warn" : ""}>{j.status.gaps_today}{j.status.largest_gap_slots != null ? ` (grootste ${n0(j.status.largest_gap_slots)} slots)` : ""}</span></Line>
       </Panel>
 

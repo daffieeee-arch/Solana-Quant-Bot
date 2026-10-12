@@ -17,7 +17,8 @@ interface WalletData {
     sim_taken: number; sim_skipped: number; in_positions_sol: number; open_positions: number; today_net_sol: number; failed_today: number;
     failed_cost_sol: number; daily_loss_limit_sol: number | null; risk_found: boolean; kill_switch: boolean | null;
     max_open_positions: number | null; size_sol: number | null; txs: PaperTx[] } | null;
-  onchain: { sample: boolean; address: string | null; slot: number | null; time_unix: number | null; balance_sol: number | null; txs: ChainTx[] } | null;
+  onchain: { sample: boolean; mode: "paper" | "onchain"; address: string | null; slot: number | null; time_unix: number | null; balance_sol: number | null;
+    note: string | null; txs: ChainTx[] } | null;
 }
 const EXIT: Record<string, string> = { take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data" };
 const f3 = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("nl-NL", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
@@ -51,7 +52,8 @@ export default function Wallet() {
   if (error && !data) return <p className="text-warn">{error}</p>;
   if (!data) return <Loading what="Wallet" />;
   const p = data.paper, oc = data.onchain;
-  const address = data.address ?? (oc && !oc.sample ? oc.address : null);
+  const enginePaper = oc?.mode === "paper" && !oc.sample; // the engine's paper wallet: simulated, no address
+  const address = enginePaper ? null : data.address ?? (oc && !oc.sample ? oc.address : null);
   const limit = p?.daily_loss_limit_sol ?? null;
   const lossToday = p ? Math.min(0, p.today_net_sol) : 0;
 
@@ -65,12 +67,13 @@ export default function Wallet() {
               <svg width="18" height="18" viewBox="0 0 18 18"><rect x="2" y="4" width="14" height="10" rx="3" stroke="#0A0D13" strokeWidth="1.8" fill="none" /><circle cx="12.5" cy="9" r="1.3" fill="#0A0D13" /></svg>
             </span>
             <div className="flex flex-col gap-0.5 min-w-0">
-              <span className="text-[13px] text-fg-2 font-semibold">Bot-wallet (apart van je Phantom)</span>
+              <span className="text-[13px] text-fg-2 font-semibold">{enginePaper ? "Paper-wallet van de bot" : "Bot-wallet (apart van je Phantom)"}</span>
               <span className="text-[11px] text-muted num truncate">
-                {address ? <>{shortAddr(address)} · <a href={solscanAccount(address)} target="_blank" rel="noopener noreferrer" className="text-accent-fg font-bold">Solscan ↗</a></> : "nog geen adres ingesteld"}
+                {enginePaper ? "geen adres (paper)" : address ? <>{shortAddr(address)} · <a href={solscanAccount(address)} target="_blank" rel="noopener noreferrer" className="text-accent-fg font-bold">Solscan ↗</a></> : "nog geen adres ingesteld"}
               </span>
             </div>
-            {oc?.sample && <span className="ml-auto"><Badge tone="warn">voorbeelddata</Badge></span>}
+            {oc?.sample ? <span className="ml-auto shrink-0 whitespace-nowrap"><Badge tone="warn">voorbeelddata</Badge></span>
+              : enginePaper ? <span className="ml-auto shrink-0 whitespace-nowrap"><Badge tone="accent">paper (gesimuleerd)</Badge></span> : null}
           </div>
           <div className="flex items-baseline gap-2.5">
             <Num value={oc?.balance_sol} format={{ minimumFractionDigits: 2, maximumFractionDigits: 2 }} className="text-[40px] leading-none font-semibold tracking-[-1.5px]" />
@@ -78,6 +81,7 @@ export default function Wallet() {
           </div>
           <p className="m-0 text-[11px] text-muted">
             {oc?.sample ? "Voorbeeld van het formaat. Het echte on-chain saldo verschijnt als de live-engine wallet.json schrijft; deze pagina vraagt zelf niets op bij een node."
+              : enginePaper ? `Gesimuleerd door de paper-engine: 10 SOL plus gerealiseerde winst, min open posities tegen inleg. Er bestaat geen wallet en er wordt niets verstuurd (besluit eigenaar). Stand op slot ${oc?.slot?.toLocaleString("nl-NL") ?? "–"}.`
               : `Stand op slot ${oc?.slot?.toLocaleString("nl-NL") ?? "–"} · ${unixTime(oc?.time_unix)} UTC`}
           </p>
         </section>
@@ -85,7 +89,7 @@ export default function Wallet() {
         {p && (
           <Panel className="grid gap-2">
             <div className="flex justify-between items-baseline gap-2 flex-wrap">
-              <span className="text-[13px] font-extrabold">Paper-wallet</span>
+              <span className="text-[13px] font-extrabold">{enginePaper ? "Kapitaalsimulatie (controle)" : "Paper-wallet"}</span>
               {p.test_run ? <Badge tone="warn">testdata · {p.journal}</Badge> : <span className="text-[11px] text-muted">{p.journal}</span>}
             </div>
             <div className="flex items-baseline gap-2">
@@ -139,7 +143,7 @@ export default function Wallet() {
           </Panel>
         )}
 
-        {oc && (
+        {oc && !enginePaper && (
           <Panel>
             <div className="flex justify-between items-baseline mb-1 gap-2"><h2 className="m-0 text-base font-extrabold">On-chain transacties</h2>
               {oc.sample ? <Badge tone="warn">voorbeelddata</Badge> : <span className="text-[11px] text-muted">landing · tip · fee</span>}</div>
