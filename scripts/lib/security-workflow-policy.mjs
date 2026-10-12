@@ -27,7 +27,7 @@ const workflows = {
         permissions: { contents: 'read', 'security-events': 'write' },
         strategy: {
           'fail-fast': false,
-          'max-parallel': 2,
+          'max-parallel': 4,
           matrix: { language: ['actions', 'javascript-typescript', 'python', 'rust'] },
         },
         env: {
@@ -40,11 +40,12 @@ const workflows = {
           checkout,
           {
             name: 'Prepare pinned Rust toolchain for extraction',
-            if: "matrix.language == 'rust'",
+            if: "matrix.language == 'rust' && github.event_name != 'pull_request'",
             run: 'rustup toolchain install 1.97.1 --profile minimal',
           },
           {
             name: 'Initialize CodeQL',
+            if: "matrix.language != 'rust' || github.event_name != 'pull_request'",
             uses: 'github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd',
             with: {
               languages: '${{ matrix.language }}',
@@ -54,6 +55,7 @@ const workflows = {
           },
           {
             name: 'Analyze and publish security results',
+            if: "matrix.language != 'rust' || github.event_name != 'pull_request'",
             uses: 'github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd',
             with: { category: '/language:${{ matrix.language }}' },
           },

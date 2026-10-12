@@ -39,10 +39,40 @@ env:
   TRITON_LIVE_ENABLED: 'false'
   ENTRY_SHADOW_MODE: 'true'
 jobs:
+  scope:
+    name: scope-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      v2: \${{ steps.scope.outputs.v2 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22.23.2'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Enforce repository and zero-cost policy
+        run: npm run ci:policy
+      - name: Classify changed paths
+        id: scope
+        env:
+          CI_EVENT: \${{ github.event_name }}
+          CI_BEFORE: \${{ github.event.before }}
+        run: node scripts/ci-change-scope.mjs
   quality:
     name: core-offline
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    needs: scope
+    if: \${{ needs.scope.outputs.v2 == 'true' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -121,6 +151,8 @@ jobs:
     name: columnar-offline
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    needs: scope
+    if: \${{ needs.scope.outputs.v2 == 'true' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -170,6 +202,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     needs:
+      - scope
       - quality
       - columnar
     if: \${{ always() }}
@@ -238,7 +271,7 @@ describe('semantic CI workflow policy', () => {
 
   it('caches Bronze/Parquet build artifacts separately and never gates on hits', () => {
     const jobs = parseWorkflowYaml(SAFE_WORKFLOW).jobs;
-    expect(Object.keys(jobs)).toEqual(['quality', 'columnar', 'required']);
+    expect(Object.keys(jobs)).toEqual(['scope', 'quality', 'columnar', 'required']);
     const steps = jobs.columnar.steps;
     const cache = steps.find((step: { name: string }) => step.name === 'Restore scoped Rust build cache');
     expect(cache.with.path.split('\n')).toEqual([
@@ -259,7 +292,7 @@ describe('semantic CI workflow policy', () => {
   it('requires the always-running fail-closed aggregate without changing the protected check name', () => {
     const job = parseWorkflowYaml(SAFE_WORKFLOW).jobs.required;
     expect(job.name).toBe('tests-build-zero-cost');
-    expect(job.needs).toEqual(['quality', 'columnar']);
+    expect(job.needs).toEqual(['scope', 'quality', 'columnar']);
     expect(job.if).toBe('${{ always() }}');
     expect(job.steps.at(-1).run).toBe('node scripts/assert-required-ci.mjs');
     for (const variant of [
@@ -267,10 +300,31 @@ describe('semantic CI workflow policy', () => {
       SAFE_WORKFLOW.replace('      - columnar', '      - quality'),
       SAFE_WORKFLOW.replace('node scripts/assert-required-ci.mjs', 'true'),
       SAFE_WORKFLOW.replace('  columnar:', '  columnar:\n    continue-on-error: true'),
-      SAFE_WORKFLOW.replace('  columnar:', '  columnar:\n    if: false'),
+      SAFE_WORKFLOW.replace('    name: columnar-offline\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    needs: scope\n    if: ${{ needs.scope.outputs.v2 == \'true\' }}',
+        '    name: columnar-offline\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    needs: scope\n    if: false'),
       SAFE_WORKFLOW.replace('rust/of1-bronze-decoder/target', 'datasets'),
       SAFE_WORKFLOW.replace('rust/of1-parquet-projection/target', 'governance'),
     ]) expect(errors(variant)).toMatch(/canonical|unapproved/i);
+  });
+
+  it('lets only the scope job skip the frozen V2 jobs, after the repository policy', () => {
+    const jobs = parseWorkflowYaml(SAFE_WORKFLOW).jobs;
+    expect(jobs.scope.name).toBe('scope-policy');
+    expect(jobs.scope.outputs).toEqual({ v2: '${{ steps.scope.outputs.v2 }}' });
+    expect(jobs.scope.steps.map((step: { run?: string }) => step.run).filter(Boolean))
+      .toEqual(['npm ci', 'npm run ci:policy', 'node scripts/ci-change-scope.mjs']);
+    for (const name of ['quality', 'columnar']) {
+      expect(jobs[name].needs).toBe('scope');
+      expect(jobs[name].if).toBe("${{ needs.scope.outputs.v2 == 'true' }}");
+    }
+    for (const variant of [
+      SAFE_WORKFLOW.replace("v2 == 'true' }}", "v2 != 'true' }}"),
+      SAFE_WORKFLOW.replace('run: node scripts/ci-change-scope.mjs', 'run: echo v2=false'),
+      SAFE_WORKFLOW.replace('      - name: Enforce repository and zero-cost policy\n        run: npm run ci:policy\n      - name: Classify', '      - name: Classify'),
+    ]) {
+      expect(variant).not.toBe(SAFE_WORKFLOW);
+      expect(errors(variant)).toMatch(/canonical|unapproved/i);
+    }
   });
 
   it('rejects broad cache paths, cross-toolchain keys, unpinned actions and hit-based gate skips', () => {
@@ -435,7 +489,7 @@ describe('semantic CI workflow policy', () => {
       '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n      - name: Install locked dependencies',
     );
     expect(errors(unsafe)).toMatch(/every checkout step.*persist-credentials: false/i);
-    expect(errors(unsafe)).toMatch(/exactly three actions\/checkout steps/i);
+    expect(errors(unsafe)).toMatch(/exactly four actions\/checkout steps/i);
   });
 
   it('rejects a second checkout even when both disable credential persistence', () => {
@@ -443,7 +497,7 @@ describe('semantic CI workflow policy', () => {
       '      - name: Install locked dependencies',
       '      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n        with: { persist-credentials: false }\n      - name: Install locked dependencies',
     );
-    expect(errors(unsafe)).toMatch(/exactly three actions\/checkout steps/i);
+    expect(errors(unsafe)).toMatch(/exactly four actions\/checkout steps/i);
   });
 
   it('rejects safety overrides hidden in another nested map such as container.env', () => {
