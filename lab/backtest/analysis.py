@@ -119,8 +119,8 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
 
 
 def _ci_row(con, sql_days):
-    """(trades, mean %, 'lo … hi') from per-day (sum ret, count ret) rows."""
-    days = con.execute(sql_days).fetchall()
+    """(trades, mean %, 'lo … hi') from per-day (sum ret, count ret) rows (days sorted: a reproducible CI)."""
+    days = sorted(con.execute(sql_days).fetchall())
     sums = np.array([x[1] for x in days], dtype=float)
     cnts = np.array([x[2] for x in days], dtype=float)
     if not cnts.sum():
@@ -395,13 +395,190 @@ def _capital_days(trades, start, max_positions):
             round(min(vals), 3) if vals else None, round(sum(vals) / len(vals), 3) if vals else None)
 
 
+def _ci_num(con, sql_days):
+    """(trades, mean, lo, hi) as numbers from per-day (sum ret, count ret) rows; lo/hi None with < 2 days.
+    Days are sorted, so the seeded bootstrap gives the same CI on every run."""
+    days = sorted(con.execute(sql_days).fetchall())
+    sums = np.array([x[1] for x in days], dtype=float)
+    cnts = np.array([x[2] for x in days], dtype=float)
+    if not cnts.sum():
+        return 0, None, None, None
+    lo, hi = _boot(sums, cnts)
+    return int(cnts.sum()), float(sums.sum() / cnts.sum()), lo, hi
+
+
+def _pct(x):
+    return "" if x is None else f"{x * 100:+.2f}%"
+
+
+def holdout(run_dir, config, store=STORE):
+    """The pre-registered hold-out evaluation. config: the frozen candidates file (JSON) with the
+    parts (slot ranges of the trigger), the combined groups, the candidates (family, segment,
+    variant, farm, size, overlay, role), the reference family, the main measure's (d, q) points and
+    the risk rules. Per candidate and part: the main measure (of its points, the one with the lower
+    mean return per filled trade after base costs, with its 95% day-bootstrap CI), every other
+    point, pessimistic costs, the farm-matched reference (N2: entries matched to the candidate's
+    triggers) and the difference, trades, win rate, total losses, top-10 pool concentration,
+    window_end closes and the capital simulation with the risk rules. Then the decision rule.
+    Writes <run_dir>/holdout_eval.md and .json."""
+    from .costs import Scenario, settle_sql
+    from .store import load_defaults
+    from .tournament import results_glob
+
+    with open(config) as f:
+        c = json.load(f)
+    cfg = load_defaults()
+    con = _con()
+    src = f"read_parquet('{results_glob(run_dir)}')"
+    pnl, ret = settle_sql(Scenario.from_cfg("base", cfg))
+    _, ret_p = settle_sql(Scenario.from_cfg("pessimistic", cfg))
+    parts = c["parts"]
+    part = "CASE " + " ".join(f"WHEN t >= {lo} AND t < {hi} THEN '{k}'" for k, (lo, hi) in parts.items()) + " END"
+    groups = {k: [k] for k in parts} | c.get("combined", {})
+    ref = c["reference"]
+    segs = sorted({k["segment"] for k in c["candidates"]})
+    sizes = sorted({k["size_sol"] for k in c["candidates"]})
+    fams = sorted({k["family"] for k in c["candidates"]} | {ref["family"]})
+    lit = lambda xs: ",".join(f"'{x}'" if isinstance(x, str) else repr(x) for x in xs)  # noqa: E731
+    variants = sorted({k["variant"] for k in c["candidates"]})
+    con.execute(f"""CREATE TEMP TABLE x AS
+        SELECT family, variant, segment, farm, size_sol, d, q, day, t, mint, pool, ref_mint, ref_t, entry_slot, exit_slot,
+               cost, proceeds, entry_failed, exit_reason, d_ms, {pnl} AS pnl, {ret} AS ret, {ret_p} AS ret_p, {part} AS part
+        FROM {src} WHERE NOT skipped AND overlay = 'none' AND family IN ({lit(fams)}) AND segment IN ({lit(segs)})
+          AND size_sol IN ({lit(sizes)}) AND variant IN ({lit(variants)})""")
+    # The reference rows carry the farm of the trigger they were matched to (an N2 row's ref is the
+    # trigger's signal key: the pool for pool signals, the mint on the curve).
+    cand_fams = sorted({k["family"] for k in c["candidates"]})
+    con.execute(f"""CREATE TEMP TABLE h AS
+        SELECT x.*, g.farm AS ref_farm FROM x
+        LEFT JOIN (SELECT DISTINCT COALESCE(pool, mint) AS key, t, farm FROM x WHERE family IN ({lit(cand_fams)})) g
+          ON x.family = '{ref["family"]}' AND x.ref_mint = g.key AND x.ref_t = g.t""")
+    con.execute("DROP TABLE x")
+    points = [tuple(p) for p in c["main_measure"]["points"]] + [tuple(p) for p in c.get("also_points", [])]
+    rr = c["risk_rules"]
+    out = {"config": os.path.basename(config), "run_dir": run_dir, "candidates": {}}
+    for k in c["candidates"]:
+        sel = (f"family = '{k['family']}' AND segment = '{k['segment']}' AND variant = '{k['variant']}' "
+               f"AND size_sol = {k['size_sol']}" + ("" if k["farm"] == "all" else f" AND farm = '{k['farm']}'"))
+        # The reference: N2 entries matched to this candidate's triggers (same variant's exit rule).
+        rsel = (f"family = '{ref['family']}' AND segment = '{k['segment']}' AND variant = '{k['variant']}' "
+                f"AND size_sol = {k['size_sol']}" + ("" if k["farm"] == "all" else f" AND ref_farm = '{k['farm']}'"))
+        res = {}
+        for g, ps in groups.items():
+            w = f"part IN ({lit(ps)})"
+            pts = {}
+            for d, q in points:
+                pw = f"{w} AND d = {d} AND q = {q}"
+                n, m, lo, hi = _ci_num(con, f"SELECT day, sum(ret), count(ret) FROM h WHERE {sel} AND {pw} AND ret IS NOT NULL GROUP BY day")
+                _, mp, lop, hip = _ci_num(con, f"SELECT day, sum(ret_p), count(ret_p) FROM h WHERE {sel} AND {pw} AND ret_p IS NOT NULL GROUP BY day")
+                rn, rm, _, _ = _ci_num(con, f"SELECT day, sum(ret), count(ret) FROM h WHERE {rsel} AND {pw} AND ret IS NOT NULL GROUP BY day")
+                extra = con.execute(f"""SELECT count(*), avg(pnl) / 1e9, avg((ret > 0)::INT),
+                                               count(*) FILTER (WHERE NOT entry_failed AND proceeds < 0.1 * cost),
+                                               count(*) FILTER (WHERE exit_reason = 'window_end'), sum(pnl) / 1e9
+                                        FROM h WHERE {sel} AND {pw}""").fetchone()
+                top = con.execute(f"""SELECT sum(p) FROM (SELECT sum(pnl) / 1e9 AS p FROM h WHERE {sel} AND {pw}
+                                      GROUP BY pool ORDER BY p DESC LIMIT 10)""").fetchone()[0]
+                trades = con.execute(f"""SELECT entry_slot, exit_slot, cost, pnl, entry_failed, day, pool, proceeds, d_ms / d
+                                         FROM h WHERE {sel} AND {pw} ORDER BY entry_slot, exit_slot""").fetchall()
+                sim = _capital_limited(trades, rr["capital_sol"] * 1e9, rr["max_positions"], rr["daily_loss_sol"] * 1e9,
+                                       rr["pool_cooldown_h"] * 3_600_000) if trades else None
+                pts[f"d{d}_q{q}"] = {
+                    "d": d, "q": q, "filled": n, "mean": m, "lo": lo, "hi": hi, "pess_mean": mp, "pess_lo": lop, "pess_hi": hip,
+                    "ref_filled": rn, "ref_mean": rm, "vs_ref": None if m is None or rm is None else m - rm,
+                    "positions": extra[0], "sol_per_trade": extra[1], "win_rate": extra[2], "total_losses": extra[3],
+                    "window_end": extra[4], "total_pnl_sol": extra[5], "top10_pools_pnl_sol": top,
+                    "capital": None if sim is None else dict(zip(
+                        ("signals", "taken", "skip_pool", "skip_cooldown", "skip_daily_limit", "skip_full_cash", "final_sol",
+                         "max_drawdown_pct", "positive_days", "days", "worst_day_sol", "mean_day_sol"), sim)),
+                }
+            main = [pts[f"d{d}_q{q}"] for d, q in (tuple(p) for p in c["main_measure"]["points"])]
+            worst = min(main, key=lambda x: float("inf") if x["mean"] is None else x["mean"])
+            res[g] = {"main": {"point": f"d{worst['d']}_q{worst['q']}", "mean": worst["mean"], "lo": worst["lo"],
+                               "hi": worst["hi"], "filled": worst["filled"]}, "points": pts}
+        out["candidates"][k["id"]] = {"spec": k, "groups": res}
+    out["decision"] = _holdout_decision(out, c)
+    with open(os.path.join(run_dir, "holdout_eval.json"), "w") as f:
+        json.dump(out, f, indent=1, default=str)
+    path = os.path.join(run_dir, "holdout_eval.md")
+    with open(path, "w") as f:
+        f.write(_holdout_md(out, c))
+    return path
+
+
+def _holdout_decision(out, c):
+    """Pre-registration §4 on the decision group (B+C): the eligible candidate (role main or
+    variant) with the highest CI lower bound and a mean above 0. The control is picked only when
+    its lower bound is above 0, above every eligible candidate's lower bound, and its mean is at
+    least the highest eligible mean (a control arm must not win on a narrower CI alone). A
+    candidate positive in part A but not in the decision group drops out."""
+    g = c["decision_group"]
+    m = {k: v["groups"][g]["main"] for k, v in out["candidates"].items()}
+    roles = {k["id"]: k["role"] for k in c["candidates"]}
+    lo = lambda k: float("-inf") if m[k]["lo"] is None else m[k]["lo"]  # noqa: E731
+    eligible = [k for k in m if roles[k] in ("main", "variant") and m[k]["mean"] is not None and m[k]["mean"] > 0]
+    pick = max(eligible, key=lo) if eligible else None
+    top_mean = max((m[e]["mean"] for e in eligible), default=float("-inf"))
+    for k in m:
+        if (roles[k] == "control" and m[k]["lo"] is not None and m[k]["lo"] > 0 and all(lo(k) > lo(e) for e in eligible)
+                and m[k]["mean"] is not None and m[k]["mean"] >= top_mean):
+            pick = k
+    dropped = [k for k, v in out["candidates"].items() if "A" in v["groups"]
+               and (v["groups"]["A"]["main"]["mean"] or 0) > 0 and not (m[k]["mean"] or 0) > 0]
+    best_mean = max(m, key=lambda k: float("-inf") if m[k]["mean"] is None else m[k]["mean"])
+    return {"group": g, "pick": pick, "dropped_after_part_A": dropped,
+            "no_positive_candidate": pick is None, "highest_mean_if_none": None if pick else best_mean}
+
+
+def _holdout_md(out, c):
+    lines = [f"# Hold-out evaluation ({out['config']})", "",
+             f"Run: `{out['run_dir']}`. Main measure: of the points {c['main_measure']['points']} (d, q) the one with the "
+             "lower mean return per filled trade after base costs; 95% CI by day bootstrap (parts of 1–4 days give wide "
+             "or no CIs). Parts by trigger slot: " + ", ".join(f"{k} [{a}, {b})" for k, (a, b) in c["parts"].items()) + ".", ""]
+    for kid, v in out["candidates"].items():
+        k = v["spec"]
+        lines += [f"## {kid}: {k['family']} {k['variant']}, {k['segment']}, {k['farm']} pools, {k['size_sol']} SOL ({k['role']})", "",
+                  "| part | main point | mean | 95% CI | filled |", "|---|---|---|---|---|"]
+        for g, r in v["groups"].items():
+            mn = r["main"]
+            ci = "" if mn["lo"] is None else f"{_pct(mn['lo'])} … {_pct(mn['hi'])}"
+            lines.append(f"| {g} | {mn['point']} | {_pct(mn['mean'])} | {ci} | {mn['filled']} |")
+        lines += ["", "| part | point | mean | 95% CI | pessimistic | reference | vs reference | SOL/trade | win | total losses | "
+                  "window_end | top-10 pools SOL / all SOL | capital: final SOL, max DD %, positive days |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for g, r in v["groups"].items():
+            for name, p in r["points"].items():
+                ci = "" if p["lo"] is None else f"{_pct(p['lo'])} … {_pct(p['hi'])}"
+                cap = p["capital"]
+                capt = "" if not cap else f"{cap['final_sol']}, {cap['max_drawdown_pct']}, {cap['positive_days']}/{cap['days']}"
+                top = "" if p["top10_pools_pnl_sol"] is None else f"{p['top10_pools_pnl_sol']:.2f} / {p['total_pnl_sol']:.2f}"
+                spt = "" if p["sol_per_trade"] is None else f"{p['sol_per_trade']:+.4f}"
+                win = "" if p["win_rate"] is None else f"{p['win_rate'] * 100:.0f}%"
+                lines.append(f"| {g} | {name} | {_pct(p['mean'])} | {ci} | {_pct(p['pess_mean'])} | {_pct(p['ref_mean'])} | "
+                             f"{_pct(p['vs_ref'])} | {spt} | {win} | {p['total_losses']} | {p['window_end']} | {top} | {capt} |")
+        lines.append("")
+    d = out["decision"]
+    lines += ["## Decision (pre-registration §4)", "",
+              f"- Group: {d['group']}. Pick: **{d['pick'] or 'none'}**.",
+              f"- Positive in part A but not in {d['group']} (drop out): {', '.join(d['dropped_after_part_A']) or 'none'}."]
+    if d["no_positive_candidate"]:
+        lines.append(f"- No candidate has a mean above 0: the stop-rule clock starts with {d['highest_mean_if_none']} marked "
+                     "\"not proven\" (N2 in the shadow); the owner decides on ADJUST or STOP.")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("what", choices=["f7rev", "f7cand", "f7comp"])
+    ap.add_argument("what", choices=["f7rev", "f7cand", "f7comp", "holdout"])
     ap.add_argument("run_dir")
     ap.add_argument("--store", default=STORE)
     ap.add_argument("--segment", default="pool_reversed")
+    ap.add_argument("--config", help="holdout: the frozen candidates file")
     a = ap.parse_args()
+    if a.what == "holdout":
+        if not a.config:
+            raise SystemExit("holdout needs --config (the frozen candidates file)")
+        print(holdout(a.run_dir, a.config, a.store))
+        return
     fn = {"f7rev": f7_reversed, "f7cand": f7_candidate, "f7comp": f7_competition}[a.what]
     print(fn(a.run_dir, a.store, a.segment))
 

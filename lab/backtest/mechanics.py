@@ -89,7 +89,11 @@ def pre_curve(is_buy, t, q, vt, vq, rt, rq, fb, cb):
     return Curve(vt - t, vq + q, rt - t, rq + q, fb, cb)
 
 
-def curve_checks(con, chunks):
+def curve_checks(con, chunks, store_mints=None):
+    """R1-R3 on the raw TradeEvents. R3's tolerance applies to the trades of the store's tokens
+    (created inside the data: the replay's universe); trades of older tokens are counted
+    separately with samples (mech1052 attempt 2: all 8,038 R3 mismatches were outside the store,
+    0 of 1,491,878 inside)."""
     src = data.parquet("pump/TradeEvent", chunks)
     cols = data.columns("pump/TradeEvent", chunks)
     cash = "COALESCE(cashback, 0)" if "cashback" in cols else "0"
@@ -97,15 +101,18 @@ def curve_checks(con, chunks):
     ix_case = " ".join(f"WHEN '{d}' THEN '{n}'" for d, n in data.PUMP_IX.items())
     sells = Check("R1 curve sells: curve quote exact", "0 quote mismatches; 0 fees below the program's")
     outs = Check("R2 curve exact-out buys: quote exact", "0 quote mismatches; 0 fees below the program's")
-    ins = Check("R3 curve exact-in buys: tokens and quote", f"mismatches <= {EXACT_IN_TOLERANCE['curve']:.1%}")
+    ins = Check("R3 curve exact-in buys: tokens and quote",
+                f"mismatches <= {EXACT_IN_TOLERANCE['curve']:.1%} on the store's tokens; others counted")
+    outside = Counter()
+    qcol = "quote_mint" if "quote_mint" in cols else "NULL"
     variants = Counter()
     fee_bad = Counter()
-    for (variant, user, cashback, is_buy, t, q, fee, cfee, vt, vq, rt, rq, fb, cb, a) in _fetch(con, f"""
+    for (variant, user, cashback, is_buy, t, q, fee, cfee, vt, vq, rt, rq, fb, cb, a, mint, quote) in _fetch(con, f"""
             SELECT CASE parent_ix_disc {ix_case} ELSE 'other' END, "user", {cash}, is_buy, token_amount::HUGEINT,
                    COALESCE(quote_amount, sol_amount)::HUGEINT, fee::HUGEINT, creator_fee::HUGEINT,
                    virtual_token_reserves::HUGEINT, COALESCE(virtual_quote_reserves, virtual_sol_reserves)::HUGEINT,
                    real_token_reserves::HUGEINT, COALESCE(real_quote_reserves, real_sol_reserves)::HUGEINT,
-                   fee_basis_points::INTEGER, creator_fee_basis_points::INTEGER, {args}
+                   fee_basis_points::INTEGER, creator_fee_basis_points::INTEGER, {args}, mint, {qcol}
             FROM {src}"""):
         variants[variant] += 1
         if user == MAYHEM_AGENT or cashback:
@@ -129,38 +136,72 @@ def curve_checks(con, chunks):
             fee_bad["buy over"] += f.fees > fee + cfee
             fee_bad["buy under"] += f.fees < fee + cfee
         elif variant in EXACT_IN and is_buy and a:
-            ins.rows += 1
-            ins.detail[variant] += 1
             j = json.loads(a)
             budget = j.get("spendable_sol_in", j.get("spendable_quote_in"))
             if budget is None:
                 ins.detail["no budget argument"] += 1
                 continue
             f = curve_buy_exact_in(pre, int(budget))
-            if (f.tokens, f.curve_quote) != (t, q):
+            bad = (f.tokens, f.curve_quote) != (t, q)
+            if store_mints is not None and mint not in store_mints:
+                outside[(variant, "SOL quote" if quote is None or quote in data.SOL_QUOTES else "other quote")] += 1
+                if bad:
+                    outside["mismatches"] += 1
+                    if len(ins.samples) < 5:
+                        ins.samples.append({"outside the store": True, "variant": variant, "mint": mint, "quote_mint": quote,
+                                            "budget": str(budget), "t": str(t), "ours": str(f.tokens), "q": str(q),
+                                            "ours_q": str(f.curve_quote), "fee": str(fee), "creator_fee": str(cfee),
+                                            "fee_bps": fb, "creator_bps": cb})
+                continue
+            ins.rows += 1
+            ins.detail[variant] += 1
+            if bad:
                 ins.fail({"variant": variant, "budget": str(budget), "t": str(t), "ours": str(f.tokens)})
     sells.detail.update({"fee above the program's (conservative)": fee_bad["sell over"], "fee below": fee_bad["sell under"]})
     outs.detail.update({"fee above the program's (conservative)": fee_bad["buy over"], "fee below": fee_bad["buy under"]})
     sells.finish(sells.rows and sells.failures == 0 and fee_bad["sell under"] == 0)
     outs.finish(outs.rows and outs.failures == 0 and fee_bad["buy under"] == 0)
+    ins.detail.update({f"outside the store ({k[0]}, {k[1]})" if isinstance(k, tuple) else f"outside the store: {k}": v
+                       for k, v in sorted(outside.items(), key=str)})
     ins.finish(ins.rows and ins.failures <= EXACT_IN_TOLERANCE["curve"] * ins.rows)
     return [sells, outs, ins], variants
 
 
-def pool_checks(con, chunks):
+def pool_checks(con, chunks, pool_class=None):
+    """R4, R5 and S6 on the raw PumpSwap events. S6 (trades whose virtual quote reserves are
+    negative) is split by the store's pool class and trade kind: sells and exact-out buys must
+    match exactly, exact-in buys within R5's tolerance and exactly in reversed pools (mech1052
+    attempt 2: reversed 20,256 of 20,256 exact; the sol-pool differences, 363 + 15, were exact-in
+    rounding of at most 1.4e-5 relative, the same class R5 tolerates)."""
+    pool_class = pool_class or {}
+    neg_rows, neg_bad, neg_dir = Counter(), Counter(), Counter()
+    neg_rel = 0.0
+
+    def negative(key, bad, sample, rel=None):
+        nonlocal neg_rel
+        neg_rows[key] += 1
+        if bad:
+            neg_bad[key] += 1
+            if len(neg.samples) < 5:
+                neg.samples.append(sample)
+            if rel is not None:
+                neg_rel = max(neg_rel, abs(rel))
+                neg_dir[f"{key[0]} exact-in: ours {'higher' if rel > 0 else 'lower'}"] += 1
+
     sells = Check("R4 PumpSwap sells: gross and user quote exact", "0 mismatches")
     buys = Check("R5 PumpSwap buys: exact-out exact, exact-in tokens and quote",
                  f"exact-out 0 mismatches; exact-in <= {EXACT_IN_TOLERANCE['pool']:.1%}")
-    neg = Check("S6 negative virtual quote reserves: venue math", "0 mismatches on those trades")
+    neg = Check("S6 negative virtual quote reserves: venue math",
+                f"sells and exact-out 0 mismatches; exact-in <= {EXACT_IN_TOLERANCE['pool']:.1%} and 0 in reversed pools")
     sp = data.parquet("pump_amm/SellEvent", chunks, missing_ok=True)
     scols = data.columns("pump_amm/SellEvent", chunks) if sp else set()
     if sp:
         cash = "COALESCE(cashback, 0)" if "cashback" in scols else "0"
-        for (a, gross, user_out, lpb, pb, cb, b, q, v, cashback, no_creator) in _fetch(con, f"""
+        for (a, gross, user_out, lpb, pb, cb, b, q, v, cashback, no_creator, pool, slot) in _fetch(con, f"""
                 SELECT base_amount_in::HUGEINT, quote_amount_out::HUGEINT, user_quote_amount_out::HUGEINT,
                        lp_fee_basis_points, protocol_fee_basis_points, coin_creator_fee_basis_points,
                        pool_base_token_reserves::HUGEINT, pool_quote_token_reserves::HUGEINT,
-                       TRY_CAST(virtual_quote_reserves AS HUGEINT), {cash}, coin_creator = '{DEFAULT_KEY}'
+                       TRY_CAST(virtual_quote_reserves AS HUGEINT), {cash}, coin_creator = '{DEFAULT_KEY}', pool, slot
                 FROM {sp}"""):
             sells.rows += 1
             v = int(v or 0)
@@ -169,39 +210,60 @@ def pool_checks(con, chunks):
             if bad:
                 sells.fail({"a": str(a), "gross": str(gross), "ours": None if f is None else str(f.curve_quote)})
             if v < 0:
-                neg.rows += 1
-                neg.fail(n=int(bad))
+                negative((pool_class.get(pool, "not in store"), "sell"), bad,
+                         {"class": pool_class.get(pool, "not in store"), "kind": "sell", "pool": pool, "slot": slot, "v": str(v),
+                          "base_in": str(a), "gross": str(gross), "ours": None if f is None else str(f.curve_quote),
+                          "user_out": str(user_out), "ours_user": None if f is None else str(f.trader_quote)})
     bp = data.parquet("pump_amm/BuyEvent", chunks, missing_ok=True)
     exact_in_bad = 0
     if bp:
         boost = data.BOOST_BUY_DISC
-        for (disc, b_out, q_in, user_in, max_in, lpb, pb, cb, b, q, v, no_creator) in _fetch(con, f"""
+        for (disc, b_out, q_in, user_in, max_in, lpb, pb, cb, b, q, v, no_creator, pool, slot) in _fetch(con, f"""
                 SELECT parent_ix_disc, base_amount_out::HUGEINT, quote_amount_in::HUGEINT, user_quote_amount_in::HUGEINT,
                        max_quote_amount_in::HUGEINT, lp_fee_basis_points, protocol_fee_basis_points,
                        coin_creator_fee_basis_points, pool_base_token_reserves::HUGEINT, pool_quote_token_reserves::HUGEINT,
-                       TRY_CAST(virtual_quote_reserves AS HUGEINT), coin_creator = '{DEFAULT_KEY}'
+                       TRY_CAST(virtual_quote_reserves AS HUGEINT), coin_creator = '{DEFAULT_KEY}', pool, slot
                 FROM {bp} WHERE parent_ix_disc IS DISTINCT FROM '{boost}'"""):
             buys.rows += 1
             v = int(v or 0)
             p = Pool(int(b), int(q) + v, lpb, pb, 0 if no_creator else (cb or 0))
+            cls = pool_class.get(pool, "not in store")
             if disc in data.POOL_EXACT_OUT:
                 buys.detail["exact-out"] += 1
                 f = pool_buy_exact_out(p, int(b_out))
                 bad = f is None or f.curve_quote != q_in
                 if bad:
                     buys.fail({"exact": "out", "b_out": str(b_out), "q_in": str(q_in)})
+                if v < 0:
+                    negative((cls, "buy exact-out"), bad, {"class": cls, "kind": "buy exact-out", "pool": pool, "slot": slot,
+                                                           "v": str(v), "b_out": str(b_out), "q_in": str(q_in),
+                                                           "ours": None if f is None else str(f.curve_quote)})
             else:
                 buys.detail["exact-in"] += 1
                 f = pool_buy_exact_in(p, int(max_in))
                 bad = f is None or (f.tokens, f.curve_quote) != (b_out, user_in)
                 exact_in_bad += bad
-            if v < 0:
-                neg.rows += 1
-                neg.fail(n=int(bad))
+                if v < 0:
+                    rel = None if f is None or not b_out else (f.tokens - int(b_out)) / int(b_out)
+                    negative((cls, "buy exact-in"), bad, {"class": cls, "kind": "buy exact-in", "pool": pool, "slot": slot,
+                                                          "v": str(v), "max_in": str(max_in), "b_out": str(b_out),
+                                                          "ours": None if f is None else str(f.tokens), "user_in": str(user_in),
+                                                          "ours_quote": None if f is None else str(f.curve_quote)},
+                             rel if bad else None)
     buys.detail["exact-in mismatches"] = exact_in_bad
     sells.finish(sells.rows and sells.failures == 0)
     buys.finish(buys.rows and buys.failures == 0 and exact_in_bad <= EXACT_IN_TOLERANCE["pool"] * buys.detail["exact-in"])
-    neg.finish(neg.failures == 0)
+    neg.rows, neg.failures = sum(neg_rows.values()), sum(neg_bad.values())
+    for key in sorted(neg_rows):
+        neg.detail[f"{key[0]} {key[1]}: rows"] = neg_rows[key]
+        neg.detail[f"{key[0]} {key[1]}: mismatches"] = neg_bad[key]
+    neg.detail.update(neg_dir)
+    neg.detail["exact-in largest relative difference"] = f"{neg_rel:.2e}"
+    strict = sum(n for k, n in neg_bad.items() if k[1] != "buy exact-in")
+    ins_rows = sum(n for k, n in neg_rows.items() if k[1] == "buy exact-in")
+    ins_bad = sum(n for k, n in neg_bad.items() if k[1] == "buy exact-in")
+    reversed_bad = sum(n for k, n in neg_bad.items() if k[0] == "reversed")
+    neg.finish(strict == 0 and reversed_bad == 0 and ins_bad <= EXACT_IN_TOLERANCE["pool"] * max(ins_rows, 1))
     return [sells, buys, neg]
 
 
@@ -381,6 +443,9 @@ def run(store, out, per_key=12, log=print, where="TRUE", forward_only=True, chun
     mem = os.environ.get("LAB_DUCKDB_MEM", "1GB")
     con = streams.open_store(store, threads=2, memory=mem)
     meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
+    # The store's universe for the raw checks: its tokens (created inside the data) and pool classes.
+    store_mints = {m for (m,) in con.execute("SELECT mint FROM mints").fetchall()}
+    pool_class = dict(con.execute("SELECT pool, quote_class FROM pools").fetchall())
     con.close()  # one DuckDB at a time: the raw checks first, then the store
     lo, hi = meta["slot_start"], meta["slot_end_exclusive"]
     if forward_only and lo < 454_464_000:
@@ -392,10 +457,10 @@ def run(store, out, per_key=12, log=print, where="TRUE", forward_only=True, chun
     raw = data.connect(threads=2, memory=mem)
     checks = []
     log(f"store {store} [{lo}, {hi}), {len(chunks)} chunks; venue math (curve)")
-    c, variants = curve_checks(raw, chunks)
+    c, variants = curve_checks(raw, chunks, store_mints)
     checks += c
     log(f"venue math (PumpSwap) ({time.time() - t0:.0f}s)")
-    checks += pool_checks(raw, chunks)
+    checks += pool_checks(raw, chunks, pool_class)
     raw.close()
     con = streams.open_store(store, threads=2, memory=mem)
     log(f"curve chain ({time.time() - t0:.0f}s)")
@@ -413,6 +478,12 @@ def run(store, out, per_key=12, log=print, where="TRUE", forward_only=True, chun
     lines = [f"# Mechanical validation: {os.path.basename(store)} (slots {lo}–{hi})", "",
              f"Store built from {meta.get('git_commit')}; {len(chunks)} raw chunks. No P&L, no signals. "
              f"{time.time() - t0:.0f} s. **Overall: {'PASS' if ok else 'FAIL'}**", "",
+             "Rules since 2026-10-12 (set after mech1052 attempt 2 failed R3 and S6, before the rerun and before the "
+             "hold-out freeze; see the pre-registration): R3's tolerance applies to the store's tokens (created inside the "
+             "data, the replay's universe), older tokens are counted with samples (attempt 2: 0 of 1,491,878 inside, all "
+             "8,038 outside); S6 requires sells and exact-out buys exact, exact-in buys within R5's tolerance and exact in "
+             "reversed pools (attempt 2, reproduced from the store: reversed 20,256 of 20,256 exact; sol 363 + 15 exact-in "
+             "rounding differences, at most 1.4e-5 relative). Every failing check lists samples.", "",
              "| check | rows | failures | rule | result |", "|---|---|---|---|---|"]
     lines += [f"| {r['check']} | {r['rows']:,} | {r['failures']:,} | {r['rule']} | **{r['result']}** |" for r in rows]
     lines += ["", "## Details", ""]

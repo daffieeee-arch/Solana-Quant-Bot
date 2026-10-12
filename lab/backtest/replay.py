@@ -27,6 +27,18 @@ from dataclasses import dataclass, field, replace
 from . import venues as V
 from .venues import Curve, Pool
 
+# The end of the data window (exclusive slot), set by the tournament from its store. No entry is made
+# at or after it, and a position still open when the window ends is closed on its last slot,
+# W - 1, with exit_reason "window_end": the window's data cannot say what happened later, so a
+# deadline past it is not decided. The proceeds are those of the last state in the window.
+WINDOW_END = None
+
+
+def set_window_end(slot):
+    global WINDOW_END
+    WINDOW_END = slot
+
+
 EXACT_IN_CURVE = {"buy_exact_sol_in", "buy_exact_quote_in_v2", "other"}
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 PUMP_AMM = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
@@ -488,7 +500,8 @@ class PositionSim:
         return False
 
     def end(self):
-        """The data ended (or the hold limit passed) while holding."""
+        """The data ended (or the hold limit passed) while holding. A deadline or fill at or after
+        the window end (WINDOW_END) is not decided: the position closes on the window's last slot."""
         if self.done:
             return True
         r = self.r
@@ -496,11 +509,20 @@ class PositionSim:
             return self._complete(self.last_slot)
         if self.pending is None and self.decided_for != self.last_slot:
             self._decide(self.last_slot)
-        if self.pending is None and not self.deadline_done and self.deadline is not None and self.deadline > self.last_slot:
+        w = WINDOW_END
+        beyond = w is not None and self.deadline is not None and self.deadline + self.d >= w
+        if self.pending is None and not self.deadline_done and self.deadline is not None and self.deadline > self.last_slot \
+                and not beyond:
             self._decide(self.deadline)
+        if self.pending is None and beyond:
+            r.exit_decision_slot, r.exit_reason = w - 1, "window_end"
+            self.pending, self.pending_min = w - 1, 0
         if self.pending is None:
             r.exit_decision_slot, r.exit_reason = self.last_slot, r.exit_reason or "end_of_data"
             self.pending, self.pending_min = self.last_slot + self.d, 0
+        if w is not None and self.pending >= w:
+            self.pending, self.pending_min = w - 1, 0
+            r.exit_decision_slot, r.exit_reason = min(r.exit_decision_slot, w - 1), "window_end"
         if not self._try_exit(self.pending):
             f = self.sell(self.state, r.tokens)
             r.exit_slot, r.proceeds = self.pending, f.trader_quote if f else 0
@@ -578,6 +600,9 @@ def open_curve_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, 
     r = Result(stream.mint, decision_slot, size=size, venue="curve")
     legs = stream.curve
     r.entry_slot = decision_slot + d
+    if WINDOW_END is not None and r.entry_slot >= WINDOW_END:
+        r.skipped, r.exit_reason = True, "after_window_end"
+        return r, None, None
     s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0))
     if s_dec is None or s_dec.complete:
         r.skipped, r.exit_reason = True, "no_curve_state"
@@ -632,6 +657,9 @@ def open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, t
     r = Result(stream.mint, decision_slot, size=size, venue="pool")
     legs = stream.pool_legs
     r.entry_slot = decision_slot + d
+    if WINDOW_END is not None and r.entry_slot >= WINDOW_END:
+        r.skipped, r.exit_reason = True, "after_window_end"
+        return r, None, None
     buy, sell, price, hold = pool_venue(stream.orientation)
     s_dec = _hist_state(legs, _insertion_index(legs, decision_slot + 1, 0.0)) if legs else None
     if s_dec is None:

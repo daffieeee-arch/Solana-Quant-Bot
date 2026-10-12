@@ -332,13 +332,33 @@ def _report_commit():
     return sha or os.environ.get("LAB_ENGINE_COMMIT", "unknown")
 
 
+def window_check(results, window_end, con=None):
+    """No position may enter or exit at or after the data window's end (replay.WINDOW_END closes
+    open positions on its last slot, "window_end"). Returns the window_end closes and the skipped
+    entries after the window per family; raises if any position is outside the window."""
+    con = con or _connect()
+    src = f"read_parquet('{results}')"
+    bad = con.execute(f"""SELECT family, exit_reason, count(*) FROM {src}
+                          WHERE NOT skipped AND (entry_slot >= {window_end} OR exit_slot >= {window_end}
+                                                 OR exit_decision_slot >= {window_end})
+                          GROUP BY ALL ORDER BY ALL""").fetchall()
+    if bad:
+        raise SystemExit(f"positions outside the data window (end {window_end}): {bad}")
+    return con.execute(f"""SELECT family, count(*) FILTER (WHERE NOT skipped AND exit_reason = 'window_end'),
+                                  count(*) FILTER (WHERE skipped AND exit_reason = 'after_window_end')
+                           FROM {src} GROUP BY family
+                           HAVING count(*) FILTER (WHERE exit_reason IN ('window_end', 'after_window_end')) > 0
+                           ORDER BY family""").fetchall()
+
+
 def write_report(run_dir, cfg):
     from .tournament import results_glob
 
     results = results_glob(run_dir)
-    summary = summarize(results, cfg)
     with open(os.path.join(run_dir, "config.json")) as f:
         config = json.load(f)
+    window = window_check(results, config["store"]["slot_end_exclusive"])
+    summary = summarize(results, cfg)
     tr = trials(summary, config)
     if tr:
         # The run's rows, and the same file in the shared trials/ dataset (one file per run, not for dry runs).
@@ -347,10 +367,15 @@ def write_report(run_dir, cfg):
         if not config.get("slot_range"):  # dry runs are not trials
             os.makedirs(TRIALS, exist_ok=True)
             pq.write_table(table, os.path.join(TRIALS, f"{config['run_id']}.parquet"))
+    # One row per configuration: every column of KEYS that varies is shown (overlay rows are the O7 section).
     base = sorted((s for s in summary if s["scenario"] == "base" and s["overlay"] == "none"),
-                  key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["size_sol"], s["d"], s["tau"]))
+                  key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["farm"], s["size_sol"], s["d"],
+                                 s["q"], s["tau"]))
     lines = [f"# Backtest {config['run_id']}", "",
-             f"Store: slots {config['store']['slot_start']}–{config['store']['slot_end_exclusive']} (dev only). "
+             f"Store: slots {config['store']['slot_start']}–{config['store']['slot_end_exclusive']} "
+             f"({config['store'].get('period', 'dev')} period"
+             + (f"; decisions only in {config['decide_range'][0]}–{config['decide_range'][1]}, the rest is warm-up"
+                if config.get("decide_range") else "") + "). "
              f"Engine {config.get('engine_commit', 'unknown')}. Signals {config['signals']}, positions {config['positions']}, "
              f"{config['seconds']} s.",
              f"Entry/exit delay d, intra-slot position q={config['q']}, own slippage tolerance {config['slippage_tol']}, "
@@ -359,6 +384,10 @@ def write_report(run_dir, cfg):
                     "and segments).", ""] if config.get("only") else []) + ([f"**Dry run: decisions only in slots {config['slot_range'][0]}–{config['slot_range'][1]}. "
                     "This checks the mechanics (it runs, time, memory); the numbers are not a result.**", ""]
                    if config.get("slot_range") else []) + [
+             f"Data window end {config['store']['slot_end_exclusive']}: no position enters or exits at or after it "
+             "(checked). Positions still open there are closed on the window's last slot (exit reason window_end); "
+             "entries after it are skipped" + (": " + "; ".join(f"{f} {n} closed, {k} skipped" for f, n, k in window)
+                                               if window else ": none") + ".", "",
              "## Deviations from the spec", ""] + [f"- {x}" for x in DEVIATIONS] + (
              [f"- F6 cap, measured on {c['sampled_pool_days']} sampled pool-days: qualifying triggers per pool-day median "
               f"{c['triggers_median']:.0f}, p90 {c['triggers_p90']:.0f}; {c['dropped_share'] * 100:.0f}% of triggers are not traded."]
@@ -367,70 +396,76 @@ def write_report(run_dir, cfg):
     for t in tr:
         lines.append(f"- {t['family']} {t['variant']} ({t['segment']}, {t['regime']}): {'PASS' if t['gate_pass'] else 'no'}")
     fam = sorted((s for s in base if s["family"] in FAMILIES),
-                 key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["size_sol"], s["d"]))
-    lines += ["", "## Stop-rule measure per strategy (base costs)", "",
+                 key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["farm"], s["size_sol"], s["d"], s["q"]))
+    lines += ["", "## Stop-rule measure per strategy (base costs, no overlay)", "",
               f"Net P&L per trade in SOL after all costs (failed entries included), 95% CI by day bootstrap. "
               f"GO: CI above 0; ADJUST: mean above 0; STOP: mean ≤ 0; fewer than {MIN_TRADES} trades: no verdict. "
               f"Gate sizes: {', '.join(str(x) for x in GATE_SIZES)} SOL (10 SOL capital); 2 SOL is informative and "
               "larger sizes are capacity information only.",
               "",
-              "| family | segment | regime | variant | size SOL | d | trades | days | net SOL/trade | 95% CI | verdict | mean % | "
-              "win | payoff | top-1% share of P&L | edge vs N2 | edge 95% CI | note |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "Farm: pools by the farming split at the trigger (all, organic, flagged; n/a where there is none).",
+              "",
+              "| family | segment | regime | variant | farm | size SOL | d | q | trades | days | net SOL/trade | 95% CI | verdict | "
+              "mean % | win | payoff | top-1% share of P&L | edge vs N2 | edge 95% CI | note |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in fam:
         ci = f"{_sol(s['pnl_ci_lo'])} … {_sol(s['pnl_ci_hi'])}" if s["pnl_ci_lo"] is not None else ""
         eci = f"{_pct(s['edge_ci_lo'])} … {_pct(s['edge_ci_hi'])}" if s["edge_ci_lo"] is not None else ""
         note = size_note(s["size_sol"])
-        lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
-                     f"{s['filled']} | {s['days']} | "
+        lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['farm']} | {s['size_sol']} | "
+                     f"{s['d']} | {s['q']} | {s['filled']} | {s['days']} | "
                      f"{_sol(s['mean_pnl_sol'])} | {ci} | {s['verdict']} | {_pct(s['mean_ret'])} | "
                      f"{_num(s['win_rate'] and s['win_rate'] * 100, '.0f')}% | {_num(s['payoff'], '.2f')} | "
                      f"{_num(s['top1_pnl_share'] and s['top1_pnl_share'] * 100, '.0f')}% | "
                      f"{_pct(s['edge_vs_n2'])} | {eci} | {note} |")
-    lines += ["", "## Base cost scenario", "",
+    lines += ["", "## Base cost scenario (no overlay)", "",
               "Mean = mean return per filled trade after all costs. Drift = mean historical mid move entry→exit without us, "
               f"excluding degenerate states (mid move above ×{MAX_JUMP}: near-empty pool reserves; share shown); "
               "mean − drift ≈ our costs and impact; the median of (return − drift) per trade is shown as well. SL = stop-loss exits (share, realized mean). "
               "CIs: 95%, bootstrap over days. Ex-top: mean without the best 3 trades / best 1%.",
               "",
-              "| family | segment | regime | variant | size SOL | d | tau | n | filled | mean | median | win | 95% CI | "
+              "| family | segment | regime | variant | farm | size SOL | d | q | tau | n | filled | mean | median | win | 95% CI | "
               "ex-top3 / ex-top1% | "
               "drift (excluded) | median ret − drift | "
               "SL share / mean | total PnL SOL | N2 mean | edge vs N2 | edge 95% CI |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in base:
         ci = f"{_pct(s['ci_lo'])} … {_pct(s['ci_hi'])}" if s["ci_lo"] is not None else ""
         eci = f"{_pct(s['edge_ci_lo'])} … {_pct(s['edge_ci_hi'])}" if s["edge_ci_lo"] is not None else ""
         win = "" if s["win_rate"] is None else f"{s['win_rate'] * 100:.0f}%"
         sl = "" if s["stop_loss_share"] is None else f"{s['stop_loss_share']*100:.0f}% / {_pct(s['stop_loss_mean'])}"
-        lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
-                     f"{s['tau']} | {s['n']} | {s['filled']} | "
+        lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['farm']} | {s['size_sol']} | "
+                     f"{s['d']} | {s['q']} | {s['tau']} | {s['n']} | {s['filled']} | "
                      f"{_pct(s['mean_ret'])} | {_pct(s['median_ret'])} | {win} | {ci} | "
                      f"{_pct(s['mean_ex_top3'])} / {_pct(s['mean_ex_top1pct'])} | "
                      f"{_pct(s['hist_drift'])} ({_num(s['drift_excluded'] and s['drift_excluded'] * 100, '.2f')}%) | "
                      f"{_pct(s['median_cost'])} | {sl} | "
                      f"{s['total_pnl_sol']:+.2f} | {_pct(s['n2_mean_ret'])} | {_pct(s['edge_vs_n2'])} | {eci} |")
     diag = sorted((s for s in base if s["tau"] == base[0]["tau"]),
-                  key=lambda s: (s["family"], s["segment"], s["variant"], s["size_sol"], s["d"]))
-    lines += ["", "## Replay diagnostics (per position, base scenario)", "",
-              "| family | segment | variant | size SOL | d | reverted router txs | reverted direct txs | dropped sells | "
-              "counterfactual graduation | seed-pool exits |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+                  key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["farm"], s["size_sol"], s["d"], s["q"]))
+    lines += ["", "## Replay diagnostics (per position, base scenario, no overlay)", "",
+              "| family | segment | regime | variant | farm | size SOL | d | q | reverted router txs | reverted direct txs | "
+              "dropped sells | counterfactual graduation | seed-pool exits |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for s in diag:
-        lines.append(f"| {s['family']} | {s['segment']} | {s['variant']} | {s['size_sol']} | {s['d']} | "
+        lines.append(f"| {s['family']} | {s['segment']} | {s['regime']} | {s['variant']} | {s['farm']} | {s['size_sol']} | "
+                     f"{s['d']} | {s['q']} | "
                      f"{_num(s['reverted_router'], '.2f')} | "
                      f"{_num(s['reverted_direct'], '.2f')} | {_num(s['sells_dropped'], '.2f')} | "
                      f"{_num(s['cf_graduation'] and s['cf_graduation'] * 100, '.1f')}% | "
                      f"{_num(s['seed_pool'] and s['seed_pool'] * 100, '.1f')}% |")
     sims = capital_sims(results, cfg, summary)
     if sims:
-        lines += ["", f"## Capital simulation: {CAPITAL_SOL:g} SOL, fixed size, at most {MAX_POSITIONS} positions (base costs)", "",
+        lines += ["", f"## Capital simulation: {CAPITAL_SOL:g} SOL, fixed size, at most {MAX_POSITIONS} positions (base costs, "
+                  "no overlay)", "",
                   "Candidates: GO/ADJUST groups at a gate size plus the best variant per family and segment. Trades that "
                   "do not fit (positions full or cash short) are skipped. Drawdown on equity at cost.", "",
-                  "| family | segment | farm | variant | size SOL | d | q | trades | skipped | final SOL | return | max drawdown |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                  "| family | segment | regime | farm | variant | size SOL | d | q | trades | skipped | final SOL | return | "
+                  "max drawdown |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for c in sims:
-            lines.append(f"| {c['family']} | {c['segment']} | {c['farm']} | {c['variant']} | {c['size_sol']} | {c['d']} | {c['q']} | "
+            lines.append(f"| {c['family']} | {c['segment']} | {c['regime']} | {c['farm']} | {c['variant']} | {c['size_sol']} | "
+                         f"{c['d']} | {c['q']} | "
                          f"{c['taken']} | {c['skipped_capacity']} | {c['final_sol']:.2f} | "
                          f"{_pct(c['final_sol'] / CAPITAL_SOL - 1)} | {c['max_drawdown'] * 100:.1f}% |")
     eff = overlay_effects(results, cfg)

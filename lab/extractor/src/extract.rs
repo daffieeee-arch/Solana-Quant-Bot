@@ -36,7 +36,7 @@ const JITO_TIP_ACCOUNTS: [&str; 8] = [
 ];
 
 /// Context columns that precede the IDL fields in every event table.
-pub const EVENT_CONTEXT: [(&str, Kind); 24] = [
+pub const EVENT_CONTEXT: [(&str, Kind); 30] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     ("signature", Kind::Utf8),
@@ -65,6 +65,16 @@ pub const EVENT_CONTEXT: [(&str, Kind); 24] = [
     ("parent_ix_data", Kind::Utf8),
     // Required signers, comma separated (fee payer first); null when the fee payer is the only one.
     ("signers", Kind::Utf8),
+    // The parent instruction's accounts by IDL name (JSON {name: key}; "_extra" holds remaining
+    // accounts beyond the IDL list). Null when LAB_IX_ACCOUNTS_JSON=0 or the parent is unknown.
+    ("ix_accounts", Kind::Utf8),
+    // The same for five accounts as their own columns, null where the instruction variant has no
+    // account of that name. Prefixed because events have their own pool/user/mint fields.
+    ("ix_pool", Kind::Utf8),
+    ("ix_user", Kind::Utf8),
+    ("ix_global_config", Kind::Utf8),
+    ("ix_base_mint", Kind::Utf8),
+    ("ix_quote_mint", Kind::Utf8),
 ];
 
 // No signature column: (slot, tx_index) identifies the transaction, and the 88-character
@@ -165,6 +175,8 @@ const LAMPORTS_PER_SIGNATURE: u64 = 5_000;
 
 pub struct LabPlugin {
     max_same_slot_errors: u64,
+    /// Write the ix_accounts JSON column (LAB_IX_ACCOUNTS_JSON=0 keeps only the fixed columns).
+    ix_accounts_json: bool,
     /// Per firehose thread: the slot of the last error and how often it failed in a row.
     last_error: Mutex<HashMap<usize, (u64, u64)>>,
     /// Per firehose thread: the slot of the last HTTP 429 and how many came in a row.
@@ -254,6 +266,7 @@ impl LabPlugin {
     pub fn new(sink: Arc<Sink>, coverage: Arc<Coverage>) -> anyhow::Result<Self> {
         Ok(Self {
             max_same_slot_errors: std::env::var("LAB_MAX_SAME_SLOT_ERRORS").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
+            ix_accounts_json: std::env::var("LAB_IX_ACCOUNTS_JSON").map_or(true, |v| v != "0"),
             last_error: Mutex::new(HashMap::new()),
             last_429: Mutex::new(HashMap::new()),
             programs: [ProgramIdl::new("pump", PUMP_IDL)?, ProgramIdl::new("pump_amm", PUMP_AMM_IDL)?],
@@ -405,6 +418,22 @@ impl LabPlugin {
             }
         };
 
+        // The parent instruction's accounts by IDL name: [ix_accounts, ix_pool, ix_user,
+        // ix_global_config, ix_base_mint, ix_quote_mint].
+        let parent_accounts = |program: Option<&[u8]>, data: &[u8], accounts: &[u8]| -> [Val; 6] {
+            let named = program.and_then(|k| self.programs.iter().find(|p| p.id.as_slice() == k)).and_then(|p| {
+                let keys: Vec<Option<String>> = accounts.iter().map(|&a| key_at(usize::from(a)).map(b58)).collect();
+                p.idl.named_accounts(data, &keys)
+            });
+            match named {
+                Some(n) => {
+                    let [a, b, c, d, e] = n.fixed.map(|v| v.map_or(Val::Null, Val::Str));
+                    [if self.ix_accounts_json { Val::Str(n.json) } else { Val::Null }, a, b, c, d, e]
+                }
+                None => std::array::from_fn(|_| Val::Null),
+            }
+        };
+
         if meta.status.is_err() {
             self.counters.txs_failed_touching.fetch_add(1, Ordering::Relaxed);
             let mut discs = Vec::new();
@@ -510,14 +539,14 @@ impl LabPlugin {
 
                 // Parent = nearest earlier instruction one level up; the outer instruction when
                 // the event is emitted directly below it.
-                let (parent_program, parent_disc, parent_name, parent_args, parent_data) = {
+                let (parent_program, parent_disc, parent_name, parent_args, parent_data, parent_accts) = {
                     let earlier = &group.instructions[..j];
                     let parent = match inner.stack_height {
                         Some(h) => earlier
                             .iter()
                             .rev()
                             .find(|p| p.stack_height == Some(h.saturating_sub(1)))
-                            .map(|p| (p.instruction.program_id_index, &p.instruction.data)),
+                            .map(|p| (p.instruction.program_id_index, &p.instruction.data, &p.instruction.accounts)),
                         // Without stack heights: the nearest earlier non-event instruction of the
                         // same program, else the outer instruction if it is that program.
                         None => earlier
@@ -527,14 +556,14 @@ impl LabPlugin {
                                 key_at(usize::from(p.instruction.program_id_index)) == Some(pk)
                                     && !p.instruction.data.starts_with(&EVENT_IX_TAG)
                             })
-                            .map(|p| (p.instruction.program_id_index, &p.instruction.data)),
+                            .map(|p| (p.instruction.program_id_index, &p.instruction.data, &p.instruction.accounts)),
                     };
                     let parent = parent.or_else(|| {
                         (inner.stack_height == Some(2) || key_at(usize::from(outer_ix.program_id_index)) == Some(pk))
-                            .then_some((outer_ix.program_id_index, &outer_ix.data))
+                            .then_some((outer_ix.program_id_index, &outer_ix.data, &outer_ix.accounts))
                     });
                     match parent {
-                        Some((pidx, pdata)) => {
+                        Some((pidx, pdata, paccounts)) => {
                             let pkey = key_at(usize::from(pidx));
                             let (name, args) = decode_ix(pkey, pdata);
                             let raw = ix_raw(pdata, &args);
@@ -544,9 +573,10 @@ impl LabPlugin {
                                 name,
                                 args,
                                 raw,
+                                parent_accounts(pkey, pdata, paccounts),
                             )
                         }
-                        None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null),
+                        None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null, std::array::from_fn(|_| Val::Null)),
                     }
                 };
 
@@ -588,6 +618,7 @@ impl LabPlugin {
                     parent_data,
                     signers.clone(),
                 ]);
+                values.extend(parent_accts);
                 values.extend(decoded.values);
                 event_seq += 1;
                 self.counters.events.fetch_add(1, Ordering::Relaxed);

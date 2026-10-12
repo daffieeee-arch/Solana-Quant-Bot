@@ -65,6 +65,11 @@ H = "::HUGEINT"
 B = "::BIGINT"
 
 
+# One epoch (two chunks) before the hold-out: at least the decisions' burn-in (development.burn_in_slots,
+# 324,000) and on chunk boundaries.
+HOLDOUT_WARMUP_SLOTS = 432_000
+
+
 def load_defaults(path=DEFAULTS):
     with open(path) as f:
         return yaml.safe_load(f)
@@ -80,12 +85,24 @@ def period_range(period, cfg, from_slot=None, to_slot=None):
             raise SystemExit("the dev period must end at or before the hold-out start")
         return lo, hi
     if period == "holdout":
-        return hold["start_slot"], hold["end_slot_exclusive"]
+        # The dev epoch before the hold-out is in the store as warm-up only (the 24 h burn-in of token,
+        # pool and farmer state); the final run decides only inside the hold-out (tournament --decide).
+        return hold["start_slot"] - HOLDOUT_WARMUP_SLOTS, hold["end_slot_exclusive"]
     if period == "validate":
         lo, hi = VALIDATE
         if lo < hold["end_slot_exclusive"]:
             raise SystemExit("the validation period overlaps the hold-out")
         return lo, hi
+    if period == "forward":
+        # After the validation epoch: 1053 on, the 200 ms paper period (week2-defaults
+        # never_include_from_slot). For illustration only (e.g. case timelines), never for
+        # strategy results or parameter choices; the store's meta says so.
+        if from_slot is None or to_slot is None:
+            raise SystemExit("forward needs --from-slot and --to-slot")
+        first = cfg["windows"]["never_include_from_slot"]
+        if from_slot < first:
+            raise SystemExit(f"forward starts at or after never_include_from_slot ({first})")
+        return from_slot, to_slot
     raise ValueError(period)
 
 
@@ -393,8 +410,9 @@ def build(period, out_path, cfg, chunks, log=print):
                             WHERE e.kind IN ('buy', 'sell') AND e.slot >= {ch[0]} AND e.slot < {ch[1]} GROUP BY ALL""")
         sweep = c.src("pump_amm/SweepPoolFeeEvent")
         if sweep:
+            # (A SEMI JOIN's right side cannot be filtered in the WHERE: the pool filter is a subquery.)
             con.execute(f"""INSERT INTO s.pool_sweeps SELECT pool, slot, tx_index, outer_ix, inner_ix, amount{B}, bucket::INTEGER
-                            FROM {sweep} SEMI JOIN s.pools p USING (pool) WHERE p.quote_class IN ('sol', 'reversed')""")
+                            FROM {sweep} WHERE pool IN (SELECT pool FROM s.pools WHERE quote_class IN ('sol', 'reversed'))""")
         log(f"pass 2 {ch[0]} ({time.time() - t0:.0f}s, chunk wrote {(_io_written() - w0) / 1e9:.2f} GB, "
             f"total {_io_written() / 1e9:.1f} GB)")
         _write_check(f"pass 2 chunk {ch[0]}", _io_written() - w0, log)
@@ -427,6 +445,7 @@ def build(period, out_path, cfg, chunks, log=print):
         "ms_per_slot": {int(e): round(v, 2) for e, v in ms},
         "farmer": {"ratio": FARMER_RATIO, "min_trades": FARMER_MIN_TRADES, "window_ms": DAY_MS},
         "unhandled_event_files": unhandled,
+        "purpose": "illustration only (forward period)" if period == "forward" else period,
         "git_commit": commit,
     }
     con.execute("CREATE TABLE s.meta AS SELECT ? AS json", [json.dumps(meta)])
@@ -520,13 +539,16 @@ def _classify_pools(con, P, chunks, log):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("period", choices=["dev", "holdout", "validate"])
+    ap.add_argument("period", choices=["dev", "holdout", "validate", "forward"])
+    ap.add_argument("--illustration", action="store_true", help="forward: required, the store is for illustration only")
     ap.add_argument("--final", action="store_true", help="required for the one-time hold-out build")
-    ap.add_argument("--from-slot", type=int, help="dev only: first slot (default: development.start_slot_target)")
-    ap.add_argument("--to-slot", type=int, help="dev only: end slot, exclusive (default: the hold-out start)")
+    ap.add_argument("--from-slot", type=int, help="dev and forward: first slot (dev default: development.start_slot_target)")
+    ap.add_argument("--to-slot", type=int, help="dev and forward: end slot, exclusive (dev default: the hold-out start)")
     ap.add_argument("--out", help="output file (default: <store dir>/<period>.duckdb)")
     ap.add_argument("--out-dir", default=os.environ.get("LAB_STORE_DIR", STORE_DIR))
     a = ap.parse_args()
+    if a.period == "forward" and not a.illustration:
+        raise SystemExit("a forward store is for illustration only: pass --illustration")
     cfg = load_defaults()
     if os.path.exists(DISK_LOW):
         raise SystemExit(f"{DISK_LOW} exists (disk guard): not starting a store build")
