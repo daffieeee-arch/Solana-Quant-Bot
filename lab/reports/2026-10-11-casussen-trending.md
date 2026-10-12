@@ -1,18 +1,18 @@
-# Casussen uit eigen data: "trending", dumpers en blijvers (2026-10-11, herselectie met de scherpe dev-bundel-vlag)
+# Casussen uit eigen data: "trending", dumpers en blijvers (2026-10-12, volledige herrun met de scherpe dev-bundel-vlag)
 
-Op verzoek van de eigenaar, via de coördinator. Alleen ontwikkeldata (11–30 september 2026 UTC, vóór de hold-out), alleen pump-tokens met SOL-quote in hun eigen migratiepool; reversed pools en andere pools doen niet mee (farming-plekken). Koers = reserve-prijs van de pool (e/b, incl. virtuele reserves bij boost-pools; dezelfde koers die een koersdienst toont). Lijsten eisen ≥ 100 handelaren, ≥ 300 SOL volume en echte liquiditeit op het meetmoment (≥ 5 SOL per dag, ≥ 10 SOL na 7 dagen). Code: `lab/wallets/cases.py`, `cases_report.py`; ruwe output met tijdlijnen per casus: `data-old-faithful-one/lab/wallets/cases-v2/` (herselectie uit de bewaarde dagaggregaten van de NAS-run `cases-v1`, commit 11b081c; `report.md` daar bevat de tijdlijnen). De DexScreener-links zijn om zelf te kijken; het is geen databron.
+Op verzoek van de eigenaar, via de coördinator. Alleen ontwikkeldata (11–30 september 2026 UTC, vóór de hold-out), alleen pump-tokens met SOL-quote in hun eigen migratiepool; reversed pools en andere pools doen niet mee (farming-plekken). Koers = reserve-prijs van de pool (e/b, incl. virtuele reserves bij boost-pools; dezelfde koers die een koersdienst toont). Lijsten eisen ≥ 100 handelaren, ≥ 300 SOL volume en echte liquiditeit op het meetmoment (≥ 5 SOL per dag, ≥ 10 SOL na 7 dagen). Code: `lab/wallets/cases.py`, `cases_report.py`; ruwe output met tijdlijnen per casus: `data-old-faithful-one/lab/wallets/cases-v1/` (NAS-run op commit 1b74b66; `report.md` daar bevat alle tijdlijnen; de LAB ui-pagina "Casussen" toont dezelfde lijsten). De DexScreener-links zijn om zelf te kijken; het is geen databron.
 
 ## Wat je ziet, in gewoon Nederlands
 
 1. **"Trending 24 u" (top-5 per dag op 24-uurs-rendement × volume) is over 20 dagen voor 95% nep.** 95 van de 100 toppers zijn dev-bundels: de token gradueert in zijn eigen create-slot (de maker koopt de hele curve voor 85 SOL met 1–2 wallets, bij 10 van de 95 met 3–5 wallets), waarna 6.000–27.000 SOL in de pool wordt gestort en de koers ×10.000 tot ×100.000 boven de openingsprijs komt. Steeds dezelfde namen (AROS, VSOF, USDF, WOFI, WOTF, WSOS, ECTF, TDOF, NTDA) met nieuwe mints, mediaan 2.049 "handelaren", binnen een dag leeggehaald met één verkoop van ~10.500 SOL, vaak door de creator. De "mcap" van tientallen miljoenen SOL is een rekenartefact van een leeggekochte pool. De 5 echte: PAID (15 sept), TIGRINO (18 sept), CLIP en FAMILY (21 sept), manifest (26 sept).
-2. **De vlag is twee keer aangescherpt en staat nu op "graduatie in de create-slot óf ≤ 5 curve-kopers".** "Eén partij > 50% van de pool-kopen" ving 46 van de 100; "create-slot én ≤ 2 curve-kopers" 85, maar dezelfde operators gebruiken ook 3–5 curve-wallets: alle 10 "organische" 7-daagse instorters van die ronde hadden er precies 4, en 35 van de 100 "organische" stijgers gradueerden alsnog in de create-slot. Van alle token-dagen met ≥ 100 handelaren en ≥ 300 SOL volume (26.274 in 20 dagen) is 37% zo'n create-slot-graduatie (7.470 met ≤ 2 kopers, 747 met 3–5, 1.469 met 6–50); hun mediane einde van de dag is 0–1% van de piek. De dagaggregaten zijn bewaard, dus deze herselectie kostte geen store-scan (`cases.py --reselect`).
+2. **De vlag is twee keer aangescherpt en staat nu op "graduatie in de create-slot óf ≤ 5 curve-kopers".** "Eén partij > 50% van de pool-kopen" ving 46 van de 100; "create-slot én ≤ 2 curve-kopers" 85, maar dezelfde operators gebruiken ook 3–5 curve-wallets: alle 10 "organische" 7-daagse instorters van die ronde hadden er precies 4, en 35 van de 100 "organische" stijgers gradueerden alsnog in de create-slot. Van alle token-dagen met ≥ 100 handelaren en ≥ 300 SOL volume (26.274 in 20 dagen) is 37% zo'n create-slot-graduatie (7.470 met ≤ 2 kopers, 747 met 3–5, 1.469 met 6–50); hun mediane einde van de dag is 0–1% van de piek. De dag- en weekaggregaten zijn bewaard, dus een volgende regelwijziging kost geen store-scan (`cases.py --reselect`).
 3. **Met de scherpe vlag blijven 100 organische stijgers over, en die zien er heel anders uit dan de bundels:** mediaan 8.486 handelaren, 31.700 SOL volume op de dag, piek 275× de dagopening (meestal vanaf de curve) en aan het eind van de dag nog 31% van de piek (kwartielen 18% en 57%; 32 van de 100 eindigen boven de helft, 12 boven 80%). Niemand van hen gradueerde in de create-slot. Voorbeelden: e/acc (35.777 handelaren, 456.000 SOL op 26 sept, einde 41% van de piek), PAID (23.944 handelaren, 15 sept, 52%), SI (24.758 handelaren, 30 sept, 50%), TIGRINO (72%), HUHCAT (62%), TIPPED, PARASITE, KARDASHEV, TWINE, FROINK, BANDIT, FLEX. Dit zijn de tokens die de eigenaar in Phantom ziet stijgen; 4 van de 100 staan een latere dag bij de dumpers.
 4. **De dumpers (top-5 per dag op volume die ≤ 10% van hun piek eindigden) zijn voor 56% dev-bundels** (26 van de "één koper"-structuur, 30 create-slot-graduaties met 3–50 kopers die dezelfde dag worden gedumpt). De 44 organische dumpers: mediaan 8.336 handelaren, 38.500 SOL volume, piek 240× en einde op 3% van de piek, met nog 81 SOL in de pool (SOLFROG 160.000 SOL op 28 sept, einde 0%; JACK, CAKE, KEVIN, HYPED, Cream, FAMILY, GENO). Hype, piek, instorting — op dezelfde dag.
-5. **Na 7 dagen blijven weinig tokens over.** Van de top-10 "blijvers" op mcap zijn 7 de bundelstructuur (WSOS, FAIR, fomo, MCAT, WEPE, MINESTOCK: 145–2.300 handelaren, koers nooit bewogen). Echt zijn PAID (88.126 handelaren, 1,28 mln SOL volume, ~116.000 SOL mcap na een week op een derde van de piek), JEANPHIL (52.568 handelaren, 60% van de piek), USDF-DRMn (3.204 handelaren) en daaronder SDOG, Tilcayo, FLEX, HUHCAT, DRMR en parafactual; CALI (4 curve-kopers) valt onder de nieuwe vlag af. De 10 "instorters" met een piek-mcap van 15–42 miljoen SOL én alle 10 van de vorige "organische" instorterslijst zijn create-slot-structuren; de organische instorterslijst over 7 dagen is daarom leeg tot de NAS de 7-daagse selectie opnieuw draait met de nieuwe vlag (het weekaggregaat wordt vanaf nu ook bewaard).
-6. **In de eerste 15 minuten zijn organische stijgers en organische dumpers bijna niet uit elkaar te houden** (71 stijgers en 44 dumpers met tijdlijn, mediaan op +15 min na de pool-opening): graduatie na 4,2 tegen 2,6 min, 452 tegen 267 curve-kopers, aandeel grote kopers 0,00 tegen 0,01, insider-aandeel 0,04 tegen 0,06, pool-handelaren 2.171 tegen 2.356, koers 3,7× tegen 4,4× de open, organisch pool-volume 3.400 tegen 5.700 SOL. De grote verschillen uit de vorige versie (insider-aandeel 0,00 tegen 0,78) kwamen door de bundels in de dumperslijst. Dit sluit aan bij onderzoek 1b over 18 dagen: op +15 min geven koers en instroom hooguit een lift van ~2×, en wie na een dag nog 50% van de piek vasthoudt, is op +15 min niet te zien. De 29 stijgers zonder tijdlijn krijgen die bij de NAS-herrun.
+5. **Na 7 dagen blijven weinig tokens over.** Van de top-10 "blijvers" op mcap zijn 7 de bundelstructuur (WSOS, FAIR, fomo, MCAT, WEPE, MINESTOCK: 145–2.300 handelaren, koers nooit bewogen). Echt zijn PAID (88.126 handelaren, 1,28 mln SOL volume, ~116.000 SOL mcap na een week op een derde van de piek), JEANPHIL (52.568 handelaren, 60% van de piek), USDF-DRMn (3.204 handelaren) en daaronder SDOG, Tilcayo, FLEX, HUHCAT, DRMR, parafactual en UPTOBER (47.407 handelaren, 28% van de piek). De 10 "instorters" met een piek-mcap van 15–42 miljoen SOL zijn alle create-slot-structuren. De organische instorters over 7 dagen zijn de echte hype-tokens: NPC (27.295 handelaren, piek-mcap 52.000 SOL, na een week 2%), TIGRINO (24.246 handelaren, 216.000 SOL volume, 3%), fomopay, YAP, POT, familiars (17–21k handelaren, 1–4% over), plus vier kleine met 700–2.200 handelaren (TDOF-eS3i, DAYTRADER, LAUNCHPAD, $GULL) die net boven de vlaggrens van 5 curve-kopers zitten.
+6. **In de eerste 15 minuten zijn organische stijgers en organische dumpers maar matig uit elkaar te houden** (alle 100 stijgers en 44 dumpers met tijdlijn, mediaan op +15 min na de pool-opening): de dumpers gradueerden sneller (2,6 tegen 7,5 min), met minder curve-kopers (267 tegen 456) en juist méér vroege pool-handel (2.356 tegen 1.688 handelaren, 5.700 tegen 2.600 SOL organisch volume, koers 4,4× tegen 3,3× de open); insider-aandeel 0,06 tegen 0,04, aandeel grote kopers 0,01 tegen 0,00, geen creator-verkopen bij beide. Kortom: snelle hype in het eerste kwartier hoort eerder bij de dumper dan bij de blijver. De grote verschillen uit de eerste versie (insider-aandeel 0,00 tegen 0,78) kwamen door de bundels in de dumperslijst. Dit sluit aan bij onderzoek 1b over 18 dagen: op +15 min geven koers en instroom hooguit een lift van ~2×, en wie na een dag nog 50% van de piek vasthoudt, is op +15 min niet te zien.
 7. **Gevolg.** Een trending-lijst uit eigen data begint met de dev-bundel-vlag (create-slot-graduatie of ≤ 5 curve-kopers); daarna is de lijst bruikbaar als casusselectie. Voor handelen zegt dit niets: of een 2×-filter netto iets oplevert staat in de spec M1+ voor LAB backtest.
 
-Beperkingen: 20 dagen (1 oktober is een halve dag en valt af); de 7-dagen-lijst loopt over de hele periode en is hieronder nog die van de NAS-run met de vorige vlag (zie punt 5); labels van kopers (wallet-score) komen pas na de NAS-run van stap 1.
+Beperkingen: 20 dagen (1 oktober is een halve dag en valt af); de 7-dagen-lijst loopt over de hele periode; labels van kopers (wallet-score) komen pas na de NAS-run van stap 1.
 
 ## Per dag: trending 24 u (met en zonder zelffinanciering) en pumpers/dumpers
 
@@ -321,7 +321,7 @@ Zelfgefinancierd (dev-bundel) = de token graduateerde in zijn create-slot, of ho
 | 2026-09-30 | trending_24h_organic | 4 | [Saw](https://dexscreener.com/solana/9twiuSdTVkwtAC9XQDG57dFRhF4iqPih461HJfMZKci9) | nee | 0.06 | 62,702 | +2478% | 412.9 | 6% | 15654 | 141 |
 | 2026-09-30 | trending_24h_organic | 5 | [SI](https://dexscreener.com/solana/9rJsqPD1UqeXo1dgPybwTKm7Luga8bXVQ5A3EiYFhfeA) | nee | 0.04 | 31,495 | +2465% | 205.1 | 13% | 11401 | 133 |
 
-## 7 dagen: blijvers en instorters (NAS-run met de vorige vlag "create-slot én ≤ 2 curve-kopers"; zie punt 5)
+## 7 dagen: blijvers en instorters (met en zonder zelffinanciering)
 
 | lijst | # | token | zelfgefin. | mcap na 7 d (SOL) | piek-mcap (SOL) | eind t.o.v. piek | volume 7 d | traders | SOL in pool (7 d) |
 |---|---|---|---|---|---|---|---|---|---|
@@ -335,16 +335,16 @@ Zelfgefinancierd (dev-bundel) = de token graduateerde in zijn create-slot, of ho
 | collapsed_7d | 8 | [WOFI](https://dexscreener.com/solana/RdSJAdbWBBgKejj8GDzmqcQPdpnhMPYBTNog77Qpump) | ja | 20 | 16,231,901 | 0% | 40,934 | 2006 | 1 |
 | collapsed_7d | 9 | [NTDA](https://dexscreener.com/solana/FfK9fj41K98EuNZK2oQDRWuoyT9vb4d4jR412HcMpump) | ja | 30 | 16,201,153 | 0% | 38,681 | 2981 | 6 |
 | collapsed_7d | 10 | [WOTF](https://dexscreener.com/solana/Zd8xgiFB1AGYTmZ78MS5APSXmDTNTLUJKuSGUD7pump) | ja | 41 | 15,563,557 | 0% | 40,458 | 1992 | 10 |
-| collapsed_7d_organic | 1 | [WOFI](https://dexscreener.com/solana/CeUfw3D5TUvfGu5ohSryU6JjY3gzkRVE9MbZwGuhpump) | nee | 18 | 4,295,584 | 0% | 21,448 | 2041 | 0 |
-| collapsed_7d_organic | 2 | [AROS](https://dexscreener.com/solana/3DQbzaaQtDpNyeKY3ZQFWbqZxr8FV1FwGMxf1WpVpump) | nee | 29 | 3,979,880 | 0% | 24,311 | 3107 | 5 |
-| collapsed_7d_organic | 3 | [WOTF](https://dexscreener.com/solana/25vDtFACaScGXszJ4AnqJq7LogwtrjHPRo75WmyEpump) | nee | 21 | 3,841,773 | 0% | 16,421 | 2067 | 2 |
-| collapsed_7d_organic | 4 | [VSOF](https://dexscreener.com/solana/2dfyCX3hJs6uzzXH2KPgHduDgsXCTP57mQf3E1nFpump) | nee | 28 | 3,695,332 | 0% | 16,102 | 2092 | 5 |
-| collapsed_7d_organic | 5 | [WOTF](https://dexscreener.com/solana/DRWUnUkFbvA5T6DchUmdtZTLxpj6sdFFUHJxHucxpump) | nee | 34 | 3,519,866 | 0% | 15,708 | 2064 | 7 |
-| collapsed_7d_organic | 6 | [WOTF](https://dexscreener.com/solana/2EmpacsA5czi6MKS9QKkbkoAAZdbyN5KQktcqzpEpump) | nee | 18 | 3,336,879 | 0% | 15,903 | 3076 | 0 |
-| collapsed_7d_organic | 7 | [WOTF](https://dexscreener.com/solana/21DiocZdsmK4tFxLAE1vRqP1psN9VV1Ud6GCwo3Npump) | nee | 25 | 2,504,309 | 0% | 13,216 | 2046 | 4 |
-| collapsed_7d_organic | 8 | [WSOS](https://dexscreener.com/solana/2Xy8hfogaKmCJdyuciMS9kjPwkDkigWCd5J1ZKuypump) | nee | 18 | 2,433,788 | 0% | 13,020 | 2057 | 0 |
-| collapsed_7d_organic | 9 | [WOTF](https://dexscreener.com/solana/CjeHX5YjMAzYTvdk544UpaM4gSo1ZrqGcHudZdXmpump) | nee | 24 | 2,175,281 | 0% | 12,349 | 2071 | 3 |
-| collapsed_7d_organic | 10 | [WOTF](https://dexscreener.com/solana/Dp94jxsGeghLhYWX34cjrnGorPwXzfpsSXv6WRQppump) | nee | 18 | 1,396,946 | 0% | 9,846 | 2044 | 0 |
+| collapsed_7d_organic | 1 | [TDOF](https://dexscreener.com/solana/eS3iMtCY7XPvib3ERakSjfHophQmRWLVzT6roTqpump) | nee | 18 | 340,868 | 0% | 7,909 | 1364 | 0 |
+| collapsed_7d_organic | 2 | [DAYTRADER](https://dexscreener.com/solana/HTsqNsBZc5sjooBTL2WrKvFxd6S8P3kEkPmATnfHpump) | nee | 39 | 110,921 | 0% | 7,725 | 745 | 9 |
+| collapsed_7d_organic | 3 | [LAUNCHPAD](https://dexscreener.com/solana/HKWp72BBE7giEdVciLf6PuKgkpo9jqT9V83ximEypump) | nee | 19 | 52,930 | 0% | 8,369 | 694 | 1 |
+| collapsed_7d_organic | 4 | [NPC](https://dexscreener.com/solana/7GUnr7krtQhJwd6ASY2VUprd9t4c64zcgCsjdmZepump) | nee | 1,168 | 51,938 | 2% | 124,351 | 27295 | 175 |
+| collapsed_7d_organic | 5 | [YAP](https://dexscreener.com/solana/jLz71QZfjnZZMLjUaCBw7KmUyftkkNq8NkWi2u9dyap) | nee | 403 | 46,566 | 1% | 139,656 | 19425 | 94 |
+| collapsed_7d_organic | 6 | [TIGRINO](https://dexscreener.com/solana/91ryaCo5yGpYZM3bs6GUPs97VWJQj7RozBmqPULgpump) | nee | 1,282 | 42,618 | 3% | 215,919 | 24246 | 196 |
+| collapsed_7d_organic | 7 | [$GULL](https://dexscreener.com/solana/XQvVFz2jrrqFvhdG4NRd2o9xCQci9Xn9nGYVumBpump) | nee | 20 | 40,947 | 0% | 6,349 | 2229 | 1 |
+| collapsed_7d_organic | 8 | [fomopay](https://dexscreener.com/solana/BP4Wic5LNKsqpmiREW6uNVEC16juvFCSd4WzVBatpump) | nee | 510 | 40,884 | 1% | 111,690 | 21212 | 117 |
+| collapsed_7d_organic | 9 | [POT](https://dexscreener.com/solana/4R2vepDVY7Gdcm2VKuAy6EbBfWsYSEsDJou1QGKuMfnf) | nee | 1,213 | 34,480 | 4% | 124,005 | 17432 | 190 |
+| collapsed_7d_organic | 10 | [familiars](https://dexscreener.com/solana/2PENPmfgJfq6CG3k4byj4oWwHf8SerqakmYHMkUupump) | nee | 689 | 33,150 | 2% | 115,656 | 19734 | 123 |
 | stayers_7d | 1 | [WSOS](https://dexscreener.com/solana/sEkKnqHR8KKrjMjFqurrzdyTn4hiivmM8JHKWmopump) | ja | 388,046 | 388,171 | 100% | 9,578 | 1808 | 2,609 |
 | stayers_7d | 2 | [WSOS](https://dexscreener.com/solana/6dWQ7YC1k5sydiAij5bdc8F5jGjnE6TFN5GSoYvdpump) | ja | 336,876 | 336,966 | 100% | 6,477 | 145 | 2,427 |
 | stayers_7d | 3 | [FAIR](https://dexscreener.com/solana/QbPr1ponxN4J7ozvkdh1dNzqc4zgdkE1RGygHeKpump) | ja | 312,884 | 312,987 | 100% | 12,803 | 2326 | 2,343 |
@@ -361,22 +361,22 @@ Zelfgefinancierd (dev-bundel) = de token graduateerde in zijn create-slot, of ho
 | stayers_7d_organic | 4 | [SDOG](https://dexscreener.com/solana/yFcTuQJCMsd1Asya15GZ7h4KGdxsujRLcUiTWWXpump) | nee | 13,854 | 25,138 | 55% | 65,040 | 12241 | 574 |
 | stayers_7d_organic | 5 | [Tilcayo](https://dexscreener.com/solana/AyYNfPtftg2zDP4ZbgcoQMggQtwLh4zpfVVmUJs2thto) | nee | 9,766 | 36,921 | 26% | 202,790 | 23162 | 595 |
 | stayers_7d_organic | 6 | [FLEX](https://dexscreener.com/solana/fvHLJUwsynVHJrssbZ8MLNyku9jt2izUspbBD4Spump) | nee | 9,667 | 59,967 | 16% | 120,302 | 13503 | 503 |
-| stayers_7d_organic | 7 | [CALI](https://dexscreener.com/solana/8k4sBtEeK4pf26noKqApv8NBTnuSJcbdwpKYknk5PbAA) | nee | 9,178 | 18,942 | 48% | 62,159 | 11162 | 460 |
-| stayers_7d_organic | 8 | [HUHCAT](https://dexscreener.com/solana/A9AHYeqb7nQk7LZUraw7rBCzYRjy2DRvE6NqWfFHKRdH) | nee | 3,643 | 31,660 | 12% | 135,371 | 21828 | 326 |
-| stayers_7d_organic | 9 | [DRMR](https://dexscreener.com/solana/7Xgc5RacHtGzfhw2HukUBk5V986yBbvshr7rrCoopump) | nee | 3,088 | 3,100 | 100% | 7,974 | 3593 | 227 |
-| stayers_7d_organic | 10 | [parafactual](https://dexscreener.com/solana/CvUX4G2tzq7J3ECmNvWZLayZYV6KpgQp6SJ5K8Uvsu5g) | nee | 2,737 | 32,217 | 8% | 79,831 | 13711 | 256 |
+| stayers_7d_organic | 7 | [HUHCAT](https://dexscreener.com/solana/A9AHYeqb7nQk7LZUraw7rBCzYRjy2DRvE6NqWfFHKRdH) | nee | 3,643 | 31,660 | 12% | 135,371 | 21828 | 326 |
+| stayers_7d_organic | 8 | [DRMR](https://dexscreener.com/solana/7Xgc5RacHtGzfhw2HukUBk5V986yBbvshr7rrCoopump) | nee | 3,088 | 3,100 | 100% | 7,974 | 3593 | 227 |
+| stayers_7d_organic | 9 | [parafactual](https://dexscreener.com/solana/CvUX4G2tzq7J3ECmNvWZLayZYV6KpgQp6SJ5K8Uvsu5g) | nee | 2,737 | 32,217 | 8% | 79,831 | 13711 | 256 |
+| stayers_7d_organic | 10 | [UPTOBER](https://dexscreener.com/solana/8Vte25yt28L8BfLXm8DrzjSYEyaKX8yry6hRKRmX7FGd) | nee | 1,307 | 4,733 | 28% | 24,583 | 47407 | 156 |
+
 ## Organische stijgers tegenover organische dumpers in de eerste 15 minuten
 
 | kenmerk op +15 min | stijgers (mediaan) | dumpers (mediaan) |
 |---|---|---|
-| min. tot graduatie | 4.23 (n=71) | 2.55 (n=44) |
-| unieke kopers curve | 452 (n=71) | 266.50 (n=44) |
-| aandeel kopers ≥ 5 SOL | 0.00 (n=71) | 0.01 (n=44) |
-| netto instroom curve (SOL) | 85.01 (n=71) | 85.01 (n=44) |
-| insider-aandeel | 0.04 (n=71) | 0.06 (n=44) |
-| creator-verkopen | 0 (n=71) | 0.00 (n=44) |
-| traders pool | 2171 (n=71) | 2355.50 (n=44) |
-| organisch volume pool (SOL) | 3405.73 (n=71) | 5661.22 (n=44) |
-| prijs t.o.v. open | 3.70 (n=71) | 4.37 (n=44) |
-| split-buyer-events | 0 (n=71) | 0.00 (n=44) |
-
+| min. tot graduatie | 7.46 (n=100) | 2.55 (n=44) |
+| unieke kopers curve | 455.50 (n=100) | 266.50 (n=44) |
+| aandeel kopers ≥ 5 SOL | 0.00 (n=100) | 0.01 (n=44) |
+| netto instroom curve (SOL) | 85.01 (n=100) | 85.01 (n=44) |
+| insider-aandeel | 0.04 (n=100) | 0.06 (n=44) |
+| creator-verkopen | 0.00 (n=100) | 0.00 (n=44) |
+| traders pool | 1688.00 (n=100) | 2355.50 (n=44) |
+| organisch volume pool (SOL) | 2592.19 (n=100) | 5661.22 (n=44) |
+| prijs t.o.v. open | 3.34 (n=100) | 4.37 (n=44) |
+| split-buyer-events | 0.00 (n=100) | 0.00 (n=44) |
