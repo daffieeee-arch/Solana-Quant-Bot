@@ -107,14 +107,16 @@ class Open:
 class Engine:
     def __init__(self, feed, journal, risk_path, *, variants=F7_GRID, d=1, q=0.5, tol=0.05, tau="empirical",
                  dev_bounds=None, n2_k=1, ignore_risk=False, cfg=None, clock=None, backup=True, segments=None,
-                 farm="all"):
+                 farm="all", watchlist=None):
         """segments: trade F7 only there ('curve', 'pool_normal', 'pool_reversed'; None: everywhere);
         farm: 'organic' trades only triggers in pools that were not flagged for volume farming in the
-        hour before t (the backtest's `farm` label), 'all' trades every trigger (the label is journaled)."""
+        hour before t (the backtest's `farm` label), 'all' trades every trigger (the label is journaled);
+        watchlist: a paper.watchlist_live.LiveWatchlist fed with the pool trades seen (live: it writes the
+        recorder's watchlist-current.json every minute)."""
         if farm not in ("all", "organic"):
             raise ValueError(f"farm must be 'all' or 'organic', not {farm!r}")
         self.feed, self.j, self.risk_path = feed, journal, risk_path
-        self.segments, self.farm = (set(segments) if segments else None), farm
+        self.segments, self.farm, self.watch = (set(segments) if segments else None), farm, watchlist
         self.farm_win = defaultdict(list)  # pool -> sorted [(slot, order, sol, farmer sol)] of its trades, the last ~hour
         self.variants = [(tp, T) for tp, T in variants]
         self.d, self.q, self.tol, self.tau = d, q, tol, replay.Tau(tau)
@@ -197,13 +199,19 @@ class Engine:
             self._f7(venue, key, legs, slot)
             if venue == "pool" or venue == "curve":
                 self._hour_index(venue, key, legs, slot)
-        # 4b. the pools' farming windows (after the signals: a decision at t looks at [t - 1 h, t - 1])
+        # 4b. the pools' farming windows (after the signals: a decision at t looks at [t - 1 h, t - 1]),
+        # and the live watchlist's minute aggregates
         for (venue, key), legs in by_key.items():
             if venue == "pool":
                 self._farm_add(key, legs)
+                if self.watch is not None and self.minute is not None:
+                    self.watch.trades(key, self.minute, legs)
         if hasattr(self.feed, "drain_history"):  # trades the feed has as history only (a recorder backfill)
             for pool, legs in self.feed.drain_history():
                 self._farm_add(pool, legs)
+                if self.watch is not None and self.minute is not None:
+                    for l in legs:
+                        self.watch.trades(pool, self.watch._minute_of(l.slot) or self.minute, [l], late=True)
         # 5. time passes for tokens without events in this slot
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
@@ -223,6 +231,10 @@ class Engine:
         if block_time is None:
             return
         minute = block_time // 60
+        if self.watch is not None:
+            self.watch.slot(slot, minute)
+            if minute != self.minute:
+                self.watch.minute(minute, slot)
         day = _day(block_time)
         if self.day != day:
             if self.day is not None:
@@ -671,6 +683,8 @@ def main():
     ap.add_argument("--to", dest="hi", type=int, help="replay: end slot (exclusive)")
     ap.add_argument("--live", help="live: the recorder's output directory (LiveFeed; tokens and pools from --store)")
     ap.add_argument("--catch-up", action="store_true", help="live: stop after the last complete segment")
+    ap.add_argument("--no-watchlist", action="store_true",
+                    help="live: do not write the recorder's watchlist-current.json (paper.watchlist_live)")
     ap.add_argument("--journal", required=True)
     ap.add_argument("--config", help="paper config (YAML, e.g. paper/k3-paper-2026-10-12.yaml): segments, farm, variants, "
                                      "d, q, n2_k and the risk file; its sha256 goes into the journal")
@@ -713,8 +727,14 @@ def main():
         with open(a.risk, "rb") as f:
             j.state("risk_sha256_at_start", hashlib.sha256(f.read()).hexdigest())
         j.commit()
+    watch = None
+    if a.live and not a.no_watchlist:
+        from .watchlist_live import LiveWatchlist
+
+        watch = LiveWatchlist(feed, a.live)
     eng = Engine(feed, j, a.risk, variants=variants, d=a.d, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
-                 clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm)
+                 clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm,
+                 watchlist=watch)
     t0 = time.time()
     eng.run()
     print(f"{eng.events_seen} events, {time.time() - t0:.0f}s, journal {a.journal}")

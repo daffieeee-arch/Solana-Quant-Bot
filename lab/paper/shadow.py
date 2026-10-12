@@ -605,8 +605,13 @@ def run(a, log=print):
     ldir = os.path.join(out, "live")
     shutil.rmtree(ldir, ignore_errors=True)
     feed = ShadowFeed(rec, store=a.store, snapshot_before=lo, h24=h24, meta_bounds=(blo, bhi), memory=a.memory)
+    # The live watchlist runs beside it on what was received (the simulation keeps using the batch list).
+    from .watchlist_live import LiveWatchlist
+
+    watch = LiveWatchlist(feed, root)
     Engine(feed, Journal(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
-           dev_bounds=(blo, bhi)).run()
+           dev_bounds=(blo, bhi), watchlist=watch).run()
+    info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
     info["livefeed"] = dict(feed.stats)
     info["recorder"] = dict(rec.totals)
     feed.con.close()  # the recorder's and LiveFeed's databases are done: free their memory
@@ -664,6 +669,31 @@ def run(a, log=print):
     return info
 
 
+def compare_watchlists(log_path, batch):
+    """The live watchlist (received pools only) against the batch list per minute: of the batch's
+    F7-reversed and M1 members, the share the live list also had; and the live-only members."""
+    out = {"minutes": 0, "f7_batch": 0, "f7_live_too": 0, "m1_batch": 0, "m1_live_too": 0, "live_only": 0}
+    if not os.path.exists(log_path):
+        return out
+    with open(log_path) as f:
+        for line in f:
+            x = json.loads(line)
+            b = batch.get(x["minute"])
+            if b is None:
+                continue
+            live = set(x["pools"])
+            out["minutes"] += 1
+            for tag in ("f7_rev", "m1"):
+                members = {p for p, t in b.items() if tag in t}
+                key = "f7" if tag == "f7_rev" else "m1"
+                out[f"{key}_batch"] += len(members)
+                out[f"{key}_live_too"] += len(members & live)
+            out["live_only"] += len(live - set(b))
+    for key in ("f7", "m1"):
+        out[f"{key}_share"] = round(out[f"{key}_live_too"] / out[f"{key}_batch"], 4) if out[f"{key}_batch"] else None
+    return out
+
+
 def _segments(root):
     from .live import segment_dirs
 
@@ -705,7 +735,8 @@ def render(info, rows):
           + f"; backfills {rt.get('backfills', 0)} ({rt.get('backfill_txs', 0):,} transactions); pool creations {rt.get('pool_creations', 0):,}.",
           f"- Estimated volume: **{info['estimated_gb_per_day']} GB/day** at 3 KB per transaction (the #180 convention).",
           f"- Simulated gaps (slots): {info['gaps']}; lossless reconnects: {len(info['reconnects'])}.",
-          f"- LiveFeed: {info['livefeed']}.", "",
+          f"- LiveFeed: {info['livefeed']}.",
+          f"- Live watchlist (received pools only) against the batch list: {info.get('live_watchlist')}.", "",
           "## Reconciliation against OF1", "",
           f"- {info['reconcile']['segments_checked']} segments checked (every one with a simulated reconnect or gap and a "
           f"regular sample); segments without a simulated gap clean: **{info['reconcile']['others_clean']}**.",

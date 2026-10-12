@@ -1,0 +1,108 @@
+"""The live watchlist (paper.watchlist_live): #180's state machine fed by the engine.
+
+On complete data (the replay of the dev store) its list per minute equals the batch measurement's
+(wallets.watchlist over the store's per-(pool, minute) aggregates, cold start at the same slot),
+except that the batch lists a new M1 pool already for its own creation minute.
+Synthetic: entry at 120 SOL when organic, exit below 100, a late backfill counts in the organic
+window, and the file the recorder reads."""
+
+import json
+import os
+from types import SimpleNamespace as NS
+
+import pytest
+
+from paper.feed import Feed, PoolInfo
+from paper.watchlist_live import LiveWatchlist
+
+SOL = 1_000_000_000
+STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
+
+
+class Pools(Feed):
+    def __init__(self):
+        self.pools = {"P": PoolInfo("P", "M", "reversed", "reversed", False, None, 10)}
+        self.new_pools = []
+
+    def pool(self, p):
+        return self.pools.get(p)
+
+    def token(self, m):
+        return None
+
+
+def leg(slot, sol, depth, farmer=False):
+    # a reversed pool: SOL is the base side (sol_side: kind == 'sell' is a token buy, base, pre.b)
+    return NS(kind="sell", slot=slot, order=(slot, 0, 0, 0), farmer=farmer, base=int(sol * SOL), pre=NS(b=int(depth * SOL)))
+
+
+def test_entry_exit_late_history_and_the_file(tmp_path):
+    w = LiveWatchlist(Pools(), str(tmp_path))
+    w.slot(100, 1000)
+    w.trades("P", 1000, [leg(100, 3, 130)])  # deep and organic (3 SOL, no farmer)
+    assert w.minute(1001, 300) == {"P": ("f7_rev",)}
+    with open(tmp_path / "watchlist-current.json") as f:
+        snap = json.load(f)
+    assert snap["valid_for_minute"] == 1001 and snap["pools"] == [{"pool": "P", "mint": "M", "rules": ["f7_rev"]}]
+    assert snap["source"]["received_pools_only"] and snap["counts"]["f7_rev"] == 1
+    # Silent minutes are stepped too; still on the list at 101 SOL (exit below 100).
+    w.slot(900, 1004)
+    w.trades("P", 1004, [leg(900, 1, 101)])
+    assert w.minute(1005, 1100) == {"P": ("f7_rev",)}
+    w.slot(1200, 1005)
+    w.trades("P", 1005, [leg(1200, 1, 99)])
+    assert w.minute(1006, 1300) == {}
+    # A backfill of farming trades in an earlier minute turns the trailing hour farming.
+    w.slot(1400, 1006)
+    w.trades("P", 1006, [leg(1400, 1, 130)])
+    w.trades("P", 1003, [leg(800, 20, 120, farmer=True)], late=True)
+    assert w.minute(1007, 1500) == {}  # deep again, but farmers made most of the hour's volume
+    lines = (tmp_path / "watchlist-log.jsonl").read_text().splitlines()
+    assert [json.loads(x)["minute"] for x in lines] == [1001, 1005, 1006, 1007]
+
+
+def test_equal_to_the_batch_measurement_on_complete_data(tmp_path):
+    """Engine on the dev replay with the live watchlist = wallets.watchlist over the store, per minute."""
+    if not os.path.exists(STORE):
+        pytest.skip("dev store not built")
+    from backtest import streams
+    from backtest.strategies import Clock
+    from paper.engine import Engine
+    from paper.feed import ReplayFeed
+    from paper.journal import Journal
+    from wallets import watchlist as W
+
+    lo, hi = 450_700_000, 450_706_000
+    con = streams.open_store(STORE, threads=2, memory="1GB")
+    feed = ReplayFeed(STORE, lo, hi, con=con)
+    watch = LiveWatchlist(feed, str(tmp_path))
+    Engine(feed, Journal(str(tmp_path / "j")), None, variants=[(0.04, 600)], ignore_risk=True, n2_k=0,
+           clock=Clock.from_store(con), backup=False, watchlist=watch).run()
+    live = {}
+    for line in (tmp_path / "watchlist-log.jsonl").read_text().splitlines():
+        x = json.loads(line)
+        live[x["minute"]] = set(x["pools"])
+    # The batch: the same rules over the store's aggregates, cold start at lo (as the engine).
+    pools = con.execute(W.pools_sql(lo, hi)).fetchall()
+    cmin = W.minute_of_slot(con, {r[5] for r in pools if r[5] is not None and r[5] >= lo})
+    wl = W.Watchlist(W.Rules())
+    for pool, mint, qc, orient, mayhem, cslot, gic in pools:
+        wl.add_pool(W.PoolInfo(pool, mint, qc, orient, bool(mayhem), cmin.get(cslot), bool(gic)))
+    agg = con.execute(W.aggregates_sql(lo, hi)).fetchall()
+    by = {}
+    for pool, m, trades, sol, farmer_sol, depth, _ in agg:
+        by.setdefault(m, []).append((pool, trades, sol, farmer_sol, depth))
+    batch = {}
+    for m in range(min(by), max(by) + 1):
+        batch[m + 1] = dict(wl.step(m, by.get(m, [])))
+    common = sorted(set(live) & set(batch))
+    assert len(common) >= 20
+    # The batch puts an M1 pool on the list for the minute it is created in (it knows every pool up
+    # front); live, the pool exists only from its creation slot, so from the next minute on.
+    creation_minute = {(m, p) for m in common for p, tags in batch[m].items()
+                       if tags == ("m1",) and wl.pools[p].create_minute == m and p not in live[m]}
+    diffs = {m: d for m in common if (d := {p for p in live[m] ^ set(batch[m]) if (m, p) not in creation_minute})}
+    assert not diffs, {m: sorted(d)[:3] for m, d in list(diffs.items())[:3]}
+    assert all(p in live[m + 1] for m, p in creation_minute if m + 1 in live and p in batch.get(m + 1, {}))
+    assert sum(len(batch[m]) for m in common) > 100  # the lists are not empty
+    assert sum(1 for m in common for t in batch[m].values() if "f7_rev" in t) > 0

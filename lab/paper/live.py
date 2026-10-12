@@ -183,6 +183,7 @@ class LiveFeed(Feed):
         self.farm_keys = defaultdict(set)
         self.backfill_pending = []  # backfill rows past the segment they came with
         self.history = []  # backfill trades for the engine's farming windows (drain_history)
+        self.new_pools = []  # pools learned live, in order (the live watchlist adds them at creation)
         self.meta_bounds = meta_bounds or (0, 2**63 - 1)
 
     # ------------------------------------------------------------------ metadata
@@ -283,6 +284,7 @@ class LiveFeed(Feed):
                 self.con.execute("INSERT INTO live_pools VALUES (?, ?, ?)", [pool, cls, orient])
                 if cls in SOL_MARKETS:
                     self.pools[pool] = PoolInfo(pool, mint, orient, cls, mayhem, creator, slot)
+                    self.new_pools.append(pool)
 
     # ------------------------------------------------------------------ events
 
