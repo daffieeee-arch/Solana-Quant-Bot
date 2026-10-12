@@ -393,7 +393,8 @@ impl Recorder {
                     Err(e) => {
                         self.stats.convert_errors += 1;
                         if self.stats.convert_errors <= 10 {
-                            log::error!("slot {} tx {}: cannot convert: {e:#}", t.slot, info.index);
+                            // A fixed category only: nothing from the update itself (CodeQL #9).
+                            log::error!("slot {} tx {}: cannot convert: {}", t.slot, info.index, e.0);
                         }
                     }
                 }
@@ -745,6 +746,42 @@ mod tests {
         // A late transaction of a written slot is counted, not written.
         r.on_update(tx(1000, 5), 2).unwrap();
         assert_eq!(r.slots.late, 2); // its arrival row and its anomaly row
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Error lines of this test binary (it has no other logger).
+    struct Lines(std::sync::Mutex<Vec<String>>);
+
+    impl log::Log for Lines {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            m.level() <= log::Level::Error
+        }
+        fn log(&self, r: &log::Record) {
+            if self.enabled(r.metadata()) {
+                self.0.lock().unwrap().push(r.args().to_string());
+            }
+        }
+        fn flush(&self) {}
+    }
+
+    static LINES: Lines = Lines(std::sync::Mutex::new(Vec::new()));
+
+    #[test]
+    fn a_conversion_error_is_counted_and_logs_only_slot_index_and_category() {
+        let _ = log::set_logger(&LINES);
+        log::set_max_level(log::LevelFilter::Error);
+        let root = tmp("rec-convert-error");
+        let mut r = recorder(&root, 25_000_000_000, 2);
+        let mut u = tx(1000, 4);
+        let Some(UpdateOneof::Transaction(t)) = u.update_oneof.as_mut() else { panic!() };
+        let msg = t.transaction.as_mut().unwrap().transaction.as_mut().unwrap().message.as_mut().unwrap();
+        msg.account_keys[0].pop(); // fee payer key of 31 bytes
+        r.on_update(u, 1).unwrap();
+        assert_eq!(r.stats.convert_errors, 1);
+        let lines = LINES.0.lock().unwrap();
+        let mine: Vec<_> = lines.iter().filter(|l| l.starts_with("slot 1000 tx 4:")).collect();
+        assert_eq!(mine, ["slot 1000 tx 4: cannot convert: address of the wrong length"]);
+        drop(lines);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
