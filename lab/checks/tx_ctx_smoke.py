@@ -9,8 +9,11 @@ Checks:
 - fee payer, fee, compute units, priority fee and Jito tip equal the events' context columns;
 - `programs` names pump / pump_amm wherever the transaction has their events, and jupiter_v6 at the
   top level wherever an event's outer program is Jupiter v6;
-- direct pump.fun buys by the fee payer (outer program pump, one TradeEvent, no PumpSwap event): the
-  fee payer's token delta for the mint equals the event's token_amount (at least 99%).
+- direct pump.fun buys by the fee payer (outer program pump, one TradeEvent, no PumpSwap event):
+  where the fee payer has a token delta for the mint, it equals the event's token_amount (>= 99%); where
+  the tokens go to the fee payer's canonical ATA (ix_accounts.associated_user), that delta exists
+  (>= 99%). A buy into a token account the fee payer does not own (pump does not require its ATA:
+  1054 smoke, 42 buys of 3 wallets) has no fee-payer delta; it is counted, not failed.
 Descriptive (no pass/fail): venues, transactions with two or more DEXes and a positive SOL + WSOL net
 for the fee payer (arbitrage candidates), the SOL delta of direct buys against the event amounts,
 and the table's size per 1,000 slots with the projection per 216,000-slot chunk.
@@ -23,11 +26,21 @@ import sys
 
 import duckdb
 
+from backtest.token_meta_rpc import b58decode, find_program_address
+
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 JUPITER_V6 = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
 WSOL = "So11111111111111111111111111111111111111112"
 CHUNK_SLOTS = 216_000
 CTX_COLS = ("fee_payer", "tx_fee", "cu_consumed", "priority_fee", "jito_tip")
+ATA_SAMPLE = 50_000  # direct buys classified by destination (a Python PDA each, ~0.5 ms)
+ATA_PROGRAM = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+TOKEN_PROGRAMS = ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+
+
+def atas(owner, mint):
+    """The owner's associated token accounts for the mint under either token program."""
+    return {find_program_address([b58decode(owner), b58decode(tp), b58decode(mint)], ATA_PROGRAM)[0] for tp in TOKEN_PROGRAMS}
 
 
 def src(d, table):
@@ -89,23 +102,37 @@ def check(d):
 
     trade = src(d, "pump/TradeEvent")
     if trade:
+        accts = "t.ix_accounts" if "ix_accounts" in {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {trade}").fetchall()} \
+            else "NULL::VARCHAR"
         con.execute(f"""CREATE TEMP TABLE direct AS
             WITH single AS (SELECT slot, tx_index FROM {trade} GROUP BY slot, tx_index HAVING count(*) = 1),
                  no_amm AS (SELECT slot, tx_index FROM ev GROUP BY slot, tx_index
                             HAVING count(*) FILTER (WHERE program = 'pump_amm') = 0)
-            SELECT t.slot, t.tx_index, t.mint, t.token_amount, COALESCE(t.quote_amount, t.sol_amount) AS q,
-                   t.fee + t.creator_fee AS fees, c.tx_fee, c.jito_tip, c.signer_sol_delta, {delta('t.mint')} AS d
+            SELECT t.slot, t.tx_index, t.mint, t."user" AS buyer, t.token_amount, COALESCE(t.quote_amount, t.sol_amount) AS q,
+                   t.fee + t.creator_fee AS fees, c.tx_fee, c.jito_tip, c.signer_sol_delta, {delta('t.mint')} AS d,
+                   json_extract_string({accts}, '$.associated_user') AS dest
             FROM {trade} t JOIN c USING (slot, tx_index) SEMI JOIN single USING (slot, tx_index) SEMI JOIN no_amm USING (slot, tx_index)
             WHERE t.is_buy AND t.outer_program = '{PUMP}' AND t."user" = c.fee_payer AND NOT c.failed""")
-        nd, agree = con.execute("SELECT count(*), count(*) FILTER (WHERE d = token_amount) FROM direct").fetchone()
-        share = agree / nd if nd else None
+        nd, with_d, agree = con.execute("""SELECT count(*), count(d), count(*) FILTER (WHERE d = token_amount) FROM direct""").fetchone()
+        share = agree / with_d if with_d else None
+        # Destination: the fee payer's canonical ATA (either token program) or another token account.
+        cls = {"canonical_ata": [0, 0], "other_account": [0, 0], "no_ix_accounts": [0, 0]}  # [n, without delta]
+        sample = con.execute(f"SELECT mint, buyer, dest, d IS NULL FROM direct ORDER BY hash(slot, tx_index) LIMIT {ATA_SAMPLE}").fetchall()
+        for mint, buyer, dest, nodelta in sample:
+            k = ("no_ix_accounts" if dest is None else
+                 "canonical_ata" if dest in atas(buyer, mint) else "other_account")
+            cls[k][0] += 1
+            cls[k][1] += nodelta
+        ata_share = (cls["canonical_ata"][0] - cls["canonical_ata"][1]) / cls["canonical_ata"][0] if cls["canonical_ata"][0] else None
         # SOL: -(curve quote + trading fees + tx fee + tip) leaves rent of new accounts and other fees.
         rest = con.execute("""SELECT median(-signer_sol_delta - q - fees - tx_fee - jito_tip),
                                      quantile_cont(-signer_sol_delta - q - fees - tx_fee - jito_tip, 0.9)
                               FROM direct WHERE signer_sol_delta IS NOT NULL""").fetchone()
-        out["direct_pump_buys"] = {"n": nd, "token_delta_equals_token_amount": agree, "share": share,
-                                   "sol_rest_lamports_median_p90": rest}
-        ok &= nd > 0 and share is not None and share >= 0.99
+        out["direct_pump_buys"] = {
+            "n": nd, "with_fee_payer_delta": with_d, "delta_equals_token_amount": agree, "share": share,
+            "by_destination_sampled": {k: {"n": v[0], "without_delta": v[1]} for k, v in cls.items()},
+            "canonical_ata_with_delta_share": ata_share, "sol_rest_lamports_median_p90": rest}
+        ok &= nd > 0 and share is not None and share >= 0.99 and ata_share is not None and ata_share >= 0.99
 
     out["venues_top"] = con.execute("SELECT venues, count(*) FROM c WHERE NOT failed GROUP BY 1 ORDER BY 2 DESC LIMIT 12").fetchall()
     out["arbitrage_candidates"] = dict(zip(("n_dex_ge_2", "with_positive_sol_plus_wsol_net"), con.execute(f"""
