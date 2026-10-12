@@ -1,0 +1,15 @@
+{
+  "_sample": "Voorbeeld van het formaat; geen echte data. De live-engine schrijft <journal>/wallet.json in dit formaat (lab/ui/web/README.md).",
+  "address": "BotWa11etVoorbee1dXXXXXXXXXXXXXXXXXXXXXXXXX",
+  "slot": 457920450,
+  "time_unix": 1791802859,
+  "balance_lamports": 10380000000,
+  "txs": [
+    {"signature": "voorbeeld1", "slot": 457920401, "time_unix": 1791802840, "kind": "buy", "mint": null, "symbol": "PEPPER",
+     "amount_lamports": -500000000, "fee_lamports": 5000, "tip_lamports": 1000000, "status": "landed", "landed_slot_delta": 1, "note": null},
+    {"signature": "voorbeeld2", "slot": 457920380, "time_unix": 1791802832, "kind": "sell", "mint": null, "symbol": "QCAT",
+     "amount_lamports": 520000000, "fee_lamports": 5000, "tip_lamports": 1000000, "status": "landed", "landed_slot_delta": 1, "note": "doel +4%"},
+    {"signature": "voorbeeld3", "slot": 457920300, "time_unix": 1791802800, "kind": "buy", "mint": null, "symbol": "ROSE",
+     "amount_lamports": 0, "fee_lamports": 5000, "tip_lamports": 0, "status": "dropped", "landed_slot_delta": null, "note": "te laat"}
+  ]
+}

@@ -1,0 +1,140 @@
+<title>Lab status</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column logbook, newest workday first; each session line is a row with a session chip. */
+:root {
+  --bg: #f5f7f6; --surface: #ffffff; --fg: #17201d; --muted: #5b6a65; --line: #dde4e1;
+  --accent: #0f766e; --accent-soft: #e0f2ef;
+  --warn: #9a3412; --warn-soft: #fdebdd; --ok: #166534; --ok-soft: #e3f4e7;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d;
+  --accent: #5eead4; --accent-soft: #123430;
+  --warn: #fdba74; --warn-soft: #3a2113; --ok: #86efac; --ok-soft: #12301c; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1513; --surface: #161e1b; --fg: #e4ece9; --muted: #93a39d; --line: #26312d;
+  --accent: #5eead4; --accent-soft: #123430;
+  --warn: #fdba74; --warn-soft: #3a2113; --ok: #86efac; --ok-soft: #12301c; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 760px; margin: 0 auto; padding-inline: 16px; padding-block: 24px 48px; display: grid; gap: 20px; }
+header { display: grid; gap: 4px; }
+h1 { font-size: 1.6rem; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+.sub { color: var(--muted); margin: 0; max-width: 62ch; }
+.summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { font-family: var(--mono); font-size: 0.78rem; padding: 3px 9px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.day { display: grid; gap: 8px; }
+.day h2 { font-family: var(--mono); font-size: 0.8rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: 9.5rem 1fr; gap: 6px 14px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+.row > * { min-width: 0; }
+.sess { font-family: var(--mono); font-size: 0.82rem; font-weight: 500; color: var(--accent); overflow-wrap: anywhere; }
+.res { overflow-wrap: anywhere; }
+.res a { color: var(--accent); text-underline-offset: 2px; }
+.res a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.block { grid-column: 2; font-size: 0.88rem; }
+.block .tag { font-family: var(--mono); font-size: 0.74rem; padding: 1px 7px; border-radius: 4px; margin-right: 6px; }
+.block.none .tag { background: var(--ok-soft); color: var(--ok); }
+.block.has .tag { background: var(--warn-soft); color: var(--warn); }
+.block.has { color: var(--fg); }
+.block.none { color: var(--muted); }
+.empty, .note { color: var(--muted); padding: 16px; border: 1px dashed var(--line); border-radius: 8px; }
+footer { color: var(--muted); font-size: 0.82rem; }
+code { font-family: var(--mono); font-size: 0.85em; }
+@media (max-width: 520px) {
+  .row { grid-template-columns: 1fr; }
+  .block { grid-column: 1; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Lab status</h1>
+    <p class="sub">Per sessie per werkdag één regel: wat er af is (link of getal) en wat blokkeert. Alleen paper en onderzoek.</p>
+  </header>
+  <div class="summary" id="summary"></div>
+  <main id="log">
+    <p class="empty" id="empty">Regels laden… Elke lab-sessie zet hier één regel per werkdag neer.</p>
+  </main>
+  <footer>Sessies schrijven deze regels zelf. Zondag is het vaste synchronisatiemoment; dan schrijft de coördinator het checkpoint.</footer>
+</div>
+
+<script>
+(function () {
+  const log = document.getElementById("log");
+  const summary = document.getElementById("summary");
+  const fmtDay = new Intl.DateTimeFormat("nl-NL", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = String(text);
+    return n;
+  }
+  function safeUrl(u) {
+    if (typeof u !== "string") return null;
+    try { const x = new URL(u); return x.protocol === "https:" ? x.href : null; } catch (e) { return null; }
+  }
+  function showMessage(text) {
+    log.replaceChildren(el("p", "empty", text));
+  }
+
+  function render(docs) {
+    const rows = docs.map(d => d.data() || {}).filter(r => typeof r.date === "string");
+    summary.replaceChildren();
+    if (!rows.length) { showMessage("Nog geen regels. Elke lab-sessie zet hier één regel per werkdag neer."); return; }
+    const sessions = new Set(rows.map(r => String(r.session || "?")));
+    const blocked = rows.filter(r => r.blocker && String(r.blocker).trim() && String(r.blocker).trim().toLowerCase() !== "geen");
+    summary.append(el("span", "pill", rows.length + " regels"), el("span", "pill", sessions.size + " sessies"));
+    if (blocked.length) summary.append(el("span", "pill warn", blocked.length + " met blokkade"));
+
+    const byDay = new Map();
+    for (const r of rows) { if (!byDay.has(r.date)) byDay.set(r.date, []); byDay.get(r.date).push(r); }
+    const days = [...byDay.keys()].sort().reverse();
+    const frag = document.createDocumentFragment();
+    for (const day of days) {
+      const sec = el("section", "day");
+      let label = day;
+      const t = Date.parse(day + "T00:00:00Z");
+      if (!isNaN(t)) label = fmtDay.format(new Date(t));
+      sec.append(el("h2", null, label));
+      const items = byDay.get(day).sort((a, b) => String(a.session).localeCompare(String(b.session)));
+      for (const r of items) {
+        const row = el("div", "row");
+        row.append(el("div", "sess", r.session || "?"));
+        const res = el("div", "res");
+        res.append(document.createTextNode(String(r.result || "")));
+        const href = safeUrl(r.link);
+        if (href) {
+          if (r.result) res.append(document.createTextNode(" "));
+          const a = el("a", null, r.link_label || "openen");
+          a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer";
+          res.append(a);
+        }
+        row.append(res);
+        const b = r.blocker && String(r.blocker).trim();
+        const isNone = !b || b.toLowerCase() === "geen";
+        const blk = el("div", "block " + (isNone ? "none" : "has"));
+        blk.append(el("span", "tag", isNone ? "geen blokkade" : "blokkade"));
+        if (!isNone) blk.append(document.createTextNode(b));
+        row.append(blk);
+        sec.append(row);
+      }
+      frag.append(sec);
+    }
+    log.replaceChildren(frag);
+  }
+
+  async function start() {
+    const db = window.claude && window.claude.use ? await window.claude.use("db") : null;
+    if (!db) { showMessage("De gedeelde regels zijn in deze weergave niet beschikbaar. Open de pagina ingelogd op claude.ai."); return; }
+    db.collection("rows").orderBy("date", "desc").limit(1000).onSnapshot(
+      snap => render(snap.docs),
+      () => showMessage("De regels konden niet geladen worden. Herlaad de pagina.")
+    );
+  }
+  start();
+})();
+</script>
