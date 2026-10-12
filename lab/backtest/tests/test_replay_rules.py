@@ -107,3 +107,39 @@ def test_failed_transaction_rolls_back_its_earlier_legs():
     r = simulate_curve_position(stream, 100, SOL, 1, 0.5, TpSlTime(10.0, -10.0, 1_000, scenario()), 0.05, Tau("inf"))
     assert r.reverted_direct == 1
     assert r.sells_dropped == 1 and r.sells_scaled == 0
+
+
+def _window(end):
+    old = replay.WINDOW_END
+    replay.set_window_end(end)
+    return old
+
+
+def test_a_deadline_past_the_window_closes_on_its_last_slot():
+    """The data window ends before the time stop: the position closes on the window's last slot
+    (window_end) at the last state's price, the same proceeds as deciding later on that state."""
+    s = BASE
+    l, s = leg_buy(s, 100, 0, "A", 1_000_000_000_000)
+    stream = Stream("M", 0, "C", [l])
+    rule = TpSlTime(10.0, -10.0, 150, scenario())
+    free = simulate_curve_position(stream, 100, SOL, 1, 0.5, rule, 0.05, Tau("inf"))
+    old = _window(200)
+    try:
+        r = simulate_curve_position(stream, 100, SOL, 1, 0.5, TpSlTime(10.0, -10.0, 150, scenario()), 0.05, Tau("inf"))
+    finally:
+        replay.set_window_end(old)
+    assert (free.exit_reason, free.exit_slot) == ("time", 101 + 150 + 1)  # past 200 without a window
+    assert (r.exit_reason, r.exit_decision_slot, r.exit_slot) == ("window_end", 199, 199)
+    assert r.proceeds == free.proceeds and r.cost == free.cost
+
+
+def test_no_entry_at_or_after_the_window_end():
+    s = BASE
+    l, s = leg_buy(s, 100, 0, "A", 1_000_000_000_000)
+    stream = Stream("M", 0, "C", [l])
+    old = _window(101)
+    try:
+        r = simulate_curve_position(stream, 100, SOL, 1, 0.5, TpSlTime(10.0, -10.0, 150, scenario()), 0.05, Tau("inf"))
+    finally:
+        replay.set_window_end(old)
+    assert r.skipped and r.exit_reason == "after_window_end" and not r.cost

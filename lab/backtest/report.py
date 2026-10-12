@@ -332,13 +332,33 @@ def _report_commit():
     return sha or os.environ.get("LAB_ENGINE_COMMIT", "unknown")
 
 
+def window_check(results, window_end, con=None):
+    """No position may enter or exit at or after the data window's end (replay.WINDOW_END closes
+    open positions on its last slot, "window_end"). Returns the window_end closes and the skipped
+    entries after the window per family; raises if any position is outside the window."""
+    con = con or _connect()
+    src = f"read_parquet('{results}')"
+    bad = con.execute(f"""SELECT family, exit_reason, count(*) FROM {src}
+                          WHERE NOT skipped AND (entry_slot >= {window_end} OR exit_slot >= {window_end}
+                                                 OR exit_decision_slot >= {window_end})
+                          GROUP BY ALL ORDER BY ALL""").fetchall()
+    if bad:
+        raise SystemExit(f"positions outside the data window (end {window_end}): {bad}")
+    return con.execute(f"""SELECT family, count(*) FILTER (WHERE NOT skipped AND exit_reason = 'window_end'),
+                                  count(*) FILTER (WHERE skipped AND exit_reason = 'after_window_end')
+                           FROM {src} GROUP BY family
+                           HAVING count(*) FILTER (WHERE exit_reason IN ('window_end', 'after_window_end')) > 0
+                           ORDER BY family""").fetchall()
+
+
 def write_report(run_dir, cfg):
     from .tournament import results_glob
 
     results = results_glob(run_dir)
-    summary = summarize(results, cfg)
     with open(os.path.join(run_dir, "config.json")) as f:
         config = json.load(f)
+    window = window_check(results, config["store"]["slot_end_exclusive"])
+    summary = summarize(results, cfg)
     tr = trials(summary, config)
     if tr:
         # The run's rows, and the same file in the shared trials/ dataset (one file per run, not for dry runs).
@@ -361,6 +381,10 @@ def write_report(run_dir, cfg):
                     "and segments).", ""] if config.get("only") else []) + ([f"**Dry run: decisions only in slots {config['slot_range'][0]}–{config['slot_range'][1]}. "
                     "This checks the mechanics (it runs, time, memory); the numbers are not a result.**", ""]
                    if config.get("slot_range") else []) + [
+             f"Data window end {config['store']['slot_end_exclusive']}: no position enters or exits at or after it "
+             "(checked). Positions still open there are closed on the window's last slot (exit reason window_end); "
+             "entries after it are skipped" + (": " + "; ".join(f"{f} {n} closed, {k} skipped" for f, n, k in window)
+                                               if window else ": none") + ".", "",
              "## Deviations from the spec", ""] + [f"- {x}" for x in DEVIATIONS] + (
              [f"- F6 cap, measured on {c['sampled_pool_days']} sampled pool-days: qualifying triggers per pool-day median "
               f"{c['triggers_median']:.0f}, p90 {c['triggers_p90']:.0f}; {c['dropped_share'] * 100:.0f}% of triggers are not traded."]

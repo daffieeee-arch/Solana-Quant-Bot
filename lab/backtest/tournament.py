@@ -415,6 +415,7 @@ def _work(args):
     health.wait_ok(log, f"batch {task_id}")
     io0 = io_written()
     con = streams.open_store(STORE, threads=1, memory="600MB")
+    replay.set_window_end(store_bounds(con)[1])  # no entry or exit at or after the store's end
     base = Scenario.from_cfg("base", cfg)
     rows = []
     for venue, key, lo, hi, sigs in items:
