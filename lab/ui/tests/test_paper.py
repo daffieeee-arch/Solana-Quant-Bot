@@ -151,6 +151,38 @@ class Recorder(unittest.TestCase):
                 importlib.reload(paper)
 
 
+class Marks(unittest.TestCase):
+    def test_open_position_pnl_is_mark_pnl_and_paper_wallet_is_paper(self):
+        now = 1_791_800_000
+        today = paper.utc_day(now)
+        with tempfile.TemporaryDirectory() as d:
+            path = make_journal(d, [("F7", "Closed", 460_000_000, today, 1_000_000, 5)],
+                                positions=[("F7", "OpenPool", 460_001_000)], beats=[(now // 60 - 1, today, "", 0)])
+            db = sqlite3.connect(path)
+            for c in ("mark_proceeds", "mark_slot", "mark_pnl"):
+                db.execute(f"ALTER TABLE positions ADD COLUMN {c} INTEGER")
+            # proceeds 0.52 SOL on a 0.5 SOL gross cost, but 0.03 SOL of entry and exit costs: mark_pnl -0.01 SOL
+            db.execute("UPDATE positions SET mark_proceeds = 520000000, mark_slot = 460001100, mark_pnl = -10000000")
+            db.execute("CREATE TABLE state (k TEXT, v TEXT, PRIMARY KEY (k))")
+            db.executemany("INSERT INTO state VALUES (?, ?)", [("config", "/x/paper/k3-paper-2026-10-12.yaml"), ("config_sha256", "ab" * 32)])
+            db.commit()
+            db.close()
+            with open(os.path.join(d, "wallet.json"), "w") as fh:
+                json.dump({"mode": "paper", "address": None, "slot": 460001100, "balance_lamports": 9_990_000_000,
+                           "txs": [{"signature": None, "slot": 460001001, "kind": "buy", "mint": "OpenPool", "symbol": None,
+                                    "amount_lamports": -503000000, "fee_lamports": 5000, "tip_lamports": None, "status": "paper"}],
+                           "note": "paper trading"}, fh)
+            v = paper.journal_view(path, now)
+            o = next(r for r in v["positions"] if r["status"] == "open")
+            self.assertAlmostEqual(o["pnl_sol"], -0.01)  # mark_pnl, not mark - cost (+0.02)
+            self.assertAlmostEqual(o["ret"], -0.02)
+            self.assertEqual(v["status"]["config"], "k3-paper-2026-10-12.yaml")
+            w = paper._wallet_state(path)
+            self.assertEqual((w["mode"], w["sample"], w["address"]), ("paper", False, None))
+            self.assertEqual(w["txs"][0]["status"], "paper")
+            self.assertEqual(w["txs"][0]["tip_sol"], 0)
+
+
 class WalletAndTriton(unittest.TestCase):
     def test_wallet_paper_part_is_the_capital_simulation_and_onchain_is_marked_sample(self):
         if not paper.journal_path():

@@ -87,6 +87,16 @@ Written atomically (temp file + rename) after every change, public data only:
 - `landed_slot_delta`: landing slot minus the decision slot; null when it did not land.
 - `txs`: newest first, at most 50 are shown.
 
+The paper engine (lab/paper, #183) writes this file with `"mode": "paper"`, `"address": null` and
+`"status": "paper"` per transaction: the Wallet page then shows it as "paper (gesimuleerd)", never as an
+on-chain wallet, and leaves out the address and Solscan link.
+
+### `positions` marks (paper engine)
+
+Open positions carry `mark_proceeds`, `mark_slot` and `mark_pnl` (lamports). The Paper tab shows `mark_pnl`
+(proceeds after exit costs minus the entry cost including fees, the same definition as `exits.pnl`), so an
+open position's P&L does not jump when it closes.
+
 ### `bot-wallet.json` and `triton.json`
 
 ```json
