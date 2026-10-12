@@ -224,3 +224,54 @@ def test_reconcile_finds_nothing_then_every_kind_of_difference(tmp_path):
     t = bad["segments"][0]["tables"]["pump_amm/BuyEvent"]
     assert (t["missing"], t["extra"], t["mismatched"]) == (1, 1, 1), t
     assert t["columns"] == {"pool_base_token_reserves": 1}
+
+
+def test_a_backfill_gives_the_probe_pools_history_without_events(setup, tmp_path):
+    """The recorder followed pool P only from segment 2 on; P's earlier transactions came with
+    segment 2 as a backfill (overlapping segment 2 itself). LiveFeed's events must be the replay's
+    minus P's events before segment 2: the backfill gives farmer history and leg context, no events,
+    and the overlap counts once."""
+    import pyarrow.parquet as pq
+
+    root, h24, hist, replay = setup
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]][0]
+    rec = str(tmp_path / "rec")
+    make_segments(chunk, rec, usage=False)
+    segs = segment_dirs(rec)
+    counts = {}
+    for _, seg, _ in segs[:3]:
+        for f in glob.glob(os.path.join(seg, "pump_amm", "*Event", "*.parquet")):
+            for p in pq.read_table(f, columns=["pool"]).column("pool").to_pylist():
+                counts[p] = counts.get(p, 0) + 1
+    pool = max(counts, key=counts.get)
+    third = segs[2]
+    moved = {}
+    for i, (_, seg, _) in enumerate(segs[:3]):
+        for f in glob.glob(os.path.join(seg, "pump_amm", "*Event", "*.parquet")):
+            t = pq.read_table(f)
+            if "pool" not in t.column_names:
+                continue
+            mine = [r for r in t.to_pylist() if r["pool"] == pool]
+            if not mine:
+                continue
+            table = os.path.relpath(os.path.dirname(f), seg)
+            moved.setdefault(table, (t.schema, []))[1].extend(mine)
+            if i < 2:  # not recorded before segment 2: only in the backfill
+                pq.write_table(pa.Table.from_pylist([r for r in t.to_pylist() if r["pool"] != pool], schema=t.schema), f)
+    n = 0
+    for table, (schema, rows) in moved.items():
+        os.makedirs(os.path.join(third[1], "backfill", table), exist_ok=True)
+        pq.write_table(pa.Table.from_pylist(rows, schema=schema), os.path.join(third[1], "backfill", table, "part-00000.parquet"))
+        n += len(rows)
+    meta = dict(third[2], backfills=[{"id": f"{pool}-{LO}", "pool": pool, "from_slot": LO, "to_slot": third[2]["last_slot"],
+                                      "rows": n, "status": "complete"}])
+    with open(os.path.join(third[1], "_segment.json"), "w") as f:
+        json.dump(meta, f)
+    feed, live = live_events(rec, h24, hist)
+    start = third[2]["first_slot"]
+    want = [k for k in replay if not (k[0] == "pool" and k[1] == pool and k[2][0] < start)]
+    assert len(want) < len(replay)
+    assert live == want
+    assert feed.stats["backfill_rows"] > 0 and feed.stats["backfill_duplicates"] == 0
+    # P's farmer history reaches back before segment 2 (from the backfill).
+    assert any(s < start for (p, _), dq in feed.farmers.hist.items() if p == pool for s, *_ in dq)

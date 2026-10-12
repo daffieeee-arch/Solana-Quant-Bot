@@ -125,7 +125,17 @@ class FarmerFlags:
         return n >= FARMER_MIN_TRADES and abs(net) < FARMER_RATIO * gross
 
     def add(self, pool, trader, slot, token_buy, token_amount):
-        self.hist[(pool, trader)].append((slot, token_amount if token_buy else -token_amount, token_amount))
+        """Add a trade; one older than the wallet's last trade in the pool (a backfill) is inserted
+        in slot order."""
+        dq = self.hist[(pool, trader)]
+        item = (slot, token_amount if token_buy else -token_amount, token_amount)
+        if not dq or dq[-1][0] <= slot:
+            dq.append(item)
+            return
+        i = len(dq)
+        while i > 0 and dq[i - 1][0] > slot:
+            i -= 1
+        dq.insert(i, item)
 
     def prune(self, slot, h24):
         """Drop wallets whose last trade in a pool left the window (live memory stays bounded)."""
@@ -167,7 +177,11 @@ class LiveFeed(Feed):
         # The engine's Clock: ms per slot per epoch, measured from the block times received.
         self.clock = Clock()
         self.epoch_span = {}  # epoch -> [(first slot, time), (last slot, time)]
-        self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0}
+        self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "backfill_rows": 0, "backfill_duplicates": 0}
+        # Pools with a backfill: positions of their trades already in the farmer history, so the
+        # backfill's overlap with the recorded transactions counts once.
+        self.farm_keys = defaultdict(set)
+        self.backfill_pending = []  # backfill rows past the segment they came with
         self.meta_bounds = meta_bounds or (0, 2**63 - 1)
 
     # ------------------------------------------------------------------ metadata
@@ -271,10 +285,46 @@ class LiveFeed(Feed):
                 return round(DAY_MS / ((t1 - t0) * 1000.0 / (s1 - s0)))
         return round(DAY_MS / 400)
 
+    def _backfill_rows(self, seg, meta):
+        """Pool rows of the segment's backfill/ (earlier transactions of the recorder's new probes),
+        as (pool, token_buy, token_amount, *POOL_COLS without farmer), with the backfill rows still
+        pending from earlier segments, in chain order."""
+        rows = self.backfill_pending
+        self.backfill_pending = []
+        done = [b for b in meta.get("backfills", ()) if b.get("status") in ("complete", "failed") and b.get("rows")]
+        bdir = os.path.join(seg, "backfill")
+        if done and os.path.isdir(bdir):
+            c = Chunk((min(b["from_slot"] for b in done), max(b["to_slot"] for b in done) + 1, bdir))
+            self._new_tokens_and_pools(c)
+            sql = pool_select(c, "live_pools")
+            if sql:
+                cols = streams.POOL_COLS.replace(", farmer", "")
+                rows = rows + [tuple(r) for r in self.con.execute(f"SELECT pool, token_buy, token_amount, {cols} FROM ({sql})").fetchall()]
+        return sorted(rows, key=lambda r: (r[4], r[5], r[6], r[7]))
+
+    def _history(self, pool, token_buy, token_amount, row):
+        """A backfill trade: farmer history and the pool's leg context, no event. Counted once."""
+        key = (row[1], row[2], row[3], row[4])
+        if key in self.farm_keys[pool]:
+            self.stats["backfill_duplicates"] += 1
+            return
+        self.farm_keys[pool].add(key)
+        self.stats["backfill_rows"] += 1
+        if row[0] in ("buy", "sell"):
+            self.farmers.add(pool, row[22], row[1], token_buy, token_amount)
+        streams.pool_leg(tuple(row) + (False,), self.ctx.setdefault(pool, {}))
+
     def segment_events(self, seq, seg, meta):
         """The Events of one segment, sorted (curve and pool merged)."""
         c = Chunk((meta["first_slot"], meta["last_slot"] + 1, seg))
         self._new_tokens_and_pools(c)
+        # Backfill rows before the segment are history now; those inside it are merged into its
+        # rows in chain order (no events); those after it wait for the next segment.
+        back = self._backfill_rows(seg, meta)
+        for pool, tb, ta, *row in (r for r in back if r[4] < meta["first_slot"]):
+            self._history(pool, tb, ta, row)
+        inside = [r for r in back if meta["first_slot"] <= r[4] <= meta["last_slot"]]
+        self.backfill_pending = [r for r in back if r[4] > meta["last_slot"]]
         bt = {}
         blocks = c.src("blocks")
         if blocks:
@@ -299,14 +349,31 @@ class LiveFeed(Feed):
         sql = pool_select(c, "live_pools")
         if sql:
             cols = streams.POOL_COLS.replace(", farmer", "")
-            rows = self.con.execute(f"""SELECT pool, token_buy, token_amount, {cols} FROM ({sql})
-                                        ORDER BY slot, tx_index, outer_ix, inner_ix""").fetchall()
+            rows = [tuple(r) + (True,) for r in self.con.execute(f"""SELECT pool, token_buy, token_amount, {cols} FROM ({sql})
+                                        ORDER BY slot, tx_index, outer_ix, inner_ix""").fetchall()]
+        else:
+            rows = []
+        if inside:
+            have = {(r[4], r[5], r[6], r[7]) for r in rows}
+            rows = sorted(rows + [r + (False,) for r in inside if (r[4], r[5], r[6], r[7]) not in have],
+                          key=lambda r: (r[4], r[5], r[6], r[7]))
+        if rows:
             for pool, token_buy, token_amount, *row in rows:
+                recorded = row.pop()
+                if not recorded:
+                    self._history(pool, token_buy, token_amount, row)
+                    continue
                 kind, slot, trader = row[0], row[1], row[22]
                 farmer = False
+                seen = False
+                if pool in self.farm_keys:  # a backfilled pool: its overlap with the backfill counts once
+                    key = (slot, row[2], row[3], row[4])
+                    seen = key in self.farm_keys[pool]
+                    self.farm_keys[pool].add(key)
                 if kind in ("buy", "sell"):
                     farmer = self.farmers.flag(pool, trader, slot, h24)
-                    self.farmers.add(pool, trader, slot, token_buy, token_amount)
+                    if not seen:
+                        self.farmers.add(pool, trader, slot, token_buy, token_amount)
                 leg = streams.pool_leg(tuple(row) + (farmer,), self.ctx.setdefault(pool, {}))
                 out.append(Event(slot, row[2], row[3], row[4], bt.get(slot), "pool", pool, leg))
         out.sort(key=lambda e: e.order)
