@@ -14,11 +14,15 @@ const TokenDetail = lazy(() => import("./views/TokenDetail"));
 const Strategies = lazy(() => import("./views/Strategies"));
 const Cases = lazy(() => import("./views/Cases"));
 const Paper = lazy(() => import("./views/Paper"));
+const Wallet = lazy(() => import("./views/Wallet"));
+const Triton = lazy(() => import("./views/Triton"));
 
 // Tabs appear only when the API reports data for them (no empty tabs). Order = desktop nav order.
 const TABS: Record<string, { slug: string; label: string; short?: string }> = {
   paper: { slug: "paper", label: "Paper" },
   strategies: { slug: "strategieen", label: "Strategieën", short: "Strategie" },
+  wallet: { slug: "wallet", label: "Wallet" },
+  triton: { slug: "triton", label: "Triton" },
   tokens: { slug: "tokens", label: "Tokens" },
   cases: { slug: "casussen", label: "Casussen" },
   overview: { slug: "overzicht", label: "Overzicht" },
@@ -47,6 +51,8 @@ export default function App() {
   else if (active.key === "strategies") view = <Strategies />;
   else if (active.key === "cases") view = <Cases period={route.arg} />;
   else if (active.key === "paper") view = <Paper />;
+  else if (active.key === "wallet") view = <Wallet />;
+  else if (active.key === "triton") view = <Triton />;
   else view = <Overview />;
 
   return (

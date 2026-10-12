@@ -183,6 +183,19 @@ class Api(unittest.TestCase):
         self.assertEqual(self.req("/api/paper_chart?key=../../x")[0], 404)
         self.assertEqual(self.req("/api/paper_trades?mint=x%27%20OR%201%3D1")[0], 404)
 
+    def test_wallet_triton_and_stream(self):
+        tabs = self.get("/api/meta")["tabs"]
+        if "wallet" in tabs:
+            w = self.get("/api/wallet")
+            self.assertIn("paper", w)
+        if "triton" in tabs:
+            self.assertIn("streams", self.get("/api/triton")["triton"])
+        # SSE: the first event arrives at once, as text/event-stream.
+        with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/api/stream", timeout=10) as resp:
+            self.assertTrue(resp.headers["Content-Type"].startswith("text/event-stream"))
+            lines = [resp.readline() for _ in range(4)]
+        self.assertIn(b"event: change\n", lines)
+
     def test_bad_input(self):
         self.assertEqual(self.req("/api/token?mint=../../etc/passwd")[0], 404)
         self.assertEqual(self.req("/api/nope")[0], 404)

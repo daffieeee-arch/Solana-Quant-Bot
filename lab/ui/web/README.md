@@ -43,3 +43,53 @@ beginscherm" opens the app standalone. A service worker (offline cache, faster s
 served over plain HTTP on the tailnet address. Serving it over HTTPS would need, for example, `tailscale serve`
 with the tailnet's certificate in front of port 8501. That changes shared Tailscale settings, so it is the
 owner's or coordinator's decision; this app does not change it.
+
+## Live data: files the app reads
+
+The server (`lab/ui/server.py`, `lab/ui/paper.py`) only reads files; it never calls a node, Triton or
+DexScreener and never touches a key. Pages refresh on a Server-Sent Events tick (`/api/stream`, sent when the
+journal or the recorder writes) and fall back to polling every 30 s.
+
+| file | written by | used for |
+|---|---|---|
+| `<journal>/journal.sqlite` (+ `-wal`) | paper engine (`lab/paper`) | Paper, Wallet (paper part), markers |
+| `<journal>/wallet.json` | live engine (later) | Wallet: on-chain balance and transactions |
+| `<recorder>/budget.json`, `<recorder>/segments/*/_segment.json`, `arrivals/*.parquet` | recorder (`lab/recorder`) | Triton, Paper's Triton card |
+| `<recorder>/reconcile.json` | `python -m paper.reconcile <recorder> --out <recorder>/reconcile.json` | Triton: check against OF1 |
+| `<data>/ui-cache/bot-wallet.json` | owner / coordinator | the bot wallet's public address |
+| `<data>/ui-cache/triton.json` | owner, by hand | Triton prepaid balance |
+| `lab/paper/risk.yaml` of the engine's checkout (`LAB_PAPER_RISK`) | owner | daily loss limit, kill switch |
+
+`<journal>` is the newest `<data>/journal/*/journal/` (or `LAB_PAPER_JOURNAL`); `<recorder>` is
+`<data>/recorder` (or `LAB_RECORDER_ROOT`). Without a recorder or `wallet.json` the pages show the samples in
+`lab/ui/paper_sample/`, marked "voorbeelddata". Slots of the hold-out window (452304000–454463999) are dropped.
+
+### `wallet.json` (live engine)
+
+Written atomically (temp file + rename) after every change, public data only:
+
+```json
+{
+  "address": "<bot wallet, base58>",
+  "slot": 457920450,
+  "time_unix": 1791802859,
+  "balance_lamports": 10380000000,
+  "txs": [
+    {"signature": "<base58>", "slot": 457920401, "time_unix": 1791802840,
+     "kind": "buy | sell | other", "mint": "<token mint or null>", "symbol": "PEPPER or null",
+     "amount_lamports": -500000000, "fee_lamports": 5000, "tip_lamports": 1000000,
+     "status": "landed | failed | dropped", "landed_slot_delta": 1, "note": "free text or null"}
+  ]
+}
+```
+
+- `amount_lamports`: the SOL change of the wallet by this transaction, signed (a buy is negative).
+- `landed_slot_delta`: landing slot minus the decision slot; null when it did not land.
+- `txs`: newest first, at most 50 are shown.
+
+### `bot-wallet.json` and `triton.json`
+
+```json
+{"address": "<bot wallet public address>"}
+{"balance_usd": 18.40, "as_of": "2026-10-12"}
+```

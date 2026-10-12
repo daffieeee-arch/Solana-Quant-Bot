@@ -38,7 +38,7 @@ RUNNING_SECS = 180  # a heartbeat younger than this: the engine is running
 USD_PER_GB, BUDGET_USD = 0.08, 2.0  # recorder defaults (--usd-per-gb, --budget-usd)
 POSITIONS_SHOWN = 300
 SLOT_COLS = ("t", "entry_slot", "exit_slot", "exit_decision_slot", "slot", "last_slot")
-_segments = {}  # _segment.json path -> parsed (complete segments do not change)
+_segments = {}  # _segment.json path -> its summary (complete segments do not change); None: not shown
 _names = {}  # journal key (mint or pool) -> {"mint", "symbol", "name"}; names do not change
 
 
@@ -378,66 +378,319 @@ def key_trades(key):
             "trades": sorted(out, key=lambda t: t["slot"] or 0)}
 
 
-def recorder_view(now):
-    root, sample = recorder_root()
+def _seg_summary(path):
+    """A complete segment's _segment.json, reduced to what the pages use (segments never change once complete,
+    so a month of them stays small in memory): bytes and messages per UTC day and stream, per-minute bytes of
+    its last minutes, budget notes, reconnects, filter level, slots and write time."""
+    if path in _segments:
+        return _segments[path]
     try:
-        with open(os.path.join(root, "budget.json")) as f:
-            budget = json.load(f)
+        with open(path) as f:
+            m = json.load(f)
     except (OSError, ValueError):
         return None
-    metas = []
+    if not m.get("complete"):
+        return None
+    if any(HOLDOUT[0] <= (m.get(k) or 0) < HOLDOUT[1] for k in ("first_slot", "last_slot")):
+        _segments[path] = None
+        return None
+    days, minutes, notes = defaultdict(lambda: defaultdict(lambda: [0, 0])), defaultdict(lambda: defaultdict(int)), []
+    for u in m.get("usage", []):
+        minute = u.get("minute") or 0
+        if u.get("stream") == "budget":
+            if u.get("note"):
+                notes.append({"unix": minute * 60, "note": str(u["note"])[:300]})
+            continue
+        d = days[utc_day(minute * 60)][str(u.get("stream"))]
+        d[0] += u.get("bytes") or 0
+        d[1] += u.get("messages") or 0
+        minutes[minute][str(u.get("stream"))] += u.get("messages") or 0
+    flt = m.get("filter") or {}
+    out = {"seq": m.get("seq"), "first_slot": m.get("first_slot"), "last_slot": m.get("last_slot"),
+           "written_unix": m.get("written_unix"), "level": flt.get("level"), "dropped": list(flt.get("dropped") or []),
+           "days": {k: dict(v) for k, v in days.items()}, "minutes": {k: dict(v) for k, v in minutes.items()},
+           "notes": notes, "reconnects": [{"unix": r.get("unix"), "reason": str(r.get("reason", ""))[:200],
+                                           "after_slot": r.get("after_slot")} for r in m.get("reconnects", [])],
+           "dir": os.path.dirname(path)}
+    if len(_segments) > 60_000:
+        _segments.clear()
+    _segments[path] = out
+    return out
+
+
+def _segments_since(root, since_unix):
+    """Summaries of the complete segments written since since_unix, newest first."""
+    out = []
     for d in sorted(glob.glob(os.path.join(root, "segments", "*")), reverse=True):
-        p = os.path.join(d, "_segment.json")
-        if p not in _segments:
-            try:
-                with open(p) as f:
-                    m = json.load(f)
-            except (OSError, ValueError):
-                continue
-            if not m.get("complete"):
-                continue
-            if len(_segments) > 5000:
-                _segments.clear()
-            _segments[p] = m
-        m = _segments[p]
-        metas.append(m)
-        if len(metas) > 2000:
+        s = _seg_summary(os.path.join(d, "_segment.json"))
+        if s is None:
+            continue
+        if (s["written_unix"] or 0) < since_unix:
             break
-    metas = [m for m in metas if not any(HOLDOUT[0] <= (m.get(k) or 0) < HOLDOUT[1] for k in ("first_slot", "last_slot"))]
-    days = sorted({utc_day(u["minute"] * 60) for m in metas for u in m.get("usage", [])})
+        out.append(s)
+    return out
+
+
+def _budget(root):
+    try:
+        with open(os.path.join(root, "budget.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def recorder_view(now):
+    """Today's data use per stream against the daily budget (Paper tab's Triton card and recorder panel)."""
+    root, sample = recorder_root()
+    budget = _budget(root)
+    if budget is None:
+        return None
+    segs = _segments_since(root, now - 3 * 86_400)
+    days = sorted({d for s in segs for d in s["days"]})
     today = utc_day(now)
     day = today if today in days or not days else days[-1]
-    streams, notes, reconnects = defaultdict(lambda: [0, 0]), [], 0
-    for m in metas:
-        for u in m.get("usage", []):
-            if utc_day(u["minute"] * 60) != day:
-                continue
-            if u.get("stream") == "budget":
-                if u.get("note"):
-                    notes.append({"unix": u["minute"] * 60, "note": str(u["note"])})
-                continue
-            streams[u["stream"]][0] += u.get("bytes") or 0
-            streams[u["stream"]][1] += u.get("messages") or 0
-        reconnects += sum(1 for r in m.get("reconnects", []) if utc_day(r.get("unix") or 0) == day)
-    newest = metas[0] if metas else {}
-    flt = newest.get("filter", {})
-    cap_gb = (budget.get("cap_bytes") or 0) / 1e9
+    streams = defaultdict(lambda: [0, 0])
+    for s in segs:
+        for st, (b, n) in s["days"].get(day, {}).items():
+            streams[st][0] += b
+            streams[st][1] += n
+    notes = [n for s in segs for n in s["notes"] if utc_day(n["unix"]) == day]
+    newest = segs[0] if segs else {}
     return {
         "sample": sample, "day": day, "is_today": day == today,
-        "streams": sorted(({"stream": s, "gb": b / 1e9, "messages": n} for s, (b, n) in streams.items()), key=lambda r: -r["gb"]),
-        "spent_gb": budget.get("spent_gb"), "cap_gb": cap_gb, "usd_per_gb": USD_PER_GB, "budget_usd": BUDGET_USD,
-        "stopped": bool(budget.get("stopped")),
+        "streams": sorted(({"stream": st, "gb": b / 1e9, "messages": n} for st, (b, n) in streams.items()), key=lambda r: -r["gb"]),
+        "spent_gb": budget.get("spent_gb"), "cap_gb": (budget.get("cap_bytes") or 0) / 1e9, "usd_per_gb": USD_PER_GB,
+        "budget_usd": BUDGET_USD, "stopped": bool(budget.get("stopped")),
         "budget_day": utc_day(budget["day"] * 86400) if isinstance(budget.get("day"), int) else None,
-        "level": flt.get("level"), "dropped": flt.get("dropped", []), "last_segment_unix": newest.get("written_unix"),
-        "last_slot": newest.get("last_slot"), "segments_today": sum(1 for m in metas if utc_day(m.get("written_unix") or 0) == day),
-        "reconnects": reconnects, "notes": sorted(notes, key=lambda n: -n["unix"])[:20],
+        "level": newest.get("level"), "dropped": newest.get("dropped", []), "last_segment_unix": newest.get("written_unix"),
+        "last_slot": newest.get("last_slot"), "segments_today": sum(1 for s in segs if utc_day(s["written_unix"] or 0) == day),
+        "reconnects": sum(1 for s in segs for r in s["reconnects"] if utc_day(r["unix"] or 0) == day),
+        "notes": sorted(notes, key=lambda n: -n["unix"])[:20],
     }
+
+
+def _latency(dirs):
+    """Transport latency per transaction (receive time minus the server's created_at) over the newest segments'
+    arrivals/*.parquet: p50, p90 and a 10-bucket histogram in ms. None without arrivals."""
+    files = [f for d in dirs for f in glob.glob(os.path.join(d, "arrivals", "*.parquet"))]
+    if not files:
+        return None
+    import duckdb
+    con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+    try:
+        ms = [r[0] for r in con.execute(
+            "SELECT (received_unix_ns - created_unix_ns) / 1e6 FROM read_parquet(?) "
+            "WHERE created_unix_ns > 0 AND received_unix_ns >= created_unix_ns", [files]).fetchall()]
+    except duckdb.Error:
+        return None
+    finally:
+        con.close()
+    if not ms:
+        return None
+    edges = [0, 50, 100, 150, 200, 300, 400, 600, 800, 1200]
+    hist = [0] * len(edges)
+    for v in ms:
+        hist[max(i for i, e in enumerate(edges) if v >= e)] += 1
+    return {"p50": percentile(ms, 50), "p90": percentile(ms, 90), "n": len(ms), "edges_ms": edges, "hist": hist}
+
+
+def triton_view(now):
+    """Triton page: cost today and this month against the budget, a forecast, the manual balance, streams with
+    their rate, transport latency, the OF1 reconciliation and recent events. From the recorder's files only."""
+    root, sample = recorder_root()
+    budget = _budget(root)
+    if budget is None:
+        return None
+    month0 = calendar.timegm(time.strptime(utc_day(now)[:7] + "-01", "%Y-%m-%d"))
+    segs = _segments_since(root, month0 - 3600)
+    rec = recorder_view(now)
+    month_bytes = sum(b for s in segs for d, sts in s["days"].items() if d[:7] == utc_day(now)[:7] for b, _ in sts.values())
+    days_in_month = calendar.monthrange(*map(int, utc_day(now)[:7].split("-")))[1]
+    elapsed = max(1 / 24, (now - month0) / 86_400)
+    month_usd = month_bytes / 1e9 * USD_PER_GB
+    # Message rate per stream: the newest 5 minutes with usage rows.
+    mins = sorted({m for s in segs[:30] for m in s["minutes"]}, reverse=True)[:5]
+    rate = defaultdict(int)
+    for s in segs[:30]:
+        for m in mins:
+            for st, n in s["minutes"].get(m, {}).items():
+                rate[st] += n
+    streams = [dict(st, per_min=rate.get(st["stream"], 0) / max(1, len(mins)), dropped=st["stream"] in (rec or {}).get("dropped", []))
+               for st in (rec or {}).get("streams", [])]
+    balance = None
+    try:
+        with open(os.path.join(DATA, "ui-cache", "triton.json")) as f:
+            b = json.load(f)
+        if isinstance(b.get("balance_usd"), (int, float)):
+            balance = {"usd": float(b["balance_usd"]), "as_of": str(b.get("as_of", ""))[:20]}
+    except (OSError, ValueError, AttributeError):
+        pass
+    recon = None
+    try:
+        with open(os.path.join(root, "reconcile.json")) as f:
+            r = json.load(f)
+        recon = {"ok": bool(r.get("ok")), **{k: int(r.get("totals", {}).get(k, 0)) for k in
+                                             ("missing", "extra", "mismatched", "segments_checked", "segments_waiting")},
+                 "last_slot": max((s["slots"][1] for s in r.get("segments", []) if s.get("slots")), default=None)}
+    except (OSError, ValueError, AttributeError, TypeError):
+        pass
+    events = [{"unix": n["unix"], "kind": "budget", "text": n["note"]} for s in segs[:2000] for n in s["notes"]]
+    events += [{"unix": r["unix"], "kind": "reconnect", "text": f"herverbonden na slot {r['after_slot']}: {r['reason']}"}
+               for s in segs[:2000] for r in s["reconnects"] if r["unix"]]
+    return {
+        "sample": sample, "recorder": rec, "month_usd": month_usd, "month_gb": month_bytes / 1e9,
+        "forecast_usd": month_usd / elapsed * days_in_month, "balance": balance,
+        "streams": streams, "latency": _latency([s["dir"] for s in segs[:20]]), "reconcile": recon,
+        "events": sorted(events, key=lambda e: -e["unix"])[:20],
+    }
+
+
+RISK_DEFAULT = "/home/chupa/Solana-project/worktrees/lab-paper-live/lab/paper/risk.yaml"  # the paper engine's checkout
+SAMPLE_WALLET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_sample", "wallet.json")
+ADDRESS_RE = __import__("re").compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def risk_limits():
+    """The paper engine's owner-only limits (lab/paper/risk.yaml: flat 'key: value' lines). None if not found."""
+    path = os.environ.get("LAB_PAPER_RISK") or RISK_DEFAULT
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return None
+    out = {"path": path}
+    for line in text.splitlines():
+        k, _, v = line.split("#", 1)[0].partition(":")
+        k, v = k.strip(), v.strip()
+        if k and v:
+            try:
+                out[k] = float(v)
+            except ValueError:
+                out[k] = {"true": True, "false": False}.get(v.lower(), v)
+    return out
+
+
+def _wallet_state(journal):
+    """The live engine's <journal>/wallet.json (format in lab/ui/web/README.md), else the marked sample."""
+    path = os.environ.get("LAB_WALLET_STATE") or (os.path.join(os.path.dirname(journal), "wallet.json") if journal else "")
+    sample = not (path and os.path.isfile(path))
+    try:
+        with open(SAMPLE_WALLET if sample else path) as f:
+            w = json.load(f)
+    except (OSError, ValueError):
+        return None
+    num = lambda v: v if isinstance(v, int) else None  # noqa: E731
+    txs = []
+    for t in (w.get("txs") or [])[:50]:
+        if not isinstance(t, dict) or (isinstance(t.get("slot"), int) and HOLDOUT[0] <= t["slot"] < HOLDOUT[1]):
+            continue
+        txs.append({"signature": str(t.get("signature", ""))[:100], "slot": num(t.get("slot")), "time_unix": num(t.get("time_unix")),
+                    "kind": str(t.get("kind", ""))[:10], "mint": t.get("mint") if isinstance(t.get("mint"), str) else None,
+                    "symbol": str(t.get("symbol") or "")[:20] or None, "amount_sol": (num(t.get("amount_lamports")) or 0) / 1e9,
+                    "fee_sol": (num(t.get("fee_lamports")) or 0) / 1e9, "tip_sol": (num(t.get("tip_lamports")) or 0) / 1e9,
+                    "status": str(t.get("status", ""))[:12], "landed_slot_delta": num(t.get("landed_slot_delta")),
+                    "note": str(t.get("note") or "")[:80] or None})
+    bal = num(w.get("balance_lamports"))
+    return {"sample": sample, "address": w.get("address") if isinstance(w.get("address"), str) and ADDRESS_RE.match(w["address"]) else None,
+            "slot": num(w.get("slot")), "time_unix": num(w.get("time_unix")), "balance_sol": bal / 1e9 if bal is not None else None,
+            "txs": txs}
+
+
+def configured_address():
+    """The bot wallet's public address from LAB_BOT_WALLET or <data>/ui-cache/bot-wallet.json; never a key."""
+    a = os.environ.get("LAB_BOT_WALLET")
+    if not a:
+        try:
+            with open(os.path.join(DATA, "ui-cache", "bot-wallet.json")) as f:
+                a = json.load(f).get("address")
+        except (OSError, ValueError, AttributeError):
+            a = None
+    return a if isinstance(a, str) and ADDRESS_RE.match(a) else None
+
+
+def wallet_view(now):
+    """Wallet page. Paper part (real): 10 SOL plus realised P&L, cost of open positions, today's result against
+    the daily loss limit, and the paper orders as transactions. On-chain part: the live engine's wallet.json, or
+    the sample (marked) until there is one. Nothing here calls a node or touches a key."""
+    path = journal_path()
+    paper = None
+    if path:
+        j = Journal(path)
+        try:
+            exits = j.rows("exits")
+            opens = j.rows("positions", "status = 'open'")
+            orders = j.rows("orders")
+            fills = j.rows("fills")
+            beats = j.rows("heartbeat")
+        finally:
+            j.close()
+        clock = slot_clock(beats)
+        own = lambda r: not r["family"].startswith("N2_")  # noqa: E731
+        traded = [x for x in exits if own(x)]
+        days = sorted({x["day"] for x in traded if x["day"]})
+        today = utc_day(now)
+        day = today if today in days or not days else days[-1]
+        t_day = [x for x in traded if x["day"] == day]
+        failed = [x for x in t_day if not x["tokens"]]
+        risk = risk_limits() or {}
+        exit_of = {(x["family"], x["variant"], x["key"], x["t"]): x for x in traded}
+        order_of = {(o["family"], o["variant"], o["key"], o["t"]): o for o in orders if own(o)}
+        txs = []
+        for f in fills:
+            if not own(f):
+                continue
+            k = (f["family"], f["variant"], f["key"], f["t"])
+            o, x = order_of.get(k, {}), exit_of.get(k, {})
+            sell = f["side"] == "sell"
+            txs.append({"key": f["key"], "kind": f["side"], "slot": f["slot"], "time_unix": clock(f["slot"]),
+                        "amount_sol": ((f["quote"] or 0) if sell else -(f["quote"] or 0)) / 1e9, "status": "filled",
+                        "delay_slots": (o.get("entry_slot") - f["t"]) if not sell and o.get("entry_slot") else None,
+                        "reason": x.get("exit_reason") if sell else None, "ret": x.get("ret") if sell else None})
+        for o in order_of.values():
+            if o["status"] != "filled":
+                x = exit_of.get((o["family"], o["variant"], o["key"], o["t"]), {})
+                txs.append({"key": o["key"], "kind": "buy", "slot": o["entry_slot"], "time_unix": clock(o["entry_slot"]),
+                            "amount_sol": (x.get("pnl") or 0) / 1e9, "status": o["status"], "delay_slots": None,
+                            "reason": o.get("reason"), "ret": None})
+        txs = sorted(txs, key=lambda t: t["slot"] or 0, reverse=True)[:40]
+        names = token_names([t["key"] for t in txs])
+        for t in txs:
+            n = names.get(t["key"], {})
+            t.update(symbol=n.get("symbol"), mint=n.get("mint"))
+        realised = sum(x["pnl"] or 0 for x in traded) / 1e9
+        today_net = sum(x["pnl"] or 0 for x in t_day) / 1e9
+        # The wallet a bot with this capital would hold: the capital simulation (10 SOL, at most 5 positions),
+        # not the sum of every journaled trade (a parity run trades without capital limits).
+        final, _, taken, skipped, _ = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"] or 0, x["pnl"] or 0,
+                                                    not x["tokens"]) for x in traded])
+        paper = {"journal": os.path.basename(os.path.dirname(os.path.dirname(path))), "day": day, "is_today": day == today,
+                 "start_sol": CAPITAL_SOL, "balance_sol": final / 1e9, "sim_taken": taken, "sim_skipped": skipped,
+                 "realised_sol": realised, "test_run": os.path.basename(os.path.dirname(os.path.dirname(path))).startswith("parity"),
+                 "in_positions_sol": sum(p["cost"] or 0 for p in opens if own(p)) / 1e9, "open_positions": sum(1 for p in opens if own(p)),
+                 "today_net_sol": today_net, "failed_today": len(failed), "failed_cost_sol": -sum(x["pnl"] or 0 for x in failed) / 1e9,
+                 "daily_loss_limit_sol": risk.get("daily_loss_limit_sol"), "risk_found": bool(risk),
+                 "kill_switch": risk.get("kill_switch"), "max_open_positions": risk.get("max_open_positions"),
+                 "size_sol": risk.get("size_sol"), "txs": txs}
+    return {"paper": paper, "onchain": _wallet_state(path), "address": configured_address(), "now_unix": int(now)}
 
 
 def view(now=None):
     now = int(now if now is not None else time.time())
     path = journal_path()
     return {"journal": journal_view(path, now) if path else None, "recorder": recorder_view(now), "now_unix": now}
+
+
+def change_token():
+    """Changes when the journal or the recorder writes (file mtimes): the SSE stream's trigger."""
+    path = journal_path()
+    root, _ = recorder_root()
+    parts = []
+    for f in ([path, path + "-wal"] if path else []) + [os.path.join(root, "budget.json"), os.path.join(root, "segments")]:
+        try:
+            parts.append(os.stat(f).st_mtime_ns)
+        except OSError:
+            parts.append(0)
+    return "-".join(map(str, parts))
 
 
 def available():

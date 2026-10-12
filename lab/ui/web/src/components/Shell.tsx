@@ -92,7 +92,7 @@ function MoreSheet({ tabs, open, onOpenChange }: { tabs: Tab[]; open: boolean; o
 /** App frame: header (+ desktop nav), ticker bar, content, and the phone's tab bar with "Meer". */
 export function Shell({ tabs, active, children }: { tabs: Tab[]; active: string; children: ReactNode }) {
   const [more, setMore] = useState(false);
-  const PHONE = ["paper", "strategies", "tokens", "cases"];
+  const PHONE = ["paper", "strategies", "wallet", "triton"];  // design v1 tab bar; the rest sits under Meer
   const phoneTabs = PHONE.map((k) => tabs.find((t) => t.key === k)).filter((t): t is Tab => !!t);
   const rest = tabs.filter((t) => !PHONE.includes(t.key));
   const moreActive = rest.some((t) => t.key === active);

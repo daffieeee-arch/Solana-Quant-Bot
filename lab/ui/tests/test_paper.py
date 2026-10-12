@@ -151,6 +151,60 @@ class Recorder(unittest.TestCase):
                 importlib.reload(paper)
 
 
+class WalletAndTriton(unittest.TestCase):
+    def test_wallet_paper_part_is_the_capital_simulation_and_onchain_is_marked_sample(self):
+        if not paper.journal_path():
+            self.skipTest("no paper journal")
+        w = paper.wallet_view(1_791_800_000)
+        p = w["paper"]
+        v = paper.journal_view(paper.journal_path(), 1_791_800_000)
+        self.assertAlmostEqual(p["balance_sol"], v["capital"]["final_sol"])
+        self.assertTrue(all(t["status"] in ("filled", "entry_failed", "skipped") for t in p["txs"]))
+        self.assertTrue(w["onchain"]["sample"])  # no live wallet.json yet
+
+    def test_wallet_state_file_is_validated(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "wallet.json")
+            with open(f, "w") as fh:
+                json.dump({"address": "not base58 !", "balance_lamports": 2_000_000_000, "slot": 460_000_000,
+                           "txs": [{"slot": 452_400_000, "kind": "buy"}, {"slot": 460_000_001, "kind": "sell", "status": "landed",
+                                                                         "amount_lamports": 1, "symbol": "<b>x</b>" * 10}]}, fh)
+            os.environ["LAB_WALLET_STATE"] = f
+            try:
+                w = paper._wallet_state(None)
+            finally:
+                del os.environ["LAB_WALLET_STATE"]
+        self.assertFalse(w["sample"])
+        self.assertIsNone(w["address"])
+        self.assertEqual(w["balance_sol"], 2.0)
+        self.assertEqual(len(w["txs"]), 1)  # the hold-out slot is dropped
+        self.assertLessEqual(len(w["txs"][0]["symbol"]), 20)
+
+    def test_triton_from_the_sample(self):
+        os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"
+        try:
+            t = paper.triton_view(1_791_800_000)
+        finally:
+            del os.environ["LAB_RECORDER_ROOT"]
+        self.assertTrue(t["sample"])
+        self.assertAlmostEqual(t["month_gb"], t["recorder"]["spent_gb"], places=6)
+        self.assertGreater(t["forecast_usd"], t["month_usd"])
+        self.assertTrue(100 < t["latency"]["p50"] < t["latency"]["p90"] < 1000)
+        self.assertEqual(sum(t["latency"]["hist"]), t["latency"]["n"])
+        self.assertTrue(any(s["dropped"] for s in t["streams"]))
+
+    def test_risk_limits_parse(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
+            fh.write("size_sol: 0.5   # per trade\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\n")
+        os.environ["LAB_PAPER_RISK"] = fh.name
+        try:
+            r = paper.risk_limits()
+        finally:
+            del os.environ["LAB_PAPER_RISK"]
+            os.unlink(fh.name)
+        self.assertEqual((r["size_sol"], r["daily_loss_limit_sol"], r["kill_switch"]), (0.5, 1.0, False))
+
+
 class Capital(unittest.TestCase):
     def test_full_slots_skip_and_failed_entries_pay(self):
         trades = [(i, 100, 1_000_000_000, 100_000_000, False) for i in range(6)] + [(7, None, 0, -1_000_000, True)]

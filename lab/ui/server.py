@@ -17,6 +17,8 @@ import os
 import re
 import sqlite3
 import sys
+import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -44,6 +46,8 @@ MAX_ROWS = 2000
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("font/woff2", ".woff2")
 PAPER_CHART_PAD = 40_000  # slots (~3 h) of price around a paper position's trades
+STREAM_SLOTS = threading.BoundedSemaphore(8)  # concurrent SSE connections
+STREAM_SECS = 600
 MIN_TRADES = 200  # stop rule: below this a group is reported, not ranked
 HOLDOUT_START = labstore.HOLDOUT_START
 
@@ -96,6 +100,9 @@ def api_meta(q):
         tabs.insert(0, "cases")
     if paper.available():
         tabs.insert(0, "paper")
+        tabs.append("wallet")
+    if paper.recorder_view(time.time()) is not None:
+        tabs.append("triton")
     if has_table(con, "strategy_summary") and con.execute("SELECT count(*) FROM strategy_summary").fetchone()[0]:
         tabs.insert(0, "strategies")
     return {"meta": meta, "tabs": tabs}
@@ -383,6 +390,16 @@ def api_paper(q):
     return paper.view()
 
 
+def api_wallet(q):
+    """Wallet page: paper wallet (real, from the journal) and the on-chain wallet file (or the marked sample)."""
+    return paper.wallet_view(time.time())
+
+
+def api_triton(q):
+    """Triton page: data use and cost from the recorder's files (or the marked sample)."""
+    return {"triton": paper.triton_view(time.time())}
+
+
 def api_paper_chart(q):
     """One paper position's chart: the bot's entries and exits on that key (journal) and the token's 1-minute
     candles from the development data when it has them (a live token newer than the store has none yet)."""
@@ -461,7 +478,8 @@ ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": a
           "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases,
           "/api/paper": api_paper,
           "/api/strategy_overview": api_strategy_overview, "/api/paper_chart": api_paper_chart,
-          "/api/paper_trades": api_paper_trades}
+          "/api/paper_trades": api_paper_trades,
+          "/api/wallet": api_wallet, "/api/triton": api_triton}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -492,8 +510,41 @@ class Handler(BaseHTTPRequestHandler):
     def do_HEAD(self):
         self.do_GET()
 
+    def stream(self):
+        """Server-Sent Events: 'change' whenever the paper journal or the recorder writes, so open pages refetch at
+        once instead of waiting for their poll. Read-only and tiny (a token, no data); a slot limit keeps threads
+        bounded and each connection ends after STREAM_SECS (EventSource reconnects by itself)."""
+        if not STREAM_SLOTS.acquire(blocking=False):
+            return self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "te veel live-verbindingen"})
+        try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            self.end_headers()
+            last, t0, ping = None, time.time(), time.time()
+            self.wfile.write(b"retry: 5000\n\n")
+            while time.time() - t0 < STREAM_SECS:
+                tok = paper.change_token()
+                if tok != last:
+                    self.wfile.write(f"event: change\ndata: {tok}\n\n".encode())
+                    self.wfile.flush()
+                    last = tok
+                elif time.time() - ping > 15:
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
+                    ping = time.time()
+                time.sleep(2)
+        except (BrokenPipeError, ConnectionResetError, TimeoutError):
+            pass
+        finally:
+            STREAM_SLOTS.release()
+
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path == "/api/stream":
+            return self.stream()
         if url.path.startswith("/api/"):
             fn = ROUTES.get(url.path)
             if fn is None:
