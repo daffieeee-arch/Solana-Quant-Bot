@@ -7,3 +7,5 @@ Description=Solana lab: delete live recorder segments older than 3 days
 Type=oneshot
 ExecStart=%h/Solana-project/worktrees/paper-run/lab/ops/live-retention.sh
 Nice=10
+# paper.keeper reads one segment at a time (DuckDB 1 GB).
+MemoryMax=1500M

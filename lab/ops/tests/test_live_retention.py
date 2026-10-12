@@ -135,3 +135,20 @@ def test_the_paper_engine_has_a_restart_timer():
     assert "Unit=lab-paper.service" in timer and "OnCalendar=*:0/15" in timer
     readme = open(os.path.join(OPS, "README.md")).read()
     assert "enable --now lab-paper.timer" in readme and "disable --now lab-paper.timer" in readme
+
+
+def test_live_units_stay_down_after_a_disk_guard_stop():
+    """ops/disk-guard.sh writes locks/disk-stopped at its emergency stop; no timer or reboot may start
+    the live units again until the coordinator removes it (coordinator decision 2026-10-13)."""
+    units = os.path.join(OPS, "systemd")
+    cond = "ConditionPathExists=!%h/Solana-project/data-old-faithful-one/lab/locks/disk-stopped"
+    for u in ("lab-paper.service", "lab-recorder.service", "lab-token-meta-rpc.service"):
+        lines = open(os.path.join(units, u)).read().splitlines()
+        unit = lines[lines.index("[Unit]"):lines.index("[Service]")]
+        assert cond in unit, u
+    retention = open(os.path.join(units, "lab-live-retention.service")).read().splitlines()
+    assert "MemoryMax=1500M" in retention
+    # systemd takes no comment after a value on the same line
+    for f in os.listdir(units):
+        for line in open(os.path.join(units, f)):
+            assert line.startswith(("#", ";")) or "#" not in line, (f, line)

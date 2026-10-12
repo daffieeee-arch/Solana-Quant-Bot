@@ -15,6 +15,8 @@ no transactions: paper only.
 - `keeper.py`: before `lab/ops/live-retention.sh` deletes a segment, keeps the trades of tokens with a
   signal (recorded and backfill rows), their arrival times and 1-minute candles of every pool and
   curve under `<journal>/../kept/<seq>/` (`DONE.json` last). A segment is deleted only once kept.
+  Candle prices are quote / base in raw units as recorded: in a reversed pool (base WSOL) that is
+  tokens per SOL, so a chart of SOL per token inverts it once (and only once).
 - `engine.py`: slot-synchronous engine. It re-executes later trades against the state with our
   position using the backtest's own `PositionSim`, so paper fills equal the replay's.
   - N2 shadow: per F7 trigger, `n2_k` (default 1) random tokens of the same venue and pool
@@ -70,7 +72,8 @@ Live input checks:
   `farmer_seed` records the range and `complete_from`: before that slot the farm labels and the live
   watchlist's organic verdict lack history (a store ending before the recorder's start: one day).
 - A row that comes twice (a probe's backfill delivered after its first recorded rows, or slots
-  recorded again after a restart) counts once: row keys of the last 3,000 slots are remembered.
+  recorded again after a restart) counts once: row keys (pool or mint, slot, tx, outer, inner) of
+  the last 3,000 slots are remembered in `seen_keys` (LiveFeed), with their source.
 - A backfill trade from before the first slot the engine saw goes to the watchlist history in a
   minute estimated with the clock, never into the open minute.
 

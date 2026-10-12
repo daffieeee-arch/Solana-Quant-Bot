@@ -4,6 +4,9 @@
 [Unit]
 Description=Solana lab: paper engine on the live recorder (K3 config), paper only
 Documentation=file:%h/Solana-project/worktrees/paper-run/lab/ops/README.md
+# Not after a disk-guard emergency stop: ops/disk-guard.sh writes this file when it stops the live units;
+# only the coordinator removes it, after a check (no automatic restart around the threshold).
+ConditionPathExists=!%h/Solana-project/data-old-faithful-one/lab/locks/disk-stopped
 Requires=lab-recorder.service
 After=lab-recorder.service
 StartLimitIntervalSec=1h

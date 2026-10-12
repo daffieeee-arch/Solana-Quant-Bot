@@ -457,8 +457,10 @@ class Engine:
     def _signal(self, family, variant, key, venue, orientation, t, params, depth, trader, farm=None, lat=None):
         """farm: the trigger's label (an N2 signal carries its F7 trigger's); lat: its arrival (_latency)."""
         b = self.busy.get((family, variant, key))
+        seed = getattr(self.feed, "farm_seed", None)
         row = dict(family=family, variant=variant, key=key, t=t, day=self.day, venue=venue, orientation=orientation,
-                   depth=depth, trigger_trader=trader, farm=farm, **(lat or {}))
+                   depth=depth, trigger_trader=trader, farm=farm, **(lat or {}),
+                   farm_complete=None if seed is None else int(t >= seed["complete_from"]))
         if self.farm == "organic" and farm == "flagged":
             return self.j.put("signals", **row, status="skipped", reason="farm flagged")
         if b == "open" or (b is not None and t <= b):

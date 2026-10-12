@@ -93,6 +93,19 @@ def watchlist_lines(log_path, day):
                     f"pruned {today('pruned_total')}, restored {today('restored_total')} this day"]
 
 
+def farm_lines(journal, day):
+    """How many of the day's live F7 triggers had a farm label from incomplete farmer history (before
+    LiveFeed's complete_from): those labels are not comparable with the backtest's."""
+    trig = {}
+    for r in journal.rows("signals", "day = ? AND family = 'F7' AND farm_complete IS NOT NULL", (day,)):
+        trig.setdefault((r["key"], r["t"]), r["farm_complete"])
+    if not trig:
+        return []
+    n0 = sum(1 for v in trig.values() if not v)
+    return ["", "## Farm labels", "",
+            f"- {n0} of {len(trig)} triggers before the farmer history was complete (journal state farmer_seed)"]
+
+
 def daily_report(journal, day, watch_log=None):
     """Write <journal>/<day>/report.md and report.parquet; returns the summary rows."""
     exits = journal.rows("exits")
@@ -148,6 +161,7 @@ def daily_report(journal, day, watch_log=None):
               f"- minutes with a heartbeat: {sum(1 for b in beats if not b['note'])}; feed gaps: {len(gaps)}"
               + (f" (largest {max(b['gap_slots'] for b in gaps)} slots)" if gaps else "")]
     lines += latency_lines(journal, day)
+    lines += farm_lines(journal, day)
     if watch_log is not None:
         lines += watchlist_lines(watch_log, day)
     out = os.path.join(journal.dir, day)
