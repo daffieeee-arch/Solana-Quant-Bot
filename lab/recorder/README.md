@@ -17,6 +17,10 @@ transactions.
 | `tx_new_pools` | `account_required` = [PumpSwap, pump.fun withdraw authority `39azUYFW…`]; on unless `--no-new-pools` | every pump.fun graduation (new canonical pool, M1). Measured on 1052 (`lab/checks/creation_filter.py`, two windows of 100k slots): 100% of migrations, 0 other transactions, ~0.003 GB/day. Direct `create_pool` calls (mostly reversed pools) have no cheap rule (8–56 GB/day) |
 | `blocks` | block meta | block time, height, tx count per slot (the engine's clock) |
 | `slots` | slot status, `filter_by_commitment` | a slot is written once confirmed (+ `--close-lag`) |
+| `tx_new_reversed` (off by default, `--new-reversed`) | `account_include` [PumpSwap], `account_exclude` 15 generic accounts (protocol and buyback fee recipients, Jupiter v6, a few routers; `watch.rs` `NEW_REVERSED_EXCLUDE`) | direct pool creations, mostly reversed pools (97% of the reversed pools ≥ 150 SOL on a day are created that day). The certain fallback: ~7–8 GB/day with ~100% of direct creations (creation-filter measurement, 1052). The exclusion list also lets through deposits, withdrawals and other non-trade PumpSwap transactions |
+| `pool_creations` (off by default, `--pool-creations`) | owner PumpSwap + memcmp Pool discriminator + memcmp 16 zero bytes at 271 (`protocol_fees`, `creator_fees`), data slice 43..244 | **hypothesis, to verify in the first measuring hour:** both counters are 0 at creation and grow with the first trade, so each new pool gives exactly one update for almost no bytes. Measure updates per hour and whether every new reversed pool appears (compare with OF1's CreatePoolEvents). Every update is written (`pool_creations/`), not deduplicated |
+| `tx_probes` | `account_include` = the recorder's own probe pools | a new WSOL pool becomes a probe (full transactions for `--probe-minutes`, 180) at once when it is created with ≥ `--probe-depth-sol` (150) WSOL, or when its followed WSOL vault reaches that depth. Probes are applied within a second (no rate limit): the first F7 trigger comes 0–2 minutes after creation (LAB research smoke test) |
+| `new_vaults` | the WSOL vaults of new reversed pools below the probe depth, for `--fresh-vault-minutes` (60), data slice 64..72 | finds the ~85-SOL pools that become deep later. Their trades before the probe starts are not recorded (the farmer flag of those pools is incomplete) |
 | `vaults` (optional) | `account` = the watchlist's `vaults`, data slice 64..72 (token `amount`) | cheap balance-only following of pools that are not on the full-transaction list |
 | `pool_accounts` (off by default, `--pool-accounts`) | owner PumpSwap + memcmp Pool discriminator, data slice 43..244 | new pools (mints, vaults, coin creator). Expensive: see below |
 
@@ -48,8 +52,9 @@ the reconciliation.
 Every update is metered (protobuf size before transport compression, times `--wire-ratio`) per
 stream and minute. The daily cap is `--budget-usd` / `--usd-per-gb` (default $2 / $0.08 = 25 GB,
 UTC day, kept in `<root>/budget.json` across restarts). When the day projects above the cap, the
-lowest-priority stream is dropped (`pool_accounts`, then `vaults`, then `tx_wallets`, then the
-watchlist pools; open-position pools, graduations, blocks and slots stay); a minute above 20x the sustainable
+lowest-priority stream is dropped (`pool_accounts`, `pool_creations`, `tx_new_reversed`,
+`new_vaults`, `tx_probes`, `vaults`, `tx_wallets`, then the watchlist pools; open-position pools,
+graduations, blocks and slots stay); a minute above 20x the sustainable
 rate downscales at once. At the cap the recorder writes its last segment and exits with code 75;
 it refuses to start again the same day. A new UTC day restores all streams. Every decision is a
 `budget` usage row with a note, which the engine journals (`usage` table).
@@ -78,6 +83,12 @@ target/release/lab-recorder --root /tmp/rec-dry --watchlist <watchlist-current.j
 `Cargo.lock` started as a copy of the extractor's and only adds the Yellowstone crates
 (`yellowstone-grpc-client =14.0.1`, `yellowstone-grpc-proto =13.0.0`, `tonic-health`, vendored
 `protoc`); every Agave/Jetstreamer version is the extractor's.
+
+Probe costs, measured in the store (one day of epoch 1046): 57% of all trades of same-day reversed
+pools fall in their first 10 minutes. Probing every new reversed pool for 10 minutes would be
+~13.5 GB/day; probing those created with ≥ 150 SOL for 3 hours is ~5 GB/day and covers 51% of the
+day's deep pools from their first slot. Most others start at ~85 SOL; `new_vaults` catches the
+ones that grow.
 
 ## Not used: yellowstone-block-machine
 

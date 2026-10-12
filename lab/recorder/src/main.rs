@@ -12,6 +12,8 @@
 //!   lab-recorder --root DIR [--endpoint URL] [--watchlist FILE] [--open-pools FILE]
 //!                [--budget-usd 2] [--usd-per-gb 0.08] [--wire-ratio 1] [--segment-slots 150]
 //!                [--segment-secs 60] [--close-lag 1] [--max-tx-accounts 10000] [--pool-accounts] [--no-new-pools]
+//!                [--new-reversed] [--pool-creations] [--probe-depth-sol 150] [--probe-minutes 180]
+//!                [--fresh-vault-minutes 60]
 //!                [--reload-secs 10] [--min-update-secs 60] [--from-slot N] [--max-runtime-secs N]
 //!                [--dry-run]
 //!
@@ -44,7 +46,7 @@ use sink::Sink;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use watch::{Files, Filter};
+use watch::{Extra, Files, Filter, Opts};
 use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient};
 use yellowstone_grpc_proto::tonic::codec::CompressionEncoding;
 
@@ -68,6 +70,11 @@ struct Args {
     max_tx_accounts: usize,
     pool_accounts: bool,
     new_pools: bool,
+    new_reversed: bool,
+    pool_creations: bool,
+    probe_depth_sol: f64,
+    probe_minutes: u64,
+    fresh_vault_minutes: u64,
     reload_secs: u64,
     min_update_secs: u64,
     from_slot: Option<u64>,
@@ -92,6 +99,11 @@ fn parse_args() -> Result<Args> {
         max_tx_accounts: 10_000,
         pool_accounts: false,
         new_pools: true,
+        new_reversed: false,
+        pool_creations: false,
+        probe_depth_sol: 150.0,
+        probe_minutes: 180,
+        fresh_vault_minutes: 60,
         reload_secs: 10,
         min_update_secs: 60,
         from_slot: None,
@@ -115,6 +127,11 @@ fn parse_args() -> Result<Args> {
             "--max-tx-accounts" => a.max_tx_accounts = val()?.parse()?,
             "--pool-accounts" => a.pool_accounts = true,
             "--no-new-pools" => a.new_pools = false,
+            "--new-reversed" => a.new_reversed = true,
+            "--pool-creations" => a.pool_creations = true,
+            "--probe-depth-sol" => a.probe_depth_sol = val()?.parse()?,
+            "--probe-minutes" => a.probe_minutes = val()?.parse()?,
+            "--fresh-vault-minutes" => a.fresh_vault_minutes = val()?.parse()?,
             "--reload-secs" => a.reload_secs = val()?.parse()?,
             "--min-update-secs" => a.min_update_secs = val()?.parse()?,
             "--from-slot" => a.from_slot = Some(val()?.parse()?),
@@ -133,6 +150,16 @@ fn parse_args() -> Result<Args> {
         bail!("--segment-slots and --max-tx-accounts must be positive");
     }
     Ok(a)
+}
+
+fn opts(a: &Args) -> Opts {
+    Opts {
+        pool_accounts: a.pool_accounts,
+        new_pools: a.new_pools,
+        pool_creations: a.pool_creations,
+        new_reversed: a.new_reversed,
+        max_tx_accounts: a.max_tx_accounts,
+    }
 }
 
 fn unix() -> u64 {
@@ -228,7 +255,7 @@ async fn run(a: Args) -> Result<i32> {
     let mut files = Files::new(a.watchlist.clone(), a.open_pools.clone());
     let watch = files.reload().unwrap_or_default();
     if a.dry_run {
-        let f = Filter::new(&watch, 0, a.pool_accounts, a.new_pools, a.max_tx_accounts);
+        let f = Filter::new(&watch, &Extra::default(), 0, &opts(&a));
         let main = f.request(a.from_slot);
         let vaults = f.vault_request();
         println!(
@@ -256,10 +283,11 @@ async fn run(a: Args) -> Result<i32> {
     // The extractor's plugin decodes; its own Parquet sink stays unused (the segments write).
     let plugin = LabPlugin::new(Arc::new(Sink::start(a.root.join(".extractor-sink-unused"))), Arc::new(Coverage::new(0, 0)))?;
     let cfg = Config {
-        pool_accounts: a.pool_accounts,
-        new_pools: a.new_pools,
-        max_tx_accounts: a.max_tx_accounts,
+        opts: opts(&a),
         min_update_secs: a.min_update_secs,
+        probe_lamports: (a.probe_depth_sol * 1e9) as u64,
+        probe_secs: a.probe_minutes * 60,
+        fresh_vault_secs: a.fresh_vault_minutes * 60,
     };
     let resume_from = a.from_slot.map(|s| s.saturating_sub(1)).or(last);
     let mut rec = Recorder::new(cfg, plugin, segs, meter, watch, resume_from, a.close_lag);

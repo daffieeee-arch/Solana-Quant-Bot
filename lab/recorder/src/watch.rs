@@ -6,10 +6,13 @@
 //!   optionally `vaults: [...]` (token accounts to follow by balance only);
 //! - `open-pools.json`, written by the paper engine: pools with an open position, always kept.
 //!
-//! Streams, in downscale order (the first is dropped first): `pool_accounts`, `vaults`,
-//! `tx_wallets`, `tx_watchlist` (watchlist pools; the open-position pools stay). Blocks, slot
-//! statuses and `tx_new_pools` (pump.fun graduations, ~0.003 GB/day) always stay; only the hard
-//! stop ends them.
+//! Plus the recorder's own probes: new pools it saw created with enough WSOL (or whose WSOL vault
+//! reached the probe depth) get their own transaction filter for a few hours.
+//!
+//! Streams, in downscale order (the first is dropped first): `pool_accounts`, `pool_creations`,
+//! `tx_new_reversed`, `new_vaults`, `tx_probes`, `vaults`, `tx_wallets`, `tx_watchlist` (watchlist
+//! pools; the open-position pools stay). Blocks, slot statuses and `tx_new_pools` (pump.fun
+//! graduations, ~0.003 GB/day) always stay; only the hard stop ends them.
 
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -36,8 +39,58 @@ pub const POOL_SLICE: (u64, u64) = (43, 201);
 pub const MIGRATION_AUTHORITY: &str = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg";
 /// SPL token account `amount` (both token programs).
 pub const VAULT_SLICE: (u64, u64) = (64, 8);
+pub const WSOL: &str = "So11111111111111111111111111111111111111112";
+/// Pool bytes 271..287: `protocol_fees` and `creator_fees` (u64 each). Hypothesis, to verify in the
+/// first measuring hour: both are 0 when a pool is created and grow with its first trade, so an
+/// account stream asking for zeros there sees each new pool once (`pool_creations`).
+pub const FRESH_FEES: (u64, usize) = (271, 16);
+/// `tx_new_reversed`: every PumpSwap transaction without one of these generic accounts. They are
+/// the accounts the creation-filter measurement (1052, windows a and b) excluded in both windows:
+/// protocol and buyback fee recipients (in every trade, in no creation), Jupiter v6 and a few
+/// routers/bots. ~7-8 GB/day with ~100% of direct creations (lab/checks/creation_filter.py).
+pub const NEW_REVERSED_EXCLUDE: [&str; 15] = [
+    "A7hAgCzFw14fejgCp387JUJRMNyz4j89JKnhtKU8piqW",
+    "FWsW1xNtWscwNmKv6wVsU1iTzRN6wmmk3MjxRP5tT7hz",
+    "94qWNrtmfn42h3ZjUZwWvK1MEo9uVmmrBPd2hpNjYDjb",
+    "7hTckgnGnLQR6sdH7YkqFTAA7VwTfYFaZ6EhEsU3saCX",
+    "AVmoTthdrX6tKt4nDjco2D775W2YK3sDhxPcMmzUAmTY",
+    "9rPYyANsfQZw3DnDmKE3YCQF5E8oD89UXoHn9JFEhJUz",
+    "GXPFM2caqTtQYC2cJ5yJRi9VDkpsYZXzYdwYpGnLmtDL",
+    "9M4giFFMxmFGXtc3feFzRai56WbBqehoSeRE5GK7gf7",
+    "5cjcW9wExnJJiqgLjq7DEG75Pm6JBgE1hNv4B2vHXUW6",
+    "3BpXnfJaUTiwXnJNe7Ej1rcbzqTTQUvLShZaWazebsVR",
+    "6Vo3245eszAb5wuqEMw8mGdbfRUdKbHhDHP5LcaGuTAB",
+    "DF1ow4tspfHX9JwWJsAb9epbkA8hmpSEAtxXy1V27QBH",
+    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+    "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9",
+    "HTVZVEQMBsNanubDPTs3CxDAEGNFQHJY8c1441iy2S5r",
+];
 
-pub const DOWNSCALE: [&str; 4] = ["pool_accounts", "vaults", "tx_wallets", "tx_watchlist"];
+pub const DOWNSCALE: [&str; 8] =
+    ["pool_accounts", "pool_creations", "tx_new_reversed", "new_vaults", "tx_probes", "vaults", "tx_wallets", "tx_watchlist"];
+
+/// Which optional streams are configured (on before downscaling).
+#[derive(Clone, Debug)]
+pub struct Opts {
+    pub pool_accounts: bool,
+    pub new_pools: bool,
+    pub pool_creations: bool,
+    pub new_reversed: bool,
+    pub max_tx_accounts: usize,
+}
+
+impl Default for Opts {
+    fn default() -> Self {
+        Self { pool_accounts: false, new_pools: true, pool_creations: false, new_reversed: false, max_tx_accounts: 10_000 }
+    }
+}
+
+/// The recorder's own additions: probe pools (full transactions) and WSOL vaults of new pools.
+#[derive(Clone, Debug, Default)]
+pub struct Extra {
+    pub probes: Vec<String>,
+    pub fresh_vaults: Vec<String>,
+}
 
 fn valid(key: &str) -> bool {
     bs58::decode(key).into_vec().is_ok_and(|v| v.len() == 32)
@@ -139,38 +192,50 @@ impl Files {
 pub struct Filter {
     /// Open-position pools first, then watchlist pools.
     pub tx_pools: Vec<String>,
+    /// Probe pools that are not already in `tx_pools`.
+    pub tx_probes: Vec<String>,
     pub tx_wallets: Vec<String>,
     pub vaults: Vec<String>,
+    pub fresh_vaults: Vec<String>,
     pub pool_accounts: bool,
+    pub pool_creations: bool,
+    pub new_reversed: bool,
     /// Graduation transactions (new canonical pools for M1).
     pub new_pools: bool,
     pub level: usize,
-    /// Addresses left out by `max_tx_accounts`.
+    /// Addresses left out by `max_tx_accounts` (pools first, then probes, then wallets kept).
     pub truncated: u64,
 }
 
 impl Filter {
-    pub fn new(w: &Watch, level: usize, pool_accounts: bool, new_pools: bool, max_tx_accounts: usize) -> Self {
+    pub fn new(w: &Watch, extra: &Extra, level: usize, o: &Opts) -> Self {
         let on = |stream: &str| DOWNSCALE.iter().position(|s| *s == stream).map_or(true, |i| i >= level);
-        let mut pools: Vec<String> = w.open_pools.clone();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut take = |list: &[String]| -> Vec<String> { list.iter().filter(|p| seen.insert((*p).clone())).cloned().collect() };
+        let mut pools = take(&w.open_pools);
         if on("tx_watchlist") {
-            let open: BTreeSet<&String> = w.open_pools.iter().collect();
-            pools.extend(w.pools.iter().filter(|p| !open.contains(p)).cloned());
+            pools.extend(take(&w.pools));
         }
-        let wallets = if on("tx_wallets") { w.wallets.clone() } else { Vec::new() };
-        let total = pools.len() + wallets.len();
-        let mut f = Filter {
-            truncated: total.saturating_sub(max_tx_accounts) as u64,
-            vaults: if on("vaults") { w.vaults.clone() } else { Vec::new() },
-            pool_accounts: pool_accounts && on("pool_accounts"),
-            new_pools,
-            level,
+        let mut probes = if on("tx_probes") { take(&extra.probes) } else { Vec::new() };
+        let mut wallets = if on("tx_wallets") { w.wallets.clone() } else { Vec::new() };
+        let total = pools.len() + probes.len() + wallets.len();
+        let max = o.max_tx_accounts;
+        pools.truncate(max);
+        probes.truncate(max - pools.len());
+        wallets.truncate(max - pools.len() - probes.len());
+        Filter {
+            truncated: total.saturating_sub(max) as u64,
             tx_pools: pools,
+            tx_probes: probes,
             tx_wallets: wallets,
-        };
-        f.tx_pools.truncate(max_tx_accounts);
-        f.tx_wallets.truncate(max_tx_accounts - f.tx_pools.len());
-        f
+            vaults: if on("vaults") { w.vaults.clone() } else { Vec::new() },
+            fresh_vaults: if on("new_vaults") { extra.fresh_vaults.clone() } else { Vec::new() },
+            pool_accounts: o.pool_accounts && on("pool_accounts"),
+            pool_creations: o.pool_creations && on("pool_creations"),
+            new_reversed: o.new_reversed && on("tx_new_reversed"),
+            new_pools: o.new_pools,
+            level,
+        }
     }
 
     fn tx(accounts: &[String]) -> SubscribeRequestFilterTransactions {
@@ -182,13 +247,27 @@ impl Filter {
         }
     }
 
-    /// The main subscription: watchlist transactions, graduations, block meta, confirmed slot
-    /// statuses and, when on, the pool account stream. An empty address list never becomes a
-    /// filter (an empty `account_include` without `account_required` matches every transaction).
+    fn memcmp(offset: u64, bytes: Vec<u8>) -> SubscribeRequestFilterAccountsFilter {
+        SubscribeRequestFilterAccountsFilter {
+            filter: Some(AccountsFilterKind::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
+                offset,
+                data: Some(MemcmpData::Bytes(bytes)),
+            })),
+        }
+    }
+
+    /// The main subscription: watchlist and probe transactions, graduations, optionally all
+    /// PumpSwap transactions without the generic trade accounts (new reversed pools), block meta,
+    /// confirmed slot statuses and, when on, the pool account streams. An address list is never
+    /// sent empty (an empty `account_include` without `account_required` matches every
+    /// transaction).
     pub fn request(&self, from_slot: Option<u64>) -> SubscribeRequest {
         let mut transactions = HashMap::new();
         if !self.tx_pools.is_empty() {
             transactions.insert("tx_pools".to_owned(), Self::tx(&self.tx_pools));
+        }
+        if !self.tx_probes.is_empty() {
+            transactions.insert("tx_probes".to_owned(), Self::tx(&self.tx_probes));
         }
         if !self.tx_wallets.is_empty() {
             transactions.insert("tx_wallets".to_owned(), Self::tx(&self.tx_wallets));
@@ -204,24 +283,45 @@ impl Filter {
                 },
             );
         }
+        if self.new_reversed {
+            transactions.insert(
+                "tx_new_reversed".to_owned(),
+                SubscribeRequestFilterTransactions {
+                    vote: Some(false),
+                    failed: Some(false),
+                    account_include: vec![PUMP_AMM.to_owned()],
+                    account_exclude: NEW_REVERSED_EXCLUDE.iter().map(|a| (*a).to_owned()).collect(),
+                    ..Default::default()
+                },
+            );
+        }
         let mut accounts = HashMap::new();
-        let mut accounts_data_slice = Vec::new();
         if self.pool_accounts {
             accounts.insert(
                 "pool_accounts".to_owned(),
                 SubscribeRequestFilterAccounts {
                     owner: vec![PUMP_AMM.to_owned()],
-                    filters: vec![SubscribeRequestFilterAccountsFilter {
-                        filter: Some(AccountsFilterKind::Memcmp(SubscribeRequestFilterAccountsFilterMemcmp {
-                            offset: 0,
-                            data: Some(MemcmpData::Bytes(POOL_DISC.to_vec())),
-                        })),
-                    }],
+                    filters: vec![Self::memcmp(0, POOL_DISC.to_vec())],
                     ..Default::default()
                 },
             );
-            accounts_data_slice.push(SubscribeRequestAccountsDataSlice { offset: POOL_SLICE.0, length: POOL_SLICE.1 });
         }
+        if self.pool_creations {
+            accounts.insert(
+                "pool_creations".to_owned(),
+                SubscribeRequestFilterAccounts {
+                    owner: vec![PUMP_AMM.to_owned()],
+                    filters: vec![Self::memcmp(0, POOL_DISC.to_vec()), Self::memcmp(FRESH_FEES.0, vec![0u8; FRESH_FEES.1])],
+                    ..Default::default()
+                },
+            );
+        }
+        // One slice for the whole subscription: both pool streams read the same bytes.
+        let accounts_data_slice = if accounts.is_empty() {
+            Vec::new()
+        } else {
+            vec![SubscribeRequestAccountsDataSlice { offset: POOL_SLICE.0, length: POOL_SLICE.1 }]
+        };
         SubscribeRequest {
             transactions,
             accounts,
@@ -237,12 +337,16 @@ impl Filter {
         }
     }
 
-    /// The vault subscription (its own stream on the same connection, for its own data slice).
-    /// With no vaults it asks for nothing (the server only sends pings).
+    /// The vault subscription (its own stream on the same connection, for its own data slice):
+    /// the watchlist's vaults and the WSOL vaults of new pools. With none it asks for nothing (the
+    /// server only sends pings).
     pub fn vault_request(&self) -> SubscribeRequest {
         let mut accounts = HashMap::new();
         if !self.vaults.is_empty() {
             accounts.insert("vaults".to_owned(), SubscribeRequestFilterAccounts { account: self.vaults.clone(), ..Default::default() });
+        }
+        if !self.fresh_vaults.is_empty() {
+            accounts.insert("new_vaults".to_owned(), SubscribeRequestFilterAccounts { account: self.fresh_vaults.clone(), ..Default::default() });
         }
         SubscribeRequest {
             accounts,
@@ -254,8 +358,10 @@ impl Filter {
 
     pub fn summary(&self) -> Value {
         json!({"level": self.level, "dropped": &DOWNSCALE[..self.level.min(DOWNSCALE.len())],
-               "tx_pools": self.tx_pools.len(), "tx_wallets": self.tx_wallets.len(), "vaults": self.vaults.len(),
-               "pool_accounts": self.pool_accounts, "new_pools": self.new_pools, "truncated": self.truncated})
+               "tx_pools": self.tx_pools.len(), "tx_probes": self.tx_probes.len(), "tx_wallets": self.tx_wallets.len(),
+               "vaults": self.vaults.len(), "new_vaults": self.fresh_vaults.len(), "pool_accounts": self.pool_accounts,
+               "pool_creations": self.pool_creations, "new_reversed": self.new_reversed, "new_pools": self.new_pools,
+               "truncated": self.truncated})
     }
 }
 
@@ -268,7 +374,8 @@ pub fn segment_watchlist(before: &Filter, now: &Filter, source: &Value) -> Value
         let b: BTreeSet<&String> = b.iter().collect();
         (a.intersection(&b).map(|s| (*s).clone()).collect(), a.symmetric_difference(&b).map(|s| (*s).clone()).collect())
     };
-    let (pools, pools_partial) = both(&before.tx_pools, &now.tx_pools);
+    let all = |f: &Filter| -> Vec<String> { f.tx_pools.iter().chain(&f.tx_probes).cloned().collect() };
+    let (pools, pools_partial) = both(&all(before), &all(now));
     let (wallets, wallets_partial) = both(&before.tx_wallets, &now.tx_wallets);
     json!({
         "pools": pools.iter().map(|p| json!({"pool": p})).collect::<Vec<_>>(),
@@ -278,6 +385,7 @@ pub fn segment_watchlist(before: &Filter, now: &Filter, source: &Value) -> Value
         "vaults": now.vaults,
         // Graduation transactions were filtered for the whole segment (paper.reconcile checks them).
         "new_pools": before.new_pools && now.new_pools,
+        "new_reversed": before.new_reversed && now.new_reversed,
         "filter": now.summary(),
         "source": source,
     })
@@ -307,29 +415,44 @@ mod tests {
         assert_eq!(w.source["valid_for_minute"], 5);
     }
 
+    fn opts(pool_accounts: bool, max: usize) -> Opts {
+        Opts { pool_accounts, pool_creations: pool_accounts, new_reversed: pool_accounts, max_tx_accounts: max, ..Opts::default() }
+    }
+
+    fn level(i: usize) -> usize {
+        DOWNSCALE.iter().position(|s| *s == ["pool_accounts", "pool_creations", "tx_new_reversed", "new_vaults", "tx_probes", "vaults", "tx_wallets", "tx_watchlist"][i]).unwrap()
+    }
+
     #[test]
     fn downscale_drops_streams_in_order_and_keeps_open_pools() {
         let w = watch();
-        let full = Filter::new(&w, 0, true, true, 10_000);
+        let extra = Extra { probes: vec![A.to_owned(), C.to_owned()], fresh_vaults: vec![D.to_owned()] };
+        let full = Filter::new(&w, &extra, 0, &opts(true, 10_000));
         assert_eq!(full.tx_pools, vec![B.to_owned(), A.to_owned()]); // open pool first, no duplicate
-        assert!(full.pool_accounts && !full.vaults.is_empty() && !full.tx_wallets.is_empty());
-        let l2 = Filter::new(&w, 2, true, true, 10_000);
-        assert!(!l2.pool_accounts && l2.vaults.is_empty() && !l2.tx_wallets.is_empty());
-        let l4 = Filter::new(&w, 4, true, true, 10_000);
-        assert_eq!(l4.tx_pools, vec![B.to_owned()]);
-        assert!(l4.tx_wallets.is_empty());
-        let capped = Filter::new(&w, 0, false, false, 3);
-        assert_eq!((capped.tx_pools.len() + capped.tx_wallets.len(), capped.truncated), (3, 1));
+        assert_eq!(full.tx_probes, vec![C.to_owned()]); // A is already a watchlist pool
+        assert!(full.pool_accounts && full.pool_creations && full.new_reversed);
+        assert!(!full.vaults.is_empty() && !full.fresh_vaults.is_empty() && !full.tx_wallets.is_empty());
+        let l3 = Filter::new(&w, &extra, level(2) + 1, &opts(true, 10_000));
+        assert!(!l3.pool_accounts && !l3.pool_creations && !l3.new_reversed && !l3.fresh_vaults.is_empty());
+        let l5 = Filter::new(&w, &extra, level(4) + 1, &opts(true, 10_000));
+        assert!(l5.fresh_vaults.is_empty() && l5.tx_probes.is_empty() && !l5.vaults.is_empty());
+        let last = Filter::new(&w, &extra, DOWNSCALE.len(), &opts(true, 10_000));
+        assert_eq!(last.tx_pools, vec![B.to_owned()]);
+        assert!(last.tx_wallets.is_empty() && last.vaults.is_empty() && last.new_pools);
+        let capped = Filter::new(&w, &extra, 0, &opts(false, 3));
+        assert_eq!((capped.tx_pools.len(), capped.tx_probes.len(), capped.tx_wallets.len(), capped.truncated), (2, 1, 0, 2));
     }
 
     #[test]
     fn requests_never_ask_for_everything() {
-        let empty = Filter::new(&Watch::default(), 0, false, false, 10_000);
+        let o = Opts { new_pools: false, ..Opts::default() };
+        let empty = Filter::new(&Watch::default(), &Extra::default(), 0, &o);
         let r = empty.request(Some(7));
-        assert!(r.transactions.is_empty() && r.accounts.is_empty());
+        assert!(r.transactions.is_empty() && r.accounts.is_empty() && r.accounts_data_slice.is_empty());
         assert_eq!((r.from_slot, r.commitment), (Some(7), Some(CommitmentLevel::Confirmed as i32)));
         assert!(empty.vault_request().accounts.is_empty());
-        let full = Filter::new(&watch(), 0, true, true, 10_000);
+        let extra = Extra { probes: vec![C.to_owned()], fresh_vaults: vec![A.to_owned()] };
+        let full = Filter::new(&watch(), &extra, 0, &opts(true, 10_000));
         let r = full.request(None);
         for f in r.transactions.values() {
             assert!(!f.account_include.is_empty() || !f.account_required.is_empty());
@@ -338,25 +461,31 @@ mod tests {
         let np = &r.transactions["tx_new_pools"];
         assert_eq!(np.account_required, vec![PUMP_AMM.to_owned(), MIGRATION_AUTHORITY.to_owned()]);
         assert!(np.account_include.is_empty() && np.account_exclude.is_empty());
+        let nr = &r.transactions["tx_new_reversed"];
+        assert_eq!((nr.account_include.clone(), nr.account_exclude.len()), (vec![PUMP_AMM.to_owned()], NEW_REVERSED_EXCLUDE.len()));
+        assert!(NEW_REVERSED_EXCLUDE.iter().all(|a| valid(a)));
+        assert_eq!(r.transactions["tx_probes"].account_include, vec![C.to_owned()]);
         // Graduations stay at every downscale level.
-        assert!(Filter::new(&watch(), 4, true, true, 10_000).request(None).transactions.contains_key("tx_new_pools"));
+        assert!(Filter::new(&watch(), &extra, DOWNSCALE.len(), &opts(true, 10_000)).request(None).transactions.contains_key("tx_new_pools"));
         let pa = &r.accounts["pool_accounts"];
-        assert_eq!(pa.owner, vec![PUMP_AMM.to_owned()]);
-        assert!(!pa.filters.is_empty());
+        assert_eq!((pa.owner.clone(), pa.filters.len()), (vec![PUMP_AMM.to_owned()], 1));
+        assert_eq!(r.accounts["pool_creations"].filters.len(), 2);
         assert_eq!(r.accounts_data_slice.len(), 1);
-        assert_eq!(full.vault_request().accounts["vaults"].account, vec![D.to_owned()]);
+        let v = full.vault_request();
+        assert_eq!((v.accounts["vaults"].account.clone(), v.accounts["new_vaults"].account.clone()), (vec![D.to_owned()], vec![A.to_owned()]));
     }
 
     #[test]
     fn the_segment_after_a_change_reconciles_only_what_both_filters_had() {
         let w = watch();
-        let before = Filter::new(&w, 0, false, true, 10_000);
+        let o = opts(false, 10_000);
+        let before = Filter::new(&w, &Extra::default(), 0, &o);
         let mut w2 = w.clone();
         w2.pools = vec![A.to_owned(), D.to_owned()];
-        let now = Filter::new(&w2, 0, false, true, 10_000);
+        let now = Filter::new(&w2, &Extra { probes: vec![C.to_owned()], ..Extra::default() }, 0, &o);
         let v = segment_watchlist(&before, &now, &Value::Null);
         let pools: Vec<&str> = v["pools"].as_array().unwrap().iter().map(|p| p["pool"].as_str().unwrap()).collect();
         assert_eq!(pools, vec![A, B]);
-        assert_eq!(v["pools_partial"], json!([D]));
+        assert_eq!(v["pools_partial"], json!([C, D]));
     }
 }

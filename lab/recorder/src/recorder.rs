@@ -7,10 +7,10 @@ use crate::idl::{Kind, Val};
 use crate::meter::{Decision, Meter};
 use crate::segment::{columns, Segments, SlotBuffer, ARRIVAL_COLS, BLOCK_COLS};
 use crate::sink::{Columns, Row};
-use crate::watch::{segment_watchlist, Filter, Watch, DOWNSCALE};
+use crate::watch::{segment_watchlist, Extra, Filter, Opts, Watch, DOWNSCALE, WSOL};
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use yellowstone_grpc_proto::prelude::{
@@ -45,11 +45,21 @@ const POOL_COLS: [(&str, Kind); 12] = [
 ];
 
 pub struct Config {
-    pub pool_accounts: bool,
-    pub new_pools: bool,
-    pub max_tx_accounts: usize,
-    /// Watchlist changes are applied at most this often (downscales at once).
+    pub opts: Opts,
+    /// Watchlist changes are applied at most this often (downscales and probes at once).
     pub min_update_secs: u64,
+    /// A new pool with at least this much WSOL becomes a probe: full transactions for
+    /// `probe_secs`. Below it, its WSOL vault is followed for `fresh_vault_secs` (reversed pools
+    /// only; 0 = off) and the pool becomes a probe when the vault reaches the depth.
+    pub probe_lamports: u64,
+    pub probe_secs: u64,
+    pub fresh_vault_secs: u64,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { opts: Opts::default(), min_update_secs: 60, probe_lamports: 150_000_000_000, probe_secs: 3 * 3600, fresh_vault_secs: 3600 }
+    }
 }
 
 #[derive(Debug)]
@@ -89,6 +99,33 @@ pub struct Recorder {
     seen_pools: HashSet<Vec<u8>>,
     reconnects: Vec<Value>,
     at_last_level_noted: bool,
+    /// Probe pool -> until (unix seconds).
+    probes: BTreeMap<String, u64>,
+    /// WSOL vault of a new pool -> (pool, until).
+    fresh: HashMap<String, (String, u64)>,
+    /// Probes or new vaults were added: resubscribe at the next tick, without the rate limit
+    /// (a new pool's first trades come within minutes).
+    extra_dirty: bool,
+    /// Probes or new vaults expired: resubscribe with the rate limit.
+    extra_stale: bool,
+}
+
+fn val<'a>(r: &'a Row, name: &str) -> Option<&'a Val> {
+    r.columns.iter().position(|(n, _)| n == name).and_then(|i| r.values.get(i))
+}
+
+fn val_str(r: &Row, name: &str) -> Option<String> {
+    match val(r, name) {
+        Some(Val::Str(s)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+fn val_u64(r: &Row, name: &str) -> Option<u64> {
+    match val(r, name) {
+        Some(Val::U64(v)) => Some(*v),
+        _ => None,
+    }
 }
 
 fn b58(b: &[u8]) -> String {
@@ -99,17 +136,20 @@ fn opt_u64(v: Option<u64>) -> Val {
     v.map_or(Val::Null, Val::U64)
 }
 
-/// The stream an update is counted on: its filter (watchlist pools before wallets), or "control".
+/// The stream an update is counted on: its filter (watchlist pools, then probes, before the
+/// rest), or "control".
 fn stream_of(u: &SubscribeUpdate) -> &str {
-    if u.filters.iter().any(|f| f == "tx_pools") {
-        return "tx_pools";
+    for first in ["tx_pools", "tx_probes"] {
+        if u.filters.iter().any(|f| f == first) {
+            return first;
+        }
     }
     u.filters.first().map_or("control", String::as_str)
 }
 
 impl Recorder {
     pub fn new(cfg: Config, plugin: LabPlugin, segs: Segments, meter: Meter, watch: Watch, last_closed: Option<u64>, close_lag: u64) -> Self {
-        let active = Filter::new(&watch, 0, cfg.pool_accounts, cfg.new_pools, cfg.max_tx_accounts);
+        let active = Filter::new(&watch, &Extra::default(), 0, &cfg.opts);
         Self {
             plugin,
             slots: SlotBuffer::new(close_lag, last_closed),
@@ -129,8 +169,56 @@ impl Recorder {
             seen_pools: HashSet::new(),
             reconnects: Vec::new(),
             at_last_level_noted: false,
+            probes: BTreeMap::new(),
+            fresh: HashMap::new(),
+            extra_dirty: false,
+            extra_stale: false,
             cfg,
         }
+    }
+
+    /// A pool created in this transaction (its CreatePoolEvent row): a probe at once when it holds
+    /// enough WSOL; else, for reversed pools, follow its WSOL vault (from the create_pool accounts).
+    fn on_creation(&mut self, r: &Row, now: u64) {
+        let (Some(pool), Some(base), Some(quote)) = (val_str(r, "pool"), val_str(r, "base_mint"), val_str(r, "quote_mint")) else {
+            return;
+        };
+        let (wsol, vault_name) = if base == WSOL {
+            (val_u64(r, "pool_base_amount").or(val_u64(r, "base_amount_in")), "pool_base_token_account")
+        } else if quote == WSOL {
+            (val_u64(r, "pool_quote_amount").or(val_u64(r, "quote_amount_in")), "pool_quote_token_account")
+        } else {
+            return;
+        };
+        if wsol.is_some_and(|w| w >= self.cfg.probe_lamports) {
+            self.probe(pool, now);
+        } else if base == WSOL {
+            let vault = val_str(r, "ix_accounts")
+                .and_then(|j| serde_json::from_str::<Value>(&j).ok())
+                .and_then(|v| v[vault_name].as_str().map(str::to_owned));
+            if let Some(v) = vault {
+                self.follow_vault(v, pool, now);
+            }
+        }
+    }
+
+    fn probe(&mut self, pool: String, now: u64) {
+        if self.cfg.probe_secs > 0 && !self.probes.contains_key(&pool) {
+            self.probes.insert(pool, now + self.cfg.probe_secs);
+            self.extra_dirty = true;
+        }
+    }
+
+    fn follow_vault(&mut self, vault: String, pool: String, now: u64) {
+        if self.cfg.fresh_vault_secs > 0 && !self.fresh.contains_key(&vault) {
+            self.fresh.insert(vault, (pool, now + self.cfg.fresh_vault_secs));
+            self.extra_dirty = true;
+        }
+    }
+
+    fn filter(&self, level: usize) -> Filter {
+        let extra = Extra { probes: self.probes.keys().cloned().collect(), fresh_vaults: self.fresh.keys().cloned().collect() };
+        Filter::new(&self.watch, &extra, level, &self.cfg.opts)
     }
 
     /// The requests for a (re)connect: the main stream resumes after the last closed slot.
@@ -151,6 +239,10 @@ impl Recorder {
                 match convert::transaction(t.slot, info) {
                     Ok(Converted::Tx(tx)) => {
                         let mut rows = self.plugin.rows_for(&tx);
+                        let now = now_ns / 1_000_000_000;
+                        for r in rows.iter().filter(|r| &*r.table == "pump_amm/CreatePoolEvent") {
+                            self.on_creation(r, now);
+                        }
                         rows.push(Row {
                             table: Arc::from("arrivals"),
                             columns: self.arrival_cols.clone(),
@@ -186,7 +278,11 @@ impl Recorder {
                 }
             }
             Some(UpdateOneof::Account(a)) => {
-                let row = if stream == "pool_accounts" { self.pool_row(&a, now_ns) } else { self.vault_row(&a, now_ns) };
+                let row = if stream == "pool_accounts" || stream == "pool_creations" {
+                    self.pool_row(&a, now_ns, &stream)
+                } else {
+                    self.vault_row(&a, now_ns, &stream)
+                };
                 if let Some(r) = row {
                     self.segs.add_rows(vec![r]);
                 }
@@ -212,14 +308,21 @@ impl Recorder {
         }
     }
 
-    fn vault_row(&mut self, a: &SubscribeUpdateAccount, now_ns: u64) -> Option<Row> {
+    /// A vault balance (`vaults` or `new_vaults`). A new pool's WSOL vault at the probe depth
+    /// makes the pool a probe.
+    fn vault_row(&mut self, a: &SubscribeUpdateAccount, now_ns: u64, stream: &str) -> Option<Row> {
         let acc = a.account.as_ref()?;
         let amount = acc.data.get(..8).map(|d| u64::from_le_bytes(d.try_into().expect("8 bytes")));
         if amount.is_none() {
             self.stats.short_accounts += 1;
         }
+        if amount.is_some_and(|w| w >= self.cfg.probe_lamports) {
+            if let Some((pool, _)) = self.fresh.get(&b58(&acc.pubkey)).cloned() {
+                self.probe(pool, now_ns / 1_000_000_000);
+            }
+        }
         Some(Row {
-            table: Arc::from("vaults"),
+            table: Arc::from(if stream == "new_vaults" { "new_vaults" } else { "vaults" }),
             columns: self.vault_cols.clone(),
             values: vec![
                 Val::U64(a.slot),
@@ -233,21 +336,26 @@ impl Recorder {
         })
     }
 
-    /// A pool's first update in this process (the account is written by every trade, so later
-    /// updates carry nothing new for us).
-    fn pool_row(&mut self, a: &SubscribeUpdateAccount, now_ns: u64) -> Option<Row> {
+    /// A pool account update. `pool_accounts`: a pool's first update in this process (the account
+    /// is written by every trade, so later updates carry nothing new). `pool_creations`: every
+    /// update (to verify the creation-only hypothesis); a new reversed pool's WSOL vault is followed.
+    fn pool_row(&mut self, a: &SubscribeUpdateAccount, now_ns: u64, stream: &str) -> Option<Row> {
         let acc = a.account.as_ref()?;
         let d = &acc.data;
         if d.len() < 201 {
             self.stats.short_accounts += 1;
             return None;
         }
-        if !self.seen_pools.insert(acc.pubkey.clone()) {
+        if stream == "pool_creations" {
+            if b58(&d[0..32]) == WSOL {
+                self.follow_vault(b58(&d[96..128]), b58(&acc.pubkey), now_ns / 1_000_000_000);
+            }
+        } else if !self.seen_pools.insert(acc.pubkey.clone()) {
             return None;
         }
         let k = |i: usize| Val::Str(b58(&d[i..i + 32]));
         Some(Row {
-            table: Arc::from("pool_accounts"),
+            table: Arc::from(if stream == "pool_creations" { "pool_creations" } else { "pool_accounts" }),
             columns: self.pool_cols.clone(),
             values: vec![
                 Val::U64(a.slot),
@@ -313,10 +421,6 @@ impl Recorder {
         Ok(())
     }
 
-    fn filter(&self, level: usize) -> Filter {
-        Filter::new(&self.watch, level, self.cfg.pool_accounts, self.cfg.new_pools, self.cfg.max_tx_accounts)
-    }
-
     fn change(&mut self, f: Filter, now_unix: u64) -> Result<Action> {
         if f == self.active {
             return Ok(Action::None);
@@ -361,7 +465,26 @@ impl Recorder {
         if let Some(w) = reload {
             self.pending_watch = Some(w);
         }
-        if self.pending_watch.is_some() && now_unix >= self.last_update_unix + self.cfg.min_update_secs {
+        let (n_probes, n_fresh) = (self.probes.len(), self.fresh.len());
+        self.probes.retain(|_, until| *until > now_unix);
+        self.fresh.retain(|_, (_, until)| *until > now_unix);
+        if (self.probes.len(), self.fresh.len()) != (n_probes, n_fresh) {
+            self.extra_stale = true;
+        }
+        let rate_ok = now_unix >= self.last_update_unix + self.cfg.min_update_secs;
+        if self.extra_dirty || (self.extra_stale && rate_ok) {
+            self.extra_dirty = false;
+            self.extra_stale = false;
+            if let Some(w) = self.pending_watch.take() {
+                self.watch = w;
+            }
+            let f = self.filter(self.level);
+            let a = self.change(f, now_unix)?;
+            if !matches!(a, Action::None) {
+                return Ok(a);
+            }
+        }
+        if self.pending_watch.is_some() && rate_ok {
             self.watch = self.pending_watch.take().expect("checked");
             let f = self.filter(self.level);
             let a = self.change(f, now_unix)?;
@@ -399,7 +522,7 @@ mod tests {
         let (segs, last) = Segments::open(root, seg_slots, 3600).unwrap();
         let meter = Meter::load(root, cap, 1.0, T0).unwrap();
         let watch = Watch::parse(Some(&json!({"pools": [{"pool": POOL}], "wallets": [], "vaults": [POOL]})), None);
-        let cfg = Config { pool_accounts: true, new_pools: true, max_tx_accounts: 10_000, min_update_secs: 60 };
+        let cfg = Config { opts: Opts { pool_accounts: true, ..Opts::default() }, ..Config::default() };
         Recorder::new(cfg, plugin(), segs, meter, watch, last, 1)
     }
 
@@ -520,6 +643,70 @@ mod tests {
         r.on_tick(T0 + 1, None).unwrap();
         let m = segment_meta(&root, 0);
         assert_eq!((m["rows"]["pool_accounts"].as_u64(), m["rows"]["vaults"].as_u64()), (Some(1), Some(1)));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn creation(pool: &str, base: &str, quote: &str, wsol: u64, vault: &str) -> Row {
+        let cols = columns(&[("pool", Kind::Utf8), ("base_mint", Kind::Utf8), ("quote_mint", Kind::Utf8),
+                             ("pool_base_amount", Kind::U64), ("pool_quote_amount", Kind::U64), ("ix_accounts", Kind::Utf8)]);
+        let (b, q) = if base == WSOL { (wsol, 1) } else { (1, wsol) };
+        let accounts = json!({"pool": pool, "pool_base_token_account": vault, "pool_quote_token_account": vault}).to_string();
+        Row {
+            table: Arc::from("pump_amm/CreatePoolEvent"),
+            columns: cols,
+            values: vec![Val::Str(pool.into()), Val::Str(base.into()), Val::Str(quote.into()), Val::U64(b), Val::U64(q), Val::Str(accounts)],
+        }
+    }
+
+    fn resubscribe(a: Action) -> (Box<SubscribeRequest>, Box<SubscribeRequest>) {
+        match a {
+            Action::Resubscribe(m, v) => (m, v),
+            other => panic!("expected a resubscribe, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn new_pools_become_probes_at_once_or_when_their_wsol_vault_is_deep_enough() {
+        let root = tmp("rec-probes");
+        let mut r = recorder(&root, 25_000_000_000, 1000);
+        let deep = b58(&fake_key(11));
+        let shallow = b58(&fake_key(12));
+        let vault = b58(&fake_key(13));
+        let mint = b58(&fake_key(14));
+        // 200 SOL at creation: a probe at the next tick, without waiting for the rate limit.
+        r.on_creation(&creation(&deep, WSOL, &mint, 200_000_000_000, &vault), T0);
+        let (main, _) = resubscribe(r.on_tick(T0 + 1, None).unwrap());
+        assert_eq!(main.transactions["tx_probes"].account_include, vec![deep.clone()]);
+        // 85 SOL: its WSOL vault is followed; at 160 SOL the pool becomes a probe too.
+        r.on_creation(&creation(&shallow, WSOL, &mint, 85_000_000_000, &vault), T0 + 2);
+        let (_, vaults) = resubscribe(r.on_tick(T0 + 3, None).unwrap());
+        assert_eq!(vaults.accounts["new_vaults"].account, vec![vault.clone()]);
+        let update = |amount: u64| {
+            SubscribeUpdate {
+                filters: vec!["new_vaults".to_owned()],
+                update_oneof: Some(UpdateOneof::Account(SubscribeUpdateAccount {
+                    account: Some(SubscribeUpdateAccountInfo { pubkey: fake_key(13), data: amount.to_le_bytes().to_vec(), ..Default::default() }),
+                    slot: 1000,
+                    ..Default::default()
+                })),
+                created_at: None,
+            }
+        };
+        r.on_update(update(100_000_000_000), (T0 + 4) * 1_000_000_000).unwrap();
+        assert!(matches!(r.on_tick(T0 + 5, None).unwrap(), Action::None));
+        r.on_update(update(160_000_000_000), (T0 + 6) * 1_000_000_000).unwrap();
+        let (main, _) = resubscribe(r.on_tick(T0 + 7, None).unwrap());
+        let mut probes = main.transactions["tx_probes"].account_include.clone();
+        probes.sort();
+        let mut want = vec![deep.clone(), shallow.clone()];
+        want.sort();
+        assert_eq!(probes, want);
+        // A sol pool (graduation) below the depth is neither probed nor followed.
+        r.on_creation(&creation(&b58(&fake_key(15)), &mint, WSOL, 85_000_000_000, &b58(&fake_key(16))), T0 + 8);
+        assert!(matches!(r.on_tick(T0 + 9, None).unwrap(), Action::None));
+        // Probes and followed vaults expire (applied with the rate limit).
+        let (main, vaults) = resubscribe(r.on_tick(T0 + 3 * 3600 + 100, None).unwrap());
+        assert!(!main.transactions.contains_key("tx_probes") && !vaults.accounts.contains_key("new_vaults"));
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

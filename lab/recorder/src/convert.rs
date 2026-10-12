@@ -185,7 +185,7 @@ pub mod tests {
     /// A v0 transaction: fee payer, a pool (static), ComputeBudget, and PumpSwap loaded through a
     /// lookup table, one outer PumpSwap instruction and below it an event instruction (stack
     /// height 2) whose discriminator no IDL event has, so the extractor writes an anomaly row.
-    pub fn sample(slot: u64, index: u64, versioned: bool, v1: bool) -> SubscribeUpdateTransactionInfo {
+    pub fn sample(_slot: u64, index: u64, versioned: bool, v1: bool) -> SubscribeUpdateTransactionInfo {
         let mut event = EVENT_IX_TAG.to_vec();
         event.extend([0xAB; 8]);
         event.extend([1, 2, 3]);
