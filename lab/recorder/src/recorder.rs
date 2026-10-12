@@ -587,7 +587,8 @@ impl Recorder {
     /// A new subscription filter. The open segment stays open: its watchlist.json keeps what every
     /// filter inside it had (SegWatch).
     fn change(&mut self, f: Filter, now_unix: u64) -> Result<Action> {
-        if f == self.active {
+        if f.same_streams(&self.active) {
+            self.active.level = f.level; // a level step over streams that are off: no resubscribe
             return Ok(Action::None);
         }
         self.seg_watch.change(&self.active, &f);
