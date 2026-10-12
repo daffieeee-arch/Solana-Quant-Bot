@@ -101,7 +101,7 @@ def test_snapshot_shape_and_counts():
     assert snap["version"] == 1 and snap["valid_for_minute"] == 5
     assert [p["pool"] for p in snap["pools"]] == ["N", "R"]
     assert snap["pools"][1]["rules"] == ["f7_rev"] and snap["pools"][0]["rules"] == ["m1"]
-    assert snap["counts"] == {"pools": 2, "f7_rev": 1, "m1": 1, "wallets": 2}
+    assert {k: snap["counts"][k] for k in ("pools", "f7_rev", "m1", "wallets")} == {"pools": 2, "f7_rev": 1, "m1": 1, "wallets": 2}
     assert [w["wallet"] for w in snap["wallets"]] == ["w1", "w2"]
 
 
@@ -193,3 +193,78 @@ def test_pool_origin():
     assert pool_origin({0: 10, 150: 40, "sol_create": 84.99}) == "later"
     assert pool_origin({0: 10, 150: None, "sol_create": 84.99}) == "unknown"
     assert pool_origin({0: 10, 150: 12, "sol_create": None}) == "later"
+
+
+# ----------------------------------------------------------------------------- pruning (#165 gate point, 2026-10-13)
+
+def _trade(pool, sol=10.0, farmer=0.0, depth=130.0):
+    return (pool, 1, sol, farmer, depth)
+
+
+def test_quiet_pools_are_pruned_and_come_back_with_their_verdict():
+    wl = Watchlist(Rules(prune_idle_minutes=24 * 60, archive_minutes=7 * 24 * 60))
+    wl.add_pool(rev("R"))
+    wl.step(0, [_trade("R")])                      # organic (no farmer volume), deep: enters F7
+    assert wl.members == {"R": ("f7_rev",)} and wl.state["R"].organic is True
+    for m in range(1, 24 * 60):
+        wl.step(m, [])
+    assert "R" in wl.pools                          # 23 h 59 min quiet: still tracked (and off the list since 6 h)
+    wl.step(24 * 60, [])
+    assert "R" not in wl.pools and "R" not in wl.state and wl.archive["R"][1] is True and wl.pruned_total == 1
+    snap = wl.snapshot()
+    assert snap["counts"]["tracked"] == 0 and snap["counts"]["archived"] == 1 and snap["counts"]["pruned_total"] == 1
+    # a trade brings it back with the organic verdict intact: F7 re-enters at once (the empty hour keeps the verdict)
+    members = wl.step(24 * 60 + 5, [_trade("R", sol=0.5)])
+    assert "R" in wl.pools and wl.state["R"].organic is True and members == {"R": ("f7_rev",)} and wl.restored_total == 1
+    assert "R" not in wl.archive
+
+
+def test_archived_verdict_expires_and_rows_for_unknown_pools_are_ignored():
+    wl = Watchlist(Rules(prune_idle_minutes=60, archive_minutes=120))
+    wl.add_pool(rev("R"))
+    wl.step(0, [_trade("R", farmer=9.0)])            # farming hour: organic False
+    assert wl.state["R"].organic is False
+    wl.step(60, [])
+    assert "R" in wl.archive and wl.archive["R"][1] is False
+    wl.step(179, [])
+    assert "R" in wl.archive
+    wl.step(180, [])
+    assert "R" not in wl.archive                      # expired after archive_minutes
+    assert wl.step(181, [_trade("R")]) == {} and "R" not in wl.pools  # unknown again until add_pool
+    wl.add_pool(rev("R"))
+    assert wl.state["R"].organic is None              # a fresh state, no verdict
+
+
+def test_never_traded_pools_are_pruned_from_their_creation_or_first_sight_and_future_pools_are_kept():
+    wl = Watchlist(Rules(prune_idle_minutes=60))
+    wl.add_pool(normal("N_old", create_minute=0))     # created at 0, never trades
+    wl.add_pool(normal("N_future", create_minute=500))
+    wl.add_pool(rev("R_unknown"))                      # create_minute None: counts from the minute it was added (step 10)
+    wl.step(10, [])
+    assert set(wl.pools) == {"N_old", "N_future", "R_unknown"}
+    wl.step(60, [])
+    assert "N_old" not in wl.pools and "N_future" in wl.pools and "R_unknown" in wl.pools
+    wl.step(70, [])
+    assert "R_unknown" not in wl.pools and "N_future" in wl.pools  # first seen at step 10 -> pruned at 70
+    wl.step(559, [])
+    assert "N_future" in wl.pools
+    wl.step(560, [])
+    assert "N_future" not in wl.pools
+
+
+def test_members_are_never_pruned():
+    wl = Watchlist(Rules(prune_idle_minutes=5, f7_idle_minutes=100))
+    wl.add_pool(rev("R"))
+    wl.step(0, [_trade("R")])
+    for m in range(1, 50):
+        assert wl.step(m, []) == {"R": ("f7_rev",)} and "R" in wl.pools
+
+
+def test_archive_never_expires_with_zero():
+    wl = Watchlist(Rules(prune_idle_minutes=60, archive_minutes=0, f7_idle_minutes=30))
+    wl.add_pool(rev("R"))
+    wl.step(0, [_trade("R")])
+    wl.step(60, [])
+    assert "R" in wl.archive
+    wl.step(10**6, [])
+    assert "R" in wl.archive and wl.step(10**6 + 1, [_trade("R")]) == {"R": ("f7_rev",)}

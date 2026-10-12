@@ -22,6 +22,16 @@ Rules (everything decided from data strictly before the minute the list is valid
   wallets      followed wallets: a fixed list for now (the step-1 scores fill it later).
 A pool with an open paper position must stay on the list until the position is closed; that
 is the paper engine's job (it knows its positions), so it is not modelled here.
+Pruning (Lab Backtest, #165 gate point, 2026-10-13): over a paper run of weeks every pool ever seen
+would stay in `pools` / `state` and `step()` would walk all of them every minute. A pool that has
+been quiet for `prune_idle_minutes` (24 h; since its last trade, or since it was added / created
+when it never traded) leaves both dicts; its PoolInfo and its last organic verdict go to a compact
+`archive` (kept `archive_minutes`, 7 days). A trade on an archived pool brings it back with the
+verdict intact, so the F7 rule sees the same `organic` it would have seen without pruning (the
+trailing window is empty, the previous verdict stands until the hour holds >= 1 SOL, as before).
+A pool whose archive entry has expired is unknown again until add_pool (archive_minutes = 0 keeps
+every verdict; the batch run re-adds a known pool from the store when its trade comes). Members are
+never pruned: both rules need a trade within 6 h.
 
 Time steps are UTC minutes (block_time // 60). The list computed after minute m is valid for
 minute m + 1: `Watchlist.step(m, rows)` returns the members for m + 1.
@@ -72,6 +82,8 @@ class Rules:
     f7_idle_minutes: int = 6 * 60
     m1_max_age_minutes: int = 6 * 60
     m1_idle_minutes: int = 60
+    prune_idle_minutes: int = 24 * 60     # quiet pools leave the state machine (verdict archived)
+    archive_minutes: int = 7 * 24 * 60    # how long an archived verdict is kept; 0 = forever
 
 
 @dataclasses.dataclass
@@ -103,6 +115,7 @@ class _State:
     win_farmer: float = 0.0
     f7: bool = False
     m1: bool = False
+    first_seen: int | None = None        # minute the pool entered the state machine (for pruning never-traded pools)
 
 
 class Watchlist:
@@ -112,13 +125,43 @@ class Watchlist:
         self.rules = rules or Rules()
         self.pools = {}
         self.state = {}
+        self.archive = {}  # pool -> (PoolInfo, organic verdict, minute archived): pruned pools, compact
         self.wallets = list(dict.fromkeys(wallets))
         self.minute = None
         self.members = {}  # pool -> ("f7_rev", "m1") tags, valid for self.minute + 1
+        self.pruned_total = 0
+        self.restored_total = 0
 
     def add_pool(self, info):
         self.pools[info.pool] = info
-        self.state.setdefault(info.pool, _State())
+        self.state.setdefault(info.pool, _State(first_seen=self.minute))
+        self.archive.pop(info.pool, None)
+
+    def _restore(self, pool, minute):
+        info, organic, _ = self.archive.pop(pool)
+        self.pools[pool] = info
+        self.state[pool] = _State(organic=organic, first_seen=minute)
+        self.restored_total += 1
+
+    def _prune(self, minute):
+        """Move pools quiet for prune_idle_minutes to the archive; drop archive entries older than archive_minutes."""
+        r = self.rules
+        for pool in [p for p in self.pools if p not in self.members]:
+            s, info = self.state[pool], self.pools[pool]
+            if s.first_seen is None:
+                s.first_seen = minute  # added before the first step: counts from now
+            if s.last_trade is not None:
+                ref = s.last_trade  # quiet since its last trade
+            else:
+                ref = info.create_minute if info.create_minute is not None else s.first_seen  # never traded: since its creation, else since it was added
+            if minute - ref >= r.prune_idle_minutes:
+                self.archive[pool] = (info, s.organic, minute)
+                del self.pools[pool]
+                del self.state[pool]
+                self.pruned_total += 1
+        if self.archive and r.archive_minutes > 0:  # 0: archived verdicts never expire (the recorder's choice; PoolInfo is small)
+            for pool in [p for p, (_, _, at) in self.archive.items() if minute - at >= r.archive_minutes]:
+                del self.archive[pool]
 
     def step(self, minute, rows):
         """Apply the aggregates of `minute` (iterable of (pool, trades, sol, farmer_sol, depth_last_sol))
@@ -127,8 +170,13 @@ class Watchlist:
         touched = set()
         for pool, trades, sol, farmer_sol, depth in rows:
             if pool not in self.pools:
-                continue
+                if pool in self.archive and trades:
+                    self._restore(pool, minute)
+                else:
+                    continue
             s = self.state[pool]
+            if s.first_seen is None:
+                s.first_seen = minute
             if trades:
                 s.last_trade = minute
                 s.depth = float(depth)
@@ -165,6 +213,7 @@ class Watchlist:
                 members[pool] = tuple(tags)
         self.minute = minute
         self.members = members
+        self._prune(minute)
         return members
 
     def snapshot(self, valid_from_slot=None, generated_slot=None):
@@ -175,7 +224,8 @@ class Watchlist:
                 "wallets": [{"wallet": w, "source": "fixed"} for w in self.wallets],
                 "counts": {"pools": len(self.members),
                            **{tag: sum(1 for t in self.members.values() if tag in t) for tag in ("f7_rev", "m1")},
-                           "wallets": len(self.wallets)}}
+                           "wallets": len(self.wallets), "tracked": len(self.pools), "archived": len(self.archive),
+                           "pruned_total": self.pruned_total, "restored_total": self.restored_total}}
 
 
 # ----------------------------------------------------------------------------- batch over the store
@@ -356,8 +406,9 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
     pools = con.execute(pools_sql(warm_lo, hi)).fetchall()
     create_min = minute_of_slot(con, {r[5] for r in pools if r[5] is not None and r[5] >= warm_lo})
     wl = Watchlist(rules, wallets)
-    for pool, mint, qc, orient, mayhem, cslot, gic in pools:
-        wl.add_pool(PoolInfo(pool, mint, qc, orient, bool(mayhem), create_min.get(cslot), bool(gic)))
+    infos = {pool: PoolInfo(pool, mint, qc, orient, bool(mayhem), create_min.get(cslot), bool(gic)) for pool, mint, qc, orient, mayhem, cslot, gic in pools}
+    for info in infos.values():
+        wl.add_pool(info)
     first_minute = con.execute(f"SELECT min(block_time) // 60 FROM blocks WHERE slot >= {lo}").fetchone()[0]
     agg = con.execute(aggregates_sql(warm_lo, hi)).to_arrow_table()
     cands = con.execute(f7_candidates_sql(lo, hi)).fetchall()
@@ -452,6 +503,9 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
                 members_rows.append((m, pool, "f7_rev" in tags, "m1" in tags))
                 if hist is not None and "f7_rev" in tags:
                     _count_universe(d, hist, pool, m, True, "f7_minutes")
+        for row in rows:  # a pruned pool whose archive entry expired is still known to the store: re-add it (fresh verdict)
+            if row[0] not in wl.pools and row[0] not in wl.archive and row[0] in infos and row[1]:
+                wl.add_pool(infos[row[0]])
         members = wl.step(m, rows)
     os.makedirs(out_dir, exist_ok=True)
     tbl = pa.table({"minute": pa.array([r[0] for r in members_rows], pa.int64()),
