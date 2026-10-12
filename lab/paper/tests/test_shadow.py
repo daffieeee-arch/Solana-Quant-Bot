@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 
+import duckdb
 import pytest
 
 from backtest import data
@@ -41,7 +42,10 @@ def run(tmp_path_factory):
     a = argparse.Namespace(store=STORE, out=out, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
                            d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
                            risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB")
-    return out, shadow.run(a, log=lambda m: None)
+    window = shadow.WINDOW_SLOTS
+    shadow.WINDOW_SLOTS = 300  # the work tables are built in 7 slot windows
+    yield out, shadow.run(a, log=lambda m: None)
+    shadow.WINDOW_SLOTS = window
 
 
 def test_segments_follow_the_minutes_with_reconnects_and_a_gap(run):
@@ -87,6 +91,20 @@ def test_engine_live_with_risk_limits_writes_daily_reports(run):
     with open(os.path.join(out, "compare.md")) as f:
         text = f.read()
     assert "development data" in text and "Unexplained differences: 0" in text
+
+
+def test_work_tables_are_in_slot_order_across_windows(run):
+    out, _ = run
+    assert shadow.WINDOW_SLOTS < HI - LO
+    con = duckdb.connect(os.path.join(out, "work", "shadow-rows.duckdb"), read_only=True)
+    tables = [r[0] for r in con.execute("""SELECT table_name FROM duckdb_tables()
+                                           WHERE table_name IN ('txu', 'pc') OR regexp_matches(table_name, '^t[0-9]+$')""").fetchall()]
+    assert "txu" in tables and len(tables) > 2
+    for t in tables:
+        back = con.execute(f"""SELECT count(*) FILTER (WHERE slot < prev)
+                               FROM (SELECT slot, lag(slot) OVER (ORDER BY rowid) AS prev FROM {t})""").fetchone()[0]
+        assert back == 0, t
+    con.close()
 
 
 def test_resume_reuses_replay_and_work_database_with_the_same_result(run):
