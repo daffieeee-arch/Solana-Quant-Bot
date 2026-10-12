@@ -10,8 +10,8 @@
 //! reached the probe depth) get their own transaction filter for a few hours.
 //!
 //! Streams, in downscale order (the first is dropped first): `pool_accounts`, `pool_creations`,
-//! `tx_new_reversed`, `new_vaults`, `tx_probes`, `vaults`, `tx_wallets`, `tx_watchlist` (watchlist
-//! pools; the open-position pools stay). Blocks, slot statuses and `tx_new_pools` (pump.fun
+//! `tx_new_reversed`, `new_vaults`, `backfill` (no new backfills), `tx_probes`, `vaults`,
+//! `tx_wallets`, `tx_watchlist` (watchlist pools; the open-position pools stay). Blocks, slot statuses and `tx_new_pools` (pump.fun
 //! graduations, ~0.003 GB/day) always stay; only the hard stop ends them.
 
 use serde_json::{json, Value};
@@ -66,8 +66,17 @@ pub const NEW_REVERSED_EXCLUDE: [&str; 15] = [
     "HTVZVEQMBsNanubDPTs3CxDAEGNFQHJY8c1441iy2S5r",
 ];
 
-pub const DOWNSCALE: [&str; 8] =
-    ["pool_accounts", "pool_creations", "tx_new_reversed", "new_vaults", "tx_probes", "vaults", "tx_wallets", "tx_watchlist"];
+pub const DOWNSCALE: [&str; 9] = [
+    "pool_accounts",
+    "pool_creations",
+    "tx_new_reversed",
+    "new_vaults",
+    "backfill",
+    "tx_probes",
+    "vaults",
+    "tx_wallets",
+    "tx_watchlist",
+];
 
 /// Which optional streams are configured (on before downscaling).
 #[derive(Clone, Debug)]
@@ -76,12 +85,13 @@ pub struct Opts {
     pub new_pools: bool,
     pub pool_creations: bool,
     pub new_reversed: bool,
+    pub backfill: bool,
     pub max_tx_accounts: usize,
 }
 
 impl Default for Opts {
     fn default() -> Self {
-        Self { pool_accounts: false, new_pools: true, pool_creations: false, new_reversed: false, max_tx_accounts: 10_000 }
+        Self { pool_accounts: false, new_pools: true, pool_creations: false, new_reversed: false, backfill: true, max_tx_accounts: 10_000 }
     }
 }
 
@@ -202,6 +212,8 @@ pub struct Filter {
     pub new_reversed: bool,
     /// Graduation transactions (new canonical pools for M1).
     pub new_pools: bool,
+    /// New probes get a backfill subscription (from_slot) for their earlier transactions.
+    pub backfill: bool,
     pub level: usize,
     /// Addresses left out by `max_tx_accounts` (pools first, then probes, then wallets kept).
     pub truncated: u64,
@@ -234,6 +246,7 @@ impl Filter {
             pool_creations: o.pool_creations && on("pool_creations"),
             new_reversed: o.new_reversed && on("tx_new_reversed"),
             new_pools: o.new_pools,
+            backfill: o.backfill && on("backfill"),
             level,
         }
     }
@@ -361,34 +374,69 @@ impl Filter {
                "tx_pools": self.tx_pools.len(), "tx_probes": self.tx_probes.len(), "tx_wallets": self.tx_wallets.len(),
                "vaults": self.vaults.len(), "new_vaults": self.fresh_vaults.len(), "pool_accounts": self.pool_accounts,
                "pool_creations": self.pool_creations, "new_reversed": self.new_reversed, "new_pools": self.new_pools,
+               "backfill": self.backfill,
                "truncated": self.truncated})
     }
 }
 
-/// `watchlist.json` of a segment: the pools and wallets whose transactions were filtered for the
-/// whole segment (the reconciliation compares only those). In the segment after a change that is
-/// the intersection of the old and new filter; the rest is listed as partial.
-pub fn segment_watchlist(before: &Filter, now: &Filter, source: &Value) -> Value {
-    let both = |a: &[String], b: &[String]| -> (Vec<String>, Vec<String>) {
-        let a: BTreeSet<&String> = a.iter().collect();
-        let b: BTreeSet<&String> = b.iter().collect();
-        (a.intersection(&b).map(|s| (*s).clone()).collect(), a.symmetric_difference(&b).map(|s| (*s).clone()).collect())
-    };
-    let all = |f: &Filter| -> Vec<String> { f.tx_pools.iter().chain(&f.tx_probes).cloned().collect() };
-    let (pools, pools_partial) = both(&all(before), &all(now));
-    let (wallets, wallets_partial) = both(&before.tx_wallets, &now.tx_wallets);
-    json!({
-        "pools": pools.iter().map(|p| json!({"pool": p})).collect::<Vec<_>>(),
-        "wallets": wallets,
-        "pools_partial": pools_partial,
-        "wallets_partial": wallets_partial,
-        "vaults": now.vaults,
-        // Graduation transactions were filtered for the whole segment (paper.reconcile checks them).
-        "new_pools": before.new_pools && now.new_pools,
-        "new_reversed": before.new_reversed && now.new_reversed,
-        "filter": now.summary(),
-        "source": source,
-    })
+/// The transaction filter of one segment, over every filter change inside it: the pools (with
+/// probes) and wallets watched for the whole segment (what paper.reconcile compares) and those
+/// watched only part of it. Filter changes no longer close a segment.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SegWatch {
+    pools: BTreeSet<String>,
+    wallets: BTreeSet<String>,
+    pools_partial: BTreeSet<String>,
+    wallets_partial: BTreeSet<String>,
+    new_pools: bool,
+    new_reversed: bool,
+}
+
+fn watched_pools(f: &Filter) -> BTreeSet<String> {
+    f.tx_pools.iter().chain(&f.tx_probes).cloned().collect()
+}
+
+impl SegWatch {
+    pub fn start(f: &Filter) -> Self {
+        Self {
+            pools: watched_pools(f),
+            wallets: f.tx_wallets.iter().cloned().collect(),
+            new_pools: f.new_pools,
+            new_reversed: f.new_reversed,
+            ..Default::default()
+        }
+    }
+
+    /// The filter changes from `old` to `new` inside the segment.
+    pub fn change(&mut self, old: &Filter, new: &Filter) {
+        let (op, np) = (watched_pools(old), watched_pools(new));
+        let (ow, nw): (BTreeSet<String>, BTreeSet<String>) =
+            (old.tx_wallets.iter().cloned().collect(), new.tx_wallets.iter().cloned().collect());
+        self.pools_partial.extend(op.symmetric_difference(&np).cloned());
+        self.wallets_partial.extend(ow.symmetric_difference(&nw).cloned());
+        self.pools = self.pools.intersection(&np).cloned().collect();
+        self.wallets = self.wallets.intersection(&nw).cloned().collect();
+        self.new_pools &= new.new_pools;
+        self.new_reversed &= new.new_reversed;
+    }
+
+    /// `watchlist.json`: what the reconciliation may compare, and the rest.
+    pub fn json(&self, now: &Filter, source: &Value) -> Value {
+        let partial: BTreeSet<&String> = self.pools_partial.iter().filter(|p| !self.pools.contains(*p)).collect();
+        let wpartial: BTreeSet<&String> = self.wallets_partial.iter().filter(|w| !self.wallets.contains(*w)).collect();
+        json!({
+            "pools": self.pools.iter().map(|p| json!({"pool": p})).collect::<Vec<_>>(),
+            "wallets": self.wallets,
+            "pools_partial": partial,
+            "wallets_partial": wpartial,
+            "vaults": now.vaults,
+            // Graduation transactions were filtered for the whole segment (paper.reconcile checks them).
+            "new_pools": self.new_pools,
+            "new_reversed": self.new_reversed,
+            "filter": now.summary(),
+            "source": source,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -476,16 +524,21 @@ mod tests {
     }
 
     #[test]
-    fn the_segment_after_a_change_reconciles_only_what_both_filters_had() {
+    fn a_segment_reconciles_only_what_every_filter_inside_it_had() {
         let w = watch();
         let o = opts(false, 10_000);
-        let before = Filter::new(&w, &Extra::default(), 0, &o);
+        let first = Filter::new(&w, &Extra::default(), 0, &o);
         let mut w2 = w.clone();
         w2.pools = vec![A.to_owned(), D.to_owned()];
-        let now = Filter::new(&w2, &Extra { probes: vec![C.to_owned()], ..Extra::default() }, 0, &o);
-        let v = segment_watchlist(&before, &now, &Value::Null);
+        let second = Filter::new(&w2, &Extra { probes: vec![C.to_owned()], ..Extra::default() }, 0, &o);
+        let third = Filter::new(&w2, &Extra::default(), 0, &o); // the probe C expired again
+        let mut seg = SegWatch::start(&first);
+        seg.change(&first, &second);
+        seg.change(&second, &third);
+        let v = seg.json(&third, &Value::Null);
         let pools: Vec<&str> = v["pools"].as_array().unwrap().iter().map(|p| p["pool"].as_str().unwrap()).collect();
-        assert_eq!(pools, vec![A, B]);
+        assert_eq!(pools, vec![A, B]); // B is the open pool, A was in every filter
         assert_eq!(v["pools_partial"], json!([C, D]));
+        assert_eq!(SegWatch::start(&third).json(&third, &Value::Null)["pools"].as_array().unwrap().len(), 3);
     }
 }

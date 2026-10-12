@@ -19,8 +19,9 @@ transactions.
 | `slots` | slot status, `filter_by_commitment` | a slot is written once confirmed (+ `--close-lag`) |
 | `tx_new_reversed` (off by default, `--new-reversed`) | `account_include` [PumpSwap], `account_exclude` 15 generic accounts (protocol and buyback fee recipients, Jupiter v6, a few routers; `watch.rs` `NEW_REVERSED_EXCLUDE`) | direct pool creations, mostly reversed pools (97% of the reversed pools ≥ 150 SOL on a day are created that day). The certain fallback: ~7–8 GB/day with ~100% of direct creations (creation-filter measurement, 1052). The exclusion list also lets through deposits, withdrawals and other non-trade PumpSwap transactions |
 | `pool_creations` (off by default, `--pool-creations`) | owner PumpSwap + memcmp Pool discriminator + memcmp 16 zero bytes at 271 (`protocol_fees`, `creator_fees`), data slice 43..244 | **hypothesis, to verify in the first measuring hour:** both counters are 0 at creation and grow with the first trade, so each new pool gives exactly one update for almost no bytes. Measure updates per hour and whether every new reversed pool appears (compare with OF1's CreatePoolEvents). Every update is written (`pool_creations/`), not deduplicated |
-| `tx_probes` | `account_include` = the recorder's own probe pools | a new WSOL pool becomes a probe (full transactions for `--probe-minutes`, 180) at once when it is created with ≥ `--probe-depth-sol` (150) WSOL, or when its followed WSOL vault reaches that depth. Probes are applied within a second (no rate limit): the first F7 trigger comes 0–2 minutes after creation (LAB research smoke test) |
+| `tx_probes` | `account_include` = the recorder's own probe pools | a new WSOL pool becomes a probe (full transactions for `--probe-minutes`, 180) at once when it is created with ≥ `--probe-depth-sol` (120) WSOL, or when its followed WSOL vault reaches that depth. 120, not F7's 150: the trigger sell is the first trade that sees 150, so a switch at 150 comes a minute late (LAB research, watchlist measurement: the F7 watchlist enters at 120 too). Probes are applied within a second (no rate limit): the first F7 trigger comes 0–2 minutes after creation (LAB research smoke test) |
 | `new_vaults` | the WSOL vaults of new reversed pools below the probe depth, for `--fresh-vault-minutes` (60), data slice 64..72 | finds the ~85-SOL pools that become deep later. Their trades before the probe starts are not recorded (the farmer flag of those pools is incomplete) |
+| `backfill` | per new probe a short second subscription: `account_include` [pool], `from_slot` = its create slot, until the replay passes the probe start (+150 slots) | the pool's transactions before the probe, for LiveFeed's farmer history (without them the flag flips for 14.4% of organic triggers: LAB research's trigger_gap). Rows go to `backfill/` of the segment; `--no-backfill` turns it off. Fallback (signatures from `new_vaults` + `getTransaction`) only if Triton's from_slot window proves too short |
 | `vaults` (optional) | `account` = the watchlist's `vaults`, data slice 64..72 (token `amount`) | cheap balance-only following of pools that are not on the full-transaction list |
 | `pool_accounts` (off by default, `--pool-accounts`) | owner PumpSwap + memcmp Pool discriminator, data slice 43..244 | new pools (mints, vaults, coin creator). Expensive: see below |
 
@@ -37,12 +38,13 @@ so a live row equals the OF1 row of the same event column for column.
 `<root>/segments/<seq:09d>/` in the OF1 chunk layout (`pump/<Event>/`, `pump_amm/<Event>/`,
 `failed_txs/`, `anomalies/`, `blocks/`), plus `arrivals/` (receive time and the server's
 `created_at` per transaction), `vaults/`, `pool_accounts/`, `watchlist.json` (the pools and wallets
-filtered during the whole segment; after a change, the intersection of the old and new filter)
+filtered during the whole segment: what every filter inside it had), `backfill/` (earlier transactions of new probes)
 and `_segment.json`, written last: seq, first/last slot, row counts, usage rows per minute and
 stream, the budget state, the filter level, reconnects, late rows and totals.
 
-A segment closes after `--segment-slots` (150) slots or `--segment-secs` (60), and at every
-filter change. Only whole confirmed slots are written; rows of a slot that is already written are
+A segment closes after `--segment-slots` (150) slots or `--segment-secs` (60), once no backfill
+is running (it waits at most `--backfill-wait-secs`, 20). A filter change does not close it: its
+`watchlist.json` lists the pools and wallets that every filter inside the segment had. Only whole confirmed slots are written; rows of a slot that is already written are
 counted as late and dropped. After a disconnect the stream resumes with `from_slot` = last written
 slot + 1; after three failed resumes it continues live and the gap shows in `reconnects` and in
 the reconciliation.
@@ -53,7 +55,7 @@ Every update is metered (protobuf size before transport compression, times `--wi
 stream and minute. The daily cap is `--budget-usd` / `--usd-per-gb` (default $2 / $0.08 = 25 GB,
 UTC day, kept in `<root>/budget.json` across restarts). When the day projects above the cap, the
 lowest-priority stream is dropped (`pool_accounts`, `pool_creations`, `tx_new_reversed`,
-`new_vaults`, `tx_probes`, `vaults`, `tx_wallets`, then the watchlist pools; open-position pools,
+`new_vaults`, `backfill`, `tx_probes`, `vaults`, `tx_wallets`, then the watchlist pools; open-position pools,
 graduations, blocks and slots stay); a minute above 20x the sustainable
 rate downscales at once. At the cap the recorder writes its last segment and exits with code 75;
 it refuses to start again the same day. A new UTC day restores all streams. Every decision is a

@@ -7,6 +7,8 @@
 //!     arrivals/      per transaction: slot, tx_index, signature, received_unix_ns, created_unix_ns, stream
 //!     vaults/        vault balance updates (account stream with a data slice), when subscribed
 //!     pool_accounts/ PumpSwap pool accounts seen on the pool account stream, when subscribed
+//!     backfill/      the earlier transactions of new probe pools (from_slot replay), in the same table
+//!                    layout: farmer history for LiveFeed, not events (reconcile does not read it)
 //!     watchlist.json the transaction filter of this segment (pools, wallets, vaults)
 //!     _segment.json  written last (atomic rename): seq, first_slot, last_slot, complete, usage, ...
 //!
@@ -118,23 +120,38 @@ impl SlotBuffer {
     }
 }
 
+type Tables = BTreeMap<Arc<str>, (Columns, Vec<Vec<Val>>)>;
+
 struct Open {
     first_slot: Option<u64>,
     last_slot: u64,
     started: Instant,
-    tables: BTreeMap<Arc<str>, (Columns, Vec<Vec<Val>>)>,
+    tables: Tables,
+    backfill: Tables,
     slots: u64,
+}
+
+fn add_to(tables: &mut Tables, rows: Vec<Row>) {
+    for r in rows {
+        tables.entry(r.table.clone()).or_insert_with(|| (r.columns.clone(), Vec::new())).1.push(r.values);
+    }
+}
+
+fn write_tables(dir: &Path, tables: &Tables) -> Result<serde_json::Map<String, Value>> {
+    let mut rows = serde_json::Map::new();
+    for (table, (cols, values)) in tables {
+        if values.is_empty() {
+            continue;
+        }
+        write_parquet(dir, table, 0, cols, values)?;
+        rows.insert(table.to_string(), json!(values.len()));
+    }
+    Ok(rows)
 }
 
 impl Open {
     fn new() -> Self {
-        Self { first_slot: None, last_slot: 0, started: Instant::now(), tables: BTreeMap::new(), slots: 0 }
-    }
-
-    fn add(&mut self, rows: Vec<Row>) {
-        for r in rows {
-            self.tables.entry(r.table.clone()).or_insert_with(|| (r.columns.clone(), Vec::new())).1.push(r.values);
-        }
+        Self { first_slot: None, last_slot: 0, started: Instant::now(), tables: BTreeMap::new(), backfill: BTreeMap::new(), slots: 0 }
     }
 }
 
@@ -189,12 +206,17 @@ impl Segments {
         }
         self.open.last_slot = self.open.last_slot.max(slot);
         self.open.slots += 1;
-        self.open.add(rows);
+        add_to(&mut self.open.tables, rows);
     }
 
     /// Add rows that are not gated by slot closing (vault and pool account updates).
     pub fn add_rows(&mut self, rows: Vec<Row>) {
-        self.open.add(rows);
+        add_to(&mut self.open.tables, rows);
+    }
+
+    /// Add a finished backfill's rows (written under backfill/ of the open segment).
+    pub fn add_backfill(&mut self, rows: Vec<Row>) {
+        add_to(&mut self.open.backfill, rows);
     }
 
     pub fn is_due(&self) -> bool {
@@ -215,14 +237,8 @@ impl Segments {
         let open = std::mem::replace(&mut self.open, Open::new());
         let dir = self.root.join("segments").join(format!("{:09}", self.seq));
         fs::create_dir_all(&dir)?;
-        let mut rows = serde_json::Map::new();
-        for (table, (cols, values)) in &open.tables {
-            if values.is_empty() {
-                continue;
-            }
-            write_parquet(&dir, table, 0, cols, values)?;
-            rows.insert(table.to_string(), json!(values.len()));
-        }
+        let rows = write_tables(&dir, &open.tables)?;
+        let backfill_rows = write_tables(&dir.join("backfill"), &open.backfill)?;
         write_json_atomic(&dir.join("watchlist.json"), watchlist)?;
         let mut m = serde_json::Map::new();
         m.insert("seq".into(), json!(self.seq));
@@ -230,6 +246,9 @@ impl Segments {
         m.insert("last_slot".into(), json!(open.last_slot));
         m.insert("slots_closed".into(), json!(open.slots));
         m.insert("rows".into(), Value::Object(rows));
+        if !backfill_rows.is_empty() {
+            m.insert("backfill_rows".into(), Value::Object(backfill_rows));
+        }
         m.insert("written_unix".into(), json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()));
         m.extend(meta);
         m.insert("complete".into(), json!(true));

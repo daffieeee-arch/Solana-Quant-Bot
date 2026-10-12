@@ -12,8 +12,8 @@
 //!   lab-recorder --root DIR [--endpoint URL] [--watchlist FILE] [--open-pools FILE]
 //!                [--budget-usd 2] [--usd-per-gb 0.08] [--wire-ratio 1] [--segment-slots 150]
 //!                [--segment-secs 60] [--close-lag 1] [--max-tx-accounts 10000] [--pool-accounts] [--no-new-pools]
-//!                [--new-reversed] [--pool-creations] [--probe-depth-sol 150] [--probe-minutes 180]
-//!                [--fresh-vault-minutes 60]
+//!                [--new-reversed] [--pool-creations] [--probe-depth-sol 120] [--probe-minutes 180]
+//!                [--fresh-vault-minutes 60] [--no-backfill] [--backfill-wait-secs 20]
 //!                [--reload-secs 10] [--min-update-secs 60] [--from-slot N] [--max-runtime-secs N]
 //!                [--dry-run]
 //!
@@ -38,7 +38,10 @@ mod watch;
 
 use anyhow::{bail, Context, Result};
 use extract::{Coverage, LabPlugin};
+use futures::channel::oneshot;
+use futures::stream::{BoxStream, SelectAll};
 use futures::{SinkExt, StreamExt};
+use std::collections::HashMap;
 use meter::{Meter, GB};
 use recorder::{Action, Config, Recorder};
 use segment::Segments;
@@ -47,8 +50,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use watch::{Extra, Files, Filter, Opts};
-use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient};
+use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient, SubscribeRequestSink};
+use yellowstone_grpc_proto::prelude::SubscribeUpdate;
 use yellowstone_grpc_proto::tonic::codec::CompressionEncoding;
+use yellowstone_grpc_proto::tonic::Status;
 
 pub const EXIT_BUDGET: i32 = 75;
 /// Without any update on the main stream for this long the connection is renewed.
@@ -75,6 +80,8 @@ struct Args {
     probe_depth_sol: f64,
     probe_minutes: u64,
     fresh_vault_minutes: u64,
+    backfill: bool,
+    backfill_wait_secs: u64,
     reload_secs: u64,
     min_update_secs: u64,
     from_slot: Option<u64>,
@@ -101,9 +108,11 @@ fn parse_args() -> Result<Args> {
         new_pools: true,
         new_reversed: false,
         pool_creations: false,
-        probe_depth_sol: 150.0,
+        probe_depth_sol: 120.0,
         probe_minutes: 180,
         fresh_vault_minutes: 60,
+        backfill: true,
+        backfill_wait_secs: 20,
         reload_secs: 10,
         min_update_secs: 60,
         from_slot: None,
@@ -132,6 +141,8 @@ fn parse_args() -> Result<Args> {
             "--probe-depth-sol" => a.probe_depth_sol = val()?.parse()?,
             "--probe-minutes" => a.probe_minutes = val()?.parse()?,
             "--fresh-vault-minutes" => a.fresh_vault_minutes = val()?.parse()?,
+            "--no-backfill" => a.backfill = false,
+            "--backfill-wait-secs" => a.backfill_wait_secs = val()?.parse()?,
             "--reload-secs" => a.reload_secs = val()?.parse()?,
             "--min-update-secs" => a.min_update_secs = val()?.parse()?,
             "--from-slot" => a.from_slot = Some(val()?.parse()?),
@@ -158,6 +169,7 @@ fn opts(a: &Args) -> Opts {
         new_pools: a.new_pools,
         pool_creations: a.pool_creations,
         new_reversed: a.new_reversed,
+        backfill: a.backfill,
         max_tx_accounts: a.max_tx_accounts,
     }
 }
@@ -204,8 +216,24 @@ async fn session(rec: &mut Recorder, a: &Args, files: &mut Files, endpoint: &str
     let mut last_main = Instant::now();
     let mut last_reload = Instant::now();
     let mut got_data = false;
+    // Backfill subscriptions (one per new probe, same connection): their updates tagged with the
+    // backfill id; None marks a stream's end. Each is closed when its replay reached to_slot.
+    let mut backfills: SelectAll<BoxStream<'static, (String, Option<Result<SubscribeUpdate, Status>>)>> = SelectAll::new();
+    let mut backfill_open: HashMap<String, (SubscribeRequestSink, oneshot::Sender<()>)> = HashMap::new();
     loop {
         tokio::select! {
+            Some((id, m)) = backfills.next(), if !backfills.is_empty() => {
+                match m {
+                    Some(Ok(u)) => rec.on_backfill_update(&id, u)?,
+                    Some(Err(status)) => rec.backfill_failed(&id, &format!("{status}")),
+                    None => rec.backfill_failed(&id, "the stream ended before its to_slot"),
+                }
+                for done in rec.take_finished_backfills() {
+                    if let Some((_sink, cancel)) = backfill_open.remove(&done) {
+                        let _ = cancel.send(());
+                    }
+                }
+            },
             m = stream.next() => match m {
                 Some(Ok(u)) => {
                     got_data = true;
@@ -233,6 +261,29 @@ async fn session(rec: &mut Recorder, a: &Args, files: &mut Files, endpoint: &str
                 } else {
                     None
                 };
+                for (id, req) in rec.take_backfill_requests() {
+                    match client.subscribe_with_request(Some(req)).await {
+                        Ok((bsink, bstream)) => {
+                            let (cancel, cancelled) = oneshot::channel::<()>();
+                            let tag = id.clone();
+                            backfills.push(
+                                bstream
+                                    .take_until(cancelled)
+                                    .map(Some)
+                                    .chain(futures::stream::once(async { None }))
+                                    .map(move |m| (tag.clone(), m))
+                                    .boxed(),
+                            );
+                            backfill_open.insert(id, (bsink, cancel));
+                        }
+                        Err(e) => rec.backfill_failed(&id, &format!("subscribe: {e:#}")),
+                    }
+                }
+                for done in rec.take_finished_backfills() {
+                    if let Some((_sink, cancel)) = backfill_open.remove(&done) {
+                        let _ = cancel.send(());
+                    }
+                }
                 match rec.on_tick(unix(), reload)? {
                     Action::None => {}
                     Action::Resubscribe(m, v) => {
@@ -288,6 +339,8 @@ async fn run(a: Args) -> Result<i32> {
         probe_lamports: (a.probe_depth_sol * 1e9) as u64,
         probe_secs: a.probe_minutes * 60,
         fresh_vault_secs: a.fresh_vault_minutes * 60,
+        backfill_wait_secs: a.backfill_wait_secs,
+        backfill_max: 8,
     };
     let resume_from = a.from_slot.map(|s| s.saturating_sub(1)).or(last);
     let mut rec = Recorder::new(cfg, plugin, segs, meter, watch, resume_from, a.close_lag);

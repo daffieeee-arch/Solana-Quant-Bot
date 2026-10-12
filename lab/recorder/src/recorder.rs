@@ -7,14 +7,15 @@ use crate::idl::{Kind, Val};
 use crate::meter::{Decision, Meter};
 use crate::segment::{columns, Segments, SlotBuffer, ARRIVAL_COLS, BLOCK_COLS};
 use crate::sink::{Columns, Row};
-use crate::watch::{segment_watchlist, Extra, Filter, Opts, Watch, DOWNSCALE, WSOL};
+use crate::watch::{Extra, Filter, Opts, SegWatch, Watch, DOWNSCALE, WSOL};
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use yellowstone_grpc_proto::prelude::{
-    subscribe_update::UpdateOneof, SlotStatus, SubscribeRequest, SubscribeUpdate, SubscribeUpdateAccount,
+    subscribe_update::UpdateOneof, CommitmentLevel, SlotStatus, SubscribeRequest, SubscribeRequestFilterSlots,
+    SubscribeRequestFilterTransactions, SubscribeUpdate, SubscribeUpdateAccount,
     SubscribeUpdateBlockMeta,
 };
 use yellowstone_grpc_proto::prost::Message as _;
@@ -44,6 +45,24 @@ const POOL_COLS: [(&str, Kind); 12] = [
     ("received_unix_ns", Kind::U64),
 ];
 
+/// Slots past the last closed slot a backfill replays to, so it overlaps the probe's own
+/// transactions (LiveFeed deduplicates the overlap by event position).
+const BACKFILL_MARGIN_SLOTS: u64 = 150;
+
+struct Backfill {
+    pool: String,
+    from_slot: u64,
+    to_slot: u64,
+    rows: Vec<Row>,
+    started_unix: u64,
+    done: bool,
+    failed: Option<String>,
+    /// The connection was told to close its subscription.
+    closed: bool,
+    /// Written to a segment (rows and record).
+    reported: bool,
+}
+
 pub struct Config {
     pub opts: Opts,
     /// Watchlist changes are applied at most this often (downscales and probes at once).
@@ -54,11 +73,23 @@ pub struct Config {
     pub probe_lamports: u64,
     pub probe_secs: u64,
     pub fresh_vault_secs: u64,
+    /// A segment waits this long for running backfills before it closes without them.
+    pub backfill_wait_secs: u64,
+    /// At most this many backfills at once (more probes are not backfilled).
+    pub backfill_max: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { opts: Opts::default(), min_update_secs: 60, probe_lamports: 150_000_000_000, probe_secs: 3 * 3600, fresh_vault_secs: 3600 }
+        Self {
+            opts: Opts::default(),
+            min_update_secs: 60,
+            probe_lamports: 120_000_000_000,
+            probe_secs: 3 * 3600,
+            fresh_vault_secs: 3600,
+            backfill_wait_secs: 20,
+            backfill_max: 8,
+        }
     }
 }
 
@@ -76,6 +107,7 @@ struct Stats {
     failed_dropped: u64,
     convert_errors: u64,
     short_accounts: u64,
+    backfills_skipped: u64,
 }
 
 pub struct Recorder {
@@ -88,8 +120,8 @@ pub struct Recorder {
     pending_watch: Option<Watch>,
     level: usize,
     pub active: Filter,
-    /// The filter when the open segment started (its watchlist.json is what both had).
-    seg_before: Filter,
+    /// The open segment's filter over its filter changes (its watchlist.json).
+    seg_watch: SegWatch,
     last_update_unix: u64,
     block_cols: Columns,
     arrival_cols: Columns,
@@ -101,8 +133,11 @@ pub struct Recorder {
     at_last_level_noted: bool,
     /// Probe pool -> until (unix seconds).
     probes: BTreeMap<String, u64>,
-    /// WSOL vault of a new pool -> (pool, until).
-    fresh: HashMap<String, (String, u64)>,
+    /// WSOL vault of a new pool -> (pool, until, its create slot).
+    fresh: HashMap<String, (String, u64, Option<u64>)>,
+    /// Backfills by id ("<pool>-<from_slot>"), and the subscriptions still to open.
+    backfills: BTreeMap<String, Backfill>,
+    backfill_requests: Vec<(String, SubscribeRequest)>,
     /// Probes or new vaults were added: resubscribe at the next tick, without the rate limit
     /// (a new pool's first trades come within minutes).
     extra_dirty: bool,
@@ -158,7 +193,7 @@ impl Recorder {
             watch,
             pending_watch: None,
             level: 0,
-            seg_before: active.clone(),
+            seg_watch: SegWatch::start(&active),
             active,
             last_update_unix: 0,
             block_cols: columns(&BLOCK_COLS),
@@ -171,6 +206,8 @@ impl Recorder {
             at_last_level_noted: false,
             probes: BTreeMap::new(),
             fresh: HashMap::new(),
+            backfills: BTreeMap::new(),
+            backfill_requests: Vec::new(),
             extra_dirty: false,
             extra_stale: false,
             cfg,
@@ -190,30 +227,125 @@ impl Recorder {
         } else {
             return;
         };
+        let created = val_u64(r, "slot");
         if wsol.is_some_and(|w| w >= self.cfg.probe_lamports) {
-            self.probe(pool, now);
+            self.probe(pool, now, created);
         } else if base == WSOL {
             let vault = val_str(r, "ix_accounts")
                 .and_then(|j| serde_json::from_str::<Value>(&j).ok())
                 .and_then(|v| v[vault_name].as_str().map(str::to_owned));
             if let Some(v) = vault {
-                self.follow_vault(v, pool, now);
+                self.follow_vault(v, pool, now, created);
             }
         }
     }
 
-    fn probe(&mut self, pool: String, now: u64) {
+    /// Full transactions of `pool` for probe_secs; its earlier transactions since `created` (its
+    /// create slot) come from a backfill subscription (from_slot), for LiveFeed's farmer history.
+    fn probe(&mut self, pool: String, now: u64, created: Option<u64>) {
         if self.cfg.probe_secs > 0 && !self.probes.contains_key(&pool) {
-            self.probes.insert(pool, now + self.cfg.probe_secs);
+            self.probes.insert(pool.clone(), now + self.cfg.probe_secs);
+            self.extra_dirty = true;
+            if let Some(from) = created {
+                self.request_backfill(pool, from, now);
+            }
+        }
+    }
+
+    fn follow_vault(&mut self, vault: String, pool: String, now: u64, created: Option<u64>) {
+        if self.cfg.fresh_vault_secs > 0 && !self.fresh.contains_key(&vault) {
+            self.fresh.insert(vault, (pool, now + self.cfg.fresh_vault_secs, created));
             self.extra_dirty = true;
         }
     }
 
-    fn follow_vault(&mut self, vault: String, pool: String, now: u64) {
-        if self.cfg.fresh_vault_secs > 0 && !self.fresh.contains_key(&vault) {
-            self.fresh.insert(vault, (pool, now + self.cfg.fresh_vault_secs));
-            self.extra_dirty = true;
+    fn request_backfill(&mut self, pool: String, from_slot: u64, now: u64) {
+        let running = self.backfills.values().filter(|b| !b.done).count();
+        if !self.active.backfill || running >= self.cfg.backfill_max {
+            self.stats.backfills_skipped += 1;
+            return;
         }
+        // Up to where the main stream surely has the probe: the last closed slot plus a margin.
+        let to_slot = self.slots.last_closed.unwrap_or(from_slot).max(from_slot) + BACKFILL_MARGIN_SLOTS;
+        let id = format!("{pool}-{from_slot}");
+        let req = SubscribeRequest {
+            transactions: HashMap::from([(
+                "backfill".to_owned(),
+                SubscribeRequestFilterTransactions {
+                    vote: Some(false),
+                    failed: Some(false),
+                    account_include: vec![pool.clone()],
+                    ..Default::default()
+                },
+            )]),
+            slots: HashMap::from([(
+                "backfill_slots".to_owned(),
+                SubscribeRequestFilterSlots { filter_by_commitment: Some(true), interslot_updates: Some(false) },
+            )]),
+            commitment: Some(CommitmentLevel::Confirmed as i32),
+            from_slot: Some(from_slot),
+            ..Default::default()
+        };
+        self.backfills.insert(id.clone(), Backfill { pool, from_slot, to_slot, rows: Vec::new(), started_unix: now, done: false,
+                                                    failed: None, closed: false, reported: false });
+        self.backfill_requests.push((id, req));
+    }
+
+    /// New backfill subscriptions for the connection to open: (id, request).
+    pub fn take_backfill_requests(&mut self) -> Vec<(String, SubscribeRequest)> {
+        std::mem::take(&mut self.backfill_requests)
+    }
+
+    /// An update of backfill `id`: its transactions' rows are kept until the replay reaches its
+    /// to_slot (a confirmed slot at or after it), then it is done.
+    pub fn on_backfill_update(&mut self, id: &str, u: SubscribeUpdate) -> Result<()> {
+        self.meter.add("backfill", u.encoded_len());
+        let Some(b) = self.backfills.get_mut(id) else { return Ok(()) };
+        if b.done {
+            return Ok(());
+        }
+        match u.update_oneof {
+            Some(UpdateOneof::Transaction(t)) => {
+                let Some(info) = t.transaction.as_ref() else { return Ok(()) };
+                if let Ok(Converted::Tx(tx)) = convert::transaction(t.slot, info) {
+                    let rows = self.plugin.rows_for(&tx);
+                    if let Some(b) = self.backfills.get_mut(id) {
+                        b.rows.extend(rows);
+                    }
+                }
+            }
+            Some(UpdateOneof::Slot(s)) if s.status == SlotStatus::SlotConfirmed as i32 && s.slot >= b.to_slot => b.done = true,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Backfill `id` failed (e.g. its from_slot is older than the server keeps) or its stream
+    /// ended before to_slot: it is reported as failed with whatever rows arrived.
+    pub fn backfill_failed(&mut self, id: &str, reason: &str) {
+        if let Some(b) = self.backfills.get_mut(id) {
+            if !b.done {
+                b.done = true;
+                b.failed = Some(reason.chars().take(300).collect());
+            }
+        }
+    }
+
+    /// Backfills whose subscription the connection should close now (each id once).
+    pub fn take_finished_backfills(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        for (id, b) in self.backfills.iter_mut() {
+            if b.done && !b.closed {
+                b.closed = true;
+                out.push(id.clone());
+            }
+        }
+        out
+    }
+
+    /// The open segment may close: no backfill is still running unless it has waited too long.
+    fn backfills_settled(&self, now: u64) -> bool {
+        self.backfills.values().all(|b| b.done || now >= b.started_unix + self.cfg.backfill_wait_secs)
     }
 
     fn filter(&self, level: usize) -> Filter {
@@ -317,8 +449,8 @@ impl Recorder {
             self.stats.short_accounts += 1;
         }
         if amount.is_some_and(|w| w >= self.cfg.probe_lamports) {
-            if let Some((pool, _)) = self.fresh.get(&b58(&acc.pubkey)).cloned() {
-                self.probe(pool, now_ns / 1_000_000_000);
+            if let Some((pool, _, created)) = self.fresh.get(&b58(&acc.pubkey)).cloned() {
+                self.probe(pool, now_ns / 1_000_000_000, created);
             }
         }
         Some(Row {
@@ -348,7 +480,7 @@ impl Recorder {
         }
         if stream == "pool_creations" {
             if b58(&d[0..32]) == WSOL {
-                self.follow_vault(b58(&d[96..128]), b58(&acc.pubkey), now_ns / 1_000_000_000);
+                self.follow_vault(b58(&d[96..128]), b58(&acc.pubkey), now_ns / 1_000_000_000, Some(a.slot));
             }
         } else if !self.seen_pools.insert(acc.pubkey.clone()) {
             return None;
@@ -375,6 +507,10 @@ impl Recorder {
     }
 
     pub fn on_disconnect(&mut self, now_unix: u64, reason: &str) {
+        let running: Vec<String> = self.backfills.iter().filter(|(_, b)| !b.done).map(|(id, _)| id.clone()).collect();
+        for id in running {
+            self.backfill_failed(&id, "disconnected");
+        }
         self.reconnects.push(json!({"unix": now_unix, "after_slot": self.slots.last_closed,
                                     "dropped_pending_slots": self.slots.pending_slots(), "reason": reason}));
         self.slots.reset();
@@ -395,6 +531,7 @@ impl Recorder {
                 "failed_dropped": self.stats.failed_dropped,
                 "convert_errors": self.stats.convert_errors,
                 "short_accounts": self.stats.short_accounts,
+                "backfills_skipped": self.stats.backfills_skipped,
                 "txs_touching": c.txs_touching.load(Ordering::Relaxed),
                 "events": c.events.load(Ordering::Relaxed),
                 "anomalies": c.anomalies.load(Ordering::Relaxed),
@@ -412,21 +549,41 @@ impl Recorder {
         if !self.segs.has_slots() {
             return Ok(());
         }
-        let wl = segment_watchlist(&self.seg_before, &self.active, &self.watch.source);
-        let meta = self.segment_meta(note);
+        // Finished backfills go into this segment (rows under backfill/); running ones are listed.
+        let mut records = Vec::new();
+        for (id, b) in self.backfills.iter_mut() {
+            if b.done && !b.reported {
+                b.reported = true;
+                let rows = std::mem::take(&mut b.rows);
+                records.push(json!({"id": id, "pool": b.pool, "from_slot": b.from_slot, "to_slot": b.to_slot,
+                                    "rows": rows.len(), "status": if b.failed.is_some() { "failed" } else { "complete" },
+                                    "error": b.failed}));
+                self.segs.add_backfill(rows);
+            } else if !b.done {
+                records.push(json!({"id": id, "pool": b.pool, "from_slot": b.from_slot, "to_slot": b.to_slot, "status": "running"}));
+            }
+        }
+        self.backfills.retain(|_, b| !(b.reported && b.closed));
+        let wl = self.seg_watch.json(&self.active, &self.watch.source);
+        let mut meta = self.segment_meta(note);
+        if !records.is_empty() {
+            meta.insert("backfills".into(), Value::Array(records));
+        }
         if let Some(dir) = self.segs.close(&wl, meta)? {
             log::info!("segment {} written (slots up to {:?})", dir.display(), self.slots.last_closed);
         }
-        self.seg_before = self.active.clone();
+        self.seg_watch = SegWatch::start(&self.active);
         Ok(())
     }
 
+    /// A new subscription filter. The open segment stays open: its watchlist.json keeps what every
+    /// filter inside it had (SegWatch).
     fn change(&mut self, f: Filter, now_unix: u64) -> Result<Action> {
         if f == self.active {
             return Ok(Action::None);
         }
-        self.close_segment(None)?;
-        self.seg_before = std::mem::replace(&mut self.active, f);
+        self.seg_watch.change(&self.active, &f);
+        self.active = f;
         self.last_update_unix = now_unix;
         log::info!("subscription now {}", self.active.summary());
         Ok(Action::Resubscribe(Box::new(self.active.request(None)), Box::new(self.active.vault_request())))
@@ -467,7 +624,7 @@ impl Recorder {
         }
         let (n_probes, n_fresh) = (self.probes.len(), self.fresh.len());
         self.probes.retain(|_, until| *until > now_unix);
-        self.fresh.retain(|_, (_, until)| *until > now_unix);
+        self.fresh.retain(|_, (_, until, _)| *until > now_unix);
         if (self.probes.len(), self.fresh.len()) != (n_probes, n_fresh) {
             self.extra_stale = true;
         }
@@ -492,7 +649,7 @@ impl Recorder {
                 return Ok(a);
             }
         }
-        if self.segs.is_due() {
+        if self.segs.is_due() && self.backfills_settled(now_unix) {
             self.close_segment(None)?;
         }
         Ok(Action::None)
@@ -601,7 +758,7 @@ mod tests {
         let last = segment_meta(&root, r.segs.seq - 1);
         let usage = last["usage"].as_array().unwrap();
         assert!(usage.iter().any(|u| u["stream"] == "budget" && u["note"].as_str().unwrap().contains("hard stop")));
-        assert!(segment_meta(&root, 0)["usage"].as_array().unwrap().is_empty()); // its minute was not over yet
+        assert_eq!(r.segs.seq, 1); // the downscale changed the filter without closing a segment
         assert!(Meter::load(&root, 1_440_000, 1.0, T0 + 100).unwrap().stopped);
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -707,6 +864,58 @@ mod tests {
         // Probes and followed vaults expire (applied with the rate limit).
         let (main, vaults) = resubscribe(r.on_tick(T0 + 3 * 3600 + 100, None).unwrap());
         assert!(!main.transactions.contains_key("tx_probes") && !vaults.accounts.contains_key("new_vaults"));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_probe_backfills_its_pool_from_creation_into_the_segment() {
+        let root = tmp("rec-backfill");
+        let mut r = recorder(&root, 25_000_000_000, 2);
+        let pool = b58(&fake_key(21));
+        let mint = b58(&fake_key(22));
+        let mut row = creation(&pool, WSOL, &mint, 200_000_000_000, &b58(&fake_key(23)));
+        row.columns = {
+            let mut c = (*row.columns).clone();
+            c.push(("slot".to_owned(), Kind::U64));
+            Arc::new(c)
+        };
+        row.values.push(Val::U64(990));
+        r.on_creation(&row, T0);
+        let reqs = r.take_backfill_requests();
+        assert_eq!(reqs.len(), 1);
+        let (id, req) = &reqs[0];
+        assert_eq!(req.from_slot, Some(990));
+        assert_eq!(req.transactions["backfill"].account_include, vec![pool.clone()]);
+        assert_eq!((req.transactions["backfill"].vote, req.transactions["backfill"].failed), (Some(false), Some(false)));
+        // The replay: one transaction of the pool, then a confirmed slot past to_slot (990 + 150).
+        r.on_backfill_update(id, tx(995, 2)).unwrap();
+        r.on_backfill_update(id, update("backfill_slots", UpdateOneof::Slot(SubscribeUpdateSlot {
+            slot: 1139, status: SlotStatus::SlotConfirmed as i32, ..Default::default() }))).unwrap();
+        assert!(r.take_finished_backfills().is_empty()); // not there yet
+        r.on_backfill_update(id, confirmed(1140)).unwrap();
+        assert_eq!(r.take_finished_backfills(), vec![id.clone()]);
+        // A second probe whose backfill keeps running holds the segment for backfill_wait_secs.
+        let mut row2 = creation(&b58(&fake_key(24)), WSOL, &mint, 200_000_000_000, &b58(&fake_key(25)));
+        row2.columns = row.columns.clone();
+        row2.values.push(Val::U64(995));
+        r.on_creation(&row2, T0 + 1);
+        assert_eq!(r.take_backfill_requests().len(), 1);
+        for u in [meta(1000), confirmed(1000), meta(1001), confirmed(1001), confirmed(1002)] {
+            r.on_update(u, 1).unwrap();
+        }
+        r.on_tick(T0 + 2, None).unwrap(); // the probes' resubscribe
+        assert!(matches!(r.on_tick(T0 + 3, None).unwrap(), Action::None));
+        assert!(!root.join("segments/000000000/_segment.json").exists()); // waiting for the running backfill
+        r.on_tick(T0 + 1 + 20, None).unwrap();
+        let m = segment_meta(&root, 0);
+        let b = m["backfills"].as_array().unwrap();
+        assert_eq!(b.iter().map(|x| x["status"].as_str().unwrap()).collect::<Vec<_>>(), vec!["complete", "running"]);
+        assert_eq!(b[0]["rows"], 1);
+        assert!(root.join("segments/000000000/backfill/anomalies/part-00000.parquet").exists());
+        // A failed backfill (from_slot older than the server keeps) is reported with no rows.
+        let id2 = b[1]["id"].as_str().unwrap().to_owned();
+        r.backfill_failed(&id2, "from_slot is not available");
+        assert_eq!(r.take_finished_backfills(), vec![id2]);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
