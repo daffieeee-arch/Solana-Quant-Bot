@@ -86,7 +86,8 @@ def test_live_events_equal_the_replay(setup):
     assert len(live) == len(replay) > 1000
     diffs = [(a, b) for a, b in zip(live, replay) if a != b]
     assert not diffs, diffs[:3]
-    assert feed.stats == {"segments": 4, "late_rows": 0, "unknown_pools": 0}
+    assert {k: feed.stats[k] for k in ("segments", "late_rows", "unknown_pools", "backfill_rows")} == \
+        {"segments": 4, "late_rows": 0, "unknown_pools": 0, "backfill_rows": 0}
     assert sum(1 for k in live if k[0] == "pool" and k[4].farmer) > 0  # the farmer flag was exercised
 
 
@@ -241,6 +242,8 @@ def test_a_backfill_gives_the_probe_pools_history_without_events(setup, tmp_path
     counts = {}
     for _, seg, _ in segs[:3]:
         for f in glob.glob(os.path.join(seg, "pump_amm", "*Event", "*.parquet")):
+            if "pool" not in pq.read_schema(f).names:
+                continue
             for p in pq.read_table(f, columns=["pool"]).column("pool").to_pylist():
                 counts[p] = counts.get(p, 0) + 1
     pool = max(counts, key=counts.get)
