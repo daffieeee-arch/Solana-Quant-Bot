@@ -7,7 +7,7 @@ Fail rule:
   printed, never fatal.
 - pip:   every finding (pip-audit reports no severity, so each one counts as unknown).
 - npm:   advisories with severity high or critical, as `npm audit --omit=dev --audit-level=high`.
-An ignore entry (with reason, date and review date) turns a failing finding into a printed "ignored"
+An ignore entry (with reason, evidence that no compatible patched version exists, date and review date) turns a failing finding into a printed "ignored"
 line. A tool error or unreadable output always fails.
 
 Usage:
@@ -28,7 +28,7 @@ import tomllib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IGNORE_FILE = os.path.join(HERE, "audit-ignore.toml")
-IGNORE_FIELDS = ("id", "ecosystem", "package", "reason", "approved", "approved_by", "review_by")
+IGNORE_FIELDS = ("id", "ecosystem", "package", "reason", "evidence", "approved", "approved_by", "review_by")
 FAILING = {"high", "critical", "unknown"}
 
 

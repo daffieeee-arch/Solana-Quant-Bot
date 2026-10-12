@@ -17,7 +17,7 @@ TODAY = datetime.date(2026, 10, 12)
 
 
 def ignore(**kw):
-    e = {"id": "RUSTSEC-2099-0001", "ecosystem": "cargo", "package": "foo", "reason": "test",
+    e = {"id": "RUSTSEC-2099-0001", "ecosystem": "cargo", "package": "foo", "reason": "test", "evidence": "none compatible",
          "approved": "2026-10-12", "approved_by": "test", "review_by": "2027-01-12"}
     e.update(kw)
     return e
@@ -169,13 +169,19 @@ class IgnoreFile(unittest.TestCase):
             self.assertGreater(datetime.date.fromisoformat(e["review_by"]), datetime.date.fromisoformat(e["approved"]))
 
     def test_missing_reason_rejected(self):
-        path = self.write('[[ignore]]\nid="X"\necosystem="npm"\npackage="a"\napproved="2026-10-12"\n'
+        path = self.write('[[ignore]]\nid="X"\necosystem="npm"\npackage="a"\nevidence="e"\napproved="2026-10-12"\n'
                           'approved_by="me"\nreview_by="2027-01-01"\n')
         with self.assertRaisesRegex(da.AuditError, "reason"):
             da.load_ignores(path)
 
+    def test_missing_evidence_rejected(self):
+        path = self.write('[[ignore]]\nid="X"\necosystem="npm"\npackage="a"\nreason="r"\napproved="2026-10-12"\n'
+                          'approved_by="me"\nreview_by="2027-01-01"\n')
+        with self.assertRaisesRegex(da.AuditError, r"missing \['evidence'\]"):
+            da.load_ignores(path)
+
     def test_bad_date_and_unknown_keys_rejected(self):
-        base = 'id="X"\necosystem="npm"\npackage="a"\nreason="r"\napproved_by="me"\n'
+        base = 'id="X"\necosystem="npm"\npackage="a"\nreason="r"\nevidence="e"\napproved_by="me"\n'
         with self.assertRaises(da.AuditError):
             da.load_ignores(self.write(f'[[ignore]]\n{base}approved="12-10-2026"\nreview_by="2027-01-01"\n'))
         with self.assertRaises(da.AuditError):
