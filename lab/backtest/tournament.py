@@ -128,6 +128,37 @@ M1_CHUNK = int(os.environ.get("LAB_M1_CHUNK", "25"))  # young pools per stream l
 F6_STATS = {}
 
 
+INSIDER_FALLBACKS = [0]  # per process: token_insiders calls left window-dependent (run-info "insider_fallbacks")
+
+
+def token_insiders(con, tok, lo, clock):
+    """overlay.Insiders of a token stream loaded with pool legs from `lo` on, over the token's whole
+    history: the pool's trades before lo enter as offsets summed in SQL (busy pools have millions of
+    events; the legs are not loaded). Without them insider sells before the window were invisible and
+    the share depended on where the caller's window started.
+
+    Only for a pool in the normal orientation (the token as base, as Insiders counts it). A token whose
+    pool is reversed falls back to the window-dependent Insiders and is counted in INSIDER_FALLBACKS
+    (the run's config.json): an O7 figure on such tokens is not covered by this fix. Counting the
+    token side of a reversed pool (quote_net) is a later change."""
+    w = clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot)
+    ins = overlay.Insiders(tok, w)
+    if not ins.known or tok.pool is None:
+        return ins  # unknown insiders, or no pool: the curve legs are complete from the create on
+    if tok.orientation != "normal":
+        INSIDER_FALLBACKS[0] += 1
+        return ins
+    # The insider wallets as a temporary table for the IN filter (registered for this query only).
+    con.register("ins_w", pa.table({"w": sorted(ins.insiders)}))
+    h0, c0, s0 = con.execute("""
+        SELECT COALESCE(sum(CASE WHEN trader IN (SELECT w FROM ins_w) THEN d END), 0), COALESCE(sum(d), 0),
+               count(*) FILTER (WHERE trader = ? AND d < 0)
+        FROM (SELECT trader, CASE WHEN kind = 'buy' THEN base ELSE -base END AS d FROM pool
+              WHERE pool = ? AND kind IN ('buy', 'sell') AND slot < ?)""", [tok.creator, tok.pool, lo]).fetchone()
+    con.unregister("ins_w")
+    return overlay.Insiders(tok, w, before=(int(h0), int(c0), int(s0))) if (h0 or c0 or s0) else ins
+
+
 def m1_signals(con, cfg, lo, hi, clock):
     """M1 triggers: for each young pool and k, the first candidate event (price >= k x graduation
     price, organic flow) that also has >= 20 distinct organic buyers over the last 15 min and an
@@ -140,13 +171,14 @@ def m1_signals(con, cfg, lo, hi, clock):
     for i in range(0, len(pools), M1_CHUNK):
         part = pools[i:i + M1_CHUNK]
         mints = {cands[p][0][0]: max(c[1] for c in cands[p]) for p in part}
-        toks = streams.load_streams(con, {m: (min(c[1] for p in part for c in cands[p] if c[0] == m), t) for m, t in mints.items()})
+        los = {m: min(c[1] for p in part for c in cands[p] if c[0] == m) for m in mints}
+        toks = streams.load_streams(con, {m: (los[m], t) for m, t in mints.items()})
         for pool in part:
             mint = cands[pool][0][0]
             tok = toks.get(mint)
             if tok is None:
                 continue
-            ins = overlay.Insiders(tok, clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot))
+            ins = token_insiders(con, tok, los[mint], clock)
             if not ins.known:
                 continue
             buys = [(l.slot, l.trader) for l in tok.pool_legs if l.kind == "buy" and not l.farmer]
@@ -448,13 +480,15 @@ def _token_info(con, st, venue, clock, cache):
     """(O7 insider index or None, distinct curve buyers or None) of the token behind a stream."""
     if st.mint in cache:
         return cache[st.mint]
-    tok = st
+    tok, lo = st, 0
     if venue == "pool":
         lo, hi = (st.pool_legs[0].slot, st.pool_legs[-1].slot) if st.pool_legs else (0, 0)
         tok = streams.load_streams(con, {st.mint: (lo, hi)}).get(st.mint)
+    elif st.pool_legs:
+        lo = st.pool_legs[0].slot
     ins = buyers = None
     if tok is not None and tok.create_slot is not None:
-        ins = overlay.Insiders(tok, clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot))
+        ins = token_insiders(con, tok, lo, clock)  # the whole history: the same share for every caller
         if not ins.known:
             ins = None
         else:
@@ -463,10 +497,18 @@ def _token_info(con, st, venue, clock, cache):
     return cache[st.mint]
 
 
+def f6_flows(con, pool, sigs, hi, clock):
+    """F6Exit's organic flow index from the pool's legs since min(t) - the flow window: the position's
+    stream starts at t - 300, which cut the window of the first ~800 slots of every F6 position."""
+    lo = min(s.t - clock.slots(F6_FLOW_MS, s.t) for s in sigs) - 1
+    st = streams.load_pool_streams(con, {pool: (max(0, lo), hi)}).get(pool)
+    return FlowIndex(st) if st is not None else None
+
+
 def _work(args):
     task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays, only = args
     health.wait_ok(log, f"batch {task_id}")
-    io0 = io_written()
+    io0, fb0 = io_written(), INSIDER_FALLBACKS[0]
     con = streams.open_store(STORE, threads=1, memory="600MB")
     replay.set_window_end(store_bounds(con)[1])  # no entry or exit at or after the store's end
     base = Scenario.from_cfg("base", cfg)
@@ -479,7 +521,7 @@ def _work(args):
         if st is None:
             continue
         mint = st.mint
-        flows = FlowIndex(st) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
+        flows = f6_flows(con, key, sigs, hi, clock) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
         ins_cache = {}
         for size_sol in sizes:
             size = int(size_sol * LAMPORTS)
@@ -544,7 +586,7 @@ def _work(args):
     path = _part_path(out, task_id)
     pq.write_table(pa.Table.from_pylist(rows, schema=RESULT_SCHEMA), path + ".tmp")
     os.replace(path + ".tmp", path)
-    return len(rows), io_written() - io0
+    return len(rows), io_written() - io0, INSIDER_FALLBACKS[0] - fb0
 
 
 def engine_commit():
@@ -587,10 +629,10 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
         f"in {time.time() - t0:.0f}s")
     del items, tasks
-    positions, written = 0, 0
+    positions, written, fallbacks = 0, 0, INSIDER_FALLBACKS[0]  # the main process's (signals) first
     with mp.get_context("spawn").Pool(workers, maxtasksperchild=20) as pool:
-        for i, (n, w) in enumerate(pool.imap_unordered(_work, todo)):
-            positions, written = positions + n, written + w
+        for i, (n, w, fb) in enumerate(pool.imap_unordered(_work, todo)):
+            positions, written, fallbacks = positions + n, written + w, fallbacks + fb
             if i % 50 == 0 or i == len(todo) - 1:
                 log(f"batch {i + 1}/{len(todo)}: {positions} positions, {time.time() - t0:.0f}s, "
                     f"workers wrote {written / 1e9:.2f} GB")
@@ -603,7 +645,8 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
               "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "gate_sizes": list(GATE_SIZES), "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k,
               "max_signals": max_signals, "store": meta,
-              "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
+              "signals": n_signals, "positions": total, "seconds": round(time.time() - t0),
+              "insider_fallbacks": fallbacks}
     with open(os.path.join(out, "config.json"), "w") as f:
         json.dump(config, f, indent=1)
     from .report import write_report
