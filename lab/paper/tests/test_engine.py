@@ -356,3 +356,20 @@ def test_live_needs_a_readable_store(tmp_path, capsys):
         with pytest.raises(SystemExit) as e:
             engine.main(["--live", str(tmp_path), "--store", store, "--journal", str(tmp_path / "j")])
         assert e.value.code == 2 and "--live needs a readable --store" in capsys.readouterr().err
+
+
+def test_daily_report_has_the_live_watchlist_counts(tmp_path):
+    from paper.report import watchlist_lines
+
+    day0 = 1_790_035_200 // 60  # a UTC midnight (1_790_035_200 % 86_400 == 0)
+    day1 = day0 + 1440
+    log = tmp_path / "watchlist-log.jsonl"
+    rows = [(day0 + 10, 5, 100, 3, 10, 2), (day0 + 1400, 6, 120, 4, 25, 3),
+            (day1 + 5, 7, 130, 6, 27, 3), (day1 + 1000, 4, 90, 9, 60, 8)]
+    log.write_text("".join(json.dumps({"minute": m, "counts": {"pools": p, "tracked": t, "archived": a, "pruned_total": pr,
+                                                               "restored_total": rs}}) + "\n" for m, p, t, a, pr, rs in rows))
+    d1 = engine._day(day1 * 60)
+    assert watchlist_lines(str(log), d1)[-1] == "- end of day: 4 on the list, 90 tracked, 9 archived; pruned 35, restored 5 this day"
+    d0 = engine._day(day0 * 60)
+    assert watchlist_lines(str(log), d0)[-1].endswith("pruned 25, restored 3 this day")  # no day before: since the start
+    assert watchlist_lines(str(tmp_path / "missing.jsonl"), d1)[-1] == "- no watchlist log"

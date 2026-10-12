@@ -303,7 +303,7 @@ class Engine:
         from .report import daily_report
 
         out = self.j.export_day(day)
-        daily_report(self.j, day)
+        daily_report(self.j, day, watch_log=self.watch.log_path if self.watch is not None else None)
         if self.backup:
             dest = os.path.join(BACKUP, os.path.basename(self.j.dir.rstrip("/")), day)
             os.makedirs(dest, exist_ok=True)

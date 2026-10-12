@@ -124,3 +124,18 @@ def test_backfill_from_before_the_first_slot_gets_its_own_minute(tmp_path):
     w2.slot(100_000, 5_000)
     w2.history("P", [leg(100_000 - 9_000, 20, 120)])
     assert ("P", 5_000) not in w2.rows and len(w2.rows) == 1
+
+
+def test_a_pruned_pool_whose_archive_expired_is_added_again(tmp_path):
+    """wallets.watchlist (#211) prunes quiet pools and archives their verdict; once the archive entry
+    expired the pool is unknown there. Its next trade must add it again (as the batch re-add does),
+    not be ignored because the live watchlist added it once."""
+    w = LiveWatchlist(Pools(), str(tmp_path))
+    w.slot(100, 1000)
+    w.trades("P", 1000, [leg(100, 3, 130)])
+    assert "P" in w.wl.pools
+    w.wl.pools.pop("P")  # what pruning plus an expired archive leave behind
+    w.wl.state.pop("P")
+    getattr(w.wl, "archive", {}).pop("P", None)
+    w.trades("P", 1001, [leg(400, 3, 130)])
+    assert "P" in w.wl.pools and w.rows[("P", 1001)][0] == 1
