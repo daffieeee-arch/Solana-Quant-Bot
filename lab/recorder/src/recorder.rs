@@ -619,6 +619,7 @@ impl Recorder {
                         return self.change(f, now_unix);
                     }
                 }
+                self.active.level = self.level; // the remaining levels changed nothing; the level still moved on
                 if !self.at_last_level_noted {
                     self.at_last_level_noted = true;
                     self.meter.note(format!("all optional streams are off; the hard stop follows at the cap ({reason})"));
@@ -744,6 +745,36 @@ mod tests {
         // A late transaction of a written slot is counted, not written.
         r.on_update(tx(1000, 5), 2).unwrap();
         assert_eq!(r.slots.late, 2); // its arrival row and its anomaly row
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Nothing optional configured and an empty watchlist: every level asks for the same streams.
+    fn quiet_recorder(root: &Path) -> Recorder {
+        let (segs, last) = Segments::open(root, 1000, 3600).unwrap();
+        let meter = Meter::load(root, 1_440_000, 1.0, T0).unwrap();
+        let watch = Watch::parse(Some(&json!({"pools": [], "wallets": [], "vaults": []})), None);
+        let cfg = Config { opts: Opts { backfill: false, ..Opts::default() }, ..Config::default() };
+        Recorder::new(cfg, plugin(), segs, meter, watch, last, 1)
+    }
+
+    #[test]
+    fn a_downscale_without_effect_keeps_both_levels_in_step() {
+        let root = tmp("rec-levels-down");
+        let mut r = quiet_recorder(&root);
+        r.meter.add("vaults", 30_000); // over 20x the sustainable rate: downscale at once
+        assert!(matches!(r.on_tick(T0 + 5, None).unwrap(), Action::None)); // no level changes a stream
+        assert_eq!((r.level, r.active.level), (DOWNSCALE.len(), DOWNSCALE.len()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_restore_with_the_same_streams_resubscribes_nothing_and_resets_both_levels() {
+        let root = tmp("rec-levels-restore");
+        let mut r = quiet_recorder(&root);
+        r.level = DOWNSCALE.len();
+        r.active.level = DOWNSCALE.len();
+        assert!(matches!(r.on_tick(T0 + 86_400 + 1, None).unwrap(), Action::None)); // a new UTC day
+        assert_eq!((r.level, r.active.level), (0, 0));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
