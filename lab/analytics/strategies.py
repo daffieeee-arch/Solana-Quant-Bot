@@ -93,9 +93,10 @@ def load(con, run_dir, defaults=DEFAULTS, stage_dir=None):
         raise SystemExit(f"refusing a tournament run that is not development-only: {store}")
     cfg = read_costs(defaults)
 
+    # Gate sizes: config.json's own field (runs after families-v2), else the fixed sentence in report.md.
     report = os.path.join(run_dir, "report.md")
-    gates = None
-    if os.path.exists(report):
+    gates = conf.get("gate_sizes")
+    if gates is None and os.path.exists(report):
         with open(report) as f:
             gates = gate_sizes(f.read(), conf.get("sizes_sol") or [])
     con.execute("CREATE TABLE strategy_runs AS SELECT ? AS run_id, ? AS config_json, ?::UBIGINT AS store_first_slot, "

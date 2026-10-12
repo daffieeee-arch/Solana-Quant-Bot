@@ -98,6 +98,21 @@ class Api(unittest.TestCase):
         if s["keys"]:
             self.assertEqual(self.get(base + f"&{s['keys'][0]}=no-such-value")["curves"], [])
 
+    def test_strategies_whole_grid_gzipped(self):
+        s = self.get("/api/strategies")
+        if not s["summary"]:
+            self.skipTest("no tournament run loaded")
+        import duckdb
+        con = duckdb.connect(os.path.join("/home/chupa/Solana-project/data-old-faithful-one/lab/analytics/analytics.duckdb"),
+                             read_only=True, config={"memory_limit": "500MB", "threads": 2})
+        n = con.execute("SELECT count(*) FROM strategy_summary WHERE scenario = 'base'").fetchone()[0]
+        self.assertEqual(len(s["summary"]), n, "no silent row cap")
+        r = urllib.request.Request(f"http://127.0.0.1:{self.port}/api/strategies", headers={"Accept-Encoding": "gzip"})
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            self.assertEqual(resp.headers["Content-Encoding"], "gzip")
+            import gzip
+            self.assertEqual(len(json.loads(gzip.decompress(resp.read()))["summary"]), n)
+
     def test_cases_read_from_files_dev_only(self):
         idx = self.get("/api/cases")
         if not idx["days"] and not idx["windows"]:
@@ -143,6 +158,13 @@ class CasesGuards(unittest.TestCase):
         self.assertTrue(self.server.dev_only({"peak_slot": HOLDOUT_START - 1, "trades": HOLDOUT_START + 5}))
         self.assertFalse(self.server.dev_only({"last_slot": HOLDOUT_START}))
         self.assertFalse(self.server.dev_only({"t15_t_dec": HOLDOUT_START + 1}))
+
+    def test_run_note_is_plain_text_and_stays_in_notes_dir(self):
+        self.assertIsNone(self.server.run_note("no-such-run"))
+        self.assertIsNone(self.server.run_note("../../server"))
+        n = self.server.run_note("families-v2-1033-1046")
+        self.assertIn("hold-out", n["holdout"])
+        self.assertTrue(all(isinstance(p, str) for p in n["points"]))
 
     def test_cases_connection_reads_only_the_cases_dir(self):
         con = self.server.cases_con()

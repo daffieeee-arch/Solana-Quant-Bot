@@ -41,7 +41,7 @@ const keyVal = (r: SummaryRow, k: RunKey) => (r[k] == null || r[k] === "n/a" ? n
 
 export default function Strategies() {
   const [scenario, setScenario] = useState("base");
-  const [data, setData] = useState<{ run: { run_id: string; config: Record<string, unknown>; gate_sizes?: number[] | null } | null; summary: SummaryRow[]; keys?: RunKey[] } | null>(null);
+  const [data, setData] = useState<{ run: { run_id: string; config: Record<string, unknown>; gate_sizes?: number[] | null; note?: { holdout: string; points: string[] } | null } | null; summary: SummaryRow[]; keys?: RunKey[] } | null>(null);
   const [keySel, setKeySel] = useState<Partial<Record<RunKey, string>>>({});
   const [d, setD] = useState<number | null>(null);
   const [tau, setTau] = useState<string | null>(null);
@@ -155,9 +155,20 @@ export default function Strategies() {
   if (err) return <p className="text-warn">{err}</p>;
   if (!data) return <Loading what="Strategieën" />;
   if (!data.run) return <p className="text-muted">Nog geen afgeronde toernooirun.</p>;
+  // Always on top: in-sample development data, not proof of profit; the run's note adds the hold-out plan.
+  const store = (data.run.config.store ?? {}) as { slot_start?: number; slot_end_exclusive?: number };
+  const epoch = (s?: number) => (s == null ? "?" : Math.floor(s / 432000));
+  const note = data.run.note;
 
   return (
     <div className="grid grid-cols-1 gap-6">
+      <div className="grid grid-cols-1 gap-1.5 rounded-lg border-2 border-warn bg-warn-soft px-3.5 py-3 text-sm">
+        <p className="m-0">
+          Ontwikkeldata (epochs {epoch(store.slot_start)}–{epoch(store.slot_end_exclusive == null ? undefined : store.slot_end_exclusive - 1)}), in-sample,{" "}
+          {scenario === "base" ? "basiskosten" : `kosten ${SCEN[scenario]}`}. <b className="text-warn">Dit is geen winstbewijs.</b>{note?.holdout ? ` ${note.holdout}` : ""}
+        </p>
+        {!!note?.points.length && <ul className="m-0 pl-5 list-disc">{note.points.map((p) => <li key={p}>{p}</li>)}</ul>}
+      </div>
       <div className="grid grid-cols-1 gap-1">
         <h1 className="text-2xl font-semibold m-0 tracking-tight">Strategieën</h1>
         <p className="text-muted text-sm m-0">

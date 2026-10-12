@@ -2,6 +2,7 @@
 
 Run: "$LAB_PY" -m unittest discover -s lab/analytics/tests -v
 """
+import json
 import os
 import subprocess
 import sys
@@ -176,6 +177,13 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
             con = duckdb.connect(config={"temp_directory": ""})
             build.strategies.load(con, d)
             self.assertEqual(con.execute("SELECT gate_sizes FROM strategy_runs").fetchone()[0], [0.5, 1.0])
+            with open(os.path.join(d, "config.json")) as f:
+                conf = json.load(f)
+            with open(os.path.join(d, "config.json"), "w") as f:
+                json.dump(conf | {"gate_sizes": [2.0]}, f)  # the run's own field wins over the report text
+            con = duckdb.connect(config={"temp_directory": ""})
+            build.strategies.load(con, d)
+            self.assertEqual(con.execute("SELECT gate_sizes FROM strategy_runs").fetchone()[0], [2.0])
 
     def test_base_from_keeps_overview_and_adds_run(self):
         with tempfile.TemporaryDirectory() as d:

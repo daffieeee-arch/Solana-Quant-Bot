@@ -10,6 +10,7 @@ request. Binds only to 127.0.0.1 or the Tailscale IP; never 0.0.0.0.
 import argparse
 import datetime as dt
 import decimal
+import gzip
 import json
 import mimetypes
 import os
@@ -285,6 +286,23 @@ def run_keys(con, table):
     return [k for k in RUN_KEYS if k in have]
 
 
+NOTES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notes")
+STRATEGY_COLS = ["family", "variant", "size_sol", "d", "tau", "scenario", "n", "filled", "mean_ret", "median_ret", "win_rate",
+                 "ci_lo", "ci_hi", "total_pnl_sol", "mean_pnl_sol", "n2_mean_ret", "edge_vs_n2", "hist_drift", "fail_rate",
+                 "verdict", "pnl_ci_lo", "pnl_ci_hi"]
+STRATEGY_ROWS = 50_000
+
+
+def run_note(run_id):
+    """The run's banner note (lab/ui/notes/<run_id>.json): hold-out plan and robust measures, plain text only."""
+    p = os.path.join(NOTES, os.path.basename(str(run_id)) + ".json")
+    if not os.path.exists(p):
+        return None
+    with open(p) as f:
+        n = json.load(f)
+    return {"holdout": str(n.get("holdout") or ""), "points": [str(x) for x in n.get("points") or []]}
+
+
 def api_strategies(q):
     con = connect()
     if not has_table(con, "strategy_summary"):
@@ -294,9 +312,20 @@ def api_strategies(q):
     run = rows(con, f"SELECT run_id, config_json, {gates} AS gate_sizes FROM strategy_runs")[0]
     keys = run_keys(con, "strategy_summary")
     order = ", ".join(["family", "variant", "size_sol", "d", "tau", *keys])
-    return {"run": {"run_id": run["run_id"], "config": json.loads(run["config_json"]), "gate_sizes": run["gate_sizes"]},
+    # The whole grid for one scenario (families-v2: ~4.6k rows), only the columns the tab shows; not MAX_ROWS,
+    # which would silently drop the families that sort last.
+    have = {r[0] for r in con.execute("DESCRIBE strategy_summary").fetchall()}
+    cols = ", ".join(c for c in [*STRATEGY_COLS, *keys] if c in have)
+    cur = con.execute(f"SELECT {cols} FROM strategy_summary WHERE scenario = ? ORDER BY {order} LIMIT {STRATEGY_ROWS + 1}",
+                      [scenario])
+    names = [d[0] for d in cur.description]
+    summary = [dict(zip(names, r)) for r in cur.fetchall()]
+    if len(summary) > STRATEGY_ROWS:
+        raise ValueError(f"run grid larger than {STRATEGY_ROWS} rows per scenario")
+    return {"run": {"run_id": run["run_id"], "config": json.loads(run["config_json"]), "gate_sizes": run["gate_sizes"],
+                    "note": run_note(run["run_id"])},
             "keys": keys,
-            "summary": rows(con, f"SELECT * FROM strategy_summary WHERE scenario = ? ORDER BY {order}", [scenario])}
+            "summary": summary}
 
 
 def api_strategy_curve(q):
@@ -334,8 +363,14 @@ class Handler(BaseHTTPRequestHandler):
     static_root = None
 
     def send(self, status, body, ctype, cache="no-store"):
+        gz = len(body) > 32_768 and ctype.startswith("application/json") and "gzip" in self.headers.get("Accept-Encoding", "")
+        if gz:
+            body = gzip.compress(body, 5)
         self.send_response(status)
         self.send_header("Content-Type", ctype)
+        if gz:
+            self.send_header("Content-Encoding", "gzip")
+        self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", cache)
         for k, v in SECURITY_HEADERS.items():

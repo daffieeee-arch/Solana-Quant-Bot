@@ -1,0 +1,8 @@
+{
+  "holdout": "De eenmalige hold-out-test (epochs 1047–1051) met 3 vooraf vastgelegde kandidaten volgt.",
+  "points": [
+    "F7 in omgekeerde pools, tp4_T600 in organische pools op 0,5 SOL: de robuuste maat (de slechtste van vertraging 2 met q 0,5 en vertraging 1 met q 0,9) is +0,75% per trade.",
+    "Bij vertraging 3 is die voorsprong weg (≈ 0): F7-reversed werkt alleen als de order binnen 2 slots (~540 ms) gevuld wordt.",
+    "Bron: review-summary-2026-10-12.md bij deze run."
+  ]
+}

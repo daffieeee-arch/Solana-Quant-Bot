@@ -17,6 +17,7 @@ import sys
 import duckdb
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+NOTES = os.path.join(HERE, "..", "notes")  # <run_id>.json: {"holdout": text, "points": [text, ...]}, shown as the banner
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 SUMMARY_COLS = ["family", "variant", "size_sol", "d", "tau", "scenario", "n", "filled", "mean_ret", "median_ret",
                 "win_rate", "ci_lo", "ci_hi", "total_pnl_sol", "mean_pnl_sol", "n2_mean_ret", "edge_vs_n2",
@@ -37,6 +38,15 @@ def js(v):
     if v is None:
         return "null"
     return "%g" % v if isinstance(v, float) else str(v)
+
+
+def run_note(run_id):
+    p = os.path.join(NOTES, os.path.basename(run_id) + ".json")
+    if not os.path.exists(p):
+        return None
+    with open(p) as f:
+        n = json.load(f)
+    return {"holdout": str(n.get("holdout") or ""), "points": [str(x) for x in n.get("points") or []]}
 
 
 def main(db=os.path.join(DATA, "analytics", "analytics.duckdb"), out_name=None):
@@ -77,6 +87,7 @@ def main(db=os.path.join(DATA, "analytics", "analytics.duckdb"), out_name=None):
         "built_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     }
     data["run"]["run_id"] = data["run"]["run_id"] or run[0]
+    data["note"] = run_note(data["run"]["run_id"])
     version = data["run"]["run_id"].split("-dev")[0]
     title = html.escape("Toernooi " + version)
     curves_blob = json.dumps(curves, separators=(",", ":"), default=str)
