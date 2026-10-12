@@ -1,0 +1,11 @@
+# Starts the recorder again on a new UTC day, after a budget stop (exit 75). Starting a running
+# recorder does nothing.
+[Unit]
+Description=Solana lab: start the recorder again at 00:05 UTC (after a budget stop)
+
+[Timer]
+OnCalendar=*-*-* 00:05:00 UTC
+Unit=lab-recorder.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,9 @@
+# Deletes the live recorder's raw segments older than 3 days (owner decision 2026-10-10).
+# Journals, reports and everything else stay. See lab/ops/live-retention.sh.
+[Unit]
+Description=Solana lab: delete live recorder segments older than 3 days
+
+[Service]
+Type=oneshot
+ExecStart=%h/Solana-project/worktrees/paper-run/lab/ops/live-retention.sh
+Nice=10

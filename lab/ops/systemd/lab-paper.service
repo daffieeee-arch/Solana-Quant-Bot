@@ -1,0 +1,29 @@
+# Solana lab paper engine on the live recorder (lab/paper, engine --live) with the frozen K3
+# config. Paper only: no wallet, no keys, no transactions. Its live watchlist writes the
+# recorder's watchlist-current.json. Not installed by the repo: see lab/ops/README.md.
+[Unit]
+Description=Solana lab: paper engine on the live recorder (K3 config), paper only
+Documentation=file:%h/Solana-project/worktrees/paper-run/lab/ops/README.md
+Requires=lab-recorder.service
+After=lab-recorder.service
+StartLimitIntervalSec=1h
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/solana-lab/live.env
+# The run checkout: a worktree at the frozen commit (README).
+WorkingDirectory=%h/Solana-project/worktrees/paper-run/lab
+ExecStart=%h/.local/share/solana-quant/toolchains/lab-py/bin/python -m paper.engine --live %h/Solana-project/data-old-faithful-one/lab/recorder --config paper/k3-paper-2026-10-12.yaml --journal %h/Solana-project/data-old-faithful-one/lab/journal/paper-k3/journal --store ${PAPER_STORE}
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=60
+MemoryMax=4G
+CPUQuota=100%
+Nice=5
+NoNewPrivileges=yes
+StandardOutput=append:%h/Solana-project/data-old-faithful-one/lab/logs/paper-engine.log
+StandardError=inherit
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,23 @@
+# Token names of new reversed-pool tokens through Triton RPC (lab/backtest/token_meta_rpc.py).
+# PAID Triton usage (~$0.02 a day): off by default. It starts only when the owner's approval file
+# ~/.config/solana-lab/token-meta-rpc.approved exists; a daily call cap stops it per UTC day.
+[Unit]
+Description=Solana lab: token names through Triton RPC (paid; only with the owner's approval file)
+Documentation=file:%h/Solana-project/worktrees/paper-run/lab/ops/README.md
+After=lab-recorder.service
+ConditionPathExists=%h/.config/solana-lab/token-meta-rpc.approved
+
+[Service]
+Type=simple
+# LAB_TRITON_RPC_URL (holds the token): chmod 600, never in the repo, never logged.
+EnvironmentFile=%h/.config/solana-lab/rpc.env
+WorkingDirectory=%h/Solana-project/worktrees/paper-run/lab
+ExecStart=%h/.local/share/solana-quant/toolchains/lab-py/bin/python -m backtest.token_meta_rpc --root %h/Solana-project/data-old-faithful-one/lab/recorder --enable --follow --interval 60 --max-calls-per-day 5000
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=300
+MemoryMax=1G
+Nice=10
+NoNewPrivileges=yes
+StandardOutput=append:%h/Solana-project/data-old-faithful-one/lab/logs/token-meta-rpc.log
+StandardError=inherit
