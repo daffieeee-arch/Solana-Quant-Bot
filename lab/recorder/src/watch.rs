@@ -37,6 +37,9 @@ pub const POOL_SLICE: (u64, u64) = (43, 201);
 /// migration/sol and migration/other, 0 other transactions). Direct create_pool calls have no
 /// such account; they would cost ~8-56 GB/day to catch.
 pub const MIGRATION_AUTHORITY: &str = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg";
+pub const PUMP: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+/// pump.fun's mint authority (PDA ["mint-authority"]): an account of every create / create_v2, of no trade.
+pub const PUMP_MINT_AUTHORITY: &str = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eokM";
 /// SPL token account `amount` (both token programs).
 pub const VAULT_SLICE: (u64, u64) = (64, 8);
 pub const WSOL: &str = "So11111111111111111111111111111111111111112";
@@ -66,7 +69,8 @@ pub const NEW_REVERSED_EXCLUDE: [&str; 15] = [
     "HTVZVEQMBsNanubDPTs3CxDAEGNFQHJY8c1441iy2S5r",
 ];
 
-pub const DOWNSCALE: [&str; 9] = [
+pub const DOWNSCALE: [&str; 10] = [
+    "tx_pump_creates",
     "pool_accounts",
     "pool_creations",
     "tx_new_reversed",
@@ -85,13 +89,23 @@ pub struct Opts {
     pub new_pools: bool,
     pub pool_creations: bool,
     pub new_reversed: bool,
+    /// Every pump.fun create transaction (CreateEvent: name, symbol, uri; token_meta), off by default.
+    pub pump_creates: bool,
     pub backfill: bool,
     pub max_tx_accounts: usize,
 }
 
 impl Default for Opts {
     fn default() -> Self {
-        Self { pool_accounts: false, new_pools: true, pool_creations: false, new_reversed: false, backfill: true, max_tx_accounts: 10_000 }
+        Self {
+            pool_accounts: false,
+            new_pools: true,
+            pool_creations: false,
+            new_reversed: false,
+            pump_creates: false,
+            backfill: true,
+            max_tx_accounts: 10_000,
+        }
     }
 }
 
@@ -210,6 +224,7 @@ pub struct Filter {
     pub pool_accounts: bool,
     pub pool_creations: bool,
     pub new_reversed: bool,
+    pub pump_creates: bool,
     /// Graduation transactions (new canonical pools for M1).
     pub new_pools: bool,
     /// New probes get a backfill subscription (from_slot) for their earlier transactions.
@@ -245,6 +260,7 @@ impl Filter {
             pool_accounts: o.pool_accounts && on("pool_accounts"),
             pool_creations: o.pool_creations && on("pool_creations"),
             new_reversed: o.new_reversed && on("tx_new_reversed"),
+            pump_creates: o.pump_creates && on("tx_pump_creates"),
             new_pools: o.new_pools,
             backfill: o.backfill && on("backfill"),
             level,
@@ -292,6 +308,17 @@ impl Filter {
                     vote: Some(false),
                     failed: Some(false),
                     account_required: vec![PUMP_AMM.to_owned(), MIGRATION_AUTHORITY.to_owned()],
+                    ..Default::default()
+                },
+            );
+        }
+        if self.pump_creates {
+            transactions.insert(
+                "tx_pump_creates".to_owned(),
+                SubscribeRequestFilterTransactions {
+                    vote: Some(false),
+                    failed: Some(false),
+                    account_required: vec![PUMP.to_owned(), PUMP_MINT_AUTHORITY.to_owned()],
                     ..Default::default()
                 },
             );
@@ -374,6 +401,7 @@ impl Filter {
                "tx_pools": self.tx_pools.len(), "tx_probes": self.tx_probes.len(), "tx_wallets": self.tx_wallets.len(),
                "vaults": self.vaults.len(), "new_vaults": self.fresh_vaults.len(), "pool_accounts": self.pool_accounts,
                "pool_creations": self.pool_creations, "new_reversed": self.new_reversed, "new_pools": self.new_pools,
+               "pump_creates": self.pump_creates,
                "backfill": self.backfill,
                "truncated": self.truncated})
     }
@@ -464,7 +492,14 @@ mod tests {
     }
 
     fn opts(pool_accounts: bool, max: usize) -> Opts {
-        Opts { pool_accounts, pool_creations: pool_accounts, new_reversed: pool_accounts, max_tx_accounts: max, ..Opts::default() }
+        Opts {
+            pool_accounts,
+            pool_creations: pool_accounts,
+            new_reversed: pool_accounts,
+            pump_creates: pool_accounts,
+            max_tx_accounts: max,
+            ..Opts::default()
+        }
     }
 
     fn level(i: usize) -> usize {
@@ -515,6 +550,13 @@ mod tests {
         assert_eq!(r.transactions["tx_probes"].account_include, vec![C.to_owned()]);
         // Graduations stay at every downscale level.
         assert!(Filter::new(&watch(), &extra, DOWNSCALE.len(), &opts(true, 10_000)).request(None).transactions.contains_key("tx_new_pools"));
+        let pc = &r.transactions["tx_pump_creates"];
+        assert_eq!(pc.account_required, vec![PUMP.to_owned(), PUMP_MINT_AUTHORITY.to_owned()]);
+        assert!(pc.account_include.is_empty());
+        assert!(valid(PUMP_MINT_AUTHORITY));
+        // The pump creates are the first stream to go, and off unless asked for.
+        assert!(!Filter::new(&watch(), &extra, 1, &opts(true, 10_000)).request(None).transactions.contains_key("tx_pump_creates"));
+        assert!(!Filter::new(&watch(), &extra, 0, &Opts::default()).pump_creates);
         let pa = &r.accounts["pool_accounts"];
         assert_eq!((pa.owner.clone(), pa.filters.len()), (vec![PUMP_AMM.to_owned()], 1));
         assert_eq!(r.accounts["pool_creations"].filters.len(), 2);

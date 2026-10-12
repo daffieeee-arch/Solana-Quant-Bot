@@ -12,7 +12,7 @@
 //!   lab-recorder --root DIR [--endpoint URL] [--watchlist FILE] [--open-pools FILE]
 //!                [--budget-usd 2] [--usd-per-gb 0.08] [--wire-ratio 1] [--segment-slots 150]
 //!                [--segment-secs 60] [--close-lag 1] [--max-tx-accounts 10000] [--pool-accounts] [--no-new-pools]
-//!                [--new-reversed] [--pool-creations] [--probe-depth-sol 120] [--probe-minutes 180]
+//!                [--new-reversed] [--pool-creations] [--pump-creates] [--probe-depth-sol 120] [--probe-minutes 180]
 //!                [--fresh-vault-minutes 60] [--no-backfill] [--backfill-wait-secs 20]
 //!                [--reload-secs 10] [--min-update-secs 60] [--from-slot N] [--max-runtime-secs N]
 //!                [--no-downscale] [--dry-run]
@@ -76,6 +76,7 @@ struct Args {
     pool_accounts: bool,
     new_pools: bool,
     new_reversed: bool,
+    pump_creates: bool,
     pool_creations: bool,
     probe_depth_sol: f64,
     probe_minutes: u64,
@@ -108,6 +109,7 @@ fn parse_args() -> Result<Args> {
         pool_accounts: false,
         new_pools: true,
         new_reversed: false,
+        pump_creates: false,
         pool_creations: false,
         probe_depth_sol: 120.0,
         probe_minutes: 180,
@@ -139,6 +141,7 @@ fn parse_args() -> Result<Args> {
             "--pool-accounts" => a.pool_accounts = true,
             "--no-new-pools" => a.new_pools = false,
             "--new-reversed" => a.new_reversed = true,
+            "--pump-creates" => a.pump_creates = true,
             "--pool-creations" => a.pool_creations = true,
             "--probe-depth-sol" => a.probe_depth_sol = val()?.parse()?,
             "--probe-minutes" => a.probe_minutes = val()?.parse()?,
@@ -172,6 +175,7 @@ fn opts(a: &Args) -> Opts {
         new_pools: a.new_pools,
         pool_creations: a.pool_creations,
         new_reversed: a.new_reversed,
+        pump_creates: a.pump_creates,
         backfill: a.backfill,
         max_tx_accounts: a.max_tx_accounts,
     }
