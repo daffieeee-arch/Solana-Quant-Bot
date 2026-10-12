@@ -84,8 +84,9 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
     trig = con.execute(f"""SELECT DISTINCT pool, t, trigger_trader, TRY_CAST(split_part(variant, '_T', 2) AS BIGINT)
                            FROM {f7}""").fetchall()
     con.execute("CREATE TEMP TABLE trig (pool VARCHAR, t BIGINT, trigger_trader VARCHAR, var_t BIGINT, horizon BIGINT)")
-    con.executemany("INSERT INTO trig VALUES (?, ?, ?, ?, ?)",
-                    [(p, t, w, v, clock.slots(ms(v), t)) for p, t, w, v in trig])
+    if trig:  # a short run can have no F7 reversed trigger (executemany refuses an empty list)
+        con.executemany("INSERT INTO trig VALUES (?, ?, ?, ?, ?)",
+                        [(p, t, w, v, clock.slots(ms(v), t)) for p, t, w, v in trig])
     con.execute("""CREATE TEMP TABLE back AS
         SELECT g.pool, g.t, g.var_t, bool_or(e.slot IS NOT NULL) AS bought_back
         FROM trig g LEFT JOIN st.pool e ON e.pool = g.pool AND e.trader = g.trigger_trader AND e.token_buy
