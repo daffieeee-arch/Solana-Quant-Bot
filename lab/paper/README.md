@@ -12,6 +12,9 @@ no transactions: paper only.
 - `shadow.py`: shadow live on an archived epoch: the recorder simulated from OF1 chunks, the
   engine on its segments against its replay, every difference with a cause.
 - `reconcile.py`: recorder segments against Old Faithful once an epoch is archived.
+- `keeper.py`: before `lab/ops/live-retention.sh` deletes a segment, keeps the trades of tokens with a
+  signal (recorded and backfill rows), their arrival times and 1-minute candles of every pool and
+  curve under `<journal>/../kept/<seq>/` (`DONE.json` last). A segment is deleted only once kept.
 - `engine.py`: slot-synchronous engine. It re-executes later trades against the state with our
   position using the backtest's own `PositionSim`, so paper fills equal the replay's.
   - N2 shadow: per F7 trigger, `n2_k` (default 1) random tokens of the same venue and pool
@@ -22,8 +25,10 @@ no transactions: paper only.
   - Each UTC day is exported, reported and copied to `lab/backup/<journal>/<day>/`.
 - `journal.py`: SQLite (WAL) plus Parquet per UTC day. Writes are idempotent per event or
   signal key, so a restart gives the same journal.
-- `risk.yaml` and `risk.py`: owner-only limits, re-read every minute of event time. An invalid
-  file means nothing is opened, and the reason is journaled.
+- `risk.yaml` and `risk.py`: owner-only limits, re-read every minute of event time and again at
+  every entry (a kill switch or an invalid file between a signal and its entry opens nothing: the
+  order is journaled as skipped, "at entry: ..."). An invalid file means nothing is opened, and the
+  reason is journaled.
 - `report.py`: daily report. Contents:
   - per variant: trades, net SOL per trade, win and fill rate, and the difference to N2;
   - the stop-rule counter;
@@ -53,7 +58,21 @@ one row is +-1 s; the medians over many triggers are the measure. Replay runs le
 
 Long live runs keep memory bounded: every 100 segments LiveFeed drops farmer history, curve legs
 of mints quiet for 24 h and backfill dedup keys older than the farmer window; arrivals are read
-per segment and kept only on its Events.
+per segment and kept only on its Events. Every hour the engine drops the recent legs and last
+state of tokens without an event for an hour and nothing open, pending or waiting.
+
+Live input checks:
+- `--live` needs a readable `--store` (the snapshot of tokens and pools); pools neither in it nor
+  created in a received transaction are unknown: their trades are dropped, counted
+  (`unknown_pools`, `unknown_pool_rows`) and logged per segment with new ones.
+- Farmer history: LiveFeed seeds it from the store, per pool when it first trades live, over
+  `[first live slot - 24 h, first live slot)` as far as the store reaches. The journal's state
+  `farmer_seed` records the range and `complete_from`: before that slot the farm labels and the live
+  watchlist's organic verdict lack history (a store ending before the recorder's start: one day).
+- A row that comes twice (a probe's backfill delivered after its first recorded rows, or slots
+  recorded again after a restart) counts once: row keys of the last 3,000 slots are remembered.
+- A backfill trade from before the first slot the engine saw goes to the watchlist history in a
+  minute estimated with the clock, never into the open minute.
 
 ## Live watchlist
 

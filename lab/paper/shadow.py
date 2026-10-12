@@ -685,7 +685,8 @@ def run(a, log=print):
     gc.collect()
     ldir = os.path.join(out, "live")
     shutil.rmtree(ldir, ignore_errors=True)
-    feed = ShadowFeed(rec, store=a.store, snapshot_before=lo, h24=h24, meta_bounds=(blo, bhi), memory=a.memory)
+    feed = ShadowFeed(rec, store=a.store, snapshot_before=lo, h24=h24, meta_bounds=(blo, bhi), memory=a.memory,
+                      seed_farmers=True)
     # The live watchlist runs beside it on what was received (the simulation keeps using the batch list).
     from .watchlist_live import LiveWatchlist
 
@@ -695,7 +696,7 @@ def run(a, log=print):
     info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
     info["livefeed"] = dict(feed.stats)
     info["recorder"] = dict(rec.totals)
-    feed.con.close()  # the recorder's and LiveFeed's databases are done: free their memory
+    feed.close()  # the recorder's and LiveFeed's databases are done: free their memory
     rec.con.close()
     del feed
     gc.collect()
@@ -722,9 +723,9 @@ def run(a, log=print):
     t0 = time.time()
     rdir2 = os.path.join(out, "live-risk")
     shutil.rmtree(rdir2, ignore_errors=True)
-    lfeed = LiveFeed(root, store=a.store, follow=False, snapshot_before=lo, h24=h24, memory=a.memory)
+    lfeed = LiveFeed(root, store=a.store, follow=False, snapshot_before=lo, h24=h24, memory=a.memory, seed_farmers=True)
     Engine(lfeed, Journal(rdir2), a.risk, variants=variants, d=a.d, q=a.q, clock=lfeed.clock, backup=False).run()
-    lfeed.con.close()
+    lfeed.close()
     del lfeed
     gc.collect()
     info["live_risk_reports"] = sorted(os.path.relpath(os.path.join(dp, f), out) for dp, _, fs in os.walk(rdir2)

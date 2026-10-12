@@ -10,8 +10,9 @@ transactions.
 | `lab-recorder.service` | `lab-recorder --root <lab>/recorder $RECORDER_ARGS` (Triton Dragon's Mouth to segments) | MemoryMax 2G, CPU 100%, Nice 5. `Restart=on-failure`; exit 75 (the day's budget is spent) is never restarted. It does not start while `locks/disk-low` exists |
 | `lab-recorder.timer` | starts the recorder at 00:05 UTC, after a budget stop the day before | |
 | `lab-paper.service` | `python -m paper.engine --live <lab>/recorder --config paper/k3-paper-2026-10-12.yaml` (journal `<lab>/journal/paper-k3/journal`); its live watchlist writes the recorder's `watchlist-current.json` | MemoryMax 4G, CPU 100%, Nice 5. `Requires=` the recorder: an explicit stop of the recorder stops it, a budget exit does not (it waits for new segments) |
+| `lab-paper.timer` | every 15 min: starts the paper engine if it is not running. After five failures within an hour systemd's start limit leaves the service stopped; the timer brings it back once the hour has passed. Starting a running engine does nothing | it cannot start the engine while `locks/disk-low` exists: the recorder it requires does not start then |
 | `lab-token-meta-rpc.service` | `python -m backtest.token_meta_rpc --enable --follow`: names of new reversed-pool tokens. **Paid Triton RPC** (~$0.02 a day) | MemoryMax 1G, Nice 10, daily call cap 5,000. Starts only when `~/.config/solana-lab/token-meta-rpc.approved` exists (the owner's OK) |
-| `lab-live-retention.service` / `.timer` | hourly: `live-retention.sh` deletes complete recorder segments older than 3 days (owner decision 2026-10-10). Journals, reports, budget, watchlists, token_meta and logs stay | the disk guard's `io-stall` skips a round; `disk-low` keeps 1 day |
+| `lab-live-retention.service` / `.timer` | hourly: `live-retention.sh` deletes complete recorder segments older than 3 days (owner decision 2026-10-10). Before that `paper.keeper` keeps what the retention rule promises: the trades of tokens with a signal, their arrival times and 1-minute candles of every pool and curve, under `<lab>/journal/paper-k3/kept/<seq>/`. A segment is deleted only once its `DONE.json` exists. Journals, reports, budget, watchlists, token_meta and logs stay | the disk guard's `io-stall` skips a round; `disk-low` keeps 1 day. A failing keeper leaves the segments in place (logged) |
 
 Paths are the VPS's (`%h` = `/home/chupa`):
 - data: `~/Solana-project/data-old-faithful-one/lab`;
@@ -23,7 +24,7 @@ Settings live outside the repo in `~/.config/solana-lab/`:
 
 | file | contents | mode |
 |---|---|---|
-| `live.env` | `RECORDER_ARGS`, `PAPER_STORE` (`live.env.example`) | 644 |
+| `live.env` | `RECORDER_ARGS`, `PAPER_STORE` (`live.env.example`). **`PAPER_STORE` is required**: the engine refuses `--live` without a readable store. Use the newest store: pools created between its end and the recorder's start are unknown, their trades are dropped (counted and logged as `unknown pools`), and the farmer history is complete only from the store's end + 1 day (journal state `farmer_seed`) | 644 |
 | `recorder.env` | `LAB_TRITON_GRPC_ENDPOINT`, `LAB_TRITON_X_TOKEN` (`recorder.env.example`, names only) | **600** |
 | `rpc.env` | `LAB_TRITON_RPC_URL`, which holds the token (`rpc.env.example`) | **600** |
 | `token-meta-rpc.approved` | exists only after the owner approved paid RPC calls; one line with date and words | 644 |
@@ -66,6 +67,7 @@ Only after the owner's OK for this step. Run by the coordinator.
    systemctl --user start lab-paper.service                             # paper start / chain test
    systemctl --user enable --now lab-live-retention.timer
    systemctl --user enable --now lab-recorder.timer                     # paper: restart after a budget stop
+   systemctl --user enable --now lab-paper.timer                        # paper: restart after a start-limit stop
    systemctl --user enable lab-recorder.service lab-paper.service       # paper: start at boot
    ```
    The token names through RPC run only after the owner's separate OK:
@@ -84,8 +86,8 @@ Only after the owner's OK for this step. Run by the coordinator.
 - the journal's heartbeat.
 
 **Stop:**
-- `systemctl --user stop lab-paper lab-recorder` (the paper engine first);
-- `systemctl --user disable --now lab-recorder.timer lab-live-retention.timer`;
+- first the timers, or they start the units again: `systemctl --user disable --now lab-paper.timer lab-recorder.timer lab-live-retention.timer`;
+- then `systemctl --user stop lab-paper lab-recorder` (the paper engine first);
 - for the RPC route also `lab-token-meta-rpc` and `rm ~/.config/solana-lab/token-meta-rpc.approved`.
 
 **Disk guard.** At its emergency level (< 20 GB free) `ops/disk-guard.sh` also stops

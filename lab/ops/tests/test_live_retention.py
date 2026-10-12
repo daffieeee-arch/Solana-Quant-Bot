@@ -1,12 +1,29 @@
-"""lab/ops/live-retention.sh on a temporary recorder root: old complete segments go, the newest,
-young, unfinished and non-segment entries stay; the disk guard's flags change the rule."""
+"""lab/ops/live-retention.sh on a temporary recorder root: old complete segments go (once the keeper
+kept them), the newest, young, unfinished and non-segment entries stay; the disk guard's flags change
+the rule; a failing keeper, a bad KEEP_DAYS or a failing du never delete what is not kept."""
 
 import os
+import stat
 import subprocess
+import sys
 import time
 
-SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "live-retention.sh")
+OPS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCRIPT = os.path.join(OPS, "live-retention.sh")
+LAB_CODE = os.path.dirname(OPS)
 DAY = 86_400
+# A keeper that marks every segment it gets as kept (the real one needs real Parquet files).
+STUB_KEEPER = """#!/usr/bin/env bash
+out=""; segs=()
+while (( $# )); do case $1 in --journal) shift 2;; --out) out=$2; shift 2;; *) segs+=("$1"); shift;; esac; done
+for s in "${segs[@]}"; do mkdir -p "$out/$(basename "$s")"; echo '{}' > "$out/$(basename "$s")/DONE.json"; done
+"""
+
+
+def executable(path, text):
+    path.write_text(text)
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return str(path)
 
 
 def make(root, name, age_days, complete=True):
@@ -21,9 +38,10 @@ def make(root, name, age_days, complete=True):
     return d
 
 
-def run(lab, **env):
+def run(lab, check=True, **env):
+    env.setdefault("KEEPER_CMD", executable(lab.parent / "stub-keeper.sh", STUB_KEEPER))
     e = dict(os.environ, LAB=str(lab), **{k: str(v) for k, v in env.items()})
-    subprocess.run(["bash", SCRIPT], check=True, env=e)
+    return subprocess.run(["bash", SCRIPT], check=check, env=e)
 
 
 def test_keeps_three_days_and_the_rest(tmp_path):
@@ -59,3 +77,61 @@ def test_disk_guard_flags(tmp_path):
     (lab / "locks" / "disk-low").write_text("x")
     run(lab)
     assert not os.path.exists(two_days)  # disk low: 1 day
+
+
+def test_unkept_segments_stay(tmp_path):
+    lab = tmp_path / "lab"
+    old = make(lab, "000000001", 5)
+    make(lab, "000000002", 0)
+    run(lab, KEEPER_CMD="false")  # the keeper fails: nothing is deleted, the round still ends cleanly
+    assert os.path.exists(old)
+    log = (lab / "logs" / "live-retention.log").read_text()
+    assert "keeper exit 1" in log and "1 old segments not deleted" in log
+    run(lab)
+    assert not os.path.exists(old) and (lab / "journal" / "paper-k3" / "kept" / "000000001" / "DONE.json").exists()
+
+
+def test_keep_days_must_be_whole_days(tmp_path):
+    lab = tmp_path / "lab"
+    old = make(lab, "000000001", 5)
+    make(lab, "000000002", 0)
+    for bad in ("3.5", "abc", "-1"):  # (empty means the default, 3)
+        r = run(lab, check=False, KEEP_DAYS=bad)
+        assert r.returncode == 2 and os.path.exists(old)
+    assert "is not a whole number of days" in (lab / "logs" / "live-retention.log").read_text()
+
+
+def test_a_failing_du_does_not_end_the_round(tmp_path):
+    lab = tmp_path / "lab"
+    old = make(lab, "000000001", 5)
+    make(lab, "000000002", 0)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    executable(bin_dir / "du", "#!/bin/sh\nexit 1\n")
+    run(lab, PATH=f"{bin_dir}:{os.environ['PATH']}")
+    assert not os.path.exists(old)
+
+
+def test_with_the_real_keeper(tmp_path):
+    """A segment with real Parquet: paper.keeper keeps its candles, then the segment goes."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    lab = tmp_path / "lab"
+    old = make(lab, "000000001", 5)
+    os.remove(os.path.join(old, "pump_amm", "BuyEvent", "part-0.parquet"))
+    pq.write_table(pa.table({"slot": [1], "tx_index": [0], "outer_ix": [0], "inner_ix": [1], "pool": ["P"],
+                             "base_amount_out": [10], "quote_amount_in": [20]}),
+                   os.path.join(old, "pump_amm", "BuyEvent", "part-0.parquet"))
+    make(lab, "000000002", 0)
+    run(lab, KEEPER_CMD=f"{sys.executable} -m paper.keeper", CODE=LAB_CODE)
+    kept = lab / "journal" / "paper-k3" / "kept" / "000000001"
+    assert not os.path.exists(old) and (kept / "DONE.json").exists() and (kept / "candles.parquet").exists()
+
+
+def test_the_paper_engine_has_a_restart_timer():
+    units = os.path.join(OPS, "systemd")
+    timer = open(os.path.join(units, "lab-paper.timer")).read()
+    assert "Unit=lab-paper.service" in timer and "OnCalendar=*:0/15" in timer
+    readme = open(os.path.join(OPS, "README.md")).read()
+    assert "enable --now lab-paper.timer" in readme and "disable --now lab-paper.timer" in readme

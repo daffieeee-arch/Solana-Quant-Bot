@@ -10,6 +10,7 @@ import pyarrow.parquet as pq
 
 from backtest.store import Chunk
 from backtest.strategies import Clock
+from paper import live
 from paper.engine import Engine
 from paper.journal import Journal
 from paper.live import LiveFeed, segment_dirs
@@ -77,3 +78,90 @@ def test_latency_from_a_synthetic_segment_to_the_daily_report(tmp_path):
     assert f"- triggers 2; simulated d {d_ms} ms (median)" in report
     assert f"- receive - block time: median 1010 ms, p90 1322 ms; later than d: {(620 > d_ms) + (1_400 > d_ms)} of 2" in report
     assert "- segment close - block time: median 2000 ms, p90 2000 ms; later than d: 2 of 2" in report
+
+
+def test_backfill_overlap_with_earlier_recorded_rows_counts_once(tmp_path):
+    """A probe's recorded rows come in segment N, its backfill (overlapping them) in N + 1: the backfill
+    row is history already seen and is dropped; a backfill row first, then the recorded one: the event
+    stays, the farmer history does not count it again."""
+    f = LiveFeed(str(tmp_path), store=None, follow=False)
+    rec = ("p", "POOL", 1_000, 7, 2, 0)
+    assert f._seen(rec, 1_000, "rec") is None  # segment N: recorded
+    f._history("POOL", True, 5, ["buy", 1_000, 7, 2, 0])  # segment N + 1: the same trade from the backfill
+    assert f.stats["backfill_duplicates"] == 1 and not f.farmers.hist
+    hist = ("p", "POOL", 1_001, 3, 1, 0)
+    assert f._seen(hist, 1_001, "hist") is None  # a backfill row first
+    assert f._seen(hist, 1_001, "rec") == "hist"  # its recorded twin: an event, but no second farmer count
+    assert f._seen(rec, 1_000, "rec") == "rec"  # recorded twice (a restart): dropped
+    # Keys older than SEEN_KEEP_SLOTS behind the newest are forgotten.
+    f._seen(("p", "POOL", 1_000 + live.SEEN_KEEP_SLOTS + 10, 0, 0, 0), 1_000 + live.SEEN_KEEP_SLOTS + 10, "rec")
+    assert rec not in f.seen_keys and hist not in f.seen_keys
+
+
+def test_heap_keeps_one_of_equal_events_without_comparing_them(tmp_path):
+    from paper.feed import Event
+
+    class Twice(LiveFeed):
+        def _segments(self):
+            return [(0, "a", {}), (1, "b", {})] if self.next_seq == 0 else []
+
+        def segment_events(self, seq, seg, meta):
+            leg = SimpleNamespace(slot=100)  # not orderable: equal tuples must never reach it
+            return [Event(100, 1, 0, 0, None, "pool", "P", leg), Event(101, 0, 0, 0, None, "pool", "P", leg)]
+
+    f = Twice(str(tmp_path), store=None, follow=False)
+    out = [(e.slot, e.tx_index) for e in f.events()]
+    # Segment b repeats both: 100 (already released, at the last released slot) and 101 (still queued).
+    assert out == [(100, 1), (101, 0)] and f.stats["duplicate_rows"] == 2
+
+
+def test_unknown_pools_are_counted_and_logged(caplog):
+    import os
+
+    fix = os.path.join(os.path.dirname(live.__file__), "..", "backtest", "tests", "fixtures", "smoke1054_multihop")
+    c = Chunk((455_328_000, 455_329_000, fix))
+    f = LiveFeed("/nonexistent-recorder-root", store=None, follow=False)
+    with caplog.at_level("WARNING", logger="paper.live"):
+        f._unknown_pools(c, 7)
+        f._unknown_pools(c, 8)
+    assert f.stats["unknown_pool_rows"] == 2 * 37  # 20 buys and 17 sells of multi-hop hops, none known
+    assert f.stats["unknown_pools"] == len(f.unknown_seen) > 0
+    msgs = [r.getMessage() for r in caplog.records]
+    assert len(msgs) == 1 and msgs[0].startswith("segment 7:")  # the second segment brought no new pool
+
+
+def fake_store(path, slots):
+    import duckdb
+
+    con = duckdb.connect(str(path))
+    con.execute("""CREATE TABLE pool (pool VARCHAR, kind VARCHAR, slot UBIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT,
+                   trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT)""")
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, 0, 0, 0, ?, ?, 10)",
+                    [("P", "buy" if i % 2 else "sell", s, f"W{i % 3}", bool(i % 2)) for i, s in enumerate(slots)])
+    for t in ("mints (mint VARCHAR, create_slot UBIGINT, creator VARCHAR, mayhem BOOLEAN, quote_mint VARCHAR, "
+              "complete_slot UBIGINT, pool VARCHAR)",
+              "pools (pool VARCHAR, mint VARCHAR, orientation VARCHAR, quote_class VARCHAR, mayhem BOOLEAN, "
+              "coin_creator VARCHAR, create_slot UBIGINT)"):
+        con.execute(f"CREATE TABLE {t}")
+    con.close()
+    return str(path)
+
+
+def test_seed_window_and_when_the_farm_labels_are_complete(tmp_path):
+    h24 = 1_000
+    cases = (  # (store slots, first live slot) -> (lo, hi, complete_from)
+        (range(0, 5_000, 10), 4_000, (3_000, 4_000, 4_000)),  # the store reaches the first live slot
+        (range(3_500, 5_000, 10), 4_000, (3_500, 4_000, 4_500)),  # it starts late: complete one day after its start
+        (range(0, 2_000, 10), 4_000, (3_000, 3_000, 5_000)),  # it ends before: a gap, complete a day after the start
+    )
+    for i, (slots, first, want) in enumerate(cases):
+        f = LiveFeed(str(tmp_path), store=fake_store(tmp_path / f"s{i}.duckdb", slots), follow=False, seed_farmers=True)
+        f._init_seed(first, h24)
+        assert (f.farm_seed["lo"], f.farm_seed["hi"], f.farm_seed["complete_from"]) == want
+        f._seed_pool("P")
+        n = sum(len(dq) for dq in f.farmers.hist.values())
+        assert n == sum(1 for s in slots if want[0] <= s < want[1])  # the pool's trades of the window, once
+        f._seed_pool("P")
+        # Once per pool; a seed window left empty by a gap queries nothing.
+        assert sum(len(dq) for dq in f.farmers.hist.values()) == n and f.stats["seeded_pools"] == (want[1] > want[0])
+        f.close()

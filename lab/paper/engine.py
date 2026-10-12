@@ -141,6 +141,7 @@ class Engine:
         self.minute, self.events_seen, self.last_event, self.last_slot = None, 0, None, None
         self.slot_block_time = None  # block time of the slot being decided (signal latency)
         self.slot_arrivals = {}  # (slot, tx_index) -> Event.arrival of the slot being decided (live only)
+        self.seed_journaled = None  # the feed's farm_seed last written to the journal
         self.grad_wait = defaultdict(list)  # pool -> [Open] waiting for open + 1
         self.kept = None  # the pools last written for the recorder
         self.cool = {}  # pool -> slot until which no new entry (risk: pool_cooldown_h after a total loss)
@@ -160,6 +161,12 @@ class Engine:
             by_key.setdefault((ev.venue, ev.key), []).append(ev.leg)
             if ev.arrival is not None:
                 arr[(ev.slot, ev.tx_index)] = ev.arrival
+            seed = getattr(self.feed, "farm_seed", None)
+            if seed is not None and seed is not self.seed_journaled:
+                self.seed_journaled = seed
+                # LiveFeed's farmer history: seeded from the store over [lo, hi), complete from slot
+                # complete_from on (farm labels and the live watchlist's organic verdict before it lack history).
+                self.j.state("farmer_seed", json.dumps(seed, sort_keys=True))
             self.events_seen += 1
             self.last_event = f"{ev.slot}:{ev.tx_index}:{ev.outer_ix}:{ev.inner_ix}"
         if cur is not None:
@@ -217,8 +224,7 @@ class Engine:
             for pool, legs in self.feed.drain_history():
                 self._farm_add(pool, legs)
                 if self.watch is not None and self.minute is not None:
-                    for l in legs:
-                        self.watch.trades(pool, self.watch._minute_of(l.slot) or self.minute, [l], late=True)
+                    self.watch.history(pool, legs)
         # 5. time passes for tokens without events in this slot
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
@@ -404,6 +410,18 @@ class Engine:
                 "segment_written_unix": written, "segment_lag_ms": None if written is None else (written - bt) * 1000,
                 "d_ms": round(self.d * self.clock.ms_per_slot(leg.slot))}
 
+    def _sweep_history(self, before):
+        """Hourly: drop the recent legs and last state of tokens without an event since `before` and
+        with nothing open, pending or waiting for a graduation (bounded memory in a live run)."""
+        keep = set(self.open) | {p.key for v in self.pending.values() for p in v} | set(self.grad_wait)
+        keep |= {o.p.key for v in self.grad_wait.values() for o in v}
+        for k in [k for k, s in self.last_seen.items() if s < before and k not in keep]:
+            self.recent.pop(k, None)
+            self.last_state.pop(k, None)
+            del self.last_seen[k]
+        for k in [k for k, dq in self.recent.items() if not dq and k not in self.last_seen]:
+            del self.recent[k]  # empty entries left by lookups
+
     def _hour_index(self, venue, key, legs, slot):
         h = self.clock.slots(HOUR_MS, slot)
         hour = slot - slot % h
@@ -412,6 +430,7 @@ class Engine:
             n = self.clock.slots(F6_FARM_MS, slot)  # pools quiet for an hour leave the farming windows
             for pool in [p for p, xs in self.farm_win.items() if not xs or xs[-1][0] < slot - n]:
                 del self.farm_win[pool]
+            self._sweep_history(slot - max(HISTORY_SLOTS, h))
         if venue == "curve":  # N2 universe as in the backtest: non-mayhem SOL-market tokens
             tok = self.feed.token(key)
             if tok is not None and not tok.mayhem and tok.quote_mint in SOL_QUOTES:
@@ -488,6 +507,16 @@ class Engine:
         return f
 
     def _enter(self, p, slot, slot_legs):
+        if not self.ignore_risk:
+            # The risk file can change between the signal and the entry: re-read it, and enter only
+            # with a valid file and the kill switch off (an invalid file opens nothing, N2 included).
+            self._load_risk()
+            why = (self.risk_reason or "risk config missing") if self.risk is None else ("kill switch" if self.risk.kill_switch else None)
+            if why:
+                self.j.put("orders", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
+                           size=0, status="skipped", reason=f"at entry: {why}")
+                self.busy[(p.family, p.variant, p.key)] = p.t
+                return
         size = self.risk.size_lamports if (self.risk and not p.family.startswith("N2_")) else int(0.5 * SOL)
         if self.ignore_risk:
             size = int(self.risk.size_sol * SOL)
@@ -727,6 +756,9 @@ def main(argv=None):
     if a.ignore_risk and (a.config or a.live):
         # A paper run (a config, or live data) always has its risk limits.
         ap.error("--ignore-risk is for replay parity runs only: not with --config or --live")
+    if a.live and not (a.store and os.path.isfile(a.store)):
+        # Without the snapshot every pool created before the recorder started would be unknown.
+        ap.error(f"--live needs a readable --store (the snapshot of tokens and pools; PAPER_STORE in live.env), got {a.store!r}")
     cfg_sha = None
     if a.config:
         cfg_sha, conf = load_config(a.config)
@@ -741,7 +773,7 @@ def main(argv=None):
     if a.live:
         from .live import LiveFeed
 
-        feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up)
+        feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up, seed_farmers=True)
     elif a.lo is None or a.hi is None:
         raise SystemExit("give --from and --to (replay) or --live <recorder dir>")
     else:
@@ -760,7 +792,7 @@ def main(argv=None):
     if a.live and not a.no_watchlist:
         from .watchlist_live import LiveWatchlist
 
-        watch = LiveWatchlist(feed, a.live)
+        watch = LiveWatchlist(feed, a.live, clock=feed.clock)
     eng = Engine(feed, j, a.risk, variants=variants, d=a.d, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
                  clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm,
                  watchlist=watch)

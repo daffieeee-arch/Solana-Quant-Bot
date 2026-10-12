@@ -2,6 +2,7 @@
 loss, time), the N2 shadow, risk limits and the kill switch, feed gaps with the heartbeat, daily
 report and backup, and restart idempotency of the journal."""
 
+import json
 import os
 
 import pytest
@@ -292,3 +293,66 @@ def test_ignore_risk_is_refused_for_paper_runs(tmp_path, capsys):
         assert "--ignore-risk is for replay parity runs only" in capsys.readouterr().err
     assert not (tmp_path / "j").exists()  # refused before anything was opened
 
+
+
+class FlipRisk(Synth):
+    """Rewrites the risk file when the first event of `at` (or later) is handed out: after the signal
+    at an earlier slot, before its entry."""
+
+    def __init__(self, tokens, path, at, text):
+        super().__init__(tokens)
+        self.path, self.at, self.text, self.done = path, at, text, False
+
+    def events(self):
+        for e in super().events():
+            if not self.done and e.slot >= self.at:
+                with open(self.path, "w") as f:
+                    f.write(self.text)
+                self.done = True
+            yield e
+
+
+def test_risk_rechecked_at_entry(tmp_path):
+    """The kill switch, or a risk file that turned invalid, between the signal and the entry opens nothing."""
+    toks = {"M": trigger_token(after=[(500_041, "Z", "buy", T), (500_100, "W", "buy", 150 * T)])}
+    for name, text, why in (("kill", None, "at entry: kill switch"), ("bad", "size_sol: -1\n", "at entry: risk config")):
+        path = risk_file(tmp_path)
+        if text is None:
+            text = open(path).read().replace("kill_switch: false", "kill_switch: true")
+        j = Journal(str(tmp_path / name))
+        Engine(FlipRisk(toks, path, 500_041, text), j, path, variants=[(0.04, 600)], d=1, q=0.5, n2_k=0, clock=Clock(),
+               backup=False).run()
+        assert [(s["status"]) for s in j.rows("signals")] == ["entered"]  # the file was fine at the signal
+        o = j.rows("orders")[0]
+        assert o["status"] == "skipped" and o["reason"].startswith(why) and o["size"] == 0
+        assert j.rows("fills") == [] and j.rows("exits") == []
+
+
+def test_quiet_token_history_is_swept_hourly(tmp_path):
+    """recent / last_state / last_seen of a token without events for an hour (and nothing open) are dropped."""
+    toks = {"A": ("C", [(500_000, "A1", "buy", T), (500_010, "A2", "buy", T)]),
+            "B": ("C", [(600_000, "B1", "buy", T), (600_010, "B2", "buy", T)])}
+    eng = Engine(Synth(toks), Journal(str(tmp_path / "j")), risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5,
+                 n2_k=0, clock=Clock(), backup=False)
+    eng.run()
+    assert "A" not in eng.last_seen and "A" not in eng.last_state and "A" not in eng.recent
+    assert eng.last_seen["B"] == 600_010 and eng.recent["B"]
+
+
+def test_farmer_seed_range_is_journaled(tmp_path):
+    seed = {"store": "/x/fwd.duckdb", "lo": 1, "hi": 2, "h24": 1, "first_live_slot": 2, "complete_from": 2}
+
+    class Seeded(Synth):
+        farm_seed = seed
+
+    j = Journal(str(tmp_path / "j"))
+    Engine(Seeded({"M": trigger_token()}), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0,
+           clock=Clock(), backup=False).run()
+    assert json.loads(j.state("farmer_seed")) == seed
+
+
+def test_live_needs_a_readable_store(tmp_path, capsys):
+    for store in ("", str(tmp_path / "missing.duckdb")):
+        with pytest.raises(SystemExit) as e:
+            engine.main(["--live", str(tmp_path), "--store", store, "--journal", str(tmp_path / "j")])
+        assert e.value.code == 2 and "--live needs a readable --store" in capsys.readouterr().err
