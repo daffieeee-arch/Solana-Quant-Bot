@@ -2,6 +2,7 @@
 export interface PaperStatus {
   running: boolean; last_heartbeat_unix: number | null; last_slot: number | null; open_positions: number | null;
   gaps_today: number; largest_gap_slots: number | null; last_gap: string | null;
+  config?: string | null; config_sha256?: string | null; risk_sha256_at_start?: string | null;
 }
 export interface PaperGroup {
   trades: number; entry_failed: number; net_sol: number; net_sol_per_trade: number | null; win_rate: number | null; open: number;
@@ -11,7 +12,7 @@ export interface PaperRange {
   ret_per_trade: number | null; vs_n2_pt: number | null; curve: number[];
 }
 export interface PaperPosition {
-  family: string; variant: string; key: string; venue: string | null; orientation: string | null; entry_slot: number;
+  family: string; variant: string; key: string; venue: string | null; orientation: string | null; farm?: string | null; entry_slot: number;
   cost_sol: number | null; status: string; pnl_sol: number | null; ret?: number | null; mark_sol?: number | null;
   failed?: boolean; slots?: number | null; entry_time?: number | null; exit_time?: number | null; mint?: string | null; symbol?: string | null; name?: string | null;
 }

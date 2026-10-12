@@ -246,6 +246,7 @@ def journal_view(path, now):
         signals = {(s["family"], s["variant"], s["key"], s["t"]): s for s in j.rows("signals")}
         positions = j.rows("positions", "status = 'open'")
         usage = j.rows("usage")
+        state = {r["k"]: r["v"] for r in j.rows("state")}
     finally:
         j.close()
     run = os.path.basename(os.path.dirname(os.path.dirname(path)))
@@ -261,6 +262,10 @@ def journal_view(path, now):
         "open_positions": last["open_positions"] if last else None,
         "gaps_today": len(gaps), "largest_gap_slots": max((g["gap_slots"] for g in gaps), default=None),
         "last_gap": max(gaps, key=lambda g: g["minute"])["note"] if gaps else None,
+        # The engine's config and risk file at start (lab/paper --config; sha256 in the journal's state).
+        "config": os.path.basename(str(state["config"])) if state.get("config") else None,
+        "config_sha256": str(state.get("config_sha256") or "")[:64] or None,
+        "risk_sha256_at_start": str(state.get("risk_sha256_at_start") or "")[:64] or None,
     }
 
     by_group = defaultdict(list)
@@ -282,14 +287,17 @@ def journal_view(path, now):
     def pos_row(p, x=None):
         s = signals.get((p["family"], p["variant"], p["key"], p["t"]), {})
         r = {"family": p["family"], "variant": p["variant"], "key": p["key"], "venue": s.get("venue"),
-             "orientation": s.get("orientation"), "signal_slot": p["t"], "entry_slot": p["entry_slot"],
+             "orientation": s.get("orientation"), "farm": s.get("farm"), "signal_slot": p["t"], "entry_slot": p["entry_slot"],
              "cost_sol": (p["cost"] or 0) / 1e9 if p.get("cost") is not None else None,
              "entry_time": clock(p["entry_slot"])}
-        if x is None:  # open: the engine journals no mark yet; shown when it does
-            r["slots"] = (last_slot - p["entry_slot"]) if last_slot and p.get("entry_slot") else None
-            mark = p.get("mark_proceeds")
+        if x is None:  # open: the engine's mark (lab/paper #183); none in older journals
+            r["slots"] = (last_slot - p["entry_slot"]) if last_slot and p.get("entry_slot") and last_slot >= p["entry_slot"] else None
+            mark, mpnl = p.get("mark_proceeds"), p.get("mark_pnl")
+            # mark_pnl = mark_proceeds - entry cost including fees: the same definition as exits.pnl, so the open
+            # P&L does not jump at the close (mark - cost would leave out the entry costs).
             r.update(status="open", mark_sol=mark / 1e9 if mark is not None else None, mark_slot=p.get("mark_slot"),
-                     pnl_sol=(mark - p["cost"]) / 1e9 if mark is not None and p.get("cost") else None)
+                     pnl_sol=mpnl / 1e9 if mpnl is not None else None,
+                     ret=mpnl / p["cost"] if mpnl is not None and p.get("cost") else None)
         else:
             r.update(status=x["exit_reason"], exit_slot=x["exit_slot"], exit_time=clock(x["exit_slot"]),
                      pnl_sol=(x["pnl"] or 0) / 1e9, ret=x["ret"],
@@ -591,9 +599,19 @@ def _wallet_state(journal):
                     "status": str(t.get("status", ""))[:12], "landed_slot_delta": num(t.get("landed_slot_delta")),
                     "note": str(t.get("note") or "")[:80] or None})
     bal = num(w.get("balance_lamports"))
-    return {"sample": sample, "address": w.get("address") if isinstance(w.get("address"), str) and ADDRESS_RE.match(w["address"]) else None,
+    # The engine's paper wallet (mode "paper", owner's decision: no real money) is shown as paper, not on-chain.
+    paper_mode = w.get("mode") == "paper"
+    names = token_names([t["mint"] for t in txs if t["mint"] and not t["symbol"]])
+    for t in txs:
+        n = names.get(t["mint"]) or {}
+        if not t["symbol"] and n.get("symbol"):
+            t["symbol"] = str(n["symbol"])[:20]
+        if n.get("mint"):
+            t["mint"] = n["mint"]
+    return {"sample": sample, "mode": "paper" if paper_mode else "onchain",
+            "address": None if paper_mode else (w.get("address") if isinstance(w.get("address"), str) and ADDRESS_RE.match(w["address"]) else None),
             "slot": num(w.get("slot")), "time_unix": num(w.get("time_unix")), "balance_sol": bal / 1e9 if bal is not None else None,
-            "txs": txs}
+            "note": str(w.get("note") or "")[:200] or None, "txs": txs}
 
 
 def configured_address():

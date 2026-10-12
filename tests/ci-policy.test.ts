@@ -584,6 +584,7 @@ describe('semantic CI workflow policy', () => {
     const reviewed = [
       '.github/workflows/ci.yml',
       '.github/workflows/codeql.yml',
+      '.github/workflows/dependency-audit.yml',
       '.github/workflows/dependency-review.yml',
       '.github/workflows/roadmap-sync.yml',
     ];
