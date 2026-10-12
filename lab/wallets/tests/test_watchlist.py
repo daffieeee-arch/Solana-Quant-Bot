@@ -219,7 +219,8 @@ def test_quiet_pools_are_pruned_and_come_back_with_their_verdict():
     assert "R" not in wl.archive
 
 
-def test_archived_verdict_expires_and_rows_for_unknown_pools_are_ignored():
+def test_archived_verdict_expires_only_with_an_explicit_expiry():
+    assert Rules().archive_minutes == 0  # never expires by default (review of #211)
     wl = Watchlist(Rules(prune_idle_minutes=60, archive_minutes=120))
     wl.add_pool(rev("R"))
     wl.step(0, [_trade("R", farmer=9.0)])            # farming hour: organic False
@@ -260,11 +261,47 @@ def test_members_are_never_pruned():
         assert wl.step(m, []) == {"R": ("f7_rev",)} and "R" in wl.pools
 
 
-def test_archive_never_expires_with_zero():
-    wl = Watchlist(Rules(prune_idle_minutes=60, archive_minutes=0, f7_idle_minutes=30))
+def test_archive_never_expires_by_default():
+    wl = Watchlist(Rules(prune_idle_minutes=60, f7_idle_minutes=30))
     wl.add_pool(rev("R"))
     wl.step(0, [_trade("R")])
     wl.step(60, [])
     assert "R" in wl.archive
     wl.step(10**6, [])
     assert "R" in wl.archive and wl.step(10**6 + 1, [_trade("R")]) == {"R": ("f7_rev",)}
+
+
+def test_pruned_machine_is_identical_to_the_unpruned_one():
+    """The same row stream through Rules(prune_idle_minutes=10**9) and through the default: members per minute and
+    the organic verdict per pool must agree, with pools returning after 25 h and after 8 days."""
+    import random
+    rng = random.Random(5)
+    pools = [rev(f"R{i}") for i in range(6)] + [normal(f"N{i}", create_minute=i * 30) for i in range(4)]
+    stream = {}
+    minutes = 9 * 24 * 60
+    for m in range(minutes):
+        rows = []
+        for i, info in enumerate(pools):
+            p = info.pool
+            active = (m // 180 + i) % 3 == 0          # 3 h on, 6 h off
+            if p == "R5":
+                active = m < 60 or 25 * 60 <= m < 25 * 60 + 60 or m >= 8 * 24 * 60   # returns after 25 h and after 8 days
+            if p == "N3":
+                active = 90 <= m < 120 or m >= 8 * 24 * 60
+            if active and rng.random() < 0.7:
+                farmer = rng.choice((0.0, 0.0, 8.0))
+                rows.append((p, 1, 10.0, farmer, rng.choice((90.0, 130.0, 160.0))))
+        stream[m] = rows
+    a, b = Watchlist(Rules(prune_idle_minutes=10**9)), Watchlist(Rules())
+    for info in pools:
+        a.add_pool(info)
+        b.add_pool(info)
+    smallest = len(pools)
+    for m in range(minutes):
+        ma, mb = a.step(m, stream[m]), b.step(m, stream[m])
+        assert ma == mb, (m, ma, mb)
+        for p in a.pools:
+            vb = b.state[p].organic if p in b.state else b.archive[p][1]
+            assert a.state[p].organic == vb, (m, p)
+        smallest = min(smallest, len(b.pools))
+    assert b.pruned_total >= 3 and b.restored_total >= 2 and smallest < len(a.pools) == len(pools)

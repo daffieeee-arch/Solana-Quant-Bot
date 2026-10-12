@@ -24,14 +24,16 @@ A pool with an open paper position must stay on the list until the position is c
 is the paper engine's job (it knows its positions), so it is not modelled here.
 Pruning (Lab Backtest, #165 gate point, 2026-10-13): over a paper run of weeks every pool ever seen
 would stay in `pools` / `state` and `step()` would walk all of them every minute. A pool that has
-been quiet for `prune_idle_minutes` (24 h; since its last trade, or since it was added / created
-when it never traded) leaves both dicts; its PoolInfo and its last organic verdict go to a compact
-`archive` (kept `archive_minutes`, 7 days). A trade on an archived pool brings it back with the
-verdict intact, so the F7 rule sees the same `organic` it would have seen without pruning (the
-trailing window is empty, the previous verdict stands until the hour holds >= 1 SOL, as before).
-A pool whose archive entry has expired is unknown again until add_pool (archive_minutes = 0 keeps
-every verdict; the batch run re-adds a known pool from the store when its trade comes). Members are
-never pruned: both rules need a trade within 6 h.
+been quiet for `prune_idle_minutes` (24 h since its last trade; a pool that never traded counts
+from its creation minute, or from the minute it was first seen when the creation minute is unknown)
+leaves both dicts; its PoolInfo and its last organic verdict go to a compact `archive`. A trade on
+an archived pool brings it back with the verdict intact, so the F7 rule sees the same `organic` it
+would have seen without pruning (the trailing window is empty, the previous verdict stands until
+the hour holds >= 1 SOL, as before): members per minute and verdicts are identical to the unpruned
+machine (differential test). The archive never expires by default (`archive_minutes` = 0: an entry
+is one PoolInfo and a bool); an explicit expiry makes a returning pool unknown until add_pool (live,
+`LiveWatchlist._add` would never re-add it) or fresh (batch, re-added from the store), which both
+differ from the unpruned machine. Members are never pruned: both rules need a trade within 6 h.
 
 Time steps are UTC minutes (block_time // 60). The list computed after minute m is valid for
 minute m + 1: `Watchlist.step(m, rows)` returns the members for m + 1.
@@ -83,7 +85,8 @@ class Rules:
     m1_max_age_minutes: int = 6 * 60
     m1_idle_minutes: int = 60
     prune_idle_minutes: int = 24 * 60     # quiet pools leave the state machine (verdict archived)
-    archive_minutes: int = 7 * 24 * 60    # how long an archived verdict is kept; 0 = forever
+    archive_minutes: int = 0              # how long an archived verdict is kept; 0 = forever (default: an entry is one PoolInfo and a bool;
+                                          # with an expiry a returning pool would lose its verdict and differ from the unpruned machine)
 
 
 @dataclasses.dataclass
@@ -149,7 +152,7 @@ class Watchlist:
         for pool in [p for p in self.pools if p not in self.members]:
             s, info = self.state[pool], self.pools[pool]
             if s.first_seen is None:
-                s.first_seen = minute  # added before the first step: counts from now
+                s.first_seen = minute  # added before any step: counts from the first step
             if s.last_trade is not None:
                 ref = s.last_trade  # quiet since its last trade
             else:
@@ -175,8 +178,6 @@ class Watchlist:
                 else:
                     continue
             s = self.state[pool]
-            if s.first_seen is None:
-                s.first_seen = minute
             if trades:
                 s.last_trade = minute
                 s.depth = float(depth)
