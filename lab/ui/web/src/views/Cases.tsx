@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { get, type Candle, type MarketEvent } from "../api";
 import PriceChart, { eventMarkers } from "../components/PriceChart";
-import { Badge, Card, DexLink, Loading, Section } from "../components/ui";
+import { Badge, Card, DexLink, Loading, Section, SolscanLink } from "../components/ui";
 import { go } from "../route";
 import { day, label, n0, n1, shortAddr, solShort, unixTime } from "../format";
 
@@ -220,6 +220,7 @@ function CaseDetail({ row, tl }: { row: CaseRow; tl?: Timeline }) {
         <div className="flex flex-wrap gap-3">
           <button type="button" className="text-accent text-sm" onClick={() => go("tokens", row.mint)}>Volledige tokenpagina →</button>
           <DexLink mint={row.mint} className="text-sm">DexScreener ↗</DexLink>
+          <SolscanLink mint={row.mint} className="text-sm" />
         </div>
       </div>
     </div>

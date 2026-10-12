@@ -4,7 +4,7 @@ import { label, shortAddr } from "../format";
 import { cn } from "../lib/utils";
 import { Change } from "./Num";
 import PriceChart, { mcapCandles, type ChartMarker } from "./PriceChart";
-import { DexLink } from "./ui";
+import { DexLink, SolscanLink } from "./ui";
 
 // One paper position's chart (design v1, dashboard): candles of its token from the development data, with the
 // bot's own entries ("in") and exits ("uit ±x%") as markers. Tokens without a pump.fun history (most reversed
@@ -57,6 +57,7 @@ export default function PaperChart({ k, height = 320, compact = false }: { k: st
               <span className="font-extrabold text-lg" title={label(d.name, 40) || undefined}>{sym} / SOL</span>
               <span className="text-[11px] px-[7px] py-[3px] rounded-md bg-surface-2 text-fg-2 font-bold">{kind}</span>
               <DexLink mint={d.mint ?? d.key}>Dex ↗</DexLink>
+              <SolscanLink mint={d.mint ?? d.key} />
             </div>
             <span className="text-xs text-muted">{d.unit === "price" ? "Prijs" : "Marktwaarde"} per {FRAMES.find((f) => f.s === bucket)?.label} · <span className="text-accent-fg">▲</span> instap, <span className="text-buy">▼</span>/<span className="text-sell">▼</span> uitstap van de bot ({own.filter((t) => t.side === "exit").length}×)</span>
           </div>

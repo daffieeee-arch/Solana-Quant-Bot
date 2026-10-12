@@ -55,6 +55,23 @@ export function dexUrl(mint: string | null | undefined): string | null {
   return mint && MINT_RE.test(mint) ? `https://dexscreener.com/solana/${encodeURIComponent(mint)}` : null;
 }
 
+/** Outbound link to Solscan, the block explorer: every mint on chain has a page there, also short-lived
+ *  pump.fun tokens that DexScreener never listed or has dropped. Same rules: a plain link, no requests. */
+export function solscanUrl(mint: string | null | undefined): string | null {
+  return mint && MINT_RE.test(mint) ? `https://solscan.io/token/${encodeURIComponent(mint)}` : null;
+}
+
+export function SolscanLink({ mint, children, className = "" }: { mint: string | null | undefined; children?: ReactNode; className?: string }) {
+  const href = solscanUrl(mint);
+  if (!href) return <>{children ?? null}</>;
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" title={`${mint} op Solscan`}
+      className={`text-fg-2 font-bold underline-offset-2 hover:underline ${className}`} onClick={(e) => e.stopPropagation()}>
+      {children ?? "Solscan ↗"}
+    </a>
+  );
+}
+
 export function DexLink({ mint, children, className = "" }: { mint: string | null | undefined; children?: ReactNode; className?: string }) {
   const href = dexUrl(mint);
   if (!href) return <>{children ?? null}</>;

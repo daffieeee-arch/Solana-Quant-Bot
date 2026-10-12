@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useState, type ReactNode } from "react";
-import { Badge, DexLink, Loading } from "../components/ui";
+import { Badge, DexLink, Loading, SolscanLink } from "../components/ui";
 import { Button } from "../components/Button";
 import PaperChart from "../components/PaperChart";
 import { Change, Num } from "../components/Num";
@@ -57,7 +57,12 @@ function Hero({ j }: { j: PaperJournal }) {
   const r = j.ranges[range];
   const title = range === "1d" ? (j.is_today ? "Netto vandaag" : `Netto ${j.day}`) : range === "7d" ? "Netto 7 dagen" : "Netto alles";
   return (
-    <section className="hero rounded-[20px] p-[18px] grid gap-2.5 min-w-0">
+    <section className={cn("hero rounded-[20px] p-[18px] grid gap-2.5 min-w-0", j.test_run && "!border-2 !border-warn")}>
+      {j.test_run && (
+        <span className="justify-self-start px-2 py-1 rounded-md bg-warn-soft border border-warn-line text-warn text-[11px] font-extrabold tracking-wide">
+          TESTDATA · pariteitsrun, geen strategie-uitslag
+        </span>
+      )}
       <div className="flex justify-between items-center gap-2">
         <span className="text-[13px] text-fg-2 font-semibold">{title}</span>
         <Segmented label="Periode" value={range} options={[...RANGES]} onChange={setRange} />
@@ -195,7 +200,7 @@ function PositionsTable({ rows, sel, onSel }: { rows: PaperPosition[]; sel: stri
                     {p.failed ? "instap mislukt" : EXIT[p.status] ?? p.status}
                   </Badge>
                 </td>
-                <td className="px-2 py-2.5"><DexLink mint={p.mint ?? p.key}>Dex ↗</DexLink></td>
+                <td className="px-2 py-2.5 whitespace-nowrap"><DexLink mint={p.mint ?? p.key}>Dex ↗</DexLink> <SolscanLink mint={p.mint ?? p.key} className="ml-2">Scan ↗</SolscanLink></td>
               </tr>
             );
           })}
