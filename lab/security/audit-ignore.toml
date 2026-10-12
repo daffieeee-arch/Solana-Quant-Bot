@@ -1,0 +1,45 @@
+# Known advisories that dependency_audit.py reports but does not fail on.
+#
+# Every entry needs: id (the advisory id or one of its aliases), ecosystem (cargo, pip or npm), package,
+# reason, approved (YYYY-MM-DD), approved_by and review_by (YYYY-MM-DD). After review_by the entry stops
+# applying and the check fails again until someone re-decides. Ignored findings are always printed with
+# their reason; an entry that no longer matches anything is printed as stale.
+
+# Crates pinned by Agave (solana-runtime and friends) in lab/extractor and lab/recorder. Neither binary
+# signs, verifies signatures for funds or parses untrusted hostnames; there is no fix without an Agave
+# upgrade. GitHub rates these low/medium; RustSec gives no CVSS, so the audit treats them as unknown.
+[[ignore]]
+id = "RUSTSEC-2022-0093"
+ecosystem = "cargo"
+package = "ed25519-dalek"
+reason = "Agave-pinned ed25519-dalek 1.0.1; signing oracle needs a signer API we never call (no keys, paper only). GHSA-w5vr-6qhr-36cc."
+approved = "2026-10-09"
+approved_by = "owner (allow-ghsas in dependency-review.yml)"
+review_by = "2027-01-12"
+
+[[ignore]]
+id = "RUSTSEC-2024-0344"
+ecosystem = "cargo"
+package = "curve25519-dalek"
+reason = "Agave-pinned curve25519-dalek 3.2.0; timing side channel on secret scalars, and we hold no secrets. GHSA-x4gp-pqpj-f43q."
+approved = "2026-10-09"
+approved_by = "owner (allow-ghsas in dependency-review.yml)"
+review_by = "2027-01-12"
+
+[[ignore]]
+id = "RUSTSEC-2024-0421"
+ecosystem = "cargo"
+package = "idna"
+reason = "Agave-pinned idna 0.1.5; Punycode confusion only matters for hostname checks on untrusted input, which we do not do. GHSA-h97m-ww89-6jmq."
+approved = "2026-10-09"
+approved_by = "owner (allow-ghsas in dependency-review.yml)"
+review_by = "2027-01-12"
+
+[[ignore]]
+id = "RUSTSEC-2026-0292"
+ecosystem = "cargo"
+package = "imbl-sized-chunks"
+reason = "Via solana-runtime 4.2.2 -> imbl 7.0.1; double drop only if an element's Drop panics inside Chunk::clear/drop_*; fix (0.2.0) needs an Agave upgrade. No GHSA alias."
+approved = "2026-10-12"
+approved_by = "proposed by LAB ui; coordinator to confirm in PR review"
+review_by = "2027-01-12"
