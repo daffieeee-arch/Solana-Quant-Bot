@@ -13,7 +13,9 @@ Research code of the "LAB research" session. Paper and research only; read-only 
 | 1b | `runners.py`, `runners_report.py` | graduations with open-based outcomes and features at + 5 / + 15 min; base rates, quintile lifts, walk-forward AUC |
 | 1b | `cases.py`, `cases_report.py` | case lists from our own data (trending 24 h, dumpers, 7-day stayers / collapsed, each with an `_organic` twin without dev bundles: create-slot graduation or ≤ 5 curve buyers); per-token aggregates are saved, so `--reselect` rebuilds the lists without the store, `--reselect --timelines` adds the missing timelines |
 
-Run order for a period: `episodes` → `follow` (needs the store-v2 engine: `LAB_ENGINE=<dir with backtest/>`) → `score --day D` for each day. Tests: `pytest -q lab/wallets/tests` (the follow tests need `LAB_ENGINE`).
+| cases | `phantom.py`, `phantom_report.py` | named tokens (the owner's Phantom list) from a forward store (never the hold-out, never for tuning): most-traded mint per symbol plus the copycats, timeline, dev-bundle flag, insiders, biggest buyers / sellers, and whether F7 / M1 / M1+ would have triggered (engine definitions, descriptive, no replay); pools with a non-SOL quote and windows cut by the store end are flagged; the report merges the stores and is in Dutch |
+
+Run order for a period: `episodes` → `follow` (needs the store-v2 engine: `LAB_ENGINE=<dir with backtest/>`) → `score --day D` for each day. The Phantom cases: `LAB_STORE=<fwd store> LAB_ENGINE=<engine> python -m wallets.phantom --symbols A,B --tag 1052 --out DIR` per store, then `phantom_report --cases DIR` (without `LAB_ENGINE` the strategy checks are skipped). Tests: `pytest -q lab/wallets/tests` (the follow tests need `LAB_ENGINE`).
 
 ## Tables for the private leaderboard page (LAB ui)
 

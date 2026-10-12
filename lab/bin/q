@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# q — read-only SQL on the lab's development data (DuckDB).
+#
+#   lab/bin/q "SELECT count(*) FROM mints"
+#   echo "SELECT ..." | lab/bin/q --md
+#   lab/bin/q --file query.sql --json
+#
+# Formats: --table (default), --md, --csv, --json.  Max 500 rows, 5-minute timeout.
+# Each run gets its own systemd user scope (MemoryMax=2G) and a hardened DuckDB session:
+# the development store (lab/analytics/labstore.py: STORE) and analytics.duckdb attached READ_ONLY, memory_limit 1GB, 2 threads,
+# no temp directory, no file or network access, no extensions, configuration locked, SELECT only.
+# Only development data is attached (slots < 452,304,000; checked in the store meta); the hold-out is never opened.
+# TEMP VIEW pool_trades: PumpSwap token trades in one shape for store v1 and v2 (see labstore.py).
+set -euo pipefail
+
+LAB_DATA_ROOT="${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}"
+T="${SOLANA_TOOLCHAIN_ROOT:-$HOME/.local/share/solana-quant/toolchains}"
+LAB_PY="${LAB_PY:-$T/columnar-query-313-duckdb155/bin/python}"
+Q_TIMEOUT="${Q_TIMEOUT:-300}"
+LAB_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../analytics" && pwd)"
+
+fmt=table sql=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --table|--md|--csv|--json) fmt="${1#--}"; shift ;;
+    --file) sql="$(cat -- "$2")"; shift 2 ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --) shift; sql="$*"; break ;;
+    -*) echo "q: unknown option $1" >&2; exit 2 ;;
+    *) sql="$*"; break ;;
+  esac
+done
+if [ -z "$sql" ]; then
+  [ -t 0 ] && { echo "q: no SQL given (argument, --file or stdin)" >&2; exit 2; }
+  sql="$(cat)"
+fi
+
+read -r -d '' PYCODE <<'PY' || true
+import csv, json, os, sys
+import duckdb
+
+data_root, fmt, sql, lib = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+sys.path.insert(0, lib)
+import labstore
+MAX_ROWS = 500
+analytics = os.path.join(data_root, "analytics", "analytics.duckdb")
+
+def sq(s):
+    return "'" + s.replace("'", "''") + "'"
+
+con = duckdb.connect(":memory:", config={"memory_limit": "1GB", "threads": 2})
+try:
+    labstore.attach(con, data_root)  # READ_ONLY + development-only meta check + TEMP VIEW pool_trades
+    if os.path.exists(analytics):
+        con.execute(f"ATTACH {sq(analytics)} AS a (READ_ONLY)")
+except duckdb.Error as e:
+    print(f"q: cannot open the data read-only (is a rebuild running?): {e}", file=sys.stderr)
+    sys.exit(3)
+con.execute("USE dev")
+con.execute("SET memory_limit='1GB'; SET threads=2")
+con.execute("SET temp_directory=''")
+con.execute("SET enable_progress_bar=false; SET TimeZone='UTC'")
+con.execute("SET allowed_directories=[]")
+con.execute("SET autoinstall_known_extensions=false; SET autoload_known_extensions=false")
+con.execute("SET enable_external_access=false")
+con.execute("SET lock_configuration=true")
+
+# Only SELECT statements (incl. WITH, FROM-first, SHOW, DESCRIBE, SUMMARIZE). Anything else is
+# refused before it runs: DuckDB allows the path of an attached database even with external access
+# off, so DETACH + ATTACH or COPY TO could otherwise reopen the store writable or overwrite it.
+try:
+    stmts = con.extract_statements(sql)
+    bad = [str(s.type).split(".")[-1] for s in stmts if s.type != duckdb.StatementType.SELECT]
+    if not stmts or bad:
+        print(f"q: only SELECT queries are allowed (got: {', '.join(bad) or 'nothing'})", file=sys.stderr)
+        sys.exit(1)
+    for s in stmts:
+        cur = con.execute(s.query)
+except duckdb.Error as e:
+    print(f"q: {type(e).__name__}: {e}", file=sys.stderr)
+    sys.exit(1)
+if cur.description is None:
+    sys.exit(0)
+cols = [d[0] for d in cur.description]
+try:
+    rows = cur.fetchmany(MAX_ROWS + 1)
+except duckdb.Error as e:
+    hint = " (cast TIMESTAMPTZ to TIMESTAMP, e.g. to_timestamp(x)::TIMESTAMP)" if "pytz" in str(e) else ""
+    print(f"q: {type(e).__name__}: {e}{hint}", file=sys.stderr)
+    sys.exit(1)
+truncated = len(rows) > MAX_ROWS
+rows = rows[:MAX_ROWS]
+
+def cell(v):
+    if v is None:
+        return ""
+    if isinstance(v, float):
+        return f"{v:.6g}"
+    return str(v)
+
+out = sys.stdout
+if fmt == "json":
+    json.dump({"columns": cols, "rows": [list(r) for r in rows], "truncated": truncated},
+              out, default=str, ensure_ascii=False)
+    out.write("\n")
+elif fmt == "csv":
+    w = csv.writer(out)
+    w.writerow(cols)
+    w.writerows([[cell(v) for v in r] for r in rows])
+else:
+    txt = [[cell(v).replace("\n", " ") for v in r] for r in rows]
+    if fmt == "md":
+        esc = lambda s: s.replace("|", "\\|")
+        out.write("| " + " | ".join(map(esc, cols)) + " |\n")
+        out.write("|" + "|".join("---" for _ in cols) + "|\n")
+        for r in txt:
+            out.write("| " + " | ".join(map(esc, r)) + " |\n")
+    else:
+        width = [max([len(c)] + [len(r[i]) for r in txt]) for i, c in enumerate(cols)]
+        out.write("  ".join(c.ljust(width[i]) for i, c in enumerate(cols)).rstrip() + "\n")
+        out.write("  ".join("-" * w for w in width) + "\n")
+        for r in txt:
+            out.write("  ".join(v.ljust(width[i]) for i, v in enumerate(r)).rstrip() + "\n")
+    out.flush()
+    print(f"({len(rows)} rows{', truncated at 500' if truncated else ''})", file=sys.stderr)
+PY
+
+exec systemd-run --user --scope --quiet --collect -p MemoryMax=2G -- \
+  timeout --kill-after=10 "$Q_TIMEOUT" "$LAB_PY" -I -c "$PYCODE" "$LAB_DATA_ROOT" "$fmt" "$sql" "$LAB_LIB"

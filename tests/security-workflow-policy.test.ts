@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { parseWorkflowYaml } from '../scripts/lib/strict-yaml.mjs';
 import { validateSecurityWorkflowConfiguration } from '../scripts/lib/security-workflow-policy.mjs';
 
-const paths = ['.github/workflows/codeql.yml', '.github/workflows/dependency-review.yml'];
+const paths = ['.github/workflows/codeql.yml', '.github/workflows/dependency-review.yml', '.github/workflows/dependency-audit.yml'];
 const check = (path: string, text: string) => validateSecurityWorkflowConfiguration(path, text);
 
 describe('security workflow privilege and coverage boundaries', () => {
@@ -63,6 +63,26 @@ describe('security workflow privilege and coverage boundaries', () => {
       original.replace('GHSA-cq8v-f236-94qc', 'GHSA-cq8v-f236-94qc, GHSA-example-test-only'),
       original.replace(/\n *allow-ghsas:[^\n]*/, '\n          allow-ghsas: GHSA-example-test-only'),
     ]) expect(check(paths[1], mutation).length).toBeGreaterThan(0);
+  });
+
+  it('keeps the dependency audit read-only, pinned, scheduled and failing', () => {
+    const original = readFileSync(paths[2], 'utf8');
+    const audit = parseWorkflowYaml(original) as any;
+    expect(audit.permissions).toEqual({ contents: 'read' });
+    for (const job of Object.values(audit.jobs) as any[]) expect(job.permissions).toBeUndefined();
+    for (const mutation of [
+      original.replace(' --optional lab/recorder/Cargo.lock', ''),
+      original.replace(' --version 0.22.2 --locked', ''),
+      original.replace('pip-audit==2.10.1', 'pip-audit'),
+      original.replace('npm lab/ui/web', 'npm lab/ui/web || true'),
+      original.replace('      - lab/ui/web/package-lock.json\n', ''),
+      original.replace("'29 6 * * 1'", "'29 6 1 1 *'"),
+      original.replace('  workflow_dispatch: {}\n', ''),
+      original.replace('      - name: Test the audit script\n        run: python3 lab/security/tests/test_dependency_audit.py\n', ''),
+    ]) {
+      expect(mutation).not.toBe(original);
+      expect(check(paths[2], mutation).length).toBeGreaterThan(0);
+    }
   });
 
   it('does not authorize a security workflow under an arbitrary filename', () => {
