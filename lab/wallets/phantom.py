@@ -305,7 +305,14 @@ def describe(con, cfg, mint, clock, store_lo, store_hi, eng=None, eng_clock=None
         if p:
             tl.update(pool_quote_class=p[0], pool_orientation=p[1], pool_mayhem=bool(p[2]), p_open=p[3],
                       pool_normal_sol=(p[0] == "sol" and p[1] == "normal" and not p[2]))
+    if tl.get("pool") and tl.get("pool_quote_class") not in (None, "sol"):
+        # A pool quoted in another token: the store has no SOL side for it (e = sol_amount = 0), so no price in SOL.
+        tl["pool_other_quote"] = True
+        tl["pool_trades_other_quote"] = con.execute("SELECT COALESCE(n_buy + n_sell, 0)::BIGINT FROM pool_stats WHERE pool = ?",
+                                                    [tl["pool"]]).fetchone()[0]
     anchor, end, n_day = load_trades(con, tl, clock)
+    if end > store_hi:  # the 24 h window runs past the end of the store
+        tl["window_cut_minutes"] = (store_hi - anchor) * ms / 60000
     tl["n_insiders"] = con.execute("SELECT count(*) FROM ins WHERE trader <> ''").fetchone()[0]
     r = con.execute(f"""
       SELECT count(*), count(DISTINCT trader), sum(sol), sum(sol) FILTER (WHERE NOT farmer), count(DISTINCT trader) FILTER (WHERE token_buy),

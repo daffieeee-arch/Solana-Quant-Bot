@@ -70,7 +70,8 @@ def load(cases_dir):
             tl = r["timelines"].get(m)
             if tl is None:
                 continue
-            n = (tl.get("window_24h") or {}).get("trades") or 0
+            c = next((x for x in r.get("candidates", {}).get(s, []) if x["mint"] == m), {})
+            n = (c.get("n_pool") or 0) + (c.get("n_curve") or 0) or ((tl.get("window_24h") or {}).get("trades") or 0)
             if s not in chosen or n > chosen[s][1]:
                 chosen[s] = (m, n, r["tag"])
                 tls[m] = tl
@@ -108,6 +109,10 @@ def overview(syms, chosen, tls):
         w = tl.get("window_24h") or {}
         grad = ("in de create-slot" if tl.get("grad_in_create") else "na " + minutes(tl.get("curve_minutes"))) if tl.get("open_slot") is not None \
             else f"niet (curve, laatste stand {fmt(tl.get('curve_end_rq_sol'), 0)} SOL)"
+        if tl.get("pool_other_quote"):
+            grad += f", pool met andere quote-munt ({fmt(tl.get('pool_trades_other_quote'))} trades, geen SOL-koers)"
+        elif tl.get("window_cut_minutes") is not None:
+            grad += f" (data tot +{minutes(tl['window_cut_minutes'])})"
         a, b = strategy_cell(tl)
         L.append(f"| {link(tl)} | {tl.get('name') or ''} | {tl.get('create_time') or '–'} | {grad} | {fmt(tl.get('self_funded'))} | "
                  f"{fmt(tl.get('curve_buyers'))} | {fmt(w.get('traders'))} | {fmt(w.get('vol_sol'), 0)} | {mult(tl.get('max_mult'))} | "
@@ -133,7 +138,13 @@ def token_block(s, tl, tag):
     w = tl.get("window_24h") or {}
     o = tl.get("open_slot")
     facts = [f"Aangemaakt op {tl.get('create_time') or '?'}" + (f" door `{tl['creator'][:8]}…`" if tl.get("creator") else "") + "."]
-    if o is not None:
+    if tl.get("pool_other_quote"):
+        facts.append(f"Gegradueerd naar een pool met een **andere quote-munt dan SOL** ({fmt(tl.get('pool_trades_other_quote'))} pool-trades in de store). "
+                     "Onze store kent voor zo'n pool geen SOL-zijde en dus geen koers; de token valt buiten het universum van F7, M1 en de watchlist. "
+                     "Wat hieronder staat gaat alleen over de curve.")
+    if tl.get("window_cut_minutes") is not None:
+        facts.append(f"**Let op:** de store eindigt {minutes(tl['window_cut_minutes'])} na de pool-opening (of de aanmaak); '24 u' en 'eind' zijn hier dus de stand op dat moment.")
+    if o is not None and not tl.get("pool_other_quote"):
         if tl.get("grad_in_create"):
             facts.append(f"Gegradueerd **in de create-slot**: {fmt(tl.get('curve_buyers'))} wallet(s) kochten de hele curve "
                          f"({fmt(tl.get('curve_sol'), 0)} SOL) in dezelfde slot als de aanmaak — de dev-bundel-structuur.")
@@ -144,7 +155,7 @@ def token_block(s, tl, tag):
                      f"({pct((w.get('organic_sol') or 0) / w['vol_sol'], cap=False) if w.get('vol_sol') else '–'} organisch); "
                      f"piek {mult(tl.get('max_mult'))} de openingsprijs, einde 24 u op {mult(tl.get('end_mult'))}"
                      + (f" ({pct(tl['end_mult'] / tl['max_mult'], cap=False)} van de piek)." if tl.get("max_mult") and tl.get("end_mult") is not None else "."))
-    else:
+    elif o is None:
         facts.append(f"Niet gegradueerd in deze store: de curve kwam tot {fmt(tl.get('curve_end_rq_sol'), 0)} SOL reële reserves met "
                      f"{fmt(tl.get('curve_buyers'))} kopers en {fmt(tl.get('curve_sol'), 0)} SOL volume; piek {mult(tl.get('max_mult'))} de eerste prijs, "
                      f"einde op {mult(tl.get('end_mult'))}.")
