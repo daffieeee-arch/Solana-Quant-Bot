@@ -1,0 +1,29 @@
+# Solana-lab notebooks for the owner: `marimo run` (app mode; code hidden, cannot be edited or run
+# from the browser), bound to the Tailscale IP only, with token auth. Install (after merge):
+#   umask 077; mkdir -p ~/.config/lab-notebooks
+#   python3 -c 'import secrets; print(secrets.token_urlsafe(24))' > ~/.config/lab-notebooks/token
+#   cp lab/ops/lab-notebooks.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now lab-notebooks
+# Open: http://100.112.193.63:8502/?access_token=<token>  (the token is never logged: stdout is
+# discarded because marimo prints the URL with the token there).
+[Unit]
+Description=Solana-lab notebooks (marimo run, read-only, Tailscale only)
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Solana-project/worktrees/lab-ui
+Environment=LAB_DATA_ROOT=%h/Solana-project/data-old-faithful-one/lab
+Environment=MARIMO_SKIP_UPDATE_CHECK=1
+ExecStartPre=/usr/bin/test -s %h/.config/lab-notebooks/token
+ExecStart=%h/.local/share/solana-quant/toolchains/lab-py/bin/marimo run lab/notebooks --host 100.112.193.63 --port 8502 --headless --token --token-password-file %h/.config/lab-notebooks/token --no-sandbox
+StandardOutput=null
+MemoryMax=1500M
+CPUQuota=100%
+TasksMax=64
+Nice=10
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target
