@@ -24,8 +24,10 @@ window (days 1-9, or a late wallet's first two full days) without touching the s
   python -m wallets.money --from-slot A --to-slot B [--buckets 8] [--out DIR]
 
 Writes marks.parquet (token x day: last price, depth, venue), wallet-day-<bucket>.parquet, payers.parquet
-(fee payer x wallet x token in the period, for the creator link and the service-payer rule), creators.parquet
-and venue_flows.parquet (per venue kind: venue fees that left in SOL, network fees, the traders' net cash, SOL in
+(fee payer x wallet x token with the first slot and day of the link, for the creator link and the service-payer
+rule), creators.parquet (wallet, mint, create slot and day)
+lp_legs.parquet (every LP deposit / withdraw leg of a SOL-priced pool with the SOL moved and the depth before and after:
+the report's LP-drain section) and venue_flows.parquet (per venue kind: venue fees that left in SOL, network fees, the traders' net cash, SOL in
 the venues at the start and the end, and the SOL that entered from outside the trades (LP deposits minus
 withdrawals; a pool's opening deposit is the pre-depth of its first trade); the zero-sum identity is cash_all + venue_fees + (sol_end - sol_start) - external_in = 0). Slots stay before the hold-out. Heavy: NAS.
 """
@@ -217,10 +219,17 @@ def build_bucket(con, lo, hi, bucket, buckets, days):
 def build_side_tables(con, lo, hi):
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE payers AS
-      SELECT fee_payer, wallet, mint, count(*) AS n FROM ({legs_sql(lo, hi)}) WHERE fee_payer IS NOT NULL AND fee_payer <> wallet GROUP BY ALL""")
+      SELECT fee_payer, wallet, mint, count(*) AS n, min(slot) AS first_slot, min(day) AS first_day
+      FROM ({dated(legs_sql(lo, hi))}) WHERE fee_payer IS NOT NULL AND fee_payer <> wallet GROUP BY ALL""")
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE lp_legs AS
+      SELECT l.pool, l.mint, po.orientation, l.slot, l.tx_index, l.kind, l.sol_in, l.depth_pre, l.depth_post
+      FROM ({lp_sql(lo, hi)}) l JOIN pools po ON po.pool = l.pool""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE creators AS
-      SELECT DISTINCT creator AS wallet, mint, create_slot FROM mints WHERE creator IS NOT NULL AND create_slot >= {lo} AND create_slot < {hi}""")
+      SELECT c.wallet, c.mint, c.create_slot, db.day
+      FROM (SELECT DISTINCT creator AS wallet, mint, create_slot FROM mints WHERE creator IS NOT NULL AND create_slot >= {lo} AND create_slot < {hi}) c
+      ASOF JOIN day_bounds db ON c.create_slot >= db.from_slot""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE venue_flows AS
       WITH l AS (SELECT * FROM ({legs_sql(lo, hi)})),
@@ -266,7 +275,7 @@ def run(lo, hi, out_dir, buckets=8, store=None):
     n_marks = build_marks(con, lo, hi, days)
     con.execute(f"COPY marks TO '{os.path.join(out_dir, 'marks.parquet')}' (FORMAT PARQUET)")
     build_side_tables(con, lo, hi)
-    for name in ("payers", "creators", "venue_flows"):
+    for name in ("payers", "creators", "venue_flows", "lp_legs"):
         con.execute(f"COPY {name} TO '{os.path.join(out_dir, name + '.parquet')}' (FORMAT PARQUET)")
     counts = []
     for b in range(buckets):

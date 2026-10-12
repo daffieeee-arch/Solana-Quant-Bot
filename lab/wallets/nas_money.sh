@@ -2,7 +2,7 @@
 # Spec A (follow the money) on the NAS (roadmap #167, week3-specs-money-2026-10-12.md): P&L per wallet x day
 # over the development period, then the report (labels, groups, placebo, Holm, zero-sum).
 #
-#   LAB_SPILL_DIR=/lab/tmp/nas-money LAB_SPILL_MAX=16GB MEMORY=12GB bash lab/wallets/nas_money.sh
+#   LAB_SPILL_DIR=/lab/tmp/nas-money LAB_SPILL_MAX=16GB MEMORY=12GB REPORT_MEMORY=6GB bash lab/wallets/nas_money.sh
 #
 # Tunables (env): FROM/TO slots (development only), BUCKETS (wallet hash buckets, bounds the window working set),
 # MEMORY (DuckDB limit), BOOT, PLACEBO.
@@ -42,5 +42,7 @@ fi
 log "report (boot $BOOT, placebo $PLACEBO)"
 clusters=""
 [ -d "$CL" ] && clusters="--clusters $CL"
-nice -n 10 "$PY" -m wallets.money_report --money "$MO" $clusters --boot "$BOOT" --placebo "$PLACEBO" --out "$MO/money.md" > "$LOG/report.log" 2>&1
+F7PARTS=$DATA/backtests/f7rev-1033-1046/parts
+export LAB_WALLETS_MEMORY=${REPORT_MEMORY:-6GB}   # the report keeps the wallet-day rows in numpy next to DuckDB: a lower limit than the build
+nice -n 10 "$PY" -m wallets.money_report --money "$MO" $clusters --parts "$F7PARTS" --boot "$BOOT" --placebo "$PLACEBO" --out "$MO/money.md" > "$LOG/report.log" 2>&1
 log "done: $MO/money.md"

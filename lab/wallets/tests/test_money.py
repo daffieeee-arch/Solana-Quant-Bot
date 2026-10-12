@@ -90,8 +90,8 @@ def test_money_on_the_mini_store(tmp_path):
     assert marks[2][2] == pytest.approx(marks[1][2], rel=1e-4) and marks[2][5] and marks[1][5]  # day 3: the withdraw keeps the price, counts as an event
     assert marks[2][3] == 21471 * 10**6 and marks[1][3] == 41471 * 10**6  # and lowers the depth by the 20 SOL withdrawn
     side = con.execute(f"SELECT * FROM '{tmp_path / 'out' / 'payers.parquet'}'").fetchall()
-    assert side == [("X", "W2", "T", 2)]
-    assert con.execute(f"SELECT count(*) FROM '{tmp_path / 'out' / 'creators.parquet'}'").fetchone()[0] == 2
+    assert side == [("X", "W2", "T", 2, SLOT0 + 200, "2026-09-11")]
+    assert con.execute(f"SELECT wallet, day FROM '{tmp_path / 'out' / 'creators.parquet'}' ORDER BY 1").fetchall() == [("CR", "2026-09-11"), ("CR2", "2026-09-11")]
     flows = dict((r[0], r) for r in con.execute(f"SELECT venue, venue_fees, network_fees, cash_all, sol_start, sol_end, external_in FROM '{tmp_path / 'out' / 'venue_flows.parquet'}'").fetchall())
     assert flows["curve"][1] == 26_000_000 + 19_500_000 and flows["pool"][2] == 6000 + 5000 + 5000 + 5000
     v, c, s0, s1, ext = flows["pool"][1], flows["pool"][3], flows["pool"][4], flows["pool"][5], flows["pool"][6]

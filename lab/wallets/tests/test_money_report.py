@@ -44,13 +44,34 @@ def _dir(tmp_path):
     out = tmp_path / "money"
     os.makedirs(out)
     pq.write_table(pa.Table.from_pylist(_rows()), out / "wallet-day-0.parquet")
-    pq.write_table(pa.Table.from_pylist([{"fee_payer": "PAY", "wallet": "R0", "mint": "M", "n": 3}]), out / "payers.parquet")
-    pq.write_table(pa.Table.from_pylist([{"wallet": "R1", "mint": "M", "create_slot": 1}]), out / "creators.parquet")
+    pq.write_table(pa.Table.from_pylist([{"fee_payer": "PAY", "wallet": "R0", "mint": "M", "n": 3, "first_slot": 1, "first_day": "2026-09-12"},
+                                          {"fee_payer": "PAY", "wallet": "R1", "mint": "M", "n": 1, "first_slot": 1, "first_day": "2026-09-12"}]), out / "payers.parquet")
+    pq.write_table(pa.Table.from_pylist([{"wallet": "R1", "mint": "M", "create_slot": 1, "day": "2026-09-12"},
+                                          {"wallet": "R2", "mint": "M2", "create_slot": 9, "day": "2026-09-25"}]), out / "creators.parquet")  # R2 creates during the measurement
     pq.write_table(pa.Table.from_pylist([{"venue": "pool", "venue_fees": 10 * SOL, "network_fees": 2 * SOL, "legs": 1000, "gross_sol": 1000 * SOL,
                                           "cash_all": -110 * SOL, "sol_start": 500 * SOL, "sol_end": 650 * SOL, "external_in": 50 * SOL}]), out / "venue_flows.parquet")
     pq.write_table(pa.Table.from_pylist([{"mint": "M", "day": "2026-09-11", "price": 1.0, "depth": SOL, "venue": "pool", "last_slot": 100, "traded": True}]),
                    out / "marks.parquet")
+    # LP legs: pool A is drained 100 slots after its trigger, pool B only partially (50 %), pool C never
+    pq.write_table(pa.Table.from_pylist([
+        {"pool": "A", "mint": "MA", "orientation": "reversed", "slot": 446_300_100, "tx_index": 1, "kind": "withdraw", "sol_in": -95 * SOL, "depth_pre": 100 * SOL, "depth_post": 5 * SOL},
+        {"pool": "B", "mint": "MB", "orientation": "reversed", "slot": 446_300_100, "tx_index": 1, "kind": "withdraw", "sol_in": -50 * SOL, "depth_pre": 100 * SOL, "depth_post": 50 * SOL},
+        {"pool": "A", "mint": "MA", "orientation": "reversed", "slot": 446_299_000, "tx_index": 1, "kind": "withdraw", "sol_in": -95 * SOL, "depth_pre": 100 * SOL, "depth_post": 5 * SOL}]),
+        out / "lp_legs.parquet")  # the earlier drain of A (before the trigger) must not count
     return str(out)
+
+
+def _parts(tmp_path):
+    pdir = tmp_path / "parts"
+    os.makedirs(pdir)
+    rows = []
+    for pool, reg in (("A", "270ms"), ("B", "270ms"), ("C", "320ms")):
+        for v in ("tp4_T600", "tp6_T600"):
+            rows.append({"family": "F7", "variant": v, "segment": "pool_reversed", "pool": pool, "mint": "M" + pool, "t": 446_300_000, "day": "2026-09-12", "regime": reg})
+    rows.append({"family": "F7", "variant": "tp4_T600", "segment": "pool_reversed", "pool": "A", "mint": "MA", "t": 446_300_050, "day": "2026-09-12", "regime": "270ms"})
+    rows.append({"family": "N2_F7", "variant": "tp4_T600", "segment": "pool_reversed", "pool": "B", "mint": "MB", "t": 446_300_000, "day": "2026-09-12", "regime": "270ms"})
+    pq.write_table(pa.Table.from_pylist(rows), pdir / "part-0.parquet")
+    return str(pdir)
 
 
 def test_labels_groups_holm_and_placebo(tmp_path):
@@ -59,7 +80,9 @@ def test_labels_groups_holm_and_placebo(tmp_path):
     assert R.load(con, _dir(tmp_path)) == 1
     labels = dict(con.execute("SELECT wallet, label FROM labels").fetchall())
     assert labels["S0"] == "sniper" and labels["B0"] == "bot" and labels["R5"] == "retail" and labels["F0"] == "farmer"
-    assert labels["R1"] == "creator" and labels["L0"] == "sniper"  # creator by mints; the late wallet labelled on its first two full days
+    assert labels["R1"] == "creator" and labels["R0"] == "creator"  # R1 created on day 2; R0 shares its fee payer with R1 (link from day 2)
+    assert labels["R2"] == "retail" and labels["L0"] == "sniper"  # R2 only creates on day 15: not a creator for the measurement; the late wallet on its first two full days
+    assert con.execute("SELECT creator_any, creator_before FROM labels WHERE wallet = 'R2'").fetchone() == (True, False)
     assert con.execute("SELECT measure_from FROM labels WHERE wallet = 'L0'").fetchone()[0] == "2026-09-24"
     assert con.execute("SELECT min(day) FROM meas WHERE wallet = 'L0'").fetchone()[0] == "2026-09-24"
     s = R.group_stats(con, "label = 'sniper'", 500)
@@ -74,9 +97,26 @@ def test_labels_groups_holm_and_placebo(tmp_path):
     q = R.placebo(con, "sniper", 20, 100)
     assert q["draws"] == 20 and q["below"] == 20  # the snipers beat every placebo set of retail-like wallets
     md = R.render(con, 300, 20)
-    assert "| sniper |" in md and "**earns**" in md and "| bot |" in md
-    line = next(l for l in md.splitlines() if l.startswith("| bot |"))
+    assert "| sniper |" in md and "**earns**" in md and "| bot |" in md and "with replacement" in md
+    bind = md.index("### Binding"); ctrl = md.index("### Control: days 1-9"); r316 = md.index("### Control: regime 316ms"); r267 = md.index("### Control: regime 267ms")
+    assert bind < ctrl < r316 < r267
+    line = next(l for l in md[bind:ctrl].splitlines() if l.startswith("| bot |"))
     assert line.endswith("**no** |")
+    ctrl_bot = next(l for l in md[ctrl:r316].splitlines() if l.startswith("| bot |"))
+    assert "| 9 |" in ctrl_bot and "verdict" not in md[ctrl:r316].splitlines()[2]  # 9 label days, no verdict on a control table
+    assert "realised Σ (cash − network fees)" in md and "marked Σ value_end" in md
+    # the numpy rows reproduce the per-group mean
+    rows = R.Rows(con)
+    ids = np.array([rows.wallet_id[f"S{i}"] for i in range(40)] + [rows.wallet_id["L0"]])
+    assert abs(rows.mean_per_wallet_day(ids) - s["mean"]) < 1e-9
+    d = R.drains(con, _parts(tmp_path))
+    rows = {l.split(" | ")[0].strip("| "): l for l in d.splitlines() if l.startswith("| F7") or l.startswith("| N2")}
+    allrow = rows["F7 triggers, all"].split(" | ")
+    assert allrow[1] == "4" and allrow[2] == "3" and allrow[3] == "50%"  # 4 triggers on 3 pools; A's two triggers drained, B partial, C never
+    assert allrow[4] == "50%" and allrow[8] == "50%"  # 100 slots at 267 ms = 0.45 min: within 1 min
+    assert rows["F7 pools (first trigger per pool)"].split(" | ")[3] == "33%" and rows["N2_F7 twins' pools, all"].split(" | ")[3] == "0%"
+    md2 = R.render(con, 300, 20, False, _parts(tmp_path / "again"))
+    assert "### LP drain after an F7 trigger" in md2
     z = R.zero_sum(con)[0]
     assert z["venue"] == "pool" and abs(z["resid"]) < 1e-9 and "+0.0" in md  # -110 + 10 + (650 - 500) - 50 = 0
 
