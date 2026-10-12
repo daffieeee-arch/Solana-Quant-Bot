@@ -46,6 +46,7 @@ const POOL_COLS: [(&str, Kind); 12] = [
 
 pub struct Config {
     pub pool_accounts: bool,
+    pub new_pools: bool,
     pub max_tx_accounts: usize,
     /// Watchlist changes are applied at most this often (downscales at once).
     pub min_update_secs: u64,
@@ -108,7 +109,7 @@ fn stream_of(u: &SubscribeUpdate) -> &str {
 
 impl Recorder {
     pub fn new(cfg: Config, plugin: LabPlugin, segs: Segments, meter: Meter, watch: Watch, last_closed: Option<u64>, close_lag: u64) -> Self {
-        let active = Filter::new(&watch, 0, cfg.pool_accounts, cfg.max_tx_accounts);
+        let active = Filter::new(&watch, 0, cfg.pool_accounts, cfg.new_pools, cfg.max_tx_accounts);
         Self {
             plugin,
             slots: SlotBuffer::new(close_lag, last_closed),
@@ -312,6 +313,10 @@ impl Recorder {
         Ok(())
     }
 
+    fn filter(&self, level: usize) -> Filter {
+        Filter::new(&self.watch, level, self.cfg.pool_accounts, self.cfg.new_pools, self.cfg.max_tx_accounts)
+    }
+
     fn change(&mut self, f: Filter, now_unix: u64) -> Result<Action> {
         if f == self.active {
             return Ok(Action::None);
@@ -336,7 +341,7 @@ impl Recorder {
                 if self.level < DOWNSCALE.len() {
                     self.level += 1;
                     self.meter.note(format!("downscale to level {}: {} off ({reason})", self.level, DOWNSCALE[self.level - 1]));
-                    let f = Filter::new(&self.watch, self.level, self.cfg.pool_accounts, self.cfg.max_tx_accounts);
+                    let f = self.filter(self.level);
                     return self.change(f, now_unix);
                 }
                 if !self.at_last_level_noted {
@@ -348,7 +353,7 @@ impl Recorder {
                 self.level = 0;
                 self.at_last_level_noted = false;
                 self.meter.note("new UTC day: all streams back on".to_owned());
-                let f = Filter::new(&self.watch, 0, self.cfg.pool_accounts, self.cfg.max_tx_accounts);
+                let f = self.filter(0);
                 return self.change(f, now_unix);
             }
             Decision::Continue => {}
@@ -358,7 +363,7 @@ impl Recorder {
         }
         if self.pending_watch.is_some() && now_unix >= self.last_update_unix + self.cfg.min_update_secs {
             self.watch = self.pending_watch.take().expect("checked");
-            let f = Filter::new(&self.watch, self.level, self.cfg.pool_accounts, self.cfg.max_tx_accounts);
+            let f = self.filter(self.level);
             let a = self.change(f, now_unix)?;
             if !matches!(a, Action::None) {
                 return Ok(a);
@@ -394,7 +399,7 @@ mod tests {
         let (segs, last) = Segments::open(root, seg_slots, 3600).unwrap();
         let meter = Meter::load(root, cap, 1.0, T0).unwrap();
         let watch = Watch::parse(Some(&json!({"pools": [{"pool": POOL}], "wallets": [], "vaults": [POOL]})), None);
-        let cfg = Config { pool_accounts: true, max_tx_accounts: 10_000, min_update_secs: 60 };
+        let cfg = Config { pool_accounts: true, new_pools: true, max_tx_accounts: 10_000, min_update_secs: 60 };
         Recorder::new(cfg, plugin(), segs, meter, watch, last, 1)
     }
 

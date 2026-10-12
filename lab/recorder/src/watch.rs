@@ -7,8 +7,9 @@
 //! - `open-pools.json`, written by the paper engine: pools with an open position, always kept.
 //!
 //! Streams, in downscale order (the first is dropped first): `pool_accounts`, `vaults`,
-//! `tx_wallets`, `tx_watchlist` (watchlist pools; the open-position pools stay). Blocks and slot
-//! statuses always stay; only the hard stop ends them.
+//! `tx_wallets`, `tx_watchlist` (watchlist pools; the open-position pools stay). Blocks, slot
+//! statuses and `tx_new_pools` (pump.fun graduations, ~0.003 GB/day) always stay; only the hard
+//! stop ends them.
 
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -28,6 +29,11 @@ pub const POOL_DISC: [u8; 8] = [241, 154, 109, 4, 17, 177, 109, 188];
 /// Pool account bytes 43..244: base_mint, quote_mint, lp_mint, the two vaults, lp_supply,
 /// coin_creator, is_mayhem_mode (Borsh layout of the IDL's Pool type after the discriminator).
 pub const POOL_SLICE: (u64, u64) = (43, 201);
+/// pump.fun's withdraw authority: in every graduation (migrate to PumpSwap) and in no other
+/// PumpSwap transaction (lab/checks/creation_filter.py on 1052, two windows of 100k slots: 100% of
+/// migration/sol and migration/other, 0 other transactions). Direct create_pool calls have no
+/// such account; they would cost ~8-56 GB/day to catch.
+pub const MIGRATION_AUTHORITY: &str = "39azUYFWPz3VHgKCf3VChUwbpURdCHRxjWVowf5jUJjg";
 /// SPL token account `amount` (both token programs).
 pub const VAULT_SLICE: (u64, u64) = (64, 8);
 
@@ -136,13 +142,15 @@ pub struct Filter {
     pub tx_wallets: Vec<String>,
     pub vaults: Vec<String>,
     pub pool_accounts: bool,
+    /// Graduation transactions (new canonical pools for M1).
+    pub new_pools: bool,
     pub level: usize,
     /// Addresses left out by `max_tx_accounts`.
     pub truncated: u64,
 }
 
 impl Filter {
-    pub fn new(w: &Watch, level: usize, pool_accounts: bool, max_tx_accounts: usize) -> Self {
+    pub fn new(w: &Watch, level: usize, pool_accounts: bool, new_pools: bool, max_tx_accounts: usize) -> Self {
         let on = |stream: &str| DOWNSCALE.iter().position(|s| *s == stream).map_or(true, |i| i >= level);
         let mut pools: Vec<String> = w.open_pools.clone();
         if on("tx_watchlist") {
@@ -155,6 +163,7 @@ impl Filter {
             truncated: total.saturating_sub(max_tx_accounts) as u64,
             vaults: if on("vaults") { w.vaults.clone() } else { Vec::new() },
             pool_accounts: pool_accounts && on("pool_accounts"),
+            new_pools,
             level,
             tx_pools: pools,
             tx_wallets: wallets,
@@ -173,9 +182,9 @@ impl Filter {
         }
     }
 
-    /// The main subscription: watchlist transactions, block meta, confirmed slot statuses and,
-    /// when on, the pool account stream. An empty address list never becomes a filter (an empty
-    /// `account_include` would match every transaction on chain).
+    /// The main subscription: watchlist transactions, graduations, block meta, confirmed slot
+    /// statuses and, when on, the pool account stream. An empty address list never becomes a
+    /// filter (an empty `account_include` without `account_required` matches every transaction).
     pub fn request(&self, from_slot: Option<u64>) -> SubscribeRequest {
         let mut transactions = HashMap::new();
         if !self.tx_pools.is_empty() {
@@ -183,6 +192,17 @@ impl Filter {
         }
         if !self.tx_wallets.is_empty() {
             transactions.insert("tx_wallets".to_owned(), Self::tx(&self.tx_wallets));
+        }
+        if self.new_pools {
+            transactions.insert(
+                "tx_new_pools".to_owned(),
+                SubscribeRequestFilterTransactions {
+                    vote: Some(false),
+                    failed: Some(false),
+                    account_required: vec![PUMP_AMM.to_owned(), MIGRATION_AUTHORITY.to_owned()],
+                    ..Default::default()
+                },
+            );
         }
         let mut accounts = HashMap::new();
         let mut accounts_data_slice = Vec::new();
@@ -235,7 +255,7 @@ impl Filter {
     pub fn summary(&self) -> Value {
         json!({"level": self.level, "dropped": &DOWNSCALE[..self.level.min(DOWNSCALE.len())],
                "tx_pools": self.tx_pools.len(), "tx_wallets": self.tx_wallets.len(), "vaults": self.vaults.len(),
-               "pool_accounts": self.pool_accounts, "truncated": self.truncated})
+               "pool_accounts": self.pool_accounts, "new_pools": self.new_pools, "truncated": self.truncated})
     }
 }
 
@@ -256,6 +276,8 @@ pub fn segment_watchlist(before: &Filter, now: &Filter, source: &Value) -> Value
         "pools_partial": pools_partial,
         "wallets_partial": wallets_partial,
         "vaults": now.vaults,
+        // Graduation transactions were filtered for the whole segment (paper.reconcile checks them).
+        "new_pools": before.new_pools && now.new_pools,
         "filter": now.summary(),
         "source": source,
     })
@@ -288,31 +310,36 @@ mod tests {
     #[test]
     fn downscale_drops_streams_in_order_and_keeps_open_pools() {
         let w = watch();
-        let full = Filter::new(&w, 0, true, 10_000);
+        let full = Filter::new(&w, 0, true, true, 10_000);
         assert_eq!(full.tx_pools, vec![B.to_owned(), A.to_owned()]); // open pool first, no duplicate
         assert!(full.pool_accounts && !full.vaults.is_empty() && !full.tx_wallets.is_empty());
-        let l2 = Filter::new(&w, 2, true, 10_000);
+        let l2 = Filter::new(&w, 2, true, true, 10_000);
         assert!(!l2.pool_accounts && l2.vaults.is_empty() && !l2.tx_wallets.is_empty());
-        let l4 = Filter::new(&w, 4, true, 10_000);
+        let l4 = Filter::new(&w, 4, true, true, 10_000);
         assert_eq!(l4.tx_pools, vec![B.to_owned()]);
         assert!(l4.tx_wallets.is_empty());
-        let capped = Filter::new(&w, 0, false, 3);
+        let capped = Filter::new(&w, 0, false, false, 3);
         assert_eq!((capped.tx_pools.len() + capped.tx_wallets.len(), capped.truncated), (3, 1));
     }
 
     #[test]
     fn requests_never_ask_for_everything() {
-        let empty = Filter::new(&Watch::default(), 0, false, 10_000);
+        let empty = Filter::new(&Watch::default(), 0, false, false, 10_000);
         let r = empty.request(Some(7));
         assert!(r.transactions.is_empty() && r.accounts.is_empty());
         assert_eq!((r.from_slot, r.commitment), (Some(7), Some(CommitmentLevel::Confirmed as i32)));
         assert!(empty.vault_request().accounts.is_empty());
-        let full = Filter::new(&watch(), 0, true, 10_000);
+        let full = Filter::new(&watch(), 0, true, true, 10_000);
         let r = full.request(None);
         for f in r.transactions.values() {
-            assert!(!f.account_include.is_empty());
+            assert!(!f.account_include.is_empty() || !f.account_required.is_empty());
             assert_eq!((f.vote, f.failed), (Some(false), Some(false)));
         }
+        let np = &r.transactions["tx_new_pools"];
+        assert_eq!(np.account_required, vec![PUMP_AMM.to_owned(), MIGRATION_AUTHORITY.to_owned()]);
+        assert!(np.account_include.is_empty() && np.account_exclude.is_empty());
+        // Graduations stay at every downscale level.
+        assert!(Filter::new(&watch(), 4, true, true, 10_000).request(None).transactions.contains_key("tx_new_pools"));
         let pa = &r.accounts["pool_accounts"];
         assert_eq!(pa.owner, vec![PUMP_AMM.to_owned()]);
         assert!(!pa.filters.is_empty());
@@ -323,10 +350,10 @@ mod tests {
     #[test]
     fn the_segment_after_a_change_reconciles_only_what_both_filters_had() {
         let w = watch();
-        let before = Filter::new(&w, 0, false, 10_000);
+        let before = Filter::new(&w, 0, false, true, 10_000);
         let mut w2 = w.clone();
         w2.pools = vec![A.to_owned(), D.to_owned()];
-        let now = Filter::new(&w2, 0, false, 10_000);
+        let now = Filter::new(&w2, 0, false, true, 10_000);
         let v = segment_watchlist(&before, &now, &Value::Null);
         let pools: Vec<&str> = v["pools"].as_array().unwrap().iter().map(|p| p["pool"].as_str().unwrap()).collect();
         assert_eq!(pools, vec![A, B]);

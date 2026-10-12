@@ -14,6 +14,7 @@ transactions.
 |---|---|---|
 | `tx_pools` | transactions with `account_include` = open-position pools (`open-pools.json`, from the engine) + watchlist pools; `vote=false`, `failed=false` | the trades we simulate against, full rows |
 | `tx_wallets` | the same for the watchlist's wallets | followed wallets (whale work) |
+| `tx_new_pools` | `account_required` = [PumpSwap, pump.fun withdraw authority `39azUYFW…`]; on unless `--no-new-pools` | every pump.fun graduation (new canonical pool, M1). Measured on 1052 (`lab/checks/creation_filter.py`, two windows of 100k slots): 100% of migrations, 0 other transactions, ~0.003 GB/day. Direct `create_pool` calls (mostly reversed pools) have no cheap rule (8–56 GB/day) |
 | `blocks` | block meta | block time, height, tx count per slot (the engine's clock) |
 | `slots` | slot status, `filter_by_commitment` | a slot is written once confirmed (+ `--close-lag`) |
 | `vaults` (optional) | `account` = the watchlist's `vaults`, data slice 64..72 (token `amount`) | cheap balance-only following of pools that are not on the full-transaction list |
@@ -48,7 +49,7 @@ Every update is metered (protobuf size before transport compression, times `--wi
 stream and minute. The daily cap is `--budget-usd` / `--usd-per-gb` (default $2 / $0.08 = 25 GB,
 UTC day, kept in `<root>/budget.json` across restarts). When the day projects above the cap, the
 lowest-priority stream is dropped (`pool_accounts`, then `vaults`, then `tx_wallets`, then the
-watchlist pools; open-position pools, blocks and slots stay); a minute above 20x the sustainable
+watchlist pools; open-position pools, graduations, blocks and slots stay); a minute above 20x the sustainable
 rate downscales at once. At the cap the recorder writes its last segment and exits with code 75;
 it refuses to start again the same day. A new UTC day restores all streams. Every decision is a
 `budget` usage row with a note, which the engine journals (`usage` table).

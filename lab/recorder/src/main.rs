@@ -2,7 +2,8 @@
 //!
 //! One gRPC connection to Triton's Dragon's Mouth (Yellowstone), commitment confirmed, zstd:
 //! full transactions only for the watchlist (pools, open-position pools, wallets; vote=false,
-//! failed=false), block meta and confirmed slot statuses, and optionally vault balances and
+//! failed=false) and for pump.fun graduations (new canonical pools), block meta and confirmed
+//! slot statuses, and optionally vault balances and
 //! PumpSwap pool accounts with a data slice. Transactions are decoded by the extractor's own
 //! code (`../extractor/src`, compiled in), so the rows equal Old Faithful's; they are written as
 //! rolling segments for `paper.live.LiveFeed` (see segment.rs). A byte meter per stream and
@@ -10,7 +11,7 @@
 //!
 //!   lab-recorder --root DIR [--endpoint URL] [--watchlist FILE] [--open-pools FILE]
 //!                [--budget-usd 2] [--usd-per-gb 0.08] [--wire-ratio 1] [--segment-slots 150]
-//!                [--segment-secs 60] [--close-lag 1] [--max-tx-accounts 10000] [--pool-accounts]
+//!                [--segment-secs 60] [--close-lag 1] [--max-tx-accounts 10000] [--pool-accounts] [--no-new-pools]
 //!                [--reload-secs 10] [--min-update-secs 60] [--from-slot N] [--max-runtime-secs N]
 //!                [--dry-run]
 //!
@@ -66,6 +67,7 @@ struct Args {
     close_lag: u64,
     max_tx_accounts: usize,
     pool_accounts: bool,
+    new_pools: bool,
     reload_secs: u64,
     min_update_secs: u64,
     from_slot: Option<u64>,
@@ -89,6 +91,7 @@ fn parse_args() -> Result<Args> {
         close_lag: 1,
         max_tx_accounts: 10_000,
         pool_accounts: false,
+        new_pools: true,
         reload_secs: 10,
         min_update_secs: 60,
         from_slot: None,
@@ -111,6 +114,7 @@ fn parse_args() -> Result<Args> {
             "--close-lag" => a.close_lag = val()?.parse()?,
             "--max-tx-accounts" => a.max_tx_accounts = val()?.parse()?,
             "--pool-accounts" => a.pool_accounts = true,
+            "--no-new-pools" => a.new_pools = false,
             "--reload-secs" => a.reload_secs = val()?.parse()?,
             "--min-update-secs" => a.min_update_secs = val()?.parse()?,
             "--from-slot" => a.from_slot = Some(val()?.parse()?),
@@ -224,7 +228,7 @@ async fn run(a: Args) -> Result<i32> {
     let mut files = Files::new(a.watchlist.clone(), a.open_pools.clone());
     let watch = files.reload().unwrap_or_default();
     if a.dry_run {
-        let f = Filter::new(&watch, 0, a.pool_accounts, a.max_tx_accounts);
+        let f = Filter::new(&watch, 0, a.pool_accounts, a.new_pools, a.max_tx_accounts);
         let main = f.request(a.from_slot);
         let vaults = f.vault_request();
         println!(
@@ -251,7 +255,12 @@ async fn run(a: Args) -> Result<i32> {
     let (segs, last) = Segments::open(&a.root, a.segment_slots, a.segment_secs)?;
     // The extractor's plugin decodes; its own Parquet sink stays unused (the segments write).
     let plugin = LabPlugin::new(Arc::new(Sink::start(a.root.join(".extractor-sink-unused"))), Arc::new(Coverage::new(0, 0)))?;
-    let cfg = Config { pool_accounts: a.pool_accounts, max_tx_accounts: a.max_tx_accounts, min_update_secs: a.min_update_secs };
+    let cfg = Config {
+        pool_accounts: a.pool_accounts,
+        new_pools: a.new_pools,
+        max_tx_accounts: a.max_tx_accounts,
+        min_update_secs: a.min_update_secs,
+    };
     let resume_from = a.from_slot.map(|s| s.saturating_sub(1)).or(last);
     let mut rec = Recorder::new(cfg, plugin, segs, meter, watch, resume_from, a.close_lag);
     let deadline = (a.max_runtime_secs > 0).then(|| Instant::now() + Duration::from_secs(a.max_runtime_secs));
