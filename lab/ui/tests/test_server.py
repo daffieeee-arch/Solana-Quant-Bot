@@ -222,6 +222,19 @@ class CasesGuards(unittest.TestCase):
         self.assertFalse(self.server.dev_only({"last_slot": HOLDOUT_START}))
         self.assertFalse(self.server.dev_only({"t15_t_dec": HOLDOUT_START + 1}))
 
+    def test_holdout_result_only_from_backtests(self):
+        self.assertIsNone(self.server.holdout_result("../../etc/passwd", ["K1"]))
+        self.assertIsNone(self.server.holdout_result("analytics/analytics.duckdb", ["K1"]))
+        n = self.server.run_note("families-v2-1033-1046")
+        r = n["holdout_result"]
+        if r is None:
+            self.skipTest("no hold-out evaluation")
+        self.assertEqual(set(r["candidates"]), {c["id"] for c in n["candidates"]})
+        for c in r["candidates"].values():
+            self.assertLessEqual(c["lo"], c["mean"])
+            self.assertLessEqual(c["mean"], c["hi"])
+        self.assertEqual(n["phase"], "Hold-out: niet geslaagd" if r["pick"] is None else f"Hold-out: geslaagd ({r['pick']})")
+
     def test_run_note_is_plain_text_and_stays_in_notes_dir(self):
         self.assertIsNone(self.server.run_note("no-such-run"))
         self.assertIsNone(self.server.run_note("../../server"))

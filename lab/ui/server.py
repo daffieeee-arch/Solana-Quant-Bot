@@ -326,8 +326,43 @@ def run_note(run_id):
               "farm": str(c.get("farm", "")), "role": str(c.get("role", "")),
               **{k: num(c.get(k)) for k in ("ev", "ci_lo", "ci_hi", "d1_q09", "d2_q05", "d3_q09")}}
              for c in n.get("candidates") or [] if isinstance(c, dict)]
+    result = holdout_result(n.get("holdout_eval"), [c["id"] for c in cands])
+    phase = str(n.get("phase") or "")
+    if result:
+        phase = "Hold-out: niet geslaagd" if result["pick"] is None else f"Hold-out: geslaagd ({result['pick']})"
     return {"holdout": str(n.get("holdout") or ""), "points": [str(x) for x in n.get("points") or []],
-            "phase": str(n.get("phase") or ""), "candidates": cands, "candidates_source": str(n.get("candidates_source") or "")}
+            "phase": phase, "candidates": cands, "candidates_source": str(n.get("candidates_source") or ""),
+            "holdout_result": result, "owner_decision": str(n.get("owner_decision") or ""),
+            "owner_decision_source": str(n.get("owner_decision_source") or ""),
+            "holdout_report": str(n.get("holdout_report") or "")}
+
+
+def holdout_result(rel, ids):
+    """The one-time hold-out evaluation (Lab Backtest's holdout_eval.json): per candidate the pre-registered main
+    measure on the decision group (B+C) and the decision. Only these aggregates are read, never hold-out data;
+    the file must sit under <data>/backtests."""
+    if not isinstance(rel, str) or not rel:
+        return None
+    root = os.path.realpath(os.path.join(DATA, "backtests"))
+    path = os.path.realpath(os.path.join(DATA, rel))
+    if not path.startswith(root + os.sep) or not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            ev = json.load(f)
+        dec = ev.get("decision") or {}
+        group = str(dec.get("group") or "B+C")
+        per = {}
+        for cid in ids:
+            m = ((ev.get("candidates") or {}).get(cid) or {}).get("groups", {}).get(group, {}).get("main") or {}
+            num = lambda v: float(v) * 100 if isinstance(v, (int, float)) else None  # noqa: E731
+            per[cid] = {"point": str(m.get("point") or ""), "mean": num(m.get("mean")), "lo": num(m.get("lo")),
+                        "hi": num(m.get("hi")), "filled": m.get("filled") if isinstance(m.get("filled"), int) else None}
+    except (OSError, ValueError, AttributeError):
+        return None
+    return {"source": os.path.relpath(path, DATA), "group": group, "pick": dec.get("pick") if isinstance(dec.get("pick"), str) else None,
+            "highest_mean": dec.get("highest_mean_if_none") if isinstance(dec.get("highest_mean_if_none"), str) else None,
+            "candidates": per}
 
 
 def api_strategy_overview(q):

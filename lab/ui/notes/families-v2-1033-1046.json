@@ -1,5 +1,5 @@
 {
-  "holdout": "De eenmalige hold-out-test (epochs 1047–1051) met 3 vooraf vastgelegde kandidaten volgt.",
+  "holdout": "De eenmalige hold-out-test (epochs 1047–1051) is gedraaid: geen kandidaat haalt de lat; de uitslag staat hieronder per kandidaat.",
   "points": [
     "F7 in omgekeerde pools, tp4_T600 in organische pools op 0,5 SOL: de robuuste maat (de slechtste van vertraging 2 met q 0,5 en vertraging 1 met q 0,9) is +0,75% per trade.",
     "Bij vertraging 3 is die voorsprong weg (≈ 0): F7-reversed werkt alleen als de order binnen 2 slots (~540 ms) gevuld wordt.",
@@ -47,5 +47,9 @@
       "d2_q05": 0.41,
       "d3_q09": -0.18
     }
-  ]
+  ],
+  "holdout_eval": "backtests/holdout-1047-1051/holdout_eval.json",
+  "holdout_report": "lab/reports/2026-10-12-holdout.md",
+  "owner_decision": "Besluit eigenaar 12 okt: ADJUST. Paper met K3 (alle pools), gemarkeerd 'niet bewezen'; geen echt geld.",
+  "owner_decision_source": "besluit van de eigenaar, doorgegeven door de coördinator (12 okt)"
 }

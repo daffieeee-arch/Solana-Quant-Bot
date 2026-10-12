@@ -7,9 +7,13 @@ import { mln } from "../format";
 // Top of the Strategieën tab (design v1, "Strategieën — iPhone"): the in-sample banner, the pre-registered hold-out
 // candidates (numbers from the frozen pre-registration, via lab/ui/notes/<run>.json) and the best variant per family.
 interface Candidate { id: string; name: string; variant: string; farm: string; role: string; ev: number | null; ci_lo: number | null; ci_hi: number | null; d1_q09: number | null; d2_q05: number | null; d3_q09: number | null }
+// The one-time hold-out evaluation (holdout_eval.json): the pre-registered main measure on the decision group.
+interface HoldoutResult { source: string; group: string; pick: string | null; highest_mean: string | null;
+  candidates: Record<string, { point: string; mean: number | null; lo: number | null; hi: number | null; filled: number | null }> }
 interface Overview {
   run: { run_id: string; positions: number | null; store: { slot_start?: number; slot_end_exclusive?: number };
-    note: { holdout: string; points: string[]; phase: string; candidates: Candidate[]; candidates_source: string } | null } | null;
+    note: { holdout: string; points: string[]; phase: string; candidates: Candidate[]; candidates_source: string;
+      holdout_result: HoldoutResult | null; owner_decision: string; owner_decision_source: string; holdout_report: string } | null } | null;
   regime: string | null; regimes: string[];
   families: { family: string; segment: string | null; variant: string; mean_ret: number; ci_lo: number | null; ci_hi: number | null; n: number }[];
 }
@@ -18,17 +22,16 @@ const REGIME: Record<string, string> = { "270ms": "~270 ms (vanaf 1037)", "320ms
 const pctS = (v: number | null | undefined, digits = 2) =>
   v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("nl-NL", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
 
-function CiBar({ c, lo, hi, main }: { c: Candidate; lo: number; hi: number; main: boolean }) {
+function CiBar({ ev, ciLo, ciHi, lo, hi, band }: { ev: number | null; ciLo: number | null; ciHi: number | null; lo: number; hi: number; band: string }) {
   const x = (v: number) => `${(((v - lo) / (hi - lo)) * 100).toFixed(1)}%`;
   return (
-    <div className="relative h-[18px]" aria-hidden="true">
+    <div className="relative h-[18px] grow" aria-hidden="true">
       <div className="absolute inset-x-0 top-2 h-0.5 bg-track" />
       <div className="absolute top-0.5 w-px h-3.5 bg-[#4A5568]" style={{ left: x(0) }} />
-      {c.ci_lo != null && c.ci_hi != null && (
-        <div className="absolute top-[5px] h-2 rounded" style={{ left: x(c.ci_lo), width: `calc(${x(c.ci_hi)} - ${x(c.ci_lo)})`,
-          background: main ? "color-mix(in srgb, var(--accent) 55%, transparent)" : c.ci_lo > 0 ? "color-mix(in srgb, var(--accent) 35%, transparent)" : "rgba(142,153,173,0.35)" }} />
+      {ciLo != null && ciHi != null && (
+        <div className="absolute top-[5px] h-2 rounded" style={{ left: x(ciLo), width: `calc(${x(ciHi)} - ${x(ciLo)})`, background: band }} />
       )}
-      {c.ev != null && <div className="absolute top-[3px] w-3 h-3 -ml-1.5 rounded-full bg-fg border-2 border-bg" style={{ left: x(c.ev) }} />}
+      {ev != null && <div className="absolute top-[3px] w-3 h-3 -ml-1.5 rounded-full bg-fg border-2 border-bg" style={{ left: x(ev) }} />}
     </div>
   );
 }
@@ -49,7 +52,11 @@ export default function StrategyOverview() {
   const { run } = data, note = run.note;
   const ep = (s?: number) => (s == null ? "?" : Math.floor(s / 432000));
   const cands = note?.candidates ?? [];
-  const lo = Math.min(-0.5, ...cands.map((c) => c.ci_lo ?? 0)), hi = Math.max(2, ...cands.map((c) => c.ci_hi ?? 0));
+  const ho = note?.holdout_result ?? null;
+  const hoOf = (id: string) => ho?.candidates[id] ?? null;
+  const lo = Math.min(-0.5, ...cands.flatMap((c) => [c.ci_lo ?? 0, hoOf(c.id)?.lo ?? 0]));
+  const hi = Math.max(2, ...cands.flatMap((c) => [c.ci_hi ?? 0, hoOf(c.id)?.hi ?? 0]));
+  const failed = !!ho && ho.pick == null;
   const maxAbs = Math.max(1e-9, ...data.families.map((f) => Math.abs(f.mean_ret * 100)));
 
   return (
@@ -60,8 +67,9 @@ export default function StrategyOverview() {
           <span className="text-xs text-muted">Toernooi {run.run_id.replace(/-\d+-\d+$/, "")}{run.positions ? ` · ${mln(run.positions)} posities` : ""}</span>
         </div>
         {note?.phase && (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-accent-soft text-accent-fg text-xs font-bold whitespace-nowrap">
-            <span className="w-[7px] h-[7px] rounded-full bg-accent" />{note.phase}
+          <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-bold whitespace-nowrap",
+            failed ? "bg-sell-soft text-sell" : ho ? "bg-buy-soft text-buy" : "bg-accent-soft text-accent-fg")}>
+            <span className={cn("w-[7px] h-[7px] rounded-full", failed ? "bg-sell-strong" : ho ? "bg-buy-strong" : "bg-accent")} />{note.phase}
           </span>
         )}
       </div>
@@ -70,6 +78,13 @@ export default function StrategyOverview() {
         <p className="m-0">Ontwikkeldata {ep(run.store.slot_start)}–{ep(run.store.slot_end_exclusive == null ? undefined : run.store.slot_end_exclusive - 1)}, in-sample, basiskosten. <b>Dit is geen winstbewijs.</b>{note?.holdout ? ` ${note.holdout}` : ""}</p>
         {!!note?.points.length && <ul className="m-0 pl-4 list-disc">{note.points.map((p) => <li key={p}>{p}</li>)}</ul>}
       </div>
+
+      {note?.owner_decision && (
+        <div className="px-3 py-2.5 rounded-xl bg-accent-soft border border-accent-line text-xs leading-relaxed grid gap-0.5">
+          <span className="font-bold text-accent-fg">{note.owner_decision}</span>
+          {note.owner_decision_source && <span className="text-muted">Bron: {note.owner_decision_source}{note.holdout_report ? `; uitslag in ${note.holdout_report}` : ""}.</span>}
+        </div>
+      )}
 
       <div className="grid gap-3 lg:grid-cols-2 lg:items-start">
         {!!cands.length && (
@@ -80,16 +95,37 @@ export default function StrategyOverview() {
                 <div className="flex items-center gap-2 min-w-0">
                   <span className={cn("num text-xs font-semibold px-[7px] py-[3px] rounded-md", i === 0 ? "bg-accent text-on-accent" : "bg-surface-2 text-[#CBD3E1]")}>{c.id}</span>
                   <span className="font-bold text-sm truncate">{c.name}</span>
-                  <span className={cn("ml-auto num text-lg font-semibold", (c.ev ?? 0) > 0 ? "text-buy" : "text-sell")}>{pctS(c.ev)}</span>
+                  <span className="ml-auto text-[11px] text-muted">dev</span>
+                  <span className={cn("num text-lg font-semibold", ho ? "text-fg-2" : (c.ev ?? 0) > 0 ? "text-buy" : "text-sell")}>{pctS(c.ev)}</span>
                 </div>
-                <CiBar c={c} lo={lo} hi={hi} main={i === 0} />
+                <div className="flex items-center gap-2">
+                  <span className="w-16 shrink-0 text-[11px] text-muted">dev</span>
+                  <CiBar ev={c.ev} ciLo={c.ci_lo} ciHi={c.ci_hi} lo={lo} hi={hi}
+                    band={i === 0 ? "color-mix(in srgb, var(--accent) 55%, transparent)" : (c.ci_lo ?? 0) > 0 ? "color-mix(in srgb, var(--accent) 35%, transparent)" : "rgba(142,153,173,0.35)"} />
+                </div>
                 <div className="flex justify-between text-[11px] text-muted"><span className="num">CI {pctS(c.ci_lo)} … {pctS(c.ci_hi)}</span><span>{c.role}</span></div>
+                {hoOf(c.id) && (() => {
+                  const h = hoOf(c.id)!;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <span className="w-16 shrink-0 text-[11px] text-fg-2 font-semibold">hold-out</span>
+                        <CiBar ev={h.mean} ciLo={h.lo} ciHi={h.hi} lo={lo} hi={hi}
+                          band={(h.lo ?? 0) > 0 ? "color-mix(in srgb, var(--buy-strong) 55%, transparent)" : "color-mix(in srgb, var(--sell-strong) 45%, transparent)"} />
+                      </div>
+                      <div className="flex justify-between gap-2 text-[11px]">
+                        <span className={cn("num font-semibold", (h.lo ?? 0) > 0 ? "text-buy" : (h.hi ?? 0) < 0 ? "text-sell" : (h.mean ?? 0) < 0 ? "text-sell" : "text-fg-2")}>{pctS(h.mean)} <span className="text-muted font-normal">[{pctS(h.lo)} … {pctS(h.hi)}]</span></span>
+                        <span className="text-muted num">{ho!.group} · {h.filled?.toLocaleString("nl-NL")} trades</span>
+                      </div>
+                    </>
+                  );
+                })()}
                 <div className="flex gap-1.5 flex-wrap">
                   <Pill v={c.d1_q09} label="d1" /><Pill v={c.d2_q05} label="d2" /><Pill v={c.d3_q09} label="d3" />
                 </div>
               </div>
             ))}
-            <p className="m-0 text-[11px] text-muted">Per trade, na kosten. Hoofdmaat: de slechtste van d2 (q 0,5) en d1 (q 0,9); d3 (q 0,9) is de robuustheidstoets. Bron: {note?.candidates_source}.</p>
+            <p className="m-0 text-[11px] text-muted">Per trade, na kosten. Hoofdmaat: de slechtste van d2 (q 0,5) en d1 (q 0,9); d3 (q 0,9) is de robuustheidstoets. Bron dev: {note?.candidates_source}.{ho ? ` Bron hold-out: ${ho.source} (eenmalige test, epochs 1047–1051, deel ${ho.group}).` : ""}</p>
           </section>
         )}
 
