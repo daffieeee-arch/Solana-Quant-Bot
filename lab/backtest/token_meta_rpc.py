@@ -8,6 +8,9 @@ symbol and uri come from the Metaplex metadata account or, for a Token-2022 mint
 TokenMetadata extension. Rows go to <root>/rpc/token_meta/part-*.parquet (the token_meta columns,
 source rpc_metaplex / rpc_token2022), which `backtest.token_meta --recorder <root>` reads.
 
+A UI lookup only, never a strategy input: names, symbols and uris must not feed signals, filters
+or parameters (a build over all chunks also reads epochs 1047-1051, the hold-out).
+
 Paid Triton usage ($10 per million calls; ~1,700 new reversed pools a day): it runs only with
 --enable and LAB_TRITON_RPC_URL set (the URL holds the token: it is never printed or logged), and
 stops for the UTC day at --max-calls-per-day (state in <root>/rpc/state.json).
@@ -175,67 +178,116 @@ def lookup(url, mint, call=rpc_accounts):
 # ----------------------------------------------------------------------------- the loop
 
 
-def new_reversed_tokens(root, con=None):
-    """(mint, first slot) of the quote tokens of reversed pools in the recorder's segments."""
-    con = con or duckdb.connect()
-    sels = []
-    for table in ("pump_amm/CreatePoolEvent", "pool_creations"):
-        files = sorted(glob.glob(os.path.join(root, "segments", "*", table, "*.parquet")))
-        if files:
-            sels.append(f"SELECT quote_mint AS mint, slot FROM read_parquet({files!r}, union_by_name = true) WHERE base_mint = '{WSOL}'")
-    if not sels:
-        return []
-    return con.execute(f"SELECT mint, min(slot) FROM ({' UNION ALL '.join(sels)}) GROUP BY 1 ORDER BY 2").fetchall()
+def _segments_after(root, after_seq):
+    """(seq, dir) of complete recorder segments (with _segment.json) after after_seq, in order."""
+    out = []
+    for meta in glob.glob(os.path.join(root, "segments", "*", "_segment.json")):
+        d = os.path.dirname(meta)
+        name = os.path.basename(d)
+        if name.isdigit() and int(name) > after_seq:
+            out.append((int(name), d))
+    return sorted(out)
 
 
-def known_mints(root, con=None):
-    con = con or duckdb.connect()
-    files = sorted(glob.glob(os.path.join(root, "segments", "*", "token_meta", "*.parquet"))
-                   + glob.glob(os.path.join(root, "rpc", "token_meta", "*.parquet")))
-    if not files:
-        return set()
-    return {r[0] for r in con.execute(f"SELECT DISTINCT mint FROM read_parquet({files!r}, union_by_name = true)").fetchall()}
+def _read(con, dirs, table, select):
+    files = sorted(f for d in dirs for f in glob.glob(os.path.join(d, table, "*.parquet")))
+    return con.execute(f"SELECT {select} FROM read_parquet({files!r}, union_by_name = true)").fetchall() if files else []
 
 
-def run_once(root, url, max_calls, call=rpc_accounts, log=print):
-    """Look up every new reversed-pool token not named yet; returns the rows written."""
-    os.makedirs(os.path.join(root, "rpc", "token_meta"), exist_ok=True)
-    state_path = os.path.join(root, "rpc", "state.json")
-    state = json.load(open(state_path)) if os.path.exists(state_path) else {}
-    today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
-    if state.get("day") != today:
-        state = {"day": today, "calls": 0, "tried": state.get("tried", [])}
-    tried = set(state["tried"])
-    con = duckdb.connect()
-    have = known_mints(root, con) | tried
+def new_reversed_tokens(dirs, con):
+    """(mint, first slot) of the quote tokens of reversed pools in these segment directories."""
     rows = []
-    for mint, slot in new_reversed_tokens(root, con):
-        if mint in have:
-            continue
-        if state["calls"] >= max_calls:
-            log(f"daily RPC cap reached ({max_calls} calls): stopped until the next UTC day")
-            break
-        state["calls"] += 1
-        tried.add(mint)
-        try:
-            x = lookup(url, mint, call)
-        except RuntimeError as e:
-            log(str(e))
-            tried.discard(mint)
-            break
-        if x:
-            src, ua, name, symbol, uri = x
-            rows.append({"slot": slot, "tx_index": 0, "signature": None, "outer_ix": 0, "inner_ix": 0, "source": src,
-                         "mint": mint, "name": name, "symbol": symbol, "uri": uri, "update_authority": ua})
+    for table in ("pump_amm/CreatePoolEvent", "pool_creations"):
+        rows += [r for r in _read(con, dirs, table, f"quote_mint, slot, base_mint = '{WSOL}'") if r[2]]
+    first = {}
+    for mint, slot, _ in rows:
+        first[mint] = min(slot, first.get(mint, slot))
+    return sorted(first.items(), key=lambda x: (x[1], x[0]))
+
+
+TRIED_MAX = 100_000  # mints remembered as looked up (the oldest go first)
+
+
+def _save_state(path, state):
+    with open(path + ".tmp", "w") as f:
+        json.dump(state, f)
+    os.replace(path + ".tmp", path)
+
+
+def _write_rows(root, rows):
     if rows:
         path = os.path.join(root, "rpc", "token_meta", f"part-{int(time.time() * 1000)}.parquet")
         pq.write_table(pa.Table.from_pylist(rows, schema=SCHEMA), path + ".tmp")
         os.replace(path + ".tmp", path)
-    state["tried"] = sorted(tried)[-100_000:]
-    with open(state_path + ".tmp", "w") as f:
-        json.dump(state, f)
-    os.replace(state_path + ".tmp", state_path)
+
+
+def run_once(root, url, max_calls, call=rpc_accounts, log=print):
+    """Look up the tokens of new reversed pools in segments not read yet (state.json keeps the last
+    segment read, the UTC day's call count and the mints tried). The call count is saved after every
+    call and the names found so far are written even when a lookup fails, so a crash or a restart
+    never spends calls twice. Returns the rows written."""
+    os.makedirs(os.path.join(root, "rpc", "token_meta"), exist_ok=True)
+    state_path = os.path.join(root, "rpc", "state.json")
+    state = json.load(open(state_path)) if os.path.exists(state_path) else {}
+    today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    state.setdefault("tried", [])
+    state.setdefault("last_seq", -1)
+    if state.get("day") != today:
+        state.update(day=today, calls=0)
+    tried = list(state["tried"])  # insertion order: the oldest are dropped first
+    tried_set = set(tried)
+    con = duckdb.connect()
+    segs = _segments_after(root, state["last_seq"])
+    dirs = [d for _, d in segs]
+    named = {r[0] for r in _read(con, dirs, "token_meta", "mint")}
+    named |= {r[0] for r in _read(con, [os.path.join(root, "rpc")], "token_meta", "mint")}
+    rows = []
+    stopped = False
+    try:
+        for mint, slot in new_reversed_tokens(dirs, con):
+            if mint in named or mint in tried_set:
+                continue
+            if state["calls"] >= max_calls:
+                log(f"daily RPC cap reached ({max_calls} calls): stopped until the next UTC day")
+                stopped = True
+                break
+            state["calls"] += 1
+            tried.append(mint)
+            tried_set.add(mint)
+            state["tried"] = tried[-TRIED_MAX:]
+            _save_state(state_path, state)  # every paid call is counted before its answer is used
+            try:
+                x = lookup(url, mint, call)
+            except Exception as e:  # noqa: BLE001 - the message could carry the URL: only the class
+                log(f"lookup failed: {e.__class__.__name__}" if not isinstance(e, RuntimeError) else str(e))
+                tried.pop()  # asked again in a later pass (the call stays counted)
+                tried_set.discard(mint)
+                stopped = True
+                break
+            if x:
+                src, ua, name, symbol, uri = x
+                rows.append({"slot": slot, "tx_index": 0, "signature": None, "outer_ix": 0, "inner_ix": 0, "source": src,
+                             "mint": mint, "name": name, "symbol": symbol, "uri": uri, "update_authority": ua})
+        if not stopped and segs:
+            state["last_seq"] = segs[-1][0]  # all tokens of these segments were handled
+    finally:
+        _write_rows(root, rows)
+        state["tried"] = tried[-TRIED_MAX:]
+        _save_state(state_path, state)
     return len(rows)
+
+
+def run_follow(root, url, max_calls, interval, once=run_once, log=print, sleep=time.sleep, passes=None):
+    """One pass per interval; a failing pass is logged (class only) and the next one follows."""
+    n = 0
+    while passes is None or n < passes:
+        n += 1
+        try:
+            log(f"{once(root, url, max_calls, log=log)} names written")
+        except Exception as e:  # noqa: BLE001
+            log(f"pass failed: {e.__class__.__name__}")
+        if passes is None or n < passes:
+            sleep(interval)
 
 
 def main():
@@ -251,12 +303,11 @@ def main():
         raise SystemExit("off by default: pass --enable (paid Triton RPC calls; the owner's OK)")
     if not url:
         raise SystemExit("set LAB_TRITON_RPC_URL (it holds the token: never put it on the command line)")
-    while True:
-        n = run_once(a.root, url, a.max_calls_per_day, log=lambda m: print(time.strftime("%H:%M:%S"), m, flush=True))
-        print(time.strftime("%H:%M:%S"), f"{n} names written", flush=True)
-        if not a.follow:
-            break
-        time.sleep(a.interval)
+    log = lambda m: print(time.strftime("%H:%M:%S"), m, flush=True)  # noqa: E731
+    if a.follow:
+        run_follow(a.root, url, a.max_calls_per_day, a.interval, log=log)
+    else:
+        log(f"{run_once(a.root, url, a.max_calls_per_day, log=log)} names written")
 
 
 if __name__ == "__main__":
