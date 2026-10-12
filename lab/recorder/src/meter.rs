@@ -111,6 +111,13 @@ impl Meter {
         }
     }
 
+    /// Close the running minute's usage (it goes into the next segment) and save the state, without
+    /// moving the clock: the day, `spent` and `stopped` stay exactly as they are.
+    pub fn flush(&mut self) -> Result<()> {
+        self.roll();
+        self.save()
+    }
+
     pub fn save(&self) -> Result<()> {
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_vec_pretty(&self.state())?)?;
@@ -242,6 +249,20 @@ mod tests {
         assert_eq!(m.tick(T0 + 60).unwrap(), Decision::Continue);
         m.add("tx_new_reversed", 1_500_000);
         assert!(matches!(m.tick(T0 + 120).unwrap(), Decision::Stop(_)));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn flush_closes_the_minute_without_moving_the_day() {
+        let root = tmp("meter-flush");
+        let late = T0 + 86_400 - (T0 % 86_400) - 20; // 20 s before the end of the UTC day
+        let mut m = Meter::load(&root, 25_000_000_000, 1.0, late).unwrap();
+        m.add("tx", 100);
+        m.flush().unwrap();
+        assert!(m.take_usage().iter().any(|r| r["stream"] == "tx" && r["bytes"] == 100));
+        assert_eq!((m.day, m.spent, m.stopped), (day_of(late), 100, false));
+        let saved = Meter::load(&root, 25_000_000_000, 1.0, late + 5).unwrap();
+        assert_eq!(saved.spent, 100);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

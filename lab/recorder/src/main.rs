@@ -201,12 +201,29 @@ fn unix_ns() -> u64 {
 enum Exit {
     Stop(String),
     Shutdown,
-    Disconnected(String, bool),
+    Disconnected(String),
+}
+
+/// What one session reached, kept by the caller also when the session ends with an error.
+#[derive(Default)]
+struct SessionState {
+    /// The main subscription was accepted.
+    subscribed: bool,
+    /// At least one update arrived on the main stream.
+    got_data: bool,
 }
 
 /// One connection: subscribe (resuming after the last closed slot when `resume`), then process
 /// updates until the stream breaks, the watchdog fires, the budget stops us or we are told to stop.
-async fn session(rec: &mut Recorder, a: &Args, files: &mut Files, endpoint: &str, resume: bool, deadline: Option<Instant>) -> Result<Exit> {
+async fn session(
+    rec: &mut Recorder,
+    a: &Args,
+    files: &mut Files,
+    endpoint: &str,
+    resume: bool,
+    deadline: Option<Instant>,
+    st: &mut SessionState,
+) -> Result<Exit> {
     let token = std::env::var("LAB_TRITON_X_TOKEN").ok();
     let mut client = GeyserGrpcClient::build_from_shared(endpoint.to_owned())?
         .x_token(token)?
@@ -223,15 +240,29 @@ async fn session(rec: &mut Recorder, a: &Args, files: &mut Files, endpoint: &str
     if !resume {
         main_req.from_slot = None;
     }
+    // Resume from the slot we need, or from the start of the server's replay window when that
+    // begins later (the slots in between are a recorded gap). Unknown window: try the slot itself.
+    if let Some(wanted) = main_req.from_slot {
+        match client.subscribe_replay_info().await {
+            Ok(info) => {
+                if let Some(first) = info.first_available.filter(|first| wanted < *first) {
+                    log::warn!("replay window starts at slot {first}: slots {wanted}..{} cannot be replayed", first - 1);
+                    rec.note_replay_gap(unix(), wanted, first);
+                    main_req.from_slot = Some(first);
+                }
+            }
+            Err(e) => log::warn!("replay info unavailable ({e}); resuming from slot {wanted}"),
+        }
+    }
     log::info!("subscribing: {} from slot {:?}", rec.active.summary(), main_req.from_slot);
     let (mut sink, mut stream) = client.subscribe_with_request(Some(main_req)).await.context("subscribe")?;
     // The vault stream is its own subscription on the same connection (its own data slice).
     let (mut vsink, mut vstream) = client.subscribe_with_request(Some(vault_req)).await.context("subscribe vaults")?;
+    st.subscribed = true;
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let mut last_main = Instant::now();
     let mut last_reload = Instant::now();
-    let mut got_data = false;
     // Backfill subscriptions (one per new probe, same connection): their updates tagged with the
     // backfill id; None marks a stream's end. Each is closed when its replay reached to_slot.
     let mut backfills: SelectAll<BoxStream<'static, (String, Option<Result<SubscribeUpdate, Status>>)>> = SelectAll::new();
@@ -252,21 +283,21 @@ async fn session(rec: &mut Recorder, a: &Args, files: &mut Files, endpoint: &str
             },
             m = stream.next() => match m {
                 Some(Ok(u)) => {
-                    got_data = true;
+                    st.got_data = true;
                     last_main = Instant::now();
                     rec.on_update(u, unix_ns())?;
                 }
-                Some(Err(status)) => return Ok(Exit::Disconnected(format!("main stream: {status}"), got_data)),
-                None => return Ok(Exit::Disconnected("main stream ended".into(), got_data)),
+                Some(Err(status)) => return Ok(Exit::Disconnected(format!("main stream: {status}"))),
+                None => return Ok(Exit::Disconnected("main stream ended".into())),
             },
             m = vstream.next() => match m {
                 Some(Ok(u)) => rec.on_update(u, unix_ns())?,
-                Some(Err(status)) => return Ok(Exit::Disconnected(format!("vault stream: {status}"), got_data)),
-                None => return Ok(Exit::Disconnected("vault stream ended".into(), got_data)),
+                Some(Err(status)) => return Ok(Exit::Disconnected(format!("vault stream: {status}"))),
+                None => return Ok(Exit::Disconnected("vault stream ended".into())),
             },
             _ = tick.tick() => {
                 if last_main.elapsed() > Duration::from_secs(WATCHDOG_SECS) {
-                    return Ok(Exit::Disconnected(format!("no update for {WATCHDOG_SECS} s"), got_data));
+                    return Ok(Exit::Disconnected(format!("no update for {WATCHDOG_SECS} s")));
                 }
                 if deadline.is_some_and(|d| Instant::now() >= d) {
                     return Ok(Exit::Shutdown);
@@ -347,6 +378,16 @@ async fn run(a: Args) -> Result<i32> {
         );
         return Ok(0);
     }
+    // One recorder per root: two would share the budget (each meters on its own) and collide on
+    // segment numbers. The lock lives as long as the process.
+    let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(a.root.join("lock"))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => {
+            bail!("another recorder holds {}: one recorder per root (budget and segment numbers)", a.root.join("lock").display())
+        }
+        Err(std::fs::TryLockError::Error(e)) => return Err(e).context("lock the root"),
+    }
     if meter.stopped {
         log::error!("today's budget is spent ({:.2} GB of {:.2} GB); not starting before the next UTC day", meter.spent as f64 / GB, cap as f64 / GB);
         return Ok(EXIT_BUDGET);
@@ -370,14 +411,18 @@ async fn run(a: Args) -> Result<i32> {
     let resume_from = a.from_slot.map(|s| s.saturating_sub(1)).or(last);
     let mut rec = Recorder::new(cfg, plugin, segs, meter, watch, resume_from, a.close_lag);
     let deadline = (a.max_runtime_secs > 0).then(|| Instant::now() + Duration::from_secs(a.max_runtime_secs));
+    // failures: sessions in a row without data (transport errors included), for the backoff and
+    // giving up. resume_failures: sessions whose resume subscription was accepted but brought no
+    // update; only those make the recorder drop from_slot (transport errors never do: the server
+    // may still replay the outage once it is reachable).
     let mut failures = 0u32;
+    let mut resume_failures = 0u32;
     loop {
-        // After three failed resumes the server probably no longer has those slots: continue
-        // live; the gap shows in the segment's reconnects and in the reconciliation.
-        let resume = failures < 3;
-        let exit = match session(&mut rec, &a, &mut files, &endpoint, resume, deadline).await {
+        let resume = resume_failures < 3;
+        let mut st = SessionState::default();
+        let exit = match session(&mut rec, &a, &mut files, &endpoint, resume, deadline, &mut st).await {
             Ok(e) => e,
-            Err(e) => Exit::Disconnected(format!("{e:#}"), false),
+            Err(e) => Exit::Disconnected(format!("{e:#}")),
         };
         match exit {
             Exit::Stop(reason) => {
@@ -385,12 +430,13 @@ async fn run(a: Args) -> Result<i32> {
                 return Ok(EXIT_BUDGET);
             }
             Exit::Shutdown => {
+                rec.meter.flush()?; // the last minute's usage into the last segment, and budget.json
                 rec.close_segment(Some("shutdown"))?;
                 log::info!("shut down after slot {:?}", rec.slots.last_closed);
                 return Ok(0);
             }
-            Exit::Disconnected(reason, got_data) => {
-                failures = if got_data { 1 } else { failures + 1 };
+            Exit::Disconnected(reason) => {
+                count_session(&st, resume, &mut failures, &mut resume_failures);
                 let note = if resume { reason } else { format!("{reason} (resumed without from_slot)") };
                 log::warn!("disconnected: {note}");
                 rec.on_disconnect(unix(), &note);
@@ -404,6 +450,21 @@ async fn run(a: Args) -> Result<i32> {
     }
 }
 
+/// Bookkeeping after a session that broke off. Data resets both counts (backoff 2 s). A session
+/// without data adds to `failures`; it adds to `resume_failures` only when its resume subscription
+/// was accepted, so transport errors (connect, DNS, TLS, a refused subscribe) never cost from_slot.
+fn count_session(st: &SessionState, resume: bool, failures: &mut u32, resume_failures: &mut u32) {
+    if st.got_data {
+        *failures = 1;
+        *resume_failures = 0;
+    } else {
+        *failures += 1;
+        if st.subscribed && resume {
+            *resume_failures += 1;
+        }
+    }
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = parse_args()?;
@@ -412,4 +473,33 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().thread_name("lab-recorder").build()?;
     let code = runtime.block_on(run(args))?;
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{count_session, SessionState};
+
+    fn after(states: &[(bool, bool)]) -> (u32, u32) {
+        let (mut failures, mut resume_failures) = (0, 0);
+        for &(subscribed, got_data) in states {
+            let resume = resume_failures < 3;
+            count_session(&SessionState { subscribed, got_data }, resume, &mut failures, &mut resume_failures);
+        }
+        (failures, resume_failures)
+    }
+
+    #[test]
+    fn transport_errors_never_cost_the_resume() {
+        // A long outage: connect or subscribe fails 15 times in a row; from_slot stays.
+        let (failures, resume_failures) = after(&[(false, false); 15]);
+        assert_eq!((failures, resume_failures), (15, 0));
+    }
+
+    #[test]
+    fn three_accepted_resumes_without_data_drop_from_slot_and_data_resets() {
+        assert_eq!(after(&[(true, false), (false, false), (true, false), (true, false)]), (4, 3));
+        assert_eq!(after(&[(true, false), (true, false), (true, true)]), (1, 0));
+        // Once from_slot is dropped (resume = false), live sessions without data do not count again.
+        assert_eq!(after(&[(true, false); 5]).1, 3);
+    }
 }

@@ -206,6 +206,9 @@ impl Files {
         if w.is_none() && now.0.is_some() {
             return None; // present but unreadable (being written): try again later
         }
+        if now.0.is_none() && self.mtimes.0.is_some() {
+            log::warn!("watchlist {} is gone: only open-position pools stay on the filter", self.watchlist.display());
+        }
         self.mtimes = now;
         Some(Watch::parse(w.as_ref(), read_json(&self.open_pools).as_ref()))
     }

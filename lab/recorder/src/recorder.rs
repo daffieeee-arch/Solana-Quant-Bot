@@ -506,6 +506,14 @@ impl Recorder {
         })
     }
 
+    /// The server's replay window starts after the slot we wanted to resume from: those slots are
+    /// lost; recorded with the next segment's reconnects.
+    pub fn note_replay_gap(&mut self, now_unix: u64, wanted: u64, first_available: u64) {
+        self.reconnects.push(json!({"unix": now_unix, "after_slot": self.slots.last_closed, "replay_from": first_available,
+                                    "lost_slots": [wanted, first_available - 1],
+                                    "reason": format!("replay window starts at slot {first_available}")}));
+    }
+
     pub fn on_disconnect(&mut self, now_unix: u64, reason: &str) {
         let running: Vec<String> = self.backfills.iter().filter(|(_, b)| !b.done).map(|(id, _)| id.clone()).collect();
         for id in running {
@@ -594,16 +602,20 @@ impl Recorder {
         match self.meter.tick(now_unix)? {
             Decision::Stop(reason) => {
                 self.meter.note(format!("hard stop: {reason}"));
-                self.meter.tick(now_unix + 60)?; // flush this minute's usage into the last segment
+                self.meter.flush()?; // this minute's usage goes into the last segment
                 self.close_segment(Some("hard stop"))?;
                 return Ok(Action::Stop(reason));
             }
             Decision::Downscale(reason) => {
-                if self.level < DOWNSCALE.len() {
+                // Step over streams that are off already (not configured, or dropped by the
+                // filter): one decision drops one stream that is actually on.
+                while self.level < DOWNSCALE.len() {
                     self.level += 1;
-                    self.meter.note(format!("downscale to level {}: {} off ({reason})", self.level, DOWNSCALE[self.level - 1]));
                     let f = self.filter(self.level);
-                    return self.change(f, now_unix);
+                    if f != self.active {
+                        self.meter.note(format!("downscale to level {}: {} off ({reason})", self.level, DOWNSCALE[self.level - 1]));
+                        return self.change(f, now_unix);
+                    }
                 }
                 if !self.at_last_level_noted {
                     self.at_last_level_noted = true;
@@ -748,7 +760,8 @@ mod tests {
             other => panic!("expected a resubscribe, got {other:?}"),
         };
         assert!(main.accounts.is_empty() && !vaults.accounts.is_empty()); // pool accounts off first
-        assert_eq!(r.active.level, 1);
+        // tx_pump_creates (off in this config) is stepped over in the same tick.
+        assert_eq!(DOWNSCALE[r.active.level - 1], "pool_accounts");
         // The cap: the last segment is written with the usage and the stop.
         for u in [meta(1002), confirmed(1002), confirmed(1003)] {
             r.on_update(u, 1).unwrap();

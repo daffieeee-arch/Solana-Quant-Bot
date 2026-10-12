@@ -54,6 +54,9 @@ fn message(m: &PMessage) -> Result<VersionedMessage> {
     let instructions = m.instructions.iter().map(instruction).collect::<Result<Vec<_>>>()?;
     // V1 messages (SIMD-0385) carry their compute budget in `config` and have no lookup tables.
     if let Some(c) = &m.config {
+        if !m.versioned {
+            bail!("a message with a v1 config that is not marked versioned (proto change?)");
+        }
         if !m.address_table_lookups.is_empty() {
             bail!("v1 message with address table lookups");
         }

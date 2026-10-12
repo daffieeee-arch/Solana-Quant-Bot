@@ -18,7 +18,7 @@ transactions.
 | `blocks` | block meta | block time, height, tx count per slot (the engine's clock) |
 | `slots` | slot status, `filter_by_commitment` | a slot is written once confirmed (+ `--close-lag`) |
 | `tx_new_reversed` (off by default, `--new-reversed`) | `account_include` [PumpSwap], `account_exclude` 15 generic accounts (protocol and buyback fee recipients, Jupiter v6, a few routers; `watch.rs` `NEW_REVERSED_EXCLUDE`) | direct pool creations, mostly reversed pools (97% of the reversed pools ≥ 150 SOL on a day are created that day). The certain fallback: ~7–8 GB/day with ~100% of direct creations (creation-filter measurement, 1052). The exclusion list also lets through deposits, withdrawals and other non-trade PumpSwap transactions |
-| `pool_creations` (off by default, `--pool-creations`) | owner PumpSwap + memcmp Pool discriminator + memcmp 16 zero bytes at 271 (`protocol_fees`, `creator_fees`), data slice 43..244 | **hypothesis, to verify in the first measuring hour:** both counters are 0 at creation and grow with the first trade, so each new pool gives exactly one update for almost no bytes. Measure updates per hour and whether every new reversed pool appears (compare with OF1's CreatePoolEvents). Every update is written (`pool_creations/`), not deduplicated |
+| `pool_creations` (off by default, `--pool-creations`) | owner PumpSwap + memcmp Pool discriminator + memcmp 16 zero bytes at 271 (`protocol_fees`, `creator_fees`), data slice 43..244 | **hypothesis, to verify in the first measuring hour:** both counters are 0 at creation and grow with the first trade, so each new pool gives exactly one update for almost no bytes. A fee collection probably sets them to 0 again, so collects on existing pools match as well. Measure updates per hour, updates per *distinct* pool, and whether every new reversed pool appears (compare with OF1's CreatePoolEvents). Every update is written (`pool_creations/`), not deduplicated |
 | `tx_pump_creates` (off by default, `--pump-creates`) | `account_required` = [pump.fun, its mint authority `TSLvdd1p…` (PDA "mint-authority")] | every pump.fun create transaction: the CreateEvent (name, symbol, uri) and the Metaplex/Token-2022 metadata it creates (`token_meta/`), for the UI's token names. ~0.1 GB/day; the first stream a downscale drops |
 | `tx_probes` | `account_include` = the recorder's own probe pools | a new WSOL pool becomes a probe (full transactions for `--probe-minutes`, 180) at once when it is created with ≥ `--probe-depth-sol` (120) WSOL, or when its followed WSOL vault reaches that depth. 120, not F7's 150: the trigger sell is the first trade that sees 150, so a switch at 150 comes a minute late (LAB research, watchlist measurement: the F7 watchlist enters at 120 too). Probes are applied within a second (no rate limit): the first F7 trigger comes 0–2 minutes after creation (LAB research smoke test) |
 | `new_vaults` | the WSOL vaults of new reversed pools below the probe depth, for `--fresh-vault-minutes` (60), data slice 64..72 | finds the ~85-SOL pools that become deep later. Their trades before the probe starts are not recorded (the farmer flag of those pools is incomplete) |
@@ -52,9 +52,24 @@ stream, the budget state, the filter level, reconnects, late rows and totals.
 A segment closes after `--segment-slots` (150) slots or `--segment-secs` (60), once no backfill
 is running (it waits at most `--backfill-wait-secs`, 20). A filter change does not close it: its
 `watchlist.json` lists the pools and wallets that every filter inside the segment had. Only whole confirmed slots are written; rows of a slot that is already written are
-counted as late and dropped. After a disconnect the stream resumes with `from_slot` = last written
-slot + 1; after three failed resumes it continues live and the gap shows in `reconnects` and in
-the reconciliation.
+counted as late and dropped (`late_rows` counts rows: a late transaction's arrival row counts
+too). A skipped slot sends no block meta and no confirmed status, so the live `blocks/` table has no
+`skipped` rows. `paper.reconcile` compares the event tables per slot range, so a missing slot
+number is not a gap there.
+
+**Resume after a disconnect.**
+- The stream resumes with `from_slot` = last written slot + 1.
+- Before resuming, the recorder asks the server's replay window (`SubscribeReplayInfo`). When it
+  starts later (`first_available`), it resumes from there, and the slots in between are recorded
+  in `reconnects` (`lost_slots`).
+- Only sessions whose resume subscription was accepted but brought no update count as failed
+  resumes. After three of them the recorder continues live. Connect, DNS, TLS or subscribe errors
+  never drop `from_slot`: once the server is reachable again it can replay the outage.
+- After 20 sessions in a row without data the recorder gives up (exit 1).
+
+**One recorder per root.** The recorder holds an exclusive lock on `<root>/lock` (not in a dry run).
+A second recorder on the same root stops with a message: two would share the budget and collide on
+segment numbers.
 
 ## Budget
 
