@@ -12,9 +12,11 @@ on:
 permissions:
   contents: read
 
+# A push to main gets its own group (per commit) and is never cancelled, so every main commit is
+# really scanned; a cancelled run uploads an empty analysis (rules 0). PR runs still replace each other.
 concurrency:
-  group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  group: codeql-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
