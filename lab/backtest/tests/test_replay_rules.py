@@ -2,9 +2,9 @@
 
 from backtest import replay
 from backtest.costs import Scenario
-from backtest.replay import CurveLeg, Stream, Tau, simulate_curve_position
+from backtest.replay import SEED_POOL, CurveLeg, PoolLeg, Stream, Tau, simulate_curve_position
 from backtest.strategies import TpSlTime
-from backtest.venues import Curve, curve_buy_exact_in, curve_buy_exact_out, curve_sell
+from backtest.venues import Curve, Pool, curve_buy_exact_in, curve_buy_exact_out, curve_sell, pool_sell, pool_sell_capped
 
 SOL = 1_000_000_000
 BASE = Curve(1_073_000_000_000_000 - 400_000_000_000_000, 30 * SOL + 20 * SOL,
@@ -160,3 +160,26 @@ def test_a_graduation_sale_past_the_window_closes_on_its_last_slot():
         replay.set_window_end(old)
     assert (r.exit_reason, r.exit_decision_slot, r.exit_slot, r.seed_pool) == ("window_end", 101, 101, True)
     assert r.proceeds == free.proceeds  # the same seed-pool sale, decided inside the window
+
+
+def test_a_graduation_sale_past_the_window_uses_the_pools_state_on_its_last_slot():
+    """The pool opens on the window's last slot (W - 1): the sale at open + 1 falls at the window end,
+    so the position closes on W - 1 at the pool's last state there, not in the seed pool."""
+    s = BASE
+    l, s = leg_buy(s, 100, 0, "A", s.rt - 1_000_000_000)
+    pool = Pool(100_000_000_000_000, 200 * SOL, 2, 93, 30)  # priced ~5x the seed pool
+    after = Pool(pool.b - 1_000_000_000_000, pool.e + 2 * SOL, 2, 93, 30)
+    pleg = PoolLeg(101, 5, (101, 5, 0, 0), "buy", False, 1_000_000_000_000, 2 * SOL, pool, after, "B")
+    stream = Stream("M", 0, "C", [l], pool_legs=[pleg], pool_open_slot=101, pool="P")
+    rule = TpSlTime(10.0, -10.0, 150, scenario())
+    free = simulate_curve_position(stream, 100, SOL, 1, 0.5, rule, 0.05, Tau("inf"))
+    assert (free.exit_reason, free.seed_pool, free.exit_slot) == ("graduation", False, 102)
+    old = _window(102)
+    try:
+        r = simulate_curve_position(stream, 100, SOL, 1, 0.5, TpSlTime(10.0, -10.0, 150, scenario()), 0.05, Tau("inf"))
+    finally:
+        replay.set_window_end(old)
+    assert (r.exit_reason, r.exit_decision_slot, r.exit_slot) == ("window_end", 101, 101)
+    assert not r.seed_pool and not r.vault_capped
+    assert r.proceeds == pool_sell_capped(after, r.tokens).trader_quote == free.proceeds
+    assert r.proceeds != pool_sell(SEED_POOL, r.tokens).trader_quote
