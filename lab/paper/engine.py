@@ -139,6 +139,8 @@ class Engine:
         self.risk, self.risk_reason, self.risk_minute = None, "not loaded", None
         self.day, self.day_loss = None, 0
         self.minute, self.events_seen, self.last_event, self.last_slot = None, 0, None, None
+        self.slot_block_time = None  # block time of the slot being decided (signal latency)
+        self.slot_arrivals = {}  # (slot, tx_index) -> Event.arrival of the slot being decided (live only)
         self.grad_wait = defaultdict(list)  # pool -> [Open] waiting for open + 1
         self.kept = None  # the pools last written for the recorder
         self.cool = {}  # pool -> slot until which no new entry (risk: pool_cooldown_h after a total loss)
@@ -147,17 +149,21 @@ class Engine:
     # ------------------------------------------------------------------ main loop
 
     def run(self):
-        cur, by_key, bt = None, {}, None
+        cur, by_key, bt, arr = None, {}, None, {}
         for ev in self.feed.events():
             if ev.slot != cur:
                 if cur is not None:
+                    self.slot_arrivals = arr
                     self._end_slot(cur, by_key, bt)
                 self._quiet_entries(ev.slot)
-                cur, by_key, bt = ev.slot, {}, ev.block_time
+                cur, by_key, bt, arr = ev.slot, {}, ev.block_time, {}
             by_key.setdefault((ev.venue, ev.key), []).append(ev.leg)
+            if ev.arrival is not None:
+                arr[(ev.slot, ev.tx_index)] = ev.arrival
             self.events_seen += 1
             self.last_event = f"{ev.slot}:{ev.tx_index}:{ev.outer_ix}:{ev.inner_ix}"
         if cur is not None:
+            self.slot_arrivals = arr
             self._end_slot(cur, by_key, bt)
         self._end_of_data()
         self.j.commit()
@@ -170,6 +176,7 @@ class Engine:
                 self._enter(p, e, [])
 
     def _end_slot(self, slot, by_key, block_time):
+        self.slot_block_time = block_time
         self._clock(slot, block_time)
         # 1. open positions on tokens with events in this slot
         for (venue, key), legs in by_key.items():
@@ -372,11 +379,30 @@ class Engine:
             return
         leg, depth = trig
         farm = "n/a" if venue == "curve" else ("flagged" if self._pool_flagged(key, t) else "organic")
+        lat = self._latency(leg)
         for tp, T in self.variants:
-            self._signal("F7", f"tp{int(tp * 100)}_T{T}", key, venue, orientation, t, (tp, T), int(depth), leg.trader, farm)
+            self._signal("F7", f"tp{int(tp * 100)}_T{T}", key, venue, orientation, t, (tp, T), int(depth), leg.trader, farm,
+                         lat)
         for mkey in self._n2(venue, orientation, key, t, depth):
             for tp, T in self.variants:
-                self._signal("N2_F7", f"tp{int(tp * 100)}_T{T}", mkey, venue, orientation, t, (tp, T), int(depth), None, farm)
+                self._signal("N2_F7", f"tp{int(tp * 100)}_T{T}", mkey, venue, orientation, t, (tp, T), int(depth), None,
+                             farm, lat)
+
+    def _latency(self, leg):
+        """Measured latency of the trigger transaction (live only; replay: None), next to the
+        simulated d: block time of slot t, local receive time (and the server's created_at), receive
+        minus block time, the segment's close (written_unix: when the engine can first see it) minus
+        block time, and d in ms. block_time and written_unix have a 1 s resolution, so one signal is
+        +-1 s; the report's medians and p90 over many signals are the measure. Reporting only."""
+        a = self.slot_arrivals.get((leg.slot, leg.tx))
+        bt = self.slot_block_time
+        if a is None or bt is None or (a[0] is None and a[2] is None):
+            return None
+        received, created, written = a
+        return {"block_time": bt, "received_unix_ns": received, "created_unix_ns": created,
+                "latency_ms": None if received is None else round(received / 1e6 - bt * 1000),
+                "segment_written_unix": written, "segment_lag_ms": None if written is None else (written - bt) * 1000,
+                "d_ms": round(self.d * self.clock.ms_per_slot(leg.slot))}
 
     def _hour_index(self, venue, key, legs, slot):
         h = self.clock.slots(HOUR_MS, slot)
@@ -409,11 +435,11 @@ class Engine:
         mixed = _mix(np.array([_seed(k) for k in keys], dtype=np.uint64) ^ seed)
         return [keys[i] for i in np.argsort(mixed, kind="stable")[:self.n2_k]]
 
-    def _signal(self, family, variant, key, venue, orientation, t, params, depth, trader, farm=None):
-        """farm: the trigger's label (an N2 signal carries its F7 trigger's)."""
+    def _signal(self, family, variant, key, venue, orientation, t, params, depth, trader, farm=None, lat=None):
+        """farm: the trigger's label (an N2 signal carries its F7 trigger's); lat: its arrival (_latency)."""
         b = self.busy.get((family, variant, key))
         row = dict(family=family, variant=variant, key=key, t=t, day=self.day, venue=venue, orientation=orientation,
-                   depth=depth, trigger_trader=trader, farm=farm)
+                   depth=depth, trigger_trader=trader, farm=farm, **(lat or {}))
         if self.farm == "organic" and farm == "flagged":
             return self.j.put("signals", **row, status="skipped", reason="farm flagged")
         if b == "open" or (b is not None and t <= b):
@@ -675,7 +701,7 @@ def load_config(path):
     return hashlib.sha256(raw).hexdigest(), conf
 
 
-def main():
+def main(argv=None):
     from .feed import ReplayFeed
 
     ap = argparse.ArgumentParser()
@@ -693,11 +719,14 @@ def main():
     ap.add_argument("--d", type=int, default=1)
     ap.add_argument("--q", type=float, default=0.5)
     ap.add_argument("--variants", default="", help="e.g. 0.04:600 (default: the F7 grid)")
-    ap.add_argument("--ignore-risk", action="store_true", help="no limits (parity runs)")
+    ap.add_argument("--ignore-risk", action="store_true", help="no limits: replay parity runs only (refused with --config or --live)")
     ap.add_argument("--segments", default="", help="F7 only there, e.g. pool_reversed (default: everywhere)")
     ap.add_argument("--farm", choices=["all", "organic"], default="all", help="organic: skip triggers in farming pools")
     ap.add_argument("--no-backup", action="store_true")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
+    if a.ignore_risk and (a.config or a.live):
+        # A paper run (a config, or live data) always has its risk limits.
+        ap.error("--ignore-risk is for replay parity runs only: not with --config or --live")
     cfg_sha = None
     if a.config:
         cfg_sha, conf = load_config(a.config)

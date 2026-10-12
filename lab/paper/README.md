@@ -41,6 +41,20 @@ entries in a pool after a total loss there). Open positions carry `mark_proceeds
 `mark_pnl` (a sale of the whole position now, after costs); `<journal>/wallet.json` is the UI's
 wallet format marked `"mode": "paper"` (10 SOL plus realized P&L, paper buys and sells).
 
+Measured latency (live only; reporting, no effect on fills or parity): LiveFeed gives every Event
+its transaction's arrival from the segment (`arrivals/`: earliest `received_unix_ns` and the
+server's `created_unix_ns`; `_segment.json`: `written_unix`, when the segment was closed and the
+engine can first see it). Every F7 and N2 signal row journals, for its trigger transaction:
+`block_time` of t, `received_unix_ns`, `created_unix_ns`, `latency_ms` (receive minus block time),
+`segment_written_unix`, `segment_lag_ms` (segment close minus block time) and `d_ms` (the simulated
+d in ms). The daily report adds, per day and trigger (variants and N2 share one): median and p90 of
+both lags and how many were later than d. block_time and written_unix have a 1 s resolution, so
+one row is +-1 s; the medians over many triggers are the measure. Replay runs leave them NULL.
+
+Long live runs keep memory bounded: every 100 segments LiveFeed drops farmer history, curve legs
+of mints quiet for 24 h and backfill dedup keys older than the farmer window; arrivals are read
+per segment and kept only on its Events.
+
 ## Live watchlist
 
 LAB research's #180 state machine (`wallets.watchlist`: F7-reversed in at >= 120 SOL real depth
@@ -66,7 +80,8 @@ Known differences to the backtest, by design:
 
 - N2 draws its match only from tokens that traded earlier in the trigger's hour. The backtest
   (`n2_matches`) draws from the whole hour, but live trading cannot look ahead.
-- Risk limits (`risk.yaml`) apply to F7. `--ignore-risk` turns them off for parity runs.
+- Risk limits (`risk.yaml`) apply to F7. `--ignore-risk` turns them off for replay parity runs
+  only: the engine refuses it with `--config` or `--live`, so a paper run always has its limits.
 - The heartbeat runs on event time.
 
 ```

@@ -13,7 +13,12 @@ import pyarrow.parquet as pq
 
 TABLES = {
     "signals": ("family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, venue TEXT, orientation TEXT, depth INTEGER, "
-                "trigger_trader TEXT, status TEXT, reason TEXT, farm TEXT", "family, variant, key, t"),
+                "trigger_trader TEXT, status TEXT, reason TEXT, farm TEXT, "
+                # Live only (replay: NULL): measured latency of the trigger transaction next to the
+                # simulated d (engine._latency): block time of t, receive time, the server's created_at,
+                # receive - block time, the segment's close and close - block time, d in ms.
+                "block_time INTEGER, received_unix_ns INTEGER, created_unix_ns INTEGER, latency_ms INTEGER, "
+                "segment_written_unix INTEGER, segment_lag_ms INTEGER, d_ms INTEGER", "family, variant, key, t"),
     "orders": ("family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, size INTEGER, status TEXT, "
                "reason TEXT", "family, variant, key, t"),
     "fills": ("family TEXT, variant TEXT, key TEXT, t INTEGER, side TEXT, day TEXT, slot INTEGER, tokens INTEGER, "

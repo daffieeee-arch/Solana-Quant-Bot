@@ -642,7 +642,7 @@ def n4_signals_sql(con, cfg, dev_start, dev_end, sample, clock=None):
           SELECT e.pool, COALESCE(p.mint, p.pool) AS mint, p.orientation, e.slot, e.vault AS depth
           FROM pool e JOIN pools p USING (pool)
           WHERE e.kind = 'boost' AND {pool_universe_sql()} AND e.slot BETWEEN {lo} AND {hi}
-          QUALIFY row_number() OVER (PARTITION BY e.pool, e.slot ORDER BY e.tx_index) = 1)
+          QUALIFY row_number() OVER (PARTITION BY e.pool, e.slot ORDER BY e.tx_index, e.outer_ix, e.inner_ix) = 1)
         SELECT mint, pool, orientation, slot + {N4_CRANK_GAP - 2} AS t, depth FROM c
         ORDER BY hash(pool, slot) LIMIT {int(sample)}""").fetchall()
 

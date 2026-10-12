@@ -2,7 +2,8 @@
 
 Per family and variant: trades, net SOL per trade, win rate, fill rate and the difference to the
 N2 shadow; the stop-rule counter (trades, days, GO / ADJUST / STOP, with a day-bootstrap CI from
-5 days on); the 10 SOL capital simulation (addendum §6); heartbeat and feed gaps.
+5 days on); the 10 SOL capital simulation (addendum §6); heartbeat and feed gaps; the measured
+latency of the live F7 triggers next to the simulated d.
 """
 
 import os
@@ -32,6 +33,30 @@ def _verdict(pnls_by_day, n):
     else:
         v = "ADJUST" if mean > 0 else "STOP"
     return mean, lo, hi, v
+
+
+def _p(xs, q):
+    return int(round(np.percentile(xs, q))) if xs else None
+
+
+def latency_lines(journal, day):
+    """The day's live F7 triggers (each once: its variants and N2 signals share it): receive and
+    segment close minus block time, median and p90, and how many were later than the simulated d.
+    Measured, reporting only; a replay journal has no such rows."""
+    trig = {}
+    for r in journal.rows("signals", "day = ? AND family = 'F7' AND block_time IS NOT NULL", (day,)):
+        trig.setdefault((r["key"], r["t"]), r)
+    lines = ["", "## Latency (live F7 triggers, measured against the simulated d)", ""]
+    if not trig:
+        return lines + ["- no live trigger with arrival data this day (replay journals have none)"]
+    xs = list(trig.values())
+    lines.append(f"- triggers {len(xs)}; simulated d {_p([r['d_ms'] for r in xs], 50)} ms (median)")
+    for label, col in (("receive - block time", "latency_ms"), ("segment close - block time", "segment_lag_ms")):
+        v = [r[col] for r in xs if r[col] is not None]
+        later = sum(1 for r in xs if r[col] is not None and r[col] > r["d_ms"])
+        lines.append(f"- {label}: median {_p(v, 50)} ms, p90 {_p(v, 90)} ms; later than d: {later} of {len(v)}"
+                     if v else f"- {label}: no data")
+    return lines
 
 
 def daily_report(journal, day):
@@ -88,6 +113,7 @@ def daily_report(journal, day):
               "", "## Heartbeat", "",
               f"- minutes with a heartbeat: {sum(1 for b in beats if not b['note'])}; feed gaps: {len(gaps)}"
               + (f" (largest {max(b['gap_slots'] for b in gaps)} slots)" if gaps else "")]
+    lines += latency_lines(journal, day)
     out = os.path.join(journal.dir, day)
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "report.md"), "w") as fh:

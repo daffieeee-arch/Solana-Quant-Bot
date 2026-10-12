@@ -324,6 +324,7 @@ class LiveFeed(Feed):
             self._history(pool, tb, ta, row)
         inside = [r for r in back if meta["first_slot"] <= r[4] <= meta["last_slot"]]
         self.backfill_pending = [r for r in back if r[4] > meta["last_slot"]]
+        arrival = self._arrival_of(c, meta)
         bt = {}
         blocks = c.src("blocks")
         if blocks:
@@ -344,7 +345,7 @@ class LiveFeed(Feed):
                                       "ORDER BY slot, tx_index, outer_ix, inner_ix").fetchall():
                 leg = streams.curve_leg(r[1:])
                 self.curve_hist[r[0]].append(leg)
-                out.append(Event(r[1], r[2], r[3], r[4], bt.get(r[1]), "curve", r[0], leg))
+                out.append(Event(r[1], r[2], r[3], r[4], bt.get(r[1]), "curve", r[0], leg, arrival(r[1], r[2])))
         sql = pool_select(c, "live_pools")
         if sql:
             cols = streams.POOL_COLS.replace(", farmer", "")
@@ -374,16 +375,43 @@ class LiveFeed(Feed):
                     if not seen:
                         self.farmers.add(pool, trader, slot, token_buy, token_amount)
                 leg = streams.pool_leg(tuple(row) + (farmer,), self.ctx.setdefault(pool, {}))
-                out.append(Event(slot, row[2], row[3], row[4], bt.get(slot), "pool", pool, leg))
+                out.append(Event(slot, row[2], row[3], row[4], bt.get(slot), "pool", pool, leg, arrival(slot, row[2])))
         out.sort(key=lambda e: e.order)
         self.usage += [dict(u, seq=seq) for u in meta.get("usage", ())]
         self.stats["segments"] += 1
         if self.stats["segments"] % 100 == 0 and out:  # bounded memory in a long live run
-            last = out[-1].slot
-            self.farmers.prune(last, h24)
-            for m in [m for m, legs in self.curve_hist.items() if legs[-1].slot < last - h24]:
-                del self.curve_hist[m]
+            self._prune(out[-1].slot, h24)
         return out
+
+    def _prune(self, last, h24):
+        """Drop what the farmer window [last - h24, last] no longer needs: farmer history, curve legs of
+        mints quiet for a day, and the backfill dedup keys of older slots. A pool without keys left
+        is treated as before its first backfill again (its recorded rows are no longer tracked)."""
+        self.farmers.prune(last, h24)
+        for m in [m for m, legs in self.curve_hist.items() if legs[-1].slot < last - h24]:
+            del self.curve_hist[m]
+        for pool in list(self.farm_keys):
+            keys = {k for k in self.farm_keys[pool] if k[0] >= last - h24}
+            if keys:
+                self.farm_keys[pool] = keys
+            else:
+                del self.farm_keys[pool]
+
+    def _arrival_of(self, c, meta):
+        """Event.arrival for the segment's transactions: (received_unix_ns, created_unix_ns, the
+        segment's written_unix); a transaction without an arrival row gets (None, None, written)."""
+        arrived, written = self._arrivals(c), meta.get("written_unix")
+        return lambda slot, tx: arrived.get((slot, tx), (None, None)) + (written,)
+
+    def _arrivals(self, c):
+        """{(slot, tx_index): (received_unix_ns, created_unix_ns)} of one segment, the earliest per
+        transaction (it can arrive on more than one stream)."""
+        src = c.src("arrivals")
+        if not src:
+            return {}
+        return {(slot, tx): (received, created) for slot, tx, received, created in self.con.execute(
+            f"""SELECT slot, tx_index, min(received_unix_ns), min({c.col('arrivals', 'created_unix_ns', 'BIGINT')})
+                FROM {src} GROUP BY slot, tx_index""").fetchall()}
 
     def _segments(self):
         """Complete segments from next_seq on (the shadow recorder writes them one by one instead)."""

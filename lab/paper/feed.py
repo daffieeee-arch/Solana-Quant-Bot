@@ -29,6 +29,9 @@ class Event:
     venue: str  # curve | pool
     key: str  # mint (curve) or pool address (pool)
     leg: object  # backtest.replay.CurveLeg or PoolLeg
+    # Live only: (received_unix_ns, created_unix_ns, segment written_unix) of the event's transaction,
+    # from the segment's arrivals/ and _segment.json; None in replay. Reporting only (signal latency).
+    arrival: tuple = None
 
     @property
     def order(self):

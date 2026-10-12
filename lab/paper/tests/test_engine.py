@@ -280,3 +280,15 @@ def test_paper_config_file(tmp_path):
 
     r, why = risk.load(conf["risk_path"])
     assert why is None and (r.size_sol, r.max_open_positions, r.daily_loss_limit_sol, r.pool_cooldown_h) == (0.5, 5, 1.0, 24.0)
+
+
+def test_ignore_risk_is_refused_for_paper_runs(tmp_path, capsys):
+    """A paper run (a config, or live data) always has its risk limits: --ignore-risk is for replay parity only."""
+    conf = os.path.join(os.path.dirname(engine.__file__), "k3-paper-2026-10-12.yaml")
+    for extra in (["--live", str(tmp_path)], ["--config", conf, "--from", "1", "--to", "2"]):
+        with pytest.raises(SystemExit) as e:
+            engine.main(extra + ["--ignore-risk", "--journal", str(tmp_path / "j")])
+        assert e.value.code == 2
+        assert "--ignore-risk is for replay parity runs only" in capsys.readouterr().err
+    assert not (tmp_path / "j").exists()  # refused before anything was opened
+
