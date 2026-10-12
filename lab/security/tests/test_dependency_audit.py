@@ -100,6 +100,13 @@ class Cargo(unittest.TestCase):
         self.assertEqual(len(run_report(findings, [ignore(package="bar")], "cargo")[0]), 1)
         self.assertEqual(len(run_report(findings, [ignore(ecosystem="npm")], "cargo")[0]), 1)
 
+    def test_version_pinned_ignore_covers_only_that_version(self):
+        findings, _ = da.parse_cargo(cargo_report(warnings={"unsound": [
+            {"advisory": {"id": "RUSTSEC-2099-0001", "title": "ub"}, "package": {"name": "foo", "version": v}}
+            for v in ("0.5.10", "0.9.10")]}))
+        failing, _ = run_report(findings, [ignore(version="0.5.10")], "cargo")
+        self.assertEqual([f["version"] for f in failing], ["0.9.10"])
+
     def test_expired_ignore_fails_again(self):
         findings, _ = da.parse_cargo(cargo_report(cargo_vuln("RUSTSEC-2099-0001", "foo")))
         failing, out = run_report(findings, [ignore(review_by="2026-10-11")], "cargo")

@@ -30,6 +30,7 @@ import tomllib
 HERE = os.path.dirname(os.path.abspath(__file__))
 IGNORE_FILE = os.path.join(HERE, "audit-ignore.toml")
 IGNORE_FIELDS = ("id", "ecosystem", "package", "reason", "risk", "evidence", "approved", "approved_by", "review_by")
+OPTIONAL_FIELDS = ("version",)  # when set, the entry covers only that exact version
 FAILING = {"high", "critical", "unknown", "unsound"}
 
 
@@ -98,7 +99,7 @@ def load_ignores(path=IGNORE_FILE):
         raise AuditError(f"{path}: only [[ignore]] tables are allowed")
     for n, e in enumerate(entries, 1):
         missing = [k for k in IGNORE_FIELDS if not str(e.get(k, "")).strip()]
-        extra = sorted(set(e) - set(IGNORE_FIELDS))
+        extra = sorted(set(e) - set(IGNORE_FIELDS) - set(OPTIONAL_FIELDS))
         if missing or extra:
             raise AuditError(f"{path}: entry {n} ({e.get('id', '?')}): missing {missing} unknown {extra}")
         if e["ecosystem"] not in ("cargo", "pip", "npm"):
@@ -120,7 +121,8 @@ def match_ignore(finding, ignores, ecosystem):
     ids = {finding["id"], *finding.get("aliases", [])}
     same = (lambda a, b: pep503(a) == pep503(b)) if ecosystem == "pip" else (lambda a, b: a == b)
     for e in ignores:
-        if e["ecosystem"] == ecosystem and same(e["package"], finding["package"]) and e["id"] in ids:
+        if (e["ecosystem"] == ecosystem and same(e["package"], finding["package"]) and e["id"] in ids
+                and e.get("version", finding["version"]) == finding["version"]):
             return e
     return None
 
