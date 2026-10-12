@@ -190,6 +190,110 @@ const BLOCK_COLS: [(&str, Kind); 7] = [
     ("skipped", Kind::Bool),
 ];
 
+/// Per transaction the plugin reads (every successful one with a pump/PumpSwap event, every failed
+/// one touching them): who paid, what it cost, which programs ran and what the fee payer ended up
+/// with. MEV phase 0 (measurement only): arbitrage shows as several DEXes in one transaction with a
+/// positive net for the payer, a backrun as a trade right after a large one. No signature column:
+/// (slot, tx_index) joins the event tables and failed_txs (the signatures would dominate the size).
+const TX_CTX_COLS: [(&str, Kind); 15] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("failed", Kind::Bool),
+    ("fee_payer", Kind::Utf8),
+    ("tx_fee", Kind::U64),
+    ("cu_consumed", Kind::U64),
+    ("cu_limit", Kind::U64),
+    ("cu_price_micro", Kind::U64),
+    ("priority_fee", Kind::U64),
+    // Transfers to the 8 Jito tip accounts; of a failed transaction what it tried to pay.
+    ("jito_tip", Kind::U64),
+    // Invoked programs in execution order, "depth:label" separated by ';' (top level = 1, inner =
+    // stack height), a run of the same call as "depth:label*n"; known programs by name (see
+    // PROGRAM_LABELS), others by their id. The pump/PumpSwap event self-CPIs are left out.
+    ("programs", Kind::Utf8),
+    // The DEXes and routers among them, sorted and comma separated; null when none.
+    ("venues", Kind::Utf8),
+    ("n_dex", Kind::U64),
+    // Fee payer: lamports after minus before (the fee included), and the net change of its token
+    // accounts per mint (raw amounts, WSOL included) as "mint:delta" separated by ';', non-zero only.
+    ("signer_sol_delta", Kind::I64),
+    ("signer_token_deltas", Kind::Utf8),
+];
+
+/// What a known program is in `tx_ctx`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Class {
+    Dex,
+    Router,
+    Infra,
+}
+
+/// Programs named in tx_ctx (ids from the projects' documentation). Anything else is kept by id.
+pub const PROGRAM_LABELS: [(&str, &str, Class); 19] = [
+    ("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", "pump", Class::Dex),
+    ("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA", "pump_amm", Class::Dex),
+    ("675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", "raydium_amm_v4", Class::Dex),
+    ("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C", "raydium_cpmm", Class::Dex),
+    ("CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK", "raydium_clmm", Class::Dex),
+    ("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj", "raydium_launchlab", Class::Dex),
+    ("LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo", "meteora_dlmm", Class::Dex),
+    ("Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB", "meteora_damm_v1", Class::Dex),
+    ("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG", "meteora_damm_v2", Class::Dex),
+    ("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN", "meteora_dbc", Class::Dex),
+    ("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc", "orca_whirlpool", Class::Dex),
+    ("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", "jupiter_v6", Class::Router),
+    ("11111111111111111111111111111111", "system", Class::Infra),
+    ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "token", Class::Infra),
+    ("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb", "token2022", Class::Infra),
+    ("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", "ata", Class::Infra),
+    ("ComputeBudget111111111111111111111111111111", "compute_budget", Class::Infra),
+    ("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr", "memo", Class::Infra),
+    ("Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo", "memo_v1", Class::Infra),
+];
+
+/// (programs, venues, n_dex) of tx_ctx from the invoked programs in execution order as
+/// (depth, label, class); see TX_CTX_COLS.
+pub fn summarize_calls(calls: &[(u64, String, Option<Class>)]) -> (String, String, u64) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < calls.len() {
+        let mut j = i + 1;
+        while j < calls.len() && calls[j].0 == calls[i].0 && calls[j].1 == calls[i].1 {
+            j += 1;
+        }
+        let (depth, label) = (calls[i].0, &calls[i].1);
+        parts.push(if j - i > 1 { format!("{depth}:{label}*{}", j - i) } else { format!("{depth}:{label}") });
+        i = j;
+    }
+    let mut venues: Vec<&str> =
+        calls.iter().filter(|c| matches!(c.2, Some(Class::Dex | Class::Router))).map(|c| c.1.as_str()).collect();
+    venues.sort_unstable();
+    venues.dedup();
+    let n_dex = calls
+        .iter()
+        .filter(|c| c.2 == Some(Class::Dex))
+        .map(|c| c.1.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len() as u64;
+    (parts.join(";"), venues.join(","), n_dex)
+}
+
+/// Net change per mint of the token accounts owned by `owner`, from the pre and post token balances
+/// as (mint, owner, raw amount): a closed account counts as 0 after, a new one as 0 before. Non-zero
+/// mints only, sorted, as "mint:delta;..."; None if there are none.
+pub fn owner_token_deltas(owner: &str, pre: &[(&str, &str, &str)], post: &[(&str, &str, &str)]) -> Option<String> {
+    let mut by_mint: std::collections::BTreeMap<&str, i128> = std::collections::BTreeMap::new();
+    for (sign, list) in [(-1i128, pre), (1i128, post)] {
+        for &(mint, o, amount) in list {
+            if o == owner {
+                *by_mint.entry(mint).or_insert(0) += sign * amount.parse::<i128>().unwrap_or(0);
+            }
+        }
+    }
+    let parts: Vec<String> = by_mint.into_iter().filter(|(_, d)| *d != 0).map(|(m, d)| format!("{m}:{d}")).collect();
+    (!parts.is_empty()).then(|| parts.join(";"))
+}
+
 fn cols(spec: &[(&str, Kind)]) -> Columns {
     Arc::new(spec.iter().map(|(n, k)| ((*n).to_owned(), *k)).collect())
 }
@@ -251,6 +355,9 @@ pub struct LabPlugin {
     block_cols: Columns,
     token_meta_cols: Columns,
     token_meta_table: Arc<str>,
+    tx_ctx_cols: Columns,
+    tx_ctx_table: Arc<str>,
+    labels: HashMap<Key, (&'static str, Class)>,
     metaplex: Key,
     token2022: Key,
     failed_table: Arc<str>,
@@ -343,6 +450,9 @@ impl LabPlugin {
             block_cols: cols(&BLOCK_COLS),
             token_meta_cols: cols(&TOKEN_META_COLS),
             token_meta_table: Arc::from("token_meta"),
+            tx_ctx_cols: cols(&TX_CTX_COLS),
+            tx_ctx_table: Arc::from("tx_ctx"),
+            labels: PROGRAM_LABELS.iter().map(|(id, label, class)| (key(id), (*label, *class))).collect(),
             metaplex: key(METAPLEX_METADATA),
             token2022: key(TOKEN_2022),
             failed_table: Arc::from("failed_txs"),
@@ -503,6 +613,75 @@ impl LabPlugin {
             }
         };
 
+        // tx_ctx: invoked programs in execution order (top level, then its inner instructions).
+        let ctx = {
+            let label = |k: Option<&[u8]>| -> (String, Option<Class>) {
+                match k.and_then(|k| <[u8; 32]>::try_from(k).ok()) {
+                    Some(kk) => match self.labels.get(&kk) {
+                        Some((name, class)) => ((*name).to_owned(), Some(*class)),
+                        None => (b58(kk.as_slice()), None),
+                    },
+                    None => ("?".to_owned(), None),
+                }
+            };
+            let mut calls: Vec<(u64, String, Option<Class>)> = Vec::new();
+            for (i, ix) in outer.iter().enumerate() {
+                let (l, c) = label(key_at(usize::from(ix.program_id_index)));
+                calls.push((1, l, c));
+                for group in inner_groups.iter().filter(|g| usize::from(g.index) == i) {
+                    for inner in &group.instructions {
+                        let pk = key_at(usize::from(inner.instruction.program_id_index));
+                        if inner.instruction.data.starts_with(&EVENT_IX_TAG) && self.programs.iter().any(|p| Some(p.id.as_slice()) == pk) {
+                            continue;
+                        }
+                        let (l, c) = label(pk);
+                        calls.push((inner.stack_height.map_or(2, u64::from), l, c));
+                    }
+                }
+            }
+            let (programs, venues, n_dex) = summarize_calls(&calls);
+            let sol_delta = match (meta.pre_balances.first(), meta.post_balances.first()) {
+                (Some(&a), Some(&b)) => i64::try_from(i128::from(b) - i128::from(a)).map_or(Val::Null, Val::I64),
+                _ => Val::Null,
+            };
+            let pre: Vec<(&str, &str, &str)> = meta
+                .pre_token_balances
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|b| (b.mint.as_str(), b.owner.as_str(), b.ui_token_amount.amount.as_str()))
+                .collect();
+            let post: Vec<(&str, &str, &str)> = meta
+                .post_token_balances
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|b| (b.mint.as_str(), b.owner.as_str(), b.ui_token_amount.amount.as_str()))
+                .collect();
+            let deltas = owner_token_deltas(&fee_payer, &pre, &post);
+            Row {
+                table: self.tx_ctx_table.clone(),
+                columns: self.tx_ctx_cols.clone(),
+                values: vec![
+                    Val::U64(tx.slot),
+                    Val::U64(tx.transaction_slot_index as u64),
+                    Val::Bool(meta.status.is_err()),
+                    Val::Str(fee_payer.clone()),
+                    Val::U64(meta.fee),
+                    cu_consumed.clone(),
+                    opt(cu_limit),
+                    opt(cu_price),
+                    Val::U64(priority_fee),
+                    Val::U64(jito_tip),
+                    Val::Str(programs),
+                    if venues.is_empty() { Val::Null } else { Val::Str(venues) },
+                    Val::U64(n_dex),
+                    sol_delta,
+                    deltas.map_or(Val::Null, Val::Str),
+                ],
+            }
+        };
+
         if meta.status.is_err() {
             self.counters.txs_failed_touching.fetch_add(1, Ordering::Relaxed);
             let mut discs = Vec::new();
@@ -547,7 +726,7 @@ impl LabPlugin {
                 }
                 None => (Val::Null, Val::Null, Val::Null, Val::Null, Val::Null),
             };
-            return vec![Row {
+            return vec![ctx, Row {
                 table: self.failed_table.clone(),
                 columns: self.failed_cols.clone(),
                 values: vec![
@@ -693,6 +872,9 @@ impl LabPlugin {
                 self.counters.events.fetch_add(1, Ordering::Relaxed);
                 rows.push(Row { table: table.clone(), columns: columns.clone(), values });
             }
+        }
+        if event_seq > 0 {
+            rows.push(ctx);
         }
         // Token metadata created in this transaction, top level and inner, in execution order.
         let inner_of = |i: usize| inner_groups.iter().find(|g| usize::from(g.index) == i).map(|g| g.instructions.as_slice()).unwrap_or(&[]);
@@ -857,7 +1039,11 @@ impl Plugin for LabPlugin {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_token_metadata, is_http_429, TOKEN_METADATA_INIT};
+    use super::{
+        decode_token_metadata, is_http_429, key, owner_token_deltas, summarize_calls, Class, PROGRAM_LABELS, PUMP_AMM_IDL,
+        PUMP_IDL, TOKEN_METADATA_INIT,
+    };
+    use crate::idl::Idl;
 
     fn borsh(parts: &[&str]) -> Vec<u8> {
         parts.iter().flat_map(|p| (p.len() as u32).to_le_bytes().into_iter().chain(p.bytes())).collect()
@@ -886,6 +1072,56 @@ mod tests {
         long.extend(u32::MAX.to_le_bytes());
         assert_eq!(decode_token_metadata(true, false, &long), None);
         assert_eq!(decode_token_metadata(false, true, &[3, 0, 0, 0]), None); // an ordinary Token-2022 instruction
+    }
+
+    #[test]
+    fn program_labels_are_valid_unique_and_match_the_idls() {
+        let ids: std::collections::BTreeSet<[u8; 32]> = PROGRAM_LABELS.iter().map(|(id, _, _)| key(id)).collect();
+        let names: std::collections::BTreeSet<&str> = PROGRAM_LABELS.iter().map(|(_, n, _)| *n).collect();
+        assert_eq!((ids.len(), names.len()), (PROGRAM_LABELS.len(), PROGRAM_LABELS.len()));
+        for (idl, label) in [(PUMP_IDL, "pump"), (PUMP_AMM_IDL, "pump_amm")] {
+            let address = Idl::parse(idl).unwrap().address;
+            assert!(PROGRAM_LABELS.iter().any(|(id, n, c)| *id == address && *n == label && *c == Class::Dex));
+        }
+    }
+
+    #[test]
+    fn calls_summarized_with_depth_runs_and_venues() {
+        let c = |d: u64, l: &str, k: Option<Class>| (d, l.to_owned(), k);
+        // An arbitrage through a router: Jupiter calls PumpSwap, then Raydium CPMM, with token transfers.
+        let calls = vec![
+            c(1, "compute_budget", Some(Class::Infra)),
+            c(1, "compute_budget", Some(Class::Infra)),
+            c(1, "jupiter_v6", Some(Class::Router)),
+            c(2, "pump_amm", Some(Class::Dex)),
+            c(3, "token", Some(Class::Infra)),
+            c(3, "token", Some(Class::Infra)),
+            c(2, "raydium_cpmm", Some(Class::Dex)),
+            c(3, "token", Some(Class::Infra)),
+            c(1, "Unknown1111111111111111111111111111111111111", None),
+        ];
+        let (programs, venues, n_dex) = summarize_calls(&calls);
+        assert_eq!(
+            programs,
+            "1:compute_budget*2;1:jupiter_v6;2:pump_amm;3:token*2;2:raydium_cpmm;3:token;1:Unknown1111111111111111111111111111111111111"
+        );
+        assert_eq!((venues.as_str(), n_dex), ("jupiter_v6,pump_amm,raydium_cpmm", 2));
+        assert_eq!(summarize_calls(&[]), (String::new(), String::new(), 0));
+    }
+
+    #[test]
+    fn owner_token_deltas_per_mint() {
+        let (me, other) = ("Payer", "Pool");
+        // WSOL account closed in the transaction (spent), a new token account (bought), another owner ignored,
+        // an unchanged account dropped.
+        let pre = [("So11111111111111111111111111111111111111112", me, "1500"), ("MintB", me, "7"), ("MintA", other, "999")];
+        let post = [("MintA", me, "250"), ("MintB", me, "7"), ("MintA", other, "749")];
+        assert_eq!(
+            owner_token_deltas(me, &pre, &post).as_deref(),
+            Some("MintA:250;So11111111111111111111111111111111111111112:-1500")
+        );
+        assert_eq!(owner_token_deltas(me, &[("MintB", me, "7")], &[("MintB", me, "7")]), None);
+        assert_eq!(owner_token_deltas(me, &[], &[]), None);
     }
 
     #[test]
