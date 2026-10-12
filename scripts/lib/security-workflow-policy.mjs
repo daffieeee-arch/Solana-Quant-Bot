@@ -18,7 +18,11 @@ const workflows = {
       workflow_dispatch: {},
     },
     permissions: { contents: 'read' },
-    concurrency: { group: 'codeql-${{ github.ref }}', 'cancel-in-progress': true },
+    // Main pushes are never cancelled (2026-10-13): cancelled runs uploaded empty Rust analyses.
+    concurrency: {
+      group: "codeql-${{ github.event_name == 'push' && github.sha || github.ref }}",
+      'cancel-in-progress': "${{ github.event_name == 'pull_request' }}",
+    },
     jobs: {
       analyze: {
         name: 'CodeQL (${{ matrix.language }})',

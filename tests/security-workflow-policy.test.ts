@@ -49,6 +49,8 @@ describe('security workflow privilege and coverage boundaries', () => {
       original.replace('max-parallel: 4', 'max-parallel: 8'),
       original.replace("if: matrix.language != 'rust' || github.event_name != 'pull_request'", "if: matrix.language != 'rust'"),
       original.replace("'43 5 * * 1'", "'* * * * *'"),
+      original.replace("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", 'cancel-in-progress: true'),
+      original.replace("github.event_name == 'push' && github.sha || github.ref", 'github.ref'),
     ]) expect(check(paths[0], mutation).length).toBeGreaterThan(0);
   });
 
