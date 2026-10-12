@@ -7,7 +7,7 @@
   disagreement means a decoding error);
 - reversed pools created in the data (CreatePoolEvent with WSOL as base): the share whose token
   (quote mint) got a token_meta row, i.e. was minted in a transaction the extractor reads. The rest
-  needs the RPC route (Triton getAccountInfo, owner's OK).
+  needs the RPC route (Triton getMultipleAccounts, owner's OK).
 """
 
 import glob

@@ -65,13 +65,29 @@ def test_lookup_prefers_metaplex_then_token2022():
     assert R.lookup("u", mint, lambda u, k: {pda: None, mint: ("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", bytes(82))}) is None
 
 
+def segment(root, seq, mints, slots):
+    """A complete recorder segment with reversed-pool creations of these tokens."""
+    d = root / "segments" / f"{seq:09d}"
+    (d / "pump_amm" / "CreatePoolEvent").mkdir(parents=True)
+    pq.write_table(pa.table({"slot": slots, "base_mint": [R.WSOL] * len(mints), "quote_mint": mints}),
+                   str(d / "pump_amm" / "CreatePoolEvent" / "part-0.parquet"))
+    (d / "_segment.json").write_text("{}")
+
+
+def named_by(found):
+    def fake(url, keys):
+        pda, mint = keys
+        found.append(mint)
+        return {pda: (R.METAPLEX, metaplex_account(mint, name=mint[:4])), mint: None}
+    return fake
+
+
 def test_one_pass_over_segments_with_the_daily_cap(tmp_path):
     root = tmp_path / "rec"
     mints = [R.b58encode(bytes([i]) * 32) for i in range(1, 5)]
+    segment(root, 1, mints, [10, 11, 12, 13])
     seg = root / "segments" / "000000001" / "pump_amm" / "CreatePoolEvent"
-    seg.mkdir(parents=True)
-    pq.write_table(pa.table({"slot": [10, 11, 12, 13, 14], "base_mint": [R.WSOL] * 4 + [mints[0]],
-                             "quote_mint": mints + [R.WSOL]}), str(seg / "part-0.parquet"))
+    pq.write_table(pa.table({"slot": [14], "base_mint": [mints[0]], "quote_mint": [R.WSOL]}), str(seg / "part-1.parquet"))
     named = {}
 
     def fake(url, keys):
@@ -124,3 +140,63 @@ def test_requests_carry_an_explicit_user_agent(monkeypatch):
     monkeypatch.setattr(R.urllib.request, "urlopen", fake_urlopen)
     assert R.rpc_accounts("https://example.invalid", ["x"]) == {"x": None}
     assert seen["ua"] == "solana-lab/0.1"
+
+
+def test_a_failing_lookup_keeps_the_count_and_the_names_found(tmp_path):
+    root = tmp_path / "rec"
+    mints = [R.b58encode(bytes([i]) * 32) for i in range(1, 4)]
+    segment(root, 1, mints, [10, 11, 12])
+    calls = []
+
+    def flaky(url, keys):
+        calls.append(keys[1])
+        if len(calls) == 2:
+            raise KeyError("result")  # a reply with neither result nor error
+        return named_by([])(url, keys)
+
+    logs = []
+    assert R.run_once(str(root), "https://secret.example.invalid/x", 10, call=flaky, log=logs.append) == 1
+    state = json.load(open(root / "rpc" / "state.json"))
+    assert state["calls"] == 2 and state["last_seq"] == -1  # counted, and the segment is read again
+    assert logs == ["lookup failed: KeyError"]
+    assert [r["mint"] for r in pq.read_table(str(root / "rpc" / "token_meta")).to_pylist()] == [mints[0]]
+    # The next pass asks only for the two not named yet, then marks the segment as read.
+    found = []
+    assert R.run_once(str(root), "u", 10, call=named_by(found), log=lambda m: None) == 2
+    assert found == mints[1:] and json.load(open(root / "rpc" / "state.json"))["calls"] == 4
+    assert json.load(open(root / "rpc" / "state.json"))["last_seq"] == 1
+
+
+def test_passes_read_only_newer_complete_segments(tmp_path):
+    root = tmp_path / "rec"
+    a, b, c, d = (R.b58encode(bytes([i]) * 32) for i in range(10, 14))
+    segment(root, 5, [a], [10])
+    found = []
+    assert R.run_once(str(root), "u", 10, call=named_by(found), log=lambda m: None) == 1
+    segment(root, 3, [b], [11])  # an older sequence number: already behind
+    segment(root, 6, [c], [12])
+    unfinished = root / "segments" / "000000007" / "pump_amm" / "CreatePoolEvent"
+    unfinished.mkdir(parents=True)  # no _segment.json yet
+    pq.write_table(pa.table({"slot": [13], "base_mint": [R.WSOL], "quote_mint": [d]}), str(unfinished / "part-0.parquet"))
+    assert R.run_once(str(root), "u", 10, call=named_by(found), log=lambda m: None) == 1
+    assert found == [a, c] and json.load(open(root / "rpc" / "state.json"))["last_seq"] == 6
+
+
+def test_follow_survives_a_failing_pass_and_tried_keeps_the_newest(tmp_path, monkeypatch):
+    logs, sleeps = [], []
+    results = iter([ValueError("bad string"), 2])
+
+    def once(root, url, max_calls, log):
+        r = next(results)
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    R.run_follow("root", "u", 10, 60, once=once, log=logs.append, sleep=sleeps.append, passes=2)
+    assert logs == ["pass failed: ValueError", "2 names written"] and sleeps == [60]
+    monkeypatch.setattr(R, "TRIED_MAX", 2)
+    root = tmp_path / "rec"
+    mints = [R.b58encode(bytes([i]) * 32) for i in range(20, 23)]
+    segment(root, 1, mints, [1, 2, 3])
+    R.run_once(str(root), "u", 10, call=lambda u, k: {k[0]: None, k[1]: None}, log=lambda m: None)
+    assert json.load(open(root / "rpc" / "state.json"))["tried"] == mints[1:]  # insertion order, oldest dropped

@@ -26,6 +26,7 @@ describe('B2A retired-platform policy', () => {
     expect(tracked.filter((path) => path.startsWith('.github/workflows/'))).toEqual([
       '.github/workflows/ci.yml',
       '.github/workflows/codeql.yml',
+      '.github/workflows/dependency-audit.yml',
       '.github/workflows/dependency-review.yml',
       '.github/workflows/roadmap-sync.yml',
     ]);
