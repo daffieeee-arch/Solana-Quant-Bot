@@ -291,6 +291,16 @@ def _universe_counters():
     return {f"d-{lag}": {str(depth): collections.Counter() for depth in UNIVERSE_DEPTHS} for lag in UNIVERSE_LAGS}
 
 
+def _note_first_age(first_age, hist, kind, pool, minute, day):
+    """Minutes between the pool's creation and its first event of this kind (pools created inside the store only)."""
+    h = hist.get(pool)
+    if h is None or h[0] is None:
+        return
+    age = minute - h[0]
+    if pool not in first_age[kind] or age < first_age[kind][pool][1]:
+        first_age[kind][pool] = (day, age)
+
+
 def _count_universe(d, hist, pool, minute, on_list, kind, organic=False):
     for (lag, depth), inside in universe_membership(hist, pool, minute).items():
         c = d["universe"][f"d-{lag}"][str(depth)]
@@ -310,6 +320,7 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
     `history`: path of the pool history (--build-history) for the universe-with-lag counts."""
     t0 = time.time()
     hist = load_history(history) if history else None
+    first_age = {"cand": {}, "trig": {}, "trig_organic": {}}  # pool -> (day, minutes after creation) of its first event
     clock = clock or Clock.from_store(con)
     warm_lo = max(lo - clock.slots(WARMUP_MINUTES * 60_000, lo), 0)
     pools = con.execute(pools_sql(warm_lo, hi)).fetchall()
@@ -387,6 +398,7 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
                 d["f7_cand_covered"] += cov
                 if hist is not None:
                     _count_universe(d, hist, pool, m, cov, "cand")
+                    _note_first_age(first_age, hist, "cand", pool, m, day)
             for pool, farm in trig_by_minute.get(m, ()):
                 d["f7_trig"] += 1
                 cov = "f7_rev" in members.get(pool, ())
@@ -396,6 +408,9 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
                     d["f7_trig_organic_covered"] += cov
                 if hist is not None:
                     _count_universe(d, hist, pool, m, cov, "trig", organic=(farm == "organic"))
+                    _note_first_age(first_age, hist, "trig", pool, m, day)
+                    if farm == "organic":
+                        _note_first_age(first_age, hist, "trig_organic", pool, m, day)
             for pool in m1_points.get(m, ()):
                 d["m1_points"] += 1
                 d["m1_points_covered"] += "m1" in members.get(pool, ())
@@ -418,6 +433,8 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, hist
         out["days"][day] = {k: v for k, v in d.items() if not isinstance(v, list) and k != "universe"}
         if hist is not None:
             out["days"][day]["universe"] = d["universe"]
+            out["days"][day]["first_age_minutes"] = {
+                kind: sorted(age for dd, age in ages.values() if dd == day) for kind, ages in first_age.items()}
         for k in ("members", "f7_rev", "m1"):
             out["days"][day][k] = {"median": statistics.median(d[k]) if d[k] else None, "p95": pct(d[k], 0.95), "max": max(d[k]) if d[k] else None}
     with open(os.path.join(out_dir, f"watchlist-stats-{lo}.json"), "w") as f:
@@ -521,6 +538,21 @@ def universe_section(days, store_first_day):
     lines += ["", "Cel: kandidaatsells / triggers (organische triggers) in het universum. "
               + (f"\\* {', '.join(sorted(biased))}: diepte-historie begint met de store, daarom alleen 'bestond' in de totalen. " if biased else "")
               + f"**Totaal over {n_days} dagen** (in het universum, en daarvan ook op de dynamische lijst):", ""]
+    c1 = tot[(1, 0)]
+    if c1.get("trig"):
+        lines.append(f"Op de dag van aanmaak zelf (niet in het D−1-universum 'bestond'): {1 - c1['trig_in'] / c1['trig']:.1%} van de "
+                     f"toernooi-triggers, {1 - c1['trig_organic_in'] / max(c1['trig_organic'], 1):.1%} van de organische, "
+                     f"{1 - c1['cand_in'] / max(c1['cand'], 1):.1%} van de kandidaatsells.")
+    ages = {k: [] for k in ("cand", "trig", "trig_organic")}
+    for day, d in days.items():
+        for k, xs in d.get("first_age_minutes", {}).items():
+            ages[k] += xs
+    label_age = {"cand": "eerste kandidaatsell", "trig": "eerste toernooi-trigger", "trig_organic": "eerste organische trigger"}
+    for k, xs in ages.items():
+        if xs:
+            lines.append(f"Minuten tussen aanmaak van de pool en zijn {label_age[k]} (pools aangemaakt binnen de store, n={len(xs):,}): "
+                         f"p10 {pct(xs, 0.10):,.0f}, p25 {pct(xs, 0.25):,.0f}, mediaan {statistics.median(xs):,.0f}, p75 {pct(xs, 0.75):,.0f}, p90 {pct(xs, 0.90):,.0f}.")
+    lines.append("")
     lines += ["| universum | F7-kandidaatsells | … ook op de lijst | toernooi-triggers | … ook op de lijst | organische triggers | … ook op de lijst | F7-pool-minuten op de lijst |",
               "|---|---|---|---|---|---|---|---|"]
     for lag, depth in crits:

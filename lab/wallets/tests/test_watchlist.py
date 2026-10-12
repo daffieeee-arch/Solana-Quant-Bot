@@ -154,7 +154,8 @@ def test_report_universe_section_and_store_start_bias(tmp_path):
             "members": {"median": 4, "p95": 5, "max": 6}, "f7_rev": {"median": 3, "p95": 4, "max": 4}, "m1": {"median": 1, "p95": 1, "max": 2}}
     json.dump({"store_first_day": "2026-09-11",
                "days": {"2026-09-11": dict(base, universe=counters(5, 2)),      # store start: depth criteria biased
-                        "2026-09-13": dict(base, universe=counters(8, 4))}},
+                        "2026-09-13": dict(base, universe=counters(8, 4),
+                                           first_age_minutes={"cand": [3, 10, 400], "trig": [5, 7], "trig_organic": []})}},
               open(tmp_path / "watchlist-stats-1.json", "w"))
     md = W.report(str(tmp_path))
     assert "## Universum met ververs-vertraging" in md
@@ -164,3 +165,6 @@ def test_report_universe_section_and_store_start_bias(tmp_path):
     assert "| D−1 bestond | 65.0% (20) | 55.0% (20) | 75.0% (8) | 75.0% (8) | 50.0% (4) | 50.0% (4) | 90.0% (2,000) |" in md
     assert "| D−2 ≥ 150 SOL | 80.0% (10) | 70.0% (10) | 100.0% (4) | 100.0% (4) | 50.0% (2) | 50.0% (2) | 90.0% (1,000) |" in md
     assert "Totaal over 1 dagen" in md
+    assert "Op de dag van aanmaak zelf (niet in het D−1-universum 'bestond'): 25.0% van de toernooi-triggers, 50.0% van de organische, 35.0% van de kandidaatsells." in md
+    assert "eerste toernooi-trigger (pools aangemaakt binnen de store, n=2): p10 5, p25 5, mediaan 6, p75 7, p90 7." in md
+    assert "eerste organische trigger" not in md
