@@ -493,7 +493,7 @@
     },
     {
       "name": "rustls",
-      "version": "0.23.43",
+      "version": "0.23.45",
       "license": "Apache-2.0 OR ISC OR MIT",
       "buildScript": true
     },
@@ -1087,7 +1087,7 @@
         },
         {
           "name": "rustls",
-          "version": "0.23.43",
+          "version": "0.23.45",
           "license": "Apache-2.0 OR ISC OR MIT",
           "buildScript": true
         },
@@ -1385,7 +1385,7 @@
         },
         {
           "name": "rustls",
-          "version": "0.23.43",
+          "version": "0.23.45",
           "license": "Apache-2.0 OR ISC OR MIT",
           "buildScript": true
         },
@@ -1693,7 +1693,7 @@
         },
         {
           "name": "rustls",
-          "version": "0.23.43",
+          "version": "0.23.45",
           "license": "Apache-2.0 OR ISC OR MIT",
           "buildScript": true
         },
@@ -1853,7 +1853,7 @@
     },
     {
       "name": "rustls",
-      "version": "0.23.43",
+      "version": "0.23.45",
       "optional": true,
       "defaultFeatures": false,
       "features": [
@@ -1895,7 +1895,7 @@
     },
     {
       "name": "rustls",
-      "version": "0.23.43",
+      "version": "0.23.45",
       "status": "REVIEWED_NEW_BUILD",
       "behavior": "build.rs is no-op because read_buf is disabled; no subprocess or network.",
       "sha256": "380b9a051325baa7d4957bd9a4f1a637c27a663610b1b502f9524530f6995f4d"

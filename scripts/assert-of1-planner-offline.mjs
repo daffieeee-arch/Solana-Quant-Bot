@@ -33,8 +33,8 @@ export function assertOf1ProcessResult(label, result) {
 }
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const MANIFEST_HASH = 'a98abc110b726dcb369b8cb03c4ea198d83723347eda027e767540ec2390e5d1';
-const LOCK_HASH = '0f99d01a8121f77f689e7c48d5df497aa538dbd81ba1b6efeadb9e430744d78d';
+const MANIFEST_HASH = '9c9e709f17005451986668d05fbbe6838c2f00b28349736f670ceab777c1bead';
+const LOCK_HASH = '47fd86b971215fee901ae4ce2a3f9353c23cc7788439adb526807e0918f3111f';
 // Only the reviewed same-test-binary child harness may spawn; runtime code still cannot.
 const PROCESS_TEST_HASH = 'c7896fb4c4b0f7b5519f193ad0fd44e08967bd04cf220406542ac208b21c0c9b';
 const B7_PROCESS_TEST_HASH = 'ba2e6f6b26ccba29d0afeec561089d30e75cdc7b2b85731a26fadab3e41eaa79';
