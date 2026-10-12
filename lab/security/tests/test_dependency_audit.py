@@ -3,6 +3,7 @@
 
 Run: python3 lab/security/tests/test_dependency_audit.py
 """
+import contextlib
 import datetime
 import io
 import os
@@ -176,6 +177,19 @@ class Npm(unittest.TestCase):
         self.assertEqual([f["id"] for f in failing], ["GHSA-hhhh"])
         ok, _ = run_report(findings, [ignore(id="GHSA-hhhh", ecosystem="npm", package="a")], "npm")
         self.assertEqual(ok, [])
+
+    def test_include_dev_flag(self):
+        calls = []
+        real = da.run_json
+        da.run_json = lambda cmd, cwd=None: calls.append((cmd, cwd)) or {"vulnerabilities": {}}
+        try:
+            with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(da.main(["npm", d]), 0)
+                self.assertEqual(da.main(["npm", d, "--include-dev"]), 0)
+        finally:
+            da.run_json = real
+        self.assertIn("--omit=dev", calls[0][0])
+        self.assertNotIn("--omit=dev", calls[1][0])
 
     def test_npm_error_is_an_error(self):
         with self.assertRaises(da.AuditError):
