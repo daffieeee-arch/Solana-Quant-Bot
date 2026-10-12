@@ -507,17 +507,20 @@ def holdout(run_dir, config, store=STORE):
 
 def _holdout_decision(out, c):
     """Pre-registration §4 on the decision group (B+C): the eligible candidate (role main or
-    variant) with the highest CI lower bound and a mean above 0; the control only when its lower
-    bound is above 0 and above theirs; a candidate positive in part A but not in the decision group
-    drops out."""
+    variant) with the highest CI lower bound and a mean above 0. The control is picked only when
+    its lower bound is above 0, above every eligible candidate's lower bound, and its mean is at
+    least the highest eligible mean (a control arm must not win on a narrower CI alone). A
+    candidate positive in part A but not in the decision group drops out."""
     g = c["decision_group"]
     m = {k: v["groups"][g]["main"] for k, v in out["candidates"].items()}
     roles = {k["id"]: k["role"] for k in c["candidates"]}
     lo = lambda k: float("-inf") if m[k]["lo"] is None else m[k]["lo"]  # noqa: E731
     eligible = [k for k in m if roles[k] in ("main", "variant") and m[k]["mean"] is not None and m[k]["mean"] > 0]
     pick = max(eligible, key=lo) if eligible else None
+    top_mean = max((m[e]["mean"] for e in eligible), default=float("-inf"))
     for k in m:
-        if roles[k] == "control" and m[k]["lo"] is not None and m[k]["lo"] > 0 and all(lo(k) > lo(e) for e in eligible):
+        if (roles[k] == "control" and m[k]["lo"] is not None and m[k]["lo"] > 0 and all(lo(k) > lo(e) for e in eligible)
+                and m[k]["mean"] is not None and m[k]["mean"] >= top_mean):
             pick = k
     dropped = [k for k, v in out["candidates"].items() if "A" in v["groups"]
                and (v["groups"]["A"]["main"]["mean"] or 0) > 0 and not (m[k]["mean"] or 0) > 0]
