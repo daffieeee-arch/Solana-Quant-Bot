@@ -32,8 +32,10 @@ TRIM = 0.005
 GROSS_CAP = 10.0  # gross markouts are capped at +1000 % for the trimmed mean: a drained pool's mid runs to infinity
 DEAD = -0.99  # net <= -99 %: the venue could not pay for the tokens (drained pool, completed curve)
 SPLIT_DAY, LAST_DAY = "2026-09-20", "2026-09-30"  # the binding window of the M1x report: 2026-09-20 … 2026-09-30
-BLOCKS = (("days 1-9", f"day < '{SPLIT_DAY}'"), ("days 10-18", f"day BETWEEN '{SPLIT_DAY}' AND '{LAST_DAY}'"), ("all days", "TRUE"),
+BINDING = f"days 10-18 ({SPLIT_DAY} … {LAST_DAY[5:]})"
+BLOCKS = (("days 1-9", f"day < '{SPLIT_DAY}'"), (BINDING, f"day BETWEEN '{SPLIT_DAY}' AND '{LAST_DAY}'"), ("all days", "TRUE"),
           ("316ms", "regime = '316ms'"), ("267ms", "regime = '267ms'"))
+DEDUP = "family, segment, venue, mint, pool, t, d, h"  # the same trigger appears in more than one run (f7rev and families-v2)
 H_ORDER = ("1s", "10s", "1m", "5m", "15m", "1h", "6h")
 K_ROWS = (("K1/K2 (F7 pool_reversed, organic)", "family = 'F7' AND segment = 'pool_reversed' AND farm = 'organic'"),
           ("K3 (F7 pool_reversed, all pools)", "family = 'F7' AND segment = 'pool_reversed'"))
@@ -98,8 +100,10 @@ def load(con, markout_dir):
     if not files:
         raise SystemExit(f"no markout-*.parquet in {markout_dir}")
     lit = "[" + ",".join(f"'{f}'" for f in files) + "]"
-    con.execute(f"CREATE OR REPLACE TABLE m AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h <> ''")
-    con.execute(f"CREATE OR REPLACE TABLE entries AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h = ''")
+    con.execute(f"""CREATE OR REPLACE TABLE m AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h <> ''
+                    QUALIFY row_number() OVER (PARTITION BY {DEDUP} ORDER BY cut, net IS NULL) = 1""")
+    con.execute(f"""CREATE OR REPLACE TABLE entries AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h = ''
+                    QUALIFY row_number() OVER (PARTITION BY {DEDUP} ORDER BY cut, mid IS NULL) = 1""")
     if "regime" not in [c[0] for c in con.execute("SELECT * FROM m LIMIT 0").description]:
         con.execute("ALTER TABLE m ADD COLUMN regime VARCHAR DEFAULT '267ms'")
     con.execute("""
@@ -132,6 +136,9 @@ def stats(con, where, col, boot):
 
 
 def paired(con, where, col, boot):
+    """Per trigger under `where`: the N2 twin's own value (mean of its matched entries, on the trigger's day)
+    and the paired difference; both with a day CI. The N2 statistics the verdict uses come from here, so the
+    N2 set is exactly the twin of the trigger set (also for the K rows, whose farm filter N2 rows do not carry)."""
     rows = con.execute(f"SELECT {col} - n2_{col}, n2_{col}, day FROM pairs WHERE {where} AND {col} IS NOT NULL AND n2_{col} IS NOT NULL").fetchall()
     if not rows:
         return None
@@ -139,25 +146,21 @@ def paired(con, where, col, boot):
     n2 = np.array([r[1] for r in rows], dtype=float)
     days = np.array([r[2] for r in rows])
     lo, hi = day_ci(d, days, boot)
-    return {"n": len(d), "n2_trim": trimmed_mean(n2), "diff": trimmed_mean(d), "lo": lo, "hi": hi}
+    n2_lo, n2_hi = day_ci(n2, days, boot)
+    return {"n": len(d), "n2_trim": trimmed_mean(n2), "n2_lo": n2_lo, "n2_hi": n2_hi, "diff": trimmed_mean(d), "lo": lo, "hi": hi}
 
 
 def groups(con):
     return con.execute("SELECT DISTINCT family, segment, d FROM m WHERE family NOT LIKE 'N2\\_%' ESCAPE '\\' ORDER BY 1, 2, 3").fetchall()
 
 
-def n2_where(where):
-    """The N2 twin family of a trigger filter: family = 'N2_<fam>' with the same d / h / block (segment and farm free)."""
-    return where.replace("family = '", "family = 'N2_", 1)
-
-
-def table(con, label, where, boot, blocks=BLOCKS, n2=None):
+def table(con, label, where, boot, blocks=BLOCKS):
     """One group's table. The advantage verdict (days 10-18, spec section 5) uses the conservative net
     (dead rows counted at their loss): trigger net trim > 0 with its day CI > 0, and the N2 twin's own
-    net trim NOT > 0 with its own CI > 0 on the same horizon. The paired Δ is shown, not a criterion."""
-    n2 = n2 if n2 is not None else n2_where(where)
+    net trim NOT > 0 with its own CI > 0 on the same horizon (the twins of exactly these triggers, from
+    the paired rows). The paired Δ is shown, not a criterion."""
     L = [f"### {label}\n",
-         "| block | h | n | cut | dead | gross median | gross trim (cap 10×) | net median | **net trim** | 95% CI (days) | net trim ex dead | 95% CI ex dead | > 0 | N2 own net trim | N2 95% CI | Δ vs N2 (paired) | 95% CI | advantage |",
+         "| block | h | n | cut | dead | gross median | gross trim (cap 10×) | net median | **net trim** | 95% CI (days) | net trim ex dead | 95% CI ex dead | > 0 | N2 twin net trim (paired) | N2 95% CI | Δ vs N2 | 95% CI | advantage |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     verdicts = {}
     for bname, bwhere in blocks:
@@ -166,24 +169,23 @@ def table(con, label, where, boot, blocks=BLOCKS, n2=None):
             g = stats(con, w, "gross", boot)
             n = stats(con, w, "net", boot)
             p = paired(con, w, "net", boot)
-            q = stats(con, f"({n2}) AND h = '{h}' AND ({bwhere})", "net", boot)
             if not n:
                 continue
             trig_ok = n["trim"] > 0 and n["lo"] is not None and n["lo"] > 0
-            n2_ok = q is not None and q["trim"] > 0 and q["lo"] is not None and q["lo"] > 0
+            n2_ok = p is not None and p["n2_trim"] > 0 and p["n2_lo"] is not None and p["n2_lo"] > 0
             adv = trig_ok and not n2_ok
-            if bname == "days 10-18":
+            if bname == BINDING:
                 verdicts[h] = adv
             L.append(f"| {bname} | {h} | {fmt(n['n'])} | {fmt(n['cut'], 0, pct=True)} | {fmt(n['dead'], 0, pct=True)} | {fmt(g['median'], 1, True, True)} | {fmt(g['trim'], 1, True, True)} | "
                      f"{fmt(n['median'], 1, True, True)} | **{fmt(n['trim'], 1, True, True)}** | {fmt(n['lo'], 1, True, True)} … {fmt(n['hi'], 1, True, True)} | "
                      f"{fmt(n['trim_ex'], 1, True, True)} | {fmt(n['lo_ex'], 1, True, True)} … {fmt(n['hi_ex'], 1, True, True)} | {fmt(n['pos'], 0, True)} | "
-                     + (f"{fmt(q['trim'], 1, True, True)} ({fmt(q['n'])}) | {fmt(q['lo'], 1, True, True)} … {fmt(q['hi'], 1, True, True)} |" if q else "– | – |")
-                     + (f" {fmt(p['diff'], 1, True, True)} ({fmt(p['n'])}) | {fmt(p['lo'], 1, True, True)} … {fmt(p['hi'], 1, True, True)} |" if p else " – | – |")
-                     + (f" **{'yes' if adv else 'no'}** |" if bname == "days 10-18" else " |"))
+                     + (f"{fmt(p['n2_trim'], 1, True, True)} ({fmt(p['n'])}) | {fmt(p['n2_lo'], 1, True, True)} … {fmt(p['n2_hi'], 1, True, True)} | "
+                        f"{fmt(p['diff'], 1, True, True)} | {fmt(p['lo'], 1, True, True)} … {fmt(p['hi'], 1, True, True)} |" if p else "– | – | – | – |")
+                     + (f" **{'yes' if adv else 'no'}** |" if bname == BINDING else " |"))
     first = next((h for h in H_ORDER if verdicts.get(h)), None)
     imp = con.execute(f"SELECT avg((impact > 0.05)::INT), count(*) FROM entries WHERE ({where}) AND impact IS NOT NULL").fetchone()
     L.append("")
-    L.append(f"Days 10-18 verdict (spec section 5, conservative net with dead rows): "
+    L.append(f"{BINDING} verdict (spec section 5, conservative net with dead rows): "
              + (f"advantage first at **{first}**" if first else "no horizon with an advantage") + "."
              + (f" Entry impact > 5 % at 0.5 SOL: {fmt(imp[0], 1, True)} of {fmt(imp[1])} entries." if imp and imp[0] is not None else ""))
     L.append("")
@@ -250,7 +252,8 @@ def render(con, markout_dir, boot, parts_dir=None, cfg_path=None, ms_per_slot=No
          "a completed curve is valued on its migration pool, not dead); gross is capped at +1000 % for the trimmed mean; 'ex dead' leaves the dead rows out. "
          f"Blocks: days 1-9 (< {SPLIT_DAY}), days 10-18 ({SPLIT_DAY} … {LAST_DAY}, the binding window), all days, and the two slot-time regimes (316ms / 267ms, all days). "
          "Advantage (days 10-18, spec §5, on the conservative net that counts dead rows): the trigger's net trimmed mean > 0 with its day CI > 0, and the N2 twin's own "
-         "net trimmed mean not > 0 with its own CI > 0 on the same horizon; the paired Δ is informative, not a criterion.\n"]
+         "net trimmed mean (the matched entries of exactly these triggers) not > 0 with its own CI > 0 on the same horizon; the paired Δ is informative, not a criterion. "
+         "Rows are deduplicated over runs on (family, segment, venue, mint, pool, t, d, h).\n"]
     for fam, seg, d in groups(con):
         L.append(table(con, f"{fam} · {seg} · d = {d}", f"family = '{fam}' AND segment = '{seg}' AND d = {d}", boot))
     for label, where in K_ROWS:

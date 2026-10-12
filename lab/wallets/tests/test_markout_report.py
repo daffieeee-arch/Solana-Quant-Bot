@@ -43,31 +43,46 @@ def _rows():
                 up = 0.05 if h in ("1s", "10s") else -0.5  # early horizons positive, later ones a dead pool
                 rows.append({**entry, "h": h, "h_ms": ms, "target": entry["target"] + ms // 400, "cut": h == "6h", "mid": 1 + up,
                              "gross": up, "net": up - 0.02 if h != "6h" else -1.0})
-                # the N2 twin: two matched entries per trigger, flat
+                # the N2 twin: two matched entries per trigger, flat except at 10 s, where N2 is positive too (no advantage there)
                 for k in range(2):
                     rows.append({"family": "N2_F7", "segment": "pool_reversed", "venue": "pool", "orientation": "reversed", "mint": f"X{i}{k}", "pool": f"Q{i}{k}",
-                                 "t": 446_300_000 + i * 1000 + 50 + k, "day": day, "regime": "267ms", "farm": "n/a", "ref_mint": f"M{i}", "ref_t": 446_300_000 + i * 1000,
-                                 "variants": ["tp4_T600"], "d": d, "h": h, "h_ms": ms, "target": 0, "cut": False, "mid": 1.0, "gross": 0.0, "net": -0.02, "impact": 0.01})
+                                 "t": 446_300_000 + i * 1000 + 50 + k, "day": day, "regime": "267ms", "farm": "n/a", "ref_mint": f"P{i}", "ref_t": 446_300_000 + i * 1000,
+                                 "variants": ["tp4_T600"], "d": d, "h": h, "h_ms": ms, "target": 0, "cut": False, "mid": 1.0, "gross": 0.0,
+                                 "net": 0.04 if h == "10s" else -0.02, "impact": 0.01})
     return rows
 
 
 def test_pairing_k_rows_and_verdict(tmp_path):
     out = tmp_path / "mk"
     os.makedirs(out)
-    pq.write_table(pa.Table.from_pylist(_rows()), out / "markout-t.parquet")
-    with open(out / "run-markout-t.json", "w") as f:
-        json.dump({"run": "t", "signals": 40}, f)
+    rows = _rows()
+    pq.write_table(pa.Table.from_pylist(rows), out / "markout-t.parquet")
+    pq.write_table(pa.Table.from_pylist(rows), out / "markout-u.parquet")  # the same triggers from a second run: deduplicated
+    for run in ("t", "u"):
+        with open(out / f"run-markout-{run}.json", "w") as f:
+            json.dump({"run": run, "signals": 40}, f)
     con = duckdb.connect()
     con.execute("SET memory_limit = '200MB'; SET threads TO 1")
-    assert R.load(con, str(out)) == 1
-    assert con.execute("SELECT count(*), avg(n_n2) FROM pairs").fetchone() == (40 * 2 * 7, 2.0)
+    assert R.load(con, str(out)) == 2
+    assert con.execute("SELECT count(*) FROM m WHERE family = 'F7'").fetchone()[0] == 40 * 2 * 7  # not doubled
+    assert con.execute("SELECT count(*) FROM entries WHERE family = 'F7'").fetchone()[0] == 40 * 2
+    assert con.execute("SELECT count(*), avg(n_n2) FROM pairs").fetchone() == (40 * 2 * 7, 2.0)  # paired on the trigger's pool key
     p = R.paired(con, "family = 'F7' AND d = 1 AND h = '1s'", "net", boot=200)
-    assert p["n"] == 40 and abs(p["n2_trim"] + 0.02) < 1e-9 and abs(p["diff"] - 0.05) < 1e-9 and p["lo"] > 0
+    assert p["n"] == 40 and abs(p["n2_trim"] + 0.02) < 1e-9 and abs(p["diff"] - 0.05) < 1e-9 and p["lo"] > 0 and p["n2_hi"] < 0
     md = R.render(con, str(out), 200)
     assert "### F7 · pool_reversed · d = 1" in md and "### K1/K2 (F7 pool_reversed, organic) · d = 1" in md and "### K3 (F7 pool_reversed, all pools) · d = 2" in md
-    assert "advantage first at **1s**" in md  # 1 s and 10 s are positive with CI > 0, N2's own net is not
+    assert "advantage first at **1s**" in md  # 1 s is positive with CI > 0 and N2's own net is not
     assert "| 267ms | 1s |" in md and "| 316ms | 1s |" not in md and "Entry impact > 5 %" in md
-    line = next(l for l in md.splitlines() if l.startswith("| days 10-18 | 6h |"))
+    b = R.BINDING
+    assert b == "days 10-18 (2026-09-20 … 09-30)"
+    # at 10 s the trigger is positive but so is N2 (its own CI > 0): no advantage, in the family table and in the K1/K2 row alike
+    k = md.index("### K1/K2 (F7 pool_reversed, organic) · d = 1")
+    for section in (md[:k], md[k:]):
+        row = next(l for l in section.splitlines() if l.startswith(f"| {b} | 10s |"))
+        assert row.endswith("**no** |") and "+4.0% (" in row
+        row1 = next(l for l in section.splitlines() if l.startswith(f"| {b} | 1s |"))
+        assert row1.endswith("**yes** |")
+    line = next(l for l in md.splitlines() if l.startswith(f"| {b} | 6h |"))
     assert "| 100% | 100% |" in line  # cut and dead
     assert R.fmt(None) == "–" and R.fmt(0.1234, 1, True, True) == "+12.3%" and R.fmt(12345) == "12,345"
 
