@@ -608,11 +608,12 @@ impl Recorder {
             }
             Decision::Downscale(reason) => {
                 // Step over streams that are off already (not configured, or dropped by the
-                // filter): one decision drops one stream that is actually on.
+                // filter): one decision drops one stream that is actually on. The filter carries
+                // its level, so the comparison leaves the level out.
                 while self.level < DOWNSCALE.len() {
                     self.level += 1;
                     let f = self.filter(self.level);
-                    if f != self.active {
+                    if !f.same_streams(&self.active) {
                         self.meter.note(format!("downscale to level {}: {} off ({reason})", self.level, DOWNSCALE[self.level - 1]));
                         return self.change(f, now_unix);
                     }

@@ -270,6 +270,12 @@ impl Filter {
         }
     }
 
+    /// The same subscription as `other`, whatever the downscale level: a level whose stream is
+    /// off already (not configured, or nothing left to drop) changes nothing.
+    pub fn same_streams(&self, other: &Filter) -> bool {
+        Filter { level: other.level, ..self.clone() } == *other
+    }
+
     fn tx(accounts: &[String]) -> SubscribeRequestFilterTransactions {
         SubscribeRequestFilterTransactions {
             vote: Some(false),
@@ -527,6 +533,17 @@ mod tests {
         assert!(last.tx_wallets.is_empty() && last.vaults.is_empty() && last.new_pools);
         let capped = Filter::new(&w, &extra, 0, &opts(false, 3));
         assert_eq!((capped.tx_pools.len(), capped.tx_probes.len(), capped.tx_wallets.len(), capped.truncated), (2, 1, 0, 2));
+    }
+
+    #[test]
+    fn a_level_whose_stream_is_off_already_changes_no_stream() {
+        let (w, extra) = (watch(), Extra::default());
+        let o = Opts { pool_accounts: true, ..Opts::default() }; // pump creates off (the default)
+        let at = |level| Filter::new(&w, &extra, level, &o);
+        let (l0, l1, l2) = (at(0), at(1), at(2));
+        assert_eq!(&DOWNSCALE[..2], &["tx_pump_creates", "pool_accounts"]);
+        assert!(l1 != l0 && l1.same_streams(&l0)); // only the level differs
+        assert!(l1.pool_accounts && !l2.pool_accounts && !l2.same_streams(&l1));
     }
 
     #[test]
