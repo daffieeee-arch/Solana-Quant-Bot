@@ -23,10 +23,13 @@ def guard(hi):
 
 
 def connect(store=STORE, memory="1GB", threads=2):
-    """Read-only store connection with bounded memory; spill goes to /dev/shm, at most 1 GB."""
+    """Read-only store connection with bounded memory; spill goes to disk (never /dev/shm = RAM), at most 1 GB."""
     con = duckdb.connect(store, read_only=True)
-    # Spill: LAB_SPILL_DIR (a base directory; the NAS uses NVMe, the VPS /dev/shm) with LAB_SPILL_MAX.
-    spill = os.path.join(os.environ.get("LAB_SPILL_DIR", "/dev/shm"), f"lab-wallets-{os.getpid()}")
+    # Spill: LAB_SPILL_DIR (a base directory on NVMe; the NAS sets /lab/tmp/<run>) with LAB_SPILL_MAX.
+    # Default: the lab tmp directory next to the store. DuckDB removes its own temp files; a crashed run leaves them
+    # on disk, not in RAM (2026-10-12, after 2.3 GB of stale spill was found in /dev/shm).
+    spill = os.path.join(os.environ.get("LAB_SPILL_DIR", os.path.join(os.path.dirname(os.path.dirname(STORE)), "tmp")),
+                         f"lab-wallets-{os.getpid()}")
     con.execute(f"SET threads TO {threads}; SET memory_limit = '{memory}'; SET temp_directory = '{spill}'; "
                 f"SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'; "
                 "SET preserve_insertion_order = false; SET enable_progress_bar = false")

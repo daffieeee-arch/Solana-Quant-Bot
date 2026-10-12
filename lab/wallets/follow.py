@@ -166,17 +166,24 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
     os.makedirs(out_dir, exist_ok=True)
     t_start = time.time()
     keys = sorted(by_key)
+    tail = max_slots + 2 * max(delays) + 2
     # Streams are loaded in batches (one query per batch): curve tokens are small, pools can be big.
     # Curve legs come from the create (load_streams); pool legs only from the first trigger on,
     # because a busy pool has millions of legs before it. A batch is the unit of work for the
     # workers; every batch writes its own part, so the result does not depend on the worker count.
-    batches = []
-    for venue, size in (("curve", 200), ("pool", 25)):
-        ks = [k for v, k in keys if v == venue]
-        batches += [(venue, ks[i:i + size]) for i in range(0, len(ks), size)]
-    tail = max_slots + 2 * max(delays) + 2
+    # Pools are weighed (their legs in the range, one cheap count) and packed heaviest first, a heavy
+    # pool alone: with fixed batches of 25 in key order the busiest pools came last and one worker
+    # ran on while the others idled (NAS 2026-09-14: the last 12 % of the episodes took 63 % of the
+    # time). Rows are identical for any batching: a pool's episodes always share one batch and its
+    # streams are loaded from its own first trigger.
+    pool_keys = [k for v, k in keys if v == "pool"]
+    weights = pool_weights(con, pool_keys, lo - 1, hi + tail)
+    batches = [("pool", ks, sum(weights.get(k, 0) for k in ks)) for ks in pack_pools(pool_keys, weights)]
+    curve_keys = [k for v, k in keys if v == "curve"]
+    batches += [("curve", curve_keys[i:i + 200], 0) for i in range(0, len(curve_keys), 200)]
+    batches.sort(key=lambda b: -b[2])  # heaviest first (LPT); curve batches last
     jobs = [(i, venue, {k: by_key[(venue, k)] for k in ks}, tail, cands, sizes, delays, max_slots,
-             os.path.join(out_dir, f"follow-{lo}-part{i:05d}.parquet")) for i, (venue, ks) in enumerate(batches)]
+             os.path.join(out_dir, f"follow-{lo}-part{i:05d}.parquet")) for i, (venue, ks, _) in enumerate(batches)]
     con.close()
     n_done = n_busy = n_rows = 0
     if workers > 1:
@@ -201,10 +208,41 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
                    "sizes": sizes, "delays": delays, "variants": VARIANTS, "min_n": min_n, "control": n_control,
                    "wallets_file": wallets_file, "max_per_wallet": max_per_wallet, "workers": workers, "parts": len(jobs),
                    "candidates": len(cands), "episodes": len(eps), "episodes_busy_pool": n_busy, "positions": n_rows,
-                   "max_hold_ms": MAX_HOLD_MS, "max_legs": MAX_LEGS, "q": Q_FRAC, "tol": TOL,
+                   "max_hold_ms": MAX_HOLD_MS, "max_legs": MAX_LEGS, "pool_batch_legs": POOL_BATCH_LEGS, "q": Q_FRAC, "tol": TOL,
                    "seconds": round(time.time() - t_start)}, f, indent=1)
     print(f"{lo}-{hi}: {len(cands)} wallets, {len(eps)} episodes ({n_busy} in busy pools, skipped), {n_rows} positions, "
           f"{len(jobs)} parts, {time.time() - t_start:.0f}s", file=sys.stderr)
+
+
+POOL_BATCH_LEGS = MAX_LEGS  # a batch holds light pools up to this many legs together; a heavier pool runs alone
+POOL_BATCH_MAX = 25
+
+
+def pool_weights(con, pools, lo, hi):
+    """Legs per pool in [lo, hi): an upper bound of what a batch loads (its own window is narrower)."""
+    if not pools:
+        return {}
+    con.execute("CREATE OR REPLACE TEMP TABLE weigh_pools (pool VARCHAR)")
+    con.executemany("INSERT INTO weigh_pools VALUES (?)", [(p,) for p in pools])
+    return dict(con.execute("SELECT pool, count(*) FROM pool e SEMI JOIN weigh_pools USING (pool) "
+                            "WHERE e.slot >= ? AND e.slot < ? AND e.kind IN ('buy', 'sell') GROUP BY pool", [lo, hi]).fetchall())
+
+
+def pack_pools(pools, weights, cap=None, max_pools=None):
+    """Batches of pools, heaviest first: a pool above the cap alone, lighter ones packed up to the cap or max_pools."""
+    cap = POOL_BATCH_LEGS if cap is None else cap
+    max_pools = POOL_BATCH_MAX if max_pools is None else max_pools
+    out, cur, cur_w = [], [], 0
+    for p in sorted(pools, key=lambda p: (-weights.get(p, 0), p)):
+        w = weights.get(p, 0)
+        if cur and (cur_w + w > cap or len(cur) >= max_pools):
+            out.append(cur)
+            cur, cur_w = [], 0
+        cur.append(p)
+        cur_w += w
+    if cur:
+        out.append(cur)
+    return out
 
 
 _W = {}

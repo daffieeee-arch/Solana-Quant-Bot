@@ -64,3 +64,12 @@ def test_candidates_min_n_and_deterministic_control():
     c = follow.candidates(eps, min_n=3, n_control=1, lo=1)
     assert c == {"a": False, "b": False, "c": True}  # d has 1 episode: never a control
     assert follow.candidates(eps, 3, 1, 1) == c
+
+
+def test_pack_pools_heaviest_first_and_alone_above_cap():
+    from wallets.follow import pack_pools
+
+    w = {"A": 500_000, "B": 120_000, "C": 40_000, "D": 30_000, "E": 10, "F": 0}
+    assert pack_pools(["F", "E", "D", "C", "B", "A"], w, cap=150_000, max_pools=25) == [["A"], ["B"], ["C", "D", "E", "F"]]
+    assert pack_pools(["C", "D", "E", "F"], w, cap=150_000, max_pools=2) == [["C", "D"], ["E", "F"]]
+    assert pack_pools([], w) == []
