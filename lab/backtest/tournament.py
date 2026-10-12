@@ -128,15 +128,27 @@ M1_CHUNK = int(os.environ.get("LAB_M1_CHUNK", "25"))  # young pools per stream l
 F6_STATS = {}
 
 
+INSIDER_FALLBACKS = [0]  # per process: token_insiders calls left window-dependent (run-info "insider_fallbacks")
+
+
 def token_insiders(con, tok, lo, clock):
     """overlay.Insiders of a token stream loaded with pool legs from `lo` on, over the token's whole
     history: the pool's trades before lo enter as offsets summed in SQL (busy pools have millions of
     events; the legs are not loaded). Without them insider sells before the window were invisible and
-    the share depended on where the caller's window started."""
+    the share depended on where the caller's window started.
+
+    Only for a pool in the normal orientation (the token as base, as Insiders counts it). A token whose
+    pool is reversed falls back to the window-dependent Insiders and is counted in INSIDER_FALLBACKS
+    (the run's config.json): an O7 figure on such tokens is not covered by this fix. Counting the
+    token side of a reversed pool (quote_net) is a later change."""
     w = clock.slots(overlay.INSIDER_WINDOW_MS, tok.create_slot)
     ins = overlay.Insiders(tok, w)
-    if not ins.known or tok.pool is None or tok.orientation != "normal":
+    if not ins.known or tok.pool is None:
+        return ins  # unknown insiders, or no pool: the curve legs are complete from the create on
+    if tok.orientation != "normal":
+        INSIDER_FALLBACKS[0] += 1
         return ins
+    # The insider wallets as a temporary table for the IN filter (registered for this query only).
     con.register("ins_w", pa.table({"w": sorted(ins.insiders)}))
     h0, c0, s0 = con.execute("""
         SELECT COALESCE(sum(CASE WHEN trader IN (SELECT w FROM ins_w) THEN d END), 0), COALESCE(sum(d), 0),
@@ -496,7 +508,7 @@ def f6_flows(con, pool, sigs, hi, clock):
 def _work(args):
     task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays, only = args
     health.wait_ok(log, f"batch {task_id}")
-    io0 = io_written()
+    io0, fb0 = io_written(), INSIDER_FALLBACKS[0]
     con = streams.open_store(STORE, threads=1, memory="600MB")
     replay.set_window_end(store_bounds(con)[1])  # no entry or exit at or after the store's end
     base = Scenario.from_cfg("base", cfg)
@@ -574,7 +586,7 @@ def _work(args):
     path = _part_path(out, task_id)
     pq.write_table(pa.Table.from_pylist(rows, schema=RESULT_SCHEMA), path + ".tmp")
     os.replace(path + ".tmp", path)
-    return len(rows), io_written() - io0
+    return len(rows), io_written() - io0, INSIDER_FALLBACKS[0] - fb0
 
 
 def engine_commit():
@@ -617,10 +629,10 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
         f"in {time.time() - t0:.0f}s")
     del items, tasks
-    positions, written = 0, 0
+    positions, written, fallbacks = 0, 0, INSIDER_FALLBACKS[0]  # the main process's (signals) first
     with mp.get_context("spawn").Pool(workers, maxtasksperchild=20) as pool:
-        for i, (n, w) in enumerate(pool.imap_unordered(_work, todo)):
-            positions, written = positions + n, written + w
+        for i, (n, w, fb) in enumerate(pool.imap_unordered(_work, todo)):
+            positions, written, fallbacks = positions + n, written + w, fallbacks + fb
             if i % 50 == 0 or i == len(todo) - 1:
                 log(f"batch {i + 1}/{len(todo)}: {positions} positions, {time.time() - t0:.0f}s, "
                     f"workers wrote {written / 1e9:.2f} GB")
@@ -633,7 +645,8 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
               "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "gate_sizes": list(GATE_SIZES), "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k,
               "max_signals": max_signals, "store": meta,
-              "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
+              "signals": n_signals, "positions": total, "seconds": round(time.time() - t0),
+              "insider_fallbacks": fallbacks}
     with open(os.path.join(out, "config.json"), "w") as f:
         json.dump(config, f, indent=1)
     from .report import write_report

@@ -86,3 +86,15 @@ def test_a_cut_flow_window_exits_early():
     ctx = {"mark": 1.0, "slot": t + 2, "slots_held": 0, "pool": NS(real=10_000, b=0)}
     assert F6Exit(0.5, full, n, 10_000, "normal")(dict(ctx)) is None
     assert F6Exit(0.5, cut, n, 10_000, "normal")(dict(ctx)) == "outflow"
+
+
+def test_a_reversed_pool_falls_back_and_is_counted():
+    """token_insiders covers pools in the normal orientation only: a reversed one keeps the
+    window-dependent share and is counted (config.json insider_fallbacks), never silently 'fixed'."""
+    tok = token([l for l in POOL if l.slot >= LO])
+    tok.orientation = "reversed"
+    before = tournament.INSIDER_FALLBACKS[0]
+    got = tournament.token_insiders(None, tok, LO, CLOCK)  # no SQL is asked: con unused
+    assert tournament.INSIDER_FALLBACKS[0] == before + 1
+    w = CLOCK.slots(overlay.INSIDER_WINDOW_MS, 100)
+    assert got.share(31_000) == overlay.Insiders(tok, w).share(31_000)
