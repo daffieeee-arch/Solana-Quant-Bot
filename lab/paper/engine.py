@@ -34,6 +34,8 @@ from backtest.costs import Scenario, settle
 from backtest.replay import _hist_state, _insertion_index
 from backtest.store import load_defaults
 from backtest.strategies import (
+    F6_FARM_MS,
+    F6_FARM_SHARE,
     F7_GRID,
     HOUR_MS,
     MAYHEM_AGENT,
@@ -102,8 +104,16 @@ class Open:
 
 class Engine:
     def __init__(self, feed, journal, risk_path, *, variants=F7_GRID, d=1, q=0.5, tol=0.05, tau="empirical",
-                 dev_bounds=None, n2_k=1, ignore_risk=False, cfg=None, clock=None, backup=True):
+                 dev_bounds=None, n2_k=1, ignore_risk=False, cfg=None, clock=None, backup=True, segments=None,
+                 farm="all"):
+        """segments: trade F7 only there ('curve', 'pool_normal', 'pool_reversed'; None: everywhere);
+        farm: 'organic' trades only triggers in pools that were not flagged for volume farming in the
+        hour before t (the backtest's `farm` label), 'all' trades every trigger (the label is journaled)."""
+        if farm not in ("all", "organic"):
+            raise ValueError(f"farm must be 'all' or 'organic', not {farm!r}")
         self.feed, self.j, self.risk_path = feed, journal, risk_path
+        self.segments, self.farm = (set(segments) if segments else None), farm
+        self.farm_win = defaultdict(list)  # pool -> sorted [(slot, order, sol, farmer sol)] of its trades, the last ~hour
         self.variants = [(tp, T) for tp, T in variants]
         self.d, self.q, self.tol, self.tau = d, q, tol, replay.Tau(tau)
         self.cfg = cfg or load_defaults()
@@ -181,6 +191,13 @@ class Engine:
             self._f7(venue, key, legs, slot)
             if venue == "pool" or venue == "curve":
                 self._hour_index(venue, key, legs, slot)
+        # 4b. the pools' farming windows (after the signals: a decision at t looks at [t - 1 h, t - 1])
+        for (venue, key), legs in by_key.items():
+            if venue == "pool":
+                self._farm_add(key, legs)
+        if hasattr(self.feed, "drain_history"):  # trades the feed has as history only (a recorder backfill)
+            for pool, legs in self.feed.drain_history():
+                self._farm_add(pool, legs)
         # 5. time passes for tokens without events in this slot
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
@@ -275,11 +292,42 @@ class Engine:
         tok = self.feed.token(p.mint)
         return True, (tok.creator if tok else p.coin_creator), p.coin_creator, p.orientation
 
+    def _farm_add(self, pool, legs):
+        p = self.feed.pool(pool)
+        if p is None:
+            return
+        xs = self.farm_win[pool]
+        for l in legs:
+            if l.kind not in ("buy", "sell"):
+                continue
+            _, amount, _ = sol_side(l, p.orientation)
+            item = (l.slot, l.order, amount, amount if l.farmer else 0)
+            i = bisect.bisect_left(xs, item)
+            if i < len(xs) and xs[i][:2] == item[:2]:
+                continue  # the same trade twice (a backfill overlapping the recorded transactions)
+            xs.insert(i, item)
+        if xs and xs[0][0] < xs[-1][0] - 2 * self.clock.slots(F6_FARM_MS, xs[-1][0]):
+            del xs[:bisect.bisect_left(xs, (xs[-1][0] - self.clock.slots(F6_FARM_MS, xs[-1][0]),))]
+
+    def _pool_flagged(self, pool, t):
+        """The backtest's farming flag (strategies.f7_signals_sql): farmers made more than
+        F6_FARM_SHARE of the pool's SOL volume over slots [t - 1 h, t - 1]."""
+        xs = self.farm_win.get(pool, [])
+        vol = farm = 0
+        for slot, _, a, f in xs[bisect.bisect_left(xs, (t - self.clock.slots(F6_FARM_MS, t),)):]:
+            if slot >= t:
+                break
+            vol += a
+            farm += f
+        return farm > F6_FARM_SHARE * vol
+
     def _f7(self, venue, key, legs, t):
         if not (self.dlo <= t <= self.dhi):
             return
         ok, creator, coin_creator, orientation = self._universe(venue, key)
         if not ok:
+            return
+        if self.segments is not None and (venue if venue == "curve" else f"pool_{orientation}") not in self.segments:
             return
         trig = None
         for l in legs:  # the slot's first event that passes the event-local trigger conditions
@@ -301,17 +349,21 @@ class Engine:
         if not f7_signal(view, venue, 0, creator, clock=self.clock):
             return
         leg, depth = trig
+        farm = "n/a" if venue == "curve" else ("flagged" if self._pool_flagged(key, t) else "organic")
         for tp, T in self.variants:
-            self._signal("F7", f"tp{int(tp * 100)}_T{T}", key, venue, orientation, t, (tp, T), int(depth), leg.trader)
+            self._signal("F7", f"tp{int(tp * 100)}_T{T}", key, venue, orientation, t, (tp, T), int(depth), leg.trader, farm)
         for mkey in self._n2(venue, orientation, key, t, depth):
             for tp, T in self.variants:
-                self._signal("N2_F7", f"tp{int(tp * 100)}_T{T}", mkey, venue, orientation, t, (tp, T), int(depth), None)
+                self._signal("N2_F7", f"tp{int(tp * 100)}_T{T}", mkey, venue, orientation, t, (tp, T), int(depth), None, farm)
 
     def _hour_index(self, venue, key, legs, slot):
         h = self.clock.slots(HOUR_MS, slot)
         hour = slot - slot % h
         if hour != self.hour:
             self.hour, self.hour_events = hour, defaultdict(list)
+            n = self.clock.slots(F6_FARM_MS, slot)  # pools quiet for an hour leave the farming windows
+            for pool in [p for p, xs in self.farm_win.items() if not xs or xs[-1][0] < slot - n]:
+                del self.farm_win[pool]
         if venue == "curve":  # N2 universe as in the backtest: non-mayhem SOL-market tokens
             tok = self.feed.token(key)
             if tok is not None and not tok.mayhem and tok.quote_mint in SOL_QUOTES:
@@ -335,10 +387,13 @@ class Engine:
         mixed = _mix(np.array([_seed(k) for k in keys], dtype=np.uint64) ^ seed)
         return [keys[i] for i in np.argsort(mixed, kind="stable")[:self.n2_k]]
 
-    def _signal(self, family, variant, key, venue, orientation, t, params, depth, trader):
+    def _signal(self, family, variant, key, venue, orientation, t, params, depth, trader, farm=None):
+        """farm: the trigger's label (an N2 signal carries its F7 trigger's)."""
         b = self.busy.get((family, variant, key))
         row = dict(family=family, variant=variant, key=key, t=t, day=self.day, venue=venue, orientation=orientation,
-                   depth=depth, trigger_trader=trader)
+                   depth=depth, trigger_trader=trader, farm=farm)
+        if self.farm == "organic" and farm == "flagged":
+            return self.j.put("signals", **row, status="skipped", reason="farm flagged")
         if b == "open" or (b is not None and t <= b):
             return self.j.put("signals", **row, status="skipped", reason="busy")
         reason = self._risk_block(family)
@@ -552,6 +607,8 @@ def main():
     ap.add_argument("--q", type=float, default=0.5)
     ap.add_argument("--variants", default="", help="e.g. 0.04:600 (default: the F7 grid)")
     ap.add_argument("--ignore-risk", action="store_true", help="no limits (parity runs)")
+    ap.add_argument("--segments", default="", help="F7 only there, e.g. pool_reversed (default: everywhere)")
+    ap.add_argument("--farm", choices=["all", "organic"], default="all", help="organic: skip triggers in farming pools")
     ap.add_argument("--no-backup", action="store_true")
     a = ap.parse_args()
     if a.live:
@@ -566,7 +623,7 @@ def main():
     variants = [tuple(float(x) if i == 0 else int(x) for i, x in enumerate(v.split(":"))) for v in a.variants.split(",")
                 if v] or F7_GRID
     eng = Engine(feed, Journal(a.journal), a.risk, variants=variants, d=a.d, q=a.q, ignore_risk=a.ignore_risk,
-                 clock=clock, backup=not a.no_backup)
+                 clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm)
     t0 = time.time()
     eng.run()
     print(f"{eng.events_seen} events, {time.time() - t0:.0f}s, journal {a.journal}")

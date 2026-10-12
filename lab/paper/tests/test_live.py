@@ -276,5 +276,8 @@ def test_a_backfill_gives_the_probe_pools_history_without_events(setup, tmp_path
     assert len(want) < len(replay)
     assert live == want
     assert feed.stats["backfill_rows"] > 0 and feed.stats["backfill_duplicates"] == 0
+    hist = feed.drain_history()  # the backfill's trades for the engine's farming window, never events
+    assert hist and {p for p, _ in hist} == {pool} and feed.drain_history() == []
+    assert all(l.kind in ("buy", "sell") and l.slot < start + 1000 for _, legs in hist for l in legs)
     # P's farmer history reaches back before segment 2 (from the backfill).
     assert any(s < start for (p, _), dq in feed.farmers.hist.items() if p == pool for s, *_ in dq)

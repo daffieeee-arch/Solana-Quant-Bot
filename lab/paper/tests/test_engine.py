@@ -178,3 +178,48 @@ def test_feed_gap_heartbeat_report_and_backup(tmp_path, monkeypatch):
     assert "feed gaps: 2 (largest 959 slots)" in (tmp_path / "gap" / day / "report.md").read_text()
     # The day's Parquet files and report are copied to the backup directory.
     assert sorted(os.listdir(tmp_path / "backup" / "gap" / day)) == sorted(os.listdir(tmp_path / "gap" / day))
+
+
+def test_segments_limit_where_f7_trades(tmp_path):
+    toks = {"M": trigger_token(after=[(500_100, "W", "buy", 150 * T)])}
+    j = Journal(str(tmp_path / "seg"))
+    Engine(Synth(toks), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0, clock=Clock(), backup=False,
+           segments=["pool_reversed"]).run()
+    assert j.rows("signals") == []  # a curve trigger, but only pool_reversed is traded
+    j = Journal(str(tmp_path / "curve"))
+    Engine(Synth(toks), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0, clock=Clock(), backup=False,
+           segments=["curve"], farm="organic").run()
+    assert [(s["status"], s["farm"]) for s in j.rows("signals")] == [("entered", "n/a")]
+
+
+def test_farming_window_and_the_organic_filter(tmp_path):
+    """The backtest's pool flag: farmers' SOL volume > 50 % of all over slots [t - 1 h, t - 1]."""
+    from types import SimpleNamespace as NS
+
+    from backtest.strategies import F6_FARM_MS
+    from paper.feed import PoolInfo
+
+    class Pools(Feed):
+        meta_bounds = (0, 10**9)
+
+        def pool(self, p):
+            return PoolInfo(p, "M", "reversed", "reversed", False, None, 0)
+
+        def token(self, m):
+            return None
+
+    def leg(slot, sol, farmer):
+        return NS(kind="sell", slot=slot, order=(slot, 0, 0, 0), farmer=farmer, base=sol * SOL, pre=NS(b=200 * SOL))
+
+    eng = Engine(Pools(), Journal(str(tmp_path / "farm")), None, ignore_risk=True, clock=Clock(), backup=False, farm="organic")
+    eng._farm_add("P", [leg(100, 10, True), leg(101, 4, False)])
+    eng._farm_add("P", [leg(102, 8, False), leg(101, 4, False)])  # the same trade again (a backfill overlap) counts once
+    assert eng._pool_flagged("P", 101) and eng._pool_flagged("P", 102)  # 10 of 10, 10 of 14 SOL
+    assert not eng._pool_flagged("P", 103)  # 10 of 22: not more than half
+    assert not eng._pool_flagged("P", 100 + eng.clock.slots(F6_FARM_MS, 100) + 1)  # the farming trade left the hour
+    assert not eng._pool_flagged("Q", 103)  # no volume: organic, as the SQL's COALESCE(..., false)
+    eng._load_risk()
+    eng._signal("F7", "tp4_T600", "P", "pool", "reversed", 102, (0.04, 600), 200 * SOL, "B", "flagged")
+    eng._signal("F7", "tp4_T600", "P", "pool", "reversed", 103, (0.04, 600), 200 * SOL, "B", "organic")
+    assert [(s["t"], s["status"], s["reason"], s["farm"]) for s in eng.j.rows("signals")] == [
+        (102, "skipped", "farm flagged", "flagged"), (103, "entered", None, "organic")]

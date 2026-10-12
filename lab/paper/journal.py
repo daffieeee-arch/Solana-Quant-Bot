@@ -13,7 +13,7 @@ import pyarrow.parquet as pq
 
 TABLES = {
     "signals": ("family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, venue TEXT, orientation TEXT, depth INTEGER, "
-                "trigger_trader TEXT, status TEXT, reason TEXT", "family, variant, key, t"),
+                "trigger_trader TEXT, status TEXT, reason TEXT, farm TEXT", "family, variant, key, t"),
     "orders": ("family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, size INTEGER, status TEXT, "
                "reason TEXT", "family, variant, key, t"),
     "fills": ("family TEXT, variant TEXT, key TEXT, t INTEGER, side TEXT, day TEXT, slot INTEGER, tokens INTEGER, "
@@ -44,6 +44,10 @@ class Journal:
         self.db.execute("PRAGMA synchronous=NORMAL")
         for name, (cols, key) in TABLES.items():
             self.db.execute(f"CREATE TABLE IF NOT EXISTS {name} ({cols}, PRIMARY KEY ({key}))")
+            have = {r[1] for r in self.db.execute(f"PRAGMA table_info({name})")}
+            for c in cols.split(", "):  # a journal from before a column was added
+                if c.split()[0] not in have:
+                    self.db.execute(f"ALTER TABLE {name} ADD COLUMN {c}")
         self.db.commit()
         self.cols = {name: [c.split()[0] for c in cols.split(", ")] for name, (cols, _) in TABLES.items()}
 

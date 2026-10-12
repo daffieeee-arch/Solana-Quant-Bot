@@ -17,7 +17,7 @@ from collections import defaultdict
 from backtest import replay, streams
 from backtest.costs import Scenario, settle
 from backtest.store import load_defaults
-from backtest.strategies import Clock, Signal, f7_signals_sql
+from backtest.strategies import F6_FARM_MS, Clock, Signal, f7_signals_sql
 from backtest.tournament import STORE, exit_rule_for, work_items
 
 from .engine import Engine
@@ -32,10 +32,12 @@ TAIL = 2_000  # slots after `to`: positions opened before `to` close
 def backtest_side(con, cfg, clock, a, b):
     lo, hi = con.execute("SELECT min(slot), max(slot) + 1 FROM blocks").fetchone()
     sigs = []
-    for venue, m, t, depth, pool, orient, trader, _, _ in f7_signals_sql(con, cfg, lo, hi, clock=clock,
-                                                                        trig_range=(a - WARMUP, b - 1)):
+    farm = {}
+    for venue, m, t, depth, pool, orient, trader, _, flagged in f7_signals_sql(con, cfg, lo, hi, clock=clock,
+                                                                              trig_range=(a - WARMUP, b - 1)):
         sigs.append(Signal("F7", f"tp{int(VARIANT[0] * 100)}_T{VARIANT[1]}", m, t, venue, int(depth), VARIANT,
                            pool=pool, orientation=orient, trigger=trader))
+        farm[(pool or m, t)] = "n/a" if flagged is None else ("flagged" if flagged else "organic")
     sigs.sort(key=lambda s: (s.t, s.mint, s.pool or ""))
     scn = Scenario.from_cfg("base", cfg)
     out = {}
@@ -45,13 +47,14 @@ def backtest_side(con, cfg, clock, a, b):
         busy = -1
         for s in cl:
             if s.t <= busy:
-                out[(key, s.t)] = {"status": "busy"}
+                out[(key, s.t)] = {"status": "busy", "farm": farm.get((key, s.t))}
                 continue
             sim = replay.simulate_pool_position if venue == "pool" else replay.simulate_curve_position
             r = sim(st, s.t, int(SIZE * 1e9), D, Q, exit_rule_for(s, scn, D, clock), TOL, replay.Tau("empirical"))
             busy = r.exit_slot or s.t
             pnl, _, _ = settle(r, scn) if not r.skipped else (None, None, None)
-            out[(key, s.t)] = {"status": "skipped" if r.skipped else "entry_failed" if r.entry_failed else "filled",
+            out[(key, s.t)] = {"farm": farm.get((key, s.t)),
+                               "status": "skipped" if r.skipped else "entry_failed" if r.entry_failed else "filled",
                                "tokens": r.tokens, "cost": r.cost, "exit_decision_slot": r.exit_decision_slot,
                                "exit_slot": r.exit_slot, "exit_reason": r.exit_reason, "proceeds": r.proceeds,
                                "exit_attempts": r.exit_attempts, "pnl": pnl}
@@ -59,7 +62,8 @@ def backtest_side(con, cfg, clock, a, b):
 
 
 def engine_side(store, a, b, journal_dir, clock):
-    feed = ReplayFeed(store, a - WARMUP - 400, b + TAIL)
+    # From an hour (the farming window) plus the warm-up before `from`.
+    feed = ReplayFeed(store, a - WARMUP - 400 - clock.slots(F6_FARM_MS, a), b + TAIL)
     eng = Engine(feed, Journal(journal_dir), None, variants=[VARIANT], d=D, q=Q, tol=TOL, ignore_risk=True, n2_k=0,
                  dev_bounds=feed.meta_bounds, clock=clock, backup=False)
     eng.run()
@@ -71,11 +75,11 @@ def engine_side(store, a, b, journal_dir, clock):
     out = {}
     for k, s in sig.items():
         if s["status"] == "skipped":
-            out[k] = {"status": "busy" if s["reason"] == "busy" else "risk:" + str(s["reason"])}
+            out[k] = {"status": "busy" if s["reason"] == "busy" else "risk:" + str(s["reason"]), "farm": s["farm"]}
             continue
         o, x = orders.get(k), exits.get(k)
         st = o["status"] if o else "missing"
-        rec = {"status": st}
+        rec = {"status": st, "farm": s["farm"]}
         if st in ("filled", "entry_failed") and x:
             rec.update(tokens=x["tokens"], cost=x["cost"], exit_decision_slot=x["exit_decision_slot"],
                        exit_slot=x["exit_slot"], exit_reason=x["exit_reason"], proceeds=x["proceeds"],
@@ -86,7 +90,7 @@ def engine_side(store, a, b, journal_dir, clock):
 
 def compare(bt, en, a, b):
     keys = sorted(k for k in set(bt) | set(en) if a <= k[1] < b)
-    fields = ["status", "tokens", "cost", "exit_decision_slot", "exit_slot", "exit_reason", "proceeds", "exit_attempts", "pnl"]
+    fields = ["status", "farm", "tokens", "cost", "exit_decision_slot", "exit_slot", "exit_reason", "proceeds", "exit_attempts", "pnl"]
     diffs, counts = [], defaultdict(int)
     for k in keys:
         x, y = bt.get(k), en.get(k)

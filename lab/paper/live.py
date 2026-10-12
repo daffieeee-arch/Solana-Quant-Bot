@@ -182,6 +182,7 @@ class LiveFeed(Feed):
         # backfill's overlap with the recorded transactions counts once.
         self.farm_keys = defaultdict(set)
         self.backfill_pending = []  # backfill rows past the segment they came with
+        self.history = []  # backfill trades for the engine's farming windows (drain_history)
         self.meta_bounds = meta_bounds or (0, 2**63 - 1)
 
     # ------------------------------------------------------------------ metadata
@@ -312,16 +313,26 @@ class LiveFeed(Feed):
         return sorted(rows, key=lambda r: (r[4], r[5], r[6], r[7]))
 
     def _history(self, pool, token_buy, token_amount, row):
-        """A backfill trade: farmer history and the pool's leg context, no event. Counted once."""
+        """A backfill trade: farmer history and the pool's leg context, no event; the engine gets
+        it for the pool's farming window (drain_history). Counted once."""
         key = (row[1], row[2], row[3], row[4])
         if key in self.farm_keys[pool]:
             self.stats["backfill_duplicates"] += 1
             return
         self.farm_keys[pool].add(key)
         self.stats["backfill_rows"] += 1
+        farmer = False
         if row[0] in ("buy", "sell"):
+            farmer = self.farmers.flag(pool, row[22], row[1], self._h24())
             self.farmers.add(pool, row[22], row[1], token_buy, token_amount)
-        streams.pool_leg(tuple(row) + (False,), self.ctx.setdefault(pool, {}))
+        leg = streams.pool_leg(tuple(row) + (farmer,), self.ctx.setdefault(pool, {}))
+        if row[0] in ("buy", "sell"):
+            self.history.append((pool, [leg]))
+
+    def drain_history(self):
+        """Backfill trades since the last call, as (pool, [leg]): history only, never events."""
+        out, self.history = self.history, []
+        return out
 
     def segment_events(self, seq, seg, meta):
         """The Events of one segment, sorted (curve and pool merged)."""
