@@ -1,10 +1,12 @@
 """Reconcile the live recorder against Old Faithful once an epoch is archived.
 
-The recorder only receives the transactions of its watchlist (pools and wallets). For every
-complete segment inside complete OF1 chunks, the event rows of the watchlist pools (and of the
-watched wallets) must equal OF1's rows for the same slots: the same positions, and every column
-the same (amounts, reserves, fees, parent instruction and accounts). Anything else is a gap
-(missing live), an extra row, or a mismatch, counted per table and column.
+The recorder only receives the transactions of its watchlist (pools and wallets) and, when its
+watchlist.json says new_pools, every pump.fun graduation (account_required [PumpSwap, withdraw
+authority]). For every complete segment inside complete OF1 chunks, the event rows of the watchlist
+pools, of the watched wallets and of graduation transactions (those with a
+CompletePumpAmmMigrationEvent) must equal OF1's rows for the same slots: the same positions, and
+every column the same (amounts, reserves, fees, parent instruction and accounts). Anything else is
+a gap (missing live), an extra row, or a mismatch, counted per table and column.
 
   python -m paper.reconcile <recorder_root> [--out reconcile.json]    # OF1 chunks from LAB_CHUNKS
 
@@ -22,19 +24,20 @@ from backtest import data
 from .live import segment_dirs
 
 KEY = ("slot", "tx_index", "outer_ix", "inner_ix")
+MIGRATION = "pump/CompletePumpAmmMigrationEvent"
 
 
 def watch_of(seg):
-    """The segment's effective transaction filter: (pools, wallets). Accepts the watchlist builder's
-    format (pools as objects with a "pool" field) and plain address lists."""
+    """The segment's effective transaction filter: (pools, wallets, graduations). Accepts the
+    watchlist builder's format (pools as objects with a "pool" field) and plain address lists."""
     path = os.path.join(seg, "watchlist.json")
     if not os.path.exists(path):
-        return set(), set()
+        return set(), set(), False
     with open(path) as f:
         w = json.load(f)
     pools = {p["pool"] if isinstance(p, dict) else p for p in w.get("pools", ())}
     wallets = {x["wallet"] if isinstance(x, dict) else x for x in w.get("wallets", ())}
-    return pools, wallets
+    return pools, wallets, bool(w.get("new_pools"))
 
 
 def _lit(values):
@@ -44,7 +47,13 @@ def _lit(values):
 def reconcile_segment(con, seg, meta, chunks):
     """{table: {live, of1, missing, extra, mismatched, columns: {col: n}}} for one segment."""
     lo, hi = meta["first_slot"], meta["last_slot"]
-    pools, wallets = watch_of(seg)
+    pools, wallets, graduations = watch_of(seg)
+    mig_l = data.parquet(MIGRATION, [(lo, hi + 1, seg)], missing_ok=True)
+    mig_o = data.parquet(MIGRATION, chunks, missing_ok=True)
+
+    def graduation(src):
+        return f"EXISTS (SELECT 1 FROM {src} m WHERE m.slot = x.slot AND m.tx_index = x.tx_index)" if src else "false"
+
     out = {}
     tables = sorted({os.path.relpath(os.path.dirname(f), seg) for f in glob.glob(os.path.join(seg, "pump*", "*", "*.parquet"))}
                     | {os.path.relpath(os.path.dirname(f), d) for _, _, d in chunks
@@ -57,15 +66,16 @@ def reconcile_segment(con, seg, meta, chunks):
         cols = cols_l or cols_o
         conds = []
         if "pool" in cols and pools:
-            conds.append(f"pool IN (SELECT unnest({_lit(pools)}))")
+            conds.append(f"x.pool IN (SELECT unnest({_lit(pools)}))")
         if "user" in cols and wallets:
-            conds.append(f"\"user\" IN (SELECT unnest({_lit(wallets)}))")
-        if not conds:
+            conds.append(f"x.\"user\" IN (SELECT unnest({_lit(wallets)}))")
+        if not conds and not graduations:
             continue  # neither the table's pools nor its wallets are watched
-        where = " OR ".join(conds)
+        where_l = " OR ".join(conds + ([graduation(mig_l)] if graduations else []))
+        where_o = " OR ".join(conds + ([graduation(mig_o)] if graduations else []))
         empty = "SELECT NULL::UBIGINT AS slot, NULL::BIGINT AS tx_index, NULL::BIGINT AS outer_ix, NULL::BIGINT AS inner_ix WHERE false"
-        l_sql = f"SELECT * FROM {live} WHERE ({where})" if live else empty
-        o_sql = f"SELECT * FROM {of1} WHERE slot BETWEEN {lo} AND {hi} AND ({where})" if of1 else empty
+        l_sql = f"SELECT x.* FROM {live} x WHERE ({where_l})" if live else empty
+        o_sql = f"SELECT x.* FROM {of1} x WHERE x.slot BETWEEN {lo} AND {hi} AND ({where_o})" if of1 else empty
         common = sorted((cols_l & cols_o) - set(KEY)) if live and of1 else []
         flags = "".join(f', (l."{c}" IS DISTINCT FROM o."{c}") AS d{i}' for i, c in enumerate(common))
         differs = " OR ".join(f"d{i}" for i in range(len(common))) or "false"
