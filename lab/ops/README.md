@@ -88,11 +88,21 @@ Only after the owner's OK for this step. Run by the coordinator.
 - `systemctl --user disable --now lab-recorder.timer lab-live-retention.timer`;
 - for the RPC route also `lab-token-meta-rpc` and `rm ~/.config/solana-lab/token-meta-rpc.approved`.
 
-**Restarts.** The paper engine restarts by replaying the retained segments into the same journal (no
-state snapshots yet). After a long outage the replay starts at the oldest retained segment (3
-days), so journal rows older than that are not recomputed. The disk guard's emergency level stops
-`run-*.scope` lab jobs, not these units: retention keeps their disk use bounded (about 3 days of
-segments).
+**Disk guard.** At its emergency level (< 20 GB free) `ops/disk-guard.sh` also stops
+`lab-paper.service`, `lab-token-meta-rpc.service` and `lab-recorder.service`, in that order. They
+are not restarted automatically; the restart command is in its log. At `disk-low` the recorder
+does not start, and retention keeps 1 day.
+
+### Known limitation: a restart replays, there are no state snapshots
+
+The paper engine has no state snapshots yet. After a restart it replays the retained segments
+into the same journal; writes are idempotent per key, so the rows come out the same. After an
+outage longer than the retention (3 days), the replay starts at the oldest retained segment:
+- journal rows older than that are kept, but not recomputed;
+- state that needs older data (the 24 h farmer history, open positions from before) starts
+  incomplete.
+
+Accepted for the paper phase (coordinator, 2026-10-12).
 
 `tests/test_live_retention.py` tests the retention script on a temporary root; `systemd-analyze
 --user verify lab/ops/systemd/*` checks the unit files. Before installing, it only reports the
