@@ -11,8 +11,18 @@ def normal(pool="N", create_minute=100, grad_in_create=False):
     return PoolInfo(pool, "mint" + pool, "sol", "normal", False, create_minute, grad_in_create)
 
 
-def test_f7_reversed_enters_at_150_and_leaves_below_120():
+def test_default_thresholds_are_120_in_100_out():
+    assert Rules().f7_depth_enter_sol == 120.0 and Rules().f7_depth_exit_sol == 100.0   # coordinator decision 2026-10-12
     wl = Watchlist(Rules())
+    wl.add_pool(rev())
+    assert wl.step(0, [("R", 5, 10.0, 0.0, 119.0)]) == {}
+    assert wl.step(1, [("R", 5, 10.0, 0.0, 120.0)]) == {"R": ("f7_rev",)}
+    assert wl.step(2, [("R", 5, 10.0, 0.0, 100.0)]) == {"R": ("f7_rev",)}
+    assert wl.step(3, [("R", 5, 10.0, 0.0, 99.0)]) == {}
+
+
+def test_f7_reversed_enters_at_150_and_leaves_below_120():
+    wl = Watchlist(Rules(f7_depth_enter_sol=150.0, f7_depth_exit_sol=120.0))
     wl.add_pool(rev())
     assert wl.step(0, [("R", 5, 10.0, 0.0, 140.0)]) == {}                    # too shallow
     assert wl.step(1, [("R", 5, 10.0, 0.0, 151.0)]) == {"R": ("f7_rev",)}    # deep and organic (0 % farmers)

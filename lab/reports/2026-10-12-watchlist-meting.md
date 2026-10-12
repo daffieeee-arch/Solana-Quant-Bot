@@ -64,7 +64,7 @@ Van de 2.571 gemiste triggers met een trade ervoor was de pool in 2.567 gevallen
 | 120 / 100 | 82 / 108 | 3,68 mln | 11,32 | **94,0 %** | 28,5 % | 23,9 % |
 | 100 / 80 | 119 / 160 | 4,20 mln | 12,89 | 95,6 % | 28,9 % | 23,9 % |
 
-Instap op 120 SOL (uit onder 100) haalt de dekking van 70 % naar 94 % voor 14 % meer events (+1,4 GB/dag als volledige transacties); 100 SOL voegt daar nog 1,6 punt aan toe voor nog eens 1,6 GB. Advies: 120 / 100. De volledige periode met 120 / 100 staat hieronder.
+Instap op 120 SOL (uit onder 100) haalt de dekking van 70 % naar 94 % voor 14 % meer events (+1,4 GB/dag als volledige transacties); 100 SOL voegt daar nog 1,6 punt aan toe voor nog eens 1,6 GB. Advies: 120 / 100. De volledige periode met 120 / 100 staat hieronder. **Besluit coördinator 2026-10-12: de standaard van de F7-watchlist wordt instap 120 SOL, uit onder 100** (code: `Rules` in `watchlist.py`; de env-knoppen blijven). De recorder (#182) schakelt op dezelfde drempel over op volledige transacties.
 
 **Volledige periode met 120 / 100** (VPS-run op dezelfde code, uitvoer `wallets/watchlist-v1-enter120/`):
 
@@ -83,7 +83,7 @@ De resterende 4,4 % zijn vooral pools die binnen dezelfde minuut worden aangemaa
 ## Wat dit betekent voor de recorder (Week 1 beginning, #182)
 
 1. Creatie-detectie van reversed pools is verplicht; dagelijks verversen uit OF1 dekt 0–1 %.
-2. De F7-lijst stapt in op 120 SOL reële diepte en gaat eruit onder 100; de trigger blijft 150 SOL. Dat is een instelling van `Rules`, geen nieuwe regel.
+2. De F7-lijst stapt in op 120 SOL reële diepte en gaat eruit onder 100; de trigger blijft 150 SOL. Dat is sinds 2026-10-12 de standaard in `Rules`.
 3. Een nieuwe pool wordt mediaan 2–4 minuten na aanmaak diep en triggert mediaan 3–5 minuten na aanmaak; de wissel van vault-saldo naar volledige transacties moet per seconde, niet per minuut.
 4. De farmer-vlag heeft bij 14 % van de organische triggers de trades van vóór 150 SOL nodig: backfill vanaf de aanmaakslot bij de start van een probe.
 5. Inname: 10,3 GB/dag als volledige transacties bij 150 / 120, 12,2 GB bij 120 / 100; ruw een derde daarvan. M1 is de helft; de F7-helft groeit met de lagere drempel.

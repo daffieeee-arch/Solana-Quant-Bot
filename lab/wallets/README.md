@@ -45,7 +45,9 @@ The recorder asks Triton for full transactions only for pools we can trade and w
 
 | rule | pool | enters | leaves |
 |---|---|---|---|
-| `f7_rev` | reversed PumpSwap pool, not mayhem | last real SOL depth ≥ 150 SOL and organic (farmers ≤ 50 % of the SOL volume in the trailing 60 min, judged when that volume ≥ 1 SOL) | depth < 120 SOL, the hour turns farming, or 6 h without a trade |
+| `f7_rev` | reversed PumpSwap pool, not mayhem | last real SOL depth ≥ 120 SOL and organic (farmers ≤ 50 % of the SOL volume in the trailing 60 min, judged when that volume ≥ 1 SOL) | depth < 100 SOL, the hour turns farming, or 6 h without a trade |
+
+The F7 entry threshold is deliberately below the 150 SOL trigger threshold (coordinator decision 2026-10-12, measured in `lab/reports/2026-10-12-watchlist-meting.md`): entering at 150 missed 26 % of the organic triggers because the pool fills from ~85 to 150 SOL and the trigger sell is the first trade that sees 150; 120 / 100 covers 95.6 % of them for 12.2 instead of 10.3 GB/day as full transactions.
 | `m1` | normal SOL-quote pool, not mayhem, graduation outside the create slot | at pool creation | age > 6 h, or 60 min without a trade (a trade inside the 6 h brings it back) |
 | wallets | followed wallets | fixed list (`--wallets` CSV) until the step-1 scores exist | — |
 

@@ -7,11 +7,14 @@ measurement use, and the measurement over the development period.
 
 Rules (everything decided from data strictly before the minute the list is valid for):
   F7-reversed  reversed PumpSwap pool, not mayhem. Enters when the last seen real SOL depth is
-               >= 150 SOL (the F7 pool venue threshold) and the pool is organic: farmers made
-               <= 50 % of its SOL volume over the trailing 60 min (addendum §5; judged only when
-               that volume is >= 1 SOL, otherwise the previous verdict stands). Leaves when the
-               depth drops below 120 SOL (hysteresis), when the trailing hour turns farming, or
-               after 6 h without a trade.
+               >= 120 SOL and the pool is organic: farmers made <= 50 % of its SOL volume over the
+               trailing 60 min (addendum §5; judged only when that volume is >= 1 SOL, otherwise
+               the previous verdict stands). Leaves when the depth drops below 100 SOL (hysteresis),
+               when the trailing hour turns farming, or after 6 h without a trade. The F7 trigger
+               itself stays at 150 SOL: entering at the trigger threshold missed 26 % of the organic
+               triggers (the pool fills from ~85 to 150 SOL and the trigger sell is the first trade
+               that sees 150); 120 / 100 covers 95.6 % for +1.9 GB/day (coordinator decision
+               2026-10-12, lab/reports/2026-10-12-watchlist-meting.md).
   M1 / M1+     normal SOL-quote PumpSwap pool, not mayhem, graduation outside the create slot
                (dev bundles never trigger M1). Enters when the pool is created (the new-pool
                account stream), leaves at 6 h of age (M1 universe) or after 60 min without a trade;
@@ -61,8 +64,8 @@ MINUTES_PER_DAY = 1440
 
 @dataclasses.dataclass(frozen=True)
 class Rules:
-    f7_depth_enter_sol: float = 150.0
-    f7_depth_exit_sol: float = 120.0
+    f7_depth_enter_sol: float = 120.0   # below the 150 SOL trigger threshold on purpose (2026-10-12)
+    f7_depth_exit_sol: float = 100.0
     farmer_share_max: float = 0.50
     organic_min_sol: float = 1.0
     organic_window_minutes: int = 60
@@ -494,7 +497,7 @@ def report(out_dir):
     partial = days.pop("_partial", {})
     lines = ["# Watchlist over de ontwikkelperiode: omvang, dekking en inname per dag", "",
              "Lijst per minuut uit data vóór die minuut (`lab/wallets/watchlist.py`). F7-reversed: reversed pools, "
-             "reële SOL-diepte ≥ 150 SOL (uit < 120), organisch (farmers ≤ 50 % van het SOL-volume in het laatste uur). "
+             f"reële SOL-diepte ≥ {Rules.f7_depth_enter_sol:.0f} SOL (uit < {Rules.f7_depth_exit_sol:.0f}), organisch (farmers ≤ 50 % van het SOL-volume in het laatste uur). "
              "M1: normale pools ≤ 6 u oud, graduatie buiten de create-slot, niet 60 min stil.", "",
              "| dag | pools op de lijst (mediaan / p95 / max) | F7-rev | M1 | events/dag op de lijst | van alle pool-events | "
              "F7-kandidaatsells gedekt | F7-triggers (toernooi) gedekt, organisch | M1 +15 min gedekt | M1-trades ≤ 6 u gedekt | GB/dag (3 KB/tx) |",
