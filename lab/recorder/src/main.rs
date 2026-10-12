@@ -174,6 +174,15 @@ fn opts(a: &Args) -> Opts {
     }
 }
 
+/// F7's triggers come minutes after a reversed pool is created (99% the same day), so without
+/// creation detection (--pool-creations or --new-reversed) no new pool is probed or followed.
+fn creation_warning(a: &Args) -> Option<&'static str> {
+    (!a.pool_creations && !a.new_reversed).then_some(
+        "F7 coverage ~0% without creation detection: pass --pool-creations and/or --new-reversed \
+         (new reversed pools are found only through them; graduations alone cover M1, not F7)",
+    )
+}
+
 fn unix() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
@@ -313,13 +322,17 @@ async fn run(a: Args) -> Result<i32> {
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "filter": f.summary(),
-                "main": {"transactions": main.transactions.iter().map(|(k, v)| (k.clone(), v.account_include.len())).collect::<std::collections::BTreeMap<_, _>>(),
+                "main": {"transactions": main.transactions.iter()
+                             .map(|(k, v)| (k.clone(), serde_json::json!({"include": v.account_include.len(),
+                                  "required": v.account_required.len(), "exclude": v.account_exclude.len()})))
+                             .collect::<std::collections::BTreeMap<_, _>>(),
                          "accounts": main.accounts.keys().collect::<Vec<_>>(), "blocks_meta": main.blocks_meta.len(),
                          "slots": main.slots.len(), "commitment": main.commitment, "from_slot": main.from_slot,
                          "accounts_data_slice": main.accounts_data_slice.iter().map(|s| [s.offset, s.length]).collect::<Vec<_>>()},
                 "vaults": {"accounts": vaults.accounts.values().map(|v| v.account.len()).sum::<usize>()},
                 "budget": meter.state(),
                 "watchlist_source": watch.source,
+                "warnings": creation_warning(&a).into_iter().collect::<Vec<_>>(),
                 "invalid_addresses": watch.invalid,
             }))?
         );
@@ -328,6 +341,9 @@ async fn run(a: Args) -> Result<i32> {
     if meter.stopped {
         log::error!("today's budget is spent ({:.2} GB of {:.2} GB); not starting before the next UTC day", meter.spent as f64 / GB, cap as f64 / GB);
         return Ok(EXIT_BUDGET);
+    }
+    if let Some(w) = creation_warning(&a) {
+        log::warn!("{w}");
     }
     let endpoint = a.endpoint.clone().context("pass --endpoint or set LAB_TRITON_GRPC_ENDPOINT")?;
     let (segs, last) = Segments::open(&a.root, a.segment_slots, a.segment_secs)?;

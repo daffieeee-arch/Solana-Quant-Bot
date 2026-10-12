@@ -25,6 +25,12 @@ transactions.
 | `vaults` (optional) | `account` = the watchlist's `vaults`, data slice 64..72 (token `amount`) | cheap balance-only following of pools that are not on the full-transaction list |
 | `pool_accounts` (off by default, `--pool-accounts`) | owner PumpSwap + memcmp Pool discriminator, data slice 43..244 | new pools (mints, vaults, coin creator). Expensive: see below |
 
+**F7 needs creation detection.** 99% of the F7 triggers come in reversed pools created the same day,
+minutes after their creation (LAB research, watchlist measurement). Without `--pool-creations` or
+`--new-reversed` no new reversed pool is found, `new_vaults` stays empty and F7 coverage is ~0%;
+the recorder logs a warning then (and the dry run lists it). Which of the two becomes the default
+is decided after the first measuring hour.
+
 A transaction filter is never sent with an empty address list (that would match every
 transaction on chain); the tests check this. The vault stream is a second subscription on the
 same connection because a data slice applies to a whole subscription.
