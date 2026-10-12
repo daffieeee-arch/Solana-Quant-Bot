@@ -136,12 +136,9 @@ const workflows = {
           { name: 'Install pinned Rust toolchain', run: 'rustup toolchain install 1.97.1 --profile minimal' },
           { name: 'Install cargo-audit', run: 'cargo install cargo-audit --version 0.22.2 --locked' },
           {
-            name: 'Audit Rust lockfiles against RustSec',
-            run: 'python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock --optional lab/recorder/Cargo.lock',
-          },
-          {
-            name: 'Audit frozen V2 Rust lockfiles against RustSec',
-            run: 'python3 lab/security/dependency_audit.py cargo rust/of1-range-recorder/Cargo.lock rust/of1-bronze-decoder/Cargo.lock rust/of1-parquet-projection/Cargo.lock rust/old-faithful-pump-reducer/Cargo.lock rust/pump-protocol-v2/Cargo.lock',
+            name: 'Audit lab and frozen V2 Rust lockfiles against RustSec',
+            // One invocation, so an ignore entry is only reported stale when no lockfile uses it.
+            run: 'python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock rust/of1-range-recorder/Cargo.lock rust/of1-bronze-decoder/Cargo.lock rust/of1-parquet-projection/Cargo.lock rust/old-faithful-pump-reducer/Cargo.lock rust/pump-protocol-v2/Cargo.lock --optional lab/recorder/Cargo.lock',
           },
         ],
       },
