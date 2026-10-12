@@ -12,6 +12,7 @@ See [`../AGENTS.md`](../AGENTS.md) for the rules. Weekly checkpoints go to [`rep
 
 - `extractor/` — Rust binary `lab-extractor`. A [Jetstreamer 0.7.0](https://github.com/anza-xyz/jetstreamer) plugin that streams a slot range from Old Faithful (`files.old-faithful.net`) and writes every pump.fun and PumpSwap event to Parquet.
   - `idl/` — the official IDLs, copied unchanged from [`pump-fun/pump-public-docs`](https://github.com/pump-fun/pump-public-docs/tree/2293f9a66c654e9fe82dc5e8f4618538f24bb35f/idl). Events are decoded generically from these files; no layout is written by hand. Pump only appends event fields, so older events decode as a prefix (`decode_status = prefix`, missing tail fields are null).
+- `recorder/` — Rust binary `lab-recorder`: the live side of the paper engine. Subscribes to Triton's Dragon's Mouth (watchlist transactions, block meta, slot statuses; optional vault balances), decodes with the extractor's own code and writes rolling segments for `paper.live.LiveFeed`, with a byte meter and a daily budget. See [`recorder/README.md`](recorder/README.md).
 - `scripts/env.sh` — pinned toolchain (Rust 1.97.1) and build environment for the VPS.
 - `scripts/backfill.sh` — runs the extractor chunk by chunk inside a CPU/memory-limited systemd user scope; resumable.
 - `checks/continuity.py` — correctness check: per mint (bonding curve) and per pool, the reserves after trade *n* must equal the reserves before trade *n+1*.
