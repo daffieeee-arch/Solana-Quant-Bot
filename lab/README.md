@@ -25,6 +25,7 @@ Written outside Git to `$LAB_DATA_ROOT/events/v1/chunks/<start>-<end>/` (default
 - `failed_txs/` — failed transactions that touched pump or PumpSwap (fees, compute budget, error; from epoch 1043 on also signers and the first pump/PumpSwap instruction with decoded arguments). No signature column: `(slot, tx_index)` identifies the transaction.
 - `blocks/` — slot, parent slot, block time, block height, skipped markers.
 - `anomalies/` — events with an unknown discriminator or a payload that does not fit the IDL (raw hex kept).
+- `token_meta/` (extractor builds from ea0c4a6 on) — token metadata created in the transactions the extractor reads: Metaplex Token Metadata create instructions and Token-2022 metadata `Initialize` (mint, name, symbol, uri, update authority). `backtest/token_meta.py` combines it with pump.fun's `CreateEvent` into one row per mint. **A UI lookup only, never a strategy input**: names, symbols and uris must not feed signals, filters or parameters (a build over all chunks also reads the hold-out epochs 1047–1051).
 - `_manifest.json` — written last: status (`complete` only if Jetstreamer finished, the writer succeeded and every slot in the range was reported as a block or a skipped slot), row counts, IDL hashes, timing.
 
 Chain order is `(slot, tx_index, outer_ix, inner_ix)`. Rows inside a file are not sorted. Deduplicate on `(signature, outer_ix, inner_ix)` in case a firehose thread restart replays part of a slot.
