@@ -9,6 +9,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        mpsc,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -64,18 +65,6 @@ impl FixtureServer {
         {
             return Err(HttpsError::Fixture);
         }
-        let rcgen::CertifiedKey { cert, signing_key } =
-            rcgen::generate_simple_self_signed(vec![certificate_name.into()])
-                .map_err(|_| HttpsError::Fixture)?;
-        let root_der = cert.der().to_vec();
-        let config =
-            ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-                .with_safe_default_protocol_versions()?
-                .with_no_client_auth()
-                .with_single_cert(
-                    vec![cert.der().clone()],
-                    PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into(),
-                )?;
         let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
         let port = listener.local_addr()?.port();
         listener.set_nonblocking(true)?;
@@ -83,16 +72,31 @@ impl FixtureServer {
         let stop = stopped.clone();
         let observed_request_bytes = Arc::new(AtomicU64::new(0));
         let observed = observed_request_bytes.clone();
+        let name = certificate_name.to_owned();
+        // The signing key and the server config live only on the serving thread; the caller
+        // receives the public certificate DER (its trust root) and nothing derived from the key.
+        let (root_tx, root_rx) = mpsc::sync_channel(1);
         let worker = thread::spawn(move || {
+            let Ok((root_der, config)) = self_signed_config(&name) else {
+                let _ = root_tx.send(None);
+                return Err(HttpsError::Fixture);
+            };
+            if root_tx.send(Some(root_der)).is_err() {
+                return Err(HttpsError::Fixture);
+            }
             serve(
                 &listener,
-                &Arc::new(config),
+                &config,
                 scripts,
                 &stop,
                 fragment_delay_ms,
                 &observed,
             )
         });
+        let Ok(Some(root_der)) = root_rx.recv() else {
+            let _ = worker.join();
+            return Err(HttpsError::Fixture);
+        };
         Ok(Self {
             port,
             root_der,
@@ -137,6 +141,25 @@ impl Drop for FixtureServer {
             let _ = worker.join();
         }
     }
+}
+
+/// An in-memory self-signed certificate for `name` and a server config holding its key. Errors carry
+/// no key material: every failure is the fixed `HttpsError::Fixture`.
+fn self_signed_config(name: &str) -> HttpsResult<(Vec<u8>, Arc<ServerConfig>)> {
+    let rcgen::CertifiedKey { cert, signing_key } =
+        rcgen::generate_simple_self_signed(vec![name.into()]).map_err(|_| HttpsError::Fixture)?;
+    let root_der = cert.der().to_vec();
+    let config =
+        ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_safe_default_protocol_versions()
+            .map_err(|_| HttpsError::Fixture)?
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                PrivatePkcs8KeyDer::from(signing_key.serialize_der()).into(),
+            )
+            .map_err(|_| HttpsError::Fixture)?;
+    Ok((root_der, Arc::new(config)))
 }
 
 fn serve(
