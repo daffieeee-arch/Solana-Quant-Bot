@@ -372,7 +372,10 @@ def write_report(run_dir, cfg):
                   key=lambda s: (s["family"], s["segment"], s["regime"], s["variant"], s["farm"], s["size_sol"], s["d"],
                                  s["q"], s["tau"]))
     lines = [f"# Backtest {config['run_id']}", "",
-             f"Store: slots {config['store']['slot_start']}–{config['store']['slot_end_exclusive']} (dev only). "
+             f"Store: slots {config['store']['slot_start']}–{config['store']['slot_end_exclusive']} "
+             f"({config['store'].get('period', 'dev')} period"
+             + (f"; decisions only in {config['decide_range'][0]}–{config['decide_range'][1]}, the rest is warm-up"
+                if config.get("decide_range") else "") + "). "
              f"Engine {config.get('engine_commit', 'unknown')}. Signals {config['signals']}, positions {config['positions']}, "
              f"{config['seconds']} s.",
              f"Entry/exit delay d, intra-slot position q={config['q']}, own slippage tolerance {config['slippage_tol']}, "

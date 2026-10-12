@@ -65,6 +65,11 @@ H = "::HUGEINT"
 B = "::BIGINT"
 
 
+# One epoch (two chunks) before the hold-out: at least the decisions' burn-in (development.burn_in_slots,
+# 324,000) and on chunk boundaries.
+HOLDOUT_WARMUP_SLOTS = 432_000
+
+
 def load_defaults(path=DEFAULTS):
     with open(path) as f:
         return yaml.safe_load(f)
@@ -80,7 +85,9 @@ def period_range(period, cfg, from_slot=None, to_slot=None):
             raise SystemExit("the dev period must end at or before the hold-out start")
         return lo, hi
     if period == "holdout":
-        return hold["start_slot"], hold["end_slot_exclusive"]
+        # The dev epoch before the hold-out is in the store as warm-up only (the 24 h burn-in of token,
+        # pool and farmer state); the final run decides only inside the hold-out (tournament --decide).
+        return hold["start_slot"] - HOLDOUT_WARMUP_SLOTS, hold["end_slot_exclusive"]
     if period == "validate":
         lo, hi = VALIDATE
         if lo < hold["end_slot_exclusive"]:

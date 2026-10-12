@@ -495,7 +495,7 @@ def results_glob(run_dir):
 
 
 def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
-        label="tournament_v1", segments=None, slot_range=None, only=None):
+        label="tournament_v1", segments=None, slot_range=None, only=None, decide_range=None):
     cfg = load_defaults()
     out = os.path.join(OUT, run_id)
     os.makedirs(os.path.join(out, "parts"), exist_ok=True)
@@ -503,7 +503,9 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con = streams.open_store(STORE, threads=2, memory="1GB")
     lo, hi, meta = store_bounds(con)
     clock = Clock.from_store(con)
-    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock, segments, slot_range)
+    # --range (dry runs) and --decide (final runs, e.g. the hold-out after its warm-up) both limit the
+    # decisions to [a, b); only --range marks the run as a dry run.
+    signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock, segments, slot_range or decide_range)
     con.close()
     items = work_items(signals, clock)
     n_signals = len(signals)
@@ -529,7 +531,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con.close()
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
-              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
+              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k, "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0)}
     with open(os.path.join(out, "config.json"), "w") as f:
@@ -562,12 +564,14 @@ def main():
     ap.add_argument("--max-signals", type=int, default=0)
     ap.add_argument("--run-id", default=time.strftime("%Y%m%dT%H%M%S"))
     ap.add_argument("--range", default="", help="dry runs: signal slots lo:hi within the store")
+    ap.add_argument("--decide", default="", help="final runs: decisions only in slots lo:hi (the rest of the store is warm-up)")
     ap.add_argument("--only", action="append", help="e.g. size=0.25:M1,N2_M1 or d=3:F7/pool_reversed (repeatable)")
     a = ap.parse_args()
     run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in a.delays.split(",")],
         a.tau.split(","), [float(x) for x in a.q.split(",")], a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch,
         segments=[x for x in a.segments.split(",") if x] or None,
-        slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None, only=a.only)
+        slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None, only=a.only,
+        decide_range=tuple(int(x) for x in a.decide.split(":")) if a.decide else None)
 
 
 if __name__ == "__main__":
