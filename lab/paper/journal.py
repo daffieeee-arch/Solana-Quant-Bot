@@ -28,8 +28,9 @@ TABLES = {
     # Live data usage per minute and recorder stream (bytes received from Triton), from the recorder.
     "usage": ("minute INTEGER, day TEXT, stream TEXT, bytes INTEGER, messages INTEGER, seq INTEGER, note TEXT",
               "minute, stream"),
+    # Open positions; mark_*: a sale of the whole position now (the exit's fill math, after costs) at mark_slot.
     "positions": ("family TEXT, variant TEXT, key TEXT, t INTEGER, entry_slot INTEGER, cost INTEGER, tokens INTEGER, "
-                  "status TEXT", "family, variant, key, t"),
+                  "status TEXT, mark_proceeds INTEGER, mark_slot INTEGER, mark_pnl INTEGER", "family, variant, key, t"),
     "state": ("k TEXT, v TEXT", "k"),
 }
 DAILY = ("signals", "orders", "fills", "exits", "heartbeat", "usage")

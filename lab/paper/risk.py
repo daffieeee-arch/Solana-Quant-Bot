@@ -19,6 +19,7 @@ class Risk:
     daily_loss_limit_sol: float
     kill_switch: bool
     families: tuple
+    pool_cooldown_h: float = 0.0  # no entry in a pool for this long after a total loss there (proceeds < 10% of cost)
 
     @property
     def size_lamports(self):
@@ -34,10 +35,12 @@ def load(path):
         return None, f"risk config unreadable: {e.__class__.__name__}"
     try:
         r = Risk(float(raw["size_sol"]), int(raw["max_open_positions"]), float(raw["max_exposure_sol"]),
-                 float(raw["daily_loss_limit_sol"]), bool(raw["kill_switch"]), tuple(raw["families"]))
+                 float(raw["daily_loss_limit_sol"]), bool(raw["kill_switch"]), tuple(raw["families"]),
+                 float(raw.get("pool_cooldown_h", 0)))
     except (KeyError, TypeError, ValueError) as e:
         return None, f"risk config invalid: {e.__class__.__name__} {e}"
-    if not (0 < r.size_sol <= r.max_exposure_sol) or r.max_open_positions < 1 or r.daily_loss_limit_sol <= 0:
+    if not (0 < r.size_sol <= r.max_exposure_sol) or r.max_open_positions < 1 or r.daily_loss_limit_sol <= 0 \
+            or r.pool_cooldown_h < 0:
         return None, "risk config invalid: sizes and limits must be positive and size <= max exposure"
     if not set(r.families) <= set(FAMILIES):
         return None, f"risk config invalid: unknown families {sorted(set(r.families) - set(FAMILIES))}"

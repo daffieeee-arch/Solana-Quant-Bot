@@ -223,3 +223,60 @@ def test_farming_window_and_the_organic_filter(tmp_path):
     eng._signal("F7", "tp4_T600", "P", "pool", "reversed", 103, (0.04, 600), 200 * SOL, "B", "organic")
     assert [(s["t"], s["status"], s["reason"], s["farm"]) for s in eng.j.rows("signals")] == [
         (102, "skipped", "farm flagged", "flagged"), (103, "entered", None, "organic")]
+
+
+def test_open_positions_carry_a_mark_and_the_paper_wallet(tmp_path):
+    toks = {"M": trigger_token(after=[(500_100, "W", "buy", 30 * T), (500_200, "Z", "buy", T), (500_300, "Y", "buy", 150 * T)])}
+    j = Journal(str(tmp_path / "mark"))
+    eng = Engine(Synth(toks, crash_after=5), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0,
+                 clock=Clock(), backup=False)
+    with pytest.raises(RuntimeError):
+        eng.run()  # stopped after the event of slot 500_200: the position is open
+    pos = j.rows("positions")
+    assert len(pos) == 1 and pos[0]["mark_slot"] >= pos[0]["entry_slot"] and pos[0]["mark_proceeds"] > 0
+    assert pos[0]["mark_pnl"] == pos[0]["mark_proceeds"] - eng.scn.entry_total(pos[0]["cost"])
+    # A complete run: the take profit closes it; wallet.json is the UI's format, marked as paper.
+    j = run(tmp_path, toks, risk_file(tmp_path), name="wallet")
+    import json as _json
+
+    with open(os.path.join(j.dir, "wallet.json")) as f:
+        w = _json.load(f)
+    x = j.rows("exits")[0]
+    assert w["mode"] == "paper" and w["address"] is None and w["balance_lamports"] == 10 * SOL + x["pnl"]
+    assert [t["kind"] for t in w["txs"]] == ["sell", "buy"] and w["txs"][1]["amount_lamports"] < 0
+    assert sum(t["amount_lamports"] for t in w["txs"]) == x["pnl"]
+
+
+def test_pool_cooldown_after_a_total_loss(tmp_path):
+    from backtest.replay import Result
+    from paper.engine import Open, Pending
+
+    eng = Engine(Synth({}), Journal(str(tmp_path / "cool")), risk_file(tmp_path, pool_cooldown_h=24), clock=Clock(),
+                 backup=False)
+    eng._load_risk()
+    p = Pending("F7", "tp4_T600", "P", "pool", "reversed", 1_000, 1_001, (0.04, 600), 200 * SOL)
+    r = Result("P", 1_000, size=int(0.5 * SOL), venue="pool", entry_slot=1_001, tokens=10**12, cost=int(0.5 * SOL),
+               proceeds=int(0.04 * SOL), exit_slot=1_050, exit_reason="stop_loss", exit_attempts=1)
+    eng._settle_if_done(Open(p, r, None, 1_001), 1_050, force=True)
+    day = eng.clock.slots(24 * 3_600_000, 1_050)
+    assert eng.cool["P"] == 1_050 + day
+    assert eng._risk_block("F7", "P", 1_060) == "pool cooldown" and eng._risk_block("F7", "P", 1_051 + day) is None
+    assert eng._risk_block("N2_F7", "P", 1_060) is None  # the shadow is not limited
+    # A loss that is not total leaves the pool open.
+    r2 = Result("Q", 1_000, size=int(0.5 * SOL), venue="pool", entry_slot=1_001, tokens=10**12, cost=int(0.5 * SOL),
+                proceeds=int(0.3 * SOL), exit_slot=1_050, exit_reason="stop_loss", exit_attempts=1)
+    eng._settle_if_done(Open(Pending("F7", "tp4_T600", "Q", "pool", "reversed", 1_000, 1_001, (0.04, 600), 0), r2, None, 1_001),
+                        1_050, force=True)
+    assert "Q" not in eng.cool
+
+
+def test_paper_config_file(tmp_path):
+    from paper.engine import load_config
+
+    sha, conf = load_config(os.path.join(os.path.dirname(engine.__file__), "k3-paper-2026-10-12.yaml"))
+    assert (conf["segments"], conf["farm"], conf["variants"], conf["d"], conf["q"]) == (["pool_reversed"], "all", ["0.04:600"], 2, 0.5)
+    assert os.path.exists(conf["risk_path"]) and len(sha) == 64
+    from paper import risk
+
+    r, why = risk.load(conf["risk_path"])
+    assert why is None and (r.size_sol, r.max_open_positions, r.daily_loss_limit_sol, r.pool_cooldown_h) == (0.5, 5, 1.0, 24.0)

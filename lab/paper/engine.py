@@ -19,6 +19,8 @@ a random token of the same venue, orientation, depth band and hour that already 
 
 import argparse
 import bisect
+import hashlib
+import json
 import os
 import shutil
 import time
@@ -137,6 +139,8 @@ class Engine:
         self.minute, self.events_seen, self.last_event, self.last_slot = None, 0, None, None
         self.grad_wait = defaultdict(list)  # pool -> [Open] waiting for open + 1
         self.kept = None  # the pools last written for the recorder
+        self.cool = {}  # pool -> slot until which no new entry (risk: pool_cooldown_h after a total loss)
+        self.wallet = {"start": int(10 * SOL), "realized": 0, "txs": deque(maxlen=50)}  # paper wallet (wallet.json)
 
     # ------------------------------------------------------------------ main loop
 
@@ -171,6 +175,8 @@ class Engine:
                 if o.opened < slot:
                     o.sim.on_slot(slot, legs)
                     self._settle_if_done(o, slot)
+                    if not o.sim.done:
+                        self._put_position(o)
         # 2. entries due in this slot
         for p in self.pending.pop(slot, []):
             self._enter(p, slot, by_key.get((p.venue, p.key), []))
@@ -228,6 +234,10 @@ class Engine:
                        events=self.events_seen, open_positions=sum(len(v) for v in self.open.values()),
                        gap_slots=max(0, gap), note="")
             self.minute = minute
+            for opens in self.open.values():
+                for o in opens:
+                    self._put_position(o)
+            self._write_wallet(block_time)
             self._load_risk()
             self._live_minute(minute)
             self.j.commit()
@@ -396,14 +406,14 @@ class Engine:
             return self.j.put("signals", **row, status="skipped", reason="farm flagged")
         if b == "open" or (b is not None and t <= b):
             return self.j.put("signals", **row, status="skipped", reason="busy")
-        reason = self._risk_block(family)
+        reason = self._risk_block(family, key, t)
         if reason:
             return self.j.put("signals", **row, status="skipped", reason=reason)
         self.busy[(family, variant, key)] = "open"
         self.pending[t + self.d].append(Pending(family, variant, key, venue, orientation, t, t + self.d, params, depth))
         self.j.put("signals", **row, status="entered", reason=None)
 
-    def _risk_block(self, family):
+    def _risk_block(self, family, key=None, t=None):
         if self.risk is None:
             return self.risk_reason or "risk config missing"
         if self.risk.kill_switch:
@@ -412,6 +422,8 @@ class Engine:
             return None  # the shadow control is not limited (except by the kill switch)
         if family not in self.risk.families:
             return "family not enabled"
+        if key is not None and t is not None and self.cool.get(key, -1) > t:
+            return "pool cooldown"
         opens = [o for v in self.open.values() for o in v if not o.p.family.startswith("N2_")]
         pend = [p for v in self.pending.values() for p in v if not p.family.startswith("N2_")]
         if len(opens) + len(pend) >= self.risk.max_open_positions:
@@ -468,6 +480,7 @@ class Engine:
             if r.entry_failed:  # the transaction landed and failed: it costs the failed-tx fee
                 pnl, _, _ = settle(r, self.scn)
                 self._book_loss(p, pnl)
+                self._wallet_tx(p, "buy", slot, pnl, settled=pnl)
                 self.j.put("exits", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
                            exit_decision_slot=None, exit_slot=None, exit_reason=r.exit_reason, tokens=0, cost=0, proceeds=0,
                            pnl=pnl, ret=None, exit_attempts=0, cf_graduation=0, seed_pool=0, vault_capped=0,
@@ -482,8 +495,8 @@ class Engine:
             if "grad" in holder:  # graduated on our own buy: wait for the pool
                 o.grad = holder["grad"]
                 self.grad_wait[o.grad["pool"]].append(o)
-        self.j.put("positions", family=p.family, variant=p.variant, key=p.key, t=p.t, entry_slot=slot, cost=r.cost,
-                   tokens=r.tokens, status="open")
+        self._put_position(o)
+        self._wallet_tx(p, "buy", slot, -self.scn.entry_total(r.cost))
         if sim is None:  # graduated on our own buy
             if o.grad:
                 self.open[p.key].append(o)
@@ -562,11 +575,54 @@ class Engine:
                    sells_scaled=r.sells_scaled)
         self.j.delete("positions", family=p.family, variant=p.variant, key=p.key, t=p.t)
         self._book_loss(p, pnl)
+        self._wallet_tx(p, "sell", r.exit_slot or slot, pnl + self.scn.entry_total(r.cost) if r.tokens else pnl, settled=pnl)
+        if (not p.family.startswith("N2_") and self.risk is not None and self.risk.pool_cooldown_h > 0 and r.tokens
+                and (r.proceeds or 0) < 0.1 * r.cost):  # a total loss: the pool is closed for a while
+            end = (r.exit_slot or slot) + self.clock.slots(self.risk.pool_cooldown_h * 3_600_000, slot)
+            self.cool[p.key] = max(self.cool.get(p.key, 0), end)
         self.busy[(p.family, p.variant, p.key)] = r.exit_slot or p.t
         if o in self.open.get(p.key, ()):
             self.open[p.key].remove(o)
             if not self.open[p.key]:
                 del self.open[p.key]
+
+    def _put_position(self, o):
+        """The open position with its mark: the last sale value the position computed (PositionSim's
+        decision mark, gross), after the exit's costs, and the P&L it would give."""
+        p, r = o.p, o.r
+        mark_slot, mark = r.marks[-1] if r.marks else (None, None)
+        net = self.scn.exit_net(mark) if mark is not None else None
+        self.j.put("positions", family=p.family, variant=p.variant, key=p.key, t=p.t, entry_slot=r.entry_slot, cost=r.cost,
+                   tokens=r.tokens, status="open", mark_proceeds=net, mark_slot=mark_slot,
+                   mark_pnl=None if net is None else net - self.scn.entry_total(r.cost))
+
+    def _wallet_tx(self, p, kind, slot, amount, settled=None):
+        """The paper wallet (F7 only; the N2 shadow is not traded): 10 SOL start, every paper buy and sell."""
+        if p.family.startswith("N2_"):
+            return
+        if settled is not None:
+            self.wallet["realized"] += settled
+        self.wallet["txs"].appendleft({"signature": None, "slot": slot, "time_unix": None, "kind": kind, "mint": p.key,
+                                       "symbol": None, "amount_lamports": int(amount), "fee_lamports": self.scn.per_tx(),
+                                       "tip_lamports": None, "status": "paper",
+                                       "landed_slot_delta": self.d if kind == "buy" else None,
+                                       "note": f"{p.family} {p.variant}"})
+        self._wallet_dirty = True
+
+    def _write_wallet(self, block_time=None):
+        """<journal dir>/wallet.json in the UI's format (lab/ui/web/README.md), marked as paper: no
+        address, no signatures; balance = 10 SOL + realized P&L - open positions at entry cost."""
+        if not getattr(self, "_wallet_dirty", False):
+            return
+        open_cost = sum(self.scn.entry_total(o.r.cost) for v in self.open.values() for o in v if not o.p.family.startswith("N2_"))
+        w = {"mode": "paper", "address": None, "slot": self.last_slot, "time_unix": block_time,
+             "balance_lamports": self.wallet["start"] + self.wallet["realized"] - open_cost, "txs": list(self.wallet["txs"]),
+             "note": "paper trading: no wallet, no transactions; amounts are the engine's simulated fills after costs"}
+        path = os.path.join(self.j.dir, "wallet.json")
+        with open(path + ".tmp", "w") as f:
+            json.dump(w, f)
+        os.replace(path + ".tmp", path)
+        self._wallet_dirty = False
 
     def _book_loss(self, p, pnl):
         if not p.family.startswith("N2_"):
@@ -588,8 +644,23 @@ class Engine:
                 o.grad = {}
                 self._settle_if_done(o, self.last_slot, force=True)
         self.grad_wait.clear()
+        self._write_wallet()
         if self.day:
             self._close_day(self.day)
+
+
+def load_config(path):
+    """(sha256, config) of a paper config file; risk_path is resolved next to the file."""
+    import yaml
+
+    with open(path, "rb") as f:
+        raw = f.read()
+    conf = yaml.safe_load(raw)
+    missing = [k for k in ("segments", "farm", "variants", "d", "q", "risk") if k not in conf]
+    if missing:
+        raise SystemExit(f"paper config {path}: missing {', '.join(missing)}")
+    conf["risk_path"] = os.path.join(os.path.dirname(os.path.abspath(path)), conf["risk"])
+    return hashlib.sha256(raw).hexdigest(), conf
 
 
 def main():
@@ -601,6 +672,8 @@ def main():
     ap.add_argument("--live", help="live: the recorder's output directory (LiveFeed; tokens and pools from --store)")
     ap.add_argument("--catch-up", action="store_true", help="live: stop after the last complete segment")
     ap.add_argument("--journal", required=True)
+    ap.add_argument("--config", help="paper config (YAML, e.g. paper/k3-paper-2026-10-12.yaml): segments, farm, variants, "
+                                     "d, q, n2_k and the risk file; its sha256 goes into the journal")
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--store", default="/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
     ap.add_argument("--d", type=int, default=1)
@@ -611,6 +684,17 @@ def main():
     ap.add_argument("--farm", choices=["all", "organic"], default="all", help="organic: skip triggers in farming pools")
     ap.add_argument("--no-backup", action="store_true")
     a = ap.parse_args()
+    cfg_sha = None
+    if a.config:
+        cfg_sha, conf = load_config(a.config)
+        given = [x for x in ("variants", "segments") if getattr(a, x)] + (["farm"] if a.farm != "all" else [])
+        if given:
+            raise SystemExit(f"--config fixes the strategy: do not also pass {', '.join('--' + x for x in given)}")
+        a.variants, a.segments, a.farm = ",".join(conf["variants"]), ",".join(conf["segments"]), conf["farm"]
+        a.d, a.q, a.risk = int(conf["d"]), float(conf["q"]), conf["risk_path"]
+        n2_k = int(conf.get("n2_k", 1))
+    else:
+        n2_k = 1
     if a.live:
         from .live import LiveFeed
 
@@ -622,7 +706,14 @@ def main():
     clock = feed.clock if a.live else Clock.from_store(feed.con)
     variants = [tuple(float(x) if i == 0 else int(x) for i, x in enumerate(v.split(":"))) for v in a.variants.split(",")
                 if v] or F7_GRID
-    eng = Engine(feed, Journal(a.journal), a.risk, variants=variants, d=a.d, q=a.q, ignore_risk=a.ignore_risk,
+    j = Journal(a.journal)
+    if cfg_sha:
+        j.state("config", os.path.abspath(a.config))
+        j.state("config_sha256", cfg_sha)
+        with open(a.risk, "rb") as f:
+            j.state("risk_sha256_at_start", hashlib.sha256(f.read()).hexdigest())
+        j.commit()
+    eng = Engine(feed, j, a.risk, variants=variants, d=a.d, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
                  clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm)
     t0 = time.time()
     eng.run()

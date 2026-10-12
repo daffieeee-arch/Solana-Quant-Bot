@@ -1,0 +1,16 @@
+# Paper config K3 (owner decision ADJUST, 2026-10-12): the hold-out's control arm, "niet bewezen",
+# traded on paper as a measurement of real latency, fills and costs. No real money.
+#   python -m paper.engine --live <recorder dir> --config paper/k3-paper-2026-10-12.yaml --journal <dir>
+# Frozen once the stop-rule clock starts: any change is a new trial and restarts the clock
+# (pre-registration 7464771b..., section 4.5). The engine journals this file's sha256.
+candidate: K3                    # F7 tp4_T600 in pool_reversed, all pools (holdout-candidates-2026-10-12.json)
+status: niet bewezen             # hold-out B+C: +0.02% [-0.90, +0.61] (lab/reports/2026-10-12-holdout.md)
+families: [F7]
+segments: [pool_reversed]
+farm: all                        # every trigger; the farm label is journaled per signal
+variants: ["0.04:600"]           # tp4_T600
+size_sol: 0.5                    # the size itself is in the risk file (owner)
+d: 2                             # entry and exit one slot later than d = 1: the worse point of the pre-registered main measure
+q: 0.5
+n2_k: 1                          # N2 shadow: one random token of the same venue, orientation, depth band and hour
+risk: risk.yaml                  # next to this file: size 0.5, at most 5 open, 2.5 SOL exposure, -1 SOL/day, 24 h pool cooldown
