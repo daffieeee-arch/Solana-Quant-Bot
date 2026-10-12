@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MarketContextProvider } from '../src/providers/market-context.js';
+import { MarketContextProvider, cleanRssText } from '../src/providers/market-context.js';
 
 const coinResponse = [
   { id: 'bitcoin', symbol: 'btc', name: 'Bitcoin', current_price: 64_000, price_change_percentage_24h: 1.25 },
@@ -8,6 +8,31 @@ const coinResponse = [
 const rss = `<?xml version="1.0"?><rss><channel>
   <item><title><![CDATA[Bitcoin sees renewed interest]]></title><link>https://www.coindesk.com/example</link><pubDate>Sat, 25 Jul 2026 20:00:00 GMT</pubDate></item>
 </channel></rss>`;
+
+// The former single-pass sanitizer (dismissed CodeQL alert #3); cleanRssText must match it exactly.
+const legacyCleanRssText = (value: string) => value
+  .replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1').replace(/<[^<>]*>|[<>]/g, '').replace(/\s+/g, ' ').trim();
+
+describe('cleanRssText', () => {
+  it.each([
+    '<scr<script>ipt>update</scr</script>ipt>', '<<script>update</script>>', '<!<!-->update-->', '< update > > <',
+    '<', '>', '<>', '><', 'a<b', 'a>b', '<a<b>c>d', '&lt;script&gt;x&lt;/script&gt;', '&amp;lt;b&amp;gt;',
+    '<![CDATA[<b>x</b> & <y]]>', '  Bitcoin <b>news</b>\n', '',
+  ])('matches the former single-pass output and leaves no < or >: %j', (input) => {
+    expect(cleanRssText(input)).toBe(legacyCleanRssText(input));
+    expect(cleanRssText(input)).not.toMatch(/[<>]/);
+  });
+
+  it('matches the former output on 20,000 random strings over a markup-heavy alphabet', () => {
+    const alphabet = ['<', '>', '/', '!', '-', 'a', 's', 'c', 'r', 'i', 'p', 't', ' ', '\n', '&', ';', '[', ']'];
+    let seed = 7;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+    for (let n = 0; n < 20_000; n += 1) {
+      const input = Array.from({ length: next() % 24 }, () => alphabet[next() % alphabet.length]).join('');
+      expect(cleanRssText(input)).toBe(legacyCleanRssText(input));
+    }
+  });
+});
 
 describe('MarketContextProvider', () => {
   it.each([

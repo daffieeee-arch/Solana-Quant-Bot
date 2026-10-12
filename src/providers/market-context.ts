@@ -89,10 +89,16 @@ function tag(item: string, name: string): string {
   return new RegExp(`<${name}[^>]*>([\\s\\S]*?)<\\/${name}>`, 'i').exec(item)?.[1] ?? '';
 }
 
-function cleanRssText(value: string): string {
-  // Text only: consume ordinary tags and every remaining angle delimiter in one pass.
-  // Excluding nested openers avoids rescanning a malformed title; sinks still escape text.
-  return value.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1').replace(/<[^<>]*>|[<>]/g, '').replace(/\s+/g, ' ').trim();
+export function cleanRssText(value: string): string {
+  // Text only: drop ordinary tags, then every remaining angle delimiter, so no markup can survive.
+  // Same output as the former single pass `/<[^<>]*>|[<>]/g` (a tag never contains < or >, so
+  // the tag matches are identical); sinks still escape text.
+  return value
+    .replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1')
+    .replace(/<[^<>]*>/g, '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function isSafeHttpsUrl(value: string): boolean {
