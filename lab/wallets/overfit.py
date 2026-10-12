@@ -276,7 +276,8 @@ def render(parts_dir, scenario, blocks, days, key, sel, families, where=None):
              "draws; a PBO near 0.5 means the in-sample choice carries no information about out-of-sample rank. Both depend "
              "on the trial set: arms that are known to be bad (flagged pools, d = 3) inflate SR0 (trials) and deflate the PBO, "
              "so run the check on the set the choice was made over. With T of 11 to 20 days these are weak tests by "
-             "construction, which is the point.")
+             "construction, which is the point. F7 passed both on dev and still failed the hold-out: the DSR and the PBO "
+             "test selection, not drift; they never replace a hold-out or a forward test.")
     return "\n".join(L)
 
 
