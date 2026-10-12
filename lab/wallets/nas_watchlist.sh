@@ -4,7 +4,8 @@
 #
 #   LAB_SPILL_DIR=/lab/tmp/watchlist LAB_SPILL_MAX=8GB LAB_WATCHLIST_MEMORY=1800MB bash lab/wallets/nas_watchlist.sh
 #
-# Resumable: a day with its stats file is skipped. TRIGGERS: a tournament run directory with parts/ (F7 pool
+# First one scan for the per-pool history (creation, first >= 50 / 150 SOL depth) that the universe-with-lag
+# counts need; then the days. Resumable: a day with its stats file is skipped. TRIGGERS: a tournament run directory with parts/ (F7 pool
 # triggers for the coverage check); WALLETS: optional CSV with a `wallet` column.
 set -euo pipefail
 
@@ -32,7 +33,12 @@ for (d, lo), nxt in zip(rows, rows[1:] + [(None, $TO)]):
     print(d, lo, nxt[1])
 PYEOF
 )
-opt=()
+HISTORY=$OUT/pool-history.parquet
+if [ ! -f "$HISTORY" ]; then
+  nice -n 10 $PY -m wallets.watchlist --from-slot "$FROM" --to-slot "$TO" --build-history "$HISTORY" > "$OUT/log-history.txt" 2>&1 \
+    && log "history ok: $(tail -1 "$OUT/log-history.txt")" || { log "history FAILED (see log-history.txt)"; exit 1; }
+fi
+opt=(--history "$HISTORY")
 [ -d "$TRIGGERS/parts" ] && opt+=(--triggers "$TRIGGERS")
 [ -n "$WALLETS" ] && opt+=(--wallets "$WALLETS")
 echo "$days" | while read -r d lo hi; do

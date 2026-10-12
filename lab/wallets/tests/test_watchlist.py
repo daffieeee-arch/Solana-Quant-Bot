@@ -111,3 +111,56 @@ def test_report_renders_whole_days_and_totals(tmp_path):
     assert "| 2026-09-11 | 40 / 55 / 60 | 30 / 45 | 10 / 20 | 1,000,000 | 10.0% | 90.0% (100) | 90.0% (50), 100.0% (20) | 99.7% (300) | 99.8% (5000) | 3.07 |" in md
     assert "Totaal over 1 dagen" in md and "3.07 GB/dag als volledige transacties" in md and "1.02 GB/dag als ruwe" in md
     assert "Gedeeltelijke dagen weggelaten: 2026-09-12" in md
+
+
+def test_universe_with_refresh_lag():
+    from wallets import watchlist as W
+
+    day = W.MINUTES_PER_DAY
+    m = 10 * day + 100                                   # an event on day 10, 01:40 UTC
+    # lag 1: the universe knows data through the end of day 9
+    assert W.in_universe(m, 1, 9 * day + 1439) and not W.in_universe(m, 1, 10 * day)
+    # lag 2: through the end of day 8
+    assert W.in_universe(m, 2, 8 * day + 1439) and not W.in_universe(m, 2, 9 * day)
+    assert W.in_universe(m, 1, None, unknown_is_in=True) and not W.in_universe(m, 1, None)
+    hist = {"old": {0: None, 50: 8 * day, 150: 9 * day + 5},        # created before the store, deep since day 9
+            "new": {0: 10 * day + 1, 50: 10 * day + 2, 150: None}}   # created on day 10 itself
+    u = W.universe_membership(hist, "old", m)
+    assert u[(1, 0)] and u[(1, 50)] and u[(1, 150)] and u[(2, 0)] and u[(2, 50)] and not u[(2, 150)]
+    assert not any(W.universe_membership(hist, "new", m).values())
+    assert not any(W.universe_membership(hist, "unknown", m).values())
+
+
+def test_report_universe_section_and_store_start_bias(tmp_path):
+    import json
+
+    from wallets import watchlist as W
+
+    def counters(cand_in, trig_in):
+        c = {}
+        for lag in W.UNIVERSE_LAGS:
+            c[f"d-{lag}"] = {}
+            for depth in W.UNIVERSE_DEPTHS:
+                c[f"d-{lag}"][str(depth)] = {"cand": 10, "cand_in": cand_in, "cand_in_on_list": cand_in - 1,
+                                             "trig": 4, "trig_in": trig_in, "trig_in_on_list": trig_in,
+                                             "trig_organic": 2, "trig_organic_in": 1, "trig_organic_in_on_list": 1,
+                                             "f7_minutes": 1000, "f7_minutes_in": 900, "f7_minutes_in_on_list": 900}
+        return c
+
+    base = {"minutes": 1440, "events_all": 100, "events_on_list": 10, "events_f7_rev": 8, "events_m1": 2,
+            "events_reversed_all": 60, "events_normal_all": 40, "f7_cand": 10, "f7_cand_covered": 9,
+            "f7_trig": 4, "f7_trig_covered": 4, "f7_trig_organic": 2, "f7_trig_organic_covered": 2,
+            "m1_points": 3, "m1_points_covered": 3, "m1_events_young": 50, "m1_events_young_covered": 50,
+            "members": {"median": 4, "p95": 5, "max": 6}, "f7_rev": {"median": 3, "p95": 4, "max": 4}, "m1": {"median": 1, "p95": 1, "max": 2}}
+    json.dump({"store_first_day": "2026-09-11",
+               "days": {"2026-09-11": dict(base, universe=counters(5, 2)),      # store start: depth criteria biased
+                        "2026-09-13": dict(base, universe=counters(8, 4))}},
+              open(tmp_path / "watchlist-stats-1.json", "w"))
+    md = W.report(str(tmp_path))
+    assert "## Universum met ververs-vertraging" in md
+    assert "| 2026-09-11 * | 50.0% (10) / 50.0% (4) (50.0% (2)) |" in md
+    assert "| 2026-09-13 | 80.0% (10) / 100.0% (4) (50.0% (2)) |" in md
+    # totals: 'bestond' over both days, the depth criteria over 2026-09-13 only
+    assert "| D−1 bestond | 65.0% (20) | 55.0% (20) | 75.0% (8) | 75.0% (8) | 50.0% (4) | 50.0% (4) | 90.0% (2,000) |" in md
+    assert "| D−2 ≥ 150 SOL | 80.0% (10) | 70.0% (10) | 100.0% (4) | 100.0% (4) | 50.0% (2) | 50.0% (2) | 90.0% (1,000) |" in md
+    assert "Totaal over 1 dagen" in md

@@ -27,6 +27,13 @@ Batch (the NAS measurement, python -m wallets.watchlist --from-slot A --to-slot 
 per-(pool, minute) aggregates from the store (one scan of the pool table), the same state
 machine, then per UTC day: members per minute (median / p95 / max), the events that land on
 the list, the F7 and M1 coverage. --report renders the Markdown over all day files.
+
+Universe with a refresh lag (coordinator question, 2026-10-12): live, new reversed pools cannot be
+seen cheaply (lab/nas-results/creation-filter), so the F7 candidate set would be refreshed daily
+from OF1 with 1-2 days delay. --build-history writes per reversed pool the minute it was created
+and the first minute it showed >= 50 / >= 150 SOL real depth; a day run with --history then counts
+which F7 candidate sells and tournament triggers fall in a pool that, at the end of day D-1 or D-2,
+already existed / was that deep, and which of those the dynamic list also carried.
 """
 
 import argparse
@@ -47,6 +54,9 @@ from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard
 POS = 1 << 20
 WARMUP_MINUTES = int(os.environ.get("LAB_WATCHLIST_WARMUP_MINUTES", 6 * 60))  # state carried into a day: the longest look-back
 TX_BYTES = {"full_tx_3kb": 3072, "deshred_1kb": 1024}  # §6: full transaction with logs ~3 KB; raw ~1 KB
+UNIVERSE_LAGS = (1, 2)          # the OF1 refresh is 1 or 2 days behind: the universe for day D knows data through day D - lag
+UNIVERSE_DEPTHS = (0, 50, 150)  # 0: the pool existed; else: it had shown >= X SOL real depth
+MINUTES_PER_DAY = 1440
 
 
 @dataclasses.dataclass(frozen=True)
@@ -200,6 +210,59 @@ def f7_candidates_sql(lo, hi):
         AND e.sol_depth >= {150 * SOL} AND e.sol_amount >= GREATEST({3 * SOL}, 0.04 * e.sol_depth)"""
 
 
+def pool_history_sql(lo, hi):
+    """Per reversed pool: the minute it was created (NULL: before the store) and, over events in [lo, hi), the first
+    minute it traded and the first minute it showed >= 50 / >= 150 SOL real depth. One scan per measurement."""
+    return f"""
+      WITH ev AS (
+        SELECT e.pool, min(b.block_time) // 60 AS first_minute,
+               min(b.block_time) FILTER (WHERE e.sol_depth >= {50 * SOL}) // 60 AS deep50_minute,
+               min(b.block_time) FILTER (WHERE e.sol_depth >= {150 * SOL}) // 60 AS deep150_minute
+        FROM pool e JOIN blocks b USING (slot)
+        WHERE e.slot >= {lo} AND e.slot < {hi} AND e.kind IN ('buy', 'sell')
+          AND e.pool IN (SELECT pool FROM pools WHERE quote_class = 'reversed')
+        GROUP BY 1)
+      SELECT p.pool, cb.block_time // 60 AS create_minute, ev.first_minute, ev.deep50_minute, ev.deep150_minute
+      FROM pools p LEFT JOIN blocks cb ON cb.slot = p.create_slot LEFT JOIN ev USING (pool)
+      WHERE p.quote_class = 'reversed'"""
+
+
+def build_history(con, lo, hi, path):
+    tbl = con.execute(pool_history_sql(lo, hi)).to_arrow_table()
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    pq.write_table(tbl, path)
+    with open(os.path.splitext(path)[0] + ".json", "w") as f:
+        json.dump({"from_slot": lo, "to_slot": hi, "pools": tbl.num_rows, "commit": git_commit()}, f, indent=1)
+    return tbl.num_rows
+
+
+def load_history(path):
+    """{pool: {0: create_minute, 50: deep50_minute, 150: deep150_minute}} (None: never / before the store)."""
+    t = pq.read_table(path)
+    cols = {k: t.column(k).to_pylist() for k in ("pool", "create_minute", "deep50_minute", "deep150_minute")}
+    return {p: {0: c, 50: d50, 150: d150} for p, c, d50, d150 in zip(cols["pool"], cols["create_minute"], cols["deep50_minute"], cols["deep150_minute"])}
+
+
+def in_universe(minute, lag, qualifying_minute, unknown_is_in=False):
+    """A universe refreshed with `lag` days delay knows data through the end of UTC day D - lag, D the event's day:
+    the pool is in it when it qualified before the start of day D - lag + 1."""
+    cutoff = (minute // MINUTES_PER_DAY - (lag - 1)) * MINUTES_PER_DAY
+    if qualifying_minute is None:
+        return unknown_is_in
+    return qualifying_minute < cutoff
+
+
+def universe_membership(hist, pool, minute):
+    """{(lag, depth): bool} for an event in `pool` at `minute`. A pool created before the store counts as existing;
+    a pool missing from the history is in no universe."""
+    h = hist.get(pool)
+    out = {}
+    for lag in UNIVERSE_LAGS:
+        for depth in UNIVERSE_DEPTHS:
+            out[(lag, depth)] = h is not None and in_universe(minute, lag, h[depth], unknown_is_in=(depth == 0))
+    return out
+
+
 def minute_of_slot(con, slots):
     rows = con.execute("SELECT slot, block_time // 60 FROM blocks WHERE slot IN (SELECT unnest(?))", [list(slots)]).fetchall()
     return dict(rows)
@@ -224,9 +287,29 @@ def pct(xs, p):
     return xs[min(len(xs) - 1, int(round(p * (len(xs) - 1))))]
 
 
-def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None):
-    """Measure [lo, hi): members per minute, events on the list, coverage. State warms up over the 6 h before lo."""
+def _universe_counters():
+    return {f"d-{lag}": {str(depth): collections.Counter() for depth in UNIVERSE_DEPTHS} for lag in UNIVERSE_LAGS}
+
+
+def _count_universe(d, hist, pool, minute, on_list, kind, organic=False):
+    for (lag, depth), inside in universe_membership(hist, pool, minute).items():
+        c = d["universe"][f"d-{lag}"][str(depth)]
+        c[kind] += 1
+        if inside:
+            c[kind + "_in"] += 1
+            c[kind + "_in_on_list"] += on_list
+        if organic:
+            c[kind + "_organic"] += 1
+            if inside:
+                c[kind + "_organic_in"] += 1
+                c[kind + "_organic_in_on_list"] += on_list
+
+
+def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None, history=None):
+    """Measure [lo, hi): members per minute, events on the list, coverage. State warms up over the 6 h before lo.
+    `history`: path of the pool history (--build-history) for the universe-with-lag counts."""
     t0 = time.time()
+    hist = load_history(history) if history else None
     clock = clock or Clock.from_store(con)
     warm_lo = max(lo - clock.slots(WARMUP_MINUTES * 60_000, lo), 0)
     pools = con.execute(pools_sql(warm_lo, hi)).fetchall()
@@ -260,7 +343,8 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None):
                                                  "events_reversed_all": 0, "events_normal_all": 0,
                                                  "f7_cand": 0, "f7_cand_covered": 0,
                                                  "f7_trig": 0, "f7_trig_covered": 0, "f7_trig_organic": 0, "f7_trig_organic_covered": 0,
-                                                 "m1_points": 0, "m1_points_covered": 0, "m1_events_young": 0, "m1_events_young_covered": 0})
+                                                 "m1_points": 0, "m1_points_covered": 0, "m1_events_young": 0, "m1_events_young_covered": 0,
+                                                 "universe": _universe_counters()})
     members_rows = []
     # every minute is stepped, also a silent one: the idle rules count minutes without trades
     # (a decision point or trigger beyond the last minute with data is not stepped: it belongs to the next range)
@@ -299,7 +383,10 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None):
                         d["m1_events_young_covered"] += trades
             for pool in cand_by_minute.get(m, ()):
                 d["f7_cand"] += 1
-                d["f7_cand_covered"] += "f7_rev" in members.get(pool, ())
+                cov = "f7_rev" in members.get(pool, ())
+                d["f7_cand_covered"] += cov
+                if hist is not None:
+                    _count_universe(d, hist, pool, m, cov, "cand")
             for pool, farm in trig_by_minute.get(m, ()):
                 d["f7_trig"] += 1
                 cov = "f7_rev" in members.get(pool, ())
@@ -307,11 +394,15 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None):
                 if farm == "organic":
                     d["f7_trig_organic"] += 1
                     d["f7_trig_organic_covered"] += cov
+                if hist is not None:
+                    _count_universe(d, hist, pool, m, cov, "trig", organic=(farm == "organic"))
             for pool in m1_points.get(m, ()):
                 d["m1_points"] += 1
                 d["m1_points_covered"] += "m1" in members.get(pool, ())
             for pool, tags in members.items():
                 members_rows.append((m, pool, "f7_rev" in tags, "m1" in tags))
+                if hist is not None and "f7_rev" in tags:
+                    _count_universe(d, hist, pool, m, True, "f7_minutes")
         members = wl.step(m, rows)
     os.makedirs(out_dir, exist_ok=True)
     tbl = pa.table({"minute": pa.array([r[0] for r in members_rows], pa.int64()),
@@ -319,10 +410,14 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None):
                     "f7_rev": pa.array([r[2] for r in members_rows], pa.bool_()),
                     "m1": pa.array([r[3] for r in members_rows], pa.bool_())})
     pq.write_table(tbl, os.path.join(out_dir, f"watchlist-{lo}.parquet"))
+    store_first_day = time.strftime("%Y-%m-%d", time.gmtime(con.execute("SELECT min(block_time) FROM blocks").fetchone()[0]))
     out = {"from_slot": lo, "to_slot": hi, "commit": git_commit(), "rules": dataclasses.asdict(rules), "wallets": len(wallets),
-           "pools_seen": len(wl.pools), "trigger_dir": trigger_dir, "seconds": round(time.time() - t0), "days": {}}
+           "pools_seen": len(wl.pools), "trigger_dir": trigger_dir, "history": history, "store_first_day": store_first_day,
+           "seconds": round(time.time() - t0), "days": {}}
     for day, d in sorted(day_stats.items()):
-        out["days"][day] = {k: v for k, v in d.items() if not isinstance(v, list)}
+        out["days"][day] = {k: v for k, v in d.items() if not isinstance(v, list) and k != "universe"}
+        if hist is not None:
+            out["days"][day]["universe"] = d["universe"]
         for k in ("members", "f7_rev", "m1"):
             out["days"][day][k] = {"median": statistics.median(d[k]) if d[k] else None, "p95": pct(d[k], 0.95), "max": max(d[k]) if d[k] else None}
     with open(os.path.join(out_dir, f"watchlist-stats-{lo}.json"), "w") as f:
@@ -333,8 +428,10 @@ def run(con, lo, hi, out_dir, rules, wallets, trigger_dir=None, clock=None):
 def report(out_dir):
     """Markdown over all watchlist-stats-*.json files."""
     days = {}
+    store_first_day = None
     for f in sorted(glob.glob(os.path.join(out_dir, "watchlist-stats-*.json"))):
         j = json.load(open(f))
+        store_first_day = store_first_day or j.get("store_first_day")
         for day, d in j["days"].items():
             if d["minutes"] >= 1000:  # whole days only (a range boundary leaves a partial day in two files)
                 days[day] = d
@@ -380,9 +477,62 @@ def report(out_dir):
         lines.append("Niet meegeteld: account-updates van de vault-balansen van alle pools (§6 regel 2, ~8 bytes data per update), "
                      "de curve en de gevolgde wallets (nog een vaste lijst). Een pool met een open positie blijft bij de paper-engine op de lijst; "
                      "dat zit niet in deze telling.")
+    if any("universe" in d for d in days.values()):
+        lines += ["", *universe_section(days, store_first_day)]
     if partial:
         lines.append(f"\nGedeeltelijke dagen weggelaten: {', '.join(sorted(partial))}.")
     return "\n".join(lines)
+
+
+def universe_section(days, store_first_day):
+    """What a candidate universe refreshed from OF1 with 1 or 2 days delay misses: F7 candidate sells and tournament
+    triggers in pools that did not yet exist / were not yet that deep at the refresh."""
+    import datetime
+
+    # the depth history starts with the store: on its first two days a pool deep before the store looks new
+    biased = set()
+    if store_first_day:
+        d0 = datetime.date.fromisoformat(store_first_day)
+        biased = {(d0 + datetime.timedelta(days=k)).isoformat() for k in range(max(UNIVERSE_LAGS))}
+    crits = [(lag, depth) for lag in UNIVERSE_LAGS for depth in UNIVERSE_DEPTHS]
+    label = {0: "bestond", 50: "≥ 50 SOL", 150: "≥ 150 SOL"}
+    lines = ["## Universum met ververs-vertraging: wat missen we zonder stream op nieuwe reversed pools?", "",
+             "Live zien we nieuwe reversed pools niet goedkoop; de F7-kandidatenset zou dagelijks uit OF1 komen, 1–2 dagen achter. "
+             "Per dag D: het aandeel F7-kandidaatsells (≥ 150 SOL diep, sell ≥ max(3 SOL, 4 %)) en toernooi-F7-triggers "
+             "(alle / organisch) in een pool die aan het eind van dag D−1 resp. D−2 al bestond, al ≥ 50 SOL of al ≥ 150 SOL "
+             "reële diepte had laten zien. Pools van vóór de store tellen als bestaand. De laatste kolom van de totalen: het aandeel van de "
+             "F7-pool-minuten op de dynamische lijst waarvan de pool in dat universum zat.", "",
+             "| dag | " + " | ".join(f"D−{lag} {label[depth]}" for lag, depth in crits) + " |",
+             "|---|" + "---|" * len(crits)]
+    tot = {k: collections.Counter() for k in crits}
+    n_days = 0
+    for day, d in sorted(days.items()):
+        u = d.get("universe")
+        if not u:
+            continue
+        cells = []
+        for lag, depth in crits:
+            c = u[f"d-{lag}"][str(depth)]
+            cells.append(f"{_share(c, 'cand')} / {_share(c, 'trig')} ({_share(c, 'trig_organic')})")
+            if day not in biased or depth == 0:
+                tot[(lag, depth)].update(c)
+        n_days += day not in biased
+        lines.append(f"| {day}{' *' if day in biased else ''} | " + " | ".join(cells) + " |")
+    lines += ["", "Cel: kandidaatsells / triggers (organische triggers) in het universum. "
+              + (f"\\* {', '.join(sorted(biased))}: diepte-historie begint met de store, daarom alleen 'bestond' in de totalen. " if biased else "")
+              + f"**Totaal over {n_days} dagen** (in het universum, en daarvan ook op de dynamische lijst):", ""]
+    lines += ["| universum | F7-kandidaatsells | … ook op de lijst | toernooi-triggers | … ook op de lijst | organische triggers | … ook op de lijst | F7-pool-minuten op de lijst |",
+              "|---|---|---|---|---|---|---|---|"]
+    for lag, depth in crits:
+        c = tot[(lag, depth)]
+        lines.append(f"| D−{lag} {label[depth]} | {_share(c, 'cand')} | {_share(c, 'cand', '_in_on_list')} | {_share(c, 'trig')} | "
+                     f"{_share(c, 'trig', '_in_on_list')} | {_share(c, 'trig_organic')} | {_share(c, 'trig_organic', '_in_on_list')} | "
+                     f"{_share(c, 'f7_minutes')} |")
+    return lines
+
+
+def _share(c, kind, suffix="_in"):
+    return f"{c.get(kind + suffix, 0) / c[kind]:.1%} ({c[kind]:,})" if c.get(kind) else "–"
 
 
 def main():
@@ -393,16 +543,23 @@ def main():
     ap.add_argument("--triggers", help="tournament run directory with parts/ (F7 pool triggers for the coverage check)")
     ap.add_argument("--wallets", help="CSV with a `wallet` column: the followed wallets (fixed list for now)")
     ap.add_argument("--report", action="store_true", help="render the Markdown over the stats files in --out")
+    ap.add_argument("--build-history", metavar="PARQUET", help="write the per-pool history (creation, first >= 50 / 150 SOL) over [from, to) and stop")
+    ap.add_argument("--history", metavar="PARQUET", help="pool history from --build-history: adds the universe-with-lag counts")
     a = ap.parse_args()
     if a.report:
         print(report(a.out))
         return
     guard(a.to_slot)
     con = connect(memory=os.environ.get("LAB_WATCHLIST_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "1000MB")))
+    if a.build_history:
+        t0 = time.time()
+        n = build_history(con, a.from_slot, a.to_slot, a.build_history)
+        print(f"history {a.from_slot}-{a.to_slot}: {n} reversed pools -> {a.build_history}, {time.time() - t0:.0f}s", file=sys.stderr)
+        return
     wallets = []
     if a.wallets:
         wallets = [r[0] for r in con.execute(f"SELECT wallet FROM read_csv({a.wallets!r}, header = true)").fetchall()]
-    out = run(con, a.from_slot, a.to_slot, a.out, Rules(), wallets, a.triggers)
+    out = run(con, a.from_slot, a.to_slot, a.out, Rules(), wallets, a.triggers, history=a.history)
     days = out["days"]
     print(f"{a.from_slot}-{a.to_slot}: {out['pools_seen']} pools seen, days {list(days)}, "
           + "; ".join(f"{d}: median {v['members']['median']} pools, {v['events_on_list']:,}/{v['events_all']:,} events" for d, v in days.items())
