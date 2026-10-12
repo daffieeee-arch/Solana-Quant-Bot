@@ -120,6 +120,8 @@ class Cargo(unittest.TestCase):
     def test_bad_output_is_an_error(self):
         with self.assertRaises(da.AuditError):
             da.parse_cargo({"database": {}})
+        with self.assertRaisesRegex(da.AuditError, "unsound warning without an advisory id"):
+            da.parse_cargo(cargo_report(warnings={"unsound": [{"advisory": None, "package": {"name": "x", "version": "1"}}]}))
 
 
 class Pip(unittest.TestCase):
@@ -210,6 +212,12 @@ class IgnoreFile(unittest.TestCase):
         path = self.write('[[ignore]]\nid="X"\necosystem="npm"\npackage="a"\nreason="r"\nevidence="e"\n'
                           'approved="2026-10-12"\napproved_by="me"\nreview_by="2027-01-01"\n')
         with self.assertRaisesRegex(da.AuditError, r"missing \['risk'\]"):
+            da.load_ignores(path)
+
+    def test_empty_version_rejected(self):
+        path = self.write('[[ignore]]\nid="X"\necosystem="npm"\npackage="a"\nversion=""\nreason="r"\nrisk="k"\n'
+                          'evidence="e"\napproved="2026-10-12"\napproved_by="me"\nreview_by="2027-01-01"\n')
+        with self.assertRaisesRegex(da.AuditError, "version is empty"):
             da.load_ignores(path)
 
     def test_bad_date_and_unknown_keys_rejected(self):

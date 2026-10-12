@@ -104,6 +104,8 @@ def load_ignores(path=IGNORE_FILE):
             raise AuditError(f"{path}: entry {n} ({e.get('id', '?')}): missing {missing} unknown {extra}")
         if e["ecosystem"] not in ("cargo", "pip", "npm"):
             raise AuditError(f"{path}: entry {n}: ecosystem must be cargo, pip or npm")
+        if "version" in e and not str(e["version"]).strip():
+            raise AuditError(f"{path}: entry {n} ({e['id']}): version is empty; set the exact version or leave it out")
         for k in ("approved", "review_by"):
             try:
                 datetime.date.fromisoformat(str(e[k]))
@@ -150,6 +152,8 @@ def parse_cargo(report):
         for w in items or []:
             adv = w.get("advisory") or {}
             if kind == "unsound":
+                if not adv.get("id"):
+                    raise AuditError(f"cargo-audit unsound warning without an advisory id: {w.get('package')}")
                 findings.append({
                     "id": adv["id"], "aliases": adv.get("aliases") or [], "package": w["package"]["name"],
                     "version": w["package"]["version"], "title": adv.get("title", ""),
