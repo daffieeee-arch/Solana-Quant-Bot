@@ -67,7 +67,7 @@ The fixed verification reads occur immediately and then after `500`, `1,000`, `2
 - A directly read item counts only when it belongs to this Project.
 - The verification schedules have no environment override or unbounded fallback.
 
-**Transient errors on queries.** A read-only GraphQL query (`query …`, for example the issue, pull-request and Project-item lists) that fails transiently is repeated after `2,000`, `4,000`, `8,000`, `16,000` and `30,000` milliseconds, each plus up to 25% jitter. Transient means HTTP 5xx or 429, a non-JSON body such as a 504 gateway page, or a network error or timeout. That is six attempts at most; each retry is logged with its label and reason code.
+**Transient errors on queries.** A read-only GraphQL query (`query …`, for example the issue, pull-request and Project-item lists) that fails transiently is repeated after `2,000`, `4,000`, `8,000`, `16,000` and `30,000` milliseconds, each plus up to 25% jitter. Transient means HTTP 5xx or 429, a non-JSON body such as a 504 gateway page, or a network error or timeout. That is six attempts at most: 60 s of delays plus up to 25% jitter, so 75 s of waiting at most, plus the 30 s request timeout of each attempt. When a transient reply carries a `retry-after` header (seconds or an HTTP date; GitHub sends it with rate limits), the wait is that long instead if it is longer, at most 60 s. Each retry is logged with its label, reason code and wait.
 - Client errors (4xx) and GraphQL errors with HTTP 200 are not retried.
 - Mutations are never retried: their commit state can be ambiguous.
 

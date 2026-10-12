@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   GITHUB_QUERY_RETRY_DELAYS_MS,
+  GITHUB_RETRY_AFTER_MAX_MS,
   GitHubGraphQL,
+  itemListWithAddedItems,
+  retryAfterMilliseconds,
   PROJECT_ITEM_VISIBILITY_DELAYS_MS,
   PROJECT_VERIFICATION_DELAYS_MS,
   evaluateItemLifecycleProjection,
@@ -16,6 +19,10 @@ const MUTATION = '\n  mutation AddRoadmapItem($input: AddProjectV2ItemByIdInput!
 
 const reply = (status: number, body: string) => ({ status, ok: status >= 200 && status < 300, text: async () => body });
 const json = (status: number, value: unknown) => reply(status, JSON.stringify(value));
+const withRetryAfter = (status: number, value: string) => ({
+  ...json(status, { message: 'slow down' }),
+  headers: { get: (name: string) => (name.toLowerCase() === 'retry-after' ? value : null) },
+});
 
 const client = (responses: Array<unknown>, random = () => 0) => {
   const sleeps: number[] = [];
@@ -234,5 +241,46 @@ describe('Roadmap Sync item visibility after ADD_ITEM', () => {
       .rejects.toThrow(new RegExp(`PROJECT_VERIFICATION_EXHAUSTED operation=ADD_ITEM .*attempts=${PROJECT_ITEM_VISIBILITY_DELAYS_MS.length} reason=ITEM_NOT_VISIBLE`));
     expect(api.request.mock.calls.filter((call) => call[2] === 'add Issue #96')).toHaveLength(1);
     expect(verifier.sleeps).toEqual(PROJECT_ITEM_VISIBILITY_DELAYS_MS.slice(1));
+  });
+});
+
+
+describe('Roadmap Sync retry-after and the final audit read schedule', () => {
+  it('reads retry-after as seconds or an HTTP date', () => {
+    const now = Date.parse('2026-10-12T18:00:00Z');
+    expect(retryAfterMilliseconds('45', now)).toBe(45_000);
+    expect(retryAfterMilliseconds(' 0 ', now)).toBe(0);
+    expect(retryAfterMilliseconds('Mon, 12 Oct 2026 18:00:30 GMT', now)).toBe(30_000);
+    expect(retryAfterMilliseconds('Mon, 12 Oct 2026 17:59:00 GMT', now)).toBe(0);
+    expect(retryAfterMilliseconds('soon', now)).toBeUndefined();
+    expect(retryAfterMilliseconds(undefined, now)).toBeUndefined();
+  });
+
+  it('waits as long as retry-after asks when that is longer than the backoff, at most 60 s', async () => {
+    const { api, sleeps, logs } = client([
+      withRetryAfter(429, '45'),
+      withRetryAfter(503, '300'),
+      withRetryAfter(429, '1'),
+      json(200, { data: { ok: true } }),
+    ]);
+    await expect(api.request(QUERY, {}, 'list repository issues')).resolves.toEqual({ ok: true });
+    expect(sleeps).toEqual([45_000, GITHUB_RETRY_AFTER_MAX_MS, 8_000]);
+    expect(logs.map((entry) => entry.waitMilliseconds)).toEqual(sleeps);
+  });
+
+  it('the direct item read joins at the given read of the list', async () => {
+    const labels: string[] = [];
+    const api = {
+      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+        labels.push(label);
+        if (label === 'list project items') return itemsResponse([]);
+        return { node: null };
+      }),
+    };
+    // The final audit's reader: its first call is the audit's second read.
+    const read = itemListWithAddedItems(api, 'PROJECT_4', ['ITEM_9'], PROJECT_VERIFICATION_DELAYS_MS.length);
+    for (let i = 0; i < PROJECT_VERIFICATION_DELAYS_MS.length; i += 1) await read();
+    expect(labels.filter((label) => label === 'read project item')).toHaveLength(1);
+    expect(labels.at(-1)).toBe('read project item');
   });
 });

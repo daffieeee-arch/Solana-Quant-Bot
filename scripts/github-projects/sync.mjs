@@ -55,6 +55,9 @@ export const PROJECT_ITEM_VISIBILITY_DELAYS_MS = Object.freeze([
 // a 504 gateway page, a network error or timeout) is repeated after these delays, each plus up to
 // 25% jitter. Mutations are never repeated.
 export const GITHUB_QUERY_RETRY_DELAYS_MS = Object.freeze([2_000, 4_000, 8_000, 16_000, 30_000]);
+// A transient reply with a retry-after header (seconds or an HTTP date; GitHub sends it with rate
+// limits) waits that long instead when it is longer than the backoff, at most this long.
+export const GITHUB_RETRY_AFTER_MAX_MS = 60_000;
 export const PROJECT_VERIFICATION_OUTCOMES = Object.freeze({
   CONVERGED: 'CONVERGED',
   NOT_YET_CONVERGED: 'NOT_YET_CONVERGED',
@@ -1547,10 +1550,20 @@ export function evaluateItemFieldClearProjection({
 }
 
 class TransientGitHubError extends Error {
-  constructor(message, reason) {
+  constructor(message, reason, retryAfterMilliseconds = undefined) {
     super(message);
     this.reason = reason;
+    this.retryAfterMilliseconds = retryAfterMilliseconds;
   }
+}
+
+/** Milliseconds of a retry-after header (delta seconds or an HTTP date), or undefined. */
+export function retryAfterMilliseconds(value, now = Date.now()) {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const text = value.trim();
+  if (/^\d+$/.test(text)) return Number(text) * 1_000;
+  const at = Date.parse(text);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now);
 }
 
 const githubRetrySleep = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -1560,6 +1573,7 @@ export class GitHubGraphQL {
     fetchImpl = (...args) => fetch(...args),
     sleep = githubRetrySleep,
     random = Math.random,
+    now = () => Date.now(),
     log = (entry) => console.log(JSON.stringify(entry)),
     retryDelays = GITHUB_QUERY_RETRY_DELAYS_MS,
   } = {}) {
@@ -1567,6 +1581,7 @@ export class GitHubGraphQL {
     this.fetchImpl = fetchImpl;
     this.sleep = sleep;
     this.random = random;
+    this.now = now;
     this.log = log;
     this.retryDelays = retryDelays;
   }
@@ -1586,7 +1601,9 @@ export class GitHubGraphQL {
         if (attempt >= this.retryDelays.length) {
           throw new Error(`${error.message} after ${attempt + 1} attempts`);
         }
-        const waitMilliseconds = Math.round(this.retryDelays[attempt] * (1 + 0.25 * this.random()));
+        const backoff = Math.round(this.retryDelays[attempt] * (1 + 0.25 * this.random()));
+        const asked = Math.min(error.retryAfterMilliseconds ?? 0, GITHUB_RETRY_AFTER_MAX_MS);
+        const waitMilliseconds = Math.max(backoff, asked);
         this.log({ event: 'github_request_retry', label, attempt: attempt + 1, reason: error.reason, waitMilliseconds });
         await this.sleep(waitMilliseconds);
       }
@@ -1613,16 +1630,17 @@ export class GitHubGraphQL {
       throw new TransientGitHubError(`${label} network error ${error?.name ?? 'Error'}`, 'NETWORK');
     }
     const text = await response.text();
+    const retryAfter = retryAfterMilliseconds(response.headers?.get?.('retry-after') ?? undefined, this.now());
     let payload;
     try {
       payload = JSON.parse(text);
     } catch {
-      throw new TransientGitHubError(`${label} returned non-JSON HTTP ${response.status}`, `NON_JSON_HTTP_${response.status}`);
+      throw new TransientGitHubError(`${label} returned non-JSON HTTP ${response.status}`, `NON_JSON_HTTP_${response.status}`, retryAfter);
     }
     if (!response.ok || payload.errors?.length) {
       const messages = (payload.errors ?? []).map((error) => error.message).join('; ');
       const message = `${label} failed (HTTP ${response.status}): ${messages || 'unknown error'}`;
-      if (response.status >= 500 || response.status === 429) throw new TransientGitHubError(message, `HTTP_${response.status}`);
+      if (response.status >= 500 || response.status === 429) throw new TransientGitHubError(message, `HTTP_${response.status}`, retryAfter);
       throw new Error(message);
     }
     return payload.data;
@@ -3370,7 +3388,10 @@ export async function reconcileItems(
     }
   }
   let useCapturedSnapshot = true;
-  const readFinalItems = itemListWithAddedItems(api, project.id, [...projectionLagEligibleItemIds]);
+  // Its first call is the audit's second read (the first is the captured snapshot), so the direct
+  // read joins at the audit's sixth read, as in ADD_ITEM.
+  const readFinalItems = itemListWithAddedItems(api, project.id, [...projectionLagEligibleItemIds],
+    PROJECT_VERIFICATION_DELAYS_MS.length);
   const finalProjection = await verifyProjectProjection({
     delays: PROJECT_ITEM_VISIBILITY_DELAYS_MS,
     ...verificationOptions,
