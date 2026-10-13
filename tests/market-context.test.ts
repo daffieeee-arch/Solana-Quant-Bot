@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { MarketContextProvider, cleanRssText } from '../src/providers/market-context.js';
 
@@ -9,17 +10,36 @@ const rss = `<?xml version="1.0"?><rss><channel>
   <item><title><![CDATA[Bitcoin sees renewed interest]]></title><link>https://www.coindesk.com/example</link><pubDate>Sat, 25 Jul 2026 20:00:00 GMT</pubDate></item>
 </channel></rss>`;
 
-// The former single-pass sanitizer (dismissed CodeQL alert #3); cleanRssText must match it exactly.
-const legacyCleanRssText = (value: string) => value
-  .replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1').replace(/<[^<>]*>|[<>]/g, '').replace(/\s+/g, ' ').trim();
+// Outputs of the former single-pass sanitizer (`.replace(/<[^<>]*>|[<>]/g, '')`, dismissed CodeQL
+// alert #3), recorded before the rewrite; cleanRssText must reproduce them exactly.
+const LEGACY_OUTPUTS: [string, string][] = [
+    ["<scr<script>ipt>update</scr</script>ipt>", "scriptupdate/script"],
+    ["<<script>update</script>>", "update"],
+    ["<!<!-->update-->", "!update--"],
+    ["< update > > <", ""],
+    ["<", ""],
+    [">", ""],
+    ["<>", ""],
+    ["><", ""],
+    ["a<b", "ab"],
+    ["a>b", "ab"],
+    ["<a<b>c>d", "acd"],
+    ["&lt;script&gt;x&lt;/script&gt;", "&lt;script&gt;x&lt;/script&gt;"],
+    ["&amp;lt;b&amp;gt;", "&amp;lt;b&amp;gt;"],
+    ["<![CDATA[<b>x</b> & <y]]>", "x & y"],
+    ["  Bitcoin <b>news</b>\n", "Bitcoin news"],
+    ["", ""],
+    ["<a <b> c", "a c"],
+    ["x<y z>w<", "xw"],
+    ["<<<>>>", ""],
+    ["<a>>b<<c>", "b"],
+];
+// sha256 over the former outputs of the 20,000 random strings below, each followed by U+0000.
+const LEGACY_RANDOM_SHA256 = 'c29b7e6da942a3f11aba03030787315ec751b719b8978a942b50f5540095bb79';
 
 describe('cleanRssText', () => {
-  it.each([
-    '<scr<script>ipt>update</scr</script>ipt>', '<<script>update</script>>', '<!<!-->update-->', '< update > > <',
-    '<', '>', '<>', '><', 'a<b', 'a>b', '<a<b>c>d', '&lt;script&gt;x&lt;/script&gt;', '&amp;lt;b&amp;gt;',
-    '<![CDATA[<b>x</b> & <y]]>', '  Bitcoin <b>news</b>\n', '',
-  ])('matches the former single-pass output and leaves no < or >: %j', (input) => {
-    expect(cleanRssText(input)).toBe(legacyCleanRssText(input));
+  it.each(LEGACY_OUTPUTS)('matches the former output and leaves no < or >: %j', (input, expected) => {
+    expect(cleanRssText(input)).toBe(expected);
     expect(cleanRssText(input)).not.toMatch(/[<>]/);
   });
 
@@ -27,10 +47,14 @@ describe('cleanRssText', () => {
     const alphabet = ['<', '>', '/', '!', '-', 'a', 's', 'c', 'r', 'i', 'p', 't', ' ', '\n', '&', ';', '[', ']'];
     let seed = 7;
     const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+    const digest = createHash('sha256');
     for (let n = 0; n < 20_000; n += 1) {
       const input = Array.from({ length: next() % 24 }, () => alphabet[next() % alphabet.length]).join('');
-      expect(cleanRssText(input)).toBe(legacyCleanRssText(input));
+      const output = cleanRssText(input);
+      expect(output).not.toMatch(/[<>]/);
+      digest.update(`${output}\u0000`);
     }
+    expect(digest.digest('hex')).toBe(LEGACY_RANDOM_SHA256);
   });
 });
 
