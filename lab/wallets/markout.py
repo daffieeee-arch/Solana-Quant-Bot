@@ -341,7 +341,16 @@ def round_trips(con, per_order, size=SIZE):
     cols = [c[0] for c in con.execute("SELECT * FROM matched LIMIT 0").description]
     out = []
     entry = {}
-    for row in con.execute("SELECT * FROM matched ORDER BY sid, d, h_ms").fetchall():
+    cur = con.execute("SELECT * FROM matched ORDER BY sid, d, h_ms")
+
+    def rows():  # chunked: the matched table of a full run has millions of wide rows
+        while True:
+            chunk = cur.fetchmany(50_000)
+            if not chunk:
+                return
+            yield from chunk
+
+    for row in rows():
         r = dict(zip(cols, row))
         venue, ori = r["venue"], r["orientation"]
         m = mid(venue, ori, r)
@@ -366,7 +375,8 @@ def round_trips(con, per_order, size=SIZE):
 def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS):
     import yaml
     t0 = time.time()
-    con = connect(store) if store else connect()
+    mem = os.environ.get("LAB_WALLETS_MEMORY", "1GB")  # common.connect defaults to 1 GB: the NAS run died in the last join at 953 MiB
+    con = connect(store, memory=mem) if store else connect(memory=mem)
     clock = Clock.from_store(con)
     meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
     end_slot = int(meta["slot_end_exclusive"])
