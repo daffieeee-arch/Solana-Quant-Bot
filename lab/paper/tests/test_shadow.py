@@ -5,6 +5,9 @@ difference between live and replay has a cause other than 'unexplained'."""
 import argparse
 import json
 import os
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from types import SimpleNamespace as NS
 
 import duckdb
 import pytest
@@ -25,6 +28,46 @@ def test_coverage_intervals_and_gaps():
     assert cov.seen("P", 10) and cov.seen("P", 24) and not cov.seen("P", 25) and cov.seen("P", 27)
     assert not cov.seen("P", 30) and cov.seen("P", 45) and not cov.seen("Q", 15)
     assert cov.gap_overlaps(0, 25) and not cov.gap_overlaps(27, 40)
+
+
+@dataclass(slots=True)
+class _Leg:
+    slot: int
+    trader: str
+    pre: tuple
+    post: tuple
+
+
+def _fake_run(mints, legs_per_mint):
+    hist = defaultdict(list)
+    for m in range(mints):
+        for i in range(legs_per_mint):
+            hist[f"mint{m:06d}"].append(_Leg(1000 + i, f"trader{m}-{i}", (m, i, 3 * i), (m, i + 1, 3 * i + 1)))
+    feed = NS(curve_hist=hist, seen_keys={("c", m, i): "rec" for m in range(200) for i in range(5)}, seen_order=deque(),
+              farmers=NS(hist={}), tokens={}, pools={}, con=duckdb.connect(), seed_con=None)
+    eng = NS(recent={}, last_state={}, busy={}, watch=None)
+    return feed, eng
+
+
+def test_state_estimates_are_close_to_the_exact_size(monkeypatch):
+    """The sampled byte estimate of a structure is within 10 % of its exact size (nothing sampled)."""
+    feed, eng = _fake_run(3000, 12)
+    est = shadow._est_mb(feed.curve_hist)
+    monkeypatch.setattr(shadow, "STATE_SAMPLE", 10**9)
+    monkeypatch.setattr(shadow, "STATE_INNER", 10**9)
+    exact = shadow._est_mb(feed.curve_hist)
+    assert exact > 5 and abs(est - exact) <= 0.1 * exact
+
+
+def test_state_report_names_every_structure_and_the_memory_parts():
+    feed, eng = _fake_run(2000, 3)
+    st = shadow._state_report(feed, eng, {"feed": feed.con, "seed": None})
+    json.dumps(st)  # it goes to state.jsonl as is
+    assert st["n"]["curve_hist_legs"] == 6000 and st["n"]["seen_keys"] == 1000
+    assert st["est_mb"]["feed.curve_hist"] > 0 and "eng.recent" in st["est_mb"] and "watch.rows" not in st["est_mb"]
+    assert {"py_blocks_k", "arrow_mb", "duckdb_feed_mb"} <= set(st["mem"]) and "duckdb_seed_mb" not in st["mem"]
+    feed.con.close()
+    assert "duckdb_feed_mb" not in shadow._mem_parts({"feed": feed.con})  # a closed database is left out
 
 
 def test_replay_feed_never_touches_the_holdout():
@@ -67,6 +110,15 @@ def test_segments_follow_the_minutes_with_reconnects_and_a_gap(run):
             w = json.load(fh)
         assert w["new_pools"] and isinstance(w["pools"], list)
     assert info["recorder"].get("tx_watchlist", 0) > 0 and info["estimated_gb_per_day"] > 0
+
+
+def test_progress_lines_write_the_state_of_every_structure(run):
+    out, _ = run
+    with open(os.path.join(out, "state.jsonl")) as f:
+        lines = [json.loads(line) for line in f]
+    assert lines and lines[0]["seq"] == 0 and lines[0]["rss_mb"] > 0
+    assert {"feed.curve_hist", "feed.seen_keys", "eng.recent", "watch.rows"} <= set(lines[-1]["est_mb"])
+    assert "py_blocks_k" in lines[-1]["mem"] and "duckdb_feed_mb" in lines[-1]["mem"]
 
 
 def test_live_against_replay_has_no_unexplained_difference(run):

@@ -45,14 +45,20 @@ Under DIR:
 
 import argparse
 import bisect
+import ctypes
 import gc
 import glob
+import itertools
 import json
 import os
 import shutil
 import sqlite3
+import sys
 import time
-from collections import Counter, defaultdict
+import types
+from collections import Counter, defaultdict, deque
+
+import duckdb
 
 import numpy as np
 import pyarrow as pa
@@ -185,6 +191,7 @@ class ShadowRecorder:
         self.totals = Counter()
         self.t_start = time.time()
         self.sizes = None  # set by run(): sizes of the engine's and LiveFeed's long-lived state, for the progress lines
+        self.state_log = None  # set by run(): <out>/state.jsonl, one line per progress line with every structure
         self.signature = {"from_slot": lo, "to_slot": hi, "probes": probes_on, "watch_warmup_minutes": watch_warmup_minutes,
                           "chunks": [c[2] for c in chunks], "pools": len({p for w in self.watch.values() for p in w}),
                           "probe_pools": len(self.probes), "version": 2}
@@ -413,8 +420,14 @@ class ShadowRecorder:
         self.totals.update({"segments": 1, "rows": rows, "slots": n_slots, "pool_creations": n_pc, "backfills": len(backfills),
                             "backfill_txs": n_back, **{STREAMS[s]: n for s, n in per.items()}})
         if seq % 100 == 0:
+            rss, st = _rss_mb(), self.sizes() if self.sizes else None
+            top = dict(sorted(st["est_mb"].items(), key=lambda kv: -kv[1])[:STATE_TOP]) if st else None
             self.log(f"segment {seq}/{len(self.ranges)}: {len(watch)} on the list, {len(opened)} open, {rows} rows, "
-                     f"rss {_rss_mb()} MB, {time.time() - self.t_start:.0f}s" + (f", state {self.sizes()}" if self.sizes else ""))
+                     f"rss {rss} MB, {time.time() - self.t_start:.0f}s"
+                     + (f", state {st['n']}, est_mb {top}, mem {st['mem']}, measured in {st['measure_s']}s" if st else ""))
+            if st and self.state_log:
+                with open(self.state_log, "a") as f:
+                    f.write(json.dumps({"seq": seq, "rss_mb": rss, "s": round(time.time() - self.t_start), **st}) + "\n")
         return seq, d, meta
 
     def coverage(self):
@@ -431,6 +444,118 @@ def _state_sizes(feed, eng):
             "farmer_entries": sum(len(v) for v in feed.farmers.hist.values()), "seen_keys": len(feed.seen_keys),
             "tokens": len(feed.tokens), "pools": len(feed.pools), "busy": len(eng.busy),
             "watch_pools": len(eng.watch.wl.pools) if eng.watch is not None else 0}
+
+
+STATE_SAMPLE = 200  # entries sampled per structure for its byte estimate
+STATE_INNER = 32  # elements sampled inside a nested container larger than this
+STATE_DEPTH = 6
+STATE_TOP = 8  # structures in the progress line (state.jsonl has all)
+
+
+def _structures(feed, eng):
+    """The long-lived containers of a live run by name: LiveFeed's, the engine's and the live watchlist's."""
+    out = {f"feed.{k}": getattr(feed, k, None)
+           for k in ("curve_hist", "seen_keys", "seen_order", "farm_keys", "ctx", "tokens", "pools", "pool_class", "unknown_seen",
+                     "seeded", "epoch_span", "history", "backfill_pending", "new_pools", "usage")}
+    out["feed.farmers.hist"] = feed.farmers.hist
+    out.update({f"eng.{k}": getattr(eng, k, None)
+                for k in ("recent", "last_state", "last_seen", "open", "pending", "busy", "farm_win", "hour_events", "grad_wait",
+                          "cool", "slot_arrivals")})
+    w = getattr(eng, "watch", None)
+    if w is not None:
+        out.update({f"watch.{k}": getattr(w, k, None) for k in ("rows", "slots", "minutes", "added", "_pending")})
+        out.update({f"watch.wl.{k}": getattr(w.wl, k, None) for k in ("pools", "state", "archive", "members")})
+    return {k: v for k, v in out.items() if v is not None}
+
+
+_LEAF = (str, bytes, int, float, bool, type(None))
+_SKIP = (type, types.ModuleType, types.FunctionType, types.BuiltinFunctionType, types.MethodType)
+
+
+def _deep(o, seen, depth=STATE_DEPTH):
+    """Bytes of o and of what it holds (an object reached twice counts once per `seen`). Containers
+    larger than STATE_INNER are extrapolated from STATE_INNER evenly spaced elements."""
+    if id(o) in seen or isinstance(o, _SKIP):
+        return 0
+    seen.add(id(o))
+    n = sys.getsizeof(o)
+    if depth == 0 or isinstance(o, _LEAF):
+        return n
+    if not isinstance(o, (dict, list, tuple, set, frozenset, deque)):
+        d = getattr(o, "__dict__", None)
+        if d is not None:
+            n += _deep(d, seen, depth - 1)
+        for cls in type(o).__mro__:
+            slots = cls.__dict__.get("__slots__", ())
+            for name in (slots,) if isinstance(slots, str) else slots:
+                if name not in ("__dict__", "__weakref__") and hasattr(o, name):
+                    n += _deep(getattr(o, name), seen, depth - 1)
+        return n
+    k = len(o)
+    if k == 0:
+        return n
+    sample = list(itertools.islice(o.items() if isinstance(o, dict) else o, 0, None, max(1, k // STATE_INNER)))
+    if isinstance(o, dict):
+        got = sum(_deep(a, seen, depth - 1) + _deep(b, seen, depth - 1) for a, b in sample)
+    else:
+        got = sum(_deep(x, seen, depth - 1) for x in sample)
+    return n + round(got * k / len(sample))
+
+
+def _est_mb(c):
+    """Estimated MB of a long-lived container: its own table plus its entries, from STATE_SAMPLE of them.
+    An object shared by many entries (an interned string, a state two legs share) counts once per
+    sample, then scales with the entries: an estimate, not an exact size."""
+    n, seen = len(c), set()
+    if n == 0:
+        return 0.0
+    step = max(1, n // STATE_SAMPLE)
+    if isinstance(c, dict):
+        sample = list(itertools.islice(c.items(), 0, None, step))
+        per = sum(_deep(k, seen) + _deep(v, seen) for k, v in sample) / len(sample)
+    else:
+        sample = list(itertools.islice(c, 0, None, step))
+        per = sum(_deep(x, seen) for x in sample) / len(sample)
+    return round((sys.getsizeof(c) + per * n) / 2**20, 1)
+
+
+class _MallInfo2(ctypes.Structure):
+    _fields_ = [(n, ctypes.c_size_t) for n in ("arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
+                                                 "uordblks", "fordblks", "keepcost")]
+
+
+def _mem_parts(cons):
+    """Where the process's memory sits: Python's small-object blocks, glibc malloc (in use, and free
+    inside its arenas: fragmentation), Arrow's pool and each DuckDB database (duckdb_memory()).
+    RSS minus these is memory none of them reports (DuckDB's or Arrow's allocator overhead, code)."""
+    out = {"py_blocks_k": sys.getallocatedblocks() // 1000, "arrow_mb": pa.total_allocated_bytes() >> 20}
+    try:
+        f = ctypes.CDLL(None).mallinfo2  # glibc >= 2.33
+        f.restype = _MallInfo2
+        m = f()
+        out["malloc_used_mb"], out["malloc_free_mb"] = (m.uordblks + m.hblkhd) >> 20, m.fordblks >> 20
+    except (OSError, AttributeError):
+        pass
+    for name, con in cons.items():
+        if con is None:
+            continue
+        try:
+            cur = con.cursor()  # its own result: a result the caller still reads stays intact
+            try:
+                out[f"duckdb_{name}_mb"] = int(cur.execute("SELECT COALESCE(sum(memory_usage_bytes), 0) FROM duckdb_memory()")
+                                               .fetchone()[0]) >> 20
+            finally:
+                cur.close()
+        except duckdb.Error:
+            pass
+    return out
+
+
+def _state_report(feed, eng, cons):
+    """The progress lines' state: counts (_state_sizes), estimated MB per structure and the memory parts."""
+    t0 = time.time()
+    est = {k: _est_mb(v) for k, v in _structures(feed, eng).items()}
+    return {"n": _state_sizes(feed, eng), "est_mb": est, "mem": _mem_parts(cons), "measure_s": round(time.time() - t0, 2)}
 
 
 def _rss_mb():
@@ -703,9 +828,12 @@ def run(a, log=print):
     watch = LiveWatchlist(feed, root)
     eng = Engine(feed, Journal(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
                  dev_bounds=(blo, bhi), watchlist=watch)
-    rec.sizes = lambda: _state_sizes(feed, eng)
+    rec.sizes = lambda: _state_report(feed, eng, {"feed": feed.con, "seed": feed.seed_con, "rec": rec.con})
+    rec.state_log = os.path.join(out, "state.jsonl")
+    if os.path.exists(rec.state_log):
+        os.remove(rec.state_log)
     eng.run()
-    rec.sizes = None
+    rec.sizes = rec.state_log = None
     info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
     info["livefeed"] = dict(feed.stats)
     info["recorder"] = dict(rec.totals)
