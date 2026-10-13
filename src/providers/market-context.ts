@@ -89,10 +89,28 @@ function tag(item: string, name: string): string {
   return new RegExp(`<${name}[^>]*>([\\s\\S]*?)<\\/${name}>`, 'i').exec(item)?.[1] ?? '';
 }
 
-function cleanRssText(value: string): string {
-  // Text only: consume ordinary tags and every remaining angle delimiter in one pass.
-  // Excluding nested openers avoids rescanning a malformed title; sinks still escape text.
-  return value.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1').replace(/<[^<>]*>|[<>]/g, '').replace(/\s+/g, ' ').trim();
+export function cleanRssText(value: string): string {
+  // Text only: same result as the former `.replace(/<[^<>]*>|[<>]/g, '')`, written as a scanner so
+  // no multi-character replacement is involved. Sinks still escape text.
+  const text = value.replace(/^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/i, '$1');
+  return stripAngleMarkup(text).replace(/\s+/g, ' ').trim();
+}
+
+/** Drop every `<...>` run without inner angle brackets (an ordinary tag) and every other `<` or `>`. */
+function stripAngleMarkup(text: string): string {
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '>') continue;
+    if (c === '<') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '<' && text[j] !== '>') j += 1;
+      if (text[j] === '>') i = j; // an ordinary tag: skip it whole
+      continue; // otherwise only this lone '<' is dropped
+    }
+    out.push(c);
+  }
+  return out.join('');
 }
 
 function isSafeHttpsUrl(value: string): boolean {

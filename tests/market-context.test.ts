@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { MarketContextProvider } from '../src/providers/market-context.js';
+import { MarketContextProvider, cleanRssText } from '../src/providers/market-context.js';
 
 const coinResponse = [
   { id: 'bitcoin', symbol: 'btc', name: 'Bitcoin', current_price: 64_000, price_change_percentage_24h: 1.25 },
@@ -8,6 +9,54 @@ const coinResponse = [
 const rss = `<?xml version="1.0"?><rss><channel>
   <item><title><![CDATA[Bitcoin sees renewed interest]]></title><link>https://www.coindesk.com/example</link><pubDate>Sat, 25 Jul 2026 20:00:00 GMT</pubDate></item>
 </channel></rss>`;
+
+// Outputs of the former single-pass sanitizer (`.replace(/<[^<>]*>|[<>]/g, '')`, dismissed CodeQL
+// alert #3), recorded before the rewrite; cleanRssText must reproduce them exactly.
+const LEGACY_OUTPUTS: [string, string][] = [
+    ["<scr<script>ipt>update</scr</script>ipt>", "scriptupdate/script"],
+    ["<<script>update</script>>", "update"],
+    ["<!<!-->update-->", "!update--"],
+    ["< update > > <", ""],
+    ["<", ""],
+    [">", ""],
+    ["<>", ""],
+    ["><", ""],
+    ["a<b", "ab"],
+    ["a>b", "ab"],
+    ["<a<b>c>d", "acd"],
+    ["&lt;script&gt;x&lt;/script&gt;", "&lt;script&gt;x&lt;/script&gt;"],
+    ["&amp;lt;b&amp;gt;", "&amp;lt;b&amp;gt;"],
+    ["<![CDATA[<b>x</b> & <y]]>", "x & y"],
+    ["  Bitcoin <b>news</b>\n", "Bitcoin news"],
+    ["", ""],
+    ["<a <b> c", "a c"],
+    ["x<y z>w<", "xw"],
+    ["<<<>>>", ""],
+    ["<a>>b<<c>", "b"],
+];
+// sha256 over the former outputs of the 20,000 random strings below, each followed by U+0000.
+const LEGACY_RANDOM_SHA256 = 'c29b7e6da942a3f11aba03030787315ec751b719b8978a942b50f5540095bb79';
+
+describe('cleanRssText', () => {
+  it.each(LEGACY_OUTPUTS)('matches the former output and leaves no < or >: %j', (input, expected) => {
+    expect(cleanRssText(input)).toBe(expected);
+    expect(cleanRssText(input)).not.toMatch(/[<>]/);
+  });
+
+  it('matches the former output on 20,000 random strings over a markup-heavy alphabet', () => {
+    const alphabet = ['<', '>', '/', '!', '-', 'a', 's', 'c', 'r', 'i', 'p', 't', ' ', '\n', '&', ';', '[', ']'];
+    let seed = 7;
+    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648);
+    const digest = createHash('sha256');
+    for (let n = 0; n < 20_000; n += 1) {
+      const input = Array.from({ length: next() % 24 }, () => alphabet[next() % alphabet.length]).join('');
+      const output = cleanRssText(input);
+      expect(output).not.toMatch(/[<>]/);
+      digest.update(`${output}\u0000`);
+    }
+    expect(digest.digest('hex')).toBe(LEGACY_RANDOM_SHA256);
+  });
+});
 
 describe('MarketContextProvider', () => {
   it.each([
