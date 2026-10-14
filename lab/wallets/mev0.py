@@ -133,13 +133,23 @@ def find_arbs(con, ms):
     """Arb transactions of the epoch (one row each; with several qualifying mints, the one with the
     most venues), with the opportunity they closed (the prior trade on their first venue)."""
     routers = ", ".join(f"'{p}'" for p in ROUTERS + STORE_PROGRAMS)
-    # Store venues per (transaction, mint): only transactions of the epoch with a store leg.
+    # Candidate transactions first (the list() aggregation over every store leg of an epoch, tens of millions of
+    # groups, ran out of 18.6 GiB of spill on the NAS): an arb needs two store venues, so two or more legs in one
+    # transaction, or one store leg beside another DEX in tx_ctx.venues, and a successful transaction. Every
+    # other transaction can never pass the tests below, so the result is unchanged (1054 smoke: 309 / 273 arbs).
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE txk AS
+        SELECT slot, tx_index FROM legs WHERE slot IN (SELECT slot FROM days) GROUP BY slot, tx_index HAVING count(*) >= 2
+        UNION
+        SELECT c.slot, c.tx_index FROM ctx c
+        SEMI JOIN (SELECT DISTINCT slot, tx_index FROM legs WHERE slot IN (SELECT slot FROM days)) l USING (slot, tx_index)
+        WHERE NOT c.failed AND len(list_filter(string_split(COALESCE(c.venues, ''), ','), x -> x <> '' AND x NOT IN ({routers}))) > 0""")
+    # Store venues per (candidate transaction, mint).
     con.execute("""CREATE OR REPLACE TEMP TABLE txm AS
         SELECT slot, tx_index, mint, count(DISTINCT venue) AS n_store, count(DISTINCT program) AS n_programs,
                list_sort(list_distinct(list(venue))) AS store_venues, list_sort(list_distinct(list(program))) AS store_programs,
                arg_min(venue, outer_ix * 1000 + inner_ix) AS first_venue, max(tokens) AS max_tokens,
                sum(CASE WHEN buy THEN -sol ELSE sol END) AS legs_sol
-        FROM legs WHERE slot IN (SELECT slot FROM days) GROUP BY slot, tx_index, mint""")
+        FROM legs SEMI JOIN txk USING (slot, tx_index) WHERE slot IN (SELECT slot FROM days) GROUP BY slot, tx_index, mint""")
     con.execute(f"""CREATE OR REPLACE TEMP TABLE cand AS
         SELECT c.slot, c.tx_index, c.slot * {KEY} + c.tx_index AS k, c.fee_payer, m.mint, m.n_store, m.n_programs,
                m.store_venues, m.store_programs, m.first_venue, m.max_tokens, m.legs_sol,
