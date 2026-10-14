@@ -399,8 +399,8 @@ pub fn parse_token_ix(data: &[u8], n_accounts: usize) -> Option<TokenIx> {
 }
 
 /// A System instruction that can fund a wallet: ("transfer", lamports) for Transfer (2), and
-/// ("create_account", lamports) for CreateAccount (0) of an account the System program owns (a
-/// wallet, not a program or token account). Accounts: from = 0, to = 1.
+/// ("create_account", lamports) for CreateAccount (0) of an account the System program owns
+/// without data (a wallet, not a program, token or nonce account). Accounts: from = 0, to = 1.
 pub fn parse_system_funding(data: &[u8], n_accounts: usize) -> Option<(&'static str, u64)> {
     if n_accounts < 2 || data.len() < 12 {
         return None;
@@ -408,9 +408,23 @@ pub fn parse_system_funding(data: &[u8], n_accounts: usize) -> Option<(&'static 
     let lamports = u64::from_le_bytes(data[4..12].try_into().expect("8 bytes"));
     match u32::from_le_bytes(data[0..4].try_into().expect("4 bytes")) {
         2 => Some(("transfer", lamports)),
-        0 if data.len() >= 52 && data[20..52].iter().all(|&b| b == 0) => Some(("create_account", lamports)),
+        0 if data.len() >= 52 && data[12..52].iter().all(|&b| b == 0) => Some(("create_account", lamports)),
         _ => None,
     }
+}
+
+/// The account position a System instruction makes into something other than a wallet: given data
+/// or another owner (CreateAccount with space or an owner, CreateAccountWithSeed, Assign, Allocate,
+/// their seed variants) or a nonce account (InitializeNonceAccount).
+pub fn system_non_wallet_target(data: &[u8], accounts: &[u8]) -> Option<u8> {
+    let disc = u32::from_le_bytes(data.get(0..4)?.try_into().ok()?);
+    let pos = match disc {
+        0 if parse_system_funding(data, accounts.len()).is_none() => 1,
+        3 => 1,
+        1 | 6 | 8 | 9 | 10 => 0,
+        _ => return None,
+    };
+    accounts.get(pos).copied()
 }
 
 /// One token balance row: account position, mint, owner, raw amount, decimals.
@@ -530,6 +544,7 @@ pub struct TxView<'a> {
     pub keys: Vec<&'a [u8]>,
     pub ixs: Vec<IxView<'a>>,
     pub pre_lamports: &'a [u64],
+    pub post_lamports: &'a [u64],
     pub pre_tokens: Vec<Bal<'a>>,
     pub post_tokens: Vec<Bal<'a>>,
 }
@@ -646,6 +661,11 @@ impl Transfers {
             });
         }
 
+        // Accounts that are no wallet in this transaction: token accounts and accounts a System
+        // instruction gives data or another owner (sol_funding skips them as receivers).
+        let non_wallet: std::collections::HashSet<u8> = tx.pre_tokens.iter().chain(tx.post_tokens.iter()).map(|b| b.idx)
+            .chain(tx.ixs.iter().filter(|ix| ix.program == Some(self.system.as_slice())).filter_map(|ix| system_non_wallet_target(ix.data, ix.accounts)))
+            .collect();
         // token_transfers and sol_funding, per instruction in execution order.
         let bal_of = |key: Option<&[u8]>| {
             key.and_then(|k| tx.keys.iter().position(|x| *x == k))
@@ -698,11 +718,18 @@ impl Transfers {
                     continue;
                 }
                 let Some(&to_pos) = ix.accounts.get(1) else { continue };
-                // A wallet birth: the receiver held no SOL before the transaction.
-                if tx.pre_lamports.get(usize::from(to_pos)) != Some(&0) {
+                // A wallet birth: the receiver held no SOL before the transaction and still holds SOL
+                // after it (a failed transaction changes no balance), and is a wallet: on the curve (a
+                // key that can sign; PDAs and associated token accounts are not) and in this transaction
+                // no token account and not given data or another owner.
+                let at = usize::from(to_pos);
+                if tx.pre_lamports.get(at) != Some(&0) || (!tx.failed && tx.post_lamports.get(at).map_or(true, |&l| l == 0)) {
                     continue;
                 }
                 let (Some(from), Some(to)) = (key_of(Some(0), ix.accounts), key_of(Some(1), ix.accounts)) else { continue };
+                if non_wallet.contains(&to_pos) || !<[u8; 32]>::try_from(to).map_or(false, |k| solana_message::Address::from(k).is_on_curve()) {
+                    continue;
+                }
                 out.push(Row {
                     table: self.funding_table.clone(),
                     columns: self.funding_cols.clone(),
@@ -785,6 +812,7 @@ fn tx_view(tx: &TransactionData) -> TxView<'_> {
         pre_tokens: bals!(meta.pre_token_balances),
         post_tokens: bals!(meta.post_token_balances),
         pre_lamports: &meta.pre_balances,
+        post_lamports: &meta.post_balances,
         keys,
         ixs,
     }
@@ -1553,8 +1581,8 @@ impl Plugin for LabPlugin {
 mod tests {
     use super::{
         decode_token_metadata, explained, is_http_429, is_pda, key, mint_owner_deltas, owner_token_deltas, parse_system_funding,
-        parse_token_ix, store_legs, summarize_calls, Bal, Class, IxView, TokenIx, Transfers, TxView, FUNDING_MIN_LAMPORTS,
-        PROGRAM_LABELS, PUMP_AMM_IDL, PUMP_IDL, TOKEN_METADATA_INIT,
+        parse_token_ix, store_legs, summarize_calls, system_non_wallet_target, Bal, Class, IxView, TokenIx, Transfers, TxView,
+        FUNDING_MIN_LAMPORTS, PROGRAM_LABELS, PUMP_AMM_IDL, PUMP_IDL, TOKEN_METADATA_INIT, WSOL_MINT,
     };
     use crate::idl::{Kind, Val};
     use crate::sink::Row;
@@ -1796,6 +1824,7 @@ mod tests {
                 IxView { path: "4".into(), program: Some(&system), accounts: &[0, 7], data: &small, parent: None },
             ],
             pre_lamports: &[10_000_000_000, 2_000_000, 0, 0, 1, 1, 1, 0, 2_000_000, 1],
+            post_lamports: &[9_988_000_000, 7_000_000, 2_039_280, 2_039_280, 1, 1, 1, 2_999_999, 2_000_000, 1],
             pre_tokens: pre,
             post_tokens: post,
             keys,
@@ -1827,11 +1856,56 @@ mod tests {
     }
 
     #[test]
+    fn wallet_births_skip_token_temporary_assigned_and_pda_receivers() {
+        let (payer, wsol, temp, assigned, wallet, nonce) =
+            (test_key(11, true), test_key(12, true), test_key(13, true), test_key(14, true), test_key(15, true), test_key(17, true));
+        let pda = test_key(16, false);
+        let system = key("11111111111111111111111111111111");
+        let keys: Vec<&[u8]> = vec![&payer[..], &wsol[..], &temp[..], &pda[..], &assigned[..], &wallet[..], &nonce[..], &system[..]];
+        let fund = system_ix(2, 3 * FUNDING_MIN_LAMPORTS, None);
+        let mut assign = 1u32.to_le_bytes().to_vec();
+        assign.extend([7u8; 32]);
+        // A nonce account: created by the System program for itself, but with 80 bytes of data.
+        let mut nonce_create = system_ix(0, 1_447_680, Some([0; 32]));
+        nonce_create[12..20].copy_from_slice(&80u64.to_le_bytes());
+        assert_eq!(parse_system_funding(&nonce_create, 2), None);
+        assert_eq!(system_non_wallet_target(&nonce_create, &[0, 6]), Some(6));
+        assert_eq!(system_non_wallet_target(&assign, &[4]), Some(4));
+        assert_eq!(system_non_wallet_target(&fund, &[0, 5]), None);
+        assert_eq!(system_non_wallet_target(&system_ix(0, 9_000_000, Some([0; 32])), &[0, 5]), None); // a wallet creation
+        // The payer funds: a WSOL token account, a temporary account closed again in the transaction, a
+        // PDA, an account it then assigns to a program, and a wallet. Only the wallet is a birth.
+        let ixs = || vec![
+            IxView { path: "0".into(), program: Some(&system), accounts: &[0, 6], data: &nonce_create, parent: None },
+            IxView { path: "1".into(), program: Some(&system), accounts: &[0, 1], data: &fund, parent: None },
+            IxView { path: "2".into(), program: Some(&system), accounts: &[0, 2], data: &fund, parent: None },
+            IxView { path: "3".into(), program: Some(&system), accounts: &[0, 3], data: &fund, parent: None },
+            IxView { path: "4".into(), program: Some(&system), accounts: &[0, 4], data: &fund, parent: None },
+            IxView { path: "5".into(), program: Some(&system), accounts: &[4], data: &assign, parent: None },
+            IxView { path: "6".into(), program: Some(&system), accounts: &[0, 5], data: &fund, parent: None },
+        ];
+        let t = Transfers::new(std::collections::HashSet::new(), None);
+        let pre: [u64; 8] = [10_000_000_000, 0, 0, 0, 0, 0, 0, 1];
+        let ok = TxView { slot: 1, tx_index: 0, fee_payer: b58(&payer), failed: false, keys: keys.clone(), ixs: ixs(), pre_lamports: &pre,
+                          post_lamports: &[9_985_000_000, 3_000_000, 0, 3_000_000, 3_000_000, 3_000_000, 1_447_680, 1],
+                          pre_tokens: vec![], post_tokens: vec![bal(1, WSOL_MINT, "PayerOwner", 3_000_000)] };
+        let to = |tx: &TxView| t.rows(tx, &[], &Default::default()).iter().filter(|r| &*r.table == "sol_funding")
+            .map(|r| (col(r, "to_account").clone(), col(r, "failed").clone())).collect::<Vec<_>>();
+        assert_eq!(to(&ok), vec![(st(&b58(&wallet)), Val::Bool(false))]);
+        // A failed transaction changes no balance and has no token accounts it would have created: the
+        // WSOL and temporary accounts cannot be told from wallets there, so they stay in, flagged failed.
+        let failed = TxView { failed: true, post_lamports: &[9_999_995_000, 0, 0, 0, 0, 0, 0, 1], post_tokens: vec![], ixs: ixs(), keys, ..ok };
+        let got = to(&failed);
+        assert_eq!(got.iter().map(|(a, _)| a.clone()).collect::<Vec<_>>(), [&wsol, &temp, &wallet].map(|k| st(&b58(k))).to_vec());
+        assert!(got.iter().all(|(_, f)| *f == Val::Bool(true)));
+    }
+
+    #[test]
     fn mints_outside_the_set_are_not_kept_and_created_mints_are_learned() {
         let t = Transfers::new(std::collections::HashSet::from(["Known".to_owned()]), None);
         assert!(t.is_pump("Known") && t.is_pump("AbcdefPump111pump") && !t.is_pump("Other"));
         let created = event("pump/CreateEvent", &[("mint", st("NewMint"))]);
-        let tx = TxView { slot: 1, tx_index: 0, fee_payer: String::new(), failed: false, keys: vec![], ixs: vec![], pre_lamports: &[],
+        let tx = TxView { slot: 1, tx_index: 0, fee_payer: String::new(), failed: false, keys: vec![], ixs: vec![], pre_lamports: &[], post_lamports: &[],
                           pre_tokens: vec![bal(0, "Other", "A", 5)], post_tokens: vec![bal(0, "Other", "A", 1)] };
         assert!(t.rows(&tx, &[created], &Default::default()).is_empty()); // "Other" is no pump mint
         assert!(t.is_pump("NewMint"));

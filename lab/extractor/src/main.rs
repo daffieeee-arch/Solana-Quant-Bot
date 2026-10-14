@@ -78,6 +78,7 @@ fn main() -> Result<()> {
     // The token transfer tables (LAB_TRANSFERS=1): recorded in the manifest before the plugin moves.
     let transfers = plugin.transfers.as_ref().map(|t| {
         serde_json::json!({"pump_mints": t.n_mints(), "pump_mints_file": t.mints_file, "funding_min_lamports": extract::FUNDING_MIN_LAMPORTS,
+                           "funding_receiver": "wallet-v2: on the curve, no token account and no System data or owner in the tx, 0 SOL before and > 0 after (failed tx: 0 before)",
                            "spec": "spec-token-transfers-2026-10-15.md v2 (sha256 b17d9306)"})
     });
     let fatal = plugin.fatal.clone();
