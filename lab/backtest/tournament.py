@@ -89,6 +89,9 @@ RESULT_SCHEMA = pa.schema([
     ("d_ms", pa.float64()),
     # M1+ / M1-early (and their N2): the veto inputs at t and the highest mark before the exit (/ cost - 1).
     ("ins_share", pa.float64()), ("curve_buyers", pa.int64()), ("peak_ret", pa.float64()),
+    # Why ins_share is undefined (circ_le_0, h_ins_gt_circ, h_ins_lt_0, insiders_unknown; NULL when it is defined
+    # or not asked): M1x and O7 rows.
+    ("ins_reason", pa.string()),
 ])
 
 
@@ -190,7 +193,8 @@ def m1_signals(con, cfg, lo, hi, clock):
                     continue
                 lo_b = t - clock.slots(M1_BUYERS_MS, t)
                 a, b = bisect.bisect_left(bslots, lo_b), bisect.bisect_right(bslots, t)
-                if len({buys[j][1] for j in range(a, b)}) < M1_MIN_BUYERS or ins.share(t) > overlay.VETO_SHARE:
+                # The O7 entry condition, fail-closed: an undefined insider share is no trigger either.
+                if len({buys[j][1] for j in range(a, b)}) < M1_MIN_BUYERS or overlay.vetoes(ins.share(t), overlay.VETO_SHARE):
                     continue
                 for k in ks:
                     out.append((mint, pool, t, depth, k))
@@ -451,9 +455,10 @@ def _part_path(out, task_id):
 O7_FAMILIES = ("F7", "N2_F7", "F1", "N2_F1")
 
 
-def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5, ins_share=None, curve_buyers=None, peak_ret=None):
+def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5, ins_share=None, curve_buyers=None, peak_ret=None,
+         ins_reason=None):
     return {
-        "ins_share": ins_share, "curve_buyers": curve_buyers, "peak_ret": peak_ret,
+        "ins_share": ins_share, "curve_buyers": curve_buyers, "peak_ret": peak_ret, "ins_reason": ins_reason,
         "family": sig.family, "variant": sig.variant, "mint": mint, "t": sig.t, "venue": sig.venue,
         "depth": sig.depth, "ref_mint": sig.ref[0] if sig.ref else None, "ref_t": sig.ref[1] if sig.ref else None,
         "size_sol": size_sol, "d": d, "tau": tau_mode, "entry_failed": r.entry_failed, "skipped": r.skipped,
@@ -556,29 +561,31 @@ def _work(args):
                             if fam_x in M1X:
                                 # M1+ / M1-early: the vetoes as paired rows (a vetoed trade counts as 0, as O7).
                                 ins, buyers = _token_info(con, st, sig.venue, clock, ins_cache)
-                                share = ins.share(sig.t) if ins is not None else None
+                                share, why = ins.share_reason(sig.t) if ins is not None else (None, "insiders_unknown")
                                 peak = getattr(getattr(rule, "base", rule), "peak", None)
                                 pr = peak / r.cost - 1 if (peak and r.cost and not r.skipped) else None
                                 rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q, ins_share=share,
-                                                 curve_buyers=buyers, peak_ret=pr))
+                                                 curve_buyers=buyers, peak_ret=pr, ins_reason=why))
                                 for veto in M1X[fam_x]["vetoes"]:
                                     res = (replay.Result(mint, sig.t, size=size, venue=sig.venue, skipped=True, exit_reason="veto")
                                            if m1x_vetoed(veto, share, buyers) else r)
                                     rows.append(_row(sig, res, mint, size_sol, d, tau_mode, clock, veto, q=q, ins_share=share,
-                                                     curve_buyers=buyers, peak_ret=pr if res is r else None))
+                                                     curve_buyers=buyers, peak_ret=pr if res is r else None, ins_reason=why))
                                 continue
                             rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q))
                             # O7 on the same trigger (paired with the base row): V1 veto, V2 exit, V3 both.
                             if overlays and sig.family in O7_FAMILIES:
+                                # Fail-closed (vins-definition-2026-10-15.md): an undefined share, unknown insiders
+                                # included, vetoes; the trigger stays in the pair. Without insiders there is no
+                                # insider exit (V2 is the base exit); the rows' ins_reason counts both.
                                 ins = _insiders(con, st, sig.venue, clock, ins_cache)
-                                if ins is None:
-                                    continue
-                                vetoed = ins.share(sig.t) > overlay.VETO_SHARE
+                                share, why = ins.share_reason(sig.t) if ins is not None else (None, "insiders_unknown")
+                                vetoed = overlay.vetoes(share, overlay.VETO_SHARE)
                                 veto = replay.Result(mint, sig.t, size=size, venue=sig.venue, skipped=True, exit_reason="o7_veto")
-                                r2 = sim(st, sig.t, size, d, q, overlay.O7Exit(exit_rule_for(sig, base, d, clock, st, flows), ins),
-                                         tol, tau)
+                                r2 = (sim(st, sig.t, size, d, q, overlay.O7Exit(exit_rule_for(sig, base, d, clock, st, flows), ins),
+                                          tol, tau) if ins is not None else r)
                                 for ov, res in (("O7V1", veto if vetoed else r), ("O7V2", r2), ("O7V3", veto if vetoed else r2)):
-                                    rows.append(_row(sig, res, mint, size_sol, d, tau_mode, clock, ov, q=q))
+                                    rows.append(_row(sig, res, mint, size_sol, d, tau_mode, clock, ov, q=q, ins_share=share, ins_reason=why))
         del st
     for r, day in zip(rows, _days(con, [r["t"] for r in rows])):
         r["day"] = day

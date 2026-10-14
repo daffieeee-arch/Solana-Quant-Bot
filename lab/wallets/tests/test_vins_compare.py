@@ -12,7 +12,7 @@ import pytest
 from wallets import vins_compare as V
 
 
-def _run(path, commit, shares, verdict, fallbacks=0):
+def _run(path, commit, shares, verdict, fallbacks=0, reasons=False):
     os.makedirs(path / "parts")
     rows = []
     for i, (fam, day, share) in enumerate(shares):
@@ -20,6 +20,8 @@ def _run(path, commit, shares, verdict, fallbacks=0):
             for d in (1, 2):
                 rows.append({"family": fam, "variant": "k15_trail20", "mint": f"M{i}", "t": 100 + i, "day": day, "overlay": overlay, "size_sol": 0.5,
                              "d": d, "skipped": False, "ins_share": share})
+                if reasons:  # a fail-closed engine (vins-definition-2026-10-15.md)
+                    rows[-1]["ins_reason"] = "h_ins_gt_circ" if share is None else None
     pq.write_table(pa.Table.from_pylist(rows), path / "parts" / "part-0.parquet")
     json.dump({"engine_commit": commit, "insider_fallbacks": fallbacks}, open(path / "config.json", "w"))
     json.dump({"families": {"M1P": {"verdict": verdict, "vetoes": [
@@ -48,6 +50,20 @@ def test_flips_and_render(tmp_path):
     assert "| M1P | days 10-18 | 3 | 3 | 1 | 1 | **1** | **1** |" in md and "**0** — must be 0" in md
     assert "| old | M1P | V_ins | 1 | 100 | 10% | -0.1200 | -0.2000 … -0.0300 |" in md and "| M1P | not useful | not useful |" in md
     assert "Triggers only in the new run: M1P: 1." in md and "O7 overlay on F7 pool_reversed stays provisional" in md
+
+
+def test_each_run_is_read_as_its_engine_applied_v_ins(tmp_path):
+    """An old (fail-open) run let a NULL share pass; a fail-closed run (ins_reason) vetoes it. A trigger
+    with a NULL share in both runs is a veto added, not hidden by reading the old run fail-closed too."""
+    shares = [("M1P", "2026-09-22", None), ("M1P", "2026-09-23", 0.95)]
+    _run(tmp_path / "old", "0e0cad0", shares, "not useful")
+    _run(tmp_path / "new", "cf7719f", shares, "not useful", reasons=True)
+    con = duckdb.connect()
+    V.load_triggers(con, "old", str(tmp_path / "old"))
+    V.load_triggers(con, "new", str(tmp_path / "new"))
+    r = {(x[0], x[1]): x for x in V.flips(con)}[("M1P", "days 10-18")]
+    assert (r[4], r[5], r[6], r[7]) == (0, 1, 1, 2)  # dropped 0, added 1 (the NULL), old vetoed 1, new vetoed 2
+    assert V.SEMANTICS == {"old": "fail-open (a NULL share passed V_ins)", "new": "fail-closed (an undefined share vetoes)"}
 
 
 if __name__ == "__main__":

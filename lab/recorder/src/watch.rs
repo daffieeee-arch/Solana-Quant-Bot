@@ -22,7 +22,8 @@ use yellowstone_grpc_proto::prelude::{
     subscribe_request_filter_accounts_filter::Filter as AccountsFilterKind,
     subscribe_request_filter_accounts_filter_memcmp::Data as MemcmpData, CommitmentLevel, SubscribeRequest,
     SubscribeRequestAccountsDataSlice, SubscribeRequestFilterAccounts, SubscribeRequestFilterAccountsFilter,
-    SubscribeRequestFilterAccountsFilterMemcmp, SubscribeRequestFilterBlocksMeta, SubscribeRequestFilterSlots,
+    SubscribeRequestFilterAccountsFilterMemcmp, SubscribeRequestFilterBlockFooter, SubscribeRequestFilterBlocksMeta,
+    SubscribeRequestFilterSlots,
     SubscribeRequestFilterTransactions,
 };
 
@@ -376,6 +377,12 @@ impl Filter {
             accounts,
             accounts_data_slice,
             blocks_meta: HashMap::from([("blocks".to_owned(), SubscribeRequestFilterBlocksMeta {})]),
+            // Alpenglow block footers (none before epoch 1064): the switch's marker and the producer's
+            // block time in ns. Metadata only: the certificates are not needed and not asked for.
+            block_footer: HashMap::from([(
+                "block_footers".to_owned(),
+                SubscribeRequestFilterBlockFooter { include_certificates: Some(false) },
+            )]),
             slots: HashMap::from([(
                 "slots".to_owned(),
                 SubscribeRequestFilterSlots { filter_by_commitment: Some(true), interslot_updates: Some(false) },
@@ -553,6 +560,9 @@ mod tests {
         let r = empty.request(Some(7));
         assert!(r.transactions.is_empty() && r.accounts.is_empty() && r.accounts_data_slice.is_empty());
         assert_eq!((r.from_slot, r.commitment), (Some(7), Some(CommitmentLevel::Confirmed as i32)));
+        // Alpenglow block footers on every request, without their certificates.
+        assert_eq!(r.block_footer.get("block_footers").map(|f| f.include_certificates), Some(Some(false)));
+        assert!(empty.vault_request().block_footer.is_empty()); // the vault stream asks for none
         assert!(empty.vault_request().accounts.is_empty());
         let extra = Extra { probes: vec![C.to_owned()], fresh_vaults: vec![A.to_owned()] };
         let full = Filter::new(&watch(), &extra, 0, &opts(true, 10_000));

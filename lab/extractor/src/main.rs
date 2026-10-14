@@ -161,6 +161,8 @@ fn main() -> Result<()> {
             "firehose_errors": c(&counters.firehose_errors),
             "http_429": c(&counters.http_429),
             "missing_meta": c(&counters.missing_meta),
+            // Rewards of a type the firehose does not know (Alpenglow's VATDebit): skipped, not fatal.
+            "rewards_unknown_type_skipped": c(&jetstreamer_firehose::firehose::UNKNOWN_REWARD_TYPES_SKIPPED),
         },
         "coverage": {
             "missing_slots": missing_slots,

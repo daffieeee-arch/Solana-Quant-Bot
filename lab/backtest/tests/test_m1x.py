@@ -17,7 +17,8 @@ LO, HI = 450_700_000, 450_760_000
 def test_veto_rules():
     assert S.m1x_vetoed("V_ins", 0.91, 10) and not S.m1x_vetoed("V_ins", 0.90, 10)
     assert S.m1x_vetoed("V_ins", 1.4, 10)  # shares above 1 (invisible transfers) are vetoed
-    assert not S.m1x_vetoed("V_ins", None, 10)  # unknown never vetoes (counted in the report)
+    assert S.m1x_vetoed("V_ins", None, 10)  # undefined vetoes: fail-closed (vins-definition-2026-10-15.md)
+    assert not S.m1x_vetoed("V_ins", 0.5, 10) and not S.m1x_vetoed("V_ins+V_hype", 0.5, None)  # V_hype unknown: no veto
     assert S.m1x_vetoed("V_ins+V_hype", 0.1, 586) and not S.m1x_vetoed("V_ins+V_hype", 0.1, 585)
     assert S.m1x_vetoed("V_ins+V_bundle", 0.1, 5) and not S.m1x_vetoed("V_ins+V_bundle", 0.1, 6)
     with pytest.raises(ValueError):
