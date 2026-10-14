@@ -20,13 +20,16 @@ events. Tokens and pools come from a store snapshot plus the ones created live.
 Parity with ReplayFeed on the same slots is tested (tests/test_live.py).
 """
 
+import bisect
 import glob
 import heapq
 import itertools
 import json
 import logging
 import os
+import sys
 import time
+from array import array
 from collections import defaultdict, deque
 
 import duckdb
@@ -45,6 +48,9 @@ SOL_MARKETS = ("sol", "reversed")
 # row that comes twice counts once: a probe's backfill delivered after its first recorded rows (the
 # overlap is a few hundred slots: backfill margin plus wait), or slots recorded again after a restart.
 SEEN_KEEP_SLOTS = 3_000
+# A mint's curve legs are dropped this many slots after its completion: no curve entry is possible
+# then (an entry comes d slots after its decision), and an open position holds its own copy.
+CURVE_DONE_SLOTS = 1_000
 log = logging.getLogger("paper.live")
 
 
@@ -89,47 +95,153 @@ def pool_select(c, pools_table):
       WHERE p.quote_class IN ('sol', 'reversed')"""
 
 
+class _Trades:
+    """One wallet's trades in one pool, in slot order: [slot, signed, gross] triples in one
+    array('q') (24 bytes a trade, not a ~300-byte deque of tuples). Triples before `start` left the
+    window. len() and iteration give the trades still in the window, as (slot, signed, gross)."""
+
+    __slots__ = ("start", "a")
+
+    def __init__(self):
+        self.start, self.a = 0, array("q")
+
+    def __len__(self):
+        return (len(self.a) - self.start) // 3
+
+    def __iter__(self):
+        a = self.a
+        for i in range(self.start, len(a), 3):
+            yield a[i], a[i + 1], a[i + 2]
+
+    def compact(self):
+        if self.start:
+            del self.a[:self.start]
+            self.start = 0
+
+
 class FarmerFlags:
     """The store's farmer flag, incrementally: a trade's wallet farms a pool when its own trades in
     the pool over slots [t - h24, t - 1] number at least FARMER_MIN_TRADES and their net token delta
-    is below FARMER_RATIO x their gross token volume."""
+    is below FARMER_RATIO x their gross token volume. Per (pool, trader) a _Trades window; pool and
+    trader strings are interned (every key repeats them)."""
 
     def __init__(self):
-        self.hist = defaultdict(deque)  # (pool, trader) -> deque of (slot, signed, gross)
+        self.hist = {}  # (pool, trader) -> _Trades
 
     def flag(self, pool, trader, slot, h24):
-        dq = self.hist[(pool, trader)]
-        while dq and dq[0][0] < slot - h24:
-            dq.popleft()
+        t = self.hist.get((pool, trader))
+        if t is None:
+            return False
+        a, i, lo = t.a, t.start, slot - h24
+        while i < len(a) and a[i] < lo:
+            i += 3
+        t.start = i
+        if i > 96 and 2 * i > len(a):  # mostly expired: give the memory back
+            t.compact()
+            i = 0
         n = net = gross = 0
-        for s, signed, g in dq:
-            if s >= slot:
+        for j in range(i, len(a), 3):
+            if a[j] >= slot:
                 break
-            n, net, gross = n + 1, net + signed, gross + g
+            n, net, gross = n + 1, net + a[j + 1], gross + a[j + 2]
         return n >= FARMER_MIN_TRADES and abs(net) < FARMER_RATIO * gross
 
     def add(self, pool, trader, slot, token_buy, token_amount):
         """Add a trade; one older than the wallet's last trade in the pool (a backfill) is inserted
-        in slot order."""
-        dq = self.hist[(pool, trader)]
+        in slot order, after the trades of its own slot."""
+        key = (sys.intern(pool), sys.intern(trader))
+        t = self.hist.get(key)
+        if t is None:
+            t = self.hist[key] = _Trades()
+        a = t.a
         item = (slot, token_amount if token_buy else -token_amount, token_amount)
-        if not dq or dq[-1][0] <= slot:
-            dq.append(item)
+        if len(a) == t.start or a[-3] <= slot:
+            a.extend(item)
             return
-        i = len(dq)
-        while i > 0 and dq[i - 1][0] > slot:
-            i -= 1
-        dq.insert(i, item)
+        i = len(a)
+        while i > t.start and a[i - 3] > slot:
+            i -= 3
+        a[i:i] = array("q", item)
 
     def prune(self, slot, h24):
-        """Drop wallets whose last trade in a pool left the window (live memory stays bounded)."""
-        for k in [k for k, dq in self.hist.items() if not dq or dq[-1][0] < slot - h24]:
+        """Drop wallets whose last trade in a pool left the window (live memory stays bounded), and give
+        back the memory of the trades that left it."""
+        lo = slot - h24
+        for k in [k for k, t in self.hist.items() if len(t.a) == t.start or t.a[-3] < lo]:
             del self.hist[k]
+        for t in self.hist.values():
+            t.compact()
+
+    def entries(self):
+        return sum(len(t) for t in self.hist.values())
 
     def seed(self, rows):
         """Rows (pool, trader, slot, token_buy, token_amount) in chain order, e.g. the store's last 24 h."""
         for pool, trader, slot, tb, amount in rows:
             self.add(pool, trader, slot, tb, amount)
+
+
+class _Keys:
+    """Row keys (slot, tx, outer, inner) of one backfilled pool, for counting a backfill's overlap with
+    recorded rows once: packed into one sorted array('Q') (8 bytes a key; slot < 2^30, tx < 2^16,
+    outer < 2^8, inner < 2^10), a key that does not fit in a plain set. Behaves as a set of tuples."""
+
+    __slots__ = ("a", "extra")
+
+    def __init__(self, keys=()):
+        self.a, self.extra = array("Q"), set()
+        for k in keys:
+            self.add(k)
+
+    @staticmethod
+    def _pack(k):
+        slot, tx, outer, inner = k
+        if (isinstance(slot, int) and isinstance(tx, int) and isinstance(outer, int) and isinstance(inner, int)
+                and 0 <= slot < 1 << 30 and 0 <= tx < 1 << 16 and 0 <= outer < 1 << 8 and 0 <= inner < 1 << 10):
+            return slot << 34 | tx << 18 | outer << 10 | inner
+        return None
+
+    def add(self, k):
+        p = self._pack(k)
+        if p is None:
+            self.extra.add(k)
+            return
+        a = self.a
+        if not a or a[-1] < p:
+            a.append(p)
+            return
+        i = bisect.bisect_left(a, p)
+        if i == len(a) or a[i] != p:
+            a.insert(i, p)
+
+    def __contains__(self, k):
+        p = self._pack(k)
+        if p is None:
+            return k in self.extra
+        i = bisect.bisect_left(self.a, p)
+        return i < len(self.a) and self.a[i] == p
+
+    def __len__(self):
+        return len(self.a) + len(self.extra)
+
+    def __iter__(self):
+        for p in self.a:
+            yield (p >> 34, (p >> 18) & 0xFFFF, (p >> 10) & 0xFF, p & 0x3FF)
+        yield from self.extra
+
+    def __ior__(self, keys):
+        for k in keys:
+            self.add(k)
+        return self
+
+    def __eq__(self, other):
+        return set(self) == set(other)
+
+    def drop_before(self, slot):
+        """Keep the keys of slot >= `slot`."""
+        if slot > 0:
+            del self.a[:bisect.bisect_left(self.a, min(slot, 1 << 30) << 34)]
+        self.extra = {k for k in self.extra if k[0] is not None and k[0] >= slot}
 
 
 class LiveFeed(Feed):
@@ -151,7 +263,9 @@ class LiveFeed(Feed):
         self.next_seq = from_seq
         self.con = duckdb.connect()
         self.con.execute(f"SET memory_limit = '{memory}'; SET threads TO 2")
-        self.con.execute("SET preserve_insertion_order = false")
+        # Every segment file is read once: DuckDB's file cache (on by default) would only keep them,
+        # up to the memory limit (shadow-1052-a8e69ed: ~0.86 MB per segment).
+        self.con.execute("SET preserve_insertion_order = false; SET enable_external_file_cache = false")
         self.con.execute("CREATE TABLE live_mints (mint VARCHAR)")
         self.con.execute("CREATE TABLE live_pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR)")
         self.tokens, self.pools, self.pool_class = {}, {}, {}
@@ -171,7 +285,7 @@ class LiveFeed(Feed):
         self.seen_keys, self.seen_order, self.seen_hi = {}, deque(), 0  # key -> "rec" | "hist" (SEEN_KEEP_SLOTS)
         # Pools with a backfill: positions of their trades already in the farmer history, so the
         # backfill's overlap with the recorded transactions counts once.
-        self.farm_keys = defaultdict(set)
+        self.farm_keys = defaultdict(_Keys)
         self.backfill_pending = []  # backfill rows past the segment they came with
         self.history = []  # backfill trades for the engine's farming windows (drain_history)
         self.new_pools = []  # pools learned live, in order (the live watchlist adds them at creation)
@@ -480,16 +594,22 @@ class LiveFeed(Feed):
 
     def _prune(self, last, h24):
         """Drop what the farmer window [last - h24, last] no longer needs: farmer history, curve legs of
-        mints quiet for a day, and the backfill dedup keys of older slots. A pool without keys left
-        is treated as before its first backfill again (its recorded rows are no longer tracked)."""
+        mints quiet for a day or complete for CURVE_DONE_SLOTS, and the backfill dedup keys of older
+        slots. A pool without keys left is treated as before its first backfill again (its recorded
+        rows are no longer tracked)."""
         self.farmers.prune(last, h24)
-        for m in [m for m, legs in self.curve_hist.items() if legs[-1].slot < last - h24]:
+
+        def done(m, legs):
+            tok = self.tokens.get(m)
+            return legs[-1].slot < last - h24 or (tok is not None and tok.complete_slot is not None
+                                                  and tok.complete_slot < last - CURVE_DONE_SLOTS)
+
+        for m in [m for m, legs in self.curve_hist.items() if done(m, legs)]:
             del self.curve_hist[m]
         for pool in list(self.farm_keys):
-            keys = {k for k in self.farm_keys[pool] if k[0] >= last - h24}
-            if keys:
-                self.farm_keys[pool] = keys
-            else:
+            keys = self.farm_keys[pool]
+            keys.drop_before(last - h24)
+            if not len(keys):
                 del self.farm_keys[pool]
 
     def _arrival_of(self, c, meta):

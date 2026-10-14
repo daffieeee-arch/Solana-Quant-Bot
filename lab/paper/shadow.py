@@ -441,7 +441,7 @@ def _state_sizes(feed, eng):
     """Sizes of the long-lived structures of a live run: what grows, if anything, shows here."""
     return {"recent_keys": len(eng.recent), "recent_legs": sum(len(v) for v in eng.recent.values()),
             "last_state": len(eng.last_state), "curve_hist_legs": sum(len(v) for v in feed.curve_hist.values()),
-            "farmer_entries": sum(len(v) for v in feed.farmers.hist.values()), "seen_keys": len(feed.seen_keys),
+            "farmer_entries": feed.farmers.entries(), "seen_keys": len(feed.seen_keys),
             "tokens": len(feed.tokens), "pools": len(feed.pools), "busy": len(eng.busy),
             "watch_pools": len(eng.watch.wl.pools) if eng.watch is not None else 0}
 

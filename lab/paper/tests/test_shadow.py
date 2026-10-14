@@ -15,7 +15,7 @@ import pytest
 from backtest import data
 from paper import shadow
 from paper.feed import HOLDOUT_END, HOLDOUT_START, ReplayFeed
-from paper.live import segment_dirs
+from paper.live import FarmerFlags, segment_dirs
 
 STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 LO, HI = 450700000, 450702000
@@ -44,7 +44,7 @@ def _fake_run(mints, legs_per_mint):
         for i in range(legs_per_mint):
             hist[f"mint{m:06d}"].append(_Leg(1000 + i, f"trader{m}-{i}", (m, i, 3 * i), (m, i + 1, 3 * i + 1)))
     feed = NS(curve_hist=hist, seen_keys={("c", m, i): "rec" for m in range(200) for i in range(5)}, seen_order=deque(),
-              farmers=NS(hist={}), tokens={}, pools={}, con=duckdb.connect(), seed_con=None)
+              farmers=FarmerFlags(), tokens={}, pools={}, con=duckdb.connect(), seed_con=None)
     eng = NS(recent={}, last_state={}, busy={}, watch=None)
     return feed, eng
 
