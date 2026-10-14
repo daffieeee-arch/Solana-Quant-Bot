@@ -743,11 +743,13 @@ def m1x_variant(family, moment_ms, k, trail):
 
 def m1x_vetoed(veto, ins_share, curve_buyers):
     """A veto overlay ('V_ins', 'V_ins+V_hype', 'V_ins+V_bundle') on one position: True when any
-    part applies. Unknown inputs (None) never veto (the rows carry them, so they are counted)."""
+    part applies. V_ins is fail-closed (vins-definition-2026-10-15.md): an undefined insider share
+    (None) vetoes; the rows carry the share and its reason, so the report counts the two apart.
+    V_hype and V_bundle are unchanged: an unknown curve buyer count does not veto."""
     out = False
     for part in veto.split("+"):
         if part == "V_ins":
-            out |= ins_share is not None and ins_share > M1X_INS_VETO
+            out |= ins_share is None or ins_share > M1X_INS_VETO
         elif part == "V_hype":
             out |= curve_buyers is not None and curve_buyers > M1X_HYPE_VETO
         elif part == "V_bundle":
