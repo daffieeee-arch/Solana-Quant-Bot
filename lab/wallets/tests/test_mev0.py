@@ -217,3 +217,46 @@ def test_the_report_puts_the_go_table_first(out, tmp_path):
     assert "NO-GO" in text  # two partial days, no measurement day: nothing is shown as met
     for section in ("§2.2", "§2.3", "§2.4", "§2.5", "§2.6", "§2.7", "§2.8", "§2.9", "§2.10", "§2.11"):
         assert f"## {section}" in text
+
+
+def test_days_are_utc_whatever_the_host_time_zone(tmp_path):
+    """A block at 23:30 UTC and one at 00:30 UTC fall on two UTC days, also on a host in Europe/Amsterdam
+    (where to_timestamp()::DATE would put both on the local next day)."""
+    import datetime as dt
+
+    store(tmp_path / "s.duckdb")
+    late = int(dt.datetime(2026, 9, 25, 23, 30, tzinfo=dt.timezone.utc).timestamp())
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.executemany("INSERT INTO blocks VALUES (?, ?)", [(S + 300, late), (S + 301, late + 3600)])
+    con.close()
+    con = duckdb.connect(str(tmp_path / "s.duckdb"), read_only=True)
+    con.execute("SET TimeZone = 'Europe/Amsterdam'")
+    mev0.setup(con, chunks(tmp_path / "chunks"), LO, LO + 432_000)
+    got = dict(con.execute(f"SELECT slot, day FROM days WHERE slot IN ({S + 300}, {S + 301})").fetchall())
+    assert (str(got[S + 300]), str(got[S + 301])) == ("2026-09-25", "2026-09-26")
+
+
+def test_the_first_day_of_every_epoch_counts_no_newcomers():
+    """Epochs 1040 and 1045 are not contiguous: on 1045's first day everyone active only in 1041-1044 would
+    look new. Both epochs' first days are marked, and the newcomer median skips them."""
+    import datetime as dt
+
+    from wallets import mev0_report as R
+
+    d = [dt.date(2026, 9, 20) + dt.timedelta(days=i) for i in (0, 1, 7, 8)]
+    con = duckdb.connect()
+    con.execute("CREATE TABLE days_all AS SELECT * FROM (VALUES (1040, ?::DATE), (1040, ?::DATE), (1045, ?::DATE), (1045, ?::DATE)) t(epoch, day)", d)
+    con.execute("CREATE TABLE dayinfo AS SELECT day, 1.0 AS coverage FROM days_all")
+    # One reachable arb per day; N is first seen on 1045's first day, M on the day after.
+    arbs = [(d[0], "A"), (d[1], "A"), (d[2], "N"), (d[3], "M")]
+    con.execute("CREATE TABLE arbs_cl (day DATE, fee_payer VARCHAR, net BIGINT, backrun BOOLEAN, reachable BOOLEAN)")
+    con.executemany("INSERT INTO arbs_cl VALUES (?, ?, 20000000, true, true)", arbs)
+    con.execute("CREATE VIEW arbs_all AS SELECT * FROM arbs_cl")
+    con.execute("CREATE TABLE first_seen AS SELECT * FROM (VALUES ('A', ?::DATE), ('N', ?::DATE), ('M', ?::DATE)) t(fee_payer, first_day)",
+                [d[0], d[2], d[3]])
+    con.execute("CREATE TABLE gaps_all (day DATE, closed_by_arb BOOLEAN, reachable BOOLEAN, best_net BIGINT)")
+    con.execute("CREATE TABLE attempts_all (day DATE, reachable BOOLEAN, cost BIGINT)")
+    days = R.per_day(con)
+    assert [days[x]["first_day"] for x in d] == [True, False, True, False]
+    crit, _, n_full = R.criteria(days)
+    assert n_full == 4 and "nieuwkomers 50,0 %" in crit["3 open voor nieuwkomers"][0]  # median over d[1] (0 %) and d[3] (100 %)

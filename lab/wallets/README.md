@@ -76,7 +76,7 @@ The recorder feeds `Watchlist.step(minute, rows)` with per-(pool, minute) aggreg
 
 ## MEV phase 0 (`mev0.py`, `mev0_report.py`, roadmap #206)
 
-This is a measurement on OF1 history only: nothing is sent and nothing is traded. The spec is `week3-specs-mev0-2026-10-12.md` v3. `nas_mev0.sh` runs `python -m wallets.mev0 --chunks <events/txctx-v1/chunks> --epochs 1040,1045`. It reads tx_ctx and the store, and per epoch writes these files into `mev0-v1/`:
+This is a measurement on OF1 history only: nothing is sent and nothing is traded. The spec is `week3-specs-mev0-2026-10-12.md` v4. `nas_mev0.sh` runs `python -m wallets.mev0 --chunks <events/txctx-v1/chunks> --epochs 1040,1045`. It reads tx_ctx and the store, and per epoch writes these files into `mev0-v1/`:
 
 - `arbs-<e>`: one row per arbitrage transaction:
   - kind (same / cross venue, `other_venue_unparsed`);

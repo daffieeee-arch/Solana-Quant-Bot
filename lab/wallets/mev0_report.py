@@ -69,9 +69,11 @@ def load(con, d, epochs):
 
 
 def per_day(con):
-    """{day: measures} for every day (section 2 and the inputs of section 3)."""
+    """{day: measures} for every day (section 2 and the inputs of section 3). The first day of every
+    epoch counts no newcomers: the measured epochs are not contiguous (1040, 1045), so on the first
+    day of a later epoch everyone active only in the epochs between would look new."""
     days = [r[0] for r in con.execute("SELECT day FROM dayinfo ORDER BY day").fetchall()]
-    first = days[0] if days else None
+    firsts = {r[0] for r in con.execute("SELECT min(day) FROM days_all GROUP BY epoch").fetchall()}
     out = {}
     for day in days:
         m = {"coverage": con.execute("SELECT coverage FROM dayinfo WHERE day = ?", [day]).fetchone()[0]}
@@ -100,7 +102,7 @@ def per_day(con):
                              WHERE a.day = ? AND a.reachable AND f.first_day = a.day""", [day]).fetchone()[0]
         reach_net = con.execute("SELECT sum(net) FROM arbs_cl WHERE day = ? AND reachable", [day]).fetchone()[0]
         all_net = con.execute("SELECT sum(net) FROM arbs_cl WHERE day = ?", [day]).fetchone()[0]
-        m["first_day"] = day == first
+        m["first_day"] = day in firsts
         m.update(newcomer_wins=nc[0], newcomer_winners=nc[2], newcomer_share_wins=(nc[0] / m["arbs"]) if m["arbs"] else None,
                  newcomer_share_net=((nc[1] or 0) / all_net) if all_net else None,
                  newcomer_share_reach_net=((ncr or 0) / reach_net) if reach_net else None,
@@ -193,7 +195,9 @@ def render(con, epochs):
     lines += ["## §2.3 Mislukte pogingen (bovengrens, v3 punt 1 en v4 punt 2)", "",
               table(["dag", "pogingen", "in de bereikbare klasse", "aandeel", "aandeel bereikbaar", "mediane kosten", "totale kosten"], rows), "",
               f"- Per winnaar: mislukt/geslaagd mediaan {fmt(ratio[0], 1)}, P90 {fmt(ratio[1], 1)}.",
-              f"- Fee-payer is winnaar: {fmt(split[0])} pogingen. Programma-set, zonder router-only (v4 punt 2): {fmt(split[1])}.", ""]
+              f"- Fee-payer is winnaar: {fmt(split[0])} pogingen. Programma-set, zonder router-only (v4 punt 2): {fmt(split[1])}.",
+              "- \"Bereikbaar\" is bij pogingen een proxy. Een mislukte transactie heeft geen pool, dus ze telt als bereikbaar als ze in "
+              "dezelfde of de volgende slot landt als een bereikbare arb.", ""]
     q = """SELECT day, median(jito_tip), quantile_cont(jito_tip, 0.9), median(priority_fee), quantile_cont(priority_fee, 0.9),
                   sum(jito_tip + priority_fee) / sum(gross) FROM arbs_cl GROUP BY day ORDER BY day"""
     lines += ["## §2.4 Tips en priority fees van winnende arbs", "",
@@ -226,12 +230,13 @@ def render(con, epochs):
               table(["diepte", "leeftijd", "arbs", "mediane winst", "winnaars"], rows), ""]
     stay = con.execute("""SELECT avg(datediff('day', lo, hi)), median(datediff('day', lo, hi)) FROM
                           (SELECT fee_payer, min(day) AS lo, max(day) AS hi FROM arbs_cl GROUP BY 1)""").fetchone()
-    rows = [(d, "eerste dag (telt niet)" if m["first_day"] else m["newcomer_winners"], m["newcomer_wins"],
+    rows = [(d, "eerste dag van een epoch (telt niet)" if m["first_day"] else m["newcomer_winners"], m["newcomer_wins"],
              pct(m["newcomer_share_wins"]), pct(m["newcomer_share_net"]), pct(m["newcomer_share_reach_net"])) for d, m in days.items()]
     lines += ["## §2.9 Nieuwkomers", "",
               table(["dag", "winnende nieuwkomers", "hun wins", "aandeel wins", "aandeel netto", "aandeel bereikbare netto"], rows), "",
               f"- Een winnaar wint gemiddeld {fmt(stay[0])} dagen (mediaan {fmt(stay[1])}) tussen zijn eerste en laatste win.",
-              "- Signers die alleen in de epochs tussen de meetepochs actief waren, lijken in het latere epoch nieuwkomer.", ""]
+              "- De eerste dag van elk epoch telt geen nieuwkomers. De meetepochs liggen niet aan elkaar, dus wie alleen in de epochs "
+              "ertussen actief was, zou daar nieuw lijken. Ook later in zo'n epoch kan dat nog gebeuren; het aandeel is dus een bovengrens.", ""]
     q = """SELECT day, kind, count(*), count(DISTINCT fee_payer), median(profit), sum(profit) FROM harm_all GROUP BY ALL ORDER BY ALL"""
     lines += ["## §2.10 Schadelijke MEV (alleen beschrijving, nooit een optie)", "",
               table(["dag", "soort", "aantal", "signers", "mediane winst", "totale winst"],

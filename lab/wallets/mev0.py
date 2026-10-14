@@ -106,7 +106,8 @@ def router_only(col="top_programs"):
 
 def setup(con, chunks_root, lo, hi):
     """Views for one epoch [lo, hi): ctx (tx_ctx), legs (curve and pool buys and sells from
-    lo - PRIOR_LOOKBACK) and days (slot -> UTC day)."""
+    lo - PRIOR_LOOKBACK) and days (slot -> UTC day, as the store computes it: never the host's time
+    zone, which DuckDB's to_timestamp()::DATE would use)."""
     files = chunk_files(chunks_root, "tx_ctx", lo, hi)
     if not files:
         raise SystemExit(f"no tx_ctx for [{lo}, {hi}) under {chunks_root}")
@@ -124,7 +125,7 @@ def setup(con, chunks_root, lo, hi):
                c.is_buy, c.q::BIGINT, c.rq::BIGINT, c.t::BIGINT, c.fee_payer
         FROM curve c WHERE c.slot >= {a} AND c.slot < {hi}""")
     con.execute(f"""CREATE OR REPLACE TEMP TABLE days AS
-        SELECT slot, to_timestamp(block_time)::DATE AS day FROM blocks
+        SELECT slot, epoch_ms(block_time::BIGINT * 1000)::DATE AS day FROM blocks
         WHERE slot >= {lo} AND slot < {hi} AND block_time IS NOT NULL ORDER BY slot""")
 
 
@@ -386,7 +387,7 @@ def main(argv=None):
         write(con, "signers", os.path.join(a.out, f"signers-{e}.parquet"))
         n["gaps"] = find_gaps(con, lo, hi)
         write(con, "gaps", os.path.join(a.out, f"gaps-{e}.parquet"))
-        con.execute(f"""CREATE OR REPLACE TEMP TABLE days_out AS SELECT day, count(*) AS slots, min(slot) AS first_slot,
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE days_out AS SELECT {e} AS epoch, day, count(*) AS slots, min(slot) AS first_slot,
                         max(slot) AS last_slot, {ms} AS ms_per_slot FROM days GROUP BY day ORDER BY day""")
         write(con, "days_out", os.path.join(a.out, f"days-{e}.parquet"))
         info[e] = {"lo": lo, "hi": hi, "ms_per_slot": ms, "counts": n, "seconds_arbs": round(time.time() - t0)}

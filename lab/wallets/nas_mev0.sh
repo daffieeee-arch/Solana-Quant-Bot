@@ -1,5 +1,5 @@
 #!/bin/bash
-# MEV phase 0 on the NAS (roadmap #206, week3-specs-mev0-2026-10-12.md v3): arbs, attempts, gaps, signers and harm
+# MEV phase 0 on the NAS (roadmap #206, week3-specs-mev0-2026-10-12.md v4): arbs, attempts, gaps, signers and harm
 # of the dev epochs from the tx_ctx re-extraction and the store, then the report. Measurement only.
 #
 #   LAB_SPILL_DIR=/lab/tmp/nas-mev0 LAB_SPILL_MAX=20GB bash lab/wallets/nas_mev0.sh
