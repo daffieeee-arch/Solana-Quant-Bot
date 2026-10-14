@@ -5,7 +5,14 @@
 #   LAB_ENGINE=/home/chupa/Solana-project/data-old-faithful-one/lab/backtests/f7rev-1033-1046/engine \
 #   LAB_SPILL_DIR=/lab/tmp/nas-markout LAB_SPILL_MAX=8GB bash lab/wallets/nas_markout.sh
 #
-# Tunables (env): RUNS (space-separated "<name>:<parts dir>"), MEMORY (DuckDB limit per run), BOOT.
+# Tunables (env): RUNS (space-separated "<name>:<parts dir>"), MEMORY (DuckDB limit per run), BOOT,
+# MARKOUT_DIR (output, default $OUT/markout-v1), MARKOUT_ARGS (e.g. "--from-slot A --to-slot B" for a smoke).
+# Progress: every phase writes a timed line to $MARKOUT_DIR/log/markout-<run>.log (signals, targets, pool_at,
+# curve_at, matched, round trips per 500k rows, parquet), and run-markout-<run>.json has phases_seconds.
+#
+# One-day smoke of f7rev (epoch 1040, the first ~288k slots ≈ 21.6 h at 270 ms), with timing per phase:
+#   RUNS="f7rev:$DATA/backtests/f7rev-1033-1046/parts" MARKOUT_DIR=$DATA/wallets/markout-v1-smoke-day \
+#   MARKOUT_ARGS="--from-slot 449280000 --to-slot 449568000" bash lab/wallets/nas_markout.sh
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -13,7 +20,7 @@ DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 OUT=${LAB_WALLETS_OUT:-$DATA/wallets}
 STORE=${LAB_STORE:-$DATA/store/dev2.duckdb}
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
-MK=$OUT/markout-v1
+MK=${MARKOUT_DIR:-$OUT/markout-v1}
 LOG=$MK/log
 RUNS=${RUNS:-"f7rev:$DATA/backtests/f7rev-1033-1046/parts families-v2:$DATA/backtests/families-v2-1033-1046/parts m1x:$DATA/backtests/m1x-dev-1033-1046-453d44e/parts"}
 BOOT=${BOOT:-10000}
@@ -30,7 +37,8 @@ for spec in $RUNS; do
   if [ -s "$MK/markout-$name.parquet" ]; then log "markout $name exists, skipped"; continue; fi
   if [ ! -d "$parts" ]; then log "markout $name: no parts at $parts, skipped"; continue; fi
   log "markout $name from $parts"
-  if nice -n 10 "$PY" -m wallets.markout --parts "$parts" --run "$name" --out "$MK" > "$LOG/markout-$name.log" 2>&1; then
+  # shellcheck disable=SC2086
+  if nice -n 10 "$PY" -u -m wallets.markout --parts "$parts" --run "$name" --out "$MK" ${MARKOUT_ARGS:-} > "$LOG/markout-$name.log" 2>&1; then
     log "markout $name ok: $(tail -1 "$LOG/markout-$name.log")"
   else
     log "markout $name FAILED (see $LOG/markout-$name.log)"; exit 1

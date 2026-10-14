@@ -81,11 +81,16 @@ def _parts(path):
     pq.write_table(pa.Table.from_pylist(rows), os.path.join(path, "part-0.parquet"))
 
 
-def test_markouts_on_the_mini_store(tmp_path):
+def test_markouts_on_the_mini_store(tmp_path, capfd):
     _store(tmp_path / "s.duckdb")
     _parts(str(tmp_path / "parts"))
     info = markout.run(str(tmp_path / "parts"), "t", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
     assert info["signals"] == 5 and info["pool_states"] > 0 and info["curve_states"] > 0  # states at the target slots only
+    # one timed progress line per phase on stderr (the NAS log must not stay empty), and the phases in the run json
+    err = capfd.readouterr().err
+    for phase in ("signals", "targets", "pool_at", "curve_at", "matched", "round trips", "parquet written"):
+        assert phase in err and phase.split(" (")[0] in " ".join(info["phases_seconds"]), phase
+    assert err.index("signals") < err.index("pool_at") < err.index("matched") < err.index("round trips")
     con = duckdb.connect()
     rows = con.execute(f"SELECT * FROM '{tmp_path / 'out' / 'markout-t.parquet'}'").fetchall()
     cols = [c[0] for c in con.description]
