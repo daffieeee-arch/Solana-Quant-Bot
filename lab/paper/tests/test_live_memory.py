@@ -116,6 +116,21 @@ def test_the_compact_history_takes_a_fraction_of_the_memory():
     assert new * 3 < old, (new, old)
 
 
+def test_token_amounts_of_2_63_and_more_and_a_null_trader():
+    """Token amounts are u64: 2^63 and 2^64 - 1 do not fit array('q'). That wallet keeps a list, the
+    flags stay those of the deque version, and a NULL trader is a key like any other."""
+    big = [2**63, 2**64 - 1]
+    trades = [("P", "W", 100, True, 10**18), ("P", "W", 101, False, big[0]), ("P", "W", 102, True, big[1]),
+              ("P", "W", 99, True, 5), ("P", None, 103, True, 7), ("P", None, 104, False, 7), ("P", "W", 104, False, 3)]
+    out_old, out_new, old, new = replay(trades, 1_000)
+    assert out_new == out_old
+    assert list(new.hist[("P", "W")]) == list(old.hist[("P", "W")]) and isinstance(new.hist[("P", "W")].a, list)
+    assert len(new.hist[("P", None)]) == 2 and new.entries() == 7
+    new.flag("P", "W", 2_000, 1_000)  # all of W's trades leave the window
+    new.prune(2_000, 1_000)
+    assert ("P", "W") not in new.hist
+
+
 def test_backfill_keys_behave_as_a_set():
     k = _Keys([(500, 1, 0, 0), (100, 0, 0, 0)])
     k.add((300, 2, 1, 3))

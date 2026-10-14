@@ -98,7 +98,9 @@ def pool_select(c, pools_table):
 class _Trades:
     """One wallet's trades in one pool, in slot order: [slot, signed, gross] triples in one
     array('q') (24 bytes a trade, not a ~300-byte deque of tuples). Triples before `start` left the
-    window. len() and iteration give the trades still in the window, as (slot, signed, gross)."""
+    window. len() and iteration give the trades still in the window, as (slot, signed, gross).
+    Token amounts are u64: a wallet with an amount of 2^63 or more keeps a plain list instead (the
+    same index code; dev2's largest amount is 7.46e18, 81 % of 2^63)."""
 
     __slots__ = ("start", "a")
 
@@ -117,6 +119,11 @@ class _Trades:
         if self.start:
             del self.a[:self.start]
             self.start = 0
+
+
+def _intern(s):
+    """sys.intern for the strings that repeat in every key; anything else (a NULL trader) as it is."""
+    return sys.intern(s) if type(s) is str else s
 
 
 class FarmerFlags:
@@ -149,10 +156,12 @@ class FarmerFlags:
     def add(self, pool, trader, slot, token_buy, token_amount):
         """Add a trade; one older than the wallet's last trade in the pool (a backfill) is inserted
         in slot order, after the trades of its own slot."""
-        key = (sys.intern(pool), sys.intern(trader))
+        key = (_intern(pool), _intern(trader))
         t = self.hist.get(key)
         if t is None:
             t = self.hist[key] = _Trades()
+        if token_amount >= 1 << 63 and isinstance(t.a, array):
+            t.a = list(t.a)  # beyond array('q'): checked first, so no triple is ever half added
         a = t.a
         item = (slot, token_amount if token_buy else -token_amount, token_amount)
         if len(a) == t.start or a[-3] <= slot:
@@ -161,7 +170,7 @@ class FarmerFlags:
         i = len(a)
         while i > t.start and a[i - 3] > slot:
             i -= 3
-        a[i:i] = array("q", item)
+        a[i:i] = array("q", item) if isinstance(a, array) else list(item)
 
     def prune(self, slot, h24):
         """Drop wallets whose last trade in a pool left the window (live memory stays bounded), and give
@@ -263,8 +272,9 @@ class LiveFeed(Feed):
         self.next_seq = from_seq
         self.con = duckdb.connect()
         self.con.execute(f"SET memory_limit = '{memory}'; SET threads TO 2")
-        # Every segment file is read once: DuckDB's file cache (on by default) would only keep them,
-        # up to the memory limit (shadow-1052-a8e69ed: ~0.86 MB per segment).
+        # A segment's files are read a few times when it arrives (its pool table three times, its curve
+        # table twice) and never again: DuckDB's file cache (on by default) would only keep them, up to the
+        # memory limit (shadow-1052-a8e69ed: ~0.86 MB per segment).
         self.con.execute("SET preserve_insertion_order = false; SET enable_external_file_cache = false")
         self.con.execute("CREATE TABLE live_mints (mint VARCHAR)")
         self.con.execute("CREATE TABLE live_pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR)")
