@@ -95,6 +95,47 @@ class Notebooks(unittest.TestCase):
             self.assertNotRegex(src, r"open\([^)]*['\"][wax]\+?['\"]|\.to_parquet|\.to_csv|COPY .* TO|subprocess|os\.system")
 
 
+def blindspot_fixtures(root):
+    """One audit file and the F7-reversed wash summary, in the shapes blinde_vlekken.py reads."""
+    out = os.path.join(root, "research", "blindspots", "out")
+    write(os.path.join(out, "blindspots-smoke-1054.json"), {
+        "slots": {"lo": 100, "hi": 1099, "n": 995},
+        "actor": [{"venue": "curve", "n": 13021, "user_is_fee_payer": 0.782, "sol_user_not_payer": 267.9}],
+        "round_trip_volume": [{"venue": "pool_reversed", "legs": 17700, "sol": 28877.0, "sol_round_trip": 20739.8, "share": 0.718}],
+        "token_delta": [{"venue": "pool_reversed", "side": "buy", "variant": "sell", "n": 12554, "equal": 1.0, "differs": 0.0, "no_delta": 0.0}],
+        "route": [{"venue": "curve", "outer_program": "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9", "n": 3522, "share": 0.27}],
+        "failed": {"n": 117689, "fees_sol": 4.18, "priority_sol": 3.59, "payers": 1892},
+        "landed": {"n": 65669, "fees_sol": 8.16, "tips_sol": 1.24, "payers": 21547},
+        "failed_by_payer": [{"failure_share": ">= 90 %", "payers": 97, "landed": 890, "failed": 71941, "failed_fees_sol": 0.84}],
+        "owner_to_owner": {"n": 1131, "mints": 207, "senders": 456, "receivers": 550, "receivers_who_trade": 163},
+        "holders_in_trade_tx": {"n": 898, "not_fee_payer": 516, "received": 342, "sent": 174},
+        "fan_out_examples": [{"slot": 455328800, "tx_index": 727, "mint": "Tqj8yFmagrg7oorpQkVGYR52r96RFTamvWfth9bpump",
+                              "source_owner": "GzDHuxPySSghTH6ySStMLgFwapTc8mtLydsmzVDAfGUE", "receivers": 10, "tokens": "1"}]})
+    write(os.path.join(out, "f7rev-wash.json"), {
+        "summary": {"triggers": 40737, "round_trip_share": 0.27, "buys_back_50": 0.466},
+        "returns": [{"family": "F7", "group": "rt_tx", "d": 1, "period": "dag 10-18", "n": 6797, "mean": -0.0035, "lo": -0.0054, "hi": -0.0018},
+                    {"family": "F7", "group": "wash_1h", "d": 1, "period": "dag 10-18", "n": 1, "mean": 0.0, "lo": 0.0, "hi": 0.0}]})
+
+
+class BlindeVlekken(unittest.TestCase):
+    NB = os.path.join(NB, "blinde_vlekken.py")
+
+    def test_runs_on_fixtures(self):
+        with tempfile.TemporaryDirectory() as root:
+            blindspot_fixtures(root)
+            text = run_notebook(self.NB, root)
+        for expected in ("Blinde vlekken", "78,2 %", "71,8 %", "smoke-1054", "117 689", "1 131", "27,0 %", "FLASHX…txB9",
+                         "trigger is wash-leg", "-0,35 %"):
+            self.assertIn(expected, text)
+        self.assertNotIn("Nog geen audit", text)
+
+    def test_missing_files_are_shown_not_fatal(self):
+        with tempfile.TemporaryDirectory() as root:
+            text = run_notebook(self.NB, root)
+        self.assertIn("Nog geen audit", text)
+        self.assertIn("is er nog niet", text)
+
+
 class Unit(unittest.TestCase):
     def setUp(self):
         self.text = read(UNIT)
