@@ -65,12 +65,16 @@ def fmt(x, nd=2, pct=False, sign=False):
     return s + ("%" if pct else "")
 
 
-def load(con, money_dir, clusters_dir=None, ms_per_slot=267.1):
+def load(con, money_dir, clusters_dir=None, ms_per_slot=267.1, materialize=True):
+    """materialize=False keeps the wallet-day rows (tens of millions on a full run) and the all-days measurement as
+    views on the parquet files instead of tables: slower (every statistic rescans the files) but it fits a few GB,
+    so the report and its checks can be re-rendered on the VPS."""
     files = sorted(glob.glob(os.path.join(money_dir, "wallet-day-*.parquet")))
     if not files:
         raise SystemExit(f"no wallet-day-*.parquet in {money_dir}")
     lit = "[" + ",".join(f"'{f}'" for f in files) + "]"
-    con.execute(f"CREATE OR REPLACE TABLE wd AS SELECT * FROM read_parquet({lit}, union_by_name = true)")
+    kind = "TABLE" if materialize else "VIEW"
+    con.execute(f"CREATE OR REPLACE {kind} wd AS SELECT * FROM read_parquet({lit}, union_by_name = true)")
     for name in ("payers", "creators", "venue_flows", "marks", "lp_legs"):
         path = os.path.join(money_dir, name + ".parquet")
         if os.path.exists(path):
@@ -149,11 +153,11 @@ def load(con, money_dir, clusters_dir=None, ms_per_slot=267.1):
       FROM win w LEFT JOIN feat f ON f.wallet = w.wallet LEFT JOIN memberships m ON m.wallet = w.wallet LEFT JOIN creator_set c ON c.wallet = w.wallet""")
     # measurement rows: days 10-18, from the wallet's measure_from
     con.execute(f"""
-      CREATE OR REPLACE TABLE meas AS
+      CREATE OR REPLACE {kind} meas AS
       SELECT d.*, l.label FROM wd d JOIN labels l ON l.wallet = d.wallet
       WHERE d.day >= '{SPLIT_DAY}' AND d.day <= '{LAST_DAY}' AND d.day >= l.measure_from""")
-    con.execute("""
-      CREATE OR REPLACE TABLE meas_all AS
+    con.execute(f"""
+      CREATE OR REPLACE {kind} meas_all AS
       SELECT d.*, l.label FROM wd d JOIN labels l ON l.wallet = d.wallet JOIN win w ON w.wallet = d.wallet WHERE d.day > w.label_from_excl""")
     return len(files)
 
@@ -417,6 +421,7 @@ def main():
     ap.add_argument("--parts", help="an F7 tournament's parts for the LP-drain section (F7 pool_reversed triggers)")
     ap.add_argument("--split-day", help="smoke tests only: first measurement day (the spec's 2026-09-20)")
     ap.add_argument("--last-day", help="smoke tests only: last measurement day (the spec's 2026-09-30)")
+    ap.add_argument("--views", action="store_true", help="keep the wallet-day rows as views on the parquet (fits a few GB; slower)")
     ap.add_argument("--out")
     a = ap.parse_args()
     global SPLIT_DAY, LAST_DAY
@@ -429,7 +434,7 @@ def main():
     if spill:
         os.makedirs(spill, exist_ok=True)
         con.execute(f"SET temp_directory = '{spill}'; SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'")
-    load(con, a.money, a.clusters)
+    load(con, a.money, a.clusters, materialize=not a.views)
     md = render(con, a.boot, a.placebo, not a.no_placebo, a.parts)
     if a.out:
         with open(a.out, "w") as f:
