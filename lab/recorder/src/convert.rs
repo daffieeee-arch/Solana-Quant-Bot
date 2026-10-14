@@ -5,7 +5,6 @@
 //! instructions, loaded addresses and compute units). Fields the extractor does not read (token
 //! balances, logs, rewards, return data) are left empty.
 
-use anyhow::{anyhow, bail, Context, Result};
 use jetstreamer_firehose::firehose::TransactionData;
 use solana_message::compiled_instruction::CompiledInstruction;
 use solana_message::v0::{LoadedAddresses, MessageAddressTableLookup};
@@ -18,47 +17,63 @@ use yellowstone_grpc_proto::prelude::{
     TransactionStatusMeta as PMeta,
 };
 
+/// Why an update could not be converted: a fixed category and nothing from the update itself. The
+/// recorder logs only this label next to the slot and transaction index and counts the rest
+/// (CodeQL rust/cleartext-logging #9: an error built from the update carried account data into the log).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fault(pub &'static str);
+
+impl std::fmt::Display for Fault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+impl std::error::Error for Fault {}
+
+type Result<T> = std::result::Result<T, Fault>;
+
 fn address(b: &[u8]) -> Result<Address> {
-    let a: [u8; 32] = b.try_into().map_err(|_| anyhow!("address of {} bytes", b.len()))?;
+    let a: [u8; 32] = b.try_into().map_err(|_| Fault("address of the wrong length"))?;
     Ok(Address::from(a))
 }
 
 fn signature(b: &[u8]) -> Result<Signature> {
-    let s: [u8; 64] = b.try_into().map_err(|_| anyhow!("signature of {} bytes", b.len()))?;
+    let s: [u8; 64] = b.try_into().map_err(|_| Fault("signature of the wrong length"))?;
     Ok(Signature::from(s))
 }
 
-fn byte(v: u32, what: &str) -> Result<u8> {
-    u8::try_from(v).with_context(|| format!("{what} {v} does not fit in u8"))
+fn byte(v: u32, what: &'static str) -> Result<u8> {
+    u8::try_from(v).map_err(|_| Fault(what))
 }
 
 fn instruction(ix: &PCompiledInstruction) -> Result<CompiledInstruction> {
     Ok(CompiledInstruction {
-        program_id_index: byte(ix.program_id_index, "program_id_index")?,
+        program_id_index: byte(ix.program_id_index, "program_id_index does not fit in u8")?,
         accounts: ix.accounts.clone(),
         data: ix.data.clone(),
     })
 }
 
 fn message(m: &PMessage) -> Result<VersionedMessage> {
-    let h = m.header.as_ref().context("message without header")?;
+    let h = m.header.as_ref().ok_or(Fault("message without header"))?;
     let header = MessageHeader {
-        num_required_signatures: byte(h.num_required_signatures, "num_required_signatures")?,
-        num_readonly_signed_accounts: byte(h.num_readonly_signed_accounts, "num_readonly_signed_accounts")?,
-        num_readonly_unsigned_accounts: byte(h.num_readonly_unsigned_accounts, "num_readonly_unsigned_accounts")?,
+        num_required_signatures: byte(h.num_required_signatures, "num_required_signatures does not fit in u8")?,
+        num_readonly_signed_accounts: byte(h.num_readonly_signed_accounts, "num_readonly_signed_accounts does not fit in u8")?,
+        num_readonly_unsigned_accounts: byte(h.num_readonly_unsigned_accounts, "num_readonly_unsigned_accounts does not fit in u8")?,
     };
     let account_keys = m.account_keys.iter().map(|k| address(k)).collect::<Result<Vec<_>>>()?;
     let blockhash: [u8; 32] =
-        m.recent_blockhash.as_slice().try_into().map_err(|_| anyhow!("blockhash of {} bytes", m.recent_blockhash.len()))?;
+        m.recent_blockhash.as_slice().try_into().map_err(|_| Fault("blockhash of the wrong length"))?;
     let blockhash = Hash::new_from_array(blockhash);
     let instructions = m.instructions.iter().map(instruction).collect::<Result<Vec<_>>>()?;
     // V1 messages (SIMD-0385) carry their compute budget in `config` and have no lookup tables.
     if let Some(c) = &m.config {
         if !m.versioned {
-            bail!("a message with a v1 config that is not marked versioned (proto change?)");
+            return Err(Fault("a message with a v1 config that is not marked versioned (proto change?)"));
         }
         if !m.address_table_lookups.is_empty() {
-            bail!("v1 message with address table lookups");
+            return Err(Fault("v1 message with address table lookups"));
         }
         return Ok(VersionedMessage::V1(v1::Message {
             header,
@@ -99,14 +114,14 @@ fn meta(m: &PMeta) -> Result<TransactionStatusMeta> {
                 .iter()
                 .map(|g| {
                     Ok(InnerInstructions {
-                        index: byte(g.index, "inner instruction group index")?,
+                        index: byte(g.index, "inner instruction group index does not fit in u8")?,
                         instructions: g
                             .instructions
                             .iter()
                             .map(|ix| {
                                 Ok(InnerInstruction {
                                     instruction: CompiledInstruction {
-                                        program_id_index: byte(ix.program_id_index, "program_id_index")?,
+                                        program_id_index: byte(ix.program_id_index, "program_id_index does not fit in u8")?,
                                         accounts: ix.accounts.clone(),
                                         data: ix.data.clone(),
                                     },
@@ -144,16 +159,16 @@ pub enum Converted {
 
 /// The firehose's view of a Yellowstone transaction update of `slot`.
 pub fn transaction(slot: u64, info: &SubscribeUpdateTransactionInfo) -> Result<Converted> {
-    let tx = info.transaction.as_ref().context("update without transaction")?;
-    let m = info.meta.as_ref().context("update without status meta")?;
+    let tx = info.transaction.as_ref().ok_or(Fault("update without transaction"))?;
+    let m = info.meta.as_ref().ok_or(Fault("update without status meta"))?;
     if m.err.as_ref().is_some_and(|e| !e.err.is_empty()) {
         return Ok(Converted::Failed);
     }
-    let msg = message(tx.message.as_ref().context("transaction without message")?)?;
+    let msg = message(tx.message.as_ref().ok_or(Fault("transaction without message"))?)?;
     let signatures = tx.signatures.iter().map(|s| signature(s)).collect::<Result<Vec<_>>>()?;
     Ok(Converted::Tx(Box::new(TransactionData {
         slot,
-        transaction_slot_index: usize::try_from(info.index)?,
+        transaction_slot_index: usize::try_from(info.index).map_err(|_| Fault("transaction index does not fit in usize"))?,
         signature: signature(&info.signature)?,
         message_hash: Default::default(),
         is_vote: info.is_vote,
@@ -304,6 +319,15 @@ pub mod tests {
         let mut info = sample(1000, 0, false, false);
         info.meta.as_mut().unwrap().err = Some(PErr { err: vec![1, 2] });
         assert!(matches!(transaction(1000, &info).unwrap(), Converted::Failed));
+    }
+
+    #[test]
+    fn a_malformed_update_fails_with_a_fixed_category() {
+        let mut info = sample(1000, 0, true, false);
+        info.transaction.as_mut().unwrap().message.as_mut().unwrap().account_keys[0].pop();
+        assert_eq!(transaction(1000, &info).err(), Some(Fault("address of the wrong length")));
+        info.meta = None;
+        assert_eq!(transaction(1000, &info).err(), Some(Fault("update without status meta")));
     }
 
     #[test]
