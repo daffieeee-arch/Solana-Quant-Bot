@@ -84,6 +84,24 @@ SIZE = SOL // 2
 DEFAULTS = os.environ.get("LAB_DEFAULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml")
 SIG_COLS = ("family", "segment", "venue", "orientation", "mint", "pool", "t", "day", "farm")
 
+PHASES = {}   # phase name -> seconds, filled by progress() for the run json
+_T0 = [time.time()]
+
+
+def progress(phase, rows=None, note=""):
+    """One flushed stderr line per finished phase (the NAS log stayed empty for 3 h 40 min on the full f7rev run:
+    nothing was printed before the end): time of day, elapsed, phase, rows, seconds since the previous line."""
+    now = time.time()
+    dt = now - _T0[0]
+    _T0[0] = now
+    PHASES[phase] = round(PHASES.get(phase, 0) + dt, 1)
+    print(f"{time.strftime('%H:%M:%S')} {phase}: {rows if rows is not None else ''} rows {dt:,.1f}s {note}".replace("  ", " "),
+          file=sys.stderr, flush=True)
+
+
+def _count(con, table):
+    return con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+
 
 # --- signals from the parts -----------------------------------------------------------------------
 
@@ -115,7 +133,9 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
                    CASE WHEN venue = 'curve' THEN mint ELSE pool END AS key
             FROM read_parquet({lit}, union_by_name = true) WHERE {' AND '.join(where)}
             GROUP BY family, segment, venue, orientation, mint, pool, t)""")
-    return con.execute("SELECT count(*) FROM sig").fetchone()[0]
+    n = _count(con, "sig")
+    progress("signals", n, f"from {len(files)} parts")
+    return n
 
 
 # --- venue states at the end of each slot ------------------------------------------------------------
@@ -173,6 +193,7 @@ def match_states(con, lo, hi):
       SELECT mint, arg_min(pool, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS pool,
              arg_min(orientation, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS orientation
       FROM pools WHERE quote_class IN ('sol', 'reversed') AND mint IN (SELECT DISTINCT key FROM sig WHERE venue = 'curve') GROUP BY mint""")
+    progress("grad_pool", _count(con, "grad_pool"))
     con.execute("""
       CREATE OR REPLACE TEMP TABLE pool_targets AS
       SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'pool'
@@ -181,6 +202,7 @@ def match_states(con, lo, hi):
     con.execute("""
       CREATE OR REPLACE TEMP TABLE curve_targets AS
       SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'curve'""")
+    progress("targets per venue", _count(con, "pool_targets") + _count(con, "curve_targets"), f"slots [{lo}, {hi}]")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE pool_at AS
       WITH legs AS ({pool_legs_sql(lo, hi)}),
@@ -202,6 +224,7 @@ def match_states(con, lo, hi):
         FROM pool_targets kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
         WINDOW w AS (PARTITION BY kt.key ORDER BY kt.target ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
       SELECT * FROM filled WHERE slot IS NOT NULL""")
+    progress("pool_at (pool legs ASOF targets)", _count(con, "pool_at"))
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE curve_at AS
       WITH legs AS (
@@ -221,6 +244,7 @@ def match_states(con, lo, hi):
         FROM curve_targets kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
         WINDOW w AS (PARTITION BY kt.key ORDER BY kt.target ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
       SELECT * FROM filled WHERE slot IS NOT NULL""")
+    progress("curve_at (curve legs ASOF targets)", _count(con, "curve_at"))
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE venue_last AS
       SELECT key, max(slot) AS last_slot FROM (
@@ -228,7 +252,8 @@ def match_states(con, lo, hi):
         UNION ALL
         SELECT c.mint, c.slot FROM curve c SEMI JOIN (SELECT key FROM curve_targets) k ON k.key = c.mint WHERE c.slot BETWEEN {lo} AND {hi})
       GROUP BY key""")
-    return (con.execute("SELECT count(*) FROM pool_at").fetchone()[0], con.execute("SELECT count(*) FROM curve_at").fetchone()[0])
+    progress("venue_last", _count(con, "venue_last"))
+    return (_count(con, "pool_at"), _count(con, "curve_at"))
 
 
 def horizon_slots(ms_per_slot, h_ms):
@@ -248,6 +273,7 @@ def build_targets(con, clock, end_slot):
     con.execute("CREATE OR REPLACE TEMP TABLE targets (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT)")
     if rows:
         con.executemany("INSERT INTO targets VALUES (?, ?, ?, ?, ?)", rows)
+    progress("targets", len(rows))
     return len(rows)
 
 
@@ -269,6 +295,7 @@ def build_matched(con, end_slot):
       LEFT JOIN pool_at ps ON s.venue = 'pool' AND ps.key = s.key AND ps.target = tg.target
       LEFT JOIN curve_at cs ON s.venue = 'curve' AND cs.key = s.key AND cs.target = tg.target
       LEFT JOIN pool_at gs ON s.venue = 'curve' AND gs.key = gp.pool AND gs.target = tg.target""")
+    progress("matched", _count(con, "matched"))
 
 
 # --- round trips with the engine -----------------------------------------------------------------------
@@ -337,6 +364,9 @@ def sell(venue, orientation, r, tokens):
     return 0 if f is None else f.trader_quote  # rev_sell_token already puts the WSOL received in trader_quote
 
 
+PROGRESS_ROWS = 500_000
+
+
 def round_trips(con, per_order, size=SIZE):
     """Rows (sid, d, h, h_ms, target, cut, mid, gross, net, impact_entry) from the matched states."""
     global V
@@ -346,6 +376,8 @@ def round_trips(con, per_order, size=SIZE):
     out = []
     entry = {}
     cur = con.execute("SELECT * FROM matched ORDER BY sid, d, h_ms")
+    progress("matched sorted (first fetch)", 0)
+    t_loop = time.time()
 
     def rows():  # chunked: the matched table of a full run has millions of wide rows
         while True:
@@ -355,6 +387,9 @@ def round_trips(con, per_order, size=SIZE):
             yield from chunk
 
     for row in rows():
+        if len(out) and len(out) % PROGRESS_ROWS == 0:
+            el = time.time() - t_loop
+            progress("round trips", len(out), f"{len(out) / el:,.0f} rows/s")
         r = dict(zip(cols, row))
         venue, ori = r["venue"], r["orientation"]
         m = mid(venue, ori, r)
@@ -373,12 +408,16 @@ def round_trips(con, per_order, size=SIZE):
             if back is not None:
                 net = back / (size + 2 * per_order) - 1
         out.append((r["sid"], r["d"], r["h"], r["h_ms"], r["target"], bool(r["cut"]), m, gross, net, impact))
+    el = time.time() - t_loop
+    progress("round trips", len(out), f"{len(out) / el:,.0f} rows/s" if el > 0 else "")
     return out
 
 
 def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS):
     import yaml
     t0 = time.time()
+    _T0[0] = t0
+    PHASES.clear()
     mem = os.environ.get("LAB_WALLETS_MEMORY", "1GB")  # common.connect defaults to 1 GB: the NAS run died in the last join at 953 MiB
     con = connect(store, memory=mem) if store else connect(memory=mem)
     clock = Clock.from_store(con)
@@ -398,15 +437,18 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     rows = round_trips(con, per_order)
     con.execute("CREATE OR REPLACE TEMP TABLE mk (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT, cut BOOLEAN, mid DOUBLE, gross DOUBLE, net DOUBLE, impact DOUBLE)")
     con.executemany("INSERT INTO mk VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    progress("mk insert", len(rows))
     table = con.execute("""
       SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.ms_per_slot, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
              m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact
       FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms""").fetch_arrow_table()
     os.makedirs(out_dir, exist_ok=True)
     pq.write_table(table, os.path.join(out_dir, f"markout-{run_name}.parquet"))
+    progress("parquet written", table.num_rows)
     info = {"run": run_name, "parts": parts_dir, "families": families, "slots": [lo, hi], "signals": n_sig, "pool_states": n_pool,
             "curve_states": n_curve, "states": "at target slots only", "targets": n_targets, "rows": len(rows), "size_sol": SIZE / SOL, "per_order_lamports": per_order,
-            "delays": list(DELAYS), "horizons": dict(HORIZONS_MS), "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
+            "delays": list(DELAYS), "horizons": dict(HORIZONS_MS), "commit": git_commit(), "seconds": round(time.time() - t0, 1),
+            "phases_seconds": dict(PHASES)}
     with open(os.path.join(out_dir, f"run-markout-{run_name}.json"), "w") as f:
         json.dump(info, f, indent=1)
     return info
