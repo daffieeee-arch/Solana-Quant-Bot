@@ -38,6 +38,8 @@ import sys
 import duckdb
 import numpy as np
 
+from wallets.common import REF_MS
+
 SPLIT_DAY, LAST_DAY = "2026-09-20", "2026-09-30"
 MS_SQL = "ms_per_slot"  # per wallet-day row, from the store meta (money.py); nothing about regimes is hardcoded here
 MIN_POS = 5
@@ -72,8 +74,9 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
     kind = "TABLE" if materialize else "VIEW"
     con.execute(f"CREATE OR REPLACE {kind} wd AS SELECT * FROM read_parquet({lit}, union_by_name = true)")
     cols = [c[0] for c in con.execute("SELECT * FROM wd LIMIT 0").description]
-    if "ms_per_slot" not in cols or "regime" not in cols:
-        raise SystemExit("wallet-day rows without ms_per_slot / regime: rerun money.py (regimes come from the store meta, not from the report)")
+    if "ms_per_slot" not in cols or "regime" not in cols:  # rows from before #231: one 'unknown' regime, holds at the reference ms
+        print(f"wallet-day rows without ms_per_slot / regime (run from before the regime columns): regime 'unknown', {REF_MS} ms per slot", file=sys.stderr)
+        con.execute(f"CREATE OR REPLACE {kind} wd AS SELECT *, {REF_MS}::DOUBLE AS ms_per_slot, 'unknown' AS regime FROM read_parquet({lit}, union_by_name = true)")
     for name in ("payers", "creators", "venue_flows", "marks", "lp_legs"):
         path = os.path.join(money_dir, name + ".parquet")
         if os.path.exists(path):

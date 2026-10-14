@@ -27,6 +27,8 @@ import sys
 import duckdb
 import numpy as np
 
+from wallets.common import REF_MS
+
 BOOT = 10_000
 TRIM = 0.005
 GROSS_CAP = 10.0  # gross markouts are capped at +1000 % for the trimmed mean: a drained pool's mid runs to infinity
@@ -110,8 +112,11 @@ def load(con, markout_dir):
     con.execute(f"""CREATE OR REPLACE TABLE entries AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h = ''
                     QUALIFY row_number() OVER (PARTITION BY {DEDUP} ORDER BY cut, mid IS NULL) = 1""")
     cols = [c[0] for c in con.execute("SELECT * FROM m LIMIT 0").description]
-    if "regime" not in cols or "ms_per_slot" not in cols:
-        raise SystemExit("markout rows without regime / ms_per_slot: rerun markout.py (regimes come from the store meta, not from the report)")
+    if "regime" not in cols or "ms_per_slot" not in cols:  # rows from before #231: one 'unknown' regime, holds at the reference ms
+        print(f"markout rows without regime / ms_per_slot (run from before the regime columns): regime 'unknown', {REF_MS} ms per slot", file=sys.stderr)
+        for t in ("m", "entries"):
+            con.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS regime VARCHAR DEFAULT 'unknown'")
+            con.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS ms_per_slot DOUBLE DEFAULT {REF_MS}")
     con.execute("""
       CREATE OR REPLACE TABLE pairs AS
       SELECT t.family, t.segment, t.mint, t.t, t.d, t.h, t.day, t.regime, t.farm, t.gross, t.net,
