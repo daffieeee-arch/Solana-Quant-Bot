@@ -102,7 +102,15 @@ class LiveWatchlist:
         """Pool legs of one minute. late: history the recorder delivered after the minute (backfill)."""
         if not self._add(pool):
             return
-        o = self.wl.pools[pool].orientation
+        # A pool the state machine pruned is archived (#211): its trade goes into the minute's rows like any
+        # other, and step() restores it with its verdict, the batch's route. Never wl.pools[pool] directly.
+        info = self.wl.pools.get(pool)
+        if info is None:
+            archived = getattr(self.wl, "archive", {}).get(pool)
+            if archived is None:
+                return
+            info = archived[0]
+        o = info.orientation
         if late and self.stepped is not None and minute <= self.stepped:
             n = sol = farm = 0
             for l in legs:
