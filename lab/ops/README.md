@@ -39,7 +39,7 @@ Only after the owner's OK for this step. Run by the coordinator.
    ```bash
    git -C ~/Solana-project/Solana-bot worktree add --detach ~/Solana-project/worktrees/paper-run <commit>
    git -C ~/Solana-project/worktrees/paper-run rev-parse HEAD     # note it
-   sha256sum ~/Solana-project/worktrees/paper-run/lab/paper/k3-paper-2026-10-12.yaml   # af5c42a7...
+   sha256sum ~/Solana-project/worktrees/paper-run/lab/paper/k3-paper-2026-10-12.yaml   # note it: the engine journals it (config_sha256)
    ```
 2. **Recorder binary**: the NAS build (bookworm, glibc ≤ 2.39, `cargo test` green, sha256 noted):
    ```bash
