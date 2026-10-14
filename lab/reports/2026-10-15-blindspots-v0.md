@@ -160,6 +160,24 @@ Netto per gevulde trade na basiskosten, 95 %-interval uit een bootstrap over han
   - (2) als *bevestiging*: een pre-registratie op de schone epochs 1055–1063 met K3 met en zonder rt_tx-filter, de lat vooraf vastgelegd en DSR/PBO erbij. De hypothesen H1/H2, de vlag en de lat zijn vastgelegd vóór het bekijken van E18: `data-old-faithful-one/lab/research/hypothesis-wash-trigger-2026-10-15.md`, sha256 `35bdaa0d…` (comment op #167). E18 kan daar niets aan veranderen.
 - **K3 zelf blijft ongemoeid.** De paper-run legt de trigger-transactie al vast, dus de split kan achteraf uit de paper-data worden berekend zonder K3 te veranderen.
 
+### 4.1 Hold-out-diagnose (E18; geen afstemming)
+
+De hypothesen voor 1055–1063 lagen vast vóór deze uitkomst werd bekeken (`hypothesis-wash-trigger-2026-10-15.md`, sha256 `35bdaa0d…`, comment op #167); niets hieronder verandert ze. Zelfde scripts (a4b sha `3a2500ce…`, a4c sha `7e6980c3…`), hold-out-store en hold-out-posities, K3-instelling.
+
+- **Triggers (feit):** 6.165 F7-triggers, waarvan **36,8 %** wash-leg (dev: 27 %). Van de overige koopt de verkoper bij 57,5 % binnen 50 slots terug; 59,4 % van het volume in de trigger-pools is heen-en-terug in één transactie.
+
+| groep | d=1 (~270 ms): netto/trade [95 % CI] | n | d=2 (~535 ms) | n |
+|---|---|---|---|---|
+| F7 alle | +0,62 % [−0,15 … +1,20] | 5.165 | −0,16 % [−0,90 … +0,42] | 4.830 |
+| F7 trigger is wash-leg | −0,69 % [−1,82 … +0,64] | 1.386 | −0,77 % [−1,79 … +0,61] | 1.375 |
+| F7 echte verkoop | **+1,10 %** [+0,31 … +1,58] | 3.779 | +0,08 % [−0,73 … +0,67] | 3.455 |
+| N2 (willekeurig) | −4,02 % [−4,54 … −3,53] | 21.282 | −4,20 % [−4,71 … −3,72] | 20.893 |
+
+**Lezing (reconstructie met het kostenmodel; diagnose):**
+- De richting is dezelfde als op dev: wash-triggers zijn slechter dan echte verkopen, bij beide vertragingen.
+- Bij d=1 heeft F7 zonder wash-triggers op de hold-out een interval boven nul.
+- **Bij d=2 (~535 ms) is er ook zonder wash-triggers geen voorsprong meer.** K3 en de vastgelegde toets gebruiken 600 ms. De voorsprong van F7 verdwijnt dus grotendeels tussen ~270 en ~535 ms. Voor een live bot betekent dat: zonder een uitvoering onder ~300 ms is ook het gefilterde F7 waarschijnlijk geen winstbron. Dit is een waarschuwing vooraf voor H1; H1 en H2 blijven ongewijzigd staan.
+
 ## 5. Getoetste en verworpen hypothesen (deze ronde)
 
 | hypothese | uitkomst | label |
@@ -174,7 +192,7 @@ Netto per gevulde trade na basiskosten, 95 %-interval uit een bootstrap over han
 
 | # | kandidaat | mechanisme en tegenpartij | data | resultaat tot nu toe | onzekerheid | live haalbaar | volgende falsificatietoets |
 |---|---|---|---|---|---|---|---|
-| 1 | **Risicofilter "wash-trigger"** voor F7 in omgekeerde pools | F7 verdient alleen als de verkoper de prijs echt omlaag duwde (een gehaaste verkoper is de tegenpartij). Bij een wash-leg is er geen tegenpartij en geen terugvering. | trigger-transactie zelf (koopt hij terug in dezelfde tx?), te zien op het beslismoment | dev (verkennend): zonder wash-triggers +1,94 % (d=1) / +1,00 % (d=2) per trade in dag 10–18, wash-triggers −0,35 % / −0,56 %; capaciteit −24 % trades | dev is verbruikt; regime verandert met Alpenglow | ja: de trigger-transactie zit in dezelfde stream | pre-registratie op 1055–1063 (schoon): K3 met en zonder filter, lat vooraf |
+| 1 | **Risicofilter "wash-trigger"** voor F7 in omgekeerde pools (hold-out-diagnose: zelfde richting; bij ~535 ms geen voorsprong meer) | F7 verdient alleen als de verkoper de prijs echt omlaag duwde (een gehaaste verkoper is de tegenpartij). Bij een wash-leg is er geen tegenpartij en geen terugvering. | trigger-transactie zelf (koopt hij terug in dezelfde tx?), te zien op het beslismoment | dev (verkennend): zonder wash-triggers +1,94 % (d=1) / +1,00 % (d=2) per trade in dag 10–18, wash-triggers −0,35 % / −0,56 %; capaciteit −24 % trades | dev is verbruikt; regime verandert met Alpenglow | ja: de trigger-transactie zit in dezelfde stream | pre-registratie op 1055–1063 (schoon): K3 met en zonder filter, lat vooraf |
 | 2 | **Insider-aandeel uit transfers** (veto/exit voor M1, O7) | bundels verdelen voorraad over wallets die in de pool verkopen; wie koopt, is hun tegenpartij | #239 token_transfers | nog niet gemeten | volume en filter van de nieuwe tabellen | deels: transfers zitten in de live stream, maar de geschiedenis van vóór de start ontbreekt | spec Q1 (lat vooraf) op dev, daarna 1055–1063 |
 | 3 | **Kostenmodel: rent en mislukte pogingen** | uitvoering, geen strategie | tx_ctx, token_transfers | rent ~0,002 SOL per nieuw account, terug bij sluiten | klein | ja | meten in het paper-journal |
 
