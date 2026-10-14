@@ -57,18 +57,20 @@ def one(con, sql):
     return dict(zip(cols, row))
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
     ap.add_argument("--json")
     ap.add_argument("--bounded", action="store_true", help="no de-duplication, approximate quantiles (large datasets)")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     global BOUNDED
     BOUNDED = a.bounded
 
     chunks = chunk_dirs(a.root)
     dirs = [d for _, d in chunks]
     con = duckdb.connect()
+    # Times are printed as UTC: never through the host's time zone (Europe/Amsterdam on the VPS).
+    con.execute("SET TimeZone = 'UTC'")
     con.execute(f"SET threads TO {int(os.environ.get('LAB_DUCKDB_THREADS', '4'))}")
     con.execute(f"SET memory_limit = '{os.environ.get('LAB_DUCKDB_MEM', '6GB')}'")
     tmp = os.environ.get("LAB_DUCKDB_TMP")
