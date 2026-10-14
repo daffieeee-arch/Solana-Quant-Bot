@@ -601,7 +601,7 @@ def _m1x_delta(con, fam, veto, size, d, period, defined_only=False):
     triggers whose insider share is defined (vins-definition-2026-10-15.md, point 3). The pair key is
     the whole trigger and configuration as one row value (before, `{key} AS k` named only its last
     column: pairs joined on the pool alone, across variants, sizes and d)."""
-    key = "family, variant, size_sol, d, q, mint, t, COALESCE(pool, '')"
+    key = "family, variant, size_sol, d, tau, q, mint, t, COALESCE(pool, '')"
     only = " AND ins_reason IS NULL" if defined_only else ""
     rows = sorted(con.execute(f"""
         WITH b AS (SELECT row({key}) AS k, pnl FROM m WHERE overlay = 'none' AND NOT skipped),
@@ -641,7 +641,7 @@ def m1x(run_dir, store=STORE):
     have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
     reason = "ins_reason" if "ins_reason" in have else "CASE WHEN ins_share IS NULL THEN 'insiders_unknown' END AS ins_reason"
     con.execute(f"""CREATE TEMP TABLE m AS
-        SELECT family, variant, size_sol, d, q, overlay, regime, day, {period} AS period, t, mint, pool, entry_slot, exit_slot,
+        SELECT family, variant, size_sol, d, tau, q, overlay, regime, day, {period} AS period, t, mint, pool, entry_slot, exit_slot,
                cost, proceeds, skipped, entry_failed, exit_reason, ins_share, {reason}, curve_buyers, peak_ret, d_ms,
                {pnl} AS pnl, {ret} AS ret
         FROM {src} WHERE family IN ({",".join(f"'{f}'" for f in fams)})""")

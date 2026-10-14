@@ -89,7 +89,8 @@ RESULT_SCHEMA = pa.schema([
     ("d_ms", pa.float64()),
     # M1+ / M1-early (and their N2): the veto inputs at t and the highest mark before the exit (/ cost - 1).
     ("ins_share", pa.float64()), ("curve_buyers", pa.int64()), ("peak_ret", pa.float64()),
-    # Why ins_share is undefined (overlay.UNDEFINED; NULL when it is defined or not asked): M1x and O7 rows.
+    # Why ins_share is undefined (circ_le_0, h_ins_gt_circ, h_ins_lt_0, insiders_unknown; NULL when it is defined
+    # or not asked): M1x and O7 rows.
     ("ins_reason", pa.string()),
 ])
 

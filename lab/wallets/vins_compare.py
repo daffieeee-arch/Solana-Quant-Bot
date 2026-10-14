@@ -3,8 +3,9 @@ tournament (M1P, M1E, N2) is run again on dev with the fixed engine under the sa
 (a bugfix plus a recompute, not tuning), and this script compares the two runs:
 
   - per trigger (family, mint, t; the base row: overlay none, 0.5 SOL, d = 1, first variant) the insider
-    share and the V_ins flag (ins_share > 0.90, or undefined: fail-closed since vins-definition-2026-10-15.md;
-    "unknown" counts the undefined ones) in the old and the new run; flipped vetoes = triggers vetoed
+    share and the V_ins flag in the old and the new run, as each run's engine applied it: a run with an
+    `ins_reason` column is fail-closed (vins-definition-2026-10-15.md: an undefined share vetoes), an older
+    run vetoed only ins_share > 0.90 (NULL passed); "unknown" counts the NULL shares; flipped vetoes = triggers vetoed
     in one run and not in the other, per family and per period (days 1-9 / days 10-18);
   - the §10 verdicts of both runs from m1x.json, and the Δ(V_ins) rows at 0.5 SOL, d = 1 and 2;
   - the new run's `insider_fallbacks` counter (config.json or m1x.json): must be 0 for M1 / M1x (normal
@@ -25,6 +26,7 @@ import duckdb
 
 INS_VETO = 0.90
 SPLIT_DAY, LAST_DAY = "2026-09-20", "2026-09-30"
+SEMANTICS = {}  # run name -> how its engine applied V_ins to an undefined (NULL) share
 
 
 def load_triggers(con, name, run_dir):
@@ -32,10 +34,14 @@ def load_triggers(con, name, run_dir):
     if not files:
         raise SystemExit(f"no parts in {run_dir}")
     lit = "[" + ",".join(f"'{f}'" for f in files) + "]"
+    # Label each run with what its engine did: fail-closed runs carry ins_reason (vins-definition-2026-10-15.md).
+    have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet({lit}, union_by_name = true)").fetchall()}
+    closed = "ins_reason" in have
+    SEMANTICS[name] = "fail-closed (an undefined share vetoes)" if closed else "fail-open (a NULL share passed V_ins)"
     con.execute(f"""
       CREATE OR REPLACE TABLE {name} AS
       SELECT family, mint, t, any_value(day) AS day, any_value(ins_share) AS ins_share,
-             COALESCE(any_value(ins_share) > {INS_VETO}, true) AS vetoed, any_value(ins_share) IS NULL AS unknown
+             COALESCE(any_value(ins_share) > {INS_VETO}, {str(closed).lower()}) AS vetoed, any_value(ins_share) IS NULL AS unknown
       FROM (SELECT family, mint, t, day, ins_share,
                    row_number() OVER (PARTITION BY family, mint, t ORDER BY variant, size_sol, d) AS rn
             FROM read_parquet({lit}, union_by_name = true)
@@ -96,7 +102,8 @@ def render(old_dir, new_dir, n_old, n_new, rows, extra_new, vo, vn, fb):
     L = [f"## V_ins recompute: {os.path.basename(os.path.normpath(old_dir))} → {os.path.basename(os.path.normpath(new_dir))}\n",
          f"Old engine `{commit_of(old_dir)}`, new engine `{commit_of(new_dir)}` (#213: insider share no longer depends on the caller's stream window; "
          f"one Insiders per trigger). Triggers compared on (family, mint, t) of the base row (overlay none, 0.5 SOL, d = 1, first variant): "
-         f"old {n_old:,}, new {n_new:,}. V_ins = insider share > {INS_VETO:.2f} at the decision.\n",
+         f"old {n_old:,}, new {n_new:,}. V_ins = insider share > {INS_VETO:.2f} at the decision, as each run's engine applied it to an "
+         f"undefined (NULL) share: old run {SEMANTICS.get('old', '?')}, new run {SEMANTICS.get('new', '?')}.\n",
          f"`insider_fallbacks` (new run, {fb[0] or 'not found'}): **{fb[1] if fb[1] is not None else 'not found'}** — must be 0 for M1 / M1x "
          "(normal pools only). `token_insiders` falls back to the old window-dependent Insiders for reversed pools: an O7 overlay on F7 "
          "pool_reversed stays provisional until the token side is implemented; no O7-on-reversed number is fixed by this recompute.\n",

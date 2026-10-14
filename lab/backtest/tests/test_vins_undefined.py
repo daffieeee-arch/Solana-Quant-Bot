@@ -88,14 +88,14 @@ def test_the_v_ins_delta_as_it_runs_and_over_the_defined_triggers():
     from backtest import analysis
 
     con = duckdb.connect()
-    con.execute("""CREATE TABLE m (family VARCHAR, variant VARCHAR, size_sol DOUBLE, d INTEGER, q DOUBLE, mint VARCHAR, t BIGINT,
+    con.execute("""CREATE TABLE m (family VARCHAR, variant VARCHAR, size_sol DOUBLE, d INTEGER, tau VARCHAR, q DOUBLE, mint VARCHAR, t BIGINT,
                    pool VARCHAR, overlay VARCHAR, day VARCHAR, period VARCHAR, skipped BOOLEAN, exit_reason VARCHAR, pnl BIGINT,
                    ins_reason VARCHAR)""")
     # Three triggers (base pnl -1, -2, +1 SOL): A vetoed for 0.95, B vetoed as undefined, C kept.
     for mint, pnl, vetoed, why in (("A", -1, True, None), ("B", -2, True, "circ_le_0"), ("C", 1, False, None)):
         for ov in ("none", "V_ins"):
             veto = ov == "V_ins" and vetoed
-            con.execute("INSERT INTO m VALUES ('M1P', 'v', 0.5, 1, 0.5, ?, 1, NULL, ?, '2026-09-25', 'days 10-18', ?, ?, ?, ?)",
+            con.execute("INSERT INTO m VALUES ('M1P', 'v', 0.5, 1, 'empirical', 0.5, ?, 1, NULL, ?, '2026-09-25', 'days 10-18', ?, ?, ?, ?)",
                         [mint, ov, veto, "veto" if veto else "time", pnl * 10**9, why])
     run = analysis._m1x_delta(con, "M1P", "V_ins", 0.5, 1, "days 10-18")
     diag = analysis._m1x_delta(con, "M1P", "V_ins", 0.5, 1, "days 10-18", defined_only=True)

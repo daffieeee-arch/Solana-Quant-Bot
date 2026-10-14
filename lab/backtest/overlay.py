@@ -26,7 +26,6 @@ INSIDER_WINDOW_MS = 10_000
 VETO_SHARE = 0.25
 EXIT_SOLD = 0.25
 VARIANTS = ("O7V1", "O7V2", "O7V3")
-UNDEFINED = ("circ_le_0", "h_ins_gt_circ", "h_ins_lt_0", "insiders_unknown")
 
 
 def vetoes(share, threshold):
