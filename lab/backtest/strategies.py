@@ -55,7 +55,15 @@ class Clock:
         return cls(meta.get("ms_per_slot"))
 
     def ms_per_slot(self, slot):
-        return self.per_epoch.get(slot // EPOCH_SLOTS, REF_MS)
+        """The epoch's measured slot time. An epoch not measured yet (live: LiveFeed measures one
+        after its first 1,000 slots) takes the last measured epoch before it, then REF_MS: a new
+        slot time (Alpenglow, epoch 1064) carries over into the next epoch's first minutes."""
+        e = slot // EPOCH_SLOTS
+        v = self.per_epoch.get(e)
+        if v is not None:
+            return v
+        earlier = [k for k in self.per_epoch if k < e]
+        return self.per_epoch[max(earlier)] if earlier else REF_MS
 
     def slots(self, duration_ms, at_slot):
         return max(1, round(duration_ms / self.ms_per_slot(at_slot)))
