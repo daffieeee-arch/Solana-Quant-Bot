@@ -139,3 +139,26 @@ def test_a_pruned_pool_whose_archive_expired_is_added_again(tmp_path):
     getattr(w.wl, "archive", {}).pop("P", None)
     w.trades("P", 1001, [leg(400, 3, 130)])
     assert "P" in w.wl.pools and w.rows[("P", 1001)][0] == 1
+
+
+def test_a_trade_on_a_pruned_archived_pool_restores_it(tmp_path):
+    """The crash of shadow-1052-a8e69ed (KeyError in trades): a pool pruned to the archive (#211) gets a
+    trade. The trade path takes its orientation from the archive entry, the minute's rows carry the
+    trade, and step() restores the pool with its organic verdict (the batch's route). A late
+    (backfill) trade on it is ignored like the batch ignores history of an untracked pool."""
+    from wallets import watchlist as W
+
+    w = LiveWatchlist(Pools(), str(tmp_path), rules=W.Rules(prune_idle_minutes=5))
+    w.slot(100, 1000)
+    w.trades("P", 1000, [leg(100, 3, 50)])  # organic but shallow: no member (members are never pruned)
+    assert w.minute(1001, 300) == {}
+    w.slot(5_000, 1010)
+    w.minute(1011, 5_000)  # ten quiet minutes: pruned into the archive with its organic verdict
+    assert "P" not in w.wl.pools and w.wl.archive["P"][1] is True
+    w.trades("P", 1011, [leg(5_100, 2, 50)])  # was: KeyError
+    w.trades("P", 1004, [leg(1_000, 1, 50)], late=True)  # history of an archived pool: ignored, no error
+    assert w.rows[("P", 1011)][0] == 1
+    w.slot(5_400, 1012)
+    w.minute(1012, 5_400)
+    assert "P" in w.wl.pools and w.wl.restored_total == 1 and w.wl.state["P"].organic is True
+
