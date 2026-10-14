@@ -49,6 +49,12 @@ filtered during the whole segment: what every filter inside it had), `backfill/`
 and `_segment.json`, written last: seq, first/last slot, row counts, usage rows per minute and
 stream, the budget state, the filter level, reconnects, late rows and totals.
 
+**Alpenglow** (epoch 1064, 2026-10-21).
+- **`block_footers/`:** every main request asks for Alpenglow block footers, without their certificates. Each footer becomes a `block_footers/` row: `slot`, `bank_id`, `block_producer_time_ns` (the producer's block time in nanoseconds), `received_unix_ns` and `created_unix_ns`. Like `blocks/`, it waits for the slot's confirmation.
+- **The switch:** the first footer a root ever receives marks it. It is logged, written to `<root>/alpenglow.json` and kept as an `anomalies/` row of its slot (program `recorder`, kind `alpenglow_first_footer`), once per root.
+- **The slot jump:** the jump in slot numbers at the switch needs nothing special. A resume inside it starts at the next slot that exists.
+- **Before the switch:** there are no footers, so the table is absent.
+
 **Live `tx_ctx/` is partial until MEV phase 1** (#206). Since the extractor writes `tx_ctx` (MEV
 phase 0, a measurement on OF1 history), the recorder writes it too, through the same `rows_for`.
 `convert.rs` does not fill the pre/post token balances and sets every status to Ok, and failed
