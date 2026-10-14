@@ -24,8 +24,9 @@ slot is materialised and no window runs over all legs (the first NAS run spilled
 Graduation is not death: a curve signal whose curve is complete at the entry or at a horizon is
 valued on the mint's migration pool (its SOL-quote PumpSwap pool, the state after the pool's last
 leg <= that slot, bought or sold through the pool's own fill functions); before the pool has a
-state there is no market and the row is NULL. The `regime` column is the slot-time regime of the
-signal's epoch (316ms: epochs at >= 300 ms per slot, 267ms otherwise; spec section 3).
+state there is no market and the row is NULL. `ms_per_slot` is the measured ms per slot of the
+signal's epoch (store meta) and `regime` its label rounded to 10 ms (320ms / 270ms on dev, 200ms after
+Alpenglow; spec section 3): nothing about regimes is hardcoded.
 
 Signals are deduplicated over exit variants (tp4 / tp6, trail20 / trail35 share their trigger);
 `variants` keeps the list. N2 rows carry ref_mint / ref_t so the report can pair them with
@@ -50,7 +51,7 @@ import time
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard
+from .common import EPOCH_SLOTS as EPOCH, OUT_ROOT, REF_MS, SOL, Clock, connect, git_commit, guard, regime_label
 
 
 
@@ -81,7 +82,6 @@ DELAYS = (1, 2)
 HORIZONS_MS = (("1s", 1_000), ("10s", 10_000), ("1m", 60_000), ("5m", 300_000), ("15m", 900_000), ("1h", 3_600_000), ("6h", 21_600_000))
 SIZE = SOL // 2
 DEFAULTS = os.environ.get("LAB_DEFAULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml")
-EPOCH = 432_000
 SIG_COLS = ("family", "segment", "venue", "orientation", "mint", "pool", "t", "day", "farm")
 
 
@@ -100,11 +100,15 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
         where.append(f"t >= {lo}")
     if hi is not None:
         where.append(f"t < {hi}")
-    slow = [e for e, ms in clock.per_epoch.items() if ms >= 300] if clock else []
-    regime = f"CASE WHEN t // {EPOCH} IN ({','.join(str(e) for e in slow)}) THEN '316ms' ELSE '267ms' END" if slow else "'267ms'"
+    per_epoch = clock.per_epoch if clock and clock.per_epoch else {}
+    ms_case = ("CASE t // {e} " + " ".join(f"WHEN {ep} THEN {ms!r}" for ep, ms in sorted(per_epoch.items())) + f" ELSE {REF_MS!r} END").format(e=EPOCH) \
+        if per_epoch else repr(REF_MS)
+    labels = {ep: regime_label(ms) for ep, ms in per_epoch.items()}
+    reg_case = ("CASE t // {e} " + " ".join(f"WHEN {ep} THEN '{lab}'" for ep, lab in sorted(labels.items())) + f" ELSE '{regime_label(REF_MS)}' END").format(e=EPOCH) \
+        if labels else f"'{regime_label(REF_MS)}'"
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sig AS
-      SELECT row_number() OVER (ORDER BY family, segment, mint, t, pool) AS sid, *, {regime} AS regime
+      SELECT row_number() OVER (ORDER BY family, segment, mint, t, pool) AS sid, *, ({ms_case})::DOUBLE AS ms_per_slot, {reg_case} AS regime
       FROM (SELECT family, segment, venue, orientation, mint, pool, t, any_value(day) AS day, any_value(farm) AS farm,
                    any_value(ref_mint) AS ref_mint, any_value(ref_t) AS ref_t,
                    list_sort(list_distinct(list(variant))) AS variants,
@@ -395,7 +399,7 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     con.execute("CREATE OR REPLACE TEMP TABLE mk (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT, cut BOOLEAN, mid DOUBLE, gross DOUBLE, net DOUBLE, impact DOUBLE)")
     con.executemany("INSERT INTO mk VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     table = con.execute("""
-      SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
+      SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.ms_per_slot, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
              m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact
       FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms""").fetch_arrow_table()
     os.makedirs(out_dir, exist_ok=True)

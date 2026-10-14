@@ -15,6 +15,9 @@ price and are left out), from every trade in the store:
               An open position is carried (marked) on every later day until it is sold or the period
               ends, unless it is dust (< DUST SOL at its last mark).
 
+Every wallet-day row carries `ms_per_slot` and `regime` of its day's epoch (store meta, label rounded to 10 ms:
+320ms / 270ms on dev, 200ms after Alpenglow), so the report groups and converts holds without constants.
+
 Positions (one per wallet x token, opened when the inventory goes from 0 to > 0) give the behaviour
 features the report needs for the labels: opened in the create slot + SNIPE_SLOTS (sniper), the hold
 until the first leg that leaves <= 10 % of the position's maximum (bot), the buy size (whale), and the
@@ -39,7 +42,7 @@ import os
 import sys
 import time
 
-from .common import OUT_ROOT, SOL, connect, git_commit, guard
+from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard, regime_label
 
 SNIPE_SLOTS = 3
 EXIT_SHARE = 0.10
@@ -80,12 +83,18 @@ def legs_sql(lo, hi, bucket=None, buckets=1, fees=True):
       FROM legs"""
 
 
-def day_bounds(con):
-    """UTC day -> its first slot, from the blocks table (the day of a slot = the last bound <= slot)."""
+def day_bounds(con, clock=None):
+    """UTC day -> its first slot, from the blocks table (the day of a slot = the last bound <= slot), with the ms per
+    slot and the regime label of the day's epoch from the store meta (never hardcoded)."""
     con.execute("""
       CREATE OR REPLACE TEMP TABLE day_bounds AS
       SELECT strftime(make_timestamp(block_time * 1000000), '%Y-%m-%d') AS day, min(slot) AS from_slot
       FROM blocks GROUP BY 1 ORDER BY 2""")
+    clock = clock or Clock.from_store(con)
+    rows = [(day, clock.ms_per_slot(slot), regime_label(clock.ms_per_slot(slot))) for day, slot in con.execute("SELECT day, from_slot FROM day_bounds").fetchall()]
+    con.execute("CREATE OR REPLACE TEMP TABLE day_regime (day VARCHAR, ms_per_slot DOUBLE, regime VARCHAR)")
+    if rows:
+        con.executemany("INSERT INTO day_regime VALUES (?, ?, ?)", rows)
 
 
 def dated(sql):
@@ -201,7 +210,7 @@ def build_bucket(con, lo, hi, bucket, buckets, days):
       SELECT *, value_end - lag(value_end, 1, 0) OVER (PARTITION BY wallet, mint ORDER BY day) AS dvalue FROM marked""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE wd AS
-      SELECT v.wallet, v.day,
+      SELECT v.wallet, v.day, any_value(dr.ms_per_slot) AS ms_per_slot, any_value(dr.regime) AS regime,
              sum(v.cash) AS cash, sum(v.fees) AS fees, sum(v.paid_by_other) AS paid_by_other, sum(v.value_end) AS value_end, sum(v.dvalue) AS dvalue,
              sum(v.cash) - sum(v.fees) + sum(v.dvalue) AS pnl,
              sum(v.buy_sol) AS buy_sol, sum(v.sell_sol) AS sell_sol, sum(v.n_legs) AS n_legs, sum(v.n_buys) AS n_buys,
@@ -214,6 +223,7 @@ def build_bucket(con, lo, hi, bucket, buckets, days):
                sum((create_slot IS NOT NULL AND open_slot <= create_slot + {SNIPE_SLOTS})::INT) AS n_snipe,
                median(first_buy_sol) AS median_buy_sol, count(close_slot) AS n_closed, median(close_slot - open_slot) AS median_hold_slots
         FROM positions GROUP BY wallet, open_day) p ON p.wallet = v.wallet AND p.day = v.day
+      LEFT JOIN day_regime dr ON dr.day = v.day
       GROUP BY v.wallet, v.day""")
     return con.execute("SELECT count(*), count(DISTINCT wallet) FROM wd").fetchone()
 

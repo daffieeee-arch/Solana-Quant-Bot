@@ -27,14 +27,21 @@ import sys
 import duckdb
 import numpy as np
 
+from wallets.common import REF_MS
+
 BOOT = 10_000
 TRIM = 0.005
 GROSS_CAP = 10.0  # gross markouts are capped at +1000 % for the trimmed mean: a drained pool's mid runs to infinity
 DEAD = -0.99  # net <= -99 %: the venue could not pay for the tokens (drained pool, completed curve)
 SPLIT_DAY, LAST_DAY = "2026-09-20", "2026-09-30"  # the binding window of the M1x report: 2026-09-20 … 2026-09-30
 BINDING = f"days 10-18 ({SPLIT_DAY} … {LAST_DAY[5:]})"
-BLOCKS = (("days 1-9", f"day < '{SPLIT_DAY}'"), (BINDING, f"day BETWEEN '{SPLIT_DAY}' AND '{LAST_DAY}'"), ("all days", "TRUE"),
-          ("316ms", "regime = '316ms'"), ("267ms", "regime = '267ms'"))
+BLOCKS = (("days 1-9", f"day < '{SPLIT_DAY}'"), (BINDING, f"day BETWEEN '{SPLIT_DAY}' AND '{LAST_DAY}'"), ("all days", "TRUE"))
+
+
+def blocks(con):
+    """The fixed day blocks plus one block per slot-time regime found in the rows (labels from the store meta)."""
+    regs = [r[0] for r in con.execute("SELECT DISTINCT regime FROM m WHERE regime IS NOT NULL ORDER BY 1").fetchall()]
+    return BLOCKS + tuple((r, f"regime = '{r}'") for r in regs)
 DEDUP = "family, segment, venue, mint, pool, t, d, h"  # the same trigger appears in more than one run (f7rev and families-v2)
 H_ORDER = ("1s", "10s", "1m", "5m", "15m", "1h", "6h")
 K_ROWS = (("K1/K2 (F7 pool_reversed, organic)", "family = 'F7' AND segment = 'pool_reversed' AND farm = 'organic'"),
@@ -104,8 +111,12 @@ def load(con, markout_dir):
                     QUALIFY row_number() OVER (PARTITION BY {DEDUP} ORDER BY cut, net IS NULL) = 1""")
     con.execute(f"""CREATE OR REPLACE TABLE entries AS SELECT * FROM read_parquet({lit}, union_by_name = true) WHERE h = ''
                     QUALIFY row_number() OVER (PARTITION BY {DEDUP} ORDER BY cut, mid IS NULL) = 1""")
-    if "regime" not in [c[0] for c in con.execute("SELECT * FROM m LIMIT 0").description]:
-        con.execute("ALTER TABLE m ADD COLUMN regime VARCHAR DEFAULT '267ms'")
+    cols = [c[0] for c in con.execute("SELECT * FROM m LIMIT 0").description]
+    if "regime" not in cols or "ms_per_slot" not in cols:  # rows from before #231: one 'unknown' regime, holds at the reference ms
+        print(f"markout rows without regime / ms_per_slot (run from before the regime columns): regime 'unknown', {REF_MS} ms per slot", file=sys.stderr)
+        for t in ("m", "entries"):
+            con.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS regime VARCHAR DEFAULT 'unknown'")
+            con.execute(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS ms_per_slot DOUBLE DEFAULT {REF_MS}")
     con.execute("""
       CREATE OR REPLACE TABLE pairs AS
       SELECT t.family, t.segment, t.mint, t.t, t.d, t.h, t.day, t.regime, t.farm, t.gross, t.net,
@@ -154,11 +165,12 @@ def groups(con):
     return con.execute("SELECT DISTINCT family, segment, d FROM m WHERE family NOT LIKE 'N2\\_%' ESCAPE '\\' ORDER BY 1, 2, 3").fetchall()
 
 
-def table(con, label, where, boot, blocks=BLOCKS):
+def table(con, label, where, boot, blocks=None):
     """One group's table. The advantage verdict (days 10-18, spec section 5) uses the conservative net
     (dead rows counted at their loss): trigger net trim > 0 with its day CI > 0, and the N2 twin's own
     net trim NOT > 0 with its own CI > 0 on the same horizon (the twins of exactly these triggers, from
     the paired rows). The paired Δ is shown, not a criterion."""
+    blocks = blocks or globals()["blocks"](con)
     L = [f"### {label}\n",
          "| block | h | n | cut | dead | gross median | gross trim (cap 10×) | net median | **net trim** | 95% CI (days) | net trim ex dead | 95% CI ex dead | > 0 | N2 twin net trim (paired) | N2 95% CI | Δ vs N2 | 95% CI | advantage |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -192,13 +204,10 @@ def table(con, label, where, boot, blocks=BLOCKS):
     return "\n".join(L)
 
 
-MS = {"316ms": 316.4, "267ms": 267.1}
-
-
 def exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot=None):
     """Realized net per position (variant, d, 0.5 SOL, q 0.5) against the net markout at the horizon
-    nearest the variant's median hold, on the same signals, per slot-time regime (the regime of the
-    signal in the markout rows; the hold in ms uses that regime's ms per slot)."""
+    nearest the variant's median hold, on the same signals, per slot-time regime (the regime and the ms
+    per slot of the signal in the markout rows, from the store meta)."""
     from wallets.markout import engine
     import yaml
     _, costs = engine()
@@ -214,15 +223,15 @@ def exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot=None):
       WHERE NOT skipped AND NOT entry_failed AND size_sol = 0.5 AND q = 0.5 AND family NOT LIKE 'N2\\_%' ESCAPE '\\'""")
     con.execute("""
       CREATE OR REPLACE TABLE posm AS
-      SELECT p.*, m.regime, m.h, m.net FROM pos p JOIN m ON m.family = p.family AND m.segment = p.segment AND m.mint = p.mint AND m.t = p.t AND m.d = p.d
+      SELECT p.*, m.regime, m.ms_per_slot, m.h, m.net FROM pos p JOIN m ON m.family = p.family AND m.segment = p.segment AND m.mint = p.mint AND m.t = p.t AND m.d = p.d
       WHERE m.net IS NOT NULL""")
-    rows = con.execute("SELECT family, variant, segment, d, regime, median(hold_slots), count(DISTINCT (mint, t)) FROM posm GROUP BY ALL ORDER BY ALL").fetchall()
+    rows = con.execute("SELECT family, variant, segment, d, regime, median(hold_slots), count(DISTINCT (mint, t)), median(ms_per_slot) FROM posm GROUP BY ALL ORDER BY ALL").fetchall()
     L = ["### Exit-rule cost: realized net per position vs the net markout at the median hold (0.5 SOL, base, q = 0.5), per regime\n",
          "| family | variant | segment | d | regime | positions | median hold | nearest h | realized net (trim) | markout net (trim) | Δ realized − markout | 95% CI (days) | best h afterwards (trim) |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     hs = dict(zip(H_ORDER, (1_000, 10_000, 60_000, 300_000, 900_000, 3_600_000, 21_600_000)))
-    for fam, var, seg, d, reg, hold, n in rows:
-        hold_ms = (hold or 0) * (ms_per_slot or MS.get(reg, 267.1))
+    for fam, var, seg, d, reg, hold, n, ms in rows:
+        hold_ms = (hold or 0) * (ms_per_slot or ms)
         h = min(H_ORDER, key=lambda k: abs(hs[k] - hold_ms))
         pr = con.execute("SELECT ret - net, ret, net, day FROM posm WHERE family = ? AND variant = ? AND segment = ? AND d = ? AND regime = ? AND h = ?",
                          [fam, var, seg, d, reg, h]).fetchall()
@@ -250,7 +259,7 @@ def render(con, markout_dir, boot, parts_dir=None, cfg_path=None, ms_per_slot=No
          f"trimmed = 1 % trimmed mean; CI = day bootstrap of the trimmed mean ({boot:,}×); N2 paired per trigger (mean of its matched entries); "
          "cut = share of rows past the store end or the venue's last leg (last known state); dead = share with net ≤ −99 % (the venue cannot pay: a drained pool; "
          "a completed curve is valued on its migration pool, not dead); gross is capped at +1000 % for the trimmed mean; 'ex dead' leaves the dead rows out. "
-         f"Blocks: days 1-9 (< {SPLIT_DAY}), days 10-18 ({SPLIT_DAY} … {LAST_DAY}, the binding window), all days, and the two slot-time regimes (316ms / 267ms, all days). "
+         f"Blocks: days 1-9 (< {SPLIT_DAY}), days 10-18 ({SPLIT_DAY} … {LAST_DAY}, the binding window), all days, and one block per slot-time regime in the rows (ms per slot of the signal's epoch from the store meta, rounded to 10 ms; all days). "
          "Advantage (days 10-18, spec §5, on the conservative net that counts dead rows): the trigger's net trimmed mean > 0 with its day CI > 0, and the N2 twin's own "
          "net trimmed mean (the matched entries of exactly these triggers) not > 0 with its own CI > 0 on the same horizon; the paired Δ is informative, not a criterion. "
          "Rows are deduplicated over runs on (family, segment, venue, mint, pool, t, d, h).\n"]

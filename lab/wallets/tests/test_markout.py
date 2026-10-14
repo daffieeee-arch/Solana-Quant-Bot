@@ -91,7 +91,7 @@ def test_markouts_on_the_mini_store(tmp_path):
     cols = [c[0] for c in con.description]
     R = [dict(zip(cols, r)) for r in rows]
     assert len(R) == 5 * 2 * 8  # signals x delays x (entry + 7 horizons)
-    assert all(r["regime"] == "316ms" for r in R)  # the test store runs at 400 ms per slot (>= 300)
+    assert all(r["regime"] == "400ms" and abs(r["ms_per_slot"] - 400.0) < 1e-9 for r in R)  # the test store's epoch runs at 400 ms per slot
 
     # exit variants share the signal
     p = next(r for r in R if r["pool"] == "P" and r["family"] == "F7" and r["d"] == 1 and r["h"] == "")

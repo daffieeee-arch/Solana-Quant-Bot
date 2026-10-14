@@ -18,8 +18,8 @@ Measure per group on days 10-18 (SPLIT_DAY … LAST_DAY): net P&L per wallet-day
 the change in marked inventory value), its day-bootstrap 95 % CI (whole days, BOOT times, seed 7) and
 two-sided p-value, P&L per SOL deployed, the median wallet P&L, the share of wallets > 0; the sources
 (median hold, snipe share, creator-link share, median buy, fees over turnover). Control tables (spec
-section 3): the same for days 1-9 (in-sample: the label window itself) and per slot-time regime (316ms /
-267ms by day, REGIME_DAY). Placebo (binding table only): for every group PLACEBO draws, with replacement,
+section 3): the same for days 1-9 (in-sample: the label window itself) and per slot-time regime (one block
+per regime label in the rows: the day's epoch ms per slot from the store meta, rounded to 10 ms). Placebo (binding table only): for every group PLACEBO draws, with replacement,
 of as many non-group wallets, one per group wallet from the same stratum (positions decile x active days
 x median-buy decile of the label window; an empty stratum falls back to its neighbours and is reported);
 the number of draws below the group. The bar (spec section 5): mean > 0, Holm over the seven p-values at
@@ -38,9 +38,10 @@ import sys
 import duckdb
 import numpy as np
 
+from wallets.common import REF_MS
+
 SPLIT_DAY, LAST_DAY = "2026-09-20", "2026-09-30"
-REGIME_DAY = "2026-09-18"  # epochs 1033-1036 (316 ms per slot) end on 2026-09-18; days before it count as 316ms, from it on as 267ms
-MS_SQL = f"CASE WHEN day < '{REGIME_DAY}' THEN 316.4 ELSE 267.1 END"
+MS_SQL = "ms_per_slot"  # per wallet-day row, from the store meta (money.py); nothing about regimes is hardcoded here
 MIN_POS = 5
 SNIPE_SHARE = 0.5
 BUNDLER_MIN = 3
@@ -50,9 +51,6 @@ WHALE_SOL, WHALE_MIN_POS = 5.0, 20
 SERVICE_WALLETS, SERVICE_MINTS = 100, 50
 GROUPS = ("creator", "sniper", "bundler", "farmer", "bot", "whale", "retail")
 BOOT, PLACEBO, ALPHA, PLACEBO_SHARE = 10_000, 100, 0.05, 0.95
-MS = {"316ms": 316.4, "267ms": 267.1}
-
-
 def fmt(x, nd=2, pct=False, sign=False):
     if x is None or (isinstance(x, float) and math.isnan(x)):
         return "–"
@@ -65,7 +63,7 @@ def fmt(x, nd=2, pct=False, sign=False):
     return s + ("%" if pct else "")
 
 
-def load(con, money_dir, clusters_dir=None, ms_per_slot=267.1, materialize=True):
+def load(con, money_dir, clusters_dir=None, materialize=True):
     """materialize=False keeps the wallet-day rows (tens of millions on a full run) and the all-days measurement as
     views on the parquet files instead of tables: slower (every statistic rescans the files) but it fits a few GB,
     so the report and its checks can be re-rendered on the VPS."""
@@ -75,12 +73,17 @@ def load(con, money_dir, clusters_dir=None, ms_per_slot=267.1, materialize=True)
     lit = "[" + ",".join(f"'{f}'" for f in files) + "]"
     kind = "TABLE" if materialize else "VIEW"
     con.execute(f"CREATE OR REPLACE {kind} wd AS SELECT * FROM read_parquet({lit}, union_by_name = true)")
+    cols = [c[0] for c in con.execute("SELECT * FROM wd LIMIT 0").description]
+    if "ms_per_slot" not in cols or "regime" not in cols:  # rows from before #231: one 'unknown' regime, holds at the reference ms
+        print(f"wallet-day rows without ms_per_slot / regime (run from before the regime columns): regime 'unknown', {REF_MS} ms per slot", file=sys.stderr)
+        con.execute(f"CREATE OR REPLACE {kind} wd AS SELECT *, {REF_MS}::DOUBLE AS ms_per_slot, 'unknown' AS regime FROM read_parquet({lit}, union_by_name = true)")
     for name in ("payers", "creators", "venue_flows", "marks", "lp_legs"):
         path = os.path.join(money_dir, name + ".parquet")
         if os.path.exists(path):
             con.execute(f"CREATE OR REPLACE TABLE {name} AS SELECT * FROM '{path}'")
         elif name == "lp_legs":
             con.execute("CREATE OR REPLACE TABLE lp_legs (pool VARCHAR, mint VARCHAR, orientation VARCHAR, slot BIGINT, tx_index BIGINT, kind VARCHAR, sol_in BIGINT, depth_pre BIGINT, depth_post BIGINT)")
+    con.execute("CREATE OR REPLACE TABLE wallet_ms AS SELECT wallet, median(ms_per_slot) AS ms FROM wd GROUP BY wallet")
     # label window per wallet
     con.execute(f"""
       CREATE OR REPLACE TABLE win AS
@@ -136,21 +139,22 @@ def load(con, money_dir, clusters_dir=None, ms_per_slot=267.1, materialize=True)
     con.execute(f"""
       CREATE OR REPLACE TABLE labels AS
       SELECT w.wallet, w.measure_from, f.n_positions, f.active_days, f.median_buy_sol, f.snipe_share, f.farmer_share, f.n_pool_legs,
-             f.median_hold_slots * {ms_per_slot} / 1000.0 AS median_hold_s, COALESCE(m.n, 0) AS memberships,
+             f.median_hold_slots * wm.ms / 1000.0 AS median_hold_s, COALESCE(m.n, 0) AS memberships,
              c.how AS creator_how, c.since AS creator_since,
              CASE WHEN COALESCE(f.n_positions, 0) >= {MIN_POS} AND c.since < w.measure_from THEN 'creator'
                   WHEN COALESCE(f.n_positions, 0) >= {MIN_POS} AND f.snipe_share >= {SNIPE_SHARE} THEN 'sniper'
                   WHEN COALESCE(f.n_positions, 0) >= {MIN_POS} AND COALESCE(m.n, 0) >= {BUNDLER_MIN} THEN 'bundler'
                   WHEN COALESCE(f.n_positions, 0) >= {MIN_POS} AND f.n_pool_legs >= {FARMER_MIN_LEGS} AND f.farmer_share >= {FARMER_SHARE} THEN 'farmer'
                   WHEN COALESCE(f.n_positions, 0) >= {MIN_POS} AND f.n_positions::DOUBLE / nullif(f.active_days, 0) >= {BOT_PER_DAY}
-                       AND f.median_hold_slots * {ms_per_slot} / 1000.0 <= {BOT_HOLD_S} THEN 'bot'
+                       AND f.median_hold_slots * wm.ms / 1000.0 <= {BOT_HOLD_S} THEN 'bot'
                   WHEN COALESCE(f.n_positions, 0) >= {WHALE_MIN_POS} AND f.median_buy_sol >= {WHALE_SOL} THEN 'whale'
                   ELSE 'retail' END AS label,
              c.wallet IS NOT NULL AS creator_any, c.since < w.measure_from AS creator_before, f.snipe_share >= {SNIPE_SHARE} AS sniper_any, COALESCE(m.n, 0) >= {BUNDLER_MIN} AS bundler_any,
              f.n_pool_legs >= {FARMER_MIN_LEGS} AND f.farmer_share >= {FARMER_SHARE} AS farmer_any,
-             f.n_positions::DOUBLE / nullif(f.active_days, 0) >= {BOT_PER_DAY} AND f.median_hold_slots * {ms_per_slot} / 1000.0 <= {BOT_HOLD_S} AS bot_any,
+             f.n_positions::DOUBLE / nullif(f.active_days, 0) >= {BOT_PER_DAY} AND f.median_hold_slots * wm.ms / 1000.0 <= {BOT_HOLD_S} AS bot_any,
              COALESCE(f.n_positions, 0) >= {WHALE_MIN_POS} AND f.median_buy_sol >= {WHALE_SOL} AS whale_any
-      FROM win w LEFT JOIN feat f ON f.wallet = w.wallet LEFT JOIN memberships m ON m.wallet = w.wallet LEFT JOIN creator_set c ON c.wallet = w.wallet""")
+      FROM win w LEFT JOIN feat f ON f.wallet = w.wallet LEFT JOIN memberships m ON m.wallet = w.wallet LEFT JOIN creator_set c ON c.wallet = w.wallet
+      LEFT JOIN wallet_ms wm ON wm.wallet = w.wallet""")
     # measurement rows: days 10-18, from the wallet's measure_from
     con.execute(f"""
       CREATE OR REPLACE {kind} meas AS
@@ -272,9 +276,6 @@ def placebo(con, group, draws, boot, seed=7, rows=None):
 
 DRAIN_SHARE = 0.9  # an LP withdrawal that removes >= 90 % of the pool's SOL
 DRAIN_WINDOWS = ((1, "1 min"), (5, "5 min"), (15, "15 min"), (60, "1 h"), (360, "6 h"))
-PARTS_MS = {"320ms": 316.4, "270ms": 267.1}
-
-
 def drains(con, parts_dir):
     """Descriptive (coordinator, 2026-10-12, for the K3 paper's exit and risk rules): how often the LP empties a
     reversed pool after an F7 trigger, and how long after. Trigger = distinct (pool, t) of family F7 in segment
@@ -287,22 +288,23 @@ def drains(con, parts_dir):
     lit = "[" + ",".join(f"'{f}'" for f in files) + "]"
     con.execute(f"""
       CREATE OR REPLACE TABLE trig AS
-      SELECT family, pool, t, any_value(day) AS day, any_value(regime) AS regime
+      SELECT family, pool, t, any_value(day) AS day, any_value(regime) AS regime, median(d_ms / d) AS ms_per_slot
       FROM read_parquet({lit}, union_by_name = true)
-      WHERE family IN ('F7', 'N2_F7') AND segment = 'pool_reversed' AND pool IS NOT NULL GROUP BY family, pool, t""")
+      WHERE family IN ('F7', 'N2_F7') AND segment = 'pool_reversed' AND pool IS NOT NULL AND d > 0 GROUP BY family, pool, t""")
     con.execute(f"""
       CREATE OR REPLACE TABLE drained AS
       SELECT tr.family, tr.pool, tr.t, tr.day, tr.regime, min(d.slot) AS drain_slot,
-             (min(d.slot) - tr.t) * CASE tr.regime WHEN '320ms' THEN {PARTS_MS['320ms']} ELSE {PARTS_MS['270ms']} END / 60000.0 AS minutes
+             (min(d.slot) - tr.t) * tr.ms_per_slot / 60000.0 AS minutes
       FROM trig tr LEFT JOIN (
         SELECT pool, slot FROM lp_legs WHERE kind = 'withdraw' AND depth_pre > 0 AND -sol_in >= {DRAIN_SHARE} * depth_pre) d
       ON d.pool = tr.pool AND d.slot >= tr.t
-      GROUP BY tr.family, tr.pool, tr.t, tr.day, tr.regime""")
+      GROUP BY tr.family, tr.pool, tr.t, tr.day, tr.regime, tr.ms_per_slot""")
     rows = []
-    for label, where in (("F7 triggers, all", "family = 'F7'"), ("F7 triggers, 320ms", "family = 'F7' AND regime = '320ms'"),
-                         ("F7 triggers, 270ms", "family = 'F7' AND regime = '270ms'"),
-                         ("F7 pools (first trigger per pool)", "family = 'F7' AND t = (SELECT min(t) FROM drained x WHERE x.family = 'F7' AND x.pool = drained.pool)"),
-                         ("N2_F7 twins' pools, all", "family = 'N2_F7'")):
+    regimes = [r[0] for r in con.execute("SELECT DISTINCT regime FROM drained WHERE family = 'F7' AND regime IS NOT NULL ORDER BY 1").fetchall()]
+    sets = [("F7 triggers, all", "family = 'F7'")] + [(f"F7 triggers, {r}", f"family = 'F7' AND regime = '{r}'") for r in regimes] + [
+        ("F7 pools (first trigger per pool)", "family = 'F7' AND t = (SELECT min(t) FROM drained x WHERE x.family = 'F7' AND x.pool = drained.pool)"),
+        ("N2_F7 twins' pools, all", "family = 'N2_F7'")]
+    for label, where in sets:
         r = con.execute(f"""
           SELECT count(*), count(DISTINCT pool), avg((drain_slot IS NOT NULL)::INT),
                  {", ".join(f"avg(COALESCE(minutes <= {m}, false)::INT)" for m, _ in DRAIN_WINDOWS)},
@@ -312,7 +314,7 @@ def drains(con, parts_dir):
             rows.append((label,) + tuple(r))
     L = ["### LP drain after an F7 trigger in reversed pools (descriptive, for the K3 paper's exit and risk rules)\n",
          f"Drain = the first LP withdrawal on the trigger's pool at or after the trigger that removes ≥ {DRAIN_SHARE:.0%} of the pool's SOL; "
-         "minutes from the trigger with the regime's ms per slot; 'ever' = drained before the end of the development period. "
+         "minutes from the trigger with the trigger's own ms per slot (d_ms / d of the parts); 'ever' = drained before the end of the development period. "
          "N2 rows: the pools the matched random entries sat in.\n",
          "| set | triggers | pools | drained ever | " + " | ".join(f"≤ {w}" for _, w in DRAIN_WINDOWS) + " | median min | mean min | p90 min |",
          "|---|---|---|---|" + "---|" * len(DRAIN_WINDOWS) + "---|---|---|"]
@@ -369,15 +371,15 @@ def render(con, boot, draws, do_placebo=True, parts_dir=None):
          f"Label window: days 1-9 (< {SPLIT_DAY}), late wallets their first two full active days; labels use only behaviour before the measurement "
          f"(a token created or a fee payer first shared on a measurement day does not count; the whole-period creator flag is a descriptive column). "
          f"Binding measurement {SPLIT_DAY} … {LAST_DAY}; control tables for days 1-9 (in-sample: the label window) and per slot-time regime "
-         f"(316ms = days before {REGIME_DAY}, 267ms from it on; the epoch boundary falls on that day). "
+         "(one per regime label in the rows: the day's epoch ms per slot from the store meta, rounded to 10 ms). "
          f"Net P&L per wallet-day = cash − network fees + Δ marked inventory (last price of the day, capped at the venue's real SOL). "
          f"CI: day bootstrap ({boot:,}×); p: two-sided. Placebo: {draws} draws with replacement of stratum-matched non-group wallets. "
          f"Bar (spec §5): mean > 0, Holm over the 7 groups at α = {ALPHA}, and above ≥ {PLACEBO_SHARE:.0%} of the placebo draws.\n"]
     md, stats = group_table(con, boot, f"Binding: days 10-18 ({SPLIT_DAY} … {LAST_DAY})", "TRUE", "meas", draws, do_placebo)
     L.append(md)
-    for title, where in ((f"Control: days 1-9 (< {SPLIT_DAY}, in-sample)", f"day < '{SPLIT_DAY}'"),
-                         (f"Control: regime 316ms (days < {REGIME_DAY})", f"day < '{REGIME_DAY}'"),
-                         (f"Control: regime 267ms (days ≥ {REGIME_DAY})", f"day >= '{REGIME_DAY}'")):
+    regimes = [r[0] for r in con.execute("SELECT DISTINCT regime FROM wd WHERE regime IS NOT NULL ORDER BY 1").fetchall()]
+    for title, where in [(f"Control: days 1-9 (< {SPLIT_DAY}, in-sample)", f"day < '{SPLIT_DAY}'")] + \
+                        [(f"Control: regime {r} (days whose epoch runs at {r})", f"regime = '{r}'") for r in regimes]:
         md, _ = group_table(con, boot, title, where, "meas_all")
         L.append(md)
     L += ["Sources (binding measurement days):", "", "| group | median hold | snipe share | creator-linked before the measurement | creator-linked whole period | median first buy SOL | fees / turnover |", "|---|---|---|---|---|---|---|"]

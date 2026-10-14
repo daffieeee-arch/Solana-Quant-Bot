@@ -61,6 +61,12 @@ class Clock:
         return max(1, round(duration_ms / self.ms_per_slot(at_slot)))
 
 
+def regime_label(ms_per_slot):
+    """Slot-time regime label of an epoch, its ms per slot rounded to 10 ms (the engine's names: 320ms, 270ms; after
+    Alpenglow 200ms). Always derived from the store meta, never hardcoded (coordinator, 2026-10-14)."""
+    return f"{int(round(ms_per_slot / 10.0) * 10)}ms"
+
+
 def git_commit():
     return subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                           cwd=os.path.dirname(os.path.abspath(__file__))).stdout.strip()

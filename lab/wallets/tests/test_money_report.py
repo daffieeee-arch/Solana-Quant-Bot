@@ -19,7 +19,8 @@ def _rows():
     days = [f"2026-09-{d:02d}" for d in range(11, 31)]
 
     def add(wallet, day, pnl, n_opened=2, n_snipe=0, median_buy=0.2, n_pool=4, n_farmer=0, hold=1000, n_closed=2, n_legs=4):
-        rows.append({"wallet": wallet, "day": day, "cash": pnl, "fees": 0, "paid_by_other": 0, "value_end": 0.0, "dvalue": 0.0, "pnl": float(pnl),
+        rows.append({"wallet": wallet, "day": day, "ms_per_slot": 316.4 if day < "2026-09-18" else 267.1, "regime": "320ms" if day < "2026-09-18" else "270ms",
+                     "cash": pnl, "fees": 0, "paid_by_other": 0, "value_end": 0.0, "dvalue": 0.0, "pnl": float(pnl),
                      "buy_sol": 10 * SOL, "sell_sol": 10 * SOL, "n_legs": n_legs, "n_buys": n_legs // 2, "n_pool_legs": n_pool, "n_farmer_legs": n_farmer,
                      "venue_fees": 0, "n_mints": 2, "n_opened": n_opened, "n_snipe": n_snipe, "median_buy_sol": median_buy * SOL, "n_closed": n_closed,
                      "median_hold_slots": hold})
@@ -65,11 +66,12 @@ def _parts(tmp_path):
     pdir = tmp_path / "parts"
     os.makedirs(pdir)
     rows = []
-    for pool, reg in (("A", "270ms"), ("B", "270ms"), ("C", "320ms")):
+    for pool, reg, ms in (("A", "270ms", 267.1), ("B", "270ms", 267.1), ("C", "320ms", 316.4)):
         for v in ("tp4_T600", "tp6_T600"):
-            rows.append({"family": "F7", "variant": v, "segment": "pool_reversed", "pool": pool, "mint": "M" + pool, "t": 446_300_000, "day": "2026-09-12", "regime": reg})
-    rows.append({"family": "F7", "variant": "tp4_T600", "segment": "pool_reversed", "pool": "A", "mint": "MA", "t": 446_300_050, "day": "2026-09-12", "regime": "270ms"})
-    rows.append({"family": "N2_F7", "variant": "tp4_T600", "segment": "pool_reversed", "pool": "B", "mint": "MB", "t": 446_300_000, "day": "2026-09-12", "regime": "270ms"})
+            rows.append({"family": "F7", "variant": v, "segment": "pool_reversed", "pool": pool, "mint": "M" + pool, "t": 446_300_000, "day": "2026-09-12", "regime": reg,
+                         "d": 2, "d_ms": 2 * ms})
+    rows.append({"family": "F7", "variant": "tp4_T600", "segment": "pool_reversed", "pool": "A", "mint": "MA", "t": 446_300_050, "day": "2026-09-12", "regime": "270ms", "d": 1, "d_ms": 267.1})
+    rows.append({"family": "N2_F7", "variant": "tp4_T600", "segment": "pool_reversed", "pool": "B", "mint": "MB", "t": 446_300_000, "day": "2026-09-12", "regime": "270ms", "d": 1, "d_ms": 267.1})
     pq.write_table(pa.Table.from_pylist(rows), pdir / "part-0.parquet")
     return str(pdir)
 
@@ -98,12 +100,12 @@ def test_labels_groups_holm_and_placebo(tmp_path):
     assert q["draws"] == 20 and q["below"] == 20  # the snipers beat every placebo set of retail-like wallets
     md = R.render(con, 300, 20)
     assert "| sniper |" in md and "**earns**" in md and "| bot |" in md and "with replacement" in md
-    bind = md.index("### Binding"); ctrl = md.index("### Control: days 1-9"); r316 = md.index("### Control: regime 316ms"); r267 = md.index("### Control: regime 267ms")
-    assert bind < ctrl < r316 < r267
+    bind = md.index("### Binding"); ctrl = md.index("### Control: days 1-9"); r267 = md.index("### Control: regime 270ms"); r316 = md.index("### Control: regime 320ms")
+    assert bind < ctrl < r267 < r316  # regime blocks in label order, from the rows
     line = next(l for l in md[bind:ctrl].splitlines() if l.startswith("| bot |"))
     assert line.endswith("**no** |")
-    ctrl_bot = next(l for l in md[ctrl:r316].splitlines() if l.startswith("| bot |"))
-    assert "| 9 |" in ctrl_bot and "verdict" not in md[ctrl:r316].splitlines()[2]  # 9 label days, no verdict on a control table
+    ctrl_bot = next(l for l in md[ctrl:r267].splitlines() if l.startswith("| bot |"))
+    assert "| 9 |" in ctrl_bot and "verdict" not in md[ctrl:r267].splitlines()[2]  # 9 label days, no verdict on a control table
     assert "realised Σ (cash − network fees)" in md and "marked Σ value_end" in md
     # the numpy rows reproduce the per-group mean
     rows = R.Rows(con)
