@@ -297,6 +297,499 @@ pub fn owner_token_deltas(owner: &str, pre: &[(&str, &str, &str)], post: &[(&str
     (!parts.is_empty()).then(|| parts.join(";"))
 }
 
+// ----------------------------------------------------------------------------- token transfers
+// spec-token-transfers-2026-10-15.md v2 (LAB research, sha256 b17d9306): token_deltas,
+// token_transfers and sol_funding, for a measurable insider share and funder graphs. Extractor only
+// (LAB_TRANSFERS=1 with LAB_PUMP_MINTS); the recorder includes this file but never enables them.
+
+const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
+/// sol_funding: the smallest SOL funding of a new wallet that counts (0.001 SOL).
+pub const FUNDING_MIN_LAMPORTS: u64 = 1_000_000;
+
+const TOKEN_DELTA_COLS: [(&str, Kind); 12] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("mint", Kind::Utf8),
+    ("owner", Kind::Utf8),
+    // NULL when the owner has more than one account of the mint in the transaction.
+    ("token_account", Kind::Utf8),
+    // i128 as text: a u64 balance can move by more than an i64 holds.
+    ("delta_raw", Kind::Utf8),
+    ("decimals", Kind::U64),
+    // The owner is a program-derived address (off the ed25519 curve): a curve or pool vault.
+    ("is_vault", Kind::Bool),
+    ("has_pump_event", Kind::Bool),
+    ("has_pump_event_same_mint", Kind::Bool),
+    ("fee_payer", Kind::Utf8),
+    ("failed", Kind::Bool),
+];
+
+const TOKEN_TRANSFER_COLS: [(&str, Kind); 19] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    // "<outer>" or "<outer>.<inner>" (the inner position as the event tables' inner_ix).
+    ("ix_path", Kind::Utf8),
+    ("program", Kind::Utf8),
+    ("kind", Kind::Utf8),
+    ("mint", Kind::Utf8),
+    ("source_account", Kind::Utf8),
+    ("source_owner", Kind::Utf8),
+    ("dest_account", Kind::Utf8),
+    ("dest_owner", Kind::Utf8),
+    ("authority", Kind::Utf8),
+    ("amount_raw", Kind::U64),
+    ("decimals", Kind::U64),
+    // The program that invoked the token instruction (label or id); NULL at the top level.
+    ("outer_program", Kind::Utf8),
+    // Invoked by a DEX or router: the trade itself (the store has it), not a graph edge.
+    ("in_trade", Kind::Bool),
+    ("owner_unresolved", Kind::Bool),
+    ("fee_payer", Kind::Utf8),
+    ("has_pump_event", Kind::Bool),
+    ("failed", Kind::Bool),
+];
+
+const SOL_FUNDING_COLS: [(&str, Kind); 10] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("ix_path", Kind::Utf8),
+    // "from" / "to" in the spec; named apart from the SQL keywords.
+    ("from_account", Kind::Utf8),
+    ("to_account", Kind::Utf8),
+    ("lamports", Kind::U64),
+    ("kind", Kind::Utf8),
+    ("fee_payer", Kind::Utf8),
+    ("has_pump_event", Kind::Bool),
+    ("failed", Kind::Bool),
+];
+
+/// An SPL Token / Token-2022 instruction token_transfers keeps, with the positions of its
+/// accounts in the instruction's account list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenIx {
+    pub kind: &'static str,
+    pub amount: Option<u64>,
+    pub decimals: Option<u8>,
+    pub source: Option<usize>,
+    pub mint: Option<usize>,
+    pub dest: Option<usize>,
+    pub authority: Option<usize>,
+}
+
+/// Transfer (3), TransferChecked (12), MintTo (7) / MintToChecked (14), Burn (8) / BurnChecked (15)
+/// and CloseAccount (9); None for any other instruction or a short one.
+pub fn parse_token_ix(data: &[u8], n_accounts: usize) -> Option<TokenIx> {
+    let amount = data.get(1..9).map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")));
+    let decimals = data.get(9).copied();
+    let ix = |kind, amount: Option<u64>, decimals: Option<u8>, source, mint, dest, authority, need: usize| {
+        (n_accounts >= need).then_some(TokenIx { kind, amount, decimals, source, mint, dest, authority })
+    };
+    match *data.first()? {
+        3 => ix("transfer", Some(amount?), None, Some(0), None, Some(1), Some(2), 3),
+        12 => ix("transfer_checked", Some(amount?), Some(decimals?), Some(0), Some(1), Some(2), Some(3), 4),
+        7 => ix("mint_to", Some(amount?), None, None, Some(0), Some(1), Some(2), 3),
+        14 => ix("mint_to", Some(amount?), Some(decimals?), None, Some(0), Some(1), Some(2), 3),
+        8 => ix("burn", Some(amount?), None, Some(0), Some(1), None, Some(2), 3),
+        15 => ix("burn", Some(amount?), Some(decimals?), Some(0), Some(1), None, Some(2), 3),
+        // The lamports go to account 1; the tokens have no counterparty.
+        9 => ix("close_account", None, None, Some(0), None, None, Some(2), 3),
+        _ => None,
+    }
+}
+
+/// A System instruction that can fund a wallet: ("transfer", lamports) for Transfer (2), and
+/// ("create_account", lamports) for CreateAccount (0) of an account the System program owns (a
+/// wallet, not a program or token account). Accounts: from = 0, to = 1.
+pub fn parse_system_funding(data: &[u8], n_accounts: usize) -> Option<(&'static str, u64)> {
+    if n_accounts < 2 || data.len() < 12 {
+        return None;
+    }
+    let lamports = u64::from_le_bytes(data[4..12].try_into().expect("8 bytes"));
+    match u32::from_le_bytes(data[0..4].try_into().expect("4 bytes")) {
+        2 => Some(("transfer", lamports)),
+        0 if data.len() >= 52 && data[20..52].iter().all(|&b| b == 0) => Some(("create_account", lamports)),
+        _ => None,
+    }
+}
+
+/// One token balance row: account position, mint, owner, raw amount, decimals.
+#[derive(Debug, Clone, Copy)]
+pub struct Bal<'a> {
+    pub idx: u8,
+    pub mint: &'a str,
+    pub owner: &'a str,
+    pub amount: u128,
+    pub decimals: u8,
+}
+
+/// Net change per (mint, owner) over the balance rows (post minus pre), without zero changes:
+/// (mint, owner, delta, the account position when the owner has one account of the mint, decimals).
+pub fn mint_owner_deltas<'a>(pre: &[Bal<'a>], post: &[Bal<'a>]) -> Vec<(&'a str, &'a str, i128, Option<u8>, u8)> {
+    let mut m: std::collections::BTreeMap<(&str, &str), (i128, std::collections::BTreeSet<u8>, u8)> = Default::default();
+    for (sign, list) in [(-1i128, pre), (1i128, post)] {
+        for b in list {
+            let e = m.entry((b.mint, b.owner)).or_insert((0, Default::default(), b.decimals));
+            e.0 += sign * i128::try_from(b.amount).unwrap_or(i128::MAX);
+            e.1.insert(b.idx);
+        }
+    }
+    m.into_iter()
+        .filter(|(_, (d, _, _))| *d != 0)
+        .map(|((mint, owner), (d, accounts, dec))| (mint, owner, d, (accounts.len() == 1).then(|| *accounts.iter().next().unwrap()), dec))
+        .collect()
+}
+
+/// The token flows the store's legs in a transaction explain, summed per (mint, owner), where
+/// owner None is the curve's vault (owned by the bonding curve PDA): a curve trade moves the
+/// trader's tokens against it; a pool trade against the pool's vault (owner: the pool). Normal
+/// pools (WSOL quote) move the base; reversed pools (WSOL base, the token as quote, fee in tokens)
+/// move the quote as the store records it: the trader the user amount, the vault
+/// quote_amount_in_with_lp_fee in and quote_amount_out_without_lp_fee out.
+pub fn store_legs(rows: &[Row]) -> std::collections::BTreeMap<(String, Option<String>), i128> {
+    let field = |r: &Row, name: &str| r.columns.iter().position(|(n, _)| n == name).and_then(|i| r.values.get(i).cloned());
+    let s = |r: &Row, name: &str| match field(r, name) {
+        Some(Val::Str(v)) => Some(v),
+        _ => None,
+    };
+    let u = |r: &Row, name: &str| match field(r, name) {
+        Some(Val::U64(v)) => Some(i128::from(v)),
+        _ => None,
+    };
+    let mut out: std::collections::BTreeMap<(String, Option<String>), i128> = Default::default();
+    let mut add = |mint: String, owner: Option<String>, d: i128| *out.entry((mint, owner)).or_insert(0) += d;
+    for r in rows {
+        match &*r.table {
+            "pump/TradeEvent" => {
+                let (Some(mint), Some(user), Some(t)) = (s(r, "mint"), s(r, "user"), u(r, "token_amount")) else { continue };
+                let d = if matches!(field(r, "is_buy"), Some(Val::Bool(true))) { t } else { -t };
+                add(mint.clone(), Some(user), d);
+                add(mint, None, -d);
+            }
+            "pump_amm/BuyEvent" | "pump_amm/SellEvent" => {
+                let buy = r.table.ends_with("BuyEvent");
+                let (Some(user), Some(pool), Some(base_mint), Some(quote_mint)) =
+                    (s(r, "user"), s(r, "pool"), s(r, "ix_base_mint"), s(r, "ix_quote_mint"))
+                else {
+                    continue;
+                };
+                if quote_mint == WSOL_MINT {
+                    let Some(b) = u(r, if buy { "base_amount_out" } else { "base_amount_in" }) else { continue };
+                    let d = if buy { b } else { -b };
+                    add(base_mint.clone(), Some(user), d);
+                    add(base_mint, Some(pool), -d);
+                } else if base_mint == WSOL_MINT {
+                    let (user_d, vault_d) = if buy {
+                        (u(r, "user_quote_amount_in").map(|x| -x), u(r, "quote_amount_in_with_lp_fee"))
+                    } else {
+                        (u(r, "user_quote_amount_out"), u(r, "quote_amount_out_without_lp_fee").map(|x| -x))
+                    };
+                    if let Some(x) = user_d {
+                        add(quote_mint.clone(), Some(user), x);
+                    }
+                    if let Some(x) = vault_d {
+                        add(quote_mint, Some(pool), x);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A (mint, owner) change the store's legs explain: equal to their sum for that owner, or, for a
+/// vault owner, to the curve vault's.
+pub fn explained(legs: &std::collections::BTreeMap<(String, Option<String>), i128>, mint: &str, owner: &str, is_vault: bool, delta: i128) -> bool {
+    legs.get(&(mint.to_owned(), Some(owner.to_owned()))) == Some(&delta) || (is_vault && legs.get(&(mint.to_owned(), None)) == Some(&delta))
+}
+
+/// Off the ed25519 curve: a program-derived address (a vault's owner), not a wallet.
+pub fn is_pda(b58: &str) -> bool {
+    match bs58::decode(b58).into_vec().ok().and_then(|v| <[u8; 32]>::try_from(v).ok()) {
+        Some(k) => !solana_message::Address::from(k).is_on_curve(),
+        None => false,
+    }
+}
+
+/// One instruction of a transaction in execution order, with the program that invoked it.
+pub struct IxView<'a> {
+    pub path: String,
+    pub program: Option<&'a [u8]>,
+    pub accounts: &'a [u8],
+    pub data: &'a [u8],
+    pub parent: Option<&'a [u8]>,
+}
+
+/// The parts of a transaction the three tables read.
+pub struct TxView<'a> {
+    pub slot: u64,
+    pub tx_index: u64,
+    pub fee_payer: String,
+    pub failed: bool,
+    pub keys: Vec<&'a [u8]>,
+    pub ixs: Vec<IxView<'a>>,
+    pub pre_lamports: &'a [u64],
+    pub pre_tokens: Vec<Bal<'a>>,
+    pub post_tokens: Vec<Bal<'a>>,
+}
+
+/// The extractor's token transfer tables (LAB_TRANSFERS=1): the pump.fun mint set and the columns.
+pub struct Transfers {
+    mints: std::collections::HashSet<String>,
+    /// Mints created in the chunk (CreateEvent), learned while extracting.
+    learned: std::sync::RwLock<std::collections::HashSet<String>>,
+    pub mints_file: Option<String>,
+    token: Key,
+    token2022: Key,
+    system: Key,
+    delta_cols: Columns,
+    transfer_cols: Columns,
+    funding_cols: Columns,
+    delta_table: Arc<str>,
+    transfer_table: Arc<str>,
+    funding_table: Arc<str>,
+}
+
+impl Transfers {
+    pub fn new(mints: std::collections::HashSet<String>, mints_file: Option<String>) -> Self {
+        Self {
+            mints,
+            learned: Default::default(),
+            mints_file,
+            token: key(TOKEN_PROGRAM),
+            token2022: key(TOKEN_2022),
+            system: key(SYSTEM_PROGRAM),
+            delta_cols: cols(&TOKEN_DELTA_COLS),
+            transfer_cols: cols(&TOKEN_TRANSFER_COLS),
+            funding_cols: cols(&SOL_FUNDING_COLS),
+            delta_table: Arc::from("token_deltas"),
+            transfer_table: Arc::from("token_transfers"),
+            funding_table: Arc::from("sol_funding"),
+        }
+    }
+
+    /// LAB_TRANSFERS=1 turns the tables on; LAB_PUMP_MINTS is then a file with one mint per line (the
+    /// store's mints). Off otherwise (the recorder never sets it).
+    pub fn from_env() -> anyhow::Result<Option<Self>> {
+        if std::env::var("LAB_TRANSFERS").map_or(true, |v| v != "1") {
+            return Ok(None);
+        }
+        let path = std::env::var("LAB_PUMP_MINTS").map_err(|_| anyhow::anyhow!("LAB_TRANSFERS=1 needs LAB_PUMP_MINTS (a file of mints)"))?;
+        let text = std::fs::read_to_string(&path).map_err(|e| anyhow::anyhow!("LAB_PUMP_MINTS {path}: {e}"))?;
+        let mints = text.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_owned).collect();
+        Ok(Some(Self::new(mints, Some(path))))
+    }
+
+    pub fn n_mints(&self) -> usize {
+        self.mints.len()
+    }
+
+    /// A pump.fun mint: in the store's set, created in this chunk, or with the pump.fun "pump" suffix
+    /// (most mints; a superset that also takes rare vanity mints of other launchpads).
+    pub fn is_pump(&self, mint: &str) -> bool {
+        mint.ends_with("pump") || self.mints.contains(mint) || self.learned.read().map_or(false, |l| l.contains(mint))
+    }
+
+    fn learn(&self, rows: &[Row]) {
+        for r in rows.iter().filter(|r| &*r.table == "pump/CreateEvent") {
+            if let Some(i) = r.columns.iter().position(|(n, _)| n == "mint") {
+                if let Some(Val::Str(m)) = r.values.get(i) {
+                    if let Ok(mut l) = self.learned.write() {
+                        l.insert(m.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// The three tables' rows of one transaction. `core` holds its event rows (the store's legs);
+    /// `labels` names the invoking programs.
+    pub fn rows(&self, tx: &TxView, core: &[Row], labels: &HashMap<Key, (&'static str, Class)>) -> Vec<Row> {
+        self.learn(core);
+        let b58 = |b: &[u8]| bs58::encode(b).into_string();
+        let key_of = |pos: Option<usize>, accounts: &[u8]| pos.and_then(|p| accounts.get(p)).and_then(|&a| tx.keys.get(usize::from(a)).copied());
+        let has_event = core.iter().any(|r| matches!(&*r.table, "pump/TradeEvent" | "pump_amm/BuyEvent" | "pump_amm/SellEvent"));
+        let legs = store_legs(core);
+        let mut out = Vec::new();
+        let base = |values: Vec<Val>| -> Vec<Val> {
+            let mut v = vec![Val::U64(tx.slot), Val::U64(tx.tx_index)];
+            v.extend(values);
+            v
+        };
+
+        // token_deltas: net change per (mint, owner) of pump mints, minus what the store's legs explain.
+        for (mint, owner, d, account, dec) in mint_owner_deltas(&tx.pre_tokens, &tx.post_tokens) {
+            if !self.is_pump(mint) {
+                continue;
+            }
+            let vault = is_pda(owner);
+            if explained(&legs, mint, owner, vault, d) {
+                continue;
+            }
+            let same_mint = legs.keys().any(|(m, _)| m == mint);
+            out.push(Row {
+                table: self.delta_table.clone(),
+                columns: self.delta_cols.clone(),
+                values: base(vec![
+                    Val::Str(mint.to_owned()),
+                    Val::Str(owner.to_owned()),
+                    account.and_then(|a| tx.keys.get(usize::from(a))).map_or(Val::Null, |k| Val::Str(b58(*k))),
+                    Val::Str(d.to_string()),
+                    Val::U64(u64::from(dec)),
+                    Val::Bool(vault),
+                    Val::Bool(has_event),
+                    Val::Bool(same_mint),
+                    Val::Str(tx.fee_payer.clone()),
+                    Val::Bool(tx.failed),
+                ]),
+            });
+        }
+
+        // token_transfers and sol_funding, per instruction in execution order.
+        let bal_of = |key: Option<&[u8]>| {
+            key.and_then(|k| tx.keys.iter().position(|x| *x == k))
+                .and_then(|pos| tx.post_tokens.iter().chain(tx.pre_tokens.iter()).find(|b| usize::from(b.idx) == pos).copied())
+        };
+        for ix in &tx.ixs {
+            let Some(program) = ix.program else { continue };
+            if program == self.token.as_slice() || program == self.token2022.as_slice() {
+                let Some(t) = parse_token_ix(ix.data, ix.accounts.len()) else { continue };
+                let (src, dst, mint_key, auth) =
+                    (key_of(t.source, ix.accounts), key_of(t.dest, ix.accounts), key_of(t.mint, ix.accounts), key_of(t.authority, ix.accounts));
+                let (sb, db) = (bal_of(src), bal_of(dst));
+                let mint = mint_key.map(b58).or_else(|| sb.or(db).map(|b| b.mint.to_owned()));
+                let Some(mint) = mint.filter(|m| self.is_pump(m)) else { continue };
+                let unresolved = (src.is_some() && sb.is_none()) || (dst.is_some() && db.is_none());
+                let parent = ix.parent.and_then(|p| <[u8; 32]>::try_from(p).ok());
+                let (outer_label, in_trade) = match parent {
+                    Some(p) => match labels.get(&p) {
+                        Some((name, class)) => (Val::Str((*name).to_owned()), matches!(class, Class::Dex | Class::Router)),
+                        None => (Val::Str(b58(&p)), false),
+                    },
+                    None => (Val::Null, false),
+                };
+                out.push(Row {
+                    table: self.transfer_table.clone(),
+                    columns: self.transfer_cols.clone(),
+                    values: base(vec![
+                        Val::Str(ix.path.clone()),
+                        Val::Str(if program == self.token.as_slice() { "token" } else { "token2022" }.to_owned()),
+                        Val::Str(t.kind.to_owned()),
+                        Val::Str(mint),
+                        src.map_or(Val::Null, |k| Val::Str(b58(k))),
+                        sb.map_or(Val::Null, |b| Val::Str(b.owner.to_owned())),
+                        dst.map_or(Val::Null, |k| Val::Str(b58(k))),
+                        db.map_or(Val::Null, |b| Val::Str(b.owner.to_owned())),
+                        auth.map_or(Val::Null, |k| Val::Str(b58(k))),
+                        t.amount.map_or(Val::Null, Val::U64),
+                        t.decimals.map(u64::from).or_else(|| sb.or(db).map(|b| u64::from(b.decimals))).map_or(Val::Null, Val::U64),
+                        outer_label,
+                        Val::Bool(in_trade),
+                        Val::Bool(unresolved),
+                        Val::Str(tx.fee_payer.clone()),
+                        Val::Bool(has_event),
+                        Val::Bool(tx.failed),
+                    ]),
+                });
+            } else if program == self.system.as_slice() {
+                let Some((kind, lamports)) = parse_system_funding(ix.data, ix.accounts.len()) else { continue };
+                if lamports < FUNDING_MIN_LAMPORTS {
+                    continue;
+                }
+                let Some(&to_pos) = ix.accounts.get(1) else { continue };
+                // A wallet birth: the receiver held no SOL before the transaction.
+                if tx.pre_lamports.get(usize::from(to_pos)) != Some(&0) {
+                    continue;
+                }
+                let (Some(from), Some(to)) = (key_of(Some(0), ix.accounts), key_of(Some(1), ix.accounts)) else { continue };
+                out.push(Row {
+                    table: self.funding_table.clone(),
+                    columns: self.funding_cols.clone(),
+                    values: base(vec![
+                        Val::Str(ix.path.clone()),
+                        Val::Str(b58(from)),
+                        Val::Str(b58(to)),
+                        Val::U64(lamports),
+                        Val::Str(kind.to_owned()),
+                        Val::Str(tx.fee_payer.clone()),
+                        Val::Bool(has_event),
+                        Val::Bool(tx.failed),
+                    ]),
+                });
+            }
+        }
+        out
+    }
+}
+
+/// A transaction as the token transfer tables read it: account keys, instructions in execution
+/// order (each top-level one, then its inner ones) with the program that invoked each, and the
+/// pre-balances.
+fn tx_view(tx: &TransactionData) -> TxView<'_> {
+    let msg = &tx.transaction.message;
+    let meta = &tx.transaction_status_meta;
+    let mut keys: Vec<&[u8]> = msg.static_account_keys().iter().map(AsRef::as_ref).collect();
+    keys.extend(meta.loaded_addresses.writable.iter().map(AsRef::as_ref));
+    keys.extend(meta.loaded_addresses.readonly.iter().map(AsRef::as_ref));
+    let key = |i: u8| keys.get(usize::from(i)).copied();
+    let inner_groups = meta.inner_instructions.as_deref().unwrap_or(&[]);
+    let mut ixs = Vec::new();
+    for (i, ix) in msg.instructions().iter().enumerate() {
+        let outer_program = key(ix.program_id_index);
+        ixs.push(IxView { path: i.to_string(), program: outer_program, accounts: &ix.accounts, data: &ix.data, parent: None });
+        for group in inner_groups.iter().filter(|g| usize::from(g.index) == i) {
+            for (j, inner) in group.instructions.iter().enumerate() {
+                // The invoker: the nearest earlier instruction one level up; the top-level one at
+                // height 2 or without heights.
+                let parent = match inner.stack_height {
+                    Some(h) if h > 2 => group.instructions[..j]
+                        .iter()
+                        .rev()
+                        .find(|p| p.stack_height == Some(h - 1))
+                        .and_then(|p| key(p.instruction.program_id_index)),
+                    _ => outer_program,
+                };
+                ixs.push(IxView {
+                    path: format!("{i}.{j}"),
+                    program: key(inner.instruction.program_id_index),
+                    accounts: &inner.instruction.accounts,
+                    data: &inner.instruction.data,
+                    parent,
+                });
+            }
+        }
+    }
+    // The same conversion for both lists (the balance type is not a direct dependency to name).
+    macro_rules! bals {
+        ($list:expr) => {
+            $list
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|b| Bal {
+                    idx: b.account_index,
+                    mint: b.mint.as_str(),
+                    owner: b.owner.as_str(),
+                    amount: b.ui_token_amount.amount.parse().unwrap_or(0),
+                    decimals: b.ui_token_amount.decimals,
+                })
+                .collect::<Vec<Bal>>()
+        };
+    }
+    TxView {
+        slot: tx.slot,
+        tx_index: tx.transaction_slot_index as u64,
+        fee_payer: msg.static_account_keys().first().map(|k| bs58::encode(k).into_string()).unwrap_or_default(),
+        failed: meta.status.is_err(),
+        pre_tokens: bals!(meta.pre_token_balances),
+        post_tokens: bals!(meta.post_token_balances),
+        pre_lamports: &meta.pre_balances,
+        keys,
+        ixs,
+    }
+}
+
 fn cols(spec: &[(&str, Kind)]) -> Columns {
     Arc::new(spec.iter().map(|(n, k)| ((*n).to_owned(), *k)).collect())
 }
@@ -372,6 +865,8 @@ pub struct LabPlugin {
     /// block or as a skipped slot.
     coverage: Arc<Coverage>,
     pub fatal: Arc<AtomicBool>,
+    /// token_deltas, token_transfers and sol_funding (LAB_TRANSFERS=1; the extractor only).
+    pub transfers: Option<Transfers>,
 }
 
 pub struct Coverage {
@@ -465,6 +960,7 @@ impl LabPlugin {
             counters: Arc::new(Counters::default()),
             coverage,
             fatal: Arc::new(AtomicBool::new(false)),
+            transfers: Transfers::from_env()?,
         })
     }
 
@@ -477,8 +973,19 @@ impl LabPlugin {
         }
     }
 
-    /// Extract all rows for one transaction. Public for tests.
+    /// Extract all rows for one transaction. Public for tests. With LAB_TRANSFERS=1 every transaction
+    /// is also read for the token transfer tables (a plain token transfer or a wallet's funding does
+    /// not touch pump.fun); the other tables are exactly as without them.
     pub fn rows_for(&self, tx: &TransactionData) -> Vec<Row> {
+        let mut rows = self.core_rows(tx);
+        if let Some(t) = &self.transfers {
+            let extra = t.rows(&tx_view(tx), &rows, &self.labels);
+            rows.extend(extra);
+        }
+        rows
+    }
+
+    fn core_rows(&self, tx: &TransactionData) -> Vec<Row> {
         let msg = &tx.transaction.message;
         let meta = &tx.transaction_status_meta;
         let static_keys = msg.static_account_keys();
@@ -1045,9 +1552,13 @@ impl Plugin for LabPlugin {
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_token_metadata, is_http_429, key, owner_token_deltas, summarize_calls, Class, PROGRAM_LABELS, PUMP_AMM_IDL,
-        PUMP_IDL, TOKEN_METADATA_INIT,
+        decode_token_metadata, explained, is_http_429, is_pda, key, mint_owner_deltas, owner_token_deltas, parse_system_funding,
+        parse_token_ix, store_legs, summarize_calls, Bal, Class, IxView, TokenIx, Transfers, TxView, FUNDING_MIN_LAMPORTS,
+        PROGRAM_LABELS, PUMP_AMM_IDL, PUMP_IDL, TOKEN_METADATA_INIT,
     };
+    use crate::idl::{Kind, Val};
+    use crate::sink::Row;
+    use std::sync::Arc;
     use crate::idl::Idl;
 
     fn borsh(parts: &[&str]) -> Vec<u8> {
@@ -1137,4 +1648,193 @@ mod tests {
         assert!(!is_http_429("slot 454429001 not found in index https://example/1051"));
         assert!(!is_http_429("Timeout while waiting for operation: seek_to_slot 454290000"));
     }
+
+    // ------------------------------------------------------------------ token transfers
+
+    fn amount_ix(disc: u8, amount: u64, decimals: Option<u8>) -> Vec<u8> {
+        let mut d = vec![disc];
+        d.extend(amount.to_le_bytes());
+        d.extend(decimals);
+        d
+    }
+
+    #[test]
+    fn token_instructions_parse_with_their_account_positions() {
+        let t = parse_token_ix(&amount_ix(3, 1_000, None), 3).unwrap();
+        assert_eq!((t.kind, t.amount, t.source, t.dest, t.authority, t.mint), ("transfer", Some(1_000), Some(0), Some(1), Some(2), None));
+        assert_eq!(parse_token_ix(&amount_ix(3, 1_000, None), 2), None); // too few accounts
+        let t = parse_token_ix(&amount_ix(12, 7, Some(6)), 4).unwrap();
+        assert_eq!(t, TokenIx { kind: "transfer_checked", amount: Some(7), decimals: Some(6), source: Some(0), mint: Some(1), dest: Some(2), authority: Some(3) });
+        assert_eq!(parse_token_ix(&amount_ix(14, 5, Some(6)), 3).map(|t| (t.kind, t.mint, t.dest)), Some(("mint_to", Some(0), Some(1))));
+        assert_eq!(parse_token_ix(&amount_ix(15, 5, Some(6)), 3).map(|t| (t.kind, t.source, t.mint, t.dest)), Some(("burn", Some(0), Some(1), None)));
+        assert_eq!(parse_token_ix(&[9], 3).map(|t| (t.kind, t.amount, t.dest)), Some(("close_account", None, None)));
+        assert_eq!(parse_token_ix(&[1], 4), None); // InitializeAccount
+        assert_eq!(parse_token_ix(&[3, 1, 2], 3), None); // cut-off amount
+        assert_eq!(parse_token_ix(&amount_ix(12, 7, None), 4), None); // TransferChecked without decimals
+    }
+
+    fn system_ix(disc: u32, lamports: u64, owner: Option<[u8; 32]>) -> Vec<u8> {
+        let mut d = disc.to_le_bytes().to_vec();
+        d.extend(lamports.to_le_bytes());
+        if let Some(o) = owner {
+            d.extend(0u64.to_le_bytes()); // space
+            d.extend(o);
+        }
+        d
+    }
+
+    #[test]
+    fn system_funding_is_a_transfer_or_a_wallet_creation() {
+        assert_eq!(parse_system_funding(&system_ix(2, 5_000_000, None), 2), Some(("transfer", 5_000_000)));
+        assert_eq!(parse_system_funding(&system_ix(0, 9_000_000, Some([0; 32])), 2), Some(("create_account", 9_000_000)));
+        assert_eq!(parse_system_funding(&system_ix(0, 9_000_000, Some([7; 32])), 2), None); // a program-owned account
+        assert_eq!(parse_system_funding(&system_ix(2, 5, None), 1), None);
+        assert_eq!(parse_system_funding(&system_ix(1, 5, None), 2), None); // Assign
+    }
+
+    fn bal(idx: u8, mint: &'static str, owner: &'static str, amount: u128) -> Bal<'static> {
+        Bal { idx, mint, owner, amount, decimals: 6 }
+    }
+
+    #[test]
+    fn deltas_per_mint_and_owner_over_all_their_accounts() {
+        let pre = [bal(1, "M", "A", 500), bal(2, "M", "A", 100), bal(3, "M", "B", 50), bal(4, "N", "C", 9)];
+        let post = [bal(1, "M", "A", 300), bal(2, "M", "A", 100), bal(5, "M", "D", 250), bal(4, "N", "C", 9)];
+        assert_eq!(mint_owner_deltas(&pre, &post), vec![("M", "A", -200, None, 6), ("M", "B", -50, Some(3), 6), ("M", "D", 250, Some(5), 6)]);
+    }
+
+    fn event(table: &str, fields: &[(&str, Val)]) -> Row {
+        Row {
+            table: Arc::from(table),
+            columns: Arc::new(fields.iter().map(|(n, v)| ((*n).to_owned(), if matches!(v, Val::Str(_)) { Kind::Utf8 } else { Kind::U64 })).collect()),
+            values: fields.iter().map(|(_, v)| v.clone()).collect(),
+        }
+    }
+
+    fn st(v: &str) -> Val {
+        Val::Str(v.to_owned())
+    }
+
+    const WSOL: &str = "So11111111111111111111111111111111111111112";
+
+    #[test]
+    fn store_legs_explain_trader_and_vault_flows() {
+        let rows = [
+            event("pump/TradeEvent", &[("mint", st("M")), ("user", st("U")), ("token_amount", Val::U64(500)), ("is_buy", Val::Bool(true))]),
+            event("pump_amm/BuyEvent", &[("user", st("U")), ("pool", st("P")), ("ix_base_mint", st("M")), ("ix_quote_mint", st(WSOL)),
+                                         ("base_amount_out", Val::U64(70))]),
+            // A reversed pool (WSOL base, token R as quote, fee in tokens): selling WSOL for R.
+            event("pump_amm/SellEvent", &[("user", st("V")), ("pool", st("Q")), ("ix_base_mint", st(WSOL)), ("ix_quote_mint", st("R")),
+                                          ("user_quote_amount_out", Val::U64(90)), ("quote_amount_out_without_lp_fee", Val::U64(95))]),
+        ];
+        let legs = store_legs(&rows);
+        assert_eq!(legs.get(&("M".to_owned(), Some("U".to_owned()))), Some(&570)); // curve 500 + pool 70, summed
+        assert_eq!(legs.get(&("M".to_owned(), None)), Some(&-500)); // the curve's vault
+        assert_eq!(legs.get(&("M".to_owned(), Some("P".to_owned()))), Some(&-70)); // the pool's vault
+        assert_eq!((legs.get(&("R".to_owned(), Some("V".to_owned()))), legs.get(&("R".to_owned(), Some("Q".to_owned())))), (Some(&90), Some(&-95)));
+        assert!(explained(&legs, "M", "U", false, 570) && !explained(&legs, "M", "U", false, 500));
+        assert!(explained(&legs, "M", "CurveVaultOwner", true, -500) && !explained(&legs, "M", "SomeWallet", false, -500));
+    }
+
+    /// A key on (wallet) or off (program-derived) the ed25519 curve, deterministic.
+    fn test_key(seed: u8, on_curve: bool) -> [u8; 32] {
+        (0u8..=255).map(|i| [seed; 31].iter().copied().chain([i]).collect::<Vec<u8>>())
+            .map(|v| <[u8; 32]>::try_from(v).unwrap())
+            .find(|k| solana_message::Address::from(*k).is_on_curve() == on_curve)
+            .unwrap()
+    }
+
+    fn b58(k: &[u8]) -> String {
+        bs58::encode(k).into_string()
+    }
+
+    fn col<'a>(r: &'a Row, name: &str) -> &'a Val {
+        &r.values[r.columns.iter().position(|(n, _)| n == name).unwrap()]
+    }
+
+    #[test]
+    fn insider_transfers_wallet_births_and_explained_trades() {
+        let payer = test_key(1, true);
+        let (insider, buyer, fresh) = (test_key(2, true), test_key(3, true), test_key(4, true));
+        let (ins_ata, buyer_ata, fresh_ata) = (test_key(5, true), test_key(6, true), test_key(7, true));
+        let mint = test_key(8, true);
+        let curve = test_key(9, false); // the bonding curve PDA owns the curve's vault
+        let curve_ata = test_key(10, true);
+        let token = key("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+        let system = key("11111111111111111111111111111111");
+        let pump = key("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
+        let keys: Vec<&[u8]> =
+            vec![&payer[..], &ins_ata[..], &buyer_ata[..], &fresh_ata[..], &mint[..], &token[..], &system[..], &fresh[..], &curve_ata[..], &pump[..]];
+        let (m, ins, buy, cv) = (b58(&mint), b58(&insider), b58(&buyer), b58(&curve));
+        let mints = std::collections::HashSet::from([m.clone()]);
+        let t = Transfers::new(mints, None);
+        let leak: fn(String) -> &'static str = |s| Box::leak(s.into_boxed_str());
+        let (m, ins, buy, cv) = (leak(m), leak(ins), leak(buy), leak(cv));
+        let fresh_s = b58(&fresh);
+        // Pre: insider 5,000, buyer none, curve vault 10,000. The transaction: the buyer buys 500 on
+        // the curve (explained), the insider sends 1,000 to a fresh wallet's account (top level), the
+        // curve's transfer to the buyer runs inside pump (a trade); the payer funds the fresh wallet
+        // with 0.002 SOL (a birth) and the insider with 0.005 SOL (not a birth).
+        let pre = vec![bal(1, m, ins, 5_000), bal(8, m, cv, 10_000)];
+        let post = vec![bal(1, m, ins, 4_000), bal(2, m, buy, 500), bal(3, m, "FreshOwnerUnused", 0), bal(8, m, cv, 9_500)];
+        let post: Vec<Bal> = post.into_iter().map(|b| if b.idx == 3 { Bal { owner: leak(fresh_s.clone()), amount: 1_000, ..b } } else { b }).collect();
+        let transfer = amount_ix(12, 1_000, Some(6));
+        let curve_out = amount_ix(3, 500, None);
+        let birth = system_ix(2, 2 * FUNDING_MIN_LAMPORTS, None);
+        let not_birth = system_ix(2, 5 * FUNDING_MIN_LAMPORTS, None);
+        let small = system_ix(2, FUNDING_MIN_LAMPORTS - 1, None);
+        let tx = TxView {
+            slot: 7,
+            tx_index: 3,
+            fee_payer: b58(&payer),
+            failed: false,
+            ixs: vec![
+                IxView { path: "0".into(), program: Some(&token), accounts: &[1, 4, 3, 0], data: &transfer, parent: None },
+                IxView { path: "1.0".into(), program: Some(&token), accounts: &[8, 2, 9], data: &curve_out, parent: Some(&pump) },
+                IxView { path: "2".into(), program: Some(&system), accounts: &[0, 7], data: &birth, parent: None },
+                IxView { path: "3".into(), program: Some(&system), accounts: &[0, 1], data: &not_birth, parent: None },
+                IxView { path: "4".into(), program: Some(&system), accounts: &[0, 7], data: &small, parent: None },
+            ],
+            pre_lamports: &[10_000_000_000, 2_000_000, 0, 0, 1, 1, 1, 0, 2_000_000, 1],
+            pre_tokens: pre,
+            post_tokens: post,
+            keys,
+        };
+        let core = [event("pump/TradeEvent", &[("mint", st(m)), ("user", st(buy)), ("token_amount", Val::U64(500)), ("is_buy", Val::Bool(true))])];
+        let labels = PROGRAM_LABELS.iter().map(|(id, label, class)| (key(id), (*label, *class))).collect();
+        let rows = t.rows(&tx, &core, &labels);
+        let of = |table: &str| rows.iter().filter(|r| &*r.table == table).collect::<Vec<_>>();
+        // token_deltas: the insider's -1,000 and the fresh wallet's +1,000; the buyer's +500 and the
+        // curve vault's -500 are the store's leg.
+        let deltas: Vec<(Val, Val, Val)> = of("token_deltas").iter().map(|r| (col(r, "owner").clone(), col(r, "delta_raw").clone(), col(r, "is_vault").clone())).collect();
+        assert_eq!(deltas.len(), 2, "{deltas:?}");
+        assert!(deltas.contains(&(st(ins), st("-1000"), Val::Bool(false))) && deltas.contains(&(st(&fresh_s), st("1000"), Val::Bool(false))));
+        assert!(of("token_deltas").iter().all(|r| *col(r, "has_pump_event") == Val::Bool(true) && *col(r, "has_pump_event_same_mint") == Val::Bool(true)));
+        assert!(is_pda(cv) && !is_pda(ins));
+        // token_transfers: the insider's (a graph edge) and the curve's to the buyer (in a trade).
+        let tr = of("token_transfers");
+        assert_eq!(tr.len(), 2);
+        let top = tr.iter().find(|r| *col(r, "ix_path") == st("0")).unwrap();
+        assert_eq!((col(top, "kind"), col(top, "source_owner"), col(top, "dest_owner"), col(top, "amount_raw")),
+                   (&st("transfer_checked"), &st(ins), &st(&fresh_s), &Val::U64(1_000)));
+        assert_eq!((col(top, "in_trade"), col(top, "outer_program"), col(top, "owner_unresolved")), (&Val::Bool(false), &Val::Null, &Val::Bool(false)));
+        let inner = tr.iter().find(|r| *col(r, "ix_path") == st("1.0")).unwrap();
+        assert_eq!((col(inner, "in_trade"), col(inner, "outer_program"), col(inner, "mint")), (&Val::Bool(true), &st("pump"), &st(m)));
+        // sol_funding: only the fresh wallet's 0.002 SOL (0 before, >= 0.001 SOL).
+        let f = of("sol_funding");
+        assert_eq!(f.len(), 1);
+        assert_eq!((col(f[0], "to_account"), col(f[0], "lamports"), col(f[0], "kind")), (&st(&fresh_s), &Val::U64(2 * FUNDING_MIN_LAMPORTS), &st("transfer")));
+    }
+
+    #[test]
+    fn mints_outside_the_set_are_not_kept_and_created_mints_are_learned() {
+        let t = Transfers::new(std::collections::HashSet::from(["Known".to_owned()]), None);
+        assert!(t.is_pump("Known") && t.is_pump("AbcdefPump111pump") && !t.is_pump("Other"));
+        let created = event("pump/CreateEvent", &[("mint", st("NewMint"))]);
+        let tx = TxView { slot: 1, tx_index: 0, fee_payer: String::new(), failed: false, keys: vec![], ixs: vec![], pre_lamports: &[],
+                          pre_tokens: vec![bal(0, "Other", "A", 5)], post_tokens: vec![bal(0, "Other", "A", 1)] };
+        assert!(t.rows(&tx, &[created], &Default::default()).is_empty()); // "Other" is no pump mint
+        assert!(t.is_pump("NewMint"));
+    }
 }
+

@@ -75,6 +75,11 @@ fn main() -> Result<()> {
     let coverage = Arc::new(Coverage::new(args.start, args.end));
     let plugin = LabPlugin::new(sink.clone(), coverage.clone())?;
     let counters = plugin.counters.clone();
+    // The token transfer tables (LAB_TRANSFERS=1): recorded in the manifest before the plugin moves.
+    let transfers = plugin.transfers.as_ref().map(|t| {
+        serde_json::json!({"pump_mints": t.n_mints(), "pump_mints_file": t.mints_file, "funding_min_lamports": extract::FUNDING_MIN_LAMPORTS,
+                           "spec": "spec-token-transfers-2026-10-15.md v2 (sha256 b17d9306)"})
+    });
     let fatal = plugin.fatal.clone();
 
     let started = Instant::now();
@@ -139,6 +144,7 @@ fn main() -> Result<()> {
         // since ix_accounts; earlier chunks do not have them).
         "event_context": extract::EVENT_CONTEXT.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
         "ix_accounts_json": std::env::var("LAB_IX_ACCOUNTS_JSON").map_or(true, |v| v != "0"),
+        "transfers": transfers,
         "error": result.as_ref().err().map(|e| e.to_string()),
         "sink_error": tables.as_ref().err().map(|e| format!("{e:#}")),
         "rows": tables.as_ref().ok(),
