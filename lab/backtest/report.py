@@ -272,22 +272,26 @@ def overlay_effects(results, cfg, con=None):
         return []
     # One trigger and configuration: the base row and its overlay rows share this key (pk: pool or '').
     key = "family, variant, size_sol, d, tau, " + ("q, " if "q" in have else "") + "mint, t, pk"
+    # The insider share undefined at the decision (vins-definition-2026-10-15.md): vetoed (V1, V3), and for the
+    # exit table (V2) o7_insiders_undefined. Runs before the fail-closed O7 have no ins_reason.
+    undef = "ins_reason IS NOT NULL" if "ins_reason" in have else "false"
     rows = []
     for part in _partitions(con, f"(SELECT * FROM {src} WHERE overlay <> 'none')"):
         rows += con.execute(f"""
             WITH r AS (SELECT *, COALESCE(pool, '') AS pk, {pnl} AS pnl FROM {src} WHERE {part}),
             b AS (SELECT {key}, pnl FROM r WHERE overlay = 'none' AND NOT skipped),
-            o AS (SELECT {key}, overlay, day, exit_reason IN ('o7_veto', 'veto') AS vetoed,
+            o AS (SELECT {key}, overlay, day, exit_reason IN ('o7_veto', 'veto') AS vetoed, {undef} AS undefined,
                          CASE WHEN exit_reason IN ('o7_veto', 'veto') THEN 0 ELSE pnl END AS pnl
                   FROM r WHERE overlay <> 'none')
-            SELECT family, size_sol, d, overlay, day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(vetoed::INT)
+            SELECT family, size_sol, d, overlay, day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(vetoed::INT), sum(undefined::INT)
             FROM o JOIN b USING ({key}) WHERE o.pnl IS NOT NULL GROUP BY ALL""").fetchall()
     groups = {}
-    for fam, size, d, ov, day, dsum, n, nveto in rows:
-        g = groups.setdefault((fam, size, d, ov), {"days": {}, "n": 0, "veto": 0})
+    for fam, size, d, ov, day, dsum, n, nveto, nundef in rows:
+        g = groups.setdefault((fam, size, d, ov), {"days": {}, "n": 0, "veto": 0, "undefined": 0})
         g["days"][day] = (dsum, n)
         g["n"] += n
         g["veto"] += nveto
+        g["undefined"] += nundef
     out = []
     for (fam, size, d, ov), g in sorted(groups.items()):
         days = sorted(g["days"])
@@ -295,7 +299,7 @@ def overlay_effects(results, cfg, con=None):
         cnts = np.array([g["days"][x][1] for x in days], dtype=float)
         lo, hi = _boot(sums, cnts)
         out.append({"family": fam, "size_sol": size, "d": d, "overlay": ov, "n": g["n"], "veto_share": g["veto"] / g["n"],
-                    "delta_sol": float(sums.sum() / cnts.sum()), "ci_lo": lo, "ci_hi": hi})
+                    "undefined_share": g["undefined"] / g["n"], "delta_sol": float(sums.sum() / cnts.sum()), "ci_lo": lo, "ci_hi": hi})
     return out
 
 
@@ -473,12 +477,16 @@ def write_report(run_dir, cfg):
         lines += ["", "## O7 insider overlay: paired difference to the base family (base costs)", "",
                   "Per trigger: overlay P&L minus base P&L (a vetoed trade counts as 0), mean in SOL per trade, "
                   "95% CI by day bootstrap. O7 is useful when the difference is above 0 with the CI above 0 at F7, "
-                  "for d = 1 and d = 2. Limitation: transfers are invisible.", "",
-                  "| family | size SOL | d | overlay | trades | vetoed | Δ SOL/trade | 95% CI |", "|---|---|---|---|---|---|---|---|"]
+                  "for d = 1 and d = 2. Limitation: transfers are invisible. An undefined insider share (circulation <= 0, "
+                  "insiders above the circulation or below 0, insiders unknown) vetoes (V1, V3) and is counted; at V2 those "
+                  "positions are o7_insiders_undefined (vins-definition-2026-10-15.md).", "",
+                  "| family | size SOL | d | overlay | trades | vetoed | of which undefined | Δ SOL/trade | 95% CI |",
+                  "|---|---|---|---|---|---|---|---|---|"]
         for e in eff:
             ci = f"{_sol(e['ci_lo'])} … {_sol(e['ci_hi'])}" if e["ci_lo"] is not None else ""
+            undef = f"{e['undefined_share'] * 100:.1f}%" + (" (o7_insiders_undefined)" if e["overlay"] == "O7V2" else "")
             lines.append(f"| {e['family']} | {e['size_sol']} | {e['d']} | {e['overlay']} | {e['n']} | "
-                         f"{e['veto_share'] * 100:.1f}% | {_sol(e['delta_sol'])} | {ci} |")
+                         f"{e['veto_share'] * 100:.1f}% | {undef} | {_sol(e['delta_sol'])} | {ci} |")
     with open(os.path.join(run_dir, "report.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     # Last: consumers (LAB ui) treat a run as complete once summary.parquet exists.

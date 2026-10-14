@@ -3,7 +3,8 @@ tournament (M1P, M1E, N2) is run again on dev with the fixed engine under the sa
 (a bugfix plus a recompute, not tuning), and this script compares the two runs:
 
   - per trigger (family, mint, t; the base row: overlay none, 0.5 SOL, d = 1, first variant) the insider
-    share and the V_ins flag (ins_share > 0.90) in the old and the new run; flipped vetoes = triggers vetoed
+    share and the V_ins flag (ins_share > 0.90, or undefined: fail-closed since vins-definition-2026-10-15.md;
+    "unknown" counts the undefined ones) in the old and the new run; flipped vetoes = triggers vetoed
     in one run and not in the other, per family and per period (days 1-9 / days 10-18);
   - the §10 verdicts of both runs from m1x.json, and the Δ(V_ins) rows at 0.5 SOL, d = 1 and 2;
   - the new run's `insider_fallbacks` counter (config.json or m1x.json): must be 0 for M1 / M1x (normal
@@ -34,7 +35,7 @@ def load_triggers(con, name, run_dir):
     con.execute(f"""
       CREATE OR REPLACE TABLE {name} AS
       SELECT family, mint, t, any_value(day) AS day, any_value(ins_share) AS ins_share,
-             COALESCE(any_value(ins_share) > {INS_VETO}, false) AS vetoed, any_value(ins_share) IS NULL AS unknown
+             COALESCE(any_value(ins_share) > {INS_VETO}, true) AS vetoed, any_value(ins_share) IS NULL AS unknown
       FROM (SELECT family, mint, t, day, ins_share,
                    row_number() OVER (PARTITION BY family, mint, t ORDER BY variant, size_sol, d) AS rn
             FROM read_parquet({lit}, union_by_name = true)

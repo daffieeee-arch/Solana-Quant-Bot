@@ -7,7 +7,11 @@ on the curve and the token's migration pool; transfers are invisible, so an insi
 tokens to another wallet and sells there is not seen.
 
   ins_share(t) = H_ins(t) / circ(t), with H_ins the insiders' and circ everybody's net bought tokens.
-  V1 veto: no entry when ins_share > 25% at the decision.
+  It is undefined (None, with a reason) when the store cannot measure it (vins-definition-2026-10-15.md,
+  sha256 b7181aef): circ <= 0 (circ_le_0), H_ins > circ (h_ins_gt_circ: tokens moved to sell wallets
+  out of the store's sight), H_ins < 0 (h_ins_lt_0), or the insider set unknown (insiders_unknown).
+  No cap at 1 and no corrected share. Vetoes are fail-closed: undefined vetoes (vetoes()).
+  V1 veto: no entry when ins_share > 25% at the decision, or undefined.
   V2 exit: sell when the insiders have net sold >= 25% of H_ins(entry) since the entry, or the
            creator sold anything; the family's own exit rule still applies (first one wins).
   V3: both.
@@ -22,6 +26,12 @@ INSIDER_WINDOW_MS = 10_000
 VETO_SHARE = 0.25
 EXIT_SOLD = 0.25
 VARIANTS = ("O7V1", "O7V2", "O7V3")
+UNDEFINED = ("circ_le_0", "h_ins_gt_circ", "h_ins_lt_0", "insiders_unknown")
+
+
+def vetoes(share, threshold):
+    """A fail-closed veto: an undefined share (None) vetoes like one above the threshold."""
+    return share is None or share > threshold
 
 
 class Insiders:
@@ -55,9 +65,23 @@ class Insiders:
     def _i(self, slot):
         return bisect.bisect_right(self.slots, slot)
 
-    def share(self, t):
+    def share_reason(self, t):
+        """(ins_share, None), or (None, reason) when the share is undefined (see the module doc)."""
+        if not self.known:
+            return None, "insiders_unknown"
         i = self._i(t)
-        return self.h_ins[i] / self.circ[i] if self.circ[i] > 0 else 0.0
+        h, c = self.h_ins[i], self.circ[i]
+        if c <= 0:
+            return None, "circ_le_0"
+        if h < 0:
+            return None, "h_ins_lt_0"
+        if h > c:
+            return None, "h_ins_gt_circ"
+        return h / c, None
+
+    def share(self, t):
+        """ins_share(t) in [0, 1], or None when undefined (a comparison with None fails loudly)."""
+        return self.share_reason(t)[0]
 
     def holdings(self, t):
         return self.h_ins[self._i(t)]

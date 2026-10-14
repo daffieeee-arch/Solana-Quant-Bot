@@ -594,14 +594,19 @@ def _m1x_stats(con, where):
             "top1_share": top, "capital_final_sol": final / 1e9, "capital_max_dd": mdd, "capital_taken": taken}
 
 
-def _m1x_delta(con, fam, veto, size, d, period):
+def _m1x_delta(con, fam, veto, size, d, period, defined_only=False):
     """Paired veto effect (as report.overlay_effects): per trigger and variant, veto row P&L (0 when
-    vetoed) minus the base row's, mean SOL per trade with a day-bootstrap CI; and the share vetoed."""
+    vetoed) minus the base row's, mean SOL per trade with a day-bootstrap CI; and the share vetoed.
+    The rule as it runs (an undefined insider share vetoes); defined_only: the diagnosis over the
+    triggers whose insider share is defined (vins-definition-2026-10-15.md, point 3). The pair key is
+    the whole trigger and configuration as one row value (before, `{key} AS k` named only its last
+    column: pairs joined on the pool alone, across variants, sizes and d)."""
     key = "family, variant, size_sol, d, q, mint, t, COALESCE(pool, '')"
+    only = " AND ins_reason IS NULL" if defined_only else ""
     rows = sorted(con.execute(f"""
-        WITH b AS (SELECT {key} AS k, pnl FROM m WHERE overlay = 'none' AND NOT skipped),
-        o AS (SELECT {key} AS k, day, exit_reason = 'veto' AS vetoed, CASE WHEN exit_reason = 'veto' THEN 0 ELSE pnl END AS pnl
-              FROM m WHERE overlay = '{veto}' AND family = '{fam}' AND size_sol = {size} AND d = {d} AND period = '{period}')
+        WITH b AS (SELECT row({key}) AS k, pnl FROM m WHERE overlay = 'none' AND NOT skipped),
+        o AS (SELECT row({key}) AS k, day, exit_reason = 'veto' AS vetoed, CASE WHEN exit_reason = 'veto' THEN 0 ELSE pnl END AS pnl
+              FROM m WHERE overlay = '{veto}' AND family = '{fam}' AND size_sol = {size} AND d = {d} AND period = '{period}'{only})
         SELECT day, sum(o.pnl - b.pnl) / 1e9, count(*), sum(vetoed::INT) FROM o JOIN b USING (k)
         WHERE o.pnl IS NOT NULL AND b.pnl IS NOT NULL GROUP BY day""").fetchall())
     if not rows:
@@ -631,10 +636,15 @@ def m1x(run_dir, store=STORE):
     pnl, ret = settle_sql(Scenario.from_cfg("base", cfg))
     period = "CASE " + " ".join(f"WHEN day BETWEEN '{a}' AND '{b}' THEN '{k}'" for k, (a, b) in M1X_PERIODS.items()) + " ELSE 'other' END"
     fams = [f for f in M1X] + ["N2_" + f for f in M1X]
+    src = f"read_parquet('{results_glob(run_dir)}', union_by_name = true)"
+    # Runs before the fail-closed V_ins (vins-definition-2026-10-15.md) have no ins_reason: a NULL share was unknown insiders.
+    have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
+    reason = "ins_reason" if "ins_reason" in have else "CASE WHEN ins_share IS NULL THEN 'insiders_unknown' END AS ins_reason"
     con.execute(f"""CREATE TEMP TABLE m AS
         SELECT family, variant, size_sol, d, q, overlay, regime, day, {period} AS period, t, mint, pool, entry_slot, exit_slot,
-               cost, proceeds, skipped, entry_failed, exit_reason, ins_share, curve_buyers, peak_ret, d_ms, {pnl} AS pnl, {ret} AS ret
-        FROM read_parquet('{results_glob(run_dir)}', union_by_name = true) WHERE family IN ({",".join(f"'{f}'" for f in fams)})""")
+               cost, proceeds, skipped, entry_failed, exit_reason, ins_share, {reason}, curve_buyers, peak_ret, d_ms,
+               {pnl} AS pnl, {ret} AS ret
+        FROM {src} WHERE family IN ({",".join(f"'{f}'" for f in fams)})""")
     out = {"run_dir": run_dir, "periods": M1X_PERIODS, "binding": M1X_BINDING, "families": {}}
     for fam, spec in M1X.items():
         variants = [r[0] for r in con.execute(f"SELECT DISTINCT variant FROM m WHERE family = '{fam}' ORDER BY 1").fetchall()]
@@ -664,17 +674,22 @@ def m1x(run_dir, store=STORE):
                         for g in (fam, "N2_" + fam):
                             x = _m1x_delta(con, g, veto, size, d, per)
                             if x:
-                                f["vetoes"].append({"period": per, "family": g, "veto": veto, "size": size, "d": d, **x})
+                                diag = _m1x_delta(con, g, veto, size, d, per, defined_only=True) if "V_ins" in veto else None
+                                f["vetoes"].append({"period": per, "family": g, "veto": veto, "size": size, "d": d, **x,
+                                                    "defined": diag})
             # Which part of a combined veto refuses (base rows, one per trigger: first variant, 0.5 SOL, d = 1).
             for g in (fam, "N2_" + fam):
+                base_one = (f"family = '{g}' AND overlay = 'none' AND variant = '{variants[0]}' AND size_sol = 0.5 AND d = 1 "
+                            f"AND period = '{per}'")
                 r = con.execute(f"""SELECT count(*), count(*) FILTER (WHERE ins_share > {M1X_INS_VETO}),
-                                           count(*) FILTER (WHERE ins_share > 1), count(*) FILTER (WHERE ins_share IS NULL),
+                                           count(*) FILTER (WHERE ins_share IS NULL),
                                            count(*) FILTER (WHERE curve_buyers > {585}),
                                            count(*) FILTER (WHERE curve_buyers <= {M1X_BUNDLE_MAX})
-                                    FROM m WHERE family = '{g}' AND overlay = 'none' AND variant = '{variants[0]}'
-                                      AND size_sol = 0.5 AND d = 1 AND period = '{per}'""").fetchone()
-                f["veto_parts"].append({"period": per, "family": g, "triggers": r[0], "V_ins": r[1], "ins_share_above_1": r[2],
-                                        "ins_unknown": r[3], "V_hype": r[4], "V_bundle": r[5]})
+                                    FROM m WHERE {base_one}""").fetchone()
+                reasons = dict(con.execute(f"SELECT ins_reason, count(*) FROM m WHERE {base_one} AND ins_reason IS NOT NULL "
+                                           "GROUP BY 1 ORDER BY 1").fetchall())
+                f["veto_parts"].append({"period": per, "family": g, "triggers": r[0], "V_ins_above": r[1], "V_ins_undefined": r[2],
+                                        "undefined_reasons": reasons, "V_hype": r[3], "V_bundle": r[4]})
             for v in variants:
                 rows = con.execute(f"""SELECT exit_reason, count(*), median((exit_slot - entry_slot) * d_ms / d) / 60000,
                                               median(peak_ret)
@@ -759,16 +774,23 @@ def _m1x_md(out):
             if info:
                 L += ["", "Informative sizes (no veto): " + "; ".join(
                     f"{g['variant']} {g['size']} SOL d{g['d']}: {_pct(g['mean'])} ({g['trades']})" for g in info) + "."]
-            L += ["", f"Vetoes ({per}), paired per trigger and variant:", "",
-                  "| family | veto | size | d | pairs | vetoed | Δ SOL/trade | 95% CI |", "|---|---|---|---|---|---|---|---|"]
+            L += ["", f"Vetoes ({per}), paired per trigger and variant: the rule as it runs (an undefined insider share vetoes, "
+                  "vins-definition-2026-10-15.md); for V_ins also the diagnosis over the triggers with a defined share:", "",
+                  "| family | veto | size | d | pairs | vetoed | Δ SOL/trade | 95% CI | defined: pairs | vetoed | Δ | 95% CI |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|"]
             for x in f["vetoes"]:
                 if x["period"] == per:
                     ci = "" if x["lo"] is None else f"{x['lo']:+.4f} … {x['hi']:+.4f}"
+                    dg = x.get("defined")
+                    dcols = (" | | | |" if not dg else
+                             f" {dg['pairs']} | {dg['veto_share'] * 100:.0f}% | {dg['delta_sol']:+.4f} | "
+                             + ("" if dg["lo"] is None else f"{dg['lo']:+.4f} … {dg['hi']:+.4f}") + " |")
                     L.append(f"| {x['family']} | {x['veto']} | {x['size']} | {x['d']} | {x['pairs']} | {x['veto_share'] * 100:.0f}% | "
-                             f"{x['delta_sol']:+.4f} | {ci} |")
+                             f"{x['delta_sol']:+.4f} | {ci} |" + dcols)
             L += ["", "Veto parts (one row per trigger: first variant, 0.5 SOL, d = 1): " + "; ".join(
-                f"{x['family']}: {x['triggers']} triggers, V_ins {x['V_ins']} (share > 1: {x['ins_share_above_1']}, unknown "
-                f"{x['ins_unknown']}), V_hype {x['V_hype']}, V_bundle {x['V_bundle']}" for x in f["veto_parts"] if x["period"] == per) + ".", "",
+                f"{x['family']}: {x['triggers']} triggers, V_ins(>0.90) {x['V_ins_above']}, V_ins(undefined) {x['V_ins_undefined']}"
+                + (" (" + ", ".join(f"{k} {v}" for k, v in x["undefined_reasons"].items()) + ")" if x["undefined_reasons"] else "")
+                + f", V_hype {x['V_hype']}, V_bundle {x['V_bundle']}" for x in f["veto_parts"] if x["period"] == per) + ".", "",
                   f"Exits ({per}, 0.5 SOL, d = 1, no veto):", "", "| variant | exit | share | n | median hold min | median peak before exit |",
                   "|---|---|---|---|---|---|"]
             for x in f["exits"]:

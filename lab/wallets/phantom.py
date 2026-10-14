@@ -252,7 +252,8 @@ def m1_check(con, cfg, tl, eng, eng_clock, clock):
             if first_ratio is None:
                 first_ratio = {"t": int(t), "minutes_after_open": (t - o) * ms / 60000, "ratio": ratio}
             nb, sh = organic_buyers(t - n_buy, t), ins.share(t)
-            if nb >= strategies.M1_MIN_BUYERS and sh <= overlay.VETO_SHARE:
+            # Fail-closed (vins-definition-2026-10-15.md): an undefined share (None, engines from that fix on) is no trigger.
+            if nb >= strategies.M1_MIN_BUYERS and sh is not None and sh <= overlay.VETO_SHARE:
                 px = con.execute(f"SELECT arg_max(px, slot * 1048576 + tx_index) FROM tr WHERE slot <= {t}").fetchone()[0]
                 hit = {"t": int(t), "minutes_after_open": (t - o) * ms / 60000, "ratio": ratio, "organic_buyers_15m": nb,
                        "insider_share": sh, "depth_sol": depth / SOL,
@@ -271,7 +272,7 @@ def m1_check(con, cfg, tl, eng, eng_clock, clock):
             "organic_buyers": organic_buyers(o, t15), "insider_share": ins.share(t15), "curve_buyers": tl.get("curve_buyers")}
     plus["trigger_k"] = {str(k): bool(plus["px_mult"] is not None and plus["px_mult"] >= k and (plus["net_sol"] or 0) > 0
                                    and plus["organic_buyers"] >= strategies.M1_MIN_BUYERS) for k in M1PLUS_KS}
-    plus["veto_ins"] = plus["insider_share"] > V_INS
+    plus["veto_ins"] = plus["insider_share"] is None or plus["insider_share"] > V_INS  # fail-closed: undefined vetoes
     plus["veto_hype"] = (tl.get("curve_buyers") or 0) > V_HYPE
     plus["after"] = price_after(con, t15, px15, {"1 u": clock.slots(HOUR_MS, o), "6 u": n_age, "24 u": clock.slots(DAY_MS, o)}) if px15 else None
     out["m1plus_t15"] = plus
