@@ -122,6 +122,8 @@ class Engine:
         self.farm_win = defaultdict(list)  # pool -> sorted [(slot, order, sol, farmer sol)] of its trades, the last ~hour
         self.variants = [(tp, T) for tp, T in variants]
         self.d, self.q, self.tol, self.tau = d, q, tol, replay.Tau(tau)
+        if d_ms is not None and d_ms <= 0:
+            raise ValueError(f"d_ms must be > 0, not {d_ms}")
         self.d_ms = d_ms
         self.cfg = cfg or load_defaults()
         self.clock = clock or Clock()
@@ -417,8 +419,8 @@ class Engine:
 
     def _d_at(self, t):
         """Entry and exit delay in slots of a decision at t: d, or d_ms in the clock's slots at t
-        (Clock.slots: rounded, at least 1). K3's d_ms = 550 (owner decision 2026-10-14) is 2 slots at
-        267 ms, the pre-registered d = 2, and follows a new slot time after Alpenglow (epoch 1064)."""
+        (Clock.slots: rounded, at least 1). K3's d_ms = 600 (owner decision 2026-10-14) is 2 slots at
+        266-316 ms (the history, the pre-registered d = 2) and 3 slots at 200-240 ms (epoch 1053 on)."""
         return self.clock.slots(self.d_ms, t) if self.d_ms else self.d
 
     def _sweep_history(self, before):
@@ -744,6 +746,8 @@ def load_config(path):
     missing = [k for k in ("segments", "farm", "variants", "q", "risk") if k not in conf]
     if ("d" in conf) == ("d_ms" in conf):
         missing.append("exactly one of d (slots) and d_ms (milliseconds)")
+    elif "d_ms" in conf and not (isinstance(conf["d_ms"], int) and conf["d_ms"] > 0):
+        missing.append(f"d_ms > 0 (got {conf['d_ms']!r})")
     if missing:
         raise SystemExit(f"paper config {path}: missing {', '.join(missing)}")
     conf["risk_path"] = os.path.join(os.path.dirname(os.path.abspath(path)), conf["risk"])
@@ -765,8 +769,8 @@ def main(argv=None):
                                      "d, q, n2_k and the risk file; its sha256 goes into the journal")
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--store", default="/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
-    ap.add_argument("--d", type=int, default=1, help="entry and exit delay in slots")
-    ap.add_argument("--d-ms", type=int, help="the delay in milliseconds instead, in slots per epoch by the clock")
+    ap.add_argument("--d", type=int, help="entry and exit delay in slots (default 1)")
+    ap.add_argument("--d-ms", type=int, help="the delay in milliseconds instead (> 0), in slots per epoch by the clock")
     ap.add_argument("--q", type=float, default=0.5)
     ap.add_argument("--variants", default="", help="e.g. 0.04:600 (default: the F7 grid)")
     ap.add_argument("--ignore-risk", action="store_true", help="no limits: replay parity runs only (refused with --config or --live)")
@@ -774,6 +778,10 @@ def main(argv=None):
     ap.add_argument("--farm", choices=["all", "organic"], default="all", help="organic: skip triggers in farming pools")
     ap.add_argument("--no-backup", action="store_true")
     a = ap.parse_args(argv)
+    if a.d is not None and a.d_ms is not None:
+        ap.error("give the delay once: --d (slots) or --d-ms (milliseconds), not both")
+    if a.d_ms is not None and a.d_ms <= 0:
+        ap.error(f"--d-ms must be > 0, got {a.d_ms}")
     if a.ignore_risk and (a.config or a.live):
         # A paper run (a config, or live data) always has its risk limits.
         ap.error("--ignore-risk is for replay parity runs only: not with --config or --live")
@@ -784,7 +792,7 @@ def main(argv=None):
     if a.config:
         cfg_sha, conf = load_config(a.config)
         given = [x for x in ("variants", "segments") if getattr(a, x)] + (["farm"] if a.farm != "all" else []) \
-            + (["d-ms"] if a.d_ms is not None else [])
+            + (["d"] if a.d is not None else []) + (["d-ms"] if a.d_ms is not None else [])
         if given:
             raise SystemExit(f"--config fixes the strategy: do not also pass {', '.join('--' + x for x in given)}")
         a.variants, a.segments, a.farm = ",".join(conf["variants"]), ",".join(conf["segments"]), conf["farm"]
@@ -793,6 +801,7 @@ def main(argv=None):
         n2_k = int(conf.get("n2_k", 1))
     else:
         n2_k = 1
+        a.d = 1 if a.d is None else a.d
     if a.live:
         from .live import LiveFeed
 

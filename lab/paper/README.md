@@ -40,11 +40,12 @@ no transactions: paper only.
 
 The paper candidate is a config file (`k3-paper-2026-10-12.yaml`, the owner's ADJUST decision:
 K3, "niet bewezen", as a measurement): segments, farm label, variants, the delay, q, N2 and the risk file.
-**The delay is `d_ms: 550` (owner decision 2026-10-14).** The entry and exit delay is 550 ms, the base scenario's latency. At each decision, the clock turns it into slots (`Clock.slots`: rounded, at least 1) by the measured slot time of that epoch.
-- At 267 ms it is 2 slots, the pre-registered d = 2, so nothing changes for the history.
-- After Alpenglow (epoch 1064, 2026-10-21) it follows the new slot time.
-- Runs without a config keep `--d` in slots, or take `--d-ms`.
-- A config holds exactly one of `d` and `d_ms`.
+**The delay is `d_ms: 600` (owner decision 2026-10-14).** At each decision, the clock turns it into slots (`Clock.slots`: rounded, at least 1) by the measured slot time of that epoch.
+- **History (266–316 ms):** 2 slots, the pre-registered d = 2.
+- **From epoch 1053 (218 ms) and after Alpenglow (epoch 1064):** 3 slots.
+- **Why 600, not 550:** the edges are 240 ms and 400 ms. The first choice, 550 ms, sat on the rounding edge at 220 ms, so at the 218 ms of epoch 1053 on, d flipped between 2 and 3.
+- **Without a config:** runs keep `--d` in slots, or take `--d-ms` (> 0), never both.
+- **With a config:** it holds exactly one of `d` and `d_ms`.
 `--config` loads it and journals its sha256 and the risk file's; it is frozen once the stop-rule
 clock runs. The engine labels every F7 pool trigger like the backtest (flagged when farmers made
 more than half of the pool's SOL volume in the hour before t); `--farm organic` skips flagged ones.
