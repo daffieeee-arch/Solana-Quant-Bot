@@ -562,6 +562,7 @@ mod tests {
         assert_eq!((r.from_slot, r.commitment), (Some(7), Some(CommitmentLevel::Confirmed as i32)));
         // Alpenglow block footers on every request, without their certificates.
         assert_eq!(r.block_footer.get("block_footers").map(|f| f.include_certificates), Some(Some(false)));
+        assert!(empty.vault_request().block_footer.is_empty()); // the vault stream asks for none
         assert!(empty.vault_request().accounts.is_empty());
         let extra = Extra { probes: vec![C.to_owned()], fresh_vaults: vec![A.to_owned()] };
         let full = Filter::new(&watch(), &extra, 0, &opts(true, 10_000));

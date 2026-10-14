@@ -424,7 +424,9 @@ impl Recorder {
                     ],
                 }];
                 rows.extend(self.first_footer(&f, now_ns));
-                self.slots.push(f.slot, rows);
+                // Not gated by the slot's close: a footer comes when the validator reports it, which
+                // can be after its slot (and the next) confirmed. Consumers join on (slot, bank_id).
+                self.segs.add_rows(rows);
             }
             Some(UpdateOneof::Slot(s)) => {
                 if s.status == SlotStatus::SlotConfirmed as i32 {
@@ -934,6 +936,22 @@ mod tests {
         assert!(matches!(r.on_tick(T0 + 2, None).unwrap(), Action::None));
         let m = segment_meta(&root, 1);
         assert_eq!((m["rows"]["block_footers"].as_u64(), m["rows"]["anomalies"].as_u64()), (Some(1), None));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_footer_after_its_slot_closed_is_still_a_row_and_notes_the_switch() {
+        // The footer is sent when the validator reports it, not with its block: here after slot 1001 confirmed.
+        let root = tmp("rec-late-footer");
+        let mut r = recorder(&root, 25_000_000_000, 2);
+        for u in [meta(1000), confirmed(1000), meta(1001), confirmed(1001), footer(1000), meta(1002), confirmed(1002)] {
+            r.on_update(u, 5).unwrap();
+        }
+        assert_eq!(r.slots.late, 0);
+        assert!(matches!(r.on_tick(T0 + 1, None).unwrap(), Action::None));
+        let m = segment_meta(&root, 0);
+        assert_eq!((m["rows"]["block_footers"].as_u64(), m["rows"]["anomalies"].as_u64()), (Some(1), Some(1)));
+        assert!(root.join("alpenglow.json").exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
