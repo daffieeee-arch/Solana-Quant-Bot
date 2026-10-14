@@ -36,7 +36,7 @@ def _rows():
         farm = "organic" if i % 2 else "flagged"
         for d in (1, 2):
             entry = {"family": "F7", "segment": "pool_reversed", "venue": "pool", "orientation": "reversed", "mint": f"M{i}", "pool": f"P{i}",
-                     "t": 446_300_000 + i * 1000, "day": day, "regime": "267ms", "farm": farm, "ref_mint": None, "ref_t": None, "variants": ["tp4_T600"],
+                     "t": 446_300_000 + i * 1000, "day": day, "regime": "270ms", "ms_per_slot": 267.1, "farm": farm, "ref_mint": None, "ref_t": None, "variants": ["tp4_T600"],
                      "d": d, "h": "", "h_ms": 0, "target": 446_300_000 + i * 1000 + d, "cut": False, "mid": 1.0, "gross": None, "net": None, "impact": 0.01}
             rows.append(entry)
             for h, ms in hs:
@@ -46,7 +46,7 @@ def _rows():
                 # the N2 twin: two matched entries per trigger, flat except at 10 s, where N2 is positive too (no advantage there)
                 for k in range(2):
                     rows.append({"family": "N2_F7", "segment": "pool_reversed", "venue": "pool", "orientation": "reversed", "mint": f"X{i}{k}", "pool": f"Q{i}{k}",
-                                 "t": 446_300_000 + i * 1000 + 50 + k, "day": day, "regime": "267ms", "farm": "n/a", "ref_mint": f"P{i}", "ref_t": 446_300_000 + i * 1000,
+                                 "t": 446_300_000 + i * 1000 + 50 + k, "day": day, "regime": "270ms", "ms_per_slot": 267.1, "farm": "n/a", "ref_mint": f"P{i}", "ref_t": 446_300_000 + i * 1000,
                                  "variants": ["tp4_T600"], "d": d, "h": h, "h_ms": ms, "target": 0, "cut": False, "mid": 1.0, "gross": 0.0,
                                  "net": 0.04 if h == "10s" else -0.02, "impact": 0.01})
     return rows
@@ -72,7 +72,7 @@ def test_pairing_k_rows_and_verdict(tmp_path):
     md = R.render(con, str(out), 200)
     assert "### F7 · pool_reversed · d = 1" in md and "### K1/K2 (F7 pool_reversed, organic) · d = 1" in md and "### K3 (F7 pool_reversed, all pools) · d = 2" in md
     assert "advantage first at **1s**" in md  # 1 s is positive with CI > 0 and N2's own net is not
-    assert "| 267ms | 1s |" in md and "| 316ms | 1s |" not in md and "Entry impact > 5 %" in md
+    assert "| 270ms | 1s |" in md and "| 320ms | 1s |" not in md and "Entry impact > 5 %" in md  # regime blocks come from the rows
     b = R.BINDING
     assert b == "days 10-18 (2026-09-20 … 09-30)"
     # at 10 s the trigger is positive but so is N2 (its own CI > 0): no advantage, in the family table and in the K1/K2 row alike

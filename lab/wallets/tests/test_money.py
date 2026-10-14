@@ -66,6 +66,7 @@ def test_money_on_the_mini_store(tmp_path):
     # W1 day 1: paid 2 SOL (two legs of one tx), fee once (6000), inventory 2e10 tokens marked at the day's last price (W2's sell state)
     w1 = wd[("W1", "2026-09-11")]
     assert w1["cash"] == -2 * SOL and w1["fees"] == 6000 and w1["n_legs"] == 2 and w1["n_opened"] == 1
+    assert w1["regime"] == "400ms" and abs(w1["ms_per_slot"] - 400.0) < 1e-9  # from the store meta, per day
     price_d1 = (102475 * SOL // 1000 - 404_000_000) / (975 * 10**9 + 5 * 10**9)
     assert w1["value_end"] == pytest.approx(2 * 10**10 * price_d1) and w1["pnl"] == pytest.approx(-2 * SOL - 6000 + 2 * 10**10 * price_d1)
     # W1 day 2: no trade, the position is carried and marked at the collapsed price; the fall is day 2's loss
