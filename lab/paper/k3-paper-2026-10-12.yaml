@@ -3,6 +3,12 @@
 #   python -m paper.engine --live <recorder dir> --config paper/k3-paper-2026-10-12.yaml --journal <dir>
 # Frozen once the stop-rule clock starts: any change is a new trial and restarts the clock
 # (pre-registration 7464771b..., section 4.5). The engine journals this file's sha256.
+# Changed 2026-10-14, before the stop-rule clock started (owner decisions via the coordinator, LAB research
+# advising): d = 2 slots became a delay in milliseconds, turned into slots per epoch by the measured slot
+# time (Clock.slots: rounded, at least 1). First d_ms = 550; then d_ms = 600, because 550 ms sits on the
+# rounding edge at 220 ms and the forward epochs from 1053 measure 218 ms, so d flipped between 2 and 3.
+# 600 ms is 2 slots at 266-316 ms (the history: the pre-registered d = 2) and 3 slots at 200-240 ms (from
+# epoch 1053, 218 ms, and after Alpenglow, epoch 1064); the edges are 240 ms and 400 ms.
 candidate: K3                    # F7 tp4_T600 in pool_reversed, all pools (holdout-candidates-2026-10-12.json)
 status: niet bewezen             # hold-out B+C: +0.02% [-0.90, +0.61] (lab/reports/2026-10-12-holdout.md)
 families: [F7]
@@ -10,7 +16,7 @@ segments: [pool_reversed]
 farm: all                        # every trigger; the farm label is journaled per signal
 variants: ["0.04:600"]           # tp4_T600
 size_sol: 0.5                    # the size itself is in the risk file (owner)
-d: 2                             # entry and exit one slot later than d = 1: the worse point of the pre-registered main measure
+d_ms: 600                        # entry and exit delay (owner decision 2026-10-14): 2 slots at 266-316 ms, 3 slots from epoch 1053 (218 ms)
 q: 0.5
 n2_k: 1                          # N2 shadow: one random token of the same venue, orientation, depth band and hour
 risk: risk.yaml                  # next to this file: size 0.5, at most 5 open, 2.5 SOL exposure, -1 SOL/day, 24 h pool cooldown

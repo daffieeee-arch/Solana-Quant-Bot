@@ -107,8 +107,10 @@ class Open:
 class Engine:
     def __init__(self, feed, journal, risk_path, *, variants=F7_GRID, d=1, q=0.5, tol=0.05, tau="empirical",
                  dev_bounds=None, n2_k=1, ignore_risk=False, cfg=None, clock=None, backup=True, segments=None,
-                 farm="all", watchlist=None):
-        """segments: trade F7 only there ('curve', 'pool_normal', 'pool_reversed'; None: everywhere);
+                 farm="all", watchlist=None, d_ms=None):
+        """d: entry (and exit) delay in slots; d_ms, when given, replaces it with milliseconds that the
+        clock turns into slots at each decision (_d_at), so the delay follows the slot time per epoch;
+        segments: trade F7 only there ('curve', 'pool_normal', 'pool_reversed'; None: everywhere);
         farm: 'organic' trades only triggers in pools that were not flagged for volume farming in the
         hour before t (the backtest's `farm` label), 'all' trades every trigger (the label is journaled);
         watchlist: a paper.watchlist_live.LiveWatchlist fed with the pool trades seen (live: it writes the
@@ -120,6 +122,9 @@ class Engine:
         self.farm_win = defaultdict(list)  # pool -> sorted [(slot, order, sol, farmer sol)] of its trades, the last ~hour
         self.variants = [(tp, T) for tp, T in variants]
         self.d, self.q, self.tol, self.tau = d, q, tol, replay.Tau(tau)
+        if d_ms is not None and d_ms <= 0:
+            raise ValueError(f"d_ms must be > 0, not {d_ms}")
+        self.d_ms = d_ms
         self.cfg = cfg or load_defaults()
         self.clock = clock or Clock()
         lo, hi = dev_bounds or feed.meta_bounds
@@ -410,7 +415,13 @@ class Engine:
         return {"block_time": bt, "received_unix_ns": received, "created_unix_ns": created,
                 "latency_ms": None if received is None else round(received / 1e6 - bt * 1000),
                 "segment_written_unix": written, "segment_lag_ms": None if written is None else (written - bt) * 1000,
-                "d_ms": round(self.d * self.clock.ms_per_slot(leg.slot))}
+                "d_ms": round(self._d_at(leg.slot) * self.clock.ms_per_slot(leg.slot))}
+
+    def _d_at(self, t):
+        """Entry and exit delay in slots of a decision at t: d, or d_ms in the clock's slots at t
+        (Clock.slots: rounded, at least 1). K3's d_ms = 600 (owner decision 2026-10-14) is 2 slots at
+        266-316 ms (the history, the pre-registered d = 2) and 3 slots at 200-240 ms (epoch 1053 on)."""
+        return self.clock.slots(self.d_ms, t) if self.d_ms else self.d
 
     def _sweep_history(self, before):
         """Hourly: drop the recent legs and last state of tokens without an event since `before` and
@@ -471,7 +482,8 @@ class Engine:
         if reason:
             return self.j.put("signals", **row, status="skipped", reason=reason)
         self.busy[(family, variant, key)] = "open"
-        self.pending[t + self.d].append(Pending(family, variant, key, venue, orientation, t, t + self.d, params, depth))
+        d = self._d_at(t)
+        self.pending[t + d].append(Pending(family, variant, key, venue, orientation, t, t + d, params, depth))
         self.j.put("signals", **row, status="entered", reason=None)
 
     def _risk_block(self, family, key=None, t=None):
@@ -532,7 +544,7 @@ class Engine:
             stream = SimpleNamespace(mint=p.key, curve=hist, pool_legs=[], pool_open_slot=None,
                                      complete_slot=tok.complete_slot if tok else None, orientation="normal")
             holder = {}
-            r, sim, i = replay.open_curve_position(stream, p.t, size, self.d, self.q, rule, self.tol, self.tau,
+            r, sim, i = replay.open_curve_position(stream, p.t, size, p.entry_slot - p.t, self.q, rule, self.tol, self.tau,
                                                    on_complete=self._on_complete(p, holder, tok),
                                                    hist_state=self._hist_state_fn(p.key))
             legs = hist
@@ -542,7 +554,7 @@ class Engine:
                 st = self.last_state[p.key]
                 legs.insert(0, SimpleNamespace(slot=self.last_seen[p.key], tx=-1, kind="state", pre=st, post=st))
             stream = SimpleNamespace(mint=p.key, pool_legs=legs, orientation=p.orientation)
-            r, sim, i = replay.open_pool_position(stream, p.t, size, self.d, self.q, rule, self.tol, self.tau,
+            r, sim, i = replay.open_pool_position(stream, p.t, size, p.entry_slot - p.t, self.q, rule, self.tol, self.tau,
                                                   hist_state=self._hist_state_fn(p.key))
         status = "skipped" if r.skipped else ("entry_failed" if r.entry_failed else "filled")
         self.j.put("orders", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
@@ -679,7 +691,7 @@ class Engine:
         self.wallet["txs"].appendleft({"signature": None, "slot": slot, "time_unix": None, "kind": kind, "mint": p.key,
                                        "symbol": None, "amount_lamports": int(amount), "fee_lamports": self.scn.per_tx(),
                                        "tip_lamports": None, "status": "paper",
-                                       "landed_slot_delta": self.d if kind == "buy" else None,
+                                       "landed_slot_delta": p.entry_slot - p.t if kind == "buy" else None,
                                        "note": f"{p.family} {p.variant}"})
         self._wallet_dirty = True
 
@@ -731,7 +743,11 @@ def load_config(path):
     with open(path, "rb") as f:
         raw = f.read()
     conf = yaml.safe_load(raw)
-    missing = [k for k in ("segments", "farm", "variants", "d", "q", "risk") if k not in conf]
+    missing = [k for k in ("segments", "farm", "variants", "q", "risk") if k not in conf]
+    if ("d" in conf) == ("d_ms" in conf):
+        missing.append("exactly one of d (slots) and d_ms (milliseconds)")
+    elif "d_ms" in conf and not (isinstance(conf["d_ms"], int) and conf["d_ms"] > 0):
+        missing.append(f"d_ms > 0 (got {conf['d_ms']!r})")
     if missing:
         raise SystemExit(f"paper config {path}: missing {', '.join(missing)}")
     conf["risk_path"] = os.path.join(os.path.dirname(os.path.abspath(path)), conf["risk"])
@@ -753,7 +769,8 @@ def main(argv=None):
                                      "d, q, n2_k and the risk file; its sha256 goes into the journal")
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--store", default="/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
-    ap.add_argument("--d", type=int, default=1)
+    ap.add_argument("--d", type=int, help="entry and exit delay in slots (default 1)")
+    ap.add_argument("--d-ms", type=int, help="the delay in milliseconds instead (> 0), in slots per epoch by the clock")
     ap.add_argument("--q", type=float, default=0.5)
     ap.add_argument("--variants", default="", help="e.g. 0.04:600 (default: the F7 grid)")
     ap.add_argument("--ignore-risk", action="store_true", help="no limits: replay parity runs only (refused with --config or --live)")
@@ -761,6 +778,10 @@ def main(argv=None):
     ap.add_argument("--farm", choices=["all", "organic"], default="all", help="organic: skip triggers in farming pools")
     ap.add_argument("--no-backup", action="store_true")
     a = ap.parse_args(argv)
+    if a.d is not None and a.d_ms is not None:
+        ap.error("give the delay once: --d (slots) or --d-ms (milliseconds), not both")
+    if a.d_ms is not None and a.d_ms <= 0:
+        ap.error(f"--d-ms must be > 0, got {a.d_ms}")
     if a.ignore_risk and (a.config or a.live):
         # A paper run (a config, or live data) always has its risk limits.
         ap.error("--ignore-risk is for replay parity runs only: not with --config or --live")
@@ -770,14 +791,17 @@ def main(argv=None):
     cfg_sha = None
     if a.config:
         cfg_sha, conf = load_config(a.config)
-        given = [x for x in ("variants", "segments") if getattr(a, x)] + (["farm"] if a.farm != "all" else [])
+        given = [x for x in ("variants", "segments") if getattr(a, x)] + (["farm"] if a.farm != "all" else []) \
+            + (["d"] if a.d is not None else []) + (["d-ms"] if a.d_ms is not None else [])
         if given:
             raise SystemExit(f"--config fixes the strategy: do not also pass {', '.join('--' + x for x in given)}")
         a.variants, a.segments, a.farm = ",".join(conf["variants"]), ",".join(conf["segments"]), conf["farm"]
-        a.d, a.q, a.risk = int(conf["d"]), float(conf["q"]), conf["risk_path"]
+        a.d, a.d_ms = int(conf.get("d", 1)), (int(conf["d_ms"]) if "d_ms" in conf else None)
+        a.q, a.risk = float(conf["q"]), conf["risk_path"]
         n2_k = int(conf.get("n2_k", 1))
     else:
         n2_k = 1
+        a.d = 1 if a.d is None else a.d
     if a.live:
         from .live import LiveFeed
 
@@ -801,7 +825,7 @@ def main(argv=None):
         from .watchlist_live import LiveWatchlist
 
         watch = LiveWatchlist(feed, a.live, clock=feed.clock)
-    eng = Engine(feed, j, a.risk, variants=variants, d=a.d, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
+    eng = Engine(feed, j, a.risk, variants=variants, d=a.d, d_ms=a.d_ms, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
                  clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm,
                  watchlist=watch)
     t0 = time.time()

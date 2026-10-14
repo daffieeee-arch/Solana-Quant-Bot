@@ -54,15 +54,23 @@ def test_latency_from_a_synthetic_segment_to_the_daily_report(tmp_path):
     assert arrival(1_001, 8) == (None, None, BT + 2)  # no arrival row: only the segment's close
 
     clock = Clock()
-    d_ms = round(2 * clock.ms_per_slot(1_000))
-    eng = lambda slot, tx: SimpleNamespace(slot_arrivals={(slot, tx): arrival(slot, tx)}, slot_block_time=BT, d=2,  # noqa: E731
-                                           clock=clock)
+
+    def eng_ns(**kw):
+        # K3's delay (d_ms = 600, owner decision 2026-10-14) through the engine's own _d_at.
+        ns = SimpleNamespace(d=2, d_ms=600, clock=clock, **kw)
+        ns._d_at = lambda t: Engine._d_at(ns, t)
+        return ns
+
+    # The journaled d_ms is the simulated delay: 600 ms in whole slots (2 at 267.3 ms), back in ms.
+    d_ms = round(clock.slots(600, 1_000) * clock.ms_per_slot(1_000))
+    assert d_ms == 535
+    eng = lambda slot, tx: eng_ns(slot_arrivals={(slot, tx): arrival(slot, tx)}, slot_block_time=BT)  # noqa: E731
     lat5 = Engine._latency(eng(1_000, 5), SimpleNamespace(slot=1_000, tx=5))
     assert lat5 == {"block_time": BT, "received_unix_ns": BT * NS + 620_000_000, "created_unix_ns": BT * NS + 600_000_000,
                     "latency_ms": 620, "segment_written_unix": BT + 2, "segment_lag_ms": 2_000, "d_ms": d_ms}
     lat7 = Engine._latency(eng(1_001, 7), SimpleNamespace(slot=1_001, tx=7))
     assert (lat7["latency_ms"], lat7["segment_lag_ms"]) == (1_400, 2_000)
-    replay = SimpleNamespace(slot_arrivals={}, slot_block_time=BT, d=2, clock=clock)
+    replay = eng_ns(slot_arrivals={}, slot_block_time=BT)
     assert Engine._latency(replay, SimpleNamespace(slot=1_000, tx=5)) is None  # replay: the fields stay NULL
 
     j = Journal(str(tmp_path / "journal"))
