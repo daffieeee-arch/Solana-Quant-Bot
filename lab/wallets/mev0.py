@@ -1,6 +1,6 @@
 """MEV phase 0: atomic arbitrage and backruns around pump.fun and PumpSwap venues, measured on Old
 Faithful history only. Nothing is sent and nothing is traded. Frozen spec:
-data-old-faithful-one/lab/research/week3-specs-mev0-2026-10-12.md, version 3 (sha256 16a05e10...).
+data-old-faithful-one/lab/research/week3-specs-mev0-2026-10-12.md, version 4 (sha256 57112dee...).
 
 Inputs:
 - tx_ctx of the re-extracted chunks (--chunks, events/txctx-v1/chunks): fee payer, success,
@@ -8,15 +8,15 @@ Inputs:
 - the store (LAB_STORE): curve and PumpSwap trades with (slot, tx_index), SOL amount and depth,
   pools, mints and block times.
 
-Definitions (spec section 1, version 3):
+Definitions (spec section 1, versions 3 and 4):
 - arb: a successful transaction whose fee payer trades one mint M at two or more venues, has a flat
   position in M (|token delta| <= 1 % of the largest leg) and gains SOL + WSOL. net =
   signer_sol_delta + the WSOL delta: the fee (priority fee included) and a Jito tip are already in
-  signer_sol_delta (v3 point 2). closed_loop: no other token delta either. Without it a routed sale
-  of another token through M (A -> M -> SOL) passes the spec's literal test: on the 1054 smoke
-  chunk, 36 of 309 literal candidates, with 39.7 of their 40.1 SOL. arbs-<e> keeps every literal
-  candidate with the flag; winners, program sets, events and gaps use closed-loop arbs only
-  (proposed to LAB research as a clarification).
+  signer_sol_delta (v3 point 2). An arb also needs closed_loop (v4 point 1): no other token
+  delta than WSOL and M. Without it a routed sale of another token through M (A -> M -> SOL)
+  passes the literal test: on the 1054 smoke chunk, 36 of 309 literal candidates, with 39.7 of
+  their 40.1 SOL. arbs-<e> keeps every literal candidate with the flag. Winners, program sets,
+  events, gaps and the report use closed-loop arbs only; the report names the literal count apart.
   - same_venue: two or more store pools of M under one program. Fully proven.
   - cross_venue: store venues under different programs (curve and pool), or one store venue plus
     another DEX program in tx_ctx.venues. In the second case other_venue_unparsed = true: that the
@@ -27,7 +27,9 @@ Definitions (spec section 1, version 3):
   territory).
 - attempt, an upper bound (v3 point 1): a failed transaction whose fee payer won an arb in the
   period, or whose top-level program set equals a winning arb's, and that lands in the same or the
-  next slot as an arb or a trigger. Cost = its fee; a failed transaction's tip does not land.
+  next slot as an arb or a trigger. A pure router set (only ROUTERS, no DEX or own program) is no
+  program-set match (v4 point 2): such a transaction counts only by a winner. Cost = its fee; a
+  failed transaction's tip does not land.
 - gap, an unrealized opportunity (only between two store pools of one mint): after each trade on
   either pool, the best net over SIZES_SOL of buying on one pool and selling on the other in one
   transaction (ARB_TX_COST); open while > 0. The curve against a pool in the migration slot gives
@@ -53,7 +55,7 @@ import time
 
 from .common import EPOCH_SLOTS, OUT_ROOT, SOL, STORE, Clock, connect, git_commit, guard
 
-SPEC = "week3-specs-mev0-2026-10-12.md v3 (sha256 16a05e10)"
+SPEC = "week3-specs-mev0-2026-10-12.md v4 (sha256 57112dee)"
 WSOL = "So11111111111111111111111111111111111111112"
 ROUTERS = ("jupiter_v6",)  # routers: never a venue of their own
 STORE_PROGRAMS = ("pump", "pump_amm")  # venues the store parses (curve, PumpSwap)
@@ -94,6 +96,12 @@ def top_programs(col="programs"):
     infra = ", ".join(f"'{p}'" for p in INFRA)
     return (f"array_to_string(list_sort(list_distinct(list_filter(list_transform(list_filter(string_split({col}, ';'), "
             f"x -> starts_with(x, '1:')), x -> split_part(split_part(x, ':', 2), '*', 1)), x -> x NOT IN ({infra})))), ',')")
+
+
+def router_only(col="top_programs"):
+    """SQL: the top-level program set holds routers only (v4 point 2: no program-set match)."""
+    routers = ", ".join(f"'{p}'" for p in ROUTERS)
+    return f"(len(list_filter(string_split({col}, ','), x -> x NOT IN ({routers}))) = 0)"
 
 
 def setup(con, chunks_root, lo, hi):
@@ -328,7 +336,7 @@ def find_attempts(con, out, epochs, e, lo, hi, chunks_root):
     con.execute(f"""CREATE OR REPLACE TEMP TABLE attempts AS
         WITH f AS (SELECT slot, tx_index, fee_payer, tx_fee, priority_fee, {top_programs()} AS top_programs FROM ctx WHERE failed),
              winners AS (SELECT DISTINCT fee_payer FROM all_arbs),
-             sets AS (SELECT DISTINCT top_programs FROM all_arbs WHERE top_programs <> ''),
+             sets AS (SELECT DISTINCT top_programs FROM all_arbs WHERE top_programs <> '' AND NOT {router_only()}),
              reach AS (SELECT DISTINCT slot FROM read_parquet('{os.path.join(out, f"arbs-{e}.parquet")}') WHERE reachable AND closed_loop)
         SELECT f.*, f.fee_payer IN (SELECT fee_payer FROM winners) AS by_winner,
                f.top_programs IN (SELECT top_programs FROM sets) AS same_programs,

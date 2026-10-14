@@ -1,12 +1,12 @@
-"""MEV phase 0 report: the GO / NO-GO table of the frozen spec (week3-specs-mev0-2026-10-12.md v3,
+"""MEV phase 0 report: the GO / NO-GO table of the frozen spec (week3-specs-mev0-2026-10-12.md v4,
 section 3) on top, then the per-day measurements of section 2, from the parquet files of wallets.mev0.
 
 Days: UTC days of the measured epochs. Section 3 judges "the median per day over the measurement
 days". A day that an epoch boundary cuts (slot coverage < FULL_DAY of 24 h) is shown, but it is not
 a measurement day for the medians: its counts would understate a full day.
 
-Arbs are the closed-loop ones (wallets.mev0: the fee payer is flat in every token but SOL and WSOL).
-The spec-literal count is shown next to them.
+Arbs are the closed-loop ones (v4 point 1: the fee payer is flat in every token but SOL and WSOL).
+The literal count, without the loop requirement, is named apart next to them.
 
   python -m wallets.mev0_report --dir <wallets>/mev0-v1 --epochs 1040,1045 --out lab/reports/<date>-mev-fase0.md
 """
@@ -161,7 +161,7 @@ def render(con, epochs):
     verdict = decide(*(p for _, p in crit.values()), n1)
     lines = [f"# MEV fase 0: arbitrage en backruns rond pump/PumpSwap (epochs {', '.join(map(str, epochs))})", "",
              "Alleen meten op OF1-historie; er is niets verstuurd en niets gehandeld. Spec: "
-             "`week3-specs-mev0-2026-10-12.md` versie 3 (sha256 16a05e10…).", "",
+             "`week3-specs-mev0-2026-10-12.md` versie 4 (sha256 57112dee…).", "",
              f"## Go/no-go (§3): **{verdict}**", "",
              f"Mediaan per dag over {n_full} volledige meetdagen (dekking ≥ {int(FULL_DAY * 100)} %).", "",
              table(["criterium", "gemeten", "gehaald"], [(k, v, "ja" if p else "nee") for k, (v, p) in crit.items()]), "",
@@ -169,8 +169,8 @@ def render(con, epochs):
              "criterium gehaald; gaat hij erover, dan is het niet aangetoond en telt het als niet gehaald.",
              "- Een GO geldt voor de markt van vóór Alpenglow; fase 1 begint met een hermeting van §2.1, §2.5 en §2.9 na epoch 1064 "
              "(v3 punt 4).",
-             "- Arbs zijn gesloten lussen: de fee-payer staat vlak in elk token behalve SOL/WSOL. De letterlijke telling uit de spec staat "
-             "ernaast; die bevat gerouteerde verkopen van andere tokens.", ""]
+             "- Arbs zijn gesloten lussen (v4 punt 1): de fee-payer staat vlak in elk token behalve SOL/WSOL. De letterlijke telling "
+             "zonder lus-eis staat er apart naast (kolom \"letterlijk\"); die bevat gerouteerde verkopen van andere tokens.", ""]
     rows = []
     for d, m in days.items():
         rows.append((d, pct(m["coverage"]), m["literal"], m["arbs"], m["backrun"], m["reachable"], m["reachable_x"], m["gaps"],
@@ -190,10 +190,10 @@ def render(con, epochs):
                            SELECT median(f.n / w.n), quantile_cont(f.n / w.n, 0.9) FROM w JOIN f USING (fee_payer)""").fetchone()
     split = con.execute("""SELECT count(*) FILTER (WHERE by_winner), count(*) FILTER (WHERE same_programs AND NOT by_winner)
                            FROM attempts_all""").fetchone()
-    lines += ["## §2.3 Mislukte pogingen (bovengrens, v3 punt 1)", "",
+    lines += ["## §2.3 Mislukte pogingen (bovengrens, v3 punt 1 en v4 punt 2)", "",
               table(["dag", "pogingen", "in de bereikbare klasse", "aandeel", "aandeel bereikbaar", "mediane kosten", "totale kosten"], rows), "",
               f"- Per winnaar: mislukt/geslaagd mediaan {fmt(ratio[0], 1)}, P90 {fmt(ratio[1], 1)}.",
-              f"- Van de pogingen zijn er {fmt(split[0])} van een winnaar en {fmt(split[1])} alleen door dezelfde programma-set.", ""]
+              f"- Fee-payer is winnaar: {fmt(split[0])} pogingen. Programma-set, zonder router-only (v4 punt 2): {fmt(split[1])}.", ""]
     q = """SELECT day, median(jito_tip), quantile_cont(jito_tip, 0.9), median(priority_fee), quantile_cont(priority_fee, 0.9),
                   sum(jito_tip + priority_fee) / sum(gross) FROM arbs_cl GROUP BY day ORDER BY day"""
     lines += ["## §2.4 Tips en priority fees van winnende arbs", "",

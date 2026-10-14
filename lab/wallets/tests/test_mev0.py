@@ -98,6 +98,9 @@ def chunks(root):
         ctx_row(S + 9, 1, "F", "pump_amm,raydium_clmm", 5_000_000, "N:500000000"),                                # not flat
         ctx_row(S + 12, 1, "R", "pump_amm,raydium_clmm", 99_000_000, "N:0;T:-7000000000", programs="1:jupiter_v6;2:raydium_clmm;2:pump_amm"),
         ctx_row(S + 13, 1, "U", "", -8_000, failed=True, programs="1:jupiter_v6", fee=8_000),  # R's program set: R is no winner
+        # Router-only set of the winner A3: a failed Jupiter transaction of someone else (J) is no attempt; A3's own is one.
+        ctx_row(S + 156, 1, "J", "", -6_000, failed=True, programs="1:jupiter_v6", fee=6_000),
+        ctx_row(S + 156, 2, "A3", "", -6_500, failed=True, programs="1:jupiter_v6", fee=6_500),
         ctx_row(S + 20, 1, "X", "pump_amm", -SOL // 2, "L:10000000000"),
         ctx_row(S + 20, 2, "Y", "pump_amm", -SOL, "L:20000000000"),
         ctx_row(S + 20, 3, "X", "pump_amm", 6 * SOL // 10, "L:-10000000000"),
@@ -105,7 +108,8 @@ def chunks(root):
         ctx_row(S + 30, 2, "Z", "pump_amm", -2 * SOL, "L:10000000000"),
         ctx_row(S + 32, 1, "FR", "pump_amm", 12 * SOL // 100, "L:-1000000000"),
         ctx_row(S + 150, 1, "G", "pump_amm", -12 * SOL // 10, "N:40000000000"),
-        ctx_row(S + 155, 1, "A3", "pump_amm,meteora_dlmm", 7_000_000, "N:0", programs="1:BOT3;2:pump_amm;2:meteora_dlmm"),
+        # A3 wins through Jupiter: its top-level program set is router-only (v4 point 2).
+        ctx_row(S + 155, 1, "A3", "jupiter_v6,meteora_dlmm,pump_amm", 7_000_000, "N:0", programs="1:jupiter_v6;2:pump_amm;2:meteora_dlmm"),
         # Failed: by the winner A one slot after its arb; with A2's program set (W) next to A2's reachable arb;
         # by someone else with other programs (V): not an attempt.
         ctx_row(S + 1, 1, "A", "pump_amm", -9_000, failed=True, fee=9_000),
@@ -151,7 +155,8 @@ def test_arbs_kinds_net_and_backruns(out):
 
 def test_failed_attempts_are_an_upper_bound_by_winner_or_program_set(out):
     att = {r["fee_payer"]: r for r in rows(out, "attempts")}
-    assert set(att) == {"A", "W"}  # V: neither; U: only the routed sale R's program set, and R is no winner
+    assert set(att) == {"A", "W", "A3"}  # V: neither; U: only the routed sale R's program set, and R is no winner
+    assert (att["A3"]["by_winner"], att["A3"]["same_programs"]) == (True, False)  # v4: J (router-only, no winner) is out
     assert (att["A"]["by_winner"], att["A"]["reachable"], att["A"]["cost"]) == (True, False, 9_000)
     assert (att["W"]["same_programs"], att["W"]["reachable"], att["W"]["jito_tip_attempted"]) == (True, True, 50_000)
 
@@ -179,7 +184,8 @@ def test_a_gap_between_two_pools_of_one_mint_closed_by_the_arb(out):
 def test_run_json_and_days(out):
     with open(out / f"run-mev0-{E}.json") as f:
         info = json.load(f)
-    assert info["spec"].startswith("week3-specs-mev0") and info["counts"]["arbs"] == 4 and info["counts"]["attempts"] == 2
+    assert info["spec"].startswith("week3-specs-mev0-2026-10-12.md v4") and info["counts"]["arbs"] == 4
+    assert info["counts"]["attempts"] == 3
     assert [r["slots"] for r in rows(out, "days")] == [100, 100]
 
 
