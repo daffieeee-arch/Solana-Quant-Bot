@@ -275,12 +275,43 @@ def test_paper_config_file(tmp_path):
     from paper.engine import load_config
 
     sha, conf = load_config(os.path.join(os.path.dirname(engine.__file__), "k3-paper-2026-10-12.yaml"))
-    assert (conf["segments"], conf["farm"], conf["variants"], conf["d"], conf["q"]) == (["pool_reversed"], "all", ["0.04:600"], 2, 0.5)
+    assert (conf["segments"], conf["farm"], conf["variants"], conf["d_ms"], conf["q"]) == (["pool_reversed"], "all", ["0.04:600"], 550, 0.5)
+    assert "d" not in conf  # the owner decision 2026-10-14: the delay in ms, not in slots
     assert os.path.exists(conf["risk_path"]) and len(sha) == 64
     from paper import risk
 
     r, why = risk.load(conf["risk_path"])
     assert why is None and (r.size_sol, r.max_open_positions, r.daily_loss_limit_sol, r.pool_cooldown_h) == (0.5, 5, 1.0, 24.0)
+
+
+def test_d_ms_follows_the_slot_time_of_the_epoch(tmp_path):
+    """K3's d_ms = 550: 2 slots at 267.3 ms (the pre-registered d = 2), 3 at 200 ms (a faster slot
+    time after Alpenglow); the order, the signal's d_ms and the wallet's landed delta follow it."""
+    for ms, d in ((267.3, 2), (200.0, 3)):
+        j = Journal(str(tmp_path / f"j{d}"))
+        eng = Engine(Synth({"M": trigger_token(after=[(500_100, "W", "buy", 150 * T)])}), j, risk_file(tmp_path),
+                     variants=[(0.04, 600)], d_ms=550, q=0.5, n2_k=0, clock=Clock({500_040 // 432_000: ms}), backup=False)
+        eng.run()
+        o = j.rows("orders")[0]
+        assert (o["status"], o["entry_slot"]) == ("filled", 500_040 + d)
+        assert j.rows("signals")[0]["d_ms"] is None  # replay: no measured latency, the row stays NULL
+        assert eng._d_at(500_040) == d and round(d * ms) == round(eng._d_at(500_040) * eng.clock.ms_per_slot(500_040))
+    with open(tmp_path / "j3" / "wallet.json") as f:
+        assert [t["landed_slot_delta"] for t in json.load(f)["txs"] if t["kind"] == "buy"] == [3]
+
+
+def test_a_config_has_exactly_one_delay(tmp_path):
+    from paper.engine import load_config
+
+    base = {"segments": ["pool_reversed"], "farm": "all", "variants": ["0.04:600"], "q": 0.5, "risk": "risk.yaml"}
+    for extra, ok in (({"d": 2}, True), ({"d_ms": 550}, True), ({"d": 2, "d_ms": 550}, False), ({}, False)):
+        p = tmp_path / f"c{len(extra)}{ok}.yaml"
+        p.write_text(yaml.safe_dump({**base, **extra}))
+        if ok:
+            assert load_config(str(p))[1].get("d_ms", extra.get("d_ms")) == extra.get("d_ms")
+        else:
+            with pytest.raises(SystemExit, match="exactly one of d"):
+                load_config(str(p))
 
 
 def test_ignore_risk_is_refused_for_paper_runs(tmp_path, capsys):
