@@ -60,7 +60,7 @@ def rows(con, sql):
     """The query's result as a list of dicts (column name -> value; HUGEINT as int)."""
     cur = con.execute(sql)
     cols = [c[0] for c in cur.description]
-    return [dict(zip(cols, (int(v) if isinstance(v, int) else v for v in r))) for r in cur.fetchall()]
+    return [dict(zip(cols, (int(v) if isinstance(v, int) and not isinstance(v, bool) else v for v in r))) for r in cur.fetchall()]
 
 
 def load(con, chunk, lo, hi):

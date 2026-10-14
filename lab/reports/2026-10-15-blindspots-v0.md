@@ -10,11 +10,11 @@
 
 ## In gewoon Nederlands
 
-1. **Onze tradebedragen kloppen.** Bij 94–100 % van de trades (per variant, ontwikkeldata) is het tokenbedrag in onze rij gelijk aan wat de wallet op de chain echt kreeg of kwijtraakte; de rest ging naar een token-account van een andere eigenaar, niet naar een fout bedrag (< 1,5 % "anders"). Dat geldt ook voor de lastige "omgekeerde" pools (base WSOL). (**feit**)
+1. **Onze tradebedragen kloppen.** Bij 94–100 % van de trades (per variant met ≥ 500 trades, ontwikkeldata; de kleine variant pool buy_v2 haalt 69 %) is het tokenbedrag in onze rij gelijk aan wat de wallet op de chain echt kreeg of kwijtraakte; de rest ging naar een token-account van een andere eigenaar, niet naar een fout bedrag (< 1,5 % "anders"). Dat geldt ook voor de lastige "omgekeerde" pools (base WSOL). (**feit**)
 2. **We zien maar de helft van de geldstromen van een wallet.** Wallets krijgen en geven tokens buiten trades om: in 6,7 minuten 1.131 overdrachten tussen verschillende eigenaren, waarbij één wallet tot 10 andere wallets in één transactie bevoorraadt. Die overdrachten zaten tot nu toe niet in onze data. Conclusies over wallet-winst ("geld volgen", leiders' eigen rendement, het insider-aandeel) zijn daardoor **reconstructies met een gat**. (**feit** voor de overdrachten; de gevolgen zijn een **reconstructie**)
-3. **In de pools waar K3 handelt is het meeste volume nep.** 72 % van het SOL-volume in "omgekeerde" pools is heen-en-terug in één transactie: dezelfde wallet verkoopt en koopt dezelfde token binnen één transactie terug (wash). In de ontwikkeldata (vier volle chunks van epochs 1040 en 1045, ~64 uur) is dat 74–86 %. In gewone pools is het ~0 %. (**feit**)
+3. **In de pools waar K3 handelt is het meeste volume wash.** 72 % van het SOL-volume in "omgekeerde" pools zit in transacties die dezelfde token zowel verkopen als terugkopen (heen-en-terug in één transactie; in de voorbeelden is het steeds dezelfde wallet). In de ontwikkeldata (vier volle chunks van epochs 1040 en 1045, ~64 uur) is dat 74–86 %. In gewone pools is het ~0 %. (**feit**)
 4. **Dat raakt de F7-triggers waar K3 op draait.** Over de hele ontwikkelperiode is bij **27 %** van de F7-triggers in omgekeerde pools de "grote verkoop" zo'n wash-leg: de prijs staat aan het eind van dezelfde transactie alweer terug. Bij nog eens bijna de helft van de rest koopt dezelfde wallet binnen ~13 seconden terug. (**feit**)
-5. **En het kost geld.** Op de ontwikkeldata verliezen F7-trades na een wash-trigger −0,35 % tot −1,98 % per trade (interval onder nul), terwijl trades na een echte verkoop +1,0 % tot +1,9 % halen. Dat is **verkennend** (deze data is al gebruikt) en dus een idee om op schone data te toetsen, geen bewijs. K3 blijft ongemoeid.
+5. **En het kost geld (backtest).** Op de ontwikkeldata verliezen F7-trades na een wash-trigger −0,35 % tot −1,98 % per trade (interval onder nul), terwijl trades na een echte verkoop +1,0 % tot +1,9 % halen. Dat is een **reconstructie met het kostenmodel en verkennend** (deze data is al gebruikt) en dus een idee om op schone data te toetsen, geen bewijs. K3 blijft ongemoeid.
 6. **Mislukte transacties zijn er meer dan gelukte**, maar ze komen vooral van een kleine groep spam- en MEV-bots: In de ontwikkeldata doen ~400–540 fee payers met ≥ 90 % mislukking 85–89 % van alle mislukte pump-transacties (in de 1054-smoke 97 payers, 61 %). Voor gewone handelaars is het slagingspercentage hoog. (**feit**)
 7. **Wie "de handelaar" is, is meestal duidelijk.** Bij curve-trades is de `user` in 78 % ook de fee payer. Van de rest komt 80 % van één bekende bot (de Mayhem-agent van pump.fun, die al is uitgesloten als trigger). Wel loopt maar 24 % van de curve-trades direct via pump: de rest gaat via trading-apps en bots. (**feit**)
 
@@ -65,6 +65,8 @@ In de ontwikkeldata (vier chunks, 2,3–8,4 mln trades per venue per chunk) is "
 **Gevolg:** labels per `user` (zoals de store doet) zijn meestal juist. Fee-payer-clusters (whale stap 0) moeten relayers en wash-bots met rotatie herkennen: dat doet de service-registry van stap 0 al voor payers met ≥ 100 wallets.
 
 ### 2.3 Wash-volume: heen-en-terug in één transactie (**feit**)
+
+Gemeten als: een transactie die dezelfde token in dezelfde venue zowel koopt als verkoopt. Dat is niet per se één wallet; in de bekeken voorbeelden wel.
 
 | venue | SOL-volume (1.000 slots) | waarvan heen-en-terug in één tx | aandeel |
 |---|---|---|---|
@@ -145,7 +147,7 @@ Twee vlaggen, allebei te zien op het beslismoment: **rt_tx** = de trigger-transa
 Netto per gevulde trade na basiskosten, 95 %-interval uit een bootstrap over handelsdagen (10.000 trekkingen). Code: `lab/reports/2026-10-15-blindspots-v0/a4b_f7rev_triggers.py` en `a4c_f7rev_returns.py`.
 
 **Lezing.**
-- **Wat we zien (feit, op al gebruikte data):** F7-trades na een wash-trigger verliezen geld, in beide periodes en bij beide vertragingen, met een interval onder nul. Trades na een echte verkoop doen het duidelijk beter dan F7 als geheel.
+- **Wat we zien (reconstructie met het kostenmodel, verkennend; de triggertellingen zelf zijn feit):** F7-trades na een wash-trigger verliezen geld, in beide periodes en bij beide vertragingen, met een interval onder nul. Trades na een echte verkoop doen het duidelijk beter dan F7 als geheel.
 - **Waarom dat klopt met het mechanisme:** bij een wash-leg is er geen gehaaste verkoper die de prijs omlaag duwt; de prijs staat aan het eind van de transactie alweer terug, dus er is niets om op terug te veren. We betalen dan alleen kosten.
 - **Controle:** de willekeurige instap N2 in dezelfde pools reageert nauwelijks op de wash-vlag: wash-pools zijn niet in het algemeen slechter. Het effect zit in de trigger.
 - **Waarom dit geen bewijs is (verkennend):**
@@ -155,7 +157,7 @@ Netto per gevulde trade na basiskosten, 95 %-interval uit een bootstrap over han
   - de hold-out (K3 +0,02 %) is niet gesplitst.
 - **Volgende toets:**
   - (1) als *diagnose* (geen afstemming): het wash-aandeel en de split in de hold-out 1047–1051;
-  - (2) als *bevestiging*: een pre-registratie op de schone epochs 1055–1063 met K3 met en zonder rt_tx-filter, de lat vooraf vastgelegd en DSR/PBO erbij.
+  - (2) als *bevestiging*: een pre-registratie op de schone epochs 1055–1063 met K3 met en zonder rt_tx-filter, de lat vooraf vastgelegd en DSR/PBO erbij. De hypothesen H1/H2, de vlag en de lat zijn vastgelegd vóór het bekijken van E18: `data-old-faithful-one/lab/research/hypothesis-wash-trigger-2026-10-15.md`, sha256 `35bdaa0d…` (comment op #167). E18 kan daar niets aan veranderen.
 - **K3 zelf blijft ongemoeid.** De paper-run legt de trigger-transactie al vast, dus de split kan achteraf uit de paper-data worden berekend zonder K3 te veranderen.
 
 ## 5. Getoetste en verworpen hypothesen (deze ronde)
@@ -166,7 +168,7 @@ Netto per gevulde trade na basiskosten, 95 %-interval uit een bootstrap over han
 | De buyback-fee is een extra kost die onze fills missen | **verworpen**: 50 % van de protocol-fee, exact bij alle 53.262 events | feit |
 | F7-triggers in omgekeerde pools zijn echte verkopen | **verworpen**: 27 % wash in dezelfde tx, plus 47 % van de rest koopt binnen 13 s terug | feit |
 | Mislukte transacties maken onze kosten veel hoger dan aangenomen | **niet bevestigd**: 91 % van de payers mislukt nooit; de mislukkingen zitten bij spam- en MEV-bots | feit |
-| Een wash-trigger (rt_tx) is voor F7 een verliesgevende trigger | **ondersteund, verkennend**: −0,35 tot −1,98 % tegen +0,62 tot +1,94 % zonder; toets op 1055–1063 | feit (dev, verbruikt)
+| Een wash-trigger (rt_tx) is voor F7 een verliesgevende trigger | **ondersteund, verkennend**: −0,35 tot −1,98 % tegen +0,62 tot +1,94 % zonder; toets op 1055–1063 | reconstructie/aanname (backtest met kostenmodel, dev verbruikt)
 
 ## 6. Shortlist (nog niets bewezen)
 

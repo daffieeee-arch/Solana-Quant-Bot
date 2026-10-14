@@ -72,13 +72,13 @@ def _(mo):
 def _(mo):
     _rows = [
         ("Trades op pump.fun en PumpSwap (bedragen, reserves, fees)", "benut", "feit",
-         "Gecontroleerd: de tokenbedragen in onze rijen zijn gelijk aan de token-delta van de wallet op de chain (97–100 % per variant)."),
+         "Gecontroleerd: de tokenbedragen in onze rijen zijn gelijk aan de token-delta van de wallet op de chain (94–100 % per variant met ≥ 500 trades)."),
         ("Wie handelt: `user`, fee payer, signers", "deels benut", "feit",
          "De store gebruikt `user` als handelaar. 22 % van de curve-trades heeft een andere fee payer (bots, relayers). De kolom signers is leeg."),
         ("Route: via welk programma de trade liep", "aanwezig, niet benut", "feit",
          "Een groot deel van de curve-trades loopt via bot- of routerprogramma's, niet direct via pump."),
         ("Heen-en-terug in één transactie (wash)", "aanwezig, niet gemarkeerd", "feit",
-         "72 % van het SOL-volume in reversed pools (1.000 slots van 1054); in gewone pools ~0 %. Volume- en instroom-features tellen het mee."),
+         "74–86 % van het SOL-volume in reversed pools (ontwikkeldata; 72 % in 1.000 slots van 1054); in gewone pools ~0 %. Volume- en instroom-features tellen het mee."),
         ("Mislukte transacties", "aanwezig, niet benut", "feit",
          "Meer mislukt dan geland; een klein aantal fee payers doet het meeste. Ons kostenmodel gebruikt alleen een slagingskans."),
         ("Andere DEX'en in dezelfde transactie", "alleen in tx_ctx (2 epochs)", "feit",
