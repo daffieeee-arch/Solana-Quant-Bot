@@ -16,7 +16,7 @@ Dit register is het geheugen van het lab. Elke proef krijgt hier een regel: wat 
 | dev, dag 10–18 | 1033–1046 (deel) | – 452.304.000 (2026-09-20 … 09-30) | **verbruikt** als bindende dev-periode van E07 en E10; verder alleen verkennend | M1x §10, money-v1, markout, MEV0, blindspots |
 | hold-out | 1047–1051 | 452.304.000 – 454.464.000 | **gesloten**: één keer geopend op 2026-10-12 (E06) | alleen diagnose; nooit meer afstemmen |
 | forward | 1052–1054 | 454.464.000 – 455.760.000 | **verbruikt** voor illustratie en techniek | shadows, paired exact-in, Phantom-casussen, MEV0- en transfers-smoke, deze audit (1.000 slots van 1054) |
-| **schoon, pre-Alpenglow** | **1055–1063** | 455.760.000 – 459.648.000 | **onaangeroerd, niet gedownload** | gereserveerd voor de eerstvolgende bevestigende toets (met pre-registratie) |
+| **schoon, pre-Alpenglow** | **1055–1063** | 455.760.000 – 459.648.000 | **onaangeroerd**; download goedgekeurd door de eigenaar (2026-10-15). OF1 had op 15 okt alleen 1055 en 1056 gepubliceerd, de rest volgt tot ~21 okt. Extractie in een afgeschermde root, **niet lezen vóór een pre-registratie** | gereserveerd voor de eerstvolgende bevestigende toets (met pre-registratie) |
 | Alpenglow | ≥ 1064 (vanaf ~2026-10-21) | – | nieuw regime (slots ~200 ms) | live paper (K3-meetklok), later forward-toetsen |
 
 Let op: 1055–1063 is de laatste schone periode met de oude slottijd. Elke analyse die deze epochs aanraakt, moet eerst hier worden ingeschreven, met welk deel en waarvoor.
