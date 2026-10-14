@@ -36,6 +36,29 @@ pub const BLOCK_COLS: [(&str, Kind); 7] = [
     ("skipped", Kind::Bool),
 ];
 
+/// Alpenglow block footers (epoch 1064 on): the producer's block time in nanoseconds, against our
+/// receive time and the server's `created_at` (latency from block production).
+pub const FOOTER_COLS: [(&str, Kind); 5] = [
+    ("slot", Kind::U64),
+    ("bank_id", Kind::U64),
+    ("block_producer_time_ns", Kind::U64),
+    ("received_unix_ns", Kind::U64),
+    ("created_unix_ns", Kind::U64),
+];
+
+pub const ANOMALY_COLS: [(&str, Kind); 9] = [
+    // The extractor's `anomalies` table (extract.rs ANOMALY_COLS).
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("signature", Kind::Utf8),
+    ("outer_ix", Kind::U64),
+    ("inner_ix", Kind::U64),
+    ("program", Kind::Utf8),
+    ("kind", Kind::Utf8),
+    ("event", Kind::Utf8),
+    ("payload_hex", Kind::Utf8),
+];
+
 pub const ARRIVAL_COLS: [(&str, Kind); 6] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
@@ -163,7 +186,7 @@ pub struct Segments {
     seg_secs: u64,
 }
 
-fn write_json_atomic(path: &Path, v: &Value) -> Result<()> {
+pub fn write_json_atomic(path: &Path, v: &Value) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(v)?).with_context(|| format!("write {}", tmp.display()))?;
     fs::File::open(&tmp)?.sync_all()?;
@@ -197,6 +220,10 @@ impl Segments {
             }
         }
         Ok((Self { root: root.to_owned(), seq: next, open: Open::new(), seg_slots, seg_secs }, last_slot))
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// Add the rows of a closed slot.

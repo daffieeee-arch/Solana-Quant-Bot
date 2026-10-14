@@ -5,7 +5,7 @@ use crate::convert::{self, Converted};
 use crate::extract::LabPlugin;
 use crate::idl::{Kind, Val};
 use crate::meter::{Decision, Meter};
-use crate::segment::{columns, Segments, SlotBuffer, ARRIVAL_COLS, BLOCK_COLS};
+use crate::segment::{columns, write_json_atomic, Segments, SlotBuffer, ANOMALY_COLS, ARRIVAL_COLS, BLOCK_COLS, FOOTER_COLS};
 use crate::sink::{Columns, Row};
 use crate::watch::{Extra, Filter, Opts, SegWatch, Watch, DOWNSCALE, WSOL};
 use anyhow::Result;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 use yellowstone_grpc_proto::prelude::{
     subscribe_update::UpdateOneof, CommitmentLevel, SlotStatus, SubscribeRequest, SubscribeRequestFilterSlots,
     SubscribeRequestFilterTransactions, SubscribeUpdate, SubscribeUpdateAccount,
-    SubscribeUpdateBlockMeta,
+    SubscribeUpdateBlockFooter, SubscribeUpdateBlockMeta,
 };
 use yellowstone_grpc_proto::prost::Message as _;
 
@@ -124,10 +124,14 @@ pub struct Recorder {
     seg_watch: SegWatch,
     last_update_unix: u64,
     block_cols: Columns,
+    footer_cols: Columns,
+    anomaly_cols: Columns,
     arrival_cols: Columns,
     vault_cols: Columns,
     pool_cols: Columns,
     stats: Stats,
+    /// The first Alpenglow block footer was handled (this run, or an earlier one: <root>/alpenglow.json).
+    alpenglow_noted: bool,
     seen_pools: HashSet<Vec<u8>>,
     reconnects: Vec<Value>,
     at_last_level_noted: bool,
@@ -197,6 +201,9 @@ impl Recorder {
             active,
             last_update_unix: 0,
             block_cols: columns(&BLOCK_COLS),
+            footer_cols: columns(&FOOTER_COLS),
+            anomaly_cols: columns(&ANOMALY_COLS),
+            alpenglow_noted: false,
             arrival_cols: columns(&ARRIVAL_COLS),
             vault_cols: columns(&VAULT_COLS),
             pool_cols: columns(&POOL_COLS),
@@ -404,6 +411,23 @@ impl Recorder {
                 let row = self.block_row(&b);
                 self.slots.push(b.slot, vec![row]);
             }
+            Some(UpdateOneof::BlockFooter(f)) => {
+                let mut rows = vec![Row {
+                    table: Arc::from("block_footers"),
+                    columns: self.footer_cols.clone(),
+                    values: vec![
+                        Val::U64(f.slot),
+                        Val::U64(f.bank_id),
+                        Val::U64(f.block_producer_time_nanos),
+                        Val::U64(now_ns),
+                        opt_u64(created_ns),
+                    ],
+                }];
+                rows.extend(self.first_footer(&f, now_ns));
+                // Not gated by the slot's close: a footer comes when the validator reports it, which
+                // can be after its slot (and the next) confirmed. Consumers join on (slot, bank_id).
+                self.segs.add_rows(rows);
+            }
             Some(UpdateOneof::Slot(s)) => {
                 if s.status == SlotStatus::SlotConfirmed as i32 {
                     for (slot, rows) in self.slots.confirm(s.slot) {
@@ -424,6 +448,41 @@ impl Recorder {
             _ => {}
         }
         Ok(())
+    }
+
+    /// The first Alpenglow block footer this recorder root ever received (the switch, epoch 1064):
+    /// logged, kept in <root>/alpenglow.json and returned as an anomaly row of its slot. Nothing
+    /// after that, also not after a restart (the file says it was noted).
+    fn first_footer(&mut self, f: &SubscribeUpdateBlockFooter, now_ns: u64) -> Option<Row> {
+        if self.alpenglow_noted {
+            return None;
+        }
+        self.alpenglow_noted = true;
+        let path = self.segs.root().join("alpenglow.json");
+        if path.exists() {
+            return None;
+        }
+        log::warn!("first Alpenglow block footer: slot {} (noted in {})", f.slot, path.display());
+        let note = json!({"first_footer_slot": f.slot, "bank_id": f.bank_id, "block_producer_time_ns": f.block_producer_time_nanos,
+                          "received_unix_ns": now_ns});
+        if let Err(e) = write_json_atomic(&path, &note) {
+            log::error!("cannot write {}: {e:#}", path.display());
+        }
+        Some(Row {
+            table: Arc::from("anomalies"),
+            columns: self.anomaly_cols.clone(),
+            values: vec![
+                Val::U64(f.slot),
+                Val::Null,
+                Val::Null,
+                Val::Null,
+                Val::Null,
+                Val::Str("recorder".to_owned()),
+                Val::Str("alpenglow_first_footer".to_owned()),
+                Val::Null,
+                Val::Null,
+            ],
+        })
     }
 
     fn block_row(&self, b: &SubscribeUpdateBlockMeta) -> Row {
@@ -844,6 +903,77 @@ mod tests {
         assert!(usage.iter().any(|u| u["stream"] == "budget" && u["note"].as_str().unwrap().contains("hard stop")));
         assert_eq!(r.segs.seq, 1); // the downscale changed the filter without closing a segment
         assert!(Meter::load(&root, 1_440_000, 1.0, T0 + 100).unwrap().stopped);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn footer(slot: u64) -> SubscribeUpdate {
+        update("block_footers", UpdateOneof::BlockFooter(SubscribeUpdateBlockFooter {
+            slot,
+            bank_id: slot + 7,
+            block_producer_time_nanos: 1_791_763_200_000_000_000 + slot,
+            ..Default::default()
+        }))
+    }
+
+    #[test]
+    fn block_footers_become_rows_and_the_first_one_is_noted_once() {
+        let root = tmp("rec-footers");
+        let mut r = recorder(&root, 25_000_000_000, 2);
+        for u in [meta(1000), footer(1000), confirmed(1000), meta(1001), footer(1001), confirmed(1001), meta(1002), confirmed(1002)] {
+            r.on_update(u, 5).unwrap();
+        }
+        assert!(matches!(r.on_tick(T0 + 1, None).unwrap(), Action::None));
+        let m = segment_meta(&root, 0);
+        assert_eq!((m["rows"]["block_footers"].as_u64(), m["rows"]["anomalies"].as_u64()), (Some(2), Some(1)));
+        let note: Value = serde_json::from_slice(&std::fs::read(root.join("alpenglow.json")).unwrap()).unwrap();
+        assert_eq!((note["first_footer_slot"].as_u64(), note["bank_id"].as_u64()), (Some(1000), Some(1007)));
+        // A restart on the same root: the switch was noted already, its footers are only rows.
+        drop(r);
+        let mut r = recorder(&root, 25_000_000_000, 2);
+        for u in [meta(1003), footer(1003), confirmed(1003), meta(1004), confirmed(1004), meta(1005), confirmed(1005)] {
+            r.on_update(u, 6).unwrap();
+        }
+        assert!(matches!(r.on_tick(T0 + 2, None).unwrap(), Action::None));
+        let m = segment_meta(&root, 1);
+        assert_eq!((m["rows"]["block_footers"].as_u64(), m["rows"]["anomalies"].as_u64()), (Some(1), None));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_footer_after_its_slot_closed_is_still_a_row_and_notes_the_switch() {
+        // The footer is sent when the validator reports it, not with its block: here after slot 1001 confirmed.
+        let root = tmp("rec-late-footer");
+        let mut r = recorder(&root, 25_000_000_000, 2);
+        for u in [meta(1000), confirmed(1000), meta(1001), confirmed(1001), footer(1000), meta(1002), confirmed(1002)] {
+            r.on_update(u, 5).unwrap();
+        }
+        assert_eq!(r.slots.late, 0);
+        assert!(matches!(r.on_tick(T0 + 1, None).unwrap(), Action::None));
+        let m = segment_meta(&root, 0);
+        assert_eq!((m["rows"]["block_footers"].as_u64(), m["rows"]["anomalies"].as_u64()), (Some(1), Some(1)));
+        assert!(root.join("alpenglow.json").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_slot_jump_closes_in_order_and_a_resume_inside_it_takes_the_next_slot() {
+        // Alpenglow's switch: ~2 vote-only slots never confirm and the slot numbers jump (1002..1009).
+        let root = tmp("rec-jump");
+        let mut r = recorder(&root, 25_000_000_000, 100);
+        for u in [tx(1000, 1), meta(1000), confirmed(1000), meta(1001), confirmed(1001), meta(1010), confirmed(1010)] {
+            r.on_update(u, 1).unwrap();
+        }
+        assert_eq!(r.slots.last_closed, Some(1001));
+        r.on_disconnect(T0, "test"); // 1010 was not closed yet: dropped, resent after the reconnect
+        let (main, _) = r.requests(None);
+        assert_eq!(main.from_slot, Some(1002)); // inside the jump: the stream resumes at the next slot that exists
+        for u in [tx(1010, 3), meta(1010), confirmed(1010), meta(1011), confirmed(1011)] {
+            r.on_update(u, 2).unwrap();
+        }
+        assert_eq!((r.slots.last_closed, r.slots.late, r.slots.unconfirmed), (Some(1010), 0, 0));
+        r.close_segment(None).unwrap();
+        let m = segment_meta(&root, 0);
+        assert_eq!((m["first_slot"].as_u64(), m["last_slot"].as_u64(), m["rows"]["arrivals"].as_u64()), (Some(1000), Some(1010), Some(2)));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
