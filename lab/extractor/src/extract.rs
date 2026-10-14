@@ -552,7 +552,8 @@ pub struct TxView<'a> {
 /// The extractor's token transfer tables (LAB_TRANSFERS=1): the pump.fun mint set and the columns.
 pub struct Transfers {
     mints: std::collections::HashSet<String>,
-    /// Mints created in the chunk (CreateEvent), learned while extracting.
+    /// Mints learned while extracting from the pump.fun curve's events (CreateEvent, TradeEvent, ...):
+    /// only those without the suffix and not in the file, so the set stays small.
     learned: std::sync::RwLock<std::collections::HashSet<String>>,
     pub mints_file: Option<String>,
     token: Key,
@@ -600,22 +601,39 @@ impl Transfers {
         self.mints.len()
     }
 
-    /// A pump.fun mint: in the store's set, created in this chunk, or with the pump.fun "pump" suffix
-    /// (most mints; a superset that also takes rare vanity mints of other launchpads).
+    /// A pump.fun mint: in the store's set, seen in a pump.fun curve event of this run, or with the
+    /// pump.fun "pump" suffix (most mints; a superset that also takes rare vanity mints of other
+    /// launchpads).
     pub fn is_pump(&self, mint: &str) -> bool {
         mint.ends_with("pump") || self.mints.contains(mint) || self.learned.read().map_or(false, |l| l.contains(mint))
     }
 
+    /// Learn the mints of the pump.fun curve's events in this transaction (before its token rows, so
+    /// a create with its first buy is complete). Only the curve program: its mints are pump.fun mints
+    /// by construction. PumpSwap pools can pair any mint (USDC, PUMP), so they teach nothing.
     fn learn(&self, rows: &[Row]) {
-        for r in rows.iter().filter(|r| &*r.table == "pump/CreateEvent") {
-            if let Some(i) = r.columns.iter().position(|(n, _)| n == "mint") {
-                if let Some(Val::Str(m)) = r.values.get(i) {
-                    if let Ok(mut l) = self.learned.write() {
-                        l.insert(m.clone());
-                    }
-                }
-            }
+        let new: Vec<&String> = rows
+            .iter()
+            .filter(|r| r.table.starts_with("pump/"))
+            .filter_map(|r| match r.columns.iter().position(|(n, _)| n == "mint").and_then(|i| r.values.get(i)) {
+                Some(Val::Str(m)) if !m.ends_with("pump") && !self.mints.contains(m) => Some(m),
+                _ => None,
+            })
+            .collect();
+        // A read lock first: most transactions teach nothing new, and the threads share the set.
+        if new.is_empty() || self.learned.read().map_or(false, |l| new.iter().all(|m| l.contains(*m))) {
+            return;
         }
+        if let Ok(mut l) = self.learned.write() {
+            l.extend(new.into_iter().cloned());
+        }
+    }
+
+    /// The mints learned in this run, sorted: the next chunk's LAB_PUMP_MINTS adds them.
+    pub fn learned_mints(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.learned.read().map_or(Vec::new(), |l| l.iter().cloned().collect());
+        v.sort();
+        v
     }
 
     /// The three tables' rows of one transaction. `core` holds its event rows (the store's legs);
@@ -894,7 +912,7 @@ pub struct LabPlugin {
     coverage: Arc<Coverage>,
     pub fatal: Arc<AtomicBool>,
     /// token_deltas, token_transfers and sol_funding (LAB_TRANSFERS=1; the extractor only).
-    pub transfers: Option<Transfers>,
+    pub transfers: Option<Arc<Transfers>>,
 }
 
 pub struct Coverage {
@@ -988,7 +1006,7 @@ impl LabPlugin {
             counters: Arc::new(Counters::default()),
             coverage,
             fatal: Arc::new(AtomicBool::new(false)),
-            transfers: Transfers::from_env()?,
+            transfers: Transfers::from_env()?.map(Arc::new),
         })
     }
 
@@ -1909,6 +1927,15 @@ mod tests {
                           pre_tokens: vec![bal(0, "Other", "A", 5)], post_tokens: vec![bal(0, "Other", "A", 1)] };
         assert!(t.rows(&tx, &[created], &Default::default()).is_empty()); // "Other" is no pump mint
         assert!(t.is_pump("NewMint"));
+        // A curve trade teaches its mint; a PumpSwap pool (any pair, e.g. USDC) and suffix or file
+        // mints do not go into the learned set.
+        let traded = event("pump/TradeEvent", &[("mint", st("OldCurveMint"))]);
+        let pool = event("pump_amm/CreatePoolEvent", &[("mint", st("UsdcLike"))]);
+        let suffixed = event("pump/TradeEvent", &[("mint", st("Xyzpump"))]);
+        let listed = event("pump/TradeEvent", &[("mint", st("Known"))]);
+        t.rows(&tx, &[traded, pool, suffixed, listed], &Default::default());
+        assert!(t.is_pump("OldCurveMint") && !t.is_pump("UsdcLike"));
+        assert_eq!(t.learned_mints(), vec!["NewMint".to_owned(), "OldCurveMint".to_owned()]);
     }
 }
 
