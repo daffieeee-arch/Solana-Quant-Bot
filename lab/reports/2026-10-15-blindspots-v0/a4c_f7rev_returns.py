@@ -6,7 +6,7 @@ Positions: K3's configuration (variant tp4_T600, 0.5 SOL, q 0.5, overlay none, a
 base costs (backtest.costs settle_sql). Mean net return per filled position with a 95 % day-bootstrap CI.
 Also the random control N2_F7 (same pools, random times) for the pool-level flag.
 
-Usage (cwd = repo lab/): python a4c_f7rev_returns.py <parts dir> <store> <out.json>
+Usage (cwd = repo lab/): python a4c_f7rev_returns.py <parts dir> <store> <out.json> [holdout]
 """
 import json
 import os
@@ -70,13 +70,16 @@ def boot(day_sums, n=10_000, seed=7):
 
 
 res = {"parts": parts, "config": "tp4_T600, 0.5 SOL, q 0.5, overlay none, base costs", "rows": []}
+PERIODS = (("dag 1-9", "day <= '2026-09-19'"), ("dag 10-18", "day >= '2026-09-20'"))
+if len(sys.argv) > 4 and sys.argv[4] == "holdout":  # diagnosis only (hold-out 1047-1051 is closed for tuning)
+    PERIODS = (("hold-out", "true"),)
 groups = [("F7", "alle", "true"), ("F7", "rt_tx", "rt_tx"), ("F7", "geen rt_tx", "NOT rt_tx"),
           ("F7", "wash_1h", "wash_1h"), ("F7", "geen wash_1h", "NOT wash_1h"),
           ("F7", "geen rt_tx en geen wash_1h", "NOT rt_tx AND NOT wash_1h"),
           ("N2_F7", "alle", "true"), ("N2_F7", "wash_1h", "wash_1h"), ("N2_F7", "geen wash_1h", "NOT wash_1h")]
 for fam, name, cond in groups:
     for d in (1, 2):
-        for period, days in (("dag 1-9", "day <= '2026-09-19'"), ("dag 10-18", "day >= '2026-09-20'")):
+        for period, days in PERIODS:
             w = f"family = '{fam}' AND d = {d} AND ({cond}) AND {days} AND NOT entry_failed AND ret IS NOT NULL"
             ds = con.execute(f"SELECT sum(ret), count(*) FROM j WHERE {w} GROUP BY day").fetchall()
             n = sum(c for _, c in ds)
