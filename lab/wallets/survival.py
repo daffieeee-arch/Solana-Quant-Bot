@@ -27,11 +27,13 @@ import time
 
 import numpy as np
 
-from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard, regime_label
+from .common import OUT_ROOT, REF_MS, SOL, Clock, connect, git_commit, guard, regime_label
 from .markout import ms_case
 
 DRAIN_FRAC = 0.9
-K3_HOLD_SLOTS = 600          # T600: the K3 exit rule holds at most 600 slots
+K3_HOLD_SLOTS = 600          # T600: the K3 exit rule holds at most 600 slots *at the reference slot time*: the engine converts
+                             # clock.slots(ms(600), t) = 600 x 267.3 ms into the epoch's slots (~500 at 320 ms, ~735 at 218 ms)
+K3_SQL = f"greatest(1, round({K3_HOLD_SLOTS} * {REF_MS} / ms_per_slot))"   # the hold in slots of the trigger's epoch
 GAP_MINUTES = (1, 2, 5, 10)
 GRID_MIN = (1, 2, 3, 5, 10, 30, 60, 360)
 SPLIT_DAY, LAST_DAY = "2026-09-20", "2026-09-30"
@@ -99,14 +101,23 @@ def build(con, clock, end_slot, observe_slots):
              {gap_cols},
              least({hi_obs}, tr.t + {observe_slots if observe_slots else end_slot}) AS censor_slot
       FROM trig tr""")
+    # everything observed is bounded at the censor slot (an event at or after it is unobserved: NULL), and the WSOL
+    # at an inactivity exit is the reserve after the last leg of any kind at or before the exit slot (a withdraw or
+    # deposit inside the quiet gap counts; the gap-opening trade's reserve did not see it)
+    bounded = ", ".join(f"CASE WHEN {c} < censor_slot THEN {c} END AS {c}" for c in ["drain_slot", "first_withdraw_slot", "last_trade_slot"] + [f"exit_{m}m" for m in GAP_MINUTES])
+    b_exit = ", ".join(f"(SELECT arg_max(l.b_post, (l.slot, l.tx_index)) FROM legs l WHERE l.pool = s.pool AND l.slot <= s.exit_{m}m) AS b_exit_{m}m" for m in GAP_MINUTES)
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE surv AS
-      SELECT *, drain_slot IS NOT NULL AND drain_slot < censor_slot AS event,
-             (COALESCE(least(drain_slot, censor_slot), censor_slot) - t) AS time_slots,
-             (COALESCE(least(drain_slot, censor_slot), censor_slot) - t) * ms_per_slot / 60000.0 AS time_min,
-             drain_slot IS NOT NULL AND drain_slot - t <= {K3_HOLD_SLOTS} AS drain_in_k3_hold,
-             CASE WHEN day < '{SPLIT_DAY}' THEN 'days 1-9' WHEN day <= '{LAST_DAY}' THEN 'days 10-18' ELSE 'later' END AS block
+      SELECT * REPLACE ({bounded}, CASE WHEN first_withdraw_slot < censor_slot THEN first_withdraw_frac END AS first_withdraw_frac)
       FROM surv""")
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE surv AS
+      SELECT * REPLACE ({b_exit}), drain_slot IS NOT NULL AS event,
+             (COALESCE(drain_slot, censor_slot) - t) AS time_slots,
+             (COALESCE(drain_slot, censor_slot) - t) * ms_per_slot / 60000.0 AS time_min,
+             drain_slot IS NOT NULL AND drain_slot - t <= {K3_SQL} AS drain_in_k3_hold,
+             CASE WHEN day < '{SPLIT_DAY}' THEN 'days 1-9' WHEN day <= '{LAST_DAY}' THEN 'days 10-18' ELSE 'later' END AS block
+      FROM surv s""")
     n, ev = con.execute("SELECT count(*), sum(event::INT) FROM surv").fetchone()
     progress(f"survival rows: {n}, drains observed {ev}")
     return n, ev
@@ -160,7 +171,7 @@ def render(con, info):
          f"of the pool's WSOL; censoring at the store end{' or t + ' + format(info['observe_slots'], ',') + ' slots' if info['observe_slots'] else ''}. "
          "Kaplan–Meier (lifelines), minutes of the epoch's slot time, 95 % CI (Greenwood). Descriptive on used data: no test, no registration.\n",
          "### Survival S(t) = share not yet drained t minutes after the trigger\n",
-         "| group | n | drains | " + " | ".join(f"{g} min" for g in GRID_MIN) + " | median (min) | drained within T600 (600 slots) |",
+         "| group | n | drains | " + " | ".join(f"{g} min" for g in GRID_MIN) + " | median (min) | drained within the K3 hold (T600 = 600 slots at 267.3 ms, in the epoch's slots) |",
          "|---|---|---|" + "---|" * len(GRID_MIN) + "---|---|"]
     for name, where in groups(con):
         rows = con.execute(f"SELECT time_min, event, drain_in_k3_hold FROM surv WHERE {where}").fetchall()
@@ -178,22 +189,23 @@ def render(con, info):
           f"Among the observed drains, {fw[2]:,} of {fw[3]:,} ({pct(fw[2] / max(fw[3], 1))}) come after the pool's last trade (trading stopped first).\n",
           "### Inactivity exit: no trade for X minutes\n",
           "Fires at the end of the first gap of ≥ X minutes between trades after t. Against the drain: before it (minutes saved = drain − exit; WSOL in the pool at the exit), after it, or never within the observation.\n",
-          "| X | fires | before the drain | median minutes saved | median WSOL at exit (SOL) | exits with ≥ 1 SOL in the pool | after the drain | never, drained | never, not drained |",
-          "|---|---|---|---|---|---|---|---|---|"]
+          "| X | fires | before the drain | median minutes saved | median WSOL at exit (SOL) | exits with ≥ 1 SOL in the pool | after the drain | fires, no drain observed | never, drained | never, not drained |",
+          "|---|---|---|---|---|---|---|---|---|---|"]
     for m in GAP_MINUTES:
         r = con.execute(f"""
           SELECT count(exit_{m}m), count(*) FILTER (exit_{m}m IS NOT NULL AND event AND exit_{m}m < drain_slot),
                  median((drain_slot - exit_{m}m) * ms_per_slot / 60000.0) FILTER (exit_{m}m IS NOT NULL AND event AND exit_{m}m < drain_slot),
                  median(b_exit_{m}m / {SOL}) FILTER (exit_{m}m IS NOT NULL AND event AND exit_{m}m < drain_slot),
                  count(*) FILTER (exit_{m}m IS NOT NULL AND event AND exit_{m}m < drain_slot AND b_exit_{m}m >= {SOL}),
-                 count(*) FILTER (exit_{m}m IS NOT NULL AND event AND exit_{m}m >= drain_slot),
+                 count(*) FILTER (exit_{m}m IS NOT NULL AND event AND exit_{m}m >= drain_slot), count(*) FILTER (exit_{m}m IS NOT NULL AND NOT event),
                  count(*) FILTER (exit_{m}m IS NULL AND event), count(*) FILTER (exit_{m}m IS NULL AND NOT event), count(*)
           FROM surv""").fetchone()
-        n = r[8]
+        n = r[9]
         L.append(f"| {m} min | {r[0]:,} ({pct(r[0] / n)}) | {r[1]:,} ({pct(r[1] / n)}) | {'–' if r[2] is None else f'{r[2]:.1f}'} | "
-                 f"{'–' if r[3] is None else f'{r[3]:.2f}'} | {r[4]:,} | {r[5]:,} | {r[6]:,} | {r[7]:,} |")
+                 f"{'–' if r[3] is None else f'{r[3]:.2f}'} | {r[4]:,} | {r[5]:,} | {r[6]:,} | {r[7]:,} | {r[8]:,} |")
     L += ["\nReading guide: an exit that fires after the drain sells into an empty pool; 'never, drained' is the share the inactivity rule cannot protect. "
-          "The K3 column of the survival table is the share of triggers whose pool is drained within the engine's maximum hold of 600 slots.\n",
+          "The K3 column of the survival table is the share of triggers whose pool is drained within the engine's maximum hold: T600 is a duration "
+          f"(600 slots at the reference {REF_MS} ms), converted to the epoch's slots as the engine does (clock.slots(ms(600), t)).\n",
           f"Run: commit {info['commit']}, {info['seconds']} s."]
     return "\n".join(L)
 
@@ -228,7 +240,8 @@ def rerender(out_dir):
     report of a NAS run can be fixed on the VPS without rerunning the build."""
     import duckdb
     con = duckdb.connect()
-    con.execute(f"CREATE TEMP TABLE surv AS SELECT * FROM '{os.path.join(out_dir, 'survival.parquet')}'")
+    # drain_in_k3_hold is recomputed (the hold is a duration per epoch; the first NAS run used a flat 600 slots)
+    con.execute(f"CREATE TEMP TABLE surv AS SELECT * REPLACE (event AND drain_slot - t <= {K3_SQL} AS drain_in_k3_hold) FROM '{os.path.join(out_dir, 'survival.parquet')}'")
     with open(os.path.join(out_dir, "run-survival.json")) as f:
         info = json.load(f)
     with open(os.path.join(out_dir, "survival.md"), "w") as f:
