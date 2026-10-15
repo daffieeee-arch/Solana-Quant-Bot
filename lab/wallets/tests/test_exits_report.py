@@ -1,5 +1,6 @@
-"""Exit-grid report on mini parts: the paired Δ against tp4_T600 only on the common triggers (busy_until drops later
-triggers of a pool for a longer hold), the dropped counts per side, the empty share and the bar."""
+"""Exit-grid report on mini parts that carry only farm = 'flagged' and 'organic' (as K3's parts do): farm 'all' is
+their union; the paired Δ against tp4_T600 only on the common triggers (busy_until drops later triggers of a pool for
+a longer hold), the dropped counts per side, the empty share, the Σ SOL per day and the bar."""
 
 import json
 import os
@@ -16,7 +17,8 @@ CFG = {"costs": {"ata_rent_lamports": 1_513_840, "scenarios": {"base": {"land_pr
 DAYS = ["2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24"]
 
 
-def _row(variant, i, day, ret, d=1, farm="all"):
+def _row(variant, i, day, ret, d=1, farm=None):
+    farm = farm or ("flagged" if i % 2 else "organic")
     cost = SOL // 2
     return {"family": "F7", "variant": variant, "segment": "pool_reversed", "mint": f"M{i}", "pool": f"P{i}", "t": 449_300_000 + 1000 * i, "d": d, "d_ms": 267.3 * d,
             "day": day, "regime": "270ms", "farm": farm, "overlay": "none", "size_sol": 0.5, "q": 0.5, "skipped": False, "entry_failed": False,
@@ -36,6 +38,7 @@ def _parts(path):
             if i % 4:
                 rows.append(_row("hold60", i, day, -1.0 if i == 5 else base + 0.03, d))
     rows.append({**_row("hold60", 99, DAYS[0], 0.5), "skipped": True})  # a skipped position never counts
+    assert not any(r["farm"] == "all" for r in rows)
     os.makedirs(path)
     pq.write_table(pa.Table.from_pylist(rows), os.path.join(path, "part-0.parquet"))
 
@@ -49,15 +52,22 @@ def test_paired_on_common_triggers_and_bar(tmp_path):
     md = out.read_text()
     info = json.load(open(tmp_path / "exits.json"))
     assert info["positions"] == 140 and info["variants"] == 2   # 40 + 30 per d, the skipped one excluded
-    rows = [ln for ln in md.splitlines() if ln.startswith("| hold60 | 1 | all |")]
-    cells = [c.strip() for c in rows[0].split("|")[1:-1]]
-    # days 10-18 block first: 30 positions, common 30, dropped v / b = 0 / 10 (the baseline's ten busy triggers)
-    assert cells[3] == "30" and cells[13] == "30" and cells[18] == "0 / 10"
+    def cells(prefix):
+        return [c.strip() for c in next(ln for ln in md.splitlines() if ln.startswith(prefix)).split("|")[1:-1]]
+    c = cells("| hold60 | 1 | all |")
+    # days 10-18 block first: 30 positions (flagged 20 + organic 10: the busy triggers i % 4 == 0 are even, so organic), common 30, dropped v / b = 0 / 10
+    assert c[3] == "30" and c[14] == "30" and c[19] == "0 / 10"
+    assert cells("| hold60 | 1 | flagged |")[3] == "20" and cells("| hold60 | 1 | organic |")[3] == "10"
     # the paired Δ on the common set is +2.9 pt (29 x +3 pt, 0 on the drained trigger); empty 1 of 30 on both sides
-    assert cells[14] == "**+2.9%**" and cells[17] == "3.3% / 3.3%"
+    assert c[15] == "**+2.9%**" and c[18] == "3.3% / 3.3%"
+    # Σ SOL / day: the union's total is the sum of the two groups' (4 days in the block)
+    sol = lambda cc: float(cc[7])
+    assert abs(sol(c) - sol(cells("| hold60 | 1 | flagged |")) - sol(cells("| hold60 | 1 | organic |"))) < 2e-3
+    assert sol(c) < 0 and sol(cells("| tp4_T600 | 1 | all |")) < sol(c)   # the drained trigger dominates; the baseline fills ten more losers
     # tp4_T600's own row: no pairing columns
     base_row = next(ln for ln in md.splitlines() if ln.startswith("| tp4_T600 | 1 | all |"))
     assert base_row.rstrip().endswith("| – | – | – | – | – | – |")
+    assert "| 1 | all |" in md and "| 2 | all |" in md
     # the bar: Δ CI > 0 at d = 1 and d = 2 and the empty share within 2 points -> clearly better on dev
     assert "| hold60 | yes | yes | **clearly better on dev** |" in md and info["passed"] == ["hold60"]
     assert "| hold60 | 30 | 0% | 100% |" in md    # exit reasons: all 'time'
