@@ -4,8 +4,10 @@
 //! transport compression: an upper bound of what Triton counts, so the budget errs on the safe
 //! side. The first hour of the top-up compares it with Triton's own figure (`--wire-ratio`).
 //!
-//! The day is the UTC day. Spent bytes are kept in `<root>/budget.json`, so a restart does not
-//! reset them. When the day's spend projects above the cap (current rate until midnight), the
+//! The day is the UTC day. Spent bytes are kept in `<root>/budget.json` (written atomically and
+//! fsynced), so a restart does not reset them. At the start the day's spend is the larger of
+//! budget.json and the usage rows of today's segments: a lost, stale or unreadable budget.json
+//! (a power cut) never starts the day at 0 (fail-closed). When the day's spend projects above the cap (current rate until midnight), the
 //! lowest-priority stream is dropped (downscale), one level at a time; at the cap itself the
 //! recorder stops and does not start again that day. Every decision is a usage row (stream
 //! "budget", with a note) in the segment, so the engine journals it.
@@ -53,6 +55,30 @@ fn day_of(unix: u64) -> u64 {
     unix / 86_400
 }
 
+/// The bytes of `day`'s usage rows in the complete segments under `root` (their `_segment.json`):
+/// a lower bound of the day's spend that survives a lost budget.json. Segments written before the
+/// day (file time) cannot hold its minutes and are not read.
+pub fn segments_spent(root: &Path, day: u64) -> Result<u64> {
+    let dir = root.join("segments");
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(0) };
+    let day_start = std::time::UNIX_EPOCH + std::time::Duration::from_secs(day * 86_400);
+    let mut total = 0u64;
+    for e in entries {
+        let meta = e?.path().join("_segment.json");
+        let Ok(md) = std::fs::metadata(&meta) else { continue };
+        if md.modified().map_or(false, |t| t < day_start) {
+            continue;
+        }
+        let Some(v) = std::fs::read(&meta).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { continue };
+        for u in v["usage"].as_array().into_iter().flatten() {
+            if u["minute"].as_u64().map(|m| day_of(m * 60)) == Some(day) {
+                total += u["bytes"].as_u64().unwrap_or(0);
+            }
+        }
+    }
+    Ok(total)
+}
+
 impl Meter {
     /// The meter of `root`, with the day's spend so far from `budget.json`.
     pub fn load(root: &Path, cap_bytes: u64, wire_ratio: f64, now_unix: u64) -> Result<Self> {
@@ -72,11 +98,22 @@ impl Meter {
             last_downscale_unix: 0,
             no_downscale: false,
         };
-        if let Some(v) = std::fs::read(&m.path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
-            if v["day"].as_u64() == Some(m.day) {
-                m.spent = v["spent_bytes"].as_u64().unwrap_or(0);
-                m.stopped = v["stopped"].as_bool().unwrap_or(false);
-            }
+        match std::fs::read(&m.path) {
+            Ok(b) => match serde_json::from_slice::<Value>(&b) {
+                Ok(v) if v["day"].as_u64() == Some(m.day) => {
+                    m.spent = v["spent_bytes"].as_u64().unwrap_or(0);
+                    m.stopped = v["stopped"].as_bool().unwrap_or(false);
+                }
+                Ok(_) => {}
+                Err(e) => log::error!("budget: {} is unreadable ({e}); today's spend comes from the segments", m.path.display()),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::error!("budget: cannot read {} ({e}); today's spend comes from the segments", m.path.display()),
+        }
+        let from_segments = segments_spent(root, m.day)?;
+        if from_segments > m.spent {
+            log::warn!("budget: today's segments hold {from_segments} bytes, budget.json {}: taking the segments", m.spent);
+            m.spent = from_segments;
         }
         Ok(m)
     }
@@ -119,9 +156,10 @@ impl Meter {
     }
 
     pub fn save(&self) -> Result<()> {
-        let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(&self.state())?)?;
-        std::fs::rename(&tmp, &self.path)?;
+        crate::segment::write_json_atomic(&self.path, &self.state())?;
+        if let Some(dir) = self.path.parent() {
+            std::fs::File::open(dir)?.sync_all()?; // the rename itself on disk
+        }
         Ok(())
     }
 
@@ -282,6 +320,39 @@ mod tests {
         m.add("tx", 10);
         assert_eq!(m.tick(T0 + 86_400 + 1).unwrap(), Decision::Restore);
         assert_eq!(m.spent, 0);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn segment(root: &Path, seq: u64, usage: Value) {
+        let d = root.join(format!("segments/{seq:09}"));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("_segment.json"), json!({"seq": seq, "complete": true, "usage": usage}).to_string()).unwrap();
+    }
+
+    #[test]
+    fn a_lost_stale_or_unreadable_budget_takes_todays_segments() {
+        let root = tmp("budget-recover");
+        let minute = T0 / 60; // 2026-10-12 00:00
+        segment(&root, 0, json!([{"minute": minute + 5, "stream": "tx", "bytes": 100, "messages": 1},
+                                  {"minute": minute + 5, "stream": "budget", "bytes": 0, "messages": 0, "note": "x"}]));
+        segment(&root, 1, json!([{"minute": minute + 6, "stream": "tx", "bytes": 250, "messages": 2},
+                                  {"minute": minute - 10, "stream": "tx", "bytes": 999, "messages": 1}])); // yesterday's minute
+        assert_eq!(segments_spent(&root, day_of(T0)).unwrap(), 350);
+        let load = || Meter::load(&root, 25_000_000_000, 1.0, T0 + 3_600).unwrap().spent;
+        std::fs::write(root.join("budget.json"), b"{\"day\": 20738, \"spent_by").unwrap(); // cut off by a power loss
+        assert_eq!(load(), 350); // not 0: fail-closed
+        std::fs::write(root.join("budget.json"), json!({"day": day_of(T0), "spent_bytes": 50}).to_string()).unwrap();
+        assert_eq!(load(), 350); // a stale budget.json: the segments are larger
+        std::fs::write(root.join("budget.json"), json!({"day": day_of(T0), "spent_bytes": 500}).to_string()).unwrap();
+        assert_eq!(load(), 500); // the running minutes not yet in a segment
+        std::fs::remove_file(root.join("budget.json")).unwrap();
+        assert_eq!(load(), 350);
+        // save() writes it back atomically
+        let m = Meter::load(&root, 25_000_000_000, 1.0, T0 + 3_600).unwrap();
+        m.save().unwrap();
+        let v: Value = serde_json::from_slice(&std::fs::read(root.join("budget.json")).unwrap()).unwrap();
+        assert_eq!(v["spent_bytes"].as_u64(), Some(350));
+        assert!(!root.join("budget.json.tmp").exists());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
