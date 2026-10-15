@@ -3,9 +3,12 @@ does not see. Inputs: the transfer extraction chunks (token_deltas, token_transf
 */_manifest.json) and the store (LAB_STORE). Everything is restricted to mints created inside the window, so the
 owner ledger has the mint's full history (minted at the create, every leg, every transfer).
 
-Ledger: per (mint, owner) the token movements are the store legs (curve: trader +/- t; pool: trader +/- token_amount)
-plus the token_deltas rows the extractor kept (those a store leg does not explain, vaults included). Holdings at a
-slot are the sum up to and including it. Insiders of a mint (O7 definition): the creator and every buyer in the
+Ledger: per (mint, owner) the token movements are the store legs (curve: trader +/- t; pool: trader +/- token_amount,
+plus the trader's own non-trade transfers, burns and mint_to in the same transaction) plus the token_deltas rows the
+extractor kept (those a store leg does not explain, vaults included); a vault side for every leg and every pool boost
+(boost_buy_and_burn: the pool's vault burns the base) whose vault row the extractor dropped. Vaults are named by the
+ledger itself: the mint's bonding-curve PDA (wallets/keys.py) and its pools; any other program-derived owner (a bot's
+PDA, a PDA-held trader account) is a holder. Holdings at a slot are the sum up to and including it. Insiders of a mint (O7 definition): the creator and every buyer in the
 first 10 s after the create.
 
 Q1 (--triggers parquet: mint, t[, ins_share]): share_c = insiders' holdings / circulating (all non-vault holdings)
@@ -29,6 +32,9 @@ import os
 import sys
 import time
 
+import pyarrow as pa
+
+from . import keys
 from .common import EPOCH_SLOTS, SOL, STORE, Clock, connect, git_commit
 
 INSIDER_WINDOW_MS = 10_000
@@ -101,11 +107,21 @@ def setup(con, root, lo, hi, clock):
         SELECT slot, last_value(day IGNORE NULLS) OVER (ORDER BY slot ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS day
         FROM (SELECT r.range AS slot, d.day FROM range({lo}, {hi}) r LEFT JOIN days d ON d.slot = r.range)""")
     progress(f"setup: {_count(con, 'days')} day slots, {_count(con, 'wmints')} mints created in the window")
+    # The vault owners of every window mint: the bonding-curve PDA (it owns the curve's token vault) and its pools (a
+    # pool owns its vaults). The extractor's is_vault marks every off-curve owner, a bot's PDA or a PDA-held trader
+    # account included (check 4.1 diagnosis of 2026-10-15: the sniper ARu4n5mF… and the sellers it feeds are PDAs),
+    # so the ledger names the vaults itself and treats every other owner as a holder.
+    mints = [r[0] for r in con.execute("SELECT mint FROM wmints ORDER BY mint").fetchall()]
+    con.register("curve_pdas", pa.table({"mint": pa.array(mints, pa.string()), "owner": pa.array([keys.curve_pda(m) for m in mints], pa.string())}))
+    con.execute("""CREATE OR REPLACE TEMP TABLE wvaults AS
+        SELECT DISTINCT mint, owner FROM (SELECT mint, owner FROM curve_pdas
+                                          UNION ALL SELECT ps.mint, ps.pool FROM pools ps SEMI JOIN wmints w ON w.mint = ps.mint)""")
     # td / tt materialised once, for the window's mints only (every later use is on those mints; a view would rescan
     # the chunks at each use: td four times, tt three times on an epoch). sf (SOL funding) is not per mint: a view.
     con.execute("""CREATE OR REPLACE TEMP TABLE td AS
-        SELECT slot, tx_index, mint, owner, token_account, delta_raw::HUGEINT AS delta, is_vault, has_pump_event_same_mint, fee_payer
-        FROM td_raw SEMI JOIN wmints USING (mint) WHERE NOT failed""")
+        SELECT t.slot, t.tx_index, t.mint, t.owner, t.token_account, t.delta_raw::HUGEINT AS delta, v.owner IS NOT NULL AS vault, t.is_vault AS is_pda,
+               t.has_pump_event_same_mint, t.fee_payer
+        FROM td_raw t SEMI JOIN wmints w ON w.mint = t.mint LEFT JOIN wvaults v ON v.mint = t.mint AND v.owner = t.owner WHERE NOT t.failed""")
     progress(f"setup: td {_count(con, 'td')} token_deltas rows of the window's mints")
     con.execute("""CREATE OR REPLACE TEMP TABLE tt AS
         SELECT slot, tx_index, ix_path, kind, mint, source_owner, dest_owner, amount_raw::HUGEINT AS amount, in_trade, owner_unresolved
@@ -116,32 +132,53 @@ def setup(con, root, lo, hi, clock):
     per_epoch = clock.per_epoch or {}
     case = "CASE create_slot // {e} ".format(e=EPOCH_SLOTS) + " ".join(f"WHEN {ep} THEN {ms!r}" for ep, ms in sorted(per_epoch.items())) + f" ELSE {clock.ms_per_slot(lo)!r} END" if per_epoch else repr(clock.ms_per_slot(lo))
     con.execute(f"CREATE OR REPLACE TEMP TABLE wmints2 AS SELECT *, greatest(1, round({INSIDER_WINDOW_MS} / ({case})))::BIGINT AS window_slots FROM wmints")
-    # store legs of the window's mints, owner side and vault side
+    # store legs of the window's mints, owner side and vault side (vault_owner: the owner of the vault's token account)
     con.execute(f"""CREATE OR REPLACE TEMP TABLE legs AS
         SELECT c.mint, c.slot, c.tx_index, c.trader AS owner, CASE WHEN c.is_buy THEN c.t ELSE -c.t END::HUGEINT AS delta, c.is_buy AS buy,
-               c.q::HUGEINT AS sol, 'curve' AS venue, c.mint || ':curve' AS key
-        FROM curve c SEMI JOIN wmints w ON w.mint = c.mint WHERE c.slot >= {lo} AND c.slot < {hi}
+               c.q::HUGEINT AS sol, 'curve' AS venue, c.mint || ':curve' AS key, v.owner AS vault_owner
+        FROM curve c JOIN curve_pdas v ON v.mint = c.mint WHERE c.slot >= {lo} AND c.slot < {hi}
         UNION ALL
         SELECT ps.mint, p.slot, p.tx_index, p.trader, CASE WHEN p.token_buy THEN p.token_amount ELSE -p.token_amount END::HUGEINT, p.token_buy,
-               p.sol_amount::HUGEINT, 'pool', p.pool
+               p.sol_amount::HUGEINT, 'pool', p.pool, p.pool
         FROM pool p JOIN pools ps USING (pool) SEMI JOIN wmints w ON w.mint = ps.mint
         WHERE p.slot >= {lo} AND p.slot < {hi} AND p.kind IN ('buy', 'sell')""")
-    progress(f"setup: legs {_count(con, 'legs')}")
+    # pool boosts (boost_buy_and_burn): the pool buys base with the boost vault's quote and burns it from its own
+    # vault, no user side; the store has the burned base in `base`. The extractor's legs do not cover the boost, yet
+    # the diagnosis of 2026-10-15 found no delta row for it (53 % of the 4.1 deficit on 1040), so the vault side is
+    # added here unless a vault row was kept.
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE boosts AS
+        SELECT ps.mint, p.slot, p.tx_index, p.pool AS key, p.base::HUGEINT AS burned
+        FROM pool p JOIN pools ps USING (pool) SEMI JOIN wmints w ON w.mint = ps.mint
+        WHERE p.slot >= {lo} AND p.slot < {hi} AND p.kind = 'boost' AND p.base IS NOT NULL""")
+    # a trader's token movements besides the trade in the same transaction (a bot buys and forwards the tokens to
+    # its customers; a seller receives from a PDA and sells at once): non-trade transfers, burns and mint_to per owner
+    con.execute("""CREATE OR REPLACE TEMP TABLE flows AS
+        SELECT mint, slot, tx_index, owner, sum(amount) AS flow FROM (
+            SELECT mint, slot, tx_index, dest_owner AS owner, amount FROM tt WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade AND dest_owner IS NOT NULL
+            UNION ALL SELECT mint, slot, tx_index, source_owner, -amount FROM tt WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade AND source_owner IS NOT NULL
+            UNION ALL SELECT mint, slot, tx_index, source_owner, -amount FROM tt WHERE kind = 'burn' AND source_owner IS NOT NULL
+            UNION ALL SELECT mint, slot, tx_index, dest_owner, amount FROM tt WHERE kind = 'mint_to' AND dest_owner IS NOT NULL) GROUP BY 1, 2, 3, 4""")
+    progress(f"setup: legs {_count(con, 'legs')}, boosts {_count(con, 'boosts')}, flows {_count(con, 'flows')}")
     # Insiders: the creator and every buyer in the first 10 s (O7); buyers both as the store's trader and as the
     # chain's token owner (a kept positive non-vault delta in that window), since the two can differ.
     con.execute("""CREATE OR REPLACE TEMP TABLE insiders AS
         SELECT DISTINCT w.mint, x.owner FROM wmints2 w JOIN (
             SELECT mint, owner, slot FROM legs WHERE buy
-            UNION ALL SELECT mint, owner, slot FROM td WHERE NOT is_vault AND delta > 0 AND has_pump_event_same_mint
+            UNION ALL SELECT mint, owner, slot FROM td WHERE NOT vault AND delta > 0 AND has_pump_event_same_mint
             UNION ALL SELECT mint, creator, create_slot FROM wmints WHERE creator IS NOT NULL) x
         ON x.mint = w.mint AND x.slot <= w.create_slot + w.window_slots""")
     progress(f"setup: insiders {_count(con, 'insiders')}")
-    # the owner ledger: legs (owner side) + kept token_deltas rows (non-vault); vaults: legs (vault side) + kept vault rows
-    # The vault side of a leg is added only when the extractor dropped the vault row of that transaction (spec v2: a
-    # vault delta equal to the leg's base is dropped; otherwise the kept row is the transaction's whole net vault delta,
-    # mint and leg included, e.g. the create transaction with the dev buy).
-    # Same rule on the owner side: a kept non-vault row is the owner's whole net delta in that transaction (the
-    # extractor only drops a row equal to the leg's base), so the leg's owner side is added only without a kept row.
+    # the owner ledger: legs (owner side) + kept token_deltas rows (holders); vaults: legs and boosts (vault side) +
+    # kept vault rows.
+    # The vault side of a leg (or boost) is added only when the extractor dropped the row of *that* vault (spec v2: a
+    # vault delta equal to the leg's base is dropped; otherwise the kept row is the transaction's whole net vault
+    # delta, mint and leg included, e.g. the create transaction with the dev buy). A kept row of another
+    # program-derived owner in the transaction (a bot's PDA feeding the seller) is a holder's row and explains nothing
+    # (check 4.1 diagnosis of 2026-10-15: "any vault row kept" skipped the curve's side on such sells).
+    # Same rule on the owner side: a kept holder row is the owner's whole net delta in that transaction (the
+    # extractor only drops a row equal to the leg's base), so the leg's owner side is added only without a kept row;
+    # then the trader's non-trade flows in the transaction are added to it (a bot that buys and forwards the tokens at
+    # once has no row at all, its net being 0; the leg alone doubled the tokens), once per trader.
     # The store's trader can differ from the chain's token owner (a PDA-held token account: the kept row then
     # carries the leg's exact amount under the owner), so a leg is also explained by a kept row with its amount —
     # one to one (row_number per (mint, slot, tx, delta) on both sides) and only by kept rows whose owner is not
@@ -151,19 +188,27 @@ def setup(con, root, lo, hi, clock):
     # as a blockwise nested-loop join (legs x kept rows; the NAS run of 2026-10-15 sat in it for 6 h on epoch 1040).
     con.execute("""CREATE OR REPLACE TEMP TABLE kept_other AS
         SELECT k.mint, k.slot, k.tx_index, k.delta, row_number() OVER (PARTITION BY k.mint, k.slot, k.tx_index, k.delta ORDER BY k.owner) AS rn
-        FROM (SELECT DISTINCT mint, slot, tx_index, owner, delta FROM td WHERE NOT is_vault) k
+        FROM (SELECT DISTINCT mint, slot, tx_index, owner, delta FROM td WHERE NOT vault) k
         ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) lt
              ON lt.mint = k.mint AND lt.slot = k.slot AND lt.tx_index = k.tx_index AND lt.owner = k.owner""")
     con.execute("""CREATE OR REPLACE TEMP TABLE ledger AS
-        SELECT l.mint, l.slot, l.tx_index, l.owner, l.delta, false AS vault, 'leg' AS src
-        FROM (SELECT *, row_number() OVER (PARTITION BY mint, slot, tx_index, delta ORDER BY owner) AS rn FROM legs) l
-        ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE NOT is_vault) ko
-             ON ko.mint = l.mint AND ko.slot = l.slot AND ko.tx_index = l.tx_index AND ko.owner = l.owner
-        ANTI JOIN kept_other kd
-             ON kd.mint = l.mint AND kd.slot = l.slot AND kd.tx_index = l.tx_index AND kd.delta = l.delta AND kd.rn = l.rn
-        UNION ALL SELECT mint, slot, tx_index, owner, delta, is_vault, 'delta' FROM td
+        SELECT mint, slot, tx_index, owner, delta, false AS vault, 'leg' AS src FROM (
+            SELECT l.mint, l.slot, l.tx_index, l.owner, l.delta + CASE WHEN l.rno = 1 THEN COALESCE(f.flow, 0) ELSE 0 END AS delta
+            FROM (SELECT *, row_number() OVER (PARTITION BY mint, slot, tx_index, delta ORDER BY owner) AS rn,
+                            row_number() OVER (PARTITION BY mint, slot, tx_index, owner ORDER BY delta) AS rno FROM legs) l
+            ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE NOT vault) ko
+                 ON ko.mint = l.mint AND ko.slot = l.slot AND ko.tx_index = l.tx_index AND ko.owner = l.owner
+            ANTI JOIN kept_other kd
+                 ON kd.mint = l.mint AND kd.slot = l.slot AND kd.tx_index = l.tx_index AND kd.delta = l.delta AND kd.rn = l.rn
+            LEFT JOIN flows f ON f.mint = l.mint AND f.slot = l.slot AND f.tx_index = l.tx_index AND f.owner = l.owner)
+        WHERE delta <> 0
+        UNION ALL SELECT mint, slot, tx_index, owner, delta, vault, 'delta' FROM td
         UNION ALL SELECT l.mint, l.slot, l.tx_index, '<vault:' || l.key || '>', -l.delta, true, 'leg_vault' FROM legs l
-                  ANTI JOIN (SELECT DISTINCT mint, slot, tx_index FROM td WHERE is_vault) v USING (mint, slot, tx_index)""")
+                  ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
+                       ON v.mint = l.mint AND v.slot = l.slot AND v.tx_index = l.tx_index AND v.owner = l.vault_owner
+        UNION ALL SELECT b.mint, b.slot, b.tx_index, '<vault:' || b.key || '>', -b.burned, true, 'leg_vault' FROM boosts b
+                  ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
+                       ON v.mint = b.mint AND v.slot = b.slot AND v.tx_index = b.tx_index AND v.owner = b.key""")
     con.execute("""CREATE OR REPLACE TEMP TABLE ledger_legs AS
         SELECT mint, slot, tx_index, owner, delta FROM legs""")
     progress(f"setup: {_count(con, 'wmints')} mints created in the window, {_count(con, 'legs')} legs, {_count(con, 'ledger')} ledger rows, "

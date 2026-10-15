@@ -1,7 +1,9 @@
 """Transfers module on a mini store and a mini transfers chunk: the owner ledger (legs plus the kept delta rows, with
-the create transaction's net vault row and a kept row under another owner than the store's trader), conservation,
-the corrected insider share against the legs-only share, bar (b) for a legs-only share > 1, wallet births with a hub
-and a funder of six same-label wallets, and the transfer-fed selling of a new pool."""
+the create transaction's net vault row and a kept row under another owner than the store's trader; the check 4.1
+patterns of 2026-10-15: a pool boost burning from its vault without a delta row, a bot that buys and forwards the
+tokens in the same transaction, a PDA feeding a seller in the sell transaction, a PDA-held trader account flagged
+is_vault), conservation, the corrected insider share against the legs-only share, bar (b) for a legs-only share > 1,
+wallet births with a hub and a funder of six same-label wallets, and the transfer-fed selling of a new pool."""
 
 import json
 import re
@@ -11,7 +13,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from wallets import transfers
+from wallets import keys, transfers
 
 E = 1040
 LO = E * 432_000
@@ -20,6 +22,7 @@ T0 = 1_790_000_000
 M = "Mpump"
 U = 10**6  # one token unit scale: 1,000 tokens minted
 SUPPLY = 1000 * U
+CV = keys.curve_pda(M)   # the owner of the curve's token vault
 
 
 def _store(path):
@@ -36,11 +39,15 @@ def _store(path):
         (M, S + 5, 1, True, 100 * U, 10**9, "I"),         # insider buy (within 10 s = 37 slots)
         (M, S + 30, 1, False, 50 * U, 4 * 10**8, "XSIG"),  # X sells 50 through a PDA-held account: the store's trader differs from the owner
         (M, S + 50, 1, False, 10 * U, 10**8, "X"),        # X sells 10 after the trigger
+        (M, S + 45, 1, True, 20 * U, 2 * 10**8, "R"),      # bot R buys 20 and forwards 19 to W and 1 to FEE in the same tx (net 0: no row)
+        (M, S + 46, 1, True, 10 * U, 10**8, "PDA1"),      # a PDA buys 10 (its row equals the leg: dropped)
+        (M, S + 47, 1, False, 10 * U, 10**8, "Z"),        # PDA1 transfers 10 to Z, Z sells them in the same tx (Z net 0; PDA1's row kept, flagged is_vault)
         ("Old", S + 3, 1, True, 10 * U, 10**8, "Q")])
     con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, quote_class VARCHAR, orientation VARCHAR, create_slot UBIGINT)")
     con.execute("INSERT INTO pools VALUES ('P', ?, 'sol', 'normal', ?)", [M, S + 60])
-    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT)")
-    con.execute("INSERT INTO pool VALUES ('P', ?, 1, 'sell', 'X', false, ?, 50000000), ('P', ?, 2, 'buy', 'Y', true, ?, 20000000)", [S + 70, 5 * U, S + 70, 2 * U])
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT, base BIGINT)")
+    con.execute("INSERT INTO pool VALUES ('P', ?, 1, 'sell', 'X', false, ?, 50000000, NULL), ('P', ?, 2, 'buy', 'Y', true, ?, 20000000, NULL)", [S + 70, 5 * U, S + 70, 2 * U])
+    con.execute("INSERT INTO pool VALUES ('P', ?, 3, 'boost', 'BOOSTER', NULL, NULL, NULL, ?)", [S + 80, 3 * U])   # boost_buy_and_burn: 3 burned from the vault
     con.close()
 
 
@@ -54,21 +61,27 @@ def _chunk(root):
         return {"slot": slot, "tx_index": tx, "mint": M, "owner": owner, "token_account": owner + "_ta", "delta_raw": str(delta), "decimals": 6,
                 "is_vault": vault, "has_pump_event": trade, "has_pump_event_same_mint": trade, "fee_payer": owner, "failed": False}
     pq.write_table(pa.Table.from_pylist([
-        td(S, 1, "CURVE", SUPPLY - 300 * U, vault=True),   # the create: mint 1000, dev buy 300 -> the vault's net row is kept
+        td(S, 1, CV, SUPPLY - 300 * U, vault=True),        # the create: mint 1000, dev buy 300 -> the vault's net row is kept
         td(S + 20, 1, "I", -60 * U, trade=False), td(S + 20, 1, "X", 60 * U, trade=False),   # I transfers 60 to X (no trade in that tx)
         td(S + 30, 1, "X", -50 * U),                        # X's sell: kept under the chain owner X (the store says XSIG)
-        td(S + 90, 1, "GHOST", 7 * U, ),                    # a failed-flag row must be ignored
-    ][:-1] + [dict(td(S + 90, 1, "GHOST", 7 * U), failed=True)]), d / "token_deltas" / "part-00000.parquet")
+        td(S + 45, 1, "W", 19 * U), td(S + 45, 1, "FEE", 1 * U),   # R's forwards; R itself has no row (net 0), the vault's row was dropped
+        td(S + 47, 1, "PDA1", -10 * U, vault=True),         # PDA1 -> Z -> curve: PDA1's row is kept and flagged (off-curve owner); Z and the vault have none
+        dict(td(S + 90, 1, "GHOST", 7 * U), failed=True),   # a failed-flag row must be ignored
+    ]), d / "token_deltas" / "part-00000.parquet")
 
     def tt(slot, tx, kind, src, dst, amount, in_trade):
         return {"slot": slot, "tx_index": tx, "ix_path": "1.1", "program": "token", "kind": kind, "mint": M, "source_account": None, "source_owner": src,
                 "dest_account": None, "dest_owner": dst, "authority": src, "amount_raw": amount, "decimals": 6, "outer_program": "pump" if in_trade else "token",
                 "in_trade": in_trade, "owner_unresolved": False, "fee_payer": src or dst, "has_pump_event": in_trade, "failed": False}
     pq.write_table(pa.Table.from_pylist([
-        tt(S, 1, "mint_to", None, "CURVE", SUPPLY, True), tt(S, 1, "transfer_checked", "CURVE", "CR", 300 * U, True),
-        tt(S + 5, 1, "transfer_checked", "CURVE", "I", 100 * U, True),
+        tt(S, 1, "mint_to", None, CV, SUPPLY, True), tt(S, 1, "transfer_checked", CV, "CR", 300 * U, True),
+        tt(S + 5, 1, "transfer_checked", CV, "I", 100 * U, True),
         tt(S + 20, 1, "transfer", "I", "X", 60 * U, False),
-        tt(S + 30, 1, "transfer_checked", "X", "CURVE", 50 * U, True), tt(S + 50, 1, "transfer_checked", "X", "CURVE", 10 * U, True)]),
+        tt(S + 30, 1, "transfer_checked", "X", CV, 50 * U, True), tt(S + 50, 1, "transfer_checked", "X", CV, 10 * U, True),
+        tt(S + 45, 1, "transfer_checked", CV, "R", 20 * U, True), tt(S + 45, 1, "transfer", "R", "W", 19 * U, False), tt(S + 45, 1, "transfer", "R", "FEE", 1 * U, False),
+        tt(S + 46, 1, "transfer_checked", CV, "PDA1", 10 * U, True),
+        tt(S + 47, 1, "transfer", "PDA1", "Z", 10 * U, False), tt(S + 47, 1, "transfer_checked", "Z", CV, 10 * U, True),
+        tt(S + 80, 3, "burn", "P", None, 3 * U, True)]),
         d / "token_transfers" / "part-00000.parquet")
 
     def sf(slot, tx, frm, to, lamports):
@@ -85,7 +98,8 @@ def _chunk(root):
 def test_ledger_shares_births_and_bundles(tmp_path, monkeypatch):
     _store(tmp_path / "s.duckdb")
     root = _chunk(tmp_path / "chunks")
-    pq.write_table(pa.Table.from_pylist([{"mint": M, "t": S + 40, "ins_share": 400 / 350}, {"mint": "Old", "t": S + 40, "ins_share": 0.1}]), tmp_path / "trig.parquet")
+    pq.write_table(pa.Table.from_pylist([{"mint": M, "t": S + 40, "ins_share": 400 / 350}, {"mint": M, "t": S + 48, "ins_share": 400 / 370},
+                                         {"mint": "Old", "t": S + 40, "ins_share": 0.1}]), tmp_path / "trig.parquet")
     pq.write_table(pa.Table.from_pylist([{"wallet": f"b{i}", "label": "bundler"} for i in range(6)] + [{"wallet": "r0", "label": "retail"}, {"wallet": "r1", "label": "retail"}]),
                    tmp_path / "labels.parquet")
     monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
@@ -93,18 +107,22 @@ def test_ledger_shares_births_and_bundles(tmp_path, monkeypatch):
     out = tmp_path / "out"
     transfers.main(["--chunks", root, "--triggers", str(tmp_path / "trig.parquet"), "--labels", str(tmp_path / "labels.parquet"), "--out", str(out)])
     con = duckdb.connect()
-    # conservation: the window's mint only (Old was created before it); 1000 minted = 300 (CR) + 40 (I) + 10 (X) + 650 (vault) at the day end
-    cons = con.execute(f"SELECT mint, held, minted, diff, ok FROM '{out}/conservation.parquet' ORDER BY day").fetchall()
-    assert {c[0] for c in cons} == {M} and all(c[1] == SUPPLY and c[3] == 0 and c[4] for c in cons) and len(cons) == 3  # one row per UTC day
-    q1 = con.execute(f"SELECT * FROM '{out}/q1_triggers.parquet'").fetchall()
-    cols = [d[0] for d in con.description]
-    r = dict(zip(cols, q1[0]))
-    assert len(q1) == 1 and r["mint"] == M  # Old is outside the window
+    # conservation: the window's mint only (Old was created before it); 1000 minted - 3 burned by the boost = 300 (CR) + 40 (I) + 10 (X)
+    # + 19 (W) + 1 (FEE) + 627 (vault: 650 - 20 (R) - 10 (PDA1) + 10 (Z) - 3) at the day end; R, PDA1 and Z hold 0
+    cons = con.execute(f"SELECT mint, held, minted, burned, diff, ok FROM '{out}/conservation.parquet' ORDER BY day").fetchall()
+    assert {c[0] for c in cons} == {M} and all(c[1] == SUPPLY - 3 * U and c[3] == 3 * U and c[4] == 0 and c[5] for c in cons) and len(cons) == 3  # one row per UTC day
+    q1 = {r["t"]: r for r in con.execute(f"SELECT * FROM '{out}/q1_triggers.parquet'").arrow().read_all().to_pylist()}
+    assert set(q1) == {S + 40, S + 48} and all(r["mint"] == M for r in q1.values())  # Old is outside the window
+    r = q1[S + 40]
     # at t = S + 40: CR 300, I 40, X 10 in circulation (350); insiders CR and I hold 340
     assert r["circ"] == 350 * U and r["h_ins"] == 340 * U and abs(r["share_c"] - 340 / 350) < 1e-12 and r["undefined"] is None
     assert abs(r["share_legs"] - 400 / 350) < 1e-12 and abs(r["share_legs"] - r["ins_share_old"]) < 1e-9  # legs only: > 1, reproduces the engine
-    # bar (b): X (not an insider) sells 10 on the curve and 5 on pool P in the hour after t; it received 60 from the insider I: fully explained
-    assert r["sellers"] == 1 and r["sold_1h"] == 15 * U and r["from_insider_1hop"] == 15 * U and r["explained_share"] == 1.0
+    # bar (b): X (not an insider) sells 10 on the curve and 5 on pool P in the hour after t; it received 60 from the insider I: fully
+    # explained. Z sells 10 fed by PDA1 (no insider): sellers 2, 15 of 25 explained
+    assert r["sellers"] == 2 and r["sold_1h"] == 25 * U and r["from_insider_1hop"] == 15 * U and abs(r["explained_share"] - 15 / 25) < 1e-12
+    # at t = S + 48 the forwards W 19 and FEE 1 are in circulation (370), R / PDA1 / Z hold 0, PDA1 is a holder not a vault; legs only 400 / 370
+    r = q1[S + 48]
+    assert r["circ"] == 370 * U and r["h_ins"] == 340 * U and r["holders"] == 5 and r["neg_owners"] == 0 and abs(r["share_legs"] - 400 / 370) < 1e-12
     # Q2: six bundler wallets from F are linked (5 siblings each); the retail wallets are not; H is a hub (60 births on a day)
     q2 = {(a, b): (w, l) for a, b, w, l in con.execute(f"SELECT label, hub, wallets, linked FROM '{out}/q2_measure.parquet'").fetchall()}
     assert q2[("bundler", False)] == (6, 6) and q2[("retail", False)] == (2, 0) and ("onbekend", True) not in q2  # hub births are below 0.005 SOL
@@ -183,7 +201,7 @@ def _store_review(path):
         (M2, S + 150, 1, False, 10 * U, 10**8, "C", "sell"),
         (M2, S + 100, 1, False, 10 * U, 10**8, "D", "sell"), (M2, S + 400, 1, False, 10 * U, 10**8, "D", "sell")])
     con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, quote_class VARCHAR, orientation VARCHAR, create_slot UBIGINT)")
-    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT)")
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT, base BIGINT)")
     con.close()
 
 
@@ -197,8 +215,8 @@ def _chunk_review(root):
         return {"slot": slot, "tx_index": tx, "mint": M2, "owner": owner, "token_account": owner + "_ta", "delta_raw": str(delta), "decimals": 6,
                 "is_vault": vault, "has_pump_event": trade, "has_pump_event_same_mint": trade, "fee_payer": owner, "failed": False}
     pq.write_table(pa.Table.from_pylist([
-        td(S, 1, "CURVE", SUPPLY - 300 * U, vault=True),                               # the create: mint 1000, dev buy 300
-        td(S + 60, 1, "P", 20 * U), td(S + 60, 1, "CURVE", -40 * U, vault=True),       # the bundle: B2's 20 on the PDA P; C2's row dropped (= its leg); the vault's net
+        td(S, 1, keys.curve_pda(M2), SUPPLY - 300 * U, vault=True),                    # the create: mint 1000, dev buy 300
+        td(S + 60, 1, "P", 20 * U, vault=True), td(S + 60, 1, keys.curve_pda(M2), -40 * U, vault=True),   # the bundle: B2's 20 on the PDA P (flagged: off-curve owner); C2's row dropped (= its leg); the vault's net
         td(S + 200, 1, "I", -50 * U, trade=False), td(S + 200, 1, "B", 50 * U, trade=False),   # I -> B 50 at S + 200
         td(S + 100, 1, "B", -50 * U, trade=False), td(S + 100, 1, "C", 50 * U, trade=False),   # B -> C 50 at S + 100: before B received from I
         td(S + 300, 1, "I", -20 * U, trade=False), td(S + 300, 1, "D", 20 * U, trade=False),   # I -> D 20 at S + 300: between D's two sales
@@ -209,7 +227,7 @@ def _chunk_review(root):
                 "dest_account": None, "dest_owner": dst, "authority": src, "amount_raw": amount, "decimals": 6, "outer_program": "pump" if in_trade else "token",
                 "in_trade": in_trade, "owner_unresolved": False, "fee_payer": src or dst, "has_pump_event": in_trade, "failed": False}
     pq.write_table(pa.Table.from_pylist([
-        tt(S, 1, "mint_to", None, "CURVE", SUPPLY, True),
+        tt(S, 1, "mint_to", None, keys.curve_pda(M2), SUPPLY, True),
         tt(S + 200, 1, "transfer", "I", "B", 50 * U, False), tt(S + 100, 1, "transfer", "B", "C", 50 * U, False), tt(S + 300, 1, "transfer", "I", "D", 20 * U, False)]),
         d / "token_transfers" / "part-00000.parquet")
     pq.write_table(pa.Table.from_pylist([{"slot": S + 1, "tx_index": 1, "ix_path": "1", "from_account": "F", "to_account": "w0", "lamports": 50_000_000, "kind": "transfer",
