@@ -221,11 +221,33 @@ def setup(con, root, lo, hi, clock):
     # tokens on a PDA, must keep C's leg; matching on the amount alone dropped both).
     # "explained by owner OR by amount" as two hash anti-joins: one anti-join with the OR in its condition is planned
     # as a blockwise nested-loop join (legs x kept rows; the NAS run of 2026-10-15 sat in it for 6 h on epoch 1040).
+    # Last, the transaction's balance: the chain's own rows (kept rows, the vault side) against minted − burned. When
+    # they already balance, the trade's tokens are carried by a kept holder row under another owner and the leg's
+    # owner side would double them; such a leg is not added even when no kept row has its exact amount (job 815
+    # diagnosis of 2026-10-16, every residual transaction of 1040 and 1045: a custody wallet that moves the tokens to
+    # a per-trade signer and pays a fee from the same account, the pool's output landing on another owner than the
+    # signer, or a temporary account that splits the output; the residual was the net leg itself). A leg is added only
+    # when the chain's rows leave a gap (the trader's row dropped as equal to the leg's base, the create transaction).
     con.execute("""CREATE OR REPLACE TEMP TABLE kept_other AS
         SELECT k.mint, k.slot, k.tx_index, k.delta, row_number() OVER (PARTITION BY k.mint, k.slot, k.tx_index, k.delta ORDER BY k.owner) AS rn
         FROM (SELECT DISTINCT mint, slot, tx_index, owner, delta FROM td WHERE NOT vault) k
         ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) lt
              ON lt.mint = k.mint AND lt.slot = k.slot AND lt.tx_index = k.tx_index AND lt.owner = k.owner""")
+    con.execute("""CREATE OR REPLACE TEMP TABLE chain AS
+        SELECT mint, slot, tx_index, owner, delta, vault, 'delta' AS src FROM td
+        UNION ALL SELECT l.mint, l.slot, l.tx_index, '<vault:' || l.key || '>', -l.delta, true, 'leg_vault' FROM legs l
+                  ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
+                       ON v.mint = l.mint AND v.slot = l.slot AND v.tx_index = l.tx_index AND v.owner = l.vault_owner
+        UNION ALL SELECT b.mint, b.slot, b.tx_index, '<vault:' || b.key || '>', -b.burned, true, 'leg_vault' FROM boosts b
+                  ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
+                       ON v.mint = b.mint AND v.slot = b.slot AND v.tx_index = b.tx_index AND v.owner = b.key""")
+    con.execute("""CREATE OR REPLACE TEMP TABLE balanced AS
+        SELECT c.mint, c.slot, c.tx_index
+        FROM (SELECT mint, slot, tx_index, sum(delta) AS s FROM chain GROUP BY 1, 2, 3) c
+        LEFT JOIN (SELECT mint, slot, tx_index, sum(CASE WHEN kind = 'mint_to' THEN amount ELSE -amount END) AS mb
+                   FROM tt WHERE kind IN ('mint_to', 'burn') GROUP BY 1, 2, 3) m
+             ON m.mint = c.mint AND m.slot = c.slot AND m.tx_index = c.tx_index
+        WHERE c.s = COALESCE(m.mb, 0)""")
     con.execute("""CREATE OR REPLACE TEMP TABLE ledger AS
         SELECT mint, slot, tx_index, owner, delta, false AS vault, 'leg' AS src FROM (
             SELECT l.mint, l.slot, l.tx_index, l.owner, l.delta + CASE WHEN l.rno = 1 THEN COALESCE(f.flow, 0) ELSE 0 END AS delta
@@ -235,15 +257,11 @@ def setup(con, root, lo, hi, clock):
                  ON ko.mint = l.mint AND ko.slot = l.slot AND ko.tx_index = l.tx_index AND ko.owner = l.owner
             ANTI JOIN kept_other kd
                  ON kd.mint = l.mint AND kd.slot = l.slot AND kd.tx_index = l.tx_index AND kd.delta = l.delta AND kd.rn = l.rn
+            ANTI JOIN balanced bl
+                 ON bl.mint = l.mint AND bl.slot = l.slot AND bl.tx_index = l.tx_index
             LEFT JOIN flows f ON f.mint = l.mint AND f.slot = l.slot AND f.tx_index = l.tx_index AND f.owner = l.owner)
         WHERE delta <> 0
-        UNION ALL SELECT mint, slot, tx_index, owner, delta, vault, 'delta' FROM td
-        UNION ALL SELECT l.mint, l.slot, l.tx_index, '<vault:' || l.key || '>', -l.delta, true, 'leg_vault' FROM legs l
-                  ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
-                       ON v.mint = l.mint AND v.slot = l.slot AND v.tx_index = l.tx_index AND v.owner = l.vault_owner
-        UNION ALL SELECT b.mint, b.slot, b.tx_index, '<vault:' || b.key || '>', -b.burned, true, 'leg_vault' FROM boosts b
-                  ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
-                       ON v.mint = b.mint AND v.slot = b.slot AND v.tx_index = b.tx_index AND v.owner = b.key""")
+        UNION ALL SELECT * FROM chain""")
     con.execute("""CREATE OR REPLACE TEMP TABLE ledger_legs AS
         SELECT mint, slot, tx_index, owner, delta FROM legs""")
     progress(f"setup: {_count(con, 'wmints')} mints created in the window, {_count(con, 'legs')} legs, {_count(con, 'ledger')} ledger rows, "
