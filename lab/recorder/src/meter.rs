@@ -69,7 +69,10 @@ pub fn segments_spent(root: &Path, day: u64) -> Result<u64> {
         if md.modified().map_or(false, |t| t < day_start) {
             continue;
         }
-        let Some(v) = std::fs::read(&meta).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { continue };
+        let Some(v) = std::fs::read(&meta).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
+            log::warn!("budget: {} is unreadable; its usage is not counted", meta.display());
+            continue;
+        };
         for u in v["usage"].as_array().into_iter().flatten() {
             if u["minute"].as_u64().map(|m| day_of(m * 60)) == Some(day) {
                 total += u["bytes"].as_u64().unwrap_or(0);
@@ -115,6 +118,8 @@ impl Meter {
             log::warn!("budget: today's segments hold {from_segments} bytes, budget.json {}: taking the segments", m.spent);
             m.spent = from_segments;
         }
+        // A recovered spend at the cap stops before the stream starts (main checks `stopped` first).
+        m.stopped |= m.spent >= m.cap_bytes;
         Ok(m)
     }
 
@@ -177,7 +182,11 @@ impl Meter {
             self.minute = minute;
             if day_of(now_unix) != self.day {
                 self.day = day_of(now_unix);
-                self.spent = 0;
+                // Normally 0; after a clock step past midnight the new day's segments are the floor.
+                self.spent = match self.path.parent() {
+                    Some(root) => segments_spent(root, self.day)?,
+                    None => 0,
+                };
                 self.stopped = false;
                 self.recent.clear();
                 restore = true;
@@ -345,8 +354,19 @@ mod tests {
         assert_eq!(load(), 350); // a stale budget.json: the segments are larger
         std::fs::write(root.join("budget.json"), json!({"day": day_of(T0), "spent_bytes": 500}).to_string()).unwrap();
         assert_eq!(load(), 500); // the running minutes not yet in a segment
+        std::fs::write(root.join("budget.json"), json!({"day": day_of(T0) - 1, "spent_bytes": 9_999}).to_string()).unwrap();
+        assert_eq!(load(), 350); // yesterday's budget.json: not today's spend, the segments count
         std::fs::remove_file(root.join("budget.json")).unwrap();
         assert_eq!(load(), 350);
+        // A recovered spend at the cap is stopped before any byte is streamed.
+        assert!(Meter::load(&root, 300, 1.0, T0 + 3_600).unwrap().stopped);
+        assert!(!Meter::load(&root, 400, 1.0, T0 + 3_600).unwrap().stopped);
+        // A new day in tick takes that day's segments as the floor (a clock step past midnight).
+        let next = T0 + 86_400;
+        segment(&root, 2, json!([{"minute": next / 60 + 1, "stream": "tx", "bytes": 70, "messages": 1}]));
+        let mut m = Meter::load(&root, 25_000_000_000, 1.0, T0 + 3_600).unwrap();
+        assert_eq!(m.tick(next + 120).unwrap(), Decision::Restore);
+        assert_eq!(m.spent, 70);
         // save() writes it back atomically
         let m = Meter::load(&root, 25_000_000_000, 1.0, T0 + 3_600).unwrap();
         m.save().unwrap();
