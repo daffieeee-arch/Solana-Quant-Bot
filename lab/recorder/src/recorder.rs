@@ -462,7 +462,9 @@ impl Recorder {
         if path.exists() {
             return None;
         }
-        log::warn!("first Alpenglow block footer: slot {} (noted in {})", f.slot, path.display());
+        // The log names only the file: the slot and the footer's fields go into it, not into the log
+        // (CodeQL rust/cleartext-logging treats every field of a subscription update as account data).
+        log::warn!("first Alpenglow block footer received (slot and times in {})", path.display());
         let note = json!({"first_footer_slot": f.slot, "bank_id": f.bank_id, "block_producer_time_ns": f.block_producer_time_nanos,
                           "received_unix_ns": now_ns});
         if let Err(e) = write_json_atomic(&path, &note) {
