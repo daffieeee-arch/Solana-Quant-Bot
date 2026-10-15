@@ -187,12 +187,19 @@ def setup(con, root, lo, hi, clock):
             UNION ALL SELECT mint, slot, tx_index, source_owner, -amount FROM tt WHERE kind = 'burn' AND source_owner IS NOT NULL
             UNION ALL SELECT mint, slot, tx_index, dest_owner, amount FROM tt WHERE kind = 'mint_to' AND dest_owner IS NOT NULL) GROUP BY 1, 2, 3, 4""")
     progress(f"setup: legs {_count(con, 'legs')}, boosts {_count(con, 'boosts')}, hops {_count(con, 'hops')}, flows {_count(con, 'flows')}")
-    # Insiders: the creator and every buyer in the first 10 s (O7); buyers both as the store's trader and as the
-    # chain's token owner (a kept positive non-vault delta in that window), since the two can differ.
+    # Insiders: the creator and every *curve* buyer in the first 10 s (O7, spec v3 Q1: "creator + curve-kopers <= create
+    # + 10 s"; the engine's Insiders counts the same set). Pool buyers in that window are not insiders: a token that
+    # completes and migrates in its create transaction has pool buys seconds later, and counting them made the
+    # legs-only share 1.0 where the engine's was 0.79 (check 4.2 on 1040/1045: 258 of 260 disagreements had the
+    # legs-only share higher). Buyers both as the store's trader and as the chain's token owner (a kept positive
+    # non-vault delta in a transaction with a curve leg of the mint), since the two can differ.
     con.execute("""CREATE OR REPLACE TEMP TABLE insiders AS
         SELECT DISTINCT w.mint, x.owner FROM wmints2 w JOIN (
-            SELECT mint, owner, slot FROM legs WHERE buy
-            UNION ALL SELECT mint, owner, slot FROM td WHERE NOT vault AND delta > 0 AND has_pump_event_same_mint
+            SELECT mint, owner, slot FROM legs WHERE buy AND venue = 'curve'
+            UNION ALL SELECT d.mint, d.owner, d.slot FROM td d
+                      SEMI JOIN (SELECT DISTINCT mint, slot, tx_index FROM legs WHERE venue = 'curve') c
+                           ON c.mint = d.mint AND c.slot = d.slot AND c.tx_index = d.tx_index
+                      WHERE NOT d.vault AND d.delta > 0 AND d.has_pump_event_same_mint
             UNION ALL SELECT mint, creator, create_slot FROM wmints WHERE creator IS NOT NULL) x
         ON x.mint = w.mint AND x.slot <= w.create_slot + w.window_slots""")
     progress(f"setup: insiders {_count(con, 'insiders')}")
