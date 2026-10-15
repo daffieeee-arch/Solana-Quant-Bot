@@ -511,7 +511,7 @@ def f6_flows(con, pool, sigs, hi, clock):
 
 
 def _work(args):
-    task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays, only = args
+    task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays, only, delay_ms = args
     health.wait_ok(log, f"batch {task_id}")
     io0, fb0 = io_written(), INSIDER_FALLBACKS[0]
     con = streams.open_store(STORE, threads=1, memory="600MB")
@@ -530,12 +530,14 @@ def _work(args):
         ins_cache = {}
         for size_sol in sizes:
             size = int(size_sol * LAMPORTS)
-            for d in delays:
+            for d_set in delays:
                 for q in qs:
                     for tau_mode in taus:
                         tau = replay.Tau(tau_mode)
                         busy_until = defaultdict(lambda: -1)
                         for sig in sigs:
+                            # --delay-ms: the delay in whole slots of the trigger's epoch (the engine's _d_at).
+                            d = delay_slots(delay_ms, sig.t, clock) if d_set is None else d_set
                             if only and not _allowed(only, sig, size=size_sol, d=d, q=q):
                                 continue
                             fk = (sig.family, sig.variant)
@@ -596,6 +598,11 @@ def _work(args):
     return len(rows), io_written() - io0, INSIDER_FALLBACKS[0] - fb0
 
 
+def delay_slots(delay_ms, t, clock):
+    """A delay in milliseconds as whole slots at slot t: the paper engine's rule (Engine._d_at, #227)."""
+    return clock.slots(delay_ms, t)
+
+
 def engine_commit():
     """Commit of the engine code: set by scripts/backtest-run.sh for a frozen copy, else from git."""
     if os.environ.get("LAB_ENGINE_COMMIT"):
@@ -613,7 +620,12 @@ def results_glob(run_dir):
 
 
 def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
-        label="tournament_v1", segments=None, slot_range=None, only=None, decide_range=None):
+        label="tournament_v1", segments=None, slot_range=None, only=None, decide_range=None, delay_ms=None,
+        variants=None, report=True):
+    if delay_ms is not None:
+        if delay_ms <= 0:
+            raise ValueError("delay_ms must be > 0")
+        delays = [None]  # one delay, in slots per trigger (delay_slots)
     cfg = load_defaults()
     out = os.path.join(OUT, run_id)
     os.makedirs(os.path.join(out, "parts"), exist_ok=True)
@@ -625,12 +637,14 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     # decisions to [a, b); only --range marks the run as a dry run.
     signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock, segments, slot_range or decide_range)
     con.close()
+    if variants:  # --variants: only these variants are simulated (a pre-registered configuration)
+        signals = [s for s in signals if s.variant in variants]
     items = work_items(signals, clock)
     n_signals = len(signals)
     del signals
     overlays = "O7" in families
     only_rules = parse_only(only)
-    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, qs, tol, cfg, clock, overlays, only_rules)
+    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, qs, tol, cfg, clock, overlays, only_rules, delay_ms)
              for i, j in enumerate(range(0, len(items), batch))]
     todo = [t for t in tasks if not os.path.exists(_part_path(out, t[0]))]
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
@@ -649,13 +663,16 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con.close()
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
-              "families": families, "sizes_sol": sizes, "delays": delays, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
+              "families": families, "sizes_sol": sizes, "delays": delays, "delay_ms": delay_ms, "variants": variants, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "gate_sizes": list(GATE_SIZES), "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k,
               "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0),
               "insider_fallbacks": fallbacks}
     with open(os.path.join(out, "config.json"), "w") as f:
         json.dump(config, f, indent=1)
+    if not report:  # --no-report: the positions only (a pre-registered test reads them itself)
+        log(f"done (no report): {out}")
+        return
     from .report import write_report
     write_report(out, cfg)
     if "F7" in families and (not segments or "pool_reversed" in segments):
@@ -675,7 +692,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--families", default="F7,F1,N1,N2")
     ap.add_argument("--sizes", default="0.5,2,5,10,25")
-    ap.add_argument("--delays", default="1,2")
+    ap.add_argument("--delays", default=None, help="delays in slots, comma separated (default 1,2)")
+    ap.add_argument("--delay-ms", type=int, default=None, help="one delay in ms, whole slots of each trigger's epoch (instead of --delays)")
+    ap.add_argument("--variants", default="", help="simulate only these signal variants, comma separated (e.g. tp4_T600)")
+    ap.add_argument("--no-report", action="store_true", help="write the positions and config.json only")
     ap.add_argument("--tau", default="empirical")
     ap.add_argument("--q", default="0.5", help="intra-slot position(s) of our order, comma separated")
     ap.add_argument("--segments", default="", help="F7 only: keep these segments (curve,pool_normal,pool_reversed)")
@@ -690,11 +710,14 @@ def main():
     ap.add_argument("--decide", default="", help="final runs: decisions only in slots lo:hi (the rest of the store is warm-up)")
     ap.add_argument("--only", action="append", help="e.g. size=0.25:M1,N2_M1 or d=3:F7/pool_reversed (repeatable)")
     a = ap.parse_args()
-    run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in a.delays.split(",")],
+    if a.delay_ms is not None and a.delays is not None:
+        raise SystemExit("pass --delays or --delay-ms, not both")
+    run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in (a.delays or "1,2").split(",")],
         a.tau.split(","), [float(x) for x in a.q.split(",")], a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch,
         segments=[x for x in a.segments.split(",") if x] or None,
         slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None, only=a.only,
-        decide_range=tuple(int(x) for x in a.decide.split(":")) if a.decide else None)
+        decide_range=tuple(int(x) for x in a.decide.split(":")) if a.decide else None, delay_ms=a.delay_ms,
+        variants=[x for x in a.variants.split(",") if x] or None, report=not a.no_report)
 
 
 if __name__ == "__main__":
