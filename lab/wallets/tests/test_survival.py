@@ -63,3 +63,22 @@ def test_drain_survival_and_inactivity_exit(tmp_path):
     assert cells[11] == "2.0" and cells[12].startswith("50.0 %")
     assert "| 1 min | 4 (100.0 %) | 2 (50.0 %) |" in md  # P1 and P2 fire before their drain; P4 after; P3 fires with no drain
     assert "the first withdraw is already the drain (≥ 90%) in 2 (66.7 %)" in md
+
+
+def test_regime_groups_round_per_epoch_ms_and_rerender(tmp_path):
+    """One regime row per slot-time regime (rounded to 10 ms), not one per epoch (the first NAS run printed 14 rows all
+    labelled 'regime 270ms' / '320ms'); --rerender rebuilds survival.md from the parquet and json alone."""
+    con = duckdb.connect()
+    con.execute("CREATE TABLE surv (ms_per_slot DOUBLE, farm VARCHAR, block VARCHAR)")
+    con.execute("INSERT INTO surv VALUES (265.83, 'organic', 'days 1-9'), (266.17, 'organic', 'days 1-9'), (268.26, 'organic', 'days 1-9'), (315.9, 'organic', 'days 1-9'), (317.13, 'organic', 'days 1-9')")
+    g = dict(survival.groups(con))
+    assert [k for k in g if k.startswith("regime")] == ["regime 270ms", "regime 320ms"]
+    assert con.execute(f"SELECT count(*) FROM surv WHERE {g['regime 270ms']}").fetchone()[0] == 3
+    assert con.execute(f"SELECT count(*) FROM surv WHERE {g['regime 320ms']}").fetchone()[0] == 2
+    _store(tmp_path / "s.duckdb")
+    _parts(str(tmp_path / "parts"))
+    survival.run(str(tmp_path / "parts"), str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), observe_slots=3000)
+    md = (tmp_path / "out" / "survival.md").read_text()
+    (tmp_path / "out" / "survival.md").write_text("stale")
+    survival.rerender(str(tmp_path / "out"))
+    assert (tmp_path / "out" / "survival.md").read_text() == md
