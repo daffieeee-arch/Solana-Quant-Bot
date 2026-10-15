@@ -332,6 +332,9 @@ def _store_hops(path):
     con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT, base BIGINT)")
     con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'U1', true, ?, 30000000, NULL), ('P3', ?, 1, 'sell', 'U1', false, ?, 5000000, NULL)", [S + 70, 30 * U, S + 71, 5 * U])
     con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'PB', true, ?, 10000000, NULL)", [S + 3, 10 * U])   # a pool buy 3 slots after the create: no insider
+    # job 815 (2026-10-16): a custody wallet W moves 18 to the per-trade signer SIG, which sells them, and pays 1 to FEE
+    # from the same account; a buy whose output lands on CUST (with a 2 top-up from U1 in the same tx), not on the signer SIG2
+    con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'sell', 'SIG', false, ?, 18000000, NULL), ('P3', ?, 1, 'buy', 'SIG2', true, ?, 10000000, NULL)", [S + 75, 18 * U, S + 76, 10 * U])
     con.close()
 
 
@@ -351,6 +354,8 @@ def _chunk_hops(root):
         # S + 3: PB's row equals its leg (dropped), the pool vault's row dropped
         # S + 70: U1's row equals its leg (dropped), the router's net is 0 (no row), the pool vault's row dropped
         # S + 71: U1's row equals its leg (dropped), the temporary account nets 0 and is closed, the vault's row dropped
+        td(S + 75, 1, "W", -19 * U), td(S + 75, 1, "FEE", 1 * U),      # the custody sell: W's whole net (18 to SIG + 1 fee), SIG nets 0 (no row), the vault's row dropped
+        td(S + 76, 1, "CUST", 12 * U), td(S + 76, 1, "U1", -2 * U),    # the custody buy: CUST's whole net (10 from the vault + 2 from U1), SIG2 no row, the vault's row dropped
     ]), d / "token_deltas" / "part-00000.parquet")
 
     def tt(slot, tx, ix, kind, src, dst, amount, in_trade, src_acc=None, dst_acc=None, unresolved=False):
@@ -369,7 +374,14 @@ def _chunk_hops(root):
         # the temporary-account sell: U1 -> TMP (not in trade, owner unresolved), close, TMP -> vault (in trade)
         tt(S + 71, 1, "3", "transfer_checked", "U1", None, 5 * U, False, "U1_ta", "TMP_ta", unresolved=True),
         tt(S + 71, 1, "4", "close_account", "U1", None, None, False, "TMP_ta", None),
-        tt(S + 71, 1, "6.1", "transfer_checked", None, "P3", 5 * U, True, "TMP_ta", "P3_ta", unresolved=True)]),
+        tt(S + 71, 1, "6.1", "transfer_checked", None, "P3", 5 * U, True, "TMP_ta", "P3_ta", unresolved=True),
+        # the custody sell: W -> SIG and W -> FEE (both in trade), SIG -> vault; no kept row has the leg's amount (W's is 19)
+        tt(S + 75, 1, "3.0", "transfer_checked", "W", "SIG", 18 * U, True, "W_ta", "SIG_ta"),
+        tt(S + 75, 1, "3.15", "transfer_checked", "W", "FEE", 1 * U, True, "W_ta", "FEE_ta"),
+        tt(S + 75, 1, "3.3", "transfer_checked", "SIG", "P3", 18 * U, True, "SIG_ta", "P3_ta"),
+        # the custody buy: vault -> CUST (in trade, CUST is not the store's trader), U1 -> CUST 2 (in trade)
+        tt(S + 76, 1, "1.12", "transfer_checked", "P3", "CUST", 10 * U, True, "P3_ta", "CUST_ta"),
+        tt(S + 76, 1, "1.21", "transfer_checked", "U1", "CUST", 2 * U, True, "U1_ta", "CUST_ta")]),
         d / "token_transfers" / "part-00000.parquet")
     pq.write_table(pa.Table.from_pylist([{"slot": S + 1, "tx_index": 1, "ix_path": "1", "from_account": "F", "to_account": "w0", "lamports": 50_000_000, "kind": "transfer",
                                           "fee_payer": "F", "has_pump_event": False, "failed": False}]), d / "sol_funding" / "part-00000.parquet")
@@ -378,18 +390,22 @@ def _chunk_hops(root):
 
 def test_router_and_temporary_account_hops_count_once(tmp_path, monkeypatch):
     """The trader's non-trade transfer that continues the trade's in-trade transfer through an intermediate account is
-    not a flow: U1's buy of 30 and sell of 5 appear once (job 79: the net leg was twice the amount); R's forwards stay."""
+    not a flow: U1's buy of 30 and sell of 5 appear once (job 79: the net leg was twice the amount); R's forwards stay.
+    A trade whose tokens a kept holder row already carries (job 815: W's custody sell through the signer SIG with a fee
+    from the same account, SIG2's buy landing on CUST with a top-up) adds no leg: the chain's rows balance by themselves."""
     _store_hops(tmp_path / "s.duckdb")
     root = _chunk_hops(tmp_path / "chunks")
-    pq.write_table(pa.Table.from_pylist([{"mint": M3, "t": S + 72}]), tmp_path / "trig.parquet")
+    pq.write_table(pa.Table.from_pylist([{"mint": M3, "t": S + 72}, {"mint": M3, "t": S + 77}]), tmp_path / "trig.parquet")
     monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
     monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
     out = tmp_path / "out"
     transfers.main(["--chunks", root, "--triggers", str(tmp_path / "trig.parquet"), "--out", str(out)])
     con = duckdb.connect()
     cons = con.execute(f"SELECT held, minted, diff, ok FROM '{out}/conservation.parquet' ORDER BY day").fetchall()
-    assert cons and all(c[0] == SUPPLY and c[2] == 0 and c[3] for c in cons)   # without the hop rule: +30 and -5 doubled -> diff 25
-    q1 = con.execute(f"SELECT circ, h_ins, share_c FROM '{out}/q1_triggers.parquet'").fetchone()
+    assert cons and all(c[0] == SUPPLY and c[2] == 0 and c[3] for c in cons)   # without the hop rule: +30 and -5 doubled -> diff 25; without the balance rule: -18 and +10 doubled -> diff -8
+    q1 = {r[0]: r[1:] for r in con.execute(f"SELECT t, circ, h_ins, share_c FROM '{out}/q1_triggers.parquet'").fetchall()}
     # circulation at S + 72: CR 0 (deposited) + W 19 + FEE 1 + U1 25 + PB 10 = 55 (curve vault 680 and pool vault 265 excluded);
     # insiders = CR (creator) only: PB bought on the pool 3 slots after the create and R on the curve after the 10 s window
-    assert q1[0] == 55 * U and q1[1] == 0 and q1[2] == 0
+    assert q1[S + 72] == (55 * U, 0, 0)
+    # at S + 77: W 0, FEE 2, U1 23, PB 10, CUST 12 = 47; the signers SIG and SIG2 hold nothing (with their legs added: 39)
+    assert q1[S + 77] == (47 * U, 0, 0)
