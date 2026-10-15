@@ -81,8 +81,9 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
     clock = Clock(json.loads(con.execute("SELECT json FROM st.meta").fetchone()[0]).get("ms_per_slot"))
     # T of the variant is in v1 slot units (267.3 ms); the window in slots follows each epoch's slot time.
     # (Column names are case-insensitive: the window must not be called "T" next to the trigger slot "t".)
-    trig = con.execute(f"""SELECT DISTINCT pool, t, trigger_trader, TRY_CAST(split_part(variant, '_T', 2) AS BIGINT)
-                           FROM {f7}""").fetchall()
+    # Spec E exits: trail/flow carry _T600 (with an optional _sl8 after it), hold has no T and is left out here.
+    trig = con.execute(f"""SELECT DISTINCT pool, t, trigger_trader, TRY_CAST(regexp_extract(variant, '_T([0-9]+)', 1) AS BIGINT) AS v
+                           FROM {f7} WHERE v IS NOT NULL""").fetchall()
     con.execute("CREATE TEMP TABLE trig (pool VARCHAR, t BIGINT, trigger_trader VARCHAR, var_t BIGINT, horizon BIGINT)")
     if trig:  # a short run can have no F7 reversed trigger (executemany refuses an empty list)
         con.executemany("INSERT INTO trig VALUES (?, ?, ?, ?, ?)",
