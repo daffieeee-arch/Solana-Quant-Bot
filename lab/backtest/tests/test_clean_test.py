@@ -112,17 +112,20 @@ def test_the_runs_must_be_the_pre_registered_ones():
         ct.check_runs(*_cfgs(), dict(meta, window=[455_760_000, 456_624_000]), delays, False, "abc1234")
 
 
-def test_the_replay_code_must_be_f2c9666s(tmp_path):
-    import shutil
-
-    here = os.path.dirname(os.path.dirname(os.path.abspath(ct.__file__)))
-    assert ct.check_replay_code(os.path.join(here, "backtest")) == sorted(ct.REPLAY_SHA256)
-    copy = tmp_path / "backtest"
-    shutil.copytree(os.path.join(here, "backtest"), copy, ignore=shutil.ignore_patterns("tests", "__pycache__"))
-    with open(copy / "replay.py", "a") as f:
+def test_the_replay_code_must_be_f2c9666s(tmp_path, monkeypatch):
+    """The guard on a copy with known hashes: main may move on (exit grids); the clean test runs from its pin."""
+    assert len(ct.REPLAY_SHA256) == 10 and all(len(v) == 64 for v in ct.REPLAY_SHA256.values())
+    for f in ct.REPLAY_SHA256:
+        (tmp_path / f).write_text(f"# {f}\n")
+    monkeypatch.setattr(ct, "REPLAY_SHA256", {f: hashlib.sha256(f"# {f}\n".encode()).hexdigest() for f in ct.REPLAY_SHA256})
+    assert ct.check_replay_code(str(tmp_path)) == sorted(ct.REPLAY_SHA256)
+    with open(tmp_path / "replay.py", "a") as f:
         f.write("# changed\n")
     with pytest.raises(ct.Refused):
-        ct.check_replay_code(str(copy))
+        ct.check_replay_code(str(tmp_path))
+    (tmp_path / "replay.py").unlink()
+    with pytest.raises(ct.Refused):  # a missing file too
+        ct.check_replay_code(str(tmp_path))
 
 
 def test_equality_per_epoch_at_the_clocks_d(tmp_path):
