@@ -80,20 +80,76 @@ def test_documents_must_match_their_hashes(tmp_path):
         ct.check_document(str(doc), sha, "addendum")
 
 
-def test_the_run_must_be_k3_on_the_clean_store(tmp_path):
-    cfg = dict(ct.K3, decide_range=[455_760_000, 456_192_000])
-    (tmp_path / "config.json").write_text(json.dumps(cfg))
-    meta = {"period": "clean", "slot_start": 455_328_000, "slot_end_exclusive": 456_192_000}
-    assert ct.check_run(str(tmp_path), meta, False) == (455_760_000, 456_192_000)
-    for k, v in (("delay_ms", None), ("variants", None), ("sizes_sol", [0.5, 2.0]), ("families", ["F7", "O7"])):
-        (tmp_path / "config.json").write_text(json.dumps(dict(cfg, **{k: v})))
+def _cfgs(**over):
+    test = dict(ct.COMMON, delay_ms=600, delays=[None], decide_range=[455_760_000, 456_192_000], engine_commit="abc1234ff")
+    matrix = dict(ct.COMMON, delay_ms=None, delays=[1, 2, 3], decide_range=[455_760_000, 456_192_000], engine_commit="abc1234ff")
+    for k, v in over.items():
+        (test if k.startswith("t_") else matrix)[k[2:]] = v
+    return test, matrix
+
+
+def test_the_runs_must_be_the_pre_registered_ones():
+    meta = {"period": "clean", "window": [455_760_000, 456_192_000], "slot_start": 455_328_000}
+    delays = {1055: 3}
+    assert ct.check_runs(*_cfgs(), meta, delays, False, "abc1234") == (455_760_000, 456_192_000)
+    for over in ({"t_delay_ms": None}, {"t_variants": ["tp4_T600"]}, {"t_sizes_sol": [0.5, 2.0]}, {"t_families": ["F7"]},
+                 {"m_delays": [1, 2]}, {"m_engine_commit": "other"}, {"m_decide_range": [455_760_000, 456_000_000]},
+                 {"t_decide_range": None, "m_decide_range": None}, {"t_n2_k": 3}):
         with pytest.raises(ct.Refused):
-            ct.check_run(str(tmp_path), meta, False)
-    (tmp_path / "config.json").write_text(json.dumps(cfg))
+            ct.check_runs(*_cfgs(**over), meta, delays, False, "abc1234")
+    with pytest.raises(ct.Refused):  # a d the Clock gives must be in the matrix run
+        ct.check_runs(*_cfgs(), meta, {1055: 4}, False, "abc1234")
     with pytest.raises(ct.Refused):
-        ct.check_run(str(tmp_path), dict(meta, period="dev"), False)
-    with pytest.raises(ct.Refused):  # decisions must end with the store
-        ct.check_run(str(tmp_path), dict(meta, slot_end_exclusive=456_624_000), False)
+        ct.check_runs(*_cfgs(), meta, delays, False, "def5678")
+    with pytest.raises(ct.Refused):
+        ct.check_runs(*_cfgs(), dict(meta, period="forward"), delays, False, "abc1234")
+    with pytest.raises(ct.Refused):  # decisions must cover the store's window exactly
+        ct.check_runs(*_cfgs(), dict(meta, window=[455_760_000, 456_624_000]), delays, False, "abc1234")
+
+
+def test_the_replay_code_must_be_f2c9666s(tmp_path):
+    import shutil
+
+    here = os.path.dirname(os.path.dirname(os.path.abspath(ct.__file__)))
+    assert ct.check_replay_code(os.path.join(here, "backtest")) == sorted(ct.REPLAY_SHA256)
+    copy = tmp_path / "backtest"
+    shutil.copytree(os.path.join(here, "backtest"), copy, ignore=shutil.ignore_patterns("tests", "__pycache__"))
+    with open(copy / "replay.py", "a") as f:
+        f.write("# changed\n")
+    with pytest.raises(ct.Refused):
+        ct.check_replay_code(str(copy))
+
+
+def test_equality_per_epoch_at_the_clocks_d(tmp_path):
+    e55 = 1055 * EPOCH_SLOTS
+    base = {"family": "F7", "segment": "pool_reversed", "variant": "tp4_T600", "size_sol": 0.5, "q": 0.5, "overlay": "none",
+            "skipped": False, "pool": "P", "ret_x": 0.1, "day": "2026-10-11"}
+    test = [dict(base, t=e55 + 10, d=3), dict(base, t=e55 + 20, d=3)]
+    matrix = [dict(r, d=d) for r in test for d in (1, 2, 3)]
+    for name, rows in (("test", test), ("matrix", matrix)):
+        os.makedirs(tmp_path / name)
+        duckdb.connect().execute(f"COPY (SELECT * FROM (VALUES {', '.join(_row(r) for r in rows)}) v({', '.join(base | {'t': 0, 'd': 0})})) "
+                                 f"TO '{tmp_path / name / 'p.parquet'}' (FORMAT parquet)")
+    con = duckdb.connect()
+    ok, eq = ct.equality(con, str(tmp_path / "test" / "*.parquet"), str(tmp_path / "matrix" / "*.parquet"), {1055: 3})
+    assert ok and eq[1055] == {"d": 3, "test_rows": 2, "matrix_rows": 2, "only_test": 0, "only_matrix": 0}
+    ok, eq = ct.equality(con, str(tmp_path / "test" / "*.parquet"), str(tmp_path / "matrix" / "*.parquet"), {1055: 2})
+    assert not ok and eq[1055]["only_test"] == 2  # the test run's d = 3 rows are not the matrix run's d = 2 rows
+
+
+def _row(r):
+    vals = [r[k] for k in ("family", "segment", "variant", "size_sol", "q", "overlay", "skipped", "pool", "ret_x", "day", "t", "d")]
+    return "(" + ", ".join(f"'{v}'" if isinstance(v, str) else str(v).upper() if isinstance(v, bool) else str(v) for v in vals) + ")"
+
+
+def test_the_matrix_fills_absent_days_with_zero_and_the_dsr_has_both_variances():
+    labels, m = ct.matrix({"a": {"d1": 1.0, "d3": 2.0}, "b": {"d2": -1.0}}, ["d1", "d2", "d3"])
+    assert labels == ["a", "b"] and m.tolist() == [[1.0, 0.0], [0.0, -1.0], [2.0, 0.0]]
+    rng = np.random.default_rng(3)
+    d = ct.dsr_both(rng.normal(0.2, 1.0, 30), 42, 0.02)
+    assert d["t"] == 30 and d["sr0_null"] > 0 and d["sr0_dev"] > 0 and 0 <= d["dsr_dev"] <= 1 and 0 <= d["dsr_null"] <= 1
+    assert d["dsr_dev"] < d["psr0"]  # deflated below the PSR against 0
+    assert ct.dsr_both([0.0, 0.0, 0.0], 42, 0.02)["sr"] is None
 
 
 def test_delay_ms_in_whole_slots_of_the_triggers_epoch():
@@ -120,10 +176,15 @@ def test_the_clean_period_warms_up_from_the_dataset_and_reads_the_window_from_th
     monkeypatch.setenv("LAB_CHUNKS", v1)
     monkeypatch.setattr(store, "CLEAN_CHUNKS", clean)
     cfg = {"windows": {"holdout": {"start_slot": 452_304_000, "end_slot_exclusive": 454_464_000}}}
-    chunks = store.period_chunks("clean", cfg, e55, e56)
+    chunks = store.period_chunks("clean", cfg, e55, e56, warmup_epochs=1)
     assert [(c[0], os.path.dirname(c[2])) for c in chunks] == [(e54, v1), (e54 + 216_000, v1), (e55, clean), (e55 + 216_000, clean)]
-    assert data.complete_chunks() and store.period_range("clean", cfg, e55, e56) == (e54, e56)
-    for lo, hi in ((e54, e55), (e55, 1064 * EPOCH_SLOTS + 1), (None, e56)):
+    assert [c[0] for c in store.period_chunks("clean", cfg, e55, e56)] == [e55, e55 + 216_000]  # no warm-up
+    assert data.complete_chunks() and store.period_range("clean", cfg, e55, e56, 1) == (e54, e56)
+    # the window's end defaults to the end of the clean root's complete chunks
+    assert store.period_range("clean", cfg, None, None, 1) == (e54, e56)
+    _chunk(clean, e56 + 216_000, e56 + 432_000)  # after a gap: not part of the window
+    assert store.clean_window_end(e55) == e56
+    for lo, hi in ((e54, e55), (e55, 1064 * EPOCH_SLOTS + 1)):
         with pytest.raises(SystemExit):
             store.period_range("clean", cfg, lo, hi)
     with pytest.raises(SystemExit):  # the window's second epoch is not extracted yet

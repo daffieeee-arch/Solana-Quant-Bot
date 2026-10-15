@@ -3,7 +3,7 @@
   python -m backtest.store dev [--from-slot S] [--to-slot E]  # slots before the hold-out
   python -m backtest.store validate                           # epoch 1052: mechanical checks only
   python -m backtest.store holdout --final                    # only for the single final run
-  python -m backtest.store clean --final --from-slot S --to-slot E --prereg FILE --prereg-sha256 SHA
+  python -m backtest.store clean --final --warmup-epochs W --prereg FILE --prereg-sha256 SHA [--to-slot E]
                                                               # once: the clean-data test (1055-1063)
 
 The hold-out store can be built once: a lock file records when and from which commit. The dev
@@ -51,8 +51,9 @@ SPILL_MAX = os.environ.get("LAB_SPILL_MAX", "15GB")  # set a small cap while the
 VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 ms slots
 # The clean-data test of the wash-trigger hypothesis (research/hypothesis-wash-trigger-2026-10-15.md,
 # sha256 35bdaa0d): epochs 1055-1063, the last before the Alpenglow switch (1064), extracted once into
-# their own root and read once, after the pre-registration is hashed. Its window comes from the
-# pre-registration; the epoch before it is warm-up from the dataset (events/v1).
+# their own root and read once, after the pre-registration is hashed. The window starts with 1055 and
+# ends with the last complete chunk of the clean root (unless --to-slot); --warmup-epochs epochs
+# before it come from the dataset (events/v1) as warm-up, as for the hold-out (0: none).
 CLEAN = (455_760_000, 459_648_000)
 CLEAN_CHUNKS = os.environ.get("LAB_CLEAN_CHUNKS", "/home/chupa/Solana-project/data-old-faithful-one/lab/events/clean-v1/chunks")
 DISK_FLOOR_GB = 50
@@ -83,7 +84,16 @@ def load_defaults(path=DEFAULTS):
         return yaml.safe_load(f)
 
 
-def period_range(period, cfg, from_slot=None, to_slot=None):
+def clean_window_end(from_slot):
+    """The end of the complete clean chunks that tile [from_slot, ...) without a gap (at most CLEAN's end)."""
+    edge = from_slot
+    for lo, hi, _ in data.complete_chunks(CLEAN_CHUNKS):
+        if lo == edge and hi <= CLEAN[1]:
+            edge = hi
+    return edge
+
+
+def period_range(period, cfg, from_slot=None, to_slot=None, warmup_epochs=0):
     hold = cfg["windows"]["holdout"]
     if period == "dev":
         dev = cfg["windows"]["development"]
@@ -102,13 +112,13 @@ def period_range(period, cfg, from_slot=None, to_slot=None):
             raise SystemExit("the validation period overlaps the hold-out")
         return lo, hi
     if period == "clean":
-        # The decision window [from, to) is the pre-registration's; the epoch before it is warm-up (the
-        # token, pool and farmer state), as for the hold-out (tournament --decide).
-        if from_slot is None or to_slot is None:
-            raise SystemExit("clean needs --from-slot and --to-slot (the pre-registered window)")
+        # The decision window [from, to): from 1055 on (or a later pre-registered start), to the end of
+        # the clean root's complete chunks; warm-up epochs before it (tournament --decide), if any.
+        from_slot = CLEAN[0] if from_slot is None else from_slot
+        to_slot = clean_window_end(from_slot) if to_slot is None else to_slot
         if not CLEAN[0] <= from_slot < to_slot <= CLEAN[1]:
-            raise SystemExit(f"the clean window must lie in epochs 1055-1063 [{CLEAN[0]}, {CLEAN[1]})")
-        return from_slot - HOLDOUT_WARMUP_SLOTS, to_slot
+            raise SystemExit(f"the clean window [{from_slot}, {to_slot}) must lie in epochs 1055-1063 [{CLEAN[0]}, {CLEAN[1]})")
+        return from_slot - warmup_epochs * HOLDOUT_WARMUP_SLOTS, to_slot
     if period == "forward":
         # After the validation epoch: 1053 on, the 200 ms paper period (week2-defaults
         # never_include_from_slot). For illustration only (e.g. case timelines), never for
@@ -122,12 +132,13 @@ def period_range(period, cfg, from_slot=None, to_slot=None):
     raise ValueError(period)
 
 
-def period_chunks(period, cfg, from_slot=None, to_slot=None):
+def period_chunks(period, cfg, from_slot=None, to_slot=None, warmup_epochs=0):
     """The complete chunks that tile [lo, hi) exactly; fails on any gap."""
-    lo, hi = period_range(period, cfg, from_slot, to_slot)
+    lo, hi = period_range(period, cfg, from_slot, to_slot, warmup_epochs)
     if period == "clean":  # warm-up from the dataset, the window only from the clean root
-        chunks = ([c for c in data.complete_chunks() if c[0] >= lo and c[1] <= from_slot]
-                  + [c for c in data.complete_chunks(CLEAN_CHUNKS) if c[0] >= from_slot and c[1] <= hi])
+        start = lo + warmup_epochs * HOLDOUT_WARMUP_SLOTS  # the window's first slot
+        chunks = ([c for c in data.complete_chunks() if c[0] >= lo and c[1] <= start]
+                  + [c for c in data.complete_chunks(CLEAN_CHUNKS) if c[0] >= start and c[1] <= hi])
     else:
         chunks = [c for c in data.complete_chunks() if c[0] >= lo and c[1] <= hi]
     edge, missing = lo, []
@@ -590,6 +601,7 @@ def main():
     ap.add_argument("--final", action="store_true", help="required for the one-time hold-out and clean builds")
     ap.add_argument("--prereg", help="clean: the hashed pre-registration (its sha256 goes into the store's meta and lock)")
     ap.add_argument("--prereg-sha256", help="clean: the pre-registration's expected sha256")
+    ap.add_argument("--warmup-epochs", type=int, help="clean: epochs before the window from the dataset as warm-up (0 or 1)")
     ap.add_argument("--from-slot", type=int, help="dev and forward: first slot (dev default: development.start_slot_target)")
     ap.add_argument("--to-slot", type=int, help="dev and forward: end slot, exclusive (dev default: the hold-out start)")
     ap.add_argument("--out", help="output file (default: <store dir>/<period>.duckdb)")
@@ -608,13 +620,26 @@ def main():
             raise SystemExit(f"the {a.period} store is built once, for the final run: pass --final")
         if os.path.exists(lock):
             raise SystemExit(f"{a.period} already used: {open(lock).read()}")
+    warmup = 0
     if a.period == "clean":
-        extra = {"prereg": a.prereg, "prereg_sha256": check_sha256(a.prereg, a.prereg_sha256),
+        if a.warmup_epochs not in (0, 1):
+            raise SystemExit("clean: pass --warmup-epochs 0 or 1 (as the pre-registration says)")
+        warmup = a.warmup_epochs
+        extra = {"prereg": a.prereg, "prereg_sha256": check_sha256(a.prereg, a.prereg_sha256), "warmup_epochs": warmup,
                  "purpose": "clean-data test (hypothesis-wash-trigger-2026-10-15, sha256 35bdaa0d)"}
-    chunks = period_chunks(a.period, cfg, a.from_slot, a.to_slot)
+    chunks = period_chunks(a.period, cfg, a.from_slot, a.to_slot, warmup)
+    if a.period == "clean":
+        window = [c for c in chunks if c[0] >= chunks[0][0] + warmup * HOLDOUT_WARMUP_SLOTS]
+        shas = sorted({str(_chunk_meta(c)["extractor_sha256"]) for c in window})
+        if len(shas) != 1 or shas[0] == "None":
+            raise SystemExit(f"the clean window's chunks must come from one extractor build; found {shas}")
+        extra.update({"clean_extractor_sha256": shas[0], "window": [window[0][0], window[-1][1]],
+                      "warmup_chunks": [_chunk_meta(c) for c in chunks if c not in window]})
     need, free = _disk_check(a.out_dir, chunks)
     print(f"{len(chunks)} chunks [{chunks[0][0]}, {chunks[-1][1]}); ~{need:.0f} GB needed, {free:.0f} GB free", flush=True)
-    out = a.out or os.path.join(a.out_dir, f"{a.period}.duckdb")
+    name = f"clean-1055-{(chunks[-1][1] - 1) // HOLDOUT_WARMUP_SLOTS}" if a.period == "clean" else a.period
+    out = a.out or os.path.join(a.out_dir, f"{name}.duckdb")
+    print(f"store: {out}", flush=True)
     meta = build(a.period, out, cfg, chunks, log=lambda m: print(m, flush=True), extra_meta=extra)
     if a.period in ("holdout", "clean"):
         with open(lock, "w") as f:
