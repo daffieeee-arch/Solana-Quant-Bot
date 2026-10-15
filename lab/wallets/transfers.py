@@ -124,7 +124,7 @@ def setup(con, root, lo, hi, clock):
         FROM td_raw t SEMI JOIN wmints w ON w.mint = t.mint LEFT JOIN wvaults v ON v.mint = t.mint AND v.owner = t.owner WHERE NOT t.failed""")
     progress(f"setup: td {_count(con, 'td')} token_deltas rows of the window's mints")
     con.execute("""CREATE OR REPLACE TEMP TABLE tt AS
-        SELECT slot, tx_index, ix_path, kind, mint, source_owner, dest_owner, amount_raw::HUGEINT AS amount, in_trade, owner_unresolved
+        SELECT slot, tx_index, ix_path, kind, mint, source_owner, dest_owner, source_account, dest_account, amount_raw::HUGEINT AS amount, in_trade, owner_unresolved
         FROM tt_raw SEMI JOIN wmints USING (mint) WHERE NOT failed""")
     progress(f"setup: tt {_count(con, 'tt')} token_transfers rows of the window's mints")
     con.execute("CREATE OR REPLACE TEMP VIEW sf AS SELECT slot, tx_index, from_account AS funder, to_account AS wallet, lamports::BIGINT AS lamports, kind FROM sf_raw WHERE NOT failed")
@@ -150,15 +150,43 @@ def setup(con, root, lo, hi, clock):
         SELECT ps.mint, p.slot, p.tx_index, p.pool AS key, p.base::HUGEINT AS burned
         FROM pool p JOIN pools ps USING (pool) SEMI JOIN wmints w ON w.mint = ps.mint
         WHERE p.slot >= {lo} AND p.slot < {hi} AND p.kind = 'boost' AND p.base IS NOT NULL""")
+    # A non-trade transfer that continues an in-trade transfer through an intermediate token account — a router's
+    # account that receives the pool's output and forwards it to the trader, or a temporary account (owner
+    # unresolved, closed in the same transaction) that the trader fills and that then feeds the vault — is the same
+    # trade's token movement: the leg already carries it, so it is not a flow (job 79 diagnosis of 2026-10-15: the
+    # trader's net leg was exactly twice the amount on such routes, 82 % of the remaining 4.1 residual). Matched on
+    # the shared token account, or on the shared owner when the chunk has no account columns, and only through an
+    # intermediary that is not itself a leg trader of the transaction (a bot that buys and forwards from its own
+    # account, or a seller fed by a PDA, keeps its flows). Four equality joins (an OR would plan a nested loop).
+    con.execute("""CREATE OR REPLACE TEMP TABLE hops AS
+        WITH x AS (SELECT mint, slot, tx_index, ix_path, source_account, dest_account, source_owner, dest_owner FROM tt
+                   WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade),
+             y AS (SELECT mint, slot, tx_index, source_account, dest_account, source_owner, dest_owner FROM tt
+                   WHERE kind IN ('transfer', 'transfer_checked') AND in_trade),
+             h AS (
+               SELECT x.mint, x.slot, x.tx_index, x.ix_path, y.dest_owner AS via FROM x JOIN y
+                 ON y.mint = x.mint AND y.slot = x.slot AND y.tx_index = x.tx_index AND y.dest_account = x.source_account
+               UNION ALL SELECT x.mint, x.slot, x.tx_index, x.ix_path, y.source_owner FROM x JOIN y
+                 ON y.mint = x.mint AND y.slot = x.slot AND y.tx_index = x.tx_index AND y.source_account = x.dest_account
+               UNION ALL SELECT x.mint, x.slot, x.tx_index, x.ix_path, y.dest_owner FROM x JOIN y
+                 ON y.mint = x.mint AND y.slot = x.slot AND y.tx_index = x.tx_index AND y.dest_owner = x.source_owner AND x.source_account IS NULL
+               UNION ALL SELECT x.mint, x.slot, x.tx_index, x.ix_path, y.source_owner FROM x JOIN y
+                 ON y.mint = x.mint AND y.slot = x.slot AND y.tx_index = x.tx_index AND y.source_owner = x.dest_owner AND x.dest_account IS NULL)
+        SELECT DISTINCT h.mint, h.slot, h.tx_index, h.ix_path FROM h
+        ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) t
+             ON t.mint = h.mint AND t.slot = h.slot AND t.tx_index = h.tx_index AND t.owner = h.via""")
     # a trader's token movements besides the trade in the same transaction (a bot buys and forwards the tokens to
-    # its customers; a seller receives from a PDA and sells at once): non-trade transfers, burns and mint_to per owner
+    # its customers; a seller receives from a PDA and sells at once): non-trade transfers (hops excluded), burns and
+    # mint_to per owner
     con.execute("""CREATE OR REPLACE TEMP TABLE flows AS
         SELECT mint, slot, tx_index, owner, sum(amount) AS flow FROM (
-            SELECT mint, slot, tx_index, dest_owner AS owner, amount FROM tt WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade AND dest_owner IS NOT NULL
-            UNION ALL SELECT mint, slot, tx_index, source_owner, -amount FROM tt WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade AND source_owner IS NOT NULL
+            SELECT mint, slot, tx_index, dest_owner AS owner, amount FROM tt ANTI JOIN hops USING (mint, slot, tx_index, ix_path)
+                WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade AND dest_owner IS NOT NULL
+            UNION ALL SELECT mint, slot, tx_index, source_owner, -amount FROM tt ANTI JOIN hops USING (mint, slot, tx_index, ix_path)
+                WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade AND source_owner IS NOT NULL
             UNION ALL SELECT mint, slot, tx_index, source_owner, -amount FROM tt WHERE kind = 'burn' AND source_owner IS NOT NULL
             UNION ALL SELECT mint, slot, tx_index, dest_owner, amount FROM tt WHERE kind = 'mint_to' AND dest_owner IS NOT NULL) GROUP BY 1, 2, 3, 4""")
-    progress(f"setup: legs {_count(con, 'legs')}, boosts {_count(con, 'boosts')}, flows {_count(con, 'flows')}")
+    progress(f"setup: legs {_count(con, 'legs')}, boosts {_count(con, 'boosts')}, hops {_count(con, 'hops')}, flows {_count(con, 'flows')}")
     # Insiders: the creator and every buyer in the first 10 s (O7); buyers both as the store's trader and as the
     # chain's token owner (a kept positive non-vault delta in that window), since the two can differ.
     con.execute("""CREATE OR REPLACE TEMP TABLE insiders AS

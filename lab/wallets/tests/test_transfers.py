@@ -307,3 +307,85 @@ def test_diag_on_a_conserving_fixture_renders_empty(tmp_path, monkeypatch):
     md = (out / "diag.md").read_text()
     assert "conservation 3 / 3 mint-days (100.0 %)" in md and "with a non-zero residual 0; mints 1, failing 4.1 on some day 0" in md
     assert "Σ|residual| over the failing mints 0, over the conserving mints 0" in md and "### Rows of the first three examples" in md
+
+
+M3 = "M3pump"
+
+
+def _store_hops(path):
+    """Job 79 (2026-10-15) residual patterns: U1 buys 30 on the pool through a router (the pool's output lands on the
+    router's account and is forwarded to U1 in the same transaction) and sells 5 through a temporary account (owner
+    unresolved, closed in the transaction) that feeds the vault; a bot R buys 20 and forwards 19 from its own account."""
+    con = duckdb.connect(str(path))
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"ms_per_slot": {str(E): 267.3}})])
+    con.execute("CREATE TABLE blocks (slot UBIGINT, block_time BIGINT)")
+    con.executemany("INSERT INTO blocks VALUES (?, ?)", [(x, T0 + (x - S) // 100 * 86_400) for x in range(S - 10, S + 300)])
+    con.execute("CREATE TABLE mints (mint VARCHAR, create_slot UBIGINT, creator VARCHAR, supply UBIGINT, mayhem BOOLEAN, cashback BOOLEAN, holder_reward BOOLEAN)")
+    con.execute("INSERT INTO mints VALUES (?, ?, 'CR', ?, false, false, false)", [M3, S, SUPPLY])
+    con.execute("CREATE TABLE curve (mint VARCHAR, slot UBIGINT, tx_index UBIGINT, is_buy BOOLEAN, t HUGEINT, q HUGEINT, trader VARCHAR, variant VARCHAR)")
+    con.executemany("INSERT INTO curve VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
+        (M3, S, 1, True, 300 * U, 3 * 10**9, "CR", "buy"),
+        (M3, S + 45, 1, True, 20 * U, 2 * 10**8, "R", "buy")])
+    con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, quote_class VARCHAR, orientation VARCHAR, create_slot UBIGINT)")
+    con.execute("INSERT INTO pools VALUES ('P3', ?, 'sol', 'normal', ?)", [M3, S + 60])
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT, base BIGINT)")
+    con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'U1', true, ?, 30000000, NULL), ('P3', ?, 1, 'sell', 'U1', false, ?, 5000000, NULL)", [S + 70, 30 * U, S + 71, 5 * U])
+    con.close()
+
+
+def _chunk_hops(root):
+    d = root / "c0"
+    for t in ("token_deltas", "token_transfers", "sol_funding"):
+        (d / t).mkdir(parents=True)
+    (d / "_manifest.json").write_text(json.dumps({"status": "complete", "slot_start": LO, "slot_end_exclusive": LO + 432_000, "extractor_sha256": "abc"}))
+
+    def td(slot, tx, owner, delta, vault=False, trade=True):
+        return {"slot": slot, "tx_index": tx, "mint": M3, "owner": owner, "token_account": owner + "_ta", "delta_raw": str(delta), "decimals": 6,
+                "is_vault": vault, "has_pump_event": trade, "has_pump_event_same_mint": trade, "fee_payer": owner, "failed": False}
+    pq.write_table(pa.Table.from_pylist([
+        td(S, 1, keys.curve_pda(M3), SUPPLY - 300 * U, vault=True),      # the create: mint 1000, dev buy 300 (CR's row dropped)
+        td(S + 45, 1, "W", 19 * U), td(S + 45, 1, "FEE", 1 * U),          # R's forwards; R has no row (net 0); the vault's row dropped
+        td(S + 60, 1, "CR", -300 * U), td(S + 60, 1, "P3", 300 * U, vault=True),   # CR deposits the pool
+        # S + 70: U1's row equals its leg (dropped), the router's net is 0 (no row), the pool vault's row dropped
+        # S + 71: U1's row equals its leg (dropped), the temporary account nets 0 and is closed, the vault's row dropped
+    ]), d / "token_deltas" / "part-00000.parquet")
+
+    def tt(slot, tx, ix, kind, src, dst, amount, in_trade, src_acc=None, dst_acc=None, unresolved=False):
+        return {"slot": slot, "tx_index": tx, "ix_path": ix, "program": "token", "kind": kind, "mint": M3, "source_account": src_acc, "source_owner": src,
+                "dest_account": dst_acc, "dest_owner": dst, "authority": src, "amount_raw": amount, "decimals": 6, "outer_program": "pump" if in_trade else "token",
+                "in_trade": in_trade, "owner_unresolved": unresolved, "fee_payer": src or dst or "U1", "has_pump_event": in_trade, "failed": False}
+    pq.write_table(pa.Table.from_pylist([
+        tt(S, 1, "1.1", "mint_to", None, keys.curve_pda(M3), SUPPLY, True), tt(S, 1, "1.2", "transfer_checked", keys.curve_pda(M3), "CR", 300 * U, True),
+        tt(S + 45, 1, "1.1", "transfer_checked", keys.curve_pda(M3), "R", 20 * U, True),
+        tt(S + 45, 1, "2.1", "transfer", "R", "W", 19 * U, False), tt(S + 45, 1, "2.2", "transfer", "R", "FEE", 1 * U, False),   # by owner (no accounts): R is the trader, not a hop
+        tt(S + 60, 1, "1.1", "transfer", "CR", "P3", 300 * U, True),
+        # the router buy: vault -> ROUTER's account (in trade), ROUTER -> U1 (not in trade), same amount
+        tt(S + 70, 1, "4.19", "transfer_checked", "P3", "ROUTER", 30 * U, True, "P3_ta", "ROUTER_ta"),
+        tt(S + 70, 1, "4.31", "transfer_checked", "ROUTER", "U1", 30 * U, False, "ROUTER_ta", "U1_ta"),
+        # the temporary-account sell: U1 -> TMP (not in trade, owner unresolved), close, TMP -> vault (in trade)
+        tt(S + 71, 1, "3", "transfer_checked", "U1", None, 5 * U, False, "U1_ta", "TMP_ta", unresolved=True),
+        tt(S + 71, 1, "4", "close_account", "U1", None, None, False, "TMP_ta", None),
+        tt(S + 71, 1, "6.1", "transfer_checked", None, "P3", 5 * U, True, "TMP_ta", "P3_ta", unresolved=True)]),
+        d / "token_transfers" / "part-00000.parquet")
+    pq.write_table(pa.Table.from_pylist([{"slot": S + 1, "tx_index": 1, "ix_path": "1", "from_account": "F", "to_account": "w0", "lamports": 50_000_000, "kind": "transfer",
+                                          "fee_payer": "F", "has_pump_event": False, "failed": False}]), d / "sol_funding" / "part-00000.parquet")
+    return str(root)
+
+
+def test_router_and_temporary_account_hops_count_once(tmp_path, monkeypatch):
+    """The trader's non-trade transfer that continues the trade's in-trade transfer through an intermediate account is
+    not a flow: U1's buy of 30 and sell of 5 appear once (job 79: the net leg was twice the amount); R's forwards stay."""
+    _store_hops(tmp_path / "s.duckdb")
+    root = _chunk_hops(tmp_path / "chunks")
+    pq.write_table(pa.Table.from_pylist([{"mint": M3, "t": S + 72}]), tmp_path / "trig.parquet")
+    monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    transfers.main(["--chunks", root, "--triggers", str(tmp_path / "trig.parquet"), "--out", str(out)])
+    con = duckdb.connect()
+    cons = con.execute(f"SELECT held, minted, diff, ok FROM '{out}/conservation.parquet' ORDER BY day").fetchall()
+    assert cons and all(c[0] == SUPPLY and c[2] == 0 and c[3] for c in cons)   # without the hop rule: +30 and -5 doubled -> diff 25
+    q1 = con.execute(f"SELECT circ FROM '{out}/q1_triggers.parquet'").fetchone()
+    # circulation at S + 72: CR 0 (deposited) + W 19 + FEE 1 + U1 25 = 45 (curve vault 680 and pool vault 275 excluded)
+    assert q1[0] == 45 * U
