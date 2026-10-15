@@ -5,8 +5,13 @@
 #   LAB_ENGINE=/home/chupa/Solana-project/data-old-faithful-one/lab/backtests/f7rev-1033-1046/engine \
 #   LAB_SPILL_DIR=/lab/tmp/nas-markout LAB_SPILL_MAX=8GB bash lab/wallets/nas_markout.sh
 #
-# Tunables (env): RUNS (space-separated "<name>:<parts dir>"), MEMORY (DuckDB limit per run), BOOT,
-# MARKOUT_DIR (output, default $OUT/markout-v1), MARKOUT_ARGS (e.g. "--from-slot A --to-slot B" for a smoke).
+# The big runs (families-v2 has 9x the f7rev signals: one unbucketed pool_at spilled 93 GiB at MEMORY 12GB) on the
+# 24 GB runner, with the venue-state match in 32 key-hash buckets and 200 GB of spill:
+#   MEMORY=12GB BUCKETS=32 LAB_SPILL_MAX=200GB LAB_SPILL_DIR=/lab/tmp/nas-markout LAB_ENGINE=... bash lab/wallets/nas_markout.sh
+#
+# Tunables (env): RUNS (space-separated "<name>:<parts dir>"), MEMORY (DuckDB limit per run), BUCKETS (key-hash
+# buckets of the venue-state match, default 1 = unbucketed; the union over the buckets is the unbucketed result),
+# BOOT, MARKOUT_DIR (output, default $OUT/markout-v1), MARKOUT_ARGS (e.g. "--from-slot A --to-slot B" for a smoke).
 # Progress: every phase writes a timed line to $MARKOUT_DIR/log/markout-<run>.log (signals, targets, pool_at,
 # curve_at, matched, round trips per 500k rows, parquet), and run-markout-<run>.json has phases_seconds.
 #
@@ -22,15 +27,15 @@ STORE=${LAB_STORE:-$DATA/store/dev2.duckdb}
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 MK=${MARKOUT_DIR:-$OUT/markout-v1}
 LOG=$MK/log
-RUNS=${RUNS:-"f7rev:$DATA/backtests/f7rev-1033-1046/parts families-v2:$DATA/backtests/families-v2-1033-1046/parts m1x:$DATA/backtests/m1x-dev-1033-1046-453d44e/parts"}
+RUNS=${RUNS:-"f7rev:$DATA/backtests/f7rev-1033-1046/parts families-v2:$DATA/backtests/families-v2-1033-1046/parts m1x:$DATA/backtests/m1x-dev-1033-1046-5090d14/parts"}
 BOOT=${BOOT:-10000}
 
 case "${LAB_ENGINE:-}" in */backtest) export LAB_ENGINE=${LAB_ENGINE%/backtest} ;; esac
-export PYTHONPATH=$REPO/lab LAB_STORE=$STORE LAB_WALLETS_OUT=$OUT LAB_WALLETS_MEMORY=${MEMORY:-6GB}
+export PYTHONPATH=$REPO/lab LAB_STORE=$STORE LAB_WALLETS_OUT=$OUT LAB_WALLETS_MEMORY=${MEMORY:-6GB} LAB_MARKOUT_BUCKETS=${BUCKETS:-1}
 export LAB_SPILL_DIR=${LAB_SPILL_DIR:-/lab/tmp/nas-markout} LAB_SPILL_MAX=${LAB_SPILL_MAX:-8GB}
 mkdir -p "$MK" "$LOG" "$LAB_SPILL_DIR"
 log() { echo "$(date +%FT%T) $*" | tee -a "$LOG/nas_markout.log"; }
-log "start repo=$REPO commit=$(git -C "$REPO" rev-parse --short HEAD) store=$STORE out=$MK engine=${LAB_ENGINE:-?}"
+log "start repo=$REPO commit=$(git -C "$REPO" rev-parse --short HEAD) store=$STORE out=$MK engine=${LAB_ENGINE:-?} memory=$LAB_WALLETS_MEMORY buckets=$LAB_MARKOUT_BUCKETS spill=$LAB_SPILL_DIR/$LAB_SPILL_MAX"
 
 for spec in $RUNS; do
   name=${spec%%:*}; parts=${spec#*:}

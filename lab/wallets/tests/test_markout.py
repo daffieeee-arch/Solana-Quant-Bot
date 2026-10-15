@@ -136,6 +136,21 @@ def test_markouts_on_the_mini_store(tmp_path, capfd):
     assert n2["ref_mint"] == "MR" and n2["ref_t"] == B and n2["farm"] == "n/a"
 
 
+def test_buckets_do_not_change_the_markouts(tmp_path, monkeypatch, capfd):
+    """The venue-state match per key-hash bucket (LAB_MARKOUT_BUCKETS, the NAS setting for the big runs) and a
+    one-row flush of the round trips give the same parquet as the unbucketed run."""
+    _store(tmp_path / "s.duckdb")
+    _parts(str(tmp_path / "parts"))
+    markout.run(str(tmp_path / "parts"), "one", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
+    monkeypatch.setenv("LAB_MARKOUT_BUCKETS", "3")
+    monkeypatch.setattr(markout, "FLUSH_ROWS", 7)
+    info = markout.run(str(tmp_path / "parts"), "three", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
+    assert info["buckets"] == 3 and "bucket 3/3" in capfd.readouterr().err
+    con = duckdb.connect()
+    one, three = (con.execute(f"SELECT * FROM '{tmp_path / 'out' / f'markout-{n}.parquet'}' ORDER BY ALL").fetchall() for n in ("one", "three"))
+    assert len(one) == 5 * 2 * 8 and one == three
+
+
 def test_guard_refuses_the_holdout(tmp_path):
     with pytest.raises(ValueError):
         markout.guard(markout.__dict__["guard"].__globals__["HOLDOUT_START"] + 1)
