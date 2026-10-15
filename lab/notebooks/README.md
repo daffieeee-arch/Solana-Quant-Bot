@@ -20,3 +20,10 @@ Rules for new notebooks:
 | Notebook | Content |
 |---|---|
 | `uitslagen.py` | Hold-out (K1–K3, group B+C, decision), M1+/M1-early (binding period, per family and size, §10 verdict), paired exact-in measurement |
+| `blinde_vlekken.py` | Which chain information we use or miss, the blind-spot audit per chunk, the F7-reversed wash check, conclusions that may change |
+| `experimentregister.py` | The experiment register (filterable by kind; rejected and exploratory coloured), data usage per epoch range (spent, closed, clean), and the owner's cases excluded from the clean-data test with DexScreener links (link only) |
+
+`experimentregister.py` parses the markdown tables of `lab/reports/experiment-register.md` in the served
+worktree, so the page shows the register as of the deployed commit: redeploy after the register changes.
+The case list is read from `$LAB_DATA_ROOT/research/case-exclusions-clean-data.md`. The page never reads
+the clean extraction.
