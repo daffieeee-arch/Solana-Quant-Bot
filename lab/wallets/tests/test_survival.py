@@ -28,15 +28,21 @@ def _store(path):
     rows += [("withdraw", "P2", S + 500, 2, 100 * SOL, 50 * SOL, 0), ("withdraw", "P2", S + 1200, 1, 50 * SOL, 50 * SOL, 0)]
     # P3: one trade, never drained (censored at t + 3000 slots = 20 min)
     rows += [("sell", "P3", S + 5, 1, 100 * SOL, 1 * SOL, 1 * SOL)]
-    # P4: one trade, drained at S + 75 (0.5 min): inside the K3 hold of 600 slots
+    # P4: one trade, drained at S + 75 (0.5 min): inside the K3 hold (600 x 267.3 ms = 401 slots at 400 ms)
     rows += [("sell", "P4", S + 5, 1, 100 * SOL, 1 * SOL, 1 * SOL), ("withdraw", "P4", S + 75, 1, 100 * SOL, 100 * SOL, 0)]
+    # P5: one trade, drained at S + 4000: after the observation (t + 3000) -> unobserved, censored (C5)
+    rows += [("sell", "P5", S + 5, 1, 100 * SOL, 1 * SOL, 1 * SOL), ("withdraw", "P5", S + 4000, 1, 100 * SOL, 100 * SOL, 0)]
+    # P6: one trade, a half withdraw at S + 50 inside the quiet gap, the drain at S + 2000: the 1-min exit (S + 155) sees 50 SOL (C4)
+    rows += [("sell", "P6", S + 5, 1, 100 * SOL, 1 * SOL, 1 * SOL), ("withdraw", "P6", S + 50, 1, 100 * SOL, 50 * SOL, 0), ("withdraw", "P6", S + 2000, 1, 50 * SOL, 50 * SOL, 0)]
+    # P7: one trade, drained at S + 500: inside a flat 600 slots, outside the 401-slot hold of this epoch (C6)
+    rows += [("sell", "P7", S + 5, 1, 100 * SOL, 1 * SOL, 1 * SOL), ("withdraw", "P7", S + 500, 1, 100 * SOL, 100 * SOL, 0)]
     con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
     con.close()
 
 
 def _parts(path):
     rows = [{"family": "F7", "variant": "tp4_T600", "segment": "pool_reversed", "venue": "pool", "orientation": "reversed", "mint": f"M{i}", "pool": f"P{i}",
-             "t": S, "day": "2026-09-11", "farm": "organic" if i < 3 else "flagged"} for i in range(1, 5)]
+             "t": S, "day": "2026-09-11", "farm": "organic" if i < 3 else "flagged"} for i in range(1, 8)]
     rows.append({**rows[0], "variant": "tp6_T600"})  # a second exit variant of the same trigger: one row
     os.makedirs(path)
     pq.write_table(pa.Table.from_pylist(rows), os.path.join(path, "part-0.parquet"))
@@ -46,23 +52,31 @@ def test_drain_survival_and_inactivity_exit(tmp_path):
     _store(tmp_path / "s.duckdb")
     _parts(str(tmp_path / "parts"))
     info = survival.run(str(tmp_path / "parts"), str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), observe_slots=3000)
-    assert info["triggers"] == 4 and info["events"] == 3
+    assert info["triggers"] == 7 and info["events"] == 5
     con = duckdb.connect()
-    r = {x[0]: x for x in con.execute(f"SELECT pool, event, time_min, drain_in_k3_hold, first_withdraw_frac, exit_1m, drain_slot FROM '{tmp_path / 'out' / 'survival.parquet'}'").fetchall()}
+    r = {x[0]: x for x in con.execute(f"SELECT pool, event, time_min, drain_in_k3_hold, first_withdraw_frac, exit_1m, drain_slot, b_exit_1m, first_withdraw_slot FROM '{tmp_path / 'out' / 'survival.parquet'}'").fetchall()}
     assert r["P1"][1] and abs(r["P1"][2] - 2.0) < 1e-9 and r["P1"][3] and r["P1"][4] == 1.0
     assert r["P2"][1] and abs(r["P2"][2] - 8.0) < 1e-9 and not r["P2"][3] and abs(r["P2"][4] - 0.5) < 1e-12  # the half withdraw is not the drain
     assert not r["P3"][1] and abs(r["P3"][2] - 20.0) < 1e-9 and r["P3"][6] is None             # censored at t + 3000 slots
     assert r["P4"][1] and abs(r["P4"][2] - 0.5) < 1e-9 and r["P4"][3]
+    # C5: P5's drain at S + 4000 is after the observation: unobserved, censored at 20 min, no withdraw seen, not in the hold
+    assert not r["P5"][1] and abs(r["P5"][2] - 20.0) < 1e-9 and r["P5"][6] is None and r["P5"][8] is None and not r["P5"][3]
+    # C6: the hold is 600 x 267.3 ms = 401 slots at 400 ms: P7's drain at S + 500 is outside it
+    assert r["P7"][1] and r["P7"][6] == S + 500 and not r["P7"][3]
     # inactivity exit of 1 min = 150 slots: P1 fires at S + 20 + 150 (before the drain at S + 300), P4 at S + 5 + 150 (after its drain at S + 75)
     assert r["P1"][5] == S + 170 and r["P4"][5] == S + 155 and r["P2"][5] == S + 1150
+    # C4: the WSOL at P6's exit (S + 155) is the reserve after the half withdraw at S + 50, not the gap-opening trade's 100
+    assert r["P6"][5] == S + 155 and r["P6"][7] == 50 * SOL and r["P1"][7] == 100 * SOL  # P1: its last leg before the exit is the buy at S + 20 (reserve back to 100)
     md = (tmp_path / "out" / "survival.md").read_text()
     all_row = next(ln for ln in md.splitlines() if ln.startswith("| all |"))
     cells = [c.strip() for c in all_row.split("|")[1:-1]]
-    # S(1 min) = 3/4, S(3 min) = 2/4, S(10 min) = 1/4, median 2.0 min, 2 of 4 drained within 600 slots
-    assert cells[1] == "4" and cells[2] == "3" and cells[3].startswith("75.0 %") and cells[5].startswith("50.0 %") and cells[7].startswith("25.0 %")
-    assert cells[11] == "2.0" and cells[12].startswith("50.0 %")
-    assert "| 1 min | 4 (100.0 %) | 2 (50.0 %) |" in md  # P1 and P2 fire before their drain; P4 after; P3 fires with no drain
-    assert "the first withdraw is already the drain (≥ 90%) in 2 (66.7 %)" in md
+    # drains at 0.5 (P4), 2.0 (P1), 3.33 (P7), 8 (P2), 13.3 (P6) min; P3 and P5 censored at 20 min:
+    # S(1 min) = 6/7, S(3 min) = 5/7, S(10 min) = 3/7, S(30 min) = 2/7, median 8.0 min, 2 of 7 (P1, P4) drained within the hold
+    assert cells[1] == "7" and cells[2] == "5" and cells[3].startswith("85.7 %") and cells[5].startswith("71.4 %") and cells[7].startswith("42.9 %") and cells[8].startswith("28.6 %")
+    assert cells[11] == "8.0" and cells[12].startswith("28.6 %")
+    # 1-min exit: P1, P2, P6, P7 fire before their drain; P4 after; P3 and P5 fire with no drain observed
+    assert "| 1 min | 7 (100.0 %) | 4 (57.1 %) |" in md and "| 1 | 2 | 0 | 0 |" in md
+    assert "the first withdraw is already the drain (≥ 90%) in 3 (60.0 %)" in md   # P1, P4, P7 of the five pools with a withdraw seen
 
 
 def test_regime_groups_round_per_epoch_ms_and_rerender(tmp_path):
