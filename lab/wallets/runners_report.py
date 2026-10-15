@@ -1,7 +1,8 @@
 """Report of spec F section 1 (runners.py entries): per entry moment the distribution of mult_1h / mult_6h, the time of
 the maximum, end_6h and dd_6h (per regime, per segment, days 1-9 / 10-18 / all); per feature the AUC for "x5 within
 6 h" and "x10 within 6 h" with a 95 % day-bootstrap CI (seed 7) and quintile tables (share of runners and mean end_6h
-per quintile); the creator's earlier tokens (count, median mult_6h at c5) joined as features. No bar: a feature with
+per quintile); the creator's earlier tokens joined as features, point in time (created before the moment; their mult_6h
+only once their own 6 h window has closed before the moment). No bar: a feature with
 AUC >= 0.65 in both regimes is a lead for a pre-registration of its own, nothing more.
 
 The day bootstrap of an AUC is exact and fast through the day-pair matrix W[d1, d2] = the Mann-Whitney wins of the
@@ -41,17 +42,22 @@ def load(con, entries_dir):
     if not files:
         raise SystemExit(f"no entries-*.parquet under {entries_dir}")
     con.execute(f"CREATE OR REPLACE TABLE e AS SELECT * FROM read_parquet({files!r}, union_by_name = true)")
-    # the creator's earlier tokens (by create slot) and their median mult_6h at c5
+    # the creator's earlier tokens, point in time per (key, moment): created before the moment t; their mult_6h at c5 only
+    # when that token's 6 h window closed before t (entry_slot + h6_slots <= t), since mult_6h is known only then
+    # (review of 2026-10-16: serial creators launch minutes apart, the plain join looked ahead)
     con.execute("""CREATE OR REPLACE TABLE ch AS
         WITH tk AS (SELECT DISTINCT key, creator, create_slot FROM e WHERE creator IS NOT NULL),
-             c5 AS (SELECT key, mult_6h FROM e WHERE moment = 'c5')
-        SELECT a.key, count(b.key) AS creator_prev_n, median(c5.mult_6h) AS creator_prev_mult6
-        FROM tk a LEFT JOIN tk b ON b.creator = a.creator AND b.create_slot < a.create_slot LEFT JOIN c5 ON c5.key = b.key
-        GROUP BY 1""")
+             c5 AS (SELECT key, entry_slot + h6_slots AS known_slot, mult_6h FROM e WHERE moment = 'c5')
+        SELECT a.key, a.moment, count(b.key) AS creator_prev_n,
+               median(c5.mult_6h) FILTER (WHERE c5.known_slot <= a.t) AS creator_prev_mult6
+        FROM (SELECT DISTINCT key, moment, t, creator, create_slot FROM e WHERE creator IS NOT NULL) a
+        LEFT JOIN tk b ON b.creator = a.creator AND b.create_slot < a.t AND b.key <> a.key
+        LEFT JOIN c5 ON c5.key = b.key
+        GROUP BY 1, 2""")
     con.execute("""CREATE OR REPLACE TABLE ent AS
         SELECT e.*, ch.creator_prev_n, ch.creator_prev_mult6, mult_6h >= 5 AS run5, mult_6h >= 10 AS run10,
                dense_rank() OVER (ORDER BY day) - 1 AS day_idx
-        FROM e LEFT JOIN ch USING (key)""")
+        FROM e LEFT JOIN ch ON ch.key = e.key AND ch.moment = e.moment""")
     return con.execute("SELECT count(*), count(DISTINCT key), count(DISTINCT day) FROM ent").fetchone()
 
 

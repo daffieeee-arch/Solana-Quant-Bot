@@ -322,7 +322,7 @@ def assemble(con, clock, lo):
                (a.slot_max - e.entry_slot) * ({ms_case(clock, 'e.entry_slot')}) / 60000.0 AS t_max_min,
                a.last_net / e.cost::DOUBLE AS end_6h, a.dd_net / e.cost::DOUBLE AS dd_6h,
                (a.last_slot - e.entry_slot) * ({ms_case(clock, 'e.entry_slot')}) / 60000.0 AS last_min,
-               e.entry_slot + e.h6 >= {HOLDOUT_START} AS cut,
+               e.h6 AS h6_slots, e.entry_slot + e.h6 >= {HOLDOUT_START} AS cut,
                fa.* EXCLUDE (key, moment), fe.* EXCLUDE (key, moment), fr.* EXCLUDE (key, moment), fh.payer_hub, ft.top5_share, ft.holders
         FROM ent e JOIN tok t ON t.key = e.key JOIN blocks b ON b.slot = e.entry_slot JOIN agg a ON a.key = e.key AND a.moment = e.moment
         LEFT JOIN fe_all fa ON fa.key = e.key AND fa.moment = e.moment LEFT JOIN fe ON fe.key = e.key AND fe.moment = e.moment

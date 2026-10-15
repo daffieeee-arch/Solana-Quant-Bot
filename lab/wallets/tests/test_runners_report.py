@@ -43,7 +43,7 @@ def _entries(path, n=1200, seed=3):
                      "segment": "curve" if moment != "m1" else "pool", "regime": regime, "day": days[i % len(days)], "depth_sol": rng.uniform(1, 50),
                      "tokens": 1.0, "cost_sol": 0.5007, "min_since_create": float(i % 30), "create_slot": 500 + i // 3, "creator": f"C{(i // 3) % 40}", "mayhem": False,
                      "has_curve": True, "n_marks": 10, "n_curve": 5, "n_pool": 5, "mult_1h": mult * 0.8, "mult_6h": mult, "t_max_min": rng.uniform(0, 300),
-                     "end_6h": mult * rng.uniform(0, 1), "dd_6h": rng.uniform(0.3, 1), "last_min": 350.0, "cut": False,
+                     "end_6h": mult * rng.uniform(0, 1), "dd_6h": rng.uniform(0.3, 1), "last_min": 350.0, "h6_slots": 80_000, "cut": False,
                      "all_inflow": strong, "all_buyers": int(rng.integers(1, 50)), "top5_share": rng.uniform(0.2, 1), "holders": int(rng.integers(1, 200)),
                      "payer_hub": rng.uniform(0, 0.3), "pre5_inflow": rng.normal(), "post5_inflow": None if i % 5 == 0 else rng.normal()})
     os.makedirs(path)
@@ -64,7 +64,30 @@ def test_report_finds_the_planted_lead(tmp_path):
     # the AUC table marks the lead bold with a CI and the runner count; features absent from the entries are skipped
     row = next(ln for ln in md.splitlines() if ln.startswith("| all_inflow |"))
     assert "**0." in row and "…" in row and "pre1_inflow" not in md.split("## 3.")[1].split("## 4.")[0]
-    # the creator history is joined: K1 (second token of creator C1 ... ) gets creator_prev_n 1 -> the feature appears in the table
     assert "| creator_prev_n |" in md
     # quintiles of the strongest feature per moment
     assert "**c1 · all_inflow**" in md and "| 5 |" in md
+
+
+def test_creator_history_is_point_in_time(tmp_path):
+    """A creator with two tokens 10 min apart: the second sees the first create (count 1) but not its mult_6h, which is
+    known only 6 h after the first token's entry; a third token a day later sees both tokens and the first two multiples."""
+    import duckdb
+    ms = 400.0
+    h6 = round(6 * 3_600_000 / ms)          # 54,000 slots
+    ten_min = round(600_000 / ms)           # 1,500 slots
+    day = round(86_400_000 / ms)
+    base = {"moment": "c5", "entry_venue": "curve", "segment": "curve", "regime": "270ms", "depth_sol": 1.0, "tokens": 1.0, "cost_sol": 0.5,
+            "min_since_create": 5.0, "mayhem": False, "has_curve": True, "n_marks": 3, "n_curve": 3, "n_pool": 0, "mult_1h": 1.0, "t_max_min": 1.0,
+            "end_6h": 0.5, "dd_6h": 0.9, "last_min": 300.0, "cut": False, "all_inflow": 1.0, "h6_slots": h6, "creator": "C", "entry_ord": 0}
+    rows = [dict(base, key="A", mint="A", create_slot=1000, t=1000 + 800, entry_slot=1000 + 802, day="2026-09-21", mult_6h=7.0),
+            dict(base, key="B", mint="B", create_slot=1000 + ten_min, t=1000 + ten_min + 800, entry_slot=1000 + ten_min + 802, day="2026-09-21", mult_6h=1.0),
+            dict(base, key="D", mint="D", create_slot=1000 + day, t=1000 + day + 800, entry_slot=1000 + day + 802, day="2026-09-22", mult_6h=1.5)]
+    os.makedirs(tmp_path / "ent")
+    pq.write_table(pa.Table.from_pylist(rows), tmp_path / "ent" / "entries-1.parquet")
+    con = duckdb.connect()
+    R.load(con, str(tmp_path / "ent"))
+    got = {r[0]: (r[1], r[2]) for r in con.execute("SELECT key, creator_prev_n, creator_prev_mult6 FROM ent").fetchall()}
+    assert got["A"] == (0, None)
+    assert got["B"] == (1, None)            # A was created before B's moment, but A's mult_6h is not known yet
+    assert got["D"] == (2, 4.0)             # a day later: both earlier tokens, median of 7.0 and 1.0
