@@ -79,6 +79,8 @@ Hypothese van de coördinator na §2a: het farmer-verlies is de prijs van volume
 
 Uitkomst: **cashback verklaart het farmer-verlies niet** (0,04 %). Over PUMP-incentives zegt deze data niets positiefs: de accumulator-closes die wél zijn geëxtraheerd melden nul geclaimde tokens voor 4,9 mln wallets, en het claim-event zelf ontbreekt in `events/v1`; het blijft **onbekend** of farmers elders PUMP ontvangen (dat zou een aparte extractie en een PUMP-prijsaanname vragen; er is geen PUMP/SOL-pool in dev2). De lezing van §1 blijft dus staan: farmers betalen 2,2 % van hun volume en krijgen in de SOL-boekhouding niets terug. Labels: cashback en closes zijn **feit** uit de chaindata; de farmer-achtige set is een **reconstructie** (feature-regel zonder label-voorrang).
 
+Aanvulling 2026-10-16 (extractie `events/transfers-v1-small`, vier chunks ≈ 64 uur van de epochs 1040 en 1045, met manifest): `pump/ClaimTokenIncentivesEvent` komt in geen van de vier chunks voor. In dit venster zijn via het pump-programma dus **geen PUMP-incentives geclaimd** (feit voor dit venster; strookt met de learned_mints-check: 0 incentive-mints). PUMP-overdrachten zelf zijn niet geëxtraheerd: `token_transfers` bevat alleen mints uit de pump-set en PUMP hoort daar per ontwerp niet in. Of farmers PUMP via een ander pad krijgen (airdrop, ander programma) blijft **onbekend**; een gerichte extractie van PUMP-overdrachten naar de farmer-wallets volgt alleen bij een concrete aanwijzing (besluit coördinator 2026-10-16).
+
 ## 3. Controletabellen (§3): dag 1–9 en per regime
 
 | groep | dag 1–9 (in-sample: het label-venster) | 316 ms (dagen < 09-18) | 267 ms (dagen ≥ 09-18) |
@@ -111,7 +113,7 @@ Drain = de eerste LP-withdrawal op de pool van de trigger, op of na de trigger, 
 
 - Geen groep haalt de vooraf vastgelegde lat. Niemand verdient structureel in deze markt op dag 10–18: creators eindigen op nul, bots net boven nul (gerealiseerd, maar niet na Holm), alle andere groepen verliezen, en bij farmers en snipers is dat verlies kas, geen waardering (§2a).
 - Wat de spec vroeg ("waarmee: snelheid, voorkennis of timing") krijgt daarmee een negatief antwoord: snelheid (snipers, bots) levert geen structurele winst op, voorkennis (creators) levert per saldo nul op, en de farmers betalen voor hun volume.
-- Het geld gaat niet naar een groep handelaren maar naar de LP-kant van reversed pools (12,1 mln SOL netto withdrawals in 21 dagen) en naar fees (0,8 mln SOL). Cashback geeft farmers 0,04 % terug; PUMP-incentives zijn in deze data niet zichtbaar (§2c).
+- Het geld gaat niet naar een groep handelaren maar naar de LP-kant van reversed pools (12,1 mln SOL netto withdrawals in 21 dagen) en naar fees (0,8 mln SOL). Cashback geeft farmers 0,04 % terug; PUMP-incentives zijn in deze data niet zichtbaar en in ≈ 64 uur van 1040/1045 is geen enkele PUMP-claim via het pump-programma gedaan (§2c).
 - Wat dit niet is: geen bewijs over individuele wallets (labels zijn groepsgemiddelden uit gedrag), geen uitspraak over PUMP-beloningen buiten de chain-events die we extraheren, en geen uitspraak over de markt na Alpenglow (epoch 1064, ~21 oktober), die als nieuw regime apart gemeten moet worden. Groeps-P&L mist bovendien tokens die per transfer van wallet wisselen (E15); de herrekening met de transfers-extractie (spec v3) volgt.
 
 Review: de coördinator. Daarna beslist de eigenaar.
