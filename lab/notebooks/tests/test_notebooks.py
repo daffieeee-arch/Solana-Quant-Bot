@@ -95,6 +95,154 @@ class Notebooks(unittest.TestCase):
             self.assertNotRegex(src, r"open\([^)]*['\"][wax]\+?['\"]|\.to_parquet|\.to_csv|COPY .* TO|subprocess|os\.system")
 
 
+def blindspot_fixtures(root):
+    """One audit file and the F7-reversed wash summary, in the shapes blinde_vlekken.py reads."""
+    out = os.path.join(root, "research", "blindspots", "out")
+    write(os.path.join(out, "blindspots-smoke-1054.json"), {
+        "slots": {"lo": 100, "hi": 1099, "n": 995},
+        "actor": [{"venue": "curve", "n": 13021, "user_is_fee_payer": 0.782, "sol_user_not_payer": 267.9}],
+        "round_trip_volume": [{"venue": "pool_reversed", "legs": 17700, "sol": 28877.0, "sol_round_trip": 20739.8, "share": 0.718}],
+        "token_delta": [{"venue": "pool_reversed", "side": "buy", "variant": "sell", "n": 12554, "equal": 1.0, "differs": 0.0, "no_delta": 0.0}],
+        "route": [{"venue": "curve", "outer_program": "FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9", "n": 3522, "share": 0.27}],
+        "failed": {"n": 117689, "fees_sol": 4.18, "priority_sol": 3.59, "payers": 1892},
+        "landed": {"n": 65669, "fees_sol": 8.16, "tips_sol": 1.24, "payers": 21547},
+        "failed_by_payer": [{"failure_share": ">= 90 %", "payers": 97, "landed": 890, "failed": 71941, "failed_fees_sol": 0.84}],
+        "owner_to_owner": {"n": 1131, "mints": 207, "senders": 456, "receivers": 550, "receivers_who_trade": 163},
+        "holders_in_trade_tx": {"n": 898, "not_fee_payer": 516, "received": 342, "sent": 174},
+        "fan_out_examples": [{"slot": 455328800, "tx_index": 727, "mint": "Tqj8yFmagrg7oorpQkVGYR52r96RFTamvWfth9bpump",
+                              "source_owner": "GzDHuxPySSghTH6ySStMLgFwapTc8mtLydsmzVDAfGUE", "receivers": 10, "tokens": "1"}]})
+    write(os.path.join(out, "f7rev-wash.json"), {
+        "summary": {"triggers": 40737, "round_trip_share": 0.27, "buys_back_50": 0.466},
+        "returns": [{"family": "F7", "group": "rt_tx", "d": 1, "period": "dag 10-18", "n": 6797, "mean": -0.0035, "lo": -0.0054, "hi": -0.0018},
+                    {"family": "F7", "group": "wash_1h", "d": 1, "period": "dag 10-18", "n": 1, "mean": 0.0, "lo": 0.0, "hi": 0.0}]})
+
+
+class BlindeVlekken(unittest.TestCase):
+    NB = os.path.join(NB, "blinde_vlekken.py")
+
+    def test_runs_on_fixtures(self):
+        with tempfile.TemporaryDirectory() as root:
+            blindspot_fixtures(root)
+            text = run_notebook(self.NB, root)
+        for expected in ("Blinde vlekken", "78,2 %", "71,8 %", "smoke-1054", "117 689", "1 131", "27,0 %", "FLASHX…txB9",
+                         "trigger is wash-leg", "-0,35 %"):
+            self.assertIn(expected, text)
+        self.assertNotIn("Nog geen audit", text)
+
+    def test_missing_files_are_shown_not_fatal(self):
+        with tempfile.TemporaryDirectory() as root:
+            text = run_notebook(self.NB, root)
+        self.assertIn("Nog geen audit", text)
+        self.assertIn("is er nog niet", text)
+
+
+
+REGISTER_MD = """# Experimentregister
+
+## 1. Datagebruik
+
+| periode | epochs | slots | status | gebruikt voor |
+|---|---|---|---|---|
+| dev, dag 1–9 | 1033–1046 (deel) | 446.256.000 – | **verbruikt**, verkennend | drempels |
+| hold-out | 1047–1051 | 452.304.000 – 454.464.000 | **gesloten**: één keer geopend | alleen diagnose |
+| **schoon, pre-Alpenglow** | **1055–1063** | 455.760.000 – 459.648.000 | **onaangeroerd** | gereserveerd |
+
+## 2. Proeven
+
+| id | datum | wat | data | regel vooraf | uitkomst | status | correcties |
+|---|---|---|---|---|---|---|---|
+| E04 | 2026-10-11 | whale stap 1 | dev | spec | volgers −13 % | **verworpen** | geen |
+| E16 | 2026-10-15 | wash-leg `a|b` of echt \\| ander | dev2 | geen toets | 27 % wash-leg | **verkennend**, kandidaat | – |
+| E06 | 2026-10-12 | **hold-out** K1–K3 | 1047–1051 | pre-reg | niets geslaagd | **verworpen** (K3 blijft als paper-*meting*) | – |
+
+## 3. Bekende stille bugs
+
+| datum | bug | geraakt | fix | regressietest |
+|---|---|---|---|---|
+| 2026-10-10 | boost-cranks | E01 | v1.1 | ja |
+"""
+
+CASES_MD = """# Uitsluitingen
+
+| datum | mint | naam | waarom | toegevoegd door |
+|---|---|---|---|---|
+| 2026-10-15 | `33jENUQnjoitkMFpvNJcSHyLAHFWJuHwT6E3E8CNpump` | Doge Pepe (DOPE) | grafiek bekeken | coördinator |
+| 2026-10-15 | elke mint met symbool `SEALS` | Save The Seals (SEALS) | lancering 13 okt | coördinator |
+| 2026-10-15 | `HvYfFr8nm6bn9V93TDDMgqWwS2D2LsMn1Y3rDCToqeAB` | Save The Seals (SEALS) | aanvulling | coördinator |
+| 2026-10-15 | `"><script>x</script>` | Fout (BAD) | geen geldig adres | test |
+"""
+
+
+def register_fixtures(root):
+    """The experiment register and the owner's case exclusions, in the shapes experimentregister.py reads."""
+    reg = os.path.join(root, "experiment-register.md")
+    with open(reg, "w", encoding="utf-8") as f:
+        f.write(REGISTER_MD)
+    os.makedirs(os.path.join(root, "research"), exist_ok=True)
+    with open(os.path.join(root, "research", "case-exclusions-clean-data.md"), "w", encoding="utf-8") as f:
+        f.write(CASES_MD)
+    return reg
+
+
+def run_register(root, register):
+    os.environ["LAB_REGISTER"] = register
+    try:
+        name = "experimentregister"
+        os.environ["LAB_DATA_ROOT"] = root
+        sys.modules.pop(name, None)
+        outputs, defs = importlib.import_module(name).app.run()
+        text = json.dumps([repr(o) if not hasattr(o, "text") else o.text for o in outputs], ensure_ascii=False)
+        return text, defs
+    finally:
+        del os.environ["LAB_REGISTER"]
+
+
+class Experimentregister(unittest.TestCase):
+    NB = os.path.join(NB, "experimentregister.py")
+    REAL = os.path.join(os.path.dirname(NB), "..", "reports", "experiment-register.md")
+
+    def test_runs_on_fixtures(self):
+        with tempfile.TemporaryDirectory() as root:
+            text, defs = run_register(root, register_fixtures(root))
+        rows = {r["id"]: r for r in defs["rows"]}
+        self.assertEqual(list(rows), ["E04", "E16", "E06"])
+        self.assertEqual([rows[i]["soort"] for i in rows], ["verworpen", "verkennend", "verworpen"])
+        self.assertEqual(rows["E16"]["wat"], "wash-leg a|b of echt | ander")  # bars in code and \\| do not split
+        self.assertEqual(rows["E06"]["wat"], "hold-out K1–K3")
+        self.assertEqual(rows["E06"]["status"], "verworpen (K3 blijft als paper-meting)")
+        for expected in ("Experimentregister", "3 proeven: 2 verworpen, 1 verkennend", "#fde2e1", "#fff1c2", "#dcfce7",
+                         "schoon", "gesloten", "1055–1063", "Doge Pepe (DOPE)", "Save The Seals (SEALS)",
+                         "https://dexscreener.com/solana/33jENUQnjoitkMFpvNJcSHyLAHFWJuHwT6E3E8CNpump",
+                         "https://dexscreener.com/solana/HvYfFr8nm6bn9V93TDDMgqWwS2D2LsMn1Y3rDCToqeAB",
+                         "wacht op epoch 1056/1057", "regel: elke mint met symbool SEALS", "nog geen adres"):
+            self.assertIn(expected, text)
+        self.assertNotIn("<script>x", text)  # file text is escaped, and only base58 addresses become links
+        self.assertIn("&lt;script&gt;x", text)
+        self.assertNotIn("Bestand niet gevonden", text)
+
+    def test_missing_files_are_shown_not_fatal(self):
+        with tempfile.TemporaryDirectory() as root:
+            text, defs = run_register(root, os.path.join(root, "nope.md"))
+        self.assertEqual(text.count("Bestand niet gevonden"), 2)
+        self.assertEqual(defs["rows"], [])
+
+    def test_reads_the_real_register(self):
+        """The coordinator's register parses: every experiment has an id, a status and a known kind."""
+        with tempfile.TemporaryDirectory() as root:
+            text, defs = run_register(root, self.REAL)
+        self.assertGreaterEqual(len(defs["rows"]), 18)
+        for r in defs["rows"]:
+            self.assertRegex(r["id"], r"^E\d+$")
+            self.assertNotEqual(r["soort"], "anders", r)
+        self.assertIn("1055–1063", text)
+        self.assertIn("#dcfce7", text)  # the clean period is shown as clean
+
+    def test_never_reads_clean_extraction(self):
+        src = read(self.NB)
+        self.assertNotIn("clean-v1", src)
+        self.assertNotRegex(src, r"['\"/]events\b")
+        self.assertNotRegex(src, r"\b(requests|urllib|httpx|socket)\b")  # DexScreener is a link only
+
 class Unit(unittest.TestCase):
     def setUp(self):
         self.text = read(UNIT)
