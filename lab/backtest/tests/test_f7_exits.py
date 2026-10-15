@@ -99,3 +99,21 @@ def test_exit_rule_for_keeps_the_tp_variants_and_dispatches_the_new_ones(family)
     stream = SimpleNamespace(orientation="reversed", pool_legs=[])
     new = exit_rule_for(SimpleNamespace(family=family, params=("flow", 10, None), t=t), Scn(), 1, clock, stream)
     assert isinstance(new, FlowTime) and new.flows.flow(0, 10**12) == 0  # a FlowIndex of the stream when none is passed
+
+
+def test_section_e_reads_t_from_every_variant_name():
+    import duckdb
+
+    from backtest.analysis import variant_t_sql
+
+    names = ["tp4_T600", "tp6_T2400", "trail3_T600_sl8", "flow10_T600", "hold60", "hold300_sl8"]
+    got = duckdb.connect().execute(f"SELECT {variant_t_sql('v')} FROM unnest(?::VARCHAR[]) t(v)", [names]).fetchall()
+    assert [r[0] for r in got] == [600, 2400, 600, 600, None, None]
+
+
+def test_trail_and_hold_get_no_flow_index():
+    clock = Clock({1044: 267.3})
+    stream = SimpleNamespace(orientation="reversed", pool_legs=[])
+    for params in (("trail", 0.05, None), ("hold", 60, -0.08)):
+        rule = exit_rule_for(SimpleNamespace(family="F7", params=params, t=1044 * EPOCH_SLOTS), Scn(), 1, clock, stream)
+        assert not hasattr(rule, "flows")

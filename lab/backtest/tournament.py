@@ -406,7 +406,9 @@ def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None, insiders=Non
                       clock.slots(F6_MAX_HOLD_MS, sig.t), stream.orientation)
     if sig.family in ("F7", "N2_F7"):
         if isinstance(sig.params[0], str):  # spec E exits: (kind, parameter, stop-loss)
-            return f7_exit_rule(sig.params, scn, sig.t, clock, flows if flows is not None else FlowIndex(stream))
+            if sig.params[0] == "flow" and flows is None:
+                flows = FlowIndex(stream)
+            return f7_exit_rule(sig.params, scn, sig.t, clock, flows if sig.params[0] == "flow" else None)
         tp, T = sig.params
         return tp_sl_time(tp, -0.08, clock.slots(ms(T), sig.t), scn)
     if sig.family in ("F1", "N2_F1"):
@@ -538,7 +540,8 @@ def _work(args):
             continue
         mint = st.mint
         flows = f6_flows(con, key, sigs, hi, clock) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
-        if flows is None and any(sg.params and sg.params[0] == "flow" for sg in sigs):  # spec E flow exits
+        if flows is None and any(sg.family in ("F7", "N2_F7") and isinstance(sg.params[0], str) and sg.params[0] == "flow"
+                                 for sg in sigs):  # spec E flow exits
             flows = FlowIndex(st)
         ins_cache = {}
         for size_sol in sizes:
