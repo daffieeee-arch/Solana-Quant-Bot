@@ -1,8 +1,8 @@
 """Spec F section 1 runner module on a mini store: the entry fill and every mark reproduce the engine's venue
 functions (curve_buy_exact_in / curve_sell, pool_sell_capped after the migration, rev_buy_token / rev_sell_token on an
 F7 reversed pool), the moments follow block time, and the multiples / drawdown / end marks follow from the marks.
-The curve rows carry a deliberately wrong `vq` on the no-event rows (the store's Mayhem rows): the module rebuilds
-the state from rt / rq and the mint's constant offset."""
+A mayhem twin of the token (same rows) gets no curve entry: the Mayhem agent resets the virtual SOL inside its own
+trades, so a replay cannot price through its legs."""
 
 import json
 import os
@@ -46,14 +46,13 @@ def _store(path, curve_rows, pool_rows, pool_kind="normal"):
     con.execute("CREATE TABLE blocks (slot UBIGINT, block_time BIGINT)")
     con.execute(f"INSERT INTO blocks SELECT r, {T0} + floor((r - {S}) * {MS} / 1000)::BIGINT FROM range({S - 10}, {S + 60_000}) t(r)")
     con.execute("CREATE TABLE mints (mint VARCHAR, create_slot UBIGINT, creator VARCHAR, mayhem BOOLEAN, supply UBIGINT, complete_slot UBIGINT)")
-    con.execute("INSERT INTO mints VALUES (?, ?, 'CR', false, ?, NULL)", [M, S, SUPPLY])
+    con.execute("INSERT INTO mints VALUES (?, ?, 'CR', false, ?, NULL), ('Mmay', ?, 'CR', true, ?, NULL)", [M, S, SUPPLY, S, SUPPLY])
     con.execute("""CREATE TABLE curve (mint VARCHAR, slot UBIGINT, tx_index UBIGINT, outer_ix UBIGINT, inner_ix UBIGINT, variant VARCHAR, is_buy BOOLEAN,
                    t HUGEINT, q HUGEINT, fee_bps INTEGER, creator_bps INTEGER, vt HUGEINT, vq HUGEINT, rt HUGEINT, rq HUGEINT, trader VARCHAR, fee_payer VARCHAR)""")
     for i, (slot, is_buy, t, q, c, event) in enumerate(curve_rows):
-        # no-event rows (the store's Mayhem-program rows): fee tiers 0 and a vq that is off by a factor
-        con.execute("INSERT INTO curve VALUES (?, ?, 1, 2, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [M, slot, "buy" if is_buy else "sell", is_buy, t, q, FEE if event else 0, CFEE if event else 0,
-                     c.vt, c.vq if event else c.vq // 3, c.rt, c.rq, f"W{i}", f"W{i}" if i % 2 else "PAYER"])
+        for mint in (M, "Mmay"):     # the mayhem twin carries the same rows and must get no curve entry
+            con.execute("INSERT INTO curve VALUES (?, ?, 1, 2, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        [mint, slot, "buy" if is_buy else "sell", is_buy, t, q, FEE, CFEE, c.vt, c.vq, c.rt, c.rq, f"W{i}", f"W{i}" if i % 2 else "PAYER"])
     con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, quote_class VARCHAR, orientation VARCHAR, create_slot UBIGINT, coin_creator VARCHAR, mayhem BOOLEAN)")
     con.execute("""CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot UBIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, trader VARCHAR, fee_payer VARCHAR,
                    b BIGINT, vault BIGINT, vq BIGINT, e BIGINT, lp_bps INTEGER, protocol_bps INTEGER, creator_bps INTEGER, cashback_bps INTEGER,
@@ -94,8 +93,9 @@ def test_curve_entry_marks_and_migration(tmp_path, monkeypatch):
     monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
     out = tmp_path / "out"
     info = runners.run(LO, LO + 5_000, str(out), store=str(tmp_path / "s.duckdb"), cfg="/nonexistent.yaml")
-    assert info["tx_cost_lamports"] == TX and info["curve_excluded"] == {"mayhem": 0, "no_event_rows": 0}
+    assert info["tx_cost_lamports"] == TX and info["curve_excluded"] == {"mayhem": 1} and info["curve_rows_without_fee_tiers"] == 0
     df = duckdb.connect().execute(f"SELECT * FROM '{out}/entries-{LO}.parquet' ORDER BY moment").arrow().read_all().to_pylist()
+    assert all(r["key"] == M for r in df) and len(df) == 3       # the mayhem twin: no entries at all (no pool either)
     by = {r["moment"]: r for r in df}
     # c1: the first trade at or after create + 60 s = slot S + 150 -> S + 300; d = round(600 / 400) = 2 slots -> the entry trade is S + 400
     r = by["c1"]
