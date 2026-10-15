@@ -78,6 +78,7 @@ def test_no_triggers(con):
     wash.flags(con, "SELECT * FROM tr WHERE false")
     assert con.execute("SELECT count(*) FROM f_rt").fetchone()[0] == 0
     assert con.execute("SELECT count(*) FROM f_w").fetchone()[0] == 0
+    assert not con.execute("SELECT table_name FROM duckdb_tables() WHERE temporary AND table_name LIKE '_wash%'").fetchall()
 
 
 @pytest.mark.skipif(not os.environ.get("LAB_RTTX_REGRESS"), reason="dev2 store and f7rev run: set LAB_RTTX_REGRESS=1 (heavy, NAS)")

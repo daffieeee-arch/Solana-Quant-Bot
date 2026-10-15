@@ -19,8 +19,9 @@ WASH_SHARE = 0.5
 
 
 def round_trip_txs_sql(store, pools_sql, lo, hi, at_slots_sql=None):
-    """Per transaction in a pool (pool, slot, tx_index): rt (it buys and sells the token) and its SOL volume.
-    at_slots_sql (pool, t): only the transactions in those pools at those slots (rt_tx alone needs no more)."""
+    """Per transaction in a pool (pool, slot, tx_index): rt (it buys and sells the token) and its SOL volume,
+    for the pools of pools_sql in slots [lo, hi]. With at_slots_sql (pool, t) only the transactions in
+    those pools at those slots (rt_tx alone needs no more); pools_sql, lo and hi are then ignored."""
     where = f"slot BETWEEN {lo} AND {hi} AND pool IN ({pools_sql})"
     if at_slots_sql:
         where = f"(pool, slot) IN (SELECT (pool, t) FROM ({at_slots_sql}))"
@@ -43,6 +44,7 @@ def flags(con, triggers, store="s", buckets=8, wash=True, hour_slots=HOUR_SLOTS,
     if wash:
         con.execute(f"CREATE OR REPLACE TEMP TABLE {out_w} (pool VARCHAR, t BIGINT, wash_share DOUBLE)")
     if lo is None:
+        con.execute("DROP TABLE _wash_tr")
         return
     first = lo - hour_slots if wash else lo
     for b in range(buckets):
