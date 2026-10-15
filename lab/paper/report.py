@@ -19,14 +19,18 @@ from backtest.report import CAPITAL_SOL, MAX_POSITIONS, MIN_TRADES, _boot, capit
 MIN_DAYS_CI = 5
 
 
-def _verdict(pnls_by_day, n):
+def _verdict(pnls_by_day, n, filled_by_day=None):
+    """The stop rule (owner, 2026-10-10): net P&L per trade after all costs, from MIN_TRADES trades on.
+    pnls_by_day holds every exit's P&L, failed entries' costs included; n and filled_by_day (per day)
+    count the filled trades only, so a failed entry costs but is no trade (default: every exit)."""
     days = sorted(pnls_by_day)
+    counts = filled_by_day if filled_by_day is not None else {d: len(v) for d, v in pnls_by_day.items()}
     total = sum(sum(v) for v in pnls_by_day.values())
     mean = total / n if n else None
     lo = hi = None
     if len(days) >= MIN_DAYS_CI:
         lo, hi = _boot(np.array([sum(pnls_by_day[d]) for d in days], dtype=float),
-                       np.array([len(pnls_by_day[d]) for d in days], dtype=float))
+                       np.array([counts.get(d, 0) for d in days], dtype=float))
     if mean is None or n < MIN_TRADES:
         v = "too few trades"
     elif lo is not None and lo > 0:
@@ -34,6 +38,16 @@ def _verdict(pnls_by_day, n):
     else:
         v = "ADJUST" if mean > 0 else "STOP"
     return mean, lo, hi, v
+
+
+def stop_rule_inputs(exits):
+    """(P&L per day of every exit, filled trades per day, filled trades): a failed entry (no tokens) costs
+    its transaction but is no trade."""
+    by_day, filled_by_day = defaultdict(list), defaultdict(int)
+    for x in exits:
+        by_day[x["day"]].append(x["pnl"])
+        filled_by_day[x["day"]] += bool(x["tokens"])
+    return by_day, filled_by_day, sum(filled_by_day.values())
 
 
 def _p(xs, q):
@@ -136,10 +150,8 @@ def daily_report(journal, day, watch_log=None):
                                     if n2 and r["net_sol_per_trade"] is not None and n2["net_sol_per_trade"] is not None else None)
     # Stop-rule counter and capital simulation over everything so far (traded families only).
     traded = [x for x in exits if not x["family"].startswith("N2_") and x["day"] <= day]
-    by_day = defaultdict(list)
-    for x in traded:
-        by_day[x["day"]].append(x["pnl"])
-    mean, lo, hi, verdict = _verdict(by_day, len(traded))
+    by_day, filled_by_day, n_filled = stop_rule_inputs(traded)
+    mean, lo, hi, verdict = _verdict(by_day, n_filled, filled_by_day)
     final, mdd, taken, skipped = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"], x["pnl"], not x["tokens"])
                                               for x in traded])
     gaps = [b for b in beats if b["note"]]
@@ -153,7 +165,8 @@ def daily_report(journal, day, watch_log=None):
                      f"{f(r['fill_rate'] and r['fill_rate'] * 100, '.0f')}% | {f(r['vs_n2_sol_per_trade'], '+.4f')} |")
     ci = f"{lo / 1e9:+.4f} … {hi / 1e9:+.4f} SOL" if lo is not None else f"from {MIN_DAYS_CI} days"
     lines += ["", "## Stop-rule counter (all paper days so far)", "",
-              f"- trades {len(traded)}, days {len(by_day)}, net {'' if mean is None else f'{mean / 1e9:+.4f}'} SOL/trade, "
+              f"- trades {n_filled} (failed entries {len(traded) - n_filled}, their cost included), days {len(by_day)}, "
+              f"net {'' if mean is None else f'{mean / 1e9:+.4f}'} SOL/trade, "
               f"95% CI {ci}: **{verdict}**",
               "", f"## Capital simulation ({CAPITAL_SOL:g} SOL, at most {MAX_POSITIONS} positions)", "",
               f"- final {final / 1e9:.3f} SOL, max drawdown {mdd * 100:.1f}%, trades {taken}, skipped {skipped}",
