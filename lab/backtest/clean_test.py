@@ -33,7 +33,9 @@ H1: mean net return per filled K3 trade without rt_tx > 0 (lower bound of the 95
 bootstrap over trading days, DRAWS draws, seed 7). H2: mean without - mean with rt_tx > 0 (both groups
 drawn together per day). "bevestigd" when H1 and H2 hold, "risicofilter zonder bewezen winst" when only
 H2 holds, else "verworpen". Triggers without a trigger leg (rt_tx NULL) are in neither group (a4c).
-The matrix (addendum v4): rows the decision window's UTC dates (a date without a trade counts 0), T
+The matrix (addendum v4): every column is the net P&L per UTC day of all its non-skipped rows, failed
+entries (their transaction cost) included, as "netto P&L per UTC-dag" (section 6) and the 36 dev columns;
+H1, H2 and a4c's check count filled trades. Rows the decision window's UTC dates (a date without a trade counts 0), T
 of them; columns the 36 dev configurations of the matrix run (9 variants x d 1, 2 x farm all /
 organic), the 6 filters (K3 without rt_tx, without wash_1h, without both; at d_ms 600 and d = 1) and,
 43rd, K3 at the Clock's d from the test run. DSR on the H1 series (K3 without rt_tx at d_ms 600) against
@@ -327,6 +329,38 @@ def run_a4c(a4c, parts, store, out_json, engine_dir, keep_sql, con):
     return json.load(open(out_json))
 
 
+FILLED = "NOT entry_failed AND ret IS NOT NULL"  # a filled trade (H1, H2 and a4c count these)
+GROUPS = (("zonder rt_tx", "NOT rt_tx", "geen rt_tx"), ("zonder wash_1h", "NOT wash_1h", "geen wash_1h"),
+          ("zonder beide", "NOT rt_tx AND NOT wash_1h", "geen rt_tx en geen wash_1h"))
+
+
+def k3_frame(con, tg, mg, keep, win, ret, pnl):
+    """TEMP table kf: every non-skipped K3 row of the test run and the matrix run in the window, minus the
+    exclusions, with rt_tx and wash_1h (tables f_rt and f_w of backtest.wash). Failed entries stay in: their
+    net P&L (pnl, SOL) is the failed transaction's cost, as in the dev columns (_config_series); counts and
+    means per filled trade select FILLED."""
+    fl = (f"LEFT JOIN f_rt ON f_rt.pool = k.pool AND f_rt.t = k.t AND f_rt.trigger_trader = k.trigger_trader "
+          f"LEFT JOIN f_w ON f_w.pool = k.pool AND f_w.t = k.t")
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE kf AS
+    SELECT k.src, k.d, k.day, k.entry_failed, k.ret, k.pnl, f_rt.rt_tx, coalesce(f_w.wash_share, 0) >= {wash.WASH_SHARE} AS wash_1h
+    FROM (SELECT 'test' AS src, pool, t, trigger_trader, d, day, entry_failed, {ret} AS ret, {pnl} / 1e9 AS pnl
+          FROM read_parquet('{tg}', union_by_name = true) WHERE {K3} AND {win} AND {keep}
+          UNION ALL
+          SELECT 'matrix' AS src, pool, t, trigger_trader, d, day, entry_failed, {ret} AS ret, {pnl} / 1e9 AS pnl
+          FROM read_parquet('{mg}', union_by_name = true) WHERE {K3} AND {win} AND {keep}) k {fl}""")
+
+
+def k3_series(con):
+    """{label: {day: SOL}} from kf: the 6 filters (at d_ms 600 from the test run, at d = 1 from the matrix
+    run) and K3|clock, each the net P&L of all its rows per day (failed entries included)."""
+    series = {}
+    for name, cond, _ in GROUPS:
+        for src, d_sql, lab in (("test", "true", "d_ms600"), ("matrix", "d = 1", "d1")):
+            series[f"K3 {name}|{lab}"] = dict(con.execute(f"SELECT day, sum(pnl) FROM kf WHERE src = '{src}' AND {d_sql} AND {cond} GROUP BY day").fetchall())
+    series["K3|clock"] = dict(con.execute("SELECT day, sum(pnl) FROM kf WHERE src = 'test' GROUP BY day").fetchall())
+    return series
+
+
 def lock_run(a, store_sha, test_cfg, matrix_cfg, days):
     """clean.lock next to the store: the one run of the test (written when the minimum is passed). A later
     call (a resume) computes only for the same store and runs; anything else is refused."""
@@ -399,6 +433,8 @@ def run_test(a, log=print):
     con.execute(f"CREATE TEMP TABLE k3 AS SELECT * FROM k3all WHERE {keep}")
     n_kept, trig_kept = con.execute("SELECT count(*), count(DISTINCT (pool, t)) FROM k3").fetchone()
     out["positions"] = {"k3": n_all, "excluded_positions": n_all - n_kept, "excluded_triggers": trig_all - trig_kept}
+    n_failed, failed_sol = con.execute("SELECT count(*) FILTER (WHERE entry_failed), sum(pnl) FILTER (WHERE entry_failed) FROM k3").fetchone()
+    out["positions"].update({"failed_entries": n_failed, "failed_entry_pnl_sol": failed_sol or 0.0})
     log(f"exclusions: {len(rules)} rules, {len(mints)} mints, {len(pools)} pools; {n_all - n_kept} K3 positions removed")
     # 5. the minimum
     days = con.execute("SELECT count(DISTINCT day) FROM k3 WHERE NOT entry_failed AND ret IS NOT NULL").fetchone()[0]
@@ -434,28 +470,18 @@ def run_test(a, log=print):
     out["wash_1h"] = {k: dict(zip(("mean", "lo", "hi"), boot_mean(group(c), a.draws))) | {"n": sum(n for _, n in group(c))}
                       for k, c in (("wash_1h", "wash_1h"), ("geen wash_1h", "NOT wash_1h"),
                                    ("geen rt_tx en geen wash_1h", "NOT rt_tx AND NOT wash_1h"))}
-    # The filter groups at every d of both runs (one flag definition): K3 rows with rt_tx and wash_1h.
-    fl = lambda alias: (f"LEFT JOIN f_rt ON f_rt.pool = {alias}.pool AND f_rt.t = {alias}.t AND f_rt.trigger_trader = {alias}.trigger_trader "  # noqa: E731
-                        f"LEFT JOIN f_w ON f_w.pool = {alias}.pool AND f_w.t = {alias}.t")
-    con.execute(f"""CREATE TEMP TABLE kf AS
-    SELECT k.src, k.d, k.day, k.ret, k.pnl, f_rt.rt_tx, coalesce(f_w.wash_share, 0) >= {wash.WASH_SHARE} AS wash_1h
-    FROM (SELECT 'test' AS src, pool, t, trigger_trader, d, day, entry_failed, {ret} AS ret, {pnl} / 1e9 AS pnl
-          FROM read_parquet('{tg}', union_by_name = true) WHERE {K3} AND {win} AND {keep}
-          UNION ALL
-          SELECT 'matrix' AS src, pool, t, trigger_trader, d, day, entry_failed, {ret} AS ret, {pnl} / 1e9 AS pnl
-          FROM read_parquet('{mg}', union_by_name = true) WHERE {K3} AND {win} AND {keep}) k {fl('k')}
-    WHERE NOT k.entry_failed AND k.ret IS NOT NULL""")
-    groups = (("zonder rt_tx", "NOT rt_tx", "geen rt_tx"), ("zonder wash_1h", "NOT wash_1h", "geen wash_1h"),
-              ("zonder beide", "NOT rt_tx AND NOT wash_1h", "geen rt_tx en geen wash_1h"))
+    # The filter groups at every d of both runs (one flag definition): K3 rows with rt_tx and wash_1h, the
+    # failed entries included (their net P&L is the failed transaction's cost, as in the dev columns).
+    k3_frame(con, tg, mg, keep, win, ret, pnl)
     # a4c itself, unchanged, on the matrix run (d = 1, 2) minus the excluded positions: its filter groups
     # must equal backtest.wash's (count and mean), else the flag is not a4c's on this data.
     if a.a4c:
         rows = run_a4c(a.a4c, mg, a.store, os.path.join(a.out, "a4c-matrix-run.json"), a.engine_dir, keep, con)["rows"]
         out["a4c_matrix_run"] = rows
         diffs = []
-        for _, cond, a4c_name in groups:
+        for _, cond, a4c_name in GROUPS:
             for d in (1, 2):
-                n, mean = con.execute(f"SELECT count(*), avg(ret) FROM kf WHERE src = 'matrix' AND d = {d} AND {cond}").fetchone()
+                n, mean = con.execute(f"SELECT count(*), avg(ret) FROM kf WHERE src = 'matrix' AND d = {d} AND {cond} AND {FILLED}").fetchone()
                 ref = next((r for r in rows if r["family"] == "F7" and r["group"] == a4c_name and r["d"] == d), None)
                 if ref is None or ref["n"] != n or (n and abs((ref["mean"] or 0) - mean) > 1e-12):
                     diffs.append(f"{a4c_name} d={d}: wash {n} {mean} vs a4c {ref and (ref['n'], ref['mean'])}")
@@ -474,10 +500,7 @@ def run_test(a, log=print):
     series = {f"{v}|d{dd}|{farm}": sr for (v, dd, farm), sr in _config_series(con, mg, pnl, f"{keep} AND {win}", (1, 2)).items()}
     expected = [f"tp{int(tp * 100)}_T{T}|d{dd}|{farm}" for tp, T in F7_GRID for dd in (1, 2) for farm in ("all", "organic")]
     expected += [f"K3 {name}|{lab}" for name in ("zonder rt_tx", "zonder wash_1h", "zonder beide") for lab in ("d_ms600", "d1")] + ["K3|clock"]
-    for name, cond, _ in groups:
-        for src, d_sql, lab in (("test", "true", "d_ms600"), ("matrix", "d = 1", "d1")):
-            series[f"K3 {name}|{lab}"] = dict(con.execute(f"SELECT day, sum(pnl) FROM kf WHERE src = '{src}' AND {d_sql} AND {cond} GROUP BY day").fetchall())
-    series["K3|clock"] = dict(con.execute("SELECT day, sum(pnl) FROM kf WHERE src = 'test' GROUP BY day").fetchall())
+    series.update(k3_series(con))
     zero = sorted(k for k in expected if not series.get(k))
     series.update({k: {} for k in zero})  # a configuration without a trade is a column of zeros (T x 43)
     if set(series) != set(expected):
@@ -515,7 +538,8 @@ def report_md(o):
         + ", ".join(f"{e}: d={v['d']}, {v['test_rows']} = {v['matrix_rows']} rijen" for e, v in o["equality"].items() if v["test_rows"] or v["matrix_rows"]) + ".",
         f"Uitsluitingen: {len(o['exclusions']['mints'])} mints, {len(o['exclusions']['pools'])} pools; {p['excluded_triggers']} triggers, "
         f"{p['excluded_positions']} van {p['k3']} K3-posities vervallen.",
-        f"Gevulde K3-trades: {p['filled']} op {p['trading_days']} handelsdagen; met rt_tx {p['rt_tx']}, zonder {p['no_rt_tx']}, zonder trigger-leg {p['no_trigger_leg']}.",
+        f"Gevulde K3-trades: {p['filled']} op {p['trading_days']} handelsdagen; met rt_tx {p['rt_tx']}, zonder {p['no_rt_tx']}, zonder trigger-leg {p['no_trigger_leg']}. "
+        f"Mislukte instappen: {p['failed_entries']} (netto {p['failed_entry_pnl_sol']:.4f} SOL; in de dag-P&L van de matrix en de DSR, niet in H1/H2 per gevulde trade).",
         "",
         "| toets | n | waarde | 95 %-interval (dagbootstrap, 10.000, seed 7) | geslaagd |",
         "|---|---|---|---|---|",
