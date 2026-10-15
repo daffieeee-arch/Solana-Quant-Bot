@@ -135,11 +135,11 @@ def setup(con, root, lo, hi, clock):
     # store legs of the window's mints, owner side and vault side (vault_owner: the owner of the vault's token account)
     con.execute(f"""CREATE OR REPLACE TEMP TABLE legs AS
         SELECT c.mint, c.slot, c.tx_index, c.trader AS owner, CASE WHEN c.is_buy THEN c.t ELSE -c.t END::HUGEINT AS delta, c.is_buy AS buy,
-               c.q::HUGEINT AS sol, 'curve' AS venue, c.mint || ':curve' AS key, v.owner AS vault_owner
+               c.q::HUGEINT AS sol, 'curve' AS venue, c.mint || ':curve' AS key, v.owner AS vault_owner, true AS eng
         FROM curve c JOIN curve_pdas v ON v.mint = c.mint WHERE c.slot >= {lo} AND c.slot < {hi}
         UNION ALL
         SELECT ps.mint, p.slot, p.tx_index, p.trader, CASE WHEN p.token_buy THEN p.token_amount ELSE -p.token_amount END::HUGEINT, p.token_buy,
-               p.sol_amount::HUGEINT, 'pool', p.pool, p.pool
+               p.sol_amount::HUGEINT, 'pool', p.pool, p.pool, ps.orientation = 'normal'
         FROM pool p JOIN pools ps USING (pool) SEMI JOIN wmints w ON w.mint = ps.mint
         WHERE p.slot >= {lo} AND p.slot < {hi} AND p.kind IN ('buy', 'sell')""")
     # pool boosts (boost_buy_and_burn): the pool buys base with the boost vault's quote and burns it from its own
@@ -187,17 +187,19 @@ def setup(con, root, lo, hi, clock):
             UNION ALL SELECT mint, slot, tx_index, source_owner, -amount FROM tt WHERE kind = 'burn' AND source_owner IS NOT NULL
             UNION ALL SELECT mint, slot, tx_index, dest_owner, amount FROM tt WHERE kind = 'mint_to' AND dest_owner IS NOT NULL) GROUP BY 1, 2, 3, 4""")
     progress(f"setup: legs {_count(con, 'legs')}, boosts {_count(con, 'boosts')}, hops {_count(con, 'hops')}, flows {_count(con, 'flows')}")
-    # Insiders: the creator and every *curve* buyer in the first 10 s (O7, spec v3 Q1: "creator + curve-kopers <= create
-    # + 10 s"; the engine's Insiders counts the same set). Pool buyers in that window are not insiders: a token that
-    # completes and migrates in its create transaction has pool buys seconds later, and counting them made the
-    # legs-only share 1.0 where the engine's was 0.79 (check 4.2 on 1040/1045: 258 of 260 disagreements had the
-    # legs-only share higher). Buyers both as the store's trader and as the chain's token owner (a kept positive
-    # non-vault delta in a transaction with a curve leg of the mint), since the two can differ.
+    # Insiders: the engine's set (overlay.Insiders, the O7 veto and the old ins_share): the creator and every buyer in
+    # the first 10 s on the curve or on a normal-orientation pool (`eng` legs; a reversed pool's legs are outside
+    # the engine's stream). Spec v3 Q1 says "creator + curve-kopers <= create + 10 s"; the engine also counts the pool
+    # buyers of a token that completes and migrates in its create transaction, and check 4.2 reproduces the engine:
+    # curve-only (#279) put the legs-only share below the old one on 123 of 129 and 86 of 94 disagreements (job 815,
+    # 84 of 90 and 59 of 69 disagreeing mints had pool buys within the window), all legs plus every chain buyer (#272)
+    # put it above. Buyers both as the store's trader and as the chain's token owner (a kept positive non-vault delta
+    # in a transaction with such a leg of the mint), since the two can differ.
     con.execute("""CREATE OR REPLACE TEMP TABLE insiders AS
         SELECT DISTINCT w.mint, x.owner FROM wmints2 w JOIN (
-            SELECT mint, owner, slot FROM legs WHERE buy AND venue = 'curve'
+            SELECT mint, owner, slot FROM legs WHERE buy AND eng
             UNION ALL SELECT d.mint, d.owner, d.slot FROM td d
-                      SEMI JOIN (SELECT DISTINCT mint, slot, tx_index FROM legs WHERE venue = 'curve') c
+                      SEMI JOIN (SELECT DISTINCT mint, slot, tx_index FROM legs WHERE eng) c
                            ON c.mint = d.mint AND c.slot = d.slot AND c.tx_index = d.tx_index
                       WHERE NOT d.vault AND d.delta > 0 AND d.has_pump_event_same_mint
             UNION ALL SELECT mint, creator, create_slot FROM wmints WHERE creator IS NOT NULL) x
@@ -262,8 +264,9 @@ def setup(con, root, lo, hi, clock):
             LEFT JOIN flows f ON f.mint = l.mint AND f.slot = l.slot AND f.tx_index = l.tx_index AND f.owner = l.owner)
         WHERE delta <> 0
         UNION ALL SELECT * FROM chain""")
+    # the legs-only ledger (check 4.2: the engine's circulation and insider holdings): the engine's legs only
     con.execute("""CREATE OR REPLACE TEMP TABLE ledger_legs AS
-        SELECT mint, slot, tx_index, owner, delta FROM legs""")
+        SELECT mint, slot, tx_index, owner, delta FROM legs WHERE eng""")
     progress(f"setup: {_count(con, 'wmints')} mints created in the window, {_count(con, 'legs')} legs, {_count(con, 'ledger')} ledger rows, "
              f"{_count(con, 'insiders')} insiders")
     return shas
