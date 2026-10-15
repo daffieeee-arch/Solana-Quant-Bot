@@ -2,12 +2,12 @@
 
 | | |
 |---|---|
-| code | `lab/wallets/survival.py`, `nas_survival.sh` (#257); regime-rijen en `--rerender` (#259); review-fixes C4–C6 (#264); run op commit **33b731f** |
-| run | NAS (task 80-survival-33b731f), 39 s; rapport op de VPS opnieuw gerenderd uit de parquet (#259 regime-rijen; #264 K3-hold per epoch) |
-| uitvoer | `data-old-faithful-one/lab/wallets/survival-v1/`: `survival.parquet` (sha256 edfe42ac…, één rij per trigger), `survival.md` (829e223a…), `run-survival.json` (78129f0f…) |
+| code | `lab/wallets/survival.py`, `nas_survival.sh` (#257); regime-rijen en `--rerender` (#259); review-fixes C4–C6 (#264); run op commit **8cef820** (main met #264) |
+| run | NAS (task 74-survival, 8cef820), 46 s: de rebuild met C4–C6; de eerdere run (task 80 op 33b731f, met de VPS-rerender) staat in `survival-v1/superseded-33b731f/` |
+| uitvoer | `data-old-faithful-one/lab/wallets/survival-v1/`: `survival.parquet` (sha256 e05f8195…, één rij per trigger), `survival.md` (01b7ba3d…), `run-survival.json` (80cfdadc…) |
 | data | triggers van de f7rev-run (F7, segment pool_reversed, alle varianten delen hun trigger): 40.737 distincte (pool, t), slots 446.531.016–452.284.000; store dev2; de hold-out is niet gebruikt |
 
-> **Correctie (2026-10-15, Codex-review C4–C6, #264):** (C6) de K3-hold stond als vaste 600 slots; de engine rekent T600 als duur (600 × 267,3 ms) per epoch om in slots, dus ~500 slots bij 320 ms. De kolom "opgenomen binnen de K3-hold" is opnieuw gerenderd uit de parquet: alles 7,5 % (was 7,8 %), regime 320 ms 9,0 % (was 10,7 %), dag 1–9 8,5 % (was 9,4 %). (C4) de kolom "mediaan WSOL in de pool bij de exit" en "exits met ≥ 1 SOL" namen de reserve van de laatste *trade*; een withdraw of deposit in het stille gat telde niet mee. Die kolommen worden herrekend met de NAS-rerun van `nas_survival.sh` op #264 en dan hier vervangen; tot dan gelden ze onder voorbehoud. (C5) raakt alleen smokes met `--observe-slots`, niet deze run.
+> **Correctie (2026-10-15, Codex-review C4–C6, #264):** (C6) de K3-hold stond als vaste 600 slots; de engine rekent T600 als duur (600 × 267,3 ms) per epoch om in slots, dus ~500 slots bij 320 ms. De kolom "opgenomen binnen de K3-hold": alles 7,5 % (was 7,8 %), regime 320 ms 9,0 % (was 10,7 %), dag 1–9 8,5 % (was 9,4 %). (C4) de kolom "mediaan WSOL in de pool bij de exit" nam de reserve van de laatste *trade*; een withdraw of deposit in het stille gat telde niet mee. De NAS-rebuild op #264 (task 74) verschuift die medianen licht omhoog: 1 min 350 → 359 SOL, 2 min 416 → 427, 5 min 478 → 488, 10 min 555 → 563; de tabel in §3 is vervangen, de lezing verandert niet. (C5) raakt alleen smokes met `--observe-slots`, niet deze run.
 
 Beschrijvend op verbruikte data, geen toets en geen registratie. Doel: de duur van de markt na een F7-trigger meten, als verklaring voor de dead-rijen van de markouts (`2026-10-15-markouts.md`, §4) en als onderbouwing van de beslissing in het register dat "verlaten bij de eerste opname" geen exit-regel is.
 
@@ -37,14 +37,14 @@ CI's per cel (± 0–1 pt) staan in `survival.md`. Op 6 u is 0,5 % van de pools 
 - De eerste withdraw na de trigger **is** in 91,4 % van de gevallen al de opname (≥ 90 %). Gedeeltelijke opnames vooraf zijn zeldzaam; de LP vertrekt in één keer.
 - In 63,0 % van de opnames is de laatste trade van de pool al voorbij: eerst stopt de handel, dan haalt de LP de WSOL weg. Maar het gat tussen die laatste trade en de opname is kort:
 
-| X | vuurt | vóór de opname | mediaan gewonnen minuten | mediaan WSOL in de pool bij de exit (zie correctie C4) | ná de opname (verkoop in een lege pool) |
+| X | vuurt | vóór de opname | mediaan gewonnen minuten | mediaan WSOL in de pool bij de exit | ná de opname (verkoop in een lege pool) |
 |---|---|---|---|---|---|
-| 1 min | 40.737 (100 %) | 1.704 (4,2 %) | 50,5 | 350 SOL | 39.032 (95,8 %) |
-| 2 min | 40.737 (100 %) | 1.068 (2,6 %) | 52,8 | 416 SOL | 39.668 |
-| 5 min | 40.737 (100 %) | 853 (2,1 %) | 45,0 | 478 SOL | 39.883 |
-| 10 min | 40.737 (100 %) | 585 (1,4 %) | 40,0 | 555 SOL | 40.151 |
+| 1 min | 40.737 (100 %) | 1.704 (4,2 %) | 50,5 | 359 SOL | 39.032 (95,8 %) |
+| 2 min | 40.737 (100 %) | 1.068 (2,6 %) | 52,8 | 427 SOL | 39.668 |
+| 5 min | 40.737 (100 %) | 853 (2,1 %) | 45,0 | 488 SOL | 39.883 |
+| 10 min | 40.737 (100 %) | 585 (1,4 %) | 40,0 | 563 SOL | 40.151 |
 
-Een inactiviteits-exit vuurt bij elke trigger (elke pool valt uiteindelijk stil), maar in 96–99 % van de gevallen pas ná de opname: de LP neemt op binnen de minuut nadat de handel stilvalt. De 1–4 % waar de regel wél vóór de opname vuurt, zijn grote pools (mediaan 350–555 SOL) die tientallen minuten blijven staan; dat zijn niet de pools waar de K3-posities zitten.
+Een inactiviteits-exit vuurt bij elke trigger (elke pool valt uiteindelijk stil), maar in 96–99 % van de gevallen pas ná de opname: de LP neemt op binnen de minuut nadat de handel stilvalt. De 1–4 % waar de regel wél vóór de opname vuurt, zijn grote pools (mediaan 359–563 SOL) die tientallen minuten blijven staan; dat zijn niet de pools waar de K3-posities zitten.
 
 ## 4. Wat dit betekent
 
