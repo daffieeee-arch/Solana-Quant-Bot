@@ -101,3 +101,11 @@ def test_m1_dispatch_and_names():
     assert isinstance(trail, M1Exit) and trail.trail == 0.30
     assert [m1_long_variant("M1", 2, 0.30), m1_long_variant("M1", 3, M1_FLOW), m1_long_variant("M1P", 1.5, 0.50),
             m1_long_variant("M1E", 1.5, M1_FLOW, 300_000)] == ["k2_trail30", "k3_flow300", "k15_trail50", "m5_flow300"]
+
+
+def test_peak_mark_and_its_first_slot():
+    from backtest.tournament import _peak
+
+    assert _peak(SimpleNamespace(marks=[(10, 100), (12, 140), (15, 140), (20, 90)])) == {"peak_mark": 140, "peak_slot": 12}
+    assert _peak(SimpleNamespace(marks=[])) == {"peak_mark": None, "peak_slot": None}
+    assert _peak(SimpleNamespace()) == {"peak_mark": None, "peak_slot": None}

@@ -101,6 +101,9 @@ RESULT_SCHEMA = pa.schema([
     # Why ins_share is undefined (circ_le_0, h_ins_gt_circ, h_ins_lt_0, insiders_unknown; NULL when it is defined
     # or not asked): M1x and O7 rows.
     ("ins_reason", pa.string()),
+    # Every position: the highest mark since the entry (the simulated full sale at that moment, lamports, the
+    # same quantity as proceeds before costs) and its slot; NULL without a mark (no fill).
+    ("peak_mark", pa.int64()), ("peak_slot", pa.int64()),
 ])
 
 
@@ -524,7 +527,17 @@ def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5, ins_share
         "farm": "n/a" if sig.flagged is None else ("flagged" if sig.flagged else "organic"),
         "regime": clock.regime_label(sig.t), "d_ms": round(d * clock.ms_per_slot(sig.t), 1), "overlay": ov,
         "q": q, "trigger_trader": sig.trigger, "trigger_farmer": sig.trigger_farmer,
+        **_peak(r),
     }
+
+
+def _peak(r):
+    """The highest mark since the entry and its first slot (r.marks: the replay's (slot, mark) decisions)."""
+    marks = getattr(r, "marks", None) or []
+    if not marks:
+        return {"peak_mark": None, "peak_slot": None}
+    slot, mark = max(marks, key=lambda x: (x[1], -x[0]))
+    return {"peak_mark": int(mark), "peak_slot": int(slot)}
 
 
 def _insiders(con, st, venue, clock, cache):
