@@ -260,21 +260,36 @@ def horizon_slots(ms_per_slot, h_ms):
     return int(math.ceil(h_ms / ms_per_slot))
 
 
+def ms_case(clock, slot_sql):
+    """SQL: the clock's ms per slot of the epoch of `slot_sql` (Clock.ms_per_slot: the epoch's value, else the last
+    measured earlier epoch, else REF_MS), as a CASE over the measured epochs."""
+    per_epoch = clock.per_epoch if clock and clock.per_epoch else {}
+    if not per_epoch:
+        return repr(REF_MS)
+    eps = sorted(per_epoch)
+    # epoch e takes per_epoch[e]; an unmeasured epoch takes the last measured one before it (REF_MS below the first)
+    parts = [f"WHEN ({slot_sql}) // {EPOCH} < {eps[0]} THEN {REF_MS!r}"]
+    for i, e in enumerate(eps):
+        nxt = eps[i + 1] if i + 1 < len(eps) else None
+        cond = f"({slot_sql}) // {EPOCH} < {nxt}" if nxt is not None else "true"
+        parts.append(f"WHEN {cond} THEN {per_epoch[e]!r}")
+    return "CASE " + " ".join(parts) + " END"
+
+
 def build_targets(con, clock, end_slot):
-    """signal x d x (entry, horizons) -> target slot; the entry is horizon '' at t + d."""
-    rows = []
-    for sid, t in con.execute("SELECT sid, t FROM sig").fetchall():
-        for d in DELAYS:
-            entry = t + d
-            ms = clock.ms_per_slot(entry)
-            rows.append((sid, d, "", 0, entry))
-            for name, h_ms in HORIZONS_MS:
-                rows.append((sid, d, name, h_ms, entry + horizon_slots(ms, h_ms)))
-    con.execute("CREATE OR REPLACE TEMP TABLE targets (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT)")
-    if rows:
-        con.executemany("INSERT INTO targets VALUES (?, ?, ?, ?, ?)", rows)
-    progress("targets", len(rows))
-    return len(rows)
+    """signal x d x (entry, horizons) -> target slot; the entry is horizon '' at t + d. In SQL (the Python
+    executemany took 100 s per 190k rows on the NAS): the same arithmetic as horizon_slots, ms of the entry
+    slot's epoch, ceil(h_ms / ms)."""
+    hz = "('', 0), " + ", ".join(f"('{n}', {h})" for n, h in HORIZONS_MS)
+    ds = ", ".join(str(d) for d in DELAYS)
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE targets AS
+      SELECT s.sid::BIGINT AS sid, d.d::INTEGER AS d, hz.h::VARCHAR AS h, hz.h_ms::BIGINT AS h_ms,
+             (s.t + d.d + CASE WHEN hz.h_ms = 0 THEN 0 ELSE ceil(hz.h_ms / ({ms_case(clock, 's.t + d.d')}))::BIGINT END)::BIGINT AS target
+      FROM sig s, (SELECT unnest([{ds}]) AS d) d, (SELECT * FROM (VALUES {hz}) v(h, h_ms)) hz""")
+    n = _count(con, "targets")
+    progress("targets", n)
+    return n
 
 
 def build_matched(con, end_slot):
@@ -435,8 +450,12 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     n_pool, n_curve = match_states(con, *slot_bounds(con, clock))
     build_matched(con, end_slot)
     rows = round_trips(con, per_order)
-    con.execute("CREATE OR REPLACE TEMP TABLE mk (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT, cut BOOLEAN, mid DOUBLE, gross DOUBLE, net DOUBLE, impact DOUBLE)")
-    con.executemany("INSERT INTO mk VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    cols = ("sid", "d", "h", "h_ms", "target", "cut", "mid", "gross", "net", "impact")
+    types = (pa.int64(), pa.int32(), pa.string(), pa.int64(), pa.int64(), pa.bool_(), pa.float64(), pa.float64(), pa.float64(), pa.float64())
+    mk_arrow = pa.table({c: pa.array([r[i] for r in rows], type=ty) for i, (c, ty) in enumerate(zip(cols, types))})
+    con.register("mk_arrow", mk_arrow)  # one bulk insert (executemany took 120 s per 190k rows on the NAS)
+    con.execute("CREATE OR REPLACE TEMP TABLE mk AS SELECT * FROM mk_arrow")
+    con.unregister("mk_arrow")
     progress("mk insert", len(rows))
     table = con.execute("""
       SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.ms_per_slot, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
