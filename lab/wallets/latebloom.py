@@ -25,9 +25,22 @@ import time
 
 import numpy as np
 
-from backtest import wash  # the repo's one rt_tx / wash_1h definition (read only; lab/backtest is not ours to change)
 from .common import OUT_ROOT, SOL, connect, git_commit, guard
 from .money_report import day_boot
+
+
+def _repo_wash():
+    """The repo's one rt_tx / wash_1h definition (lab/backtest/wash.py, read only), loaded by path so that a frozen
+    engine on sys.path (LAB_ENGINE runs put its backtest/ first) cannot shadow it."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backtest", "wash.py")
+    spec = importlib.util.spec_from_file_location("lab_repo_wash", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+wash = _repo_wash()
 
 FAMILY, SEGMENT, D = "F7", "pool_reversed", 1
 HOUR_SLOTS = wash.HOUR_SLOTS          # the pre-trigger activity window (~1 h), as the wash share
