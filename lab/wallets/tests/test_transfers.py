@@ -313,7 +313,7 @@ M3 = "M3pump"
 
 
 def _store_hops(path):
-    """Job 79 (2026-10-15) residual patterns: U1 buys 30 on the pool through a router (the pool's output lands on the
+    """Job 79 (2026-10-15) residual patterns, and check 4.2: U1 buys 30 on the pool through a router (the pool's output lands on the
     router's account and is forwarded to U1 in the same transaction) and sells 5 through a temporary account (owner
     unresolved, closed in the transaction) that feeds the vault; a bot R buys 20 and forwards 19 from its own account."""
     con = duckdb.connect(str(path))
@@ -328,9 +328,10 @@ def _store_hops(path):
         (M3, S, 1, True, 300 * U, 3 * 10**9, "CR", "buy"),
         (M3, S + 45, 1, True, 20 * U, 2 * 10**8, "R", "buy")])
     con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, quote_class VARCHAR, orientation VARCHAR, create_slot UBIGINT)")
-    con.execute("INSERT INTO pools VALUES ('P3', ?, 'sol', 'normal', ?)", [M3, S + 60])
+    con.execute("INSERT INTO pools VALUES ('P3', ?, 'sol', 'normal', ?)", [M3, S + 2])   # migrated 2 slots after the create
     con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT, base BIGINT)")
     con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'U1', true, ?, 30000000, NULL), ('P3', ?, 1, 'sell', 'U1', false, ?, 5000000, NULL)", [S + 70, 30 * U, S + 71, 5 * U])
+    con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'PB', true, ?, 10000000, NULL)", [S + 3, 10 * U])   # a pool buy 3 slots after the create: no insider
     con.close()
 
 
@@ -347,6 +348,7 @@ def _chunk_hops(root):
         td(S, 1, keys.curve_pda(M3), SUPPLY - 300 * U, vault=True),      # the create: mint 1000, dev buy 300 (CR's row dropped)
         td(S + 45, 1, "W", 19 * U), td(S + 45, 1, "FEE", 1 * U),          # R's forwards; R has no row (net 0); the vault's row dropped
         td(S + 60, 1, "CR", -300 * U), td(S + 60, 1, "P3", 300 * U, vault=True),   # CR deposits the pool
+        # S + 3: PB's row equals its leg (dropped), the pool vault's row dropped
         # S + 70: U1's row equals its leg (dropped), the router's net is 0 (no row), the pool vault's row dropped
         # S + 71: U1's row equals its leg (dropped), the temporary account nets 0 and is closed, the vault's row dropped
     ]), d / "token_deltas" / "part-00000.parquet")
@@ -360,6 +362,7 @@ def _chunk_hops(root):
         tt(S + 45, 1, "1.1", "transfer_checked", keys.curve_pda(M3), "R", 20 * U, True),
         tt(S + 45, 1, "2.1", "transfer", "R", "W", 19 * U, False), tt(S + 45, 1, "2.2", "transfer", "R", "FEE", 1 * U, False),   # by owner (no accounts): R is the trader, not a hop
         tt(S + 60, 1, "1.1", "transfer", "CR", "P3", 300 * U, True),
+        tt(S + 3, 1, "1.1", "transfer_checked", "P3", "PB", 10 * U, True),
         # the router buy: vault -> ROUTER's account (in trade), ROUTER -> U1 (not in trade), same amount
         tt(S + 70, 1, "4.19", "transfer_checked", "P3", "ROUTER", 30 * U, True, "P3_ta", "ROUTER_ta"),
         tt(S + 70, 1, "4.31", "transfer_checked", "ROUTER", "U1", 30 * U, False, "ROUTER_ta", "U1_ta"),
@@ -386,6 +389,7 @@ def test_router_and_temporary_account_hops_count_once(tmp_path, monkeypatch):
     con = duckdb.connect()
     cons = con.execute(f"SELECT held, minted, diff, ok FROM '{out}/conservation.parquet' ORDER BY day").fetchall()
     assert cons and all(c[0] == SUPPLY and c[2] == 0 and c[3] for c in cons)   # without the hop rule: +30 and -5 doubled -> diff 25
-    q1 = con.execute(f"SELECT circ FROM '{out}/q1_triggers.parquet'").fetchone()
-    # circulation at S + 72: CR 0 (deposited) + W 19 + FEE 1 + U1 25 = 45 (curve vault 680 and pool vault 275 excluded)
-    assert q1[0] == 45 * U
+    q1 = con.execute(f"SELECT circ, h_ins, share_c FROM '{out}/q1_triggers.parquet'").fetchone()
+    # circulation at S + 72: CR 0 (deposited) + W 19 + FEE 1 + U1 25 + PB 10 = 55 (curve vault 680 and pool vault 265 excluded);
+    # insiders = CR (creator) only: PB bought on the pool 3 slots after the create and R on the curve after the 10 s window
+    assert q1[0] == 55 * U and q1[1] == 0 and q1[2] == 0
