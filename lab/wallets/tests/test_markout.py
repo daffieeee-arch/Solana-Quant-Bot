@@ -143,3 +143,24 @@ def test_guard_refuses_the_holdout(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_sql_targets_equal_the_python_formula_across_an_epoch_boundary():
+    """build_targets (SQL) reproduces entry + ceil(h_ms / ms) with the ms of the entry slot's epoch, also when t + d
+    crosses into the next epoch and for an epoch the clock has not measured (last earlier epoch)."""
+    from wallets.common import EPOCH_SLOTS, Clock
+    con = duckdb.connect()
+    clock = Clock({1036: 316.4, 1037: 267.1})  # 1038 unmeasured -> 267.1; 1035 -> REF_MS
+    ts = [1035 * EPOCH_SLOTS + 5, 1036 * EPOCH_SLOTS + 10, 1037 * EPOCH_SLOTS - 2, 1037 * EPOCH_SLOTS - 1, 1037 * EPOCH_SLOTS + 3, 1038 * EPOCH_SLOTS + 7]
+    con.execute("CREATE TEMP TABLE sig AS SELECT * FROM (VALUES " + ", ".join(f"({i + 1}, {t})" for i, t in enumerate(ts)) + ") v(sid, t)")
+    n = markout.build_targets(con, clock, 10**12)
+    got = {(r[0], r[1], r[2]): r[4] for r in con.execute("SELECT sid, d, h, h_ms, target FROM targets").fetchall()}
+    want = {}
+    for sid, t in enumerate(ts, 1):
+        for d in markout.DELAYS:
+            entry = t + d
+            ms = clock.ms_per_slot(entry)
+            want[(sid, d, "")] = entry
+            for name, h_ms in markout.HORIZONS_MS:
+                want[(sid, d, name)] = entry + markout.horizon_slots(ms, h_ms)
+    assert n == len(want) == len(got) and got == want
