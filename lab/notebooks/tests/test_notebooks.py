@@ -136,6 +136,113 @@ class BlindeVlekken(unittest.TestCase):
         self.assertIn("is er nog niet", text)
 
 
+
+REGISTER_MD = """# Experimentregister
+
+## 1. Datagebruik
+
+| periode | epochs | slots | status | gebruikt voor |
+|---|---|---|---|---|
+| dev, dag 1–9 | 1033–1046 (deel) | 446.256.000 – | **verbruikt**, verkennend | drempels |
+| hold-out | 1047–1051 | 452.304.000 – 454.464.000 | **gesloten**: één keer geopend | alleen diagnose |
+| **schoon, pre-Alpenglow** | **1055–1063** | 455.760.000 – 459.648.000 | **onaangeroerd** | gereserveerd |
+
+## 2. Proeven
+
+| id | datum | wat | data | regel vooraf | uitkomst | status | correcties |
+|---|---|---|---|---|---|---|---|
+| E04 | 2026-10-11 | whale stap 1 | dev | spec | volgers −13 % | **verworpen** | geen |
+| E16 | 2026-10-15 | wash-leg `a|b` of echt \\| ander | dev2 | geen toets | 27 % wash-leg | **verkennend**, kandidaat | – |
+| E06 | 2026-10-12 | **hold-out** K1–K3 | 1047–1051 | pre-reg | niets geslaagd | **verworpen** (K3 blijft als paper-*meting*) | – |
+
+## 3. Bekende stille bugs
+
+| datum | bug | geraakt | fix | regressietest |
+|---|---|---|---|---|
+| 2026-10-10 | boost-cranks | E01 | v1.1 | ja |
+"""
+
+CASES_MD = """# Uitsluitingen
+
+| datum | mint | naam | waarom | toegevoegd door |
+|---|---|---|---|---|
+| 2026-10-15 | `33jENUQnjoitkMFpvNJcSHyLAHFWJuHwT6E3E8CNpump` | Doge Pepe (DOPE) | grafiek bekeken | coördinator |
+| 2026-10-15 | elke mint met symbool `SEALS` | Save The Seals (SEALS) | lancering 13 okt | coördinator |
+| 2026-10-15 | `HvYfFr8nm6bn9V93TDDMgqWwS2D2LsMn1Y3rDCToqeAB` | Save The Seals (SEALS) | aanvulling | coördinator |
+| 2026-10-15 | `"><script>x</script>` | Fout (BAD) | geen geldig adres | test |
+"""
+
+
+def register_fixtures(root):
+    """The experiment register and the owner's case exclusions, in the shapes experimentregister.py reads."""
+    reg = os.path.join(root, "experiment-register.md")
+    with open(reg, "w", encoding="utf-8") as f:
+        f.write(REGISTER_MD)
+    os.makedirs(os.path.join(root, "research"), exist_ok=True)
+    with open(os.path.join(root, "research", "case-exclusions-clean-data.md"), "w", encoding="utf-8") as f:
+        f.write(CASES_MD)
+    return reg
+
+
+def run_register(root, register):
+    os.environ["LAB_REGISTER"] = register
+    try:
+        name = "experimentregister"
+        os.environ["LAB_DATA_ROOT"] = root
+        sys.modules.pop(name, None)
+        outputs, defs = importlib.import_module(name).app.run()
+        text = json.dumps([repr(o) if not hasattr(o, "text") else o.text for o in outputs], ensure_ascii=False)
+        return text, defs
+    finally:
+        del os.environ["LAB_REGISTER"]
+
+
+class Experimentregister(unittest.TestCase):
+    NB = os.path.join(NB, "experimentregister.py")
+    REAL = os.path.join(os.path.dirname(NB), "..", "reports", "experiment-register.md")
+
+    def test_runs_on_fixtures(self):
+        with tempfile.TemporaryDirectory() as root:
+            text, defs = run_register(root, register_fixtures(root))
+        rows = {r["id"]: r for r in defs["rows"]}
+        self.assertEqual(list(rows), ["E04", "E16", "E06"])
+        self.assertEqual([rows[i]["soort"] for i in rows], ["verworpen", "verkennend", "verworpen"])
+        self.assertEqual(rows["E16"]["wat"], "wash-leg a|b of echt | ander")  # bars in code and \\| do not split
+        self.assertEqual(rows["E06"]["wat"], "hold-out K1–K3")
+        self.assertEqual(rows["E06"]["status"], "verworpen (K3 blijft als paper-meting)")
+        for expected in ("Experimentregister", "3 proeven: 2 verworpen, 1 verkennend", "#fde2e1", "#fff1c2", "#dcfce7",
+                         "schoon", "gesloten", "1055–1063", "Doge Pepe (DOPE)", "Save The Seals (SEALS)",
+                         "https://dexscreener.com/solana/33jENUQnjoitkMFpvNJcSHyLAHFWJuHwT6E3E8CNpump",
+                         "https://dexscreener.com/solana/HvYfFr8nm6bn9V93TDDMgqWwS2D2LsMn1Y3rDCToqeAB",
+                         "wacht op epoch 1056/1057", "regel: elke mint met symbool SEALS", "nog geen adres"):
+            self.assertIn(expected, text)
+        self.assertNotIn("<script>x", text)  # file text is escaped, and only base58 addresses become links
+        self.assertIn("&lt;script&gt;x", text)
+        self.assertNotIn("Bestand niet gevonden", text)
+
+    def test_missing_files_are_shown_not_fatal(self):
+        with tempfile.TemporaryDirectory() as root:
+            text, defs = run_register(root, os.path.join(root, "nope.md"))
+        self.assertEqual(text.count("Bestand niet gevonden"), 2)
+        self.assertEqual(defs["rows"], [])
+
+    def test_reads_the_real_register(self):
+        """The coordinator's register parses: every experiment has an id, a status and a known kind."""
+        with tempfile.TemporaryDirectory() as root:
+            text, defs = run_register(root, self.REAL)
+        self.assertGreaterEqual(len(defs["rows"]), 18)
+        for r in defs["rows"]:
+            self.assertRegex(r["id"], r"^E\d+$")
+            self.assertNotEqual(r["soort"], "anders", r)
+        self.assertIn("1055–1063", text)
+        self.assertIn("#dcfce7", text)  # the clean period is shown as clean
+
+    def test_never_reads_clean_extraction(self):
+        src = read(self.NB)
+        self.assertNotIn("clean-v1", src)
+        self.assertNotRegex(src, r"['\"/]events\b")
+        self.assertNotRegex(src, r"\b(requests|urllib|httpx|socket)\b")  # DexScreener is a link only
+
 class Unit(unittest.TestCase):
     def setUp(self):
         self.text = read(UNIT)
