@@ -298,7 +298,7 @@ pub fn owner_token_deltas(owner: &str, pre: &[(&str, &str, &str)], post: &[(&str
 }
 
 // ----------------------------------------------------------------------------- token transfers
-// spec-token-transfers-2026-10-15.md v2 (LAB research, sha256 b17d9306): token_deltas,
+// spec-token-transfers-2026-10-15.md v3 (LAB research, sha256 611a6327): token_deltas,
 // token_transfers and sol_funding, for a measurable insider share and funder graphs. Extractor only
 // (LAB_TRANSFERS=1 with LAB_PUMP_MINTS); the recorder includes this file but never enables them.
 
@@ -306,6 +306,24 @@ const TOKEN_PROGRAM: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 /// sol_funding: the smallest SOL funding of a new wallet that counts (0.001 SOL).
 pub const FUNDING_MIN_LAMPORTS: u64 = 1_000_000;
+/// The pump.fun curve events whose `mint` is the curve's token: the mint set learns from these. Not
+/// ClaimTokenIncentivesEvent and AdminUpdateTokenIncentivesEvent (their mint is the incentive
+/// token, PUMP); an event an IDL update adds teaches nothing until it is listed here.
+pub const CURVE_MINT_EVENTS: [&str; 13] = [
+    "pump/CreateEvent",
+    "pump/TradeEvent",
+    "pump/CompleteEvent",
+    "pump/CompletePumpAmmMigrationEvent",
+    "pump/PostCompleteBuyEvent",
+    "pump/DistributeCreatorFeesEvent",
+    "pump/DistributeFeeToHoldersEvent",
+    "pump/SweepBondingCurveFeeEvent",
+    "pump/MigrateBondingCurveCreatorEvent",
+    "pump/SetCreatorEvent",
+    "pump/SetMetaplexCreatorEvent",
+    "pump/AdminCtoEvent",
+    "pump/UpdateMayhemVirtualParamsEvent",
+];
 
 const TOKEN_DELTA_COLS: [(&str, Kind); 12] = [
     ("slot", Kind::U64),
@@ -317,7 +335,9 @@ const TOKEN_DELTA_COLS: [(&str, Kind); 12] = [
     // i128 as text: a u64 balance can move by more than an i64 holds.
     ("delta_raw", Kind::Utf8),
     ("decimals", Kind::U64),
-    // The owner is a program-derived address (off the ed25519 curve): a curve or pool vault.
+    // The owner is a program-derived address (off the ed25519 curve): a curve or pool vault. What
+    // the store's legs leave unexplained is mostly the token fee of reversed pools (the pool's quote
+    // vault keeps its LP fee), so most token_deltas rows are vault rows of such pools.
     ("is_vault", Kind::Bool),
     ("has_pump_event", Kind::Bool),
     ("has_pump_event_same_mint", Kind::Bool),
@@ -342,7 +362,8 @@ const TOKEN_TRANSFER_COLS: [(&str, Kind); 19] = [
     ("decimals", Kind::U64),
     // The program that invoked the token instruction (label or id); NULL at the top level.
     ("outer_program", Kind::Utf8),
-    // Invoked by a DEX or router: the trade itself (the store has it), not a graph edge.
+    // Invoked by a DEX or router (spec §2B): the trade itself (the store has it), not a graph edge.
+    // This also covers a DEX's LP deposits and withdrawals and its fee claims, which are no trades.
     ("in_trade", Kind::Bool),
     ("owner_unresolved", Kind::Bool),
     ("fee_payer", Kind::Utf8),
@@ -394,6 +415,12 @@ pub fn parse_token_ix(data: &[u8], n_accounts: usize) -> Option<TokenIx> {
         15 => ix("burn", Some(amount?), Some(decimals?), Some(0), Some(1), None, Some(2), 3),
         // The lamports go to account 1; the tokens have no counterparty.
         9 => ix("close_account", None, None, Some(0), None, None, Some(2), 3),
+        // Token-2022 TransferFeeExtension (26), TransferCheckedWithFee (1): [26, 1, amount, decimals,
+        // fee]. amount leaves the source; the destination receives amount - fee (withheld in it).
+        26 if data.get(1) == Some(&1) => {
+            let amount = data.get(2..10).map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")));
+            ix("transfer_checked_with_fee", Some(amount?), Some(*data.get(10)?), Some(0), Some(1), Some(2), Some(3), 4)
+        }
         _ => None,
     }
 }
@@ -609,12 +636,13 @@ impl Transfers {
     }
 
     /// Learn the mints of the pump.fun curve's events in this transaction (before its token rows, so
-    /// a create with its first buy is complete). Only the curve program: its mints are pump.fun mints
-    /// by construction. PumpSwap pools can pair any mint (USDC, PUMP), so they teach nothing.
+    /// a create with its first buy is complete). Only the curve events in CURVE_MINT_EVENTS, whose
+    /// `mint` is the curve's token. PumpSwap pools can pair any mint (USDC, PUMP), and the curve
+    /// program's token incentive events carry the incentive token (PUMP), so they teach nothing.
     fn learn(&self, rows: &[Row]) {
         let new: Vec<&String> = rows
             .iter()
-            .filter(|r| r.table.starts_with("pump/"))
+            .filter(|r| CURVE_MINT_EVENTS.contains(&&*r.table))
             .filter_map(|r| match r.columns.iter().position(|(n, _)| n == "mint").and_then(|i| r.values.get(i)) {
                 Some(Val::Str(m)) if !m.ends_with("pump") && !self.mints.contains(m) => Some(m),
                 _ => None,
@@ -768,6 +796,17 @@ impl Transfers {
     }
 }
 
+/// The program that invoked inner instruction j of a top-level instruction: the nearest earlier inner
+/// instruction one stack level up; the top-level one (`outer`) at height 2 or without heights.
+/// `heights` and `programs` are the group's stack heights and program keys; None when no earlier
+/// instruction is one level up.
+pub fn invoker<'a>(heights: &[Option<u32>], programs: &[Option<&'a [u8]>], j: usize, outer: Option<&'a [u8]>) -> Option<&'a [u8]> {
+    match heights.get(j).copied().flatten() {
+        Some(h) if h > 2 => (0..j).rev().find(|&k| heights[k] == Some(h - 1)).and_then(|k| programs[k]),
+        _ => outer,
+    }
+}
+
 /// A transaction as the token transfer tables read it: account keys, instructions in execution
 /// order (each top-level one, then its inner ones) with the program that invoked each, and the
 /// pre-balances.
@@ -784,17 +823,10 @@ fn tx_view(tx: &TransactionData) -> TxView<'_> {
         let outer_program = key(ix.program_id_index);
         ixs.push(IxView { path: i.to_string(), program: outer_program, accounts: &ix.accounts, data: &ix.data, parent: None });
         for group in inner_groups.iter().filter(|g| usize::from(g.index) == i) {
+            let heights: Vec<Option<u32>> = group.instructions.iter().map(|x| x.stack_height).collect();
+            let programs: Vec<Option<&[u8]>> = group.instructions.iter().map(|x| key(x.instruction.program_id_index)).collect();
             for (j, inner) in group.instructions.iter().enumerate() {
-                // The invoker: the nearest earlier instruction one level up; the top-level one at
-                // height 2 or without heights.
-                let parent = match inner.stack_height {
-                    Some(h) if h > 2 => group.instructions[..j]
-                        .iter()
-                        .rev()
-                        .find(|p| p.stack_height == Some(h - 1))
-                        .and_then(|p| key(p.instruction.program_id_index)),
-                    _ => outer_program,
-                };
+                let parent = invoker(&heights, &programs, j, outer_program);
                 ixs.push(IxView {
                     path: format!("{i}.{j}"),
                     program: key(inner.instruction.program_id_index),
@@ -1599,7 +1631,7 @@ impl Plugin for LabPlugin {
 mod tests {
     use super::{
         decode_token_metadata, explained, is_http_429, is_pda, key, mint_owner_deltas, owner_token_deltas, parse_system_funding,
-        parse_token_ix, store_legs, summarize_calls, system_non_wallet_target, Bal, Class, IxView, TokenIx, Transfers, TxView,
+        invoker, parse_token_ix, store_legs, summarize_calls, system_non_wallet_target, Bal, Class, IxView, TokenIx, Transfers, TxView,
         FUNDING_MIN_LAMPORTS, PROGRAM_LABELS, PUMP_AMM_IDL, PUMP_IDL, TOKEN_METADATA_INIT, WSOL_MINT,
     };
     use crate::idl::{Kind, Val};
@@ -1717,6 +1749,28 @@ mod tests {
         assert_eq!(parse_token_ix(&[1], 4), None); // InitializeAccount
         assert_eq!(parse_token_ix(&[3, 1, 2], 3), None); // cut-off amount
         assert_eq!(parse_token_ix(&amount_ix(12, 7, None), 4), None); // TransferChecked without decimals
+        // Token-2022 TransferCheckedWithFee: [26, 1, amount, decimals, fee]
+        let mut with_fee = vec![26u8, 1];
+        with_fee.extend(500u64.to_le_bytes());
+        with_fee.push(6);
+        with_fee.extend(5u64.to_le_bytes());
+        let t = parse_token_ix(&with_fee, 4).unwrap();
+        assert_eq!((t.kind, t.amount, t.decimals, t.source, t.mint, t.dest, t.authority),
+                   ("transfer_checked_with_fee", Some(500), Some(6), Some(0), Some(1), Some(2), Some(3)));
+        assert_eq!(parse_token_ix(&[26, 0, 1, 2], 4), None); // another transfer-fee instruction
+        assert_eq!(parse_token_ix(&with_fee[..10], 4), None); // cut-off decimals
+    }
+
+    #[test]
+    fn the_invoker_is_the_nearest_earlier_instruction_one_level_up() {
+        let (o, a, b, c, d, e, f): (&[u8], &[u8], &[u8], &[u8], &[u8], &[u8], &[u8]) = (b"O", b"A", b"B", b"C", b"D", b"E", b"F");
+        // A (2) -> B (3) -> C (4), then D (3) under A again; E (2) and F (no height) under the top level.
+        let heights: [Option<u32>; 6] = [Some(2), Some(3), Some(4), Some(3), Some(2), None];
+        let programs = [Some(a), Some(b), Some(c), Some(d), Some(e), Some(f)];
+        let got: Vec<_> = (0..6).map(|j| invoker(&heights, &programs, j, Some(o))).collect();
+        assert_eq!(got, vec![Some(o), Some(a), Some(b), Some(a), Some(o), Some(o)]);
+        // A height-3 instruction with no height-2 one before it has no known invoker.
+        assert_eq!(invoker(&[Some(3u32)], &[Some(a)], 0, Some(o)), None);
     }
 
     fn system_ix(disc: u32, lamports: u64, owner: Option<[u8; 32]>) -> Vec<u8> {
@@ -1936,6 +1990,14 @@ mod tests {
         t.rows(&tx, &[traded, pool, suffixed, listed], &Default::default());
         assert!(t.is_pump("OldCurveMint") && !t.is_pump("UsdcLike"));
         assert_eq!(t.learned_mints(), vec!["NewMint".to_owned(), "OldCurveMint".to_owned()]);
+        // The curve program's token incentive events carry the incentive token (PUMP): nothing learned.
+        // Its fee events carry the curve's token and teach it.
+        let claim = event("pump/ClaimTokenIncentivesEvent", &[("mint", st("IncentiveTok"))]);
+        let admin = event("pump/AdminUpdateTokenIncentivesEvent", &[("mint", st("IncentiveTok"))]);
+        let fees = event("pump/DistributeCreatorFeesEvent", &[("mint", st("FeeCurveMint"))]);
+        t.rows(&tx, &[claim, admin, fees], &Default::default());
+        assert!(!t.is_pump("IncentiveTok") && t.is_pump("FeeCurveMint"));
+        assert_eq!(t.learned_mints(), vec!["FeeCurveMint".to_owned(), "NewMint".to_owned(), "OldCurveMint".to_owned()]);
     }
 }
 
