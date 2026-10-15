@@ -184,6 +184,85 @@ class F1Exit(ExitRule):
         return None
 
 
+class _NetStop(ExitRule):
+    """The optional stop-loss on the net return (as TpSlTime) the spec E exits share."""
+
+    def _stopped(self, ctx):
+        return self.sl is not None and self.scn.exit_net(ctx["mark"]) / self.scn.entry_total(ctx["cost"]) - 1 <= self.sl
+
+
+class TrailTime(_NetStop):
+    """Trailing stop from the peak mark since the entry (the first mark starts it), the optional
+    stop-loss, or time (spec E: trail{3,5,10}_T600[_sl8])."""
+
+    def __init__(self, trail, sl, max_slots, scn):
+        self.trail, self.sl, self.max_slots, self.scn, self.peak = trail, sl, max_slots, scn, 0
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        self.peak = max(self.peak, ctx["mark"])
+        if ctx["mark"] <= self.peak * (1 - self.trail):
+            return "trailing_stop"
+        if self._stopped(ctx):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+class HoldTime(_NetStop):
+    """Only time, no take-profit, and the optional stop-loss (spec E: hold{60,180,300}[_sl8])."""
+
+    def __init__(self, sl, max_slots, scn):
+        self.sl, self.max_slots, self.scn = sl, max_slots, scn
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        if self._stopped(ctx):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+class FlowTime(_NetStop):
+    """Hold while the organic net SOL inflow over [slot - n_flow, slot] is > 0, evaluated from n_flow
+    slots held on (FlowIndex: farmer legs out, our own buy is not in the stream); the optional
+    stop-loss; time (spec E: flow{10,30,60}_T600[_sl8]). Evaluated at the pool's trades only."""
+
+    def __init__(self, flows, n_flow, sl, max_slots, scn):
+        self.flows, self.n_flow, self.sl, self.max_slots, self.scn = flows, n_flow, sl, max_slots, scn
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        if ctx["slots_held"] >= self.n_flow and self.flows.flow(ctx["slot"] - self.n_flow, ctx["slot"]) <= 0:
+            return "outflow"
+        if self._stopped(ctx):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+def f7_exit_rule(params, scn, t, clock, flows):
+    """The spec E exit rule of an F7 signal with params (kind, parameter, stop-loss)."""
+    kind, x, sl = params
+    cap = clock.slots(ms(F7_EXIT_T), t)
+    if kind == "trail":
+        return TrailTime(x, sl, cap, scn)
+    if kind == "hold":
+        return HoldTime(sl, clock.slots(x * 1000, t), scn)
+    if kind == "flow":
+        return FlowTime(flows, clock.slots(x * 1000, t), sl, cap, scn)
+    raise ValueError(kind)
+
+
 def tp_sl_time(tp, sl, max_slots, scn):
     return TpSlTime(tp, sl, max_slots, scn)
 
@@ -364,6 +443,19 @@ def f7_signal(view, venue, depth, creator, coin_creator=None, clock=None):
 
 
 F7_GRID = [(tp, T) for tp in (0.04, 0.06, 0.10) for T in (150, 600, 2_400)]
+# Spec E (research/week3-specs-exits-2026-10-15.md, sha256 7372ba01): exit rules beside tp/T for F7 in
+# pool_reversed, each without and with the stop-loss of -8 %: (kind, parameter, stop-loss). Only built
+# when asked for (tournament --f7-grid exits | all); the 9 tp/T variants are unchanged.
+F7_EXIT_GRID = ([("trail", x, sl) for x in (0.03, 0.05, 0.10) for sl in (None, -0.08)]
+                + [("hold", x, sl) for x in (60, 180, 300) for sl in (None, -0.08)]
+                + [("flow", x, sl) for x in (10, 30, 60) for sl in (None, -0.08)])
+F7_EXIT_T = 600  # the exits' time cap: T600 as in tp4_T600 (v1 slots, per epoch through the Clock)
+
+
+def f7_exit_variant(kind, x, sl):
+    """trail{3,5,10}_T600, hold{60,180,300}, flow{10,30,60}_T600, with _sl8 for the stop-loss."""
+    name = {"trail": f"trail{round(x * 100)}_T{F7_EXIT_T}", "hold": f"hold{x}", "flow": f"flow{x}_T{F7_EXIT_T}"}[kind]
+    return name + ("_sl8" if sl is not None else "")
 
 # ----------------------------------------------------------------------------- F1
 

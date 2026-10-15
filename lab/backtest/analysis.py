@@ -23,6 +23,11 @@ from .streams import SPILL_DIR, SPILL_MAX
 STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 
 
+def variant_t_sql(col):
+    """T of an F7 variant in v1 slots as SQL: tp4_T600 -> 600, trail3_T600_sl8 -> 600, hold60 -> NULL."""
+    return f"TRY_CAST(regexp_extract({col}, '_T([0-9]+)', 1) AS BIGINT)"
+
+
 def _con():
     con = duckdb.connect()
     con.execute(f"SET memory_limit = '1GB'; SET threads TO 2; SET temp_directory = '{SPILL_DIR}'; "
@@ -81,8 +86,9 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
     clock = Clock(json.loads(con.execute("SELECT json FROM st.meta").fetchone()[0]).get("ms_per_slot"))
     # T of the variant is in v1 slot units (267.3 ms); the window in slots follows each epoch's slot time.
     # (Column names are case-insensitive: the window must not be called "T" next to the trigger slot "t".)
-    trig = con.execute(f"""SELECT DISTINCT pool, t, trigger_trader, TRY_CAST(split_part(variant, '_T', 2) AS BIGINT)
-                           FROM {f7}""").fetchall()
+    # Spec E exits: trail/flow carry _T600 (with an optional _sl8 after it), hold has no T and is left out here.
+    trig = con.execute(f"""SELECT DISTINCT pool, t, trigger_trader, {variant_t_sql('variant')} AS v
+                           FROM {f7} WHERE v IS NOT NULL""").fetchall()
     con.execute("CREATE TEMP TABLE trig (pool VARCHAR, t BIGINT, trigger_trader VARCHAR, var_t BIGINT, horizon BIGINT)")
     if trig:  # a short run can have no F7 reversed trigger (executemany refuses an empty list)
         con.executemany("INSERT INTO trig VALUES (?, ?, ?, ?, ?)",
@@ -96,7 +102,7 @@ def f7_reversed(run_dir, store=STORE, segment="pool_reversed"):
         SELECT r.size_sol, r.d, r.q, b.bought_back, count(*) AS n, round(avg(r.ret_base) * 100, 2) AS mean_pct,
                round(avg(r.pnl_base_lamports) / 1e9, 4) AS sol_per_trade,
                round(avg(r.trigger_farmer::INT) * 100, 1) AS trigger_farmer_pct
-        FROM {f7} r JOIN back b ON b.pool = r.pool AND b.t = r.t AND b.var_t = TRY_CAST(split_part(r.variant, '_T', 2) AS BIGINT)
+        FROM {f7} r JOIN back b ON b.pool = r.pool AND b.t = r.t AND b.var_t = {variant_t_sql('r.variant')}
         WHERE r.ret_base IS NOT NULL GROUP BY r.size_sol, r.d, r.q, b.bought_back ORDER BY ALL""").fetchall()
     lines += _table(["size SOL", "d", "q", "seller bought back", "trades", "mean %", "SOL/trade", "trigger seller farmer %"],
                     rows) + [""]
