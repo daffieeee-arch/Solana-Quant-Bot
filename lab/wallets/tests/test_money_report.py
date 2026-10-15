@@ -125,3 +125,16 @@ def test_labels_groups_holm_and_placebo(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_load_on_read_only_store(tmp_path):
+    """transfers.py labels through load() on the read-only store connection (NAS task 70 failed with 'Cannot execute
+    statement of type "CREATE" on database ... attached in read-only mode'): every object load() makes is TEMP."""
+    store = tmp_path / "store.duckdb"
+    duckdb.connect(str(store)).execute("CREATE TABLE t (x INT)").close()
+    con = duckdb.connect(str(store), read_only=True)
+    con.execute("SET memory_limit = '300MB'; SET threads TO 1")
+    assert R.load(con, _dir(tmp_path), materialize=False) == 1
+    labels = dict(con.execute("SELECT wallet, label FROM labels").fetchall())
+    assert labels["S0"] == "sniper" and labels["B0"] == "bot"
+    assert con.execute("SELECT count(*) FROM meas_all").fetchone()[0] > 0

@@ -75,6 +75,27 @@ The recorder feeds `Watchlist.step(minute, rows)` with per-(pool, minute) aggreg
 
 `trigger_gap.py` (LAB backtest question for the recorder's probe step, #182): live, a new reversed pool is seen as a vault balance until it passes 150 SOL and only then as full transactions. `python -m wallets.trigger_gap --triggers <tournament run> --to-slot B --out DIR` takes every F7 pool trigger (distinct pool, t, seller), the seller's trades in that pool over the 24 h before the trigger (the store's farmer window), counts how many fall before the pool's first slot at ≥ 150 SOL and whether the farmer flag (≥ 2 trades, |net tokens| < 5 % of gross) computed from the later trades alone differs from the flag over all of them; `report.md` per farm label, with the recomputed flag checked against the tournament's `trigger_farmer`. One pool-table scan restricted to the trigger pools: a NAS job.
 
+## MEV phase 0 (`mev0.py`, `mev0_report.py`, roadmap #206)
+
+This is a measurement on OF1 history only: nothing is sent and nothing is traded. The spec is `week3-specs-mev0-2026-10-12.md` v4. `nas_mev0.sh` runs `python -m wallets.mev0 --chunks <events/txctx-v1/chunks> --epochs 1040,1045`. It reads tx_ctx and the store, and per epoch writes these files into `mev0-v1/`:
+
+- `arbs-<e>`: one row per arbitrage transaction:
+  - kind (same / cross venue, `other_venue_unparsed`);
+  - net and gross;
+  - fees and tip;
+  - the prior trade on its first venue (backrun, distance, reachable at ≥ 2 slots);
+  - depth and age;
+  - `closed_loop`.
+- `attempts-<e>`: failed transactions, an upper bound.
+- `gaps-<e>`: unrealized opportunities between two store pools of one mint.
+- `signers-<e>`: first and last day per fee payer.
+- `harm-<e>`: sandwiches and front-runs, description only.
+- `days-<e>` and `run-mev0-<e>.json`.
+
+`python -m wallets.mev0_report --dir mev0-v1 --epochs 1040,1045` then writes the report. It puts the §3 GO/NO-GO table on top, as medians over the full UTC days.
+
+**Arbs are closed loops: the fee payer is flat in every token except SOL and WSOL.** The spec's literal test (flat in the traded mint, SOL + WSOL up) also accepts a routed sale of another token. On the 1054 smoke chunk that was 36 of 309 candidates, carrying 39.7 of 40.1 SOL. The parquet keeps every literal candidate with the flag. Memory: `LAB_WALLETS_MEMORY`. Run it on the NAS.
+
 ## Memory limits (DuckDB) per module
 
 VPS defaults fit a 2 GB scope; on the NAS raise them per module: `LAB_EPISODES_MEMORY` (640MB), `LAB_FOLLOW_MEMORY` (1GB, main process) and `LAB_WORKER_MEMORY` (800MB per worker), `LAB_SCORE_MEMORY` (1GB), `LAB_RUNNERS_MEMORY`, `LAB_CASES_MEMORY` and `LAB_WATCHLIST_MEMORY` (1000MB); `LAB_WALLETS_MEMORY` sets all of them at once. Spill: `LAB_SPILL_DIR` / `LAB_SPILL_MAX`.

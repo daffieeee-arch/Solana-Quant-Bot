@@ -10,7 +10,8 @@
 //!     backfill/      the earlier transactions of new probe pools (from_slot replay), in the same table
 //!                    layout: farmer history for LiveFeed, not events (reconcile does not read it)
 //!     watchlist.json the transaction filter of this segment (pools, wallets, vaults)
-//!     _segment.json  written last (atomic rename): seq, first_slot, last_slot, complete, usage, ...
+//!     _segment.json  written last (atomic rename), after every file and directory of the segment is
+//!                    on disk (fsync): seq, first_slot, last_slot, complete, usage, ...
 //!
 //! Slots are only written once closed (confirmed, see `SlotBuffer`), so a segment holds whole
 //! slots and every row of a slot is in one segment.
@@ -34,6 +35,29 @@ pub const BLOCK_COLS: [(&str, Kind); 7] = [
     ("executed_tx_count", Kind::U64),
     ("entry_count", Kind::U64),
     ("skipped", Kind::Bool),
+];
+
+/// Alpenglow block footers (epoch 1064 on): the producer's block time in nanoseconds, against our
+/// receive time and the server's `created_at` (latency from block production).
+pub const FOOTER_COLS: [(&str, Kind); 5] = [
+    ("slot", Kind::U64),
+    ("bank_id", Kind::U64),
+    ("block_producer_time_ns", Kind::U64),
+    ("received_unix_ns", Kind::U64),
+    ("created_unix_ns", Kind::U64),
+];
+
+pub const ANOMALY_COLS: [(&str, Kind); 9] = [
+    // The extractor's `anomalies` table (extract.rs ANOMALY_COLS).
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("signature", Kind::Utf8),
+    ("outer_ix", Kind::U64),
+    ("inner_ix", Kind::U64),
+    ("program", Kind::Utf8),
+    ("kind", Kind::Utf8),
+    ("event", Kind::Utf8),
+    ("payload_hex", Kind::Utf8),
 ];
 
 pub const ARRIVAL_COLS: [(&str, Kind); 6] = [
@@ -161,9 +185,26 @@ pub struct Segments {
     open: Open,
     seg_slots: u64,
     seg_secs: u64,
+    /// Puts the segment's files and directories on disk before `_segment.json` (tests inject a check).
+    sync: fn(&Path) -> Result<()>,
 }
 
-fn write_json_atomic(path: &Path, v: &Value) -> Result<()> {
+/// fsync every file and directory under `dir`, the directories after their entries: a segment's
+/// parquet files are on disk before `_segment.json` says it is complete.
+pub fn sync_tree(dir: &Path) -> Result<()> {
+    for e in fs::read_dir(dir)? {
+        let e = e?;
+        if e.file_type()?.is_dir() {
+            sync_tree(&e.path())?;
+        } else {
+            fs::File::open(e.path())?.sync_all().with_context(|| format!("fsync {}", e.path().display()))?;
+        }
+    }
+    fs::File::open(dir)?.sync_all().with_context(|| format!("fsync {}", dir.display()))?;
+    Ok(())
+}
+
+pub fn write_json_atomic(path: &Path, v: &Value) -> Result<()> {
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_vec_pretty(v)?).with_context(|| format!("write {}", tmp.display()))?;
     fs::File::open(&tmp)?.sync_all()?;
@@ -196,7 +237,11 @@ impl Segments {
                 }
             }
         }
-        Ok((Self { root: root.to_owned(), seq: next, open: Open::new(), seg_slots, seg_secs }, last_slot))
+        Ok((Self { root: root.to_owned(), seq: next, open: Open::new(), seg_slots, seg_secs, sync: sync_tree }, last_slot))
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 
     /// Add the rows of a closed slot.
@@ -240,6 +285,7 @@ impl Segments {
         let rows = write_tables(&dir, &open.tables)?;
         let backfill_rows = write_tables(&dir.join("backfill"), &open.backfill)?;
         write_json_atomic(&dir.join("watchlist.json"), watchlist)?;
+        (self.sync)(&dir)?; // the data on disk first: a "complete" segment never has empty parquet files
         let mut m = serde_json::Map::new();
         m.insert("seq".into(), json!(self.seq));
         m.insert("first_slot".into(), json!(first));
@@ -319,6 +365,37 @@ mod tests {
         let (s2, last) = Segments::open(&root, 3, 3600).unwrap();
         assert_eq!((s2.seq, last), (1, Some(102)));
         assert!(!root.join("segments/000000001").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    static SYNCED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// The injected sync: the parquet files and watchlist.json are there, _segment.json is not yet.
+    fn check_then_sync(dir: &Path) -> Result<()> {
+        assert!(!dir.join("_segment.json").exists());
+        assert!(dir.join("blocks/part-00000.parquet").exists() && dir.join("backfill/blocks/part-00000.parquet").exists());
+        assert!(dir.join("watchlist.json").exists());
+        SYNCED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        sync_tree(dir)
+    }
+
+    #[test]
+    fn the_data_is_on_disk_before_the_segment_is_complete() {
+        let root = tmp("sync-order");
+        let (mut s, _) = Segments::open(&root, 2, 3600).unwrap();
+        s.sync = check_then_sync;
+        s.add_slot(7, vec![row("blocks", 7)]);
+        s.add_slot(8, vec![row("blocks", 8)]);
+        s.add_backfill(vec![row("blocks", 3)]);
+        let dir = s.close(&json!({"pools": []}), serde_json::Map::new()).unwrap().unwrap();
+        assert_eq!(SYNCED.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let meta: Value = serde_json::from_slice(&fs::read(dir.join("_segment.json")).unwrap()).unwrap();
+        assert_eq!((meta["rows"]["blocks"].as_u64(), meta["backfill_rows"]["blocks"].as_u64()), (Some(2), Some(1)));
+        // Every file the segment names is readable with its rows.
+        use parquet::file::reader::{FileReader, SerializedFileReader};
+        let rows = |f: &str| SerializedFileReader::new(fs::File::open(dir.join(f)).unwrap()).unwrap().metadata().file_metadata().num_rows();
+        assert_eq!((rows("blocks/part-00000.parquet"), rows("backfill/blocks/part-00000.parquet")), (2, 1));
+        sync_tree(&root).unwrap(); // the whole root syncs too (directories after their entries)
         fs::remove_dir_all(&root).unwrap();
     }
 }

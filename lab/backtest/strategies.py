@@ -184,6 +184,86 @@ class F1Exit(ExitRule):
         return None
 
 
+class _NetStop(ExitRule):
+    """The optional stop-loss on the net return (as TpSlTime) the spec E exits share."""
+
+    def _stopped(self, ctx):
+        return self.sl is not None and self.scn.exit_net(ctx["mark"]) / self.scn.entry_total(ctx["cost"]) - 1 <= self.sl
+
+
+class TrailTime(_NetStop):
+    """Trailing stop from the peak mark since the entry (the first mark starts it), the optional
+    stop-loss, or time (spec E: trail{3,5,10}_T600[_sl8])."""
+
+    def __init__(self, trail, sl, max_slots, scn):
+        self.trail, self.sl, self.max_slots, self.scn, self.peak = trail, sl, max_slots, scn, 0
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        self.peak = max(self.peak, ctx["mark"])
+        if ctx["mark"] <= self.peak * (1 - self.trail):
+            return "trailing_stop"
+        if self._stopped(ctx):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+class HoldTime(_NetStop):
+    """Only time, no take-profit, and the optional stop-loss (spec E: hold{60,180,300}[_sl8])."""
+
+    def __init__(self, sl, max_slots, scn):
+        self.sl, self.max_slots, self.scn = sl, max_slots, scn
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        if self._stopped(ctx):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+class FlowTime(_NetStop):
+    """Hold while the organic net SOL inflow over [slot - n_flow, slot] is > 0, evaluated from n_flow
+    slots held on (FlowIndex: farmer legs out, our own buy is not in the stream); the optional
+    stop-loss; time (spec E: flow{10,30,60}_T600[_sl8]). Evaluated at the pool's trades only."""
+
+    def __init__(self, flows, n_flow, sl, max_slots, scn):
+        self.flows, self.n_flow, self.sl, self.max_slots, self.scn = flows, n_flow, sl, max_slots, scn
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        if ctx["slots_held"] >= self.n_flow and self.flows.flow(ctx["slot"] - self.n_flow, ctx["slot"]) <= 0:
+            return "outflow"
+        if self._stopped(ctx):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+def f7_exit_rule(params, scn, t, clock, flows):
+    """The exit rule of an F7 signal with params (kind, parameter, stop-loss[, cap_ms]): spec E's (cap
+    T600) or a long exit's (its own cap)."""
+    kind, x, sl, *cap_ms = params
+    cap = clock.slots(cap_ms[0], t) if cap_ms else clock.slots(ms(F7_EXIT_T), t)
+    if kind == "trail":
+        return TrailTime(x, sl, cap, scn)
+    if kind == "hold":
+        return HoldTime(sl, clock.slots(x * 1000, t), scn)
+    if kind == "flow":
+        return FlowTime(flows, clock.slots(x * 1000, t), sl, cap, scn)
+    raise ValueError(kind)
+
+
 def tp_sl_time(tp, sl, max_slots, scn):
     return TpSlTime(tp, sl, max_slots, scn)
 
@@ -364,6 +444,27 @@ def f7_signal(view, venue, depth, creator, coin_creator=None, clock=None):
 
 
 F7_GRID = [(tp, T) for tp in (0.04, 0.06, 0.10) for T in (150, 600, 2_400)]
+# Spec E (research/week3-specs-exits-2026-10-15.md, sha256 7372ba01): exit rules beside tp/T for F7 in
+# pool_reversed, each without and with the stop-loss of -8 %: (kind, parameter, stop-loss). Only built
+# when asked for (tournament --f7-grid exits | all); the 9 tp/T variants are unchanged.
+F7_EXIT_GRID = ([("trail", x, sl) for x in (0.03, 0.05, 0.10) for sl in (None, -0.08)]
+                + [("hold", x, sl) for x in (60, 180, 300) for sl in (None, -0.08)]
+                + [("flow", x, sl) for x in (10, 30, 60) for sl in (None, -0.08)])
+F7_EXIT_T = 600  # the exits' time cap: T600 as in tp4_T600 (v1 slots, per epoch through the Clock)
+# "Hold while the coin rises" (coordinator 2026-10-15, spec on #167): long exits with their own cap in
+# ms, (kind, parameter, stop-loss, cap_ms). Only built with tournament --f7-grid long; their positions
+# are loaded in clusters of their own (work_items), so the other variants' windows do not change.
+H1_MS, H6_MS = 3_600_000, 6 * 3_600_000
+F7_LONG_GRID = ([("trail", x, None, H6_MS) for x in (0.20, 0.30, 0.50)] + [("trail", 0.30, None, H1_MS)]
+                + [("flow", 300, sl, H6_MS) for sl in (None, -0.08)])
+
+
+def f7_exit_variant(kind, x, sl, cap_ms=None):
+    """trail{3,5,10}_T600, hold{60,180,300}, flow{10,30,60}_T600, with _sl8 for the stop-loss; with a cap
+    in ms (the long exits): trail{20,30,50}_H6, trail30_H1, flow300_H6[_sl8]."""
+    cap = f"_T{F7_EXIT_T}" if cap_ms is None else f"_H{cap_ms // 3_600_000}"
+    name = {"trail": f"trail{round(x * 100)}{cap}", "hold": f"hold{x}", "flow": f"flow{x}{cap}"}[kind]
+    return name + ("_sl8" if sl is not None else "")
 
 # ----------------------------------------------------------------------------- F1
 
@@ -743,11 +844,13 @@ def m1x_variant(family, moment_ms, k, trail):
 
 def m1x_vetoed(veto, ins_share, curve_buyers):
     """A veto overlay ('V_ins', 'V_ins+V_hype', 'V_ins+V_bundle') on one position: True when any
-    part applies. Unknown inputs (None) never veto (the rows carry them, so they are counted)."""
+    part applies. V_ins is fail-closed (vins-definition-2026-10-15.md): an undefined insider share
+    (None) vetoes; the rows carry the share and its reason, so the report counts the two apart.
+    V_hype and V_bundle are unchanged: an unknown curve buyer count does not veto."""
     out = False
     for part in veto.split("+"):
         if part == "V_ins":
-            out |= ins_share is not None and ins_share > M1X_INS_VETO
+            out |= ins_share is None or ins_share > M1X_INS_VETO
         elif part == "V_hype":
             out |= curve_buyers is not None and curve_buyers > M1X_HYPE_VETO
         elif part == "V_bundle":
@@ -797,6 +900,21 @@ def m1x_candidates_sql(con, cfg, dev_start, dev_end, moments_ms, clock=None):
     return out
 
 
+M1_LONG_TRAILS = (0.30, 0.50)  # --m1-grid long: wider trails beside the 0.20 / 0.35 ones
+M1_FLOW_EXIT_MS = 300_000  # --m1-grid long: flow300, the organic net inflow over the last 5 min
+M1_FLOW = "flow300"  # its marker in a signal's params (where the trail is otherwise)
+
+
+def m1_long_variant(family, k, exit_, moment_ms=None):
+    """The names of the long M1 exits: k2_trail30, k2_flow300 (M1), k15_flow300 (M1P), m1_flow300 (M1E)."""
+    tail = exit_ if isinstance(exit_, str) else f"trail{int(round(exit_ * 100))}"
+    if family == "M1E":
+        return f"m{moment_ms // 60_000}_{tail}"
+    if family == "M1P":
+        return f"k{int(round(k * 10))}_{tail}"
+    return f"k{k}_{tail}"
+
+
 class M1Exit(ExitRule):
     """Trailing stop from the peak mark, hard stop at -25% from the entry cost, or time."""
 
@@ -812,6 +930,29 @@ class M1Exit(ExitRule):
             return "stop_loss"
         if ctx["mark"] <= self.peak * (1 - self.trail):
             return "trailing_stop"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+class M1FlowExit(ExitRule):
+    """M1Exit with the organic inflow in place of the trail: hard stop at -25 % from the entry cost,
+    "outflow" when the organic net SOL inflow over [slot - n_flow, slot] is <= 0 (evaluated from n_flow
+    slots held on; FlowIndex, farmer legs out), or time (--m1-grid long: *_flow300). The peak mark is
+    kept as in M1Exit (the M1X rows' peak_ret)."""
+
+    def __init__(self, flows, n_flow, max_slots):
+        self.flows, self.n_flow, self.max_slots, self.peak = flows, n_flow, max_slots, 0
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        self.peak = max(self.peak, ctx["mark"])
+        if ctx["mark"] <= ctx["cost"] * (1 + M1_HARD_STOP):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.n_flow and self.flows.flow(ctx["slot"] - self.n_flow, ctx["slot"]) <= 0:
+            return "outflow"
         if ctx["slots_held"] >= self.max_slots:
             return "time"
         return None

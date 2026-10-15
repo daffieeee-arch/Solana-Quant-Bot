@@ -84,6 +84,24 @@ SIZE = SOL // 2
 DEFAULTS = os.environ.get("LAB_DEFAULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml")
 SIG_COLS = ("family", "segment", "venue", "orientation", "mint", "pool", "t", "day", "farm")
 
+PHASES = {}   # phase name -> seconds, filled by progress() for the run json
+_T0 = [time.time()]
+
+
+def progress(phase, rows=None, note=""):
+    """One flushed stderr line per finished phase (the NAS log stayed empty for 3 h 40 min on the full f7rev run:
+    nothing was printed before the end): time of day, elapsed, phase, rows, seconds since the previous line."""
+    now = time.time()
+    dt = now - _T0[0]
+    _T0[0] = now
+    PHASES[phase] = round(PHASES.get(phase, 0) + dt, 1)
+    print(f"{time.strftime('%H:%M:%S')} {phase}: {rows if rows is not None else ''} rows {dt:,.1f}s {note}".replace("  ", " "),
+          file=sys.stderr, flush=True)
+
+
+def _count(con, table):
+    return con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+
 
 # --- signals from the parts -----------------------------------------------------------------------
 
@@ -115,7 +133,9 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
                    CASE WHEN venue = 'curve' THEN mint ELSE pool END AS key
             FROM read_parquet({lit}, union_by_name = true) WHERE {' AND '.join(where)}
             GROUP BY family, segment, venue, orientation, mint, pool, t)""")
-    return con.execute("SELECT count(*) FROM sig").fetchone()[0]
+    n = _count(con, "sig")
+    progress("signals", n, f"from {len(files)} parts")
+    return n
 
 
 # --- venue states at the end of each slot ------------------------------------------------------------
@@ -130,13 +150,13 @@ def slot_bounds(con, clock):
 
 
 def pool_legs_sql(lo, hi):
-    """Post-states of the pool legs of the signals' pools (and migration pools) in [lo, hi], per leg, following
+    """Post-states of the pool legs of the signals' pools (and migration pools: the keys of pool_targets) in [lo, hi], per leg, following
     streams.pool_leg: buy / sell from the row (b -/+ base, e + e_delta, virt = vq, the row's fee tiers); boost
     (b - base, e + e_delta, virt = vq) and withdraw / deposit (vault + virt -/+ quote_user, b -/+ base) take the
     fee tiers from the last buy / sell at or before them, and the LP legs their virtual quote from the last buy,
     sell or boost (pool_leg carries ctx["virt"] over a boost too)."""
     return f"""
-      WITH keys AS (SELECT DISTINCT key FROM sig WHERE venue = 'pool' UNION SELECT pool FROM grad_pool),
+      WITH keys AS (SELECT DISTINCT key FROM pool_targets),
       raw AS (
         SELECT p.pool AS key, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, p.vq, p.base, p.e_delta, p.quote_user,
                p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps
@@ -163,27 +183,57 @@ def pool_legs_sql(lo, hi):
       SELECT * FROM trades UNION ALL SELECT * FROM others"""
 
 
+def _per_bucket(con, table, body, nb, phase):
+    """CREATE `table` from `body` (a SELECT with {b} for the bucket) for bucket 0, INSERT the other buckets."""
+    for b in range(nb):
+        verb = f"CREATE OR REPLACE TEMP TABLE {table} AS" if b == 0 else f"INSERT INTO {table}"
+        con.execute(f"{verb} {body.format(b=b)}")
+        progress(phase, _count(con, table), f"bucket {b + 1}/{nb}" if nb > 1 else "")
+
+
+def buckets():
+    """LAB_MARKOUT_BUCKETS: the ASOF match and the carry-forward window run per key-hash bucket (every step is
+    per key, so the union over the buckets is the unbucketed result). The families-v2 run (9x the f7rev signals)
+    spilled 93 GiB in one unbucketed pool_at on the NAS; 1 = unbucketed (the smoke and the f7rev run)."""
+    n = int(os.environ.get("LAB_MARKOUT_BUCKETS", "1"))
+    if n < 1:
+        raise SystemExit("LAB_MARKOUT_BUCKETS must be >= 1")
+    return n
+
+
 def match_states(con, lo, hi):
     """The venue state at every target slot, without materialising a state per slot: each leg is mapped to the
     first target slot at or after it (ASOF), the last leg per (key, target) wins (one aggregation), and targets
     without a leg since the previous target carry the previous state forward (a window over the targets only).
-    Writes pool_at (pools and migration pools), curve_at and venue_last."""
+    The legs are materialised once (one scan of pool / curve); the match and the window run per key-hash bucket
+    (buckets()). Writes pool_at (pools and migration pools), curve_at and venue_last."""
+    nb = buckets()
     con.execute("""
       CREATE OR REPLACE TEMP TABLE grad_pool AS
       SELECT mint, arg_min(pool, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS pool,
              arg_min(orientation, (CASE WHEN quote_class = 'sol' THEN 0 ELSE 1 END, create_slot)) AS orientation
       FROM pools WHERE quote_class IN ('sol', 'reversed') AND mint IN (SELECT DISTINCT key FROM sig WHERE venue = 'curve') GROUP BY mint""")
-    con.execute("""
-      CREATE OR REPLACE TEMP TABLE pool_targets AS
-      SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'pool'
-      UNION
-      SELECT DISTINCT gp.pool, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid JOIN grad_pool gp ON gp.mint = s.key WHERE s.venue = 'curve'""")
-    con.execute("""
-      CREATE OR REPLACE TEMP TABLE curve_targets AS
-      SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'curve'""")
+    progress("grad_pool", _count(con, "grad_pool"))
     con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE pool_at AS
-      WITH legs AS ({pool_legs_sql(lo, hi)}),
+      CREATE OR REPLACE TEMP TABLE pool_targets AS
+      SELECT key, target, hash(key) % {nb} AS bkt FROM (
+        SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'pool'
+        UNION
+        SELECT DISTINCT gp.pool, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid JOIN grad_pool gp ON gp.mint = s.key WHERE s.venue = 'curve')""")
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE curve_targets AS
+      SELECT key, target, hash(key) % {nb} AS bkt FROM (
+        SELECT DISTINCT s.key, tg.target FROM targets tg JOIN sig s ON s.sid = tg.sid WHERE s.venue = 'curve')""")
+    progress("targets per venue", _count(con, "pool_targets") + _count(con, "curve_targets"), f"slots [{lo}, {hi}], {nb} buckets")
+    con.execute(f"CREATE OR REPLACE TEMP TABLE pool_legs AS SELECT *, hash(key) % {nb} AS bkt FROM ({pool_legs_sql(lo, hi)})")
+    progress("pool legs", _count(con, "pool_legs"))
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE curve_legs AS
+      SELECT c.mint AS key, c.slot, c.tx_index, c.outer_ix, c.inner_ix, c.vt, c.vq, c.rt, c.rq, c.fee_bps, c.creator_bps, hash(c.mint) % {nb} AS bkt
+      FROM curve c SEMI JOIN (SELECT DISTINCT key FROM curve_targets) s ON s.key = c.mint WHERE c.slot BETWEEN {lo} AND {hi}""")
+    progress("curve legs", _count(con, "curve_legs"))
+    pool_at_sql = """
+      WITH legs AS (SELECT * FROM pool_legs WHERE bkt = {b}), kt_b AS (SELECT key, target FROM pool_targets WHERE bkt = {b}),
       hit AS (
         SELECT kt.key, kt.target, arg_max(l.slot, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS slot,
                arg_max(l.b, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS b, arg_max(l.e, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS e,
@@ -192,35 +242,35 @@ def match_states(con, lo, hi):
                arg_max(l.protocol_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS protocol_bps,
                arg_max(l.creator_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS creator_bps,
                arg_max(l.cashback_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS cashback_bps
-        FROM legs l ASOF JOIN pool_targets kt ON kt.key = l.key AND l.slot <= kt.target GROUP BY kt.key, kt.target),
+        FROM legs l ASOF JOIN kt_b kt ON kt.key = l.key AND l.slot <= kt.target GROUP BY kt.key, kt.target),
       filled AS (
         SELECT kt.key, kt.target,
                last_value(h.slot IGNORE NULLS) OVER w AS slot, last_value(h.b IGNORE NULLS) OVER w AS b, last_value(h.e IGNORE NULLS) OVER w AS e,
                last_value(h.virt IGNORE NULLS) OVER w AS virt, last_value(h.lp_bps IGNORE NULLS) OVER w AS lp_bps,
                last_value(h.protocol_bps IGNORE NULLS) OVER w AS protocol_bps, last_value(h.creator_bps IGNORE NULLS) OVER w AS creator_bps,
                last_value(h.cashback_bps IGNORE NULLS) OVER w AS cashback_bps
-        FROM pool_targets kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
+        FROM kt_b kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
         WINDOW w AS (PARTITION BY kt.key ORDER BY kt.target ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
-      SELECT * FROM filled WHERE slot IS NOT NULL""")
-    con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE curve_at AS
-      WITH legs AS (
-        SELECT c.mint AS key, c.slot, c.tx_index, c.outer_ix, c.inner_ix, c.vt, c.vq, c.rt, c.rq, c.fee_bps, c.creator_bps
-        FROM curve c SEMI JOIN (SELECT DISTINCT key FROM sig WHERE venue = 'curve') s ON s.key = c.mint WHERE c.slot BETWEEN {lo} AND {hi}),
+      SELECT * FROM filled WHERE slot IS NOT NULL"""
+    _per_bucket(con, "pool_at", pool_at_sql, nb, "pool_at (pool legs ASOF targets)")
+    curve_at_sql = """
+      WITH legs AS (SELECT * FROM curve_legs WHERE bkt = {b}), kt_b AS (SELECT key, target FROM curve_targets WHERE bkt = {b}),
       hit AS (
         SELECT kt.key, kt.target, arg_max(l.slot, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS slot,
                arg_max(l.vt, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS vt, arg_max(l.vq, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS vq,
                arg_max(l.rt, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS rt, arg_max(l.rq, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS rq,
                arg_max(l.fee_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS fee_bps,
                arg_max(l.creator_bps, (l.slot, l.tx_index, l.outer_ix, l.inner_ix)) AS creator_bps
-        FROM legs l ASOF JOIN curve_targets kt ON kt.key = l.key AND l.slot <= kt.target GROUP BY kt.key, kt.target),
+        FROM legs l ASOF JOIN kt_b kt ON kt.key = l.key AND l.slot <= kt.target GROUP BY kt.key, kt.target),
       filled AS (
         SELECT kt.key, kt.target, last_value(h.slot IGNORE NULLS) OVER w AS slot, last_value(h.vt IGNORE NULLS) OVER w AS vt,
                last_value(h.vq IGNORE NULLS) OVER w AS vq, last_value(h.rt IGNORE NULLS) OVER w AS rt, last_value(h.rq IGNORE NULLS) OVER w AS rq,
                last_value(h.fee_bps IGNORE NULLS) OVER w AS fee_bps, last_value(h.creator_bps IGNORE NULLS) OVER w AS creator_bps
-        FROM curve_targets kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
+        FROM kt_b kt LEFT JOIN hit h ON h.key = kt.key AND h.target = kt.target
         WINDOW w AS (PARTITION BY kt.key ORDER BY kt.target ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
-      SELECT * FROM filled WHERE slot IS NOT NULL""")
+      SELECT * FROM filled WHERE slot IS NOT NULL"""
+    _per_bucket(con, "curve_at", curve_at_sql, nb, "curve_at (curve legs ASOF targets)")
+    con.execute("DROP TABLE pool_legs; DROP TABLE curve_legs")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE venue_last AS
       SELECT key, max(slot) AS last_slot FROM (
@@ -228,47 +278,75 @@ def match_states(con, lo, hi):
         UNION ALL
         SELECT c.mint, c.slot FROM curve c SEMI JOIN (SELECT key FROM curve_targets) k ON k.key = c.mint WHERE c.slot BETWEEN {lo} AND {hi})
       GROUP BY key""")
-    return (con.execute("SELECT count(*) FROM pool_at").fetchone()[0], con.execute("SELECT count(*) FROM curve_at").fetchone()[0])
+    progress("venue_last", _count(con, "venue_last"))
+    return (_count(con, "pool_at"), _count(con, "curve_at"))
 
 
 def horizon_slots(ms_per_slot, h_ms):
     return int(math.ceil(h_ms / ms_per_slot))
 
 
+def ms_case(clock, slot_sql):
+    """SQL: the clock's ms per slot of the epoch of `slot_sql` (Clock.ms_per_slot: the epoch's value, else the last
+    measured earlier epoch, else REF_MS), as a CASE over the measured epochs."""
+    per_epoch = clock.per_epoch if clock and clock.per_epoch else {}
+    if not per_epoch:
+        return repr(REF_MS)
+    eps = sorted(per_epoch)
+    # epoch e takes per_epoch[e]; an unmeasured epoch takes the last measured one before it (REF_MS below the first)
+    parts = [f"WHEN ({slot_sql}) // {EPOCH} < {eps[0]} THEN {REF_MS!r}"]
+    for i, e in enumerate(eps):
+        nxt = eps[i + 1] if i + 1 < len(eps) else None
+        cond = f"({slot_sql}) // {EPOCH} < {nxt}" if nxt is not None else "true"
+        parts.append(f"WHEN {cond} THEN {per_epoch[e]!r}")
+    return "CASE " + " ".join(parts) + " END"
+
+
 def build_targets(con, clock, end_slot):
-    """signal x d x (entry, horizons) -> target slot; the entry is horizon '' at t + d."""
-    rows = []
-    for sid, t in con.execute("SELECT sid, t FROM sig").fetchall():
-        for d in DELAYS:
-            entry = t + d
-            ms = clock.ms_per_slot(entry)
-            rows.append((sid, d, "", 0, entry))
-            for name, h_ms in HORIZONS_MS:
-                rows.append((sid, d, name, h_ms, entry + horizon_slots(ms, h_ms)))
-    con.execute("CREATE OR REPLACE TEMP TABLE targets (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT)")
-    if rows:
-        con.executemany("INSERT INTO targets VALUES (?, ?, ?, ?, ?)", rows)
-    return len(rows)
+    """signal x d x (entry, horizons) -> target slot; the entry is horizon '' at t + d. In SQL (the Python
+    executemany took 100 s per 190k rows on the NAS): the same arithmetic as horizon_slots, ms of the entry
+    slot's epoch, ceil(h_ms / ms)."""
+    hz = "('', 0), " + ", ".join(f"('{n}', {h})" for n, h in HORIZONS_MS)
+    ds = ", ".join(str(d) for d in DELAYS)
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE targets AS
+      SELECT s.sid::BIGINT AS sid, d.d::INTEGER AS d, hz.h::VARCHAR AS h, hz.h_ms::BIGINT AS h_ms,
+             (s.t + d.d + CASE WHEN hz.h_ms = 0 THEN 0 ELSE ceil(hz.h_ms / ({ms_case(clock, 's.t + d.d')}))::BIGINT END)::BIGINT AS target
+      FROM sig s, (SELECT unnest([{ds}]) AS d) d, (SELECT * FROM (VALUES {hz}) v(h, h_ms)) hz""")
+    n = _count(con, "targets")
+    progress("targets", n)
+    return n
 
 
 def build_matched(con, end_slot):
     """targets x signals with the venue state at each target (pool_at / curve_at), the migration pool's state for
-    curve signals, and the cut flag (past the store end or the venue's last leg)."""
+    curve signals, and the cut flag (past the store end or the venue's last leg). Two steps of pure equi-joins:
+    the state key per venue is computed first (NULL where the venue does not apply), so every state join is a
+    hash join (the f7rev run spent 15,901 of 16,300 s in one query whose LEFT JOINs carried `s.venue = ...`
+    beside the key match)."""
     con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE matched AS
-      SELECT tg.sid, tg.d, tg.h, tg.h_ms, tg.target, s.venue, s.orientation, s.key,
-             ps.slot AS p_slot, ps.b, ps.e, ps.virt, ps.lp_bps, ps.protocol_bps, ps.creator_bps, ps.cashback_bps,
-             cs.slot AS c_slot, cs.vt, cs.vq, cs.rt, cs.rq, cs.fee_bps AS c_fee_bps, cs.creator_bps AS c_creator_bps,
-             gp.orientation AS g_orientation, gs.slot AS g_slot, gs.b AS g_b, gs.e AS g_e, gs.virt AS g_virt, gs.lp_bps AS g_lp_bps,
-             gs.protocol_bps AS g_protocol_bps, gs.creator_bps AS g_creator_bps, gs.cashback_bps AS g_cashback_bps,
+      CREATE OR REPLACE TEMP TABLE tsig AS
+      SELECT tg.sid, tg.d, tg.h, tg.h_ms, tg.target, s.venue, s.orientation, s.key, gp.orientation AS g_orientation,
+             CASE WHEN s.venue = 'pool' THEN s.key END AS pkey, CASE WHEN s.venue = 'curve' THEN s.key END AS ckey,
+             CASE WHEN s.venue = 'curve' THEN gp.pool END AS gkey,
              (tg.target >= {end_slot} OR tg.target > greatest(vl.last_slot, COALESCE(gl.last_slot, 0))) AS cut
       FROM targets tg JOIN sig s ON s.sid = tg.sid
       LEFT JOIN venue_last vl ON vl.key = s.key
-      LEFT JOIN grad_pool gp ON s.venue = 'curve' AND gp.mint = s.key
-      LEFT JOIN venue_last gl ON gl.key = gp.pool
-      LEFT JOIN pool_at ps ON s.venue = 'pool' AND ps.key = s.key AND ps.target = tg.target
-      LEFT JOIN curve_at cs ON s.venue = 'curve' AND cs.key = s.key AND cs.target = tg.target
-      LEFT JOIN pool_at gs ON s.venue = 'curve' AND gs.key = gp.pool AND gs.target = tg.target""")
+      LEFT JOIN grad_pool gp ON gp.mint = s.key AND s.venue = 'curve'
+      LEFT JOIN venue_last gl ON gl.key = gp.pool""")
+    con.execute("""
+      CREATE OR REPLACE TEMP TABLE matched AS
+      SELECT x.sid, x.d, x.h, x.h_ms, x.target, x.venue, x.orientation, x.key,
+             ps.slot AS p_slot, ps.b, ps.e, ps.virt, ps.lp_bps, ps.protocol_bps, ps.creator_bps, ps.cashback_bps,
+             cs.slot AS c_slot, cs.vt, cs.vq, cs.rt, cs.rq, cs.fee_bps AS c_fee_bps, cs.creator_bps AS c_creator_bps,
+             x.g_orientation, gs.slot AS g_slot, gs.b AS g_b, gs.e AS g_e, gs.virt AS g_virt, gs.lp_bps AS g_lp_bps,
+             gs.protocol_bps AS g_protocol_bps, gs.creator_bps AS g_creator_bps, gs.cashback_bps AS g_cashback_bps, x.cut
+      FROM tsig x
+      LEFT JOIN pool_at ps ON ps.key = x.pkey AND ps.target = x.target
+      LEFT JOIN curve_at cs ON cs.key = x.ckey AND cs.target = x.target
+      LEFT JOIN pool_at gs ON gs.key = x.gkey AND gs.target = x.target""")
+    con.execute("DROP TABLE tsig")
+    progress("matched", _count(con, "matched"))
 
 
 # --- round trips with the engine -----------------------------------------------------------------------
@@ -337,15 +415,35 @@ def sell(venue, orientation, r, tokens):
     return 0 if f is None else f.trader_quote  # rev_sell_token already puts the WSOL received in trader_quote
 
 
-def round_trips(con, per_order, size=SIZE):
-    """Rows (sid, d, h, h_ms, target, cut, mid, gross, net, impact_entry) from the matched states."""
+PROGRESS_ROWS = 500_000
+
+
+MK_COLS = ("sid", "d", "h", "h_ms", "target", "cut", "mid", "gross", "net", "impact")
+MK_TYPES = (pa.int64(), pa.int32(), pa.string(), pa.int64(), pa.int64(), pa.bool_(), pa.float64(), pa.float64(), pa.float64(), pa.float64())
+FLUSH_ROWS = 1_000_000
+
+
+def _flush(writer, rows):
+    """One Arrow batch of `rows` to the mk parquet (a DuckDB insert here would replace the connection's pending
+    matched cursor; executemany took 120 s per 190k rows on the NAS)."""
+    writer.write_table(pa.table({c: pa.array([r[i] for r in rows], type=ty) for i, (c, ty) in enumerate(zip(MK_COLS, MK_TYPES))}))
+
+
+def round_trips(con, per_order, mk_path, size=SIZE):
+    """Writes the mk parquet (sid, d, h, h_ms, target, cut, mid, gross, net, impact_entry) from the matched
+    states, in chunks of FLUSH_ROWS (the full families-v2 run has ~30M rows: never all of them as Python objects);
+    returns the row count."""
     global V
     if V is None:
         V, _ = engine()
     cols = [c[0] for c in con.execute("SELECT * FROM matched LIMIT 0").description]
     out = []
+    n = 0
     entry = {}
+    writer = pq.ParquetWriter(mk_path, pa.schema(list(zip(MK_COLS, MK_TYPES))))
     cur = con.execute("SELECT * FROM matched ORDER BY sid, d, h_ms")
+    progress("matched sorted (first fetch)", 0)
+    t_loop = time.time()
 
     def rows():  # chunked: the matched table of a full run has millions of wide rows
         while True:
@@ -355,6 +453,13 @@ def round_trips(con, per_order, size=SIZE):
             yield from chunk
 
     for row in rows():
+        if n and n % PROGRESS_ROWS == 0:
+            el = time.time() - t_loop
+            progress("round trips", n, f"{n / el:,.0f} rows/s")
+        if len(out) >= FLUSH_ROWS:
+            _flush(writer, out)
+            out = []
+        n += 1
         r = dict(zip(cols, row))
         venue, ori = r["venue"], r["orientation"]
         m = mid(venue, ori, r)
@@ -362,7 +467,7 @@ def round_trips(con, per_order, size=SIZE):
         if r["h"] == "":
             tokens = buy(venue, ori, r, size) if m is not None else None
             impact = (size / tokens) / m - 1 if tokens and m else None  # price paid per token over the mid
-            entry[k] = (m, tokens, impact)
+            entry = {k: (m, tokens, impact)}  # the rows come ordered by (sid, d, h_ms): only the current entry is needed
             out.append((r["sid"], r["d"], "", 0, r["target"], bool(r["cut"]), m, None, None, impact))
             continue
         m0, tokens, impact = entry.get(k, (None, None, None))
@@ -373,12 +478,18 @@ def round_trips(con, per_order, size=SIZE):
             if back is not None:
                 net = back / (size + 2 * per_order) - 1
         out.append((r["sid"], r["d"], r["h"], r["h_ms"], r["target"], bool(r["cut"]), m, gross, net, impact))
-    return out
+    _flush(writer, out)
+    writer.close()
+    el = time.time() - t_loop
+    progress("round trips", n, f"{n / el:,.0f} rows/s" if el > 0 else "")
+    return n
 
 
 def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS):
     import yaml
     t0 = time.time()
+    _T0[0] = t0
+    PHASES.clear()
     mem = os.environ.get("LAB_WALLETS_MEMORY", "1GB")  # common.connect defaults to 1 GB: the NAS run died in the last join at 953 MiB
     con = connect(store, memory=mem) if store else connect(memory=mem)
     clock = Clock.from_store(con)
@@ -395,18 +506,24 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     n_targets = build_targets(con, clock, end_slot)
     n_pool, n_curve = match_states(con, *slot_bounds(con, clock))
     build_matched(con, end_slot)
-    rows = round_trips(con, per_order)
-    con.execute("CREATE OR REPLACE TEMP TABLE mk (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT, cut BOOLEAN, mid DOUBLE, gross DOUBLE, net DOUBLE, impact DOUBLE)")
-    con.executemany("INSERT INTO mk VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    table = con.execute("""
-      SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.ms_per_slot, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
-             m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact
-      FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms""").fetch_arrow_table()
     os.makedirs(out_dir, exist_ok=True)
-    pq.write_table(table, os.path.join(out_dir, f"markout-{run_name}.parquet"))
+    out_path = os.path.join(out_dir, f"markout-{run_name}.parquet")
+    mk_path = out_path + ".mk.tmp"
+    n_rows = round_trips(con, per_order, mk_path)
+    con.execute(f"CREATE OR REPLACE TEMP TABLE mk AS SELECT * FROM read_parquet('{mk_path}')")
+    os.remove(mk_path)
+    progress("mk insert", n_rows)
+    con.execute(f"""
+      COPY (
+        SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.ms_per_slot, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
+               m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact
+        FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms
+      ) TO '{out_path}' (FORMAT PARQUET)""")  # streamed by DuckDB: the full table is never an Arrow table in Python
+    progress("parquet written", n_rows)
     info = {"run": run_name, "parts": parts_dir, "families": families, "slots": [lo, hi], "signals": n_sig, "pool_states": n_pool,
-            "curve_states": n_curve, "states": "at target slots only", "targets": n_targets, "rows": len(rows), "size_sol": SIZE / SOL, "per_order_lamports": per_order,
-            "delays": list(DELAYS), "horizons": dict(HORIZONS_MS), "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
+            "curve_states": n_curve, "states": "at target slots only", "buckets": buckets(), "targets": n_targets, "rows": n_rows, "size_sol": SIZE / SOL,
+            "per_order_lamports": per_order, "delays": list(DELAYS), "horizons": dict(HORIZONS_MS), "commit": git_commit(),
+            "seconds": round(time.time() - t0, 1), "phases_seconds": dict(PHASES)}
     with open(os.path.join(out_dir, f"run-markout-{run_name}.json"), "w") as f:
         json.dump(info, f, indent=1)
     return info

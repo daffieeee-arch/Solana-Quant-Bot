@@ -24,5 +24,11 @@ serde_json = "1"
 hex = "0.4"
 clickhouse = "0.15"
 
+# Alpenglow (epoch 1064): VATDebit rewards (proto type 6) fail upstream's convert_proto_rewards, and
+# with it the whole block. A vendored copy of the pinned jetstreamer-firehose skips unknown reward
+# types and counts them (../vendor/jetstreamer-firehose/VENDORED.md, upstream anza-xyz/jetstreamer#124).
+[patch."https://github.com/anza-xyz/jetstreamer"]
+jetstreamer-firehose = { path = "../vendor/jetstreamer-firehose" }
+
 [profile.release]
 debug = 0

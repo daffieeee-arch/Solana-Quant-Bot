@@ -3558,7 +3558,6 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jetstreamer-firehose"
 version = "0.7.0"
-source = "git+https://github.com/anza-xyz/jetstreamer?rev=1f9d30600fb479acdd5eb956ea2e19455c903590#1f9d30600fb479acdd5eb956ea2e19455c903590"
 dependencies = [
  "ahash 0.8.12",
  "base64 0.23.1",

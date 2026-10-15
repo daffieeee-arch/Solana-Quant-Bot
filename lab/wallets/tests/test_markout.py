@@ -81,11 +81,16 @@ def _parts(path):
     pq.write_table(pa.Table.from_pylist(rows), os.path.join(path, "part-0.parquet"))
 
 
-def test_markouts_on_the_mini_store(tmp_path):
+def test_markouts_on_the_mini_store(tmp_path, capfd):
     _store(tmp_path / "s.duckdb")
     _parts(str(tmp_path / "parts"))
     info = markout.run(str(tmp_path / "parts"), "t", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
     assert info["signals"] == 5 and info["pool_states"] > 0 and info["curve_states"] > 0  # states at the target slots only
+    # one timed progress line per phase on stderr (the NAS log must not stay empty), and the phases in the run json
+    err = capfd.readouterr().err
+    for phase in ("signals", "targets", "pool_at", "curve_at", "matched", "round trips", "parquet written"):
+        assert phase in err and phase.split(" (")[0] in " ".join(info["phases_seconds"]), phase
+    assert err.index("signals") < err.index("pool_at") < err.index("matched") < err.index("round trips")
     con = duckdb.connect()
     rows = con.execute(f"SELECT * FROM '{tmp_path / 'out' / 'markout-t.parquet'}'").fetchall()
     cols = [c[0] for c in con.description]
@@ -131,6 +136,21 @@ def test_markouts_on_the_mini_store(tmp_path):
     assert n2["ref_mint"] == "MR" and n2["ref_t"] == B and n2["farm"] == "n/a"
 
 
+def test_buckets_do_not_change_the_markouts(tmp_path, monkeypatch, capfd):
+    """The venue-state match per key-hash bucket (LAB_MARKOUT_BUCKETS, the NAS setting for the big runs) and a
+    one-row flush of the round trips give the same parquet as the unbucketed run."""
+    _store(tmp_path / "s.duckdb")
+    _parts(str(tmp_path / "parts"))
+    markout.run(str(tmp_path / "parts"), "one", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
+    monkeypatch.setenv("LAB_MARKOUT_BUCKETS", "3")
+    monkeypatch.setattr(markout, "FLUSH_ROWS", 7)
+    info = markout.run(str(tmp_path / "parts"), "three", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
+    assert info["buckets"] == 3 and "bucket 3/3" in capfd.readouterr().err
+    con = duckdb.connect()
+    one, three = (con.execute(f"SELECT * FROM '{tmp_path / 'out' / f'markout-{n}.parquet'}' ORDER BY ALL").fetchall() for n in ("one", "three"))
+    assert len(one) == 5 * 2 * 8 and one == three
+
+
 def test_guard_refuses_the_holdout(tmp_path):
     with pytest.raises(ValueError):
         markout.guard(markout.__dict__["guard"].__globals__["HOLDOUT_START"] + 1)
@@ -138,3 +158,24 @@ def test_guard_refuses_the_holdout(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_sql_targets_equal_the_python_formula_across_an_epoch_boundary():
+    """build_targets (SQL) reproduces entry + ceil(h_ms / ms) with the ms of the entry slot's epoch, also when t + d
+    crosses into the next epoch and for an epoch the clock has not measured (last earlier epoch)."""
+    from wallets.common import EPOCH_SLOTS, Clock
+    con = duckdb.connect()
+    clock = Clock({1036: 316.4, 1037: 267.1})  # 1038 unmeasured -> 267.1; 1035 -> REF_MS
+    ts = [1035 * EPOCH_SLOTS + 5, 1036 * EPOCH_SLOTS + 10, 1037 * EPOCH_SLOTS - 2, 1037 * EPOCH_SLOTS - 1, 1037 * EPOCH_SLOTS + 3, 1038 * EPOCH_SLOTS + 7]
+    con.execute("CREATE TEMP TABLE sig AS SELECT * FROM (VALUES " + ", ".join(f"({i + 1}, {t})" for i, t in enumerate(ts)) + ") v(sid, t)")
+    n = markout.build_targets(con, clock, 10**12)
+    got = {(r[0], r[1], r[2]): r[4] for r in con.execute("SELECT sid, d, h, h_ms, target FROM targets").fetchall()}
+    want = {}
+    for sid, t in enumerate(ts, 1):
+        for d in markout.DELAYS:
+            entry = t + d
+            ms = clock.ms_per_slot(entry)
+            want[(sid, d, "")] = entry
+            for name, h_ms in markout.HORIZONS_MS:
+                want[(sid, d, name)] = entry + markout.horizon_slots(ms, h_ms)
+    assert n == len(want) == len(got) and got == want

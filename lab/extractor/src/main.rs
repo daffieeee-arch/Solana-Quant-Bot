@@ -75,6 +75,13 @@ fn main() -> Result<()> {
     let coverage = Arc::new(Coverage::new(args.start, args.end));
     let plugin = LabPlugin::new(sink.clone(), coverage.clone())?;
     let counters = plugin.counters.clone();
+    // The token transfer tables (LAB_TRANSFERS=1): recorded in the manifest before the plugin moves.
+    let transfers = plugin.transfers.as_ref().map(|t| {
+        serde_json::json!({"pump_mints": t.n_mints(), "pump_mints_file": t.mints_file, "funding_min_lamports": extract::FUNDING_MIN_LAMPORTS,
+                           "funding_receiver": "wallet-v2: on the curve, no token account and no System data or owner in the tx, 0 SOL before and > 0 after (failed tx: 0 before)",
+                           "spec": "spec-token-transfers-2026-10-15.md v3 (sha256 611a6327)"})
+    });
+    let learning = plugin.transfers.clone();
     let fatal = plugin.fatal.clone();
 
     let started = Instant::now();
@@ -90,6 +97,18 @@ fn main() -> Result<()> {
     let result = runtime.block_on(Arc::new(runner).run(args.start..args.end, false));
     let elapsed = started.elapsed().as_secs_f64();
     let tables = sink.finish();
+    // The mints the pump.fun curve's events taught this run (no suffix, not in LAB_PUMP_MINTS), one per
+    // line: the next chunk adds them to its LAB_PUMP_MINTS. Written before the manifest.
+    let learned = match &learning {
+        Some(t) => {
+            let mints = t.learned_mints();
+            let tmp = args.out.join("._learned_mints.txt.tmp");
+            std::fs::write(&tmp, mints.iter().map(|m| format!("{m}\n")).collect::<String>())?;
+            std::fs::rename(&tmp, args.out.join("_learned_mints.txt"))?;
+            Some(mints.len())
+        }
+        None => None,
+    };
 
     // The firehose does not report skipped slots at the edges of a thread's range. A slot the
     // epoch's slot index does not contain was skipped on chain, so it is not missing data.
@@ -139,6 +158,11 @@ fn main() -> Result<()> {
         // since ix_accounts; earlier chunks do not have them).
         "event_context": extract::EVENT_CONTEXT.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
         "ix_accounts_json": std::env::var("LAB_IX_ACCOUNTS_JSON").map_or(true, |v| v != "0"),
+        "transfers": transfers.map(|mut v| {
+            v["learned_mints"] = serde_json::json!(learned);
+            v["learned_mints_file"] = serde_json::json!("_learned_mints.txt");
+            v
+        }),
         "error": result.as_ref().err().map(|e| e.to_string()),
         "sink_error": tables.as_ref().err().map(|e| format!("{e:#}")),
         "rows": tables.as_ref().ok(),
@@ -154,6 +178,8 @@ fn main() -> Result<()> {
             "firehose_errors": c(&counters.firehose_errors),
             "http_429": c(&counters.http_429),
             "missing_meta": c(&counters.missing_meta),
+            // Rewards of a type the firehose does not know (Alpenglow's VATDebit): skipped, not fatal.
+            "rewards_unknown_type_skipped": c(&jetstreamer_firehose::firehose::UNKNOWN_REWARD_TYPES_SKIPPED),
         },
         "coverage": {
             "missing_slots": missing_slots,
