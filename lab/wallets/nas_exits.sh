@@ -4,7 +4,7 @@
 #
 #   PARTS=$DATA/backtests/exits-dev-1033-1046-<engine>/parts bash lab/wallets/nas_exits.sh
 #
-# Tunables (env): PARTS (required), OUT_DIR (default $OUT/exits-v1), BASELINE (tp4_T600), BOOT (10000), MEMORY (DuckDB),
+# Tunables (env): PARTS (required), OUT_DIR (default $OUT/exits-v1), FAMILIES (F7; spec F long grid: F7,M1,M1E,M1P), BASELINE (tp4_T600), BOOT (10000), MEMORY (DuckDB),
 # CFG (week2-defaults.yaml), LAB_ENGINE (the run's engine dir: its costs.settle_sql is used when set).
 set -euo pipefail
 
@@ -24,7 +24,7 @@ log() { echo "$(date +%FT%T) $*" | tee -a "$LOG/nas_exits.log"; }
 log "start repo=$REPO commit=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || cat "$REPO/COMMIT" 2>/dev/null || echo ?) parts=$PARTS out=$EX engine=${LAB_ENGINE:-repo} memory=$LAB_WALLETS_MEMORY"
 [ -d "$PARTS" ] || { log "no parts at $PARTS"; exit 1; }
 log "report (boot ${BOOT:-10000})"
-nice -n 10 "$PY" -u -m wallets.exits_report --parts "$PARTS" --baseline "${BASELINE:-tp4_T600}" --cfg "$CFG" --boot "${BOOT:-10000}" --out "$EX/exits.md" > "$LOG/report.log" 2>&1 || { log "report FAILED (see $LOG/report.log)"; exit 1; }
+nice -n 10 "$PY" -u -m wallets.exits_report --parts "$PARTS" --families "${FAMILIES:-F7}" --baseline "${BASELINE:-tp4_T600}" --cfg "$CFG" --boot "${BOOT:-10000}" --out "$EX/exits.md" > "$LOG/report.log" 2>&1 || { log "report FAILED (see $LOG/report.log)"; exit 1; }
 log "report ok: $(tail -1 "$LOG/report.log" | cut -c1-200)"
 # DSR / PBO over every trial of the grid (variant x d x farm; the 9 existing variants included): the N of spec E §1
 log "overfit (all trials)"

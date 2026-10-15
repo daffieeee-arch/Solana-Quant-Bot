@@ -71,3 +71,63 @@ def test_paired_on_common_triggers_and_bar(tmp_path):
     # the bar: Δ CI > 0 at d = 1 and d = 2 and the empty share within 2 points -> clearly better on dev
     assert "| hold60 | yes | yes | **clearly better on dev** |" in md and info["passed"] == ["hold60"]
     assert "| hold60 | 30 | 0% | 100% |" in md    # exit reasons: all 'time'
+
+
+def _row_long(family, variant, i, day, ret, peak_mult, d=1, segment="pool_normal"):
+    """A long-grid position (engine fc4173c+): peak_mark = the gross mark at the peak; here cost * peak_mult."""
+    r = _row(variant, i, day, ret, d, farm="organic")
+    r.update({"family": family, "segment": segment, "peak_mark": int(r["cost"] * peak_mult), "peak_slot": r["entry_slot"] + 10,
+              "exit_reason": "trailing_stop" if variant.endswith("trail20") else "time"})
+    return r
+
+
+def _parts_long(path):
+    rows = []
+    for i in range(40):
+        day = DAYS[i % 4]
+        # M1 k2: the reference k2_trail20 exits early on every trigger; k2_trail30 holds longer: two x5 runners captured
+        # (+400 %), one x10 runner missed (sold at -20 % after a x10 peak), one drain, the rest +1 pt vs the reference
+        rows.append(_row_long("M1", "k2_trail20", i, day, 0.02, 1.5))
+        if i == 0 or i == 1:
+            rows.append(_row_long("M1", "k2_trail30", i, day, 4.0, 6.0))
+        elif i == 2:
+            rows.append(_row_long("M1", "k2_trail30", i, day, -0.2, 12.0))
+        elif i == 3:
+            rows.append(_row_long("M1", "k2_trail30", i, day, -1.0, 1.1))
+        else:
+            rows.append(_row_long("M1", "k2_trail30", i, day, 0.03, 1.6))
+        # F7 long: trail30_H6 against tp4_T600 (the F7 reference), reversed pools
+        rows.append(_row_long("F7", "tp4_T600", i, day, 0.02, 1.2, segment="pool_reversed"))
+        rows.append(_row_long("F7", "trail30_H6", i, day, 0.05 if i % 5 else -1.0, 2.0, segment="pool_reversed"))
+    os.makedirs(path)
+    pq.write_table(pa.Table.from_pylist(rows), os.path.join(path, "part-0.parquet"))
+
+
+def test_long_grid_families_and_runners(tmp_path):
+    _parts_long(str(tmp_path / "parts"))
+    with open(tmp_path / "cfg.yaml", "w") as f:
+        yaml.safe_dump(CFG, f)
+    out = tmp_path / "exits.md"
+    exits_report.main(["--parts", str(tmp_path / "parts"), "--families", "F7,M1", "--cfg", str(tmp_path / "cfg.yaml"), "--boot", "200", "--out", str(out)])
+    md = out.read_text()
+    info = json.load(open(tmp_path / "exits.json"))
+    assert info["positions"] == 160 and info["variants"] == 4 and info["families"] == ["F7", "M1"]
+    def cells(prefix, block):
+        blk = md.split(block)[1]
+        return [c.strip() for c in next(ln for ln in blk.splitlines() if ln.startswith(prefix)).split("|")[1:-1]]
+    # M1: k2_trail30 is paired against k2_trail20 (its prefix + _trail20): 40 common triggers, Δ on them
+    c = cells("| k2_trail30 | 1 | all |", "### days 10-18 (M1 pool_normal)")
+    assert c[14] == "40" and c[19] == "0 / 0"
+    # runners: 3 of 40 reached x5 (two captured, the x10 one not: -20 % < 50 % of its net peak); 1 of 40 reached x10, captured 0 %
+    assert c[20] == "7.5% / 67%" and c[21] == "2.5% / 0%"
+    # Σ SOL / day split: runners / drains / collapses / rest; the drain is one position of -0.5 SOL over 4 days
+    r, dr, co, rest = [float(x) for x in c[22].split(" / ")]
+    assert abs(dr - (-0.5 / 4)) < 0.01 and co == 0 and r > 0 and rest > 0
+    # the reference row carries no pairing cells but the runner cells
+    ref = cells("| k2_trail20 | 1 | all |", "### days 10-18 (M1 pool_normal)")
+    assert ref[14] == "–" and ref[20] == "0.0% / –"
+    # F7 keeps tp4_T600 as the reference; trail30_H6 has 8 drains (empty 20 %) so it fails the spec E bar at d = 1
+    f = cells("| trail30_H6 | 1 | all |", "### days 10-18 (F7 pool_reversed)")
+    assert f[14] == "40" and f[8] == "20.0%"
+    assert "| trail30_H6 | no | no | no |" in md and info["passed"] == []
+    assert "### Exit reasons (days 10-18, farm all, d = 1) (M1 pool_normal)" in md
