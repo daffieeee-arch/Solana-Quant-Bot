@@ -6,8 +6,11 @@ Per variant x d x farm, days 10-18 binding (days 1-9 and all days beside, regime
   plain mean, 95 % CI of the trimmed mean over a day bootstrap; the paired Δ against the baseline per trigger on
   the COMMON triggers only (busy_until skips later triggers of a pool while a position is open, so a longer hold has
   fewer positions: the dropped triggers are counted per variant, and the baseline's own net on the common set is
-  shown next to the variant's); the empty share (net <= -99 %: sold into a drained pool); the tail (p5, p95, worst
-  day, share > 0, payoff); the exit reasons; the median hold in seconds.
+  shown next to the variant's); the total net P&L in SOL per day of the block (days without a trade count 0: a longer
+  hold fills fewer triggers per pool, so a higher net per trade can still sum lower per day); the empty share
+  (net <= -99 %: sold into a drained pool); the tail (p5, p95, worst day, share > 0, payoff); the exit reasons; the
+  median hold in seconds. The parts carry farm = 'flagged' and 'organic' (K3's filter); farm 'all' is their union
+  (K3's farm 'alle'), added by load() when the parts do not carry it, and paired as a group of its own.
 Bar (spec §2, fixed): Δ > 0 with CI > 0 at d = 1 AND d = 2 on days 10-18, farm all, and the empty share at most the
 baseline's + 2 points. DSR / PBO over all trials: wallets.overfit on the same parts (nas_exits.sh runs it).
 
@@ -51,7 +54,7 @@ def load(con, parts_dir, cfg_path, baseline=BASELINE):
     costs = _costs()
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
-    _, ret = costs.settle_sql(costs.Scenario.from_cfg("base", cfg))
+    pnl, ret = costs.settle_sql(costs.Scenario.from_cfg("base", cfg))
     files = sorted(glob.glob(os.path.join(parts_dir, "*.parquet")))
     if not files:
         raise SystemExit(f"no parquet parts in {parts_dir}")
@@ -61,32 +64,37 @@ def load(con, parts_dir, cfg_path, baseline=BASELINE):
     farm_col = "COALESCE(farm, 'organic')" if "farm" in cols else "'organic'"
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE pos AS
-      SELECT variant, d, {farm_col} AS farm, day, regime, mint, t, pool, exit_reason, {ret} AS ret,
+      SELECT variant, d, {farm_col} AS farm, day, regime, mint, t, pool, exit_reason, {ret} AS ret, {pnl} AS pnl,
              (exit_slot - entry_slot) AS hold_slots, CASE WHEN d > 0 THEN d_ms / d END AS ms_per_slot
       FROM read_parquet({lit}, union_by_name = true)
       WHERE family = '{FAMILY}' AND segment = '{SEGMENT}' AND NOT skipped AND NOT entry_failed AND size_sol = 0.5 AND q = 0.5 {overlay}""")
+    n = con.execute("SELECT count(*), count(DISTINCT variant) FROM pos").fetchone()   # the parts' positions, before the union
+    # farm 'all' = the union of the farm groups (a trigger belongs to one pool, so to one group): K3's farm 'alle'
+    if not con.execute("SELECT count(*) FROM pos WHERE farm = 'all'").fetchone()[0]:
+        con.execute("INSERT INTO pos SELECT variant, d, 'all', day, regime, mint, t, pool, exit_reason, ret, pnl, hold_slots, ms_per_slot FROM pos")
     # the baseline's positions, joined per trigger (mint, t, d, farm): the common set and the dropped triggers
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE pair AS
       SELECT v.variant, v.d, v.farm, v.day, v.regime, v.mint, v.t, v.ret AS ret_v, b.ret AS ret_b, v.ret - b.ret AS delta
       FROM pos v JOIN pos b ON b.variant = '{baseline}' AND b.mint = v.mint AND b.t = v.t AND b.d = v.d AND b.farm = v.farm
       WHERE v.variant <> '{baseline}'""")
-    n = con.execute("SELECT count(*), count(DISTINCT variant) FROM pos").fetchone()
     print(f"positions {n[0]:,}, variants {n[1]}, paired rows {con.execute('SELECT count(*) FROM pair').fetchone()[0]:,}", file=sys.stderr, flush=True)
     return n
 
 
 def stats(con, variant, d, farm, where, boot):
-    rows = con.execute(f"SELECT ret, day, hold_slots * ms_per_slot / 1000.0 FROM pos WHERE variant = ? AND d = ? AND farm = ? AND {where}", [variant, d, farm]).fetchall()
+    rows = con.execute(f"SELECT ret, day, hold_slots * ms_per_slot / 1000.0, pnl FROM pos WHERE variant = ? AND d = ? AND farm = ? AND {where}", [variant, d, farm]).fetchall()
     if not rows:
         return None
+    block_days = con.execute(f"SELECT count(DISTINCT day) FROM pos WHERE {where}").fetchone()[0]
     r = np.array([x[0] for x in rows]); days = np.array([x[1] for x in rows]); hold = np.array([x[2] for x in rows], dtype=float)
+    sol_day = sum(x[3] for x in rows) / 1e9 / block_days
     lo, hi = day_ci(r, days, boot)
     per_day = {}
     for v, dd in zip(r, days):
         per_day[dd] = per_day.get(dd, 0.0) + v
     wins, losses = r[r > 0], r[r <= 0]
-    return {"n": len(r), "trim": trimmed_mean(r), "mean": float(r.mean()), "lo": lo, "hi": hi, "empty": float((r <= EMPTY).mean()),
+    return {"n": len(r), "trim": trimmed_mean(r), "mean": float(r.mean()), "lo": lo, "hi": hi, "sol_day": sol_day, "empty": float((r <= EMPTY).mean()),
             "p5": float(np.percentile(r, 5)), "p95": float(np.percentile(r, 95)), "worst_day": min(per_day.values()), "pos_share": float((r > 0).mean()),
             "payoff": (float(wins.mean() / -losses.mean()) if len(wins) and len(losses) and losses.mean() < 0 else None),
             "hold_s": float(np.median(hold[~np.isnan(hold)])) if np.isfinite(hold).any() else None, "days": len(per_day)}
@@ -123,8 +131,8 @@ def render(con, info, boot, baseline=BASELINE):
     verdict = {}
     for blk, where in BLOCKS + tuple((f"regime {r}", f"regime = '{r}'") for r in regimes):
         L.append(f"### {blk}\n")
-        L.append(f"| variant | d | farm | n | net trim | 95 % CI (days) | mean | empty | > 0 | p5 / p95 | worst day | payoff | median hold | common n | Δ vs {baseline} (trim) | 95 % CI | variant / {baseline} on common | empty common v / b | dropped v / b |")
-        L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+        L.append(f"| variant | d | farm | n | net trim | 95 % CI (days) | mean | Σ SOL / day | empty | > 0 | p5 / p95 | worst day | payoff | median hold | common n | Δ vs {baseline} (trim) | 95 % CI | variant / {baseline} on common | empty common v / b | dropped v / b |")
+        L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for farm in farms:
             for d in ds:
                 for v in variants:
@@ -132,7 +140,7 @@ def render(con, info, boot, baseline=BASELINE):
                     if s is None:
                         continue
                     row = (f"| {v} | {d} | {farm} | {s['n']:,} | **{fmt(s['trim'], 1, True, True)}** | {ci(s['lo'], s['hi'])} | {fmt(s['mean'], 1, True, True)} | "
-                           f"{fmt(s['empty'], 1, True)} | {fmt(s['pos_share'], 0, True)} | {fmt(s['p5'], 1, True, True)} / {fmt(s['p95'], 1, True, True)} | "
+                           f"{fmt(s['sol_day'], 3, False, True)} | {fmt(s['empty'], 1, True)} | {fmt(s['pos_share'], 0, True)} | {fmt(s['p5'], 1, True, True)} / {fmt(s['p95'], 1, True, True)} | "
                            f"{fmt(s['worst_day'], 2, True, True)} | {fmt(s['payoff'], 2) if s['payoff'] is not None else '–'} | {fmt(s['hold_s'], 1) if s['hold_s'] is not None else '–'} s |")
                     if v == baseline:
                         L.append(row + " – | – | – | – | – | – |")
@@ -169,7 +177,7 @@ def render(con, info, boot, baseline=BASELINE):
             passed.append(v)
         L.append(f"| {v} | {'yes' if vd.get(1) else 'no'} | {'yes' if vd.get(2) else 'no'} | {'**clearly better on dev**' if both else 'no'} |")
     L.append("\nA variant that passes the bar is 'better on dev' only; DSR / PBO over all trials (overfit section) and the hold-out diagnosis decide whether it becomes a second hypothesis before clean-v1 is read.\n")
-    L.append(f"Run: commit {info['commit']}, {info['seconds']} s; parts {info['parts']}.")
+    L.append(f"Run: commit {info['commit']}; parts {info['parts']}.")
     info["passed"] = passed
     return "\n".join(L)
 
@@ -189,8 +197,8 @@ def main(argv=None):
     con.execute(f"SET memory_limit = '{os.environ.get('LAB_WALLETS_MEMORY', '1500MB')}'; SET threads TO {os.environ.get('LAB_WALLETS_THREADS', '2')}")
     n = load(con, a.parts, a.cfg, a.baseline)
     info = {"parts": a.parts, "baseline": a.baseline, "cfg": a.cfg, "boot": a.boot, "positions": n[0], "variants": n[1], "commit": git_commit(), "seconds": None}
-    info["seconds"] = round(time.time() - t0, 1)
     md = render(con, info, a.boot, a.baseline)
+    info["seconds"] = round(time.time() - t0, 1)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, "w") as f:
         f.write(md + "\n")
