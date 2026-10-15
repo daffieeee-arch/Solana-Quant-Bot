@@ -235,3 +235,34 @@ def test_a_dry_run_never_reads_the_clean_data(tmp_path, monkeypatch, meta):
     a = SimpleNamespace(dry_run=True, hypothesis="h", exclusions="e", exclusions_sha256="0" * 64, store=store)
     with pytest.raises(ct.Refused, match="never reads the clean data"):
         ct.run_test(a)
+
+
+def test_failed_entries_cost_in_every_column_and_not_in_the_per_trade_tests(tmp_path):
+    """A failed K3 entry's cost (its net P&L) is in K3|clock and the filter columns, as in the dev
+    columns built the same way; counts and means per filled trade leave it out."""
+    base = {"family": "F7", "segment": "pool_reversed", "variant": "tp4_T600", "size_sol": 0.5, "q": 0.5, "overlay": "none",
+            "farm": "organic", "mint": "M", "day": "2026-10-11", "trigger_trader": "W"}
+    rows = [dict(base, pool="A", t=1, entry_failed=False, skipped=False, pnl_x=10_000_000, ret_x=0.02),
+            dict(base, pool="B", t=2, entry_failed=False, skipped=False, pnl_x=-5_000_000, ret_x=-0.01),
+            dict(base, pool="C", t=3, entry_failed=True, skipped=False, pnl_x=-505_000, ret_x=None),
+            dict(base, pool="D", t=4, entry_failed=False, skipped=True, pnl_x=None, ret_x=None)]
+    con = duckdb.connect()
+    for name, d in (("test", 3), ("matrix", 1)):
+        os.makedirs(tmp_path / name)
+        con.execute("CREATE OR REPLACE TABLE r (family VARCHAR, segment VARCHAR, variant VARCHAR, size_sol DOUBLE, q DOUBLE, overlay VARCHAR, "
+                    "farm VARCHAR, mint VARCHAR, day VARCHAR, trigger_trader VARCHAR, pool VARCHAR, t BIGINT, entry_failed BOOLEAN, "
+                    "skipped BOOLEAN, pnl_x BIGINT, ret_x DOUBLE, d BIGINT)")
+        con.executemany("INSERT INTO r VALUES (" + ", ".join("?" * 17) + ")", [list(r.values()) + [d] for r in rows])
+        con.execute(f"COPY r TO '{tmp_path / name / 'p.parquet'}' (FORMAT parquet)")
+    con.execute("CREATE TABLE f_rt AS SELECT * FROM (VALUES ('A', 1, 'W', false), ('B', 2, 'W', true), ('C', 3, 'W', false)) v(pool, t, trigger_trader, rt_tx)")
+    con.execute("CREATE TABLE f_w (pool VARCHAR, t BIGINT, wash_share DOUBLE)")
+    tg, mg = str(tmp_path / "test" / "*.parquet"), str(tmp_path / "matrix" / "*.parquet")
+    ct.k3_frame(con, tg, mg, "true", "true", "ret_x", "pnl_x")
+    s = ct.k3_series(con)
+    all_rows = (10_000_000 - 5_000_000 - 505_000) / 1e9
+    assert s["K3|clock"]["2026-10-11"] == pytest.approx(all_rows)
+    assert ct._config_series(con, mg, "pnl_x", "true", (1,))[("tp4_T600", 1, "all")]["2026-10-11"] == pytest.approx(all_rows)
+    assert s["K3 zonder rt_tx|d1"]["2026-10-11"] == pytest.approx((10_000_000 - 505_000) / 1e9)  # A and the failed C
+    assert s["K3 zonder rt_tx|d_ms600"] == s["K3 zonder rt_tx|d1"]
+    n, mean = con.execute(f"SELECT count(*), avg(ret) FROM kf WHERE src = 'matrix' AND d = 1 AND NOT rt_tx AND {ct.FILLED}").fetchone()
+    assert (n, mean) == (1, 0.02)  # per filled trade (a4c's check, H1/H2): the failed entry is not a trade
