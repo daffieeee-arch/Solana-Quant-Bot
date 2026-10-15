@@ -72,28 +72,28 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
         raise SystemExit(f"no wallet-day-*.parquet in {money_dir}")
     lit = "[" + ",".join(f"'{f}'" for f in files) + "]"
     kind = "TABLE" if materialize else "VIEW"
-    con.execute(f"CREATE OR REPLACE {kind} wd AS SELECT * FROM read_parquet({lit}, union_by_name = true)")
+    con.execute(f"CREATE OR REPLACE TEMP {kind} wd AS SELECT * FROM read_parquet({lit}, union_by_name = true)")
     cols = [c[0] for c in con.execute("SELECT * FROM wd LIMIT 0").description]
     if "ms_per_slot" not in cols or "regime" not in cols:  # rows from before #231: one 'unknown' regime, holds at the reference ms
         print(f"wallet-day rows without ms_per_slot / regime (run from before the regime columns): regime 'unknown', {REF_MS} ms per slot", file=sys.stderr)
-        con.execute(f"CREATE OR REPLACE {kind} wd AS SELECT *, {REF_MS}::DOUBLE AS ms_per_slot, 'unknown' AS regime FROM read_parquet({lit}, union_by_name = true)")
+        con.execute(f"CREATE OR REPLACE TEMP {kind} wd AS SELECT *, {REF_MS}::DOUBLE AS ms_per_slot, 'unknown' AS regime FROM read_parquet({lit}, union_by_name = true)")
     for name in ("payers", "creators", "venue_flows", "marks", "lp_legs"):
         path = os.path.join(money_dir, name + ".parquet")
         if os.path.exists(path):
-            con.execute(f"CREATE OR REPLACE TABLE {name} AS SELECT * FROM '{path}'")
+            con.execute(f"CREATE OR REPLACE TEMP TABLE {name} AS SELECT * FROM '{path}'")
         elif name == "lp_legs":
-            con.execute("CREATE OR REPLACE TABLE lp_legs (pool VARCHAR, mint VARCHAR, orientation VARCHAR, slot BIGINT, tx_index BIGINT, kind VARCHAR, sol_in BIGINT, depth_pre BIGINT, depth_post BIGINT)")
-    con.execute("CREATE OR REPLACE TABLE wallet_ms AS SELECT wallet, median(ms_per_slot) AS ms FROM wd GROUP BY wallet")
+            con.execute("CREATE OR REPLACE TEMP TABLE lp_legs (pool VARCHAR, mint VARCHAR, orientation VARCHAR, slot BIGINT, tx_index BIGINT, kind VARCHAR, sol_in BIGINT, depth_pre BIGINT, depth_post BIGINT)")
+    con.execute("CREATE OR REPLACE TEMP TABLE wallet_ms AS SELECT wallet, median(ms_per_slot) AS ms FROM wd GROUP BY wallet")
     # label window per wallet
     con.execute(f"""
-      CREATE OR REPLACE TABLE win AS
+      CREATE OR REPLACE TEMP TABLE win AS
       SELECT wallet, first_day,
              CASE WHEN first_day < '{SPLIT_DAY}' THEN '0000' ELSE first_day END AS label_from_excl,
              CASE WHEN first_day < '{SPLIT_DAY}' THEN '{SPLIT_DAY}' ELSE strftime(CAST(first_day AS DATE) + INTERVAL 3 DAY, '%Y-%m-%d') END AS measure_from
       FROM (SELECT wallet, min(day) AS first_day FROM wd WHERE n_legs > 0 GROUP BY wallet)""")
     # the label days: days 1-9, or the two full days after the first day for late wallets
     con.execute("""
-      CREATE OR REPLACE TABLE feat AS
+      CREATE OR REPLACE TEMP TABLE feat AS
       SELECT w.wallet,
              sum(d.n_opened) AS n_positions, count(*) FILTER (WHERE d.n_legs > 0) AS active_days,
              median(d.median_buy_sol) / 1e9 AS median_buy_sol,
@@ -104,10 +104,10 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
       GROUP BY w.wallet""")
     # creators and the fee-payer link (service payers excluded)
     con.execute(f"""
-      CREATE OR REPLACE TABLE service AS
+      CREATE OR REPLACE TEMP TABLE service AS
       SELECT fee_payer FROM payers GROUP BY fee_payer HAVING count(DISTINCT wallet) >= {SERVICE_WALLETS} AND count(DISTINCT mint) >= {SERVICE_MINTS}""")
     con.execute("""
-      CREATE OR REPLACE TABLE creator_set AS
+      CREATE OR REPLACE TEMP TABLE creator_set AS
       SELECT wallet, min(since) AS since, arg_min(how, since) AS how FROM (
         SELECT wallet, day AS since, 'creator' AS how FROM creators
         UNION ALL
@@ -123,21 +123,21 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
     # bundler memberships (cluster events bought into), before the label window's end
     # cluster memberships up to the wallet's label window end (the last traded slot before its measure_from)
     con.execute("""
-      CREATE OR REPLACE TABLE day_cut AS
+      CREATE OR REPLACE TEMP TABLE day_cut AS
       SELECT w.measure_from AS day, (SELECT max(last_slot) FROM marks k WHERE k.day < w.measure_from AND k.traded) AS cutoff
       FROM (SELECT DISTINCT measure_from FROM win) w""")
     if clusters_dir and glob.glob(os.path.join(clusters_dir, "members-*.parquet")):
         mlit = "[" + ",".join(f"'{f}'" for f in sorted(glob.glob(os.path.join(clusters_dir, 'members-*.parquet')))) + "]"
         con.execute(f"""
-          CREATE OR REPLACE TABLE memberships AS
+          CREATE OR REPLACE TEMP TABLE memberships AS
           SELECT e.wallet, count(*) AS n
           FROM (SELECT DISTINCT wallet, window_slot, eid, slot FROM read_parquet({mlit}) WHERE buyer) e
           JOIN win w ON w.wallet = e.wallet JOIN day_cut dc ON dc.day = w.measure_from
           WHERE e.slot < COALESCE(dc.cutoff, 0) GROUP BY e.wallet""")
     else:
-        con.execute("CREATE OR REPLACE TABLE memberships (wallet VARCHAR, n BIGINT)")
+        con.execute("CREATE OR REPLACE TEMP TABLE memberships (wallet VARCHAR, n BIGINT)")
     con.execute(f"""
-      CREATE OR REPLACE TABLE labels AS
+      CREATE OR REPLACE TEMP TABLE labels AS
       SELECT w.wallet, w.measure_from, f.n_positions, f.active_days, f.median_buy_sol, f.snipe_share, f.farmer_share, f.n_pool_legs,
              f.median_hold_slots * wm.ms / 1000.0 AS median_hold_s, COALESCE(m.n, 0) AS memberships,
              c.how AS creator_how, c.since AS creator_since,
@@ -157,11 +157,11 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
       LEFT JOIN wallet_ms wm ON wm.wallet = w.wallet""")
     # measurement rows: days 10-18, from the wallet's measure_from
     con.execute(f"""
-      CREATE OR REPLACE {kind} meas AS
+      CREATE OR REPLACE TEMP {kind} meas AS
       SELECT d.*, l.label FROM wd d JOIN labels l ON l.wallet = d.wallet
       WHERE d.day >= '{SPLIT_DAY}' AND d.day <= '{LAST_DAY}' AND d.day >= l.measure_from""")
     con.execute(f"""
-      CREATE OR REPLACE {kind} meas_all AS
+      CREATE OR REPLACE TEMP {kind} meas_all AS
       SELECT d.*, l.label FROM wd d JOIN labels l ON l.wallet = d.wallet JOIN win w ON w.wallet = d.wallet WHERE d.day > w.label_from_excl""")
     return len(files)
 
