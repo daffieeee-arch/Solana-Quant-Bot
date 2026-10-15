@@ -49,6 +49,12 @@ from .strategies import (
     F6_MAX_HOLD_MS,
     F7_EXIT_GRID,
     F7_GRID,
+    F7_LONG_GRID,
+    M1_FLOW,
+    M1_FLOW_EXIT_MS,
+    M1_LONG_TRAILS,
+    M1FlowExit,
+    m1_long_variant,
     Clock,
     F6Exit,
     FlowIndex,
@@ -231,8 +237,20 @@ def m1x_signals(con, cfg, lo, hi, clock, family):
     return sorted(out, key=lambda x: (x[3], x[1], x[2], x[5]))
 
 
+def grid_set(spec, allowed, every):
+    """A grid option as a set: comma separated names from `allowed`, or "all" (= `every`)."""
+    names = {x for x in str(spec).split(",") if x}
+    if "all" in names:
+        names = (names - {"all"}) | set(every)
+    if not names or names - set(allowed):
+        raise ValueError(f"grid {spec!r}: choose from {sorted(allowed)} or all")
+    return names
+
+
 def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None, slot_range=None,
-                  f7_grid="v1"):
+                  f7_grid="v1", m1_grid="v1"):
+    f7g = grid_set(f7_grid, ("v1", "exits", "long"), ("v1", "exits"))
+    m1g = grid_set(m1_grid, ("v1", "long"), ("v1", "long"))
     lo, hi, _ = store_bounds(con)
     clock = clock or Clock.from_store(con)
     if slot_range:  # dry runs: decisions in [a, b] only, with the burn-in before a and the end guard after b as data
@@ -245,13 +263,14 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
             if segments and ("curve" if venue == "curve" else f"pool_{orientation}") not in segments:
                 continue
             m, pool = sys.intern(m), (sys.intern(pool) if pool else None)
-            for tp, T in (F7_GRID if f7_grid in ("v1", "all") else ()):
+            for tp, T in (F7_GRID if "v1" in f7g else ()):
                 signals.append(Signal("F7", f"tp{int(tp*100)}_T{T}", m, slot, venue, int(depth), (tp, T),
                                       pool=pool, orientation=orientation, trigger=trader,
                                       trigger_farmer=None if tfarmer is None else bool(tfarmer),
                                       flagged=None if flagged is None else bool(flagged)))
-            for kind, x, sl in (F7_EXIT_GRID if f7_grid in ("exits", "all") else ()):  # spec E exits
-                signals.append(Signal("F7", f7_exit_variant(kind, x, sl), m, slot, venue, int(depth), (kind, x, sl),
+            exits = (F7_EXIT_GRID if "exits" in f7g else []) + (F7_LONG_GRID if "long" in f7g else [])
+            for params in exits:  # spec E exits (kind, x, sl) and the long exits (kind, x, sl, cap_ms)
+                signals.append(Signal("F7", f7_exit_variant(*params), m, slot, venue, int(depth), params,
                                       pool=pool, orientation=orientation, trigger=trader,
                                       trigger_farmer=None if tfarmer is None else bool(tfarmer),
                                       flagged=None if flagged is None else bool(flagged)))
@@ -284,19 +303,27 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
     if "M1" in families:
         n_m1 = 0
         for mint, pool, t, depth, k in m1_signals(con, cfg, lo, hi, clock):
-            for kk, trail in M1_GRID:
+            for kk, trail in (M1_GRID if "v1" in m1g else ()):
                 if kk == k:
                     signals.append(Signal("M1", f"k{k}_trail{int(trail * 100)}", sys.intern(mint), t, "pool", int(depth),
                                           (k, trail), pool=sys.intern(pool), orientation="normal"))
                     n_m1 += 1
+            for ex in ((*M1_LONG_TRAILS, M1_FLOW) if "long" in m1g else ()):  # the long exits: trail30/50, flow300
+                signals.append(Signal("M1", m1_long_variant("M1", k, ex), sys.intern(mint), t, "pool", int(depth),
+                                      (k, ex), pool=sys.intern(pool), orientation="normal"))
+                n_m1 += 1
         log(f"M1: {n_m1} signals")
     for fam in ("M1P", "M1E"):
         if fam in families:
             n_x = 0
             for mint, pool, moment, t, depth, k in m1x_signals(con, cfg, lo, hi, clock, fam):
-                for trail in M1X_TRAILS:
+                for trail in (M1X_TRAILS if "v1" in m1g else ()):
                     signals.append(Signal(fam, m1x_variant(fam, moment, k, trail), sys.intern(mint), t, "pool", int(depth or 0),
                                           (k, trail, moment), pool=sys.intern(pool), orientation="normal"))
+                    n_x += 1
+                for ex in ((*M1_LONG_TRAILS, M1_FLOW) if "long" in m1g else ()):
+                    signals.append(Signal(fam, m1_long_variant(fam, k, ex, moment), sys.intern(mint), t, "pool", int(depth or 0),
+                                          (k, ex, moment), pool=sys.intern(pool), orientation="normal"))
                     n_x += 1
             log(f"{fam}: {n_x} signals")
     if "N4" in families:
@@ -362,13 +389,20 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
     return signals
 
 
+def long_cap_ms(s):
+    """The cap of a long F7 exit (params (kind, x, sl, cap_ms)); None for every other signal."""
+    if s.family in ("F7", "N2_F7") and len(s.params) == 4 and isinstance(s.params[0], str):
+        return s.params[3]
+    return None
+
+
 def work_items(signals, clock=None):
     """Group signals per token (curve) or pool into clusters; each cluster has its own load
     window, capped in length so a busy pool never loads more than MAX_WINDOW_MS at once."""
     clock = clock or Clock()
     by_key = defaultdict(list)
-    for s in signals:
-        by_key[(s.venue, s.pool if s.venue == "pool" else s.mint)].append(s)
+    for s in signals:  # the long exits apart (their own window): the other variants' clusters stay as they were
+        by_key[(s.venue, s.pool if s.venue == "pool" else s.mint, long_cap_ms(s))].append(s)
     items = []
     for key, sigs in by_key.items():
         sigs.sort(key=lambda s: s.t)
@@ -384,9 +418,9 @@ def work_items(signals, clock=None):
     def end(s):
         if s.family in ("S1", "N2_S1") and s.params[1] is not None:
             return s.params[1]  # the planned rebalance exit
-        return s.t + clock.slots(MAX_HOLD_MS.get(s.family, ms(4_500)), s.t)
+        return s.t + clock.slots(long_cap_ms(s) or MAX_HOLD_MS.get(s.family, ms(4_500)), s.t)
 
-    for (venue, k), c in items:
+    for (venue, k, _), c in items:
         lo = c[0].t - 300
         hi = max(end(s) for s in c) + clock.slots(WINDOW_MARGIN_MS, c[-1].t)
         out.append((venue, k, lo, hi, c))
@@ -396,7 +430,11 @@ def work_items(signals, clock=None):
 def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None, insiders=None):
     clock = clock or Clock()
     if sig.family in M1_LIKE:
-        rule = M1Exit(sig.params[1], clock.slots(M1_MAX_HOLD_MS, sig.t))
+        if sig.params[1] == M1_FLOW:  # --m1-grid long: flow300 with M1Exit's hard stop, time and O7
+            rule = M1FlowExit(flows if flows is not None else FlowIndex(stream), clock.slots(M1_FLOW_EXIT_MS, sig.t),
+                              clock.slots(M1_MAX_HOLD_MS, sig.t))
+        else:
+            rule = M1Exit(sig.params[1], clock.slots(M1_MAX_HOLD_MS, sig.t))
         return overlay.O7Exit(rule, insiders) if insiders is not None else rule
     if sig.family in ("S1", "N2_S1"):
         size, exit_t = sig.params
@@ -540,8 +578,8 @@ def _work(args):
             continue
         mint = st.mint
         flows = f6_flows(con, key, sigs, hi, clock) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
-        if flows is None and any(sg.family in ("F7", "N2_F7") and isinstance(sg.params[0], str) and sg.params[0] == "flow"
-                                 for sg in sigs):  # spec E flow exits
+        if flows is None and any((sg.family in ("F7", "N2_F7") and isinstance(sg.params[0], str) and sg.params[0] == "flow")
+                                 or (sg.family in M1_LIKE and sg.params[1] == M1_FLOW) for sg in sigs):  # flow exits
             flows = FlowIndex(st)
         ins_cache = {}
         for size_sol in sizes:
@@ -637,7 +675,7 @@ def results_glob(run_dir):
 
 def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
         label="tournament_v1", segments=None, slot_range=None, only=None, decide_range=None, delay_ms=None,
-        variants=None, report=True, f7_grid="v1"):
+        variants=None, report=True, f7_grid="v1", m1_grid="v1"):
     if delay_ms is not None:
         if delay_ms <= 0:
             raise ValueError("delay_ms must be > 0")
@@ -652,7 +690,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     # --range (dry runs) and --decide (final runs, e.g. the hold-out after its warm-up) both limit the
     # decisions to [a, b); only --range marks the run as a dry run.
     signals = build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k, clock, segments, slot_range or decide_range,
-                            f7_grid=f7_grid)
+                            f7_grid=f7_grid, m1_grid=m1_grid)
     con.close()
     if variants:  # --variants: only these variants are simulated (a pre-registered configuration)
         signals = [s for s in signals if s.variant in variants]
@@ -680,7 +718,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con.close()
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
-              "families": families, "sizes_sol": sizes, "delays": delays, "delay_ms": delay_ms, "variants": variants, "f7_grid": f7_grid, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
+              "families": families, "sizes_sol": sizes, "delays": delays, "delay_ms": delay_ms, "variants": variants, "f7_grid": f7_grid, "m1_grid": m1_grid, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "gate_sizes": list(GATE_SIZES), "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k,
               "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0),
@@ -713,8 +751,11 @@ def main():
     ap.add_argument("--delay-ms", type=int, default=None, help="one delay in ms, whole slots of each trigger's epoch (instead of --delays)")
     ap.add_argument("--variants", default="", help="simulate only these signal variants, comma separated (e.g. tp4_T600)")
     ap.add_argument("--no-report", action="store_true", help="write the positions and config.json only")
-    ap.add_argument("--f7-grid", choices=["v1", "exits", "all"], default="v1",
-                    help="F7 variants: v1 = the 9 tp/T (default), exits = spec E's 18 exit rules, all = both")
+    ap.add_argument("--f7-grid", default="v1",
+                    help="F7 variants, comma separated: v1 = the 9 tp/T (default), exits = spec E's 18 exit rules, "
+                         "long = the 6 long exits (trail20/30/50_H6, trail30_H1, flow300_H6[_sl8]); all = v1,exits")
+    ap.add_argument("--m1-grid", default="v1",
+                    help="M1/M1P/M1E variants: v1 = trail20/35 (default), long = trail30/50 and flow300, all = both")
     ap.add_argument("--tau", default="empirical")
     ap.add_argument("--q", default="0.5", help="intra-slot position(s) of our order, comma separated")
     ap.add_argument("--segments", default="", help="F7 only: keep these segments (curve,pool_normal,pool_reversed)")
@@ -736,7 +777,7 @@ def main():
         segments=[x for x in a.segments.split(",") if x] or None,
         slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None, only=a.only,
         decide_range=tuple(int(x) for x in a.decide.split(":")) if a.decide else None, delay_ms=a.delay_ms,
-        variants=[x for x in a.variants.split(",") if x] or None, report=not a.no_report, f7_grid=a.f7_grid)
+        variants=[x for x in a.variants.split(",") if x] or None, report=not a.no_report, f7_grid=a.f7_grid, m1_grid=a.m1_grid)
 
 
 if __name__ == "__main__":
