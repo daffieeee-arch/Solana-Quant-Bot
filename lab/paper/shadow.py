@@ -159,7 +159,7 @@ class ShadowRecorder:
     """Writes the recorder's segments for [lo, hi) from the chunks, one at a time (write(seq))."""
 
     def __init__(self, scon, chunks, root, lo, hi, clock, window, probes_on=True, gaps=3, reconnects=6, seed=1052,
-                 watch_warmup_minutes=0, work=None, memory="1GB", log=print, reuse=False):
+                 watch_warmup_minutes=0, work=None, memory="1GB", log=print, reuse=False, prepare=True):
         self.root, self.lo, self.hi, self.clock, self.log = root, lo, hi, clock, log
         os.makedirs(os.path.join(root, "segments"), exist_ok=True)
         t0 = time.time()
@@ -195,6 +195,8 @@ class ShadowRecorder:
         self.signature = {"from_slot": lo, "to_slot": hi, "probes": probes_on, "watch_warmup_minutes": watch_warmup_minutes,
                           "chunks": [c[2] for c in chunks], "pools": len({p for w in self.watch.values() for p in w}),
                           "probe_pools": len(self.probes), "version": 2}
+        if not prepare:  # --from-compare: the segments are written; ranges, gaps and the lists are what counts
+            return
         self._prepare(chunks, work or os.path.join(os.path.dirname(root.rstrip("/")), "work"), memory, reuse)
         log(f"recorder input ready ({time.time() - t0:.0f}s): {len(self.ranges)} segments, gaps {self.gaps}, "
             f"reconnects after {[r['after_slot'] for r in self.reconnects.values()]}")
@@ -432,6 +434,29 @@ class ShadowRecorder:
 
     def coverage(self):
         return Coverage(self.recv, self.gaps)
+
+    def from_segments(self):
+        """--from-compare: what write() recorded, rebuilt from the written segments: recv from each segment's
+        slots (_segment.json) and listed pools (watchlist.json: the minute's list and the open pools then)
+        plus the probes (from the store, as in write()), and the totals from the usage rows. A segment whose
+        slots are not this recorder's range (another seed, gaps or window) is refused."""
+        self.recv, self.totals = [], Counter()
+        for seq, (m, a, b) in enumerate(self.ranges):
+            d = os.path.join(self.root, "segments", f"{seq:09d}")
+            with open(os.path.join(d, "_segment.json")) as f:
+                meta = json.load(f)
+            if (meta["first_slot"], meta["last_slot"] + 1) != (a, b):
+                raise SystemExit(f"segment {seq}: slots {meta['first_slot']}..{meta['last_slot']} are not the range {a}..{b - 1}")
+            with open(os.path.join(d, "watchlist.json")) as f:
+                listed = {x["pool"] for x in json.load(f)["pools"]}
+            self.recv += [(p, a, b, "tx_watchlist") for p in sorted(listed)]
+            self.recv += [(p, max(a, s), min(b, e), "tx_probes") for p, _, s, e, _, _ in self.probes
+                          if s < b and a < e and p not in listed]
+            self.totals.update({"segments": 1, "rows": meta["totals"]["rows"], "backfills": len(meta.get("backfills", []))})
+            for u in meta["usage"]:
+                key = "backfill_txs" if u["stream"] == "backfill" else u["stream"]
+                self.totals[key] += u["messages"]
+        return self
 
     def gap_segments(self):
         return {i for i, (_, a, b) in enumerate(self.ranges) if any(ga < b and a < gb for ga, gb in self.gaps)}
@@ -764,53 +789,9 @@ def _status(out, step, **kw):
     os.replace(path + ".tmp", path)
 
 
-def run(a, log=print):
-    """The five steps. With a.resume, a finished replay (replay/DONE.json with the same settings) and
-    a finished work database (work/READY.json with the same signature) are reused; the live run,
-    engine --live, the comparison and the reconciliation always run again."""
-    out = os.path.abspath(a.out)
-    os.makedirs(out, exist_ok=True)
-    resume = getattr(a, "resume", False)
-    scon = streams.open_store(a.store, threads=2, memory=a.memory)
-    clock = Clock.from_store(scon)
-    blo, bhi = scon.execute("SELECT min(slot), max(slot) + 1 FROM blocks").fetchone()
-    lo, hi = a.lo or blo, a.hi or bhi
-    meta = json.loads(scon.execute("SELECT json FROM meta").fetchone()[0])
-    variants = [tuple(float(x) if i == 0 else int(x) for i, x in enumerate(v.split(":"))) for v in a.variants.split(",")
-                if v] or F7_GRID
-    from backtest.store import load_defaults
-
-    cfg = load_defaults()
-    window = decision_bounds(cfg, blo, bhi, clock)
-    ms = clock.ms_per_slot(lo)
-    h24 = round(DAY_MS / ms)
-    info = {"store": a.store, "store_purpose": meta.get("purpose"), "from_slot": lo, "to_slot": hi, "decisions": window,
-            "variants": [f"tp{int(tp * 100)}_T{T}" for tp, T in variants], "d": a.d, "q": a.q, "ms_per_slot": ms,
-            "probes": not a.no_probes, "seed": a.seed, "commit": W.git_commit()}
-    log(f"shadow {lo}..{hi}, decisions {window[0]}..{window[1]} ({ms:.1f} ms/slot)")
-
-    # 1. replay
-    t0 = time.time()
-    rdir = os.path.join(out, "replay")
-    replay_key = {"store": os.path.abspath(a.store), "from_slot": lo, "to_slot": hi, "variants": info["variants"],
-                  "d": a.d, "q": a.q}
-    done_path = os.path.join(rdir, "DONE.json")
-    if resume and os.path.exists(done_path) and json.load(open(done_path)).get("key") == replay_key:
-        log(f"replay reused ({done_path})")
-    else:
-        shutil.rmtree(rdir, ignore_errors=True)
-        rfeed = ReplayFeed(a.store, lo, hi, con=scon)
-        Engine(rfeed, Journal(rdir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
-               dev_bounds=(blo, bhi)).run()
-        del rfeed
-        with open(done_path, "w") as f:
-            json.dump({"key": replay_key, "seconds": round(time.time() - t0)}, f)
-        log(f"replay done ({time.time() - t0:.0f}s)")
-    _status(out, "replay")
-
-    # 2. recorder + live
-    t0 = time.time()
-    root = os.path.join(out, "rec")
+def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, variants, resume, info, log):
+    """Step 2: the shadow recorder writes the segments one minute at a time while LiveFeed and the engine
+    read them. Returns (recorder, the live journal's directory); closes the store connection."""
     shutil.rmtree(root, ignore_errors=True)
     rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
                          gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
@@ -841,16 +822,90 @@ def run(a, log=print):
     rec.con.close()
     del feed
     gc.collect()
+    return rec, ldir
+
+
+def run(a, log=print):
+    """The five steps. With a.resume, a finished replay (replay/DONE.json with the same settings) and
+    a finished work database (work/READY.json with the same signature) are reused; the live run,
+    engine --live, the comparison and the reconciliation always run again. With a.from_compare the
+    finished replay and live run (STATUS.json at least "live", their journals and the segments) are
+    reused and only steps 3-5 run: the recorder's coverage is rebuilt from the segments."""
+    out = os.path.abspath(a.out)
+    os.makedirs(out, exist_ok=True)
+    resume = getattr(a, "resume", False)
+    from_compare = getattr(a, "from_compare", False)
+    if from_compare:
+        status = json.load(open(os.path.join(out, "STATUS.json"))).get("step") if os.path.exists(os.path.join(out, "STATUS.json")) else None
+        if status not in ("live", "compare", "engine --live", "done") or not os.path.exists(os.path.join(out, "live", "journal.sqlite")):
+            raise SystemExit(f"--from-compare needs a finished live step (STATUS.json: {status!r})")
+    scon = streams.open_store(a.store, threads=2, memory=a.memory)
+    clock = Clock.from_store(scon)
+    blo, bhi = scon.execute("SELECT min(slot), max(slot) + 1 FROM blocks").fetchone()
+    lo, hi = a.lo or blo, a.hi or bhi
+    meta = json.loads(scon.execute("SELECT json FROM meta").fetchone()[0])
+    variants = [tuple(float(x) if i == 0 else int(x) for i, x in enumerate(v.split(":"))) for v in a.variants.split(",")
+                if v] or F7_GRID
+    from backtest.store import load_defaults
+
+    cfg = load_defaults()
+    window = decision_bounds(cfg, blo, bhi, clock)
+    ms = clock.ms_per_slot(lo)
+    h24 = round(DAY_MS / ms)
+    info = {"store": a.store, "store_purpose": meta.get("purpose"), "from_slot": lo, "to_slot": hi, "decisions": window,
+            "variants": [f"tp{int(tp * 100)}_T{T}" for tp, T in variants], "d": a.d, "q": a.q, "ms_per_slot": ms,
+            "probes": not a.no_probes, "seed": a.seed, "commit": W.git_commit()}
+    log(f"shadow {lo}..{hi}, decisions {window[0]}..{window[1]} ({ms:.1f} ms/slot)")
+
+    # 1. replay
+    t0 = time.time()
+    rdir = os.path.join(out, "replay")
+    replay_key = {"store": os.path.abspath(a.store), "from_slot": lo, "to_slot": hi, "variants": info["variants"],
+                  "d": a.d, "q": a.q}
+    done_path = os.path.join(rdir, "DONE.json")
+    if (resume or from_compare) and os.path.exists(done_path) and json.load(open(done_path)).get("key") == replay_key:
+        log(f"replay reused ({done_path})")
+    elif from_compare:
+        raise SystemExit(f"--from-compare needs the finished replay of the same settings ({done_path})")
+    else:
+        shutil.rmtree(rdir, ignore_errors=True)
+        rfeed = ReplayFeed(a.store, lo, hi, con=scon)
+        Engine(rfeed, Journal(rdir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+               dev_bounds=(blo, bhi)).run()
+        del rfeed
+        with open(done_path, "w") as f:
+            json.dump({"key": replay_key, "seconds": round(time.time() - t0)}, f)
+        log(f"replay done ({time.time() - t0:.0f}s)")
+    _status(out, "replay")
+
+    # 2. recorder + live
+    t0 = time.time()
+    root = os.path.join(out, "rec")
+    if from_compare:
+        rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
+                             gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
+                             memory=a.memory, log=log, prepare=False).from_segments()
+        scon.close()
+        ldir = os.path.join(out, "live")
+        info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
+        info["livefeed"] = "see the live run's log (--from-compare reuses the live step)"
+        info["recorder"] = dict(rec.totals)
+        log(f"live reused: {len(rec.ranges)} segments, {len(rec.recv)} received ranges rebuilt ({time.time() - t0:.0f}s)")
+    else:
+        rec, ldir = _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, variants, resume, info, log)
     info["gaps"], info["reconnects"] = rec.gaps, list(rec.reconnects.values())
     days = max(1e-9, (hi - lo) * ms / DAY_MS)
     info["estimated_gb_per_day"] = round(sum(rec.totals[s] for s in list(STREAMS.values()) + ["backfill_txs"])
                                          * TX_BYTES / 1e9 / days, 2)
     log(f"live done ({time.time() - t0:.0f}s): {dict(rec.totals)}")
-    _status(out, "live", segments=rec.totals.get("segments", 0))
+    if not from_compare:
+        _status(out, "live", segments=rec.totals.get("segments", 0))
 
     # 3. compare
+    log(f"compare: rss {_rss_mb()} MB before")
     scon = streams.open_store(a.store, threads=2, memory=a.memory)
     rows = compare(rdir, ldir, rec.coverage(), scon, root, d=a.d, hour_slots=clock.slots(HOUR_MS, lo))
+    log(f"compare: {len(rows)} keys, rss {_rss_mb()} MB after")
     info["summary"] = summarize(rows)
     info["unexplained"] = sum(1 for r in rows if r["cause"] == "unexplained")
     pa_rows = pa.Table.from_pylist(rows)
@@ -995,6 +1050,8 @@ def main():
     ap.add_argument("--memory", default=os.environ.get("LAB_DUCKDB_MEM", "1GB"), help="per DuckDB connection")
     ap.add_argument("--resume", action="store_true",
                     help="reuse a finished replay and work database of the same settings (the rest runs again)")
+    ap.add_argument("--from-compare", action="store_true",
+                    help="reuse the finished replay and live step (journals, segments); run compare, engine --live and reconcile")
     a = ap.parse_args()
     info = run(a, log=lambda m: print(time.strftime("%H:%M:%S"), m, flush=True))
     if not os.path.exists(os.path.join(os.path.abspath(a.out), "compare.json")):
