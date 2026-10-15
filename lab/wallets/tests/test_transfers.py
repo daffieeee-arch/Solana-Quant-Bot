@@ -269,6 +269,13 @@ def test_diag_residuals_name_the_pattern(tmp_path, monkeypatch):
     t = pq.read_table(d / "part-00000.parquet").to_pylist()
     t.append({**t[1], "owner": "X2", "delta_raw": str(60 * U)})
     pq.write_table(pa.Table.from_pylist(t), d / "part-00000.parquet")
+    # the same transaction closes an account: a token_transfers row without an amount (the NAS run of 2026-10-15 on
+    # 1040 crashed in the render on such a NULL once the examples were no longer trades)
+    d = tmp_path / "chunks" / "c0" / "token_transfers"
+    t = pq.read_table(d / "part-00000.parquet").to_pylist()
+    row = next(x for x in t if x["slot"] == S + 20)
+    t.append({**row, "ix_path": "1.2", "kind": "close_account", "amount_raw": None, "dest_owner": None})
+    pq.write_table(pa.Table.from_pylist(t), d / "part-00000.parquet")
     monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
     monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
     out = tmp_path / "diag"
@@ -280,3 +287,23 @@ def test_diag_residuals_name_the_pattern(tmp_path, monkeypatch):
     assert info["identity"] == [1, 1] and info["cons"][1] < info["cons"][0]
     md = (out / "diag.md").read_text()
     assert "| none | – | – | · | · | y | · | · | y |" in md and "100.0 %" in md
+    assert "| close_account | 1.2 | I | None | – | False | False |" in md   # the NULL amount renders as –
+
+
+def test_diag_on_a_conserving_fixture_renders_empty(tmp_path, monkeypatch):
+    """No failing mint: no residual rows, Σ|residual| 0, and the report still renders (boost rows without token_amount
+    and all)."""
+    from wallets import transfers_diag
+    _store(tmp_path / "s.duckdb")
+    root = _chunk(tmp_path / "chunks")
+    monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "diag"
+    transfers_diag.main(["--chunks", root, "--out", str(out)])
+    con = duckdb.connect()
+    assert con.execute(f"SELECT count(*) FROM '{out}/txres.parquet'").fetchone() == (0,)
+    info = json.load(open(out / "run-diag.json"))
+    assert info["identity"] == [1, 1] and info["cons"][1] == info["cons"][0]
+    md = (out / "diag.md").read_text()
+    assert "conservation 3 / 3 mint-days (100.0 %)" in md and "with a non-zero residual 0; mints 1, failing 4.1 on some day 0" in md
+    assert "Σ|residual| over the failing mints 0, over the conserving mints 0" in md and "### Rows of the first three examples" in md

@@ -106,7 +106,7 @@ def render(con, info):
     L += ["\n### Largest residuals (failing mints)\n", "| mint | slot | tx_index | venue | variants | residual | net leg | net delta | net vault delta | net leg_vault | minted | burned | transfers | in_trade |", "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     ex = con.execute("""SELECT mint, slot, tx_index, venue, variants, residual, net_leg, net_delta, net_vault_delta, net_leg_vault, minted, burned, n_transfer, n_in_trade
                         FROM txres WHERE mint_fails AND residual <> 0 ORDER BY abs(residual) DESC LIMIT 15""").fetchall()
-    f = lambda v: "–" if v is None else f"{v:,}"
+    f = lambda v: "–" if v is None else f"{v:,}"   # NULL-safe: a close_account row has no amount, a boost row no token_amount
     for r in ex:
         L.append(f"| {r[0]} | {r[1]} | {r[2]} | {r[3]} | {','.join(r[4]) or '–'} | {f(r[5])} | {f(r[6])} | {f(r[7])} | {f(r[8])} | {f(r[9])} | {f(r[10])} | {f(r[11])} | {r[12]} | {r[13]} |")
     L.append("\n### Rows of the first three examples\n")
@@ -115,17 +115,17 @@ def render(con, info):
         L.append("| source | owner | delta | vault |")
         L.append("|---|---|---|---|")
         for x in con.execute("SELECT src, owner, delta, vault FROM ledger WHERE mint = ? AND slot = ? AND tx_index = ? ORDER BY src, owner", [r[0], r[1], r[2]]).fetchall():
-            L.append(f"| {x[0]} | {x[1]} | {x[2]:,} | {x[3]} |")
+            L.append(f"| {x[0]} | {x[1]} | {f(x[2])} | {x[3]} |")
         L.append("\n| kind | ix_path | source owner | dest owner | amount | in_trade | unresolved |")
         L.append("|---|---|---|---|---|---|---|")
         for x in con.execute("SELECT kind, ix_path, source_owner, dest_owner, amount, in_trade, owner_unresolved FROM tt WHERE mint = ? AND slot = ? AND tx_index = ? ORDER BY ix_path", [r[0], r[1], r[2]]).fetchall():
-            L.append(f"| {x[0]} | {x[1]} | {x[2]} | {x[3]} | {x[4]:,} | {x[5]} | {x[6]} |")
+            L.append(f"| {x[0]} | {x[1]} | {x[2]} | {x[3]} | {f(x[4])} | {x[5]} | {x[6]} |")
         L.append("\n| store | variant / kind | trader | is_buy / token_buy | t / token_amount |")
         L.append("|---|---|---|---|---|")
         for x in con.execute("SELECT 'curve', variant, trader, is_buy, t FROM curve WHERE mint = ? AND slot = ? AND tx_index = ? ORDER BY trader", [r[0], r[1], r[2]]).fetchall():
-            L.append(f"| {x[0]} | {x[1]} | {x[2]} | {x[3]} | {x[4]:,} |")
+            L.append(f"| {x[0]} | {x[1]} | {x[2]} | {x[3]} | {f(x[4])} |")
         for x in con.execute("SELECT 'pool', p.kind, p.trader, p.token_buy, p.token_amount FROM pool p JOIN pools ps USING (pool) WHERE ps.mint = ? AND p.slot = ? AND p.tx_index = ? ORDER BY p.trader", [r[0], r[1], r[2]]).fetchall():
-            L.append(f"| {x[0]} | {x[1]} | {x[2]} | {x[3]} | {x[4]:,} |")
+            L.append(f"| {x[0]} | {x[1]} | {x[2]} | {x[3]} | {f(x[4])} |")
         L.append("")
     L.append(f"Run: commit {info['commit']}, {info['seconds']} s.")
     return "\n".join(L)
