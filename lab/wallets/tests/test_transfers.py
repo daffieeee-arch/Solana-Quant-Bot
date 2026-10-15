@@ -331,7 +331,7 @@ def _store_hops(path):
     con.execute("INSERT INTO pools VALUES ('P3', ?, 'sol', 'normal', ?)", [M3, S + 2])   # migrated 2 slots after the create
     con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT, base BIGINT)")
     con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'U1', true, ?, 30000000, NULL), ('P3', ?, 1, 'sell', 'U1', false, ?, 5000000, NULL)", [S + 70, 30 * U, S + 71, 5 * U])
-    con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'PB', true, ?, 10000000, NULL)", [S + 3, 10 * U])   # a pool buy 3 slots after the create: no insider
+    con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'buy', 'PB', true, ?, 10000000, NULL)", [S + 3, 10 * U])   # a pool buy 3 slots after the create on a normal pool: an insider (the engine's set)
     # job 815 (2026-10-16): a custody wallet W moves 18 to the per-trade signer SIG, which sells them, and pays 1 to FEE
     # from the same account; a buy whose output lands on CUST (with a 2 top-up from U1 in the same tx), not on the signer SIG2
     con.execute("INSERT INTO pool VALUES ('P3', ?, 1, 'sell', 'SIG', false, ?, 18000000, NULL), ('P3', ?, 1, 'buy', 'SIG2', true, ?, 10000000, NULL)", [S + 75, 18 * U, S + 76, 10 * U])
@@ -405,7 +405,8 @@ def test_router_and_temporary_account_hops_count_once(tmp_path, monkeypatch):
     assert cons and all(c[0] == SUPPLY and c[2] == 0 and c[3] for c in cons)   # without the hop rule: +30 and -5 doubled -> diff 25; without the balance rule: -18 and +10 doubled -> diff -8
     q1 = {r[0]: r[1:] for r in con.execute(f"SELECT t, circ, h_ins, share_c FROM '{out}/q1_triggers.parquet'").fetchall()}
     # circulation at S + 72: CR 0 (deposited) + W 19 + FEE 1 + U1 25 + PB 10 = 55 (curve vault 680 and pool vault 265 excluded);
-    # insiders = CR (creator) only: PB bought on the pool 3 slots after the create and R on the curve after the 10 s window
-    assert q1[S + 72] == (55 * U, 0, 0)
+    # insiders = CR (creator, holds 0) and PB (a normal-pool buy 3 slots after the create, as the engine counts it); R bought on
+    # the curve after the 10 s window
+    assert q1[S + 72] == (55 * U, 10 * U, 10 / 55)
     # at S + 77: W 0, FEE 2, U1 23, PB 10, CUST 12 = 47; the signers SIG and SIG2 hold nothing (with their legs added: 39)
-    assert q1[S + 77] == (47 * U, 0, 0)
+    assert q1[S + 77] == (47 * U, 10 * U, 10 / 47)
