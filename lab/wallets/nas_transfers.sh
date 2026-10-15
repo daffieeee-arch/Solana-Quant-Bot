@@ -53,6 +53,15 @@ for e in "${EP[@]}"; do
   else
     log "epoch $e FAILED (see $LOG/transfers-$e.log)"; exit 1
   fi
+  # DIAG=1: the check 4.1 diagnosis (per-transaction residuals by pattern) next to the epoch's report
+  if [ "${DIAG:-0}" = "1" ] && [ ! -s "$od/diag/diag.md" ]; then
+    log "epoch $e diag"
+    if nice -n 10 "$PY" -u -m wallets.transfers_diag --chunks "$CHUNKS" --from-slot "$lo" --to-slot "$hi" --out "$od/diag" > "$LOG/diag-$e.log" 2>&1; then
+      log "epoch $e diag ok: $(tail -1 "$LOG/diag-$e.log")"
+    else
+      log "epoch $e diag FAILED (see $LOG/diag-$e.log)"; exit 1
+    fi
+  fi
 done
 (cd "$TV" && find . -name '*.parquet' -o -name '*.md' -o -name '*.json' | sort | xargs sha256sum > SHA256SUMS)
 log "done"
