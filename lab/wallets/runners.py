@@ -18,11 +18,10 @@ venue, as the engine's pool_sell_capped / curve_sell do). mult_1h / mult_6h = th
 6 h, t_max the minutes from the entry to that mark, end_6h the mark at the last trade within 6 h, dd_6h the lowest
 mark before the maximum. After the curve completes, the mint's SOL pool prices the position (its own state).
 
-The curve state is rebuilt from the real reserves: vt = rt + 279.9 M tokens (every row of dev) and vq = rq + the
-mint's constant offset (the mode of vq - rq over its rows with a TradeEvent; 30 SOL on 402,428 of the 472,120
-non-mayhem dev mints, another constant on the rest). The store's own vq is unusable on the Mayhem-program rows (no
-event, fee tiers 0; 12.2 M rows on dev), and on mayhem mints the offset varies from row to row even with an event
-(2026-10-16 check), so mayhem mints get no curve entry (their pool phase stays); nor do mints without an event row.
+The curve state is the row's logged state (vt, vq, rt, rq after the trade; the state before it by +/- t and q, as
+streams.py does). Mayhem mints get no curve entry (their pool phase stays): the Mayhem agent (BwWK17cb..., fee tiers
+0) resets the curve's virtual SOL inside its own trades, every later trade is priced on the reset state (Lab
+Backtest, 2026-10-16), and a replay cannot simulate through an agent leg; all engine universes exclude them too.
 
 Features (only trades before the moment t, windows 'all' since the create, 'pre1' / 'pre5' = the 1 / 5 min before t;
 and 'post1' / 'post5' = the 1 / 5 min after the entry, for a hold decision at that later point): net SOL inflow
@@ -54,7 +53,6 @@ ENTRY_MS = 600
 H1_MS = 3_600_000
 H6_MS = 21_600_000
 SIZE = SOL // 2
-VT_OFF = 279_900_000_000_000     # vt - rt on every curve row of dev (the curve's constant virtual token offset)
 BPS = 10_000
 DEFAULTS = os.environ.get("LAB_DEFAULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml")
 WINDOWS = ("all", "pre1", "pre5", "post1", "post5")
@@ -104,22 +102,19 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
               AND f.t >= {lo} AND f.t < {hi} AND f.pool NOT IN (SELECT key FROM tok)""")
     progress(f"tok {_count(con, 'tok')} (mints {lo}..{hi}, pools of F7 triggers)")
     # curve legs: the mint's constant vq offset from its event rows; fee tiers = the mint's modal event tiers
-    # mayhem mints: vq - rq varies from row to row even on event rows (195,695 of 198,278 mayhem mints on dev; every
-    # non-mayhem mint has one constant offset), so the constant-product rebuild does not hold there: no curve entry,
-    # their pool phase stays
-    con.execute("""CREATE OR REPLACE TEMP TABLE coff AS
-        SELECT mint, mode(vq - rq) AS vq_off, mode(fee_bps) AS fee_bps, mode(creator_bps) AS creator_bps
-        FROM curve c SEMI JOIN tok ON tok.mint = c.mint AND tok.has_curve AND NOT COALESCE(tok.mayhem, false) WHERE c.fee_bps > 0 GROUP BY 1""")
+    # curve legs of the non-mayhem mints: the logged post-state and the pre-state (streams.py), fee tiers from the row
     con.execute(f"""CREATE OR REPLACE TEMP TABLE cl AS
         SELECT c.mint AS key, 'curve' AS venue, NULL::VARCHAR AS orientation,
                c.slot * 1000000000 + c.tx_index * 100000 + c.outer_ix * 1000 + c.inner_ix AS ord, c.slot, c.tx_index, c.is_buy,
                c.q::HUGEINT AS sol, c.t::HUGEINT AS tokens, c.trader, c.fee_payer, false AS farmer,
-               c.rt::HUGEINT AS rt, c.rq::HUGEINT AS rq,
+               c.vt::HUGEINT AS vt, c.vq::HUGEINT AS vq, c.rt::HUGEINT AS rt, c.rq::HUGEINT AS rq,
+               CASE WHEN c.is_buy THEN c.vt + c.t ELSE c.vt - c.t END::HUGEINT AS vt_pre,
+               CASE WHEN c.is_buy THEN c.vq - c.q ELSE c.vq + c.q END::HUGEINT AS vq_pre,
                CASE WHEN c.is_buy THEN c.rt + c.t ELSE c.rt - c.t END::HUGEINT AS rt_pre,
                CASE WHEN c.is_buy THEN c.rq - c.q ELSE c.rq + c.q END::HUGEINT AS rq_pre,
-               o.vq_off::HUGEINT AS vq_off, o.fee_bps, o.creator_bps
-        FROM curve c JOIN coff o USING (mint) WHERE c.slot >= {lo} AND c.slot < {hi_ext}""")
-    progress(f"curve legs {_count(con, 'cl')} ({_count(con, 'coff')} mints with event rows)")
+               COALESCE(c.fee_bps, 0) AS fee_bps, COALESCE(c.creator_bps, 0) AS creator_bps
+        FROM curve c JOIN tok t ON t.mint = c.mint AND t.has_curve AND NOT COALESCE(t.mayhem, false) WHERE c.slot >= {lo} AND c.slot < {hi_ext}""")
+    progress(f"curve legs {_count(con, 'cl')}")
     # pool legs: post-states as streams.pool_leg (buy / sell: b -/+ base, e + e_delta; boost: b - base, e + e_delta;
     # withdraw / deposit: vault + last virtual quote -/+ quote_user, b -/+ base); the pre-state of a trade is the row
     con.execute(f"""CREATE OR REPLACE TEMP TABLE pl AS
@@ -192,28 +187,28 @@ def entries(con, cost_tx):
     """The entry trade of every moment (the first fillable trade >= t + d_slots) and the fill at its pre-state."""
     con.execute(f"""CREATE OR REPLACE TEMP TABLE cand AS
         SELECT m.key, m.moment, m.t, m.d_slots, m.h1, m.h6, m.m1s, m.m5s, l.ord, l.slot, l.venue, l.orientation,
-               l.rt_pre, l.rq_pre, l.vq_off, l.fee_bps, l.creator_bps, l.b_pre, l.e_pre, l.virt, l.lp, l.pr, l.cr, l.cb,
+               l.vt_pre, l.vq_pre, l.rt_pre, l.rq_pre, l.fee_bps, l.creator_bps, l.b_pre, l.e_pre, l.virt, l.lp, l.pr, l.cr, l.cb,
                row_number() OVER (PARTITION BY m.key, m.moment ORDER BY l.ord) AS rn
         FROM mom m JOIN (
-            SELECT key, ord, slot, venue, orientation, rt_pre, rq_pre, vq_off, fee_bps, creator_bps,
+            SELECT key, ord, slot, venue, orientation, vt_pre, vq_pre, rt_pre, rq_pre, fee_bps, creator_bps,
                    NULL::HUGEINT AS b_pre, NULL::HUGEINT AS e_pre, NULL::HUGEINT AS virt, NULL AS lp, NULL AS pr, NULL AS cr, NULL AS cb
             FROM cl WHERE rt_pre > 0
             UNION ALL
-            SELECT key, ord, slot, venue, orientation, NULL, NULL, NULL, NULL, NULL, b_pre, e_pre, virt, lp, pr, cr, cb
+            SELECT key, ord, slot, venue, orientation, NULL, NULL, NULL, NULL, NULL, NULL, b_pre, e_pre, virt, lp, pr, cr, cb
             FROM pl WHERE trade AND b_pre > 0 AND e_pre > 0) l
         ON l.key = m.key AND l.slot >= m.t + m.d_slots""")
     con.execute(f"""CREATE OR REPLACE TEMP TABLE ent AS
         WITH c AS (SELECT * FROM cand WHERE rn = 1),
         f AS (
             SELECT *,
-              -- curve: net quote for the budget, tokens by the constant product on (rt + VT_OFF, rq + vq_off), capped at the real tokens
+              -- curve: net quote for the budget, tokens by the constant product on the pre-state, capped at the real tokens
               CASE WHEN venue = 'curve' THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'fee_bps', 'creator_bps')} END::HUGEINT AS cq,
               CASE WHEN venue = 'pool' AND orientation = 'normal' THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pn,
               CASE WHEN venue = 'pool' AND orientation = 'reversed' THEN (e_pre * {SIZE}) // (b_pre + {SIZE}) END::HUGEINT AS rg
             FROM c),
         g AS (
             SELECT *,
-              CASE WHEN venue = 'curve' THEN least(rt_pre, ((cq - 1) * (rt_pre + {VT_OFF})) // (rq_pre + vq_off + cq - 1))
+              CASE WHEN venue = 'curve' THEN least(rt_pre, ((cq - 1) * vt_pre) // (vq_pre + cq - 1))
                    WHEN orientation = 'normal' THEN (b_pre * (pn - 1)) // (e_pre + pn - 1)
                    WHEN rg <= e_pre - virt THEN rg - ({_fees('rg', 'lp', 'pr', 'cr', 'cb')}) END::HUGEINT AS tokens,
               CASE WHEN venue = 'curve' THEN rq_pre WHEN orientation = 'normal' THEN e_pre - virt ELSE b_pre END::HUGEINT AS depth
@@ -221,7 +216,7 @@ def entries(con, cost_tx):
         SELECT key, moment, t, d_slots, h1, h6, m1s, m5s, ord AS entry_ord, slot AS entry_slot, venue, orientation, depth, tokens,
                -- the curve fill capped at the real tokens buys exactly rt_pre (curve_buy_exact_out): q = rt * vq // (vt - rt) + 1 plus fees
                CASE WHEN venue = 'curve' AND tokens = rt_pre
-                    THEN (rt_pre * (rq_pre + vq_off)) // {VT_OFF} + 1 + ({_fees(f'(rt_pre * (rq_pre + vq_off)) // {VT_OFF} + 1', 'fee_bps', 'creator_bps')}) + {cost_tx}
+                    THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1 + ({_fees('(rt_pre * vq_pre) // (vt_pre - rt_pre) + 1', 'fee_bps', 'creator_bps')}) + {cost_tx}
                     ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost
         FROM g WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
     progress(f"entries {_count(con, 'ent')} of {_count(con, 'mom')} moments: " + str(con.execute("SELECT moment, venue, count(*) FROM ent GROUP BY 1, 2 ORDER BY 1, 2").fetchall()))
@@ -231,17 +226,17 @@ def marks(con, cost_tx, hi_ext):
     """Net mark of every entry at every trade from the entry trade on, within 6 h; then the multiples."""
     con.execute(f"""CREATE OR REPLACE TEMP TABLE mk AS
         WITH st AS (
-            SELECT key, ord, slot, 'curve' AS venue, NULL::VARCHAR AS orientation, rt, rq, vq_off, fee_bps, creator_bps,
+            SELECT key, ord, slot, 'curve' AS venue, NULL::VARCHAR AS orientation, vt, vq, rt, rq, fee_bps, creator_bps,
                    NULL::HUGEINT AS b, NULL::HUGEINT AS e, NULL::HUGEINT AS virt, NULL AS lp, NULL AS pr, NULL AS cr, NULL AS cb FROM cl
             UNION ALL
-            SELECT key, ord, slot, 'pool', orientation, NULL, NULL, NULL, NULL, NULL, b_post, e_post, virt, lp, pr, cr, cb FROM pl),
+            SELECT key, ord, slot, 'pool', orientation, NULL, NULL, NULL, NULL, NULL, NULL, b_post, e_post, virt, lp, pr, cr, cb FROM pl),
         j AS (
             SELECT e.key, e.moment, e.entry_ord, e.entry_slot, e.h1, e.cost, e.tokens AS pos, s.ord, s.slot, s.venue, s.orientation,
-                   s.rt, s.rq, s.vq_off, s.fee_bps, s.creator_bps, s.b, s.e, s.virt, s.lp, s.pr, s.cr, s.cb
+                   s.vt, s.vq, s.rt, s.rq, s.fee_bps, s.creator_bps, s.b, s.e, s.virt, s.lp, s.pr, s.cr, s.cb
             FROM ent e JOIN st s ON s.key = e.key AND s.ord >= e.entry_ord AND s.slot <= e.entry_slot + e.h6),
         q AS (
             SELECT *,
-              CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq, (pos * (rq + vq_off)) // (rt + {VT_OFF} + pos)) END::HUGEINT AS cq,
+              CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq, (pos * vq) // (vt + pos)) END::HUGEINT AS cq,
               CASE WHEN venue = 'pool' AND orientation = 'normal' AND b > 0 AND e > 0
                    THEN CASE WHEN (e * pos) // (b + pos) <= e - virt THEN (e * pos) // (b + pos)
                              WHEN e > e - virt THEN (e * (((e - virt) * b) // virt)) // (b + ((e - virt) * b) // virt) END END::HUGEINT AS pg,
@@ -347,9 +342,9 @@ def run(lo, hi, out_dir, f7_parts=None, m1x_triggers=None, cfg=DEFAULTS, store=N
     os.makedirs(out_dir, exist_ok=True)
     con.execute(f"COPY out TO '{out_dir}/entries-{lo}.parquet' (FORMAT PARQUET)")
     info = {"lo": lo, "hi": hi, "hi_ext": hi_ext, "entries": n, "moments": _count(con, "mom"), "tokens": _count(con, "tok"),
-            "curve_excluded": {"mayhem": con.execute("SELECT count(*) FROM tok WHERE has_curve AND COALESCE(mayhem, false)").fetchone()[0],
-                               "no_event_rows": con.execute("SELECT count(*) FROM tok WHERE has_curve AND NOT COALESCE(mayhem, false) AND mint NOT IN (SELECT mint FROM coff)").fetchone()[0]},
-            "tx_cost_lamports": cost, "size_lamports": SIZE, "vt_off": VT_OFF, "commit": git_commit(), "seconds": round(time.time() - t0, 1),
+            "curve_excluded": {"mayhem": con.execute("SELECT count(*) FROM tok WHERE has_curve AND COALESCE(mayhem, false)").fetchone()[0]},
+            "curve_rows_without_fee_tiers": con.execute("SELECT count(*) FROM cl WHERE fee_bps = 0").fetchone()[0],
+            "tx_cost_lamports": cost, "size_lamports": SIZE, "commit": git_commit(), "seconds": round(time.time() - t0, 1),
             "per_moment": {m: c for m, c in con.execute("SELECT moment, count(*) FROM out GROUP BY 1").fetchall()}}
     with open(f"{out_dir}/run-runners-{lo}.json", "w") as f:
         json.dump(info, f, indent=1, default=str)
