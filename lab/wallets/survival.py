@@ -146,9 +146,11 @@ def groups(con):
     g = [("all", "TRUE")]
     g += [(f"farm {f}", f"farm = '{f}'") for (f,) in con.execute("SELECT DISTINCT farm FROM surv WHERE farm IS NOT NULL ORDER BY 1").fetchall()]
     g += [(b, f"block = '{b}'") for (b,) in con.execute("SELECT DISTINCT block FROM surv ORDER BY 1").fetchall()]
-    regs = con.execute("SELECT DISTINCT ms_per_slot FROM surv ORDER BY 1").fetchall()
+    # One row per slot-time regime (ms per slot rounded to 10 ms, the engine's names), not per epoch: the first NAS
+    # run grouped on the raw per-epoch ms_per_slot and labelled 14 epoch rows "regime 270ms" / "regime 320ms".
+    regs = con.execute("SELECT DISTINCT round(ms_per_slot / 10) * 10 FROM surv ORDER BY 1").fetchall()
     if len(regs) > 1:
-        g += [(f"regime {regime_label(m)}", f"ms_per_slot = {m!r}") for (m,) in regs]
+        g += [(f"regime {regime_label(m)}", f"round(ms_per_slot / 10) * 10 = {m!r}") for (m,) in regs]
     return g
 
 
@@ -221,9 +223,23 @@ def run(parts_dir, out_dir, family=FAMILY, segment=SEGMENT, lo=None, hi=None, ob
     return info
 
 
+def rerender(out_dir):
+    """Re-render survival.md from an existing survival.parquet and run-survival.json (seconds, no store): the
+    report of a NAS run can be fixed on the VPS without rerunning the build."""
+    import duckdb
+    con = duckdb.connect()
+    con.execute(f"CREATE TEMP TABLE surv AS SELECT * FROM '{os.path.join(out_dir, 'survival.parquet')}'")
+    with open(os.path.join(out_dir, "run-survival.json")) as f:
+        info = json.load(f)
+    with open(os.path.join(out_dir, "survival.md"), "w") as f:
+        f.write(render(con, info) + "\n")
+    return info
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--parts", required=True)
+    ap.add_argument("--parts", help="positions of the run (required unless --rerender)")
+    ap.add_argument("--rerender", action="store_true", help="only re-render survival.md from the parquet and json in --out")
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "survival-v1"))
     ap.add_argument("--family", default=FAMILY)
     ap.add_argument("--segment", default=SEGMENT)
@@ -231,7 +247,12 @@ def main():
     ap.add_argument("--to-slot", type=int)
     ap.add_argument("--observe-slots", type=int, help="censor at t + N slots instead of the store end (a smoke)")
     a = ap.parse_args()
-    info = run(a.parts, a.out, a.family, a.segment, a.from_slot, a.to_slot, a.observe_slots)
+    if a.rerender:
+        info = rerender(a.out)
+    elif a.parts:
+        info = run(a.parts, a.out, a.family, a.segment, a.from_slot, a.to_slot, a.observe_slots)
+    else:
+        ap.error("--parts is required unless --rerender")
     print(json.dumps(info, default=str), file=sys.stderr)
 
 
