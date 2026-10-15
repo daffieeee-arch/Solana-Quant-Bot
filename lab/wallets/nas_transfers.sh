@@ -16,7 +16,7 @@ STORE=${LAB_STORE:-$DATA/store/dev2.duckdb}
 CHUNKS=${CHUNKS:-$DATA/events/transfers-v1/chunks}
 EPOCHS=${EPOCHS:-1040,1045}
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
-M1X=${M1X_PARTS:-$DATA/backtests/m1x-dev-1033-1046-0e0cad0/parts}
+M1X=${M1X_PARTS:-$DATA/backtests/m1x-dev-1033-1046-5090d14/parts}
 MONEY=${MONEY:-$DATA/wallets/money-v1}
 TV=$OUT/transfers-v1
 LOG=$TV/log
@@ -27,8 +27,9 @@ mkdir -p "$TV" "$LOG" "$LAB_SPILL_DIR"
 log() { echo "$(date +%FT%T) $*" | tee -a "$LOG/nas_transfers.log"; }
 log "start repo=$REPO commit=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || cat "$REPO/COMMIT" 2>/dev/null || echo ?) store=$STORE chunks=$CHUNKS epochs=$EPOCHS out=$TV"
 
-# Q1 triggers: one row per M1x trigger (mint, t, the engine's old insider share) from the parts' base rows.
-TRIGGERS=${TRIGGERS:-$TV/triggers-m1x.parquet}
+# Q1 triggers: one row per M1x trigger (mint, t, the engine's old insider share) from the parts' base rows,
+# named after the m1x run (default the run after #235, 5090d14).
+TRIGGERS=${TRIGGERS:-$TV/triggers-m1x-$(basename "$(dirname "$M1X")").parquet}
 if [ ! -s "$TRIGGERS" ]; then
   "$PY" - "$M1X" "$TRIGGERS" <<'PYEOF'
 import sys, duckdb
