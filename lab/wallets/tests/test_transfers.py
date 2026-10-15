@@ -4,6 +4,7 @@ the corrected insider share against the legs-only share, bar (b) for a legs-only
 and a funder of six same-label wallets, and the transfer-fed selling of a new pool."""
 
 import json
+import re
 import os
 
 import duckdb
@@ -115,3 +116,44 @@ def test_ledger_shares_births_and_bundles(tmp_path, monkeypatch):
     assert q3 == [(1, 5 * U, 5 * U, 1.0)]
     md = open(out / "transfers.md").read()
     assert "100.0 %" in md and "| bundler | 6 | 6 | 100.0 %" in md and "Hubs" in md
+
+
+class _Explained:
+    """A connection proxy: every CREATE ... TABLE x AS <select> is EXPLAINed first and its join operators recorded."""
+
+    def __init__(self, con):
+        self.con, self.plans = con, {}
+
+    def execute(self, sql, *a, **k):
+        m = re.match(r"\s*CREATE (?:OR REPLACE )?TEMP TABLE (\w+) AS\s+(.*)$", sql, re.S)
+        if m:
+            plan = self.con.execute("EXPLAIN " + m.group(2)).fetchall()[0][1]
+            self.plans[m.group(1)] = sorted(set(re.findall(r"[A-Z_]*JOIN|CROSS_PRODUCT", plan)))
+        return self.con.execute(sql, *a, **k)
+
+    def __getattr__(self, name):
+        return getattr(self.con, name)
+
+
+def test_no_nested_loop_join_in_any_query(tmp_path, monkeypatch):
+    """Every table of the module is built with hash (or ASOF) joins: an anti-join with an OR in its condition was
+    planned as a blockwise nested-loop join and the NAS run sat in it for 6 h on one epoch (2026-10-16)."""
+    _store(tmp_path / "s.duckdb")
+    root = _chunk(tmp_path / "chunks")
+    pq.write_table(pa.Table.from_pylist([{"mint": M, "t": S + 40, "ins_share": 400 / 350}]), tmp_path / "trig.parquet")
+    pq.write_table(pa.Table.from_pylist([{"wallet": "b0", "label": "bundler"}]), tmp_path / "labels.parquet")
+    monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    seen = {}
+    real = transfers.connect
+
+    def wrapped(*a, **k):
+        px = _Explained(real(*a, **k))
+        seen["plans"] = px.plans
+        return px
+    monkeypatch.setattr(transfers, "connect", wrapped)
+    transfers.main(["--chunks", root, "--triggers", str(tmp_path / "trig.parquet"), "--labels", str(tmp_path / "labels.parquet"), "--out", str(tmp_path / "out")])
+    plans = seen["plans"]
+    assert {"ledger", "insiders", "q1", "q1b", "q2", "q3", "cons", "births", "hubs"} <= set(plans)
+    bad = {t: ops for t, ops in plans.items() if any("NESTED_LOOP" in op or "BLOCKWISE" in op or "CROSS_PRODUCT" in op for op in ops)}
+    assert not bad, bad
