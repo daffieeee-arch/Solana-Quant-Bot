@@ -4,7 +4,8 @@
   python -m backtest.store validate                           # epoch 1052: mechanical checks only
   python -m backtest.store holdout --final                    # only for the single final run
   python -m backtest.store clean --final --warmup-epochs W --prereg FILE --prereg-sha256 SHA [--to-slot E]
-                                                              # once: the clean-data test (1055-1063)
+                                                              # the clean-data test (1055-1063): rebuilt with
+                                                              # more epochs until the test locks it
 
 The hold-out store can be built once: a lock file records when and from which commit. The dev
 store never contains a hold-out slot, so strategy code that only opens the dev store cannot
@@ -620,6 +621,8 @@ def main():
             raise SystemExit(f"the {a.period} store is built once, for the final run: pass --final")
         if os.path.exists(lock):
             raise SystemExit(f"{a.period} already used: {open(lock).read()}")
+    # clean: the store may be rebuilt (with more epochs) until the test has outcomes; backtest.clean_test
+    # writes clean.lock when it passes the minimum of trading days (addendum section 3), not this build.
     warmup = 0
     if a.period == "clean":
         if a.warmup_epochs not in (0, 1):
@@ -641,7 +644,7 @@ def main():
     out = a.out or os.path.join(a.out_dir, f"{name}.duckdb")
     print(f"store: {out}", flush=True)
     meta = build(a.period, out, cfg, chunks, log=lambda m: print(m, flush=True), extra_meta=extra)
-    if a.period in ("holdout", "clean"):
+    if a.period == "holdout":
         with open(lock, "w") as f:
             json.dump(meta, f)
     print(json.dumps({k: v for k, v in meta.items() if k != "chunk_list"}, indent=1))

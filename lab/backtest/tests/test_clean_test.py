@@ -75,6 +75,11 @@ def test_documents_must_match_their_hashes(tmp_path):
         ct.check_document(str(doc), "0" * 64, "addendum")
     with pytest.raises(ct.Refused):
         ct.check_document(str(doc), sha[:8], "addendum")  # too short a prefix
+    with pytest.raises(ct.Refused):  # outside a dry run the sidecar is required for a prefix
+        ct.check_document(str(doc), sha[:16], "addendum", sidecar=True)
+    assert ct.check_document(str(doc), sha, "addendum", sidecar=True) == sha  # or all 64 digits
+    (tmp_path / "addendum.sha256").write_text(sha + "  addendum.md\n")
+    assert ct.check_document(str(doc), sha[:16], "addendum", sidecar=True) == sha
     (tmp_path / "addendum.sha256").write_text("f" * 64 + "  addendum.md\n")
     with pytest.raises(ct.Refused):  # the recorded hash file disagrees
         ct.check_document(str(doc), sha, "addendum")
@@ -194,3 +199,39 @@ def test_the_clean_period_warms_up_from_the_dataset_and_reads_the_window_from_th
             store.period_range("clean", cfg, lo, hi)
     with pytest.raises(SystemExit):  # the window's second epoch is not extracted yet
         store.period_chunks("clean", cfg, e55, e56 + EPOCH_SLOTS)
+
+
+def test_the_lock_is_the_one_run(tmp_path):
+    from types import SimpleNamespace
+
+    store = tmp_path / "clean-1055-1063.duckdb"
+    store.write_bytes(b"store")
+    add = tmp_path / "addendum.md"
+    add.write_text("v5")
+    runs = []
+    for name in ("test", "matrix"):
+        d = tmp_path / name
+        d.mkdir()
+        (d / "config.json").write_text(json.dumps({"engine_commit": "abc"}))
+        runs.append(str(d))
+    a = SimpleNamespace(store=str(store), addendum=str(add), test_run=runs[0], matrix_run=runs[1])
+    first = ct.lock_run(a, "s1", {"engine_commit": "abc"}, {}, 9)
+    assert (tmp_path / "clean.lock").exists() and first["trading_days"] == 9
+    assert ct.lock_run(a, "s1", {"engine_commit": "abc"}, {}, 9)["store_sha256"] == "s1"  # a resume of the same run
+    with pytest.raises(ct.Refused):  # another store (e.g. rebuilt with more epochs) after the run
+        ct.lock_run(a, "s2", {"engine_commit": "abc"}, {}, 9)
+
+
+@pytest.mark.parametrize("meta", [{"period": "clean", "slot_end_exclusive": 456_192_000},
+                                  {"period": "forward", "slot_end_exclusive": 456_192_000}])
+def test_a_dry_run_never_reads_the_clean_data(tmp_path, monkeypatch, meta):
+    from types import SimpleNamespace
+
+    store = str(tmp_path / "s.duckdb")
+    c = duckdb.connect(store)
+    c.execute("CREATE TABLE meta AS SELECT ? AS json", [json.dumps(meta)])
+    c.close()
+    monkeypatch.setattr(ct, "check_document", lambda *a, **k: "0" * 64)
+    a = SimpleNamespace(dry_run=True, hypothesis="h", exclusions="e", exclusions_sha256="0" * 64, store=store)
+    with pytest.raises(ct.Refused, match="never reads the clean data"):
+        ct.run_test(a)

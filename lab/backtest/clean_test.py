@@ -22,7 +22,9 @@ next step and nothing after it is computed):
   4. exclusions: every rule of the list resolved against the store (mints <-> pools, symbols, names),
      written to exclusions.json; their positions leave every run's rows before any outcome;
   5. the minimum: >= MIN_DAYS trading days (UTC days with a filled K3 trade); below it only
-     "te weinig dagen" is written;
+     "te weinig dagen" is written (no outcome, so no run: the store may be rebuilt with more epochs).
+     Passing it writes clean.lock next to the store (the store, its sha256, the runs): the one run.
+     A later call computes again only for exactly that store and those runs;
   6. outcomes: rt_tx and wash_1h (backtest.wash, the audit's a4c SQL), H1, H2, the decision rule,
      wash_1h descriptive, a4c itself (unchanged) on the matrix run at d = 1, 2, whose filter groups
      must equal backtest.wash's (n and mean), then the DSR and the PBO.
@@ -38,8 +40,8 @@ organic), the 6 filters (K3 without rt_tx, without wash_1h, without both; at d_m
 the best of --trials (42) skill-less trials, with the Sharpe variance of the 36 dev trials and with the
 null variance 1/T; the 43rd column's DSR beside it. PBO (CSCV) over the T x 43 matrix, blocks min(16, T).
 
---dry-run: any store and runs, no period, window, engine or addendum checks; the output is marked as
-a dry run (for testing the job, never for the test).
+--dry-run: dev or forward stores only (refused on a 'clean' store or a window in 1055-1063); no
+window, engine or addendum checks; the output is marked as a dry run (for testing the job only).
 """
 
 import argparse
@@ -55,8 +57,8 @@ import numpy as np
 
 from . import wash
 from .costs import Scenario, settle_sql
-from .store import load_defaults
-from .strategies import EPOCH_SLOTS, Clock
+from .store import CLEAN, load_defaults
+from .strategies import EPOCH_SLOTS, F7_GRID, Clock
 
 HYPOTHESIS_SHA = "35bdaa0d3f5ed9a36e2af0582810412d29d7d35b217d50d1dc45fd4acb083a28"
 A4C_SHA = "7e6980c31f5acdb996be6efb209b9f749b1cff775e5e2f91667187e73d2a24d6"
@@ -93,14 +95,17 @@ def sha256(path):
         return hashlib.sha256(f.read()).hexdigest()
 
 
-def check_document(path, expected, name):
-    """The document's sha256 when it equals the expected one and its .sha256 file (when present)."""
+def check_document(path, expected, name, sidecar=False):
+    """The document's sha256 when it equals the expected one and its .sha256 file (when present). sidecar:
+    the .sha256 file must exist, unless the expected hash has all 64 digits."""
     if not path or not os.path.exists(path):
         raise Refused(f"{name}: {path} does not exist")
     got = sha256(path)
     if not expected or len(expected) < 16 or not got.startswith(expected.lower()):
         raise Refused(f"{name}: sha256 {got} is not the expected {expected}")
     side = os.path.splitext(path)[0] + ".sha256"
+    if sidecar and len(expected) < 64 and not os.path.exists(side):
+        raise Refused(f"{name}: {side} is missing (or pass all 64 digits)")
     if os.path.exists(side):
         recorded = open(side).read().split()[0]
         if recorded != got:
@@ -322,18 +327,41 @@ def run_a4c(a4c, parts, store, out_json, engine_dir, keep_sql, con):
     return json.load(open(out_json))
 
 
+def lock_run(a, store_sha, test_cfg, matrix_cfg, days):
+    """clean.lock next to the store: the one run of the test (written when the minimum is passed). A later
+    call (a resume) computes only for the same store and runs; anything else is refused."""
+    run = {"store": os.path.abspath(a.store), "store_sha256": store_sha, "addendum_sha256": sha256(a.addendum),
+           "test_run": os.path.abspath(a.test_run), "matrix_run": os.path.abspath(a.matrix_run),
+           "test_config_sha256": sha256(os.path.join(a.test_run, "config.json")),
+           "matrix_config_sha256": sha256(os.path.join(a.matrix_run, "config.json")),
+           "engine_commit": test_cfg.get("engine_commit"), "trading_days": days}
+    lock = os.path.join(os.path.dirname(os.path.abspath(a.store)), "clean.lock")
+    if os.path.exists(lock):
+        held = json.load(open(lock))
+        if {k: held.get(k) for k in run if k != "locked_at_unix"} != run:
+            raise Refused(f"clean.lock holds another run: {held}")
+        return held
+    tmp = lock + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(run | {"locked_at_unix": int(__import__("time").time())}, f, indent=1)
+    os.replace(tmp, lock)
+    return run
+
+
 def run_test(a, log=print):
     out = {"dry_run": bool(a.dry_run), "documents": {}}
     # 1. documents
     out["documents"]["hypothesis"] = check_document(a.hypothesis, HYPOTHESIS_SHA, "hypothesis")
     if not a.dry_run:
-        out["documents"]["addendum"] = check_document(a.addendum, a.addendum_sha256, "addendum")
-    out["documents"]["exclusions"] = check_document(a.exclusions, a.exclusions_sha256, "exclusions")
+        out["documents"]["addendum"] = check_document(a.addendum, a.addendum_sha256, "addendum", sidecar=True)
+    out["documents"]["exclusions"] = check_document(a.exclusions, a.exclusions_sha256, "exclusions", sidecar=not a.dry_run)
     con = duckdb.connect(config={"memory_limit": os.environ.get("LAB_DUCKDB_MEM", "2GB"), "threads": 2})
     if os.environ.get("LAB_SPILL_DIR"):
         con.execute(f"SET temp_directory='{os.environ['LAB_SPILL_DIR']}'")
     con.execute(f"ATTACH '{a.store}' AS s (READ_ONLY)")
     meta = json.loads(con.execute("SELECT json FROM s.meta").fetchone()[0])
+    if a.dry_run and (meta.get("period") == "clean" or meta.get("slot_end_exclusive", 0) > CLEAN[0]):
+        raise Refused("a dry run never reads the clean data (store period 'clean' or slots in 1055-1063)")
     if not a.dry_run and meta.get("prereg_sha256") != out["documents"]["addendum"]:
         raise Refused(f"the store was built for pre-registration {meta.get('prereg_sha256')}, not the addendum's")
     if not a.dry_run:
@@ -379,8 +407,10 @@ def run_test(a, log=print):
         out["decision"] = "te weinig dagen"
         json.dump({k: out[k] for k in ("dry_run", "documents", "window", "decision")} | {"trading_days": days},
                   open(os.path.join(a.out, "result.json"), "w"), indent=1, default=str)
-        log(f"te weinig dagen: {days} < {MIN_DAYS}; nothing else is computed")
+        log(f"te weinig dagen: {days} < {MIN_DAYS}; nothing else is computed (no lock: the store may grow)")
         return out
+    if not a.dry_run:
+        out["lock"] = lock_run(a, out["window"]["store_sha256"], test_cfg, matrix_cfg, days)
     # 6. outcomes: the flags on every trigger of both runs (one definition), then H1, H2
     con.execute(f"""CREATE TEMP TABLE trig AS SELECT DISTINCT pool, t, trigger_trader FROM read_parquet('{tg}', union_by_name = true) WHERE {F7REV} AND {win}
                     UNION SELECT DISTINCT pool, t, trigger_trader FROM read_parquet('{mg}', union_by_name = true) WHERE {F7REV} AND {win}""")
@@ -442,10 +472,16 @@ def run_test(a, log=print):
     dates = [x for (x,) in con.execute(f"""SELECT DISTINCT CAST(DATE '1970-01-01' + CAST(block_time // 86400 AS INTEGER) AS VARCHAR)
                                           FROM s.blocks WHERE block_time IS NOT NULL AND {first} ORDER BY 1""").fetchall()]
     series = {f"{v}|d{dd}|{farm}": sr for (v, dd, farm), sr in _config_series(con, mg, pnl, f"{keep} AND {win}", (1, 2)).items()}
+    expected = [f"tp{int(tp * 100)}_T{T}|d{dd}|{farm}" for tp, T in F7_GRID for dd in (1, 2) for farm in ("all", "organic")]
+    expected += [f"K3 {name}|{lab}" for name in ("zonder rt_tx", "zonder wash_1h", "zonder beide") for lab in ("d_ms600", "d1")] + ["K3|clock"]
     for name, cond, _ in groups:
         for src, d_sql, lab in (("test", "true", "d_ms600"), ("matrix", "d = 1", "d1")):
             series[f"K3 {name}|{lab}"] = dict(con.execute(f"SELECT day, sum(pnl) FROM kf WHERE src = '{src}' AND {d_sql} AND {cond} GROUP BY day").fetchall())
     series["K3|clock"] = dict(con.execute("SELECT day, sum(pnl) FROM kf WHERE src = 'test' GROUP BY day").fetchall())
+    zero = sorted(k for k in expected if not series.get(k))
+    series.update({k: {} for k in zero})  # a configuration without a trade is a column of zeros (T x 43)
+    if set(series) != set(expected):
+        raise Refused(f"unexpected matrix columns: {sorted(set(series) ^ set(expected))}")
     labels, mtx = matrix(series, dates, strict=True)
     t = len(dates)
     var_dev, dev_days = dev_sharpe_variance(con, a.dev_parts, pnl)
@@ -455,8 +491,9 @@ def run_test(a, log=print):
     out["PBO"] = {"t": t, "n_trials": len(labels), "blocks": p_.get("blocks"), "pbo": p_.get("pbo"), "slope": p_.get("slope"),
                   "prob_loss": p_.get("prob_loss"), "n_splits": p_.get("n_splits"), "indicative_only": t < 10, "labels": labels,
                   "nonzero_cells": int(np.count_nonzero(mtx)), "cells": int(mtx.size)}
-    if len(labels) != 43:
-        out["PBO"]["warning"] = f"{len(labels)} columns instead of 43 (a configuration without any trade in the window)"
+    out["PBO"]["zero_columns"] = zero
+    if zero:
+        out["PBO"]["warning"] = f"{len(zero)} of the 43 columns without any trade in the window (zeros): {zero}"
     json.dump(out, open(os.path.join(a.out, "result.json"), "w"), indent=1, default=str)
     with open(os.path.join(a.out, "result.md"), "w") as fh:
         fh.write(report_md(out))

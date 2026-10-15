@@ -4,7 +4,7 @@
 #   0. the documents (hypothesis, addendum, exclusion list, a4c) and the engine: this checkout is the pinned
 #      commit and its replay code is byte-equal to f2c9666, before any clean data is read;
 #   a. the store backtest.store clean: window [455,760,000, end of the complete clean-v1 chunks), epoch 1054
-#      from events/v1 as warm-up, one extractor build; store/clean-1055-<last epoch>.duckdb and clean.lock;
+#      from events/v1 as warm-up, one extractor build; store/clean-1055-<last epoch>.duckdb;
 #   b. two tournament runs from an engine snapshot (engine/ with COMMIT), decisions only in the window,
 #      positions only (--no-report): the test (--delay-ms 600) and the matrix (--delays 1,2,3 and any other
 #      d the Clock gives for 600 ms);
@@ -13,9 +13,10 @@
 #
 #   ENGINE=<pinned commit> ADDENDUM_SHA=<sha256> EXCLUSIONS_SHA=<sha256> bash lab/backtest/nas_clean_test.sh
 #
-# Start once, when epoch 1063 is complete in clean-v1 or on 2026-10-24 12:00 UTC (addendum section 4). After a
-# failure the job resumes: the clean store is reused only for the same addendum and window, the runs resume
-# their parts (same engine snapshot only).
+# Start when epoch 1063 is complete in clean-v1 or on 2026-10-24 12:00 UTC (addendum section 4); operationally
+# not before 5 complete epochs. Below 5 trading days the test writes only "te weinig dagen" and no lock: a later
+# start rebuilds the store with more epochs. Once the test passes the minimum it writes clean.lock (the one
+# run); a resume after a failure then reuses exactly that store and those runs (same engine snapshot only).
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -47,27 +48,51 @@ import sys
 from backtest.clean_test import A4C_SHA, HYPOTHESIS_SHA, check_document, check_replay_code
 h, a, a_sha, e, e_sha, a4c, engine = sys.argv[1:]
 for path, sha, name in ((h, HYPOTHESIS_SHA, "hypothesis"), (a, a_sha, "addendum"), (e, e_sha, "exclusions"), (a4c, A4C_SHA, "a4c")):
-    print(name, path, check_document(path, sha, name))
+    print(name, path, check_document(path, sha, name, sidecar=True))
 print("replay code equal to f2c9666:", check_replay_code(engine))
 EOF
 log "documents and engine ok"
 
-# a. The store (one build; reused only for the same addendum and window start).
+# a. The store. clean.lock (written by clean_test once the minimum of trading days is passed: the one run)
+# pins it; without a lock a store for the current end of the clean root is reused, else built (a "te weinig
+# dagen" store with fewer epochs is superseded, and logged).
+NOW_END=$("$PY" -c "from backtest.store import clean_window_end; print(clean_window_end($FROM))")
 if [ -e "$STORE_DIR/clean.lock" ]; then
-  STORE=$("$PY" - "$STORE_DIR/clean.lock" "$ADDENDUM_SHA" "$FROM" 2>> "$OUT/job.log" <<'EOF'
+  STORE=$("$PY" - "$STORE_DIR/clean.lock" "$ADDENDUM_SHA" "$NOW_END" 2>> "$OUT/job.log" <<'EOF'
 import json, sys
-meta = json.load(open(sys.argv[1]))
-assert meta["period"] == "clean" and meta["prereg_sha256"].startswith(sys.argv[2].lower()), meta.get("prereg_sha256")
-assert meta["window"][0] == int(sys.argv[3]) and meta["warmup_epochs"] == 1, (meta["window"], meta["warmup_epochs"])
-print(f"{sys.argv[1].rsplit('/', 1)[0]}/clean-1055-{(meta['window'][1] - 1) // 432000}.duckdb")
+import duckdb
+lock = json.load(open(sys.argv[1]))
+assert lock["addendum_sha256"].startswith(sys.argv[2].lower()), lock["addendum_sha256"]
+meta = json.loads(duckdb.connect(lock["store"], read_only=True).execute("SELECT json FROM meta").fetchone()[0])
+print(f"locked store, window {meta['window']}, warm-up epochs {meta['warmup_epochs']}; clean root now ends at {sys.argv[3]}", file=sys.stderr)
+print(lock["store"])
 EOF
-  ) || { log "clean.lock exists for another build: REFUSED"; exit 1; }
-  log "store reused: $STORE"
+  ) || { log "clean.lock exists for another addendum or store: REFUSED"; exit 1; }
+  log "store locked by the test's run: $STORE (window and clean-root end in job.log)"
 else
-  if nice -n 10 "$PY" -m backtest.store clean --final --warmup-epochs 1 --from-slot "$FROM" --prereg "$ADDENDUM" \
-       --prereg-sha256 "$ADDENDUM_SHA" > "$OUT/store.log" 2>&1; then
+  CANDIDATE=$STORE_DIR/clean-1055-$(( (NOW_END - 1) / 432000 )).duckdb
+  REUSE=$("$PY" - "$CANDIDATE" "$ADDENDUM_SHA" "$FROM" "$NOW_END" 2>> "$OUT/job.log" <<'EOF'
+import json, os, sys
+import duckdb
+path, sha, lo, hi = sys.argv[1], sys.argv[2].lower(), int(sys.argv[3]), int(sys.argv[4])
+ok = False
+if os.path.exists(path):
+    meta = json.loads(duckdb.connect(path, read_only=True).execute("SELECT json FROM meta").fetchone()[0])
+    ok = meta["period"] == "clean" and meta["prereg_sha256"].startswith(sha) and meta["window"] == [lo, hi] and meta["warmup_epochs"] == 1
+    print(f"existing {path}: window {meta['window']}, reuse {ok}", file=sys.stderr)
+print("yes" if ok else "no")
+EOF
+  )
+  for old in "$STORE_DIR"/clean-1055-*.duckdb; do
+    [ -e "$old" ] && [ "$old" != "$CANDIDATE" ] && log "superseded store (fewer epochs, no outcome): $old"
+  done
+  if [ "$REUSE" = yes ]; then
+    STORE=$CANDIDATE
+    log "store reused: $STORE (window [$FROM,$NOW_END))"
+  elif nice -n 10 "$PY" -m backtest.store clean --final --warmup-epochs 1 --from-slot "$FROM" --prereg "$ADDENDUM" \
+         --prereg-sha256 "$ADDENDUM_SHA" > "$OUT/store.log" 2>&1; then
     STORE=$(sed -n 's/^store: //p' "$OUT/store.log")
-    log "store ok: $STORE"
+    log "store built: $STORE (window [$FROM,$NOW_END))"
   else
     log "store FAILED (store.log)"; exit 1
   fi
