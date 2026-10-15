@@ -113,7 +113,9 @@ LAST=$(( (TO - 1) / 432000 ))
 log "window [$FROM,$TO) (epochs 1055-$LAST); matrix delays $DELAYS; store sha256 $(sha256sum "$STORE" | cut -c1-16)"
 
 # b. Two runs from engine snapshots of this commit.
-ID=clean-1055-$LAST-${COMMIT:0:7}
+# The window's end slot is in the id: a later start with one more chunk (same last epoch) never resumes another
+# window's parts.
+ID=clean-1055-$LAST-$TO-${COMMIT:0:7}
 snapshot() {  # $1: run dir
   if [ ! -d "$1/engine/backtest" ]; then
     mkdir -p "$1/engine"
