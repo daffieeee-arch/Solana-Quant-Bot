@@ -13,7 +13,7 @@ Over a range (--seven --from-slot A --to-slot B; graduations with 7 days of data
      market cap within 7 days that lost >= 95% by day 7 (collapsed).
 
 Each case gets a timeline (create, graduation, peak, end), the runner features at graduation
-+ 5 / + 15 min (runners.py), the insider share and creator sells, and the five biggest sells
++ 5 / + 15 min (runners1b.py), the insider share and creator sells, and the five biggest sells
 in the first 24 h with their timing. cases_report.py renders Markdown with a DexScreener
 link per mint for the owner; no other data source is used.
 
@@ -33,7 +33,7 @@ import time
 import duckdb
 import pyarrow.parquet as pq
 
-from . import runners
+from . import runners1b as runners
 from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard
 from .episodes import POOL_KEY, SOL_QUOTES
 
