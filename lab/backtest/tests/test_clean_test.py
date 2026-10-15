@@ -145,6 +145,11 @@ def _row(r):
 def test_the_matrix_fills_absent_days_with_zero_and_the_dsr_has_both_variances():
     labels, m = ct.matrix({"a": {"d1": 1.0, "d3": 2.0}, "b": {"d2": -1.0}}, ["d1", "d2", "d3"])
     assert labels == ["a", "b"] and m.tolist() == [[1.0, 0.0], [0.0, -1.0], [2.0, 0.0]]
+    with pytest.raises(ct.Refused):  # a series day that is no row (another type or day) is refused, not zeroed
+        ct.matrix({"a": {"2026-10-11": 1.0}}, ["2026-10-12"], strict=True)
+    import datetime
+    with pytest.raises(ct.Refused):
+        ct.matrix({"a": {datetime.date(2026, 10, 11): 1.0}}, ["2026-10-11"], strict=True)
     rng = np.random.default_rng(3)
     d = ct.dsr_both(rng.normal(0.2, 1.0, 30), 42, 0.02)
     assert d["t"] == 30 and d["sr0_null"] > 0 and d["sr0_dev"] > 0 and 0 <= d["dsr_dev"] <= 1 and 0 <= d["dsr_null"] <= 1

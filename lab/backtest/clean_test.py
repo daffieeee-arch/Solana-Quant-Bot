@@ -215,9 +215,15 @@ def dsr_both(daily, n_trials, var_sr_dev):
             "sr0_null": sr0_null, "dsr_null": psr(sr, sr0_null, t, skew, kurt)}
 
 
-def matrix(series, dates):
-    """T x N matrix of daily values: series = {label: {date: value}}, rows the dates (absent: 0)."""
+def matrix(series, dates, strict=False):
+    """T x N matrix of daily values: series = {label: {date: value}}, rows the dates (absent: 0). strict: a
+    series day that is not a row is refused (a day of another type or definition would turn into zeros)."""
     labels = sorted(series)
+    if strict:
+        rows = set(dates)
+        stray = sorted({str(d) for k in labels for d in series[k] if d not in rows})
+        if stray:
+            raise Refused(f"series days outside the matrix rows (type or day definition differs): {stray[:5]}")
     return labels, np.array([[float(series[k].get(d, 0.0) or 0.0) for k in labels] for d in dates], dtype=float)
 
 
@@ -429,22 +435,26 @@ def run_test(a, log=print):
     # The matrix: the window's UTC dates x 43 columns (absent: 0)
     from wallets.overfit import pbo
 
-    swin = win.replace("t >=", "slot >=").replace("t <", "slot <")
+    # The window's UTC dates as the parts' `day` (the day of the last block at or before a slot, YYYY-MM-DD):
+    # from the block at or before the window's first slot on.
+    first = (f"slot >= (SELECT max(slot) FROM s.blocks WHERE block_time IS NOT NULL AND slot <= {lo}) AND slot < {hi}"
+             if lo is not None else "true")
     dates = [x for (x,) in con.execute(f"""SELECT DISTINCT CAST(DATE '1970-01-01' + CAST(block_time // 86400 AS INTEGER) AS VARCHAR)
-                                          FROM s.blocks WHERE block_time IS NOT NULL AND {swin} ORDER BY 1""").fetchall()]
+                                          FROM s.blocks WHERE block_time IS NOT NULL AND {first} ORDER BY 1""").fetchall()]
     series = {f"{v}|d{dd}|{farm}": sr for (v, dd, farm), sr in _config_series(con, mg, pnl, f"{keep} AND {win}", (1, 2)).items()}
     for name, cond, _ in groups:
         for src, d_sql, lab in (("test", "true", "d_ms600"), ("matrix", "d = 1", "d1")):
             series[f"K3 {name}|{lab}"] = dict(con.execute(f"SELECT day, sum(pnl) FROM kf WHERE src = '{src}' AND {d_sql} AND {cond} GROUP BY day").fetchall())
     series["K3|clock"] = dict(con.execute("SELECT day, sum(pnl) FROM kf WHERE src = 'test' GROUP BY day").fetchall())
-    labels, mtx = matrix(series, dates)
+    labels, mtx = matrix(series, dates, strict=True)
     t = len(dates)
     var_dev, dev_days = dev_sharpe_variance(con, a.dev_parts, pnl)
     out["DSR"] = dsr_both(mtx[:, labels.index("K3 zonder rt_tx|d_ms600")], a.trials, var_dev) | {"series": "K3 zonder rt_tx|d_ms600", "dev_days": dev_days}
     out["DSR_K3_clock"] = dsr_both(mtx[:, labels.index("K3|clock")], a.trials, var_dev) | {"series": "K3|clock", "descriptive": True}
     p_ = pbo(mtx, blocks=min(16, t)) if t >= 2 else {}
     out["PBO"] = {"t": t, "n_trials": len(labels), "blocks": p_.get("blocks"), "pbo": p_.get("pbo"), "slope": p_.get("slope"),
-                  "prob_loss": p_.get("prob_loss"), "n_splits": p_.get("n_splits"), "indicative_only": t < 10, "labels": labels}
+                  "prob_loss": p_.get("prob_loss"), "n_splits": p_.get("n_splits"), "indicative_only": t < 10, "labels": labels,
+                  "nonzero_cells": int(np.count_nonzero(mtx)), "cells": int(mtx.size)}
     if len(labels) != 43:
         out["PBO"]["warning"] = f"{len(labels)} columns instead of 43 (a configuration without any trade in the window)"
     json.dump(out, open(os.path.join(a.out, "result.json"), "w"), indent=1, default=str)
@@ -481,7 +491,7 @@ def report_md(o):
         f"met de Sharpe-variantie van de 36 dev-trials {num(ds.get('dsr_dev'))}, met de nulvariantie 1/T {num(ds.get('dsr_null'))}; "
         f"PSR tegen 0 {num(ds.get('psr0'))}. Beschrijvend, de 43e kolom (K3 bij de Clock-d): DSR {num(o['DSR_K3_clock'].get('dsr_dev'))} / "
         f"{num(o['DSR_K3_clock'].get('dsr_null'))}.",
-        f"PBO (CSCV, {pb['n_trials']} kolommen, T = {pb['t']} UTC-dagen, {pb['blocks']} blokken): {num(pb['pbo'])}"
+        f"PBO (CSCV, {pb['n_trials']} kolommen, T = {pb['t']} UTC-dagen, {pb['blocks']} blokken, {pb['nonzero_cells']} van {pb['cells']} cellen niet 0): {num(pb['pbo'])}"
         + (" — slechts indicatief (T < 10)" if pb["indicative_only"] else "") + f"; helling {num(pb['slope'])}, kans op verlies {num(pb['prob_loss'])}"
         + (f"; {pb['warning']}" if pb.get("warning") else "") + ".",
         f"a4c (ongewijzigd) op de matrix-run, d = 1 en 2, tegen backtest.wash: {o.get('a4c_consistency', 'niet gedraaid')}.",
