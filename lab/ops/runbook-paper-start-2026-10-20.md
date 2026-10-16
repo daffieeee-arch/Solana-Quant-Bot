@@ -1,6 +1,8 @@
-# Runbook: paper start (K3 + group H), about 2026-10-21
+# Runbook: paper start (K3 + group H), Tuesday 2026-10-20
 
 For the coordinator, step by step, once the owner has given the OK and the Triton credentials.
+
+**The day (owner decision, night of 2026-10-16):** the paper start is Tuesday **2026-10-20**, on route B (§1). The recorder and the paper engine then run at least 24 hours before the Alpenglow switch (2026-10-21, about 14:50 UTC).
 
 **Scope:** paper only. No wallet, no keys, no transactions. K3 (E14) runs unchanged, and group H (the arms of H4 and H5, `research/week4-spec-paper-h4h5-2026-10-16.md`) runs beside it. This runbook fills in `README.md` ("Installeren en starten") for this start. Where they differ, this runbook applies to this start.
 
@@ -12,6 +14,19 @@ For the coordinator, step by step, once the owner has given the OK and the Trito
   ```
 - `C` is the run commit: main at or after dcff935, which contains #299 (the arms) and #301 (the streaming end() fix).
 
+## Timeline for 2026-10-20 (UTC)
+
+| time | step | section |
+|---|---|---|
+| ~09:30 | Preconditions 0.1–0.7; settings and installation. | §0, §2, §3 |
+| ~10:00 | The measuring hour: the recorder alone, `--budget-usd 0.5 --max-runtime-secs 3600`, in its own root. | §4.1 steps 0–1 |
+| ~11:00 | The hour ends: the chain test on it (step 2, a few minutes); Lab Backtest reads GB per stream, probes and backfills. | §4.1 step 2, "After the hour" |
+| ~11:15 | Budget decision with the owner: the day's `--budget-usd` goes into `RECORDER_ARGS` in `live.env`. | §2, §4.1 |
+| ~11:30 | Start the recorder, then the paper engine; the first checks. | §4.2, §4.3 |
+| by 14:50 at the latest | Both running: 24 hours before the switch. | 0.6 |
+
+If the measuring hour has to be repeated or the budget decision waits, the start moves with it, as long as both run by 14:50 UTC. After that, the coordinator and the owner decide whether to start that day.
+
 ## 0. Preconditions
 
 | # | check | how |
@@ -21,7 +36,7 @@ For the coordinator, step by step, once the owner has given the OK and the Trito
 | 0.3 | NAS job 91 is green (see below). | `compare.md` and `state.jsonl` of job 91 |
 | 0.4 | The recorder binary is the **5e2d1b7** build (#315, main a1c1712; QUEUE item 64). It has: `--pump-creates` (#287); durable budget (#265); rustls 0.23.46 (#290); Alpenglow block footers; no silent loss on a segment write error, exit 74 (#308); fail-closed on an unknown spend, with `--budget-assume-spent` (#308); and the meter saved before exit 74 (#315). NAS: 65/65 tests, GLIBC_2.34, cargo audit clean. | `readlink $LAB/bin/lab-recorder` → `lab-recorder-5e2d1b7-bookworm`; `sha256sum $LAB/bin/lab-recorder-5e2d1b7-bookworm` → `aeb4bea8…` (as noted at the build) |
 | 0.5 | At least 50 GB free; the disk guard is active (unit `solana-disk-guard.timer`, script `~/Solana-project/ops/disk-guard.sh`, outside this repo); no other Triton consumer is running; no `locks/disk-low` or `locks/disk-stopped`. | `df -h ~`; `systemctl --user list-timers solana-disk-guard.timer`; `ls $LAB/locks` |
-| 0.6 | Alpenglow: the switch is at epoch 1064, about 2026-10-21 14:50 UTC. The recorder handles it (footers), and so does the Clock (the last measured epoch until 1,000 slots of 1064). Note whether the start falls before or after the switch. | `$LAB/recorder/alpenglow.json` appears at the first footer |
+| 0.6 | Alpenglow: the switch is at epoch 1064, about 2026-10-21 14:50 UTC. **The start falls before it**: the recorder and the engine run at least 24 hours on the old consensus, then through the switch. The recorder handles it (footers), and so does the Clock (the last measured epoch until 1,000 slots of 1064). | `$LAB/recorder/alpenglow.json` appears at the first footer, after the switch |
 | 0.7 | **PAPER_STORE on the VPS** (route B, §1): `$LAB/store/fwd1053-1054.duckdb`, mode 444, sha256 `be816aa5ad09bef331e894526bd8375601e0aab08f2c525225f000fa50066a40`, equal to the NAS copy. The coordinator copied it on 2026-10-16. | `stat -c %a $LAB/store/fwd1053-1054.duckdb` → `444`; `sha256sum $LAB/store/fwd1053-1054.duckdb` |
 
 Job 91 (arms on, 2c3e5fe) counts as green when all of these hold:
@@ -35,8 +50,8 @@ Job 91 ran without the end() fix (#301). That fix changes only the exit of a pos
 
 The engine needs a store for `--live`. The store is the snapshot of the tokens and pools known before the start, plus the farmer history. The coordinator's rule (2026-10-16) is to use the newest store whose data has already been used.
 
-**Route B is the expected route for 2026-10-21.**
-- Per addendum §4, E20 runs only once epoch 1063 is complete, or at the latest on 2026-10-24 12:00 UTC. The clean data is therefore not spent on the 21st, and route A cannot be ready.
+**Route B is the route for 2026-10-20.**
+- Per addendum §4, E20 runs only once epoch 1063 is complete, or at the latest on 2026-10-24 12:00 UTC. The clean data is therefore not spent on the 20th, and route A cannot be ready.
 - The start accepts the gap of about ten days between the store's end (about 2026-10-11) and the start. This includes the `unknown pools` the engine log counts in the first days: pools created in the gap that keep trading. The farm labels are complete only from the first live slot + 24 h. See below.
 - Route A stays for a later restart, if the coordinator and owner decide so (for example at the clock start).
 
@@ -245,6 +260,7 @@ systemctl --user stop lab-paper lab-recorder
 
 **Group H off, K3 on.** Remove the `PAPER_ARGS` line from `live.env`, then run `systemctl --user restart lab-paper`.
 - After a restart the engine replays the retained segments (3 days) into the same journal; the README's known limitation covers this.
+- **Until the restart fix with the high-water mark is deployed** (`paper/restart.py`, its PR planned for 2026-10-18): no planned restarts after day 3 (from the start + about 2.5 days), and deploys are bundled. A restart within the first 3 days replays everything from the start with the same farmer seed, so the journal comes out the same; a deploy of the fix on day 1 or 2 is such a restart.
 - K3's rows come out the same with or without H (`tests/test_arms_replay.py`).
 - H's rows so far stay in the journal.
 
