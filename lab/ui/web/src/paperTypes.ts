@@ -21,10 +21,19 @@ export interface PaperJournal {
   variants: (PaperGroup & { family: string; variant: string })[]; positions: PaperPosition[]; shadow_positions: PaperPosition[];
   ranges: Record<"1d" | "7d" | "all", PaperRange>;
   ticker: { key: string; ret: number | null; failed: boolean; symbol?: string | null; mint?: string | null }[];
-  stop_rule: { trades: number; days: number; min_trades: number; min_days_ci: number; mean_sol_per_trade: number | null; ci_lo: number | null; ci_hi: number | null; verdict: string };
+  // The daily report's stop rule (lab/paper/stoprule.py): the primary group only, filled trades, from the clock start.
+  stop_rule: {
+    trades: number; entry_failed: number; days: number; min_trades: number; min_days_ci: number; mean_sol_per_trade: number | null;
+    ci_lo: number | null; ci_hi: number | null; verdict: string; primary: string[] | null; clock: PaperClock | null;
+    clock_days: number; clock_max_days: number;
+  };
   capital: { start_sol: number; max_positions: number; final_sol: number; max_drawdown: number; taken: number; skipped: number; curve: number[] };
   n2: { family: string; variant: string; has_shadow: boolean; own_sol_per_trade: number | null; n2_sol_per_trade: number | null; diff_all: number | null; diff_today: number | null; n2_trades: number }[];
+  arms: { group: string; variants: (PaperGroup & { variant: string; today_sol: number })[] }[];
   holdout_rows_dropped: number;
+}
+export interface PaperClock {
+  date: string; reason: string; set_at: string; phase: "not_started" | "running" | "extended" | "due"; clock_day: number | null;
 }
 export interface PaperRecorder {
   sample: boolean; day: string; is_today: boolean; streams: { stream: string; gb: number; messages: number }[];

@@ -14,7 +14,6 @@ paper day, a count without a decision.
 import json
 import os
 from collections import defaultdict
-from datetime import date
 
 import numpy as np
 import pyarrow as pa
@@ -22,42 +21,38 @@ import pyarrow.parquet as pq
 
 from backtest.report import CAPITAL_SOL, MAX_POSITIONS, MIN_TRADES, _boot, capital_sim
 
+# The selection and count are shared with the web app's Paper tab (lab/ui/paper.py): see paper/stoprule.py.
+from .stoprule import (CLOCK_DAYS, CLOCK_KEY, CLOCK_LATEST, CLOCK_MAX_DAYS, GROUPS_KEY,  # noqa: F401 (re-exported)
+                       clock_state, counted, decide, parse_clock, parse_groups, stop_rule_inputs)
+
 MIN_DAYS_CI = 5
-# The stop rule's clock (AGENTS.md, owner 2026-10-10): the decision after 4 weeks with at least MIN_TRADES trades,
-# else at MIN_TRADES trades, at most 6 weeks; its start no later than CLOCK_LATEST, fixed in the journal state.
-CLOCK_KEY, CLOCK_LATEST, CLOCK_DAYS, CLOCK_MAX_DAYS = "clock_start", "2026-11-02", 28, 42
 DRAWS, SEED, TRIM, EMPTY = 10_000, 7, 0.01, -0.99
 
 
 def groups_of(journal):
     """(primary group's variants or None (every variant), {further group: [variants]}) from the journal's state."""
-    raw = journal.state("groups")
-    if not raw:
-        return None, {}
-    gs = json.loads(raw)
-    primary = [v for g in gs.values() if g.get("primary") for v in g["variants"]]
-    return set(primary), {name: g["variants"] for name, g in gs.items() if not g.get("primary")}
+    return parse_groups(journal.state(GROUPS_KEY))
 
 
 def clock_of(journal):
     """The clock start record ({date, reason, set_at[, previous]}) from the journal state, or None."""
-    raw = journal.state(CLOCK_KEY)
-    return json.loads(raw) if raw else None
+    return parse_clock(journal.state(CLOCK_KEY))
 
 
 def clock_lines(clock, day, n_filled, verdict):
     """The clock's state on `day`: not set, not started, its day, or the decision due."""
-    if clock is None:
+    st = clock_state(clock, day, n_filled, MIN_TRADES)
+    if st["phase"] == "not_set":
         return ["- no clock start in the journal yet (python -m paper.clock): a count of every paper day, no decision"]
     head = f"- clock start {clock['date']} (set {clock['set_at']}; reason: {clock['reason']})"
-    if day < clock["date"]:
+    if st["phase"] == "not_started":
         return [head + ": not started, nothing counted yet"]
-    n = (date.fromisoformat(day) - date.fromisoformat(clock["date"])).days + 1
-    if n >= CLOCK_MAX_DAYS:
+    n = st["clock_day"]
+    if st["phase"] == "due" and n >= CLOCK_MAX_DAYS:
         now = f"clock day {n}: the {CLOCK_MAX_DAYS}-day limit, the decision is due: **{verdict}**"
-    elif n >= CLOCK_DAYS and n_filled >= MIN_TRADES:
+    elif st["phase"] == "due":
         now = f"clock day {n}, {n_filled} trades: the decision is due: **{verdict}**"
-    elif n >= CLOCK_DAYS:
+    elif st["phase"] == "extended":
         now = f"clock day {n}, {n_filled} trades: it runs on until {MIN_TRADES} trades, at most day {CLOCK_MAX_DAYS}"
     else:
         now = f"clock day {n} of {CLOCK_DAYS}"
@@ -133,23 +128,7 @@ def _verdict(pnls_by_day, n, filled_by_day=None):
     if len(days) >= MIN_DAYS_CI:
         lo, hi = _boot(np.array([sum(pnls_by_day[d]) for d in days], dtype=float),
                        np.array([counts.get(d, 0) for d in days], dtype=float))
-    if mean is None or n < MIN_TRADES:
-        v = "too few trades"
-    elif lo is not None and lo > 0:
-        v = "GO"
-    else:
-        v = "ADJUST" if mean > 0 else "STOP"
-    return mean, lo, hi, v
-
-
-def stop_rule_inputs(exits):
-    """(P&L per day of every exit, filled trades per day, filled trades): a failed entry (no tokens) costs
-    its transaction but is no trade."""
-    by_day, filled_by_day = defaultdict(list), defaultdict(int)
-    for x in exits:
-        by_day[x["day"]].append(x["pnl"])
-        filled_by_day[x["day"]] += bool(x["tokens"])
-    return by_day, filled_by_day, sum(filled_by_day.values())
+    return mean, lo, hi, decide(mean, lo, n, MIN_TRADES)
 
 
 def _p(xs, q):
@@ -254,10 +233,7 @@ def daily_report(journal, day, watch_log=None):
     # primary group's variants only: K3's stop rule); with a clock start, the trades entered on or after its day.
     primary, further = groups_of(journal)
     clock = clock_of(journal)
-    entered = {(o["family"], o["variant"], o["key"], o["t"]): o["day"] for o in orders}
-    traded = [x for x in exits if not x["family"].startswith("N2_") and x["day"] <= day
-              and (primary is None or x["variant"] in primary)
-              and (clock is None or entered.get((x["family"], x["variant"], x["key"], x["t"]), x["day"]) >= clock["date"])]
+    traded = counted(exits, orders, day, primary, clock)
     by_day, filled_by_day, n_filled = stop_rule_inputs(traded)
     mean, lo, hi, verdict = _verdict(by_day, n_filled, filled_by_day)
     final, mdd, taken, skipped = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"], x["pnl"], not x["tokens"])

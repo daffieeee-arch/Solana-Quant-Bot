@@ -93,15 +93,27 @@ function Ring({ part }: { part: number }) {
   );
 }
 
+// The clock's state in words (lab/paper/stoprule.py clock_state); without a clock: a count, no decision.
+function clockText(s: PaperJournal["stop_rule"]): string {
+  const c = s.clock;
+  if (!c) return "geen klokstart: telling, geen beslissing";
+  if (c.phase === "not_started") return `klok start ${c.date}`;
+  if (c.phase === "due") return `klokdag ${c.clock_day}: beslissing`;
+  if (c.phase === "extended") return `klokdag ${c.clock_day}: loopt door tot ${s.min_trades} trades`;
+  return `klokdag ${c.clock_day} van ${s.clock_days}`;
+}
+
 function StopCard({ j }: { j: PaperJournal }) {
   const s = j.stop_rule, early = s.trades < s.min_trades, v = VERDICT[s.verdict];
+  const decides = s.clock != null && s.clock.phase !== "not_started";
   return (
     <Panel className="flex items-center gap-3">
       <Ring part={s.trades / s.min_trades} />
       <div className="flex flex-col gap-0.5 min-w-0 items-start">
         <span className="text-[11px] text-muted">Stopregel</span>
         <span className="num text-[15px] font-semibold">{n0(s.trades)} / {s.min_trades}</span>
-        {early ? <span className="text-[11px] text-fg-2">te vroeg</span> : <Badge tone={v?.tone ?? "muted"}>{v?.text ?? s.verdict}</Badge>}
+        {decides && !early && <Badge tone={v?.tone ?? "muted"}>{v?.text ?? s.verdict}</Badge>}
+        <span className="text-[11px] text-fg-2">{decides && early ? `te vroeg · ${clockText(s)}` : clockText(s)}</span>
       </div>
     </Panel>
   );
@@ -327,20 +339,40 @@ function Details({ j, r, now }: { j: PaperJournal; r: PaperRecorder | null; now:
 
       <Panel>
         <h2 className="m-0 mb-1 text-[13px] font-extrabold">Stopregel-teller</h2>
-        <p className="m-0 mb-1 text-xs text-muted">Alle paper-dagen, zonder N2. Oordeel vanaf {s.min_trades} trades; 95%-interval (per dag) vanaf {s.min_days_ci} dagen.</p>
-        <Line k="Trades · dagen">{n0(s.trades)} · {s.days}</Line>
+        <p className="m-0 mb-1 text-xs text-muted">
+          {s.clock ? `Trades ingestapt vanaf de klokstart ${s.clock.date} (reden: ${s.clock.reason}). ` : "Geen klokstart in het journaal: telling van elke paper-dag, geen beslissing. "}
+          {s.primary ? `Alleen de hoofdgroep (${s.primary.join(", ")}), zonder N2. ` : "Zonder N2. "}
+          Alleen gevulde trades; de kosten van mislukte instappen tellen wel mee. Oordeel vanaf {s.min_trades} trades; 95%-interval (per dag) vanaf {s.min_days_ci} dagen.
+          {s.clock && ` Beslissing na ${s.clock_days} dagen met minstens ${s.min_trades} trades, anders bij ${s.min_trades} trades, uiterlijk dag ${s.clock_max_days}.`}
+        </p>
+        <Line k="Klok">{clockText(s)}</Line>
+        <Line k="Trades · mislukt · dagen">{n0(s.trades)} · {n0(s.entry_failed)} · {s.days}</Line>
         <Line k="Netto per trade"><Num value={s.mean_sol_per_trade} signed format={{ minimumFractionDigits: 4, maximumFractionDigits: 4 }} suffix=" SOL" className={tone(s.mean_sol_per_trade)} /></Line>
         <Line k="95%-interval">{s.ci_lo == null ? `vanaf ${s.min_days_ci} dagen` : `${s.ci_lo.toFixed(4)} … ${s.ci_hi?.toFixed(4)} SOL`}</Line>
       </Panel>
 
       <Panel>
         <h2 className="m-0 mb-1 text-[13px] font-extrabold">Kapitaalsimulatie</h2>
-        <p className="m-0 mb-1 text-xs text-muted">{n0(c.start_sol)} SOL, vaste grootte, hoogstens {c.max_positions} posities tegelijk.</p>
+        <p className="m-0 mb-1 text-xs text-muted">{n0(c.start_sol)} SOL, vaste grootte, hoogstens {c.max_positions} posities tegelijk; dezelfde trades als de stopregel-teller.</p>
         <Area ys={c.curve} id="g-cap" />
         <Line k="Eindstand"><span className={tone(c.final_sol - c.start_sol)}>{c.final_sol.toLocaleString("nl-NL", { maximumFractionDigits: 2 })} SOL</span></Line>
         <Line k="Grootste daling">{n1(c.max_drawdown * 100)}%</Line>
         <Line k="Genomen / overgeslagen">{n0(c.taken)} / {n0(c.skipped)}</Line>
       </Panel>
+
+      {j.arms.map((g) => (
+        <Panel key={g.group}>
+          <h2 className="m-0 mb-1 text-[13px] font-extrabold">Groep {g.group}: meting, geen toets</h2>
+          <p className="m-0 mb-1 text-xs text-muted">Telt niet mee voor de stopregel of de kapitaalsimulatie. Alle paper-dagen tot {j.is_today ? "vandaag" : j.day}.</p>
+          {g.variants.map((x) => (
+            <div key={x.variant}>
+              <Line k={`${x.variant} · trades · mislukt · open`}>{n0(x.trades)} · {n0(x.entry_failed)} · {n0(x.open)}</Line>
+              <Line k="Netto per trade"><Num value={x.net_sol_per_trade} signed format={{ minimumFractionDigits: 4, maximumFractionDigits: 4 }} suffix=" SOL" className={tone(x.net_sol_per_trade)} /></Line>
+              <Line k="Totaal · vandaag"><span className={tone(x.net_sol)}>{x.net_sol.toFixed(3)} SOL</span> · <span className={tone(x.today_sol)}>{x.today_sol.toFixed(3)} SOL</span></Line>
+            </div>
+          ))}
+        </Panel>
+      ))}
 
       <Panel>
         <h2 className="m-0 mb-1 text-[13px] font-extrabold">Verschil met N2</h2>
