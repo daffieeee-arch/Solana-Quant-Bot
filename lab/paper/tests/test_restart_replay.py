@@ -42,18 +42,20 @@ def _content(j):
 
 
 def _pick(u, clock):
-    """An H position held across a commit, a crash in it, and a later start before its entry such that no position
-    of the run is open over both the later start and the crash (that one could not be carried: restart_lost), and the
-    restart has an hour before the crash (the farm windows of a replay of every pool)."""
+    """An H position held over minute commits (at least 600 slots), a crash in the middle of it, and a later start:
+    an hour and 1,000 slots before the crash (the farm window of a replay of every pool is complete from an hour after
+    its first slot, so the signals after the HWM are decided as in the run), at least 2,000 slots after the slice's
+    start and before the position's trigger, and with no position of the run open over both the later start and the
+    crash (that one could not be carried: restart_lost). On dev2 [450130000, 450175000): 38B8sK's arms, 1,124 slots."""
     hour = clock.slots(3_600_000, LO)
     every = u.journal.rows("exits", "tokens > 0")
     for x in sorted(u.journal.rows("exits", ARMS + " AND tokens > 0"), key=lambda r: r["entry_slot"] - r["exit_slot"]):
-        if not x["exit_slot"] or x["exit_slot"] - x["entry_slot"] < 2_000:
+        if not x["exit_slot"] or x["exit_slot"] - x["entry_slot"] < 600:
             continue
         crash = (x["entry_slot"] + x["exit_slot"]) // 2
-        for lo2 in range(x["t"] - 2_000, LO, -2_000):
-            if crash - lo2 > hour and not any(y["entry_slot"] < lo2 and (y["exit_slot"] or HI) >= crash - 1_000 for y in every):
-                return x, crash, lo2
+        lo2 = min(crash - hour - 1_000, x["t"] - 2_000)
+        if lo2 >= LO + 2_000 and not any(y["entry_slot"] < lo2 and (y["exit_slot"] or HI) >= crash - 1_000 for y in every):
+            return x, crash, lo2
     return None
 
 

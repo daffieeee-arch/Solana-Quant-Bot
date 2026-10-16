@@ -35,8 +35,11 @@ from collections import Counter
 
 HWM_KEY, HWM_STATE_KEY, RESTARTS_KEY = "hwm", "hwm_state", "restarts"
 # Counts that are no difference to the journal: signals and positions of the journal from before the replay's first
-# slot (the keeper removed their segments), whose exits only count for the risk state.
-BEFORE = ("journal_entries_before_the_replay", "journal_exits_before_the_replay")
+# slot (the keeper removed their segments), whose exits only count for the risk state; and signals of the replay's
+# first hour, where its own trigger history (200 slots), N2 hour index and farm windows are still filling.
+BEFORE = ("journal_entries_before_the_replay", "journal_exits_before_the_replay",
+          "journal_signals_in_the_replays_first_hour", "replay_signals_in_its_first_hour_not_in_journal",
+          "day_loss_from_before_the_replay")
 # Journal rows from this many slots before the replay's first slot: entries due inside the replay of signals
 # just before it.
 MARGIN_SLOTS = 2_000
@@ -95,7 +98,7 @@ class Restart:
         self.exit_order, self.next_exit = [], 0  # [(slot, key)] of the journal's exits, in order
         self.applied, self.closed = set(), set()  # signal keys decided in the replay; exits applied in memory
         self.natural = {}  # signal key -> the replay's own decision ('entered' / 'skipped')
-        self.first_slot = None
+        self.first_slot = self.warm = self.first_day = None  # the replay's first slot; an hour after it; its UTC day
 
     def load(self, first_slot):
         """The journal's signals, orders, buy fills and exits from MARGIN_SLOTS before the replay's first slot on."""
@@ -169,7 +172,7 @@ def restart_lines(journal, day):
         before = ", ".join(f"{k} {c[k]}" for k in BEFORE if c.get(k))
         lines.append(f"- resumed at the HWM slot {r['hwm']}, the replay from slot {r.get('first_slot')}: "
                      f"{('differences to the journal: ' + diff) if diff else 'no difference to the journal'}"
-                     + (f" (from before the replay: {before})" if before else ""))
+                     + (f" (from before the replay or its first hour: {before})" if before else ""))
         if c.get("restart_lost"):
             lines.append(f"  - {c['restart_lost']} open positions the replay could not carry, closed at their last mark "
                          "(exit_reason restart_lost)")

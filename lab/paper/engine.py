@@ -302,7 +302,7 @@ class Engine:
                     self.slot_arrivals = arr
                     self._end_slot(cur, by_key, bt)
                 elif self.replaying:
-                    self.rs.load(ev.slot)  # the journal's rows of the window this start replays
+                    self._load_replay(ev.slot, ev.block_time)
                 self._quiet_entries(ev.slot)
                 cur, by_key, bt, arr = ev.slot, {}, ev.block_time, {}
             by_key.setdefault((ev.venue, ev.key), []).append(ev.leg)
@@ -709,7 +709,8 @@ class Engine:
             self.rs.applied.add((family, variant, key, t))
             j = self.rs.sig.get((family, variant, key, t))
             if j is None:
-                self.rs.counts["replay_signals_not_in_journal"] += 1
+                self.rs.counts["replay_signals_in_its_first_hour_not_in_journal" if t < self.rs.warm
+                               else "replay_signals_not_in_journal"] += 1
             elif j["status"] == "entered":
                 self._pend(j, g, params)
             return
@@ -720,6 +721,13 @@ class Engine:
         self.pending[t + d].append(Pending(family, variant, key, venue, orientation, t, t + d, params, depth,
                                            None if g is self.primary else g.name))
         self.j.put("signals", **row, status="entered", reason=None)
+
+    def _load_replay(self, first_slot, block_time=None):
+        """The journal's rows of the window this start replays, and the end of its first hour (its own trigger history,
+        N2 hour index and farm windows fill there: signals before it are counted apart), and its first UTC day."""
+        self.rs.load(first_slot)
+        self.rs.warm = first_slot + self.clock.slots(HOUR_MS, first_slot)
+        self.rs.first_day = _day(block_time)
 
     def _pend(self, row, g, params, now=None):
         """Replaying: the journal's entered signal (row) becomes a pending entry at the journal's entry slot (its
@@ -745,7 +753,8 @@ class Engine:
             if self._pend(row, g, dict(g.variants)[row["variant"]], now=slot) is None:
                 self.rs.counts["journal_entries_before_the_replay"] += 1
             else:
-                self.rs.counts["journal_signals_not_in_replay"] += 1
+                self.rs.counts["journal_signals_in_the_replays_first_hour" if row["t"] < self.rs.warm
+                               else "journal_signals_not_in_replay"] += 1
 
     def _farm_window_complete(self, pool, t):
         """1 when the pool's trades over the farm label's hour [t - 1 h, t) are all in the feed: a feed of every
@@ -1058,7 +1067,7 @@ class Engine:
         rs, j = self.rs, self.journal
         slot = rs.slot if slot is None else slot
         if rs.first_slot is None:  # no event before the HWM in this replay
-            rs.load(slot)
+            self._load_replay(slot)
         c = rs.counts
         self._journal_exits(rs.slot)  # every exit the journal made, closed in memory
         # Busy, cooldowns, the daily loss and the wallets: the HWM's state.
@@ -1079,8 +1088,8 @@ class Engine:
                 continue
             if {k: v for k, v in g.cool.items() if v >= rs.slot} != gs["cool"]:
                 c["cooldowns_different"] += 1
-            if g.day_loss != gs["day_loss"]:
-                c["day_loss_different"] += 1  # also when the replay started on the HWM's day: its loss before is missing
+            if g.day_loss != gs["day_loss"]:  # a replay that started on the HWM's day lacks the day's exits before it
+                c["day_loss_from_before_the_replay" if rs.first_day == self.day else "day_loss_different"] += 1
             g.cool, g.day_loss = dict(gs["cool"]), gs["day_loss"]
             g.wallet["realized"], g.wallet["txs"] = gs["realized"], deque(gs["txs"], maxlen=50)
             g.wallet_dirty = True
