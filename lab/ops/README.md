@@ -27,7 +27,7 @@ Settings live outside the repo in `~/.config/solana-lab/`:
 
 | file | contents | mode |
 |---|---|---|
-| `live.env` | `RECORDER_ARGS`, `PAPER_STORE` (`live.env.example`). **`PAPER_STORE` is required**: the engine refuses `--live` without a readable store. Use the newest store: pools created between its end and the recorder's start are unknown, their trades are dropped (counted and logged as `unknown pools`), and the farmer history is complete only from the store's end + 1 day (journal state `farmer_seed`) | 644 |
+| `live.env` | `RECORDER_ARGS`, `PAPER_STORE` (`live.env.example`). **`PAPER_STORE` is required**: the engine refuses `--live` without a readable store. Use the newest store: pools created between its end and the recorder's start are unknown, their trades are dropped (counted and logged as `unknown pools`), and the farmer history is complete only from the **first live slot + 1 day** when the store ends before the recorder's start (as fwd1053-1054 does for the paper start), else from the later of the first live slot and the store's start + 1 day (journal state `farmer_seed`, `complete_from`; paper/live.py `_init_seed`) | 644 |
 | `recorder.env` | `LAB_TRITON_GRPC_ENDPOINT`, `LAB_TRITON_X_TOKEN` (`recorder.env.example`, names only) | **600** |
 | `rpc.env` | `LAB_TRITON_RPC_URL`, which holds the token (`rpc.env.example`) | **600** |
 | `token-meta-rpc.approved` | exists only after the owner approved paid RPC calls; one line with date and words | 644 |
@@ -95,7 +95,7 @@ Only after the owner's OK for this step. Run by the coordinator.
 - then `systemctl --user stop lab-paper lab-recorder` (the paper engine first);
 - for the RPC route also `lab-token-meta-rpc` and `rm ~/.config/solana-lab/token-meta-rpc.approved`.
 
-**Disk guard.** At its emergency level (< 20 GB free) `ops/disk-guard.sh` also stops
+**Disk guard.** At its emergency level (< 20 GB free) `~/Solana-project/ops/disk-guard.sh` (unit `solana-disk-guard.timer`, outside this repo) also stops
 `lab-paper.service`, `lab-token-meta-rpc.service` and `lab-recorder.service`, in that order, and
 writes `<lab>/locks/disk-stopped` first. The three units have `ConditionPathExists=!` on that file:
 while it exists no timer (or reboot) starts them again, even after `disk-low` is gone, so they do not
