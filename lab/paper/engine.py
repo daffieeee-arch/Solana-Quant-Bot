@@ -320,6 +320,8 @@ class Engine:
         if self.replaying:  # the data ended before the HWM (a catch-up with nothing new)
             self._resume(self.last_slot)
         self._end_of_data()
+        if self.last_slot is not None:  # everything up to the last slot is committed now
+            self._checkpoint(self.last_slot + 1, self.minute)
         self.j.commit()
 
     def _journal_seed(self, seed):
@@ -355,6 +357,10 @@ class Engine:
         self.slot_block_time = block_time
         if self.first_slot is None:
             self.first_slot = slot
+        if self.replaying and slot > self.rs.slot:
+            # Past the HWM's slot (its minute's first slot had no event here): resume before this slot's day change,
+            # which the first run did not reach (it died after its last commit), so the day is closed now.
+            self._resume(slot)
         self._clock(slot, block_time)
         if self.replaying and slot >= self.rs.slot:  # the HWM was committed before this slot's events
             self._resume(slot)
@@ -477,11 +483,12 @@ class Engine:
         """Live: the engine's minute is at most one behind the wall clock (not replaying or catching up)."""
         return self.wall_clock is None or (self.minute is not None and self.minute >= int(self.wall_clock() // 60) - 1)
 
-    def _keep_pools(self, force=False):
+    def _keep_pools(self, force=False, now=False):
         """Pools of open and pending positions for the recorder (open-pools.json): every minute and
         as soon as the set changes, so a pool leaving the watchlist keeps its transactions. Not while replaying or
-        catching up: a list of the past would replace the one the recorder has (the last run's)."""
-        if not hasattr(self.feed, "keep_pools") or self.replaying or not self._caught_up():
+        catching up: a list of the past would replace the one the recorder has (the last run's). now: at the HWM
+        (_resume) the positions are the journal's, current ones: written at once."""
+        if not hasattr(self.feed, "keep_pools") or self.replaying or not (now or self._caught_up()):
             return
         pools = sorted({o.p.key for v in self.open.values() for o in v if o.p.venue == "pool"}
                        | {p.key for v in self.pending.values() for p in v if p.venue == "pool"}
@@ -1051,7 +1058,10 @@ class Engine:
                     self.rs.counts["exits_forced_from_journal"] += 1
                     break
             if p is None:
-                g = self.variant_group.get(x["variant"], self.primary)
+                g = self.variant_group.get(x["variant"])
+                if g is None:  # its group is not configured now (e.g. group H off): no current group's risk state
+                    self.rs.counts["journal_exits_of_unconfigured_variants"] += 1
+                    continue
                 p = Pending(x["family"], x["variant"], x["key"], None, None, x["t"], x["entry_slot"], None, 0,
                             None if g is self.primary else g.name)
                 if x["entry_slot"] is not None and x["entry_slot"] < self.rs.first_slot:
@@ -1123,6 +1133,8 @@ class Engine:
                     del self.pending[e]
         for k, r in jpend.items():
             g = self.variant_group.get(r["variant"])
+            if g is None:
+                c["journal_pending_of_unconfigured_variants"] += 1
             if k in mpend or g is None:
                 continue
             p = self._pend(r, g, dict(g.variants)[r["variant"]])
@@ -1142,13 +1154,17 @@ class Engine:
                "counts": dict(sorted(c.items())), "compare_6h": cmp_}
         j.state(RS.RESTARTS_KEY, json.dumps(json.loads(j.state(RS.RESTARTS_KEY) or "[]") + [rec], sort_keys=True))
         self._write_wallet(self.slot_block_time)
+        self._keep_pools(force=True, now=True)  # the open positions' pools for the recorder during the catch-up
 
     def _close_lost(self, row, slot):
         """A position open in the journal at the HWM that the replay does not hold (paper/restart.py): closed at the
         HWM at its last journaled mark (mark_pnl; without a mark at zero proceeds), exit_reason 'restart_lost'. No
-        sale is simulated, so no sell fill."""
+        sale is simulated, so no sell fill. A position of a variant not configured now (its group off: runbook §5,
+        "Group H off") is closed so too, but touches no current group's daily loss, wallet or cooldowns."""
         k = RS.key_of(row)
-        g = self.variant_group.get(row["variant"], self.primary)
+        g = self.variant_group.get(row["variant"])
+        unconfigured = g is None
+        g = g or self.primary
         sig = self.rs.sig.get(k) or {}
         p = Pending(row["family"], row["variant"], row["key"], sig.get("venue"), sig.get("orientation"), row["t"],
                     row["entry_slot"], None, sig.get("depth") or 0, None if g is self.primary else g.name)
@@ -1162,6 +1178,9 @@ class Engine:
                    vault_capped=0, reverted_direct=0, reverted_router=0, sells_dropped=0, sells_scaled=0, peak_mark=None,
                    peak_slot=None, n_flow_slots=None, cap_slots=None)
         self.j.delete("positions", family=p.family, variant=p.variant, key=p.key, t=p.t)
+        if unconfigured:
+            self.rs.counts["restart_lost_of_unconfigured_variants"] += 1
+            return
         self._exit_effects(p, net - total, slot, tokens, proceeds, cost, slot)
         self.rs.counts["restart_lost"] += 1
 
@@ -1375,11 +1394,17 @@ def main(argv=None):
     if not a.live and (a.lo is None or a.hi is None):
         raise SystemExit("give --from and --to (replay) or --live <recorder dir>")
     if a.live:
-        from .live import LiveFeed
+        from .live import LiveFeed, segment_dirs
 
         j = Journal(a.journal)
+        # A restart (the journal has a high-water mark) replays the segments of the last RS.WINDOW_H hours before it.
+        found = RS.load(j)
+        from_seq = RS.window_start_seq(segment_dirs(a.live), found[0]) if found else 0
+        if found:
+            print(f"restart: HWM slot {found[0]['slot']}; replay from segment {from_seq} ({RS.WINDOW_H} h)", flush=True)
         # Pools and graduations learned live by earlier runs (journal table 'learned'): known again after a restart.
-        feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up, seed_farmers=True, learned=j.rows("learned"))
+        feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up, seed_farmers=True, learned=j.rows("learned"),
+                        from_seq=from_seq)
     else:
         feed = ReplayFeed(a.store, a.lo, a.hi)
         j = Journal(a.journal)

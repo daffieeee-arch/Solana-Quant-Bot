@@ -5,7 +5,8 @@ commit) and 'hwm_state' (the small risk state at that point per group: the daily
 running, the paper wallet's realized P&L and last transactions, and the busy entries that can still block a signal).
 Every row the run journaled before that point is committed with it, and none after it.
 
-A start on a journal with a HWM replays the retained recorder segments, as every live start does. Up to the HWM:
+A start on a journal with a HWM replays the recorder segments of the last WINDOW_H (36) hours before it, not every
+retained one (a replay runs at a few times real time). Up to the HWM:
 - It writes no journal rows (heartbeat, usage, signals, orders, fills, exits, positions), no daily exports or reports
   and no wallet files. The first run's rows stay as they are.
 - It takes the decisions from the journal instead of making them again:
@@ -34,6 +35,12 @@ import json
 from collections import Counter
 
 HWM_KEY, HWM_STATE_KEY, RESTARTS_KEY = "hwm", "hwm_state", "restarts"
+# The replay window of a restart, back from the HWM. Up to the HWM the journal decides, so the replay only rebuilds
+# the state at it: the positions open then (an H position is held at most 6 h), with the 24 h farmer history behind
+# their legs (the flow exits count organic legs only), and the live watchlist's rules (at most 24 h, Rules). 30 h
+# would do; 36 h leaves 6 h, so this start's complete_from (its first slot + 24 h) lies 12 h before the HWM and the 6 h
+# comparison runs. A position entered before the window would be closed at the HWM (restart_lost).
+WINDOW_H = 36
 # Counts that are no difference to the journal: signals and positions of the journal from before the replay's first
 # slot (the keeper removed their segments), whose exits only count for the risk state; and signals of the replay's
 # first hour, where its own trigger history (200 slots), N2 hour index and farm windows are still filling.
@@ -147,6 +154,21 @@ class Restart:
                 c["same" if j is not None and j["status"] == nat else "different" if j is not None else "not_in_journal"] += 1
         c["journal_only"] = sum(1 for k in self.sig if lo <= k[3] < self.slot and k not in self.natural)
         return {"compared": True, "from_slot": lo, **c}
+
+
+def window_start_seq(segments, hwm, hours=WINDOW_H):
+    """The first recorder segment a restart replays: the first complete one closed (written_unix) at or after the HWM's
+    minute - `hours`. Segments without written_unix (older recorders): every segment."""
+    cutoff = hwm["minute"] * 60 - hours * 3600
+    for seq, _, meta in segments:
+        if meta.get("written_unix") is not None and meta["written_unix"] >= cutoff:
+            return seq
+    return segments[0][0] if segments else 0
+
+
+def window_start_slot(hwm_slot, clock, hours=WINDOW_H):
+    """The same window in slots (a replay feed's first slot, in the tests)."""
+    return hwm_slot - clock.slots(hours * 3_600_000, hwm_slot)
 
 
 def exit_slot(row):

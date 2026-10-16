@@ -448,8 +448,14 @@ def test_a_restart_after_the_retention_keeps_the_first_starts_farmer_seed(tmp_pa
         j.put("heartbeat", minute=minute, day=f"2026-10-2{minute}", last_slot=last, events=1, open_positions=0, gap_slots=0, note="")
     lines = seed_lines(j)
     assert lines[3] == "- start 1: first live slot 4000 (2026-10-21), farm labels complete from slot 5000 (2026-10-22)"
-    assert lines[4].startswith("- start 2: first live slot 8000 (2026-10-22), farm labels complete from slot 9000 (not reached yet); "
-                               "a restart: signals of slots [8000, 9000) after the journal's high-water mark")
+    assert lines[4] == "- start 2: first live slot 8000 (2026-10-22), farm labels complete from slot 9000 (not reached yet)"
+    # With the restart's record (paper/restart.py): signals after its HWM and before complete_from lack history only
+    # when complete_from lies after the HWM (an outage of more than ~1.5 days).
+    for hwm, want in ((8_600, "; a restart: the signals of slots [8600, 9000), after the journal's high-water mark, are "
+                              "journaled with incomplete farmer history"),
+                      (9_400, "; a restart: complete before the journal's high-water mark (slot 9400)")):
+        j.state("restarts", json.dumps([{"hwm": hwm, "first_slot": 8_000, "day": "2026-10-22", "counts": {}}]))
+        assert seed_lines(j)[4].startswith(lines[4] + want), seed_lines(j)[4]
 
 
 def test_live_needs_a_readable_store(tmp_path, capsys):

@@ -111,11 +111,12 @@ Live input checks:
   `farmer_seed` keeps the **first** start's; every start's seed is listed once, in order, in `farmer_seeds`
   (LAB review B6).
   Every start replays the retained segments. After the first 3 days the oldest of them is ~3 days old, and the
-  farmer history before it is gone, so a restart then seeds its window there: the signals of its first day,
-  [first live slot, `complete_from`), have incomplete history. Up to the journal's high-water mark the restart writes
-  nothing and takes the journal's decisions (see "Restarts" below), so the first run's rows stay. Only signals after
-  the HWM inside that day are journaled with incomplete history (`farm_complete` 0, group H `skipped`, "farm history
-  incomplete"): after an outage of more than ~2 days. The daily report lists every start ("Farmer seed per start").
+  farmer history before it is gone. A restart seeds at the start of its replay window (36 h before the journal's
+  high-water mark, see "Restarts" below): the signals of its first day, [first live slot, `complete_from`), have
+  incomplete history. Up to the HWM the restart writes nothing and takes the journal's decisions, so the first run's
+  rows stay. Only signals after the HWM and before `complete_from` are journaled with incomplete history
+  (`farm_complete` 0, group H `skipped`, "farm history incomplete"): after an outage of more than ~1.5 days. The daily
+  report lists every start ("Farmer seed per start") and, for a restart, whether that happened.
 - A row that comes twice (a probe's backfill delivered after its first recorded rows, or slots
   recorded again after a restart) counts once: row keys (pool or mint, slot, tx, outer, inner) of
   the last 3,000 slots are remembered in `seen_keys` (LiveFeed), with their source.
@@ -152,7 +153,12 @@ and minute of the commit) and `hwm_state` (per group the daily loss, the running
 wallet's realized P&L and last transactions, and the busy entries that can still block). Nothing is committed
 between minutes (`Journal.export_day` does not commit), so the journal holds exactly what the run did up to its HWM.
 
-A start on a journal with a HWM replays the retained segments as every start does, but up to the HWM:
+A start on a journal with a HWM replays the segments of the last 36 h before it (`restart.WINDOW_H`: from the first
+segment closed then on, LiveFeed's `from_seq`), not every retained one. That covers the oldest open position (an H
+position is held at most 6 h) with the 24 h farmer history behind its legs, and the live watchlist's longest rule
+(24 h), with 6 h to spare; this start's farm labels are complete 12 h before the HWM. Measured on the VPS (K3 + H, one
+CPU, every event of a dev chunk in one-minute segments: an upper bound for the recorder's filtered stream): 5 s per
+segment, so at most ~3 h for the window. Up to the HWM it:
 - it writes no rows (heartbeat, usage, signals, orders, fills, exits, positions), no daily exports or reports and no
   wallet files;
 - it takes the decisions from the journal: a signal enters as journaled (N2 matches included), an entry fills with
@@ -162,14 +168,16 @@ So the positions open at the HWM are the first run's, rebuilt over the same even
 
 At the HWM the journal's state is taken: its open positions, its pending entries, and busy, cooldowns, the daily loss
 and the wallets from `hwm_state`. A journal-open position the replay does not hold is closed at the HWM at its last
-journaled mark, `exit_reason` `restart_lost` (no sell fill). This happens when its entry lies before the retained
-segments (an outage of ~3 days), when its entry does not fill again, or when the replay exits before the HWM where the
-journal does not. The counts go to state `restarts` and the daily report ("## Restarts"). There, the last 6 h before
+journaled mark, `exit_reason` `restart_lost` (no sell fill). This happens when its entry lies before the window,
+when its entry does not fill again, or when the replay exits before the HWM where the journal does not. A position of a
+variant whose group is not configured now (runbook §5, "Group H off") is closed so too, without touching any current
+group's daily loss, wallet or cooldowns. At the HWM the open positions' pools go to `open-pools.json` at once (they are
+current); after that the file waits until the engine has caught up. The counts go to state `restarts` and the daily report ("## Restarts"). There, the last 6 h before
 the HWM are also compared: what the replay would have decided itself against the journal. This only happens when
 that window starts after this start's farmer history is complete.
 
 LiveFeed keeps what a restart cannot learn again from the retained segments in the journal table `learned`:
-- pools learned live, loaded when they were learned before the first retained segment (the others are learned
+- pools learned live, loaded when they were learned before the window's first segment (the others are learned
   again, in order);
 - graduated tokens;
 - the first block of each epoch, so the measured slot time, and with it every delay in slots, stays the same.

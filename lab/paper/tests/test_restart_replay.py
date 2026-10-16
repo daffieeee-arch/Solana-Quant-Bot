@@ -1,8 +1,9 @@
 """The high-water-mark restart (paper/restart.py) on a dev slice with the paper config (K3 and group H), LAB review
-point 7: a run that dies with an H position open over its HWM and restarts from a later start (the keeper removed the
-oldest segments) ends with the uninterrupted run's journal (paper.journal_diff green; explained only: the
-pool_seen_slot of pools first seen before the restart's start), wallets and HWM state. The H position's exit row is
-there once and equals the run without the restart; busy and the daily loss after the HWM are equal.
+point 7: a run dies with an H position open over its HWM and restarts at the start of its replay window
+(restart.window_start_slot, the window scaled to the slice). It ends with the uninterrupted run's journal
+(paper.journal_diff green; explained only: the pool_seen_slot of pools first seen before the restart's start), wallets
+and HWM state. The H position's exit row is there once and equals the run without the restart; busy and the daily
+loss after the HWM are equal.
 A NAS test (LAB_NAS_TESTS=1): three engine runs over the real dev2 store."""
 
 import json
@@ -41,22 +42,30 @@ def _content(j):
     return {t: j.rows(t) for t in TABLES}
 
 
+# The restart's replay window (restart.WINDOW_H, 36 h live) scaled to the 3.3 h slice: 1.2 h is more than the hour a
+# replay of every pool needs for its farm windows (ReplayFeed's farmer flags come from the store, not from a 24 h
+# history), so the signals after the HWM are decided as in the uninterrupted run.
+WINDOW_TEST_H = 1.2
+
+
 def _pick(u, clock):
-    """An H position held over minute commits (at least 600 slots), a crash in the middle of it, and a later start:
-    an hour and 1,000 slots before the crash (the farm window of a replay of every pool is complete from an hour after
-    its first slot, so the signals after the HWM are decided as in the run), at least 2,000 slots after the slice's
-    start and before the position's trigger, and with no position of the run open over both the later start and the
-    crash (that one could not be carried: restart_lost). On dev2 [450130000, 450175000): 38B8sK's arms, 1,124 slots."""
-    hour = clock.slots(3_600_000, LO)
-    every = u.journal.rows("exits", "tokens > 0")
+    """An H position held over minute commits (at least 600 slots), a crash in the middle of it, and a window that fits
+    (_window_fits, its HWM estimated as the crash less a minute). On dev2 [450130000, 450175000): 38B8sK's arms,
+    1,124 slots."""
     for x in sorted(u.journal.rows("exits", ARMS + " AND tokens > 0"), key=lambda r: r["entry_slot"] - r["exit_slot"]):
-        if not x["exit_slot"] or x["exit_slot"] - x["entry_slot"] < 600:
-            continue
-        crash = (x["entry_slot"] + x["exit_slot"]) // 2
-        lo2 = min(crash - hour - 1_000, x["t"] - 2_000)
-        if lo2 >= LO + 2_000 and not any(y["entry_slot"] < lo2 and (y["exit_slot"] or HI) >= crash - 1_000 for y in every):
-            return x, crash, lo2
+        crash = (x["entry_slot"] + x["exit_slot"]) // 2 if x["exit_slot"] else None
+        if crash and x["exit_slot"] - x["entry_slot"] >= 600 and _window_fits(
+                u, x, crash, RS.window_start_slot(crash - 300, clock, hours=WINDOW_TEST_H)):
+            return x, crash
     return None
+
+
+def _window_fits(u, x, crash, lo2):
+    """The window starts at least 2,000 slots after the slice's start and before the position's trigger, and no
+    position of the run is open over both its start and the crash (that one could not be carried: restart_lost)."""
+    every = u.journal.rows("exits", "tokens > 0")
+    return LO + 2_000 <= lo2 <= x["t"] - 2_000 and not any(
+        y["entry_slot"] < lo2 and (y["exit_slot"] or HI) >= crash - 1_000 for y in every)
 
 
 @pytest.fixture(scope="module")
@@ -72,13 +81,16 @@ def runs(tmp_path_factory):
     u = _run(str(d / "u"), clock)
     pick = _pick(u, clock)
     if pick is None:
-        pytest.skip("no H position on the slice held long enough with room for a later start")
-    x, crash, lo2 = pick
+        pytest.skip("no H position on the slice held over minute commits with its window inside the slice")
+    x, crash = pick
     with pytest.raises(RuntimeError, match="simulated crash"):
         _run(str(d / "r"), clock, crash_slot=crash)
     j1 = Journal(str(d / "r"))
     before, hwm = _content(j1), json.loads(j1.state(RS.HWM_KEY))
     j1.close()
+    lo2 = RS.window_start_slot(hwm["slot"], clock, hours=WINDOW_TEST_H)  # the restart replays its window only
+    if not _window_fits(u, x, crash, lo2):
+        pytest.skip(f"the window [{lo2}, HWM {hwm['slot']}) does not fit the slice around the H position")
     r = _run(str(d / "r"), clock, lo=lo2)
     print(f"H position {x['variant']} {x['key']} t={x['t']} entry={x['entry_slot']} exit={x['exit_slot']}; crash {crash}, "
           f"HWM {hwm['slot']}, restart from {lo2}; restart record {r.journal.state(RS.RESTARTS_KEY)}")
