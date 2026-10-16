@@ -9,6 +9,7 @@ events must equal ReplayFeed's over the same slots: venue, key, position and the
 import glob
 import json
 import os
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pytest
@@ -145,6 +146,40 @@ def test_pools_from_the_recorders_pool_account_streams(tmp_path):
     assert list(feed.events()) == []
     p = feed.pools["P1"]
     assert (p.mint, p.orientation, p.quote_class, p.create_slot) == ("M1", "reversed", "reversed", 101)
+
+
+def test_a_token_created_live_keeps_its_creator_and_old_ones_go(tmp_path):
+    """The recorder's --pump-creates: a token created after the snapshot gets its creator from the CreateEvent,
+    also when the creator moved the creator fee to a sharing config, which becomes the pool's coin creator
+    (#233, job 84). Tokens that never complete are dropped after TOKEN_KEEP_DAYS."""
+    import pyarrow.parquet as pq
+
+    from paper import live
+    from paper.engine import Engine
+    from paper.live import WSOL
+
+    d = tmp_path / "segments" / "000000000"
+    for t in ("pump/CreateEvent", "pump_amm/CreatePoolEvent"):
+        (d / t).mkdir(parents=True)
+    pq.write_table(pa.table({"slot": [101, 102], "tx_index": [0, 0], "mint": ["M1", "M2"], "user": ["C1", "C2"],
+                             "is_mayhem_mode": [False, False], "quote_mint": [None, None]},
+                            schema=pa.schema([("slot", pa.uint64()), ("tx_index", pa.int64()), ("mint", pa.string()),
+                                              ("user", pa.string()), ("is_mayhem_mode", pa.bool_()), ("quote_mint", pa.string())])),
+                   str(d / "pump" / "CreateEvent" / "part-00000.parquet"))
+    pq.write_table(pa.table({"slot": [105], "tx_index": [0], "pool": ["P1"], "base_mint": ["M1"], "quote_mint": [WSOL],
+                             "coin_creator": ["S1"], "is_mayhem_mode": [False]}),
+                   str(d / "pump_amm" / "CreatePoolEvent" / "part-00000.parquet"))
+    (d / "_segment.json").write_text(json.dumps({"seq": 0, "first_slot": 100, "last_slot": 110, "complete": True}))
+    feed = LiveFeed(str(tmp_path), follow=False, h24=1000, memory="200MB")
+    assert list(feed.events()) == []
+    assert (feed.token("M1").creator, feed.pools["P1"].coin_creator) == ("C1", "S1")
+    eng = SimpleNamespace(feed=feed, burn_slot=0, dev=(0, 10**9))
+    assert Engine._universe(eng, "pool", "P1") == (True, "C1", "S1", "normal")  # F7's creator rule sees C1 and S1
+    feed.tokens["M1"] = live.TokenInfo("M1", 101, "C1", False, None, None, "P1")  # graduated: kept
+    feed._prune(102 + live.TOKEN_KEEP_DAYS * 1000 + 1, 1000)  # M2 (slot 102) is older than the keep window
+    assert set(feed.tokens) == {"M1"} and feed.stats["tokens_dropped"] == 1
+    assert feed.con.execute("SELECT list(mint ORDER BY mint) FROM live_mints").fetchone()[0] == ["M1"]
+    feed.close()
 
 
 def test_farmer_flags_window():

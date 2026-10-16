@@ -12,10 +12,12 @@ from types import SimpleNamespace as NS
 import duckdb
 import pytest
 
-from backtest import data
+from backtest import data, streams
+from backtest.store import load_defaults
+from backtest.strategies import Clock, decision_bounds
 from paper import shadow
 from paper.feed import HOLDOUT_END, HOLDOUT_START, ReplayFeed
-from paper.live import FarmerFlags, segment_dirs
+from paper.live import FarmerFlags, LiveFeed, segment_dirs
 
 STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 LO, HI = 450700000, 450702000
@@ -214,3 +216,36 @@ def test_from_compare_reuses_replay_and_live_with_the_same_result(run, tmp_path)
         assert json.load(f)["step"] == "done"
     with pytest.raises(SystemExit):  # no finished live step here
         shadow.run(argparse.Namespace(out=str(tmp_path), from_compare=True, **kw), log=lambda m: None)
+
+
+def test_pump_creates_bring_every_create_and_its_creator(tmp_path):
+    """--pump-creates: each segment holds every pump.fun create transaction of its slots, and LiveFeed knows
+    the creator (the store's) of every token created after the live start. Without them it takes the pool's
+    coin creator, a sharing config when the creator moved the creator fee (#233, job 84)."""
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    if not chunk or not os.path.exists(STORE):
+        pytest.skip("dev store or its chunk not available")
+    hi = LO + 600
+    scon = streams.open_store(STORE, threads=2, memory="700MB")
+    clock = Clock.from_store(scon)
+    blo, bhi = scon.execute("SELECT min(slot), max(slot) + 1 FROM blocks").fetchone()
+    root = str(tmp_path / "rec")
+    rec = shadow.ShadowRecorder(scon, chunk, root, LO, hi, clock, decision_bounds(load_defaults(), blo, bhi, clock),
+                                probes_on=False, gaps=0, reconnects=0, work=str(tmp_path / "work"), memory="700MB",
+                                log=lambda m: None, pump_creates=True)
+    for seq in range(len(rec.ranges)):
+        rec.write(seq)
+    created = dict(scon.execute(f"SELECT mint, creator FROM mints WHERE create_slot >= {LO} AND create_slot < {hi}").fetchall())
+    scon.close()
+    assert len(created) > 10
+    segs = segment_dirs(root)
+    got = duckdb.connect().execute(f"""SELECT DISTINCT mint, "user" FROM read_parquet(
+        {[os.path.join(seg, "pump", "CreateEvent", "part-00000.parquet") for _, seg, _ in segs
+          if os.path.exists(os.path.join(seg, "pump", "CreateEvent"))]!r})""").fetchall()
+    assert dict(got) == created
+    usage = sum(u["messages"] for _, _, m in segs for u in m["usage"] if u["stream"] == "tx_pump_creates")
+    assert usage == rec.totals["tx_pump_creates"] >= len(created)
+    feed = LiveFeed(root, store=STORE, follow=False, snapshot_before=LO, h24=10**9, memory="700MB")
+    list(feed.events())
+    assert {m: feed.token(m).creator for m in created} == created
+    feed.close()

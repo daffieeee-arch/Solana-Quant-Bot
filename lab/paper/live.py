@@ -51,6 +51,9 @@ SEEN_KEEP_SLOTS = 3_000
 # A mint's curve legs are dropped this many slots after its completion: no curve entry is possible
 # then (an entry comes d slots after its decision), and an open position holds its own copy.
 CURVE_DONE_SLOTS = 1_000
+# Tokens learned from create transactions (the recorder's --pump-creates, ~50k a day) are dropped once
+# they are this many days old without a graduation: F7 needs a token's creator only for its pool.
+TOKEN_KEEP_DAYS = 3
 log = logging.getLogger("paper.live")
 
 
@@ -290,7 +293,7 @@ class LiveFeed(Feed):
         self.clock = Clock()
         self.epoch_span = {}  # epoch -> [(first slot, time), (last slot, time)]
         self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "unknown_pool_rows": 0, "backfill_rows": 0,
-                      "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0}
+                      "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0, "tokens_dropped": 0}
         self.unknown_seen = set()  # pools whose trades were dropped (not in the snapshot, creation not received)
         self.seen_keys, self.seen_order, self.seen_hi = {}, deque(), 0  # key -> "rec" | "hist" (SEEN_KEEP_SLOTS)
         # Pools with a backfill: positions of their trades already in the farmer history, so the
@@ -606,7 +609,8 @@ class LiveFeed(Feed):
         """Drop what the farmer window [last - h24, last] no longer needs: farmer history, curve legs of
         mints quiet for a day or complete for CURVE_DONE_SLOTS, and the backfill dedup keys of older
         slots. A pool without keys left is treated as before its first backfill again (its recorded
-        rows are no longer tracked)."""
+        rows are no longer tracked). Tokens older than TOKEN_KEEP_DAYS that never completed go too
+        (a later graduation then takes the pool's coin creator as the creator, as without the create)."""
         self.farmers.prune(last, h24)
 
         def done(m, legs):
@@ -616,6 +620,15 @@ class LiveFeed(Feed):
 
         for m in [m for m, legs in self.curve_hist.items() if done(m, legs)]:
             del self.curve_hist[m]
+        old = [m for m, t in self.tokens.items() if t.complete_slot is None and t.pool is None
+               and t.create_slot is not None and t.create_slot < last - TOKEN_KEEP_DAYS * h24]
+        if old:
+            for m in old:
+                del self.tokens[m]
+            self.con.register("old_mints", pa.table({"mint": old}))
+            self.con.execute("DELETE FROM live_mints WHERE mint IN (SELECT mint FROM old_mints)")
+            self.con.unregister("old_mints")
+            self.stats["tokens_dropped"] += len(old)
         for pool in list(self.farm_keys):
             keys = self.farm_keys[pool]
             keys.drop_before(last - h24)
