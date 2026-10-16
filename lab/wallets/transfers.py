@@ -268,12 +268,20 @@ def setup(con, root, lo, hi, clock):
         UNION ALL SELECT b.mint, b.slot, b.tx_index, '<vault:' || b.key || '>', -b.burned, true, 'leg_vault' FROM boosts b
                   ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
                        ON v.mint = b.mint AND v.slot = b.slot AND v.tx_index = b.tx_index AND v.owner = b.key""")
+    # Balanced only when a kept holder's row (an owner that is not a trader of the transaction) is there to carry the
+    # tokens (review 2026-10-16: a buy of 100 and a sell of 100 by two traders in one transaction, every row dropped,
+    # balance by themselves and lost both legs).
     con.execute("""CREATE OR REPLACE TEMP TABLE balanced AS
         SELECT c.mint, c.slot, c.tx_index
         FROM (SELECT mint, slot, tx_index, sum(delta) AS s FROM chain GROUP BY 1, 2, 3) c
         LEFT JOIN (SELECT mint, slot, tx_index, sum(CASE WHEN kind = 'mint_to' THEN amount ELSE -amount END) AS mb
                    FROM tt WHERE kind IN ('mint_to', 'burn') GROUP BY 1, 2, 3) m
              ON m.mint = c.mint AND m.slot = c.slot AND m.tx_index = c.tx_index
+        SEMI JOIN (SELECT DISTINCT k.mint, k.slot, k.tx_index FROM td k
+                   ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) lt
+                        ON lt.mint = k.mint AND lt.slot = k.slot AND lt.tx_index = k.tx_index AND lt.owner = k.owner
+                   WHERE NOT k.vault) h
+             ON h.mint = c.mint AND h.slot = c.slot AND h.tx_index = c.tx_index
         WHERE c.s = COALESCE(m.mb, 0)""")
     con.execute("""CREATE OR REPLACE TEMP TABLE ledger AS
         SELECT mint, slot, tx_index, owner, delta, false AS vault, 'leg' AS src FROM (

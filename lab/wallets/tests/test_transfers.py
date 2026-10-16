@@ -519,3 +519,31 @@ def test_review_equal_amount_in_the_same_transaction_is_no_account_relation(tmp_
     r = con.execute(f"SELECT circ, h_ins, holders, neg_owners FROM '{out}/q1_triggers.parquet'").fetchone()
     # CR 300 + I 100 + Z 0 + A 100 + W 100 = 600 in circulation (the old code: 500, A missing); insiders CR and I
     assert r == (600 * U, 400 * U, 4, 0)
+
+
+M6 = "M6pump"
+
+
+def test_review_balanced_needs_a_kept_holder_row(tmp_path, monkeypatch):
+    """Point 5, the `balanced` rule (#281) checked: A buys 100 and B sells 100 in one transaction, both rows dropped as
+    equal to their legs, the vault nets 0 (no row). The chain's rows balance by themselves, yet no kept holder's row
+    carries the tokens: both legs belong in the ledger (A +100, B back to 0)."""
+    CV2 = keys.curve_pda(M6)
+    _mini_store(tmp_path / "s.duckdb", M6, [
+        (S, 1, True, 300 * U, 3 * 10**9, "CR", "buy"), (S + 5, 1, True, 100 * U, 10**9, "I", "buy"),
+        (S + 55, 1, True, 100 * U, 10**9, "B", "buy"),
+        (S + 60, 1, True, 100 * U, 10**9, "A", "buy"), (S + 60, 1, False, 100 * U, 10**9, "B", "sell")])
+    root = _mini_chunk(tmp_path / "chunks", M6, [(S, 1, CV2, SUPPLY - 300 * U, True)], [
+        (S, 1, "mint_to", None, CV2, SUPPLY, True), (S, 1, "transfer_checked", CV2, "CR", 300 * U, True), (S + 5, 1, "transfer_checked", CV2, "I", 100 * U, True),
+        (S + 55, 1, "transfer_checked", CV2, "B", 100 * U, True),
+        (S + 60, 1, "transfer_checked", CV2, "A", 100 * U, True, "1.1"), (S + 60, 1, "transfer_checked", "B", CV2, 100 * U, True, "2.1")])
+    pq.write_table(pa.Table.from_pylist([{"mint": M6, "t": S + 70}]), tmp_path / "trig.parquet")
+    monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    transfers.main(["--chunks", root, "--triggers", str(tmp_path / "trig.parquet"), "--out", str(out)])
+    con = duckdb.connect()
+    cons = con.execute(f"SELECT held, minted, diff, ok FROM '{out}/conservation.parquet' ORDER BY day").fetchall()
+    assert cons and all(c[0] == SUPPLY and c[2] == 0 and c[3] for c in cons)
+    # CR 300 + I 100 + A 100 + B 0 = 500 in circulation, 3 holders (with the legs dropped: B still 100, A missing)
+    assert con.execute(f"SELECT circ, h_ins, holders FROM '{out}/q1_triggers.parquet'").fetchone() == (500 * U, 400 * U, 3)
