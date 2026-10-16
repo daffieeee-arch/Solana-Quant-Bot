@@ -39,7 +39,7 @@ if [ "$STEP" = build ]; then
   W=$(mktemp -d)
   export DEBIAN_FRONTEND=noninteractive UV_PYTHON_INSTALL_DIR=$W/pythons UV_CACHE_DIR=$W/uv-cache
   apt-get update -qq >> "$OUT/job.log" 2>&1 && apt-get install -y -qq python3-venv >> "$OUT/job.log" 2>&1
-  python3 -m venv "$W/boot" && "$W/boot/bin/pip" install -q uv==0.11.3
+  python3 -m venv "$W/boot" && "$W/boot/bin/pip" install -q uv==0.13.1
   "$W/boot/bin/uv" python install 3.13 >> "$OUT/job.log" 2>&1
   "$W/boot/bin/uv" venv -q -p 3.13 "$W/py313" && "$W/boot/bin/uv" pip install -q -p "$W/py313/bin/python" maturin==1.15.0
   "$W/py313/bin/python" -V | tee -a "$OUT/job.log"
