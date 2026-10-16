@@ -22,6 +22,8 @@ Under DIR:
        tx_probes     transactions with an event of a probed pool;
        tx_new_pools  graduations (CompletePumpAmmMigrationEvent);
        tx_new_reversed  reversed-pool creations (CreatePoolEvent with WSOL as base);
+       tx_pump_creates  with --pump-creates: every pump.fun create transaction (its CreateEvent gives
+                     LiveFeed the creator of a token created after the live start);
        pool_creations every CreatePoolEvent as a pool account row; blocks: every slot.
      The real filter matches any account of a transaction; one that names a pool without an event
      of it is not modelled. Lossless reconnects move a segment's last slots into the next one
@@ -88,7 +90,7 @@ BACKFILL_AFTER = 150             # the backfill's to_slot: the last closed slot 
 TX_BYTES = 3072                  # a full transaction with logs (#180, triton-edge §6)
 GAP_SLOTS = (150, 600, 2400)     # simulated gaps: ~40 s, ~2.5 min, ~10 min at 250 ms
 RECONNECT_SLOTS = (40, 200)      # lossless reconnects: a segment's last slots come with the next one
-STREAMS = {1: "tx_watchlist", 2: "tx_probes", 3: "tx_new_pools", 4: "tx_new_reversed"}
+STREAMS = {1: "tx_watchlist", 2: "tx_probes", 3: "tx_new_pools", 4: "tx_new_reversed", 5: "tx_pump_creates"}
 FAMILIES = ("F7", "N2_F7")
 # Work tables are written one slot window at a time, each window sorted: the tables end up in slot
 # order (a segment's copy reads only its own slots via zonemaps) while no sort holds more than one
@@ -163,8 +165,9 @@ class ShadowRecorder:
     """Writes the recorder's segments for [lo, hi) from the chunks, one at a time (write(seq))."""
 
     def __init__(self, scon, chunks, root, lo, hi, clock, window, probes_on=True, gaps=3, reconnects=6, seed=1052,
-                 watch_warmup_minutes=0, work=None, memory="1GB", log=print, reuse=False, prepare=True):
+                 watch_warmup_minutes=0, work=None, memory="1GB", log=print, reuse=False, pump_creates=False, prepare=True):
         self.root, self.lo, self.hi, self.clock, self.log = root, lo, hi, clock, log
+        self.pump_creates = pump_creates
         os.makedirs(os.path.join(root, "segments"), exist_ok=True)
         t0 = time.time()
         warm_lo = max(lo - clock.slots(watch_warmup_minutes * 60_000, lo), 0)
@@ -199,6 +202,8 @@ class ShadowRecorder:
         self.signature = {"from_slot": lo, "to_slot": hi, "probes": probes_on, "watch_warmup_minutes": watch_warmup_minutes,
                           "chunks": [c[2] for c in chunks], "pools": len({p for w in self.watch.values() for p in w}),
                           "probe_pools": len(self.probes), "version": 2}
+        if pump_creates:
+            self.signature["pump_creates"] = True
         if not prepare:  # --from-compare: the segments are written; ranges, gaps and the lists are what counts
             return
         self._prepare(chunks, work or os.path.join(os.path.dirname(root.rstrip("/")), "work"), memory, reuse)
@@ -269,6 +274,10 @@ class ShadowRecorder:
             con.execute("""CREATE TABLE pc (slot UBIGINT, tx_index BIGINT, pool VARCHAR, base_mint VARCHAR,
                                             quote_mint VARCHAR, coin_creator VARCHAR, is_mayhem_mode BOOLEAN)""")
         con.execute(f"CREATE TABLE crev AS SELECT DISTINCT slot, tx_index FROM pc WHERE base_mint = '{WSOL}'")
+        # --pump-creates (the recorder's account_required [pump.fun, its mint authority]): every create transaction.
+        cre = data.parquet("pump/CreateEvent", chunks, missing_ok=True) if self.pump_creates else None
+        con.execute(f"CREATE TABLE cre AS SELECT DISTINCT slot, tx_index FROM {cre} WHERE {span}" if cre else
+                    "CREATE TABLE cre (slot UBIGINT, tx_index BIGINT)")
         # The other pools of those transactions can trade live too (an N2 pick, a trigger): take them along.
         con.execute("""CREATE TEMP TABLE k0 AS SELECT DISTINCT slot, tx_index FROM
                        (SELECT slot, tx_index FROM txu WHERE pool IN (SELECT pool FROM u)
@@ -277,7 +286,7 @@ class ShadowRecorder:
                     "WHERE pool NOT IN (SELECT pool FROM u)")
         con.execute("""CREATE TABLE allkeys AS SELECT DISTINCT slot, tx_index FROM
                        (SELECT slot, tx_index FROM txu WHERE pool IN (SELECT pool FROM u)
-                        UNION ALL SELECT * FROM grad UNION ALL SELECT * FROM crev)""")
+                        UNION ALL SELECT * FROM grad UNION ALL SELECT * FROM crev UNION ALL SELECT * FROM cre)""")
         self.loads = 0
         con.execute(f"CREATE TABLE blocks_t AS SELECT * FROM {data.parquet('blocks', chunks)} WHERE {span} ORDER BY slot")
         con.execute("CREATE TABLE segr (seq INTEGER, a UBIGINT, b UBIGINT)")
@@ -367,7 +376,8 @@ class ShadowRecorder:
                           SELECT t.slot, t.tx_index, r.src FROM txu t JOIN recv_arrow r
                             ON t.pool = r.pool AND t.slot >= r.lo AND t.slot < r.hi WHERE {self._pred(a, b, 't.slot')}
                           UNION ALL SELECT slot, tx_index, 3 FROM grad WHERE {self._pred(a, b)}
-                          UNION ALL SELECT slot, tx_index, 4 FROM crev WHERE {self._pred(a, b)}) GROUP BY 1, 2""")
+                          UNION ALL SELECT slot, tx_index, 4 FROM crev WHERE {self._pred(a, b)}
+                          UNION ALL SELECT slot, tx_index, 5 FROM cre WHERE {self._pred(a, b)}) GROUP BY 1, 2""")
         con.unregister("recv_arrow")
         self._load(seq, a, b)
         rows = 0
@@ -831,7 +841,8 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
     shutil.rmtree(root, ignore_errors=True)
     rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
                          gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
-                         work=os.path.join(out, "work"), memory=a.memory, log=log, reuse=resume)
+                         work=os.path.join(out, "work"), memory=a.memory, log=log, reuse=resume,
+                         pump_creates=getattr(a, "pump_creates", False))
     _status(out, "recorder input")
     scon.close()  # not needed while live runs (its cache would hold memory); reopened for the comparison
     gc.collect()
@@ -890,7 +901,8 @@ def run(a, log=print):
     h24 = round(DAY_MS / ms)
     info = {"store": a.store, "store_purpose": meta.get("purpose"), "from_slot": lo, "to_slot": hi, "decisions": window,
             "variants": [f"tp{int(tp * 100)}_T{T}" for tp, T in variants], "d": a.d, "q": a.q, "ms_per_slot": ms,
-            "probes": not a.no_probes, "seed": a.seed, "commit": W.git_commit()}
+            "probes": not a.no_probes, "pump_creates": getattr(a, "pump_creates", False), "seed": a.seed,
+            "commit": W.git_commit()}
     log(f"shadow {lo}..{hi}, decisions {window[0]}..{window[1]} ({ms:.1f} ms/slot)")
 
     # 1. replay
@@ -920,7 +932,7 @@ def run(a, log=print):
     if from_compare:
         rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
                              gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
-                             memory=a.memory, log=log, prepare=False).from_segments()
+                             memory=a.memory, log=log, prepare=False, pump_creates=getattr(a, "pump_creates", False)).from_segments()
         scon.close()
         ldir = os.path.join(out, "live")
         info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
@@ -1084,6 +1096,8 @@ def main():
     ap.add_argument("--reconnects", type=int, default=6)
     ap.add_argument("--seed", type=int, default=1052)
     ap.add_argument("--no-probes", action="store_true")
+    ap.add_argument("--pump-creates", action="store_true",
+                    help="the recorder's --pump-creates: every pump.fun create transaction (live learns new tokens' creators)")
     ap.add_argument("--watch-warmup", type=int, default=0, help="watchlist warm-up minutes before --from (inside the store)")
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--reconcile-every", type=int, default=30)
