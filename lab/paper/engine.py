@@ -1089,6 +1089,10 @@ class Engine:
         # Open positions: the journal's table. One the replay does not hold is closed at its last mark.
         jpos = {RS.key_of(r): r for r in j.rows("positions")}
         mem = {(o.p.family, o.p.variant, o.p.key, o.p.t): o for v in self.open.values() for o in v}
+        for g in self.groups:  # the exposure (cost of the open F7 positions) per group, before the journal's is taken
+            mine = lambda k: not k[0].startswith("N2_") and self.variant_group.get(k[1]) is g  # noqa: E731
+            if sum(o.r.cost for k, o in mem.items() if mine(k)) != sum(r["cost"] for k, r in jpos.items() if mine(k)):
+                c["exposure_different"] += 1
         for k, o in mem.items():
             if k not in jpos:
                 c["replay_positions_not_in_journal"] += 1

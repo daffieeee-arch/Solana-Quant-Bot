@@ -105,6 +105,31 @@ def test_a_restart_from_a_later_start_ends_with_the_uninterrupted_journal(tmp_pa
     assert r.journal.state(RS.HWM_STATE_KEY) == u.journal.state(RS.HWM_STATE_KEY)
 
 
+def test_an_exit_decided_before_the_hwm_and_filled_after_it_is_written_once(tmp_path):
+    # B's take profit is decided at 501_549; its exit fills at 501_550, after the commit that starts that minute
+    # (the HWM). The first run's exit row was not committed; the restart carries the decided exit and writes it once.
+    toks = {"A": TOKENS["A"], "B": trig(501_000, [(501_200, "Z", "buy", T), (501_549, "Y", "buy", 150 * T),
+                                                  (501_550, "Q", "buy", T)]),
+            "C": ("C2", [(501_300, "X", "buy", T), (501_560, "V", "buy", T), (501_900, "W", "buy", T)])}
+    u = engine(tmp_path, "u", Later(toks))
+    u.run()
+    x = u.journal.rows("exits", "key = 'B'")[0]
+    assert (x["exit_decision_slot"], x["exit_slot"]) == (501_549, 501_550)
+    e = engine(tmp_path, "r", Later(toks, crash_after=12))  # dies fetching 501_900: 501_560 is not processed
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        e.run()
+    e.journal.db.rollback()
+    assert json.loads(e.journal.state(RS.HWM_KEY))["slot"] == 501_550
+    assert not e.journal.rows("exits", "key = 'B'") and e.journal.rows("positions", "key = 'B'")
+    e.journal.close()
+    r = engine(tmp_path, "r", Later(toks, from_slot=500_500))
+    r.run()
+    assert r.journal.rows("exits", "key = 'B'") == [x]
+    assert content(r.journal) == content(u.journal) and wallet(r.journal) == wallet(u.journal)
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[0]
+    assert {k: v for k, v in rec["counts"].items() if k not in RS.BEFORE} == {}, rec["counts"]
+
+
 def test_up_to_the_hwm_the_journal_decides_also_with_a_changed_risk_file(tmp_path, monkeypatch):
     monkeypatch.setattr(RS, "COMPARE_MS", 300 * Clock().ms_per_slot(501_000))  # 300 slots: [501_000, 501_300)
     u = engine(tmp_path, "u", Later(TOKENS))

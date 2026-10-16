@@ -12,7 +12,8 @@
 #                 2. the first-start regression: the uninterrupted replay U (K3 + H, the paper config) over the dev chunk
 #                    [450144000, 450360000) with main's code (MAIN_DIR: an export of main at this branch's base) and with
 #                    this commit's; paper.journal_diff must be green, the wallets, heartbeats and daily reports equal,
-#                    and the only schema difference the new table `learned`.
+#                    and the only schema difference the new table `learned`. Both runs read this commit's config and
+#                    groups files (unchanged by this branch), so the journal state 'groups' names the same risk paths.
 #
 #   STEP=recorder LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/paper/nas_hwm.sh                   (bookworm runner)
 #   STEP=python LAB_PY=/lab/venv/bin/python MAIN_DIR=<main export> bash lab/paper/nas_hwm.sh             (lab runner)
@@ -60,7 +61,8 @@ for side in main new; do
   rm -rf "$OUT/u-$side"
   log "U $side from $src"
   (cd "$src/lab" && PYTHONPATH=. "$PY" -m paper.engine --from 450144000 --to 450360000 --journal "$OUT/u-$side" \
-     --config paper/k3-paper-2026-10-12.yaml --groups paper/h-arms-2026-10-16.yaml --store "$STORE" --no-backup) \
+     --config "$REPO/lab/paper/k3-paper-2026-10-12.yaml" --groups "$REPO/lab/paper/h-arms-2026-10-16.yaml" \
+     --store "$STORE" --no-backup) \
      >> "$OUT/u-$side.log" 2>&1 || { tail -20 "$OUT/u-$side.log" | tee -a "$OUT/job.log"; log "U $side: FAILED"; exit 1; }
   tail -1 "$OUT/u-$side.log" | tee -a "$OUT/job.log"
 done
