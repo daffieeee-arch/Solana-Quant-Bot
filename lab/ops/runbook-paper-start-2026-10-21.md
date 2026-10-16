@@ -180,11 +180,27 @@ cat $LAB/recorder/alpenglow.json 2>/dev/null                                    
 
 ### 4.4 K3's stop-rule clock
 
-The plan for weeks 2–8 targets Monday 26 October, at the latest Monday 2 November. The clock starts on a date the coordinator records, not at the paper start.
+The plan for weeks 2–8 targets Monday 26 October, at the latest Monday 2 November (owner). The clock does not start at the paper start. Its start goes into the running journal's state, with a date and a reason (coordinator, 2026-10-16); there is no fresh journal.
 
-The report's stop-rule counter counts every paper day in the journal. If the clock starts after the journal does, choose one of two:
-- a fresh journal directory on the clock date: stop, move the journal aside, start again;
-- a small follow-up, a clock start in the journal state that the report counts from. Lab Backtest can build it before the clock date.
+```bash
+cd $R/lab
+$PY -m paper.clock --journal $LAB/journal/paper-k3/journal                     # shows it: "no clock start set"
+$PY -m paper.clock --journal $LAB/journal/paper-k3/journal --start 2026-10-26 --reason "<why this day>"
+cd ~
+```
+
+The command refuses a start that:
+- is in the past;
+- is after 2026-11-02;
+- falls on a day the journal already has a K3 entry for, or has K3 entries after it (set it the day before; the engine may run).
+
+Until its day comes, `--replace` moves it, and the earlier start stays in the record. From its day on, it stays.
+
+From the clock start, the daily report's stop-rule counter and capital simulation count K3's trades entered on or after that day. The report shows:
+- the clock day;
+- when the decision is due: after 28 days with ≥ 200 trades, else at 200 trades, at most day 42.
+
+Before the clock start, the report counts every paper day, without a decision.
 
 ## 5. Stop and rollback
 
