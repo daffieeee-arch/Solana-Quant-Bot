@@ -111,6 +111,10 @@ const workflows = {
         paths: [
           '.github/workflows/dependency-audit.yml',
           'lab/security/**',
+          'lab/core/Cargo.lock',
+          'lab/core/Cargo.toml',
+          'lab/core-py/Cargo.lock',
+          'lab/core-py/Cargo.toml',
           'lab/extractor/Cargo.lock',
           'lab/extractor/Cargo.toml',
           'lab/recorder/Cargo.lock',
@@ -142,7 +146,7 @@ const workflows = {
           {
             name: 'Audit lab and frozen V2 Rust lockfiles against RustSec',
             // One invocation, so an ignore entry is only reported stale when no lockfile uses it.
-            run: 'python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock lab/recorder/Cargo.lock rust/of1-range-recorder/Cargo.lock rust/of1-bronze-decoder/Cargo.lock rust/of1-parquet-projection/Cargo.lock rust/old-faithful-pump-reducer/Cargo.lock rust/pump-protocol-v2/Cargo.lock',
+            run: 'python3 lab/security/dependency_audit.py cargo lab/core/Cargo.lock lab/core-py/Cargo.lock lab/extractor/Cargo.lock lab/recorder/Cargo.lock rust/of1-range-recorder/Cargo.lock rust/of1-bronze-decoder/Cargo.lock rust/of1-parquet-projection/Cargo.lock rust/old-faithful-pump-reducer/Cargo.lock rust/pump-protocol-v2/Cargo.lock',
           },
         ],
       },
