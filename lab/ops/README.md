@@ -5,8 +5,8 @@ repo.** Installing is a step for the measuring hour (`data-old-faithful-one/lab/
 and the paper start, each **only after the owner's OK**. Paper only: no wallet, no keys, no
 transactions.
 
-The paper start of about 2026-10-21 (store, settings, order, checks, stop and rollback) is
-written out as exact commands in [`runbook-paper-start-2026-10-21.md`](runbook-paper-start-2026-10-21.md).
+The paper start of 2026-10-20 (store, settings, order, checks, stop and rollback) is
+written out as exact commands in [`runbook-paper-start-2026-10-20.md`](runbook-paper-start-2026-10-20.md).
 
 | unit | what | limits |
 |---|---|---|
