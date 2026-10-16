@@ -11,6 +11,11 @@ Per segment, under <out>/<seq>/ (the segment directory's name):
   candles.parquet                 every pool and curve of the segment per UTC minute: trades, base and
                                   quote volume, open/high/low/close of the trade price (quote / base,
                                   raw units: pool orientation as recorded; curve: SOL per token)
+  blocks.parquet                  the segment's blocks/ rows whole (slot, parent, block time, height, ...): the
+                                  slot clock and the block times after the retention
+  block_footers.parquet           its block_footers/ rows whole (Alpenglow, epoch 1064 on: slot, bank_id, the
+                                  producer's time, receive and created_at times): the producer latency and the
+                                  slot time before and after the switch stay measurable (coordinator, 2026-10-16)
   DONE.json                       written last: counts. A segment without it is not kept yet.
 
 The journal is read read-only (the engine keeps writing it). A missing journal means no signals yet:
@@ -70,7 +75,7 @@ def keep_segment(con, seg, out, keys):
         if os.path.exists(d):
             shutil.rmtree(d)
     os.makedirs(os.path.join(tmp, "signal_trades"))
-    counts = {"signal_trades": {}, "arrivals": 0, "candles": 0, "signal_keys": len(keys)}
+    counts = {"signal_trades": {}, "arrivals": 0, "candles": 0, "blocks": 0, "block_footers": 0, "signal_keys": len(keys)}
     con.execute("CREATE OR REPLACE TEMP TABLE keys (k VARCHAR)")
     if keys:
         con.executemany("INSERT INTO keys VALUES (?)", [(k,) for k in keys])
@@ -97,6 +102,12 @@ def keep_segment(con, seg, out, keys):
         counts["arrivals"] = con.execute(f"SELECT count(*) FROM ({sel})").fetchone()[0]
         if counts["arrivals"]:
             con.execute(f"COPY ({sel} ORDER BY slot, tx_index) TO '{os.path.join(tmp, 'arrivals.parquet')}' (FORMAT parquet, COMPRESSION zstd)")
+    for table in ("blocks", "block_footers"):  # whole: one row per slot or block, a few MB a day
+        s = src(seg, table)
+        if s:
+            counts[table] = con.execute(f"SELECT count(*) FROM {s}").fetchone()[0]
+            if counts[table]:
+                con.execute(f"COPY (SELECT * FROM {s} ORDER BY slot) TO '{os.path.join(tmp, table + '.parquet')}' (FORMAT parquet, COMPRESSION zstd)")
     parts = []
     blocks = src(seg, "blocks")
     minute = "(b.block_time // 60)" if blocks else "NULL::BIGINT"

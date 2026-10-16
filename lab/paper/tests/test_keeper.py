@@ -27,6 +27,9 @@ def ev(slot, tx, **kw):
 def segment(root):
     seg = os.path.join(root, "segments", "000000005")
     write(seg, "blocks", [{"slot": s, "block_time": BT + (s - 1000) * 20} for s in (1000, 1001, 1002, 1003)])
+    write(seg, "block_footers", [{"slot": s, "bank_id": s + 7, "block_producer_time_ns": (BT + (s - 1000) * 20) * 10**9,
+                                  "received_unix_ns": (BT + (s - 1000) * 20) * 10**9 + 250_000_000, "created_unix_ns": None}
+                                 for s in (1001, 1003)])
     write(seg, "pump_amm/BuyEvent", [
         ev(1000, 1, pool="SIGPOOL", base_amount_out=100, quote_amount_in=200),   # price 2
         ev(1001, 4, pool="SIGPOOL", base_amount_out=100, quote_amount_in=500),   # price 5
@@ -68,6 +71,12 @@ def test_keeper_keeps_signal_trades_arrivals_and_candles(tmp_path):
     assert c[("pool", "SIGPOOL", (BT + 60) // 60)] == (1, 4.0, 4.0, 4.0, 4.0)
     assert c[("pool", "OTHER", m)] == (1, 3.0, 3.0, 3.0, 3.0)  # candles of every pool, not only signals
     assert c[("curve", "SIGMINT", m)][0] == 1 and c[("curve", "OTHERMINT", m)][1] == 0.1
+    # blocks and Alpenglow footers are kept whole, for the slot clock and the producer latency after the retention
+    assert (done["blocks"], done["block_footers"]) == (4, 2)
+    assert con.execute(f"SELECT slot, block_time FROM '{k}/blocks.parquet' ORDER BY slot").fetchall() == \
+        [(s, BT + (s - 1000) * 20) for s in (1000, 1001, 1002, 1003)]
+    assert con.execute(f"SELECT slot, bank_id, received_unix_ns - block_producer_time_ns FROM '{k}/block_footers.parquet'").fetchall() == \
+        [(1001, 1008, 250_000_000), (1003, 1010, 250_000_000)]
     mtime = os.path.getmtime(os.path.join(k, "DONE.json"))
     assert keeper.main(["--journal", str(tmp_path / "journal"), "--out", out, seg]) == 0  # kept already: nothing
     assert os.path.getmtime(os.path.join(k, "DONE.json")) == mtime
@@ -88,3 +97,20 @@ def test_a_broken_segment_is_not_marked_kept(tmp_path):
     out = str(tmp_path / "kept")
     assert keeper.main(["--journal", str(tmp_path / "j"), "--out", out, seg]) == 1
     assert not os.path.exists(os.path.join(out, "000000005", "DONE.json"))
+
+
+def test_the_ui_sample_recorder_without_blocks_or_footers_is_kept_too(tmp_path):
+    """The web app's sample recorder (segments with only _segment.json and arrivals): the keeper finishes each with
+    DONE.json and zero blocks and footers (a segment from before the footers, or a quiet one)."""
+    import shutil
+
+    sample = os.path.join(os.path.dirname(keeper.__file__), "..", "ui", "paper_sample", "recorder")
+    root = tmp_path / "rec"
+    shutil.copytree(sample, root)
+    segs = sorted(str(p) for p in (root / "segments").iterdir())
+    out = str(tmp_path / "kept")
+    assert keeper.main(["--journal", str(tmp_path / "no-journal"), "--out", out, *segs]) == 0
+    for seg in segs:
+        done = json.load(open(os.path.join(out, os.path.basename(seg), "DONE.json")))
+        assert (done["blocks"], done["block_footers"]) == (0, 0)
+        assert not os.path.exists(os.path.join(out, os.path.basename(seg), "block_footers.parquet"))
