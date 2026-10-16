@@ -62,7 +62,7 @@ VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 m
 # before it come from the dataset (events/v1) as warm-up, as for the hold-out (0: none).
 CLEAN = (455_760_000, 459_648_000)
 CLEAN_CHUNKS = os.environ.get("LAB_CLEAN_CHUNKS", "/home/chupa/Solana-project/data-old-faithful-one/lab/events/clean-v1/chunks")
-# The live paper engine's snapshot (PAPER_STORE; lab/ops/runbook-paper-start-2026-10-21.md): the tokens, pools and
+# The live paper engine's snapshot (PAPER_STORE; lab/ops/runbook-paper-start-2026-10-20.md): the tokens, pools and
 # farmer history of the epochs before the live start, never for strategy results. A window in the clean epochs
 # only once the clean data is spent (coordinator, 2026-10-16): E20's clean.lock next to the clean store, and a
 # result.json of a real run with a decision for E20 itself and every later clean test (CLEAN_TESTS, under

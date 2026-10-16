@@ -25,12 +25,13 @@ POOL_COLS = ("kind, pool, slot, tx_index, outer_ix, inner_ix, parent_ix_disc, b,
              "farmer, fee_payer, token_buy, sol_amount, sol_depth, token_amount")
 
 
-def leg(pool, slot, tx, ix, b, e, base, e_delta, fp, token_buy, sol, kind=None):
+def leg(pool, slot, tx, ix, b, e, base, e_delta, fp, token_buy, sol, kind=None, payer=None):
     """A store pool row: pre-state (b, e), amounts, and the normalized token side."""
     k = kind or ("buy" if (token_buy if pool != "P2" else not token_buy) else "sell")
     depth = e if pool != "P2" else b
+    # fee_payer NULL: the trader pays its own transaction (the store's NULLIF); payer names a separate paying wallet
     return (k, pool, slot, tx, ix, 0, None, b, e, 0, e, 20, 5, 5, 0, base, e_delta, abs(e_delta), None, None, None, None, None, fp,
-            "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA", False, fp, token_buy, sol, depth, base if pool != "P2" else abs(e_delta))
+            "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA", False, payer, token_buy, sol, depth, base if pool != "P2" else abs(e_delta))
 
 
 def store(path):
@@ -72,7 +73,7 @@ def store(path):
     ]
     con.executemany(f"INSERT INTO pool ({POOL_COLS}) VALUES ({', '.join('?' * len(POOL_COLS.split(', ')))})", rows)
     con.execute("CREATE TABLE curve (mint VARCHAR, slot UBIGINT, tx_index UBIGINT, outer_ix UBIGINT, inner_ix UBIGINT, is_buy BOOLEAN, "
-                "q HUGEINT, rq HUGEINT, t HUGEINT, fee_payer VARCHAR)")
+                "q HUGEINT, rq HUGEINT, t HUGEINT, trader VARCHAR, fee_payer VARCHAR)")
     con.close()
 
 
