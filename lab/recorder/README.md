@@ -71,8 +71,17 @@ too). A skipped slot sends no block meta and no confirmed status, so the live `b
 `skipped` rows. `paper.reconcile` compares the event tables per slot range, so a missing slot
 number is not a gap there.
 
+**A segment that cannot be written** (a table, the sync or `_segment.json` fails, e.g. on a full
+disk) loses no row:
+- Its rows stay in memory.
+- The recorder exits with code 74, and systemd restarts it.
+- The restart removes the unfinished directory and resumes after the last complete segment on disk.
+- The server then replays the slots that were only in memory, through `from_slot`. Where its replay window is shorter, they are recorded as `lost_slots`.
+
+A reconnect in the same process would resume after those in-memory slots and lose them.
+
 **Resume after a disconnect.**
-- The stream resumes with `from_slot` = last written slot + 1.
+- The stream resumes with `from_slot` = last closed slot + 1. The closed slots of the open segment are still in memory and are written with it.
 - Before resuming, the recorder asks the server's replay window (`SubscribeReplayInfo`). When it
   starts later (`first_available`), it resumes from there, and the slots in between are recorded
   in `reconnects` (`lost_slots`).
@@ -96,6 +105,25 @@ graduations, blocks and slots stay); a minute above 20x the sustainable
 rate downscales at once. At the cap the recorder writes its last segment and exits with code 75;
 it refuses to start again the same day. A new UTC day restores all streams. Every decision is a
 `budget` usage row with a note, which the engine journals (`usage` table).
+
+**Unknown spend (fail-closed).** At the start, today's spend is the larger of `budget.json` and
+the usage rows of today's segments. The recorder cannot know it when, for today (by file time):
+- `budget.json` is unreadable;
+- a `_segment.json` is unreadable;
+- a segment directory has no `_segment.json` (an interrupted write) and there is no `budget.json`
+  of today.
+
+Today's `budget.json` covers such a directory, because the meter saves at every minute's roll,
+before a segment takes that minute's usage. When the spend is unknown, the recorder stops for the
+day: it logs the reasons and exits with code 75, like a spent budget.
+
+After a check, the owner restarts it once with `--budget-assume-spent YYYY-MM-DD=BYTES`:
+- it applies to that UTC day only;
+- the spend never goes below what the readable segments hold;
+- a `budget` row notes it.
+
+A first start (no `budget.json`, no segments), and a lost `budget.json` beside complete segments,
+start as before.
 
 `--no-downscale` (measuring runs, e.g. the first measuring hour): no projected or spike downscale,
 every stream stays on; the cap is only the hard stop. Without it a small `--budget-usd` (0.5 is a

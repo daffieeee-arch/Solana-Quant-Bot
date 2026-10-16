@@ -15,10 +15,12 @@
 //!                [--new-reversed] [--pool-creations] [--pump-creates] [--probe-depth-sol 120] [--probe-minutes 180]
 //!                [--fresh-vault-minutes 60] [--no-backfill] [--backfill-wait-secs 20]
 //!                [--reload-secs 10] [--min-update-secs 60] [--from-slot N] [--max-runtime-secs N]
-//!                [--no-downscale] [--dry-run]
+//!                [--no-downscale] [--budget-assume-spent YYYY-MM-DD=BYTES] [--dry-run]
 //!
 //! The endpoint can also come from LAB_TRITON_GRPC_ENDPOINT; the token only from
-//! LAB_TRITON_X_TOKEN (never logged). Exit code 75: the day's budget is spent.
+//! LAB_TRITON_X_TOKEN (never logged). Exit code 75: the day's budget is spent, or today's spend is
+//! unknown (meter.rs; the owner's restart override is --budget-assume-spent). Exit code 74: a
+//! segment could not be written; the restart resumes after the last segment on disk.
 
 #[allow(dead_code)]
 #[path = "../../extractor/src/idl.rs"]
@@ -44,7 +46,7 @@ use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use meter::{Meter, GB};
 use recorder::{Action, Config, Recorder};
-use segment::Segments;
+use segment::{SegmentWriteError, Segments};
 use sink::Sink;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -56,6 +58,11 @@ use yellowstone_grpc_proto::tonic::codec::CompressionEncoding;
 use yellowstone_grpc_proto::tonic::Status;
 
 pub const EXIT_BUDGET: i32 = 75;
+/// A segment could not be written. Its closed slots were only in memory, past the last segment on
+/// disk; a reconnect in this process would resume after them and lose them. The recorder ends
+/// instead (systemd restarts it) and resumes after the last complete segment on disk; the server
+/// replays the rest through from_slot (a recorded gap where its replay window is shorter).
+pub const EXIT_SEGMENT: i32 = 74;
 /// Without any update on the main stream for this long the connection is renewed.
 const WATCHDOG_SECS: u64 = 30;
 /// Consecutive sessions without data before the recorder gives up (a human looks).
@@ -88,6 +95,8 @@ struct Args {
     from_slot: Option<u64>,
     max_runtime_secs: u64,
     no_downscale: bool,
+    /// The owner's restart override for a day whose spend is unknown: (UTC day, bytes).
+    budget_assume: Option<(u64, u64)>,
     dry_run: bool,
 }
 
@@ -121,6 +130,7 @@ fn parse_args() -> Result<Args> {
         from_slot: None,
         max_runtime_secs: 0,
         no_downscale: false,
+        budget_assume: None,
         dry_run: false,
     };
     let (mut watchlist, mut open_pools) = (None, None);
@@ -154,6 +164,7 @@ fn parse_args() -> Result<Args> {
             "--max-runtime-secs" => a.max_runtime_secs = val()?.parse()?,
             "--dry-run" => a.dry_run = true,
             "--no-downscale" => a.no_downscale = true,
+            "--budget-assume-spent" => a.budget_assume = Some(parse_assume(&val()?)?),
             other => bail!("unknown argument {other}"),
         }
     }
@@ -167,6 +178,29 @@ fn parse_args() -> Result<Args> {
         bail!("--segment-slots and --max-tx-accounts must be positive");
     }
     Ok(a)
+}
+
+/// `--budget-assume-spent YYYY-MM-DD=BYTES`: today's spend when it cannot be known (meter.rs), for
+/// that UTC day only.
+fn parse_assume(s: &str) -> Result<(u64, u64)> {
+    let (date, bytes) = s.split_once('=').context("--budget-assume-spent takes YYYY-MM-DD=BYTES")?;
+    let day = meter::day_from_date(date).with_context(|| format!("--budget-assume-spent: {date} is not a date YYYY-MM-DD"))?;
+    Ok((day, bytes.parse().context("--budget-assume-spent: BYTES must be a whole number")?))
+}
+
+/// The exit code for an error that ends the recorder: a segment that could not be written.
+fn segment_exit(e: &anyhow::Error) -> Option<i32> {
+    let w = e.chain().find_map(|c| c.downcast_ref::<SegmentWriteError>())?;
+    log::error!("{w}; exiting with {EXIT_SEGMENT}: the restart resumes after the last segment on disk");
+    Some(EXIT_SEGMENT)
+}
+
+/// `Ok(EXIT_SEGMENT)` for a segment write error, the error itself otherwise.
+fn end_on(e: anyhow::Error) -> Result<i32> {
+    match segment_exit(&e) {
+        Some(code) => Ok(code),
+        None => Err(e),
+    }
 }
 
 fn opts(a: &Args) -> Opts {
@@ -359,7 +393,7 @@ async fn session(
 async fn run(a: Args) -> Result<i32> {
     std::fs::create_dir_all(&a.root)?;
     let cap = (a.budget_usd / a.usd_per_gb * GB) as u64;
-    let mut meter = Meter::load(&a.root, cap, a.wire_ratio, unix())?;
+    let mut meter = Meter::load_with(&a.root, cap, a.wire_ratio, unix(), a.budget_assume)?;
     // A measuring run keeps every stream on; --budget-usd stays the hard stop.
     meter.no_downscale = a.no_downscale;
     let mut files = Files::new(a.watchlist.clone(), a.open_pools.clone());
@@ -399,7 +433,9 @@ async fn run(a: Args) -> Result<i32> {
         Err(std::fs::TryLockError::Error(e)) => return Err(e).context("lock the root"),
     }
     if meter.stopped {
-        log::error!("today's budget is spent ({:.2} GB of {:.2} GB); not starting before the next UTC day", meter.spent as f64 / GB, cap as f64 / GB);
+        if meter.unknown.is_none() {
+            log::error!("today's budget is spent ({:.2} GB of {:.2} GB); not starting before the next UTC day", meter.spent as f64 / GB, cap as f64 / GB);
+        } // an unknown spend is logged by the meter, with the override
         return Ok(EXIT_BUDGET);
     }
     if let Some(w) = creation_warning(&a) {
@@ -432,7 +468,10 @@ async fn run(a: Args) -> Result<i32> {
         let mut st = SessionState::default();
         let exit = match session(&mut rec, &a, &mut files, &endpoint, resume, deadline, &mut st).await {
             Ok(e) => e,
-            Err(e) => Exit::Disconnected(format!("{e:#}")),
+            Err(e) => match segment_exit(&e) {
+                Some(code) => return Ok(code),
+                None => Exit::Disconnected(format!("{e:#}")),
+            },
         };
         match exit {
             Exit::Stop(reason) => {
@@ -441,7 +480,9 @@ async fn run(a: Args) -> Result<i32> {
             }
             Exit::Shutdown => {
                 rec.meter.flush()?; // the last minute's usage into the last segment, and budget.json
-                rec.close_segment(Some("shutdown"))?;
+                if let Err(e) = rec.close_segment(Some("shutdown")) {
+                    return end_on(e);
+                }
                 log::info!("shut down after slot {:?}", rec.slots.last_closed);
                 return Ok(0);
             }
@@ -451,7 +492,9 @@ async fn run(a: Args) -> Result<i32> {
                 log::warn!("disconnected: {note}");
                 rec.on_disconnect(unix(), &note);
                 if failures >= MAX_FAILURES {
-                    rec.close_segment(Some("giving up"))?;
+                    if let Err(e) = rec.close_segment(Some("giving up")) {
+                        return end_on(e);
+                    }
                     bail!("{failures} sessions in a row without data; giving up");
                 }
                 tokio::time::sleep(Duration::from_secs((1u64 << failures.min(6)).min(60))).await;
@@ -488,7 +531,22 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_session, SessionState};
+    use super::{count_session, end_on, parse_assume, SegmentWriteError, SessionState, EXIT_SEGMENT};
+
+    #[test]
+    fn a_segment_write_error_ends_the_recorder_and_other_errors_do_not() {
+        let w = SegmentWriteError { seq: 3, stage: "sync", kind: Some(std::io::ErrorKind::StorageFull) };
+        assert_eq!(end_on(anyhow::Error::new(w).context("on_tick")).unwrap(), EXIT_SEGMENT);
+        assert!(end_on(anyhow::anyhow!("main stream: unavailable")).is_err());
+    }
+
+    #[test]
+    fn the_budget_override_names_its_day() {
+        assert_eq!(parse_assume("2026-10-12=5000").unwrap(), (20_738, 5_000));
+        for bad in ["2026-10-12", "2026-02-30=1", "x=1", "2026-10-12=1.5", "2026-10-12=-1"] {
+            assert!(parse_assume(bad).is_err(), "{bad}");
+        }
+    }
 
     fn after(states: &[(bool, bool)]) -> (u32, u32) {
         let (mut failures, mut resume_failures) = (0, 0);

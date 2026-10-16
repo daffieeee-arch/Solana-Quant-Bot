@@ -6,8 +6,11 @@
 //!
 //! The day is the UTC day. Spent bytes are kept in `<root>/budget.json` (written atomically and
 //! fsynced), so a restart does not reset them. At the start the day's spend is the larger of
-//! budget.json and the usage rows of today's segments: a lost, stale or unreadable budget.json
-//! (a power cut) never starts the day at 0 (fail-closed). When the day's spend projects above the cap (current rate until midnight), the
+//! budget.json and the usage rows of today's segments: a lost or stale budget.json never starts
+//! the day at 0. When today's spend cannot be known (an unreadable budget.json or `_segment.json`
+//! of today, or a segment directory of today without `_segment.json` and no budget.json of today),
+//! the recorder stops for the day (fail-closed) until the owner restarts it with
+//! `--budget-assume-spent YYYY-MM-DD=BYTES`. When the day's spend projects above the cap (current rate until midnight), the
 //! lowest-priority stream is dropped (downscale), one level at a time; at the cap itself the
 //! recorder stops and does not start again that day. Every decision is a usage row (stream
 //! "budget", with a note) in the segment, so the engine journals it.
@@ -16,6 +19,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const GB: f64 = 1e9;
 
@@ -45,6 +49,8 @@ pub struct Meter {
     last_downscale_unix: u64,
     /// Measuring runs (`--no-downscale`): no projected or spike downscale, only the hard stop at the cap.
     pub no_downscale: bool,
+    /// Why today's spend is unknown, when that stopped the day (`load_with`).
+    pub unknown: Option<String>,
 }
 
 const RECENT_MINUTES: usize = 5;
@@ -55,36 +61,103 @@ fn day_of(unix: u64) -> u64 {
     unix / 86_400
 }
 
-/// The bytes of `day`'s usage rows in the complete segments under `root` (their `_segment.json`):
-/// a lower bound of the day's spend that survives a lost budget.json. Segments written before the
-/// day (file time) cannot hold its minutes and are not read.
-pub fn segments_spent(root: &Path, day: u64) -> Result<u64> {
-    let dir = root.join("segments");
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Ok(0) };
-    let day_start = std::time::UNIX_EPOCH + std::time::Duration::from_secs(day * 86_400);
-    let mut total = 0u64;
+/// The UTC date "YYYY-MM-DD" of a day number (days since 1970-01-01; H. Hinnant's civil_from_days).
+pub fn date_of_day(day: u64) -> String {
+    let z = day as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The day number of a UTC date "YYYY-MM-DD" (days_from_civil); None for anything else.
+pub fn day_from_date(s: &str) -> Option<u64> {
+    let mut p = s.split('-');
+    let (y, m, d): (i64, i64, i64) = (p.next()?.parse().ok()?, p.next()?.parse().ok()?, p.next()?.parse().ok()?);
+    if p.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
+    let day = u64::try_from(era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468).ok()?;
+    (date_of_day(day) == s).then_some(day) // 2026-02-30 is no date
+}
+
+/// Today's usage as the segments under `root` record it (segments written before the day, by file
+/// time, cannot hold its minutes and are not read).
+#[derive(Default)]
+pub struct SegmentsUsage {
+    /// The bytes of `day`'s usage rows in complete segments: a lower bound of the day's spend that
+    /// survives a lost budget.json.
+    pub bytes: u64,
+    /// Segments of the day whose `_segment.json` cannot be read: their usage is unknown.
+    pub unreadable: Vec<String>,
+    /// Segment directories of the day without `_segment.json` (an interrupted write): their minutes
+    /// are only in budget.json.
+    pub unfinished: Vec<String>,
+}
+
+pub fn segments_usage(root: &Path, day: u64) -> Result<SegmentsUsage> {
+    let mut out = SegmentsUsage::default();
+    let Ok(entries) = std::fs::read_dir(root.join("segments")) else { return Ok(out) };
+    let day_start = UNIX_EPOCH + Duration::from_secs(day * 86_400);
+    let before = |t: std::io::Result<SystemTime>| t.map_or(false, |t| t < day_start);
     for e in entries {
-        let meta = e?.path().join("_segment.json");
-        let Ok(md) = std::fs::metadata(&meta) else { continue };
-        if md.modified().map_or(false, |t| t < day_start) {
-            continue;
+        let e = e?;
+        let name = e.file_name().to_string_lossy().into_owned();
+        if name.parse::<u64>().is_err() || !e.file_type()?.is_dir() {
+            continue; // not a segment
         }
-        let Some(v) = std::fs::read(&meta).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
-            log::warn!("budget: {} is unreadable; its usage is not counted", meta.display());
-            continue;
-        };
-        for u in v["usage"].as_array().into_iter().flatten() {
-            if u["minute"].as_u64().map(|m| day_of(m * 60)) == Some(day) {
-                total += u["bytes"].as_u64().unwrap_or(0);
+        let meta = e.path().join("_segment.json");
+        match std::fs::metadata(&meta) {
+            Ok(md) if before(md.modified()) => {}
+            Ok(_) => match std::fs::read(&meta).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) {
+                Some(v) => {
+                    for u in v["usage"].as_array().into_iter().flatten() {
+                        if u["minute"].as_u64().map(|m| day_of(m * 60)) == Some(day) {
+                            out.bytes += u["bytes"].as_u64().unwrap_or(0);
+                        }
+                    }
+                }
+                None => out.unreadable.push(name),
+            },
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if !before(e.metadata().and_then(|md| md.modified())) {
+                    out.unfinished.push(name);
+                }
             }
+            Err(_) => out.unreadable.push(name),
         }
     }
-    Ok(total)
+    out.unreadable.sort();
+    out.unfinished.sort();
+    Ok(out)
+}
+
+/// The bytes of `day`'s usage rows in the complete segments under `root` (`segments_usage`).
+pub fn segments_spent(root: &Path, day: u64) -> Result<u64> {
+    Ok(segments_usage(root, day)?.bytes)
 }
 
 impl Meter {
-    /// The meter of `root`, with the day's spend so far from `budget.json`.
+    /// The meter of `root`, with the day's spend so far from `budget.json` (`load_with`, no override).
+    #[cfg(test)]
     pub fn load(root: &Path, cap_bytes: u64, wire_ratio: f64, now_unix: u64) -> Result<Self> {
+        Self::load_with(root, cap_bytes, wire_ratio, now_unix, None)
+    }
+
+    /// The meter of `root`, with the day's spend so far: the larger of today's budget.json and
+    /// today's segments. When that spend cannot be known the day is stopped (fail-closed), unless
+    /// `assume` is the owner's override `(day, bytes)` for this day (`--budget-assume-spent`): then
+    /// the spend is at least `bytes`, and a budget row notes it.
+    pub fn load_with(root: &Path, cap_bytes: u64, wire_ratio: f64, now_unix: u64, assume: Option<(u64, u64)>) -> Result<Self> {
         let path = root.join("budget.json");
         let mut m = Self {
             path,
@@ -100,23 +173,59 @@ impl Meter {
             recent: VecDeque::new(),
             last_downscale_unix: 0,
             no_downscale: false,
+            unknown: None,
         };
+        let day_start = UNIX_EPOCH + Duration::from_secs(m.day * 86_400);
+        // budget.json holds today's spend (`today`), another day's, or nothing we can read.
+        let mut today = false;
+        let mut unknown = Vec::new();
         match std::fs::read(&m.path) {
             Ok(b) => match serde_json::from_slice::<Value>(&b) {
-                Ok(v) if v["day"].as_u64() == Some(m.day) => {
-                    m.spent = v["spent_bytes"].as_u64().unwrap_or(0);
-                    m.stopped = v["stopped"].as_bool().unwrap_or(false);
-                }
+                Ok(v) if v["day"].as_u64() == Some(m.day) => match v["spent_bytes"].as_u64() {
+                    Some(spent) => {
+                        m.spent = spent;
+                        m.stopped = v["stopped"].as_bool().unwrap_or(false);
+                        today = true;
+                    }
+                    None => unknown.push("budget.json of today has no spent_bytes".to_owned()),
+                },
                 Ok(_) => {}
-                Err(e) => log::error!("budget: {} is unreadable ({e}); today's spend comes from the segments", m.path.display()),
+                // Written before today (file time): it cannot hold today's spend.
+                Err(e) if std::fs::metadata(&m.path).and_then(|md| md.modified()).is_ok_and(|t| t < day_start) => {
+                    log::warn!("budget: {} is unreadable ({e}) but older than today", m.path.display());
+                }
+                Err(e) => unknown.push(format!("budget.json is unreadable ({e})")),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => log::error!("budget: cannot read {} ({e}); today's spend comes from the segments", m.path.display()),
+            Err(e) => unknown.push(format!("budget.json cannot be read ({e})")),
         }
-        let from_segments = segments_spent(root, m.day)?;
-        if from_segments > m.spent {
-            log::warn!("budget: today's segments hold {from_segments} bytes, budget.json {}: taking the segments", m.spent);
-            m.spent = from_segments;
+        let seg = segments_usage(root, m.day)?;
+        if seg.bytes > m.spent {
+            log::warn!("budget: today's segments hold {} bytes, budget.json {}: taking the segments", seg.bytes, m.spent);
+            m.spent = seg.bytes;
+        }
+        // An unreadable _segment.json of today: its usage is unknown. A directory without one (an
+        // interrupted write) is covered by today's budget.json, which is saved at every minute's roll,
+        // before a segment takes that minute's usage; without today's budget.json it is unknown.
+        unknown.extend(seg.unreadable.iter().map(|s| format!("segments/{s}/_segment.json is unreadable")));
+        if !today {
+            unknown.extend(seg.unfinished.iter().map(|s| format!("segments/{s} has no _segment.json (an interrupted write)")));
+        }
+        if !unknown.is_empty() {
+            let why = unknown.join("; ");
+            let date = date_of_day(m.day);
+            match assume.filter(|(day, _)| *day == m.day) {
+                Some((_, bytes)) => {
+                    m.spent = m.spent.max(bytes);
+                    m.note(format!("today's spend was unknown ({why}); the owner's override assumes {bytes} bytes for {date}: spent {}", m.spent));
+                }
+                None => {
+                    log::error!("budget: today's spend is unknown ({why}): stopped for {date}. Once checked, the owner can restart with \
+                                 --budget-assume-spent {date}=<bytes> (at least {} from the readable segments)", m.spent);
+                    m.stopped = true;
+                    m.unknown = Some(why);
+                }
+            }
         }
         // A recovered spend at the cap stops before the stream starts (main checks `stopped` first).
         m.stopped |= m.spent >= m.cap_bytes;
@@ -169,8 +278,12 @@ impl Meter {
     }
 
     pub fn state(&self) -> Value {
-        json!({"day": self.day, "spent_bytes": self.spent, "cap_bytes": self.cap_bytes,
-               "spent_gb": self.spent as f64 / GB, "stopped": self.stopped, "wire_ratio": self.wire_ratio})
+        let mut v = json!({"day": self.day, "spent_bytes": self.spent, "cap_bytes": self.cap_bytes,
+                           "spent_gb": self.spent as f64 / GB, "stopped": self.stopped, "wire_ratio": self.wire_ratio});
+        if let Some(why) = &self.unknown {
+            v["unknown"] = json!(why);
+        }
+        v
     }
 
     /// Advance to `now_unix`: close finished minutes, and decide.
@@ -348,8 +461,9 @@ mod tests {
                                   {"minute": minute - 10, "stream": "tx", "bytes": 999, "messages": 1}])); // yesterday's minute
         assert_eq!(segments_spent(&root, day_of(T0)).unwrap(), 350);
         let load = || Meter::load(&root, 25_000_000_000, 1.0, T0 + 3_600).unwrap().spent;
-        std::fs::write(root.join("budget.json"), b"{\"day\": 20738, \"spent_by").unwrap(); // cut off by a power loss
-        assert_eq!(load(), 350); // not 0: fail-closed
+        std::fs::write(root.join("budget.json"), b"{\"day\": 20738, \"spent_by").unwrap(); // cut off
+        assert_eq!(load(), 350); // not 0; and stopped (an_unknown_spend_of_today_stops_until_the_owners_override)
+        assert!(Meter::load(&root, 25_000_000_000, 1.0, T0 + 3_600).unwrap().stopped);
         std::fs::write(root.join("budget.json"), json!({"day": day_of(T0), "spent_bytes": 50}).to_string()).unwrap();
         assert_eq!(load(), 350); // a stale budget.json: the segments are larger
         std::fs::write(root.join("budget.json"), json!({"day": day_of(T0), "spent_bytes": 500}).to_string()).unwrap();
@@ -373,6 +487,65 @@ mod tests {
         let v: Value = serde_json::from_slice(&std::fs::read(root.join("budget.json")).unwrap()).unwrap();
         assert_eq!(v["spent_bytes"].as_u64(), Some(350));
         assert!(!root.join("budget.json.tmp").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dates_and_day_numbers() {
+        assert_eq!((date_of_day(day_of(T0)), date_of_day(0), date_of_day(11_016)), ("2026-10-12".into(), "1970-01-01".into(), "2000-02-29".into()));
+        assert_eq!((day_from_date("2026-10-12"), day_from_date("1970-01-01"), day_from_date("2000-02-29")), (Some(day_of(T0)), Some(0), Some(11_016)));
+        for bad in ["2026-02-30", "2100-02-29", "2026-13-01", "2026-10-1x", "2026-10", "2026-10-12-1", "1969-12-31", ""] {
+            assert_eq!(day_from_date(bad), None, "{bad}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_spend_of_today_stops_until_the_owners_override() {
+        let root = tmp("budget-unknown");
+        let (minute, today) = (T0 / 60, day_of(T0));
+        let load = |assume| Meter::load_with(&root, 25_000_000_000, 1.0, T0 + 3_600, assume).unwrap();
+        let unknown = |m: &Meter, what: &str| m.stopped && m.unknown.as_deref().is_some_and(|u| u.contains(what));
+        // A first start (nothing on disk), and no budget.json with complete readable segments: as before.
+        let m = load(None);
+        assert!(!m.stopped && m.spent == 0 && m.unknown.is_none());
+        segment(&root, 0, json!([{"minute": minute + 5, "stream": "tx", "bytes": 100, "messages": 1}]));
+        let m = load(None);
+        assert!(!m.stopped && m.spent == 100 && m.unknown.is_none());
+        // 1. An unreadable budget.json of today.
+        std::fs::write(root.join("budget.json"), b"{\"day\": 20738, \"spent_by").unwrap();
+        let m = load(None);
+        assert!(unknown(&m, "budget.json is unreadable"));
+        assert_eq!(m.state()["unknown"].as_str(), m.unknown.as_deref());
+        // The owner's override holds for its own day only, and never goes below the segments.
+        assert!(unknown(&load(Some((today - 1, 5_000))), "budget.json is unreadable"));
+        let m = load(Some((today, 5_000)));
+        assert!(!m.stopped && m.spent == 5_000 && m.unknown.is_none());
+        let mut m = load(Some((today, 50)));
+        assert_eq!(m.spent, 100);
+        m.flush().unwrap(); // the override is a budget row, and budget.json readable again
+        assert!(m.take_usage().iter().any(|r| r["stream"] == "budget" && r["note"].as_str().unwrap().contains("the owner's override")));
+        assert!(!load(None).stopped);
+        std::fs::write(root.join("budget.json"), json!({"day": today}).to_string()).unwrap();
+        assert!(unknown(&load(None), "no spent_bytes"));
+        // 2. An unreadable _segment.json of today: unknown, also beside today's budget.json.
+        std::fs::write(root.join("budget.json"), json!({"day": today, "spent_bytes": 400}).to_string()).unwrap();
+        std::fs::write(root.join("segments/000000000/_segment.json"), b"{\"seq\": 0, \"comp").unwrap();
+        assert!(unknown(&load(None), "segments/000000000/_segment.json is unreadable"));
+        segment(&root, 0, json!([{"minute": minute + 5, "stream": "tx", "bytes": 100, "messages": 1}]));
+        // 3. A segment directory of today without _segment.json (an interrupted write): today's
+        // budget.json covers its minutes; without one its usage is unknown.
+        std::fs::create_dir_all(root.join("segments/000000001/blocks")).unwrap();
+        let m = load(None);
+        assert!(!m.stopped && m.spent == 400);
+        std::fs::remove_file(root.join("budget.json")).unwrap();
+        assert!(unknown(&load(None), "segments/000000001 has no _segment.json"));
+        std::fs::write(root.join("budget.json"), json!({"day": today - 1, "spent_bytes": 9}).to_string()).unwrap();
+        assert!(unknown(&load(None), "segments/000000001 has no _segment.json")); // yesterday's budget.json does not cover it
+        // A later day: files written before it hold none of its spend, readable or not.
+        std::fs::write(root.join("budget.json"), b"{broken").unwrap();
+        std::fs::write(root.join("segments/000000000/_segment.json"), b"{broken").unwrap();
+        let later = Meter::load_with(&root, 25_000_000_000, 1.0, T0 + 3_650 * 86_400, None).unwrap();
+        assert!(!later.stopped && later.spent == 0 && later.unknown.is_none());
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
