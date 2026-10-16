@@ -12,7 +12,7 @@ Every choice names its source. Facts from this repo cite the file. External fact
 | # | decision | why |
 |---|---|---|
 | 1 | One Rust process `lab-live`. A single-threaded engine core owns all state; a network task feeds it, and a writer thread journals. | Determinism (the same order as a replay) makes parity provable. ~90 transactions/s on average needs one core (§10). |
-| 2 | Its input in live shadow: **the recorder's own stream**, which moves to `processed` with client-side confirmation. It reaches the engine over a local relay. | **0 extra Triton GB**, and the earliest data. The recorder keeps writing confirmed segments, as Triton recommends (§4, §7). |
+| 2 | Live shadow input: **b1**, the recorder's own stream at `processed` over a local relay (+0 GB), or **b2**, its own engine-only stream (~7–12 GB/day, its own budget). The owner decides before M3; the recommendation is b1 first, then b2 beside it (§4). | b1 means parity on identical input; b2 measures the live configuration and is independent of the recorder (§4). |
 | 3 | Decoding comes from `lab/extractor` (the OF1-identical rows); the client, filters, meter and reconnect come from `lab/recorder`. | The rows are already byte-identical to OF1, and the tests exist (§2). |
 | 4 | A shared crate `lab/core` holds venue math, costs, exit rules, FlowIndex, PositionSim and the F7 trigger. Rust uses it directly; the Python backtest uses it through PyO3 + maturin. | The same math by construction instead of "parity afterwards"; faster tournaments as a by-product (§12). |
 | 5 | Parity: the Rust engine replays the same OF1 chunks or recorded segments, and writes the paper journal's SQLite schema. `paper.parity` compares the two journals: **0 unexplained**. | The proven method of jobs 90/92 (§3). |
@@ -97,18 +97,77 @@ Most of "new" is a port of existing Python. §12 moves it to a shared crate, so 
 |---|---|---|---|
 | (a) **replay** | OF1 chunks or recorded segments, plus the snapshot | none | M1/M2; also every NAS test |
 | (b1) **live shadow on the recorder's stream** (recommended) | the recorder subscribes at `processed`. It relays every update over a Unix socket to `lab-live`, and still writes confirmed segments by buffering per (slot, bank_id) until the slot's confirmed/finalized status | **+0 GB**: the same filters, one stream. `processed` adds only the banks that are later discarded (< 1 % of slots under Alpenglow: Triton's guide) | M3 |
-| (b2) **live shadow with its own stream** | its own Dragon's Mouth subscription, e.g. on Riptide (`riptide.rpcpool.com`, a lower-latency path for shared subscriptions; [Triton: Riptide](https://docs.triton.one/project-yellowstone/riptide)) | **~15–23 GB/day**: 23.16 GB/day with the paper filters (shadow job 85, `compare.md`), less with only the engine's pools. At $0.08/GB that is **$1.20–1.85/day, $36–56/month**. Needs the owner's OK | only when a check against a second path is wanted |
+| (b2) **live shadow with its own stream** | its own Dragon's Mouth subscription with the engine-only filter below. Optionally on Riptide (`riptide.rpcpool.com`, a lower-latency path for shared subscriptions; [Triton: Riptide](https://docs.triton.one/project-yellowstone/riptide)) | **~7–12 GB/day** with the engine-only filter; ~17 GB/day when it follows every deep reversed pool itself. At $0.08/GB that is **$17–29/month** (or ~$41). It has its own budget. Needs the owner's OK | the owner leans to b2 ("as much Triton as possible"); the decision falls before M3 |
 | (c) live trading | — | — | out of scope (§11) |
 
-**Why b1.**
+**Why b1 is the default.**
 - One stream means one budget and one meter, and the decider sees exactly what the recorder records, so parity holds by construction.
 - `processed` is Triton's recommendation for low latency, with commitment handled client-side: "For maximum performance, however, we recommend handling commitment levels client side" ([Dragon's Mouth gRPC Subscriptions](https://docs.triton.one/project-yellowstone/dragons-mouth-grpc-subscriptions)).
+- b1 is Triton data too: the same Dragon's Mouth stream, read once.
 
-**The relay.**
-- Each frame is length-prefixed: the update's prost bytes plus the recorder's receive time in ns.
+**The relay (b1).**
+- Each frame is length-prefixed: the update's prost bytes plus the recorder's receive time in ns. The recorder forwards each frame before its own decoding.
 - The recorder never blocks on it. When the socket buffer is full it drops the frame, counts it, and sends a gap marker.
 - After a gap the decider marks itself stale until the next complete slot. That is a recorded gap, never a silent one.
 - The cost is microseconds; it is measured in §10.
+
+### b2 in detail: the engine-only filter, its volume, its own budget
+
+**What the engine needs.** K3 and group H trade **`pool_reversed` only** (`paper/k3-paper-2026-10-12.yaml`, `paper/h-arms-2026-10-16.yaml`). So the engine-only stream holds:
+
+| stream | why | from the recorder's filters |
+|---|---|---|
+| transactions of the **reversed pools on the F7 watchlist**, and of the pools of open positions | triggers, depth, flow, farm labels, exits | `tx_pools`, restricted to the reversed entries |
+| **probes** of new reversed pools (≥ 120 SOL), with their backfill | a pool's first hours and its farmer history before it is on the watchlist | `tx_probes` and backfills, reversed only |
+| creation of reversed pools | new pools within seconds (99 % of F7's pools are created that day) | `tx_new_reversed`, `pool_creations` |
+| block meta, slot statuses, block footers | clock, bank completion, Alpenglow | as the recorder |
+
+**Not needed:**
+- `--pump-creates`: no reversed pool has a pump.fun mint (dev2: 0 of 54,027), so F7 takes the pool's `coin_creator` there;
+- the normal-pool and M1 watchlist entries;
+- vault balances and pool accounts: the state comes from events, §9.
+
+**Volume.** Measured on the store `fwd1054` (epoch 1054, 26.2 h, scaled to 24 h), with the #180 convention of 3 KB per transaction:
+
+| set of transactions | per 24 h | GB/day |
+|---|---|---|
+| every SOL-market pool | 18.2 M | 54.7 |
+| reversed pools, ever ≥ 150 SOL, followed all day | 5.7 M | 17.2 |
+| reversed pools, while ≥ 120 SOL | 5.5 M | 16.5 |
+| the recorder's whole paper stream (shadow job 85: watchlist + probes + backfills + creations) | ~7.5 M | 23.2 |
+
+- The recorder does not follow every deep pool all day. Its watchlist adds and prunes pools by the F7 and M1 rules, giving 4.96 M watchlist transactions a day.
+- Reversed pools carry ~38 % of all pool transactions (7.0 M of 18.2 M a day).
+- The engine-only share of the recorder's stream is therefore about 40 % of the watchlist plus the reversed probes, backfills and creations: **~2.4–4 M transactions a day, ~7–12 GB/day.**
+- An engine that keeps its own watchlist without the Python builder, following every reversed pool ≥ 150 SOL all day, needs **~17 GB/day**.
+- The bytes per transaction come from the measuring hour (`_segment.json` usage per stream). Until then, 3 KB is an estimate.
+
+**Its own budget and meter.**
+- `lab-live` runs its own `Meter` (`lab/recorder/src/meter.rs`) in its own root (`<lab>/live-engine/budget.json`).
+- It has its own `--budget-usd` (for example $1/day, 12.5 GB) and the same fail-closed rules as the recorder (#265, #308): a hard stop at the cap, and an unknown spend stops the day.
+- Its downscale order: probes first, then backfills, then the watchlist pools; the pools of open positions and the creations last.
+- The Triton bill is the sum of both streams. The owner sets both caps.
+
+**Its watchlist.**
+- At first b2 reads `watchlist-current.json`, which the Python watchlist builder writes from the recorder's data. b2 is then independent of the recorder's **stream**, but not of its watchlist.
+- Full independence needs the builder ported to Rust (after M3), or the ~17 GB/day variant.
+
+### b1 against b2, honestly
+
+| | b1: the recorder's stream + relay | b2: its own stream |
+|---|---|---|
+| Triton cost | +0 | +$17–29/month (+~$41 when fully independent) |
+| latency, network | the same path as the recorder | the same, or lower on Riptide. Its own smaller stream has no head-of-line blocking behind the recorder's probes and backfills on one HTTP/2 connection |
+| latency, local | +µs for the relay (measured) | none |
+| what it measures | the latency of the recorder's configuration | **the configuration a live bot would run**: its own filter, connection, reconnect and budget |
+| robustness | one point of failure. A recorder restart (exit 74/75, a deploy) stops the engine too, and the recorder's downscale can drop streams the engine needs | independent reconnect, budget and downscale. A recorder failure does not stop it, and the reverse |
+| parity with Python | the same input bytes: differences are only logic | two inputs: a gap on one side is a difference that needs a cause. Both are reconciled against OF1 (`paper.reconcile`) |
+| work | the recorder moves to processed and gets the relay | the engine gets its own client, meter and filter, mostly reused from the recorder (§2) |
+
+**Recommendation.**
+- **M3a = b1:** cheap, and parity of logic on identical input.
+- **M3b = b2**, once M3a is green: the live configuration, measured beside b1 for a week (b1 against b2 latency on the same updates), then on Riptide if the owner wants.
+- If the owner chooses b2 directly, M3 is b2 and the parity report attributes gaps through OF1 reconciliation.
 
 ## 5. Milestones and estimates
 
@@ -119,7 +178,7 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
 | **M0** | `lab/core` skeleton: venue math (curve/pool buy and sell, exact-in/out, fee tiers, signed vq, synthetic migration), proptest, PyO3 bindings for `venues`; the Python backtest calls them behind a flag | 2–3 days | the A/B of a dev tournament is byte-identical, flag on vs off |
 | **M1** | `lab-live` replay mode for **K3**: snapshot export, F7 trigger, PositionSim, costs, risk, journal writer; `paper.parity` against Python | 1.5–2.5 weeks | 0 unexplained on the dev chunk and fwd1053-1054 |
 | **M2** | the **H4/H5 arms**: FlowIndex, flow and flowtp exits, farm window, `require_farm_complete`, groups and their own wallets | ~1 week | 0 unexplained with both arms (as jobs 90/92) |
-| **M3** | **live shadow (b1)**: recorder at `processed` with bank-aware buffering and the relay; latency stamps; metrics; watchdog; Alpenglow handling | 1–1.5 weeks, then ≥ 2 weeks of running | a daily parity report with 0 unexplained among finalized decisions; latency histograms per step |
+| **M3** | **live shadow**: M3a = b1 (recorder at `processed` with bank-aware buffering and the relay), then M3b = b2 beside it (its own client, filter, meter and budget), or b2 directly if the owner so decides (§4); latency stamps; metrics; watchdog; Alpenglow handling | 1–1.5 weeks, then ≥ 2 weeks of running | a daily parity report with 0 unexplained among finalized decisions; latency histograms per step |
 | **M4** | the shared core in the backtest: PositionSim and exits through PyO3 in `backtest/tournament.py` | 1–2 weeks | tournament A/B byte-identical; time measured |
 | **M5** | robustness: cargo-fuzz on the decoders, proptest on the math, starting in M0 and continuous; CodeQL and cargo audit as now | continuous | fuzz targets in the NAS nightly; no open finding |
 
@@ -316,24 +375,31 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
 
 ## 13. Metrics and alerts
 
-- **Export:** the `metrics` crate 0.24 with `metrics-exporter-prometheus` 0.18 on `127.0.0.1` (and on Tailscale only with the owner's OK for the NAS Grafana). The same numbers also go to a JSON stats file every 10 s, which the web UI and the watchdog read.
+- **Export:** the `metrics` crate 0.24 with `metrics-exporter-prometheus` 0.18 on `127.0.0.1`. The same numbers also go to a JSON stats file every 10 s, which the web UI and the watchdog read.
+- **Grafana** (owner, 2026-10-16: yes):
+  - a separate folder "Solana" in the owner's existing Grafana on the NAS, with a **read-only** data source (Prometheus scraping the endpoint, or the JSON file);
+  - the endpoint stays on localhost; the link over Tailscale comes later, set up with the owner;
+  - the metric names are stable and prefixed `lab_live_`, so the dashboards survive versions.
 - **Metrics:**
   - latency histograms per step (§10);
   - stream lag against slot time;
   - reconnects and gaps (slots);
   - queue depth and age;
-  - budget (spent GB);
+  - budget (spent GB, per stream);
   - open positions and P&L per group;
   - rolled-back decisions;
   - the parity status of the last day.
-- **Alerts (a push to the owner):**
-  - a stop or exit;
-  - a gap above N slots;
-  - budget at 80 % and 100 %;
-  - lag above X s;
-  - the day loss limit hit;
-  - a missing heartbeat.
-- The channel (ntfy or Telegram) is the owner's choice; the coordinator raises it. Grafana on the NAS gets only the owner's OK.
+- **Alerts** (owner, 2026-10-16: the channel is decided later):
+  - The alert point is **generic**: an `alert_webhook_url` in the config, **empty by default**.
+  - When empty, no alert is sent: the alerts still go to the log, the stats file and the metric `lab_live_alerts_total{kind}`.
+  - When set, each alert is one JSON POST (`{"kind", "text", "unix", "host"}`), with a timeout, no retries in the engine thread, and no secrets in the text. ntfy, Telegram (through a small relay) or a Grafana contact point can sit behind it.
+  - The alerts:
+    - a stop or exit;
+    - a gap above N slots;
+    - budget at 80 % and 100 %;
+    - lag above X s;
+    - the day loss limit hit;
+    - a missing heartbeat.
 
 ## 14. An independent kill switch (watchdog)
 
@@ -358,8 +424,9 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
 - **Differential tests** against the Python implementation on random legs, until step 4 of §12.
 - **CI as now:** CodeQL Rust on the branch through `workflow_dispatch` before every merge (memory: Rust CodeQL does not run on PRs), cargo audit through the bookworm runner, and dependency review.
 
-## Open questions for the owner and coordinator
+## The owner's answers (2026-10-16, through the coordinator)
 
-1. **b1** (the recorder moves to `processed` and relays; +0 GB) or **b2** (its own stream, +$36–56/month)? Recommended: b1.
-2. Should M0 (the shared core with PyO3) come before M1? Recommended: yes, its first step only (venues), because M1 needs that math in Rust anyway.
-3. The alert channel (ntfy or Telegram), and Grafana on the NAS: the owner's choice.
+1. **M0 before M1:** yes. M0 is in progress (#311).
+2. **Grafana:** yes, a separate folder "Solana" with a read-only data source. Metrics on localhost (Prometheus and JSON); the Tailscale link comes later (§13).
+3. **The alert channel:** decided later. The alert point is a generic webhook URL in the config, empty by default (§13).
+4. **b1 or b2:** still open. The owner wants "as much Triton as possible" and leans to b2. b2's filter, volume, own budget and the comparison are in §4. **The decision falls before M3.**
