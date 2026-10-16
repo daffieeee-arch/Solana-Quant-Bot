@@ -79,6 +79,6 @@ Dag 10–18.
 
 ## 6. Open en beperkingen
 
-- De aanvulling uit de spec (holder-concentratie van de token op t en de transfers van Q1/Q3 op 1040/1045) wacht op de transfers-rerun na de 4.1-fix (#270); de kolommen komen in dezelfde tabel zodra transfers-v1 op de VPS staat.
+- De aanvulling uit de spec (holder-concentratie van de token op t en de transfers van Q1/Q3 op 1040/1045) is gebouwd (`wallets/latebloom_transfers.py`, #296) en gedraaid (NAS job 89, f241e17, `wallets/latebloom-v1/transfers/epoch-{1040,1045}/`), maar **levert voor F7-reversed geen rij op**: het transfers-ledger bestaat alleen voor mints die in het venster zijn aangemaakt (pump-curve-mints uit `mints`), en geen enkele reversed pool in dev2 heeft zo'n token (feit: 0 van 54.027 reversed pools met een rij in `mints`; 0 van 4.138 resp. 1.535 triggers met een ledger). Dat is de constructie van transfers-v1, geen bug. Een ledger vanaf de pool-start zou een nieuwe extractie met een mint-startlijst vragen (~1,6 TB OF1 per 2 epochs) en laat de oude voorraad onbekend; besluit coördinator 2026-10-16: laten rusten, E22 genoteerd als "niet meetbaar voor F7-reversed met transfers-v1". De kolommen werken wel voor normale pools (de M1x-mints van Q1), mocht dat later nodig zijn.
 - Eén periode, 8 dag-blokken in de bootstrap, verbruikte data; geen model en geen multiple-testing-correctie over de 35 kenmerken (daarom alleen effectgroottes met CI, geen "significant"). Na Alpenglow (epoch 1064) een nieuw regime.
 - Het markout is op 0,5 SOL en d = 1; de uitkomst kent geen pad (de replay met de grid wel).
