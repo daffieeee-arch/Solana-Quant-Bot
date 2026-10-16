@@ -13,8 +13,12 @@ import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-import paper  # noqa: E402
+# lab/ui/paper.py by its path, as the server loads it: the name 'paper' is lab/paper's package (OneProcess).
+_spec = importlib.util.spec_from_file_location("lab_ui_paper", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "paper.py"))
+if "lab_ui_paper" not in sys.modules:
+    sys.modules["lab_ui_paper"] = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(sys.modules["lab_ui_paper"])
+paper = sys.modules["lab_ui_paper"]
 
 PARITY = "/home/chupa/Solana-project/data-old-faithful-one/lab/journal/parity-450144000-450360000/journal"
 DAY = 86_400
@@ -343,11 +347,11 @@ class Recorder(unittest.TestCase):
             shutil.copytree(paper.SAMPLE_RECORDER, d, dirs_exist_ok=True)
             os.environ["LAB_RECORDER_ROOT"] = d
             try:
-                importlib.reload(paper)
+                paper.__spec__.loader.exec_module(paper)  # a reload: loaded by path, no finder knows it
                 self.assertFalse(paper.recorder_view(1_791_800_000)["sample"])
             finally:
                 del os.environ["LAB_RECORDER_ROOT"]
-                importlib.reload(paper)
+                paper.__spec__.loader.exec_module(paper)  # a reload: loaded by path, no finder knows it
 
 
 class Marks(unittest.TestCase):
@@ -493,6 +497,24 @@ class FrontEndWording(unittest.TestCase):
         self.assertIn("TEST · geen paper trading", self.tsx)
         self.assertIn("{a.not_permission}", self.tsx)
         self.assertIn("Vier weken (${s.clock_days} dagen) is de geplande lengte, geen minimum; de grens is dag ${s.clock_max_days}.", self.tsx)
+
+
+class OneProcess(unittest.TestCase):
+    """lab/ui/tests and lab/paper/tests run in one pytest process, in either order: the web app's paper.py is loaded
+    by its path as 'lab_ui_paper', so it never takes or meets the package name 'paper' (LAB review, 2026-10-16)."""
+
+    def test_ui_and_paper_tests_together(self):
+        import subprocess
+        try:
+            import pytest  # noqa: F401
+        except ImportError:
+            self.skipTest("no pytest in this Python")
+        lab = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+        ui = ["ui/tests/test_paper.py", "ui/tests/test_server.py::CasesGuards"]
+        for files in (["paper/tests/test_clock.py", *ui], [*ui, "paper/tests/test_clock.py"]):
+            r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-k", "not OneProcess", *files],
+                               cwd=lab, capture_output=True, text=True, timeout=300)
+            self.assertEqual(r.returncode, 0, f"{files}\n{r.stdout[-3000:]}")
 
 
 if __name__ == "__main__":
