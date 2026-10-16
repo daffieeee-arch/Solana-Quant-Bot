@@ -5,6 +5,9 @@ repo.** Installing is a step for the measuring hour (`data-old-faithful-one/lab/
 and the paper start, each **only after the owner's OK**. Paper only: no wallet, no keys, no
 transactions.
 
+The paper start of about 2026-10-21 (store, settings, order, checks, stop and rollback) is
+written out as exact commands in [`runbook-paper-start-2026-10-21.md`](runbook-paper-start-2026-10-21.md).
+
 | unit | what | limits |
 |---|---|---|
 | `lab-recorder.service` | `lab-recorder --root <lab>/recorder $RECORDER_ARGS` (Triton Dragon's Mouth to segments) | MemoryMax 2G, CPU 100%, Nice 5. `Restart=on-failure`; exit 75 (the day's budget is spent) is never restarted. It does not start while `locks/disk-low` exists |
@@ -57,9 +60,11 @@ Only after the owner's OK for this step. Run by the coordinator.
    hour with exit 0, and is not restarted.
 4. **Units**:
    ```bash
-   cp ~/Solana-project/worktrees/paper-run/lab/ops/systemd/lab-*.{service,timer} ~/.config/systemd/user/
+   cd ~/Solana-project/worktrees/paper-run/lab/ops/systemd    # the live units only: lab-notebooks.service runs already
+   cp lab-recorder.service lab-recorder.timer lab-paper.service lab-paper.timer \
+      lab-live-retention.service lab-live-retention.timer ~/.config/systemd/user/
    systemctl --user daemon-reload
-   systemd-analyze --user verify ~/.config/systemd/user/lab-*.service    # no errors
+   systemd-analyze --user verify ~/.config/systemd/user/lab-{recorder,paper,live-retention}.service    # no errors
    ```
 5. **Start** (the measuring hour: the recorder only, or recorder plus engine):
    ```bash
