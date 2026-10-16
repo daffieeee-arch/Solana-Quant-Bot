@@ -1,0 +1,31 @@
+# Solana-lab web app (lab/ui/server.py): read-only, bound to the Tailscale IP only. It serves the pinned deploy
+# worktree worktrees/lab-ui-deploy (detached on a main commit, moved only on deploy), never a working tree, and the
+# front end built from it into $LAB_DATA_ROOT/ui-cache/web.
+# Install (once; it replaces the transient unit of the same name started with systemd-run):
+#   git -C ~/Solana-project/Solana-bot fetch origin
+#   git -C ~/Solana-project/Solana-bot worktree add --detach ~/Solana-project/worktrees/lab-ui-deploy <commit>
+#   cp lab/ops/systemd/lab-ui-web.service ~/.config/systemd/user/
+#   systemctl --user stop lab-ui-web && systemctl --user daemon-reload   (a stopped transient unit is gone)
+#   systemctl --user enable --now lab-ui-web
+# Deploy (after merge; <commit> = the main commit to serve): lab/ui/web/README.md, "Deploy".
+[Unit]
+Description=Solana-lab web app (read-only, Tailscale only)
+Documentation=file:%h/Solana-project/worktrees/lab-ui-deploy/lab/ui/web/README.md
+StartLimitIntervalSec=1h
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Solana-project/worktrees/lab-ui-deploy
+Environment=LAB_DATA_ROOT=%h/Solana-project/data-old-faithful-one/lab
+ExecStart=%h/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155/bin/python -I lab/ui/server.py --host 100.112.193.63 --port 8501
+MemoryMax=1G
+CPUQuota=100%
+TasksMax=128
+Nice=10
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=default.target

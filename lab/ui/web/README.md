@@ -36,6 +36,26 @@ systemd-run --user --scope -p MemoryMax=1500M -p CPUQuota=100% -- nice -n 10 \
 
 `npm install` counts as heavy: run it under `heavy.lock` (see the repo's AGENTS.md).
 
+## Deploy
+
+`lab/ops/systemd/lab-ui-web.service` runs the server from the pinned deploy worktree
+`worktrees/lab-ui-deploy`, detached on a main commit, so a working tree's branch never reaches the running
+app. After a merge (`<commit>` = the main commit to serve):
+
+```bash
+D=~/Solana-project/worktrees/lab-ui-deploy
+git -C ~/Solana-project/Solana-bot fetch origin && git -C "$D" checkout --detach <commit>
+# Only when lab/ui/web changed. npm ci only when package-lock.json changed (heavy: under heavy.lock).
+cd "$D/lab/ui/web"
+systemd-run --user --scope -p MemoryMax=1500M -p CPUQuota=100% -- nice -n 10 \
+  node_modules/.bin/vite build --outDir "$LAB_DATA_ROOT/ui-cache/web.new" --emptyOutDir
+C="$LAB_DATA_ROOT/ui-cache"; rm -rf "$C/web.prev" && mv "$C/web" "$C/web.prev" && mv "$C/web.new" "$C/web"
+systemctl --user restart lab-ui-web
+curl -s -o /dev/null -w "%{http_code}\n" http://100.112.193.63:8501/api/paper   # 200
+```
+
+Roll back the front end with `web.prev`, and the server by checking out the previous commit and restarting.
+
 ## iPhone
 
 `index.html` has a web-app manifest, an apple-touch-icon and `apple-mobile-web-app-capable`, so "Zet op
