@@ -17,6 +17,9 @@ full sell of the position at that state (price impact, venue fees, network cost;
 venue, as the engine's pool_sell_capped / curve_sell do). mult_1h / mult_6h = the highest mark / cost within 1 h /
 6 h, t_max the minutes from the entry to that mark, end_6h the mark at the last trade within 6 h, dd_6h the lowest
 mark before the maximum. After the curve completes, the mint's SOL pool prices the position (its own state).
+Three simple exits on the same marks, as multiples of the cost (x_tp2: the first mark >= 2 x cost; x_tr30 / x_tr50:
+the first mark <= 70 % / 50 % of the highest earlier mark; otherwise the 6 h end): the sell is at the state of the
+mark that triggers the rule, without the engine's slot delay (modelaanname, a touch optimistic).
 
 The curve state is the row's logged state (vt, vq, rt, rq after the trade; the state before it by +/- t and q, as
 streams.py does). Mayhem mints get no curve entry (their pool phase stays): the Mayhem agent (BwWK17cb..., fee tiers
@@ -34,7 +37,8 @@ share_c (transfers-v1) and the wash flags rt_tx / wash_1h are not here: 'onbeken
 
   LAB_STORE=<dev2> python -m wallets.runners --from-slot A --to-slot B [--f7-parts DIR] [--m1x-triggers FILE]
       [--cfg week2-defaults.yaml] [--out DIR]
-Writes entries-<A>.parquet (one row per token x moment with an entry) and run-runners-<A>.json. Slots stay before
+Writes entries-<A>.parquet (one row per key x moment x t with an entry: every F7 / M1 trigger of a pool counts) and
+run-runners-<A>.json. Slots stay before
 the hold-out. Heavy on a full epoch (every trade of every new token joined to its entries): NAS; a slice of a few
 thousand slots on the VPS as a smoke test.
 """
@@ -188,7 +192,7 @@ def entries(con, cost_tx):
     con.execute(f"""CREATE OR REPLACE TEMP TABLE cand AS
         SELECT m.key, m.moment, m.t, m.d_slots, m.h1, m.h6, m.m1s, m.m5s, l.ord, l.slot, l.venue, l.orientation,
                l.vt_pre, l.vq_pre, l.rt_pre, l.rq_pre, l.fee_bps, l.creator_bps, l.b_pre, l.e_pre, l.virt, l.lp, l.pr, l.cr, l.cb,
-               row_number() OVER (PARTITION BY m.key, m.moment ORDER BY l.ord) AS rn
+               row_number() OVER (PARTITION BY m.key, m.moment, m.t ORDER BY l.ord) AS rn
         FROM mom m JOIN (
             SELECT key, ord, slot, venue, orientation, vt_pre, vq_pre, rt_pre, rq_pre, fee_bps, creator_bps,
                    NULL::HUGEINT AS b_pre, NULL::HUGEINT AS e_pre, NULL::HUGEINT AS virt, NULL AS lp, NULL AS pr, NULL AS cr, NULL AS cb
@@ -219,7 +223,7 @@ def entries(con, cost_tx):
                     THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1 + ({_fees('(rt_pre * vq_pre) // (vt_pre - rt_pre) + 1', 'fee_bps', 'creator_bps')}) + {cost_tx}
                     ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost
         FROM g WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
-    progress(f"entries {_count(con, 'ent')} of {_count(con, 'mom')} moments: " + str(con.execute("SELECT moment, venue, count(*) FROM ent GROUP BY 1, 2 ORDER BY 1, 2").fetchall()))
+    progress(f"entries {_count(con, 'ent')} of {_count(con, 'mom')} moments (one per key x moment x t): " + str(con.execute("SELECT moment, venue, count(*) FROM ent GROUP BY 1, 2 ORDER BY 1, 2").fetchall()))
 
 
 def marks(con, cost_tx, hi_ext):
@@ -231,7 +235,7 @@ def marks(con, cost_tx, hi_ext):
             UNION ALL
             SELECT key, ord, slot, 'pool', orientation, NULL, NULL, NULL, NULL, NULL, NULL, b_post, e_post, virt, lp, pr, cr, cb FROM pl),
         j AS (
-            SELECT e.key, e.moment, e.entry_ord, e.entry_slot, e.h1, e.cost, e.tokens AS pos, s.ord, s.slot, s.venue, s.orientation,
+            SELECT e.key, e.moment, e.t, e.entry_ord, e.entry_slot, e.h1, e.cost, e.tokens AS pos, s.ord, s.slot, s.venue, s.orientation,
                    s.vt, s.vq, s.rt, s.rq, s.fee_bps, s.creator_bps, s.b, s.e, s.virt, s.lp, s.pr, s.cr, s.cb
             FROM ent e JOIN st s ON s.key = e.key AND s.ord >= e.entry_ord AND s.slot <= e.entry_slot + e.h6),
         q AS (
@@ -243,27 +247,35 @@ def marks(con, cost_tx, hi_ext):
               CASE WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0 THEN {_net_for_budget('pos', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS rn
             FROM j),
         n AS (
-            SELECT key, moment, entry_ord, entry_slot, h1, cost, ord, slot, venue,
+            SELECT key, moment, t, entry_ord, entry_slot, h1, cost, ord, slot, venue,
               CASE WHEN cq IS NOT NULL THEN greatest(0, cq - ({_fees('cq', 'fee_bps', 'creator_bps')})) - {cost_tx}
                    WHEN pg IS NOT NULL THEN greatest(0, pg - ({_fees('pg', 'lp', 'pr', 'cr', 'cb')})) - {cost_tx}
                    WHEN rn IS NOT NULL AND rn > 1 THEN (b * (rn - 1)) // (e + rn - 1) - {cost_tx} END::HUGEINT AS net
             FROM q)
         SELECT * FROM n WHERE net IS NOT NULL""")
     progress(f"marks {_count(con, 'mk')}")
+    # three simple exits on the same marks (modelaanname: the sell is at the state of the mark that triggers the rule, no
+    # slot delay): tp2 = the first mark >= 2 x cost; tr30 / tr50 = the first mark <= 70 % / 50 % of the highest earlier
+    # mark; without a trigger the 6 h end. A one-step drain triggers the trail on the drained state: the rug is kept.
     con.execute(f"""CREATE OR REPLACE TEMP TABLE agg AS
-        WITH a AS (
-            SELECT key, moment, count(*) AS n_marks, max(net) FILTER (WHERE slot <= entry_slot + h1) AS max1, max(net) AS max6,
+        WITH w AS (
+            SELECT *, max(net) OVER (PARTITION BY key, moment, t ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS pmax FROM mk),
+        a AS (
+            SELECT key, moment, t, count(*) AS n_marks, max(net) FILTER (WHERE slot <= entry_slot + h1) AS max1, max(net) AS max6,
                    arg_max(ord, (net, -ord)) AS ord_max, arg_max(slot, (net, -ord)) AS slot_max, arg_max(net, ord) AS last_net, max(slot) AS last_slot,
-                   count(*) FILTER (WHERE venue = 'curve') AS n_curve, count(*) FILTER (WHERE venue = 'pool') AS n_pool
-            FROM mk GROUP BY 1, 2)
+                   count(*) FILTER (WHERE venue = 'curve') AS n_curve, count(*) FILTER (WHERE venue = 'pool') AS n_pool,
+                   arg_min(net, ord) FILTER (WHERE net >= 2 * cost) AS x_tp2,
+                   arg_min(net, ord) FILTER (WHERE net <= 0.7 * pmax) AS x_tr30,
+                   arg_min(net, ord) FILTER (WHERE net <= 0.5 * pmax) AS x_tr50
+            FROM w GROUP BY 1, 2, 3)
         SELECT a.*, d.dd_net
-        FROM a JOIN (SELECT a.key, a.moment, min(m.net) AS dd_net FROM a JOIN mk m ON m.key = a.key AND m.moment = a.moment AND m.ord <= a.ord_max GROUP BY 1, 2) d
-             USING (key, moment)""")
+        FROM a JOIN (SELECT a.key, a.moment, a.t, min(m.net) AS dd_net FROM a JOIN mk m ON m.key = a.key AND m.moment = a.moment AND m.t = a.t AND m.ord <= a.ord_max GROUP BY 1, 2, 3) d
+             USING (key, moment, t)""")
     progress(f"agg {_count(con, 'agg')}")
 
 
 def features(con):
-    """Point-in-time features per (key, moment): windows all / pre1 / pre5 before t and post1 / post5 after the entry."""
+    """Point-in-time features per (key, moment, t): windows all / pre1 / pre5 before t and post1 / post5 after the entry."""
     win = {"all": "l.slot <= m.t", "pre1": "l.slot > m.t - m.m1s AND l.slot <= m.t", "pre5": "l.slot > m.t - m.m5s AND l.slot <= m.t",
            "post1": "l.slot > m.entry_slot AND l.slot <= m.entry_slot + m.m1s", "post5": "l.slot > m.entry_slot AND l.slot <= m.entry_slot + m.m5s"}
 
@@ -277,29 +289,29 @@ def features(con):
                 f"avg((l.fee_payer <> l.trader)::INT) FILTER (WHERE {cond} AND l.is_buy) AS {w}_payer_other"]
     near = [c for w, cond in win.items() if w != "all" for c in cols(w, cond)]
     con.execute(f"""CREATE OR REPLACE TEMP TABLE fe AS
-        SELECT m.key, m.moment, {', '.join(near)}
+        SELECT m.key, m.moment, m.t, {', '.join(near)}
         FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot > m.t - m.m5s AND l.slot <= m.entry_slot + m.m5s
-        GROUP BY 1, 2""")
+        GROUP BY 1, 2, 3""")
     # the 'all' window reaches back to the create: its own pass over every leg <= t
     con.execute(f"""CREATE OR REPLACE TEMP TABLE fe_all AS
-        SELECT m.key, m.moment, {', '.join(cols('all', 'true'))}
-        FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t GROUP BY 1, 2""")
+        SELECT m.key, m.moment, m.t, {', '.join(cols('all', 'true'))}
+        FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t GROUP BY 1, 2, 3""")
     # same-transaction round trips per window; payer hubs and top-5 holders since the create
     con.execute("""CREATE OR REPLACE TEMP TABLE txs AS
         SELECT key, slot, tx_index, bool_or(is_buy) AND bool_or(NOT is_buy) AS both FROM trades_all GROUP BY 1, 2, 3""")
     rt = ", ".join(f"avg(x.both::INT) FILTER (WHERE {cond.replace('l.', 'x.')}) AS {w}_rt_share" for w, cond in win.items())
     con.execute(f"""CREATE OR REPLACE TEMP TABLE fe_rt AS
-        SELECT m.key, m.moment, {rt} FROM ent m JOIN txs x ON x.key = m.key AND x.slot <= m.entry_slot + m.m5s GROUP BY 1, 2""")
+        SELECT m.key, m.moment, m.t, {rt} FROM ent m JOIN txs x ON x.key = m.key AND x.slot <= m.entry_slot + m.m5s GROUP BY 1, 2, 3""")
     con.execute("""CREATE OR REPLACE TEMP TABLE fe_hub AS
-        WITH pb AS (SELECT m.key, m.moment, l.fee_payer, l.trader FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t AND l.is_buy GROUP BY ALL),
-             pc AS (SELECT key, moment, fee_payer, count(*) AS n FROM pb GROUP BY 1, 2, 3)
-        SELECT pb.key, pb.moment, count(DISTINCT pb.trader) FILTER (WHERE pc.n >= 5)::DOUBLE / count(DISTINCT pb.trader) AS payer_hub
-        FROM pb JOIN pc USING (key, moment, fee_payer) GROUP BY 1, 2""")
+        WITH pb AS (SELECT m.key, m.moment, m.t, l.fee_payer, l.trader FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t AND l.is_buy GROUP BY ALL),
+             pc AS (SELECT key, moment, t, fee_payer, count(*) AS n FROM pb GROUP BY 1, 2, 3, 4)
+        SELECT pb.key, pb.moment, pb.t, count(DISTINCT pb.trader) FILTER (WHERE pc.n >= 5)::DOUBLE / count(DISTINCT pb.trader) AS payer_hub
+        FROM pb JOIN pc USING (key, moment, t, fee_payer) GROUP BY 1, 2, 3""")
     con.execute("""CREATE OR REPLACE TEMP TABLE fe_top AS
-        WITH h AS (SELECT m.key, m.moment, l.trader, sum(CASE WHEN l.is_buy THEN l.tokens ELSE -l.tokens END) AS net
-                   FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t GROUP BY 1, 2, 3),
-             r AS (SELECT *, row_number() OVER (PARTITION BY key, moment ORDER BY net DESC) AS rk FROM h WHERE net > 0)
-        SELECT key, moment, sum(net) FILTER (WHERE rk <= 5)::DOUBLE / sum(net) AS top5_share, count(*) AS holders FROM r GROUP BY 1, 2""")
+        WITH h AS (SELECT m.key, m.moment, m.t, l.trader, sum(CASE WHEN l.is_buy THEN l.tokens ELSE -l.tokens END) AS net
+                   FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t GROUP BY 1, 2, 3, 4),
+             r AS (SELECT *, row_number() OVER (PARTITION BY key, moment, t ORDER BY net DESC) AS rk FROM h WHERE net > 0)
+        SELECT key, moment, t, sum(net) FILTER (WHERE rk <= 5)::DOUBLE / sum(net) AS top5_share, count(*) AS holders FROM r GROUP BY 1, 2, 3""")
     progress("features")
 
 
@@ -316,13 +328,15 @@ def assemble(con, clock, lo):
                a.n_marks, a.n_curve, a.n_pool, a.max1 / e.cost::DOUBLE AS mult_1h, a.max6 / e.cost::DOUBLE AS mult_6h,
                (a.slot_max - e.entry_slot) * ({ms_case(clock, 'e.entry_slot')}) / 60000.0 AS t_max_min,
                a.last_net / e.cost::DOUBLE AS end_6h, a.dd_net / e.cost::DOUBLE AS dd_6h,
+               COALESCE(a.x_tp2, a.last_net) / e.cost::DOUBLE AS x_tp2, COALESCE(a.x_tr30, a.last_net) / e.cost::DOUBLE AS x_tr30,
+               COALESCE(a.x_tr50, a.last_net) / e.cost::DOUBLE AS x_tr50,
                (a.last_slot - e.entry_slot) * ({ms_case(clock, 'e.entry_slot')}) / 60000.0 AS last_min,
                e.h6 AS h6_slots, e.entry_slot + e.h6 >= {HOLDOUT_START} AS cut,
-               fa.* EXCLUDE (key, moment), fe.* EXCLUDE (key, moment), fr.* EXCLUDE (key, moment), fh.payer_hub, ft.top5_share, ft.holders
-        FROM ent e JOIN tok t ON t.key = e.key JOIN blocks b ON b.slot = e.entry_slot JOIN agg a ON a.key = e.key AND a.moment = e.moment
-        LEFT JOIN fe_all fa ON fa.key = e.key AND fa.moment = e.moment LEFT JOIN fe ON fe.key = e.key AND fe.moment = e.moment
-        LEFT JOIN fe_rt fr ON fr.key = e.key AND fr.moment = e.moment
-        LEFT JOIN fe_hub fh ON fh.key = e.key AND fh.moment = e.moment LEFT JOIN fe_top ft ON ft.key = e.key AND ft.moment = e.moment""")
+               fa.* EXCLUDE (key, moment, t), fe.* EXCLUDE (key, moment, t), fr.* EXCLUDE (key, moment, t), fh.payer_hub, ft.top5_share, ft.holders
+        FROM ent e JOIN tok t ON t.key = e.key JOIN blocks b ON b.slot = e.entry_slot JOIN agg a ON a.key = e.key AND a.moment = e.moment AND a.t = e.t
+        LEFT JOIN fe_all fa ON fa.key = e.key AND fa.moment = e.moment AND fa.t = e.t LEFT JOIN fe ON fe.key = e.key AND fe.moment = e.moment AND fe.t = e.t
+        LEFT JOIN fe_rt fr ON fr.key = e.key AND fr.moment = e.moment AND fr.t = e.t
+        LEFT JOIN fe_hub fh ON fh.key = e.key AND fh.moment = e.moment AND fh.t = e.t LEFT JOIN fe_top ft ON ft.key = e.key AND ft.moment = e.moment AND ft.t = e.t""")
     return _count(con, "out")
 
 
