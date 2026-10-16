@@ -286,7 +286,7 @@ def features(con):
                 f"count(DISTINCT l.trader) FILTER (WHERE {cond} AND NOT l.is_buy) AS {w}_sellers",
                 f"count(DISTINCT l.trader) FILTER (WHERE {cond} AND l.is_buy AND NOT l.farmer)::DOUBLE / nullif(count(DISTINCT l.trader) FILTER (WHERE {cond} AND l.is_buy), 0) AS {w}_buyers_nofarm",
                 f"median(l.sol) FILTER (WHERE {cond} AND l.is_buy) / 1e9 AS {w}_medbuy",
-                f"avg((l.fee_payer <> l.trader)::INT) FILTER (WHERE {cond} AND l.is_buy) AS {w}_payer_other"]
+                f"avg((l.fee_payer IS NOT NULL)::INT) FILTER (WHERE {cond} AND l.is_buy) AS {w}_payer_other"]  # store: NULL = pays itself
     near = [c for w, cond in win.items() if w != "all" for c in cols(w, cond)]
     con.execute(f"""CREATE OR REPLACE TEMP TABLE fe AS
         SELECT m.key, m.moment, m.t, {', '.join(near)}
@@ -303,7 +303,7 @@ def features(con):
     con.execute(f"""CREATE OR REPLACE TEMP TABLE fe_rt AS
         SELECT m.key, m.moment, m.t, {rt} FROM ent m JOIN txs x ON x.key = m.key AND x.slot <= m.entry_slot + m.m5s GROUP BY 1, 2, 3""")
     con.execute("""CREATE OR REPLACE TEMP TABLE fe_hub AS
-        WITH pb AS (SELECT m.key, m.moment, m.t, l.fee_payer, l.trader FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t AND l.is_buy GROUP BY ALL),
+        WITH pb AS (SELECT m.key, m.moment, m.t, COALESCE(l.fee_payer, l.trader) AS fee_payer, l.trader FROM ent m JOIN trades_all l ON l.key = m.key AND l.slot <= m.t AND l.is_buy GROUP BY ALL),
              pc AS (SELECT key, moment, t, fee_payer, count(*) AS n FROM pb GROUP BY 1, 2, 3, 4)
         SELECT pb.key, pb.moment, pb.t, count(DISTINCT pb.trader) FILTER (WHERE pc.n >= 5)::DOUBLE / count(DISTINCT pb.trader) AS payer_hub
         FROM pb JOIN pc USING (key, moment, t, fee_payer) GROUP BY 1, 2, 3""")

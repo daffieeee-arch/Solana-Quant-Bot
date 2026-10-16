@@ -17,13 +17,13 @@ first=True
 for lo,hi in EP:
     con.execute(f"""CREATE OR REPLACE TABLE lg AS
 SELECT c2.trader AS wallet, 'curve' AS venue, c2.mint, NULL::VARCHAR AS pool, c2.slot::BIGINT AS slot, c2.tx_index::BIGINT AS tx_index, c2.is_buy, c2.q::DOUBLE AS sol, c2.t::DOUBLE AS tok,
-       c2.outer_program, c2.priority_fee::BIGINT AS priority_fee, c2.jito_tip::BIGINT AS jito_tip, c2.tx_fee::BIGINT AS tx_fee, c2.fee_payer <> c2.trader AS other_payer,
+       c2.outer_program, c2.priority_fee::BIGINT AS priority_fee, c2.jito_tip::BIGINT AS jito_tip, c2.tx_fee::BIGINT AS tx_fee, c2.fee_payer IS NOT NULL AS other_payer,
        m.create_slot::BIGINT AS create_slot, NULL::BIGINT AS pool_create, FALSE AS farmer, 'curve' AS orientation,
        c2.vq::DOUBLE AS q_res, c2.vt::DOUBLE AS t_res, c2.vq::DOUBLE AS depth, (c2.fee_bps + c2.creator_bps)::INT AS bps, c2.mayhem_trade AS mayhem
 FROM s.curve c2 JOIN c ON c.wallet = c2.trader LEFT JOIN s.mints m USING (mint) WHERE c2.slot >= {lo} AND c2.slot < {hi}
 UNION ALL
 SELECT p.trader, CASE WHEN p.orientation = 'reversed' THEN 'pool_reversed' ELSE 'pool' END, po.mint, p.pool, p.slot::BIGINT, p.tx_index, p.token_buy, p.sol_amount::DOUBLE, p.token_amount::DOUBLE,
-       p.outer_program, p.priority_fee::BIGINT, p.jito_tip::BIGINT, p.tx_fee::BIGINT, p.fee_payer <> p.trader, m.create_slot::BIGINT, po.create_slot::BIGINT, p.farmer, p.orientation,
+       p.outer_program, p.priority_fee::BIGINT, p.jito_tip::BIGINT, p.tx_fee::BIGINT, p.fee_payer IS NOT NULL, m.create_slot::BIGINT, po.create_slot::BIGINT, p.farmer, p.orientation,
        CASE WHEN p.orientation = 'reversed' THEN p.b ELSE p.e END::DOUBLE, CASE WHEN p.orientation = 'reversed' THEN p.e ELSE p.b END::DOUBLE, p.sol_depth::DOUBLE, (p.lp_bps + p.protocol_bps + p.creator_bps)::INT, po.mayhem
 FROM s.pool p JOIN c ON c.wallet = p.trader JOIN s.pools po USING (pool) LEFT JOIN s.mints m ON m.mint = po.mint
 WHERE p.kind IN ('buy','sell') AND p.slot >= {lo} AND p.slot < {hi}""")
