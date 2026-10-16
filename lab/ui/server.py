@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import decimal
 import gzip
+import importlib.util
 import json
 import os
 import re
@@ -27,8 +28,20 @@ import duckdb
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "analytics"))
 import labstore  # noqa: E402
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import paper  # noqa: E402
+
+
+def _load_paper():
+    """lab/ui/paper.py by its path, as the module 'lab_ui_paper': the name 'paper' is lab/paper's package, and both
+    can be loaded in one process (pytest over lab/paper/tests and lab/ui/tests)."""
+    if "lab_ui_paper" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("lab_ui_paper", os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["lab_ui_paper"] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules["lab_ui_paper"]
+
+
+paper = _load_paper()
 
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 ANALYTICS = os.path.join(DATA, "analytics", "analytics.duckdb")
