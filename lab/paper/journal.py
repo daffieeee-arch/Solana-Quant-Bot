@@ -47,6 +47,10 @@ TABLES = {
     "positions": ("family TEXT, variant TEXT, key TEXT, t INTEGER, entry_slot INTEGER, cost INTEGER, tokens INTEGER, "
                   "status TEXT, mark_proceeds INTEGER, mark_slot INTEGER, mark_pnl INTEGER", "family, variant, key, t"),
     "state": ("k TEXT, v TEXT", "k"),
+    # Live: pools, graduated tokens and epoch clock spans LiveFeed learned from the recorder's segments (seq: the
+    # segment it learned them from; info: JSON). A restart loads them, so what was learned before the retained
+    # segments stays known (paper/restart.py). A cache, not a record: rewritten per key.
+    "learned": ("kind TEXT, key TEXT, seq INTEGER, slot INTEGER, info TEXT", "kind, key"),
 }
 DAILY = ("signals", "orders", "fills", "exits", "heartbeat", "usage")
 
@@ -90,8 +94,9 @@ class Journal:
         return [dict(zip(names, r)) for r in cur.fetchall()]
 
     def export_day(self, day):
-        """Write the day's rows of every daily table as Parquet, sorted by key (deterministic)."""
-        self.commit()
+        """Write the day's rows of every daily table as Parquet, sorted by key (deterministic). No commit: this
+        connection reads its own rows, and the engine commits at its minutes only, each with its high-water mark
+        (paper/restart.py)."""
         out = os.path.join(self.dir, day)
         os.makedirs(out, exist_ok=True)
         for t in DAILY:

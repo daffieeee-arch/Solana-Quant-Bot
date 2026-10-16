@@ -440,7 +440,8 @@ def test_a_restart_after_the_retention_keeps_the_first_starts_farmer_seed(tmp_pa
     db = sqlite3.connect(os.path.join(j.dir, "journal.sqlite"))
     assert json.loads(db.execute("SELECT v FROM state WHERE k = 'farmer_seed'").fetchone()[0]) == first
     db.close()
-    # S1: the daily report names every start and the slots a restart replayed with incomplete farmer history
+    # S1: the daily report names every start and the slots a restart journals with incomplete farmer history (after
+    # its high-water mark)
     from paper.report import seed_lines
 
     for minute, last in ((1, 4_500), (2, 8_500)):  # heartbeats: the days of the slots
@@ -448,7 +449,7 @@ def test_a_restart_after_the_retention_keeps_the_first_starts_farmer_seed(tmp_pa
     lines = seed_lines(j)
     assert lines[3] == "- start 1: first live slot 4000 (2026-10-21), farm labels complete from slot 5000 (2026-10-22)"
     assert lines[4].startswith("- start 2: first live slot 8000 (2026-10-22), farm labels complete from slot 9000 (not reached yet); "
-                               "a restart: the signals of slots [8000, 9000) were replayed")
+                               "a restart: signals of slots [8000, 9000) after the journal's high-water mark")
 
 
 def test_live_needs_a_readable_store(tmp_path, capsys):

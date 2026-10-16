@@ -27,6 +27,7 @@ no transactions: paper only.
   - Each UTC day is exported, reported and copied to `lab/backup/<journal>/<day>/`.
 - `journal.py`: SQLite (WAL) plus Parquet per UTC day. Writes are idempotent per event or
   signal key, so a restart gives the same journal.
+- `restart.py`: live restarts with a high-water mark: up to it the journal leads (see "Restarts" below).
 - `risk.yaml` and `risk.py`: owner-only limits, re-read every minute of event time and again at
   every entry (a kill switch or an invalid file between a signal and its entry opens nothing: the
   order is journaled as skipped, "at entry: ..."). An invalid file means nothing is opened, and the
@@ -109,14 +110,12 @@ Live input checks:
   of the first live slot and the store's start + 1 day (as lab/ops/README.md says).
   `farmer_seed` keeps the **first** start's; every start's seed is listed once, in order, in `farmer_seeds`
   (LAB review B6).
-  **A restart rewrites a day.** Every start replays the retained segments. After the first 3 days the oldest of
-  them is ~3 days old, and the farmer history before it is gone. So any restart then (a crash, a deploy, a reboot)
-  seeds its window there, and replays the signals of its first day, [first live slot, `complete_from`), with
-  incomplete history.
-  - INSERT OR REPLACE rewrites their rows: `farm_complete` 0, and group H `skipped`, "farm history incomplete".
-  - The first run's orders, fills and exits of that day stay.
-  - The daily report lists every start and the slots it replayed so ("Farmer seed per start").
-  Keeping the first rows ("first writer wins") is a follow-up after the paper start.
+  Every start replays the retained segments. After the first 3 days the oldest of them is ~3 days old, and the
+  farmer history before it is gone, so a restart then seeds its window there: the signals of its first day,
+  [first live slot, `complete_from`), have incomplete history. Up to the journal's high-water mark the restart writes
+  nothing and takes the journal's decisions (see "Restarts" below), so the first run's rows stay. Only signals after
+  the HWM inside that day are journaled with incomplete history (`farm_complete` 0, group H `skipped`, "farm history
+  incomplete"): after an outage of more than ~2 days. The daily report lists every start ("Farmer seed per start").
 - A row that comes twice (a probe's backfill delivered after its first recorded rows, or slots
   recorded again after a restart) counts once: row keys (pool or mint, slot, tx, outer, inner) of
   the last 3,000 slots are remembered in `seen_keys` (LiveFeed), with their source.
@@ -130,7 +129,11 @@ and organic, out below 100; M1 for 6 h), fed by the engine with the pool trades 
 recorder's backfills of new probes, as per-(pool, UTC minute) rows like the batch measurement.
 Every minute the list for the next minute goes to `<recorder root>/watchlist-current.json` (the
 recorder's input) and one line to `watchlist-log.jsonl`. `engine --live` runs it unless
-`--no-watchlist`. On complete data (the dev replay) the lists equal the batch measurement's per
+`--no-watchlist`. While the engine is more than a minute behind the wall clock (replaying the retained segments at a
+start, or catching up), the list is not written, and neither is `open-pools.json`: the recorder keeps the lists it
+has (the last run's, or none on a first start: then only its base filters and probes; `recorder/src/watch.rs`,
+test `missing_or_old_input_files_keep_the_base_filters_without_a_reload_loop`). The log gets one line per minute,
+also across restarts. On complete data (the dev replay) the lists equal the batch measurement's per
 minute, except that the batch already lists a new M1 pool for its own creation minute (it knows
 every pool up front); live it is on from the next minute (`tests/test_watchlist_live.py`).
 
@@ -142,7 +145,36 @@ M1 pools from their graduation. A pool that left the list is only seen again as 
 position or inside another received transaction. `paper.shadow` measures what this costs: the
 live list against the batch list per minute.
 
-The engine restarts by replaying deterministically into the same journal.
+## Restarts (live): the high-water mark
+
+`paper/restart.py`. With `--live`, every minute's commit journals its high-water mark (HWM): state `hwm` (the slot
+and minute of the commit) and `hwm_state` (per group the daily loss, the running pool cooldowns and the paper
+wallet's realized P&L and last transactions, and the busy entries that can still block). Nothing is committed
+between minutes (`Journal.export_day` does not commit), so the journal holds exactly what the run did up to its HWM.
+
+A start on a journal with a HWM replays the retained segments as every start does, but up to the HWM:
+- it writes no rows (heartbeat, usage, signals, orders, fills, exits, positions), no daily exports or reports and no
+  wallet files;
+- it takes the decisions from the journal: a signal enters as journaled (N2 matches included), an entry fills with
+  the journal's size unless the journal has it skipped or failed (a risk file changed since does not matter), and an
+  exit closes the position with the journal's values. What the replay computes itself only counts as a difference.
+So the positions open at the HWM are the first run's, rebuilt over the same events from their entry on.
+
+At the HWM the journal's state is taken: its open positions, its pending entries, and busy, cooldowns, the daily loss
+and the wallets from `hwm_state`. A journal-open position the replay does not hold is closed at the HWM at its last
+journaled mark, `exit_reason` `restart_lost` (no sell fill). This happens when its entry lies before the retained
+segments (an outage of ~3 days), when its entry does not fill again, or when the replay exits before the HWM where the
+journal does not. The counts go to state `restarts` and the daily report ("## Restarts"). There, the last 6 h before
+the HWM are also compared: what the replay would have decided itself against the journal. This only happens when
+that window starts after this start's farmer history is complete.
+
+LiveFeed keeps what a restart cannot learn again from the retained segments in the journal table `learned`:
+- pools learned live, loaded when they were learned before the first retained segment (the others are learned
+  again, in order);
+- graduated tokens;
+- the first block of each epoch, so the measured slot time, and with it every delay in slots, stays the same.
+
+ReplayFeed runs and parity are unchanged: no HWM, no `learned` rows.
 
 Known differences to the backtest, by design:
 

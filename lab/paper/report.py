@@ -22,6 +22,8 @@ import pyarrow.parquet as pq
 
 from backtest.report import CAPITAL_SOL, MAX_POSITIONS, capital_sim
 
+from .restart import restart_lines
+
 # The selection, count, bootstrap and verdict are shared with the web app's Paper tab (lab/ui/paper.py): see
 # paper/stoprule.py.
 from .stoprule import (CLOCK_DAYS, CLOCK_KEY, CLOCK_LATEST, CLOCK_MAX_DAYS, COSTS_KEY, DRAWS, FEED_KEY,  # noqa: F401
@@ -227,10 +229,12 @@ def seed_lines(journal):
     """The farmer seed of every start (journal state farmer_seeds; LAB review B6, S1).
     - LiveFeed replays the retained segments at every start.
     - After the first 3 days, the oldest one left is ~3 days old, and the farmer history before it is gone.
-    - So such a restart seeds a window that starts there, and the signals of its first day, [first live slot,
-      complete_from), are replayed with incomplete history. INSERT OR REPLACE rewrites those rows: farm_complete 0, and
-      group H 'skipped, farm history incomplete'. The orders, fills and exits of the first run stay.
-    These lines name the days so rewritten."""
+    - So such a restart seeds a window that starts there: the signals of its first day, [first live slot,
+      complete_from), have incomplete history.
+    - Up to the journal's high-water mark a restart writes no rows and takes the journal's decisions
+      (paper/restart.py). Only the signals after the HWM inside that day are journaled with incomplete history
+      (farm_complete 0, group H 'skipped, farm history incomplete'): after an outage of more than ~2 days.
+    These lines name every start's window."""
     raw = journal.state("farmer_seeds")
     if not raw:
         return []
@@ -240,8 +244,8 @@ def seed_lines(journal):
         line = (f"- start {i}: first live slot {a} ({_day_at(journal, a) or '?'}), farm labels complete from slot {b} "
                 f"({_day_at(journal, b) or 'not reached yet'})")
         if i > 1:
-            line += (f"; a restart: the signals of slots [{a}, {b}) were replayed with incomplete farmer history and their "
-                     "rows rewritten (farm_complete 0, group H skipped)")
+            line += (f"; a restart: signals of slots [{a}, {b}) after the journal's high-water mark (## Restarts) are "
+                     "journaled with incomplete farmer history (farm_complete 0, group H skipped)")
         lines.append(line)
     return lines
 
@@ -327,6 +331,7 @@ def daily_report(journal, day, watch_log=None):
     lines += latency_lines(journal, day)
     lines += farm_lines(journal, day)
     lines += seed_lines(journal)
+    lines += restart_lines(journal, day)
     for group, variants in sorted(further.items()):
         lines += arm_lines(journal, day, group, variants)
     if watch_log is not None:
