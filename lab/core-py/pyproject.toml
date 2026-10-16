@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
+[project]
+name = "labcore"
+version = "0.1.0"
+description = "lab-core's venue math for the lab backtest (paper only)"
+requires-python = ">=3.13"
+
+[tool.maturin]
+module-name = "labcore"
+features = []
