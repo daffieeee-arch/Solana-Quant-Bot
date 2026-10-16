@@ -47,9 +47,11 @@ from .strategies import (
     F6_FLOW_MS,
     F6_GRID,
     F6_MAX_HOLD_MS,
+    F7_BIG_GRID,
     F7_EXIT_GRID,
     F7_GRID,
     F7_LONG_GRID,
+    FLOW_KINDS,
     M1_FLOW,
     M1_FLOW_EXIT_MS,
     M1_LONG_TRAILS,
@@ -254,7 +256,7 @@ def grid_set(spec, allowed, every):
 
 def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clock=None, segments=None, slot_range=None,
                   f7_grid="v1", m1_grid="v1"):
-    f7g = grid_set(f7_grid, ("v1", "exits", "long"), ("v1", "exits"))
+    f7g = grid_set(f7_grid, ("v1", "exits", "long", "big"), ("v1", "exits"))
     m1g = grid_set(m1_grid, ("v1", "long"), ("v1", "long"))
     lo, hi, _ = store_bounds(con)
     clock = clock or Clock.from_store(con)
@@ -273,8 +275,9 @@ def build_signals(con, cfg, families, sizes, n1_sample, max_signals, n2_k=5, clo
                                       pool=pool, orientation=orientation, trigger=trader,
                                       trigger_farmer=None if tfarmer is None else bool(tfarmer),
                                       flagged=None if flagged is None else bool(flagged)))
-            exits = (F7_EXIT_GRID if "exits" in f7g else []) + (F7_LONG_GRID if "long" in f7g else [])
-            for params in exits:  # spec E exits (kind, x, sl) and the long exits (kind, x, sl, cap_ms)
+            exits = ((F7_EXIT_GRID if "exits" in f7g else []) + (F7_LONG_GRID if "long" in f7g else [])
+                     + (F7_BIG_GRID if "big" in f7g else []))
+            for params in exits:  # spec E exits (kind, x, sl), the long exits and big take-profits (kind, x, sl, cap_ms)
                 signals.append(Signal("F7", f7_exit_variant(*params), m, slot, venue, int(depth), params,
                                       pool=pool, orientation=orientation, trigger=trader,
                                       trigger_farmer=None if tfarmer is None else bool(tfarmer),
@@ -449,9 +452,9 @@ def exit_rule_for(sig, scn, d, clock=None, stream=None, flows=None, insiders=Non
                       clock.slots(F6_MAX_HOLD_MS, sig.t), stream.orientation)
     if sig.family in ("F7", "N2_F7"):
         if isinstance(sig.params[0], str):  # spec E exits: (kind, parameter, stop-loss)
-            if sig.params[0] == "flow" and flows is None:
+            if sig.params[0] in FLOW_KINDS and flows is None:
                 flows = FlowIndex(stream)
-            return f7_exit_rule(sig.params, scn, sig.t, clock, flows if sig.params[0] == "flow" else None)
+            return f7_exit_rule(sig.params, scn, sig.t, clock, flows if sig.params[0] in FLOW_KINDS else None)
         tp, T = sig.params
         return tp_sl_time(tp, -0.08, clock.slots(ms(T), sig.t), scn)
     if sig.family in ("F1", "N2_F1"):
@@ -593,7 +596,7 @@ def _work(args):
             continue
         mint = st.mint
         flows = f6_flows(con, key, sigs, hi, clock) if any(sg.family in ("F6", "N2_F6") for sg in sigs) else None
-        if flows is None and any((sg.family in ("F7", "N2_F7") and isinstance(sg.params[0], str) and sg.params[0] == "flow")
+        if flows is None and any((sg.family in ("F7", "N2_F7") and isinstance(sg.params[0], str) and sg.params[0] in FLOW_KINDS)
                                  or (sg.family in M1_LIKE and sg.params[1] == M1_FLOW) for sg in sigs):  # flow exits
             flows = FlowIndex(st)
         ins_cache = {}
@@ -768,7 +771,8 @@ def main():
     ap.add_argument("--no-report", action="store_true", help="write the positions and config.json only")
     ap.add_argument("--f7-grid", default="v1",
                     help="F7 variants, comma separated: v1 = the 9 tp/T (default), exits = spec E's 18 exit rules, "
-                         "long = the 6 long exits (trail20/30/50_H6, trail30_H1, flow300_H6[_sl8]); all = v1,exits")
+                         "long = the 6 long exits (trail20/30/50_H6, trail30_H1, flow300_H6[_sl8]), big = the 3 big "
+                         "take-profits (tp50_H6, tp100_H6, flow300_tp100_H6); all = v1,exits")
     ap.add_argument("--m1-grid", default="v1",
                     help="M1/M1P/M1E variants: v1 = trail20/35 (default), long = trail30/50 and flow300, all = both")
     ap.add_argument("--tau", default="empirical")

@@ -250,9 +250,45 @@ class FlowTime(_NetStop):
         return None
 
 
+class TpTime(_NetStop):
+    """A take-profit on the net return (as TpSlTime), the optional stop-loss, or time (the big take-profits:
+    tp{50,100}_H6, no stop-loss)."""
+
+    def __init__(self, tp, sl, max_slots, scn):
+        self.tp, self.sl, self.max_slots, self.scn = tp, sl, max_slots, scn
+
+    def deadline(self, entry_slot):
+        return entry_slot + self.max_slots
+
+    def __call__(self, ctx):
+        if self.scn.exit_net(ctx["mark"]) / self.scn.entry_total(ctx["cost"]) - 1 >= self.tp:
+            return "take_profit"
+        if self._stopped(ctx):
+            return "stop_loss"
+        if ctx["slots_held"] >= self.max_slots:
+            return "time"
+        return None
+
+
+class FlowTpTime(FlowTime):
+    """FlowTime with a take-profit on the net return, checked first (flow300_tp100_H6)."""
+
+    def __init__(self, flows, n_flow, tp, sl, max_slots, scn):
+        super().__init__(flows, n_flow, sl, max_slots, scn)
+        self.tp = tp
+
+    def __call__(self, ctx):
+        if self.scn.exit_net(ctx["mark"]) / self.scn.entry_total(ctx["cost"]) - 1 >= self.tp:
+            return "take_profit"
+        return super().__call__(ctx)
+
+
+FLOW_KINDS = ("flow", "flowtp")  # F7 exit kinds that need the pool's FlowIndex
+
+
 def f7_exit_rule(params, scn, t, clock, flows):
     """The exit rule of an F7 signal with params (kind, parameter, stop-loss[, cap_ms]): spec E's (cap
-    T600) or a long exit's (its own cap)."""
+    T600) or a long exit's (its own cap). flowtp's parameter is (flow seconds, take-profit)."""
     kind, x, sl, *cap_ms = params
     cap = clock.slots(cap_ms[0], t) if cap_ms else clock.slots(ms(F7_EXIT_T), t)
     if kind == "trail":
@@ -261,6 +297,10 @@ def f7_exit_rule(params, scn, t, clock, flows):
         return HoldTime(sl, clock.slots(x * 1000, t), scn)
     if kind == "flow":
         return FlowTime(flows, clock.slots(x * 1000, t), sl, cap, scn)
+    if kind == "tp":
+        return TpTime(x, sl, cap, scn)
+    if kind == "flowtp":
+        return FlowTpTime(flows, clock.slots(x[0] * 1000, t), x[1], sl, cap, scn)
     raise ValueError(kind)
 
 
@@ -457,13 +497,23 @@ F7_EXIT_T = 600  # the exits' time cap: T600 as in tp4_T600 (v1 slots, per epoch
 H1_MS, H6_MS = 3_600_000, 6 * 3_600_000
 F7_LONG_GRID = ([("trail", x, None, H6_MS) for x in (0.20, 0.30, 0.50)] + [("trail", 0.30, None, H1_MS)]
                 + [("flow", 300, sl, H6_MS) for sl in (None, -0.08)])
+# Big take-profits (coordinator 2026-10-16, LAB research's runners: 52 % of the F7 triggers reach x2 within 1 h):
+# tp50_H6, tp100_H6 and flow300_tp100_H6 (flow300's outflow stop plus the take-profit), no stop-loss, cap 6 h.
+# Only built with tournament --f7-grid big; long exits, so their clusters and windows are their own.
+F7_BIG_GRID = [("tp", 0.50, None, H6_MS), ("tp", 1.00, None, H6_MS), ("flowtp", (300, 1.00), None, H6_MS)]
 
 
 def f7_exit_variant(kind, x, sl, cap_ms=None):
     """trail{3,5,10}_T600, hold{60,180,300}, flow{10,30,60}_T600, with _sl8 for the stop-loss; with a cap
-    in ms (the long exits): trail{20,30,50}_H6, trail30_H1, flow300_H6[_sl8]."""
+    in ms (the long exits): trail{20,30,50}_H6, trail30_H1, flow300_H6[_sl8]; the big take-profits
+    tp{50,100}_H6 and flow300_tp100_H6."""
     cap = f"_T{F7_EXIT_T}" if cap_ms is None else f"_H{cap_ms // 3_600_000}"
-    name = {"trail": f"trail{round(x * 100)}{cap}", "hold": f"hold{x}", "flow": f"flow{x}{cap}"}[kind]
+    if kind == "tp":
+        name = f"tp{round(x * 100)}{cap}"
+    elif kind == "flowtp":
+        name = f"flow{x[0]}_tp{round(x[1] * 100)}{cap}"
+    else:
+        name = {"trail": f"trail{round(x * 100)}{cap}", "hold": f"hold{x}", "flow": f"flow{x}{cap}"}[kind]
     return name + ("_sl8" if sl is not None else "")
 
 # ----------------------------------------------------------------------------- F1
