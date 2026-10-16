@@ -6,6 +6,9 @@
   python -m backtest.store clean --final --warmup-epochs W --prereg FILE --prereg-sha256 SHA [--to-slot E]
                                                               # the clean-data test (1055-1063): rebuilt with
                                                               # more epochs until the test locks it
+  python -m backtest.store paper [--epochs 2] [--from-slot S --to-slot E]
+                                                              # the live paper engine's snapshot (PAPER_STORE);
+                                                              # in 1055-1063 only once the clean data is spent
 
 The hold-out store can be built once: a lock file records when and from which commit. The dev
 store never contains a hold-out slot, so strategy code that only opens the dev store cannot
@@ -35,6 +38,8 @@ sol_depth (real SOL in the pool).
 """
 
 import argparse
+import glob
+import hashlib
 import json
 import os
 import shutil
@@ -57,6 +62,12 @@ VALIDATE = (454464000, 454896000)  # epoch 1052: after the hold-out, still 250 m
 # before it come from the dataset (events/v1) as warm-up, as for the hold-out (0: none).
 CLEAN = (455_760_000, 459_648_000)
 CLEAN_CHUNKS = os.environ.get("LAB_CLEAN_CHUNKS", "/home/chupa/Solana-project/data-old-faithful-one/lab/events/clean-v1/chunks")
+# The live paper engine's snapshot (PAPER_STORE; lab/ops/runbook-paper-start-2026-10-21.md): the tokens, pools and
+# farmer history of the epochs before the live start, never for strategy results. A window in the clean epochs
+# only once the clean data is spent (coordinator, 2026-10-16): E20's clean.lock next to the clean store, and a
+# result.json of a real run with a decision for every later clean test (CLEAN_TESTS, under CLEAN_RESULTS).
+CLEAN_TESTS = ("h3", "h4", "h5")
+CLEAN_RESULTS = os.environ.get("LAB_CLEAN_RESULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/clean-test")
 DISK_FLOOR_GB = 50
 DISK_LOW = "/home/chupa/Solana-project/data-old-faithful-one/lab/locks/disk-low"  # set by ops/disk-guard.sh
 POOL_PARTS = int(os.environ.get("LAB_POOL_PARTS", "4"))  # pool slices per chunk in pass 2 (smaller sorts)
@@ -92,6 +103,51 @@ def clean_window_end(from_slot):
         if lo == edge and hi <= CLEAN[1]:
             edge = hi
     return edge
+
+
+def clean_unspent(lock_path, results=CLEAN_RESULTS, tests=CLEAN_TESTS):
+    """(why the clean data is not spent yet, the evidence that it is): no reasons once E20's clean.lock is readable
+    and every test in `tests` has a result.json of a real run (no dry run) with a decision."""
+    why, evidence = [], {"clean_lock": lock_path, "results": {}}
+    try:
+        with open(lock_path, "rb") as f:
+            raw = f.read()
+        json.loads(raw)
+        evidence["clean_lock_sha256"] = hashlib.sha256(raw).hexdigest()
+    except (OSError, ValueError):
+        why.append(f"no readable clean.lock at {lock_path} (E20 has not passed its minimum)")
+    for name in tests:
+        done = []
+        for path in sorted(glob.glob(os.path.join(results, f"{name}-*", "result", "result.json"))):
+            try:
+                with open(path) as f:
+                    r = json.load(f)
+            except (OSError, ValueError):
+                continue
+            if r.get("dry_run") is False and r.get("decision"):
+                done.append(path)
+        if done:
+            evidence["results"][name] = done
+        else:
+            why.append(f"no {name.upper()} result (result.json of a real run with a decision) under {results}")
+    return why, evidence
+
+
+def overlaps_clean(lo, hi):
+    return lo < CLEAN[1] and hi > CLEAN[0]
+
+
+def paper_window(from_slot, to_slot, epochs, spent):
+    """The paper snapshot's [from, to): by default the `epochs` epochs before the end of the clean root's complete
+    chunks; that default exists only once the clean data is spent (before that the root is not even listed)."""
+    if to_slot is None:
+        if not spent:
+            raise SystemExit("the default window ends with the clean data, which is not spent yet: give --from-slot and "
+                             f"--to-slot before {CLEAN[0]} (or use the existing forward store)")
+        to_slot = clean_window_end(CLEAN[0])
+    if from_slot is None:
+        from_slot = to_slot - epochs * HOLDOUT_WARMUP_SLOTS
+    return from_slot, to_slot
 
 
 def period_range(period, cfg, from_slot=None, to_slot=None, warmup_epochs=0):
@@ -130,16 +186,29 @@ def period_range(period, cfg, from_slot=None, to_slot=None, warmup_epochs=0):
         if from_slot < first:
             raise SystemExit(f"forward starts at or after never_include_from_slot ({first})")
         return from_slot, to_slot
+    if period == "paper":
+        if from_slot is None or to_slot is None or from_slot >= to_slot:
+            raise SystemExit("paper needs a window: --from-slot below --to-slot")
+        first = cfg["windows"]["never_include_from_slot"]
+        if from_slot < first:
+            raise SystemExit(f"paper starts at or after never_include_from_slot ({first})")
+        return from_slot, to_slot
     raise ValueError(period)
 
 
-def period_chunks(period, cfg, from_slot=None, to_slot=None, warmup_epochs=0):
+def period_chunks(period, cfg, from_slot=None, to_slot=None, warmup_epochs=0, clean_spent=False):
     """The complete chunks that tile [lo, hi) exactly; fails on any gap."""
     lo, hi = period_range(period, cfg, from_slot, to_slot, warmup_epochs)
     if period == "clean":  # warm-up from the dataset, the window only from the clean root
         start = lo + warmup_epochs * HOLDOUT_WARMUP_SLOTS  # the window's first slot
         chunks = ([c for c in data.complete_chunks() if c[0] >= lo and c[1] <= start]
                   + [c for c in data.complete_chunks(CLEAN_CHUNKS) if c[0] >= start and c[1] <= hi])
+    elif period == "paper":  # the clean epochs only from the clean root, and only once spent; the rest from the dataset
+        if overlaps_clean(lo, hi) and not clean_spent:
+            raise SystemExit(f"paper [{lo}, {hi}) reads clean epochs ({CLEAN[0]}..{CLEAN[1]}) that are not spent yet")
+        chunks = sorted([c for c in data.complete_chunks() if c[0] >= lo and c[1] <= hi and not overlaps_clean(c[0], c[1])]
+                        + ([c for c in data.complete_chunks(CLEAN_CHUNKS) if c[0] >= max(lo, CLEAN[0]) and c[1] <= min(hi, CLEAN[1])]
+                           if overlaps_clean(lo, hi) else []))
     else:
         chunks = [c for c in data.complete_chunks() if c[0] >= lo and c[1] <= hi]
     edge, missing = lo, []
@@ -597,14 +666,18 @@ def check_sha256(path, expected):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("period", choices=["dev", "holdout", "validate", "forward", "clean"])
+    ap.add_argument("period", choices=["dev", "holdout", "validate", "forward", "clean", "paper"])
     ap.add_argument("--illustration", action="store_true", help="forward: required, the store is for illustration only")
     ap.add_argument("--final", action="store_true", help="required for the one-time hold-out and clean builds")
     ap.add_argument("--prereg", help="clean: the hashed pre-registration (its sha256 goes into the store's meta and lock)")
     ap.add_argument("--prereg-sha256", help="clean: the pre-registration's expected sha256")
     ap.add_argument("--warmup-epochs", type=int, help="clean: epochs before the window from the dataset as warm-up (0 or 1)")
-    ap.add_argument("--from-slot", type=int, help="dev and forward: first slot (dev default: development.start_slot_target)")
-    ap.add_argument("--to-slot", type=int, help="dev and forward: end slot, exclusive (dev default: the hold-out start)")
+    ap.add_argument("--from-slot", type=int, help="dev, forward and paper: first slot (dev default: development.start_slot_target)")
+    ap.add_argument("--to-slot", type=int, help="dev, forward and paper: end slot, exclusive (dev default: the hold-out start; "
+                                                "paper: the end of the clean root's complete chunks, once spent)")
+    ap.add_argument("--epochs", type=int, default=2, help="paper: epochs before --to-slot when --from-slot is not given")
+    ap.add_argument("--clean-lock", help="paper: E20's clean.lock (default: <LAB_STORE_DIR>/clean.lock)")
+    ap.add_argument("--clean-results", default=CLEAN_RESULTS, help="paper: the clean tests' output root (<test>-<sha>/result)")
     ap.add_argument("--out", help="output file (default: <store dir>/<period>.duckdb)")
     ap.add_argument("--out-dir", default=os.environ.get("LAB_STORE_DIR", STORE_DIR))
     a = ap.parse_args()
@@ -624,13 +697,27 @@ def main():
     # clean: the store may be rebuilt (with more epochs) until the test has outcomes; backtest.clean_test
     # writes clean.lock when it passes the minimum of trading days (addendum section 3), not this build.
     warmup = 0
+    spent = False
+    if a.period == "paper":
+        why, evidence = clean_unspent(a.clean_lock or os.path.join(os.environ.get("LAB_STORE_DIR", STORE_DIR), "clean.lock"),
+                                      a.clean_results)
+        spent = not why
+        if a.to_slot is None and not spent:
+            raise SystemExit("refused: the default window reads the clean epochs, which are not spent yet: " + "; ".join(why))
+        a.from_slot, a.to_slot = paper_window(a.from_slot, a.to_slot, a.epochs, spent)
+        if overlaps_clean(a.from_slot, a.to_slot) and not spent:
+            raise SystemExit("refused: the window reads clean epochs and the clean data is not spent yet: " + "; ".join(why))
+        extra = {"purpose": "paper snapshot (PAPER_STORE): tokens, pools and farmer history before the live start; "
+                            "never for strategy results"}
+        if overlaps_clean(a.from_slot, a.to_slot):
+            extra["clean_spent"] = evidence
     if a.period == "clean":
         if a.warmup_epochs not in (0, 1):
             raise SystemExit("clean: pass --warmup-epochs 0 or 1 (as the pre-registration says)")
         warmup = a.warmup_epochs
         extra = {"prereg": a.prereg, "prereg_sha256": check_sha256(a.prereg, a.prereg_sha256), "warmup_epochs": warmup,
                  "purpose": "clean-data test (hypothesis-wash-trigger-2026-10-15, sha256 35bdaa0d)"}
-    chunks = period_chunks(a.period, cfg, a.from_slot, a.to_slot, warmup)
+    chunks = period_chunks(a.period, cfg, a.from_slot, a.to_slot, warmup, clean_spent=spent)
     if a.period == "clean":
         window = [c for c in chunks if c[0] >= chunks[0][0] + warmup * HOLDOUT_WARMUP_SLOTS]
         shas = sorted({str(_chunk_meta(c)["extractor_sha256"]) for c in window})
@@ -641,6 +728,8 @@ def main():
     need, free = _disk_check(a.out_dir, chunks)
     print(f"{len(chunks)} chunks [{chunks[0][0]}, {chunks[-1][1]}); ~{need:.0f} GB needed, {free:.0f} GB free", flush=True)
     name = f"clean-1055-{(chunks[-1][1] - 1) // HOLDOUT_WARMUP_SLOTS}" if a.period == "clean" else a.period
+    if a.period == "paper":
+        name = f"paper-{chunks[0][0] // HOLDOUT_WARMUP_SLOTS}-{(chunks[-1][1] - 1) // HOLDOUT_WARMUP_SLOTS}"
     out = a.out or os.path.join(a.out_dir, f"{name}.duckdb")
     print(f"store: {out}", flush=True)
     meta = build(a.period, out, cfg, chunks, log=lambda m: print(m, flush=True), extra_meta=extra)
