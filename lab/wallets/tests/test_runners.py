@@ -123,6 +123,12 @@ def test_curve_entry_marks_and_migration(tmp_path, monkeypatch):
     imax = max(range(len(net)), key=lambda i: (net[i], -i))
     assert abs(r["dd_6h"] - min(net[: imax + 1]) / cost) < 1e-6 and abs(r["end_6h"] - net[-1] / cost) < 1e-6
     assert abs(r["t_max_min"] - (marks[imax][0] - (S + 400)) * MS / 60000) < 1e-9
+    # the simple exits: tp x2 = the first mark >= 2 x cost; trail 30 / 50 = the first mark <= 70 % / 50 % of the highest earlier mark
+    tp2 = next((m for m in net if m >= 2 * cost), net[-1])
+    tr30 = next((net[i] for i in range(1, len(net)) if net[i] <= 0.7 * max(net[:i])), net[-1])
+    tr50 = next((net[i] for i in range(1, len(net)) if net[i] <= 0.5 * max(net[:i])), net[-1])
+    assert abs(r["x_tp2"] - tp2 / cost) < 1e-6 and abs(r["x_tr30"] - tr30 / cost) < 1e-6 and abs(r["x_tr50"] - tr50 / cost) < 1e-6
+    assert r["x_tp2"] >= 2 and r["x_tr30"] < r["mult_6h"]
     # the 25 SOL curve buy and the 20 SOL pool buy make a c1 entry a runner
     assert r["mult_6h"] > 2
     # c5: first trade at or after +300 s = slot S + 750 -> S + 900; entry = S + 1500 (the sell); c15: +900 s = S + 2250 -> S + 3000, the
@@ -161,13 +167,16 @@ def test_reversed_pool_f7_entry(tmp_path, monkeypatch):
     parts = tmp_path / "parts"
     parts.mkdir()
     pq.write_table(pa.Table.from_pylist([{"family": "F7", "variant": "tp4_T600", "d": 1, "size_sol": 0.5, "q": 0.5, "t": S + 15, "pool": "PR", "mint": "Tq"},
+                                         {"family": "F7", "variant": "tp4_T600", "d": 1, "size_sol": 0.5, "q": 0.5, "t": S + 45, "pool": "PR", "mint": "Tq"},
                                          {"family": "N2_F7", "variant": "tp4_T600", "d": 1, "size_sol": 0.5, "q": 0.5, "t": S + 15, "pool": "PR", "mint": "Tq"}]),
                    parts / "part-0.parquet")
     monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
     out = tmp_path / "out"
     runners.run(LO, LO + 5_000, str(out), f7_parts=str(parts), store=str(tmp_path / "s.duckdb"), cfg="/nonexistent.yaml")
-    df = duckdb.connect().execute(f"SELECT * FROM '{out}/entries-{LO}.parquet'").arrow().read_all().to_pylist()
-    assert len(df) == 1 and df[0]["moment"] == "f7" and df[0]["segment"] == "pool_reversed" and df[0]["key"] == "PR"
+    df = duckdb.connect().execute(f"SELECT * FROM '{out}/entries-{LO}.parquet' ORDER BY t").arrow().read_all().to_pylist()
+    # every trigger of the pool is an entry of its own (the second: t = S + 45 -> the first trade >= S + 47 is the sell at S + 90)
+    assert len(df) == 2 and all(r_["moment"] == "f7" and r_["segment"] == "pool_reversed" and r_["key"] == "PR" for r_ in df)
+    assert df[1]["t"] == S + 45 and df[1]["entry_slot"] == S + 90 and df[1]["n_marks"] == 2
     r = df[0]
     # t = S + 15, d = 2 -> the entry trade is S + 20; its pre-state = the state after S + 10
     assert r["entry_slot"] == S + 20

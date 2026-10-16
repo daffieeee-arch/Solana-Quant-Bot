@@ -37,13 +37,15 @@ def _entries(path, n=1200, seed=3):
         strong = rng.normal()                        # the planted lead: higher -> runner
         run = rng.uniform() < 1 / (1 + np.exp(-(2.5 * strong - 2.0)))
         mult = rng.uniform(5, 12) if run else rng.uniform(0.1, 2.5)
+        end = mult * rng.uniform(0, 1)
         moment = ("c1", "c5", "m1")[i % 3]
         regime = "320ms" if i % 2 else "270ms"
         rows.append({"key": f"K{i // 3}", "mint": f"K{i // 3}", "moment": moment, "t": 1000 + i, "entry_slot": 1002 + i, "entry_ord": 0, "entry_venue": "curve",
                      "segment": "curve" if moment != "m1" else "pool", "regime": regime, "day": days[i % len(days)], "depth_sol": rng.uniform(1, 50),
                      "tokens": 1.0, "cost_sol": 0.5007, "min_since_create": float(i % 30), "create_slot": 500 + i // 3, "creator": f"C{(i // 3) % 40}", "mayhem": False,
                      "has_curve": True, "n_marks": 10, "n_curve": 5, "n_pool": 5, "mult_1h": mult * 0.8, "mult_6h": mult, "t_max_min": rng.uniform(0, 300),
-                     "end_6h": mult * rng.uniform(0, 1), "dd_6h": rng.uniform(0.3, 1), "last_min": 350.0, "h6_slots": 80_000, "cut": False,
+                     "end_6h": end, "dd_6h": rng.uniform(0.3, 1), "last_min": 350.0, "h6_slots": 80_000, "cut": False,
+                     "x_tp2": 2.0 if mult >= 2 else end, "x_tr30": max(end, 0.7 * mult), "x_tr50": max(end, 0.5 * mult),
                      "all_inflow": strong, "all_buyers": int(rng.integers(1, 50)), "top5_share": rng.uniform(0.2, 1), "holders": int(rng.integers(1, 200)),
                      "payer_hub": rng.uniform(0, 0.3), "pre5_inflow": rng.normal(), "post5_inflow": None if i % 5 == 0 else rng.normal()})
     os.makedirs(path)
@@ -57,6 +59,8 @@ def test_report_finds_the_planted_lead(tmp_path):
     md = out.read_text()
     assert "## 1. Entries per moment" in md and "| c1 | 400 | 400 |" in md
     assert "### days 10-18" in md and "| c1 | 270ms | curve |" in md
+    # both regimes occur on days 10-18 here: each is scored there
+    assert "270ms scored on days 10-18; 320ms scored on days 10-18" in md
     # the planted feature leads in every regime for every moment; a noise feature does not
     leads = md.split("## 4. Leads")[1].split("## 5.")[0]
     assert "c1: `all_inflow`" in leads and "c5: `all_inflow`" in leads and "m1: `all_inflow`" in leads
@@ -65,8 +69,17 @@ def test_report_finds_the_planted_lead(tmp_path):
     row = next(ln for ln in md.splitlines() if ln.startswith("| all_inflow |"))
     assert "**0." in row and "…" in row and "pre1_inflow" not in md.split("## 3.")[1].split("## 4.")[0]
     assert "| creator_prev_n |" in md
-    # quintiles of the strongest feature per moment
+    # quintiles of the strongest feature per moment, with the net SOL of the simple exits per entry and per day
     assert "**c1 · all_inflow**" in md and "| 5 |" in md
+    q5 = next(ln for ln in md.split("**c1 · all_inflow**")[1].splitlines() if ln.startswith("| 5 |"))
+    cells = q5.split(" | ")
+    per_entry = [float(x) for x in cells[6].split(" / ")]
+    import duckdb
+    want = duckdb.connect().execute(f"""WITH q AS (SELECT ntile(5) OVER (ORDER BY all_inflow) AS qt, cost_sol, end_6h, x_tp2, x_tr30, x_tr50
+                                            FROM '{tmp_path / 'ent' / 'entries-1.parquet'}' WHERE moment = 'c1' AND day >= '2026-09-20' AND day <= '2026-09-30')
+        SELECT avg((end_6h - 1) * cost_sol), avg((x_tp2 - 1) * cost_sol), avg((x_tr30 - 1) * cost_sol), avg((x_tr50 - 1) * cost_sol) FROM q WHERE qt = 5""").fetchone()
+    assert per_entry == [round(w, 4) for w in want]
+    assert "net SOL / entry: hold 6h / tp ×2 / trail 30 / trail 50" in md
 
 
 def test_creator_history_is_point_in_time(tmp_path):
