@@ -105,6 +105,18 @@ Live input checks:
   `[first live slot - 24 h, first live slot)` as far as the store reaches. The journal's state
   `farmer_seed` records the range and `complete_from`: before that slot the farm labels and the live
   watchlist's organic verdict lack history (a store ending before the recorder's start: one day).
+  `complete_from` is the first live slot + 1 day when the store ends before the recorder's start, else the later
+  of the first live slot and the store's start + 1 day (as lab/ops/README.md says).
+  `farmer_seed` keeps the **first** start's; every start's seed is listed once, in order, in `farmer_seeds`
+  (LAB review B6).
+  **A restart rewrites a day.** Every start replays the retained segments. After the first 3 days the oldest of
+  them is ~3 days old, and the farmer history before it is gone. So any restart then (a crash, a deploy, a reboot)
+  seeds its window there, and replays the signals of its first day, [first live slot, `complete_from`), with
+  incomplete history.
+  - INSERT OR REPLACE rewrites their rows: `farm_complete` 0, and group H `skipped`, "farm history incomplete".
+  - The first run's orders, fills and exits of that day stay.
+  - The daily report lists every start and the slots it replayed so ("Farmer seed per start").
+  Keeping the first rows ("first writer wins") is a follow-up after the paper start.
 - A row that comes twice (a probe's backfill delivered after its first recorded rows, or slots
   recorded again after a restart) counts once: row keys (pool or mint, slot, tx, outer, inner) of
   the last 3,000 slots are remembered in `seen_keys` (LiveFeed), with their source.

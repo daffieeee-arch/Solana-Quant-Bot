@@ -296,15 +296,32 @@ class Engine:
             seed = getattr(self.feed, "farm_seed", None)
             if seed is not None and seed is not self.seed_journaled:
                 self.seed_journaled = seed
-                # LiveFeed's farmer history: seeded from the store over [lo, hi), complete from slot
-                # complete_from on (farm labels and the live watchlist's organic verdict before it lack history).
-                self.j.state("farmer_seed", json.dumps(seed, sort_keys=True))
+                self._journal_seed(seed)
             self.events_seen += 1
             self.last_event = f"{ev.slot}:{ev.tx_index}:{ev.outer_ix}:{ev.inner_ix}"
         if cur is not None:
             self.slot_arrivals = arr
             self._end_slot(cur, by_key, bt)
         self._end_of_data()
+        self.j.commit()
+
+    def _journal_seed(self, seed):
+        """LiveFeed's farmer history: seeded from the store over [lo, hi), complete from slot complete_from on (farm
+        labels and the live watchlist's organic verdict before it lack history).
+        - 'farmer_seed' keeps the first start's seed.
+        - 'farmer_seeds' lists every start's seed once, in order (LAB review B6).
+        - Both are committed at once (N1), so a process that dies before its first minute still leaves them.
+        Each start replays the retained segments, and after the first 3 days the oldest of them is ~3 days old. That
+        start seeds a window from there, and replays the signals of [first live slot, complete_from) with incomplete
+        farmer history. INSERT OR REPLACE rewrites their rows: farm_complete 0, and group H skipped. The first run's
+        orders, fills and exits stay. The daily report names those days (report.seed_lines). Keeping the first rows
+        ("first writer wins") is a follow-up after the paper start."""
+        if self.j.state("farmer_seed") is None:
+            self.j.state("farmer_seed", json.dumps(seed, sort_keys=True))
+        seeds = json.loads(self.j.state("farmer_seeds") or "[]")
+        if not seeds or seeds[-1] != json.loads(json.dumps(seed)):
+            seeds.append(seed)
+            self.j.state("farmer_seeds", json.dumps(seeds, sort_keys=True))
         self.j.commit()
 
     def _quiet_entries(self, before):
