@@ -49,6 +49,24 @@ def _fake_run(mints, legs_per_mint):
     return feed, eng
 
 
+def test_creator_sells_live_cannot_know():
+    """job 84 (shadow-1053-1054): pool Cj2rYAJ…, token created after the live start whose creator moved the
+    creator fee to a sharing config (the pool's coin creator); the creator's 20.7 SOL sell was an F7 trigger
+    live took and the replay's creator rule vetoed."""
+    c = duckdb.connect()
+    c.execute("CREATE TABLE mints AS SELECT * FROM (VALUES ('M1', 1000, 'C1'), ('M2', 100, 'C2'), ('M3', 1000, 'C3')) v(mint, create_slot, creator)")
+    c.execute("""CREATE TABLE pools AS SELECT * FROM (VALUES ('P1', 'M1', 'S1'), ('P2', 'M2', 'S2'), ('P3', 'M3', 'C3'))
+                 v(pool, mint, coin_creator)""")
+    c.execute("""CREATE TABLE pool AS SELECT * FROM (VALUES
+                   ('P1', 1200, 'C1', 'sell', false), ('P1', 1300, 'C1', 'buy', true), ('P1', 1400, 'X', 'sell', false),
+                   ('P1', 1250, 'C1', 'withdraw', false),
+                   ('P2', 1200, 'C2', 'sell', false),  -- created before the live start: live knows its creator
+                   ('P3', 1200, 'C3', 'sell', false))  -- creator = coin creator: live knows it too
+                 v(pool, slot, trader, kind, token_buy)""")
+    assert shadow.creator_sells_unknown_live(c, {"P1", "P2", "P3"}, 500) == {"P1": [1200]}
+    assert shadow.creator_sells_unknown_live(c, set(), 500) == {}
+
+
 def test_state_estimates_are_close_to_the_exact_size(monkeypatch):
     """The sampled byte estimate of a structure is within 10 % of its exact size (nothing sampled)."""
     feed, eng = _fake_run(3000, 12)

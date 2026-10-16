@@ -35,8 +35,12 @@ Under DIR:
      not_seen (no event of the trigger's slot was received: the watchlist did not see it),
      state_stale (the pool's last event before the entry was not received, e.g. an N2 pick seen
      only as the other pool of a received transaction), window_incomplete (an event in
-     [t - 400, t + d] was not received), position_events_unseen (during the position), or
-     unexplained, which must be 0.
+     [t - 400, t + d] was not received), position_events_unseen (during the position),
+     creator_unknown (an F7 trigger live took while the replay's creator rule vetoed it: the token
+     was created after the live start, so live never got its CreateEvent, a curve transaction, and
+     took the pool's coin creator as the creator; the real creator, who had moved the creator fee
+     to a sharing config, sold in F7's creator window [t - 200 v1 slots, t]), or unexplained,
+     which must be 0.
   5. live-risk/: `engine --live` as it runs live (risk.yaml limits, the clock measured from the
      segments' block times, decisions from the first segment) on the same segments, with its daily
      reports; reconcile.json: paper.reconcile against the chunks on every segment with a simulated
@@ -65,7 +69,7 @@ import pyarrow as pa
 
 from backtest import data, streams
 from backtest.store import DAY_MS
-from backtest.strategies import F7_GRID, HOUR_MS, Clock, decision_bounds
+from backtest.strategies import F7_CREATOR_MS, F7_GRID, HOUR_MS, Clock, decision_bounds
 from wallets import watchlist as W
 
 from . import reconcile
@@ -659,10 +663,32 @@ def _same(a, b, cols):
     return all(a.get(c) == b.get(c) for c in cols)
 
 
-def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500):
+def creator_sells_unknown_live(scon, pools, snapshot_before):
+    """Pool -> sorted slots of sells by its token's creator, for the pools whose creator live cannot
+    know: the token was created at or after the live start (the recorder takes no curve
+    transactions, so its CreateEvent never arrives and live takes the pool's coin creator as the
+    creator) and its creator is not the coin creator (the creator moved the curve's creator fee to a
+    sharing config: pfee migrate_bonding_curve_creator). The replay's F7 creator rule sees these
+    sells; live does not."""
+    if not pools:
+        return {}
+    scon.register("cr_pools", pa.table({"pool": sorted(pools)}))
+    out = defaultdict(list)
+    for pool, slot in scon.execute("""
+          SELECT e.pool, e.slot FROM pool e JOIN pools p USING (pool) JOIN mints m ON m.mint = p.mint
+          WHERE e.pool IN (SELECT pool FROM cr_pools) AND m.create_slot >= ? AND m.creator <> p.coin_creator
+            AND e.trader = m.creator AND e.kind IN ('buy', 'sell') AND NOT e.token_buy
+          ORDER BY 1, 2""", [snapshot_before]).fetchall():
+        out[pool].append(slot)
+    scon.unregister("cr_pools")
+    return out
+
+
+def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snapshot_before=None, creator_slots=0):
     """Per signal key: same, or a cause (module docstring). What live received is read from the
     segments themselves: (pool, slot, tx_index) of their pump_amm rows (a backfill is history, not
-    events, so it does not count)."""
+    events, so it does not count). snapshot_before: the live start (the LiveFeed snapshot's bound);
+    creator_slots: F7's creator window in slots."""
     R, L = _journal(replay_dir), _journal(live_dir)
     # The pools of every pool signal, from two hours before it (N2 picks a pool that traded this
     # hour; its state is its last event) to its exit: the store's events and the received ones.
@@ -686,6 +712,14 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500):
             got = set(scon.execute(f"""SELECT DISTINCT pool, slot, tx_index FROM read_parquet({files!r}, union_by_name = true)
                                        WHERE pool IN (SELECT pool FROM want_arrow)""").fetchall())
         scon.unregister("want_arrow")
+
+    live_only_f7 = {k[2] for k in L["signals"] if k[0] == "F7" and k not in R["signals"] and L["signals"][k]["venue"] == "pool"}
+    creator_sells = creator_sells_unknown_live(scon, live_only_f7, snapshot_before) if snapshot_before is not None else {}
+
+    def creator_sold(pool, t):
+        xs = creator_sells.get(pool, ())
+        i = bisect.bisect_left(xs, t - creator_slots)
+        return i < len(xs) and xs[i] <= t
 
     def unseen(pool, a, b):
         xs = events.get(pool, [])
@@ -732,6 +766,8 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500):
             end = exit_slot(k)
             if venue == "curve":
                 cause = "curve"
+            elif fam == "F7" and r is None and l is not None and creator_sold(key, t):
+                cause = "creator_unknown"
             elif fam == "N2_F7" and n2_picks["r"][(var, t)] != n2_picks["l"][(var, t)]:
                 trig_r = {x for x in f7_at[(var, t)] if R["signals"].get(("F7", var, x, t))}
                 trig_l = {x for x in f7_at[(var, t)] if L["signals"].get(("F7", var, x, t))}
@@ -904,7 +940,8 @@ def run(a, log=print):
     # 3. compare
     log(f"compare: rss {_rss_mb()} MB before")
     scon = streams.open_store(a.store, threads=2, memory=a.memory)
-    rows = compare(rdir, ldir, rec.coverage(), scon, root, d=a.d, hour_slots=clock.slots(HOUR_MS, lo))
+    rows = compare(rdir, ldir, rec.coverage(), scon, root, d=a.d, hour_slots=clock.slots(HOUR_MS, lo), snapshot_before=lo,
+                   creator_slots=clock.slots(F7_CREATOR_MS, lo))
     log(f"compare: {len(rows)} keys, rss {_rss_mb()} MB after")
     info["summary"] = summarize(rows)
     info["unexplained"] = sum(1 for r in rows if r["cause"] == "unexplained")
@@ -1006,7 +1043,10 @@ def render(info, rows):
           "took it on shortly before); position_events_unseen = during the position; gap = a simulated gap; busy_follows = "
           "busy in one run because of an earlier different position; n2_pick = the N2 draw came from a different hour set "
           "(live only knows received pools); follows_f7 = the N2 of an F7 trigger that differs; curve = curve transactions "
-          "are not recorded.", ""]
+          "are not recorded; creator_unknown = live took an F7 trigger that the creator rule vetoes in the replay: the token "
+          "was created after the live start, so live never got its CreateEvent and took the pool's coin creator as the "
+          "creator, while the real creator (who moved the creator fee to a sharing config) sold in F7's creator window "
+          "[t − 200 v1 slots, t].", ""]
     un = [r for r in rows if r["cause"] == "unexplained"][:10]
     if un:
         L += ["### Unexplained (first 10)", "", "| family | variant | key | t | replay | live |", "|---|---|---|---|---|---|"]
