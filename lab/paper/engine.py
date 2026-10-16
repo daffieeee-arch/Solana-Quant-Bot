@@ -296,9 +296,7 @@ class Engine:
             seed = getattr(self.feed, "farm_seed", None)
             if seed is not None and seed is not self.seed_journaled:
                 self.seed_journaled = seed
-                # LiveFeed's farmer history: seeded from the store over [lo, hi), complete from slot
-                # complete_from on (farm labels and the live watchlist's organic verdict before it lack history).
-                self.j.state("farmer_seed", json.dumps(seed, sort_keys=True))
+                self._journal_seed(seed)
             self.events_seen += 1
             self.last_event = f"{ev.slot}:{ev.tx_index}:{ev.outer_ix}:{ev.inner_ix}"
         if cur is not None:
@@ -306,6 +304,19 @@ class Engine:
             self._end_slot(cur, by_key, bt)
         self._end_of_data()
         self.j.commit()
+
+    def _journal_seed(self, seed):
+        """LiveFeed's farmer history: seeded from the store over [lo, hi), complete from slot complete_from on (farm
+        labels and the live watchlist's organic verdict before it lack history). The state 'farmer_seed' keeps the
+        first start's: a restart after the retention (3 days) replays from a later segment and seeds its own window,
+        whose complete_from lies later, but the rows from before it keep the first start's labels (LAB review B6).
+        'farmer_seeds' lists every start's seed once, in order."""
+        if self.j.state("farmer_seed") is None:
+            self.j.state("farmer_seed", json.dumps(seed, sort_keys=True))
+        seeds = json.loads(self.j.state("farmer_seeds") or "[]")
+        if not seeds or seeds[-1] != json.loads(json.dumps(seed)):
+            seeds.append(seed)
+            self.j.state("farmer_seeds", json.dumps(seeds, sort_keys=True))
 
     def _quiet_entries(self, before):
         """Entries due in slots without any event (before the next event's slot): the token's state

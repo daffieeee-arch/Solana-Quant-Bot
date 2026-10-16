@@ -105,6 +105,9 @@ Live input checks:
   `[first live slot - 24 h, first live slot)` as far as the store reaches. The journal's state
   `farmer_seed` records the range and `complete_from`: before that slot the farm labels and the live
   watchlist's organic verdict lack history (a store ending before the recorder's start: one day).
+  `farmer_seed` keeps the **first** start's. A restart after the retention (3 days) replays from the
+  first segment left and seeds its own window, with a later `complete_from`. Every start's seed is
+  listed once, in order, in `farmer_seeds` (LAB review B6).
 - A row that comes twice (a probe's backfill delivered after its first recorded rows, or slots
   recorded again after a restart) counts once: row keys (pool or mint, slot, tx, outer, inner) of
   the last 3,000 slots are remembered in `seen_keys` (LiveFeed), with their source.

@@ -394,6 +394,48 @@ def test_farmer_seed_range_is_journaled(tmp_path):
     assert json.loads(j.state("farmer_seed")) == seed
 
 
+def test_a_restart_after_the_retention_keeps_the_first_starts_farmer_seed(tmp_path):
+    """LAB review B6: the keeper deleted the oldest segments (older than 3 days) before a restart, so LiveFeed seeds
+    from the first segment left and its complete_from lies later. The journal keeps the first start's farmer_seed and
+    complete_from, and lists every start's seed once in farmer_seeds; a restart within the retention adds none."""
+    import shutil
+
+    from paper.live import LiveFeed, segment_dirs
+    from paper.tests.test_livefeed_state import fake_store, segment
+
+    h24 = 1_000  # slots in a day, here
+    store = fake_store(tmp_path / "store.duckdb", range(0, 2_000, 10))  # the store ends before the recorder starts
+    root = tmp_path / "rec"
+    for i in range(8):  # a segment a day from slot 4,000 on
+        segment(root, i, 4_000 + i * h24, 4_000 + (i + 1) * h24 - 1, 1_700_000_000 + i * 86_400, [])
+    j = Journal(str(tmp_path / "j"))
+
+    def start():
+        f = LiveFeed(str(root), store=store, follow=False, seed_farmers=True)
+        f._init_seed(segment_dirs(str(root))[0][2]["first_slot"], h24)  # as segment_events does at its first segment
+        seed = dict(f.farm_seed)
+        f.close()
+
+        class Seeded(Synth):
+            farm_seed = seed
+
+        Engine(Seeded({"M": trigger_token()}), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0,
+               clock=Clock(), backup=False).run()
+        return seed
+
+    first = start()
+    assert (first["first_live_slot"], first["complete_from"]) == (4_000, 5_000)
+    start()  # a restart within the retention: the same oldest segment, the same seed
+    assert json.loads(j.state("farmer_seeds")) == [first]
+    for seq, path, _ in segment_dirs(str(root))[:4]:  # the keeper: segments older than 3 days are gone
+        shutil.rmtree(path)
+    later = start()
+    assert (later["first_live_slot"], later["complete_from"]) == (8_000, 9_000)
+    kept = json.loads(j.state("farmer_seed"))
+    assert kept == first and kept["complete_from"] == 5_000  # not moved by the restart
+    assert json.loads(j.state("farmer_seeds")) == [first, later]
+
+
 def test_live_needs_a_readable_store(tmp_path, capsys):
     for store in ("", str(tmp_path / "missing.duckdb")):
         with pytest.raises(SystemExit) as e:
