@@ -5,12 +5,16 @@ N2 shadow; the stop-rule counter (trades, days, GO / ADJUST / STOP, with a day-b
 5 days on); the 10 SOL capital simulation (addendum §6); heartbeat and feed gaps; the measured
 latency of the live F7 triggers next to the simulated d. With variant groups (journal state 'groups') the
 stop-rule counter and the capital simulation count the primary group (K3) only; every further group (H) gets a
-section per variant, a measurement and no test (research/week4-spec-paper-h4h5-2026-10-16.md §4).
+section per variant, a measurement and no test (research/week4-spec-paper-h4h5-2026-10-16.md §4). With a clock
+start in the journal state (paper/clock.py) the stop-rule counter and the capital simulation count the trades entered
+on or after that day, and the report shows the clock day and when the decision is due; without one they count every
+paper day, a count without a decision.
 """
 
 import json
 import os
 from collections import defaultdict
+from datetime import date
 
 import numpy as np
 import pyarrow as pa
@@ -19,6 +23,9 @@ import pyarrow.parquet as pq
 from backtest.report import CAPITAL_SOL, MAX_POSITIONS, MIN_TRADES, _boot, capital_sim
 
 MIN_DAYS_CI = 5
+# The stop rule's clock (AGENTS.md, owner 2026-10-10): the decision after 4 weeks with at least MIN_TRADES trades,
+# else at MIN_TRADES trades, at most 6 weeks; its start no later than CLOCK_LATEST, fixed in the journal state.
+CLOCK_KEY, CLOCK_LATEST, CLOCK_DAYS, CLOCK_MAX_DAYS = "clock_start", "2026-11-02", 28, 42
 DRAWS, SEED, TRIM, EMPTY = 10_000, 7, 0.01, -0.99
 
 
@@ -30,6 +37,32 @@ def groups_of(journal):
     gs = json.loads(raw)
     primary = [v for g in gs.values() if g.get("primary") for v in g["variants"]]
     return set(primary), {name: g["variants"] for name, g in gs.items() if not g.get("primary")}
+
+
+def clock_of(journal):
+    """The clock start record ({date, reason, set_at[, previous]}) from the journal state, or None."""
+    raw = journal.state(CLOCK_KEY)
+    return json.loads(raw) if raw else None
+
+
+def clock_lines(clock, day, n_filled, verdict):
+    """The clock's state on `day`: not set, not started, its day, or the decision due."""
+    if clock is None:
+        return ["- no clock start in the journal yet (python -m paper.clock): a count of every paper day, no decision"]
+    head = f"- clock start {clock['date']} (set {clock['set_at']}; reason: {clock['reason']})"
+    if day < clock["date"]:
+        return [head + ": not started, nothing counted yet"]
+    n = (date.fromisoformat(day) - date.fromisoformat(clock["date"])).days + 1
+    if n >= CLOCK_MAX_DAYS:
+        now = f"clock day {n}: the {CLOCK_MAX_DAYS}-day limit, the decision is due: **{verdict}**"
+    elif n >= CLOCK_DAYS and n_filled >= MIN_TRADES:
+        now = f"clock day {n}, {n_filled} trades: the decision is due: **{verdict}**"
+    elif n >= CLOCK_DAYS:
+        now = f"clock day {n}, {n_filled} trades: it runs on until {MIN_TRADES} trades, at most day {CLOCK_MAX_DAYS}"
+    else:
+        now = f"clock day {n} of {CLOCK_DAYS}"
+    return [head, f"- {now} (the decision after {CLOCK_DAYS} days with at least {MIN_TRADES} trades, else at "
+                  f"{MIN_TRADES} trades, at most day {CLOCK_MAX_DAYS})"]
 
 
 def _trim(x, frac=TRIM):
@@ -218,10 +251,13 @@ def daily_report(journal, day, watch_log=None):
         r["vs_n2_sol_per_trade"] = (r["net_sol_per_trade"] - n2["net_sol_per_trade"]
                                     if n2 and r["net_sol_per_trade"] is not None and n2["net_sol_per_trade"] is not None else None)
     # Stop-rule counter and capital simulation over everything so far (traded families only; with groups the
-    # primary group's variants only: K3's stop rule).
+    # primary group's variants only: K3's stop rule); with a clock start, the trades entered on or after its day.
     primary, further = groups_of(journal)
+    clock = clock_of(journal)
+    entered = {(o["family"], o["variant"], o["key"], o["t"]): o["day"] for o in orders}
     traded = [x for x in exits if not x["family"].startswith("N2_") and x["day"] <= day
-              and (primary is None or x["variant"] in primary)]
+              and (primary is None or x["variant"] in primary)
+              and (clock is None or entered.get((x["family"], x["variant"], x["key"], x["t"]), x["day"]) >= clock["date"])]
     by_day, filled_by_day, n_filled = stop_rule_inputs(traded)
     mean, lo, hi, verdict = _verdict(by_day, n_filled, filled_by_day)
     final, mdd, taken, skipped = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"], x["pnl"], not x["tokens"])
@@ -236,11 +272,13 @@ def daily_report(journal, day, watch_log=None):
                      f"{f(r['net_sol_per_trade'], '+.4f')} | {f(r['win_rate'] and r['win_rate'] * 100, '.0f')}% | "
                      f"{f(r['fill_rate'] and r['fill_rate'] * 100, '.0f')}% | {f(r['vs_n2_sol_per_trade'], '+.4f')} |")
     ci = f"{lo / 1e9:+.4f} … {hi / 1e9:+.4f} SOL" if lo is not None else f"from {MIN_DAYS_CI} days"
-    lines += ["", "## Stop-rule counter (all paper days so far" + (f"; {', '.join(sorted(primary))} only" if primary else "") + ")", "",
+    since = f"from the clock start {clock['date']}" if clock else "all paper days so far"
+    lines += ["", f"## Stop-rule counter ({since}" + (f"; {', '.join(sorted(primary))} only" if primary else "") + ")", "",
+              *clock_lines(clock, day, n_filled, verdict),
               f"- trades {n_filled} (failed entries {len(traded) - n_filled}, their cost included), days {len(by_day)}, "
               f"net {'' if mean is None else f'{mean / 1e9:+.4f}'} SOL/trade, "
               f"95% CI {ci}: **{verdict}**",
-              "", f"## Capital simulation ({CAPITAL_SOL:g} SOL, at most {MAX_POSITIONS} positions)", "",
+              "", f"## Capital simulation ({CAPITAL_SOL:g} SOL, at most {MAX_POSITIONS} positions; {since})", "",
               f"- final {final / 1e9:.3f} SOL, max drawdown {mdd * 100:.1f}%, trades {taken}, skipped {skipped}",
               "", "## Heartbeat", "",
               f"- minutes with a heartbeat: {sum(1 for b in beats if not b['note'])}; feed gaps: {len(gaps)}"
