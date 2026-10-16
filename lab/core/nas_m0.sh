@@ -2,8 +2,11 @@
 # M0 of the Rust live route (lab/docs/rust-live-route-design-2026-10-16.md §12) on the NAS: lab-core's venue math
 # must equal backtest/venues.py exactly. Two steps, because Rust and the lab Python live in different runners:
 #
-#   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/core (unit tests and
-#                proptest), then the abi3-py313 wheel of lab/core-py with maturin 1.15, into $OUT/wheel/.
+#   STEP=build   (bookworm runner, Rust 1.97.1, as root): cargo test --release --locked of lab/core (unit tests
+#                and proptest), then the abi3-py313 wheel of lab/core-py with maturin 1.15, into $OUT/wheel/. The
+#                image has Python 3.11 without venv: apt python3-venv, uv in a 3.11 venv, then uv's own CPython 3.13
+#                for maturin (an abi3-py313 wheel is built against 3.13). The container mounts only /lab, so run
+#                it with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab (the same files as the lab runner's $DATA).
 #   STEP=python  (the lab Python 3.13 runner): the wheel into $OUT/site (not into the shared venv), then
 #                a. backtest/tests/test_venues_core.py: Python against Rust on 20,000 random and edge cases per
 #                   function, exactly equal;
@@ -12,8 +15,8 @@
 #                   math both run), then the parts compared with EXCEPT ALL both ways. Green: the same row
 #                   count, 0 rows only on one side.
 #
-#   STEP=build  bash lab/core/nas_m0.sh
-#   STEP=python bash lab/core/nas_m0.sh
+#   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/core/nas_m0.sh      (bookworm runner)
+#   STEP=python LAB_PY=/lab/venv/bin/python bash lab/core/nas_m0.sh                       (lab runner)
 #
 # Both steps write to $DATA/backtests/core-m0-<commit7>/ (job.log, wheel/, site/, ab.txt).
 set -euo pipefail
@@ -29,11 +32,19 @@ log "start $STEP commit=$COMMIT out=$OUT"
 
 if [ "$STEP" = build ]; then
   cd "$REPO/lab/core"
-  cargo test --release --locked 2>&1 | tee -a "$OUT/job.log" | tail -5
-  log "cargo test: ok"
+  cargo test --release --locked > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
+  grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
+  log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
+  # maturin under CPython 3.13: python3-venv for a 3.11 venv, uv in it, then uv's managed 3.13.
   W=$(mktemp -d)
-  python3 -m venv "$W/m" && "$W/m/bin/pip" install -q maturin==1.15.0
-  "$W/m/bin/maturin" build --release --locked -m "$REPO/lab/core-py/Cargo.toml" -o "$OUT/wheel" 2>&1 | tee -a "$OUT/job.log" | tail -3
+  export DEBIAN_FRONTEND=noninteractive UV_PYTHON_INSTALL_DIR=$W/pythons UV_CACHE_DIR=$W/uv-cache
+  apt-get update -qq >> "$OUT/job.log" 2>&1 && apt-get install -y -qq python3-venv >> "$OUT/job.log" 2>&1
+  python3 -m venv "$W/boot" && "$W/boot/bin/pip" install -q uv==0.11.3
+  "$W/boot/bin/uv" python install 3.13 >> "$OUT/job.log" 2>&1
+  "$W/boot/bin/uv" venv -q -p 3.13 "$W/py313" && "$W/boot/bin/uv" pip install -q -p "$W/py313/bin/python" maturin==1.15.0
+  "$W/py313/bin/python" -V | tee -a "$OUT/job.log"
+  "$W/py313/bin/maturin" build --release --locked -i "$W/py313/bin/python" -m "$REPO/lab/core-py/Cargo.toml" -o "$OUT/wheel" \
+    >> "$OUT/job.log" 2>&1 || { tail -30 "$OUT/job.log"; log "maturin build: FAILED"; exit 1; }
   rm -rf "$W"
   ls -l "$OUT/wheel" | tee -a "$OUT/job.log"
   log "build: done"
@@ -42,6 +53,7 @@ fi
 
 [ "$STEP" = python ] || { log "unknown STEP=$STEP"; exit 2; }
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
+"$PY" -c "import sys; assert sys.version_info >= (3, 13), sys.version" || { log "the wheel is abi3-py313: $PY is older"; exit 1; }
 WHEEL=$(ls "$OUT"/wheel/labcore-*.whl | head -1)
 rm -rf "$OUT/site" && "$PY" -m pip install -q --no-deps --target "$OUT/site" "$WHEEL"
 export PYTHONPATH=$REPO/lab:$OUT/site PYTHONDONTWRITEBYTECODE=1
