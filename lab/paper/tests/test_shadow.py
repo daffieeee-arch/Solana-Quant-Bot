@@ -15,7 +15,7 @@ import pytest
 from backtest import data
 from paper import shadow
 from paper.feed import HOLDOUT_END, HOLDOUT_START, ReplayFeed
-from paper.live import segment_dirs
+from paper.live import FarmerFlags, segment_dirs
 
 STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 LO, HI = 450700000, 450702000
@@ -44,9 +44,27 @@ def _fake_run(mints, legs_per_mint):
         for i in range(legs_per_mint):
             hist[f"mint{m:06d}"].append(_Leg(1000 + i, f"trader{m}-{i}", (m, i, 3 * i), (m, i + 1, 3 * i + 1)))
     feed = NS(curve_hist=hist, seen_keys={("c", m, i): "rec" for m in range(200) for i in range(5)}, seen_order=deque(),
-              farmers=NS(hist={}), tokens={}, pools={}, con=duckdb.connect(), seed_con=None)
+              farmers=FarmerFlags(), tokens={}, pools={}, con=duckdb.connect(), seed_con=None)
     eng = NS(recent={}, last_state={}, busy={}, watch=None)
     return feed, eng
+
+
+def test_creator_sells_live_cannot_know():
+    """job 84 (shadow-1053-1054): pool Cj2rYAJ…, token created after the live start whose creator moved the
+    creator fee to a sharing config (the pool's coin creator); the creator's 20.7 SOL sell was an F7 trigger
+    live took and the replay's creator rule vetoed."""
+    c = duckdb.connect()
+    c.execute("CREATE TABLE mints AS SELECT * FROM (VALUES ('M1', 1000, 'C1'), ('M2', 100, 'C2'), ('M3', 1000, 'C3')) v(mint, create_slot, creator)")
+    c.execute("""CREATE TABLE pools AS SELECT * FROM (VALUES ('P1', 'M1', 'S1'), ('P2', 'M2', 'S2'), ('P3', 'M3', 'C3'))
+                 v(pool, mint, coin_creator)""")
+    c.execute("""CREATE TABLE pool AS SELECT * FROM (VALUES
+                   ('P1', 1200, 'C1', 'sell', false), ('P1', 1300, 'C1', 'buy', true), ('P1', 1400, 'X', 'sell', false),
+                   ('P1', 1250, 'C1', 'withdraw', false),
+                   ('P2', 1200, 'C2', 'sell', false),  -- created before the live start: live knows its creator
+                   ('P3', 1200, 'C3', 'sell', false))  -- creator = coin creator: live knows it too
+                 v(pool, slot, trader, kind, token_buy)""")
+    assert shadow.creator_sells_unknown_live(c, {"P1", "P2", "P3"}, 500) == {"P1": [1200]}
+    assert shadow.creator_sells_unknown_live(c, set(), 500) == {}
 
 
 def test_state_estimates_are_close_to_the_exact_size(monkeypatch):
@@ -176,3 +194,23 @@ def test_resume_reuses_replay_and_work_database_with_the_same_result(run):
     assert again["recorder"]["rows"] == info["recorder"]["rows"]
     with open(os.path.join(out, "STATUS.json")) as f:
         assert json.load(f)["step"] == "done"
+
+
+def test_from_compare_reuses_replay_and_live_with_the_same_result(run, tmp_path):
+    """After a kill in the comparison (the container's memory limit), --from-compare runs steps 3-5 on the
+    finished replay and live step: the coverage rebuilt from the segments gives the same comparison."""
+    out, info = run
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    kw = dict(store=STORE, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
+              d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
+              risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB")
+    logs = []
+    again = shadow.run(argparse.Namespace(out=out, from_compare=True, **kw), log=logs.append)
+    assert any(m.startswith("live reused") for m in logs) and any(m.startswith("compare: ") and "rss" in m for m in logs)
+    assert again["summary"] == info["summary"] and again["unexplained"] == info["unexplained"]
+    assert again["recorder"]["rows"] == info["recorder"]["rows"] and again["estimated_gb_per_day"] == info["estimated_gb_per_day"]
+    assert again["reconcile"] == info["reconcile"]
+    with open(os.path.join(out, "STATUS.json")) as f:
+        assert json.load(f)["step"] == "done"
+    with pytest.raises(SystemExit):  # no finished live step here
+        shadow.run(argparse.Namespace(out=str(tmp_path), from_compare=True, **kw), log=lambda m: None)
