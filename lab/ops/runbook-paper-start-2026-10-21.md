@@ -32,26 +32,43 @@ Job 91 ran without the end() fix (#301). That fix changes only the exit of a pos
 
 ## 1. PAPER_STORE
 
-The engine needs a store for `--live`. The store is the snapshot of the tokens and pools known before the start, plus the farmer history.
+The engine needs a store for `--live`. The store is the snapshot of the tokens and pools known before the start, plus the farmer history. The coordinator's rule (2026-10-16) is to use the newest store whose data has already been used.
 
-**Which store.**
-- The newest OF1 data before the start is clean-v1 (epochs 1055–1063). Nobody may read it before the clean runs (E20, H3, H4, H5) are done. A store "just before the start" is therefore not possible now.
-- The newest store without clean data is **`fwd1053-1054.duckdb`**. It covers slots 454,896,000–455,760,000 and ends at the start of epoch 1055 (about 2026-10-11, some ten days before the start). It is the store that shadow job 91 measured with. The store is already built; there is no build step, only a copy.
-- **A decision for later (coordinator and owner):** after the clean runs, may a store over clean-v1 serve as the paper snapshot? It would shorten the gap. It also needs a small code change, because `store forward` reads only events/v1.
+**Route A: the clean data is spent before the start.** That means:
+- E20 has written `clean.lock`;
+- H3, H4 and H5 have each written the `result.json` of a real run with a decision.
 
-**Commands** (about 1 min for 4.5 GB at ≤ 85 MiB/s):
+Then the NAS, where clean-v1 lives, builds a store over the last two complete clean epochs: 1062–1063, or 1061–1062 if 1063 is not extracted yet. `python -m backtest.store paper` enforces the condition itself:
+- It refuses every window in 1055–1063 until the lock and all three results are there. Without them it does not even list the clean root.
+- It writes the evidence (the lock's sha256 and the result paths) into the store's meta, under `clean_spent`.
+
+**Route B: otherwise.** Use **`fwd1053-1054.duckdb`**: slots 454,896,000–455,760,000, ending at the start of epoch 1055 (about 2026-10-11).
+- It is the store that shadow job 91 measured with.
+- It is already built, so there is no build step, only a copy.
+
+**Route A, the NAS job.** The coordinator runs it from a checkout at C. It takes about 5 min: an epoch builds in about 140 s, chunk by chunk, within a 3 GB memory scope.
 
 ```bash
-NAS=/mnt/fastdisk/solana-lab/data-old-faithful-one/lab/store/fwd1053-1054.duckdb
-rsync -a --bwlimit=85000 truenas-lab:$NAS $LAB/store/
-ssh truenas-lab sha256sum $NAS
-sha256sum $LAB/store/fwd1053-1054.duckdb                   # the same as on the NAS
-chmod 444 $LAB/store/fwd1053-1054.duckdb
-$PY -c "import duckdb,json; c=duckdb.connect('$LAB/store/fwd1053-1054.duckdb', read_only=True, config={'memory_limit':'512MB'}); m=json.loads(c.execute('SELECT json FROM meta').fetchone()[0]); print(m['slot_start'], m['slot_end_exclusive'])"
-                                                           # 454896000 455760000
+cd <checkout at C>/lab && LAB_SPILL_DIR=/lab/tmp/paper-store PYTHONPATH=. $LAB_PY -m backtest.store paper --epochs 2
+# "refused: … not spent yet: no clean.lock … / no H5 result …"   -> route B
+# "store: …/store/paper-1062-1063.duckdb" and a meta with clean_spent  -> route A
 ```
 
-**What a store that ends before the start means.** All of it is known, and all of it is journaled.
+**Copy to the VPS** (about 1 min for 4.5 GB at ≤ 85 MiB/s):
+
+```bash
+S=fwd1053-1054.duckdb                                      # route B; route A: S=paper-<a>-<b>.duckdb (the job's name)
+NAS=/mnt/fastdisk/solana-lab/data-old-faithful-one/lab/store/$S
+rsync -a --bwlimit=85000 truenas-lab:$NAS $LAB/store/
+ssh truenas-lab sha256sum $NAS
+sha256sum $LAB/store/$S                                    # the same as on the NAS
+chmod 444 $LAB/store/$S
+$PY -c "import duckdb,json; c=duckdb.connect('$LAB/store/$S', read_only=True, config={'memory_limit':'512MB'}); m=json.loads(c.execute('SELECT json FROM meta').fetchone()[0]); print(m['period'], m['slot_start'], m['slot_end_exclusive'], sorted(m.get('clean_spent', {}).get('results', {})))"
+                                                           # route B: forward 454896000 455760000 []
+                                                           # route A: paper <from> <to> ['h3', 'h4', 'h5']
+```
+
+**What a store that ends before the start means** (route A shortens the gap to hours or days; route B leaves about ten days). All of it is known, and all of it is journaled.
 - **Unknown pools and tokens.** Pools and tokens created between the store's end and the recorder's start are unknown until their creation arrives live.
   - Pools arrive through `tx_new_reversed` and `pool_creations`; tokens arrive through `--pump-creates`.
   - Their trades are dropped until then, and the engine log notes them as unknown pools.
@@ -65,11 +82,12 @@ $PY -c "import duckdb,json; c=duckdb.connect('$LAB/store/fwd1053-1054.duckdb', r
 
 ```bash
 mkdir -p ~/.config/solana-lab
-cat > ~/.config/solana-lab/live.env <<'EOF'
+cat > ~/.config/solana-lab/live.env <<EOF
 RECORDER_ARGS="--pool-creations --new-reversed --pump-creates --budget-usd 2"
-PAPER_STORE=/home/chupa/Solana-project/data-old-faithful-one/lab/store/fwd1053-1054.duckdb
+PAPER_STORE=$LAB/store/$S
 PAPER_ARGS="--groups paper/h-arms-2026-10-16.yaml"
 EOF
+cat ~/.config/solana-lab/live.env                          # PAPER_STORE is the absolute path of §1's store
 chmod 644 ~/.config/solana-lab/live.env
 install -m 600 /dev/null ~/.config/solana-lab/recorder.env
 # the owner fills in (an editor, not the command line): LAB_TRITON_GRPC_ENDPOINT=… and LAB_TRITON_X_TOKEN=…
@@ -123,7 +141,7 @@ systemd-run --user --scope -p MemoryMax=2G -p CPUQuota=100% -- $LAB/bin/lab-reco
 # step 2: the chain test on the hour (a separate journal; little or no K3 trigger in one hour)
 cd $R/lab && systemd-run --user --scope -p MemoryMax=3G -p CPUQuota=100% -- $PY -m paper.engine --live $M --catch-up \
   --config paper/k3-paper-2026-10-12.yaml --groups paper/h-arms-2026-10-16.yaml \
-  --store $LAB/store/fwd1053-1054.duckdb --journal $LAB/journal/measure-$(date -u +%Y%m%d)/journal --no-backup; cd ~
+  --store $LAB/store/$S --journal $LAB/journal/measure-$(date -u +%Y%m%d)/journal --no-backup; cd ~
 ```
 
 **After the hour:**
