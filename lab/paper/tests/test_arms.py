@@ -11,7 +11,7 @@ import yaml
 
 from backtest.strategies import EPOCH_SLOTS, F7_BIG_GRID, F7_LONG_GRID, H6_MS, Clock, FlowIndex, f7_exit_rule
 from paper import engine
-from paper.engine import EXIT_VARIANTS, Engine, Group, LiveFlowIndex, _windows, config_groups, load_config, variant
+from paper.engine import EXIT_VARIANTS, Engine, Group, LiveFlowIndex, _windows, config_groups, load_config, load_groups, variant
 from paper.journal import Journal
 from paper.report import daily_report
 
@@ -63,25 +63,41 @@ def test_variants_and_groups():
                groups=[Group("H", ["0.04:600"], segments=["pool_reversed"])])
 
 
-def test_the_paper_config_has_group_h_beside_an_unchanged_k3(tmp_path):
-    sha, conf = load_config(os.path.join(os.path.dirname(engine.__file__), "k3-paper-2026-10-12.yaml"))
-    assert (conf["segments"], conf["farm"], conf["variants"], conf["d_ms"], conf["q"], conf["n2_k"], conf["risk"]) == (
-        ["pool_reversed"], "all", ["0.04:600"], 600, 0.5, 1, "risk.yaml")  # K3 as before
-    (h,) = config_groups(conf)
-    assert (h.name, [n for n, _ in h.variants], h.farm, h.segments, h.d_ms, h.q, h.n2_k, h.wallet_file, h.require_farm_complete) == (
+K3_CONFIG_SHA = "04b5e652eb0301ae768745adeb7127c5c69be3af889e209715ff3122d3e81f64"  # E14's config as on main: the arms never change it
+
+
+def test_k3s_config_is_untouched_and_group_h_is_a_file_of_its_own(tmp_path):
+    here = os.path.dirname(engine.__file__)
+    sha, conf = load_config(os.path.join(here, "k3-paper-2026-10-12.yaml"))
+    assert sha == K3_CONFIG_SHA and "groups" not in conf
+    gsha, gconf = load_groups(os.path.join(here, "h-arms-2026-10-16.yaml"))
+    (h,) = config_groups(gconf)
+    assert len(gsha) == 64 and (h.name, [n for n, _ in h.variants], h.farm, h.segments, h.d_ms, h.q, h.n2_k, h.wallet_file,
+                                h.require_farm_complete) == (
         "H", ["flow300_H6", "flow300_tp100_H6"], "organic", {"pool_reversed"}, 600, 0.5, 0, "wallet-h.json", True)
     from paper import risk
 
     r, why = risk.load(h.risk_path)
     assert why is None and (r.size_sol, r.max_open_positions, r.max_exposure_sol, r.daily_loss_limit_sol, r.pool_cooldown_h) == (
         0.5, 5, 2.5, 1.0, 24.0)
-    bad = dict(conf, groups={"H": dict(conf["groups"]["H"], wallet="wallet.json")})
-    p = tmp_path / "bad.yaml"
-    p.write_text(yaml.safe_dump({k: v for k, v in bad.items() if k != "risk_path"}))
-    (tmp_path / "risk.yaml").write_text("x: 1\n")
-    (tmp_path / "risk-h.yaml").write_text("x: 1\n")
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(yaml.safe_dump({"groups": {"H": dict(gconf["groups"]["H"], wallet="wallet.json")}}))
     with pytest.raises(SystemExit, match="a wallet file of its own"):
-        load_config(str(p))
+        load_groups(str(bad))
+    k3 = yaml.safe_load(open(os.path.join(here, "k3-paper-2026-10-12.yaml")))
+    (tmp_path / "risk.yaml").write_text("x: 1\n")
+    mixed = tmp_path / "mixed.yaml"
+    mixed.write_text(yaml.safe_dump(dict(k3, groups=gconf["groups"])))
+    with pytest.raises(SystemExit, match="a file of their own"):
+        load_config(str(mixed))
+
+
+def test_without_groups_the_engine_has_its_one_group(tmp_path):
+    eng = Engine(NS(meta_bounds=(0, 10**9)), Journal(str(tmp_path / "j")), None, variants=["0.04:600"], clock=Clock(), backup=False)
+    assert eng.groups == [eng.primary] and eng.primary.name == "K3" and eng.variants == [(0.04, 600)]
+    assert engine.groups_state(eng) == ('{"K3": {"d": 1, "d_ms": null, "farm": "all", "n2_k": 1, "primary": true, "q": 0.5, '
+                                        '"require_farm_complete": false, "risk": null, "segments": null, "variants": ["tp4_T600"], '
+                                        '"wallet": "wallet.json"}}')
 
 
 def test_the_exit_windows_follow_the_clock_and_its_fallback():

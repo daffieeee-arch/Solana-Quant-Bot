@@ -42,7 +42,7 @@ Under DIR:
      was created after the live start, so live never got its CreateEvent, a curve transaction, and
      took the pool's coin creator as the creator; the real creator, who had moved the creator fee
      to a sharing config, sold in F7's creator window [t - 200 v1 slots, t]), farm_incomplete (a group
-     with require_farm_complete, the arms of --config, skipped the trigger on one side: a farm label without
+     with require_farm_complete, the arms of --groups, skipped the trigger on one side: a farm label without
      full history), or unexplained, which must be 0.
   5. live-risk/: `engine --live` as it runs live (risk.yaml limits, the clock measured from the
      segments' block times, decisions from the first segment) on the same segments, with its daily
@@ -880,13 +880,13 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
 
 
 def _groups(a):
-    """The further variant groups of --config (a paper config's `groups` section: the arms beside K3), fresh
-    Group objects per engine (each holds its own state)."""
-    if not getattr(a, "config", None):
+    """The variant groups of --groups (a groups file: the arms beside K3), fresh Group objects per engine (each
+    holds its own state)."""
+    if not getattr(a, "groups", None):
         return []
-    from .engine import config_groups, load_config
+    from .engine import config_groups, load_groups
 
-    return config_groups(load_config(a.config)[1])
+    return config_groups(load_groups(a.groups)[1])
 
 
 def run(a, log=print):
@@ -1117,7 +1117,8 @@ def main():
     ap.add_argument("--reconnects", type=int, default=6)
     ap.add_argument("--seed", type=int, default=1052)
     ap.add_argument("--no-probes", action="store_true")
-    ap.add_argument("--config", help="a paper config: its further groups (the arms beside K3) run beside --variants")
+    ap.add_argument("--groups", help="a groups file (paper/h-arms-2026-10-16.yaml): its groups (the arms beside K3) run beside "
+                                     "--variants")
     ap.add_argument("--pump-creates", action="store_true",
                     help="the recorder's --pump-creates: every pump.fun create transaction (live learns new tokens' creators)")
     ap.add_argument("--watch-warmup", type=int, default=0, help="watchlist warm-up minutes before --from (inside the store)")

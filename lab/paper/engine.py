@@ -960,9 +960,25 @@ def load_config(path):
         missing.append(f"d_ms > 0 (got {conf['d_ms']!r})")
     if missing:
         raise SystemExit(f"paper config {path}: missing {', '.join(missing)}")
+    if "groups" in conf:
+        raise SystemExit(f"paper config {path}: groups beside the primary group come from a file of their own (--groups)")
+    conf["risk_path"] = os.path.join(os.path.dirname(os.path.abspath(path)), conf["risk"])
+    return hashlib.sha256(raw).hexdigest(), conf
+
+
+def load_groups(path):
+    """(sha256, conf) of a groups file (`groups:` name -> settings, e.g. paper/h-arms-2026-10-16.yaml): the further
+    variant groups beside the primary group's config, whose file and sha stay as they are. Risk paths resolve next
+    to the file."""
+    import yaml
+
+    with open(path, "rb") as f:
+        raw = f.read()
+    conf = yaml.safe_load(raw)
     here = os.path.dirname(os.path.abspath(path))
-    conf["risk_path"] = os.path.join(here, conf["risk"])
-    for name, g in (conf.get("groups") or {}).items():
+    if not isinstance(conf, dict) or not conf.get("groups"):
+        raise SystemExit(f"groups file {path}: no `groups`")
+    for name, g in conf["groups"].items():
         bad = [k for k in ("families", "segments", "farm", "variants", "q", "risk", "wallet") if k not in g]
         if ("d" in g) == ("d_ms" in g):
             bad.append("exactly one of d and d_ms")
@@ -971,13 +987,13 @@ def load_config(path):
         if g.get("wallet") in (None, "wallet.json"):
             bad.append("a wallet file of its own")
         if bad:
-            raise SystemExit(f"paper config {path}: group {name}: {', '.join(bad)}")
+            raise SystemExit(f"groups file {path}: group {name}: {', '.join(bad)}")
         g["risk_path"] = os.path.join(here, g["risk"])
     return hashlib.sha256(raw).hexdigest(), conf
 
 
 def config_groups(conf):
-    """The config's further groups (its `groups` section) as Group objects."""
+    """A groups file's groups (load_groups) as Group objects."""
     return [Group(name, list(g["variants"]), farm=g["farm"], segments=g["segments"], d=int(g.get("d", 1)),
                   d_ms=int(g["d_ms"]) if "d_ms" in g else None, q=float(g["q"]), n2_k=int(g.get("n2_k", 0)),
                   risk_path=g["risk_path"], wallet_file=g["wallet"], require_farm_complete=bool(g.get("require_farm_complete")))
@@ -1006,6 +1022,8 @@ def main(argv=None):
     ap.add_argument("--config", help="paper config (YAML, e.g. paper/k3-paper-2026-10-12.yaml): segments, farm, variants, "
                                      "d, q, n2_k and the risk file; its sha256 goes into the journal")
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
+    ap.add_argument("--groups", help="a groups file (e.g. paper/h-arms-2026-10-16.yaml): variant groups beside the config's "
+                                     "(primary) group, with their own risk files and wallets; its sha256 goes into the journal")
     ap.add_argument("--store", default="/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb")
     ap.add_argument("--d", type=int, help="entry and exit delay in slots (default 1)")
     ap.add_argument("--d-ms", type=int, help="the delay in milliseconds instead (> 0), in slots per epoch by the clock")
@@ -1037,10 +1055,14 @@ def main(argv=None):
         a.d, a.d_ms = int(conf.get("d", 1)), (int(conf["d_ms"]) if "d_ms" in conf else None)
         a.q, a.risk = float(conf["q"]), conf["risk_path"]
         n2_k = int(conf.get("n2_k", 1))
-        groups, name = config_groups(conf), str(conf.get("candidate", "K3"))
+        name = str(conf.get("candidate", "K3"))
     else:
         n2_k = 1
         a.d = 1 if a.d is None else a.d
+    groups_sha = None
+    if a.groups:
+        groups_sha, gconf = load_groups(a.groups)
+        groups = config_groups(gconf)
     if a.live:
         from .live import LiveFeed
 
@@ -1057,10 +1079,13 @@ def main(argv=None):
         j.state("config_sha256", cfg_sha)
         with open(a.risk, "rb") as f:
             j.state("risk_sha256_at_start", hashlib.sha256(f.read()).hexdigest())
+    if groups_sha:
+        j.state("groups_file", os.path.abspath(a.groups))
+        j.state("groups_sha256", groups_sha)
         for g in groups:
             with open(g.risk_path, "rb") as f:
                 j.state(f"risk_sha256_at_start:{g.name}", hashlib.sha256(f.read()).hexdigest())
-        j.commit()
+    j.commit()
     watch = None
     if a.live and not a.no_watchlist:
         from .watchlist_live import LiveWatchlist

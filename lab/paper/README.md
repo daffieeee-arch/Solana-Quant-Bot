@@ -54,8 +54,9 @@ entries in a pool after a total loss there). Open positions carry `mark_proceeds
 `mark_pnl` (a sale of the whole position now, after costs); `<journal>/wallet.json` is the UI's
 wallet format marked `"mode": "paper"` (10 SOL plus realized P&L, paper buys and sells).
 
-**Variant groups** (`research/week4-spec-paper-h4h5-2026-10-16.md`, sha256 abc0f29f): the config's top level is
-the primary group (K3, unchanged); its `groups` section adds groups of their own. Group **H** trades the arms of
+**Variant groups** (`research/week4-spec-paper-h4h5-2026-10-16.md`, sha256 abc0f29f): the config is the primary
+group (K3, its file and sha256 unchanged); `--groups paper/h-arms-2026-10-16.yaml` (live.env `PAPER_ARGS`) adds
+groups of their own, and the journal keeps `groups_sha256` beside `config_sha256`. Group **H** trades the arms of
 H4 and H5, `flow300_H6` and `flow300_tp100_H6`, on the organic F7 triggers in pool_reversed (d_ms 600, q 0.5,
 no N2), a measurement and no test.
 - **Its own budget:** `risk-h.yaml` (0.5 SOL, at most 5 open, 2.5 SOL exposure, -1 SOL per day, a 24 h pool
@@ -76,7 +77,7 @@ no N2), a measurement and no test.
   days with a position the day series' mean with a day-bootstrap interval (H4's form).
 - **Parity:** `python -m paper.parity --arm flow300_H6 --from A --to B --out DIR` compares an arm with the backtest
   (busy over organic triggers only: equal on every organic trigger; the tournament's busy: equal in pools without
-  a flagged trigger). `paper.shadow --config <paper config>` runs the groups beside its variants.
+  a flagged trigger). `paper.shadow --groups <groups file>` runs the groups beside its variants.
 
 Measured latency (live only; reporting, no effect on fills or parity): LiveFeed gives every Event
 its transaction's arrival from the segment (`arrivals/`: earliest `received_unix_ns` and the

@@ -1,0 +1,18 @@
+# Paper group H beside K3 (research/week4-spec-paper-h4h5-2026-10-16.md, sha256 abc0f29f; coordinator 2026-10-16):
+# the arms of H4 (flow300_H6) and H5 (flow300_tp100_H6) on the organic F7 triggers in pool_reversed, from the
+# live start; a measurement, no test. A file of its own, loaded with `paper.engine --groups` (live.env
+# PAPER_ARGS), so K3's config (k3-paper-2026-10-12.yaml, E14) and its sha256 stay as they are; the journal
+# keeps both shas. Its own risk file, daily loss, pool cooldown and paper wallet; busy per arm on organic
+# triggers only; it opens only where the farm label had full history (farm_complete, farm_window_complete).
+groups:
+  H:
+    families: [F7]
+    segments: [pool_reversed]
+    farm: organic
+    variants: [flow300_H6, flow300_tp100_H6]
+    d_ms: 600
+    q: 0.5
+    n2_k: 0
+    risk: risk-h.yaml
+    wallet: wallet-h.json
+    require_farm_complete: true

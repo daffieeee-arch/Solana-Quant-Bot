@@ -11,7 +11,7 @@ import pytest
 from backtest import streams
 from backtest.strategies import Clock
 from paper import engine
-from paper.engine import Engine, config_groups, load_config
+from paper.engine import Engine, config_groups, load_config, load_groups
 from paper.feed import ReplayFeed
 from paper.journal import Journal
 
@@ -33,11 +33,13 @@ class CrashFeed(ReplayFeed):
 
 
 def _run(journal_dir, clock, with_h=True, crash_slot=None):
-    _, conf = load_config(os.path.join(os.path.dirname(engine.__file__), "k3-paper-2026-10-12.yaml"))
+    here = os.path.dirname(engine.__file__)
+    _, conf = load_config(os.path.join(here, "k3-paper-2026-10-12.yaml"))
+    groups = config_groups(load_groups(os.path.join(here, "h-arms-2026-10-16.yaml"))[1]) if with_h else ()
     feed = CrashFeed(STORE, LO, HI, crash_slot=crash_slot)
     eng = Engine(feed, Journal(journal_dir), conf["risk_path"], variants=conf["variants"], d_ms=conf["d_ms"], q=conf["q"],
                  n2_k=conf["n2_k"], segments=conf["segments"], farm=conf["farm"], clock=clock, backup=False,
-                 dev_bounds=(LO - 400_000, HI), groups=config_groups(conf) if with_h else ())
+                 dev_bounds=(LO - 400_000, HI), groups=groups)
     eng.run()
     return eng
 
@@ -99,3 +101,20 @@ def test_a_restart_with_an_open_arm_position_gives_the_same_journal(runs):
     assert again.j.rows("heartbeat") == both.j.rows("heartbeat")
     for w in ("wallet.json", "wallet-h.json"):
         assert json.load(open(os.path.join(again.j.dir, w))) == json.load(open(os.path.join(both.j.dir, w)))
+
+
+def test_the_journal_keeps_k3s_config_sha_and_the_groups_sha(tmp_path):
+    if not os.path.exists(STORE):
+        pytest.skip("dev store not built")
+    here = os.path.dirname(engine.__file__)
+    k3, h = os.path.join(here, "k3-paper-2026-10-12.yaml"), os.path.join(here, "h-arms-2026-10-16.yaml")
+    engine.main(["--from", str(LO), "--to", str(LO + 2_000), "--journal", str(tmp_path / "j"), "--config", k3, "--groups", h,
+                 "--store", STORE, "--no-backup"])
+    j = Journal(str(tmp_path / "j"))
+    assert j.state("config_sha256") == load_config(k3)[0] and j.state("groups_sha256") == load_groups(h)[0]
+    assert j.state("risk_sha256_at_start") and j.state("risk_sha256_at_start:H")
+    assert sorted(json.loads(j.state("groups"))) == ["H", "K3"]
+    engine.main(["--from", str(LO), "--to", str(LO + 2_000), "--journal", str(tmp_path / "k"), "--config", k3, "--store", STORE,
+                 "--no-backup"])
+    k = Journal(str(tmp_path / "k"))
+    assert k.state("groups_sha256") is None and sorted(json.loads(k.state("groups"))) == ["K3"]

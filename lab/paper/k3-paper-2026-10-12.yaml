@@ -20,20 +20,3 @@ d_ms: 600                        # entry and exit delay (owner decision 2026-10-
 q: 0.5
 n2_k: 1                          # N2 shadow: one random token of the same venue, orientation, depth band and hour
 risk: risk.yaml                  # next to this file: size 0.5, at most 5 open, 2.5 SOL exposure, -1 SOL/day, 24 h pool cooldown
-# Added 2026-10-16, before the stop-rule clock started (research/week4-spec-paper-h4h5-2026-10-16.md, sha256
-# abc0f29f; coordinator): group H beside K3 from the live start, a measurement, no test. K3's fields above are
-# unchanged; the stop rule and E14's report count K3 only. H: the arms of H4 and H5 on the organic triggers, its
-# own risk file, daily loss and paper wallet; busy per arm on organic triggers only; it opens only where the farm
-# label had full history (farm_complete and farm_window_complete).
-groups:
-  H:
-    families: [F7]
-    segments: [pool_reversed]
-    farm: organic
-    variants: [flow300_H6, flow300_tp100_H6]
-    d_ms: 600
-    q: 0.5
-    n2_k: 0
-    risk: risk-h.yaml
-    wallet: wallet-h.json
-    require_farm_complete: true
