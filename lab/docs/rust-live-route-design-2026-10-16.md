@@ -18,6 +18,7 @@ Every choice names its source. Facts from this repo cite the file. External fact
 | 5 | Parity: the Rust engine replays the same OF1 chunks or recorded segments, and writes the paper journal's SQLite schema. `paper.parity` compares the two journals: **0 unexplained**. | The proven method of jobs 90/92 (§3). |
 | 6 | Alpenglow: yellowstone-grpc-client **15.0.0** with proto **14.0.1**; per-`(slot, bank_id)` buffers; decisions at `processed`, settled at `finalized`. | Triton's Alpenglow guide and the solana.com upgrade page (§7). |
 | 7 | Metrics: Prometheus text on localhost and a JSON stats file. A separate watchdog process. cargo-fuzz and proptest. | §13–15. |
+| 8 | Cores: a deterministic decision loop on one pinned core (vCPU 7), with network, decoding, journal and metrics in parallel around it; live units first through `CPUWeight=` and `CPUAffinity=`; release with fat LTO and `x86-64-v3` (znver4 only if measured faster); rayon over the NAS's cores for the backtest. | The owner, 2026-10-17; measure first (§16). |
 
 ## 1. Goal and limits
 
@@ -423,6 +424,148 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
   - the fee tiers are monotone in market cap.
 - **Differential tests** against the Python implementation on random legs, until step 4 of §12.
 - **CI as now:** CodeQL Rust on the branch through `workflow_dispatch` before every merge (memory: Rust CodeQL does not run on PRs), cargo audit through the bookworm runner, and dependency review.
+
+## 16. Core use and CPU
+
+The owner asked on 2026-10-17 that the Rust code use the processor and its cores optimally, in favour of the trading bot. That does **not** mean "everything in parallel":
+- **The decision loop stays deterministic, on one dedicated core.** The same order as a replay is what makes parity provable (§3).
+- **Everything that is not a decision runs in parallel around it:** network, decoding, journal writing, metrics.
+- **Measure first, then change, in this order:** the algorithm, then the allocations, then parallelism, then CPU-specific instructions.
+
+The Python paper engine just showed why (profile of 2026-10-17, VPS, K3 + H, 30 one-minute segments):
+- `FarmerFlags.flag` summed a wallet's whole 24 h window per trade, which was 60 % of a restart's replay.
+- A sliding window made it 47× faster (65.8 s → 1.4 s), so the whole replay ran 2× faster on the same single core.
+- More cores would not have found that.
+
+### 16.1 Live (`lab-live`): which thread, which core
+
+| step | thread(s) | vCPU (§16.2) | in → out | budget, p99 per transaction |
+|---|---|---|---|---|
+| Triton stream(s): receive, stamp `t_recv`, a sequence number | Tokio runtime with 1–2 worker threads, network only | 6 | gRPC → bounded queue of raw updates | ≤ 20 µs |
+| Decode: extractor rows (`idl.rs`, `extract.rs`) | 2 decoder threads (more only if the histogram asks) | 6 (and 5, if the Python paper is off) | updates → decoded rows with (slot, tx_index, outer, inner) | ≤ 50 µs |
+| Re-sequence: chain order per slot, a slot released once the next one was seen or its block meta/footer arrived (as LiveFeed's lag) | 1 thread | 6 | rows → ordered events | ≤ 10 µs |
+| **Decision loop:** state (pools, 24 h farmer sums, flow windows), F7 trigger, risk, positions, exits | **1 thread, pinned** | **7** | events → decisions and journal rows | ≤ 20 µs per event |
+| Journal writer: SQLite batches, commit per minute with the HWM (`paper/restart.py`) | 1 thread | 6 | journal rows → disk | off the hot path |
+| Metrics: the HdrHistograms per step (§10), the stats file, Prometheus text | 1 thread, low priority | 6 | stamps → files | off the hot path |
+| Watchdog (§14) | its own process and unit | 0–3 | stats file, journal → stop | — |
+
+- **Why decoding can be parallel:** it is pure: no state, the same input gives the same rows. The re-sequencer restores the order before the decision loop sees anything, so the decisions do not depend on how many decoders ran or in which order they finished.
+- **CPU-bound work stays out of Tokio's async workers.** The Tokio docs say: "you should use a separate thread pool dedicated to CPU bound tasks" (Tokio 1.53, "CPU-bound tasks and blocking code"). `worker_threads` defaults to "the number of cores available to the system" (`runtime::Builder`); we set it to 1–2 explicitly.
+- **Queues:**
+  - between one producer and one consumer (re-sequencer → decision loop → journal writer, decision loop → metrics): `rtrb` 0.4, "a realtime-safe single-producer single-consumer ring buffer". It is wait-free; "a fixed-capacity buffer is allocated on construction"; a full buffer returns an error instead of blocking.
+  - where the decoders feed the re-sequencer (several producers): `crossbeam-channel` 0.5 bounded channels, multi-producer multi-consumer, "an alternative to std::sync::mpsc with more features and better performance". Their docs make no lock-free claim, so they are not used in the decision loop's path.
+- **A full queue is a fault, never silent loss.**
+  - A full queue into the decision loop counts and alarms; the stream reconnects from the last complete slot, as the recorder does.
+  - A full journal queue stops the decision loop (fail closed). The watchdog sees the missing heartbeat (§14).
+- **No allocations in the hot path:**
+  - pubkeys are interned once into `u32` ids (`[u8; 32]` in one table), with no `String` in the loop;
+  - per-pool and per-(pool, wallet) state lives in preallocated slabs;
+  - event buffers are reused;
+  - the farmer sums are a sliding window, as in Python since the change of 2026-10-17.
+
+  A test counts allocations per event (a counting global allocator in the test build) and expects 0 in steady state.
+- **The budget is a hypothesis to measure (§16.6), not a promise.** At ~90 tx/s on average and ×10 peaks (§10), one event has ~1 ms at the peak. The 20 µs budget leaves a margin of ~50×.
+
+### 16.2 The VPS: which core does what
+
+**Facts (measured 2026-10-17):**
+- 8 vCPUs, `AMD EPYC 9645` (Zen 5c), KVM, 1 thread per core, 1 NUMA node (`lscpu`).
+- The vCPU exposes AVX-512 (F, BW, CD, DQ, VL, VNNI, BF16, VBMI, VBMI2, BITALG, IFMA, VPOPCNTDQ): every feature of rustc's `znver5`, and so of `znver4` (`/proc/cpuinfo` against `rustc --print cfg -C target-cpu=…`).
+- User units get only the `cpu`, `memory` and `pids` controllers (`user@1000.service/cgroup.subtree_control`). Two consequences:
+  - `AllowedCPUs=` (the `cpuset` controller, systemd.resource-control(5)) does **not** apply to our units.
+  - `CPUAffinity=` does apply: it is `sched_setaffinity(2)` on the unit's own processes (systemd.exec(5)). `CPUWeight=` and `CPUQuota=` also apply, through the cpu controller.
+- An unprivileged process can only lower its own priority: `ulimit -e` and `ulimit -r` are 0. A higher priority (`Nice=` below 0, `CPUSchedulingPolicy=fifo|rr`) needs `CAP_SYS_NICE` (setpriority(2), sched_setscheduler(2)), and so a system-level change by the owner.
+- In a VM, pinning to a vCPU is not pinning to a physical core: the hypervisor still schedules the vCPU. Pinning still gives fewer migrations inside the guest and a warm cache on the vCPU's current core. Watch `steal` (`vmstat`, `%st`), and journal it with the HdrHistograms.
+
+**Proposal for when `lab-live` runs** (the owner wants the live services first):
+
+| unit | CPUAffinity | CPUWeight | CPUQuota | Nice | MemoryMax | now |
+|---|---|---|---|---|---|---|
+| `lab-live` (hot thread pinned to 7) | 6-7 | 1000 | 200 % | 0 | 2G | — |
+| `lab-recorder` | 4 | 1000 | 100 % | 0 | 2G | 2G, 100 %, Nice 5 |
+| `lab-paper` (Python, the reference) | 5 | 300 | 100 % | 5 | 4G | 4G, 100 %, Nice 5 |
+| Claude sessions, notebooks, UI, retention, NAS jobs started from the VPS | 0-3 | 100 (default) or lower | as now | 10 | as now | — |
+
+- **Weights instead of priorities.** `CPUWeight=` is the relative share under contention: "a higher weight means more CPU time", and the kernel default is 100 (systemd.resource-control(5)). It works without privileges, so it is the way to give the live units precedence inside the user slice.
+- **`CPUQuota=`** is a ceiling ("200 %" is two CPUs). It protects the rest of the machine if a live unit runs away; it does not reserve anything.
+- **The Claude sessions run in scopes** (`worktrees/start-*.sh`), and `CPUAffinity=` is an exec setting that scopes do not take. Their start scripts therefore get `taskset -c 0-3`. Other projects' services (such as `kalshi-dashboard`) are not ours to change (AGENTS.md): their affinity stays as is.
+- **The user slice as a whole** competes with the system slices by its own weight. Raising it is an owner decision (a system-level drop-in), and is not needed for now.
+- **Measure it:** the per-step histograms (§10) with and without this layout, on the paper run. Keep the layout only if the decision loop's p99 improves.
+
+### 16.3 The build profile
+
+```toml
+[profile.release]            # lab-live, lab-recorder, lab-watchdog
+lto = "fat"
+codegen-units = 1
+panic = "abort"              # a panic ends the process: systemd restarts it, the HWM replays (paper/restart.py)
+overflow-checks = true       # as now (lab/live/Cargo.toml)
+```
+
+- **LTO and codegen-units:** "codegen-units = 1" and "fat" LTO trade compile time for speed and size, "not always" faster (The Rust Performance Book, *Build configuration*). The NAS builds are not time-critical, so we take them, and confirm with criterion (§16.6).
+- **`panic = "abort"`** "can slightly reduce binary size, slightly increase runtime speed" (*Build configuration*), and it fits fail-closed. The open SQLite transaction rolls back and the HWM covers the rest.
+  - **Not for `lab/core`:** PyO3 turns a Rust panic into a Python exception and needs unwinding, so `lab/core-py` keeps `panic = "unwind"` in its own profile.
+- **Allocator:** "Replacing the system allocator can greatly improve runtime speed and reduce memory usage, but results depend on the program" (*Build configuration*).
+  - Candidates: `tikv-jemallocator` (heap statistics for §10's profiling) and `mimalloc`.
+  - The choice follows a replay benchmark on the NAS. The steady state allocates nothing anyway (§16.1); the allocator matters for decoding and start-up.
+- **target-cpu: the NAS (Zen 4, Ryzen 7 8845HS) builds, the VPS (Zen 5c) runs.** rustc 1.97.1 offers `x86-64-v3` (AVX2), `x86-64-v4` (AVX-512 F/BW/CD/DQ/VL), `znver4` and `znver5`.
+  - **The default is `x86-64-v3`.** It runs on both machines, and on any host netcup might move the VM to.
+  - **`znver4` only if criterion shows ≥ 5 % on the hot functions.** It runs on both: the VPS exposes every znver4 feature (§16.2), and Zen 4 is the NAS itself.
+  - **Never `native`:** it depends on the build machine (on the NAS it is `znver4`), so the binary is not reproducible. **Never `znver5`:** the NAS tests would hit illegal instructions.
+  - The rustc book on `-C target-feature`: "Using this flag is unsafe and might result in undefined runtime behavior". So every binary checks at start-up, with `is_x86_feature_detected!`, each feature it was compiled for (`cfg!(target_feature = …)`). It refuses to start with a clear message instead of failing later with SIGILL.
+  - The NAS build job keeps its GLIBC check (`objdump -T`, max GLIBC_2.34) and adds the target-cpu to the build log.
+- **AMD's own guides** are the reference for any micro-architectural tuning (cache sizes, AVX-512 throughput): *Software Optimization Guide for the AMD Zen4 Microarchitecture* (pub. 57647) and *… Zen5 Microarchitecture* (pub. 58455, rev. 1.00, August 2024). Nothing in this design depends on them yet; they are where to look when a histogram points at a loop the compiler should vectorise.
+
+### 16.4 Backtest and research (M4): `lab/core` with rayon
+
+- **Parallel over independent units:**
+  - tokens, or pools, of one variant: the tournament evaluates per trade, without a portfolio limit;
+  - variants of one grid.
+- **Not parallel:** busy and the risk limits of a paper group are sequential by nature, and stay in one thread.
+- **Thread count:** `rayon` 1.12 `ThreadPoolBuilder::num_threads` explicitly, defaulting to the NAS's 16 logical CPUs minus 2, settable with `LAB_CORE_THREADS`. The default "may change in future versions" (rayon docs), so we do not rely on it.
+- **The GIL:** `Python::detach` (PyO3 0.30) "temporarily releases the GIL, thus allowing other Python threads to run". Every call from Python into a long Rust computation goes through it.
+- **Determinism:** results must not depend on the thread count.
+  - Every reduction collects per key and sorts before it sums.
+  - Money stays in integer lamports.
+  - A test runs 1 and N threads and compares bytes.
+- **Measure per step:** wall time with 1, 4, 8 and 14 threads per step (fills, exits, the tournament), as a NAS job. The speed-up table goes into the M4 report. Steps that do not scale stay single-threaded.
+
+### 16.5 The Python side
+
+- **The lesson of 2026-10-17 holds there too:** the way of computing first, then cores.
+- Python's paper engine is single-threaded by design (determinism, the GIL). Its one core is vCPU 5 in §16.2.
+- Parallel Python is not planned. The Rust live route is the place for parallelism around a deterministic core.
+
+### 16.6 Measure, do not guess
+
+- **criterion** 0.8, "a statistics-driven micro-benchmarking library", on the hot functions, as a NAS job:
+  - decoding one transaction;
+  - the re-sequencer;
+  - one decision-loop step;
+  - the farmer window update;
+  - encoding one journal row.
+
+  `--save-baseline` per merged commit, so a regression shows up as a number.
+- **The HdrHistogram stamps per step (§10)** in the paper run. The daily report shows p50, p99 and p999 per step, plus the steal time.
+- **perf + `cargo flamegraph`** on a replay of a recorded day (§10's profiling plan).
+- **Optimize only where the measurements point.** Each optimization PR carries its before/after numbers, as the Python `flag()` PR does.
+
+**Sources** (checked 2026-10-17):
+- Tokio 1.53, crate docs, "CPU-bound tasks and blocking code", and `runtime::Builder`: https://docs.rs/tokio/latest/tokio/
+- rtrb 0.4: https://docs.rs/rtrb/latest/rtrb/
+- crossbeam-channel 0.5.17: https://docs.rs/crossbeam-channel/latest/crossbeam_channel/
+- rayon 1.12, `ThreadPoolBuilder`: https://docs.rs/rayon/latest/rayon/struct.ThreadPoolBuilder.html
+- core_affinity 0.8, `set_for_current`, for pinning the decision loop: https://docs.rs/core_affinity/latest/core_affinity/
+- PyO3 0.30.1, `Python::detach`: https://docs.rs/pyo3/latest/pyo3/marker/struct.Python.html
+- criterion 0.8.2: https://docs.rs/criterion/latest/criterion/
+- The Rust Performance Book, *Build configuration*: https://nnethercote.github.io/perf-book/build-configuration.html
+- The rustc book, *Codegen options* (`target-cpu`, `target-feature`): https://doc.rust-lang.org/rustc/codegen-options/index.html
+- systemd 255 man pages on the VPS:
+  - systemd.exec(5): `CPUAffinity=`, `Nice=`, `CPUSchedulingPolicy=`;
+  - systemd.resource-control(5): `CPUWeight=`, `CPUQuota=`, `AllowedCPUs=`;
+  - online at https://www.freedesktop.org/software/systemd/man/latest/ (it refused automated fetching, so the installed pages were read);
+  - with sched_setaffinity(2), setpriority(2) and sched_setscheduler(2).
+- AMD, *Software Optimization Guide for the AMD Zen4 Microarchitecture* (pub. 57647) and *… Zen5 Microarchitecture* (pub. 58455, rev. 1.00): both are listed with their publication numbers in the kernel's collection of AMD reference documents, https://bugzilla.kernel.org/show_bug.cgi?id=206537.
 
 ## The owner's answers (2026-10-16, through the coordinator)
 
