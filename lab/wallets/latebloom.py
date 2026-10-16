@@ -287,8 +287,9 @@ def ci(lo, hi, nd=1, pct=False, sign=False):
     return "–" if lo is None else f"[{fmt(lo, nd, pct, sign)} … {fmt(hi, nd, pct, sign)}]"
 
 
-def analyse(con, block_where, boot):
-    """Rows of the per-feature table for one block: AUC, quintile / category shares and net at 5 min."""
+def analyse(con, block_where, boot, features=None):
+    """Rows of the per-feature table for one block: AUC, quintile / category shares and net at 5 min (features: the
+    (name, sql, description) triples to score; default FEATURES)."""
     rows = con.execute(f"SELECT day, late_5::INT, least(net_5m, {NET_CAP}) FROM lb WHERE {block_where} AND net_5m IS NOT NULL").fetchall()
     if not rows:
         return []
@@ -299,7 +300,7 @@ def analyse(con, block_where, boot):
     net = np.array([r[2] for r in rows], dtype=float)
     ones = np.ones(len(rows))
     out = []
-    for name, expr, desc in FEATURES:
+    for name, expr, desc in (features or FEATURES):
         vals = con.execute(f"SELECT {expr} FROM lb WHERE {block_where} AND net_5m IS NOT NULL").fetchall()
         x = np.array([np.nan if v[0] is None else float(v[0]) for v in vals])
         ok = ~np.isnan(x)
@@ -339,9 +340,11 @@ def analyse(con, block_where, boot):
     return out
 
 
-def render(con, info, results):
+def render(con, info, results, features=None, title=None, intro=None):
+    """The report: outcome shares per block, the per-feature tables, the definitions (features / title / intro: an addendum
+    such as latebloom_transfers renders its own feature set with the same tables)."""
     tot = con.execute("SELECT count(*), count(net_5m), count(drain_slot) FROM lb").fetchone()
-    L = [f"## Late bloomers vs drains (exploratory, spec E §3): {FAMILY} {SEGMENT}, dev2, d = {D}, 0.5 SOL\n",
+    L = [title or f"## Late bloomers vs drains (exploratory, spec E §3): {FAMILY} {SEGMENT}, dev2, d = {D}, 0.5 SOL\n",
          f"Triggers {tot[0]:,} (distinct pool, t), with a 5-min markout {tot[1]:,}, with a drain observed {tot[2]:,}. "
          "Outcome at h ∈ {5 min, 15 min}: **late** = the pool is not drained by t + d + h and the net markout at h is > 0; "
          "**drained** = the LP drain (≥ 90 % of the WSOL, research D) is at or before t + d + h; **lower** = the rest. "
@@ -349,6 +352,8 @@ def render(con, info, results):
          f"Per feature: AUC of late_5 against the rest (0.5 = no separation), late share and mean net at 5 min (capped at +{NET_CAP:.0%}) "
          "per quintile (per category when ≤ 6 values), top − bottom with a day bootstrap "
          f"({info['boot']:,}×; days drawn together). Descriptive on used data: no model, no selection, no threshold.\n"]
+    if intro is not None:
+        L[1] = intro
     L.append("### Outcome shares per block\n")
     L.append("| block | n | late 5 min | drained by 5 min | lower at 5 min | late 15 min | drained by 15 min | lower at 15 min | net 5 min (mean, capped) | net 5 min (median) |")
     L.append("|---|---|---|---|---|---|---|---|---|---|")
@@ -379,8 +384,8 @@ def render(con, info, results):
                 L.append(f"| {r['feature']} | {b_['label']} | {b_['n']:,} | {fmt(b_['late'], 1, True)} | {ci(*b_['late_ci'], nd=1, pct=True)} | {fmt(b_['net'], 1, True, True)} | {ci(*b_['net_ci'], nd=1, pct=True, sign=True)} |")
         L.append("\n</details>")
     L.append("\n### Feature definitions\n")
-    L += [f"- `{n}`: {d}" for n, _, d in FEATURES]
-    L.append(f"\nRun: commit {info['commit']}, {info['seconds']} s, buckets {info['buckets']}, lookback {info['lookback_slots']}.")
+    L += [f"- `{n}`: {d}" for n, _, d in (features or FEATURES)]
+    L.append(f"\nRun: commit {info['commit']}, {info['seconds']} s, buckets {info.get('buckets')}, lookback {info.get('lookback_slots')}.")
     return "\n".join(L)
 
 
