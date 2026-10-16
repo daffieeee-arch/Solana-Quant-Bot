@@ -5,6 +5,7 @@ itself runs on the NAS (backtest/nas_clean_h4.sh)."""
 import hashlib
 import json
 import os
+import subprocess
 from types import SimpleNamespace
 
 import duckdb
@@ -17,10 +18,17 @@ from backtest import clean_test as ct
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(h4.__file__)))
 
 
-def test_the_replay_code_is_this_checkouts():
-    """The pin's hashes are this checkout's files (the PR of the job merges them unchanged into main)."""
+H4_PIN = "165bb04e2b12ff939fcad30ff7f8e51c9321ac62"  # #291's squash merge (#167): main moves on, H4 runs from its pin
+
+
+def test_the_replay_hashes_are_the_h4_pins_files():
     assert set(h4.REPLAY_SHA256_H4) == set(ct.REPLAY_SHA256)
-    assert h4.check_replay(os.path.join(HERE, "backtest")) == sorted(h4.REPLAY_SHA256_H4)
+    try:
+        blobs = {f: subprocess.run(["git", "-C", HERE, "show", f"{H4_PIN}:lab/backtest/{f}"], capture_output=True, check=True).stdout
+                 for f in h4.REPLAY_SHA256_H4}
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pytest.skip("no git history with the H4 pin")
+    assert {f: hashlib.sha256(b).hexdigest() for f, b in blobs.items()} == h4.REPLAY_SHA256_H4
 
 
 def test_another_replay_code_is_refused(tmp_path, monkeypatch):
