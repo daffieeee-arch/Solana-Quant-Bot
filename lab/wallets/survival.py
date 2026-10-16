@@ -97,7 +97,11 @@ def build(con, clock, end_slot, observe_slots):
              (SELECT min(w.slot) FROM wd w WHERE w.pool = tr.pool AND w.slot > tr.t AND w.frac >= {DRAIN_FRAC}) AS drain_slot,
              (SELECT min(w.slot) FROM wd w WHERE w.pool = tr.pool AND w.slot > tr.t) AS first_withdraw_slot,
              (SELECT arg_min(w.frac, (w.slot, w.tx_index)) FROM wd w WHERE w.pool = tr.pool AND w.slot > tr.t) AS first_withdraw_frac,
-             (SELECT max(g.slot) FROM gaps g WHERE g.pool = tr.pool AND g.slot > tr.t) AS last_trade_slot,
+             -- the last trade inside the trigger's own observation (review 2026-10-16: a max over the whole range
+             -- that was then nulled at the censor slot lost an earlier, valid last trade whenever a trade followed
+             -- the censor slot)
+             (SELECT max(g.slot) FROM gaps g WHERE g.pool = tr.pool AND g.slot > tr.t
+              AND g.slot < least({hi_obs}, tr.t + {observe_slots if observe_slots else end_slot})) AS last_trade_slot,
              {gap_cols},
              least({hi_obs}, tr.t + {observe_slots if observe_slots else end_slot}) AS censor_slot
       FROM trig tr""")

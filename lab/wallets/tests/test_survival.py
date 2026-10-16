@@ -96,3 +96,32 @@ def test_regime_groups_round_per_epoch_ms_and_rerender(tmp_path):
     (tmp_path / "out" / "survival.md").write_text("stale")
     survival.rerender(str(tmp_path / "out"))
     assert (tmp_path / "out" / "survival.md").read_text() == md
+
+
+def test_last_trade_is_bounded_per_trigger_window(tmp_path):
+    """Review of main 59cc71d (Codex, 2026-10-16), point 6: last_trade_slot was the maximum over the whole range and
+    then nulled at the censor slot, so a trade after a trigger's observation hid its earlier, valid last trade (and the
+    'drain after the last trade' count missed it). Two triggers on one pool with different observation ends."""
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": SLOT0, "slot_end_exclusive": SLOT0 + 432_000, "ms_per_slot": {str(SLOT0 // 432_000): 400.0}})])
+    con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, b BIGINT, base BIGINT, sol_amount BIGINT)")
+    rows = [("sell", "P8", S + 5, 1, 100 * SOL, 1 * SOL, 1 * SOL), ("sell", "P8", S + 100, 1, 100 * SOL, 1 * SOL, 1 * SOL), ("sell", "P8", S + 3500, 1, 100 * SOL, 1 * SOL, 1 * SOL)]
+    rows += [("sell", "P9", S + 5, 1, 100 * SOL, 1 * SOL, 1 * SOL), ("sell", "P9", S + 100, 1, 100 * SOL, 1 * SOL, 1 * SOL),
+             ("withdraw", "P9", S + 2500, 1, 100 * SOL, 100 * SOL, 0), ("sell", "P9", S + 3500, 1, 100 * SOL, 1 * SOL, 1 * SOL)]
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+    con.close()
+    base = {"family": "F7", "variant": "tp4_T600", "segment": "pool_reversed", "venue": "pool", "orientation": "reversed", "day": "2026-09-11", "farm": "organic"}
+    os.makedirs(tmp_path / "parts")
+    pq.write_table(pa.Table.from_pylist([{**base, "mint": "M8", "pool": "P8", "t": S}, {**base, "mint": "M8", "pool": "P8", "t": S + 2000},
+                                         {**base, "mint": "M9", "pool": "P9", "t": S}]), tmp_path / "parts" / "part-0.parquet")
+    survival.run(str(tmp_path / "parts"), str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), observe_slots=3000)
+    con = duckdb.connect()
+    r = {(x[0], x[1]): x[2:] for x in con.execute(f"SELECT pool, t, last_trade_slot, censor_slot, drain_slot, event FROM '{tmp_path / 'out' / 'survival.parquet'}'").fetchall()}
+    # P8 at t = S (censor S + 3000): the last trade inside the window is S + 100 (the old code: NULL, because of the trade at S + 3500)
+    assert r[("P8", S)] == (S + 100, S + 3000, None, False)
+    # P8 at t = S + 2000 (censor S + 5000): the trade at S + 3500 is inside its window
+    assert r[("P8", S + 2000)] == (S + 3500, S + 5000, None, False)
+    # P9: drained at S + 2500 after its last trade at S + 100; the trade after the censor slot no longer hides that
+    assert r[("P9", S)] == (S + 100, S + 3000, S + 2500, True)
+    assert con.execute(f"SELECT count(*) FILTER (event AND drain_slot > last_trade_slot) FROM '{tmp_path / 'out' / 'survival.parquet'}'").fetchone() == (1,)

@@ -228,6 +228,8 @@ def _chunk_review(root):
                 "in_trade": in_trade, "owner_unresolved": False, "fee_payer": src or dst, "has_pump_event": in_trade, "failed": False}
     pq.write_table(pa.Table.from_pylist([
         tt(S, 1, "mint_to", None, keys.curve_pda(M2), SUPPLY, True),
+        # the bundle's in-trade transfers: the curve pays B2's 20 to the PDA P and C2's 20 to C2 (the real connection of P's kept row)
+        tt(S + 60, 1, "transfer_checked", keys.curve_pda(M2), "P", 20 * U, True), tt(S + 60, 1, "transfer_checked", keys.curve_pda(M2), "C2", 20 * U, True),
         tt(S + 200, 1, "transfer", "I", "B", 50 * U, False), tt(S + 100, 1, "transfer", "B", "C", 50 * U, False), tt(S + 300, 1, "transfer", "I", "D", 20 * U, False)]),
         d / "token_transfers" / "part-00000.parquet")
     pq.write_table(pa.Table.from_pylist([{"slot": S + 1, "tx_index": 1, "ix_path": "1", "from_account": "F", "to_account": "w0", "lamports": 50_000_000, "kind": "transfer",
@@ -410,3 +412,110 @@ def test_router_and_temporary_account_hops_count_once(tmp_path, monkeypatch):
     assert q1[S + 72] == (55 * U, 10 * U, 10 / 55)
     # at S + 77: W 0, FEE 2, U1 23, PB 10, CUST 12 = 47; the signers SIG and SIG2 hold nothing (with their legs added: 39)
     assert q1[S + 77] == (47 * U, 10 * U, 10 / 47)
+
+
+# ----------------------------------------------------------------------------- review of main 59cc71d (Codex, 2026-10-16): points 4 and 5
+M4 = "M4pump"
+
+
+def _mini_store(path, mint, curve_rows):
+    con = duckdb.connect(str(path))
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"ms_per_slot": {str(E): 267.3}})])
+    con.execute("CREATE TABLE blocks (slot UBIGINT, block_time BIGINT)")
+    con.executemany("INSERT INTO blocks VALUES (?, ?)", [(x, T0 + (x - S) // 100 * 86_400) for x in range(S - 10, S + 500)])
+    con.execute("CREATE TABLE mints (mint VARCHAR, create_slot UBIGINT, creator VARCHAR, supply UBIGINT, mayhem BOOLEAN, cashback BOOLEAN, holder_reward BOOLEAN)")
+    con.execute("INSERT INTO mints VALUES (?, ?, 'CR', ?, false, false, false)", [mint, S, SUPPLY])
+    con.execute("CREATE TABLE curve (mint VARCHAR, slot UBIGINT, tx_index UBIGINT, is_buy BOOLEAN, t HUGEINT, q HUGEINT, trader VARCHAR, variant VARCHAR)")
+    con.executemany("INSERT INTO curve VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(mint, *r) for r in curve_rows])
+    con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, quote_class VARCHAR, orientation VARCHAR, create_slot UBIGINT)")
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR, trader VARCHAR, token_buy BOOLEAN, token_amount BIGINT, sol_amount BIGINT, base BIGINT)")
+    con.close()
+
+
+def _mini_chunk(root, mint, td_rows, tt_rows):
+    d = root / "c0"
+    for t in ("token_deltas", "token_transfers", "sol_funding"):
+        (d / t).mkdir(parents=True)
+    (d / "_manifest.json").write_text(json.dumps({"status": "complete", "slot_start": LO, "slot_end_exclusive": LO + 432_000, "extractor_sha256": "abc"}))
+
+    def td(slot, tx, owner, delta, vault=False, trade=True):
+        return {"slot": slot, "tx_index": tx, "mint": mint, "owner": owner, "token_account": owner + "_ta", "delta_raw": str(delta), "decimals": 6,
+                "is_vault": vault, "has_pump_event": trade, "has_pump_event_same_mint": trade, "fee_payer": owner, "failed": False}
+
+    def tt(slot, tx, kind, src, dst, amount, in_trade, ix="1.1"):
+        return {"slot": slot, "tx_index": tx, "ix_path": ix, "program": "token", "kind": kind, "mint": mint, "source_account": None, "source_owner": src,
+                "dest_account": None, "dest_owner": dst, "authority": src, "amount_raw": amount, "decimals": 6, "outer_program": "pump" if in_trade else "token",
+                "in_trade": in_trade, "owner_unresolved": False, "fee_payer": src or dst, "has_pump_event": in_trade, "failed": False}
+    pq.write_table(pa.Table.from_pylist([td(*r) if isinstance(r, tuple) else r for r in td_rows]), d / "token_deltas" / "part-00000.parquet")
+    pq.write_table(pa.Table.from_pylist([tt(*r) for r in tt_rows]), d / "token_transfers" / "part-00000.parquet")
+    pq.write_table(pa.Table.from_pylist([{"slot": S + 1, "tx_index": 1, "ix_path": "1", "from_account": "F", "to_account": "w0", "lamports": 50_000_000, "kind": "transfer",
+                                          "fee_payer": "F", "has_pump_event": False, "failed": False}]), d / "sol_funding" / "part-00000.parquet")
+    return str(root)
+
+
+def test_review_q1b_counts_receipts_in_transaction_order_not_slot_order(tmp_path, monkeypatch):
+    """Point 4: the same slot is not the same time. An insider transfer in transaction 9 of a slot does not explain a
+    sale in transaction 2 of that slot (the old `h.slot <= s.slot` made it 100 % explained); one in an earlier
+    transaction does. A second hop in the same transaction as the first counts only when the instruction order proves
+    it (numerically: ix 10.1 is after 9.2)."""
+    CV2 = keys.curve_pda(M4)
+    _mini_store(tmp_path / "s.duckdb", M4, [
+        (S, 1, True, 300 * U, 3 * 10**9, "CR", "buy"), (S + 5, 1, True, 100 * U, 10**9, "I", "buy"),
+        (S + 40, 1, False, 5 * U, 5 * 10**7, "E", "sell"),                       # a non-insider sale before t: legs-only share 400 / 395 > 1
+        (S + 100, 2, False, 10 * U, 10**8, "A", "sell"),                         # A sells in tx 2, I -> A lands in tx 9 of the same slot: not explained
+        (S + 120, 5, False, 10 * U, 10**8, "B", "sell"),                         # B sells in tx 5, I -> B in tx 1 of the same slot: explained
+        (S + 140, 3, False, 10 * U, 10**8, "C", "sell"),                         # I -> B2 (ix 1.1) then B2 -> C (ix 1.2) in one tx: a proven second hop
+        (S + 160, 3, False, 10 * U, 10**8, "D", "sell"),                         # B3 -> D (ix 1.1) before I -> B3 (ix 1.2) in one tx: not insider tokens
+        (S + 180, 3, False, 10 * U, 10**8, "F", "sell"),                         # B4 -> F in tx 2, I -> B4 in tx 5 of the same slot: not insider tokens
+        (S + 195, 1, False, 10 * U, 10**8, "G", "sell")])                        # I -> B5 (ix 9.2) then B5 -> G (ix 10.1): proven (numeric, not text, order)
+    root = _mini_chunk(tmp_path / "chunks", M4, [(S, 1, CV2, SUPPLY - 300 * U, True)], [
+        (S, 1, "mint_to", None, CV2, SUPPLY, True),
+        (S + 100, 9, "transfer", "I", "A", 10 * U, False),
+        (S + 120, 1, "transfer", "I", "B", 10 * U, False),
+        (S + 130, 1, "transfer", "I", "B2", 10 * U, False, "1.1"), (S + 130, 1, "transfer", "B2", "C", 10 * U, False, "1.2"),
+        (S + 150, 1, "transfer", "I", "B3", 10 * U, False, "1.2"), (S + 150, 1, "transfer", "B3", "D", 10 * U, False, "1.1"),
+        (S + 170, 5, "transfer", "I", "B4", 10 * U, False), (S + 170, 2, "transfer", "B4", "F", 10 * U, False),
+        (S + 190, 1, "transfer", "I", "B5", 10 * U, False, "9.2"), (S + 190, 1, "transfer", "B5", "G", 10 * U, False, "10.1")])
+    pq.write_table(pa.Table.from_pylist([{"mint": M4, "t": S + 50}]), tmp_path / "trig.parquet")
+    monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    transfers.main(["--chunks", root, "--triggers", str(tmp_path / "trig.parquet"), "--out", str(out)])
+    con = duckdb.connect()
+    r = con.execute(f"SELECT share_legs, sellers, sold_1h, from_insider_1hop, from_insider_2hops, explained_share FROM '{out}/q1_triggers.parquet'").fetchone()
+    assert r[0] > 1 and r[1] == 6 and r[2] == 60 * U
+    # one hop: B only (A's receipt is later in the slot); two hops: B, C and G -> 30 of 60 (the old code: 60 of 60)
+    assert r[3] == 10 * U and r[4] == 30 * U and abs(r[5] - 0.5) < 1e-12
+
+
+M5 = "M5pump"
+
+
+def test_review_equal_amount_in_the_same_transaction_is_no_account_relation(tmp_path, monkeypatch):
+    """Point 5: a real buy of 100 by A plus an independent transfer of 100 (Z -> W) in the same transaction. The old
+    one-to-one match on the amount let W's kept row stand in for A's leg: A vanished and the mint-day was 100 short.
+    A kept row replaces a leg only with a real connection (an in-trade transfer to its account or owner, or a hop
+    from a trader of the transaction)."""
+    CV2 = keys.curve_pda(M5)
+    _mini_store(tmp_path / "s.duckdb", M5, [
+        (S, 1, True, 300 * U, 3 * 10**9, "CR", "buy"), (S + 5, 1, True, 100 * U, 10**9, "I", "buy"),
+        (S + 55, 1, True, 100 * U, 10**9, "Z", "buy"),                     # Z buys 100 (its row equals the leg: dropped), after the insider window
+        (S + 60, 1, True, 100 * U, 10**9, "A", "buy")])                    # A buys 100 in the transaction that also moves Z's 100 to W
+    root = _mini_chunk(tmp_path / "chunks", M5, [
+        (S, 1, CV2, SUPPLY - 300 * U, True),
+        (S + 60, 1, "Z", -100 * U), (S + 60, 1, "W", 100 * U)],           # the independent transfer's rows are kept; A's and the vault's are dropped
+        [(S, 1, "mint_to", None, CV2, SUPPLY, True), (S, 1, "transfer_checked", CV2, "CR", 300 * U, True),
+         (S + 5, 1, "transfer_checked", CV2, "I", 100 * U, True), (S + 55, 1, "transfer_checked", CV2, "Z", 100 * U, True),
+         (S + 60, 1, "transfer_checked", CV2, "A", 100 * U, True), (S + 60, 1, "transfer", "Z", "W", 100 * U, False, "2.1")])
+    pq.write_table(pa.Table.from_pylist([{"mint": M5, "t": S + 70}]), tmp_path / "trig.parquet")
+    monkeypatch.setenv("LAB_STORE", str(tmp_path / "s.duckdb"))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    transfers.main(["--chunks", root, "--triggers", str(tmp_path / "trig.parquet"), "--out", str(out)])
+    con = duckdb.connect()
+    cons = con.execute(f"SELECT held, minted, diff, ok FROM '{out}/conservation.parquet' ORDER BY day").fetchall()
+    assert cons and all(c[0] == SUPPLY and c[2] == 0 and c[3] for c in cons)   # the old code: held 900, diff -100
+    r = con.execute(f"SELECT circ, h_ins, holders, neg_owners FROM '{out}/q1_triggers.parquet'").fetchone()
+    # CR 300 + I 100 + Z 0 + A 100 + W 100 = 600 in circulation (the old code: 500, A missing); insiders CR and I
+    assert r == (600 * U, 400 * U, 4, 0)
