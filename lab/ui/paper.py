@@ -8,11 +8,13 @@ Sources (never written to):
             picks the root (default <data>/recorder); without a budget.json the page shows the sample in
             lab/ui/paper_sample/recorder, marked as such.
 
-The numbers mirror lab/paper/report.py (daily report): trades and net SOL per trade count failed entries,
-the stop-rule counter covers every paper day of the traded families (not N2), the CI is a day-clustered
-bootstrap from 5 days on, and the capital simulation is backtest.report.capital_sim (10 SOL, 5 positions).
-The bootstrap here is pure Python (the server has no numpy), so its CI can differ from the report's in the
-last digit; mean, trades and verdict are the same.
+The numbers mirror lab/paper/report.py (daily report). Which exits the stop rule counts, what a trade is and the
+clock come from lab/paper/stoprule.py, the same functions the report calls: the primary group (K3) only, filled
+trades (a failed entry costs but is no trade), and with a clock start the trades entered from its day; without one
+a count of every paper day, no decision. The capital simulation (backtest.report.capital_sim, 10 SOL, 5 positions)
+runs over the same trades. Further groups (H) get a measurement of their own, no test. The CI is a day-clustered
+bootstrap from 5 days on, in pure Python (the server has no numpy), so it can differ from the report's in the last
+digit; mean, trades and verdict are the same.
 
 Slots of the hold-out window (epochs 1047-1051) are never shown: a journal row that touches one is dropped
 and counted, as is any recorder usage of such a segment.
@@ -21,6 +23,7 @@ import bisect
 import calendar
 import glob
 import heapq
+import importlib.util
 import json
 import os
 import random
@@ -40,6 +43,18 @@ POSITIONS_SHOWN = 300
 SLOT_COLS = ("t", "entry_slot", "exit_slot", "exit_decision_slot", "slot", "last_slot")
 _segments = {}  # _segment.json path -> its summary (complete segments do not change); None: not shown
 _names = {}  # journal key (mint or pool) -> {"mint", "symbol", "name"}; names do not change
+
+
+def _load_stoprule():
+    """lab/paper/stoprule.py by its path (stdlib only; the name 'paper' is this module's here)."""
+    spec = importlib.util.spec_from_file_location(
+        "lab_paper_stoprule", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "paper", "stoprule.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+stoprule = _load_stoprule()
 
 
 def journal_path():
@@ -156,20 +171,31 @@ def boot(sums, cnts, n=1000, seed=7):
     return (percentile(means, 2.5), percentile(means, 97.5)) if means else (None, None)
 
 
-def verdict(pnl_by_day, n):
-    """paper.report._verdict, in SOL: (mean, lo, hi, verdict); 'too few trades' below MIN_TRADES."""
+def verdict(pnl_by_day, n, filled_by_day):
+    """paper.report._verdict, in SOL: (mean, lo, hi, verdict). pnl_by_day holds every exit's P&L (failed entries'
+    costs included), n and filled_by_day count the filled trades (stoprule.stop_rule_inputs)."""
     days = sorted(pnl_by_day)
     mean = sum(sum(v) for v in pnl_by_day.values()) / n / 1e9 if n else None
     lo = hi = None
     if len(days) >= MIN_DAYS_CI:
-        lo, hi = boot([sum(pnl_by_day[d]) / 1e9 for d in days], [len(pnl_by_day[d]) for d in days])
-    if mean is None or n < MIN_TRADES:
-        v = "too few trades"
-    elif lo is not None and lo > 0:
-        v = "GO"
-    else:
-        v = "ADJUST" if mean > 0 else "STOP"
-    return mean, lo, hi, v
+        lo, hi = boot([sum(pnl_by_day[d]) / 1e9 for d in days], [filled_by_day.get(d, 0) for d in days])
+    return mean, lo, hi, stoprule.decide(mean, lo, n, MIN_TRADES)
+
+
+def stop_rule(exits, orders, state, day):
+    """The stop-rule counter and its trades on `day`, as the daily report counts them (stoprule.counted)."""
+    primary, further = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
+    clock = stoprule.parse_clock(state.get(stoprule.CLOCK_KEY))
+    trades = stoprule.counted(exits, orders, day, primary, clock)
+    by_day, filled_by_day, n = stoprule.stop_rule_inputs([dict(x, pnl=x["pnl"] or 0) for x in trades])
+    mean, lo, hi, v = verdict(by_day, n, filled_by_day)
+    st = stoprule.clock_state(clock, day, n, MIN_TRADES)
+    return {"trades": n, "entry_failed": len(trades) - n, "days": len(by_day), "min_trades": MIN_TRADES,
+            "min_days_ci": MIN_DAYS_CI, "mean_sol_per_trade": mean, "ci_lo": lo, "ci_hi": hi, "verdict": v,
+            "primary": sorted(primary) if primary else None,
+            "clock": None if clock is None else {"date": str(clock.get("date")), "reason": str(clock.get("reason", ""))[:300],
+                                                 "set_at": str(clock.get("set_at", ""))[:40], **st},
+            "clock_days": stoprule.CLOCK_DAYS, "clock_max_days": stoprule.CLOCK_MAX_DAYS}, trades, primary, further
 
 
 def capital_sim(trades, start=CAPITAL_SOL * 1e9, max_positions=MAX_POSITIONS):
@@ -243,6 +269,7 @@ def journal_view(path, now):
     try:
         beats = j.rows("heartbeat")
         exits = j.rows("exits")
+        orders = j.rows("orders")
         signals = {(s["family"], s["variant"], s["key"], s["t"]): s for s in j.rows("signals")}
         positions = j.rows("positions", "status = 'open'")
         usage = j.rows("usage")
@@ -268,6 +295,10 @@ def journal_view(path, now):
         "risk_sha256_at_start": str(state.get("risk_sha256_at_start") or "")[:64] or None,
     }
 
+    # The page is the primary group's (K3) with its N2 shadows; further groups (H) get a measurement section apart.
+    stop, counted, primary, further = stop_rule(exits, orders, state, day)
+    ours = lambda f, v: not f.startswith("N2_") and (primary is None or v in primary)  # noqa: E731
+    shade = lambda f, v: f.startswith("N2_") and (primary is None or v in primary)  # noqa: E731
     by_group = defaultdict(list)
     for x in exits:
         if x["day"] == day:
@@ -277,9 +308,9 @@ def journal_view(path, now):
         open_by[(p["family"], p["variant"])] += 1
     groups = sorted(set(by_group) | set(open_by))
     variants = [{"family": f, "variant": v, "open": open_by[(f, v)], **group_stats(by_group[(f, v)])}
-                for f, v in groups if not f.startswith("N2_")]
-    traded_today = [x for (f, _), xs in by_group.items() if not f.startswith("N2_") for x in xs]
-    totals = {"open": sum(n for (f, _), n in open_by.items() if not f.startswith("N2_")), **group_stats(traded_today)}
+                for f, v in groups if ours(f, v)]
+    traded_today = [x for (f, v), xs in by_group.items() if ours(f, v) for x in xs]
+    totals = {"open": sum(n for (f, v), n in open_by.items() if ours(f, v)), **group_stats(traded_today)}
 
     last_slot = last["last_slot"] if last else None
     clock = slot_clock(beats)
@@ -306,17 +337,17 @@ def journal_view(path, now):
         return r
 
     closed = sorted((x for x in traded_today), key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
-    pos = [pos_row(p) for p in positions if not p["family"].startswith("N2_")]
+    pos = [pos_row(p) for p in positions if ours(p["family"], p["variant"])]
     pos += [pos_row(x, x) for x in closed[:POSITIONS_SHOWN]]
-    shadow_today = sorted((x for (f, _), xs in by_group.items() if f.startswith("N2_") for x in xs),
+    shadow_today = sorted((x for (f, v), xs in by_group.items() if shade(f, v) for x in xs),
                           key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
     shadow_rows = [pos_row(x, x) for x in shadow_today[:POSITIONS_SHOWN]]
     names = token_names([r["key"] for r in pos + shadow_rows])
     for r in pos + shadow_rows:
         r.update(names.get(r["key"], {}))
 
-    traded = [x for x in exits if not x["family"].startswith("N2_")]
-    shadow_all = [x for x in exits if x["family"].startswith("N2_")]
+    traded = [x for x in exits if ours(x["family"], x["variant"])]
+    shadow_all = [x for x in exits if shade(x["family"], x["variant"])]
     week = utc_day(calendar.timegm(time.strptime(day, "%Y-%m-%d")) - 6 * 86_400)
     ranges = {"1d": range_stats([x for x in traded if x["day"] == day], [x for x in shadow_all if x["day"] == day]),
               "7d": range_stats([x for x in traded if week <= x["day"] <= day], [x for x in shadow_all if week <= x["day"] <= day]),
@@ -325,14 +356,9 @@ def journal_view(path, now):
     tnames = token_names([t["key"] for t in ticker])
     for t in ticker:
         t.update(symbol=tnames[t["key"]].get("symbol"), mint=tnames[t["key"]].get("mint"))
-    by_day = defaultdict(list)
-    for x in traded:
-        by_day[x["day"]].append(x["pnl"] or 0)
-    mean, lo, hi, v = verdict(by_day, len(traded))
-    stop = {"trades": len(traded), "days": len(by_day), "min_trades": MIN_TRADES, "min_days_ci": MIN_DAYS_CI,
-            "mean_sol_per_trade": mean, "ci_lo": lo, "ci_hi": hi, "verdict": v}
+    # The capital simulation over the stop rule's trades, as the daily report.
     final, mdd, taken, skipped, curve = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"] or 0, x["pnl"] or 0,
-                                                      not x["tokens"]) for x in traded])
+                                                      not x["tokens"]) for x in counted])
     capital = {"start_sol": CAPITAL_SOL, "max_positions": MAX_POSITIONS, "final_sol": final / 1e9, "max_drawdown": mdd,
                "taken": taken, "skipped": skipped, "curve": [round(c, 4) for c in thin(curve)]}
 
@@ -340,7 +366,7 @@ def journal_view(path, now):
     all_by = defaultdict(list)
     for x in exits:
         all_by[(x["family"], x["variant"])].append(x)
-    for (f, var) in sorted(k for k in all_by if not k[0].startswith("N2_")):
+    for (f, var) in sorted(k for k in all_by if ours(*k)):
         shadow = all_by.get(("N2_" + f, var))
         own_t, sh_t = group_stats(by_group.get((f, var), [])), group_stats(by_group.get(("N2_" + f, var), []))
         own_a, sh_a = group_stats(all_by[(f, var)]), group_stats(shadow or [])
@@ -352,7 +378,22 @@ def journal_view(path, now):
 
     return {"journal": run, "test_run": run.startswith("parity"), "day": day, "is_today": day == today,
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
-            "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows, "journal_usage_rows": len(usage), "holdout_rows_dropped": j.dropped}
+            "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
+            "arms": arm_groups(exits, positions, further, day), "journal_usage_rows": len(usage),
+            "holdout_rows_dropped": j.dropped}
+
+
+def arm_groups(exits, positions, further, day):
+    """Further groups (H), per variant: a measurement, no test (paper.report.arm_lines). Up to `day`."""
+    out = []
+    for group, variants in sorted(further.items()):
+        rows = []
+        for v in variants:
+            xs = [x for x in exits if x["family"] == "F7" and x["variant"] == v and x["day"] <= day]
+            rows.append({"variant": v, **group_stats(xs), "today_sol": sum(x["pnl"] or 0 for x in xs if x["day"] == day) / 1e9,
+                         "open": sum(1 for p in positions if p["family"] == "F7" and p["variant"] == v)})
+        out.append({"group": group, "variants": rows})
+    return out
 
 
 def key_trades(key):
@@ -640,10 +681,13 @@ def wallet_view(now):
             orders = j.rows("orders")
             fills = j.rows("fills")
             beats = j.rows("heartbeat")
+            state = {r["k"]: r["v"] for r in j.rows("state")}
         finally:
             j.close()
         clock = slot_clock(beats)
-        own = lambda r: not r["family"].startswith("N2_")  # noqa: E731
+        primary, _ = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
+        # The bot's wallet is the primary group's (K3); the arms (H) keep their own paper wallet.
+        own = lambda r: not r["family"].startswith("N2_") and (primary is None or r["variant"] in primary)  # noqa: E731
         traded = [x for x in exits if own(x)]
         days = sorted({x["day"] for x in traded if x["day"]})
         today = utc_day(now)
@@ -677,10 +721,12 @@ def wallet_view(now):
             t.update(symbol=n.get("symbol"), mint=n.get("mint"))
         realised = sum(x["pnl"] or 0 for x in traded) / 1e9
         today_net = sum(x["pnl"] or 0 for x in t_day) / 1e9
-        # The wallet a bot with this capital would hold: the capital simulation (10 SOL, at most 5 positions),
-        # not the sum of every journaled trade (a parity run trades without capital limits).
+        # The wallet a bot with this capital would hold: the capital simulation (10 SOL, at most 5 positions) over the
+        # stop rule's trades, as the Paper tab and the daily report; not the sum of every journaled trade (a parity
+        # run trades without capital limits).
+        _, counted, _, _ = stop_rule(exits, orders, state, day)
         final, _, taken, skipped, _ = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"] or 0, x["pnl"] or 0,
-                                                    not x["tokens"]) for x in traded])
+                                                    not x["tokens"]) for x in counted])
         paper = {"journal": os.path.basename(os.path.dirname(os.path.dirname(path))), "day": day, "is_today": day == today,
                  "start_sol": CAPITAL_SOL, "balance_sol": final / 1e9, "sim_taken": taken, "sim_skipped": skipped,
                  "realised_sol": realised, "test_run": os.path.basename(os.path.dirname(os.path.dirname(path))).startswith("parity"),

@@ -36,6 +36,9 @@ no transactions: paper only.
   - the stop-rule counter;
   - the 10 SOL capital simulation;
   - heartbeat and feed gaps.
+- `stoprule.py`: which exits the stop rule counts (primary group, filled trades, from the clock start), the
+  clock's state and the verdict thresholds. Stdlib only: the report and the web app's Paper tab
+  (`lab/ui/paper.py`, whose server has no numpy) call the same functions, so they cannot count differently.
 - `parity.py`: engine against backtest on one dev chunk (signals, farm label, fills, exits).
 
 The paper candidate is a config file (`k3-paper-2026-10-12.yaml`, the owner's ADJUST decision:

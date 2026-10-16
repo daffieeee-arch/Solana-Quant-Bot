@@ -4,6 +4,7 @@ read-only, and hold-out slots never show. Light (a few seconds).
 Run: "$LAB_PY" lab/ui/tests/test_paper.py
 """
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -61,8 +62,11 @@ class ParityJournal(unittest.TestCase):
         self.assertAlmostEqual(v["totals"]["net_sol_per_trade"], -0.0114, places=4)
         self.assertEqual(round(v["totals"]["win_rate"] * 100), 57)
         s = v["stop_rule"]
-        self.assertEqual((s["trades"], s["days"], s["verdict"]), (2956, 2, "STOP"))
-        self.assertAlmostEqual(s["mean_sol_per_trade"], -0.0121, places=4)
+        # The report.md there predates #267 (it counted failed entries as trades: 2956, -0.0121); since #267 the
+        # report counts the 2890 filled trades, the 66 failed entries' costs included.
+        self.assertEqual((s["trades"], s["entry_failed"], s["days"], s["verdict"]), (2890, 66, 2, "STOP"))
+        self.assertAlmostEqual(s["mean_sol_per_trade"], -0.0124, places=4)
+        self.assertIsNone(s["clock"])  # no clock start: a count of every paper day, no decision
         self.assertIsNone(s["ci_lo"])  # CI from 5 days
         c = v["capital"]
         self.assertEqual((round(c["final_sol"], 3), round(c["max_drawdown"] * 100, 1), c["taken"], c["skipped"]),
@@ -126,6 +130,105 @@ class Synthetic(unittest.TestCase):
             j.db.execute("DELETE FROM exits")
         j.close()
 
+
+def lab_paper():
+    """lab/paper's journal and report, loaded as the package 'labpaper' (here 'paper' is the web app's module).
+    The report needs numpy and pyarrow (lab-py) and lab/ on the path for backtest."""
+    lab = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+    if lab not in sys.path:
+        sys.path.append(lab)
+    if "labpaper" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("labpaper", os.path.join(lab, "paper", "__init__.py"),
+                                                      submodule_search_locations=[os.path.join(lab, "paper")])
+        pkg = importlib.util.module_from_spec(spec)
+        sys.modules["labpaper"] = pkg
+        spec.loader.exec_module(pkg)
+    return importlib.import_module("labpaper.journal"), importlib.import_module("labpaper.report")
+
+
+class SameAsTheDailyReport(unittest.TestCase):
+    """The Paper tab's stop-rule counter and capital simulation equal lab/paper/report.py's on a journal with variant
+    groups (K3 primary, H an arm), a failed entry and a clock start (coordinator, 2026-10-16)."""
+    SOL = 1_000_000_000
+    GROUPS = {"K3": {"primary": True, "variants": ["tp4_T600"]}, "H": {"primary": False, "variants": ["flow300_H6"]}}
+    CLOCK = {"date": "2026-10-26", "reason": "the owner's target", "set_at": "2026-10-22T09:30:00+00:00"}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def journal(self, clock):
+        jmod, _ = lab_paper()
+        j = jmod.Journal(os.path.join(self.tmp, "run", "journal"))
+        j.state("groups", json.dumps(self.GROUPS))
+        if clock:
+            j.state("clock_start", json.dumps(self.CLOCK))
+
+        def trade(family, variant, t, entry_day, exit_day, pnl, tokens=5):
+            j.put("orders", family=family, variant=variant, key=f"P{t}", t=t, day=entry_day, entry_slot=t + 3,
+                  size=self.SOL // 2, status="filled" if tokens else "failed")
+            j.put("exits", family=family, variant=variant, key=f"P{t}", t=t, day=exit_day, entry_slot=t + 3,
+                  exit_decision_slot=t + 50, exit_slot=t + 52 if tokens else None,
+                  exit_reason="time" if tokens else "entry_failed", tokens=tokens, cost=self.SOL // 2,
+                  proceeds=self.SOL // 2 + pnl if tokens else 0, pnl=pnl, ret=pnl / (self.SOL // 2), exit_attempts=1)
+
+        trade("F7", "tp4_T600", 460_000_000, "2026-10-25", "2026-10-25", -self.SOL // 10)  # before the clock
+        trade("F7", "tp4_T600", 460_000_100, "2026-10-25", "2026-10-26", -self.SOL // 10)  # entered before it
+        t = 460_001_000
+        for d in range(26, 32):  # six clock days, so the day interval exists
+            for i in range(7):
+                t += 200
+                trade("F7", "tp4_T600", t, f"2026-10-{d}", f"2026-10-{d}", (i - 2) * self.SOL // 50)
+        trade("F7", "tp4_T600", t + 400, "2026-10-27", "2026-10-27", -505_000, tokens=0)  # failed entry: cost, no trade
+        trade("F7", "flow300_H6", t + 600, "2026-10-27", "2026-10-27", 3 * self.SOL)  # group H: a measurement only
+        trade("N2_F7", "tp4_T600", t + 800, "2026-10-28", "2026-10-28", self.SOL)  # N2 shadow: never a trade
+        j.put("heartbeat", minute=29_330_000, day="2026-10-31", last_slot=t + 900, events=3, open_positions=0,
+              gap_slots=0, note="")
+        j.commit()
+        return j
+
+    def compare(self, clock):
+        _, report = lab_paper()
+        j = self.journal(clock)
+        report.daily_report(j, "2026-10-31")
+        with open(os.path.join(j.dir, "2026-10-31", "report.md")) as f:
+            md = f.read()
+        path = os.path.join(j.dir, "journal.sqlite")
+        j.close()
+        v = paper.journal_view(path, now=1_793_448_000)  # 2026-10-31 12:00 UTC
+        self.assertEqual(v["day"], "2026-10-31")
+        s, c = v["stop_rule"], v["capital"]
+        import re
+        m = re.search(r"- trades (\d+) \(failed entries (\d+), their cost included\), days (\d+), net ([+-][\d.]+) "
+                      r"SOL/trade, 95% CI ([+-][\d.]+) … ([+-][\d.]+) SOL: \*\*([A-Za-z ]+)\*\*", md)
+        self.assertIsNotNone(m, md)
+        self.assertEqual((s["trades"], s["entry_failed"], s["days"]), tuple(int(x) for x in m.group(1, 2, 3)))
+        self.assertEqual(f"{s['mean_sol_per_trade']:+.4f}", m.group(4))
+        self.assertEqual(s["verdict"], m.group(7))
+        self.assertAlmostEqual(s["ci_lo"], float(m.group(5)), delta=0.002)  # pure-Python bootstrap: other draws
+        self.assertAlmostEqual(s["ci_hi"], float(m.group(6)), delta=0.002)
+        m = re.search(r"- final ([\d.]+) SOL, max drawdown ([\d.]+)%, trades (\d+), skipped (\d+)", md)
+        self.assertEqual((f"{c['final_sol']:.3f}", f"{c['max_drawdown'] * 100:.1f}", c["taken"], c["skipped"]),
+                         (m.group(1), m.group(2), int(m.group(3)), int(m.group(4))))
+        self.assertEqual(s["primary"], ["tp4_T600"])
+        (arm,) = v["arms"]
+        self.assertEqual((arm["group"], arm["variants"][0]["variant"], arm["variants"][0]["trades"]), ("H", "flow300_H6", 1))
+        self.assertEqual({x["variant"] for x in v["variants"]}, {"tp4_T600"})  # the page is K3's; H apart
+        return s, md
+
+    def test_with_a_clock_start(self):
+        s, md = self.compare(clock=True)
+        self.assertEqual((s["trades"], s["entry_failed"], s["days"]), (42, 1, 6))  # 6 days x 7, the failed one apart
+        self.assertEqual((s["clock"]["date"], s["clock"]["phase"], s["clock"]["clock_day"]), ("2026-10-26", "running", 6))
+        self.assertIn("clock day 6 of 28", md)
+
+    def test_without_a_clock_start(self):
+        s, md = self.compare(clock=False)
+        self.assertEqual((s["trades"], s["entry_failed"], s["days"]), (44, 1, 7))  # every paper day, K3 only
+        self.assertIsNone(s["clock"])
+        self.assertIn("a count of every paper day, no decision", md)
 
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
