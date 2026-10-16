@@ -40,3 +40,12 @@ def test_the_day_bootstrap_counts_filled_trades_per_day():
     mean, lo, hi, _ = _verdict(by_day, n, filled)
     # every day: 40 trades of +1,000,000 and 2 failed entries: the per-trade mean is the same on every day
     assert lo == pytest.approx(mean) and hi == pytest.approx(mean) == (40 * 1_000_000 - 2 * FAILED_TX) / 40
+
+
+def test_the_stop_rule_and_the_backtest_share_the_minimum():
+    """MIN_TRADES lives twice: paper/stoprule.py (stdlib, the web app loads it by path) and backtest.report (the
+    tournament's verdict). They must not drift (LAB review P2, #309.1)."""
+    from backtest import report as backtest_report
+    from paper import stoprule
+
+    assert stoprule.MIN_TRADES == backtest_report.MIN_TRADES == MIN_TRADES == 200

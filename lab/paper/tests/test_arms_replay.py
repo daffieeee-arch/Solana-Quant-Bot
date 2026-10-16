@@ -50,6 +50,10 @@ def _content(j, where="1=1"):
 
 @pytest.fixture(scope="module")
 def runs(tmp_path_factory):
+    # Two engine runs over 45,000 dev2 slots: more than the VPS's 3 GB test scope, where the OOM killer ended the
+    # module silently (LAB review P2, #299.1). A NAS test.
+    if not os.environ.get("LAB_NAS_TESTS"):
+        pytest.skip("two engine runs over the real dev2 store (> 3 GB): a NAS test, set LAB_NAS_TESTS=1 (heavy, NAS)")
     if not os.path.exists(STORE):
         pytest.skip("dev store not built")
     con = streams.open_store(STORE, threads=2, memory="1GB")

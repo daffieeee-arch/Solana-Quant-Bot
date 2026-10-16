@@ -318,6 +318,8 @@ class DecisionBoundary(unittest.TestCase):
             c = a["basis"]["costs_lamports"]
             self.assertEqual((c["network"], c["tips"], c["failed_entries"]), (2 * 210 * 605_000, 2 * 210 * 100_000, 505_000))
             self.assertEqual(c["landing_retries"], 2 * 210 * int((1 / 0.97 - 1) * 505_000))
+            self.assertEqual(a["basis"]["costs_expected"], ["landing_retries"])  # an expectation, not counted
+            self.assertIn("landing retries (expected)", md)
             self.assertEqual({u["key"] for u in a["uncertainty"]}, {"few_days", "regime", "simulated_landing", "many_trials"})
             self.assertEqual(a["assumptions"][2]["d_ms"], 600)
             self.assertEqual(a["not_permission"], "GO is geen toestemming voor live geld; dat is een aparte eigenaarsbeslissing.")

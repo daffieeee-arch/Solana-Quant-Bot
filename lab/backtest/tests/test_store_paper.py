@@ -47,14 +47,15 @@ def roots(tmp_path, monkeypatch):
 def _spend(results, lock):
     with open(lock, "w") as f:
         json.dump({"store_sha256": "0" * 64, "test_run": "e20"}, f)
-    for name in ("h3", "h4", "h5"):
+    for name in ("clean", "h3", "h4", "h5"):
         _result(results, name, dry_run=False, decision="verworpen")
 
 
-def test_the_clean_data_is_spent_only_with_the_lock_and_a_real_result_of_h3_h4_and_h5(roots):
+def test_the_clean_data_is_spent_only_with_the_lock_and_a_real_result_of_e20_h3_h4_and_h5(roots):
     _, _, results, lock = roots
     why, _ = store.clean_unspent(lock, results)
-    assert len(why) == 4 and "clean.lock" in why[0]
+    assert len(why) == 5 and "clean.lock" in why[0] and "no E20 result" in why[1]
+    _result(results, "clean", dry_run=False, decision="niet beoordeeld: 4 handelsdagen")  # E20's own result
     with open(lock, "w") as f:
         json.dump({"store_sha256": "0" * 64}, f)
     _result(results, "h3", dry_run=False, decision="verworpen")
@@ -118,4 +119,4 @@ def test_the_command_refuses_the_clean_epochs_until_they_are_spent(roots, tmp_pa
     _spend(results, lock)
     b = _main(monkeypatch, *gate)
     assert b["out"].endswith("paper-1062-1063.duckdb") and {os.path.dirname(c[2]) for c in b["chunks"]} == {clean}
-    assert b["meta"]["purpose"].startswith("paper snapshot") and set(b["meta"]["clean_spent"]["results"]) == {"h3", "h4", "h5"}
+    assert b["meta"]["purpose"].startswith("paper snapshot") and set(b["meta"]["clean_spent"]["results"]) == {"clean", "h3", "h4", "h5"}
