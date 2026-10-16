@@ -27,7 +27,10 @@ def test_their_cost_stays_in_the_mean_per_trade():
     by_day, filled, n = stop_rule_inputs(_exits(200, 5))
     mean, _, _, verdict = _verdict(by_day, n, filled)
     assert n == 200 and mean == pytest.approx((200 * 1_000_000 - 5 * FAILED_TX) / 200)
-    assert verdict in ("GO", "ADJUST")  # 200 trades: a verdict
+    assert verdict == "too few days"  # 200 trades on one day: no day interval, no verdict yet
+    days = tuple(f"2026-10-{d}" for d in range(16, 21))
+    by_day, filled, n = stop_rule_inputs(_exits(200, 5, days=days))
+    assert _verdict(by_day, n, filled)[3] in ("GO", "ADJUST")  # 200 trades and 5 days: a verdict
 
 
 def test_the_day_bootstrap_counts_filled_trades_per_day():

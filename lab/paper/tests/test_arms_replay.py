@@ -114,6 +114,7 @@ def test_the_journal_keeps_k3s_config_sha_and_the_groups_sha(tmp_path):
     assert j.state("config_sha256") == load_config(k3)[0] and j.state("groups_sha256") == load_groups(h)[0]
     assert j.state("risk_sha256_at_start") and j.state("risk_sha256_at_start:H")
     assert sorted(json.loads(j.state("groups"))) == ["H", "K3"]
+    assert json.loads(j.state("feed"))["kind"] == "replay" and json.loads(j.state("cost_scenario"))["name"] == "base"
     engine.main(["--from", str(LO), "--to", str(LO + 2_000), "--journal", str(tmp_path / "k"), "--config", k3, "--store", STORE,
                  "--no-backup"])
     k = Journal(str(tmp_path / "k"))

@@ -8,13 +8,13 @@ Sources (never written to):
             picks the root (default <data>/recorder); without a budget.json the page shows the sample in
             lab/ui/paper_sample/recorder, marked as such.
 
-The numbers mirror lab/paper/report.py (daily report). Which exits the stop rule counts, what a trade is and the
-clock come from lab/paper/stoprule.py, the same functions the report calls: the primary group (K3) only, filled
-trades (a failed entry costs but is no trade), and with a clock start the trades entered from its day; without one
-a count of every paper day, no decision. The capital simulation (backtest.report.capital_sim, 10 SOL, 5 positions)
-runs over the same trades. Further groups (H) get a measurement of their own, no test. The CI is a day-clustered
-bootstrap from 5 days on, in pure Python (the server has no numpy), so it can differ from the report's in the last
-digit; mean, trades and verdict are the same.
+The numbers mirror lab/paper/report.py (daily report). Which exits the stop rule counts, what a trade is, the
+day bootstrap (10,000 draws), the verdict, the clock and what a verdict rests on come from lab/paper/stoprule.py,
+the same functions the report calls, so mean, interval and verdict are exactly the report's: the primary group (K3)
+only, filled trades (a failed entry costs but is no trade), and with a clock start the trades entered from its day;
+without one a count of every paper day, no decision. A replay journal (a test, e.g. the parity run) is marked as
+such (`source`, `test_run`): no paper trading, no decision. The capital simulation (backtest.report.capital_sim,
+10 SOL, 5 positions) runs over the same trades. Further groups (H) get a measurement of their own, no test.
 
 Slots of the hold-out window (epochs 1047-1051) are never shown: a journal row that touches one is dropped
 and counted, as is any recorder usage of such a segment.
@@ -26,7 +26,6 @@ import heapq
 import importlib.util
 import json
 import os
-import random
 import sqlite3
 import sys
 import time
@@ -35,7 +34,6 @@ from collections import defaultdict
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 SAMPLE_RECORDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_sample", "recorder")
 HOLDOUT = (452_304_000, 454_464_000)  # epochs 1047-1051, [start, end)
-MIN_TRADES, MIN_DAYS_CI = 200, 5  # stop rule (backtest.report.MIN_TRADES, paper.report.MIN_DAYS_CI)
 CAPITAL_SOL, MAX_POSITIONS = 10.0, 5
 RUNNING_SECS = 180  # a heartbeat younger than this: the engine is running
 USD_PER_GB, BUDGET_USD = 0.08, 2.0  # recorder defaults (--usd-per-gb, --budget-usd)
@@ -55,6 +53,7 @@ def _load_stoprule():
 
 
 stoprule = _load_stoprule()
+MIN_TRADES, MIN_DAYS_CI = stoprule.MIN_TRADES, stoprule.MIN_DAYS_CI
 
 
 def journal_path():
@@ -149,53 +148,46 @@ class Journal:
         self.db.close()
 
 
-def percentile(xs, p):
-    """numpy's default (linear) percentile of a non-empty list."""
-    xs = sorted(xs)
-    k = (len(xs) - 1) * p / 100
-    lo = int(k)
-    hi = min(lo + 1, len(xs) - 1)
-    return xs[lo] + (xs[hi] - xs[lo]) * (k - lo)
-
-
-def boot(sums, cnts, n=1000, seed=7):
-    """Day-clustered bootstrap of a mean from per-day sums and counts: (lo, hi) 95% (backtest.report._boot)."""
-    if sum(cnts) < 2 or len(cnts) < 2:
-        return None, None
-    rng, k, means = random.Random(seed), len(cnts), []
-    for _ in range(n):
-        pick = [rng.randrange(k) for _ in range(k)]
-        c = sum(cnts[i] for i in pick)
-        if c:
-            means.append(sum(sums[i] for i in pick) / c)
-    return (percentile(means, 2.5), percentile(means, 97.5)) if means else (None, None)
+percentile = stoprule.percentile  # numpy's default (linear) percentile
 
 
 def verdict(pnl_by_day, n, filled_by_day):
-    """paper.report._verdict, in SOL: (mean, lo, hi, verdict). pnl_by_day holds every exit's P&L (failed entries'
-    costs included), n and filled_by_day count the filled trades (stoprule.stop_rule_inputs)."""
-    days = sorted(pnl_by_day)
-    mean = sum(sum(v) for v in pnl_by_day.values()) / n / 1e9 if n else None
-    lo = hi = None
-    if len(days) >= MIN_DAYS_CI:
-        lo, hi = boot([sum(pnl_by_day[d]) / 1e9 for d in days], [filled_by_day.get(d, 0) for d in days])
-    return mean, lo, hi, stoprule.decide(mean, lo, n, MIN_TRADES)
+    """paper.report._verdict (stoprule.verdict, lamports) in SOL: (mean, lo, hi, verdict)."""
+    mean, lo, hi, v = stoprule.verdict(pnl_by_day, n, filled_by_day)
+    sol = lambda x: None if x is None else x / 1e9  # noqa: E731
+    return sol(mean), sol(lo), sol(hi), v
 
 
-def stop_rule(exits, orders, state, day):
-    """The stop-rule counter and its trades on `day`, as the daily report counts them (stoprule.counted)."""
+def _assessment_sol(a):
+    """stoprule.assessment with its lamport amounts also in SOL (the page's unit)."""
+    b = dict(a["basis"])
+    b["mean_sol"] = None if b["mean_lamports"] is None else b["mean_lamports"] / 1e9
+    b["ci95_sol"] = [x / 1e9 for x in b["ci95_lamports"]] if b["ci95_lamports"] else None
+    b["costs_sol"] = {k: v / 1e9 for k, v in b["costs_lamports"].items()} if b["costs_lamports"] else None
+    return dict(a, basis=b)
+
+
+def stop_rule(exits, orders, state, day, live_rows=False):
+    """The stop-rule counter and its trades on `day`, as the daily report counts and decides (paper/stoprule.py).
+    live_rows: whether any signal has a live arrival time (the feed of a journal from before the state 'feed')."""
     primary, further = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
     clock = stoprule.parse_clock(state.get(stoprule.CLOCK_KEY))
-    trades = stoprule.counted(exits, orders, day, primary, clock)
-    by_day, filled_by_day, n = stoprule.stop_rule_inputs([dict(x, pnl=x["pnl"] or 0) for x in trades])
-    mean, lo, hi, v = verdict(by_day, n, filled_by_day)
-    st = stoprule.clock_state(clock, day, n, MIN_TRADES)
+    trades = [dict(x, pnl=x["pnl"] or 0, cost=x.get("cost") or 0, proceeds=x.get("proceeds") or 0)
+              for x in stoprule.counted(exits, orders, day, primary, clock)]
+    by_day, filled_by_day, n = stoprule.stop_rule_inputs(trades)
+    mean, lo, hi, v = stoprule.verdict(by_day, n, filled_by_day)
+    st = stoprule.clock_state(clock, day, v)
+    feed = stoprule.feed_of(state.get(stoprule.FEED_KEY), live_rows)
+    scn = json.loads(state[stoprule.COSTS_KEY]) if state.get(stoprule.COSTS_KEY) else None
+    judged = stoprule.assessment(trades, mean, lo, hi, v, st, scn, stoprule.primary_group(state.get(stoprule.GROUPS_KEY)), feed)
+    sol = lambda x: None if x is None else x / 1e9  # noqa: E731
     return {"trades": n, "entry_failed": len(trades) - n, "days": len(by_day), "min_trades": MIN_TRADES,
-            "min_days_ci": MIN_DAYS_CI, "mean_sol_per_trade": mean, "ci_lo": lo, "ci_hi": hi, "verdict": v,
+            "min_days_ci": MIN_DAYS_CI, "mean_sol_per_trade": sol(mean), "ci_lo": sol(lo), "ci_hi": sol(hi), "verdict": v,
             "primary": sorted(primary) if primary else None,
             "clock": None if clock is None else {"date": str(clock.get("date")), "reason": str(clock.get("reason", ""))[:300],
                                                  "set_at": str(clock.get("set_at", ""))[:40], **st},
-            "clock_days": stoprule.CLOCK_DAYS, "clock_max_days": stoprule.CLOCK_MAX_DAYS}, trades, primary, further
+            "clock_days": stoprule.CLOCK_DAYS, "clock_max_days": stoprule.CLOCK_MAX_DAYS,
+            "assessment": _assessment_sol(judged)}, trades, primary, further
 
 
 def capital_sim(trades, start=CAPITAL_SOL * 1e9, max_positions=MAX_POSITIONS):
@@ -296,7 +288,9 @@ def journal_view(path, now):
     }
 
     # The page is the primary group's (K3) with its N2 shadows; further groups (H) get a measurement section apart.
-    stop, counted, primary, further = stop_rule(exits, orders, state, day)
+    live_rows = any(s.get("received_unix_ns") for s in signals.values())
+    stop, counted, primary, further = stop_rule(exits, orders, state, day, live_rows)
+    feed = stop["assessment"]["feed"]
     ours = lambda f, v: not f.startswith("N2_") and (primary is None or v in primary)  # noqa: E731
     shade = lambda f, v: f.startswith("N2_") and (primary is None or v in primary)  # noqa: E731
     by_group = defaultdict(list)
@@ -376,7 +370,9 @@ def journal_view(path, now):
                    "own_sol_per_trade": own_a["net_sol_per_trade"], "n2_sol_per_trade": sh_a["net_sol_per_trade"],
                    "diff_all": diff(own_a, sh_a), "diff_today": diff(own_t, sh_t), "n2_trades": sh_a["trades"]})
 
-    return {"journal": run, "test_run": run.startswith("parity"), "day": day, "is_today": day == today,
+    # A replay journal (the parity run on dev data, a shadow) is a test, not paper trading: no decision.
+    return {"journal": run, "test_run": feed != "live" or run.startswith("parity"), "day": day, "is_today": day == today,
+            "source": {"feed": feed, "paper_trading": feed == "live" and not run.startswith("parity"), "journal": run},
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
             "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
             "arms": arm_groups(exits, positions, further, day), "journal_usage_rows": len(usage),

@@ -17,12 +17,18 @@ A Solana trading bot (pump.fun bonding curve and PumpSwap) that is profitable **
 
 - One checkpoint per week with a tangible result: a dataset, a backtest table or a paper-trading report. Write it to `lab/reports/`.
 - Week 1: event dataset (pump.fun + PumpSwap) from Old Faithful. Week 2: backtest tournament. Week 3+: paper trading.
-- **Stop rule** (owner decision 2026-10-10): paper trading runs one fixed main candidate with a fixed configuration. After 4 weeks and at least 200 paper trades, measure the net P&L per trade after all costs (venue fees, network fees, tips, failed transactions). Compute its 95% confidence interval with a bootstrap over trading days (resample whole days, 10,000 times).
+- **Stop rule** (owner decision 2026-10-10, amended 2026-10-16): paper trading runs one fixed main candidate (K3) with a fixed configuration. Measure the net P&L per filled paper trade after all costs (venue fees, network fees, tips, failed transactions). Compute its 95% confidence interval with a bootstrap over trading days (resample whole days, 10,000 times). `lab/paper/stoprule.py` holds the count, the bootstrap and the verdict; the daily report and the web app call the same functions.
+  - **When:** the verdict is computed and shown once there are at least 200 filled trades and at least 5 trading days for the interval. Four weeks are the planned length, not a minimum: an early verdict is no error. The clock runs at most 6 weeks.
   - **GO:** the lower bound is above 0. Only then can real money be discussed (separate owner decision).
   - **ADJUST:** the mean is above 0 but the lower bound is at or below 0. Paper trading continues; no real money.
   - **STOP:** the mean is at or below 0.
-  - Fewer than 200 trades after 4 weeks: the clock runs on until 200 trades, at most 6 weeks.
-  - The clock starts no later than 2026-11-02 (target 2026-10-26), with the best candidate available then.
+  - **Every verdict shows what it rests on:**
+    - the basis: filled trades, trading days, the clock day, the mean and its interval, and the costs;
+    - the model assumptions: simulated fills and landing, the entry delay, and the regime;
+    - what stays uncertain: few days (below 14 the day bootstrap is coarse), the new regime after the Alpenglow switch, simulated landing, and the many trials in the lab.
+  - **GO is geen toestemming voor live geld; dat is een aparte eigenaarsbeslissing.**
+  - The clock starts no later than 2026-11-02 (target 2026-10-26), with the best candidate available then. It is fixed in the paper journal with a date and a reason (`python -m paper.clock`).
+  - A replay journal (a test, such as a parity run) is not paper trading: the stop rule decides nothing on it.
 
 ## Safety rules (unchanged and non-negotiable)
 

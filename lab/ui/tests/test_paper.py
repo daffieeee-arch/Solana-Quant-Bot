@@ -63,8 +63,13 @@ class ParityJournal(unittest.TestCase):
         self.assertEqual(round(v["totals"]["win_rate"] * 100), 57)
         s = v["stop_rule"]
         # The report.md there predates #267 (it counted failed entries as trades: 2956, -0.0121); since #267 the
-        # report counts the 2890 filled trades, the 66 failed entries' costs included.
-        self.assertEqual((s["trades"], s["entry_failed"], s["days"], s["verdict"]), (2890, 66, 2, "STOP"))
+        # report counts the 2890 filled trades, the 66 failed entries' costs included. Two trading days: no day
+        # interval, so no verdict (owner, 2026-10-16: from 200 trades and 5 days).
+        self.assertEqual((s["trades"], s["entry_failed"], s["days"], s["verdict"]), (2890, 66, 2, "too few days"))
+        # A replay on dev data: a test, not paper trading, and the stop rule decides nothing on it.
+        self.assertEqual(v["source"], {"feed": "replay", "paper_trading": False, "journal": "parity-450144000-450360000"})
+        self.assertFalse(s["assessment"]["applies"])
+        self.assertEqual(s["assessment"]["uncertainty"][0]["key"], "not_paper_trading")
         self.assertAlmostEqual(s["mean_sol_per_trade"], -0.0124, places=4)
         self.assertIsNone(s["clock"])  # no clock start: a count of every paper day, no decision
         self.assertIsNone(s["ci_lo"])  # CI from 5 days
@@ -207,8 +212,8 @@ class SameAsTheDailyReport(unittest.TestCase):
         self.assertEqual((s["trades"], s["entry_failed"], s["days"]), tuple(int(x) for x in m.group(1, 2, 3)))
         self.assertEqual(f"{s['mean_sol_per_trade']:+.4f}", m.group(4))
         self.assertEqual(s["verdict"], m.group(7))
-        self.assertAlmostEqual(s["ci_lo"], float(m.group(5)), delta=0.002)  # pure-Python bootstrap: other draws
-        self.assertAlmostEqual(s["ci_hi"], float(m.group(6)), delta=0.002)
+        # One bootstrap (paper/stoprule.py) for both: the same interval, not one within a tolerance.
+        self.assertEqual((f"{s['ci_lo']:+.4f}", f"{s['ci_hi']:+.4f}"), m.group(5, 6))
         m = re.search(r"- final ([\d.]+) SOL, max drawdown ([\d.]+)%, trades (\d+), skipped (\d+)", md)
         self.assertEqual((f"{c['final_sol']:.3f}", f"{c['max_drawdown'] * 100:.1f}", c["taken"], c["skipped"]),
                          (m.group(1), m.group(2), int(m.group(3)), int(m.group(4))))
@@ -222,13 +227,104 @@ class SameAsTheDailyReport(unittest.TestCase):
         s, md = self.compare(clock=True)
         self.assertEqual((s["trades"], s["entry_failed"], s["days"]), (42, 1, 6))  # 6 days x 7, the failed one apart
         self.assertEqual((s["clock"]["date"], s["clock"]["phase"], s["clock"]["clock_day"]), ("2026-10-26", "running", 6))
-        self.assertIn("clock day 6 of 28", md)
+        self.assertIn("clock day 6, 42 trades: no verdict yet", md)
 
     def test_without_a_clock_start(self):
         s, md = self.compare(clock=False)
         self.assertEqual((s["trades"], s["entry_failed"], s["days"]), (44, 1, 7))  # every paper day, K3 only
         self.assertIsNone(s["clock"])
         self.assertIn("a count of every paper day, no decision", md)
+
+class DecisionBoundary(unittest.TestCase):
+    """Around the stop rule's boundary (the interval's lower bound just above and just below 0) the daily report and
+    the Paper tab give the same verdict and the same interval: one bootstrap, 10,000 draws (Codex review point 7).
+    Every verdict shows what it rests on and that GO is no permission for live money (owner, 2026-10-16)."""
+    SOL = 1_000_000_000
+    GROUPS = {"K3": {"primary": True, "variants": ["tp4_T600"], "d_ms": 600, "q": 0.5}}
+    COSTS = {"name": "base", "fee_per_tx": 605_000, "tip": 100_000, "failed_tx": 505_000, "land_prob": 0.97,
+             "ata_rent": 1_513_840, "rent_mode": "refunded_on_full_exit", "adverse_per_side": 0.0}
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def pnls(self, shift):
+        """210 filled trades over 10 clock days (21 a day) with uneven days, plus a failed entry; `shift` on every
+        filled trade moves the interval's bounds by exactly `shift` (the mean per filled trade)."""
+        out = []
+        for d in range(10):
+            for i in range(21):
+                out.append((f"2026-10-{26 + d}" if d < 6 else f"2026-11-0{d - 5}", (d % 3 - 1) * 3_000_000 + (i - 10) * 1_000_000
+                            + shift, 5))
+        out.append(("2026-10-27", -505_000, 0))
+        return out
+
+    def journal(self, name, shift):
+        jmod, _ = lab_paper()
+        j = jmod.Journal(os.path.join(self.tmp, name, "journal"))
+        j.state("groups", json.dumps(self.GROUPS))
+        j.state("clock_start", json.dumps({"date": "2026-10-26", "reason": "r", "set_at": "2026-10-22T09:30:00+00:00"}))
+        j.state("feed", json.dumps({"kind": "live"}))
+        j.state("cost_scenario", json.dumps(self.COSTS))
+        t = 460_000_000
+        for day, pnl, tokens in self.pnls(shift):
+            t += 100
+            j.put("orders", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day=day, entry_slot=t + 3, size=self.SOL // 2,
+                  status="filled" if tokens else "failed")
+            j.put("exits", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day=day, entry_slot=t + 3, exit_slot=t + 50 if tokens else None,
+                  exit_reason="time" if tokens else "entry_failed", tokens=tokens, cost=self.SOL // 2 if tokens else 0,
+                  proceeds=self.SOL // 2 + pnl if tokens else 0, pnl=pnl, ret=None, exit_attempts=2 if t % 700 == 0 else 1)
+        j.put("heartbeat", minute=29_330_000, day="2026-11-04", last_slot=t + 900, events=3, open_positions=0, gap_slots=0, note="")
+        j.commit()
+        return j
+
+    def both(self, name, shift):
+        _, report = lab_paper()
+        j = self.journal(name, shift)
+        report.daily_report(j, "2026-11-04")
+        with open(os.path.join(j.dir, "2026-11-04", "report.md")) as f:
+            md = f.read()
+        path = os.path.join(j.dir, "journal.sqlite")
+        j.close()
+        return md, paper.journal_view(path, now=1_793_793_600)["stop_rule"]  # 2026-11-04 12:00 UTC
+
+    def test_the_same_verdict_on_both_sides_of_the_boundary(self):
+        import math
+        import re
+        import time
+
+        _, report = lab_paper()
+        sr = report  # the report re-exports stoprule's names
+        days = sorted({d for d, _, _ in self.pnls(0)})
+        sums = [sum(p for d2, p, _ in self.pnls(0) if d2 == d) for d in days]
+        cnts = [sum(1 for d2, _, k in self.pnls(0) if d2 == d and k) for d in days]
+        t0 = time.perf_counter()
+        lo0, _ = report.verdict({d: [s] for d, s in zip(days, sums)}, sum(cnts), dict(zip(days, cnts)))[1:3]
+        self.assertLess(time.perf_counter() - t0, 2.0)  # 10,000 draws in pure Python
+        self.assertEqual(sr.DRAWS, 10_000)
+        for name, shift, want in (("above", -math.floor(lo0) + 1_000, "GO"), ("below", -math.ceil(lo0) - 1_000, "ADJUST")):
+            md, s = self.both(name, shift)
+            m = re.search(r"95% CI ([+-][\d.]+) … ([+-][\d.]+) SOL: \*\*([A-Z]+)\*\*", md)
+            self.assertEqual((s["verdict"], m.group(3)), (want, want), name)
+            self.assertEqual((f"{s['ci_lo']:+.4f}", f"{s['ci_hi']:+.4f}"), m.group(1, 2))
+            a = s["assessment"]
+            self.assertAlmostEqual(a["basis"]["ci95_lamports"][0], lo0 + shift, delta=1e-3)  # the bounds move by the shift
+            self.assertEqual((a["basis"]["filled_trades"], a["basis"]["failed_entries"], a["basis"]["trading_days"],
+                              a["basis"]["clock_day"]), (210, 1, 10, 10))
+            self.assertTrue(a["applies"])  # live, the clock running, a verdict: before four weeks, no error
+            self.assertEqual(s["clock"]["phase"], "due")
+            c = a["basis"]["costs_lamports"]
+            self.assertEqual((c["network"], c["tips"], c["failed_entries"]), (2 * 210 * 605_000, 2 * 210 * 100_000, 505_000))
+            self.assertEqual(c["landing_retries"], 2 * 210 * int((1 / 0.97 - 1) * 505_000))
+            self.assertEqual({u["key"] for u in a["uncertainty"]}, {"few_days", "regime", "simulated_landing", "many_trials"})
+            self.assertEqual(a["assumptions"][2]["d_ms"], 600)
+            self.assertEqual(a["not_permission"], "GO is geen toestemming voor live geld; dat is een aparte eigenaarsbeslissing.")
+            self.assertIn("**GO is geen toestemming voor live geld; dat is een aparte eigenaarsbeslissing.**", md)
+            self.assertIn("only 10 trading days: below 14 the day bootstrap is coarse", md)
+            self.assertIn("### What the verdict rests on", md)
+
 
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
