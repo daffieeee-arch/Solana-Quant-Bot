@@ -892,7 +892,6 @@ mod tests {
             other => panic!("expected a resubscribe, got {other:?}"),
         };
         assert!(main.accounts.is_empty() && !vaults.accounts.is_empty()); // pool accounts off first
-        // tx_pump_creates (off in this config) is stepped over in the same tick.
         assert_eq!(DOWNSCALE[r.active.level - 1], "pool_accounts");
         // The cap: the last segment is written with the usage and the stop.
         for u in [meta(1002), confirmed(1002), confirmed(1003)] {

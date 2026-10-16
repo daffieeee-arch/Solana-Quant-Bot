@@ -70,8 +70,11 @@ pub const NEW_REVERSED_EXCLUDE: [&str; 15] = [
     "HTVZVEQMBsNanubDPTs3CxDAEGNFQHJY8c1441iy2S5r",
 ];
 
+/// The streams a budget downscale drops, in order. `tx_pump_creates` goes last before the watchlist:
+/// its CreateEvents give LiveFeed the creator of every token created after the store snapshot (F7's
+/// creator rule; a creator who moved the creator fee to a sharing config is not the pool's coin
+/// creator, #233 job 84), it costs ~0.1 GB a day, and without the watchlist no trigger is left for it.
 pub const DOWNSCALE: [&str; 10] = [
-    "tx_pump_creates",
     "pool_accounts",
     "pool_creations",
     "tx_new_reversed",
@@ -80,6 +83,7 @@ pub const DOWNSCALE: [&str; 10] = [
     "tx_probes",
     "vaults",
     "tx_wallets",
+    "tx_pump_creates",
     "tx_watchlist",
 ];
 
@@ -535,6 +539,11 @@ mod tests {
         assert!(!l3.pool_accounts && !l3.pool_creations && !l3.new_reversed && !l3.fresh_vaults.is_empty());
         let l5 = Filter::new(&w, &extra, level(4) + 1, &opts(true, 10_000));
         assert!(l5.fresh_vaults.is_empty() && l5.tx_probes.is_empty() && !l5.vaults.is_empty());
+        assert!(l5.pump_creates); // the creates stay until only the watchlist is left
+        let l7 = Filter::new(&w, &extra, level(6) + 1, &opts(true, 10_000));
+        assert!(l7.tx_wallets.is_empty() && l7.pump_creates && l7.tx_pools.len() == 2);
+        let l8 = Filter::new(&w, &extra, level(6) + 2, &opts(true, 10_000));
+        assert!(!l8.pump_creates && l8.tx_pools.len() == 2); // then the creates, the watchlist pools last
         let last = Filter::new(&w, &extra, DOWNSCALE.len(), &opts(true, 10_000));
         assert_eq!(last.tx_pools, vec![B.to_owned()]);
         assert!(last.tx_wallets.is_empty() && last.vaults.is_empty() && last.new_pools);
@@ -545,12 +554,12 @@ mod tests {
     #[test]
     fn a_level_whose_stream_is_off_already_changes_no_stream() {
         let (w, extra) = (watch(), Extra::default());
-        let o = Opts { pool_accounts: true, ..Opts::default() }; // pump creates off (the default)
+        let o = Opts { pool_creations: true, ..Opts::default() }; // pool accounts off (the default)
         let at = |level| Filter::new(&w, &extra, level, &o);
         let (l0, l1, l2) = (at(0), at(1), at(2));
-        assert_eq!(&DOWNSCALE[..2], &["tx_pump_creates", "pool_accounts"]);
+        assert_eq!(&DOWNSCALE[..2], &["pool_accounts", "pool_creations"]);
         assert!(l1 != l0 && l1.same_streams(&l0)); // only the level differs
-        assert!(l1.pool_accounts && !l2.pool_accounts && !l2.same_streams(&l1));
+        assert!(l1.pool_creations && !l2.pool_creations && !l2.same_streams(&l1));
     }
 
     #[test]
@@ -584,8 +593,11 @@ mod tests {
         assert_eq!(pc.account_required, vec![PUMP.to_owned(), PUMP_MINT_AUTHORITY.to_owned()]);
         assert!(pc.account_include.is_empty());
         assert!(valid(PUMP_MINT_AUTHORITY));
-        // The pump creates are the first stream to go, and off unless asked for.
-        assert!(!Filter::new(&watch(), &extra, 1, &opts(true, 10_000)).request(None).transactions.contains_key("tx_pump_creates"));
+        // The pump creates go last before the watchlist pools, and are off unless asked for.
+        let pc_level = DOWNSCALE.iter().position(|s| *s == "tx_pump_creates").unwrap();
+        assert_eq!(pc_level, DOWNSCALE.len() - 2);
+        assert!(Filter::new(&watch(), &extra, pc_level, &opts(true, 10_000)).request(None).transactions.contains_key("tx_pump_creates"));
+        assert!(!Filter::new(&watch(), &extra, pc_level + 1, &opts(true, 10_000)).request(None).transactions.contains_key("tx_pump_creates"));
         assert!(!Filter::new(&watch(), &extra, 0, &Opts::default()).pump_creates);
         let pa = &r.accounts["pool_accounts"];
         assert_eq!((pa.owner.clone(), pa.filters.len()), (vec![PUMP_AMM.to_owned()], 1));
