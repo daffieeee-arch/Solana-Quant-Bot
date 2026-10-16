@@ -17,7 +17,7 @@ Type=simple
 EnvironmentFile=%h/.config/solana-lab/live.env
 # The run checkout: a worktree at the frozen commit (README).
 WorkingDirectory=%h/Solana-project/worktrees/paper-run/lab
-ExecStart=%h/.local/share/solana-quant/toolchains/lab-py/bin/python -m paper.engine --live %h/Solana-project/data-old-faithful-one/lab/recorder --config paper/k3-paper-2026-10-12.yaml --journal %h/Solana-project/data-old-faithful-one/lab/journal/paper-k3/journal --store ${PAPER_STORE}
+ExecStart=%h/.local/share/solana-quant/toolchains/lab-py/bin/python -m paper.engine --live %h/Solana-project/data-old-faithful-one/lab/recorder --config paper/k3-paper-2026-10-12.yaml --journal %h/Solana-project/data-old-faithful-one/lab/journal/paper-k3/journal --store ${PAPER_STORE} $PAPER_ARGS
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=60

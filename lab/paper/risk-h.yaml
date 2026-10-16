@@ -1,0 +1,10 @@
+# Paper-trading risk limits of group H (research/week4-spec-paper-h4h5-2026-10-16.md §0): the arms
+# flow300_H6 (H4) and flow300_tp100_H6 (H5) on the organic F7 triggers, a budget of their own beside K3's
+# risk.yaml. Changed only by the owner; the engine only reads this file (every minute of event time).
+size_sol: 0.5              # per trade
+max_open_positions: 5
+max_exposure_sol: 2.5      # sum of the group's open positions at entry cost
+daily_loss_limit_sol: 1.0  # the group's realized loss per UTC day; beyond it no new group positions that day
+kill_switch: false         # true: open nothing (this group)
+families: [F7]
+pool_cooldown_h: 24        # no new group entry in a pool for 24 h after a total loss there

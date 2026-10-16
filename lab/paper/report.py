@@ -3,7 +3,9 @@
 Per family and variant: trades, net SOL per trade, win rate, fill rate and the difference to the
 N2 shadow; the stop-rule counter (trades, days, GO / ADJUST / STOP, with a day-bootstrap CI from
 5 days on); the 10 SOL capital simulation (addendum §6); heartbeat and feed gaps; the measured
-latency of the live F7 triggers next to the simulated d.
+latency of the live F7 triggers next to the simulated d. With variant groups (journal state 'groups') the
+stop-rule counter and the capital simulation count the primary group (K3) only; every further group (H) gets a
+section per variant, a measurement and no test (research/week4-spec-paper-h4h5-2026-10-16.md §4).
 """
 
 import json
@@ -17,6 +19,73 @@ import pyarrow.parquet as pq
 from backtest.report import CAPITAL_SOL, MAX_POSITIONS, MIN_TRADES, _boot, capital_sim
 
 MIN_DAYS_CI = 5
+DRAWS, SEED, TRIM, EMPTY = 10_000, 7, 0.01, -0.99
+
+
+def groups_of(journal):
+    """(primary group's variants or None (every variant), {further group: [variants]}) from the journal's state."""
+    raw = journal.state("groups")
+    if not raw:
+        return None, {}
+    gs = json.loads(raw)
+    primary = [v for g in gs.values() if g.get("primary") for v in g["variants"]]
+    return set(primary), {name: g["variants"] for name, g in gs.items() if not g.get("primary")}
+
+
+def _trim(x, frac=TRIM):
+    x = np.sort(np.asarray(x, dtype=float))
+    k = int(len(x) * frac)
+    return float(x[k:len(x) - k].mean()) if len(x) > 2 * k else None
+
+
+def _boot_days(x, draws=DRAWS, seed=SEED):
+    """Mean of a daily series with a 95 % interval over a day bootstrap (as clean_h4)."""
+    x = np.asarray(x, dtype=float)
+    idx = np.random.default_rng(seed).integers(0, len(x), size=(draws, len(x)))
+    m = x[idx].mean(1)
+    return float(x.mean()), float(np.percentile(m, 2.5)), float(np.percentile(m, 97.5))
+
+
+def arm_lines(journal, day, group, variants):
+    """A further group's section, per variant: a measurement, no test (no stop rule)."""
+    days = [d for d in journal.days() if d <= day]
+    lines = ["", f"## Group {group}: measurement, no test", "",
+             "| variant | trades | failed entries | net SOL/trade (trim 1 % / mean) | Σ SOL today | Σ SOL so far | win | fill rate | "
+             "drains | exit reasons | take-profit proceeds/cost p5 / median / p95 | median hold (slots) |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    ci = []
+    for v in variants:
+        xs = [x for x in journal.rows("exits", "family = 'F7' AND variant = ? AND day <= ?", (v, day))]
+        today = [x for x in xs if x["day"] == day]
+        filled = [x for x in xs if x["tokens"]]
+        orders = journal.rows("orders", "family = 'F7' AND variant = ? AND day <= ?", (v, day))
+        n_fill = sum(o["status"] == "filled" for o in orders)
+        rets = [x["ret"] for x in filled if x["ret"] is not None]
+        per_trade = [x["pnl"] / 1e9 for x in xs]
+        reasons = {}
+        for x in xs:
+            k = "failed entry" if not x["tokens"] else x["exit_reason"]
+            reasons[k] = reasons.get(k, 0) + 1
+        tp = sorted(x["proceeds"] / x["cost"] for x in filled if x["exit_reason"] == "take_profit" and x["cost"])
+        holds = [x["exit_slot"] - x["entry_slot"] for x in filled if x["exit_slot"] is not None and x["entry_slot"] is not None]
+        f = lambda x, fmt: "–" if x is None else format(x, fmt)  # noqa: E731
+        tpq = " / ".join(f"{np.percentile(tp, q):.2f}" for q in (5, 50, 95)) if tp else "–"
+        lines.append(f"| {v} | {len(filled)} | {len(xs) - len(filled)} | {f(_trim(per_trade), '+.4f')} / "
+                     f"{f(float(np.mean(per_trade)) if per_trade else None, '+.4f')} | {sum(x['pnl'] for x in today) / 1e9:+.3f} | "
+                     f"{sum(per_trade):+.3f} | {f(float(np.mean([r > 0 for r in rets])) * 100 if rets else None, '.0f')}% | "
+                     f"{f(n_fill / len(orders) * 100 if orders else None, '.0f')}% | "
+                     f"{f(float(np.mean([r <= EMPTY for r in rets])) * 100 if rets else None, '.0f')}% | "
+                     f"{', '.join(f'{k} {n}' for k, n in sorted(reasons.items())) or '–'} | {tpq} | "
+                     f"{f(float(np.median(holds)) if holds else None, '.0f')} |")
+        by_day = {d: sum(x["pnl"] for x in xs if x["day"] == d) / 1e9 for d in days}
+        with_pos = sum(1 for d in days if any(x["day"] == d for x in xs))
+        if with_pos >= MIN_DAYS_CI:
+            m, lo, hi = _boot_days([by_day[d] for d in days])
+            ci.append(f"- {v}: Σ net SOL per UTC day {m:+.3f}, 95 % interval {lo:+.3f} … {hi:+.3f} "
+                      f"({len(days)} days, {with_pos} with a position; day bootstrap {DRAWS:,}, seed {SEED})")
+        else:
+            ci.append(f"- {v}: {with_pos} days with a position (the day interval from {MIN_DAYS_CI} on)")
+    return lines + ["", "Day series (descriptive, H4's form; no stop rule, no decision):", *ci]
 
 
 def _verdict(pnls_by_day, n, filled_by_day=None):
@@ -148,8 +217,11 @@ def daily_report(journal, day, watch_log=None):
         n2 = by.get(("N2_" + r["family"], r["variant"]))
         r["vs_n2_sol_per_trade"] = (r["net_sol_per_trade"] - n2["net_sol_per_trade"]
                                     if n2 and r["net_sol_per_trade"] is not None and n2["net_sol_per_trade"] is not None else None)
-    # Stop-rule counter and capital simulation over everything so far (traded families only).
-    traded = [x for x in exits if not x["family"].startswith("N2_") and x["day"] <= day]
+    # Stop-rule counter and capital simulation over everything so far (traded families only; with groups the
+    # primary group's variants only: K3's stop rule).
+    primary, further = groups_of(journal)
+    traded = [x for x in exits if not x["family"].startswith("N2_") and x["day"] <= day
+              and (primary is None or x["variant"] in primary)]
     by_day, filled_by_day, n_filled = stop_rule_inputs(traded)
     mean, lo, hi, verdict = _verdict(by_day, n_filled, filled_by_day)
     final, mdd, taken, skipped = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"], x["pnl"], not x["tokens"])
@@ -164,7 +236,7 @@ def daily_report(journal, day, watch_log=None):
                      f"{f(r['net_sol_per_trade'], '+.4f')} | {f(r['win_rate'] and r['win_rate'] * 100, '.0f')}% | "
                      f"{f(r['fill_rate'] and r['fill_rate'] * 100, '.0f')}% | {f(r['vs_n2_sol_per_trade'], '+.4f')} |")
     ci = f"{lo / 1e9:+.4f} … {hi / 1e9:+.4f} SOL" if lo is not None else f"from {MIN_DAYS_CI} days"
-    lines += ["", "## Stop-rule counter (all paper days so far)", "",
+    lines += ["", "## Stop-rule counter (all paper days so far" + (f"; {', '.join(sorted(primary))} only" if primary else "") + ")", "",
               f"- trades {n_filled} (failed entries {len(traded) - n_filled}, their cost included), days {len(by_day)}, "
               f"net {'' if mean is None else f'{mean / 1e9:+.4f}'} SOL/trade, "
               f"95% CI {ci}: **{verdict}**",
@@ -175,6 +247,8 @@ def daily_report(journal, day, watch_log=None):
               + (f" (largest {max(b['gap_slots'] for b in gaps)} slots)" if gaps else "")]
     lines += latency_lines(journal, day)
     lines += farm_lines(journal, day)
+    for group, variants in sorted(further.items()):
+        lines += arm_lines(journal, day, group, variants)
     if watch_log is not None:
         lines += watchlist_lines(watch_log, day)
     out = os.path.join(journal.dir, day)

@@ -6,6 +6,13 @@ Both trade F7 tp4_T600 at 0.5 SOL, d = 1, q = 0.5, empirical tau, without risk l
 every F7 trigger in [from, to): the signal itself, the entry (filled / failed / skipped), the fill
 (tokens, cost), the exit (decision slot, slot, reason, proceeds, attempts) and the P&L in lamports.
 Writes parity.md and parity.json to <dir>.
+
+  python -m paper.parity --arm flow300_H6 --from A --to B --out <dir>
+
+The paper arms (research/week4-spec-paper-h4h5-2026-10-16.md §6.4): an exit variant on the organic triggers,
+d_ms 600, against the backtest with busy over the organic triggers only (as the engine's arm: equal on every
+organic trigger) and with the tournament's busy over every trigger (equal on the organic triggers of pools without
+a flagged trigger; the others are the documented difference, counted).
 """
 
 import argparse
@@ -18,9 +25,9 @@ from backtest import replay, streams
 from backtest.costs import Scenario, settle
 from backtest.store import load_defaults
 from backtest.strategies import F6_FARM_MS, Clock, Signal, f7_signals_sql
-from backtest.tournament import STORE, exit_rule_for, work_items
+from backtest.tournament import STORE, delay_slots, exit_rule_for, work_items
 
-from .engine import Engine
+from .engine import Engine, variant
 from .feed import ReplayFeed
 from .journal import Journal
 
@@ -29,14 +36,18 @@ WARMUP = 2_000  # slots before `from`: triggers there are traded but not compare
 TAIL = 2_000  # slots after `to`: positions opened before `to` close
 
 
-def backtest_side(con, cfg, clock, a, b):
+def backtest_side(con, cfg, clock, a, b, var=VARIANT, d=D, d_ms=None, segments=None, organic_busy=False):
+    """Every F7 trigger's position in the backtest replay. organic_busy: flagged triggers open and block nothing
+    (the paper arms); else busy over every trigger (the tournament)."""
+    name, params = variant(var)
     lo, hi = con.execute("SELECT min(slot), max(slot) + 1 FROM blocks").fetchone()
     sigs = []
     farm = {}
     for venue, m, t, depth, pool, orient, trader, _, flagged in f7_signals_sql(con, cfg, lo, hi, clock=clock,
                                                                               trig_range=(a - WARMUP, b - 1)):
-        sigs.append(Signal("F7", f"tp{int(VARIANT[0] * 100)}_T{VARIANT[1]}", m, t, venue, int(depth), VARIANT,
-                           pool=pool, orientation=orient, trigger=trader))
+        if segments and ("curve" if venue == "curve" else f"pool_{orient}") not in segments:
+            continue
+        sigs.append(Signal("F7", name, m, t, venue, int(depth), params, pool=pool, orientation=orient, trigger=trader))
         farm[(pool or m, t)] = "n/a" if flagged is None else ("flagged" if flagged else "organic")
     sigs.sort(key=lambda s: (s.t, s.mint, s.pool or ""))
     scn = Scenario.from_cfg("base", cfg)
@@ -46,11 +57,15 @@ def backtest_side(con, cfg, clock, a, b):
               else streams.load_streams(con, {key: (lo_w, hi_w)})).get(key)
         busy = -1
         for s in cl:
+            if organic_busy and farm.get((key, s.t)) == "flagged":
+                out[(key, s.t)] = {"status": "farm flagged", "farm": "flagged"}
+                continue
             if s.t <= busy:
                 out[(key, s.t)] = {"status": "busy", "farm": farm.get((key, s.t))}
                 continue
+            dd = delay_slots(d_ms, s.t, clock) if d_ms else d
             sim = replay.simulate_pool_position if venue == "pool" else replay.simulate_curve_position
-            r = sim(st, s.t, int(SIZE * 1e9), D, Q, exit_rule_for(s, scn, D, clock), TOL, replay.Tau("empirical"))
+            r = sim(st, s.t, int(SIZE * 1e9), dd, Q, exit_rule_for(s, scn, dd, clock, st), TOL, replay.Tau("empirical"))
             busy = r.exit_slot or s.t
             pnl, _, _ = settle(r, scn) if not r.skipped else (None, None, None)
             out[(key, s.t)] = {"farm": farm.get((key, s.t)),
@@ -61,21 +76,22 @@ def backtest_side(con, cfg, clock, a, b):
     return out
 
 
-def engine_side(store, a, b, journal_dir, clock):
+def engine_side(store, a, b, journal_dir, clock, var=VARIANT, d=D, d_ms=None, segments=None, farm="all", tail=TAIL):
     # From an hour (the farming window) plus the warm-up before `from`.
-    feed = ReplayFeed(store, a - WARMUP - 400 - clock.slots(F6_FARM_MS, a), b + TAIL)
-    eng = Engine(feed, Journal(journal_dir), None, variants=[VARIANT], d=D, q=Q, tol=TOL, ignore_risk=True, n2_k=0,
-                 dev_bounds=feed.meta_bounds, clock=clock, backup=False)
+    feed = ReplayFeed(store, a - WARMUP - 400 - clock.slots(F6_FARM_MS, a), b + tail)
+    eng = Engine(feed, Journal(journal_dir), None, variants=[var], d=d, d_ms=d_ms, q=Q, tol=TOL, ignore_risk=True, n2_k=0,
+                 dev_bounds=feed.meta_bounds, clock=clock, backup=False, segments=segments, farm=farm)
     eng.run()
     j = eng.j
-    sig = {(r["key"], r["t"]): r for r in j.rows("signals", "family = 'F7'")}
-    orders = {(r["key"], r["t"]): r for r in j.rows("orders", "family = 'F7'")}
-    fills = {(r["key"], r["t"], r["side"]): r for r in j.rows("fills", "family = 'F7'")}
-    exits = {(r["key"], r["t"]): r for r in j.rows("exits", "family = 'F7'")}
+    name = variant(var)[0]
+    sig = {(r["key"], r["t"]): r for r in j.rows("signals", "family = 'F7' AND variant = ?", (name,))}
+    orders = {(r["key"], r["t"]): r for r in j.rows("orders", "family = 'F7' AND variant = ?", (name,))}
+    exits = {(r["key"], r["t"]): r for r in j.rows("exits", "family = 'F7' AND variant = ?", (name,))}
     out = {}
     for k, s in sig.items():
         if s["status"] == "skipped":
-            out[k] = {"status": "busy" if s["reason"] == "busy" else "risk:" + str(s["reason"]), "farm": s["farm"]}
+            st = "busy" if s["reason"] == "busy" else "farm flagged" if s["reason"] == "farm flagged" else "risk:" + str(s["reason"])
+            out[k] = {"status": st, "farm": s["farm"]}
             continue
         o, x = orders.get(k), exits.get(k)
         st = o["status"] if o else "missing"
@@ -104,14 +120,68 @@ def compare(bt, en, a, b):
     return keys, diffs, dict(counts)
 
 
+ARM_TAIL = 20_000  # slots after `to` for the arms (6 h caps: a position still open at the data's end is not compared)
+
+
+def arm_parity(store, a, b, arm, journal_dir, con=None, tail=ARM_TAIL, d_ms=600, segments=("pool_reversed",)):
+    """An arm of the paper engine (farm organic, d_ms) against the backtest replay. Returns a dict: the
+    comparison with busy over organic triggers only (every organic trigger; positions the engine closed at the
+    data's end are left out) and with the tournament's busy (organic triggers of pools without a flagged trigger)."""
+    cfg = load_defaults()
+    con = con or streams.open_store(store, threads=2, memory="1GB")
+    clock = Clock.from_store(con)
+    segs = list(segments)
+    bt_org = backtest_side(con, cfg, clock, a, b, var=arm, d_ms=d_ms, segments=segs, organic_busy=True)
+    bt_tour = backtest_side(con, cfg, clock, a, b, var=arm, d_ms=d_ms, segments=segs, organic_busy=False)
+    en, n_events = engine_side(store, a, b, journal_dir, clock, var=arm, d_ms=d_ms, segments=segs, farm="organic", tail=tail)
+    open_at_end = {k for k, v in en.items() if v.get("exit_reason") == "end_of_data"}
+    flagged_pools = {k[0] for k, v in bt_tour.items() if v.get("farm") == "flagged" and a - WARMUP <= k[1] < b}
+    org = {k for k in set(bt_org) | set(en) if a <= k[1] < b and (bt_org.get(k) or en.get(k)).get("farm") == "organic"}
+    keys1 = sorted(k for k in org if k not in open_at_end)
+    _, d1, c1 = compare({k: bt_org[k] for k in keys1 if k in bt_org}, {k: en[k] for k in keys1 if k in en}, a, b)
+    keys2 = sorted(k for k in keys1 if k[0] not in flagged_pools)
+    _, d2, c2 = compare({k: bt_tour[k] for k in keys2 if k in bt_tour}, {k: en[k] for k in keys2 if k in en}, a, b)
+    in_flagged = [k for k in keys1 if k[0] in flagged_pools]
+    _, d3, _ = compare({k: bt_tour[k] for k in in_flagged if k in bt_tour}, {k: en[k] for k in in_flagged if k in en}, a, b)
+    pnl = lambda side, ks: sum((side.get(k) or {}).get("pnl") or 0 for k in ks)  # noqa: E731
+    return {"arm": variant(arm)[0], "slots": [a, b], "d_ms": d_ms, "engine_events": n_events,
+            "organic_busy": {"triggers": len(keys1), "by_status": c1, "different": len(d1), "diffs": d1[:20],
+                             "open_at_data_end": len(open_at_end), "pnl_backtest": pnl(bt_org, keys1), "pnl_engine": pnl(en, keys1)},
+            "tournament_busy": {"triggers": len(keys2), "by_status": c2, "different": len(d2), "diffs": d2[:20]},
+            "flagged_pools": {"organic_triggers": len(in_flagged), "different_from_the_tournament": len(d3)}}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="a", type=int, default=450144000)
     ap.add_argument("--to", dest="b", type=int, default=450360000)
     ap.add_argument("--out", required=True)
     ap.add_argument("--store", default=STORE)
+    ap.add_argument("--arm", help="a paper arm (an exit variant, e.g. flow300_H6) on the organic triggers, d_ms 600")
+    ap.add_argument("--tail", type=int, default=ARM_TAIL, help="--arm: slots of data after --to")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
+    if a.arm:
+        t0 = time.time()
+        res = arm_parity(a.store, a.a, a.b, a.arm, os.path.join(a.out, "journal"), tail=a.tail)
+        res["seconds"] = round(time.time() - t0)
+        with open(os.path.join(a.out, "parity.json"), "w") as f:
+            json.dump(res, f, indent=1, default=str)
+        o, t = res["organic_busy"], res["tournament_busy"]
+        lines = [f"# Paper arm parity {res['arm']}, slots {a.a}–{a.b} (organic triggers, d_ms {res['d_ms']})", "",
+                 f"- busy over organic triggers (the engine's arm): {o['triggers']} triggers {o['by_status']}, different "
+                 f"{o['different']}; P&L backtest {o['pnl_backtest']}, engine {o['pnl_engine']} lamports; open at the data's end "
+                 f"(not compared) {o['open_at_data_end']}",
+                 f"- the tournament's busy, pools without a flagged trigger: {t['triggers']} triggers {t['by_status']}, different "
+                 f"{t['different']}",
+                 f"- organic triggers in pools with a flagged trigger: {res['flagged_pools']['organic_triggers']}, different from "
+                 f"the tournament {res['flagged_pools']['different_from_the_tournament']} (the documented difference, spec §2)",
+                 f"- engine {res['engine_events']} events, {res['seconds']} s", ""]
+        lines += [f"- {d}" for d in o["diffs"] + t["diffs"]]
+        with open(os.path.join(a.out, "parity.md"), "w") as f:
+            f.write("\n".join(lines) + "\n")
+        print("\n".join(lines[:6]))
+        return
     cfg = load_defaults()
     con = streams.open_store(a.store, threads=2, memory="1GB")
     clock = Clock.from_store(con)
