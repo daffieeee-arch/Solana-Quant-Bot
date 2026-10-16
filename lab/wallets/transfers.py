@@ -230,9 +230,34 @@ def setup(con, root, lo, hi, clock):
     # a per-trade signer and pays a fee from the same account, the pool's output landing on another owner than the
     # signer, or a temporary account that splits the output; the residual was the net leg itself). A leg is added only
     # when the chain's rows leave a gap (the trader's row dropped as equal to the leg's base, the create transaction).
+    # Only a kept row with a real connection to the transaction's trade can stand in for a leg (review 2026-10-16: an
+    # equal amount alone is not an account relation; a real buy of 100 plus an independent transfer of 100 in the same
+    # transaction lost the buyer): its token account or owner is the destination (a buy) or source (a sell) of an
+    # in-trade transfer of that transaction, or its owner is joined to a trader of the transaction by a non-trade
+    # transfer in it (a hop).
+    con.execute("""CREATE OR REPLACE TEMP TABLE kept_linked AS
+        SELECT DISTINCT k.mint, k.slot, k.tx_index, k.owner, k.delta FROM (
+            SELECT k.mint, k.slot, k.tx_index, k.owner, k.delta FROM td k JOIN tt x
+                ON x.mint = k.mint AND x.slot = k.slot AND x.tx_index = k.tx_index AND x.in_trade AND k.delta > 0
+                AND (x.dest_account::VARCHAR = k.token_account OR x.dest_owner = k.owner)
+            UNION ALL
+            SELECT k.mint, k.slot, k.tx_index, k.owner, k.delta FROM td k JOIN tt x
+                ON x.mint = k.mint AND x.slot = k.slot AND x.tx_index = k.tx_index AND x.in_trade AND k.delta < 0
+                AND (x.source_account::VARCHAR = k.token_account OR x.source_owner = k.owner)
+            UNION ALL
+            SELECT k.mint, k.slot, k.tx_index, k.owner, k.delta FROM td k JOIN tt x
+                ON x.mint = k.mint AND x.slot = k.slot AND x.tx_index = k.tx_index AND NOT x.in_trade AND x.dest_owner = k.owner
+                JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) l
+                ON l.mint = x.mint AND l.slot = x.slot AND l.tx_index = x.tx_index AND l.owner = x.source_owner
+            UNION ALL
+            SELECT k.mint, k.slot, k.tx_index, k.owner, k.delta FROM td k JOIN tt x
+                ON x.mint = k.mint AND x.slot = k.slot AND x.tx_index = k.tx_index AND NOT x.in_trade AND x.source_owner = k.owner
+                JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) l
+                ON l.mint = x.mint AND l.slot = x.slot AND l.tx_index = x.tx_index AND l.owner = x.dest_owner) k""")
     con.execute("""CREATE OR REPLACE TEMP TABLE kept_other AS
         SELECT k.mint, k.slot, k.tx_index, k.delta, row_number() OVER (PARTITION BY k.mint, k.slot, k.tx_index, k.delta ORDER BY k.owner) AS rn
         FROM (SELECT DISTINCT mint, slot, tx_index, owner, delta FROM td WHERE NOT vault) k
+        SEMI JOIN kept_linked kl ON kl.mint = k.mint AND kl.slot = k.slot AND kl.tx_index = k.tx_index AND kl.owner = k.owner AND kl.delta = k.delta
         ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) lt
              ON lt.mint = k.mint AND lt.slot = k.slot AND lt.tx_index = k.tx_index AND lt.owner = k.owner""")
     con.execute("""CREATE OR REPLACE TEMP TABLE chain AS
@@ -243,12 +268,20 @@ def setup(con, root, lo, hi, clock):
         UNION ALL SELECT b.mint, b.slot, b.tx_index, '<vault:' || b.key || '>', -b.burned, true, 'leg_vault' FROM boosts b
                   ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM td WHERE vault) v
                        ON v.mint = b.mint AND v.slot = b.slot AND v.tx_index = b.tx_index AND v.owner = b.key""")
+    # Balanced only when a kept holder's row (an owner that is not a trader of the transaction) is there to carry the
+    # tokens (review 2026-10-16: a buy of 100 and a sell of 100 by two traders in one transaction, every row dropped,
+    # balance by themselves and lost both legs).
     con.execute("""CREATE OR REPLACE TEMP TABLE balanced AS
         SELECT c.mint, c.slot, c.tx_index
         FROM (SELECT mint, slot, tx_index, sum(delta) AS s FROM chain GROUP BY 1, 2, 3) c
         LEFT JOIN (SELECT mint, slot, tx_index, sum(CASE WHEN kind = 'mint_to' THEN amount ELSE -amount END) AS mb
                    FROM tt WHERE kind IN ('mint_to', 'burn') GROUP BY 1, 2, 3) m
              ON m.mint = c.mint AND m.slot = c.slot AND m.tx_index = c.tx_index
+        SEMI JOIN (SELECT DISTINCT k.mint, k.slot, k.tx_index FROM td k
+                   ANTI JOIN (SELECT DISTINCT mint, slot, tx_index, owner FROM legs) lt
+                        ON lt.mint = k.mint AND lt.slot = k.slot AND lt.tx_index = k.tx_index AND lt.owner = k.owner
+                   WHERE NOT k.vault) h
+             ON h.mint = c.mint AND h.slot = c.slot AND h.tx_index = c.tx_index
         WHERE c.s = COALESCE(m.mb, 0)""")
     con.execute("""CREATE OR REPLACE TEMP TABLE ledger AS
         SELECT mint, slot, tx_index, owner, delta, false AS vault, 'leg' AS src FROM (
@@ -307,21 +340,29 @@ def q1(con, triggers_parquet, clock):
              sells AS (SELECT tb.mint, tb.t, l.owner, l.slot, l.tx_index, -l.delta AS sold
                        FROM tb JOIN legs l ON l.mint = tb.mint AND l.slot > tb.t AND l.slot <= tb.t + {hour} AND NOT l.buy
                        ANTI JOIN insiders i ON i.mint = tb.mint AND i.owner = l.owner),
-             e AS (SELECT mint, slot, tx_index, source_owner AS src, dest_owner AS dst, amount FROM tt
+             -- the instruction path as a list of integers: the order inside a transaction
+             e AS (SELECT mint, slot, tx_index, list_transform(string_split(ix_path, '.'), x -> TRY_CAST(x AS INTEGER)) AS ix,
+                          source_owner AS src, dest_owner AS dst, amount FROM tt
                    WHERE kind IN ('transfer', 'transfer_checked') AND NOT in_trade AND source_owner IS NOT NULL AND dest_owner IS NOT NULL),
-             hop1 AS (SELECT e.mint, e.dst AS owner, e.slot, e.amount FROM e JOIN insiders i ON i.mint = e.mint AND i.owner = e.src),
+             hop1 AS (SELECT e.mint, e.dst AS owner, e.slot, e.tx_index, e.ix, e.amount FROM e JOIN insiders i ON i.mint = e.mint AND i.owner = e.src),
              -- a second hop only from the first hop's receipt on (review C2a: a transfer B -> C before B received from
-             -- the insider is not insider tokens)
-             hop2 AS (SELECT e.mint, e.dst AS owner, e.slot, e.amount FROM e JOIN (SELECT mint, owner, min(slot) AS first_slot FROM hop1 GROUP BY 1, 2) h
-                      ON h.mint = e.mint AND h.owner = e.src AND e.slot >= h.first_slot
+             -- the insider is not insider tokens), in transaction order (review 2026-10-16: the same slot is not the
+             -- same time): a later transaction, or the same transaction when the instruction order proves it
+             first1 AS (SELECT mint, owner, slot, tx_index, ix FROM hop1 QUALIFY row_number() OVER (PARTITION BY mint, owner ORDER BY slot, tx_index, ix) = 1),
+             hop2 AS (SELECT e.mint, e.dst AS owner, e.slot, e.tx_index, e.amount FROM e JOIN first1 h
+                      ON h.mint = e.mint AND h.owner = e.src
+                      AND (e.slot > h.slot OR (e.slot = h.slot AND (e.tx_index > h.tx_index OR (e.tx_index = h.tx_index AND e.ix > h.ix))))
                       ANTI JOIN insiders i ON i.mint = e.mint AND i.owner = e.dst),
              -- explained chronologically (review C2b): the explainable amount of a seller is the minimum over its sales
-             -- k of (received up to slot_k + sold after k), capped at the total sold; a receipt after a sale cannot
-             -- explain it
+             -- k of (received up to sale k + sold after k), capped at the total sold; a receipt after a sale cannot
+             -- explain it. "Up to" in transaction order: an earlier transaction of the same slot counts, a receipt in
+             -- the sale's own transaction does not (the store's leg has no instruction position: conservative)
              sr AS (SELECT s.*, sum(s.sold) OVER (PARTITION BY s.mint, s.t, s.owner) AS tot_sold,
                            sum(s.sold) OVER (PARTITION BY s.mint, s.t, s.owner ORDER BY s.slot, s.tx_index ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cum_sold,
-                           (SELECT COALESCE(sum(amount), 0) FROM hop1 h WHERE h.mint = s.mint AND h.owner = s.owner AND h.slot <= s.slot) AS r1,
-                           (SELECT COALESCE(sum(amount), 0) FROM hop2 h WHERE h.mint = s.mint AND h.owner = s.owner AND h.slot <= s.slot) AS r2
+                           (SELECT COALESCE(sum(amount), 0) FROM hop1 h WHERE h.mint = s.mint AND h.owner = s.owner
+                            AND (h.slot < s.slot OR (h.slot = s.slot AND h.tx_index < s.tx_index))) AS r1,
+                           (SELECT COALESCE(sum(amount), 0) FROM hop2 h WHERE h.mint = s.mint AND h.owner = s.owner
+                            AND (h.slot < s.slot OR (h.slot = s.slot AND h.tx_index < s.tx_index))) AS r2
                     FROM sells s),
              per_seller AS (
                 SELECT mint, t, owner, max(tot_sold) AS sold,
