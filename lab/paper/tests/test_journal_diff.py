@@ -64,6 +64,21 @@ def test_different_groups_or_costs_are_red_and_a_cause_explains(tmp_path):
     assert res["green"] and res["explained"] == {"rust_saw_more": 1}
 
 
+def test_a_schema_difference_is_red(tmp_path):
+    import sqlite3
+
+    a, b = _journal(tmp_path / "a"), _journal(tmp_path / "b")
+    assert journal_diff.schema_diff(a, b) == []
+    db = sqlite3.connect(os.path.join(b, "journal.sqlite"))
+    db.execute("ALTER TABLE exits ADD COLUMN extra INTEGER")
+    db.execute("CREATE TABLE extra_table (x INTEGER)")
+    db.commit()
+    db.close()
+    res = journal_diff.compare(a, b)
+    assert not res["green"] and res["unexplained"] == 0
+    assert res["schema_diff"][0] == "table extra_table only in B" and res["schema_diff"][1].startswith("table exits:")
+
+
 def test_the_command_writes_its_report_and_exits_by_colour(tmp_path):
     a, b = _journal(tmp_path / "a"), _journal(tmp_path / "b", pnl=0)
     assert journal_diff.main(["--journal-a", a, "--journal-b", a, "--out", str(tmp_path / "o1")]) == 0

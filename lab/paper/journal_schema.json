@@ -1,0 +1,52 @@
+{
+ "tables": [
+  {
+   "name": "signals",
+   "cols": "family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, venue TEXT, orientation TEXT, depth INTEGER, trigger_trader TEXT, status TEXT, reason TEXT, farm TEXT, block_time INTEGER, received_unix_ns INTEGER, created_unix_ns INTEGER, latency_ms INTEGER, segment_written_unix INTEGER, segment_lag_ms INTEGER, d_ms INTEGER, farm_complete INTEGER, pool_seen_slot INTEGER, farm_window_complete INTEGER",
+   "key": "family, variant, key, t"
+  },
+  {
+   "name": "orders",
+   "cols": "family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, size INTEGER, status TEXT, reason TEXT",
+   "key": "family, variant, key, t"
+  },
+  {
+   "name": "fills",
+   "cols": "family TEXT, variant TEXT, key TEXT, t INTEGER, side TEXT, day TEXT, slot INTEGER, tokens INTEGER, quote INTEGER",
+   "key": "family, variant, key, t, side"
+  },
+  {
+   "name": "exits",
+   "cols": "family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, exit_decision_slot INTEGER, exit_slot INTEGER, exit_reason TEXT, tokens INTEGER, cost INTEGER, proceeds INTEGER, pnl INTEGER, ret REAL, exit_attempts INTEGER, cf_graduation INTEGER, seed_pool INTEGER, vault_capped INTEGER, reverted_direct INTEGER, reverted_router INTEGER, sells_dropped INTEGER, sells_scaled INTEGER, peak_mark INTEGER, peak_slot INTEGER, n_flow_slots INTEGER, cap_slots INTEGER",
+   "key": "family, variant, key, t"
+  },
+  {
+   "name": "heartbeat",
+   "cols": "minute INTEGER, day TEXT, last_slot INTEGER, last_event TEXT, events INTEGER, open_positions INTEGER, gap_slots INTEGER, note TEXT",
+   "key": "minute, note"
+  },
+  {
+   "name": "usage",
+   "cols": "minute INTEGER, day TEXT, stream TEXT, bytes INTEGER, messages INTEGER, seq INTEGER, note TEXT",
+   "key": "minute, stream"
+  },
+  {
+   "name": "positions",
+   "cols": "family TEXT, variant TEXT, key TEXT, t INTEGER, entry_slot INTEGER, cost INTEGER, tokens INTEGER, status TEXT, mark_proceeds INTEGER, mark_slot INTEGER, mark_pnl INTEGER",
+   "key": "family, variant, key, t"
+  },
+  {
+   "name": "state",
+   "cols": "k TEXT, v TEXT",
+   "key": "k"
+  }
+ ],
+ "daily": [
+  "signals",
+  "orders",
+  "fills",
+  "exits",
+  "heartbeat",
+  "usage"
+ ]
+}
