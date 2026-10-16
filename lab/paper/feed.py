@@ -85,6 +85,8 @@ class LiveFeed(Feed):
 class ReplayFeed(Feed):
     """Events of a store for slots [lo, hi), in chain order. [lo, hi) must not touch the hold-out."""
 
+    all_pools = True  # every pool's every trade is in the feed (live: only the recorder's pools)
+
     def __init__(self, store, lo, hi, batch=200_000, con=None):
         if lo < HOLDOUT_END and hi > HOLDOUT_START:
             raise ValueError(f"ReplayFeed never reads the hold-out [{HOLDOUT_START}, {HOLDOUT_END})")

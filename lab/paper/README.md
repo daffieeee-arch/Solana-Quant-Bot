@@ -54,6 +54,30 @@ entries in a pool after a total loss there). Open positions carry `mark_proceeds
 `mark_pnl` (a sale of the whole position now, after costs); `<journal>/wallet.json` is the UI's
 wallet format marked `"mode": "paper"` (10 SOL plus realized P&L, paper buys and sells).
 
+**Variant groups** (`research/week4-spec-paper-h4h5-2026-10-16.md`, sha256 abc0f29f): the config's top level is
+the primary group (K3, unchanged); its `groups` section adds groups of their own. Group **H** trades the arms of
+H4 and H5, `flow300_H6` and `flow300_tp100_H6`, on the organic F7 triggers in pool_reversed (d_ms 600, q 0.5,
+no N2), a measurement and no test.
+- **Its own budget:** `risk-h.yaml` (0.5 SOL, at most 5 open, 2.5 SOL exposure, -1 SOL per day, a 24 h pool
+  cooldown), its own daily loss and its own paper wallet `<journal>/wallet-h.json`. K3's limits, wallet and stop
+  rule are its own: K3's journal rows are the same with and without the group (`tests/test_arms_replay.py`).
+- **Busy per arm on organic triggers only:** a flagged trigger opens and blocks nothing in the group (the backtest
+  and the clean tests simulate both labels together; the forward replay counts the difference).
+- **Full history only** (`require_farm_complete`): the group opens only when the farm label had it, i.e.
+  `farm_complete` (LiveFeed's farmer seed) and `farm_window_complete` (the pool's hour [t - 1 h, t) covered: seen
+  for an hour, followed since its creation, or a replay of every pool). Signals journal `pool_seen_slot` and
+  `farm_window_complete`.
+- **Exits:** the backtest's own rules (`strategies.f7_exit_rule`: FlowTime, FlowTpTime), the flow from a
+  `LiveFlowIndex` per open position fed with the pool's legs (the backtest's FlowIndex, only the legs since the
+  entry). Exits journal `peak_mark` / `peak_slot` and the windows `n_flow_slots` / `cap_slots`.
+- **Report:** the daily report's stop-rule counter and capital simulation count K3 only; group H gets a section
+  per arm ("measurement, no test"): trades, net per trade (1 %-trimmed and mean), the day's and the run's net SOL,
+  win and fill rate, drains, exit reasons, take-profit proceeds/cost (p5 / median / p95), median hold, and from 5
+  days with a position the day series' mean with a day-bootstrap interval (H4's form).
+- **Parity:** `python -m paper.parity --arm flow300_H6 --from A --to B --out DIR` compares an arm with the backtest
+  (busy over organic triggers only: equal on every organic trigger; the tournament's busy: equal in pools without
+  a flagged trigger). `paper.shadow --config <paper config>` runs the groups beside its variants.
+
 Measured latency (live only; reporting, no effect on fills or parity): LiveFeed gives every Event
 its transaction's arrival from the segment (`arrivals/`: earliest `received_unix_ns` and the
 server's `created_unix_ns`; `_segment.json`: `written_unix`, when the segment was closed and the

@@ -21,7 +21,11 @@ TABLES = {
                 "segment_written_unix INTEGER, segment_lag_ms INTEGER, d_ms INTEGER, "
                 # Live only: 1 when the farmer history behind the farm label was complete at t (LiveFeed's
                 # farm_seed complete_from), 0 before; NULL in replay (the store's labels).
-                "farm_complete INTEGER", "family, variant, key, t"),
+                "farm_complete INTEGER, "
+                # Pools: the first slot the engine saw the pool (backfill included), and whether the farm label's
+                # hour [t - 1 h, t) was covered (seen for an hour, or followed since the pool's creation); a
+                # group with require_farm_complete opens nothing on 0 (week4-spec-paper-h4h5 §1).
+                "pool_seen_slot INTEGER, farm_window_complete INTEGER", "family, variant, key, t"),
     "orders": ("family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, size INTEGER, status TEXT, "
                "reason TEXT", "family, variant, key, t"),
     "fills": ("family TEXT, variant TEXT, key TEXT, t INTEGER, side TEXT, day TEXT, slot INTEGER, tokens INTEGER, "
@@ -29,7 +33,10 @@ TABLES = {
     "exits": ("family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, exit_decision_slot INTEGER, "
               "exit_slot INTEGER, exit_reason TEXT, tokens INTEGER, cost INTEGER, proceeds INTEGER, pnl INTEGER, ret REAL, "
               "exit_attempts INTEGER, cf_graduation INTEGER, seed_pool INTEGER, vault_capped INTEGER, "
-              "reverted_direct INTEGER, reverted_router INTEGER, sells_dropped INTEGER, sells_scaled INTEGER",
+              "reverted_direct INTEGER, reverted_router INTEGER, sells_dropped INTEGER, sells_scaled INTEGER, "
+              # The highest mark since the entry (gross, as proceeds) and its first slot (the tournament's
+              # peak_mark / peak_slot); the exit rule's windows in slots: the flow window and the time cap.
+              "peak_mark INTEGER, peak_slot INTEGER, n_flow_slots INTEGER, cap_slots INTEGER",
               "family, variant, key, t"),
     "heartbeat": ("minute INTEGER, day TEXT, last_slot INTEGER, last_event TEXT, events INTEGER, open_positions INTEGER, "
                   "gap_slots INTEGER, note TEXT", "minute, note"),

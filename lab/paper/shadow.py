@@ -41,8 +41,9 @@ Under DIR:
      creator_unknown (an F7 trigger live took while the replay's creator rule vetoed it: the token
      was created after the live start, so live never got its CreateEvent, a curve transaction, and
      took the pool's coin creator as the creator; the real creator, who had moved the creator fee
-     to a sharing config, sold in F7's creator window [t - 200 v1 slots, t]), or unexplained,
-     which must be 0.
+     to a sharing config, sold in F7's creator window [t - 200 v1 slots, t]), farm_incomplete (a group
+     with require_farm_complete, the arms of --config, skipped the trigger on one side: a farm label without
+     full history), or unexplained, which must be 0.
   5. live-risk/: `engine --live` as it runs live (risk.yaml limits, the clock measured from the
      segments' block times, decisions from the first segment) on the same segments, with its daily
      reports; reconcile.json: paper.reconcile against the chunks on every segment with a simulated
@@ -92,6 +93,9 @@ GAP_SLOTS = (150, 600, 2400)     # simulated gaps: ~40 s, ~2.5 min, ~10 min at 2
 RECONNECT_SLOTS = (40, 200)      # lossless reconnects: a segment's last slots come with the next one
 STREAMS = {1: "tx_watchlist", 2: "tx_probes", 3: "tx_new_pools", 4: "tx_new_reversed", 5: "tx_pump_creates"}
 FAMILIES = ("F7", "N2_F7")
+# A group with require_farm_complete (the arms) skips a trigger whose farm label lacked history: live and replay
+# can differ there (LiveFeed's seed and the recorder's coverage against the store's every pool from the start).
+FARM_INCOMPLETE = ("farm history incomplete", "farm window incomplete")
 # Work tables are written one slot window at a time, each window sorted: the tables end up in slot
 # order (a segment's copy reads only its own slots via zonemaps) while no sort holds more than one
 # window. One sort over a whole epoch's txu ran out of a 1 GB connection (shadow-1052-db9a9c9).
@@ -782,6 +786,8 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
                 trig_r = {x for x in f7_at[(var, t)] if R["signals"].get(("F7", var, x, t))}
                 trig_l = {x for x in f7_at[(var, t)] if L["signals"].get(("F7", var, x, t))}
                 cause = "follows_f7" if trig_r != trig_l else "n2_pick"
+            elif any(x and x["status"] == "skipped" and x["reason"] in FARM_INCOMPLETE for x in (r, l)):
+                cause = "farm_incomplete"
             elif r and l and r["status"] != l["status"] and "busy" in (r["reason"], l["reason"]):
                 cause = "busy_follows"
             elif cov.gap_overlaps(t - HISTORY_SLOTS, end):
@@ -855,6 +861,7 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
 
     watch = LiveWatchlist(feed, root)
     eng = Engine(feed, Journal(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+                 groups=_groups(a),
                  dev_bounds=(blo, bhi), watchlist=watch)
     rec.sizes = lambda: _state_report(feed, eng, {"feed": feed.con, "seed": feed.seed_con, "rec": rec.con})
     rec.state_log = os.path.join(out, "state.jsonl")
@@ -870,6 +877,16 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
     del feed
     gc.collect()
     return rec, ldir
+
+
+def _groups(a):
+    """The further variant groups of --config (a paper config's `groups` section: the arms beside K3), fresh
+    Group objects per engine (each holds its own state)."""
+    if not getattr(a, "config", None):
+        return []
+    from .engine import config_groups, load_config
+
+    return config_groups(load_config(a.config)[1])
 
 
 def run(a, log=print):
@@ -908,7 +925,9 @@ def run(a, log=print):
     # 1. replay
     t0 = time.time()
     rdir = os.path.join(out, "replay")
+    info["groups"] = {g.name: [n for n, _ in g.variants] for g in _groups(a)}
     replay_key = {"store": os.path.abspath(a.store), "from_slot": lo, "to_slot": hi, "variants": info["variants"],
+                  **({"groups": info["groups"]} if info["groups"] else {}),
                   "d": a.d, "q": a.q}
     done_path = os.path.join(rdir, "DONE.json")
     if (resume or from_compare) and os.path.exists(done_path) and json.load(open(done_path)).get("key") == replay_key:
@@ -919,6 +938,7 @@ def run(a, log=print):
         shutil.rmtree(rdir, ignore_errors=True)
         rfeed = ReplayFeed(a.store, lo, hi, con=scon)
         Engine(rfeed, Journal(rdir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+               groups=_groups(a),
                dev_bounds=(blo, bhi)).run()
         del rfeed
         with open(done_path, "w") as f:
@@ -969,7 +989,7 @@ def run(a, log=print):
     rdir2 = os.path.join(out, "live-risk")
     shutil.rmtree(rdir2, ignore_errors=True)
     lfeed = LiveFeed(root, store=a.store, follow=False, snapshot_before=lo, h24=h24, memory=a.memory, seed_farmers=True)
-    Engine(lfeed, Journal(rdir2), a.risk, variants=variants, d=a.d, q=a.q, clock=lfeed.clock, backup=False).run()
+    Engine(lfeed, Journal(rdir2), a.risk, variants=variants, d=a.d, q=a.q, clock=lfeed.clock, backup=False, groups=_groups(a)).run()
     lfeed.close()
     del lfeed
     gc.collect()
@@ -1058,7 +1078,8 @@ def render(info, rows):
           "are not recorded; creator_unknown = live took an F7 trigger that the creator rule vetoes in the replay: the token "
           "was created after the live start, so live never got its CreateEvent and took the pool's coin creator as the "
           "creator, while the real creator (who moved the creator fee to a sharing config) sold in F7's creator window "
-          "[t − 200 v1 slots, t].", ""]
+          "[t − 200 v1 slots, t]; farm_incomplete = an arm (require_farm_complete) skipped the trigger on one side: its farm "
+          "label lacked full history.", ""]
     un = [r for r in rows if r["cause"] == "unexplained"][:10]
     if un:
         L += ["### Unexplained (first 10)", "", "| family | variant | key | t | replay | live |", "|---|---|---|---|---|---|"]
@@ -1096,6 +1117,7 @@ def main():
     ap.add_argument("--reconnects", type=int, default=6)
     ap.add_argument("--seed", type=int, default=1052)
     ap.add_argument("--no-probes", action="store_true")
+    ap.add_argument("--config", help="a paper config: its further groups (the arms beside K3) run beside --variants")
     ap.add_argument("--pump-creates", action="store_true",
                     help="the recorder's --pump-creates: every pump.fun create transaction (live learns new tokens' creators)")
     ap.add_argument("--watch-warmup", type=int, default=0, help="watchlist warm-up minutes before --from (inside the store)")
