@@ -7,13 +7,16 @@ DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-fait
 S = os.environ.get("LAB_STORE", f"{DATA}/store/dev2.duckdb")
 W = os.path.join(os.environ.get("LAB_WALLETS_OUT", f"{DATA}/wallets"), "winners-v1")
 PER=int(sys.argv[1]) if len(sys.argv) > 1 else 400   # positions per (hold bucket x venue)
+BLOCK=sys.argv[2] if len(sys.argv) > 2 else "all"   # all | out (days 10-18 only, entry_day >= 2026-09-20) | lab (days 1-9)
+VENUE=sys.argv[3] if len(sys.argv) > 3 else "all"  # all | curve | pool | pool_reversed
 WIN=2000  # slots looked back for the last state before the entry / exit slot
 t0=time.time(); log=lambda *a: print(round(time.time()-t0,1), *a, flush=True)
 con=duckdb.connect(); con.execute(f"SET memory_limit='1400MB'; SET threads TO 2; SET preserve_insertion_order=false; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='6GB'")
 con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
 con.execute(f"""CREATE TABLE smp AS SELECT * FROM (SELECT p.*, l.exit_pool, row_number() OVER (PARTITION BY hold_bucket, entry_venue ORDER BY hash(wallet || mint)) rn
   FROM '{W}/c_pos.parquet' p JOIN (SELECT wallet, mint, arg_max(pool, slot) AS exit_pool FROM '{W}/c_legs.parquet' WHERE NOT is_buy GROUP BY 1,2) l USING (wallet, mint)
-  WHERE kind = 'closed' AND hold_bucket >= 'c' AND n_venues = 1 AND NOT COALESCE(mayhem, false) AND (ls - 446256000) // 432000 = (fb - 446256000) // 432000) WHERE rn <= {PER}""")
+  WHERE kind = 'closed' AND hold_bucket >= 'c' AND n_venues = 1 AND NOT COALESCE(mayhem, false) AND (ls - 446256000) // 432000 = (fb - 446256000) // 432000
+  AND ({'true' if BLOCK == 'all' else "entry_day >= '2026-09-20'" if BLOCK == 'out' else "entry_day < '2026-09-20'"}) AND ({'true' if VENUE == 'all' else f"entry_venue = '{VENUE}'"})) WHERE rn <= {PER}""")
 log("sample", con.execute("SELECT entry_venue, hold_bucket, count(*) FROM smp GROUP BY 1,2 ORDER BY 1,2").fetchall())
 con.execute("CREATE TABLE sm AS SELECT wallet, mint, entry_venue AS venue, CASE WHEN entry_venue = 'curve' THEN mint ELSE entry_pool END AS key, fb, ls, first_buy_sol, buy_sol, sell_sol, net_cash, entry_bps, hold_bucket, entry_day, hold, ms FROM smp")
 EP=[(446256000+432000*i, 446256000+432000*(i+1)) for i in range(14)]
@@ -48,5 +51,5 @@ con.execute(f"""CREATE TABLE out AS SELECT *,
   sell_sol(x0, buy_tok(e0, buy_sol, fbps), fbps) - buy_sol - {COST} AS net0, sell_sol(x2, buy_tok(e2, buy_sol, fbps), fbps) - buy_sol - {COST} AS net2, sell_sol(x3, buy_tok(e3, buy_sol, fbps), fbps) - buy_sol - {COST} AS net3,
   sell_sol(x0, buy_tok(e0, 5e8, fbps), fbps) - 5e8 - {COST} AS h0, sell_sol(x2, buy_tok(e2, 5e8, fbps), fbps) - 5e8 - {COST} AS h2, sell_sol(x3, buy_tok(e3, 5e8, fbps), fbps) - 5e8 - {COST} AS h3
   FROM rp""")
-con.execute(f"COPY out TO '{W}/c_replay.parquet' (FORMAT PARQUET)")
+con.execute(f"COPY out TO '{W}/c_replay{'' if BLOCK == 'all' and VENUE == 'all' else '-' + BLOCK + '-' + VENUE}.parquet' (FORMAT PARQUET)")
 log("done", con.execute("SELECT count(*), count(net0), count(net3) FROM out").fetchone())
