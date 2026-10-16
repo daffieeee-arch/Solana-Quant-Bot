@@ -46,6 +46,11 @@ def set_window_end(slot):
 EXACT_IN_CURVE = {"buy_exact_sol_in", "buy_exact_quote_in_v2", "buy_exact_quote_in_v3", "multi_hop_curve_swap", "other"}
 PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 PUMP_AMM = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+# The Mayhem program's agent (its sol vault authority). Its curve trade is priced on the previous state; then
+# pump resets the curve's virtual quote reserves inside the same instruction (the agent's own TradeEvent already
+# logs the new value, and the next trades are priced on it). The reset rule is not modelled, so a re-execution
+# through such a leg is refused and counted (Result.mayhem_reverted). Mayhem curves are outside every universe.
+MAYHEM_AGENT = "BwWK17cbHxwWBKZkUYvzxLcNQ1YVyaFezduWbtm2de6s"
 # Standard PumpSwap seed after migration (median of all dev-period pools) and its fee tier.
 SEED_POOL = Pool(206_900_000_000_000, 84_990_359_060, 2, 93, 30)
 
@@ -172,6 +177,7 @@ class Result:
     reverted_router: int = 0
     sells_dropped: int = 0
     sells_scaled: int = 0
+    mayhem_reverted: int = 0  # Mayhem-agent transactions refused (their virtual-quote reset is not modelled)
     hist_mid_entry: float = None  # historical mid price (no us) at entry and exit
     hist_mid_exit: float = None
     marks: list = field(default_factory=list)
@@ -243,7 +249,7 @@ class Holdings:
 
 def _rerun_curve(state, leg, tau, hold, diag):
     """Re-execute one historical curve leg; returns (state, cf_token_delta) or None if it fails."""
-    if state.complete:
+    if state.complete or leg.trader == MAYHEM_AGENT:  # the agent's virtual-quote reset is not modelled
         return None
     state = replace(state, fee_bps=leg.pre.fee_bps, creator_bps=leg.pre.creator_bps)
     own_limits = leg.direct
@@ -489,7 +495,9 @@ class PositionSim:
             if ok:
                 self.state = tx_state
             else:
-                if failed_leg.direct:
+                if isinstance(failed_leg, CurveLeg) and failed_leg.trader == MAYHEM_AGENT:
+                    self.r.mayhem_reverted += 1
+                elif failed_leg.direct:
                     self.r.reverted_direct += 1
                 else:
                     self.r.reverted_router += 1
