@@ -4,6 +4,7 @@ Run: "$LAB_PY" -m unittest discover -s lab/ui/tests -v
 """
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -261,6 +262,32 @@ class Binding(unittest.TestCase):
     def test_forbidden_ports(self):
         for p in ("3000", "8443", "8787", "8771"):
             self.refused("--port", p)
+
+
+class Unit(unittest.TestCase):
+    """lab/ops/systemd/lab-ui-web.service: the pinned deploy worktree, the Tailscale IP, bounded resources."""
+
+    def setUp(self):
+        with open(os.path.join(os.path.dirname(SERVER), "..", "ops", "systemd", "lab-ui-web.service")) as f:
+            self.text = f.read()
+        self.exec = re.search(r"^ExecStart=(.*)$", self.text, re.M).group(1)
+
+    def test_serves_pinned_deploy_worktree(self):
+        self.assertRegex(self.text, r"(?m)^WorkingDirectory=%h/Solana-project/worktrees/lab-ui-deploy$")
+        self.assertNotRegex(self.text, r"worktrees/lab-ui(?!-deploy)")
+        self.assertIn(" -I lab/ui/server.py ", self.exec)
+
+    def test_tailscale_bind_and_port(self):
+        self.assertIn("--host 100.112.193.63", self.exec)
+        self.assertNotIn("0.0.0.0", self.text)
+        port = int(re.search(r"--port (\d+)", self.exec).group(1))
+        self.assertNotIn(port, (3000, 8443, 8787, 8771, 8502))
+
+    def test_limits(self):
+        self.assertRegex(self.text, r"(?m)^MemoryMax=1G$")
+        self.assertRegex(self.text, r"(?m)^CPUQuota=\d+%$")
+        self.assertRegex(self.text, r"(?m)^StartLimitBurst=5$")
+        self.assertRegex(self.text, r"(?m)^NoNewPrivileges=yes$")
 
 
 if __name__ == "__main__":
