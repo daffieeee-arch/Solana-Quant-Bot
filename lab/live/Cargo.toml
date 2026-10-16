@@ -15,6 +15,9 @@ path = "src/main.rs"
 # The extractor's row types are compiled in from ../extractor/src (idl.rs, sink.rs) at its versions; no
 # Jetstreamer or Agave crates: a replay reads the rows the extractor or the recorder wrote.
 anyhow = "1"
+# idl.rs encodes pubkeys (bs58) and byte arrays (hex): the extractor's versions (lab/extractor/Cargo.toml).
+bs58 = "0.5"
+hex = "0.4"
 serde_json = "1"
 sha2 = "0.10"
 log = "0.4"
