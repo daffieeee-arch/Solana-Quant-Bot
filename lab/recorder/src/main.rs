@@ -188,18 +188,27 @@ fn parse_assume(s: &str) -> Result<(u64, u64)> {
     Ok((day, bytes.parse().context("--budget-assume-spent: BYTES must be a whole number")?))
 }
 
-/// The exit code for an error that ends the recorder: a segment that could not be written.
-fn segment_exit(e: &anyhow::Error) -> Option<i32> {
+/// The exit code for an error that ends the recorder: a segment that could not be written. The meter is saved
+/// first, so budget.json holds the running minute's bytes when the restart reads it (LAB review P2, #308).
+fn segment_exit(e: &anyhow::Error, meter: &Meter) -> Option<i32> {
     let w = e.chain().find_map(|c| c.downcast_ref::<SegmentWriteError>())?;
+    save_before_exit(meter);
     log::error!("{w}; exiting with {EXIT_SEGMENT}: the restart resumes after the last segment on disk");
     Some(EXIT_SEGMENT)
 }
 
 /// `Ok(EXIT_SEGMENT)` for a segment write error, the error itself otherwise.
-fn end_on(e: anyhow::Error) -> Result<i32> {
-    match segment_exit(&e) {
+fn end_on(e: anyhow::Error, meter: &Meter) -> Result<i32> {
+    match segment_exit(&e, meter) {
         Some(code) => Ok(code),
         None => Err(e),
+    }
+}
+
+/// budget.json with the running minute, before an exit that does not flush the meter.
+fn save_before_exit(meter: &Meter) {
+    if let Err(err) = meter.save() {
+        log::error!("budget: budget.json could not be saved before the exit ({err:#}); the restart counts from the segments");
     }
 }
 
@@ -468,7 +477,7 @@ async fn run(a: Args) -> Result<i32> {
         let mut st = SessionState::default();
         let exit = match session(&mut rec, &a, &mut files, &endpoint, resume, deadline, &mut st).await {
             Ok(e) => e,
-            Err(e) => match segment_exit(&e) {
+            Err(e) => match segment_exit(&e, &rec.meter) {
                 Some(code) => return Ok(code),
                 None => Exit::Disconnected(format!("{e:#}")),
             },
@@ -481,7 +490,7 @@ async fn run(a: Args) -> Result<i32> {
             Exit::Shutdown => {
                 rec.meter.flush()?; // the last minute's usage into the last segment, and budget.json
                 if let Err(e) = rec.close_segment(Some("shutdown")) {
-                    return end_on(e);
+                    return end_on(e, &rec.meter);
                 }
                 log::info!("shut down after slot {:?}", rec.slots.last_closed);
                 return Ok(0);
@@ -493,8 +502,9 @@ async fn run(a: Args) -> Result<i32> {
                 rec.on_disconnect(unix(), &note);
                 if failures >= MAX_FAILURES {
                     if let Err(e) = rec.close_segment(Some("giving up")) {
-                        return end_on(e);
+                        return end_on(e, &rec.meter);
                     }
+                    save_before_exit(&rec.meter);
                     bail!("{failures} sessions in a row without data; giving up");
                 }
                 tokio::time::sleep(Duration::from_secs((1u64 << failures.min(6)).min(60))).await;
@@ -531,13 +541,22 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_session, end_on, parse_assume, SegmentWriteError, SessionState, EXIT_SEGMENT};
+    use super::{count_session, end_on, parse_assume, unix, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
 
     #[test]
-    fn a_segment_write_error_ends_the_recorder_and_other_errors_do_not() {
+    fn a_segment_write_error_saves_the_running_minute_and_ends_the_recorder_other_errors_do_not() {
+        let root = std::env::temp_dir().join(format!("lab-recorder-exit74-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut meter = Meter::load(&root, 25_000_000_000, 1.0, unix()).unwrap();
+        meter.add("tx_pools", 12_345); // the running minute: not in budget.json yet
+        assert!(end_on(anyhow::anyhow!("main stream: unavailable"), &meter).is_err());
+        assert!(!root.join("budget.json").exists()); // a disconnect saves nothing; the session goes on
         let w = SegmentWriteError { seq: 3, stage: "sync", kind: Some(std::io::ErrorKind::StorageFull) };
-        assert_eq!(end_on(anyhow::Error::new(w).context("on_tick")).unwrap(), EXIT_SEGMENT);
-        assert!(end_on(anyhow::anyhow!("main stream: unavailable")).is_err());
+        assert_eq!(end_on(anyhow::Error::new(w).context("on_tick"), &meter).unwrap(), EXIT_SEGMENT);
+        // the restart's meter starts from the saved minute, not below it
+        assert_eq!(Meter::load(&root, 25_000_000_000, 1.0, unix()).unwrap().spent, 12_345);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

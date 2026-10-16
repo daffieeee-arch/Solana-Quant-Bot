@@ -71,7 +71,9 @@ def assessment_lines(a):
              f"filled trade, 95 % interval {ci} SOL (day bootstrap, {b['draws']:,} draws, seed {b['seed']})"]
     c = b["costs_lamports"]
     if c:
-        lines.append("- costs beyond the fill prices (SOL): " + ", ".join(f"{k.replace('_', ' ')} {v / 1e9:.4f}" for k, v in c.items())
+        expected = set(b.get("costs_expected") or ())
+        lines.append("- costs beyond the fill prices (SOL): " + ", ".join(
+            f"{k.replace('_', ' ')}{' (expected)' if k in expected else ''} {v / 1e9:.4f}" for k, v in c.items())
                      + "; venue fees are in the fill prices (each pool's and curve's own fee rates), not split out")
     else:
         lines.append("- costs: the journal has no cost scenario (an engine from before 2026-10-16)")

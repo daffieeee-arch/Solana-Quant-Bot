@@ -36,10 +36,10 @@ The engine needs a store for `--live`. The store is the snapshot of the tokens a
 
 **Route A: the clean data is spent before the start.** That means:
 - E20 has written `clean.lock`;
-- H3, H4 and H5 have each written the `result.json` of a real run with a decision.
+- E20, H3, H4 and H5 have each written the `result.json` of a real run with a decision (E20's in `research/clean-test/clean-<commit7>/result/`).
 
 Then the NAS, where clean-v1 lives, builds a store over the last two complete clean epochs: 1062–1063, or 1061–1062 if 1063 is not extracted yet. `python -m backtest.store paper` enforces the condition itself:
-- It refuses every window in 1055–1063 until the lock and all three results are there. Without them it does not even list the clean root.
+- It refuses every window in 1055–1063 until the lock and all four results are there. Without them it does not even list the clean root.
 - It writes the evidence (the lock's sha256 and the result paths) into the store's meta, under `clean_spent`.
 
 **Route B: otherwise.** Use **`fwd1053-1054.duckdb`**: slots 454,896,000–455,760,000, ending at the start of epoch 1055 (about 2026-10-11).
@@ -65,7 +65,7 @@ sha256sum $LAB/store/$S                                    # the same as on the 
 chmod 444 $LAB/store/$S
 $PY -c "import duckdb,json; c=duckdb.connect('$LAB/store/$S', read_only=True, config={'memory_limit':'512MB'}); m=json.loads(c.execute('SELECT json FROM meta').fetchone()[0]); print(m['period'], m['slot_start'], m['slot_end_exclusive'], sorted(m.get('clean_spent', {}).get('results', {})))"
                                                            # route B: forward 454896000 455760000 []
-                                                           # route A: paper <from> <to> ['h3', 'h4', 'h5']
+                                                           # route A: paper <from> <to> ['clean', 'h3', 'h4', 'h5']
 ```
 
 **What a store that ends before the start means** (route A shortens the gap to hours or days; route B leaves about ten days). All of it is known, and all of it is journaled.

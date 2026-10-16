@@ -65,8 +65,10 @@ CLEAN_CHUNKS = os.environ.get("LAB_CLEAN_CHUNKS", "/home/chupa/Solana-project/da
 # The live paper engine's snapshot (PAPER_STORE; lab/ops/runbook-paper-start-2026-10-21.md): the tokens, pools and
 # farmer history of the epochs before the live start, never for strategy results. A window in the clean epochs
 # only once the clean data is spent (coordinator, 2026-10-16): E20's clean.lock next to the clean store, and a
-# result.json of a real run with a decision for every later clean test (CLEAN_TESTS, under CLEAN_RESULTS).
-CLEAN_TESTS = ("h3", "h4", "h5")
+# result.json of a real run with a decision for E20 itself and every later clean test (CLEAN_TESTS, under
+# CLEAN_RESULTS: <test>-<commit7>/result/result.json; E20's directory is clean-<commit7>, backtest/nas_clean_test.sh).
+CLEAN_TESTS = ("clean", "h3", "h4", "h5")
+CLEAN_TEST_NAMES = {"clean": "E20"}
 CLEAN_RESULTS = os.environ.get("LAB_CLEAN_RESULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/clean-test")
 DISK_FLOOR_GB = 50
 DISK_LOW = "/home/chupa/Solana-project/data-old-faithful-one/lab/locks/disk-low"  # set by ops/disk-guard.sh
@@ -129,7 +131,7 @@ def clean_unspent(lock_path, results=CLEAN_RESULTS, tests=CLEAN_TESTS):
         if done:
             evidence["results"][name] = done
         else:
-            why.append(f"no {name.upper()} result (result.json of a real run with a decision) under {results}")
+            why.append(f"no {CLEAN_TEST_NAMES.get(name, name.upper())} result (result.json of a real run with a decision) under {results}")
     return why, evidence
 
 

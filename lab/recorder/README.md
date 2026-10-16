@@ -26,6 +26,12 @@ transactions.
 | `vaults` (optional) | `account` = the watchlist's `vaults`, data slice 64..72 (token `amount`) | cheap balance-only following of pools that are not on the full-transaction list |
 | `pool_accounts` (off by default, `--pool-accounts`) | owner PumpSwap + memcmp Pool discriminator, data slice 43..244 | new pools (mints, vaults, coin creator). Expensive: see below |
 
+**Pump creates in LiveFeed: kept for 3 days.**
+- LiveFeed keeps a token learned from `tx_pump_creates` for `TOKEN_KEEP_DAYS` (3, `paper/live.py`). A token that has not graduated by then is dropped from LiveFeed.
+- If it graduates later anyway, its pool's F7 creator rule falls back to the pool's `coin_creator`. That is a sharing config when the creator moved the fee.
+- The shadow compare names such a case `creator_unknown` (#233), so it is counted, not silent.
+- This is rare: F7's pools are almost all created the day of the create.
+
 **F7 needs creation detection.** 99% of the F7 triggers come in reversed pools created the same day,
 minutes after their creation (LAB research, watchlist measurement). Without `--pool-creations` or
 `--new-reversed` no new reversed pool is found, `new_vaults` stays empty and F7 coverage is ~0%;

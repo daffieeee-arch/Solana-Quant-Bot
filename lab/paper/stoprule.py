@@ -29,6 +29,8 @@ CLOCK_KEY, CLOCK_LATEST, CLOCK_DAYS, CLOCK_MAX_DAYS = "clock_start", "2026-11-02
 GROUPS_KEY, FEED_KEY, COSTS_KEY = "groups", "feed", "cost_scenario"
 ALPENGLOW_SLOT = 1064 * 432_000  # the consensus switch (epoch 1064, about 2026-10-21): a new regime
 DECISIONS = ("GO", "ADJUST", "STOP")
+# Cost items that are expectations from the cost scenario, not counted from the journal (LAB review P2, #309.3).
+COSTS_EXPECTED = ("landing_retries",)
 NOT_PERMISSION = "GO is geen toestemming voor live geld; dat is een aparte eigenaarsbeslissing."
 
 
@@ -140,7 +142,8 @@ def clock_state(clock, day, verdict_):
 def costs(traded, scn):
     """The stop rule's costs beyond the fill prices, in lamports, as backtest.costs.settle books them under the cost
     scenario `scn` (the engine's, state 'cost_scenario'): per filled trade an entry and an exit transaction (fee, tip
-    and the expected failed attempts before one lands), the exit attempts that failed on their own limit, the failed
+    and the *expected* failed attempts before one lands: int((1 / land_prob - 1) * failed_tx) per transaction, a
+    rounded expectation, not counted attempts), the exit attempts that failed on their own limit, the failed
     entries, ATA rent when it is lost, and adverse execution. Venue fees are in the fill prices (each pool's and
     curve's own fee rates from the data) and are not split out in the journal."""
     filled = [x for x in traded if x["tokens"]]
@@ -150,7 +153,7 @@ def costs(traded, scn):
     return {
         "network": 2 * n * scn["fee_per_tx"],
         "tips": 2 * n * scn["tip"],
-        "landing_retries": 2 * n * retries,
+        "landing_retries": 2 * n * retries,  # an expectation (COSTS_EXPECTED), not counted attempts
         "failed_exit_attempts": sum(max(0, (x["exit_attempts"] or 0) - 1) for x in filled) * scn["failed_tx"],
         "failed_entries": sum(1 for x in traded if not x["tokens"]) * scn["failed_tx"],
         "ata_rent_lost": n * scn["ata_rent"] if scn.get("rent_mode") == "lost" else 0,
@@ -206,7 +209,7 @@ def assessment(traded, mean, lo, hi, verdict_, clock_st, scn=None, group=None, f
         "basis": {"filled_trades": n, "failed_entries": len(traded) - n, "trading_days": days,
                   "clock_day": clock_st.get("clock_day"), "mean_lamports": mean,
                   "ci95_lamports": [lo, hi] if lo is not None else None, "draws": DRAWS, "seed": SEED,
-                  "costs_lamports": costs(traded, scn) if scn else None},
+                  "costs_lamports": costs(traded, scn) if scn else None, "costs_expected": list(COSTS_EXPECTED)},
         "assumptions": assumptions,
         "uncertainty": uncertainty,
         "not_permission": NOT_PERMISSION,
