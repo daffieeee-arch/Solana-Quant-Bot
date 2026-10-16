@@ -1,8 +1,9 @@
 """Daily paper report (Markdown + Parquet) from the journal.
 
 Per family and variant: trades, net SOL per trade, win rate, fill rate and the difference to the
-N2 shadow; the stop-rule counter (trades, days, GO / ADJUST / STOP, with a day-bootstrap CI from
-5 days on); the 10 SOL capital simulation (addendum §6); heartbeat and feed gaps; the measured
+N2 shadow; the stop-rule counter (trades, days, GO / ADJUST / STOP once there are 200 filled trades and 5 trading
+days for the day-bootstrap CI, paper/stoprule.py), with what the verdict rests on and what stays uncertain; the
+10 SOL capital simulation (addendum §6); heartbeat and feed gaps; the measured
 latency of the live F7 triggers next to the simulated d. With variant groups (journal state 'groups') the
 stop-rule counter and the capital simulation count the primary group (K3) only; every further group (H) gets a
 section per variant, a measurement and no test (research/week4-spec-paper-h4h5-2026-10-16.md §4). With a clock
@@ -19,14 +20,15 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from backtest.report import CAPITAL_SOL, MAX_POSITIONS, MIN_TRADES, _boot, capital_sim
+from backtest.report import CAPITAL_SOL, MAX_POSITIONS, capital_sim
 
-# The selection and count are shared with the web app's Paper tab (lab/ui/paper.py): see paper/stoprule.py.
-from .stoprule import (CLOCK_DAYS, CLOCK_KEY, CLOCK_LATEST, CLOCK_MAX_DAYS, GROUPS_KEY,  # noqa: F401 (re-exported)
-                       clock_state, counted, decide, parse_clock, parse_groups, stop_rule_inputs)
+# The selection, count, bootstrap and verdict are shared with the web app's Paper tab (lab/ui/paper.py): see
+# paper/stoprule.py.
+from .stoprule import (CLOCK_DAYS, CLOCK_KEY, CLOCK_LATEST, CLOCK_MAX_DAYS, COSTS_KEY, DRAWS, FEED_KEY,  # noqa: F401
+                       GROUPS_KEY, MIN_DAYS_CI, MIN_TRADES, SEED, assessment, clock_state, counted, feed_of,
+                       parse_clock, parse_groups, primary_group, stop_rule_inputs, verdict)
 
-MIN_DAYS_CI = 5
-DRAWS, SEED, TRIM, EMPTY = 10_000, 7, 0.01, -0.99
+TRIM, EMPTY = 0.01, -0.99
 
 
 def groups_of(journal):
@@ -39,25 +41,44 @@ def clock_of(journal):
     return parse_clock(journal.state(CLOCK_KEY))
 
 
-def clock_lines(clock, day, n_filled, verdict):
-    """The clock's state on `day`: not set, not started, its day, or the decision due."""
-    st = clock_state(clock, day, n_filled, MIN_TRADES)
+def clock_lines(clock, day, n_filled, verdict_):
+    """The clock's state on `day`: not set, not started, its day, or the verdict there."""
+    st = clock_state(clock, day, verdict_)
     if st["phase"] == "not_set":
         return ["- no clock start in the journal yet (python -m paper.clock): a count of every paper day, no decision"]
     head = f"- clock start {clock['date']} (set {clock['set_at']}; reason: {clock['reason']})"
     if st["phase"] == "not_started":
         return [head + ": not started, nothing counted yet"]
     n = st["clock_day"]
-    if st["phase"] == "due" and n >= CLOCK_MAX_DAYS:
-        now = f"clock day {n}: the {CLOCK_MAX_DAYS}-day limit, the decision is due: **{verdict}**"
+    if st["limit"]:
+        now = f"clock day {n}: the {CLOCK_MAX_DAYS}-day limit, the decision is due: **{verdict_}**"
     elif st["phase"] == "due":
-        now = f"clock day {n}, {n_filled} trades: the decision is due: **{verdict}**"
-    elif st["phase"] == "extended":
-        now = f"clock day {n}, {n_filled} trades: it runs on until {MIN_TRADES} trades, at most day {CLOCK_MAX_DAYS}"
+        now = f"clock day {n}, {n_filled} trades: the verdict is there: **{verdict_}**"
     else:
-        now = f"clock day {n} of {CLOCK_DAYS}"
-    return [head, f"- {now} (the decision after {CLOCK_DAYS} days with at least {MIN_TRADES} trades, else at "
-                  f"{MIN_TRADES} trades, at most day {CLOCK_MAX_DAYS})"]
+        now = f"clock day {n}, {n_filled} trades: no verdict yet"
+    return [head, f"- {now} (the verdict from {MIN_TRADES} filled trades and {MIN_DAYS_CI} trading days on, at most "
+                  f"day {CLOCK_MAX_DAYS})"]
+
+
+def assessment_lines(a):
+    """The verdict's basis, assumptions and uncertainty (stoprule.assessment) as report lines."""
+    b = a["basis"]
+    sol = lambda x: f"{x / 1e9:+.4f}"  # noqa: E731
+    ci = f"{sol(b['ci95_lamports'][0])} … {sol(b['ci95_lamports'][1])}" if b["ci95_lamports"] else "–"
+    lines = ["", "### What the verdict rests on", "",
+             f"- {b['filled_trades']} filled trades (failed entries {b['failed_entries']}), {b['trading_days']} trading days"
+             + (f", clock day {b['clock_day']}" if b["clock_day"] else "") + f"; net {sol(b['mean_lamports'])} SOL per "
+             f"filled trade, 95 % interval {ci} SOL (day bootstrap, {b['draws']:,} draws, seed {b['seed']})"]
+    c = b["costs_lamports"]
+    if c:
+        lines.append("- costs beyond the fill prices (SOL): " + ", ".join(f"{k.replace('_', ' ')} {v / 1e9:.4f}" for k, v in c.items())
+                     + "; venue fees are in the fill prices (each pool's and curve's own fee rates), not split out")
+    else:
+        lines.append("- costs: the journal has no cost scenario (an engine from before 2026-10-16)")
+    lines += ["", "Model assumptions:", *(f"- {x['text']}" for x in a["assumptions"]),
+              "", "What stays uncertain:", *(f"- {x['text']}" for x in a["uncertainty"]),
+              "", f"**{a['not_permission']}**"]
+    return lines
 
 
 def _trim(x, frac=TRIM):
@@ -117,18 +138,22 @@ def arm_lines(journal, day, group, variants):
 
 
 def _verdict(pnls_by_day, n, filled_by_day=None):
-    """The stop rule (owner, 2026-10-10): net P&L per trade after all costs, from MIN_TRADES trades on.
-    pnls_by_day holds every exit's P&L, failed entries' costs included; n and filled_by_day (per day)
-    count the filled trades only, so a failed entry costs but is no trade (default: every exit)."""
-    days = sorted(pnls_by_day)
-    counts = filled_by_day if filled_by_day is not None else {d: len(v) for d, v in pnls_by_day.items()}
-    total = sum(sum(v) for v in pnls_by_day.values())
-    mean = total / n if n else None
-    lo = hi = None
-    if len(days) >= MIN_DAYS_CI:
-        lo, hi = _boot(np.array([sum(pnls_by_day[d]) for d in days], dtype=float),
-                       np.array([counts.get(d, 0) for d in days], dtype=float))
-    return mean, lo, hi, decide(mean, lo, n, MIN_TRADES)
+    """The stop rule's (mean, lo, hi, verdict) in lamports: stoprule.verdict, the Paper tab's too."""
+    return verdict(pnls_by_day, n, filled_by_day)
+
+
+def cost_scenario(journal):
+    """The engine's cost scenario (state 'cost_scenario'); for a journal from before it, the base scenario of the
+    defaults, which the engine has always used."""
+    raw = journal.state(COSTS_KEY)
+    if raw:
+        return json.loads(raw)
+    from dataclasses import asdict
+
+    from backtest.costs import Scenario
+    from backtest.store import load_defaults
+
+    return asdict(Scenario.from_cfg("base", load_defaults()))
 
 
 def _p(xs, q):
@@ -235,7 +260,11 @@ def daily_report(journal, day, watch_log=None):
     clock = clock_of(journal)
     traded = counted(exits, orders, day, primary, clock)
     by_day, filled_by_day, n_filled = stop_rule_inputs(traded)
-    mean, lo, hi, verdict = _verdict(by_day, n_filled, filled_by_day)
+    mean, lo, hi, verdict_ = _verdict(by_day, n_filled, filled_by_day)
+    feed = feed_of(journal.state(FEED_KEY),
+                   journal.db.execute("SELECT 1 FROM signals WHERE received_unix_ns IS NOT NULL LIMIT 1").fetchone())
+    judged = assessment(traded, mean, lo, hi, verdict_, clock_state(clock, day, verdict_), cost_scenario(journal),
+                        primary_group(journal.state(GROUPS_KEY)), feed)
     final, mdd, taken, skipped = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"], x["pnl"], not x["tokens"])
                                               for x in traded])
     gaps = [b for b in beats if b["note"]]
@@ -250,10 +279,13 @@ def daily_report(journal, day, watch_log=None):
     ci = f"{lo / 1e9:+.4f} … {hi / 1e9:+.4f} SOL" if lo is not None else f"from {MIN_DAYS_CI} days"
     since = f"from the clock start {clock['date']}" if clock else "all paper days so far"
     lines += ["", f"## Stop-rule counter ({since}" + (f"; {', '.join(sorted(primary))} only" if primary else "") + ")", "",
-              *clock_lines(clock, day, n_filled, verdict),
+              *([] if feed == "live" else ["- **a replay journal (a test), not live paper trading: a count, no decision**"]),
+              *clock_lines(clock, day, n_filled, verdict_),
               f"- trades {n_filled} (failed entries {len(traded) - n_filled}, their cost included), days {len(by_day)}, "
               f"net {'' if mean is None else f'{mean / 1e9:+.4f}'} SOL/trade, "
-              f"95% CI {ci}: **{verdict}**",
+              f"95% CI {ci}: **{verdict_}**",
+              *(assessment_lines(judged) if verdict_ in ("GO", "ADJUST", "STOP") else
+                [f"- the verdict comes with {MIN_TRADES} filled trades and {MIN_DAYS_CI} trading days"]),
               "", f"## Capital simulation ({CAPITAL_SOL:g} SOL, at most {MAX_POSITIONS} positions; {since})", "",
               f"- final {final / 1e9:.3f} SOL, max drawdown {mdd * 100:.1f}%, trades {taken}, skipped {skipped}",
               "", "## Heartbeat", "",

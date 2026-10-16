@@ -32,7 +32,7 @@ import os
 import shutil
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 
 import numpy as np
@@ -1095,6 +1095,10 @@ def main(argv=None):
                  clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm,
                  watchlist=watch, name=name, groups=groups)
     j.state("groups", groups_state(eng))
+    # For the stop rule's basis (paper/stoprule.py assessment): live or replay, and the cost scenario the exits
+    # were settled with.
+    j.state("feed", json.dumps({"kind": "live" if a.live else "replay", "from": a.lo, "to": a.hi}))
+    j.state("cost_scenario", json.dumps(asdict(eng.scn), sort_keys=True))
     j.commit()
     t0 = time.time()
     eng.run()

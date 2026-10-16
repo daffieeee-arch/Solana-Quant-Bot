@@ -81,7 +81,7 @@ def test_the_report_counts_the_trades_entered_from_the_clock_start(tmp_path):
     assert "- trades 3 (failed entries 1, their cost included), days 2," in md
 
     j.state("clock_start", json.dumps({"date": "2026-10-26", "reason": "the owner's target", "set_at": "2026-10-22T09:30:00+00:00"}))
-    for day, now in (("2026-10-25", "not started, nothing counted yet"), ("2026-10-26", "- clock day 1 of 28 (the decision")):
+    for day, now in (("2026-10-25", "not started, nothing counted yet"), ("2026-10-26", "- clock day 1, 1 trades: no verdict yet (the verdict from 200 filled trades and 5 trading days on")):
         daily_report(j, day)
         md = open(os.path.join(j.dir, day, "report.md")).read()
         assert "## Stop-rule counter (from the clock start 2026-10-26; tp4_T600 only)" in md
@@ -91,13 +91,16 @@ def test_the_report_counts_the_trades_entered_from_the_clock_start(tmp_path):
     assert "- final 10.199 SOL" in md  # 10 + 0.2 - 0.000505: the capital simulation from the clock start too
 
 
-def test_the_decision_falls_due_after_four_weeks_with_200_trades_else_at_six(tmp_path):
+def test_the_verdict_shows_once_it_is_there_and_the_clock_ends_at_six_weeks(tmp_path):
+    """Owner, 2026-10-16: the four weeks no longer hold a verdict back; it shows from 200 filled trades and 5 trading
+    days on (an early GO is no error); the clock ends at day 42."""
     from paper.report import clock_lines
 
     c = {"date": "2026-10-26", "reason": "r", "set_at": "s"}
-    assert "clock day 27 of 28" in clock_lines(c, "2026-11-21", 300, "GO")[1]
-    assert "clock day 28, 200 trades: the decision is due: **ADJUST**" in clock_lines(c, "2026-11-22", 200, "ADJUST")[1]
-    assert "clock day 28, 150 trades: it runs on until 200 trades, at most day 42" in clock_lines(c, "2026-11-22", 150, "x")[1]
+    assert "clock day 10, 150 trades: no verdict yet" in clock_lines(c, "2026-11-04", 150, "too few trades")[1]
+    assert "clock day 10, 210 trades: the verdict is there: **GO**" in clock_lines(c, "2026-11-04", 210, "GO")[1]
+    assert "clock day 30, 210 trades: the verdict is there: **ADJUST**" in clock_lines(c, "2026-11-24", 210, "ADJUST")[1]
+    assert "clock day 30, 150 trades: no verdict yet" in clock_lines(c, "2026-11-24", 150, "too few trades")[1]
     assert "clock day 42: the 42-day limit, the decision is due: **too few trades**" in clock_lines(
         c, "2026-12-06", 150, "too few trades")[1]
 
