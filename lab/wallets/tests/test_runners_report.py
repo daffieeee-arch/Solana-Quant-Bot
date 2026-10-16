@@ -80,6 +80,9 @@ def test_report_finds_the_planted_lead(tmp_path):
         SELECT avg((end_6h - 1) * cost_sol), avg((x_tp2 - 1) * cost_sol), avg((x_tr30 - 1) * cost_sol), avg((x_tr50 - 1) * cost_sol) FROM q WHERE qt = 5""").fetchone()
     assert per_entry == [round(w, 4) for w in want]
     assert "net SOL / entry: hold 6h / tp ×2 / trail 30 / trail 50" in md
+    # one quintile block per feature, even though every feature has an AUC per regime (review of job 86: duplicates)
+    blocks = [ln for ln in md.split("## 5.")[1].splitlines() if ln.startswith("**")]
+    assert len(blocks) == len(set(blocks)) and blocks.count("**c1 · all_inflow**") == 1
 
 
 def test_creator_history_is_point_in_time(tmp_path):

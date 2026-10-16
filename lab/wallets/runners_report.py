@@ -250,13 +250,13 @@ def render(con, info, boot, feats, n_days):
     L.append("## 5. Quintiles of the strongest features (days 10-18, all regimes)\n")
     L.append("Net SOL per entry = mean of (exit multiple - 1) x cost; per day = the block's total over its days. The exits are runners.py's simple rules on the marks "
              "(the sell at the state of the triggering mark, no slot delay: a touch optimistic); AUC is not profit, this column is.\n")
-    top = {}
+    top = {}       # per moment: the feature's strongest |AUC - 0.5| over the regimes (one block per feature)
     for (m, r, f), v in res.items():
         a = v.get("run5", (None,))[0]
         if a is not None:
-            top.setdefault(m, []).append((abs(a - 0.5), f))
+            top.setdefault(m, {})[f] = max(top.get(m, {}).get(f, 0.0), abs(a - 0.5))
     for m in moments:
-        best = sorted(set(top.get(m, [])), reverse=True)[:6]
+        best = sorted(((d, f) for f, d in top.get(m, {}).items()), reverse=True)[:6]
         for _, f in best:
             L += [f"**{m} · {f}**\n"] + QUINTILE_HEADER + quintiles(con, where, m, f) + [""]
     L += ["## 6. Caveats\n",

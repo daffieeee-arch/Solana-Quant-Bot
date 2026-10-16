@@ -9,6 +9,7 @@ Bronnen: job 82 `long-dev-1033-1046-fc4173c` (engine fc4173c, F7 v1 + lange grid
 - **Lange exits (spec F §3, E28):** geen variant haalt de lat van spec E §2 (dag 10–18, farm alle, d = 1 én 2). Trails (20/30/50 %, 1 u / 6 u) en `_sl8` zijn overal negatief. De enige positieve lange exit is **`flow300_H6` op organic pools**: Σ +7,20 / +6,20 SOL per dag (d = 1 / 2) op dag 10–18 en +12,06 / +10,14 op dag 1–9, met 22 % drains. M1/M1E/M1P: geen lange exit met CI > 0 in welk blok dan ook; lange exits redden M1 niet.
 - **H4-controles (F7 pool_reversed, organic, flow300_H6):** de organic/flagged-splitsing is point-in-time (code); positief in beide dagblokken en bij d = 1 én 2; 75–82 % van de dagen > 0; slechtste dag −4,4 SOL (dag 10–18) en −8,7 SOL (2026-10-01, buiten de blokken); top-10 pools = 31–33 % van de netto winst op dag 10–18 maar 56–58 % op dag 1–9 (één pool +20 SOL); top-1 % posities = de helft van de netto winst. **hold180 organic (E25) haalt ≈ 90 % hiervan** (+6,67 / +5,50 SOL per dag op dag 10–18): H3 dekt het grootste deel van H4.
 - **Runners (spec F §1, E27):** 592.247 instappen op 279.347 tokens. De F7-multiples (59 % ×2 binnen 1 u) zijn echt én waardeloos: 99 % van die instappen staat na 6 u op ≤ 5 % van de kosten (pump-then-drain). De mark-formule is per trigger tegen de engine gecontroleerd (proceeds op de exit-staat: mediaan ratio 0,995). Eén fout in de module: f7/m1/m1e namen alleen de eerste trigger per pool (3.354 van 38.515 F7-triggers); gefixt in deze PR, herdraai als `runners-v2` op de NAS. Leads met het herstelde criterium: 79, allemaal activiteitskenmerken op c1/c5/c15, geen op f7/m1/m1e. AUC is geen winst: de kwintieltabel krijgt nu de netto SOL van drie eenvoudige exits (hold / tp ×2 / trail 30 / trail 50); die kolom komt met `runners-v2`.
+- **Runners-v2 (job 86, per trigger, §3.7):** 627.734 instappen. De eenvoudige exits per kwintiel beslissen: op de curve (c1/c5/c15) is élk kwintiel bij élke exit negatief, ook het hoogste kwintiel van het sterkste kenmerk (c1 `post5_buyers` Q5: hold −0,32, tp ×2 −0,15, trail 30 −0,01 SOL per instap van 0,5 SOL). **Vroeg de runners vinden op de curve is bij onze vertraging niet winstgevend.** Op F7 (reversed pools) is alleen een take-profit op ×2 met 6-u-plafond positief (+0,087 SOL per instap op dag 10–18 zonder slot-vertraging, maar −0,005 op dag 1–9 en negatief in 320 ms): een pump die de engine nog nooit met zo'n grote take-profit heeft getoetst, en de enige nieuwe aanwijzing uit deze meting. De enige bewezen positieve lijn blijft F7 organic met lange holds (H3/H4).
 - **E26-correctie (job 816):** 4.1 100,0 % op 1040 en 1045 (gehaald); 4.2 409/669 en 366/574 exact (= job 79, niet exact, oorzaak open); Q1(b) 25,0 % / 48,4 % (= job 79, lat 80 %, niet gehaald). Transfers gesloten, geen nieuwe fixronde.
 
 ## 1. Lange exits (job 82/83; spec F §3)
@@ -129,6 +130,31 @@ Het criterium "AUC ≥ 0,65 in elk regime, dag 10–18" faalde altijd: 320 ms be
 
 runners.py berekent nu per instap drie exits op dezelfde marks (modelaanname: verkoop op de staat van de triggerende mark, zonder slot-vertraging, dus iets optimistisch): `x_tp2` (eerste mark ≥ 2 × kosten), `x_tr30` / `x_tr50` (eerste mark ≤ 70 / 50 % van de hoogste eerdere mark), anders het 6-u-einde. Het rapport zet per kwintiel de netto SOL per instap en per dag voor hold / tp ×2 / trail 30 / trail 50. runners-v1 heeft die kolommen niet; ze komen met `runners-v2`. Smoke op 20.000 slots van 1040 (1.349 instappen, c1-kwintielen van 108): kwintiel 5 van `post5_buyers` hold −0,39 SOL per instap, tp ×2 +0,14, trail 30 −0,06, trail 50 −0,08; kwintiel 1–4 bij elke exit −0,29 … −0,46. Te klein voor een conclusie; het patroon (alleen een ×2-take-profit in het hoogste kwintiel boven nul, en dat is een hold-beslissing 5 min ná de instap) is wat de volledige run moet bevestigen of ontkrachten.
 
+### 3.7 Runners-v2 (job 86-runners-v2-7ceae9c): per trigger, met de eenvoudige exits — reconstructie, modelaanname
+
+627.734 instappen op 279.347 tokens; f7 38.502 instappen op 3.339 pools (elke trigger), m1 208, m1e 1.192 op 853 mints. De c-momenten zijn ongewijzigd. Dag 10–18, 270 ms: f7 ≥×2 binnen 1 u 52,3 %, ≥×5 6 u 15,4 %, t_max mediaan 17,5 min, 99 % van de ×2-instappen na 6 u ≤ 5 % (per trigger iets lager dan per eerste trigger: 59 % / 20 %). m1e 38,9 % / 11,1 %, 57 % gedraind.
+
+Leads (elk regime op zijn eigen blok, ≥ 30 runners): 90, waarvan c1 31, c5 30, c15 26, **f7 1 (`post5_inflow` 0,66 / 0,81), m1e 2 (`post5_inflow` 0,79 / 0,82, `post1_inflow` 0,66 / 0,63)**. Alle drie de pool-leads zijn de netto SOL-instroom in de 1–5 min ná de instap: een hold-beslissing, en precies wat `flow300` meet; geen instapkenmerk op f7/m1/m1e.
+
+**Exits per moment, zonder kenmerk-filter** (dag 10–18, 11 dagen, niet-afgekapte instappen; netto SOL per instap van 0,5 SOL: hold 6 u / tp ×2 / trail 30 / trail 50; modelaanname: verkoop op de staat van de triggerende mark, zonder slot-vertraging, dus optimistisch):
+
+| moment | segment | n | hold | tp ×2 | trail 30 | trail 50 | Σ/dag tp ×2 | dag 1–9 tp ×2 (n) |
+|---|---|---|---|---|---|---|---|---|
+| c1 | curve | 161.670 | −0,436 | −0,407 | −0,335 | −0,369 | −5.979 | −0,386 (90.800) |
+| c1 | pool | 9.000 | −0,373 | −0,178 | −0,165 | −0,186 | −145 | −0,235 (6.664) |
+| c5 | curve | 108.431 | −0,424 | −0,407 | −0,363 | −0,384 | −4.016 | −0,378 (59.213) |
+| c15 | curve | 60.411 | −0,390 | −0,378 | −0,348 | −0,362 | −2.074 | −0,367 (40.789) |
+| c15 | pool | 10.067 | −0,284 | −0,184 | −0,151 | −0,169 | −168 | −0,225 (7.281) |
+| f7 | pool_reversed | 24.665 | −0,480 | **+0,087** | −0,027 | −0,148 | **+195** | −0,005 (13.476; 270 ms +0,056, 320 ms −0,054) |
+| m1 | pool | 135 | −0,299 | −0,052 | +0,098 | +0,111 | −0,6 | +0,011 (69) |
+| m1e | pool | 794 | −0,327 | −0,057 | −0,023 | −0,050 | −4,1 | −0,061 (366) |
+
+Per kwintiel (runners-v2 runners.md §5): op de curve is **elk kwintiel bij elke exit negatief**; c1 `post5_buyers` Q5 hold −0,32 / tp ×2 −0,15 / trail 30 −0,013 / trail 50 −0,07, de onderste kwintielen −0,45 … −0,48 (≈ 95 % verlies per instap); c5 Q5 trail 30 −0,06. De runners bestaan (Q5: 6–8 % ×5), de rest van het kwintiel betaalt ze niet terug, en de slot-vertraging maakt het nog slechter. **Conclusie: "vroeg de runners vinden" op de curve is bij onze vertraging (≥ 600 ms) niet winstgevend, met geen enkel kenmerk en geen enkele eenvoudige exit.** De c-momenten als meetbasis zijn daarmee afgerond.
+
+Op F7 is de take-profit op ×2 met 6-u-plafond de enige positieve cel zonder filter: +0,087 SOL per instap op dag 10–18 (54 % van alle f7-instappen raakt de ×2-mark, en 54 % raakt ×2 én eindigt ≤ 5 %: vrijwel elke ×2 is een pump die daarna leegloopt), maar −0,005 op dag 1–9 en −0,054 in het 320-ms-regime; per kwintiel van `post5_inflow` (alle instroom) Q5 +0,41 en Q4 +0,17, per kwintiel van `post5_inflow_org` niet monotoon (Q1 +0,16, Q5 +0,14; dag 1–9 Q5 −0,04). Dit is een modelaanname op zijn scherpst: de ×2-mark kan de piek van één trade zijn, en de engine verkoopt 1–2 slots later. De engine-grid heeft nooit een take-profit boven +10 % gehad (spec E: tp4/6/10); een `tp100_H6`-arm (en `tp50_H6`) in een F7-dev-run is de enige nieuwe aanwijzing uit deze meting en de goedkoopste falsificatie ervan (§5 voorstel). m1 Q5 trail 50 +0,98 en m1e Q5 tp ×2 +0,42 zijn n = 27 / 158: te klein.
+
+Rapportfix in deze PR: §5 toonde sommige kenmerken dubbel (één blok per regime); nu één blok per kenmerk (sterkste |AUC − 0,5| over de regimes).
+
 ### 3.6 Caveats
 
 Kostenmodel base (landing en gefaalde transacties niet gemodelleerd); mult = gesimuleerde volle verkoop met cap op de echte SOL; c-momenten zijn een meetbasis; share_c en de wash-vlaggen zitten er niet in (onbekend); 6-u-holds kruisen dagranden; Alpenglow (epoch 1064) nooit gepoold met dev. De caveat-tekst in runners.md over "vq unusable / rebuilt from the real reserves" is vervangen door de #285-tekst.
@@ -145,7 +171,7 @@ Kostenmodel base (landing en gefaalde transacties niet gemodelleerd); mult = ges
 
 4.1 is gehaald (de balansregel van #281). 4.2 valt met de engine-set terug op precies de job-79-cijfers: de afwijking zit dus niet in de insiderset maar elders (circulatie, venster of de oude M1x-share-berekening; **onbekend**, open gelaten). Q1(b) blijft in elke insiderdefinitie ver onder 80 %. Afspraak: transfers gesloten, geen nieuwe fixronde; share_c (engine-set) is het veto-kenmerk als het ooit wordt gebruikt, met 14–16 % van de triggers boven 0,90.
 
-## 5. Herdraai runners (NAS)
+## 5. Herdraai runners (NAS) — gedaan als job 86-runners-v2-7ceae9c (627.734 instappen; uitvoer wallets/runners-v2/)
 
 ```
 git fetch origin && git checkout <merge-sha van deze PR>
