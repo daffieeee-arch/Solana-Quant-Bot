@@ -529,6 +529,14 @@ class PositionSim:
         if self.pending is None and beyond:
             r.exit_decision_slot, r.exit_reason = w - 1, "window_end"
             self.pending, self.pending_min = w - 1, 0
+        if (self.pending is None and self.deadline_done and self.deadline is not None and self.deadline > self.last_slot
+                and r.exit_decision_slot == self.deadline):
+            # advance() (the paper engine's quiet slots) took the deadline after the token's last event and its exit
+            # failed (e.g. a drained pool): the batch replay's end() takes that deadline itself, with one attempt, and
+            # no end-of-data decision on top. The same here.
+            f = self.sell(self.state, r.tokens)
+            r.exit_slot, r.proceeds = None, f.trader_quote if f else 0
+            return self._finish()
         if self.pending is None:
             r.exit_decision_slot, r.exit_reason = self.last_slot, r.exit_reason or "end_of_data"
             self.pending, self.pending_min = self.last_slot + self.d, 0
