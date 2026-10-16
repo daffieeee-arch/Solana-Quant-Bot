@@ -215,6 +215,37 @@ def watchlist_lines(log_path, day):
                     f"pruned {today('pruned_total')}, restored {today('restored_total')} this day"]
 
 
+def _day_at(journal, slot):
+    """The UTC day of the first heartbeat at or after `slot` (None when the journal has none yet)."""
+    if slot is None:
+        return None
+    r = journal.db.execute("SELECT day FROM heartbeat WHERE last_slot >= ? AND note = '' ORDER BY minute LIMIT 1", [slot]).fetchone()
+    return r[0] if r else None
+
+
+def seed_lines(journal):
+    """The farmer seed of every start (journal state farmer_seeds; LAB review B6, S1).
+    - LiveFeed replays the retained segments at every start.
+    - After the first 3 days, the oldest one left is ~3 days old, and the farmer history before it is gone.
+    - So such a restart seeds a window that starts there, and the signals of its first day, [first live slot,
+      complete_from), are replayed with incomplete history. INSERT OR REPLACE rewrites those rows: farm_complete 0, and
+      group H 'skipped, farm history incomplete'. The orders, fills and exits of the first run stay.
+    These lines name the days so rewritten."""
+    raw = journal.state("farmer_seeds")
+    if not raw:
+        return []
+    lines = ["", "## Farmer seed per start", ""]
+    for i, seed in enumerate(json.loads(raw), 1):
+        a, b = seed.get("first_live_slot"), seed.get("complete_from")
+        line = (f"- start {i}: first live slot {a} ({_day_at(journal, a) or '?'}), farm labels complete from slot {b} "
+                f"({_day_at(journal, b) or 'not reached yet'})")
+        if i > 1:
+            line += (f"; a restart: the signals of slots [{a}, {b}) were replayed with incomplete farmer history and their "
+                     "rows rewritten (farm_complete 0, group H skipped)")
+        lines.append(line)
+    return lines
+
+
 def farm_lines(journal, day):
     """How many of the day's live F7 triggers had a farm label from incomplete farmer history (before
     LiveFeed's complete_from): those labels are not comparable with the backtest's."""
@@ -295,6 +326,7 @@ def daily_report(journal, day, watch_log=None):
               + (f" (largest {max(b['gap_slots'] for b in gaps)} slots)" if gaps else "")]
     lines += latency_lines(journal, day)
     lines += farm_lines(journal, day)
+    lines += seed_lines(journal)
     for group, variants in sorted(further.items()):
         lines += arm_lines(journal, day, group, variants)
     if watch_log is not None:
