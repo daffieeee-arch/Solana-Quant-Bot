@@ -19,7 +19,7 @@ For the coordinator, step by step, once the owner has given the OK and the Trito
 | 0.1 | The owner's OK for the paper start, the Triton credentials, and the day's budget. | owner |
 | 0.2 | NAS job 92 is green: arm parity at dcff935, "0 unexplained" in both comparisons for both arms. Expected `unsold_busy`: 2 for flow300_H6, 1 for flow300_tp100_H6. | `parity.md` of job 92 |
 | 0.3 | NAS job 91 is green (see below). | `compare.md` and `state.jsonl` of job 91 |
-| 0.4 | The recorder binary is the 339c40e build: `--pump-creates` (#287), durable budget (#265), rustls 0.23.46 (#290), Alpenglow block footers. `lab/recorder` and `lab/extractor` have not changed since. | `readlink $LAB/bin/lab-recorder` → `lab-recorder-339c40e-bookworm`; `sha256sum $LAB/bin/lab-recorder-339c40e-bookworm` → `01a7ef4f…` (as noted at the build) |
+| 0.4 | The recorder binary is the **5e2d1b7** build (#315, main a1c1712; QUEUE item 64). It has: `--pump-creates` (#287); durable budget (#265); rustls 0.23.46 (#290); Alpenglow block footers; no silent loss on a segment write error, exit 74 (#308); fail-closed on an unknown spend, with `--budget-assume-spent` (#308); and the meter saved before exit 74 (#315). NAS: 65/65 tests, GLIBC_2.34, cargo audit clean. | `readlink $LAB/bin/lab-recorder` → `lab-recorder-5e2d1b7-bookworm`; `sha256sum $LAB/bin/lab-recorder-5e2d1b7-bookworm` → `aeb4bea8…` (as noted at the build) |
 | 0.5 | At least 50 GB free; the disk guard is active; no other Triton consumer is running; no `locks/disk-low` or `locks/disk-stopped`. | `df -h ~`; `systemctl --user list-timers \| grep disk-guard`; `ls $LAB/locks` |
 | 0.6 | Alpenglow: the switch is at epoch 1064, about 2026-10-21 14:50 UTC. The recorder handles it (footers), and so does the Clock (the last measured epoch until 1,000 slots of 1064). Note whether the start falls before or after the switch. | `$LAB/recorder/alpenglow.json` appears at the first footer |
 
@@ -113,7 +113,7 @@ sha256sum $R/lab/paper/k3-paper-2026-10-12.yaml            # 04b5e652eb0301ae…
 sha256sum $R/lab/paper/h-arms-2026-10-16.yaml $R/lab/paper/risk.yaml $R/lab/paper/risk-h.yaml
                                                            # at dcff935: 0fdd1750…, f4847145…, 18c495b5…; note them
 # 3.2 the recorder binary (0.4): already in place
-readlink $LAB/bin/lab-recorder                             # lab-recorder-339c40e-bookworm
+readlink $LAB/bin/lab-recorder                             # lab-recorder-5e2d1b7-bookworm
 # 3.3 the live units only (lab-notebooks.service is installed and running: do not overwrite it)
 cd $R/lab/ops/systemd
 cp lab-recorder.service lab-recorder.timer lab-paper.service lab-paper.timer \
@@ -234,7 +234,7 @@ systemctl --user stop lab-paper lab-recorder
 - K3's rows come out the same with or without H (`tests/test_arms_replay.py`).
 - H's rows so far stay in the journal.
 
-**The recorder.** There is no older build to go back to: 54ac6e2 lacks #265, #287 and #290 (the rustls advisories), so **do not** roll back to it. For a recorder problem:
+**The recorder.** There is no older build to go back to: the earlier builds (339c40e, 2133bc6) are removed, and none of them has every fix of 0.4, so **do not** roll back. For a recorder problem:
 1. stop the units;
 2. report it to the coordinator;
 3. a new NAS build replaces the binary (`/lab/ops/build-recorder-bookworm.sh <sha>`).
