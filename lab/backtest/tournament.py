@@ -104,6 +104,8 @@ RESULT_SCHEMA = pa.schema([
     # Every position: the highest mark since the entry (the simulated full sale at that moment, lamports, the
     # same quantity as proceeds before costs) and its slot; NULL without a mark (no fill).
     ("peak_mark", pa.int64()), ("peak_slot", pa.int64()),
+    # Mayhem-agent transactions the replay refused (replay.MAYHEM_AGENT); 0 in every universe, which excludes mayhem.
+    ("mayhem_reverted", pa.int64()),
 ])
 
 
@@ -520,7 +522,7 @@ def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5, ins_share
         "entry_slot": r.entry_slot, "exit_decision_slot": r.exit_decision_slot, "exit_slot": r.exit_slot,
         "cf_graduation": r.cf_graduation, "seed_pool": r.seed_pool, "vault_capped": r.vault_capped,
         "exit_attempts": r.exit_attempts, "reverted_direct": r.reverted_direct, "reverted_router": r.reverted_router,
-        "sells_dropped": r.sells_dropped, "sells_scaled": r.sells_scaled,
+        "sells_dropped": r.sells_dropped, "sells_scaled": r.sells_scaled, "mayhem_reverted": r.mayhem_reverted,
         "hist_ret": (r.hist_mid_exit / r.hist_mid_entry - 1) if (r.hist_mid_entry and r.hist_mid_exit) else None,
         "pool": sig.pool, "orientation": sig.orientation,
         "segment": _segment(sig),
