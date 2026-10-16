@@ -8,7 +8,7 @@ import { Segmented } from "../components/Segmented";
 import { usePaper } from "../live";
 import { cn } from "../lib/utils";
 import { label, n0, n1, shortAddr, unixClock, unixTime } from "../format";
-import type { PaperJournal, PaperPosition, PaperRecorder } from "../paperTypes";
+import type { PaperAssessmentItem, PaperJournal, PaperPosition, PaperRecorder } from "../paperTypes";
 
 // Paper tab (design v1, "Paper — iPhone"): the paper engine's journal and the recorder's meter, read-only
 // (lab/ui/paper.py). Numbers mirror the engine's daily report; nothing here sends or signs anything.
@@ -17,6 +17,34 @@ const EXIT: Record<string, string> = {
 };
 const VERDICT: Record<string, { text: string; tone: "buy" | "warn" | "sell" }> = {
   GO: { text: "GO", tone: "buy" }, ADJUST: { text: "BIJSTELLEN", tone: "warn" }, STOP: { text: "STOP", tone: "sell" },
+};
+// Below this many trading days the day bootstrap is coarse (lab/paper/stoprule.py FEW_DAYS).
+const FEW_DAYS = 14;
+// What a verdict rests on, in Dutch, per key of stoprule.assessment; an unknown key shows the report's English text.
+const pct = (x: number) => `${(x * 100).toLocaleString("nl-NL", { maximumFractionDigits: 1 })}%`;
+const ASSUMPTION: Record<string, (a: PaperAssessmentItem) => string> = {
+  paper: () => "Paper trading: elke fill is gesimuleerd tegen de reserves van de pool of curve, inclusief onze eigen prijsimpact. Er is geen transactie verstuurd.",
+  landing: (a) => a.land_prob != null
+    ? `Landing is gesimuleerd: elke transactie landt met kans ${pct(a.land_prob)}; een mislukte poging kost de fee van een mislukte transactie.`
+    : "Landing is gesimuleerd.",
+  delay: (a) => a.d_ms != null
+    ? `De instap komt ${n0(a.d_ms)} ms na het signaal${a.q != null ? `, op positie ${a.q.toLocaleString("nl-NL")} in het slot` : ""}.`
+    : "De instapvertraging is die uit de configuratie van de engine.",
+  regime: (a) => `${n0(a.after_switch ?? 0)} van de ${n0(a.trades ?? 0)} instappen zijn na de Alpenglow-overgang (epoch 1064).`,
+};
+const UNCERTAINTY: Record<string, (a: PaperAssessmentItem) => string> = {
+  not_paper_trading: (a) => `Dit journaal is een ${a.feed === "replay" ? "replay" : a.feed ?? "test"}: een test, geen live paper trading. De stopregel beslist hier niets.`,
+  few_days: (a) => `Pas ${n0(a.days ?? 0)} handelsdagen. Onder ${FEW_DAYS} dagen is het interval per dag grof.`,
+  regime: (a) => a.after_switch
+    ? "Een nieuw regime: de backtests komen allemaal van vóór de Alpenglow-overgang."
+    : "Alle trades zijn van vóór de Alpenglow-overgang; het regime daarna is nog niet gemeten.",
+  simulated_landing: () => "Landing, priority fees en concurrentie om dezelfde pools zijn gesimuleerd, niet gemeten.",
+  many_trials: () => "De kandidaat is gekozen uit veel varianten in het lab. Dit is de eerste toets op data die hij niet kende; bij veel pogingen kan geluk op een voorsprong lijken.",
+};
+// stoprule.costs, beyond the fill prices (venue fees are in the fill prices).
+const COSTS: Record<string, string> = {
+  network: "Netwerkfees", tips: "Tips", landing_retries: "Herhaalpogingen tot landing", failed_exit_attempts: "Mislukte uitstappogingen",
+  failed_entries: "Mislukte instappen", ata_rent_lost: "Verloren ATA-huur", adverse_execution: "Ongunstige uitvoering",
 };
 const AVATARS = ["#F5A524", "#FF7AB6", "#5B8CFF", "#22C3A6", "#8B6CFF", "#FF8A4C", "#4CC9F0", "#C084FC"];
 const avatar = (key: string) => AVATARS[[...key].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % AVATARS.length];
@@ -58,11 +86,7 @@ function Hero({ j }: { j: PaperJournal }) {
   const title = range === "1d" ? (j.is_today ? "Netto vandaag" : `Netto ${j.day}`) : range === "7d" ? "Netto 7 dagen" : "Netto alles";
   return (
     <section className={cn("hero rounded-[20px] p-[18px] grid gap-2.5 min-w-0", j.test_run && "!border-2 !border-warn")}>
-      {j.test_run && (
-        <span className="justify-self-start px-2 py-1 rounded-md bg-warn-soft border border-warn-line text-warn text-[11px] font-extrabold tracking-wide">
-          TESTDATA · pariteitsrun, geen strategie-uitslag
-        </span>
-      )}
+      {j.test_run && <TestLabel j={j} />}
       <div className="flex justify-between items-center gap-2">
         <span className="text-[13px] text-fg-2 font-semibold">{title}</span>
         <Segmented label="Periode" value={range} options={[...RANGES]} onChange={setRange} />
@@ -98,22 +122,80 @@ function clockText(s: PaperJournal["stop_rule"]): string {
   const c = s.clock;
   if (!c) return "geen klokstart: telling, geen beslissing";
   if (c.phase === "not_started") return `klok start ${c.date}`;
-  if (c.phase === "due") return `klokdag ${c.clock_day}: beslissing`;
-  if (c.phase === "extended") return `klokdag ${c.clock_day}: loopt door tot ${s.min_trades} trades`;
-  return `klokdag ${c.clock_day} van ${s.clock_days}`;
+  if (c.limit) return `klokdag ${c.clock_day}: grens van dag ${s.clock_max_days} bereikt`;
+  if (c.phase === "due") return `klokdag ${c.clock_day}: oordeel`;
+  return `klokdag ${c.clock_day} · gepland ${s.clock_days}, uiterlijk ${s.clock_max_days}`;
+}
+
+// Why there is no verdict yet (stoprule.decide); null when there is one.
+function waitText(s: PaperJournal["stop_rule"]): string | null {
+  if (s.verdict === "too few trades") return `te vroeg: ${n0(s.trades)} van ${s.min_trades} trades`;
+  if (s.verdict === "too few days") return `te vroeg: ${s.days} van ${s.min_days_ci} dagen`;
+  return null;
+}
+
+function TestLabel({ j }: { j: PaperJournal }) {
+  const parity = j.source.journal.startsWith("parity");
+  return (
+    <span className="justify-self-start self-start px-2 py-1 rounded-md bg-warn-soft border border-warn-line text-warn text-[11px] font-extrabold tracking-wide">
+      TEST · geen paper trading{parity ? " (pariteitsrun)" : j.source.feed !== "live" ? ` (${j.source.feed})` : ""}
+    </span>
+  );
 }
 
 function StopCard({ j }: { j: PaperJournal }) {
-  const s = j.stop_rule, early = s.trades < s.min_trades, v = VERDICT[s.verdict];
-  const decides = s.clock != null && s.clock.phase !== "not_started";
+  // A verdict badge only where the stop rule decides (stoprule.assessment `applies`): live paper trading, a clock
+  // start and a verdict. A replay journal is a test and gets its label instead.
+  const s = j.stop_rule, a = s.assessment, v = VERDICT[s.verdict], wait = waitText(s);
   return (
     <Panel className="flex items-center gap-3">
       <Ring part={s.trades / s.min_trades} />
       <div className="flex flex-col gap-0.5 min-w-0 items-start">
         <span className="text-[11px] text-muted">Stopregel</span>
         <span className="num text-[15px] font-semibold">{n0(s.trades)} / {s.min_trades}</span>
-        {decides && !early && <Badge tone={v?.tone ?? "muted"}>{v?.text ?? s.verdict}</Badge>}
-        <span className="text-[11px] text-fg-2">{decides && early ? `te vroeg · ${clockText(s)}` : clockText(s)}</span>
+        {j.test_run ? <TestLabel j={j} /> : a.applies && v && <Badge tone={v.tone}>{v.text}</Badge>}
+        <span className="text-[11px] text-fg-2">{wait && !j.test_run && s.clock ? `${wait} · ${clockText(s)}` : clockText(s)}</span>
+      </div>
+    </Panel>
+  );
+}
+
+// What the verdict rests on, its assumptions and what stays uncertain (stoprule.assessment), with every verdict.
+function Assessment({ j }: { j: PaperJournal }) {
+  const s = j.stop_rule, a = s.assessment, b = a.basis, v = VERDICT[a.verdict];
+  const sol = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toLocaleString("nl-NL", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} SOL`;
+  const costs = b.costs_sol ? Object.entries(b.costs_sol) : [];
+  const verdictText = j.test_run ? "test, geen paper trading" : !a.applies && v ? `${v.text} (telt nog niet)` : v?.text ?? waitText(s) ?? a.verdict;
+  return (
+    <Panel className="lg:col-span-3">
+      <div className="flex flex-wrap items-center gap-2 mb-1">
+        <h2 className="m-0 text-[13px] font-extrabold">Oordeel: waarop het rust</h2>
+        {j.test_run ? <TestLabel j={j} /> : a.applies && v ? <Badge tone={v.tone}>{v.text}</Badge> : <Badge tone="muted">{verdictText}</Badge>}
+      </div>
+      <p className="m-0 my-2 px-3 py-2 rounded-lg bg-warn-soft border border-warn-line text-warn text-[13px] font-bold">{a.not_permission}</p>
+      <div className="grid gap-3.5 lg:grid-cols-3">
+        <div>
+          <h3 className="m-0 mb-1 text-xs font-extrabold text-fg-2">Basis</h3>
+          <Line k="Gevulde trades">{n0(b.filled_trades)}</Line>
+          <Line k="Mislukte instappen">{n0(b.failed_entries)}</Line>
+          <Line k="Handelsdagen">{n0(b.trading_days)}</Line>
+          <Line k="Klokdag">{b.clock_day == null ? "–" : n0(b.clock_day)}</Line>
+          <Line k="Netto per trade"><span className={tone(b.mean_sol)}>{b.mean_sol == null ? "–" : sol(b.mean_sol)}</span></Line>
+          <Line k="95%-interval">{b.ci95_sol ? `${sol(b.ci95_sol[0])} … ${sol(b.ci95_sol[1])}` : `vanaf ${s.min_days_ci} dagen`}</Line>
+          <p className="m-0 mt-1 text-[11px] text-muted">Interval: bootstrap over hele handelsdagen, {n0(b.draws)} keer.</p>
+        </div>
+        <div>
+          <h3 className="m-0 mb-1 text-xs font-extrabold text-fg-2">Kosten (naast de fill-prijzen)</h3>
+          {costs.length ? costs.map(([k, x]) => <Line key={k} k={COSTS[k] ?? k}>{x.toLocaleString("nl-NL", { maximumFractionDigits: 4 })} SOL</Line>)
+            : <p className="m-0 text-xs text-muted">Geen kostenscenario in het journaal.</p>}
+          <p className="m-0 mt-1 text-[11px] text-muted">De fees van pool en curve zitten al in de fill-prijzen.</p>
+        </div>
+        <div>
+          <h3 className="m-0 mb-1 text-xs font-extrabold text-fg-2">Aannames</h3>
+          <ul className="m-0 mb-2 pl-4 text-xs text-fg-2 grid gap-1">{a.assumptions.map((x) => <li key={x.key}>{ASSUMPTION[x.key]?.(x) ?? x.text}</li>)}</ul>
+          <h3 className="m-0 mb-1 text-xs font-extrabold text-fg-2">Onzeker</h3>
+          <ul className="m-0 pl-4 text-xs text-fg-2 grid gap-1">{a.uncertainty.map((x) => <li key={x.key}>{UNCERTAINTY[x.key]?.(x) ?? x.text}</li>)}</ul>
+        </div>
       </div>
     </Panel>
   );
@@ -240,7 +322,7 @@ export default function Paper() {
     <div className="grid gap-3.5">
       <div className="flex flex-wrap gap-2">
         <span className="px-2.5 py-1.5 rounded-lg bg-warn-soft border border-warn-line text-warn text-[11px] font-bold">Paper trading: er wordt niets verstuurd, geen echt geld.</span>
-        {j?.test_run && <span className="px-2.5 py-1.5 rounded-lg bg-accent-soft text-accent-fg text-[11px] font-semibold">Testdata · pariteitsrun op ontwikkeldata ({j.journal})</span>}
+        {j?.test_run && <span className="px-2.5 py-1.5 rounded-lg bg-accent-soft text-accent-fg text-[11px] font-semibold">Test, geen paper trading: {j.source.feed === "replay" ? "replay" : j.source.feed} van {j.journal}. Geen oordeel.</span>}
       </div>
 
       {!j ? <p className="text-muted">Nog geen paper-journaal.</p> : (
@@ -317,6 +399,7 @@ export default function Paper() {
           </div>
 
           <div className="grid gap-3.5 lg:grid-cols-3 lg:items-start">
+            <Assessment j={j} />
             <Details j={j} r={r} now={data.now_unix} />
           </div>
         </>
@@ -342,8 +425,8 @@ function Details({ j, r, now }: { j: PaperJournal; r: PaperRecorder | null; now:
         <p className="m-0 mb-1 text-xs text-muted">
           {s.clock ? `Trades ingestapt vanaf de klokstart ${s.clock.date} (reden: ${s.clock.reason}). ` : "Geen klokstart in het journaal: telling van elke paper-dag, geen beslissing. "}
           {s.primary ? `Alleen de hoofdgroep (${s.primary.join(", ")}), zonder N2. ` : "Zonder N2. "}
-          Alleen gevulde trades; de kosten van mislukte instappen tellen wel mee. Oordeel vanaf {s.min_trades} trades; 95%-interval (per dag) vanaf {s.min_days_ci} dagen.
-          {s.clock && ` Beslissing na ${s.clock_days} dagen met minstens ${s.min_trades} trades, anders bij ${s.min_trades} trades, uiterlijk dag ${s.clock_max_days}.`}
+          Alleen gevulde trades; de kosten van mislukte instappen tellen wel mee.
+          {` Het oordeel komt vanaf ${s.min_trades} gevulde trades en ${s.min_days_ci} handelsdagen (dan is er een 95%-interval per dag). Vier weken (${s.clock_days} dagen) is de geplande lengte, geen minimum; de grens is dag ${s.clock_max_days}.`}
         </p>
         <Line k="Klok">{clockText(s)}</Line>
         <Line k="Trades · mislukt · dagen">{n0(s.trades)} · {n0(s.entry_failed)} · {s.days}</Line>
