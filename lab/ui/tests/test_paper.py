@@ -445,5 +445,55 @@ class Capital(unittest.TestCase):
         self.assertEqual(len(curve), 5)
 
 
+class FrontEndWording(unittest.TestCase):
+    """The Paper tab (web/src/views/Paper.tsx) words every verdict, clock phase and assessment item that
+    paper/stoprule.py can give in Dutch, and states the fixed sentence and the clock rule (owner, 2026-10-16)."""
+    WEB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "src")
+
+    def setUp(self):
+        with open(os.path.join(self.WEB, "views", "Paper.tsx")) as f:
+            self.tsx = f.read()
+        with open(os.path.join(self.WEB, "paperTypes.ts")) as f:
+            self.types = f.read()
+
+    def keys(self, name):
+        """The keys of the object literal `const <name> ... = { ... };` in Paper.tsx."""
+        import re
+        body = re.search(r"const " + name + r"\b[^\n]*? = \{(.*?)\n\};", self.tsx, re.S).group(1)
+        return set(re.findall(r"(?:^|[{,])\s*(\w+):", body, re.M))
+
+    def test_every_item_has_dutch_wording(self):
+        import re
+        sr = paper.stoprule
+        scn = {"fee_per_tx": 1, "tip": 1, "failed_tx": 1, "land_prob": 0.97, "ata_rent": 1, "rent_mode": "lost", "adverse_per_side": 0.01}
+        trade = {"day": "2026-10-26", "tokens": 5, "pnl": 1, "cost": 10, "proceeds": 11, "exit_attempts": 2}
+        assumptions, uncertainty, costs = set(), set(), set()
+        for feed in ("live", "replay"):
+            for slot in (1, sr.ALPENGLOW_SLOT):
+                a = sr.assessment([dict(trade, entry_slot=slot)], 1, None, None, "too few trades",
+                                  {"phase": "running", "clock_day": 1}, scn, {"d_ms": 600, "q": 0.5}, feed)
+                assumptions |= {x["key"] for x in a["assumptions"]}
+                uncertainty |= {x["key"] for x in a["uncertainty"]}
+                costs |= set(a["basis"]["costs_lamports"])
+        self.assertEqual(uncertainty, {"not_paper_trading", "few_days", "regime", "simulated_landing", "many_trials"})
+        self.assertLessEqual(assumptions, self.keys("ASSUMPTION"))
+        self.assertLessEqual(uncertainty, self.keys("UNCERTAINTY"))
+        self.assertLessEqual(costs, self.keys("COSTS"))
+        self.assertIn(f"const FEW_DAYS = {sr.FEW_DAYS};", self.tsx)
+        # Every verdict and clock phase is typed; the badge only for the three decisions; no 'extended' phase left.
+        verdicts = {sr.decide(None, None, 0), sr.decide(1, None, sr.MIN_TRADES), *(sr.decide(m, lo, sr.MIN_TRADES) for m, lo in ((1, 1), (1, -1), (-1, -2)))}
+        self.assertEqual(verdicts, {*sr.DECISIONS, "too few trades", "too few days"})
+        self.assertEqual(set(re.findall(r'"([^"]+)"', re.search(r"type PaperVerdict = (.*);", self.types).group(1))), verdicts)
+        self.assertEqual({d for d in verdicts if f"{d}: {{ text:" in self.tsx}, set(sr.DECISIONS))
+        phases = {sr.clock_state({"date": "2026-10-26"}, d, v)["phase"] for d, v in (("2026-10-25", "GO"), ("2026-10-27", "too few days"), ("2026-10-27", "GO"))}
+        self.assertEqual(set(re.findall(r'"(\w+)"', re.search(r"phase: (.*?);", self.types).group(1))), phases)
+        self.assertNotIn("extended", self.tsx + self.types)
+        # The badge follows `applies`; a test journal gets its label; the fixed sentence comes from the assessment.
+        self.assertIn("a.applies && v && <Badge", self.tsx)
+        self.assertIn("TEST · geen paper trading", self.tsx)
+        self.assertIn("{a.not_permission}", self.tsx)
+        self.assertIn("Vier weken (${s.clock_days} dagen) is de geplande lengte, geen minimum; de grens is dag ${s.clock_max_days}.", self.tsx)
+
+
 if __name__ == "__main__":
     unittest.main()

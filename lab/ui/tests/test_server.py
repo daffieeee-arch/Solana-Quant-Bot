@@ -160,7 +160,7 @@ class Api(unittest.TestCase):
             self.skipTest("no paper journal")
         self.assertIn("paper", self.get("/api/meta")["tabs"])
         self.assertTrue(all(not (HOLDOUT_START <= r["entry_slot"] < 454_464_000) for r in p["journal"]["positions"]))
-        self.assertIn(p["journal"]["stop_rule"]["verdict"], ("GO", "ADJUST", "STOP", "too few trades"))
+        self.assertIn(p["journal"]["stop_rule"]["verdict"], ("GO", "ADJUST", "STOP", "too few trades", "too few days"))
 
     def test_paper_chart_markers_and_candles(self):
         p = self.get("/api/paper")
