@@ -14,7 +14,9 @@
 //!                    on disk (fsync): seq, first_slot, last_slot, complete, usage, ...
 //!
 //! Slots are only written once closed (confirmed, see `SlotBuffer`), so a segment holds whole
-//! slots and every row of a slot is in one segment.
+//! slots and every row of a slot is in one segment. A segment stays in memory until its
+//! `_segment.json` is on disk; a failed write is a `SegmentWriteError`, which ends the recorder so
+//! that it resumes after the last segment on disk (main.rs, EXIT_SEGMENT).
 
 use crate::idl::{Kind, Val};
 use crate::sink::{write_parquet, Columns, Row};
@@ -146,6 +148,35 @@ impl SlotBuffer {
 
 type Tables = BTreeMap<Arc<str>, (Columns, Vec<Vec<Val>>)>;
 
+/// A segment that could not be written (its directory, a table, the watchlist, the sync or
+/// `_segment.json`). Its rows are still in memory (`Segments::close` keeps them), but its closed
+/// slots are past the last segment on disk: a reconnect in this process would resume after them.
+/// The recorder therefore ends (EXIT_SEGMENT) and resumes after the last complete segment.
+/// Only fixed labels and the I/O error kind: nothing derived from the updates.
+#[derive(Debug)]
+pub struct SegmentWriteError {
+    pub seq: u64,
+    pub stage: &'static str,
+    pub kind: Option<std::io::ErrorKind>,
+}
+
+impl SegmentWriteError {
+    fn at(seq: u64, stage: &'static str) -> impl FnOnce(anyhow::Error) -> Self {
+        move |e| Self { seq, stage, kind: e.chain().find_map(|c| c.downcast_ref::<std::io::Error>()).map(std::io::Error::kind) }
+    }
+}
+
+impl std::fmt::Display for SegmentWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.kind {
+            Some(k) => write!(f, "segment {:09} could not be written ({}: {k:?})", self.seq, self.stage),
+            None => write!(f, "segment {:09} could not be written ({})", self.seq, self.stage),
+        }
+    }
+}
+
+impl std::error::Error for SegmentWriteError {}
+
 struct Open {
     first_slot: Option<u64>,
     last_slot: u64,
@@ -185,8 +216,9 @@ pub struct Segments {
     open: Open,
     seg_slots: u64,
     seg_secs: u64,
-    /// Puts the segment's files and directories on disk before `_segment.json` (tests inject a check).
-    sync: fn(&Path) -> Result<()>,
+    /// Puts the segment's files and directories on disk before `_segment.json` (tests inject a check
+    /// or a failure).
+    pub(crate) sync: fn(&Path) -> Result<()>,
 }
 
 /// fsync every file and directory under `dir`, the directories after their entries: a segment's
@@ -276,32 +308,42 @@ impl Segments {
     }
 
     /// Write the open segment (nothing when it has no closed slot yet). `meta` is merged into
-    /// `_segment.json`; `watchlist` becomes `watchlist.json`.
+    /// `_segment.json`; `watchlist` becomes `watchlist.json`. The open segment is cleared only once
+    /// `_segment.json` is on disk: after a failed write (a `SegmentWriteError`) every row is still
+    /// here, and the directory left without `_segment.json` is removed by the next `open`.
     pub fn close(&mut self, watchlist: &Value, meta: serde_json::Map<String, Value>) -> Result<Option<PathBuf>> {
         let Some(first) = self.open.first_slot else { return Ok(None) };
-        let open = std::mem::replace(&mut self.open, Open::new());
         let dir = self.root.join("segments").join(format!("{:09}", self.seq));
-        fs::create_dir_all(&dir)?;
-        let rows = write_tables(&dir, &open.tables)?;
-        let backfill_rows = write_tables(&dir.join("backfill"), &open.backfill)?;
-        write_json_atomic(&dir.join("watchlist.json"), watchlist)?;
-        (self.sync)(&dir)?; // the data on disk first: a "complete" segment never has empty parquet files
+        self.write(&dir, first, watchlist, meta)?;
+        self.open = Open::new();
+        self.seq += 1;
+        Ok(Some(dir))
+    }
+
+    fn write(&self, dir: &Path, first: u64, watchlist: &Value, meta: serde_json::Map<String, Value>) -> std::result::Result<(), SegmentWriteError> {
+        let seq = self.seq;
+        let at = move |stage: &'static str| SegmentWriteError::at(seq, stage);
+        fs::create_dir_all(dir).map_err(anyhow::Error::from).map_err(at("directory"))?;
+        let rows = write_tables(dir, &self.open.tables).map_err(at("tables"))?;
+        let backfill_rows = write_tables(&dir.join("backfill"), &self.open.backfill).map_err(at("backfill"))?;
+        write_json_atomic(&dir.join("watchlist.json"), watchlist).map_err(at("watchlist"))?;
+        (self.sync)(dir).map_err(at("sync"))?; // the data on disk first: a "complete" segment never has empty parquet files
         let mut m = serde_json::Map::new();
-        m.insert("seq".into(), json!(self.seq));
+        m.insert("seq".into(), json!(seq));
         m.insert("first_slot".into(), json!(first));
-        m.insert("last_slot".into(), json!(open.last_slot));
-        m.insert("slots_closed".into(), json!(open.slots));
+        m.insert("last_slot".into(), json!(self.open.last_slot));
+        m.insert("slots_closed".into(), json!(self.open.slots));
         m.insert("rows".into(), Value::Object(rows));
         if !backfill_rows.is_empty() {
             m.insert("backfill_rows".into(), Value::Object(backfill_rows));
         }
-        m.insert("written_unix".into(), json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs()));
+        let written = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(anyhow::Error::from).map_err(at("clock"))?;
+        m.insert("written_unix".into(), json!(written.as_secs()));
         m.extend(meta);
         m.insert("complete".into(), json!(true));
-        write_json_atomic(&dir.join("_segment.json"), &Value::Object(m))?;
-        fs::File::open(&dir)?.sync_all()?;
-        self.seq += 1;
-        Ok(Some(dir))
+        write_json_atomic(&dir.join("_segment.json"), &Value::Object(m)).map_err(at("meta"))?;
+        fs::File::open(dir).and_then(|f| f.sync_all()).map_err(anyhow::Error::from).map_err(at("meta sync"))?;
+        Ok(())
     }
 }
 
@@ -377,6 +419,43 @@ mod tests {
         assert!(dir.join("watchlist.json").exists());
         SYNCED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         sync_tree(dir)
+    }
+
+    fn failing_sync(_: &Path) -> Result<()> {
+        Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "injected").into())
+    }
+
+    #[test]
+    fn a_failed_write_loses_no_row_and_the_next_open_resumes_after_the_last_complete_segment() {
+        let root = tmp("write-fails");
+        let (mut s, _) = Segments::open(&root, 2, 3600).unwrap();
+        s.add_slot(7, vec![row("blocks", 7)]);
+        s.add_slot(8, vec![row("blocks", 8)]);
+        s.close(&json!({"pools": []}), serde_json::Map::new()).unwrap().unwrap(); // segment 0: slots 7..8
+        s.add_slot(9, vec![row("blocks", 9)]);
+        s.add_slot(10, vec![row("blocks", 10)]);
+        s.add_backfill(vec![row("blocks", 4)]);
+        s.sync = failing_sync;
+        let e = s.close(&json!({"pools": []}), serde_json::Map::new()).unwrap_err();
+        let w = e.downcast_ref::<SegmentWriteError>().expect("a segment write error");
+        assert_eq!((w.seq, w.stage, w.kind), (1, "sync", Some(std::io::ErrorKind::StorageFull)));
+        assert_eq!(w.to_string(), "segment 000000001 could not be written (sync: StorageFull)");
+        assert!(root.join("segments/000000001/blocks/part-00000.parquet").exists());
+        assert!(!root.join("segments/000000001/_segment.json").exists());
+        assert_eq!(s.seq, 1);
+        // A restart resumes after the last complete segment on disk (slot 8), not after the slots that
+        // were only in memory, and removes the unfinished directory.
+        let (s2, last) = Segments::open(&root, 2, 3600).unwrap();
+        assert_eq!((s2.seq, last), (1, Some(8)));
+        assert!(!root.join("segments/000000001").exists());
+        // Nothing was dropped from memory: once the disk works, the same segment is written whole.
+        s.sync = sync_tree;
+        let dir = s.close(&json!({"pools": []}), serde_json::Map::new()).unwrap().unwrap();
+        let meta: Value = serde_json::from_slice(&fs::read(dir.join("_segment.json")).unwrap()).unwrap();
+        assert_eq!((meta["seq"].as_u64(), meta["first_slot"].as_u64(), meta["last_slot"].as_u64()), (Some(1), Some(9), Some(10)));
+        assert_eq!((meta["rows"]["blocks"].as_u64(), meta["backfill_rows"]["blocks"].as_u64()), (Some(2), Some(1)));
+        assert!(!s.has_slots() && s.seq == 2);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

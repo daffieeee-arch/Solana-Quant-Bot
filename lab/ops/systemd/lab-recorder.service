@@ -1,7 +1,9 @@
 # Solana lab live recorder (lab/recorder): Triton Dragon's Mouth -> segments. Paper only.
 # Not installed by the repo: see lab/ops/README.md ("Installeren en starten"), only after the
-# owner's OK. Exit 75 = the UTC day's budget is spent: no restart; lab-recorder.timer starts it
-# again at 00:05 UTC.
+# owner's OK. Exit 75 = the UTC day's budget is spent, or today's spend is unknown (lab/recorder/README.md,
+# "Unknown spend"; the owner's override is --budget-assume-spent): no restart; lab-recorder.timer starts it
+# again at 00:05 UTC. Exit 74 = a segment could not be written: restarted (Restart=on-failure), it resumes
+# after the last segment on disk.
 [Unit]
 Description=Solana lab: live recorder (Triton Dragon's Mouth to segments), paper only
 Documentation=file:%h/Solana-project/worktrees/paper-run/lab/ops/README.md

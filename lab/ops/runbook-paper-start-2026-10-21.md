@@ -245,4 +245,12 @@ git -C ~/Solana-project/Solana-bot worktree remove ~/Solana-project/worktrees/pa
 ```
 Then repeat 3.1 at the earlier commit and run `systemctl --user restart lab-paper`. The journal stays; writes are idempotent per key.
 
+**The recorder stops with "today's spend is unknown"** (exit 75, `recorder.log`). This happens after an unreadable `budget.json` or `_segment.json` of today, or after an interrupted segment write when there is no `budget.json` of today. Check what is broken. Then the owner restarts it once for that day with the spend the Triton dashboard shows:
+```bash
+sed -i 's/^RECORDER_ARGS="\(.*\)"$/RECORDER_ARGS="\1 --budget-assume-spent <YYYY-MM-DD>=<bytes>"/' ~/.config/solana-lab/live.env
+systemctl --user start lab-recorder lab-paper
+sed -i 's/ --budget-assume-spent [^"]*//' ~/.config/solana-lab/live.env       # off again (it holds for that day only)
+```
+Exit 74 (a segment could not be written, e.g. a full disk) restarts by itself and resumes after the last segment on disk.
+
 **A disk emergency** writes `locks/disk-stopped` (README, "Disk guard"). Only the coordinator removes it, after checking.

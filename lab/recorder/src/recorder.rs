@@ -978,6 +978,37 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    fn full_disk(_: &Path) -> Result<()> {
+        Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "injected").into())
+    }
+
+    #[test]
+    fn a_failed_segment_write_keeps_its_rows_and_the_restart_resumes_after_the_last_segment_on_disk() {
+        let root = tmp("rec-write-fails");
+        let mut r = recorder(&root, 25_000_000_000, 2);
+        for u in [tx(1000, 4), meta(1000), confirmed(1000), meta(1001), confirmed(1001), meta(1002), confirmed(1002)] {
+            r.on_update(u, 1).unwrap();
+        }
+        assert!(matches!(r.on_tick(T0 + 1, None).unwrap(), Action::None)); // segment 0: slots 1000..1001
+        r.segs.sync = full_disk;
+        for u in [meta(1003), confirmed(1003), meta(1004), confirmed(1004)] {
+            r.on_update(u, 1).unwrap();
+        }
+        let e = r.on_tick(T0 + 2, None).unwrap_err(); // segment 1 (1002..1003) is due and cannot be written
+        assert!(e.downcast_ref::<crate::segment::SegmentWriteError>().is_some());
+        assert_eq!(r.slots.last_closed, Some(1003)); // in memory, past the last segment on disk
+        assert!(r.segs.has_slots() && r.segs.seq == 1); // its rows are still there
+        // The restart (main.rs: EXIT_SEGMENT, then systemd) resumes after the last complete segment on
+        // disk, so the server replays 1002 on; the unfinished directory is removed.
+        drop(r);
+        let r = recorder(&root, 25_000_000_000, 2);
+        let (main, _) = r.requests(None);
+        assert_eq!(main.from_slot, Some(1002));
+        assert_eq!(segment_meta(&root, 0)["last_slot"].as_u64(), Some(1001));
+        assert!(!root.join("segments/000000001").exists());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn a_disconnect_drops_unclosed_slots_and_resumes_after_the_last_closed() {
         let root = tmp("rec-reconnect");
