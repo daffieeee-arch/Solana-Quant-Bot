@@ -8,6 +8,10 @@ every F7 trigger in [from, to): the signal itself, the entry (filled / failed / 
 Writes parity.md and parity.json to <dir>.
 
   python -m paper.parity --arm flow300_H6 --from A --to B --out <dir>
+  python -m paper.parity --journal-a <dir> --journal-b <dir> --out <dir>
+
+Journal against journal (paper/journal_diff.py): the Python engine against the Rust live route on the same input,
+row for row, 0 unexplained (lab/docs/rust-live-route-design-2026-10-16.md §3).
 
 The paper arms (research/week4-spec-paper-h4h5-2026-10-16.md §6.4): an exit variant on the organic triggers,
 d_ms 600, against the backtest with busy over the organic triggers only (as the engine's arm: equal on every
@@ -185,8 +189,18 @@ def main():
     ap.add_argument("--store", default=STORE)
     ap.add_argument("--arm", help="a paper arm (an exit variant, e.g. flow300_H6) on the organic triggers, d_ms 600")
     ap.add_argument("--tail", type=int, default=ARM_TAIL, help="--arm: slots of data after --to")
+    ap.add_argument("--journal-a", help="journal against journal: the reference journal directory (paper/journal_diff.py)")
+    ap.add_argument("--journal-b", help="journal against journal: the other journal directory")
+    ap.add_argument("--from-day", help="journal against journal: the first UTC day compared")
+    ap.add_argument("--to-day", help="journal against journal: the last UTC day compared")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
+    if a.journal_a or a.journal_b:
+        if not (a.journal_a and a.journal_b):
+            raise SystemExit("give both --journal-a and --journal-b")
+        from .journal_diff import run
+
+        raise SystemExit(0 if run(a.journal_a, a.journal_b, a.out, a.from_day, a.to_day)["green"] else 1)
     if a.arm:
         t0 = time.time()
         res = arm_parity(a.store, a.a, a.b, a.arm, os.path.join(a.out, "journal"), tail=a.tail)
