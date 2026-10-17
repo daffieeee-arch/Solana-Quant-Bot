@@ -22,7 +22,7 @@ serde_json = "1"
 sha2 = "0.10"
 log = "0.4"
 env_logger = "0.11"
-parquet = { version = "60", default-features = false, features = ["arrow", "zstd"] }
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd", "snap"] }  # zstd: the recorder and extractor; snap: DuckDB COPY (shadow segments)
 arrow-array = "60"
 arrow-schema = "60"
 # The paper journal is SQLite (paper/journal.py); bundled, so the NAS and the VPS link the same version.

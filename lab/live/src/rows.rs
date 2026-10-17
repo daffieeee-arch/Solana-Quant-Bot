@@ -299,6 +299,40 @@ mod tests {
     }
 
     #[test]
+    fn snappy_zstd_and_uncompressed_parts_are_read_alike() {
+        // The recorder and the extractor write zstd (extractor/src/sink.rs); DuckDB's COPY writes snappy by default:
+        // the shadow recorder's segments (paper/shadow.py) and the Python tests' segments (NAS job 95).
+        use arrow_array::{ArrayRef, RecordBatch, StringArray, UInt64Array};
+        use parquet::arrow::ArrowWriter;
+        use parquet::basic::{Compression, ZstdLevel};
+        use parquet::file::properties::WriterProperties;
+        let root = tmp("codecs");
+        let dir = root.join("1000-2000");
+        let d = dir.join("pump/TradeEvent");
+        fs::create_dir_all(&d).unwrap();
+        let codecs = [Compression::SNAPPY, Compression::ZSTD(ZstdLevel::try_new(3).unwrap()), Compression::UNCOMPRESSED];
+        for (i, c) in codecs.into_iter().enumerate() {
+            let cols: Vec<ArrayRef> = vec![
+                Arc::new(UInt64Array::from(vec![1001 + i as u64])),
+                Arc::new(UInt64Array::from(vec![0u64])),
+                Arc::new(UInt64Array::from(vec![0u64])),
+                Arc::new(UInt64Array::from(vec![Some(i as u64)])),
+                Arc::new(StringArray::from(vec![format!("M{i}")])),
+            ];
+            let batch = RecordBatch::try_from_iter(["slot", "tx_index", "outer_ix", "inner_ix", "mint"].into_iter().zip(cols)).unwrap();
+            let f = fs::File::create(d.join(format!("part-{i:05}.parquet"))).unwrap();
+            let mut w = ArrowWriter::try_new(f, batch.schema(), Some(WriterProperties::builder().set_compression(c).build())).unwrap();
+            w.write(&batch).unwrap();
+            w.close().unwrap();
+        }
+        fs::write(dir.join("_manifest.json"), serde_json::json!({"status": "complete", "slot_start": 1000, "slot_end_exclusive": 2000}).to_string()).unwrap();
+        let (rows, _) = read_rows(&chunks(&root).unwrap(), 1000, 2000, &EVENT_PREFIXES).unwrap();
+        let mints: Vec<Option<Val>> = rows.iter().map(|r| r.get("mint").cloned()).collect();
+        assert_eq!(mints, vec![Some(Val::Str("M0".into())), Some(Val::Str("M1".into())), Some(Val::Str("M2".into()))]);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn the_digest_renders_every_kind_of_value() {
         let r = EventRow {
             table: Arc::from("pump/TradeEvent"),
