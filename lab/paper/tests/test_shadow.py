@@ -383,3 +383,16 @@ def test_an_unknown_engine_commit_is_refused(tmp_path, monkeypatch, commit):
     l.close()
     with pytest.raises(SystemExit, match="unknown engine commit"):
         shadow._same_engine(str(tmp_path / "r"), str(tmp_path / "l"))
+
+
+def test_a_run_with_an_unknown_engine_commit_fails_at_once(tmp_path, monkeypatch):
+    """On an export without .git or LAB_ENGINE_COMMIT the run stops before its first step (not after hours of replay and
+    live at the comparison); --from-compare, which compares an earlier run's journals, is not stopped by it."""
+    monkeypatch.setattr(shadow, "_engine_commit", lambda: "unknown")
+    a = argparse.Namespace(store=str(tmp_path / "no-store.duckdb"), out=str(tmp_path / "out"), lo=None, hi=None)
+    with pytest.raises(SystemExit, match="engine commit is unknown"):
+        shadow.run(a, log=lambda m: None)
+    assert not os.path.exists(tmp_path / "out")  # nothing written, the store not even opened
+    with pytest.raises(SystemExit, match="finished live step"):  # --from-compare passes the check, stops on its own
+        shadow.run(argparse.Namespace(store=str(tmp_path / "no-store.duckdb"), out=str(tmp_path / "out2"), from_compare=True),
+                   log=lambda m: None)
