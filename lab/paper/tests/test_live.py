@@ -397,22 +397,17 @@ def test_a_live_restart_after_the_keeper_ends_with_the_uninterrupted_journal(set
     assert r.feed.clock.per_epoch == u.feed.clock.per_epoch  # the epoch's span starts at segment 0's first block
 
 
-def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_path, monkeypatch):
-    """A probe followed mid-life (shadow job 91, pool 4reQ...): the recorder takes pool P from segment 1 on, and P's
-    earlier trades (segment 0) come as a backfill with segment 2. LiveFeed flagged P's trades of segment 1 without that
-    history (here 102 of 275 flags differ); when the backfill arrives it computes them again (_reflag) and the
-    engine's farming window gets them (_farm_fix): the window, and so every farm label after it, equals the one of the
-    recording that had P from the start. Without the correction it does not."""
+LATE_POOL = "4w2DBFyJPHZo2hdkJUg7ejLxCJz3dXfCaMdS7zJGc6RZ"
+
+
+def late_backfill_root(root, tmp_path, pool=LATE_POOL):
+    """The fixture's recording with `pool` taken from segment 1 on: its segment-0 rows move into a backfill that comes
+    with segment 2 (a probe followed mid-life; 102 of the pool's 275 farmer flags differ in arrival order)."""
     import shutil
 
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
-    from paper.engine import Engine
-    from paper.journal import Journal
-
-    root, h24, hist, _ = setup
-    P = "4w2DBFyJPHZo2hdkJUg7ejLxCJz3dXfCaMdS7zJGc6RZ"
     late = str(tmp_path / "late")
     shutil.copytree(root, late)
     seg0, seg2 = (os.path.join(late, "segments", f"{i:09d}") for i in (0, 2))
@@ -422,7 +417,7 @@ def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_pa
         t = pq.read_table(f)
         if "pool" not in t.column_names:
             continue
-        mask = pc.fill_null(pc.equal(t["pool"], P), False)
+        mask = pc.fill_null(pc.equal(t["pool"], pool), False)
         mine = t.filter(mask)
         if mine.num_rows:
             d = os.path.join(seg2, "backfill", "pump_amm", os.path.basename(tdir))
@@ -433,9 +428,24 @@ def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_pa
     assert moved > 0
     with open(os.path.join(seg2, "_segment.json")) as fh:
         meta = json.load(fh)
-    meta["backfills"] = [{"pool": P, "from_slot": LO, "to_slot": LO + SEG - 1, "status": "complete", "rows": moved}]
+    meta["backfills"] = [{"pool": pool, "from_slot": LO, "to_slot": LO + SEG - 1, "status": "complete", "rows": moved}]
     with open(os.path.join(seg2, "_segment.json"), "w") as fh:
         json.dump(meta, fh)
+    return late
+
+
+def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_path, monkeypatch):
+    """A probe followed mid-life (shadow job 91, pool 4reQ...): the recorder takes pool P from segment 1 on, and P's
+    earlier trades (segment 0) come as a backfill with segment 2. LiveFeed flagged P's trades of segment 1 without that
+    history (here 102 of 275 flags differ); when the backfill arrives it computes them again (_reflag) and the
+    engine's farming window gets them (_farm_fix): the window, and so every farm label after it, equals the one of the
+    recording that had P from the start. Without the correction it does not."""
+    from paper.engine import Engine
+    from paper.journal import Journal
+
+    root, h24, hist, _ = setup
+    P = LATE_POOL
+    late = late_backfill_root(root, tmp_path)
 
     def farm_window(r, name):
         feed = LiveFeed(r, store=STORE, follow=False, h24=h24, memory="500MB")
@@ -452,3 +462,61 @@ def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_pa
     monkeypatch.setattr(LiveFeed, "_reflag", lambda self, pools, h24: None)
     unfixed, _ = farm_window(late, "unfixed")
     assert unfixed != full and sum(1 for a, b in zip(unfixed, full) if a != b) > 0
+
+
+def test_a_late_backfill_just_after_a_restart_leaves_the_rows_up_to_the_hwm(setup, tmp_path):
+    """LAB review on (b) with #331: the run dies in segment 1, before pool P's late backfill (segment 2). The restart
+    replays up to the HWM with the journal's decisions, then the backfill arrives and P's flags are corrected
+    (_reflag, _farm_fix). The rows up to the HWM stay the first run's, and the final journal equals the run without
+    the restart."""
+    from paper import restart as RS
+    from paper.engine import Engine
+    from paper.journal import Journal
+    from paper.journal_diff import compare
+
+    root, h24, hist, _ = setup
+    late = late_backfill_root(root, tmp_path)
+
+    class Crash(LiveFeed):
+        crash_slot = None
+
+        def events(self):
+            for e in super().events():
+                if self.crash_slot is not None and e.slot >= self.crash_slot:
+                    raise RuntimeError("simulated crash")
+                yield e
+
+    def run(name, crash_slot=None):
+        j = Journal(str(tmp_path / name))
+        feed = Crash(late, store=STORE, follow=False, h24=h24, memory="500MB", learned=j.rows("learned"))
+        feed.crash_slot = crash_slot
+        feed.farmers.seed(hist)
+        eng = Engine(feed, j, None, ignore_risk=True, variants=["0.04:120"], n2_k=0, clock=feed.clock, backup=False,
+                     restart=True)
+        try:
+            eng.run()
+        except RuntimeError:
+            j.db.rollback()
+            j.close()
+            raise
+        finally:
+            feed.close()
+        return eng
+
+    u = run("u")
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        run("r", crash_slot=LO + SEG + 400)  # in segment 1: P's backfill (segment 2) has not arrived
+    j1 = Journal(str(tmp_path / "r"))
+    hwm = json.loads(j1.state(RS.HWM_KEY))["slot"]
+    before = {t: j1.rows(t) for t in ("signals", "orders", "fills", "exits")}
+    j1.close()
+    assert hwm < LO + 2 * SEG  # before the backfill's segment
+    r = run("r")
+    assert r.feed.stats["farmer_flags_fixed"] > 0  # the correction ran after the restart's HWM
+    res = compare(u.journal.dir, r.journal.dir)
+    assert res["green"], res["tables"]
+    after = {t: r.journal.rows(t) for t in before}
+    assert all(row in after[t] for t in before for row in before[t])  # the rows up to the HWM are unchanged
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))
+    assert len(rec) == 1 and {k: v for k, v in rec[0]["counts"].items() if k not in RS.BEFORE} == {}, rec
+    assert r.farm_win.get(LATE_POOL) == u.farm_win.get(LATE_POOL)

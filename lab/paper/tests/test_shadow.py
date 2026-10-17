@@ -18,6 +18,7 @@ from backtest.strategies import Clock, decision_bounds
 from paper import shadow
 from paper.feed import HOLDOUT_END, HOLDOUT_START, ReplayFeed
 from paper.live import FarmerFlags, LiveFeed, segment_dirs
+from wallets import watchlist as W
 
 STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 LO, HI = 450700000, 450702000
@@ -337,3 +338,26 @@ def test_a_farm_label_computed_before_the_pools_backfill_is_its_own_cause(tmp_pa
     seg(hole, 1, 1_100, recorded=range(1_101, 1_200))
     seg(hole, 2, 1_200, backfill=range(1_000, 1_100), backfills=[1])
     assert cause(hole) != "farm_label_order"
+
+
+def test_compare_refuses_a_replay_and_a_live_run_of_two_commits(tmp_path):
+    """LAB review after job 98: a replay of one commit against a live run of another differs wherever the engine
+    changed (there #301's end()). The shadow's journals carry state engine_commit; compare refuses two different ones,
+    and journals without it (one earlier run) are compared as before."""
+    from paper.journal import Journal
+
+    def journal(name, commit):
+        j = Journal(str(tmp_path / name))
+        if commit:
+            j.state(shadow.ENGINE_COMMIT, commit)
+        j.commit()
+        j.close()
+        return str(tmp_path / name)
+
+    with pytest.raises(SystemExit, match="engine commit"):
+        shadow._same_engine(journal("r1", "2c3e5fe"), journal("l1", "4e97d13"))
+    with pytest.raises(SystemExit, match="engine commit"):
+        shadow._same_engine(journal("r2", None), journal("l2", "4e97d13"))
+    assert shadow._same_engine(journal("r3", "abc"), journal("l3", "abc")) == "abc"
+    assert shadow._same_engine(journal("r4", None), journal("l4", None)) is None
+    assert shadow._journal_of_this_commit(str(tmp_path / "w")).state(shadow.ENGINE_COMMIT) == W.git_commit()
