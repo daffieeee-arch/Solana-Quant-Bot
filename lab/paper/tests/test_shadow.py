@@ -223,19 +223,19 @@ def test_from_compare_reuses_replay_and_live_with_the_same_result(run, tmp_path)
 
 
 def test_from_segments_runs_the_live_engine_again_with_the_same_result(run):
-    """--from-segments reuses the replay and the recorder's segments and runs the live engine again on them (a change
-    in LiveFeed or the engine measured without simulating the recorder again): the same code gives the same
-    comparison, and the live journal is the new run's."""
+    """--from-segments reuses only the recorder's segments: the replay and the live engine run again (this commit's
+    engine on both sides; job 98 compared a replay without #301 with a live run with it), then the comparison. The same
+    code gives the same comparison, and both journals are the new run's."""
     out, info = run
     chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
     kw = dict(store=STORE, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
               d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
               risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB")
-    mtime = os.path.getmtime(os.path.join(out, "live", "journal.sqlite"))
+    mtimes = [os.path.getmtime(os.path.join(out, d, "journal.sqlite")) for d in ("replay", "live")]
     logs = []
     again = shadow.run(argparse.Namespace(out=out, from_segments=True, **kw), log=logs.append)
-    assert any(m.startswith("live engine again on the segments") for m in logs)
-    assert os.path.getmtime(os.path.join(out, "live", "journal.sqlite")) > mtime
+    assert any(m.startswith("live engine again on the segments") for m in logs) and not any("replay reused" in m for m in logs)
+    assert all(os.path.getmtime(os.path.join(out, d, "journal.sqlite")) > m for d, m in zip(("replay", "live"), mtimes))
     assert again["summary"] == info["summary"] and again["unexplained"] == info["unexplained"]
     assert isinstance(again["livefeed"], dict) and again["livefeed"]["segments"] == info["livefeed"]["segments"]
 
