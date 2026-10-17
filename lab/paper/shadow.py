@@ -1016,10 +1016,16 @@ def run(a, log=print):
     steps 3-5. Both journals then come from this commit's engine: a replay of an older commit would differ from the
     new live run wherever the engine changed (job 98: #301's end() against a replay without it, 16 rows)."""
     out = os.path.abspath(a.out)
-    os.makedirs(out, exist_ok=True)
     resume = getattr(a, "resume", False)
     from_compare = getattr(a, "from_compare", False)
     from_segments = getattr(a, "from_segments", False)
+    if not from_compare and _engine_commit() in UNKNOWN_COMMITS:
+        # Every journal this run writes is compared by its engine commit (_same_engine): on an export without .git or
+        # LAB_ENGINE_COMMIT, fail now, not hours later at the comparison (LAB review of #348). --from-compare writes no
+        # compared journal: it compares an earlier run's.
+        raise SystemExit("shadow: the engine commit is unknown (no .git, no LAB_ENGINE_COMMIT): set LAB_ENGINE_COMMIT "
+                         "(e.g. from the export's COMMIT file) or run from a git checkout")
+    os.makedirs(out, exist_ok=True)
     if from_segments:
         status = json.load(open(os.path.join(out, "STATUS.json"))).get("step") if os.path.exists(os.path.join(out, "STATUS.json")) else None
         if status not in ("live", "compare", "engine --live", "done") or not os.path.isdir(os.path.join(out, "rec", "segments")):
