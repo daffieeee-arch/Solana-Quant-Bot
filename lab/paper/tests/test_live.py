@@ -316,3 +316,82 @@ def test_a_backfill_gives_the_probe_pools_history_without_events(setup, tmp_path
     assert all(l.kind in ("buy", "sell") and l.slot < start + 1000 for _, legs in hist for l in legs)
     # P's farmer history reaches back before segment 2 (from the backfill).
     assert any(s < start for (p, _), dq in feed.farmers.hist.items() if p == pool for s, *_ in dq)
+
+
+def test_a_live_restart_after_the_keeper_ends_with_the_uninterrupted_journal(setup, tmp_path):
+    """The high-water-mark restart (paper/restart.py) on the recorder's segments: a run dies in segment 3, the keeper
+    removes segment 0, and the restart (LiveFeed with the journal's learned pools, tokens and epoch span; the farmer
+    history as the run had it at segment 1) ends with the uninterrupted run's journal. Variant tp4_T120: no position
+    opened in segment 0 is still open at the HWM (that one could not be carried)."""
+    import shutil
+
+    from paper import restart as RS
+    from paper.engine import Engine
+    from paper.journal import Journal
+    from paper.journal_diff import compare
+
+    _, h24, hist, _ = setup
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]][0]
+    full = str(tmp_path / "full")
+    make_segments(chunk, full, usage=False)
+
+    class Crash(LiveFeed):
+        crash_slot = None
+
+        def events(self):
+            for e in super().events():
+                if self.crash_slot is not None and e.slot >= self.crash_slot:
+                    raise RuntimeError("simulated crash")
+                yield e
+
+    def run(root, name, crash_slot=None, farmers=None):
+        j = Journal(str(tmp_path / name))
+        feed = Crash(root, store=STORE, follow=False, h24=h24, memory="500MB", learned=j.rows("learned"))
+        feed.crash_slot = crash_slot
+        if farmers is None:
+            feed.farmers.seed(hist)
+        else:
+            feed.farmers = farmers
+        eng = Engine(feed, j, None, ignore_risk=True, variants=["0.04:120"], n2_k=0, clock=feed.clock, backup=False,
+                     restart=True)
+        try:
+            eng.run()
+        except RuntimeError:
+            j.db.rollback()  # the process died: what it wrote after its last commit is gone
+            j.close()
+            raise
+        finally:
+            feed.close()
+        return eng
+
+    u = run(full, "u")
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        run(full, "r", crash_slot=LO + 1_600)
+    # The keeper removes segment 0; the farmer history of its trades is the run's (the restart's own seed would lack it).
+    later, first = str(tmp_path / "later"), str(tmp_path / "first")
+    shutil.copytree(full, later)
+    shutil.rmtree(os.path.join(later, "segments", f"{0:09d}"))
+    os.makedirs(os.path.join(first, "segments"))
+    shutil.copytree(os.path.join(full, "segments", f"{0:09d}"), os.path.join(first, "segments", f"{0:09d}"))
+    f0, _ = live_events(first, h24, hist)
+    r = run(later, "r", farmers=f0.farmers)
+    f0.close()
+    # What segment 0 taught (pools created there) is known to the restart, from the journal.
+    seg0 = [x["key"] for x in u.journal.rows("learned") if x["kind"] == "pool" and x["seq"] == 0]
+    assert all(x in r.feed.pool_class for x in seg0)
+    print(f"learned in segment 0: {len(seg0)} pools; loaded {r.feed.stats.get('learned_loaded')}; "
+          f"signals {len(u.journal.rows('signals'))}, exits {len(u.journal.rows('exits'))}")
+
+    def seen_before_the_restart(table, key, a, b):
+        if table == "signals" and a and b and {c for c in a if a[c] != b[c]} == {"pool_seen_slot"}:
+            return "pool first seen before the restart's start"
+        return None
+
+    res = compare(u.journal.dir, r.journal.dir, causes=[seen_before_the_restart])
+    assert res["green"], res["tables"]
+    assert r.journal.rows("heartbeat") == u.journal.rows("heartbeat")
+    assert r.journal.state(RS.HWM_STATE_KEY) == u.journal.state(RS.HWM_STATE_KEY)
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))
+    assert len(rec) == 1 and rec[0]["first_slot"] >= LO + SEG
+    assert {k: v for k, v in rec[0]["counts"].items() if k not in RS.BEFORE} == {}, rec
+    assert r.feed.clock.per_epoch == u.feed.clock.per_epoch  # the epoch's span starts at segment 0's first block

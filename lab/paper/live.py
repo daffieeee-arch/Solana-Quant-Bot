@@ -279,7 +279,7 @@ class LiveFeed(Feed):
     slots were seen."""
 
     def __init__(self, root, store=None, follow=True, poll_s=1.0, h24=None, lag_slots=1, from_seq=0,
-                 memory="1GB", meta_bounds=None, snapshot_before=None, seed_farmers=False):
+                 memory="1GB", meta_bounds=None, snapshot_before=None, seed_farmers=False, learned=()):
         self.root, self.follow, self.poll_s, self.fixed_h24, self.lag = root, follow, poll_s, h24, lag_slots
         self.store = store
         # The farmer window before the first live slot from the store, per pool when it first trades
@@ -316,6 +316,11 @@ class LiveFeed(Feed):
         self.history = []  # backfill trades for the engine's farming windows (drain_history)
         self.new_pools = []  # pools learned live, in order (the live watchlist adds them at creation)
         self.meta_bounds = meta_bounds or (0, 2**63 - 1)
+        # What this feed learns that a restart needs (the journal's 'learned' rows, drain_learned): new pools,
+        # graduated tokens and the first block of each epoch (the clock's span). seq: the segment it came from.
+        self.learned, self.seq = [], None
+        if learned:
+            self._load_learned(learned)
 
     # ------------------------------------------------------------------ metadata
 
@@ -370,6 +375,47 @@ class LiveFeed(Feed):
         out, self.usage = self.usage, []
         return out
 
+    def drain_learned(self):
+        """What was learned since the last call: (kind, key, seq, slot, info JSON) rows for the journal's 'learned'."""
+        out, self.learned = self.learned, []
+        return out
+
+    def _learn(self, kind, key, slot, info):
+        self.learned.append((kind, key, self.seq, None if slot is None else int(slot), json.dumps(info)))
+
+    def _learn_token(self, t):
+        self._learn("token", t.mint, t.complete_slot, [t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint,
+                                                       t.complete_slot, t.pool])
+
+    def _load_learned(self, rows):
+        """What earlier runs learned (the journal's 'learned' rows). Graduated tokens and epoch spans always (their
+        last state; a token's graduation is only used once it happened). A pool only when it was learned from a
+        segment before the first one this feed reads: the others it learns again in order (new_pools, the live
+        watchlist's creation minute)."""
+        segs = self._segments()
+        first = segs[0][0] if segs else None
+        mints, pools = [], []
+        for r in rows:
+            info = json.loads(r["info"])
+            if r["kind"] == "token":
+                if info[0] not in self.tokens:
+                    mints.append(info[0])
+                self.tokens[info[0]] = TokenInfo(*info)
+            elif r["kind"] == "epoch":
+                self.epoch_span.setdefault(int(r["key"]), [tuple(info), tuple(info)])
+            elif r["kind"] == "pool" and r["key"] not in self.pool_class and (first is None or r["seq"] is None
+                                                                             or r["seq"] < first):
+                cls, orient, *pool = info
+                self.pool_class[r["key"]] = (cls, orient)
+                pools.append((r["key"], cls, orient))
+                if pool:
+                    self.pools[r["key"]] = PoolInfo(*pool)
+        if mints:
+            self.con.executemany("INSERT INTO live_mints VALUES (?)", [(m,) for m in mints])
+        if pools:
+            self.con.executemany("INSERT INTO live_pools VALUES (?, ?, ?)", pools)
+        self.stats["learned_loaded"] = len(mints) + len(pools)
+
     def _new_tokens_and_pools(self, c):
         """Tokens and pools created in this segment (the store's mints and create_pool rules)."""
         create = c.src("pump/CreateEvent")
@@ -388,12 +434,14 @@ class LiveFeed(Feed):
                 t = self.tokens.get(mint)
                 if t and t.complete_slot is None:
                     self.tokens[mint] = TokenInfo(t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint, slot, t.pool)
+                    self._learn_token(self.tokens[mint])
         mig = c.src("pump/CompletePumpAmmMigrationEvent")
         if mig:
             for mint, pool in self.con.execute(f"SELECT mint, any_value(pool) FROM {mig} GROUP BY mint").fetchall():
                 t = self.tokens.get(mint)
                 if t and t.pool is None:
                     self.tokens[mint] = TokenInfo(t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint, t.complete_slot, pool)
+                    self._learn_token(self.tokens[mint])
         # New pools: from their CreatePoolEvent, else from the recorder's pool account streams
         # (pool_creations, pool_accounts: the same mints and coin creator, slot = first seen).
         for table, sql in (("pump_amm/CreatePoolEvent", """
@@ -416,6 +464,9 @@ class LiveFeed(Feed):
                 if cls in SOL_MARKETS:
                     self.pools[pool] = PoolInfo(pool, mint, orient, cls, mayhem, creator, slot)
                     self.new_pools.append(pool)
+                    self._learn("pool", pool, slot, [cls, orient, pool, mint, orient, cls, mayhem, creator, slot])
+                else:
+                    self._learn("pool", pool, slot, [cls, orient])
 
     # ------------------------------------------------------------------ events
 
@@ -540,6 +591,7 @@ class LiveFeed(Feed):
     def segment_events(self, seq, seg, meta):
         """The Events of one segment, sorted (curve and pool merged)."""
         c = Chunk((meta["first_slot"], meta["last_slot"] + 1, seg))
+        self.seq = seq
         self._new_tokens_and_pools(c)
         # Backfill rows before the segment are history now; those inside it are merged into its
         # rows in chain order (no events); those after it wait for the next segment.
@@ -557,6 +609,8 @@ class LiveFeed(Feed):
                 bt[slot] = t
                 if t is not None:
                     self.ms_window.append((slot, t))
+                    if slot // 432_000 not in self.epoch_span:  # the epoch's first block: its clock span starts here
+                        self._learn("epoch", str(slot // 432_000), slot, [slot, t])
                     span = self.epoch_span.setdefault(slot // 432_000, [(slot, t), (slot, t)])
                     span[1] = (slot, t)
                     if span[1][0] - span[0][0] >= 1000:
