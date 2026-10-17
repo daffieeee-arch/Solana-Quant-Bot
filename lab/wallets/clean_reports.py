@@ -133,13 +133,20 @@ def unsold(result_path, variant, parts=None, o=None):
 
 def classes(result_path, variant, parts=None, o=None, store=None, watch=None):
     """Descriptive point-in-time pool classes of the variant's organic positions (all d), from the store's pools and pool
-    tables (read-only): creator class at the creation, b0 band, bot-in-pool-before-t. None without parts or store."""
+    tables (read-only): creator class at the creation (earlier pools of the same coin_creator within the store), b0 band,
+    bot-in-pool-before-t (the bot query scans the store's pool table: run it in a 3G scope on the VPS or as a NAS step).
+    None without parts or store."""
     if not store or not os.path.exists(store):
         return None
     con, d = _parts_table(result_path, variant, parts, o)
     if con is None:
         return None
     con.execute(f"ATTACH '{store}' AS s (READ_ONLY)")
+    try:
+        meta = json.loads(con.execute("SELECT json FROM s.meta").fetchone()[0])
+    except Exception:  # noqa: BLE001 - a store without meta (tests): no sha
+        meta = {}
+    store_sha = meta.get("sha256") or meta.get("store_sha256") or (o or {}).get("window", {}).get("store_sha256")
     bots = []
     if watch and os.path.exists(watch):
         bots = (json.load(open(watch)).get("groups") or {}).get("reversed_bots", [])
@@ -160,7 +167,7 @@ def classes(result_path, variant, parts=None, o=None, store=None, watch=None):
         CASE WHEN bb.bot_before THEN 'bot in de pool vóór t' ELSE 'geen bot vóór t' END AS bot_class,
         (p.proceeds = 0 OR p.exit_slot IS NULL) AS lost_all
         FROM p JOIN pc ON pc.pool = p.pool AND pc.t = p.t JOIN bb ON bb.pool = p.pool AND bb.t = p.t WHERE p.farm = 'organic'""")
-    out = {"n_bots": len(bots)}
+    out = {"n_bots": len(bots), "store_sha256": store_sha, "store": os.path.basename(store)}
     for key in ("creator_class", "b0_band", "bot_class"):
         rows = con.execute(f"""WITH dd AS (SELECT {key} AS k, day, sum(pnl) AS s FROM c GROUP BY 1, 2)
             SELECT c.{key}, count(*), round(sum(pnl), 2), round(avg(lost_all::INT), 3), (SELECT round(min(s), 2) FROM dd WHERE dd.k = c.{key})
@@ -236,8 +243,10 @@ def hx_report(name, o, date, others, ub=None, cl=None):
                  + " SOL zijn in plaats van " + sol(ub['organic|alle d']['net_sol']) + " SOL (beschrijvend; de toets hierboven telt ze mee, zoals vastgelegd in de pin).")
     L += ["", "## 2b. Beschrijvende pool-klassen (point-in-time, vastgelegd 2026-10-17, geen poort)", ""]
     if cl:
-        L += [f"Organic, alle d; klassen uit de store op het moment van de poolcreatie of vóór t (creatorklasse: eerdere pools van dezelfde coin_creator; b0: openingsliquiditeit; "
-              f"bot: een van de {cl['n_bots']} bekende reversed-pool-bots (watch-wallets-2026-10-17) handelde in de pool vóór t). Geen filter, geen beslissing; alleen om forward te vergelijken.", "",
+        L += [f"Organic, alle d; klassen uit de clean store `{cl['store']}` (sha256 `{cl['store_sha256'] or 'onbekend'}`), gelezen ná de vier runs, op het moment van de poolcreatie of vóór t: "
+              f"creatorklasse = eerdere pools van dezelfde coin_creator **binnen de clean store** (niet de hele historie); b0 = openingsliquiditeit; "
+              f"bot = een van de {cl['n_bots']} bekende reversed-pool-bots (watch-wallets-2026-10-17) handelde in de pool vóór t. "
+              "De dag is hier de trigger-dag uit de run-parts, niet de entry-dag van de H-toets. Geen filter, geen beslissing; alleen om forward te vergelijken.", "",
               "| klasse | posities | Σ netto SOL | verlies-alles | slechtste dag |", "|---|---|---|---|---|"]
         for key in ("creator_class", "b0_band", "bot_class"):
             for r in cl[key]:
@@ -335,6 +344,12 @@ def main(argv=None):
     ap.add_argument("--watch-wallets", help="watch-wallets-2026-10-17.json (group reversed_bots) for the bot-before-t class")
     a = ap.parse_args(argv)
     results = {"E20": load(a.e20), "H3": load(a.h3), "H4": load(a.h4), "H5": load(a.h5)}
+    if a.store:
+        # the clean store is read only after the four registered runs (the clean_unspent rule of store.py): all four
+        # results present, none a dry run, each with a decision
+        missing = [n for n, o in results.items() if o is None or o.get("dry_run") or not o.get("decision")]
+        if missing:
+            ap.error("--store needs the four results (e20, h3, h4, h5) with dry_run false and a decision; not ok: " + ", ".join(missing))
     os.makedirs(a.out, exist_ok=True)
     written = []
     if results["E20"]:

@@ -1,0 +1,97 @@
+{
+ "dry_run": false,
+ "decision": "verworpen",
+ "window": {
+  "slot_from": 455760000,
+  "slot_to": 459648000,
+  "warmup_epochs": 1,
+  "store_period": "clean",
+  "store_commit": "x",
+  "store_sha256": "abc",
+  "engine_commit": "46a0236",
+  "extractor_sha256": "def",
+  "d_per_epoch": {
+   "1055": 3
+  }
+ },
+ "equality": {
+  "1055": {
+   "d": 3,
+   "test_rows": 100,
+   "matrix_rows": 100
+  }
+ },
+ "exclusions": {
+  "mints": [
+   "m1"
+  ],
+  "pools": []
+ },
+ "positions": {
+  "k3": 500,
+  "excluded_positions": 3,
+  "excluded_triggers": 2,
+  "failed_entries": 20,
+  "failed_entry_pnl_sol": -0.02,
+  "trading_days": 7,
+  "filled": 480,
+  "rt_tx": 100,
+  "no_rt_tx": 370,
+  "no_trigger_leg": 10
+ },
+ "H1": {
+  "n": 370,
+  "mean": 0.004,
+  "lo": -0.002,
+  "hi": 0.01,
+  "pass": false
+ },
+ "H2": {
+  "diff": 0.003,
+  "lo": -0.001,
+  "hi": 0.007,
+  "pass": false,
+  "with_rt_tx": {
+   "n": 100,
+   "mean": 0.001,
+   "lo": -0.01,
+   "hi": 0.01
+  }
+ },
+ "wash_1h": {
+  "wash": {
+   "n": 50,
+   "mean": 0.001,
+   "lo": -0.01,
+   "hi": 0.01
+  }
+ },
+ "DSR": {
+  "n_trials": 42,
+  "t": 7,
+  "dsr_dev": 0.5,
+  "dsr_null": 0.6,
+  "psr0": 0.7
+ },
+ "DSR_K3_clock": {
+  "dsr_dev": 0.5,
+  "dsr_null": 0.6
+ },
+ "PBO": {
+  "t": 7,
+  "n_trials": 43,
+  "blocks": 7,
+  "pbo": 0.4,
+  "slope": 0.0,
+  "prob_loss": 0.3,
+  "indicative_only": true,
+  "nonzero_cells": 200,
+  "cells": 301
+ },
+ "a4c_consistency": "equal",
+ "documents": {
+  "hypothesis": "x",
+  "addendum": "y",
+  "exclusions": "ccfaed98e50516a7e433187e274fc8e94eacd4d3f5fc56a5e175242c8b33fd19"
+ }
+}

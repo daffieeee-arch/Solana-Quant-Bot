@@ -27,6 +27,7 @@ def setup(tmp_path, with_bots=True):
     res = tmp_path / "h4-x"
     os.makedirs(res / "run-parts")
     shutil.copy(os.path.join(HERE, "fixtures", "clean_h4.json"), res / "result.json")
+    shutil.copy(os.path.join(HERE, "fixtures", "clean_e20.json"), tmp_path / "e20.json")
     rows = [row("A", 100, "2026-10-10", 0, None),            # unsold, pool A (creator unknown), bot traded before t
             row("A", 200, "2026-10-11", 0, None),            # unsold_busy
             row("B", 300, "2026-10-12", 1_000_000_000, 350),  # won, pool B (first pool of its creator, b0 150 SOL)
@@ -50,9 +51,12 @@ def setup(tmp_path, with_bots=True):
 def test_notes_with_classes_from_the_store(tmp_path):
     result, store, watch = setup(tmp_path)
     out = tmp_path / "out"
-    assert cr.main(["--date", "2026-10-99", "--out", str(out), "--h4", result, "--store", store, "--watch-wallets", watch]) == 0
+    e20 = str(tmp_path / "e20.json")
+    # the store is only read with the four decided runs given (here the H4 fixture stands in for H3 and H5)
+    assert cr.main(["--date", "2026-10-99", "--out", str(out), "--e20", e20, "--h3", result, "--h4", result, "--h5", result,
+                    "--store", store, "--watch-wallets", watch]) == 0
     md = (out / "2026-10-99-flow300-clean.md").read_text()
-    assert "## 2b. Beschrijvende pool-klassen" in md and "geen poort" in md
+    assert "## 2b. Beschrijvende pool-klassen" in md and "geen poort" in md and "binnen de clean store" in md and "trigger-dag" in md
     # organic positions: A (t 100), A (t 200), B, C -> creator classes: unknown x2, first pool x1, serial (12 earlier) x1
     assert "| creator onbekend (system-program) | 2 |" in md
     assert "| eerste pool van de creator | 1 |" in md
@@ -76,3 +80,20 @@ def test_without_store_the_class_section_is_unknown(tmp_path):
     md = (out / "2026-10-99-flow300-clean.md").read_text()
     assert "## 2b. Beschrijvende pool-klassen" in md and "Onbekend: geen store" in md
     assert cr.classes(result, "flow300_H6", None, None, None, None) is None
+
+
+def test_store_refused_without_the_four_decided_runs(tmp_path):
+    import pytest
+    result, store, watch = setup(tmp_path)
+    out = tmp_path / "out"
+    with pytest.raises(SystemExit):  # only h4: argparse error
+        cr.main(["--date", "2026-10-99", "--out", str(out), "--h4", result, "--store", store])
+    # all four given but one is a dry run: refused too
+    dry = json.load(open(result))
+    dry["dry_run"] = True
+    (tmp_path / "dry.json").write_text(json.dumps(dry))
+    with pytest.raises(SystemExit):
+        cr.main(["--date", "2026-10-99", "--out", str(out), "--e20", str(tmp_path / "e20.json"), "--h3", result, "--h4", result, "--h5", str(tmp_path / "dry.json"), "--store", store])
+    # the §2b intro names the store and its sha (here from the result's window, the mini store has no meta)
+    cl = cr.classes(result, "flow300_H6", None, json.load(open(result)), store, watch)
+    assert cl["store"] == "clean.duckdb" and cl["store_sha256"] == json.load(open(result))["window"]["store_sha256"]
