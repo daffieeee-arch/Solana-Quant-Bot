@@ -12,7 +12,10 @@ For the coordinator, step by step, once the owner has given the OK and the Trito
   LAB=~/Solana-project/data-old-faithful-one/lab
   PY=~/.local/share/solana-quant/toolchains/lab-py/bin/python
   ```
-- `C` is the run commit: main at or after dcff935, which contains #299 (the arms) and #301 (the streaming end() fix).
+- `C` is the run commit, **pinned by the owner on 2026-10-17: `c1e36a03318bd4474f25003492e72d12253b9e7b`** (#340, `FarmerFlags.flag` about 2× faster, so a restart catches up about twice as fast). It contains #299 (the arms), #301 (the streaming end() fix), #331 and #339 (the HWM restart) and #338.
+  - At C the four config files hash to the values in §3.1 (checked 2026-10-17).
+  - The measuring hour (§4.1) runs at the same C.
+  - The night bundle (#341, #348, #349: main at or after 7928a6b) is deployed in the first night after the start, not on the start day.
 
 ## Timeline for 2026-10-20 (UTC)
 
@@ -137,7 +140,7 @@ install -m 600 /dev/null ~/.config/solana-lab/recorder.env
 ```bash
 # 3.1 the run checkout at C (frozen for the paper run)
 git -C ~/Solana-project/Solana-bot fetch -q origin main
-git -C ~/Solana-project/Solana-bot worktree add --detach ~/Solana-project/worktrees/paper-run <C>
+git -C ~/Solana-project/Solana-bot worktree add --detach ~/Solana-project/worktrees/paper-run c1e36a03318bd4474f25003492e72d12253b9e7b
 R=~/Solana-project/worktrees/paper-run
 git -C $R rev-parse HEAD                                   # note it
 sha256sum $R/lab/paper/k3-paper-2026-10-12.yaml            # 04b5e652eb0301ae… (E14, unchanged; the journal's config_sha256)
