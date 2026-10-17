@@ -5,8 +5,10 @@ processing the same events again (a restart) gives exactly the same journal. Ope
 kept in their own table for inspection.
 """
 
+import json
 import os
 import sqlite3
+import sys
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -53,6 +55,13 @@ TABLES = {
     "learned": ("kind TEXT, key TEXT, seq INTEGER, slot INTEGER, info TEXT", "kind, key"),
 }
 DAILY = ("signals", "orders", "fills", "exits", "heartbeat", "usage")
+SCHEMA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "journal_schema.json")
+
+
+def schema():
+    """TABLES as JSON for the Rust live route's journal writer (lab/live/src/journal.rs compiles journal_schema.json
+    in): `python -m paper.journal > paper/journal_schema.json`; test_journal_schema keeps the file current."""
+    return {"tables": [{"name": n, "cols": c, "key": k} for n, (c, k) in TABLES.items()], "daily": list(DAILY)}
 
 
 class Journal:
@@ -116,3 +125,8 @@ class Journal:
     def close(self):
         self.db.commit()
         self.db.close()
+
+
+if __name__ == "__main__":
+    json.dump(schema(), sys.stdout, indent=1)
+    sys.stdout.write("\n")

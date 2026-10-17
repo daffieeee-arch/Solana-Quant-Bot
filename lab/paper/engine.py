@@ -1455,6 +1455,9 @@ def main(argv=None):
     # were settled with.
     j.state("feed", json.dumps({"kind": "live" if a.live else "replay", "from": a.lo, "to": a.hi}))
     j.state("cost_scenario", json.dumps(asdict(eng.scn), sort_keys=True))
+    # Which implementation computed the fills: venues.py reads LAB_CORE at import ('python', or 'rust': lab-core, M0).
+    # The live units do not set it.
+    j.state("venue_math", V.CORE)
     j.commit()
     t0 = time.time()
     eng.run()

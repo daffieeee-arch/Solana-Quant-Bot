@@ -4,7 +4,9 @@ M3 of lab/docs/rust-live-route-design-2026-10-16.md §3), or any two runs of the
   python -m paper.journal_diff --journal-a <dir> --journal-b <dir> --out <dir> [--from-day D] [--to-day D]
   python -m paper.parity --journal-a <dir> --journal-b <dir> --out <dir>          # the same
 
-Per table, keyed as the journal keys it (paper/journal.py TABLES): rows only in A, rows only in B, and rows in
+First the schema: every table's columns, types and primary key (PRAGMA table_info) must be the same in both, so
+the Rust journal writer cannot drift from paper/journal.py. Then per table, keyed as the journal keys it
+(paper/journal.py TABLES): rows only in A, rows only in B, and rows in
 both that differ in a compared column. Compared are the decisions and their outcome: signal status, reason, farm
 labels, entry, fills, exit, proceeds, P&L, the exit windows. Not compared are the measured arrival times (receive,
 created_at, latency, segment lag), which two engines on one stream measure differently by design. Every
@@ -60,6 +62,27 @@ def _rows(path, table, keys, cols, lo_day, hi_day):
         db.close()
 
 
+def schema_of(path):
+    """{table: [(column, type, notnull, default, pk position)]} of every table in the journal (PRAGMA table_info)."""
+    db = sqlite3.connect(f"file:{os.path.join(path, 'journal.sqlite')}?mode=ro", uri=True)
+    try:
+        names = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
+        return {n: [tuple(r[1:]) for r in db.execute(f"PRAGMA table_info({n})")] for n in names}
+    finally:
+        db.close()
+
+
+def schema_diff(path_a, path_b):
+    """The schema differences of two journals: tables only in one, and columns that differ (name, type, not null,
+    default or primary key position)."""
+    a, b = schema_of(path_a), schema_of(path_b)
+    out = [f"table {t} only in A" for t in sorted(set(a) - set(b))] + [f"table {t} only in B" for t in sorted(set(b) - set(a))]
+    for t in sorted(set(a) & set(b)):
+        if a[t] != b[t]:
+            out.append(f"table {t}: A {a[t]} / B {b[t]}")
+    return out
+
+
 def _state(path):
     db = sqlite3.connect(f"file:{os.path.join(path, 'journal.sqlite')}?mode=ro", uri=True)
     try:
@@ -72,7 +95,8 @@ def compare(path_a, path_b, lo_day=None, hi_day=None, causes=()):
     """The comparison as a dict: per table the row counts, only-A, only-B and differing rows (the first SHOWN
     of each with their columns), the shared state, and `unexplained` (every difference no cause in `causes`
     explains; causes: callables (table, key, row_a, row_b) -> a cause name or None)."""
-    res = {"a": path_a, "b": path_b, "days": [lo_day, hi_day], "tables": {}, "unexplained": 0, "explained": {}}
+    res = {"a": path_a, "b": path_b, "days": [lo_day, hi_day], "tables": {}, "unexplained": 0, "explained": {},
+           "schema_diff": schema_diff(path_a, path_b)}
     sa, sb = _state(path_a), _state(path_b)
     res["state"] = {k: {"a": sa.get(k), "b": sb.get(k), "equal": sa.get(k) == sb.get(k)} for k in STATE_KEYS}
     # The feed may differ (a replay against a live run); groups and costs may not.
@@ -101,7 +125,7 @@ def compare(path_a, path_b, lo_day=None, hi_day=None, causes=()):
         res["unexplained"] += unexplained
         for c, n in explained.items():
             res["explained"][c] = res["explained"].get(c, 0) + n
-    res["green"] = res["unexplained"] == 0 and not res["state_mismatch"] and any(
+    res["green"] = res["unexplained"] == 0 and not res["state_mismatch"] and not res["schema_diff"] and any(
         t["rows_a"] for t in res["tables"].values())
     return res
 
@@ -111,7 +135,8 @@ def report(res):
              f"- days {res['days'][0] or 'all'} … {res['days'][1] or 'all'}; "
              f"**{'GREEN' if res['green'] else 'RED'}**: {res['unexplained']} unexplained"
              + (f", explained {res['explained']}" if res["explained"] else "")
-             + (f"; state differs in {res['state_mismatch']} (groups and costs must be equal)" if res["state_mismatch"] else ""),
+             + (f"; state differs in {res['state_mismatch']} (groups and costs must be equal)" if res["state_mismatch"] else "")
+             + (f"; **schema differs**: {res['schema_diff']}" if res["schema_diff"] else ""),
              "", "| table | rows A | rows B | only A | only B | different | unexplained |", "|---|---|---|---|---|---|---|"]
     for t, r in res["tables"].items():
         lines.append(f"| {t} | {r['rows_a']} | {r['rows_b']} | {r['only_a']} | {r['only_b']} | {r['different']} | {r['unexplained']} |")

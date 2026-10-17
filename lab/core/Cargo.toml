@@ -1,0 +1,16 @@
+[package]
+name = "lab-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "The lab's shared per-event math for backtest and live (paper only): venue fills (pump curve, PumpSwap pools). Python reaches it through lab/core-py (PyO3)."
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+
+[dev-dependencies]
+proptest = "1.12"
+
+[profile.release]
+overflow-checks = true

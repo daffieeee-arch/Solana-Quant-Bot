@@ -1,0 +1,21 @@
+[package]
+name = "labcore-py"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Python bindings (PyO3) of lab-core for the backtest: the module `labcore`, used behind LAB_CORE=rust (backtest/venues_core.py)."
+license = "UNLICENSED"
+publish = false
+
+[lib]
+name = "labcore"
+crate-type = ["cdylib"]
+
+[dependencies]
+lab-core = { path = "../core" }
+# abi3 from Python 3.13 (the lab Python); maturin builds the extension module.
+pyo3 = { version = "0.30", features = ["extension-module", "abi3-py313"] }
+
+[profile.release]
+# An overflow is an error (a Python exception), never a silently wrapped amount.
+overflow-checks = true
