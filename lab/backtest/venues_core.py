@@ -1,7 +1,9 @@
 """venues.py's fill functions computed by lab-core (Rust, through the PyO3 module `labcore`), behind LAB_CORE=rust:
 the same names, arguments and dataclasses, so a tournament with and without it can be compared row for row (M0 of
 the Rust live route, lab/docs/rust-live-route-design-2026-10-16.md §12). Without `labcore` installed, setting
-LAB_CORE=rust fails at import: never a silent fallback to Python.
+LAB_CORE=rust fails at import: never a silent fallback to Python. A division by zero, possible only with a negative
+virtual quote (outside every real state), raises ZeroDivisionError in Python and a pyo3 PanicException from lab-core
+(Rust panics on a zero divisor): either way the fill raises, but the exception's type differs.
 
 Build: `maturin build --release -m lab/core-py/Cargo.toml` (the NAS bookworm runner), then pip-install the wheel.
 """

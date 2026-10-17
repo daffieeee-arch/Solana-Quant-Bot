@@ -21,9 +21,10 @@ N = 20_000
 
 
 def _amount(rng):
-    """Amounts across the scales that occur: lamports and token units from 0 to 1e16, with edge values."""
+    """Amounts across the scales that occur: lamports and token units from 0 to 1e19, with edge values. Up to 1e19
+    reaches beyond 2^63: dev2's largest token amount is 7.46e18 (LAB review of #311)."""
     return rng.choice([0, 1, 2, 3, -1, rng.randrange(1, 1_000), rng.randrange(1, 10**9), rng.randrange(1, 10**13),
-                       rng.randrange(1, 10**16)])
+                       rng.randrange(1, 10**16), rng.randrange(1 << 63, 10**19)])
 
 
 def _curve(rng):
