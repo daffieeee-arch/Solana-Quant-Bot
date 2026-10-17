@@ -20,6 +20,7 @@ opposite directions and leave E unchanged, so (B, E) is the pricing state. The v
 (program error 6063), so such a sell fails.
 """
 
+import os
 from dataclasses import dataclass, replace
 
 BPS = 10_000
@@ -219,3 +220,13 @@ def rev_sell_token(p, tokens):
     if f is None:
         return None
     return Fill(f.trader_quote, f.curve_quote, f.fees, f.tokens, f.state)
+
+
+# M0 of the Rust live route (lab/docs/rust-live-route-design-2026-10-16.md §12): with LAB_CORE=rust the functions
+# above are replaced by lab-core's (backtest/venues_core.py), the dataclasses stay. A tournament with and without it
+# must give the same rows.
+CORE = os.environ.get("LAB_CORE", "python")
+if CORE == "rust":
+    from .venues_core import *  # noqa: E402,F401,F403
+elif CORE != "python":
+    raise ImportError(f"LAB_CORE={CORE!r}: 'python' or 'rust'")
