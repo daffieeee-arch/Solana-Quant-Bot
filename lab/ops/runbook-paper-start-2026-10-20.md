@@ -33,16 +33,18 @@ If the measuring hour has to be repeated or the budget decision waits, the start
 |---|---|---|
 | 0.1 | The owner's OK for the paper start, the Triton credentials, and the day's budget. | owner |
 | 0.2 | NAS job 92 is green: arm parity at dcff935, "0 unexplained" in both comparisons for both arms. Expected `unsold_busy`: 2 for flow300_H6, 1 for flow300_tp100_H6. | `parity.md` of job 92 |
-| 0.3 | NAS job 91 is green (see below). | `compare.md` and `state.jsonl` of job 91 |
+| 0.3 | NAS job 91 is green (see below), as rerun with `--from-compare` on its output (the compare of #338's commit). | `compare.md`, `reconcile.json` and `state.jsonl` of job 91 |
 | 0.4 | The recorder binary is the **5e2d1b7** build (#315, main a1c1712; QUEUE item 64). It has: `--pump-creates` (#287); durable budget (#265); rustls 0.23.46 (#290); Alpenglow block footers; no silent loss on a segment write error, exit 74 (#308); fail-closed on an unknown spend, with `--budget-assume-spent` (#308); and the meter saved before exit 74 (#315). NAS: 65/65 tests, GLIBC_2.34, cargo audit clean. | `readlink $LAB/bin/lab-recorder` → `lab-recorder-5e2d1b7-bookworm`; `sha256sum $LAB/bin/lab-recorder-5e2d1b7-bookworm` → `aeb4bea8…` (as noted at the build) |
 | 0.5 | At least 50 GB free; the disk guard is active (unit `solana-disk-guard.timer`, script `~/Solana-project/ops/disk-guard.sh`, outside this repo); no other Triton consumer is running; no `locks/disk-low` or `locks/disk-stopped`. | `df -h ~`; `systemctl --user list-timers solana-disk-guard.timer`; `ls $LAB/locks` |
 | 0.6 | Alpenglow: the switch is at epoch 1064, about 2026-10-21 14:50 UTC. **The start falls before it**: the recorder and the engine run at least 24 hours on the old consensus, then through the switch. The recorder handles it (footers), and so does the Clock (the last measured epoch until 1,000 slots of 1064). | `$LAB/recorder/alpenglow.json` appears at the first footer, after the switch |
 | 0.7 | **PAPER_STORE on the VPS** (route B, §1): `$LAB/store/fwd1053-1054.duckdb`, mode 444, sha256 `be816aa5ad09bef331e894526bd8375601e0aab08f2c525225f000fa50066a40`, equal to the NAS copy. The coordinator copied it on 2026-10-16. | `stat -c %a $LAB/store/fwd1053-1054.duckdb` → `444`; `sha256sum $LAB/store/fwd1053-1054.duckdb` |
 
 Job 91 (arms on, 2c3e5fe) counts as green when all of these hold:
-- unexplained = 0, with `farm_incomplete` an allowed cause;
+- unexplained = 0, with `farm_incomplete` and `farm_label_order` as allowed causes:
+  - `farm_label_order`: the farm label differs although live received every trade of the pool's farm hour, because the pool's backfill arrived after its first recorded trades;
+  - compare.md counts it apart (1 trigger of 943 in job 91);
 - RSS plateaus in `state.jsonl`;
-- reconcile is clean.
+- reconcile is clean outside the simulated gaps: `ok_outside_gaps` in `reconcile.json`. Its `ok` also counts the rows the gap segments miss by design (49,249 in job 91, all in the 15 gap segments).
 
 Job 91 ran without the end() fix (#301). That fix changes only the exit of a position that cannot sell at its deadline, not memory or coverage.
 
