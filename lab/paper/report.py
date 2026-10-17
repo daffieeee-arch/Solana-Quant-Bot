@@ -263,7 +263,7 @@ def farm_lines(journal, day):
     trig = {}
     for r in journal.rows("signals", "day = ? AND family = 'F7' AND farm_complete IS NOT NULL", (day,)):
         trig.setdefault((r["key"], r["t"]), r["farm_complete"])
-    fixes = json.loads(journal.state("farm_flag_fixes") or "{}").get(day)
+    fixes, fixes_open = (json.loads(journal.state("farm_flag_fixes") or "{}").get(day) or [0, 0])
     if not trig and not fixes:
         return []
     lines = ["", "## Farm labels", ""]
@@ -272,7 +272,8 @@ def farm_lines(journal, day):
         lines.append(f"- {n0} of {len(trig)} triggers before the farmer history was complete (journal state farmer_seed)")
     if fixes:
         lines.append(f"- {fixes} recorded trades' farmer flags corrected after a probe's late backfill (the farm labels after "
-                     "it are the backtest's; legs already handed out keep their flag)")
+                     f"it are the backtest's; legs already handed out keep their flag), {fixes_open} of them in pools with an "
+                     "open position (whose flow window keeps the old flags)")
     return lines
 
 

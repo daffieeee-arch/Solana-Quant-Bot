@@ -460,12 +460,13 @@ def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_pa
     assert none == 0 and n > 0 and len(full) > 100
     assert fixed == full
     # The corrections are counted per day for the daily report (journal state farm_flag_fixes, report.farm_lines).
-    days = json.loads(e_fixed.j.state("farm_flag_fixes"))
-    assert sum(days.values()) == n
+    days = json.loads(e_fixed.j.state("farm_flag_fixes"))  # {day: [fixed, of them in pools with an open position]}
+    assert sum(v[0] for v in days.values()) == n and all(0 <= v[1] <= v[0] for v in days.values())
     from paper.report import farm_lines
 
     day = next(iter(days))
-    assert any(f"{days[day]} recorded trades' farmer flags corrected" in x for x in farm_lines(e_fixed.j, day))
+    assert any(f"{days[day][0]} recorded trades' farmer flags corrected" in x and f"{days[day][1]} of them in pools with an "
+               "open position" in x for x in farm_lines(e_fixed.j, day))
     monkeypatch.setattr(LiveFeed, "_reflag", lambda self, pools, h24: None)
     unfixed, _, e_unfixed = farm_window(late, "unfixed")
     assert unfixed != full and sum(1 for a, b in zip(unfixed, full) if a != b) > 0

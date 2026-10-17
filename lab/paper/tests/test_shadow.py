@@ -18,7 +18,6 @@ from backtest.strategies import Clock, decision_bounds
 from paper import shadow
 from paper.feed import HOLDOUT_END, HOLDOUT_START, ReplayFeed
 from paper.live import FarmerFlags, LiveFeed, segment_dirs
-from wallets import watchlist as W
 
 STORE = "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"
 LO, HI = 450700000, 450702000
@@ -184,10 +183,18 @@ def test_work_tables_are_in_slot_order_across_windows(run):
     con.close()
 
 
-def test_resume_reuses_replay_and_work_database_with_the_same_result(run):
+def test_resume_reuses_replay_and_work_database_with_the_same_result(run, monkeypatch):
     """A rerun with resume (e.g. after a kill during the live step) reuses the finished replay and
-    work database, runs the rest again and gives the same comparison; STATUS.json says done."""
+    work database, runs the rest again and gives the same comparison; STATUS.json says done. The replay is reused
+    only when it is this clean commit's (here a fixed one, so the test does not depend on the worktree's state)."""
+    import sqlite3
+
     out, info = run
+    db = sqlite3.connect(os.path.join(out, "replay", "journal.sqlite"))
+    db.execute("UPDATE state SET v = 'abc1234' WHERE k = ?", [shadow.ENGINE_COMMIT])
+    db.commit()
+    db.close()
+    monkeypatch.setattr(shadow, "_engine_commit", lambda: "abc1234")
     chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
     logs = []
     a = argparse.Namespace(store=STORE, out=out, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
@@ -360,4 +367,19 @@ def test_compare_refuses_a_replay_and_a_live_run_of_two_commits(tmp_path):
         shadow._same_engine(journal("r2", None), journal("l2", "4e97d13"))
     assert shadow._same_engine(journal("r3", "abc"), journal("l3", "abc")) == "abc"
     assert shadow._same_engine(journal("r4", None), journal("l4", None)) is None
-    assert shadow._journal_of_this_commit(str(tmp_path / "w")).state(shadow.ENGINE_COMMIT) == W.git_commit()
+    from backtest.tournament import engine_commit
+
+    assert shadow._journal_of_this_commit(str(tmp_path / "w")).state(shadow.ENGINE_COMMIT) == engine_commit()
+
+
+@pytest.mark.parametrize("commit", ["", "unknown"])
+def test_an_unknown_engine_commit_is_refused(tmp_path, monkeypatch, commit):
+    """LAB review S1 on #348: an export without .git (and without LAB_ENGINE_COMMIT) gives '' or 'unknown'; two of them
+    must not pass as one commit."""
+    monkeypatch.setattr(shadow, "_engine_commit", lambda: commit)
+    r, l = shadow._journal_of_this_commit(str(tmp_path / "r")), shadow._journal_of_this_commit(str(tmp_path / "l"))
+    assert r.state(shadow.ENGINE_COMMIT) == commit
+    r.close()
+    l.close()
+    with pytest.raises(SystemExit, match="unknown engine commit"):
+        shadow._same_engine(str(tmp_path / "r"), str(tmp_path / "l"))

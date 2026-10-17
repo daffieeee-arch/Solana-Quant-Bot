@@ -927,13 +927,23 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
 
 
 ENGINE_COMMIT = "engine_commit"
+UNKNOWN_COMMITS = ("", "unknown")  # a checkout without .git and without LAB_ENGINE_COMMIT (an export): no proof
+
+
+def _engine_commit():
+    """This checkout's engine commit: backtest.tournament.engine_commit (LAB_ENGINE_COMMIT, else git with -dirty, else
+    'unknown'). Not wallets.common.git_commit, which is '' on an export without .git: two '' would pass as one commit
+    (LAB review S1 on #348)."""
+    from backtest.tournament import engine_commit
+
+    return engine_commit()
 
 
 def _journal_of_this_commit(path):
     """A shadow journal, its state 'engine_commit' this checkout's commit: compare refuses a replay and a live run of
     two commits (LAB review after job 98, which compared a replay without #301 with a live run with it)."""
     j = Journal(path)
-    j.state(ENGINE_COMMIT, W.git_commit())
+    j.state(ENGINE_COMMIT, _engine_commit())
     j.commit()
     return j
 
@@ -952,8 +962,12 @@ def _commit_of(path):
 
 def _same_engine(replay_dir, live_dir):
     """The two journals' engine commits (state 'engine_commit'). Both absent: journals of one earlier run (job 91 and
-    before), compared as they are. Otherwise they must be equal: SystemExit names both."""
+    before), compared as they are. Otherwise they must be equal and known: SystemExit names both. An empty or
+    'unknown' commit (an export without .git or LAB_ENGINE_COMMIT) proves nothing and is refused too."""
     got = [_commit_of(replay_dir), _commit_of(live_dir)]
+    if any(c in UNKNOWN_COMMITS for c in got):
+        raise SystemExit(f"shadow compare: an unknown engine commit (replay {got[0]!r}, live {got[1]!r}): run from a git "
+                         "checkout, or set LAB_ENGINE_COMMIT")
     if got[0] != got[1]:
         raise SystemExit(f"shadow compare: the replay's engine commit {got[0]!r} is not the live run's {got[1]!r}: "
                          "run both with one commit (--from-segments runs the replay again)")
@@ -1030,7 +1044,7 @@ def run(a, log=print):
     info = {"store": a.store, "store_purpose": meta.get("purpose"), "from_slot": lo, "to_slot": hi, "decisions": window,
             "variants": [f"tp{int(tp * 100)}_T{T}" for tp, T in variants], "d": a.d, "q": a.q, "ms_per_slot": ms,
             "probes": not a.no_probes, "pump_creates": getattr(a, "pump_creates", False), "seed": a.seed,
-            "commit": W.git_commit()}
+            "commit": _engine_commit()}
     log(f"shadow {lo}..{hi}, decisions {window[0]}..{window[1]} ({ms:.1f} ms/slot)")
 
     # 1. replay
@@ -1041,9 +1055,11 @@ def run(a, log=print):
                   **({"groups": info["groups"]} if info["groups"] else {}),
                   "d": a.d, "q": a.q}
     done_path = os.path.join(rdir, "DONE.json")
-    # --resume reuses a replay of this commit only (the live run is always this commit's); --from-compare reuses both
-    # journals of the earlier run, which compare checks to be one commit's.
-    if ((resume and _commit_of(rdir) == W.git_commit()) or from_compare) and os.path.exists(done_path) \
+    # --resume reuses a replay of this commit only (the live run is always this commit's), and never one of an unknown or
+    # dirty commit; --from-compare reuses both journals of the earlier run, which compare checks to be one commit's.
+    here = _engine_commit()
+    same = here not in UNKNOWN_COMMITS and not here.endswith("-dirty") and _commit_of(rdir) == here
+    if ((resume and same) or from_compare) and os.path.exists(done_path) \
             and json.load(open(done_path)).get("key") == replay_key:
         log(f"replay reused ({done_path})")
     elif from_compare:

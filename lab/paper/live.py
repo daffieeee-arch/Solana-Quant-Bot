@@ -600,7 +600,9 @@ class LiveFeed(Feed):
         the pool's farm label organic instead of flagged). Recompute them now that the farmer history has the
         backfill, and hand the changed ones to the engine's farming windows (drain_flag_fixes). Recorded trades older
         than SEEN_KEEP_SLOTS are not looked at; the legs already handed out keep their flag (a position's flow window,
-        the live watchlist's past minutes)."""
+        the live watchlist's past minutes). The recomputation is FarmerFlags.flag's, whose window start only moves
+        forward: a trade up to SEEN_KEEP_SLOTS old may miss the oldest up to 3,000 slots of its 24 h window (trades a
+        later query already dropped), rarely deciding."""
         for i, (slot, pool, key, trader, flag) in enumerate(self.recorded):
             if pool in pools:
                 new = self.farmers.flag(pool, trader, slot, h24)

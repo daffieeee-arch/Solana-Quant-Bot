@@ -421,7 +421,9 @@ class Engine:
             for pool, order, farmer in self.feed.drain_flag_fixes():
                 self._farm_fix(pool, order, farmer)
                 if not self.replaying:  # counted per day for the report; a restart's replay counted them already
-                    self.flag_fix_days[self.day] = self.flag_fix_days.get(self.day, 0) + 1
+                    n, n_open = self.flag_fix_days.get(self.day, [0, 0])
+                    # In a pool with an open position the flag reaches its flow window only from the next legs on.
+                    self.flag_fix_days[self.day] = [n + 1, n_open + (pool in self.open)]
         # 5. time passes for tokens without events in this slot
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
