@@ -295,17 +295,22 @@ def test_a_farm_label_computed_before_the_pools_backfill_is_its_own_cause(tmp_pa
             out.append(str(tmp_path / name))
         return out
 
-    def cause(root, farm_l="organic"):
+    def cause(root, farm_l="organic", hour_slots=500):
         r, l = journals("flagged", farm_l)
         scon = streams.open_store(store, threads=1, memory="256MB")
-        rows = shadow.compare(r, l, shadow.Coverage([], []), scon, root, d=1, hour_slots=500)
+        rows = shadow.compare(r, l, shadow.Coverage([], []), scon, root, d=1, hour_slots=hour_slots)
         scon.close()
+        if rows[0]["cause"] == "farm_label_order":
+            assert (rows[0]["replay_farm"], rows[0]["live_farm"], rows[0]["with_order"]) == ("flagged", farm_l, False)
         return rows[0]["cause"]
 
     late = str(tmp_path / "late")  # recorded from 1_100 (segment 1); the backfill [1_000, 1_100) in segment 2
     seg(late, 1, 1_100, recorded=range(1_100, 1_200))
     seg(late, 2, 1_200, backfill=range(1_000, 1_100), backfills=[1])
     assert cause(late) == "farm_label_order"
+    # LAB review S1: the trades flagged before the backfill (1_100..1_199) must lie in the trigger's farm hour; an hour
+    # of [1_250, 1_300) starts after the backfill's segment (1_200), so the late backfill cannot explain this label.
+    assert cause(late, hour_slots=50) != "farm_label_order"
     assert cause(late, farm_l="flagged") is None  # the same label: no difference at all
     same = str(tmp_path / "same")  # the backfill came with the first recorded trades: the flags had their history
     seg(same, 1, 1_100, recorded=range(1_100, 1_200), backfill=range(1_000, 1_100), backfills=[1])

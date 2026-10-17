@@ -43,9 +43,10 @@ Under DIR:
      took the pool's coin creator as the creator; the real creator, who had moved the creator fee
      to a sharing config, sold in F7's creator window [t - 200 v1 slots, t]), farm_incomplete (a group
      with require_farm_complete, the arms of --groups, skipped the trigger on one side: a farm label without
-     full history), farm_label_order (the farm label differs although live received every event of the pool's
-     farm hour: its backfill arrived after its first recorded events, whose farmer flags live computed before it
-     knew the earlier trades), or unexplained, which must be 0.
+     full history), farm_label_order (the farm label differs although live received every trade of the pool's
+     farm hour: its backfill arrived after its first recorded trades, inside that hour, and live computed their
+     farmer flags before it knew the earlier trades; counted apart, with its direction), or unexplained, which
+     must be 0.
   5. live-risk/: `engine --live` as it runs live (risk.yaml limits, the clock measured from the
      segments' block times, decisions from the first segment) on the same segments, with its daily
      reports; reconcile.json: paper.reconcile against the chunks on every segment with a simulated
@@ -777,16 +778,19 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
     def farm_label_order(pool, t, r, l):
         """Both runs labelled the trigger and the labels differ; live received every trade of the pool's farm hour
         [t - 1 h, t) (recorded or backfilled) and none the store lacks (trades: the farm label counts buys and sells
-        only); and the pool's backfill arrived in a segment after its first recorded trade. Live computed those trades'
-        farmer flags before it knew the pool's earlier trades (job 91, pool 4reQ..., t 455516057: 0.5051 flagged in the
-        store, 0.4886 organic in arrival order)."""
+        only); and the pool's backfill arrived in a segment after its first recorded trade, with the trades recorded
+        before it, [first recorded, backfill segment), inside this trigger's farm hour (LAB review S1: a backfill that
+        came before the hour cannot explain a label difference later on). Live computed those trades' farmer flags
+        before it knew the pool's earlier trades (job 91, pool 4reQ..., t 455516057: 0.5051 flagged in the store,
+        0.4886 organic in arrival order)."""
         if not (r and l and r.get("farm") != l.get("farm") and {r.get("farm"), l.get("farm")} == {"organic", "flagged"}):
             return False
         lo_ = t - hour_slots
         store_hour = {x for x in trades.get(pool, ()) if lo_ <= x[0] < t}
         live_hour = {x for x in known.get(pool, ()) if lo_ <= x[0] < t}
         at, first = backfill_at.get(pool), first_rec.get(pool)
-        return store_hour == live_hour and at is not None and first is not None and first < at
+        return (store_hour == live_hour and at is not None and first is not None and first < at
+                and at > lo_ and first < t)  # the trades flagged early lie in this trigger's farm hour
 
     def exit_slot(k):
         xs = [J["exits"].get(k) for J in (R, L)]
@@ -844,6 +848,8 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
                 cause = "unexplained"
         out.append({"family": fam, "variant": var, "key": key, "t": t, "venue": venue, "orientation": orient,
                     "in_replay": r is not None, "in_live": l is not None, "same": same, "cause": cause,
+                    "replay_farm": r and r.get("farm"), "live_farm": l and l.get("farm"),
+                    "with_order": k in R["orders"] or k in L["orders"],
                     "replay_status": r and r["status"], "live_status": l and l["status"],
                     "replay_pnl": (R["exits"].get(k) or {}).get("pnl"), "live_pnl": (L["exits"].get(k) or {}).get("pnl")})
     return out
@@ -1122,9 +1128,16 @@ def render(info, rows):
           "was created after the live start, so live never got its CreateEvent and took the pool's coin creator as the "
           "creator, while the real creator (who moved the creator fee to a sharing config) sold in F7's creator window "
           "[t − 200 v1 slots, t]; farm_incomplete = an arm (require_farm_complete) skipped the trigger on one side: its farm "
-          "label lacked full history; farm_label_order = the farm label differs although live received every event of the "
-          "pool's farm hour: the pool's backfill arrived after its first recorded events, whose farmer flags live computed "
-          "before it knew the pool's earlier trades (counted apart: how often it happens live).", ""]
+          "label lacked full history; farm_label_order = the farm label differs although live received every trade of the "
+          "pool's farm hour: the pool's backfill arrived after its first recorded trades, inside that hour, and live computed "
+          "their farmer flags before it knew the pool's earlier trades (counted apart below: how often it happens live).", ""]
+    flo = [r for r in rows if r["cause"] == "farm_label_order"]
+    if flo:
+        n_org = sum(1 for r in flo if r["live_farm"] == "organic")
+        L += [f"**farm_label_order: {len(flo)}** keys: live organic (replay flagged) {n_org}, live flagged (replay organic) "
+              f"{len(flo) - n_org}; with an order on either side {sum(1 for r in flo if r['with_order'])}. History missing "
+              "before the backfill should make live less often flagged; the other direction is a signal to look at. The cause "
+              "is per key: its signal row and, when there is one, its order, fills and exit.", ""]
     un = [r for r in rows if r["cause"] == "unexplained"][:10]
     if un:
         L += ["### Unexplained (first 10)", "", "| family | variant | key | t | replay | live |", "|---|---|---|---|---|---|"]
