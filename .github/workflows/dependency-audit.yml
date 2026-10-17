@@ -6,6 +6,10 @@ on:
     paths:
       - .github/workflows/dependency-audit.yml
       - lab/security/**
+      - lab/core/Cargo.lock
+      - lab/core/Cargo.toml
+      - lab/core-py/Cargo.lock
+      - lab/core-py/Cargo.toml
       - lab/extractor/Cargo.lock
       - lab/extractor/Cargo.toml
       - lab/recorder/Cargo.lock
@@ -47,7 +51,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit lab and frozen V2 Rust lockfiles against RustSec
-        run: python3 lab/security/dependency_audit.py cargo lab/extractor/Cargo.lock lab/recorder/Cargo.lock rust/of1-range-recorder/Cargo.lock rust/of1-bronze-decoder/Cargo.lock rust/of1-parquet-projection/Cargo.lock rust/old-faithful-pump-reducer/Cargo.lock rust/pump-protocol-v2/Cargo.lock
+        run: python3 lab/security/dependency_audit.py cargo lab/core/Cargo.lock lab/core-py/Cargo.lock lab/extractor/Cargo.lock lab/recorder/Cargo.lock rust/of1-range-recorder/Cargo.lock rust/of1-bronze-decoder/Cargo.lock rust/of1-parquet-projection/Cargo.lock rust/old-faithful-pump-reducer/Cargo.lock rust/pump-protocol-v2/Cargo.lock
   pip:
     name: dependency-audit (pip)
     runs-on: ubuntu-24.04

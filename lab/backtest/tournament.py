@@ -26,6 +26,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from . import health, overlay, replay, rotation, streams
+from . import venues as V
 from .costs import LAMPORTS, Scenario, settle_sql
 from .report import GATE_SIZES
 from .store import load_defaults
@@ -736,6 +737,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     con.close()
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
+              "venue_math": V.CORE,  # 'python' or 'rust' (lab-core through LAB_CORE=rust; the same rows either way)
               "families": families, "sizes_sol": sizes, "delays": delays, "delay_ms": delay_ms, "variants": variants, "f7_grid": f7_grid, "m1_grid": m1_grid, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "gate_sizes": list(GATE_SIZES), "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k,
               "max_signals": max_signals, "store": meta,
