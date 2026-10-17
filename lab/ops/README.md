@@ -109,16 +109,24 @@ recorder does not start, and retention keeps 1 day.
 recorder exits 75 at once (the day's budget is spent): harmless, but visible in the logs every
 15 minutes until 00:05 UTC.
 
-### Known limitation: a restart replays, there are no state snapshots
+### A restart: the high-water mark
 
-The paper engine has no state snapshots yet. After a restart it replays the retained segments
-into the same journal; writes are idempotent per key, so the rows come out the same. After an
-outage longer than the retention (3 days), the replay starts at the oldest retained segment:
-- journal rows older than that are kept, but not recomputed;
-- state that needs older data (the 24 h farmer history, open positions from before) starts
-  incomplete.
-
-Accepted for the paper phase (coordinator, 2026-10-12).
+After a restart the engine replays the segments of the 36 h before the journal's high-water mark (HWM,
+the last minute it committed) into the same journal, up to the HWM with the journal's decisions and
+without writing (`paper/README.md`, "Restarts"; `paper/restart.py`). At most ~3 h on the VPS (measured
+upper bound: 5 s per one-minute segment). So the rows up to the HWM stay the first
+run's, the open positions at the HWM are rebuilt over the same events, and busy, cooldowns, daily loss
+and wallets are taken from the HWM's state. Pools, graduations and the slot clock learned before the
+retained segments come from the journal table `learned`.
+- What stays approximate, and journaled: a position whose entry lies before the window (none: positions
+  are held at most 6 h) is closed at the HWM at its last mark (`restart_lost`), and so is one of a group
+  switched off (§5 of the runbook), without touching the other groups; after an outage of more than
+  ~1.5 days, the signals after the HWM in the restart's first 24 h have incomplete farmer history
+  (`farm_complete` 0, group H skipped). The daily report's "## Restarts" counts every difference.
+- While the engine replays or catches up (more than a minute behind the wall clock) it writes neither
+  `watchlist-current.json` nor `open-pools.json`: the recorder keeps the lists it has (the last run's;
+  on a first start none, then only its base filters and probes). At the HWM it writes the open
+  positions' pools once (they are current).
 
 `tests/test_live_retention.py` tests the retention script on a temporary root; `systemd-analyze
 --user verify lab/ops/systemd/*` checks the unit files. Before installing, it only reports the

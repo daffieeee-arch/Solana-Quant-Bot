@@ -8,6 +8,10 @@ minute up to it is stepped (silent ones too: the idle rules count them) and the 
 next minute is written atomically to <recorder root>/watchlist-current.json (format v1, which the
 recorder reads), plus one line per minute in watchlist-log.jsonl.
 
+Live (wall_clock given): the list is written only when its minute is at most one behind the wall clock. While the
+engine replays the retained segments at a start, or catches up, a list of the past would replace the recorder's
+(the last run's), so it waits. The log gets one line per minute: a restart does not repeat the minutes it has.
+
 Limitation: the engine only sees what the recorder received: pools on the list, open positions,
 probes (with their backfill from creation) and graduation and creation transactions. A pool that
 is not received cannot enter by its own trades; F7 pools come in as probes (99% of F7 triggers are
@@ -27,8 +31,8 @@ SOL = 1e9
 
 
 class LiveWatchlist:
-    def __init__(self, feed, root, rules=None, wallets=(), clock=None, log=True):
-        self.feed, self.root = feed, root
+    def __init__(self, feed, root, rules=None, wallets=(), clock=None, log=True, wall_clock=None):
+        self.feed, self.root, self.wall_clock = feed, root, wall_clock
         self.path = os.path.join(root, "watchlist-current.json")
         self.log_path = os.path.join(root, "watchlist-log.jsonl") if log else None
         self.wl = W.Watchlist(rules or W.Rules(), wallets)
@@ -41,6 +45,8 @@ class LiveWatchlist:
         self._static = None  # feeds that know all pools up front (replay): (create_slot, pool) sorted
         self._new_seen = 0
         self.history_dropped = 0  # backfill legs with no minute at all (before any slot was seen)
+        self.logged = _last_minute(self.log_path)  # the log's last minute (a restart appends after it)
+        self.held = 0  # lists not written while catching up (wall_clock)
 
     # ------------------------------------------------------------------ pools
 
@@ -162,12 +168,37 @@ class LiveWatchlist:
             self.stepped = m
         snap = self.wl.snapshot(valid_from_slot=slot, generated_slot=slot)
         snap["source"] = {"by": "paper.engine (live watchlist)", "received_pools_only": True}
-        tmp = self.path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(snap, f)
-        os.replace(tmp, self.path)
-        if self.log_path:
+        if self.wall_clock is None or minute >= int(self.wall_clock() // 60) - 1:
+            tmp = self.path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(snap, f)
+            os.replace(tmp, self.path)
+        else:
+            self.held += 1
+        if self.log_path and (self.logged is None or minute > self.logged):
             with open(self.log_path, "a") as f:
                 f.write(json.dumps({"minute": minute, "slot": slot, "pools": sorted(members or {}),
                                     "counts": snap["counts"]}) + "\n")
+            self.logged = minute
         return members
+
+
+def _last_minute(path, block=1 << 16):
+    """The minute of the log's last complete line (None without one), read from the end block by block. A line cut
+    off by a crash is skipped."""
+    if not path or not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        end = pos = f.tell()
+        while pos > 0:
+            pos = max(0, pos - block)
+            f.seek(pos)
+            lines = f.read(end - pos).split(b"\n")
+            # The first piece may be a partial line (unless the block reached the start): only the later ones count.
+            for line in reversed(lines if pos == 0 else lines[1:]):
+                try:
+                    return int(json.loads(line)["minute"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+    return None
