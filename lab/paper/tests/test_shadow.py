@@ -150,9 +150,13 @@ def test_live_against_replay_has_no_unexplained_difference(run):
 
 
 def test_reconcile_clean_outside_the_gap(run):
-    _, info = run
+    out, info = run
     rc = info["reconcile"]
     assert rc["segments_checked"] >= 8 and rc["others_clean"], rc
+    # The criterion (runbook 0.3): ok_outside_gaps; ok counts the gap segments' missing rows too.
+    with open(os.path.join(out, "reconcile.json")) as f:
+        rep = json.load(f)
+    assert rc["ok_outside_gaps"] is True and rep["ok_outside_gaps"] is True and rep["ok"] is False
     assert rc["gap_segments"] and all(v["extra"] == v["mismatched"] == 0 for v in rc["gap_segments"].values())
     assert sum(v["missing"] for v in rc["gap_segments"].values()) > 0
 
@@ -249,3 +253,69 @@ def test_pump_creates_bring_every_create_and_its_creator(tmp_path):
     list(feed.events())
     assert {m: feed.token(m).creator for m in created} == created
     feed.close()
+
+
+def test_a_farm_label_computed_before_the_pools_backfill_is_its_own_cause(tmp_path):
+    """farm_label_order (job 91, pool 4reQ..., t 455516057): the labels differ although live received every trade of
+    the pool's farm hour, because its backfill arrived in a later segment than its first recorded trade. Without any
+    one of the three conditions it is not this cause (here another one, or unexplained)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from paper.journal import Journal
+
+    store = str(tmp_path / "s.duckdb")
+    con = duckdb.connect(store)
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR)")
+    con.executemany("INSERT INTO pool VALUES ('P', ?, 0, ?)", [(s, "buy" if s % 2 else "sell") for s in range(1_000, 1_200)])
+    con.execute("INSERT INTO pool VALUES ('P', 1_000, 1, 'deposit')")  # not a trade: the label does not count it
+    con.close()
+
+    def seg(root, seq, first, recorded=(), backfill=(), backfills=()):
+        d = os.path.join(root, "segments", f"{seq:09d}")
+        for sub, slots in (("", recorded), ("backfill", backfill)):
+            if slots:
+                os.makedirs(os.path.join(d, sub, "pump_amm", "BuyEvent"), exist_ok=True)
+                pq.write_table(pa.table({"pool": ["P"] * len(slots), "slot": list(slots), "tx_index": [0] * len(slots)}),
+                               os.path.join(d, sub, "pump_amm", "BuyEvent", "part-0.parquet"))
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "_segment.json"), "w") as f:
+            json.dump({"seq": seq, "first_slot": first, "last_slot": first + 99, "complete": True,
+                       "backfills": [{"pool": "P", "from_slot": 1_000, "to_slot": 1_099, "status": "complete", "rows": 100}
+                                     for _ in backfills]}, f)
+
+    def journals(farm_r, farm_l):
+        out = []
+        # The replay skips on its label; live, on an organic label, on the arm's open position (busy).
+        for name, farm, reason in (("r", farm_r, "farm flagged"), ("l", farm_l, "busy" if farm_l == "organic" else "farm flagged")):
+            j = Journal(str(tmp_path / name))
+            j.put("signals", family="F7", variant="flow300_H6", key="P", t=1_300, venue="pool", orientation="reversed",
+                  status="skipped", reason=reason, farm=farm, depth=1, trigger_trader="X")
+            j.close()
+            out.append(str(tmp_path / name))
+        return out
+
+    def cause(root, farm_l="organic", hour_slots=500):
+        r, l = journals("flagged", farm_l)
+        scon = streams.open_store(store, threads=1, memory="256MB")
+        rows = shadow.compare(r, l, shadow.Coverage([], []), scon, root, d=1, hour_slots=hour_slots)
+        scon.close()
+        if rows[0]["cause"] == "farm_label_order":
+            assert (rows[0]["replay_farm"], rows[0]["live_farm"], rows[0]["with_order"]) == ("flagged", farm_l, False)
+        return rows[0]["cause"]
+
+    late = str(tmp_path / "late")  # recorded from 1_100 (segment 1); the backfill [1_000, 1_100) in segment 2
+    seg(late, 1, 1_100, recorded=range(1_100, 1_200))
+    seg(late, 2, 1_200, backfill=range(1_000, 1_100), backfills=[1])
+    assert cause(late) == "farm_label_order"
+    # LAB review S1: the trades flagged before the backfill (1_100..1_199) must lie in the trigger's farm hour; an hour
+    # of [1_250, 1_300) starts after the backfill's segment (1_200), so the late backfill cannot explain this label.
+    assert cause(late, hour_slots=50) != "farm_label_order"
+    assert cause(late, farm_l="flagged") is None  # the same label: no difference at all
+    same = str(tmp_path / "same")  # the backfill came with the first recorded trades: the flags had their history
+    seg(same, 1, 1_100, recorded=range(1_100, 1_200), backfill=range(1_000, 1_100), backfills=[1])
+    assert cause(same) != "farm_label_order"
+    hole = str(tmp_path / "hole")  # a trade of the farm hour was not received
+    seg(hole, 1, 1_100, recorded=range(1_101, 1_200))
+    seg(hole, 2, 1_200, backfill=range(1_000, 1_100), backfills=[1])
+    assert cause(hole) != "farm_label_order"

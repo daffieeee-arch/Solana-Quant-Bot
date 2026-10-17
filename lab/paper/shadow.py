@@ -43,11 +43,15 @@ Under DIR:
      took the pool's coin creator as the creator; the real creator, who had moved the creator fee
      to a sharing config, sold in F7's creator window [t - 200 v1 slots, t]), farm_incomplete (a group
      with require_farm_complete, the arms of --groups, skipped the trigger on one side: a farm label without
-     full history), or unexplained, which must be 0.
+     full history), farm_label_order (the farm label differs although live received every trade of the pool's
+     farm hour: its backfill arrived after its first recorded trades, inside that hour, and live computed their
+     farmer flags before it knew the earlier trades; counted apart, with its direction), or unexplained, which
+     must be 0.
   5. live-risk/: `engine --live` as it runs live (risk.yaml limits, the clock measured from the
      segments' block times, decisions from the first segment) on the same segments, with its daily
      reports; reconcile.json: paper.reconcile against the chunks on every segment with a simulated
-     reconnect or gap and every --reconcile-every-th other one.
+     reconnect or gap and every --reconcile-every-th other one; its ok_outside_gaps (every segment
+     without a simulated gap clean) is the criterion, ok counts the gap segments' missing rows too.
 """
 
 import argparse
@@ -714,18 +718,39 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
         hi_ = max([x["exit_slot"] for J in (R, L) for x in [J["exits"].get(k)] if x and x.get("exit_slot")] or [k[3] + d])
         w = want.get(k[2])
         want[k[2]] = (lo_, hi_) if w is None else (min(w[0], lo_), max(w[1], hi_))
-    events, got = defaultdict(list), set()
+    events, got, trades, known, first_rec = defaultdict(list), set(), defaultdict(set), defaultdict(set), {}
     if want:
         scon.register("want_arrow", pa.table({"pool": list(want), "a": [max(0, v[0]) for v in want.values()],
                                               "b": [v[1] for v in want.values()]}))
-        for pool, slot, tx in scon.execute("""SELECT DISTINCT e.pool, e.slot, e.tx_index FROM pool e JOIN want_arrow w
-                                              ON e.pool = w.pool AND e.slot >= w.a AND e.slot <= w.b ORDER BY 1, 2, 3""").fetchall():
+        for pool, slot, tx, trade in scon.execute("""SELECT e.pool, e.slot, e.tx_index, bool_or(e.kind IN ('buy', 'sell'))
+                                                     FROM pool e JOIN want_arrow w ON e.pool = w.pool AND e.slot >= w.a AND e.slot <= w.b
+                                                     GROUP BY 1, 2, 3 ORDER BY 1, 2, 3""").fetchall():
             events[pool].append((slot, tx))
+            if trade:
+                trades[pool].add((slot, tx))
         files = glob.glob(os.path.join(root, "segments", "*", "pump_amm", "*", "*.parquet"))
         if files:
             got = set(scon.execute(f"""SELECT DISTINCT pool, slot, tx_index FROM read_parquet({files!r}, union_by_name = true)
                                        WHERE pool IN (SELECT pool FROM want_arrow)""").fetchall())
+        # farm_label_order: the pools' trades live knew (recorded, or backfilled: a probe's earlier transactions, history
+        # though not events), and its first recorded trade.
+        for sub in ("", "backfill"):
+            tfiles = [f for e in ("BuyEvent", "SellEvent")
+                      for f in glob.glob(os.path.join(root, "segments", "*", sub, "pump_amm", e, "*.parquet"))]
+            if not tfiles:
+                continue
+            for pool, slot, tx in scon.execute(f"""SELECT DISTINCT pool, slot, tx_index FROM read_parquet({tfiles!r}, union_by_name = true)
+                                                   WHERE pool IN (SELECT pool FROM want_arrow)""").fetchall():
+                known[pool].add((slot, tx))
+                if not sub:
+                    first_rec[pool] = min(first_rec.get(pool, slot), slot)
         scon.unregister("want_arrow")
+    # ... and the first slot of the segment that brought each pool's backfill.
+    backfill_at = {}
+    for _, _, meta in _segments(root):
+        for b in meta.get("backfills", ()):
+            if b.get("status") == "complete" and b.get("pool") in want and b["pool"] not in backfill_at:
+                backfill_at[b["pool"]] = meta["first_slot"]
 
     live_only_f7 = {k[2] for k in L["signals"] if k[0] == "F7" and k not in R["signals"] and L["signals"][k]["venue"] == "pool"}
     creator_sells = creator_sells_unknown_live(scon, live_only_f7, snapshot_before) if snapshot_before is not None else {}
@@ -749,6 +774,23 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
         xs = events.get(pool, [])
         i = bisect.bisect_left(xs, (s, -1))
         return i > 0 and (pool,) + xs[i - 1] not in got
+
+    def farm_label_order(pool, t, r, l):
+        """Both runs labelled the trigger and the labels differ; live received every trade of the pool's farm hour
+        [t - 1 h, t) (recorded or backfilled) and none the store lacks (trades: the farm label counts buys and sells
+        only); and the pool's backfill arrived in a segment after its first recorded trade, with the trades recorded
+        before it, [first recorded, backfill segment), inside this trigger's farm hour (LAB review S1: a backfill that
+        came before the hour cannot explain a label difference later on). Live computed those trades' farmer flags
+        before it knew the pool's earlier trades (job 91, pool 4reQ..., t 455516057: 0.5051 flagged in the store,
+        0.4886 organic in arrival order)."""
+        if not (r and l and r.get("farm") != l.get("farm") and {r.get("farm"), l.get("farm")} == {"organic", "flagged"}):
+            return False
+        lo_ = t - hour_slots
+        store_hour = {x for x in trades.get(pool, ()) if lo_ <= x[0] < t}
+        live_hour = {x for x in known.get(pool, ()) if lo_ <= x[0] < t}
+        at, first = backfill_at.get(pool), first_rec.get(pool)
+        return (store_hour == live_hour and at is not None and first is not None and first < at
+                and at > lo_ and first < t)  # the trades flagged early lie in this trigger's farm hour
 
     def exit_slot(k):
         xs = [J["exits"].get(k) for J in (R, L)]
@@ -786,6 +828,8 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
                 trig_r = {x for x in f7_at[(var, t)] if R["signals"].get(("F7", var, x, t))}
                 trig_l = {x for x in f7_at[(var, t)] if L["signals"].get(("F7", var, x, t))}
                 cause = "follows_f7" if trig_r != trig_l else "n2_pick"
+            elif farm_label_order(key, t, r, l):
+                cause = "farm_label_order"
             elif any(x and x["status"] == "skipped" and x["reason"] in FARM_INCOMPLETE for x in (r, l)):
                 cause = "farm_incomplete"
             elif r and l and r["status"] != l["status"] and "busy" in (r["reason"], l["reason"]):
@@ -804,6 +848,8 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
                 cause = "unexplained"
         out.append({"family": fam, "variant": var, "key": key, "t": t, "venue": venue, "orientation": orient,
                     "in_replay": r is not None, "in_live": l is not None, "same": same, "cause": cause,
+                    "replay_farm": r and r.get("farm"), "live_farm": l and l.get("farm"),
+                    "with_order": k in R["orders"] or k in L["orders"],
                     "replay_status": r and r["status"], "live_status": l and l["status"],
                     "replay_pnl": (R["exits"].get(k) or {}).get("pnl"), "live_pnl": (L["exits"].get(k) or {}).get("pnl")})
     return out
@@ -1010,6 +1056,9 @@ def run(a, log=print):
                                              for s in clean),
                          "gap_segments": {s["seq"]: {k: sum(t[k] for t in s["tables"].values()) for k in ("missing", "extra", "mismatched")}
                                           for s in rep["segments"] if s["seq"] in gap_segs}}
+    # ok counts every checked segment, those with a simulated gap too (missing rows by design there); ok_outside_gaps is
+    # the criterion (runbook 0.3).
+    rep["ok_outside_gaps"] = info["reconcile"]["ok_outside_gaps"] = info["reconcile"]["others_clean"]
     with open(os.path.join(out, "reconcile.json"), "w") as f:
         json.dump(rep, f, indent=1, default=str)
     log(f"reconcile done ({time.time() - t0:.0f}s): {info['reconcile']['segments_checked']} segments")
@@ -1079,7 +1128,16 @@ def render(info, rows):
           "was created after the live start, so live never got its CreateEvent and took the pool's coin creator as the "
           "creator, while the real creator (who moved the creator fee to a sharing config) sold in F7's creator window "
           "[t − 200 v1 slots, t]; farm_incomplete = an arm (require_farm_complete) skipped the trigger on one side: its farm "
-          "label lacked full history.", ""]
+          "label lacked full history; farm_label_order = the farm label differs although live received every trade of the "
+          "pool's farm hour: the pool's backfill arrived after its first recorded trades, inside that hour, and live computed "
+          "their farmer flags before it knew the pool's earlier trades (counted apart below: how often it happens live).", ""]
+    flo = [r for r in rows if r["cause"] == "farm_label_order"]
+    if flo:
+        n_org = sum(1 for r in flo if r["live_farm"] == "organic")
+        L += [f"**farm_label_order: {len(flo)}** keys: live organic (replay flagged) {n_org}, live flagged (replay organic) "
+              f"{len(flo) - n_org}; with an order on either side {sum(1 for r in flo if r['with_order'])}. History missing "
+              "before the backfill should make live less often flagged; the other direction is a signal to look at. The cause "
+              "is per key: its signal row and, when there is one, its order, fills and exit.", ""]
     un = [r for r in rows if r["cause"] == "unexplained"][:10]
     if un:
         L += ["### Unexplained (first 10)", "", "| family | variant | key | t | replay | live |", "|---|---|---|---|---|---|"]
@@ -1096,7 +1154,7 @@ def render(info, rows):
           f"- Live watchlist (received pools only) against the batch list: {info.get('live_watchlist')}.", "",
           "## Reconciliation against OF1", "",
           f"- {info['reconcile']['segments_checked']} segments checked (every one with a simulated reconnect or gap and a "
-          f"regular sample); segments without a simulated gap clean: **{info['reconcile']['others_clean']}**.",
+          f"regular sample); segments without a simulated gap clean (ok_outside_gaps): **{info['reconcile']['others_clean']}**.",
           f"- Segments with a simulated gap (missing rows expected there): {info['reconcile']['gap_segments']}.", "",
           "## engine --live (risk limits, live clock)", "",
           "Daily reports: " + (", ".join(info["live_risk_reports"]) or "none") + " (illustration only).", ""]
