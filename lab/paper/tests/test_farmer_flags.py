@@ -85,9 +85,13 @@ def synthetic(n, pools=3, traders=6, seed=7, big=False):
     return rows
 
 
-@pytest.mark.parametrize("backfill,prune_every,h24", [(0.0, 0, 300), (0.2, 0, 300), (0.2, 500, 120), (0.05, 97, 1_000)])
-def test_the_sliding_window_gives_the_summed_windows_flags(backfill, prune_every, h24):
-    assert drive(synthetic(6_000), h24, backfill, prune_every) > 5_000
+# silent: late trades added without a flag query first, so they land inside the last query's window. Only these
+# cases reach FarmerFlags.add's in-window adjustment (LiveFeed always flags a trade before it adds it); a mutation
+# that drops the adjustment fails them (LAB review of #340).
+@pytest.mark.parametrize("backfill,prune_every,h24,silent", [(0.0, 0, 300, False), (0.2, 0, 300, False), (0.2, 500, 120, False),
+                                                             (0.05, 97, 1_000, False), (0.2, 0, 300, True), (0.2, 500, 120, True)])
+def test_the_sliding_window_gives_the_summed_windows_flags(backfill, prune_every, h24, silent):
+    assert drive(synthetic(6_000), h24, backfill, prune_every, silent=silent) > 4_000
 
 
 def test_trades_added_inside_the_last_window_keep_its_sums():

@@ -707,6 +707,7 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
     segments themselves: (pool, slot, tx_index) of their pump_amm rows (a backfill is history, not
     events, so it does not count). snapshot_before: the live start (the LiveFeed snapshot's bound);
     creator_slots: F7's creator window in slots."""
+    _same_engine(replay_dir, live_dir)
     R, L = _journal(replay_dir), _journal(live_dir)
     # The pools of every pool signal, from two hours before it (N2 picks a pool that traded this
     # hour; its state is its last event) to its exit: the store's events and the received ones.
@@ -906,7 +907,7 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
     from .watchlist_live import LiveWatchlist
 
     watch = LiveWatchlist(feed, root)
-    eng = Engine(feed, Journal(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+    eng = Engine(feed, _journal_of_this_commit(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
                  groups=_groups(a),
                  dev_bounds=(blo, bhi), watchlist=watch)
     rec.sizes = lambda: _state_report(feed, eng, {"feed": feed.con, "seed": feed.seed_con, "rec": rec.con})
@@ -925,6 +926,76 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
     return rec, ldir
 
 
+ENGINE_COMMIT = "engine_commit"
+UNKNOWN_COMMITS = ("", "unknown")  # a checkout without .git and without LAB_ENGINE_COMMIT (an export): no proof
+
+
+def _engine_commit():
+    """This checkout's engine commit: backtest.tournament.engine_commit (LAB_ENGINE_COMMIT, else git with -dirty, else
+    'unknown'). Not wallets.common.git_commit, which is '' on an export without .git: two '' would pass as one commit
+    (LAB review S1 on #348)."""
+    from backtest.tournament import engine_commit
+
+    return engine_commit()
+
+
+def _journal_of_this_commit(path):
+    """A shadow journal, its state 'engine_commit' this checkout's commit: compare refuses a replay and a live run of
+    two commits (LAB review after job 98, which compared a replay without #301 with a live run with it)."""
+    j = Journal(path)
+    j.state(ENGINE_COMMIT, _engine_commit())
+    j.commit()
+    return j
+
+
+def _commit_of(path):
+    """A shadow journal's engine commit (None: written before the key, or no journal)."""
+    if not os.path.exists(os.path.join(path, "journal.sqlite")):
+        return None
+    db = sqlite3.connect(f"file:{os.path.join(path, 'journal.sqlite')}?mode=ro", uri=True)
+    try:
+        r = db.execute("SELECT v FROM state WHERE k = ?", [ENGINE_COMMIT]).fetchone()
+    finally:
+        db.close()
+    return r[0] if r else None
+
+
+def _same_engine(replay_dir, live_dir):
+    """The two journals' engine commits (state 'engine_commit'). Both absent: journals of one earlier run (job 91 and
+    before), compared as they are. Otherwise they must be equal and known: SystemExit names both. An empty or
+    'unknown' commit (an export without .git or LAB_ENGINE_COMMIT) proves nothing and is refused too."""
+    got = [_commit_of(replay_dir), _commit_of(live_dir)]
+    if any(c in UNKNOWN_COMMITS for c in got):
+        raise SystemExit(f"shadow compare: an unknown engine commit (replay {got[0]!r}, live {got[1]!r}): run from a git "
+                         "checkout, or set LAB_ENGINE_COMMIT")
+    if got[0] != got[1]:
+        raise SystemExit(f"shadow compare: the replay's engine commit {got[0]!r} is not the live run's {got[1]!r}: "
+                         "run both with one commit (--from-segments runs the replay again)")
+    return got[0]
+
+
+def _live_from_segments(a, out, root, lo, clock, blo, bhi, h24, variants, info, log):
+    """Step 2 without the recorder: the engine and LiveFeed again on the segments a finished live step wrote, as
+    _record_and_live runs them (no risk limits, the live watchlist beside it), after the replay ran again. For a change
+    in LiveFeed or the engine that the segments do not depend on (a late backfill's flag correction): its effect on the
+    comparison without simulating the recorder again."""
+    from .watchlist_live import LiveWatchlist
+
+    ldir = os.path.join(out, "live")
+    shutil.rmtree(ldir, ignore_errors=True)
+    feed = LiveFeed(root, store=a.store, follow=False, snapshot_before=lo, h24=h24, meta_bounds=(blo, bhi), memory=a.memory,
+                    seed_farmers=True)
+    eng = Engine(feed, _journal_of_this_commit(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+                 groups=_groups(a), dev_bounds=(blo, bhi), watchlist=LiveWatchlist(feed, root))
+    eng.run()
+    info["livefeed"] = dict(feed.stats)
+    feed.close()
+    del feed
+    gc.collect()
+    log(f"live engine again on the segments: {info['livefeed']}")
+    return ldir
+
+
 def _groups(a):
     """The variant groups of --groups (a groups file: the arms beside K3), fresh Group objects per engine (each
     holds its own state)."""
@@ -940,11 +1011,19 @@ def run(a, log=print):
     a finished work database (work/READY.json with the same signature) are reused; the live run,
     engine --live, the comparison and the reconciliation always run again. With a.from_compare the
     finished replay and live run (STATUS.json at least "live", their journals and the segments) are
-    reused and only steps 3-5 run: the recorder's coverage is rebuilt from the segments."""
+    reused and only steps 3-5 run: the recorder's coverage is rebuilt from the segments. With a.from_segments only the
+    segments are reused: the replay runs again, and the live engine runs again on them (_live_from_segments), before
+    steps 3-5. Both journals then come from this commit's engine: a replay of an older commit would differ from the
+    new live run wherever the engine changed (job 98: #301's end() against a replay without it, 16 rows)."""
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
     resume = getattr(a, "resume", False)
     from_compare = getattr(a, "from_compare", False)
+    from_segments = getattr(a, "from_segments", False)
+    if from_segments:
+        status = json.load(open(os.path.join(out, "STATUS.json"))).get("step") if os.path.exists(os.path.join(out, "STATUS.json")) else None
+        if status not in ("live", "compare", "engine --live", "done") or not os.path.isdir(os.path.join(out, "rec", "segments")):
+            raise SystemExit(f"--from-segments needs a finished live step's segments (STATUS.json: {status!r})")
     if from_compare:
         status = json.load(open(os.path.join(out, "STATUS.json"))).get("step") if os.path.exists(os.path.join(out, "STATUS.json")) else None
         if status not in ("live", "compare", "engine --live", "done") or not os.path.exists(os.path.join(out, "live", "journal.sqlite")):
@@ -965,7 +1044,7 @@ def run(a, log=print):
     info = {"store": a.store, "store_purpose": meta.get("purpose"), "from_slot": lo, "to_slot": hi, "decisions": window,
             "variants": [f"tp{int(tp * 100)}_T{T}" for tp, T in variants], "d": a.d, "q": a.q, "ms_per_slot": ms,
             "probes": not a.no_probes, "pump_creates": getattr(a, "pump_creates", False), "seed": a.seed,
-            "commit": W.git_commit()}
+            "commit": _engine_commit()}
     log(f"shadow {lo}..{hi}, decisions {window[0]}..{window[1]} ({ms:.1f} ms/slot)")
 
     # 1. replay
@@ -976,14 +1055,19 @@ def run(a, log=print):
                   **({"groups": info["groups"]} if info["groups"] else {}),
                   "d": a.d, "q": a.q}
     done_path = os.path.join(rdir, "DONE.json")
-    if (resume or from_compare) and os.path.exists(done_path) and json.load(open(done_path)).get("key") == replay_key:
+    # --resume reuses a replay of this commit only (the live run is always this commit's), and never one of an unknown or
+    # dirty commit; --from-compare reuses both journals of the earlier run, which compare checks to be one commit's.
+    here = _engine_commit()
+    same = here not in UNKNOWN_COMMITS and not here.endswith("-dirty") and _commit_of(rdir) == here
+    if ((resume and same) or from_compare) and os.path.exists(done_path) \
+            and json.load(open(done_path)).get("key") == replay_key:
         log(f"replay reused ({done_path})")
     elif from_compare:
         raise SystemExit(f"--from-compare needs the finished replay of the same settings ({done_path})")
     else:
         shutil.rmtree(rdir, ignore_errors=True)
         rfeed = ReplayFeed(a.store, lo, hi, con=scon)
-        Engine(rfeed, Journal(rdir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+        Engine(rfeed, _journal_of_this_commit(rdir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
                groups=_groups(a),
                dev_bounds=(blo, bhi)).run()
         del rfeed
@@ -995,14 +1079,17 @@ def run(a, log=print):
     # 2. recorder + live
     t0 = time.time()
     root = os.path.join(out, "rec")
-    if from_compare:
+    if from_compare or from_segments:
         rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
                              gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
                              memory=a.memory, log=log, prepare=False, pump_creates=getattr(a, "pump_creates", False)).from_segments()
         scon.close()
-        ldir = os.path.join(out, "live")
+        if from_segments:
+            ldir = _live_from_segments(a, out, root, lo, clock, blo, bhi, h24, variants, info, log)
+        else:
+            ldir = os.path.join(out, "live")
+            info["livefeed"] = "see the live run's log (--from-compare reuses the live step)"
         info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
-        info["livefeed"] = "see the live run's log (--from-compare reuses the live step)"
         info["recorder"] = dict(rec.totals)
         log(f"live reused: {len(rec.ranges)} segments, {len(rec.recv)} received ranges rebuilt ({time.time() - t0:.0f}s)")
     else:
@@ -1187,6 +1274,9 @@ def main():
                     help="reuse a finished replay and work database of the same settings (the rest runs again)")
     ap.add_argument("--from-compare", action="store_true",
                     help="reuse the finished replay and live step (journals, segments); run compare, engine --live and reconcile")
+    ap.add_argument("--from-segments", action="store_true",
+                    help="reuse the recorder's segments; run the replay and the live engine again (this commit's engine on "
+                         "both sides), then compare, engine --live and reconcile")
     a = ap.parse_args()
     info = run(a, log=lambda m: print(time.strftime("%H:%M:%S"), m, flush=True))
     if not os.path.exists(os.path.join(os.path.abspath(a.out), "compare.json")):

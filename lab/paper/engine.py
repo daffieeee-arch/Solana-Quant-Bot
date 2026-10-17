@@ -238,6 +238,10 @@ class Engine:
         if len(self.group_of) != len(self.groups) or len(names) != len(set(names)):
             raise ValueError(f"groups and their variants must have distinct names: {[(g.name, g.variants) for g in self.groups]}")
         self.farm_win = defaultdict(list)  # pool -> sorted [(slot, order, sol, farmer sol)] of its trades, the last ~hour
+        self.farm_fixes = {}  # (pool, order) -> farmer flag a late backfill gave a trade not in farm_win yet (_farm_fix)
+        # Corrected flags per UTC day (journal state farm_flag_fixes, the daily report's farm lines), a restart's on top.
+        self.flag_fix_days = json.loads(journal.state("farm_flag_fixes") or "{}")
+        self.flag_fix_days_written = dict(self.flag_fix_days)
         self.pool_seen, self.pool_last, self.backfilled = {}, {}, set()  # pool -> first / last slot seen; pools with a backfill
         self.first_slot = None
         self.tol, self.tau = tol, replay.Tau(tau)
@@ -413,6 +417,13 @@ class Engine:
                 self._farm_add(pool, legs)
                 if self.watch is not None and self.minute is not None:
                     self.watch.history(pool, legs)
+        if hasattr(self.feed, "drain_flag_fixes"):  # recorded trades whose farmer flag a late backfill changed
+            for pool, order, farmer in self.feed.drain_flag_fixes():
+                self._farm_fix(pool, order, farmer)
+                if not self.replaying:  # counted per day for the report; a restart's replay counted them already
+                    n, n_open = self.flag_fix_days.get(self.day, [0, 0])
+                    # In a pool with an open position the flag reaches its flow window only from the next legs on.
+                    self.flag_fix_days[self.day] = [n + 1, n_open + (pool in self.open)]
         # 5. time passes for tokens without events in this slot
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
@@ -474,6 +485,9 @@ class Engine:
                 m = u.get("minute", minute)
                 self.j.put("usage", minute=m, day=_day(m * 60), stream=u.get("stream"), bytes=u.get("bytes"),
                            messages=u.get("messages"), seq=u.get("seq"), note=u.get("note"))
+        if self.flag_fix_days != self.flag_fix_days_written:
+            self.j.state("farm_flag_fixes", json.dumps(self.flag_fix_days, sort_keys=True))
+            self.flag_fix_days_written = dict(self.flag_fix_days)
         if hasattr(self.feed, "drain_learned"):  # pools and graduations learned live: known again after a restart
             for kind, key, seq, slot, info in self.feed.drain_learned():
                 self.j.put("learned", kind=kind, key=key, seq=seq, slot=slot, info=info)
@@ -523,6 +537,9 @@ class Engine:
     def _close_day(self, day):
         from .report import daily_report
 
+        if self.flag_fix_days != self.flag_fix_days_written:  # the day's last corrections before its report
+            self.j.state("farm_flag_fixes", json.dumps(self.flag_fix_days, sort_keys=True))
+            self.flag_fix_days_written = dict(self.flag_fix_days)
         out = self.j.export_day(day)
         daily_report(self.j, day, watch_log=self.watch.log_path if self.watch is not None else None)
         if self.backup:
@@ -557,13 +574,25 @@ class Engine:
             if l.kind not in ("buy", "sell"):
                 continue
             _, amount, _ = sol_side(l, p.orientation)
-            item = (l.slot, l.order, amount, amount if l.farmer else 0)
+            farmer = self.farm_fixes.pop((pool, l.order), l.farmer) if self.farm_fixes else l.farmer
+            item = (l.slot, l.order, amount, amount if farmer else 0)
             i = bisect.bisect_left(xs, item)
             if i < len(xs) and xs[i][:2] == item[:2]:
                 continue  # the same trade twice (a backfill overlapping the recorded transactions)
             xs.insert(i, item)
         if xs and xs[0][0] < xs[-1][0] - 2 * self.clock.slots(F6_FARM_MS, xs[-1][0]):
             del xs[:bisect.bisect_left(xs, (xs[-1][0] - self.clock.slots(F6_FARM_MS, xs[-1][0]),))]
+
+    def _farm_fix(self, pool, order, farmer):
+        """A recorded trade's farmer flag, computed again after a late backfill (LiveFeed._reflag): its entry in the
+        pool's farming window gets it. A trade not in the window yet (its slot not processed) gets it when added."""
+        xs = self.farm_win.get(pool, [])
+        i = bisect.bisect_left(xs, (order[0], order))
+        if i < len(xs) and xs[i][:2] == (order[0], order):
+            slot, o, amount, _ = xs[i]
+            xs[i] = (slot, o, amount, amount if farmer else 0)
+        else:
+            self.farm_fixes[(pool, order)] = farmer
 
     def _pool_flagged(self, pool, t):
         """The backtest's farming flag (strategies.f7_signals_sql): farmers made more than
@@ -660,6 +689,8 @@ class Engine:
             n = self.clock.slots(F6_FARM_MS, slot)  # pools quiet for an hour leave the farming windows
             for pool in [p for p, xs in self.farm_win.items() if not xs or xs[-1][0] < slot - n]:
                 del self.farm_win[pool]
+            for k in [k for k in self.farm_fixes if k[1][0] < slot - n]:  # flag fixes of trades never added
+                del self.farm_fixes[k]
             self._sweep_history(slot - max(HISTORY_SLOTS, h))
             old = slot - self.clock.slots(POOL_SEEN_KEEP_MS, slot)
             for pool in [p for p, last in self.pool_last.items() if last < old]:

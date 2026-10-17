@@ -122,6 +122,12 @@ Live input checks:
   the last 3,000 slots are remembered in `seen_keys` (LiveFeed), with their source.
 - A backfill trade from before the first slot the engine saw goes to the watchlist history in a
   minute estimated with the clock, never into the open minute.
+- A probe's backfill can arrive after its first recorded trades, when the recorder follows the pool from mid-life.
+  Those trades' farmer flags were computed without the pool's earlier trades: in shadow job 91 this made pool 4reQ…
+  `organic` instead of `flagged` (`farm_label_order`). When the backfill comes, LiveFeed computes the flags of the
+  pool's recorded trades of the last 3,000 slots again (`_reflag`). The engine's farming window takes the changed
+  ones (`_farm_fix`), so the farm label after it equals the backtest's. The legs already handed out keep their
+  flag: a position's flow window and the live watchlist's past minutes.
 
 ## Live watchlist
 

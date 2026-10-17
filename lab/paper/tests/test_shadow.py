@@ -183,10 +183,18 @@ def test_work_tables_are_in_slot_order_across_windows(run):
     con.close()
 
 
-def test_resume_reuses_replay_and_work_database_with_the_same_result(run):
+def test_resume_reuses_replay_and_work_database_with_the_same_result(run, monkeypatch):
     """A rerun with resume (e.g. after a kill during the live step) reuses the finished replay and
-    work database, runs the rest again and gives the same comparison; STATUS.json says done."""
+    work database, runs the rest again and gives the same comparison; STATUS.json says done. The replay is reused
+    only when it is this clean commit's (here a fixed one, so the test does not depend on the worktree's state)."""
+    import sqlite3
+
     out, info = run
+    db = sqlite3.connect(os.path.join(out, "replay", "journal.sqlite"))
+    db.execute("UPDATE state SET v = 'abc1234' WHERE k = ?", [shadow.ENGINE_COMMIT])
+    db.commit()
+    db.close()
+    monkeypatch.setattr(shadow, "_engine_commit", lambda: "abc1234")
     chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
     logs = []
     a = argparse.Namespace(store=STORE, out=out, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
@@ -220,6 +228,24 @@ def test_from_compare_reuses_replay_and_live_with_the_same_result(run, tmp_path)
         assert json.load(f)["step"] == "done"
     with pytest.raises(SystemExit):  # no finished live step here
         shadow.run(argparse.Namespace(out=str(tmp_path), from_compare=True, **kw), log=lambda m: None)
+
+
+def test_from_segments_runs_the_live_engine_again_with_the_same_result(run):
+    """--from-segments reuses only the recorder's segments: the replay and the live engine run again (this commit's
+    engine on both sides; job 98 compared a replay without #301 with a live run with it), then the comparison. The same
+    code gives the same comparison, and both journals are the new run's."""
+    out, info = run
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    kw = dict(store=STORE, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
+              d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
+              risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB")
+    mtimes = [os.path.getmtime(os.path.join(out, d, "journal.sqlite")) for d in ("replay", "live")]
+    logs = []
+    again = shadow.run(argparse.Namespace(out=out, from_segments=True, **kw), log=logs.append)
+    assert any(m.startswith("live engine again on the segments") for m in logs) and not any("replay reused" in m for m in logs)
+    assert all(os.path.getmtime(os.path.join(out, d, "journal.sqlite")) > m for d, m in zip(("replay", "live"), mtimes))
+    assert again["summary"] == info["summary"] and again["unexplained"] == info["unexplained"]
+    assert isinstance(again["livefeed"], dict) and again["livefeed"]["segments"] == info["livefeed"]["segments"]
 
 
 def test_pump_creates_bring_every_create_and_its_creator(tmp_path):
@@ -319,3 +345,41 @@ def test_a_farm_label_computed_before_the_pools_backfill_is_its_own_cause(tmp_pa
     seg(hole, 1, 1_100, recorded=range(1_101, 1_200))
     seg(hole, 2, 1_200, backfill=range(1_000, 1_100), backfills=[1])
     assert cause(hole) != "farm_label_order"
+
+
+def test_compare_refuses_a_replay_and_a_live_run_of_two_commits(tmp_path):
+    """LAB review after job 98: a replay of one commit against a live run of another differs wherever the engine
+    changed (there #301's end()). The shadow's journals carry state engine_commit; compare refuses two different ones,
+    and journals without it (one earlier run) are compared as before."""
+    from paper.journal import Journal
+
+    def journal(name, commit):
+        j = Journal(str(tmp_path / name))
+        if commit:
+            j.state(shadow.ENGINE_COMMIT, commit)
+        j.commit()
+        j.close()
+        return str(tmp_path / name)
+
+    with pytest.raises(SystemExit, match="engine commit"):
+        shadow._same_engine(journal("r1", "2c3e5fe"), journal("l1", "4e97d13"))
+    with pytest.raises(SystemExit, match="engine commit"):
+        shadow._same_engine(journal("r2", None), journal("l2", "4e97d13"))
+    assert shadow._same_engine(journal("r3", "abc"), journal("l3", "abc")) == "abc"
+    assert shadow._same_engine(journal("r4", None), journal("l4", None)) is None
+    from backtest.tournament import engine_commit
+
+    assert shadow._journal_of_this_commit(str(tmp_path / "w")).state(shadow.ENGINE_COMMIT) == engine_commit()
+
+
+@pytest.mark.parametrize("commit", ["", "unknown"])
+def test_an_unknown_engine_commit_is_refused(tmp_path, monkeypatch, commit):
+    """LAB review S1 on #348: an export without .git (and without LAB_ENGINE_COMMIT) gives '' or 'unknown'; two of them
+    must not pass as one commit."""
+    monkeypatch.setattr(shadow, "_engine_commit", lambda: commit)
+    r, l = shadow._journal_of_this_commit(str(tmp_path / "r")), shadow._journal_of_this_commit(str(tmp_path / "l"))
+    assert r.state(shadow.ENGINE_COMMIT) == commit
+    r.close()
+    l.close()
+    with pytest.raises(SystemExit, match="unknown engine commit"):
+        shadow._same_engine(str(tmp_path / "r"), str(tmp_path / "l"))

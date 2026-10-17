@@ -106,7 +106,9 @@ class _Trades:
     same index code; dev2's largest amount is 7.46e18, 81 % of 2^63).
     The window of the last flag query is [start, end), with its count and sums kept (n, net, gross): the next
     query moves both ends instead of summing the window again (a bot with thousands of trades in a pool made
-    every flag O(window): 60 % of a restart's replay, profile 2026-10-17)."""
+    every flag O(window): 60 % of a restart's replay, profile 2026-10-17). `end` and the sums are the state of the
+    last query, not of the trades now: a trade added after it at or past `end` is outside them until the next query
+    moves `end` over it; one inserted before `end` is added to them at once (add)."""
 
     __slots__ = ("start", "a", "end", "n", "net", "gross")
 
@@ -306,7 +308,8 @@ class LiveFeed(Feed):
         self.clock = Clock()
         self.epoch_span = {}  # epoch -> [(first slot, time), (last slot, time)]
         self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "unknown_pool_rows": 0, "backfill_rows": 0,
-                      "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0, "tokens_dropped": 0}
+                      "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0, "tokens_dropped": 0,
+                      "farmer_flags_fixed": 0}
         self.unknown_seen = set()  # pools whose trades were dropped (not in the snapshot, creation not received)
         self.seen_keys, self.seen_order, self.seen_hi = {}, deque(), 0  # key -> "rec" | "hist" (SEEN_KEEP_SLOTS)
         # Pools with a backfill: positions of their trades already in the farmer history, so the
@@ -314,6 +317,9 @@ class LiveFeed(Feed):
         self.farm_keys = defaultdict(_Keys)
         self.backfill_pending = []  # backfill rows past the segment they came with
         self.history = []  # backfill trades for the engine's farming windows (drain_history)
+        # Recorded trades of the last SEEN_KEEP_SLOTS slots, (slot, pool, (slot, tx, outer, inner), trader, farmer flag):
+        # a backfill that brings a pool's earlier trades after them recomputes their flags (_reflag, drain_flag_fixes).
+        self.recorded, self.flag_fixes = deque(), []
         self.new_pools = []  # pools learned live, in order (the live watchlist adds them at creation)
         self.meta_bounds = meta_bounds or (0, 2**63 - 1)
         # What this feed learns that a restart needs (the journal's 'learned' rows, drain_learned): new pools,
@@ -588,6 +594,28 @@ class LiveFeed(Feed):
         out, self.history = self.history, []
         return out
 
+    def _reflag(self, pools, h24):
+        """A backfill brought these pools' earlier trades after their first recorded ones (a probe followed mid-life):
+        the recorded trades' farmer flags were computed without that history (shadow job 91, pool 4reQ...: 10 trades,
+        the pool's farm label organic instead of flagged). Recompute them now that the farmer history has the
+        backfill, and hand the changed ones to the engine's farming windows (drain_flag_fixes). Recorded trades older
+        than SEEN_KEEP_SLOTS are not looked at; the legs already handed out keep their flag (a position's flow window,
+        the live watchlist's past minutes). The recomputation is FarmerFlags.flag's, whose window start only moves
+        forward: a trade up to SEEN_KEEP_SLOTS old may miss the oldest up to 3,000 slots of its 24 h window (trades a
+        later query already dropped), rarely deciding."""
+        for i, (slot, pool, key, trader, flag) in enumerate(self.recorded):
+            if pool in pools:
+                new = self.farmers.flag(pool, trader, slot, h24)
+                if new != flag:
+                    self.recorded[i] = (slot, pool, key, trader, new)
+                    self.flag_fixes.append((pool, key, new))
+                    self.stats["farmer_flags_fixed"] += 1
+
+    def drain_flag_fixes(self):
+        """Recorded trades whose farmer flag a late backfill changed, since the last call: (pool, order, farmer)."""
+        out, self.flag_fixes = self.flag_fixes, []
+        return out
+
     def segment_events(self, seq, seg, meta):
         """The Events of one segment, sorted (curve and pool merged)."""
         c = Chunk((meta["first_slot"], meta["last_slot"] + 1, seg))
@@ -596,8 +624,12 @@ class LiveFeed(Feed):
         # Backfill rows before the segment are history now; those inside it are merged into its
         # rows in chain order (no events); those after it wait for the next segment.
         back = self._backfill_rows(seg, meta)
+        late = set()
         for pool, tb, ta, *row in (r for r in back if r[4] < meta["first_slot"]):
             self._history(pool, tb, ta, row)
+            late.add(pool)
+        if late and self.recorded:  # earlier trades of pools already recorded: their flags again
+            self._reflag(late, self._h24())
         inside = [r for r in back if meta["first_slot"] <= r[4] <= meta["last_slot"]]
         self.backfill_pending = [r for r in back if r[4] > meta["last_slot"]]
         arrival = self._arrival_of(c, meta)
@@ -663,6 +695,10 @@ class LiveFeed(Feed):
                     farmer = self.farmers.flag(pool, trader, slot, h24)
                     if not seen:
                         self.farmers.add(pool, trader, slot, token_buy, token_amount)
+                    rec = self.recorded
+                    rec.append((slot, pool, (slot, row[2], row[3], row[4]), trader, farmer))
+                    while rec[0][0] < slot - SEEN_KEEP_SLOTS:
+                        rec.popleft()
                 leg = streams.pool_leg(tuple(row) + (farmer,), self.ctx.setdefault(pool, {}))
                 out.append(Event(slot, row[2], row[3], row[4], bt.get(slot), "pool", pool, leg, arrival(slot, row[2])))
         out.sort(key=lambda e: e.order)
