@@ -1,0 +1,32 @@
+[package]
+name = "lab-live"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "The Rust live route (paper only): replay of OF1 chunks or recorder segments into the paper journal's schema. M1 part 1: input, journal writer; no decisions yet (lab/docs/rust-live-route-design-2026-10-16.md)."
+license = "UNLICENSED"
+publish = false
+
+[[bin]]
+name = "lab-live"
+path = "src/main.rs"
+
+[dependencies]
+# The extractor's row types are compiled in from ../extractor/src (idl.rs, sink.rs) at its versions; no
+# Jetstreamer or Agave crates: a replay reads the rows the extractor or the recorder wrote.
+anyhow = "1"
+# idl.rs encodes pubkeys (bs58) and byte arrays (hex): the extractor's versions (lab/extractor/Cargo.toml).
+bs58 = "0.5"
+hex = "0.4"
+serde_json = "1"
+sha2 = "0.10"
+log = "0.4"
+env_logger = "0.11"
+parquet = { version = "60", default-features = false, features = ["arrow", "zstd", "snap"] }  # zstd: the recorder and extractor; snap: DuckDB COPY (shadow segments)
+arrow-array = "60"
+arrow-schema = "60"
+# The paper journal is SQLite (paper/journal.py); bundled, so the NAS and the VPS link the same version.
+rusqlite = { version = "0.40", features = ["bundled"] }
+
+[profile.release]
+overflow-checks = true
