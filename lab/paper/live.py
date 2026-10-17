@@ -106,7 +106,9 @@ class _Trades:
     same index code; dev2's largest amount is 7.46e18, 81 % of 2^63).
     The window of the last flag query is [start, end), with its count and sums kept (n, net, gross): the next
     query moves both ends instead of summing the window again (a bot with thousands of trades in a pool made
-    every flag O(window): 60 % of a restart's replay, profile 2026-10-17)."""
+    every flag O(window): 60 % of a restart's replay, profile 2026-10-17). `end` and the sums are the state of the
+    last query, not of the trades now: a trade added after it at or past `end` is outside them until the next query
+    moves `end` over it; one inserted before `end` is added to them at once (add)."""
 
     __slots__ = ("start", "a", "end", "n", "net", "gross")
 
