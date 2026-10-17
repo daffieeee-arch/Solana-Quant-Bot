@@ -239,6 +239,9 @@ class Engine:
             raise ValueError(f"groups and their variants must have distinct names: {[(g.name, g.variants) for g in self.groups]}")
         self.farm_win = defaultdict(list)  # pool -> sorted [(slot, order, sol, farmer sol)] of its trades, the last ~hour
         self.farm_fixes = {}  # (pool, order) -> farmer flag a late backfill gave a trade not in farm_win yet (_farm_fix)
+        # Corrected flags per UTC day (journal state farm_flag_fixes, the daily report's farm lines), a restart's on top.
+        self.flag_fix_days = json.loads(journal.state("farm_flag_fixes") or "{}")
+        self.flag_fix_days_written = dict(self.flag_fix_days)
         self.pool_seen, self.pool_last, self.backfilled = {}, {}, set()  # pool -> first / last slot seen; pools with a backfill
         self.first_slot = None
         self.tol, self.tau = tol, replay.Tau(tau)
@@ -417,6 +420,8 @@ class Engine:
         if hasattr(self.feed, "drain_flag_fixes"):  # recorded trades whose farmer flag a late backfill changed
             for pool, order, farmer in self.feed.drain_flag_fixes():
                 self._farm_fix(pool, order, farmer)
+                if not self.replaying:  # counted per day for the report; a restart's replay counted them already
+                    self.flag_fix_days[self.day] = self.flag_fix_days.get(self.day, 0) + 1
         # 5. time passes for tokens without events in this slot
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
@@ -478,6 +483,9 @@ class Engine:
                 m = u.get("minute", minute)
                 self.j.put("usage", minute=m, day=_day(m * 60), stream=u.get("stream"), bytes=u.get("bytes"),
                            messages=u.get("messages"), seq=u.get("seq"), note=u.get("note"))
+        if self.flag_fix_days != self.flag_fix_days_written:
+            self.j.state("farm_flag_fixes", json.dumps(self.flag_fix_days, sort_keys=True))
+            self.flag_fix_days_written = dict(self.flag_fix_days)
         if hasattr(self.feed, "drain_learned"):  # pools and graduations learned live: known again after a restart
             for kind, key, seq, slot, info in self.feed.drain_learned():
                 self.j.put("learned", kind=kind, key=key, seq=seq, slot=slot, info=info)
@@ -527,6 +535,9 @@ class Engine:
     def _close_day(self, day):
         from .report import daily_report
 
+        if self.flag_fix_days != self.flag_fix_days_written:  # the day's last corrections before its report
+            self.j.state("farm_flag_fixes", json.dumps(self.flag_fix_days, sort_keys=True))
+            self.flag_fix_days_written = dict(self.flag_fix_days)
         out = self.j.export_day(day)
         daily_report(self.j, day, watch_log=self.watch.log_path if self.watch is not None else None)
         if self.backup:

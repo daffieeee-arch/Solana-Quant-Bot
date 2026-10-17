@@ -453,15 +453,28 @@ def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_pa
         eng = Engine(feed, Journal(str(tmp_path / name)), None, ignore_risk=True, n2_k=0, clock=feed.clock, backup=False)
         eng.run()
         feed.close()
-        return eng.farm_win.get(P, []), feed.stats["farmer_flags_fixed"]
+        return eng.farm_win.get(P, []), feed.stats["farmer_flags_fixed"], eng
 
-    full, none = farm_window(root, "full")
-    fixed, n = farm_window(late, "late")
+    full, none, _ = farm_window(root, "full")
+    fixed, n, e_fixed = farm_window(late, "late")
     assert none == 0 and n > 0 and len(full) > 100
     assert fixed == full
+    # The corrections are counted per day for the daily report (journal state farm_flag_fixes, report.farm_lines).
+    days = json.loads(e_fixed.j.state("farm_flag_fixes"))
+    assert sum(days.values()) == n
+    from paper.report import farm_lines
+
+    day = next(iter(days))
+    assert any(f"{days[day]} recorded trades' farmer flags corrected" in x for x in farm_lines(e_fixed.j, day))
     monkeypatch.setattr(LiveFeed, "_reflag", lambda self, pools, h24: None)
-    unfixed, _ = farm_window(late, "unfixed")
+    unfixed, _, e_unfixed = farm_window(late, "unfixed")
     assert unfixed != full and sum(1 for a, b in zip(unfixed, full) if a != b) > 0
+    # LAB review: the correction changes the farm labels only, never a position. With farm 'all' (no decision on the
+    # label) orders, fills, exits and positions are the same with and without it; only signals' farm column may differ.
+    for t in ("orders", "fills", "exits", "positions"):
+        assert e_fixed.j.rows(t) == e_unfixed.j.rows(t), t
+    strip = lambda rows: [{k: v for k, v in r.items() if k != "farm"} for r in rows]  # noqa: E731
+    assert strip(e_fixed.j.rows("signals")) == strip(e_unfixed.j.rows("signals"))
 
 
 def test_a_late_backfill_just_after_a_restart_leaves_the_rows_up_to_the_hwm(setup, tmp_path):
