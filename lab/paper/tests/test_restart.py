@@ -440,3 +440,62 @@ def test_a_pool_learned_before_the_window_is_known_from_the_journal(tmp_path):
     assert g.new_pools == ["P2"] and g.pool("P2") == f.pool("P2")
     f.close()
     g.close()
+
+
+class NoTime(Later):
+    """A feed without block times (a recorder segment without its blocks/ rows): no minute is ever seen."""
+
+    def events(self):
+        import dataclasses
+
+        for e in super().events():
+            yield dataclasses.replace(e, block_time=None)
+
+
+def test_a_hwm_without_a_minute_restarts_on_every_segment(tmp_path):
+    """LAB review nit on 5b81361: a run that ends without having seen a block time checkpoints its HWM with minute
+    null (N1). The next start must not fail on it: the window is every segment, and the restart resumes."""
+    u = engine(tmp_path, "r", NoTime(TOKENS))
+    u.run()
+    hwm = json.loads(u.journal.state(RS.HWM_KEY))
+    assert hwm["minute"] is None and hwm["slot"] == u.last_slot + 1
+    segs = [(i, "d", {"written_unix": 100 + i}) for i in range(3)]
+    assert RS.window_start_seq(segs, hwm) == 0 and RS.window_start_seq([], hwm) == 0
+    u.journal.close()
+    r = engine(tmp_path, "r", NoTime(TOKENS))
+    assert r.replaying
+    r.run()
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))
+    assert len(rec) == 1 and rec[0]["hwm"] == hwm["slot"]
+    assert {k: v for k, v in rec[0]["counts"].items() if k not in RS.BEFORE} == {}, rec
+
+
+def test_the_live_start_takes_its_window_from_a_hwm_without_a_minute(tmp_path, monkeypatch):
+    """engine.main --live on a journal whose HWM has no minute replays every segment (from_seq 0)."""
+    from paper import engine as E
+    from paper import live
+    from paper.tests.test_livefeed_state import fake_store, segment
+
+    root = tmp_path / "rec"
+    for i in range(3):
+        segment(root, i, 1_000 + 100 * i, 1_099 + 100 * i, 1_700_000_000 + 60 * i, [])
+    j = Journal(str(tmp_path / "j"))
+    j.state(RS.HWM_KEY, json.dumps({"slot": 1_250, "minute": None, "day": None}))
+    j.state(RS.HWM_STATE_KEY, json.dumps({"groups": {}, "busy": []}))
+    j.commit()
+    j.close()
+    seen = {}
+
+    class Stop(Exception):
+        pass
+
+    def feed(*a, **k):
+        seen.update(k)
+        raise Stop
+
+    monkeypatch.setattr(live, "LiveFeed", feed)
+    store = fake_store(tmp_path / "s.duckdb", range(0, 10, 10))
+    with pytest.raises(Stop):
+        E.main(["--live", str(root), "--catch-up", "--journal", str(tmp_path / "j"), "--store", store, "--no-backup",
+                "--no-watchlist"])
+    assert seen["from_seq"] == 0
