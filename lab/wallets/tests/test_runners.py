@@ -52,7 +52,7 @@ def _store(path, curve_rows, pool_rows, pool_kind="normal"):
     for i, (slot, is_buy, t, q, c, event) in enumerate(curve_rows):
         for mint in (M, "Mmay"):     # the mayhem twin carries the same rows and must get no curve entry
             con.execute("INSERT INTO curve VALUES (?, ?, 1, 2, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        [mint, slot, "buy" if is_buy else "sell", is_buy, t, q, FEE, CFEE, c.vt, c.vq, c.rt, c.rq, f"W{i}", f"W{i}" if i % 2 else "PAYER"])
+                        [mint, slot, "buy" if is_buy else "sell", is_buy, t, q, FEE, CFEE, c.vt, c.vq, c.rt, c.rq, f"W{i}", None if i % 2 else "PAYER"])  # NULL: pays itself
     con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, quote_class VARCHAR, orientation VARCHAR, create_slot UBIGINT, coin_creator VARCHAR, mayhem BOOLEAN)")
     con.execute("""CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot UBIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, trader VARCHAR, fee_payer VARCHAR,
                    b BIGINT, vault BIGINT, vq BIGINT, e BIGINT, lp_bps INTEGER, protocol_bps INTEGER, creator_bps INTEGER, cashback_bps INTEGER,
@@ -61,7 +61,7 @@ def _store(path, curve_rows, pool_rows, pool_kind="normal"):
         con.execute("INSERT INTO pools VALUES (?, ?, ?, ?, ?, 'CR', false)", [pr["pool"], pr["mint"], "sol" if pool_kind == "normal" else "reversed", pool_kind, pr["create_slot"]])
         for r in pr["rows"]:
             con.execute("INSERT INTO pool VALUES (?, ?, ?, 1, 3, 0, ?, ?, ?, ?, ?, ?, 20, 5, 5, 0, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        [r["kind"], pr["pool"], r["slot"], r.get("trader", "U"), r.get("trader", "U"), r["b"], r.get("vault", r["e"]), 0, r["e"],
+                        [r["kind"], pr["pool"], r["slot"], r.get("trader", "U"), None, r["b"], r.get("vault", r["e"]), 0, r["e"],
                          r.get("base"), r.get("e_delta"), r.get("quote_user"), pool_kind, r.get("token_buy"), r.get("sol_amount"), r.get("token_amount"), r.get("farmer", False)])
     con.close()
 

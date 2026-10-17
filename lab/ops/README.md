@@ -5,8 +5,8 @@ repo.** Installing is a step for the measuring hour (`data-old-faithful-one/lab/
 and the paper start, each **only after the owner's OK**. Paper only: no wallet, no keys, no
 transactions.
 
-The paper start of about 2026-10-21 (store, settings, order, checks, stop and rollback) is
-written out as exact commands in [`runbook-paper-start-2026-10-21.md`](runbook-paper-start-2026-10-21.md).
+The paper start of 2026-10-20 (store, settings, order, checks, stop and rollback) is
+written out as exact commands in [`runbook-paper-start-2026-10-20.md`](runbook-paper-start-2026-10-20.md).
 
 | unit | what | limits |
 |---|---|---|
@@ -15,7 +15,7 @@ written out as exact commands in [`runbook-paper-start-2026-10-21.md`](runbook-p
 | `lab-paper.service` | `python -m paper.engine --live <lab>/recorder --config paper/k3-paper-2026-10-12.yaml` (journal `<lab>/journal/paper-k3/journal`); its live watchlist writes the recorder's `watchlist-current.json` | MemoryMax 4G, CPU 100%, Nice 5. `Requires=` the recorder: an explicit stop of the recorder stops it, a budget exit does not (it waits for new segments) |
 | `lab-paper.timer` | every 15 min: starts the paper engine if it is not running. After five failures within an hour systemd's start limit leaves the service stopped; the timer brings it back once the hour has passed. Starting a running engine does nothing | it cannot start the engine while `locks/disk-low` exists: the recorder it requires does not start then |
 | `lab-token-meta-rpc.service` | `python -m backtest.token_meta_rpc --enable --follow`: names of new reversed-pool tokens. **Paid Triton RPC** (~$0.02 a day) | MemoryMax 1G, Nice 10, daily call cap 5,000. Starts only when `~/.config/solana-lab/token-meta-rpc.approved` exists (the owner's OK) |
-| `lab-live-retention.service` / `.timer` | hourly: `live-retention.sh` deletes complete recorder segments older than 3 days (owner decision 2026-10-10). Before that `paper.keeper` keeps what the retention rule promises: the trades of tokens with a signal, their arrival times and 1-minute candles of every pool and curve, under `<lab>/journal/paper-k3/kept/<seq>/`. A segment is deleted only once its `DONE.json` exists. Journals, reports, budget, watchlists, token_meta and logs stay | the disk guard's `io-stall` skips a round; `disk-low` keeps 1 day. A failing keeper leaves the segments in place (logged) |
+| `lab-live-retention.service` / `.timer` | hourly: `live-retention.sh` deletes complete recorder segments older than 3 days (owner decision 2026-10-10). Before that `paper.keeper` keeps what the retention rule promises: the trades of tokens with a signal, their arrival times, 1-minute candles of every pool and curve, and every segment's `blocks/` and Alpenglow `block_footers/` whole (the slot clock and the producer latency before and after the switch; ~14 MB/day at 200 ms slots), under `<lab>/journal/paper-k3/kept/<seq>/`. A segment is deleted only once its `DONE.json` exists. Journals, reports, budget, watchlists, token_meta and logs stay | the disk guard's `io-stall` skips a round; `disk-low` keeps 1 day. A failing keeper leaves the segments in place (logged) |
 
 Paths are the VPS's (`%h` = `/home/chupa`):
 - data: `~/Solana-project/data-old-faithful-one/lab`;
@@ -27,7 +27,7 @@ Settings live outside the repo in `~/.config/solana-lab/`:
 
 | file | contents | mode |
 |---|---|---|
-| `live.env` | `RECORDER_ARGS`, `PAPER_STORE` (`live.env.example`). **`PAPER_STORE` is required**: the engine refuses `--live` without a readable store. Use the newest store: pools created between its end and the recorder's start are unknown, their trades are dropped (counted and logged as `unknown pools`), and the farmer history is complete only from the store's end + 1 day (journal state `farmer_seed`) | 644 |
+| `live.env` | `RECORDER_ARGS`, `PAPER_STORE` (`live.env.example`). **`PAPER_STORE` is required**: the engine refuses `--live` without a readable store. Use the newest store: pools created between its end and the recorder's start are unknown, their trades are dropped (counted and logged as `unknown pools`), and the farmer history is complete only from the **first live slot + 1 day** when the store ends before the recorder's start (as fwd1053-1054 does for the paper start), else from the later of the first live slot and the store's start + 1 day (journal state `farmer_seed`, `complete_from`; paper/live.py `_init_seed`) | 644 |
 | `recorder.env` | `LAB_TRITON_GRPC_ENDPOINT`, `LAB_TRITON_X_TOKEN` (`recorder.env.example`, names only) | **600** |
 | `rpc.env` | `LAB_TRITON_RPC_URL`, which holds the token (`rpc.env.example`) | **600** |
 | `token-meta-rpc.approved` | exists only after the owner approved paid RPC calls; one line with date and words | 644 |
@@ -95,7 +95,7 @@ Only after the owner's OK for this step. Run by the coordinator.
 - then `systemctl --user stop lab-paper lab-recorder` (the paper engine first);
 - for the RPC route also `lab-token-meta-rpc` and `rm ~/.config/solana-lab/token-meta-rpc.approved`.
 
-**Disk guard.** At its emergency level (< 20 GB free) `ops/disk-guard.sh` also stops
+**Disk guard.** At its emergency level (< 20 GB free) `~/Solana-project/ops/disk-guard.sh` (unit `solana-disk-guard.timer`, outside this repo) also stops
 `lab-paper.service`, `lab-token-meta-rpc.service` and `lab-recorder.service`, in that order, and
 writes `<lab>/locks/disk-stopped` first. The three units have `ConditionPathExists=!` on that file:
 while it exists no timer (or reboot) starts them again, even after `disk-low` is gone, so they do not
@@ -109,16 +109,24 @@ recorder does not start, and retention keeps 1 day.
 recorder exits 75 at once (the day's budget is spent): harmless, but visible in the logs every
 15 minutes until 00:05 UTC.
 
-### Known limitation: a restart replays, there are no state snapshots
+### A restart: the high-water mark
 
-The paper engine has no state snapshots yet. After a restart it replays the retained segments
-into the same journal; writes are idempotent per key, so the rows come out the same. After an
-outage longer than the retention (3 days), the replay starts at the oldest retained segment:
-- journal rows older than that are kept, but not recomputed;
-- state that needs older data (the 24 h farmer history, open positions from before) starts
-  incomplete.
-
-Accepted for the paper phase (coordinator, 2026-10-12).
+After a restart the engine replays the segments of the 36 h before the journal's high-water mark (HWM,
+the last minute it committed) into the same journal, up to the HWM with the journal's decisions and
+without writing (`paper/README.md`, "Restarts"; `paper/restart.py`). At most ~3 h on the VPS (measured
+upper bound: 5 s per one-minute segment). So the rows up to the HWM stay the first
+run's, the open positions at the HWM are rebuilt over the same events, and busy, cooldowns, daily loss
+and wallets are taken from the HWM's state. Pools, graduations and the slot clock learned before the
+retained segments come from the journal table `learned`.
+- What stays approximate, and journaled: a position whose entry lies before the window (none: positions
+  are held at most 6 h) is closed at the HWM at its last mark (`restart_lost`), and so is one of a group
+  switched off (§5 of the runbook), without touching the other groups; after an outage of more than
+  ~1.5 days, the signals after the HWM in the restart's first 24 h have incomplete farmer history
+  (`farm_complete` 0, group H skipped). The daily report's "## Restarts" counts every difference.
+- While the engine replays or catches up (more than a minute behind the wall clock) it writes neither
+  `watchlist-current.json` nor `open-pools.json`: the recorder keeps the lists it has (the last run's;
+  on a first start none, then only its base filters and probes). At the HWM it writes the open
+  positions' pools once (they are current).
 
 `tests/test_live_retention.py` tests the retention script on a temporary root; `systemd-analyze
 --user verify lab/ops/systemd/*` checks the unit files. Before installing, it only reports the

@@ -22,6 +22,8 @@ import pyarrow.parquet as pq
 
 from backtest.report import CAPITAL_SOL, MAX_POSITIONS, capital_sim
 
+from .restart import RESTARTS_KEY, restart_lines
+
 # The selection, count, bootstrap and verdict are shared with the web app's Paper tab (lab/ui/paper.py): see
 # paper/stoprule.py.
 from .stoprule import (CLOCK_DAYS, CLOCK_KEY, CLOCK_LATEST, CLOCK_MAX_DAYS, COSTS_KEY, DRAWS, FEED_KEY,  # noqa: F401
@@ -215,6 +217,44 @@ def watchlist_lines(log_path, day):
                     f"pruned {today('pruned_total')}, restored {today('restored_total')} this day"]
 
 
+def _day_at(journal, slot):
+    """The UTC day of the first heartbeat at or after `slot` (None when the journal has none yet)."""
+    if slot is None:
+        return None
+    r = journal.db.execute("SELECT day FROM heartbeat WHERE last_slot >= ? AND note = '' ORDER BY minute LIMIT 1", [slot]).fetchone()
+    return r[0] if r else None
+
+
+def seed_lines(journal):
+    """The farmer seed of every start (journal state farmer_seeds; LAB review B6, S1).
+    - Every start seeds the farmer history from the store at its first live slot; a restart replays the segments of
+      the last 36 h before the journal's high-water mark (paper/restart.py), so its labels are complete 24 h after
+      its first slot (complete_from).
+    - Up to the HWM a restart writes no rows and takes the journal's decisions. Only signals after the HWM and before
+      complete_from are journaled with incomplete history (farm_complete 0, group H 'skipped, farm history
+      incomplete'): when complete_from lies after the HWM, i.e. after an outage of more than ~1.5 days.
+    These lines name every start's window, and for a restart (state 'restarts': its HWM) whether that happened."""
+    raw = journal.state("farmer_seeds")
+    if not raw:
+        return []
+    restarts = json.loads(journal.state(RESTARTS_KEY) or "[]")
+    lines = ["", "## Farmer seed per start", ""]
+    for i, seed in enumerate(json.loads(raw), 1):
+        a, b = seed.get("first_live_slot"), seed.get("complete_from")
+        line = (f"- start {i}: first live slot {a} ({_day_at(journal, a) or '?'}), farm labels complete from slot {b} "
+                f"({_day_at(journal, b) or 'not reached yet'})")
+        # This start's restart record: the one whose replay began in its seed window.
+        rec = next((r for r in restarts if a is not None and b is not None and r.get("first_slot") is not None
+                    and a <= r["first_slot"] < b), None)
+        if rec is not None and b > rec["hwm"]:
+            line += (f"; a restart: the signals of slots [{rec['hwm']}, {b}), after the journal's high-water mark, are "
+                     "journaled with incomplete farmer history (farm_complete 0, group H skipped)")
+        elif rec is not None:
+            line += f"; a restart: complete before the journal's high-water mark (slot {rec['hwm']}), no signal journaled without it"
+        lines.append(line)
+    return lines
+
+
 def farm_lines(journal, day):
     """How many of the day's live F7 triggers had a farm label from incomplete farmer history (before
     LiveFeed's complete_from): those labels are not comparable with the backtest's."""
@@ -295,6 +335,8 @@ def daily_report(journal, day, watch_log=None):
               + (f" (largest {max(b['gap_slots'] for b in gaps)} slots)" if gaps else "")]
     lines += latency_lines(journal, day)
     lines += farm_lines(journal, day)
+    lines += seed_lines(journal)
+    lines += restart_lines(journal, day)
     for group, variants in sorted(further.items()):
         lines += arm_lines(journal, day, group, variants)
     if watch_log is not None:

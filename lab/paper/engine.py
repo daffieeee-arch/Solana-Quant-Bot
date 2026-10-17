@@ -66,6 +66,7 @@ from backtest.strategies import (
     tp_sl_time,
 )
 
+from . import restart as RS
 from . import risk as R
 from .journal import Journal
 
@@ -214,8 +215,12 @@ class Open:
 class Engine:
     def __init__(self, feed, journal, risk_path, *, variants=F7_GRID, d=1, q=0.5, tol=0.05, tau="empirical",
                  dev_bounds=None, n2_k=1, ignore_risk=False, cfg=None, clock=None, backup=True, segments=None,
-                 farm="all", watchlist=None, d_ms=None, name="K3", groups=()):
+                 farm="all", watchlist=None, d_ms=None, name="K3", groups=(), restart=False, wall_clock=None):
         """The arguments up to d_ms are the primary group's (name: its name; groups: further Group objects).
+        restart (live): every minute's commit journals its high-water mark, and a start on a journal with one replays
+        up to it with the journal's decisions (paper/restart.py). wall_clock (live, e.g. time.time): while the engine's
+        minute is more than one behind it (a catch-up), open-pools.json is not written, so the recorder keeps the list
+        it has.
         d: entry (and exit) delay in slots; d_ms, when given, replaces it with milliseconds that the
         clock turns into slots at each decision (_d_at), so the delay follows the slot time per epoch;
         variants: (tp, T), '0.04:600', an exit variant's name (flow300_H6) or (name, params);
@@ -260,6 +265,14 @@ class Engine:
         self.seed_journaled = None  # the feed's farm_seed last written to the journal
         self.grad_wait = defaultdict(list)  # pool -> [Open] waiting for open + 1
         self.kept = None  # the pools last written for the recorder
+        self.restart, self.wall_clock, self.journal = restart, wall_clock, journal
+        self.variant_group = {n: g for g in self.groups for n, _ in g.variants}
+        self.hwm_state_written = None  # the last 'hwm_state' journaled
+        found = RS.load(journal) if restart else None
+        self.rs = RS.Restart(journal, *found) if found else None
+        self.replaying = self.rs is not None  # up to the HWM: the journal's decisions, no rows written
+        if self.replaying:
+            self.j = RS.Muted(journal, self.rs.hwm.get("minute"))
 
     # The primary group's settings and state under the engine's own names (the K3 runs, tests and reports).
     variants = property(lambda self: [p for _, p in self.primary.variants])
@@ -288,6 +301,8 @@ class Engine:
                 if cur is not None:
                     self.slot_arrivals = arr
                     self._end_slot(cur, by_key, bt)
+                elif self.replaying:
+                    self._load_replay(ev.slot, ev.block_time)
                 self._quiet_entries(ev.slot)
                 cur, by_key, bt, arr = ev.slot, {}, ev.block_time, {}
             by_key.setdefault((ev.venue, ev.key), []).append(ev.leg)
@@ -296,29 +311,59 @@ class Engine:
             seed = getattr(self.feed, "farm_seed", None)
             if seed is not None and seed is not self.seed_journaled:
                 self.seed_journaled = seed
-                # LiveFeed's farmer history: seeded from the store over [lo, hi), complete from slot
-                # complete_from on (farm labels and the live watchlist's organic verdict before it lack history).
-                self.j.state("farmer_seed", json.dumps(seed, sort_keys=True))
+                self._journal_seed(seed)
             self.events_seen += 1
             self.last_event = f"{ev.slot}:{ev.tx_index}:{ev.outer_ix}:{ev.inner_ix}"
         if cur is not None:
             self.slot_arrivals = arr
             self._end_slot(cur, by_key, bt)
+        if self.replaying:  # the data ended before the HWM (a catch-up with nothing new)
+            self._resume(self.last_slot)
         self._end_of_data()
+        if self.last_slot is not None:  # everything up to the last slot is committed now
+            self._checkpoint(self.last_slot + 1, self.minute)
+        self.j.commit()
+
+    def _journal_seed(self, seed):
+        """LiveFeed's farmer history: seeded from the store over [lo, hi), complete from slot complete_from on (farm
+        labels and the live watchlist's organic verdict before it lack history).
+        - 'farmer_seed' keeps the first start's seed.
+        - 'farmer_seeds' lists every start's seed once, in order (LAB review B6).
+        - Both are committed at once (N1), so a process that dies before its first minute still leaves them.
+        Each start replays the retained segments, and after the first 3 days the oldest of them is ~3 days old. That
+        start seeds a window from there: the signals of [first live slot, complete_from) have incomplete farmer
+        history. Up to the journal's high-water mark a restart writes no rows and takes the journal's decisions
+        (paper/restart.py), so the first run's rows stay. Only the signals after the HWM inside that day are journaled
+        with incomplete history (farm_complete 0, group H skipped): after an outage of more than ~2 days. The daily
+        report names them (report.seed_lines)."""
+        if self.j.state("farmer_seed") is None:
+            self.j.state("farmer_seed", json.dumps(seed, sort_keys=True))
+        seeds = json.loads(self.j.state("farmer_seeds") or "[]")
+        if not seeds or seeds[-1] != json.loads(json.dumps(seed)):
+            seeds.append(seed)
+            self.j.state("farmer_seeds", json.dumps(seeds, sort_keys=True))
         self.j.commit()
 
     def _quiet_entries(self, before):
         """Entries due in slots without any event (before the next event's slot): the token's state
         is unchanged there, so the entry fills on its last state."""
         for e in sorted(x for x in self.pending if x < before):
-            for p in self.pending.pop(e):
+            if self.replaying and e >= self.rs.slot:  # the HWM's slot had no event in this replay
+                self._resume(e)
+            for p in self.pending.pop(e, []):  # (_resume may have dropped them)
                 self._enter(p, e, [])
 
     def _end_slot(self, slot, by_key, block_time):
         self.slot_block_time = block_time
         if self.first_slot is None:
             self.first_slot = slot
+        if self.replaying and slot > self.rs.slot:
+            # Past the HWM's slot (its minute's first slot had no event here): resume before this slot's day change,
+            # which the first run did not reach (it died after its last commit), so the day is closed now.
+            self._resume(slot)
         self._clock(slot, block_time)
+        if self.replaying and slot >= self.rs.slot:  # the HWM was committed before this slot's events
+            self._resume(slot)
         # 1. open positions on tokens with events in this slot
         for (venue, key), legs in by_key.items():
             for o in list(self.open.get(key, ())):
@@ -353,6 +398,8 @@ class Engine:
             self._f7(venue, key, legs, slot)
             if venue == "pool" or venue == "curve":
                 self._hour_index(venue, key, legs, slot)
+        if self.replaying:
+            self._journal_signals(slot)
         # 4b. the pools' farming windows (after the signals: a decision at t looks at [t - 1 h, t - 1]),
         # and the live watchlist's minute aggregates
         for (venue, key), legs in by_key.items():
@@ -376,6 +423,8 @@ class Engine:
         for pool in list(self.grad_wait):
             if ("pool", pool) not in by_key:
                 self._graduation_exits(pool, slot, [])
+        if self.replaying:
+            self._journal_exits(slot)
         self.last_slot = slot
         self._keep_pools()
 
@@ -391,7 +440,7 @@ class Engine:
                 self.watch.minute(minute, slot)
         day = _day(block_time)
         if self.day != day:
-            if self.day is not None:
+            if self.day is not None and not self.replaying:  # a replayed day was closed by the run that journaled it
                 self._close_day(self.day)
             self.day = day
             for g in self.groups:
@@ -408,6 +457,9 @@ class Engine:
             self._write_wallet(block_time)
             self._load_risk()
             self._live_minute(minute)
+            if self.replaying and slot >= self.rs.slot:  # the first run's commit at the HWM was here
+                self._resume(slot)
+            self._checkpoint(slot, minute)
             self.j.commit()
         if self.last_slot is not None and slot - self.last_slot > GAP_SLOTS:
             self.j.put("heartbeat", minute=minute, day=day, last_slot=self.last_slot, last_event=self.last_event,
@@ -422,12 +474,21 @@ class Engine:
                 m = u.get("minute", minute)
                 self.j.put("usage", minute=m, day=_day(m * 60), stream=u.get("stream"), bytes=u.get("bytes"),
                            messages=u.get("messages"), seq=u.get("seq"), note=u.get("note"))
+        if hasattr(self.feed, "drain_learned"):  # pools and graduations learned live: known again after a restart
+            for kind, key, seq, slot, info in self.feed.drain_learned():
+                self.j.put("learned", kind=kind, key=key, seq=seq, slot=slot, info=info)
         self._keep_pools(force=True)
 
-    def _keep_pools(self, force=False):
+    def _caught_up(self):
+        """Live: the engine's minute is at most one behind the wall clock (not replaying or catching up)."""
+        return self.wall_clock is None or (self.minute is not None and self.minute >= int(self.wall_clock() // 60) - 1)
+
+    def _keep_pools(self, force=False, now=False):
         """Pools of open and pending positions for the recorder (open-pools.json): every minute and
-        as soon as the set changes, so a pool leaving the watchlist keeps its transactions."""
-        if not hasattr(self.feed, "keep_pools"):
+        as soon as the set changes, so a pool leaving the watchlist keeps its transactions. Not while replaying or
+        catching up: a list of the past would replace the one the recorder has (the last run's). now: at the HWM
+        (_resume) the positions are the journal's, current ones: written at once."""
+        if not hasattr(self.feed, "keep_pools") or self.replaying or not (now or self._caught_up()):
             return
         pools = sorted({o.p.key for v in self.open.values() for o in v if o.p.venue == "pool"}
                        | {p.key for v in self.pending.values() for p in v if p.venue == "pool"}
@@ -435,6 +496,22 @@ class Engine:
         if force or pools != self.kept:
             self.kept = pools
             self.feed.keep_pools(pools)
+
+    def _checkpoint(self, slot, minute):
+        """Live: the high-water mark of this commit (state 'hwm': its slot and minute) and the risk state at it
+        (state 'hwm_state', written when it changed): per group the daily loss, the pool cooldowns still running, the
+        wallet's realized P&L and last transactions, and the busy entries that can still block a signal (open, or
+        an exit at or after the slot before). A restart takes them at the HWM (paper/restart.py)."""
+        if not self.restart or self.replaying:
+            return
+        state = json.dumps({
+            "groups": {g.name: {"day_loss": g.day_loss, "cool": {k: v for k, v in g.cool.items() if v >= slot},
+                                "realized": g.wallet["realized"], "txs": list(g.wallet["txs"])} for g in self.groups},
+            "busy": sorted([*k, b] for k, b in self.busy.items() if b == "open" or b >= slot - 1)}, sort_keys=True)
+        if state != self.hwm_state_written:
+            self.j.state(RS.HWM_STATE_KEY, state)
+            self.hwm_state_written = state
+        self.j.state(RS.HWM_KEY, json.dumps({"slot": slot, "minute": minute, "day": self.day}, sort_keys=True))
 
     def _load_risk(self):
         for g in self.groups:
@@ -625,14 +702,25 @@ class Engine:
                    depth=depth, trigger_trader=trader, farm=farm, **(lat or {}), farm_complete=complete,
                    pool_seen_slot=self.pool_seen.get(key) if venue == "pool" else None, farm_window_complete=window)
         if g.farm == "organic" and farm == "flagged":
-            return self.j.put("signals", **row, status="skipped", reason="farm flagged")
-        if g.require_farm_complete and complete == 0:
-            return self.j.put("signals", **row, status="skipped", reason="farm history incomplete")
-        if g.require_farm_complete and window == 0:
-            return self.j.put("signals", **row, status="skipped", reason="farm window incomplete")
-        if b == "open" or (b is not None and t <= b):
-            return self.j.put("signals", **row, status="skipped", reason="busy")
-        reason = self._risk_block(family, key, t, g)
+            reason = "farm flagged"
+        elif g.require_farm_complete and complete == 0:
+            reason = "farm history incomplete"
+        elif g.require_farm_complete and window == 0:
+            reason = "farm window incomplete"
+        elif b == "open" or (b is not None and t <= b):
+            reason = "busy"
+        else:
+            reason = self._risk_block(family, key, t, g)
+        if self.replaying:  # up to the HWM the journal decides; this decision is only compared
+            self.rs.natural[(family, variant, key, t)] = "skipped" if reason else "entered"
+            self.rs.applied.add((family, variant, key, t))
+            j = self.rs.sig.get((family, variant, key, t))
+            if j is None:
+                self.rs.counts["replay_signals_in_its_first_hour_not_in_journal" if t < self.rs.warm
+                               else "replay_signals_not_in_journal"] += 1
+            elif j["status"] == "entered":
+                self._pend(j, g, params)
+            return
         if reason:
             return self.j.put("signals", **row, status="skipped", reason=reason)
         self.busy[(family, variant, key)] = "open"
@@ -640,6 +728,40 @@ class Engine:
         self.pending[t + d].append(Pending(family, variant, key, venue, orientation, t, t + d, params, depth,
                                            None if g is self.primary else g.name))
         self.j.put("signals", **row, status="entered", reason=None)
+
+    def _load_replay(self, first_slot, block_time=None):
+        """The journal's rows of the window this start replays, and the end of its first hour (its own trigger history,
+        N2 hour index and farm windows fill there: signals before it are counted apart), and its first UTC day."""
+        self.rs.load(first_slot)
+        self.rs.warm = first_slot + self.clock.slots(HOUR_MS, first_slot)
+        self.rs.first_day = _day(block_time)
+
+    def _pend(self, row, g, params, now=None):
+        """Replaying: the journal's entered signal (row) becomes a pending entry at the journal's entry slot (its
+        order's; without one, t + d). None when that entry is not after `now` (before this replay: not rebuilt)."""
+        o = self.rs.orders.get((row["family"], row["variant"], row["key"], row["t"]))
+        e = o["entry_slot"] if o and o["entry_slot"] is not None else row["t"] + self._d_at(row["t"], g)
+        if now is not None and e <= now:
+            return None
+        p = Pending(row["family"], row["variant"], row["key"], row["venue"], row["orientation"], row["t"], e, params,
+                    row["depth"], None if g is self.primary else g.name)
+        self.busy[(p.family, p.variant, p.key)] = "open"
+        self.pending[e].append(p)
+        return p
+
+    def _journal_signals(self, slot):
+        """Replaying: the journal's entered signals up to this slot that the replay did not decide itself (its
+        trigger not seen, or other N2 matches) enter as journaled."""
+        for row in self.rs.due_signals(slot):
+            g = self.variant_group.get(row["variant"])
+            if g is None:
+                self.rs.counts["journal_signals_of_unknown_variants"] += 1
+                continue
+            if self._pend(row, g, dict(g.variants)[row["variant"]], now=slot) is None:
+                self.rs.counts["journal_entries_before_the_replay"] += 1
+            else:
+                self.rs.counts["journal_signals_in_the_replays_first_hour" if row["t"] < self.rs.warm
+                               else "journal_signals_not_in_replay"] += 1
 
     def _farm_window_complete(self, pool, t):
         """1 when the pool's trades over the farm label's hour [t - 1 h, t) are all in the feed: a feed of every
@@ -707,7 +829,10 @@ class Engine:
 
     def _enter(self, p, slot, slot_legs):
         g = self._group(p)
-        if not self.ignore_risk:
+        forced = self._journal_order(p) if self.replaying else None
+        if forced is False:
+            return
+        if not self.ignore_risk and forced is None:
             # The risk file can change between the signal and the entry: re-read it, and enter only
             # with a valid file and the kill switch off (an invalid file opens nothing, N2 included).
             self._load_risk()
@@ -717,7 +842,10 @@ class Engine:
                            size=0, status="skipped", reason=f"at entry: {why}")
                 self.busy[(p.family, p.variant, p.key)] = p.t
                 return
-        size = g.risk.size_lamports if (g.risk and not p.family.startswith("N2_")) else int(0.5 * SOL)
+        if forced is not None:  # replaying: the journal's size (the risk file may have changed since)
+            size = forced["size"]
+        else:
+            size = g.risk.size_lamports if (g.risk and not p.family.startswith("N2_")) else int(0.5 * SOL)
         if self.ignore_risk:
             size = int(g.risk.size_sol * SOL)
         flows = None
@@ -748,6 +876,15 @@ class Engine:
             r, sim, i = replay.open_pool_position(stream, p.t, size, p.entry_slot - p.t, g.q, rule, self.tol, self.tau,
                                                   hist_state=self._hist_state_fn(p.key, g.q))
         status = "skipped" if r.skipped else ("entry_failed" if r.entry_failed else "filled")
+        if forced is not None:
+            k = (p.family, p.variant, p.key, p.t)
+            if status != "filled":  # journaled filled, not filled again: nothing to carry (restart_lost if still open)
+                self.rs.counts["journal_fills_not_filled_again"] += 1
+                self.busy[k[:3]] = p.t
+                return
+            b = self.rs.buys.get(k)
+            if b is None or (b["slot"], b["tokens"], b["quote"]) != (slot, r.tokens, r.cost):
+                self.rs.counts["fills_different"] += 1
         self.j.put("orders", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
                    size=size, status=status, reason=r.exit_reason if status != "filled" else None)
         if status != "filled":
@@ -782,6 +919,18 @@ class Engine:
         if i < len(legs):
             sim.on_slot(slot, legs[a:], start=i - a)
         self._settle_if_done(o, slot)
+
+    def _journal_order(self, p):
+        """Replaying: the journal's order for this entry. Filled there: its row (the entry is simulated with the
+        journal's size). Otherwise (skipped at entry, by the simulation, or failed; or no order): False, nothing opens,
+        as journaled (a failed entry's cost comes with its exit row, _journal_exits)."""
+        o = self.rs.orders.get((p.family, p.variant, p.key, p.t))
+        if o is not None and o["status"] == "filled":
+            return o
+        if o is None:
+            self.rs.counts["journal_orders_missing"] += 1
+        self.busy[(p.family, p.variant, p.key)] = p.t
+        return False
 
     def _on_complete(self, p, holder, tok):
         """Curve completed while we hold: sell at the pool's open + 1 once it trades, or in the
@@ -841,6 +990,8 @@ class Engine:
         if o.grad:  # waiting for the pool to open
             return
         p, r = o.p, o.r
+        if self.replaying:
+            return self._replayed_exit(o, slot)
         pnl, ret, _ = settle(r, self.scn)
         self.j.put("fills", family=p.family, variant=p.variant, key=p.key, t=p.t, side="sell", day=self.day,
                    slot=r.exit_slot, tokens=r.tokens, quote=r.proceeds)
@@ -851,18 +1002,187 @@ class Engine:
                    reverted_direct=r.reverted_direct, reverted_router=r.reverted_router, sells_dropped=r.sells_dropped,
                    sells_scaled=r.sells_scaled, **_peak(r), **_windows(o.rule))
         self.j.delete("positions", family=p.family, variant=p.variant, key=p.key, t=p.t)
+        self._exit_effects(p, pnl, r.exit_slot, r.tokens, r.proceeds, r.cost, slot)
+        self._drop(o)
+
+    def _exit_effects(self, p, pnl, exit_slot, tokens, proceeds, cost, slot):
+        """An exit's effect on the risk state: the daily loss, the paper wallet, the pool cooldown and busy."""
         self._book_loss(p, pnl)
-        self._wallet_tx(p, "sell", r.exit_slot or slot, pnl + self.scn.entry_total(r.cost) if r.tokens else pnl, settled=pnl)
+        self._wallet_tx(p, "sell", exit_slot or slot, pnl + self.scn.entry_total(cost) if tokens else pnl, settled=pnl)
         g = self._group(p)
-        if (not p.family.startswith("N2_") and g.risk is not None and g.risk.pool_cooldown_h > 0 and r.tokens
-                and (r.proceeds or 0) < 0.1 * r.cost):  # a total loss: the pool is closed for a while (for the group)
-            end = (r.exit_slot or slot) + self.clock.slots(g.risk.pool_cooldown_h * 3_600_000, slot)
+        if (not p.family.startswith("N2_") and g.risk is not None and g.risk.pool_cooldown_h > 0 and tokens
+                and (proceeds or 0) < 0.1 * cost):  # a total loss: the pool is closed for a while (for the group)
+            end = (exit_slot or slot) + self.clock.slots(g.risk.pool_cooldown_h * 3_600_000, slot)
             g.cool[p.key] = max(g.cool.get(p.key, 0), end)
-        self.busy[(p.family, p.variant, p.key)] = r.exit_slot or p.t
+        self.busy[(p.family, p.variant, p.key)] = exit_slot or p.t
+
+    def _drop(self, o):
+        """The position leaves the open ones (and a graduation's wait for its pool)."""
+        p = o.p
         if o in self.open.get(p.key, ()):
             self.open[p.key].remove(o)
             if not self.open[p.key]:
                 del self.open[p.key]
+        for pool, waiting in list(self.grad_wait.items()):
+            if o in waiting:
+                waiting.remove(o)
+                if not waiting:
+                    del self.grad_wait[pool]
+
+    def _replayed_exit(self, o, slot):
+        """Replaying: the position's simulation exits. The journal's exit decides (its values for the risk state);
+        without one the journal has the position still open, which the replay can no longer carry (restart_lost at the
+        HWM)."""
+        p, r = o.p, o.r
+        k = (p.family, p.variant, p.key, p.t)
+        self._drop(o)
+        x = self.rs.exits.get(k)
+        if x is None or k in self.rs.closed:
+            self.rs.counts["replay_exits_not_in_journal"] += 1
+            return
+        self.rs.closed.add(k)
+        if (x["exit_slot"], x["exit_reason"], x["proceeds"]) != (r.exit_slot, r.exit_reason, r.proceeds):
+            self.rs.counts["exits_different"] += 1
+        self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot)
+
+    def _journal_exits(self, slot):
+        """Replaying: the journal's exits up to this slot that the replay has not made itself. A position the replay
+        still holds closes with them; for one it does not hold (an entry before the replay, not filled again, or a
+        failed entry) only the exit's risk effects count."""
+        for x in self.rs.due_exits(slot):
+            p = None
+            for o in self.open.get(x["key"], ()):
+                if (o.p.family, o.p.variant, o.p.t) == (x["family"], x["variant"], x["t"]):
+                    p = o.p
+                    self._drop(o)
+                    self.rs.counts["exits_forced_from_journal"] += 1
+                    break
+            if p is None:
+                g = self.variant_group.get(x["variant"])
+                if g is None:  # its group is not configured now (e.g. group H off): no current group's risk state
+                    self.rs.counts["journal_exits_of_unconfigured_variants"] += 1
+                    continue
+                p = Pending(x["family"], x["variant"], x["key"], None, None, x["t"], x["entry_slot"], None, 0,
+                            None if g is self.primary else g.name)
+                if x["entry_slot"] is not None and x["entry_slot"] < self.rs.first_slot:
+                    self.rs.counts["journal_exits_before_the_replay"] += 1
+                elif x["tokens"]:
+                    self.rs.counts["journal_exits_of_positions_not_in_replay"] += 1
+            self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot)
+
+    def _resume(self, slot):
+        """The HWM is reached (its commit point, or the first slot after it): the replay is checked against the
+        journal, the journal's state is taken, and the engine writes again (paper/restart.py). The counts go to state
+        'restarts' and the daily report."""
+        rs, j = self.rs, self.journal
+        slot = rs.slot if slot is None else slot
+        if rs.first_slot is None:  # no event before the HWM in this replay
+            self._load_replay(slot)
+        c = rs.counts
+        self._journal_exits(rs.slot)  # every exit the journal made, closed in memory
+        # Busy, cooldowns, the daily loss and the wallets: the HWM's state.
+        st = rs.state
+        want = {tuple(e[:3]): e[3] for e in st.get("busy", [])}
+        have = {k: b for k, b in self.busy.items() if b == "open" or b >= rs.slot - 1}
+        for k in set(want) | set(have):
+            if want.get(k) != have.get(k):
+                c["busy_different"] += 1
+            if k in want:
+                self.busy[k] = want[k]
+            else:
+                self.busy.pop(k, None)
+        for g in self.groups:
+            gs = st["groups"].get(g.name)
+            if gs is None:  # a group added since the HWM starts afresh
+                c["groups_new_since_the_hwm"] += 1
+                continue
+            if {k: v for k, v in g.cool.items() if v >= rs.slot} != gs["cool"]:
+                c["cooldowns_different"] += 1
+            if g.day_loss != gs["day_loss"]:  # a replay that started on the HWM's day lacks the day's exits before it
+                c["day_loss_from_before_the_replay" if rs.first_day == self.day else "day_loss_different"] += 1
+            g.cool, g.day_loss = dict(gs["cool"]), gs["day_loss"]
+            g.wallet["realized"], g.wallet["txs"] = gs["realized"], deque(gs["txs"], maxlen=50)
+            g.wallet_dirty = True
+        # From here on the engine writes.
+        self.replaying, self.j = False, j
+        # Open positions: the journal's table. One the replay does not hold is closed at its last mark.
+        jpos = {RS.key_of(r): r for r in j.rows("positions")}
+        mem = {(o.p.family, o.p.variant, o.p.key, o.p.t): o for v in self.open.values() for o in v}
+        for g in self.groups:  # the exposure (cost of the open F7 positions) per group, before the journal's is taken
+            mine = lambda k: not k[0].startswith("N2_") and self.variant_group.get(k[1]) is g  # noqa: E731
+            if sum(o.r.cost for k, o in mem.items() if mine(k)) != sum(r["cost"] for k, r in jpos.items() if mine(k)):
+                c["exposure_different"] += 1
+        for k, o in mem.items():
+            if k not in jpos:
+                c["replay_positions_not_in_journal"] += 1
+                self._drop(o)
+            elif o.r.marks and (o.r.marks[-1][0], self.scn.exit_net(o.r.marks[-1][1])) != (
+                    jpos[k]["mark_slot"], jpos[k]["mark_proceeds"]):
+                c["marks_different"] += 1
+        for k, r in jpos.items():
+            if k not in mem:
+                self._close_lost(r, slot)
+        # Pending entries: the journal's entered signals without an order.
+        mpend = {(p.family, p.variant, p.key, p.t): (e, p) for e, ps in self.pending.items() for p in ps}
+        jpend = {k: r for k, r in rs.sig.items() if r["status"] == "entered" and k not in rs.orders and k[3] < rs.slot}
+        for k, (e, p) in mpend.items():
+            if k not in jpend:
+                c["replay_pending_not_in_journal"] += 1
+                self.pending[e].remove(p)
+                if not self.pending[e]:
+                    del self.pending[e]
+        for k, r in jpend.items():
+            g = self.variant_group.get(r["variant"])
+            if g is None:
+                c["journal_pending_of_unconfigured_variants"] += 1
+            if k in mpend or g is None:
+                continue
+            p = self._pend(r, g, dict(g.variants)[r["variant"]])
+            c["journal_pending_added"] += 1
+            if p.entry_slot < slot:  # its entry slot passed in a gap of this replay: it enters now
+                self.pending[p.entry_slot].remove(p)
+                if not self.pending[p.entry_slot]:
+                    del self.pending[p.entry_slot]
+                p.entry_slot = slot
+                self.pending[slot].append(p)
+        seed = getattr(self.feed, "farm_seed", None)
+        cmp_ = rs.compare(self.clock.slots(RS.COMPARE_MS, rs.slot), seed["complete_from"] if seed else None)
+        beat = j.rows("heartbeat", "minute = ? AND note = ''", (rs.hwm.get("minute"),))
+        if beat and beat[0]["events"] is not None:  # the heartbeat's event count goes on from the first run's
+            self.events_seen = beat[0]["events"]
+        rec = {"hwm": rs.slot, "resumed_at": slot, "first_slot": rs.first_slot, "day": self.day,
+               "counts": dict(sorted(c.items())), "compare_6h": cmp_}
+        j.state(RS.RESTARTS_KEY, json.dumps(json.loads(j.state(RS.RESTARTS_KEY) or "[]") + [rec], sort_keys=True))
+        self._write_wallet(self.slot_block_time)
+        self._keep_pools(force=True, now=True)  # the open positions' pools for the recorder during the catch-up
+
+    def _close_lost(self, row, slot):
+        """A position open in the journal at the HWM that the replay does not hold (paper/restart.py): closed at the
+        HWM at its last journaled mark (mark_pnl; without a mark at zero proceeds), exit_reason 'restart_lost'. No
+        sale is simulated, so no sell fill. A position of a variant not configured now (its group off: runbook §5,
+        "Group H off") is closed so too, but touches no current group's daily loss, wallet or cooldowns."""
+        k = RS.key_of(row)
+        g = self.variant_group.get(row["variant"])
+        unconfigured = g is None
+        g = g or self.primary
+        sig = self.rs.sig.get(k) or {}
+        p = Pending(row["family"], row["variant"], row["key"], sig.get("venue"), sig.get("orientation"), row["t"],
+                    row["entry_slot"], None, sig.get("depth") or 0, None if g is self.primary else g.name)
+        cost, tokens, net = row["cost"], row["tokens"], row["mark_proceeds"]
+        proceeds = 0 if net is None else _gross(self.scn, net)
+        net = self.scn.exit_net(0) if net is None else net
+        total = self.scn.entry_total(cost)
+        self.j.put("exits", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=row["entry_slot"],
+                   exit_decision_slot=slot, exit_slot=slot, exit_reason="restart_lost", tokens=tokens, cost=cost,
+                   proceeds=proceeds, pnl=net - total, ret=net / total - 1, exit_attempts=0, cf_graduation=0, seed_pool=0,
+                   vault_capped=0, reverted_direct=0, reverted_router=0, sells_dropped=0, sells_scaled=0, peak_mark=None,
+                   peak_slot=None, n_flow_slots=None, cap_slots=None)
+        self.j.delete("positions", family=p.family, variant=p.variant, key=p.key, t=p.t)
+        if unconfigured:
+            self.rs.counts["restart_lost_of_unconfigured_variants"] += 1
+            return
+        self._exit_effects(p, net - total, slot, tokens, proceeds, cost, slot)
+        self.rs.counts["restart_lost"] += 1
 
     def _put_position(self, o):
         """The open position with its mark: the last sale value the position computed (PositionSim's
@@ -875,8 +1195,9 @@ class Engine:
                    mark_pnl=None if net is None else net - self.scn.entry_total(r.cost))
 
     def _wallet_tx(self, p, kind, slot, amount, settled=None):
-        """The group's paper wallet (F7 only; the N2 shadow is not traded): 10 SOL start, every paper buy and sell."""
-        if p.family.startswith("N2_"):
+        """The group's paper wallet (F7 only; the N2 shadow is not traded): 10 SOL start, every paper buy and sell.
+        Replaying up to the HWM: nothing, the wallets come from the HWM's state."""
+        if p.family.startswith("N2_") or self.replaying:
             return
         g = self._group(p)
         if settled is not None:
@@ -891,9 +1212,9 @@ class Engine:
     def _write_wallet(self, block_time=None):
         """Per group <journal dir>/<wallet_file> (wallet.json, wallet-h.json) in the UI's format
         (lab/ui/web/README.md), marked as paper: no address, no signatures; balance = 10 SOL + realized P&L -
-        the group's open positions at entry cost."""
+        the group's open positions at entry cost. Not while replaying up to the HWM (the first run's files stay)."""
         for g in self.groups:
-            if not g.wallet_dirty:
+            if not g.wallet_dirty or self.replaying:
                 continue
             open_cost = sum(self.scn.entry_total(o.r.cost) for v in self.open.values() for o in v
                             if not o.p.family.startswith("N2_") and self._group(o.p) is g)
@@ -939,6 +1260,13 @@ def _peak(r):
         return {"peak_mark": None, "peak_slot": None}
     slot, mark = max(marks, key=lambda x: (x[1], -x[0]))
     return {"peak_mark": int(mark), "peak_slot": int(slot)}
+
+
+def _gross(scn, net):
+    """Gross proceeds whose sale after costs (Scenario.exit_net) gives `net`: a mark journaled net, as an exit's
+    proceeds."""
+    x = round((net - scn.exit_net(0)) / (1 - scn.adverse_per_side))
+    return next((y for y in (x, x + 1, x - 1, x + 2, x - 2) if scn.exit_net(y) == net), x)
 
 
 def _windows(rule):
@@ -1063,17 +1391,25 @@ def main(argv=None):
     if a.groups:
         groups_sha, gconf = load_groups(a.groups)
         groups = config_groups(gconf)
-    if a.live:
-        from .live import LiveFeed
-
-        feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up, seed_farmers=True)
-    elif a.lo is None or a.hi is None:
+    if not a.live and (a.lo is None or a.hi is None):
         raise SystemExit("give --from and --to (replay) or --live <recorder dir>")
+    if a.live:
+        from .live import LiveFeed, segment_dirs
+
+        j = Journal(a.journal)
+        # A restart (the journal has a high-water mark) replays the segments of the last RS.WINDOW_H hours before it.
+        found = RS.load(j)
+        from_seq = RS.window_start_seq(segment_dirs(a.live), found[0]) if found else 0
+        if found:
+            print(f"restart: HWM slot {found[0]['slot']}; replay from segment {from_seq} ({RS.WINDOW_H} h)", flush=True)
+        # Pools and graduations learned live by earlier runs (journal table 'learned'): known again after a restart.
+        feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up, seed_farmers=True, learned=j.rows("learned"),
+                        from_seq=from_seq)
     else:
         feed = ReplayFeed(a.store, a.lo, a.hi)
+        j = Journal(a.journal)
     clock = feed.clock if a.live else Clock.from_store(feed.con)
     variants = [v for v in a.variants.split(",") if v] or F7_GRID
-    j = Journal(a.journal)
     if cfg_sha:
         j.state("config", os.path.abspath(a.config))
         j.state("config_sha256", cfg_sha)
@@ -1090,10 +1426,12 @@ def main(argv=None):
     if a.live and not a.no_watchlist:
         from .watchlist_live import LiveWatchlist
 
-        watch = LiveWatchlist(feed, a.live, clock=feed.clock)
+        watch = LiveWatchlist(feed, a.live, clock=feed.clock, wall_clock=time.time)
+    # Live: the high-water mark per commit and, on a journal with one, the replay with its decisions
+    # (paper/restart.py); the recorder's files are not rewritten while catching up.
     eng = Engine(feed, j, a.risk, variants=variants, d=a.d, d_ms=a.d_ms, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
                  clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm,
-                 watchlist=watch, name=name, groups=groups)
+                 watchlist=watch, name=name, groups=groups, restart=bool(a.live), wall_clock=time.time if a.live else None)
     j.state("groups", groups_state(eng))
     # For the stop rule's basis (paper/stoprule.py assessment): live or replay, and the cost scenario the exits
     # were settled with.

@@ -394,6 +394,70 @@ def test_farmer_seed_range_is_journaled(tmp_path):
     assert json.loads(j.state("farmer_seed")) == seed
 
 
+def test_a_restart_after_the_retention_keeps_the_first_starts_farmer_seed(tmp_path):
+    """LAB review B6: the keeper deleted the oldest segments (older than 3 days) before a restart, so LiveFeed seeds
+    from the first segment left and its complete_from lies later. The journal keeps the first start's farmer_seed and
+    complete_from, and lists every start's seed once in farmer_seeds; a restart within the retention adds none."""
+    import shutil
+
+    from paper.live import LiveFeed, segment_dirs
+    from paper.tests.test_livefeed_state import fake_store, segment
+
+    h24 = 1_000  # slots in a day, here
+    store = fake_store(tmp_path / "store.duckdb", range(0, 2_000, 10))  # the store ends before the recorder starts
+    root = tmp_path / "rec"
+    for i in range(8):  # a segment a day from slot 4,000 on
+        segment(root, i, 4_000 + i * h24, 4_000 + (i + 1) * h24 - 1, 1_700_000_000 + i * 86_400, [])
+    j = Journal(str(tmp_path / "j"))
+
+    def start():
+        f = LiveFeed(str(root), store=store, follow=False, seed_farmers=True)
+        f._init_seed(segment_dirs(str(root))[0][2]["first_slot"], h24)  # as segment_events does at its first segment
+        seed = dict(f.farm_seed)
+        f.close()
+
+        class Seeded(Synth):
+            farm_seed = seed
+
+        Engine(Seeded({"M": trigger_token()}), j, risk_file(tmp_path), variants=[(0.04, 600)], d=1, q=0.5, n2_k=0,
+               clock=Clock(), backup=False).run()
+        return seed
+
+    first = start()
+    assert (first["first_live_slot"], first["complete_from"]) == (4_000, 5_000)
+    start()  # a restart within the retention: the same oldest segment, the same seed
+    assert json.loads(j.state("farmer_seeds")) == [first]
+    for seq, path, _ in segment_dirs(str(root))[:4]:  # the keeper: segments older than 3 days are gone
+        shutil.rmtree(path)
+    later = start()
+    assert (later["first_live_slot"], later["complete_from"]) == (8_000, 9_000)
+    kept = json.loads(j.state("farmer_seed"))
+    assert kept == first and kept["complete_from"] == 5_000  # not moved by the restart
+    assert json.loads(j.state("farmer_seeds")) == [first, later]
+    # N1: committed at once, so another connection (or a process after a crash) sees them
+    import sqlite3
+
+    db = sqlite3.connect(os.path.join(j.dir, "journal.sqlite"))
+    assert json.loads(db.execute("SELECT v FROM state WHERE k = 'farmer_seed'").fetchone()[0]) == first
+    db.close()
+    # S1: the daily report names every start and the slots a restart journals with incomplete farmer history (after
+    # its high-water mark)
+    from paper.report import seed_lines
+
+    for minute, last in ((1, 4_500), (2, 8_500)):  # heartbeats: the days of the slots
+        j.put("heartbeat", minute=minute, day=f"2026-10-2{minute}", last_slot=last, events=1, open_positions=0, gap_slots=0, note="")
+    lines = seed_lines(j)
+    assert lines[3] == "- start 1: first live slot 4000 (2026-10-21), farm labels complete from slot 5000 (2026-10-22)"
+    assert lines[4] == "- start 2: first live slot 8000 (2026-10-22), farm labels complete from slot 9000 (not reached yet)"
+    # With the restart's record (paper/restart.py): signals after its HWM and before complete_from lack history only
+    # when complete_from lies after the HWM (an outage of more than ~1.5 days).
+    for hwm, want in ((8_600, "; a restart: the signals of slots [8600, 9000), after the journal's high-water mark, are "
+                              "journaled with incomplete farmer history"),
+                      (9_400, "; a restart: complete before the journal's high-water mark (slot 9400)")):
+        j.state("restarts", json.dumps([{"hwm": hwm, "first_slot": 8_000, "day": "2026-10-22", "counts": {}}]))
+        assert seed_lines(j)[4].startswith(lines[4] + want), seed_lines(j)[4]
+
+
 def test_live_needs_a_readable_store(tmp_path, capsys):
     for store in ("", str(tmp_path / "missing.duckdb")):
         with pytest.raises(SystemExit) as e:

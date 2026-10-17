@@ -39,6 +39,11 @@
    "name": "state",
    "cols": "k TEXT, v TEXT",
    "key": "k"
+  },
+  {
+   "name": "learned",
+   "cols": "kind TEXT, key TEXT, seq INTEGER, slot INTEGER, info TEXT",
+   "key": "kind, key"
   }
  ],
  "daily": [

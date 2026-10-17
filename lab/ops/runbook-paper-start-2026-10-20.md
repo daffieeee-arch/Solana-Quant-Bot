@@ -1,6 +1,8 @@
-# Runbook: paper start (K3 + group H), about 2026-10-21
+# Runbook: paper start (K3 + group H), Tuesday 2026-10-20
 
 For the coordinator, step by step, once the owner has given the OK and the Triton credentials.
+
+**The day (owner decision, night of 2026-10-16):** the paper start is Tuesday **2026-10-20**, on route B (§1). The recorder and the paper engine then run at least 24 hours before the Alpenglow switch (2026-10-21, about 14:50 UTC).
 
 **Scope:** paper only. No wallet, no keys, no transactions. K3 (E14) runs unchanged, and group H (the arms of H4 and H5, `research/week4-spec-paper-h4h5-2026-10-16.md`) runs beside it. This runbook fills in `README.md` ("Installeren en starten") for this start. Where they differ, this runbook applies to this start.
 
@@ -12,6 +14,19 @@ For the coordinator, step by step, once the owner has given the OK and the Trito
   ```
 - `C` is the run commit: main at or after dcff935, which contains #299 (the arms) and #301 (the streaming end() fix).
 
+## Timeline for 2026-10-20 (UTC)
+
+| time | step | section |
+|---|---|---|
+| ~09:30 | Preconditions 0.1–0.7; settings and installation. | §0, §2, §3 |
+| ~10:00 | The measuring hour: the recorder alone, `--budget-usd 0.5 --max-runtime-secs 3600`, in its own root. | §4.1 steps 0–1 |
+| ~11:00 | The hour ends: the chain test on it (step 2, a few minutes); Lab Backtest reads GB per stream, probes and backfills. | §4.1 step 2, "After the hour" |
+| ~11:15 | Budget decision with the owner: the day's `--budget-usd` goes into `RECORDER_ARGS` in `live.env`. | §2, §4.1 |
+| ~11:30 | Start the recorder, then the paper engine; the first checks. | §4.2, §4.3 |
+| by 14:50 at the latest | Both running: 24 hours before the switch. | 0.6 |
+
+If the measuring hour has to be repeated or the budget decision waits, the start moves with it, as long as both run by 14:50 UTC. After that, the coordinator and the owner decide whether to start that day.
+
 ## 0. Preconditions
 
 | # | check | how |
@@ -20,8 +35,9 @@ For the coordinator, step by step, once the owner has given the OK and the Trito
 | 0.2 | NAS job 92 is green: arm parity at dcff935, "0 unexplained" in both comparisons for both arms. Expected `unsold_busy`: 2 for flow300_H6, 1 for flow300_tp100_H6. | `parity.md` of job 92 |
 | 0.3 | NAS job 91 is green (see below). | `compare.md` and `state.jsonl` of job 91 |
 | 0.4 | The recorder binary is the **5e2d1b7** build (#315, main a1c1712; QUEUE item 64). It has: `--pump-creates` (#287); durable budget (#265); rustls 0.23.46 (#290); Alpenglow block footers; no silent loss on a segment write error, exit 74 (#308); fail-closed on an unknown spend, with `--budget-assume-spent` (#308); and the meter saved before exit 74 (#315). NAS: 65/65 tests, GLIBC_2.34, cargo audit clean. | `readlink $LAB/bin/lab-recorder` → `lab-recorder-5e2d1b7-bookworm`; `sha256sum $LAB/bin/lab-recorder-5e2d1b7-bookworm` → `aeb4bea8…` (as noted at the build) |
-| 0.5 | At least 50 GB free; the disk guard is active; no other Triton consumer is running; no `locks/disk-low` or `locks/disk-stopped`. | `df -h ~`; `systemctl --user list-timers \| grep disk-guard`; `ls $LAB/locks` |
-| 0.6 | Alpenglow: the switch is at epoch 1064, about 2026-10-21 14:50 UTC. The recorder handles it (footers), and so does the Clock (the last measured epoch until 1,000 slots of 1064). Note whether the start falls before or after the switch. | `$LAB/recorder/alpenglow.json` appears at the first footer |
+| 0.5 | At least 50 GB free; the disk guard is active (unit `solana-disk-guard.timer`, script `~/Solana-project/ops/disk-guard.sh`, outside this repo); no other Triton consumer is running; no `locks/disk-low` or `locks/disk-stopped`. | `df -h ~`; `systemctl --user list-timers solana-disk-guard.timer`; `ls $LAB/locks` |
+| 0.6 | Alpenglow: the switch is at epoch 1064, about 2026-10-21 14:50 UTC. **The start falls before it**: the recorder and the engine run at least 24 hours on the old consensus, then through the switch. The recorder handles it (footers), and so does the Clock (the last measured epoch until 1,000 slots of 1064). | `$LAB/recorder/alpenglow.json` appears at the first footer, after the switch |
+| 0.7 | **PAPER_STORE on the VPS** (route B, §1): `$LAB/store/fwd1053-1054.duckdb`, mode 444, sha256 `be816aa5ad09bef331e894526bd8375601e0aab08f2c525225f000fa50066a40`, equal to the NAS copy. The coordinator copied it on 2026-10-16. | `stat -c %a $LAB/store/fwd1053-1054.duckdb` → `444`; `sha256sum $LAB/store/fwd1053-1054.duckdb` |
 
 Job 91 (arms on, 2c3e5fe) counts as green when all of these hold:
 - unexplained = 0, with `farm_incomplete` an allowed cause;
@@ -33,6 +49,11 @@ Job 91 ran without the end() fix (#301). That fix changes only the exit of a pos
 ## 1. PAPER_STORE
 
 The engine needs a store for `--live`. The store is the snapshot of the tokens and pools known before the start, plus the farmer history. The coordinator's rule (2026-10-16) is to use the newest store whose data has already been used.
+
+**Route B is the route for 2026-10-20.**
+- Per addendum §4, E20 runs only once epoch 1063 is complete, or at the latest on 2026-10-24 12:00 UTC. The clean data is therefore not spent on the 20th, and route A cannot be ready.
+- The start accepts the gap of about ten days between the store's end (about 2026-10-11) and the start. This includes the `unknown pools` the engine log counts in the first days: pools created in the gap that keep trading. The farm labels are complete only from the first live slot + 24 h. See below.
+- Route A stays for a later restart, if the coordinator and owner decide so (for example at the clock start).
 
 **Route A: the clean data is spent before the start.** That means:
 - E20 has written `clean.lock`;
@@ -48,10 +69,16 @@ Then the NAS, where clean-v1 lives, builds a store over the last two complete cl
 
 **Route A, the NAS job.** The coordinator runs it from a checkout at C. It takes about 5 min: an epoch builds in about 140 s, chunk by chunk, within a 3 GB memory scope.
 
+The paths are set as `backtest/nas_clean_test.sh` sets them, on the runner's `/lab` mount. Otherwise the store module falls back to its `/home/chupa/…` defaults and always refuses.
+
 ```bash
-cd <checkout at C>/lab && LAB_SPILL_DIR=/lab/tmp/paper-store PYTHONPATH=. $LAB_PY -m backtest.store paper --epochs 2
-# "refused: … not spent yet: no clean.lock … / no H5 result …"   -> route B
-# "store: …/store/paper-1062-1063.duckdb" and a meta with clean_spent  -> route A
+DATA=/lab/data-old-faithful-one/lab
+LAB_PY=/lab/venv/bin/python
+cd <checkout at C>/lab && LAB_STORE_DIR=$DATA/store LAB_CLEAN_RESULTS=$DATA/research/clean-test \
+  LAB_CLEAN_CHUNKS=$DATA/events/clean-v1/chunks LAB_CHUNKS=$DATA/events/v1/chunks LAB_SPILL_DIR=/lab/tmp/paper-store \
+  PYTHONPATH=. $LAB_PY -m backtest.store paper --epochs 2
+# "refused: … not spent yet: no clean.lock … / no E20 result … / no H5 result …"   -> route B
+# "store: …/store/paper-1062-1063.duckdb" and a meta with clean_spent              -> route A
 ```
 
 **Copy to the VPS** (about 1 min for 4.5 GB at ≤ 85 MiB/s):
@@ -79,6 +106,8 @@ $PY -c "import duckdb,json; c=duckdb.connect('$LAB/store/$S', read_only=True, co
   - Per the spec, the first 24 h do not count in any arm count.
 
 ## 2. Settings in `~/.config/solana-lab/`
+
+`live.env` takes the store from `$S` of §1. Run §2 in the same shell as §1, or set `S` again (`S=fwd1053-1054.duckdb` for route B).
 
 ```bash
 mkdir -p ~/.config/solana-lab
@@ -149,7 +178,7 @@ cd $R/lab && systemd-run --user --scope -p MemoryMax=3G -p CPUQuota=100% -- $PY 
 - Lab Backtest analyses GB per stream (from `_segment.json`), probes and backfills, and latency;
 - the coordinator and owner decide the budget.
 
-Exit 75 means the cap was reached: do not restart, report it.
+Exit 75 means the cap was reached, or today's spend is unknown (`recorder.log` says which; see §5). Do not restart; report it.
 
 ### 4.2 Start
 
@@ -231,6 +260,7 @@ systemctl --user stop lab-paper lab-recorder
 
 **Group H off, K3 on.** Remove the `PAPER_ARGS` line from `live.env`, then run `systemctl --user restart lab-paper`.
 - After a restart the engine replays the retained segments (3 days) into the same journal; the README's known limitation covers this.
+- **Until the restart fix with the high-water mark is deployed** (`paper/restart.py`, its PR planned for 2026-10-18): no planned restarts after day 3 (from the start + about 2.5 days), and deploys are bundled. A restart within the first 3 days replays everything from the start with the same farmer seed, so the journal comes out the same; a deploy of the fix on day 1 or 2 is such a restart.
 - K3's rows come out the same with or without H (`tests/test_arms_replay.py`).
 - H's rows so far stay in the journal.
 
@@ -239,11 +269,16 @@ systemctl --user stop lab-paper lab-recorder
 2. report it to the coordinator;
 3. a new NAS build replaces the binary (`/lab/ops/build-recorder-bookworm.sh <sha>`).
 
-**The engine.** Remove the run checkout:
+**The engine.** The paper engine and the retention timer run from the run checkout. Stop them before you replace it; the recorder runs from `$LAB/bin` and keeps running.
 ```bash
+systemctl --user disable --now lab-paper.timer lab-live-retention.timer
+systemctl --user stop lab-paper
 git -C ~/Solana-project/Solana-bot worktree remove ~/Solana-project/worktrees/paper-run
+# 3.1 at the earlier commit (worktree add, the sha checks)
+systemctl --user start lab-paper
+systemctl --user enable --now lab-paper.timer lab-live-retention.timer
 ```
-Then repeat 3.1 at the earlier commit and run `systemctl --user restart lab-paper`. The journal stays; writes are idempotent per key.
+The journal stays; writes are idempotent per key.
 
 **The recorder stops with "today's spend is unknown"** (exit 75, `recorder.log`). This happens after an unreadable `budget.json` or `_segment.json` of today, or after an interrupted segment write when there is no `budget.json` of today. Check what is broken. Then the owner restarts it once for that day with the spend the Triton dashboard shows:
 ```bash

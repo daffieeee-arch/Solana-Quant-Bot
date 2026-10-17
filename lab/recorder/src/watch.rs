@@ -527,6 +527,31 @@ mod tests {
     }
 
     #[test]
+    fn missing_or_old_input_files_keep_the_base_filters_without_a_reload_loop() {
+        // The paper engine writes neither file while it replays or catches up (a first start, or a restart): the
+        // recorder must start and run on what it has.
+        let dir = std::env::temp_dir().join(format!("lab-recorder-watch-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (wl, op) = (dir.join("watchlist-current.json"), dir.join("open-pools.json"));
+        let mut f = Files::new(wl, op.clone());
+        // Neither file yet: no error and no watchlist (run() starts from Watch::default()). The base filters stay:
+        // blocks, slot statuses and graduation transactions, no pools.
+        assert_eq!(f.reload(), None);
+        let base = Filter::new(&Watch::default(), &Extra::default(), 0, &Opts::default());
+        assert!(base.new_pools && base.tx_pools.is_empty() && base.tx_probes.is_empty() && base.tx_wallets.is_empty());
+        assert_eq!(f.reload(), None);
+        // An old open-pools.json (the last run's, still on disk): read once and kept; unchanged, it is not read again.
+        std::fs::write(&op, format!(r#"{{"written_unix": 1, "pools": ["{B}"]}}"#)).unwrap();
+        let w = f.reload().expect("a new file is read");
+        assert_eq!(w.open_pools, vec![B.to_owned()]);
+        assert!(w.pools.is_empty());
+        assert_eq!(Filter::new(&w, &Extra::default(), 0, &Opts::default()).tx_pools, vec![B.to_owned()]);
+        assert_eq!(f.reload(), None);
+        assert_eq!(f.reload(), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn downscale_drops_streams_in_order_and_keeps_open_pools() {
         let w = watch();
         let extra = Extra { probes: vec![A.to_owned(), C.to_owned()], fresh_vaults: vec![D.to_owned()] };

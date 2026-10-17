@@ -114,15 +114,18 @@ def setup(con, chunks_root, lo, hi):
     con.execute(f"""CREATE OR REPLACE TEMP VIEW ctx AS SELECT * FROM read_parquet({_lit(files)}, union_by_name = true)
                     WHERE slot >= {lo} AND slot < {hi}""")
     a = max(0, lo - PRIOR_LOOKBACK)
+    # The store's fee_payer is NULL when the trader pays its own transaction (NULLIF(tx.fee_payer, user),
+    # analytics/ANALYST.md): the legs carry the paying wallet, so a self-payer compares equal to itself (harm,
+    # backrun) instead of NULL (LAB review 2026-10-17: sandwiches of self-payers were missed, backruns overcounted).
     con.execute(f"""CREATE OR REPLACE TEMP VIEW legs AS
         SELECT p.pool AS venue, 'pump_amm' AS program, COALESCE(ps.mint, p.pool) AS mint, p.slot, p.tx_index::UBIGINT AS tx_index,
                p.outer_ix, p.inner_ix, p.slot * {KEY} + p.tx_index AS k, p.token_buy AS buy, p.sol_amount AS sol,
-               p.sol_depth AS depth, p.token_amount AS tokens, p.fee_payer
+               p.sol_depth AS depth, p.token_amount AS tokens, COALESCE(p.fee_payer, p.trader) AS fee_payer
         FROM pool p JOIN pools ps USING (pool)
         WHERE p.slot >= {a} AND p.slot < {hi} AND p.kind IN ('buy', 'sell') AND ps.quote_class IN ('sol', 'reversed')
         UNION ALL
         SELECT c.mint || ':curve', 'pump', c.mint, c.slot, c.tx_index, c.outer_ix, c.inner_ix, c.slot * {KEY} + c.tx_index,
-               c.is_buy, c.q::BIGINT, c.rq::BIGINT, c.t::BIGINT, c.fee_payer
+               c.is_buy, c.q::BIGINT, c.rq::BIGINT, c.t::BIGINT, COALESCE(c.fee_payer, c.trader)
         FROM curve c WHERE c.slot >= {a} AND c.slot < {hi}""")
     con.execute(f"""CREATE OR REPLACE TEMP TABLE days AS
         SELECT slot, epoch_ms(block_time::BIGINT * 1000)::DATE AS day FROM blocks

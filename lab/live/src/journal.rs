@@ -139,7 +139,7 @@ mod tests {
     fn the_schema_is_journal_pys() {
         let t = schema().unwrap();
         let names: Vec<&str> = t.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, ["signals", "orders", "fills", "exits", "heartbeat", "usage", "positions", "state"]);
+        assert_eq!(names, ["signals", "orders", "fills", "exits", "heartbeat", "usage", "positions", "state", "learned"]);
         let state = t.iter().find(|t| t.name == "state").unwrap();
         assert_eq!((state.decl.as_str(), state.key.as_str(), state.cols.clone()), ("k TEXT, v TEXT", "k", vec!["k".to_owned(), "v".to_owned()]));
         assert_eq!(t.iter().find(|t| t.name == "fills").unwrap().key, "family, variant, key, t, side");
