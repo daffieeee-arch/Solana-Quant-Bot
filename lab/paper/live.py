@@ -103,12 +103,16 @@ class _Trades:
     array('q') (24 bytes a trade, not a ~300-byte deque of tuples). Triples before `start` left the
     window. len() and iteration give the trades still in the window, as (slot, signed, gross).
     Token amounts are u64: a wallet with an amount of 2^63 or more keeps a plain list instead (the
-    same index code; dev2's largest amount is 7.46e18, 81 % of 2^63)."""
+    same index code; dev2's largest amount is 7.46e18, 81 % of 2^63).
+    The window of the last flag query is [start, end), with its count and sums kept (n, net, gross): the next
+    query moves both ends instead of summing the window again (a bot with thousands of trades in a pool made
+    every flag O(window): 60 % of a restart's replay, profile 2026-10-17)."""
 
-    __slots__ = ("start", "a")
+    __slots__ = ("start", "a", "end", "n", "net", "gross")
 
     def __init__(self):
         self.start, self.a = 0, array("q")
+        self.end = self.n = self.net = self.gross = 0
 
     def __len__(self):
         return (len(self.a) - self.start) // 3
@@ -121,6 +125,7 @@ class _Trades:
     def compact(self):
         if self.start:
             del self.a[:self.start]
+            self.end -= self.start
             self.start = 0
 
 
@@ -143,26 +148,31 @@ class FarmerFlags:
         if t is None:
             return False
         a, i, lo = t.a, t.start, slot - h24
-        while i < len(a) and a[i] < lo:
+        while i < len(a) and a[i] < lo:  # trades that left the window (start only moves forward)
+            if i < t.end:
+                t.n, t.net, t.gross = t.n - 1, t.net - a[i + 1], t.gross - a[i + 2]
             i += 3
         t.start = i
+        if t.end < i:  # the whole last window left: empty, sums 0
+            t.end = i
         if i > 96 and 2 * i > len(a):  # mostly expired: give the memory back
             t.compact()
-            i = 0
-        n = net = gross = 0
-        for j in range(i, len(a), 3):
-            if a[j] >= slot:
-                break
-            n, net, gross = n + 1, net + a[j + 1], gross + a[j + 2]
-        return n >= FARMER_MIN_TRADES and abs(net) < FARMER_RATIO * gross
+        e = t.end
+        while e < len(a) and a[e] < slot:  # the window's end moves to the first trade at or after `slot`
+            t.n, t.net, t.gross = t.n + 1, t.net + a[e + 1], t.gross + a[e + 2]
+            e += 3
+        while e > t.start and a[e - 3] >= slot:  # an earlier query (a backfill trade): back
+            e -= 3
+            t.n, t.net, t.gross = t.n - 1, t.net - a[e + 1], t.gross - a[e + 2]
+        t.end = e
+        return t.n >= FARMER_MIN_TRADES and abs(t.net) < FARMER_RATIO * t.gross
 
     def add(self, pool, trader, slot, token_buy, token_amount):
         """Add a trade; one older than the wallet's last trade in the pool (a backfill) is inserted
         in slot order, after the trades of its own slot."""
-        key = (_intern(pool), _intern(trader))
-        t = self.hist.get(key)
-        if t is None:
-            t = self.hist[key] = _Trades()
+        t = self.hist.get((pool, trader))
+        if t is None:  # interned once, for the new key (the seed adds millions of trades)
+            t = self.hist[(_intern(pool), _intern(trader))] = _Trades()
         if token_amount >= 1 << 63 and isinstance(t.a, array):
             t.a = list(t.a)  # beyond array('q'): checked first, so no triple is ever half added
         a = t.a
@@ -174,6 +184,9 @@ class FarmerFlags:
         while i > t.start and a[i - 3] > slot:
             i -= 3
         a[i:i] = array("q", item) if isinstance(a, array) else list(item)
+        if i < t.end:  # inside the last query's window (its slot is before that query's)
+            t.end += 3
+            t.n, t.net, t.gross = t.n + 1, t.net + item[1], t.gross + item[2]
 
     def prune(self, slot, h24):
         """Drop wallets whose last trade in a pool left the window (live memory stays bounded), and give
