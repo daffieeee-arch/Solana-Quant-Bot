@@ -925,6 +925,28 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
     return rec, ldir
 
 
+def _live_from_segments(a, out, root, lo, clock, blo, bhi, h24, variants, info, log):
+    """Step 2 without the recorder: the engine and LiveFeed again on the segments a finished live step wrote, as
+    _record_and_live runs them (no risk limits, the live watchlist beside it). For a change in LiveFeed or the engine
+    that the segments do not depend on (a late backfill's flag correction): its effect on the comparison without
+    simulating the recorder again."""
+    from .watchlist_live import LiveWatchlist
+
+    ldir = os.path.join(out, "live")
+    shutil.rmtree(ldir, ignore_errors=True)
+    feed = LiveFeed(root, store=a.store, follow=False, snapshot_before=lo, h24=h24, meta_bounds=(blo, bhi), memory=a.memory,
+                    seed_farmers=True)
+    eng = Engine(feed, Journal(ldir), None, variants=variants, d=a.d, q=a.q, ignore_risk=True, clock=clock, backup=False,
+                 groups=_groups(a), dev_bounds=(blo, bhi), watchlist=LiveWatchlist(feed, root))
+    eng.run()
+    info["livefeed"] = dict(feed.stats)
+    feed.close()
+    del feed
+    gc.collect()
+    log(f"live engine again on the segments: {info['livefeed']}")
+    return ldir
+
+
 def _groups(a):
     """The variant groups of --groups (a groups file: the arms beside K3), fresh Group objects per engine (each
     holds its own state)."""
@@ -940,11 +962,18 @@ def run(a, log=print):
     a finished work database (work/READY.json with the same signature) are reused; the live run,
     engine --live, the comparison and the reconciliation always run again. With a.from_compare the
     finished replay and live run (STATUS.json at least "live", their journals and the segments) are
-    reused and only steps 3-5 run: the recorder's coverage is rebuilt from the segments."""
+    reused and only steps 3-5 run: the recorder's coverage is rebuilt from the segments. With a.from_segments the
+    finished replay and the segments are reused, and the live engine runs again on them (_live_from_segments)
+    before steps 3-5."""
     out = os.path.abspath(a.out)
     os.makedirs(out, exist_ok=True)
     resume = getattr(a, "resume", False)
     from_compare = getattr(a, "from_compare", False)
+    from_segments = getattr(a, "from_segments", False)
+    if from_segments:
+        status = json.load(open(os.path.join(out, "STATUS.json"))).get("step") if os.path.exists(os.path.join(out, "STATUS.json")) else None
+        if status not in ("live", "compare", "engine --live", "done") or not os.path.isdir(os.path.join(out, "rec", "segments")):
+            raise SystemExit(f"--from-segments needs a finished live step's segments (STATUS.json: {status!r})")
     if from_compare:
         status = json.load(open(os.path.join(out, "STATUS.json"))).get("step") if os.path.exists(os.path.join(out, "STATUS.json")) else None
         if status not in ("live", "compare", "engine --live", "done") or not os.path.exists(os.path.join(out, "live", "journal.sqlite")):
@@ -976,10 +1005,10 @@ def run(a, log=print):
                   **({"groups": info["groups"]} if info["groups"] else {}),
                   "d": a.d, "q": a.q}
     done_path = os.path.join(rdir, "DONE.json")
-    if (resume or from_compare) and os.path.exists(done_path) and json.load(open(done_path)).get("key") == replay_key:
+    if (resume or from_compare or from_segments) and os.path.exists(done_path) and json.load(open(done_path)).get("key") == replay_key:
         log(f"replay reused ({done_path})")
-    elif from_compare:
-        raise SystemExit(f"--from-compare needs the finished replay of the same settings ({done_path})")
+    elif from_compare or from_segments:
+        raise SystemExit(f"--from-compare and --from-segments need the finished replay of the same settings ({done_path})")
     else:
         shutil.rmtree(rdir, ignore_errors=True)
         rfeed = ReplayFeed(a.store, lo, hi, con=scon)
@@ -995,14 +1024,17 @@ def run(a, log=print):
     # 2. recorder + live
     t0 = time.time()
     root = os.path.join(out, "rec")
-    if from_compare:
+    if from_compare or from_segments:
         rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
                              gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
                              memory=a.memory, log=log, prepare=False, pump_creates=getattr(a, "pump_creates", False)).from_segments()
         scon.close()
-        ldir = os.path.join(out, "live")
+        if from_segments:
+            ldir = _live_from_segments(a, out, root, lo, clock, blo, bhi, h24, variants, info, log)
+        else:
+            ldir = os.path.join(out, "live")
+            info["livefeed"] = "see the live run's log (--from-compare reuses the live step)"
         info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
-        info["livefeed"] = "see the live run's log (--from-compare reuses the live step)"
         info["recorder"] = dict(rec.totals)
         log(f"live reused: {len(rec.ranges)} segments, {len(rec.recv)} received ranges rebuilt ({time.time() - t0:.0f}s)")
     else:
@@ -1187,6 +1219,9 @@ def main():
                     help="reuse a finished replay and work database of the same settings (the rest runs again)")
     ap.add_argument("--from-compare", action="store_true",
                     help="reuse the finished replay and live step (journals, segments); run compare, engine --live and reconcile")
+    ap.add_argument("--from-segments", action="store_true",
+                    help="reuse the finished replay and the recorder's segments; run the live engine again on them, then "
+                         "compare, engine --live and reconcile")
     a = ap.parse_args()
     info = run(a, log=lambda m: print(time.strftime("%H:%M:%S"), m, flush=True))
     if not os.path.exists(os.path.join(os.path.abspath(a.out), "compare.json")):

@@ -222,6 +222,24 @@ def test_from_compare_reuses_replay_and_live_with_the_same_result(run, tmp_path)
         shadow.run(argparse.Namespace(out=str(tmp_path), from_compare=True, **kw), log=lambda m: None)
 
 
+def test_from_segments_runs_the_live_engine_again_with_the_same_result(run):
+    """--from-segments reuses the replay and the recorder's segments and runs the live engine again on them (a change
+    in LiveFeed or the engine measured without simulating the recorder again): the same code gives the same
+    comparison, and the live journal is the new run's."""
+    out, info = run
+    chunk = [c for c in data.complete_chunks() if c[0] <= LO and HI <= c[1]]
+    kw = dict(store=STORE, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
+              d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
+              risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB")
+    mtime = os.path.getmtime(os.path.join(out, "live", "journal.sqlite"))
+    logs = []
+    again = shadow.run(argparse.Namespace(out=out, from_segments=True, **kw), log=logs.append)
+    assert any(m.startswith("live engine again on the segments") for m in logs)
+    assert os.path.getmtime(os.path.join(out, "live", "journal.sqlite")) > mtime
+    assert again["summary"] == info["summary"] and again["unexplained"] == info["unexplained"]
+    assert isinstance(again["livefeed"], dict) and again["livefeed"]["segments"] == info["livefeed"]["segments"]
+
+
 def test_pump_creates_bring_every_create_and_its_creator(tmp_path):
     """--pump-creates: each segment holds every pump.fun create transaction of its slots, and LiveFeed knows
     the creator (the store's) of every token created after the live start. Without them it takes the pool's
