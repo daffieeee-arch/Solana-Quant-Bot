@@ -158,7 +158,10 @@ class Restart:
 
 def window_start_seq(segments, hwm, hours=WINDOW_H):
     """The first recorder segment a restart replays: the first complete one closed (written_unix) at or after the HWM's
-    minute - `hours`. Segments without written_unix (older recorders): every segment."""
+    minute - `hours`. Segments without written_unix (older recorders), or a HWM without a minute (a run that ended
+    before it saw any block time): every segment."""
+    if hwm.get("minute") is None:
+        return segments[0][0] if segments else 0
     cutoff = hwm["minute"] * 60 - hours * 3600
     for seq, _, meta in segments:
         if meta.get("written_unix") is not None and meta["written_unix"] >= cutoff:

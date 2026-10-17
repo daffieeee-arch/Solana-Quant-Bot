@@ -32,6 +32,16 @@ log "start $STEP commit=$COMMIT out=$OUT"
 
 if [ "$STEP" = recorder ]; then
   cd "$REPO/lab/recorder"
+  # A target without a built clang-sys must build it (bindgen), which needs libclang; the bookworm runner has none.
+  # Without libclang, take the newest recorder build's target (build-recorder-bookworm.sh) instead of any target here:
+  # one left by a failed build has no clang-sys either (jobs 17 and 19, 2026-10-17).
+  if ! ldconfig -p 2>/dev/null | grep -q libclang && ! ls /usr/lib/llvm-*/lib/libclang*.so* >/dev/null 2>&1; then
+    prev=$(ls -dt /lab/build/*-bookworm/lab/recorder/target 2>/dev/null | head -1 || true)
+    [ -n "$prev" ] || { log "no libclang and no recorder target to reuse (/lab/build/*-bookworm/lab/recorder/target)"; exit 1; }
+    rm -rf target
+    cp -a --reflink=auto "$prev" target
+    log "target: a copy of $prev (no libclang here)"
+  fi
   cargo test --release --locked > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
   grep -E "^test result|missing_or_old_input_files" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
