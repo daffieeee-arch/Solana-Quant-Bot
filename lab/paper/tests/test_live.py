@@ -395,3 +395,60 @@ def test_a_live_restart_after_the_keeper_ends_with_the_uninterrupted_journal(set
     assert len(rec) == 1 and rec[0]["first_slot"] >= LO + SEG
     assert {k: v for k, v in rec[0]["counts"].items() if k not in RS.BEFORE} == {}, rec
     assert r.feed.clock.per_epoch == u.feed.clock.per_epoch  # the epoch's span starts at segment 0's first block
+
+
+def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_path, monkeypatch):
+    """A probe followed mid-life (shadow job 91, pool 4reQ...): the recorder takes pool P from segment 1 on, and P's
+    earlier trades (segment 0) come as a backfill with segment 2. LiveFeed flagged P's trades of segment 1 without that
+    history (here 102 of 275 flags differ); when the backfill arrives it computes them again (_reflag) and the
+    engine's farming window gets them (_farm_fix): the window, and so every farm label after it, equals the one of the
+    recording that had P from the start. Without the correction it does not."""
+    import shutil
+
+    import pyarrow.compute as pc
+    import pyarrow.parquet as pq
+
+    from paper.engine import Engine
+    from paper.journal import Journal
+
+    root, h24, hist, _ = setup
+    P = "4w2DBFyJPHZo2hdkJUg7ejLxCJz3dXfCaMdS7zJGc6RZ"
+    late = str(tmp_path / "late")
+    shutil.copytree(root, late)
+    seg0, seg2 = (os.path.join(late, "segments", f"{i:09d}") for i in (0, 2))
+    moved = 0
+    for tdir in glob.glob(os.path.join(seg0, "pump_amm", "*")):
+        f = os.path.join(tdir, "part-0.parquet")
+        t = pq.read_table(f)
+        if "pool" not in t.column_names:
+            continue
+        mask = pc.fill_null(pc.equal(t["pool"], P), False)
+        mine = t.filter(mask)
+        if mine.num_rows:
+            d = os.path.join(seg2, "backfill", "pump_amm", os.path.basename(tdir))
+            os.makedirs(d, exist_ok=True)
+            pq.write_table(mine, os.path.join(d, "part-0.parquet"))
+            pq.write_table(t.filter(pc.invert(mask)), f)
+            moved += mine.num_rows
+    assert moved > 0
+    with open(os.path.join(seg2, "_segment.json")) as fh:
+        meta = json.load(fh)
+    meta["backfills"] = [{"pool": P, "from_slot": LO, "to_slot": LO + SEG - 1, "status": "complete", "rows": moved}]
+    with open(os.path.join(seg2, "_segment.json"), "w") as fh:
+        json.dump(meta, fh)
+
+    def farm_window(r, name):
+        feed = LiveFeed(r, store=STORE, follow=False, h24=h24, memory="500MB")
+        feed.farmers.seed(hist)
+        eng = Engine(feed, Journal(str(tmp_path / name)), None, ignore_risk=True, n2_k=0, clock=feed.clock, backup=False)
+        eng.run()
+        feed.close()
+        return eng.farm_win.get(P, []), feed.stats["farmer_flags_fixed"]
+
+    full, none = farm_window(root, "full")
+    fixed, n = farm_window(late, "late")
+    assert none == 0 and n > 0 and len(full) > 100
+    assert fixed == full
+    monkeypatch.setattr(LiveFeed, "_reflag", lambda self, pools, h24: None)
+    unfixed, _ = farm_window(late, "unfixed")
+    assert unfixed != full and sum(1 for a, b in zip(unfixed, full) if a != b) > 0

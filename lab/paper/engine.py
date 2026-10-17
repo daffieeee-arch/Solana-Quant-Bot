@@ -238,6 +238,7 @@ class Engine:
         if len(self.group_of) != len(self.groups) or len(names) != len(set(names)):
             raise ValueError(f"groups and their variants must have distinct names: {[(g.name, g.variants) for g in self.groups]}")
         self.farm_win = defaultdict(list)  # pool -> sorted [(slot, order, sol, farmer sol)] of its trades, the last ~hour
+        self.farm_fixes = {}  # (pool, order) -> farmer flag a late backfill gave a trade not in farm_win yet (_farm_fix)
         self.pool_seen, self.pool_last, self.backfilled = {}, {}, set()  # pool -> first / last slot seen; pools with a backfill
         self.first_slot = None
         self.tol, self.tau = tol, replay.Tau(tau)
@@ -413,6 +414,9 @@ class Engine:
                 self._farm_add(pool, legs)
                 if self.watch is not None and self.minute is not None:
                     self.watch.history(pool, legs)
+        if hasattr(self.feed, "drain_flag_fixes"):  # recorded trades whose farmer flag a late backfill changed
+            for pool, order, farmer in self.feed.drain_flag_fixes():
+                self._farm_fix(pool, order, farmer)
         # 5. time passes for tokens without events in this slot
         active = {k for _, k in by_key}
         for key, opens in list(self.open.items()):
@@ -557,13 +561,25 @@ class Engine:
             if l.kind not in ("buy", "sell"):
                 continue
             _, amount, _ = sol_side(l, p.orientation)
-            item = (l.slot, l.order, amount, amount if l.farmer else 0)
+            farmer = self.farm_fixes.pop((pool, l.order), l.farmer) if self.farm_fixes else l.farmer
+            item = (l.slot, l.order, amount, amount if farmer else 0)
             i = bisect.bisect_left(xs, item)
             if i < len(xs) and xs[i][:2] == item[:2]:
                 continue  # the same trade twice (a backfill overlapping the recorded transactions)
             xs.insert(i, item)
         if xs and xs[0][0] < xs[-1][0] - 2 * self.clock.slots(F6_FARM_MS, xs[-1][0]):
             del xs[:bisect.bisect_left(xs, (xs[-1][0] - self.clock.slots(F6_FARM_MS, xs[-1][0]),))]
+
+    def _farm_fix(self, pool, order, farmer):
+        """A recorded trade's farmer flag, computed again after a late backfill (LiveFeed._reflag): its entry in the
+        pool's farming window gets it. A trade not in the window yet (its slot not processed) gets it when added."""
+        xs = self.farm_win.get(pool, [])
+        i = bisect.bisect_left(xs, (order[0], order))
+        if i < len(xs) and xs[i][:2] == (order[0], order):
+            slot, o, amount, _ = xs[i]
+            xs[i] = (slot, o, amount, amount if farmer else 0)
+        else:
+            self.farm_fixes[(pool, order)] = farmer
 
     def _pool_flagged(self, pool, t):
         """The backtest's farming flag (strategies.f7_signals_sql): farmers made more than
@@ -660,6 +676,8 @@ class Engine:
             n = self.clock.slots(F6_FARM_MS, slot)  # pools quiet for an hour leave the farming windows
             for pool in [p for p, xs in self.farm_win.items() if not xs or xs[-1][0] < slot - n]:
                 del self.farm_win[pool]
+            for k in [k for k in self.farm_fixes if k[1][0] < slot - n]:  # flag fixes of trades never added
+                del self.farm_fixes[k]
             self._sweep_history(slot - max(HISTORY_SLOTS, h))
             old = slot - self.clock.slots(POOL_SEEN_KEEP_MS, slot)
             for pool in [p for p, last in self.pool_last.items() if last < old]:
