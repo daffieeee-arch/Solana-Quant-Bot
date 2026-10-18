@@ -62,3 +62,11 @@ def test_k2_rule_per_entry_window():
         t(creator_prior_pools, creator_traded_before, b0_sol, n_traders, inflow, tip_share, creator_trades, n_traders_1m, inflow_1m, tip_share_1m, creator_trades_1m)""")
     assert con.execute(f"SELECT count(*) FROM p WHERE {r2}").fetchone()[0] == 3
     assert con.execute(f"SELECT count(*) FROM p WHERE {r1}").fetchone()[0] == 1
+
+
+def test_k1_only_sol_quoted_curves():
+    # a curve with another quote mint logs q in that token's units: it is out, known at the creation (NULL = SOL default)
+    con = _con()
+    con.execute("CREATE TABLE m (mint VARCHAR, quote_mint VARCHAR)")
+    con.execute(f"INSERT INTO m VALUES ('A', '{k1_rolling.SOL_KEY}'), ('B', NULL), ('C', 'pumpCmXqMfrsxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')")
+    assert con.execute(f"SELECT list(mint ORDER BY mint) FROM m WHERE {k1_rolling.SOL_QUOTE}").fetchone()[0] == ["A", "B"]
