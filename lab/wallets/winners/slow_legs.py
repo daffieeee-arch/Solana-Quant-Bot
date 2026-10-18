@@ -1,6 +1,7 @@
 """Winners II (lab/reports/2026-10-17-winnaars-traag.md, exploratory): all store legs of group C (797) on dev <= 1046 and the first/last
 price per venue key. Run order: slow_legs, slow_positions, slow_replay [per-cell], slow_tables, slow_reversed_check. DuckDB <= 1.4 GB, 3G scope,
 store read-only; outputs under LAB_WALLETS_OUT/winners-v1 (c_legs, c_prices)."""
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import duckdb, time
 import os
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")

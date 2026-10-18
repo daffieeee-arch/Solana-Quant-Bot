@@ -1,6 +1,7 @@
 """Delayed replay of group C's slow positions (hold >= 1 min, closed, single venue key): entry at their first buy + d, exit at
 their last sell + d (d = 0, 2, 3 slots, both sides), constant product on the venue's post-trade state before that slot,
 fee bps from their own entry row, our base costs (2 x 705,000 lamports). Their size and 0.5 SOL. Output c_replay.parquet."""
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import duckdb, time, sys
 import os
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")

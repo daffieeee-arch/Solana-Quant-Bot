@@ -12,6 +12,7 @@ deficit is named, with examples and their rows for inspection. Nothing here chan
   LAB_STORE=<store> python -m wallets.transfers_diag --chunks <root> --from-slot A --to-slot B --out DIR
 """
 
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import argparse
 import json
 import os

@@ -40,6 +40,7 @@ Slots stay before the hold-out (common.guard). Heavy on a full run (ASOF join ag
 and curve tables): NAS; one day on the VPS as a smoke test.
 """
 
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import argparse
 import glob
 import json
