@@ -6,7 +6,7 @@ Vervolg op `2026-10-17-onderzoeksagenda.md` (v1). Alle vijf sporen van v1 zijn o
 
 ## Wat de paper-data na 20 oktober nieuw mogelijk maakt
 
-De vier goedgekeurde Triton-metingen (spec `research/spec-triton-paper-metingen-2026-10-17.md`) geven dingen die uit Old Faithful niet te halen zijn: de landingskans en slippage-fouten van ons ordertype (punt 1), de fee-markt per trigger-pool (7), transacties van de creator en op de LP-mint buiten de pool (4) en de 125 bekende wallets realtime (5). Drie van de vijf ideeën hieronder hangen daaraan; twee kunnen nu al op dev.
+De vier goedgekeurde Triton-metingen (spec `research/spec-triton-paper-metingen-2026-10-17.md`) geven dingen die uit Old Faithful niet te halen zijn: het uitvoeringssucces van opgenomen transacties van ons ordertype en de slippage-fouten (punt 1; geen landingskans, zie correctie onderaan), de fee-markt per trigger-pool (7), transacties van de creator en op de LP-mint buiten de pool (4) en de 125 bekende wallets realtime (5). Drie van de vijf ideeën hieronder hangen daaraan; twee kunnen nu al op dev.
 
 ## Idee 1 — Exit op de voorbode van de drain (dev-replay nu, live-meting na de start)
 
@@ -18,7 +18,7 @@ De vier goedgekeurde Triton-metingen (spec `research/spec-triton-paper-metingen-
 
 **Eerste stap.** Mint-lijst (LP-PDA's van alle reversed pools in 1040, ~3.800) als bestand met sha; extractie-aanvraag bij de coördinator; het leesscript staat klaar vóór de data er is.
 
-## Idee 2 — Een gemeten kostenscenario uit paper (landingskans, fees, tips) en de dev-uitkomsten opnieuw onder die kosten
+## Idee 2 — Een gemeten kostenscenario uit paper (uitvoeringssucces van opgenomen transacties, fees, tips) en de dev-uitkomsten opnieuw onder die kosten
 
 **Waarom kansrijk.** Het hele netto-beeld hangt aan scenario base: fee 0,000605 + tip 0,0001 SOL, land_prob 0,97, failed 0,000505. Dat zijn aannames. Triton-punten 1 en 7 meten per trigger-slot hoeveel kopen van ons type landen, waarom ze mislukken, en welke fee-percentielen in de slots van onze triggers landen — vóór en ná Alpenglow.
 
@@ -26,7 +26,7 @@ De vier goedgekeurde Triton-metingen (spec `research/spec-triton-paper-metingen-
 
 **Eerlijke toets.** Het scenario wordt uit de meting vastgelegd (datum, sha) vóór het wordt toegepast; daarna de dev- en clean-uitkomsten van H4/H5 onder base én measured naast elkaar (geen keuze achteraf); in de forward-toets als tweede serie, de beslisregel blijft base zoals vastgelegd (E32). Verschuift measured het teken, dan is dat een bevinding voor de volgende vastlegging, geen herinterpretatie.
 
-**Eerste stap.** Het leesscript voor punt 1 en 7 (na de bouw) levert per dag: landingskans van kopen 0,25–1 SOL in trigger-slots, slippage-aandeel, fee-p50/p75/p90 in SOL per order; na 7 dagen het scenario-bestand.
+**Eerste stap.** Het leesscript voor punt 1 en 7 (na de bouw) levert per dag: uitvoeringssucces van opgenomen kopen 0,25–1 SOL in trigger-slots (een bovengrens voor `land_prob`, niet de landingskans), slippage-aandeel, fee-p50/p75/p90 in SOL per order; na 7 dagen het scenario-bestand.
 
 ## Idee 3 — Universum-klassen van omgekeerde pools als vaste rapportagekolommen (nu), als vastlegging later
 
@@ -69,3 +69,5 @@ De vier goedgekeurde Triton-metingen (spec `research/spec-triton-paper-metingen-
 | 5 | d na Alpenglow (5) | M2-tabel | VPS, na de meetweek | later: forward-store-replay d = 2 (NAS) |
 
 Werk voor de start (leesscripts, Triton-specs) en de clean-rapporten van 24 oktober gaan voor; de eerste twee stappen passen daar tussendoor.
+
+**Correctie 2026-10-18 (Codex-review via de coördinator; spec v1.3).** Meting 1 meet het uitvoeringssucces van *opgenomen* transacties (geslaagd in `tx_pools`, mislukt in `tx_failed`), niet de landingskans: verstuurde transacties die nooit in een blok kwamen (gedropt, verlopen blockhash, niet meegenomen, verloren bundle) ziet de recorder niet. De echte landingskans P(opgenomen en geslaagd | verstuurd) ligt op of onder deze maat en is pas te meten als we zelf versturen (buiten paper). Voor idee 2 betekent dit: het gemeten scenario krijgt failed_tx, fees en tips uit de meting, maar `land_prob` 0,97 blijft een aanname met deze maat als bovengrens.
