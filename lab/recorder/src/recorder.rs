@@ -306,7 +306,7 @@ impl Recorder {
     /// An update of backfill `id`: its transactions' rows are kept until the replay reaches its
     /// to_slot (a confirmed slot at or after it), then it is done.
     pub fn on_backfill_update(&mut self, id: &str, u: SubscribeUpdate) -> Result<()> {
-        self.meter.add("backfill", u.encoded_len());
+        self.meter.add("backfill", u.encoded_len())?;
         let Some(b) = self.backfills.get_mut(id) else { return Ok(()) };
         if b.done {
             return Ok(());
@@ -367,7 +367,7 @@ impl Recorder {
 
     pub fn on_update(&mut self, u: SubscribeUpdate, now_ns: u64) -> Result<()> {
         let stream = stream_of(&u).to_owned();
-        self.meter.add(&stream, u.encoded_len());
+        self.meter.add(&stream, u.encoded_len())?;
         let created_ns = u
             .created_at
             .as_ref()
@@ -647,6 +647,18 @@ impl Recorder {
         Ok(())
     }
 
+    /// The end of a run (shutdown, the runtime limit): the last minute's usage into the last segment,
+    /// that segment, then budget.json. A failed save loses no closed slots (LAB review: it came
+    /// first and returned before the segment); its reservation on disk still covers the spend.
+    pub fn shut_down(&mut self) -> Result<()> {
+        self.meter.close_minute();
+        self.close_segment(Some("shutdown"))?;
+        if let Err(e) = self.meter.settle() {
+            log::error!("budget: {e:#}; the reservation on disk covers the spend");
+        }
+        Ok(())
+    }
+
     /// A new subscription filter. The open segment stays open: its watchlist.json keeps what every
     /// filter inside it had (SegWatch).
     fn change(&mut self, f: Filter, now_unix: u64) -> Result<Action> {
@@ -666,8 +678,12 @@ impl Recorder {
         match self.meter.tick(now_unix)? {
             Decision::Stop(reason) => {
                 self.meter.note(format!("hard stop: {reason}"));
-                self.meter.flush()?; // this minute's usage goes into the last segment
+                self.meter.close_minute(); // this minute's usage goes into the last segment
                 self.close_segment(Some("hard stop"))?;
+                // The stop does not wait for budget.json: its reservation on disk is past the cap already.
+                if let Err(e) = self.meter.settle() {
+                    log::error!("budget: {e:#}; the reservation on disk covers the spend");
+                }
                 return Ok(Action::Stop(reason));
             }
             Decision::Downscale(reason) => {
@@ -860,7 +876,7 @@ mod tests {
     fn a_downscale_without_effect_keeps_both_levels_in_step() {
         let root = tmp("rec-levels-down");
         let mut r = quiet_recorder(&root);
-        r.meter.add("vaults", 30_000); // over 20x the sustainable rate: downscale at once
+        r.meter.add("vaults", 30_000).unwrap(); // over 20x the sustainable rate: downscale at once
         assert!(matches!(r.on_tick(T0 + 5, None).unwrap(), Action::None)); // no level changes a stream
         assert_eq!((r.level, r.active.level), (DOWNSCALE.len(), DOWNSCALE.len()));
         std::fs::remove_dir_all(&root).unwrap();
@@ -886,7 +902,7 @@ mod tests {
             r.on_update(u, 1).unwrap();
         }
         // Over 20x the sustainable rate within the first minute: downscale at once.
-        r.meter.add("vaults", 30_000);
+        r.meter.add("vaults", 30_000).unwrap();
         let (main, vaults) = match r.on_tick(T0 + 5, None).unwrap() {
             Action::Resubscribe(m, v) => (m, v),
             other => panic!("expected a resubscribe, got {other:?}"),
@@ -897,7 +913,7 @@ mod tests {
         for u in [meta(1002), confirmed(1002), confirmed(1003)] {
             r.on_update(u, 1).unwrap();
         }
-        r.meter.add("tx_pools", 2_000_000);
+        r.meter.add("tx_pools", 2_000_000).unwrap();
         assert!(matches!(r.on_tick(T0 + 70, None).unwrap(), Action::Stop(_)));
         let last = segment_meta(&root, r.segs.seq - 1);
         let usage = last["usage"].as_array().unwrap();
@@ -980,6 +996,26 @@ mod tests {
 
     fn full_disk(_: &Path) -> Result<()> {
         Err(std::io::Error::new(std::io::ErrorKind::StorageFull, "injected").into())
+    }
+
+    #[test]
+    fn a_shutdown_writes_its_last_segment_also_when_budget_json_cannot_be_written() {
+        // LAB review: the meter's save came first and its error returned before the segment was written,
+        // so the closed slots in memory were lost.
+        let root = tmp("rec-shutdown-budget");
+        let mut r = recorder(&root, 25_000_000_000, 1_000);
+        for u in [tx(1000, 4), meta(1000), confirmed(1000), meta(1001), confirmed(1001), meta(1002), confirmed(1002)] {
+            r.on_update(u, 1).unwrap();
+        }
+        std::fs::create_dir_all(root.join("budget.json.tmp")).unwrap(); // budget.json cannot be written
+        r.shut_down().unwrap();
+        let m = segment_meta(&root, 0);
+        assert_eq!(m["note"], "shutdown");
+        assert!(m["usage"].as_array().unwrap().iter().any(|u| u["stream"] == "tx_pools"));
+        std::fs::remove_dir_all(root.join("budget.json.tmp")).unwrap();
+        // budget.json on disk is the reservation saved at the first update: it covers every byte that came.
+        assert!(Meter::load(&root, 25_000_000_000, 1.0, T0).unwrap().spent >= r.meter.spent);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

@@ -10,7 +10,19 @@
 //! the day at 0. When today's spend cannot be known (an unreadable budget.json or `_segment.json`
 //! of today, or a segment directory of today without `_segment.json` and no budget.json of today),
 //! the recorder stops for the day (fail-closed) until the owner restarts it with
-//! `--budget-assume-spent YYYY-MM-DD=BYTES`. When the day's spend projects above the cap (current rate until midnight), the
+//! `--budget-assume-spent YYYY-MM-DD=BYTES`.
+//!
+//! Received bytes never leave the spend (Codex 3, LAB review): budget.json holds a reservation
+//! (`reserved_bytes`), the spend this run may reach before its next save, and a byte is only counted
+//! below it. Before the first byte the run saves one (`reserve_ahead`), and once the spend comes within
+//! half a reservation of it a new one is saved (`add`). A save that fails ends the recorder
+//! (`BudgetWriteError`, exit 74 like a segment write error), so nothing is received that the disk does
+//! not cover. A restart takes the larger of `spent_bytes` and `reserved_bytes`: after a crash, a kill
+//! or a failed write it counts the whole reservation (at most one sustainable minute more than came);
+//! a clean end settles it to the spend (`settle`). Only a budget.json with a reservation covers a
+//! segment directory of today without `_segment.json`. The stop at the cap never waits for a save.
+//!
+//! When the day's spend projects above the cap (current rate until midnight), the
 //! lowest-priority stream is dropped (downscale), one level at a time; at the cap itself the
 //! recorder stops and does not start again that day. Every decision is a usage row (stream
 //! "budget", with a note) in the segment, so the engine journals it.
@@ -22,6 +34,21 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const GB: f64 = 1e9;
+/// The smallest reservation (a run with a tiny cap still saves at most every half MiB).
+const RESERVE_MIN: u64 = 1 << 20;
+
+/// budget.json could not be written: the recorder ends (main.rs, exit 74). The reservation on disk
+/// still covers every byte counted so far.
+#[derive(Debug)]
+pub struct BudgetWriteError(pub String);
+
+impl std::fmt::Display for BudgetWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "budget.json could not be written ({})", self.0)
+    }
+}
+
+impl std::error::Error for BudgetWriteError {}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -44,6 +71,10 @@ pub struct Meter {
     done: Vec<Value>,
     pub day: u64,
     pub spent: u64,
+    /// The spend budget.json covers on disk: the last reservation saved (`spent` at most).
+    pub reserved: u64,
+    /// One reservation: a sustainable minute (cap / 1440), at least RESERVE_MIN.
+    reserve: u64,
     pub stopped: bool,
     recent: VecDeque<u64>,
     last_downscale_unix: u64,
@@ -169,6 +200,8 @@ impl Meter {
             done: Vec::new(),
             day: day_of(now_unix),
             spent: 0,
+            reserved: 0,
+            reserve: (cap_bytes / 1440).max(RESERVE_MIN),
             stopped: false,
             recent: VecDeque::new(),
             last_downscale_unix: 0,
@@ -176,16 +209,23 @@ impl Meter {
             unknown: None,
         };
         let day_start = UNIX_EPOCH + Duration::from_secs(m.day * 86_400);
-        // budget.json holds today's spend (`today`), another day's, or nothing we can read.
-        let mut today = false;
+        // budget.json holds today's spend (`today`), another day's, or nothing we can read. With its
+        // reservation (`covered`) it counts every byte its run received.
+        let (mut today, mut covered) = (false, false);
         let mut unknown = Vec::new();
         match std::fs::read(&m.path) {
             Ok(b) => match serde_json::from_slice::<Value>(&b) {
                 Ok(v) if v["day"].as_u64() == Some(m.day) => match v["spent_bytes"].as_u64() {
                     Some(spent) => {
-                        m.spent = spent;
+                        let reserved = v["reserved_bytes"].as_u64();
+                        m.spent = spent.max(reserved.unwrap_or(0));
+                        if let Some(r) = reserved.filter(|r| *r > spent) {
+                            m.note(format!("the last run ended without settling its budget: today's spend counts its \
+                                            reservation, {} bytes above the {spent} saved", r - spent));
+                        }
                         m.stopped = v["stopped"].as_bool().unwrap_or(false);
                         today = true;
+                        covered = reserved.is_some();
                     }
                     None => unknown.push("budget.json of today has no spent_bytes".to_owned()),
                 },
@@ -205,11 +245,14 @@ impl Meter {
             m.spent = seg.bytes;
         }
         // An unreadable _segment.json of today: its usage is unknown. A directory without one (an
-        // interrupted write) is covered by today's budget.json, which is saved at every minute's roll,
-        // before a segment takes that minute's usage; without today's budget.json it is unknown.
+        // interrupted write) is covered by today's budget.json with its reservation, saved before any of
+        // its bytes were counted; a budget.json without one (an older recorder's: saved at the minute's
+        // roll, so a failed segment's minutes and the running one can lie past it) or none leaves it
+        // unknown.
         unknown.extend(seg.unreadable.iter().map(|s| format!("segments/{s}/_segment.json is unreadable")));
-        if !today {
-            unknown.extend(seg.unfinished.iter().map(|s| format!("segments/{s} has no _segment.json (an interrupted write)")));
+        if !covered {
+            let why = if today { "today's budget.json has no reservation to cover it" } else { "no budget.json of today" };
+            unknown.extend(seg.unfinished.iter().map(|s| format!("segments/{s} has no _segment.json (an interrupted write; {why})")));
         }
         if !unknown.is_empty() {
             let why = unknown.join("; ");
@@ -229,16 +272,35 @@ impl Meter {
         }
         // A recovered spend at the cap stops before the stream starts (main checks `stopped` first).
         m.stopped |= m.spent >= m.cap_bytes;
+        m.reserved = m.spent;
         Ok(m)
     }
 
-    /// Bytes of one update on `stream` (counted with the wire ratio).
-    pub fn add(&mut self, stream: &str, bytes: usize) {
+    /// Before the first byte of a run: a reservation on disk (main.rs; a failure ends the run before
+    /// it streams).
+    pub fn reserve_ahead(&mut self) -> Result<()> {
+        self.save_reservation(self.spent + self.reserve)
+    }
+
+    /// A new reservation on disk; `reserved` moves only once it is saved.
+    fn save_reservation(&mut self, upto: u64) -> Result<()> {
+        let before = std::mem::replace(&mut self.reserved, upto);
+        self.save().inspect_err(|_| self.reserved = before)
+    }
+
+    /// Bytes of one update on `stream` (counted with the wire ratio). Within half a reservation of the
+    /// one on disk a new one is saved first; when that fails the recorder ends (`BudgetWriteError`),
+    /// with every byte so far below the reservation on disk.
+    pub fn add(&mut self, stream: &str, bytes: usize) -> Result<()> {
         let b = (bytes as f64 * self.wire_ratio).ceil() as u64;
         let e = self.current.entry(stream.to_owned()).or_insert((0, 0));
         e.0 += b;
         e.1 += 1;
         self.spent += b;
+        if self.spent + self.reserve / 2 > self.reserved {
+            self.save_reservation(self.spent + self.reserve)?;
+        }
+        Ok(())
     }
 
     /// A note for this minute's "budget" usage row.
@@ -262,24 +324,43 @@ impl Meter {
         }
     }
 
-    /// Close the running minute's usage (it goes into the next segment) and save the state, without
-    /// moving the clock: the day, `spent` and `stopped` stay exactly as they are.
-    pub fn flush(&mut self) -> Result<()> {
+    /// Close the running minute's usage (it goes into the next segment), without saving or moving the
+    /// clock: the day, `spent` and `stopped` stay exactly as they are.
+    pub fn close_minute(&mut self) {
         self.roll();
+    }
+
+    /// The last save of a run that counts no more bytes (shutdown, the hard stop, an exit on a write
+    /// error): the reservation comes down to the spend, so the next start counts no bytes that never
+    /// came. When it fails, the reservation on disk still covers the spend.
+    pub fn settle(&mut self) -> Result<()> {
+        self.reserved = self.spent;
         self.save()
     }
 
+    /// `close_minute` and `settle`: the end of a run that writes no segment after it.
+    #[cfg(test)]
+    pub fn flush(&mut self) -> Result<()> {
+        self.roll();
+        self.settle()
+    }
+
+    /// budget.json, atomically and fsynced; a failure is a `BudgetWriteError`.
     pub fn save(&self) -> Result<()> {
-        crate::segment::write_json_atomic(&self.path, &self.state())?;
-        if let Some(dir) = self.path.parent() {
-            std::fs::File::open(dir)?.sync_all()?; // the rename itself on disk
-        }
-        Ok(())
+        let write = || -> Result<()> {
+            crate::segment::write_json_atomic(&self.path, &self.state())?;
+            if let Some(dir) = self.path.parent() {
+                std::fs::File::open(dir)?.sync_all()?; // the rename itself on disk
+            }
+            Ok(())
+        };
+        write().map_err(|e| BudgetWriteError(format!("{e:#}")).into())
     }
 
     pub fn state(&self) -> Value {
-        let mut v = json!({"day": self.day, "spent_bytes": self.spent, "cap_bytes": self.cap_bytes,
-                           "spent_gb": self.spent as f64 / GB, "stopped": self.stopped, "wire_ratio": self.wire_ratio});
+        let mut v = json!({"day": self.day, "spent_bytes": self.spent, "reserved_bytes": self.reserved.max(self.spent),
+                           "cap_bytes": self.cap_bytes, "spent_gb": self.spent as f64 / GB, "stopped": self.stopped,
+                           "wire_ratio": self.wire_ratio});
         if let Some(why) = &self.unknown {
             v["unknown"] = json!(why);
         }
@@ -300,6 +381,7 @@ impl Meter {
                     Some(root) => segments_spent(root, self.day)?,
                     None => 0,
                 };
+                self.reserved = self.spent + self.reserve; // the new day's first reservation, saved below
                 self.stopped = false;
                 self.recent.clear();
                 restore = true;
@@ -307,8 +389,12 @@ impl Meter {
             self.save()?;
         }
         if self.spent >= self.cap_bytes {
+            // The stop never waits for the disk (LAB review): the reservation there already counts every
+            // byte, so a restart stops again.
             self.stopped = true;
-            self.save()?;
+            if let Err(e) = self.save() {
+                log::error!("budget: the stop could not be saved ({e:#}); the reservation on disk covers the spend");
+            }
             return Ok(Decision::Stop(format!("{:.2} GB spent today, cap {:.2} GB", self.spent as f64 / GB, self.cap_bytes as f64 / GB)));
         }
         if restore {
@@ -367,9 +453,9 @@ mod tests {
     fn usage_rows_are_per_minute_and_stream() {
         let root = tmp("meter-rows");
         let mut m = Meter::load(&root, 25_000_000_000, 1.0, T0).unwrap();
-        m.add("tx", 100);
-        m.add("tx", 50);
-        m.add("blocks", 10);
+        m.add("tx", 100).unwrap();
+        m.add("tx", 50).unwrap();
+        m.add("blocks", 10).unwrap();
         assert_eq!(m.tick(T0 + 30).unwrap(), Decision::Continue);
         assert!(m.take_usage().is_empty()); // the minute is not finished
         m.tick(T0 + 61).unwrap();
@@ -384,11 +470,11 @@ mod tests {
         let root = tmp("meter-budget");
         let cap = 1_440_000; // 1,000 bytes per minute is sustainable
         let mut m = Meter::load(&root, cap, 1.0, T0).unwrap();
-        m.add("vaults", 5_000);
+        m.add("vaults", 5_000).unwrap();
         // 5,000 bytes in the first minute projects ~7.2 MB > cap.
         assert!(matches!(m.tick(T0 + 60).unwrap(), Decision::Downscale(_)));
         assert_eq!(m.tick(T0 + 61).unwrap(), Decision::Continue); // not twice within 30 s
-        m.add("tx", 1_500_000);
+        m.add("tx", 1_500_000).unwrap();
         assert!(matches!(m.tick(T0 + 120).unwrap(), Decision::Stop(_)));
         let again = Meter::load(&root, cap, 1.0, T0 + 200).unwrap();
         assert!(again.stopped && again.spent >= cap);
@@ -404,10 +490,10 @@ mod tests {
         let cap = 1_440_000;
         let mut m = Meter::load(&root, cap, 1.0, T0).unwrap();
         m.no_downscale = true;
-        m.add("pool_creations", 25_000); // a spike and a projection far above the cap
+        m.add("pool_creations", 25_000).unwrap(); // a spike and a projection far above the cap
         assert_eq!(m.tick(T0 + 5).unwrap(), Decision::Continue);
         assert_eq!(m.tick(T0 + 60).unwrap(), Decision::Continue);
-        m.add("tx_new_reversed", 1_500_000);
+        m.add("tx_new_reversed", 1_500_000).unwrap();
         assert!(matches!(m.tick(T0 + 120).unwrap(), Decision::Stop(_)));
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -417,7 +503,7 @@ mod tests {
         let root = tmp("meter-flush");
         let late = T0 + 86_400 - (T0 % 86_400) - 20; // 20 s before the end of the UTC day
         let mut m = Meter::load(&root, 25_000_000_000, 1.0, late).unwrap();
-        m.add("tx", 100);
+        m.add("tx", 100).unwrap();
         m.flush().unwrap();
         assert!(m.take_usage().iter().any(|r| r["stream"] == "tx" && r["bytes"] == 100));
         assert_eq!((m.day, m.spent, m.stopped), (day_of(late), 100, false));
@@ -430,7 +516,7 @@ mod tests {
     fn a_spike_downscales_within_the_minute() {
         let root = tmp("meter-spike");
         let mut m = Meter::load(&root, 1_440_000, 1.0, T0).unwrap();
-        m.add("pool_accounts", 25_000);
+        m.add("pool_accounts", 25_000).unwrap();
         assert!(matches!(m.tick(T0 + 5).unwrap(), Decision::Downscale(_)));
         std::fs::remove_dir_all(&root).unwrap();
     }
@@ -439,7 +525,7 @@ mod tests {
     fn a_new_day_restores_all_streams() {
         let root = tmp("meter-day");
         let mut m = Meter::load(&root, 25_000_000_000, 1.0, T0 + 86_400 - 30).unwrap();
-        m.add("tx", 10);
+        m.add("tx", 10).unwrap();
         assert_eq!(m.tick(T0 + 86_400 + 1).unwrap(), Decision::Restore);
         assert_eq!(m.spent, 0);
         std::fs::remove_dir_all(&root).unwrap();
@@ -533,10 +619,16 @@ mod tests {
         assert!(unknown(&load(None), "segments/000000000/_segment.json is unreadable"));
         segment(&root, 0, json!([{"minute": minute + 5, "stream": "tx", "bytes": 100, "messages": 1}]));
         // 3. A segment directory of today without _segment.json (an interrupted write): today's
-        // budget.json covers its minutes; without one its usage is unknown.
+        // budget.json covers its minutes only with its reservation (every byte was below it before it
+        // was counted). One without (an older recorder's, saved at the minute's roll), or none, leaves
+        // its usage unknown.
         std::fs::create_dir_all(root.join("segments/000000001/blocks")).unwrap();
-        let m = load(None);
-        assert!(!m.stopped && m.spent == 400);
+        assert!(unknown(&load(None), "today's budget.json has no reservation to cover it"));
+        std::fs::write(root.join("budget.json"), json!({"day": today, "spent_bytes": 400, "reserved_bytes": 450}).to_string()).unwrap();
+        let mut m = load(None);
+        assert!(!m.stopped && m.spent == 450 && m.unknown.is_none());
+        m.close_minute(); // the reservation counted is a budget row
+        assert!(m.take_usage().iter().any(|r| r["stream"] == "budget" && r["note"].as_str().unwrap().contains("50 bytes above the 400")));
         std::fs::remove_file(root.join("budget.json")).unwrap();
         assert!(unknown(&load(None), "segments/000000001 has no _segment.json"));
         std::fs::write(root.join("budget.json"), json!({"day": today - 1, "spent_bytes": 9}).to_string()).unwrap();
@@ -546,6 +638,119 @@ mod tests {
         std::fs::write(root.join("segments/000000000/_segment.json"), b"{broken").unwrap();
         let later = Meter::load_with(&root, 25_000_000_000, 1.0, T0 + 3_650 * 86_400, None).unwrap();
         assert!(!later.stopped && later.spent == 0 && later.unknown.is_none());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// budget.json cannot be written (`write_json_atomic` writes budget.json.tmp first).
+    fn block_saves(root: &Path) {
+        std::fs::create_dir_all(root.join("budget.json.tmp")).unwrap();
+    }
+
+    fn unblock_saves(root: &Path) {
+        std::fs::remove_dir_all(root.join("budget.json.tmp")).unwrap();
+    }
+
+    #[test]
+    fn a_kill_never_gives_back_the_bytes_of_the_running_minute() {
+        let root = tmp("budget-kill");
+        let cap = 25_000_000_000;
+        let mut m = Meter::load(&root, cap, 1.0, T0).unwrap();
+        m.reserve_ahead().unwrap();
+        m.add("tx", 1_000).unwrap();
+        assert_eq!(m.tick(T0 + 61).unwrap(), Decision::Continue); // the minute's roll saves budget.json
+        m.add("tx", 5_000).unwrap(); // the running minute, after that save
+        drop(m); // killed (OOM, SIGKILL, power): no flush, no settle
+        let again = Meter::load(&root, cap, 1.0, T0 + 90).unwrap();
+        assert!(again.spent >= 6_000 && !again.stopped && again.unknown.is_none(), "{}", again.spent);
+        // A clean end settles: the next start counts what came, no more.
+        let mut m = again;
+        m.add("tx", 10).unwrap();
+        let spent = m.spent;
+        m.flush().unwrap();
+        assert_eq!(Meter::load(&root, cap, 1.0, T0 + 95).unwrap().spent, spent);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_segment_write_and_a_failed_budget_write_never_give_room_back() {
+        // Codex 3: today's budget.json was saved at a roll; then budget.json cannot be written, a segment
+        // takes the next minutes' usage and cannot be written either, and the save before the exit fails
+        // too. The restart finds an older budget.json of today beside the unfinished segment directory.
+        let root = tmp("budget-both-fail");
+        let cap = 25_000_000_000;
+        let mut m = Meter::load(&root, cap, 1.0, T0).unwrap();
+        m.reserve_ahead().unwrap();
+        m.add("tx", 1_000).unwrap();
+        m.tick(T0 + 61).unwrap(); // budget.json of today: 1,000 spent
+        block_saves(&root);
+        m.add("tx", 2_000).unwrap(); // below the reservation on disk: counted without a save
+        let e = m.tick(T0 + 121).unwrap_err(); // the roll's save fails: the recorder ends (main.rs: exit 74)
+        assert!(e.downcast_ref::<BudgetWriteError>().is_some(), "{e:#}");
+        let rows = m.take_usage(); // close_segment took these minutes' usage ...
+        assert!(rows.iter().any(|r| r["bytes"] == 2_000));
+        std::fs::create_dir_all(root.join("segments/000000000/blocks")).unwrap(); // ... and its write failed
+        assert!(m.settle().is_err()); // the save before the exit fails as well
+        drop(m);
+        unblock_saves(&root);
+        let again = Meter::load(&root, cap, 1.0, T0 + 150).unwrap();
+        assert!(again.spent >= 3_000 && again.unknown.is_none(), "{}", again.spent);
+        // An older recorder's budget.json (no reservation) beside that directory proves nothing: stopped
+        // until the owner's override.
+        std::fs::write(root.join("budget.json"), json!({"day": day_of(T0), "spent_bytes": 1_000}).to_string()).unwrap();
+        let old = Meter::load(&root, cap, 1.0, T0 + 150).unwrap();
+        assert!(old.stopped && old.unknown.as_deref().is_some_and(|u| u.contains("no reservation")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_save_ends_the_run_below_its_reservation_and_the_stop_never_waits_for_one() {
+        let root = tmp("budget-stop");
+        let cap = 1_440_000; // a reservation is RESERVE_MIN here
+        let mut m = Meter::load(&root, cap, 1.0, T0).unwrap();
+        m.no_downscale = true;
+        m.reserve_ahead().unwrap();
+        block_saves(&root);
+        // Updates of 100 kB: the sixth comes within half a reservation of the one on disk.
+        let mut counted = 0;
+        let e = loop {
+            match m.add("tx", 100_000) {
+                Ok(()) => counted += 100_000,
+                Err(e) => break e,
+            }
+        };
+        assert!(e.downcast_ref::<BudgetWriteError>().is_some());
+        assert!(m.spent == counted + 100_000 && m.spent <= RESERVE_MIN, "{}", m.spent); // every byte below the disk's
+        unblock_saves(&root);
+        // At the cap the stop comes also when budget.json cannot be written (LAB review: it was lost, and
+        // the recorder streamed on past the cap, reconnecting on every tick).
+        let mut m = Meter::load(&root, cap, 1.0, T0).unwrap();
+        m.no_downscale = true;
+        m.reserve_ahead().unwrap();
+        while m.spent < cap {
+            m.add("tx", 100_000).unwrap();
+        }
+        block_saves(&root);
+        assert!(matches!(m.tick(T0 + 5).unwrap(), Decision::Stop(_)));
+        assert!(matches!(m.tick(T0 + 6).unwrap(), Decision::Stop(_)));
+        drop(m);
+        unblock_saves(&root);
+        assert!(Meter::load(&root, cap, 1.0, T0 + 10).unwrap().stopped); // the reservation on disk is past the cap
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_new_day_saves_its_first_reservation_and_a_failed_one_ends_the_run() {
+        let root = tmp("budget-day-fails");
+        let mut m = Meter::load(&root, 25_000_000_000, 1.0, T0 + 86_400 - 30).unwrap();
+        m.reserve_ahead().unwrap();
+        m.add("tx", 10).unwrap();
+        block_saves(&root);
+        assert!(m.tick(T0 + 86_400 + 1).unwrap_err().downcast_ref::<BudgetWriteError>().is_some());
+        unblock_saves(&root);
+        assert_eq!(m.tick(T0 + 86_400 + 61).unwrap(), Decision::Continue); // (the restore of a run that went on)
+        let v: Value = serde_json::from_slice(&std::fs::read(root.join("budget.json")).unwrap()).unwrap();
+        assert_eq!((v["day"].as_u64(), v["spent_bytes"].as_u64()), (Some(day_of(T0 + 86_400)), Some(0)));
+        assert!(v["reserved_bytes"].as_u64().unwrap() >= RESERVE_MIN);
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

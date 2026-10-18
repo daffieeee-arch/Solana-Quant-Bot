@@ -78,7 +78,8 @@ too). A skipped slot sends no block meta and no confirmed status, so the live `b
 number is not a gap there.
 
 **A segment that cannot be written** (a table, the sync or `_segment.json` fails, e.g. on a full
-disk) loses no row:
+disk) loses no row (a `budget.json` that cannot be written ends the recorder the same way, see
+"Budget"):
 - Its rows stay in memory.
 - The recorder exits with code 74, and systemd restarts it.
 - The restart removes the unfinished directory and resumes after the last complete segment on disk.
@@ -116,12 +117,29 @@ it refuses to start again the same day. A new UTC day restores all streams. Ever
 the usage rows of today's segments. The recorder cannot know it when, for today (by file time):
 - `budget.json` is unreadable;
 - a `_segment.json` is unreadable;
-- a segment directory has no `_segment.json` (an interrupted write) and there is no `budget.json`
-  of today.
+- a segment directory has no `_segment.json` (an interrupted write) and today's `budget.json` has
+  no reservation (none at all, or one of a recorder from before 2026-10-18).
 
-Today's `budget.json` covers such a directory, because the meter saves at every minute's roll,
-before a segment takes that minute's usage. When the spend is unknown, the recorder stops for the
-day: it logs the reasons and exits with code 75, like a spent budget.
+When the spend is unknown, the recorder stops for the day: it logs the reasons and exits with
+code 75, like a spent budget.
+
+**Received bytes never leave the spend** (Codex 3, LAB review, 2026-10-18). `budget.json` holds a
+reservation, `reserved_bytes`: the spend the run may reach before its next save. A byte is only
+counted below it.
+- Before its first byte the recorder saves one: the spend plus one sustainable minute (cap / 1440,
+  at least 1 MiB). Once the spend comes within half of it, the next one is saved.
+- A save that fails ends the recorder with code 74, like a segment write error. A reconnect in the
+  same process would stream on unmetered: past the cap, reconnecting on every tick.
+- The stop at the cap never waits for a save. The reservation on disk is past the cap already, so a
+  restart stops again.
+- A restart counts the larger of `spent_bytes` and `reserved_bytes`. After a crash, a kill or a failed
+  write that is the whole reservation: at most one sustainable minute more than came, and a `budget`
+  row notes it. A clean end (shutdown, the stop, an exit on a write error) settles the reservation to
+  the spend.
+- So today's `budget.json` with a reservation covers a segment directory without `_segment.json`. Before,
+  `budget.json` was saved at the minute's roll only: a failed segment's minutes and the running minute lay
+  past it, and after a kill, or a failed segment write and a failed save, their bytes left the spend.
+- At a shutdown the last segment is written before `budget.json`, so a failed save loses no closed slots.
 
 After a check, the owner restarts it once with `--budget-assume-spent YYYY-MM-DD=BYTES`:
 - it applies to that UTC day only;
