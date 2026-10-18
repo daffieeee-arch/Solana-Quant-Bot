@@ -207,13 +207,7 @@ impl Snapshot {
                 }),
                 None => None,
             };
-            let t = SeedTrade { trader, slot, token_buy: flag(&r[3])?, token_amount: signed(&r[4])? };
-            match seed.get_mut(&pool) {
-                Some(v) => v.push(t),
-                None => {
-                    seed.insert(pool, vec![t]);
-                }
-            }
+            seed.entry(pool).or_default().push(SeedTrade { trader, slot, token_buy: flag(&r[3])?, token_amount: signed(&r[4])? });
             Ok(())
         })?;
         Ok(s)

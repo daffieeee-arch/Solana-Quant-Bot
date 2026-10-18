@@ -1,13 +1,16 @@
 #!/bin/bash
-# M1 part 1 of the Rust live route (lab/docs/rust-live-route-design-2026-10-16.md §3) on the NAS: the lab-live
-# replay skeleton reads the same event rows as Python, in the replay's order, and writes journal.py's schema.
+# M1 of the Rust live route (lab/docs/rust-live-route-design-2026-10-16.md §3) on the NAS: the lab-live replay skeleton
+# reads the same event rows as Python, in the replay's order, and writes journal.py's schema; its store snapshot reader
+# loads what LiveFeed loads.
 #
 #   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (rows, journal, CLI and
 #                the extractor's idl/sink tests compiled in), then the release binary into $OUT/bin/.
 #                Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab (the container mounts only /lab).
 #   STEP=python  (the lab Python 3.13 runner): paper/tests/test_lab_live.py with LAB_LIVE_BIN=the binary
 #                (the dev chunk's rows and order against DuckDB, a segment of the same range, the journal schema,
-#                no key ties), plus test_journal_schema and test_journal_diff. Then the baseline and gate of the
+#                no key ties), test_lab_live_snapshot (lab-live's store snapshot against LiveFeed's own load of
+#                fwd1053: tokens, pool classes, PoolInfo, a live start's seed window and every seed trade; M1 part 3),
+#                plus test_journal_schema and test_journal_diff. Then the baseline and gate of the
 #                in-memory read (LAB review on #319 and #367): 1/16, 1/8 and the four quarters of the dev chunk
 #                450144000-450360000, one lab-live run each, one job.log line each (rows, fraction, key ties,
 #                duplicate keys, read and sort time, peak RSS, bytes per row) and an extrapolation to the whole chunk,
@@ -58,8 +61,12 @@ export LAB_LIVE_BIN=$OUT/bin/lab-live PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECO
 [ -x "$LAB_LIVE_BIN" ] || { log "no binary at $LAB_LIVE_BIN: run STEP=build first"; exit 1; }
 cd "$REPO/lab"
 "$LAB_LIVE_BIN" --version | tee -a "$OUT/job.log"
-"$PY" -m pytest -q -rs paper/tests/test_lab_live.py paper/tests/test_journal_schema.py paper/tests/test_journal_diff.py 2>&1 \
-  | tee -a "$OUT/job.log" | tail -8
+# The snapshot test exports a store (fwd1053: a seed day of ~21 M trades) and sorts it in DuckDB: its files and spill go
+# under this job's directory, not the container's /tmp (removed when green, kept for a look when red).
+export LAB_SPILL_DIR=$OUT/spill LAB_SPILL_MAX=16GB
+"$PY" -m pytest -q -rs --basetemp "$OUT/pytest-tmp" paper/tests/test_lab_live.py paper/tests/test_lab_live_snapshot.py \
+  paper/tests/test_journal_schema.py paper/tests/test_journal_diff.py 2>&1 | tee -a "$OUT/job.log" | tail -8
+rm -rf "$OUT/pytest-tmp" "$OUT/spill"
 if [ "${BASELINE:-1}" = 1 ]; then
   # The baseline and gate of the in-memory read (LAB review on #367). One dev chunk (216,000 slots, 15.5 M rows) does
   # not fit this runner's 24 GB in memory (job 99u: killed after 33 s): streaming is a precondition for M1 parity on
