@@ -7,8 +7,13 @@
 //!
 //! - It reads the extractor's event rows of the OF1 chunks (or recorder segments) in [from, to), in the Python
 //!   replay's order (rows.rs).
-//! - It writes a paper journal (journal.rs) with the state `feed` and `lab_live_rows` (rows per table, parts,
-//!   duplicate keys).
+//! - It writes a paper journal (journal.rs) with the state `feed`, `lab_live_rows` (rows per table, parts,
+//!   duplicate keys, and key ties: rows the Python side, which orders by (slot, tx, outer, inner) only, could put in
+//!   another order; parity needs 0) and `lab_live_measure` (the time to read and sort, and the peak RSS: every row
+//!   is held in memory before the sort). One dev chunk (216,000 slots, 15.5 M event rows) does not fit the NAS
+//!   runner's 24 GB that way (job 99u, killed after 33 s): streaming (part by part, compact legs) is a precondition for
+//!   M1 parity on whole chunks, not an optimisation (design §10). The read logs its progress with the RSS per table and
+//!   per million rows.
 //! - `--order-out` writes one line per row, `table slot tx_index outer_ix inner_ix event_seq sha256` (tab
 //!   separated, `null` for a missing value). paper/tests/test_lab_live.py compares it with DuckDB's reading of the
 //!   same files.
@@ -21,6 +26,7 @@ mod idl;
 mod sink;
 
 mod journal;
+mod mem;
 mod rows;
 
 use anyhow::{bail, Context, Result};
@@ -81,7 +87,9 @@ fn replay(a: &Args) -> Result<()> {
     };
     let t0 = std::time::Instant::now();
     let (events, stats) = rows::read_rows(&parts, a.from, a.to, &rows::EVENT_PREFIXES)?;
-    log::info!("{} rows from {} parts in {:.1} s", events.len(), stats.parts, t0.elapsed().as_secs_f64());
+    let (read_secs, peak) = (t0.elapsed().as_secs_f64(), mem::peak_rss_bytes()); // read and sorted
+    log::info!("{} rows from {} parts read and sorted in {:.1} s, peak RSS {} MB, key ties {}, duplicate keys {}", events.len(),
+               stats.parts, read_secs, mem::mb(peak), stats.key_ties, stats.duplicate_keys);
     if let Some(path) = &a.order_out {
         let mut f = std::io::BufWriter::new(std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?);
         for r in &events {
@@ -92,7 +100,9 @@ fn replay(a: &Args) -> Result<()> {
     }
     let mut j = journal::Journal::open(&a.journal)?;
     j.state("feed", &serde_json::json!({"kind": "replay", "engine": "lab-live", "source": source, "input": root, "from": a.from, "to": a.to}).to_string())?;
-    j.state("lab_live_rows", &serde_json::json!({"parts": stats.parts, "rows": stats.rows, "duplicate_keys": stats.duplicate_keys}).to_string())?;
+    j.state("lab_live_rows", &serde_json::json!({"parts": stats.parts, "rows": stats.rows, "duplicate_keys": stats.duplicate_keys,
+                                                  "key_ties": stats.key_ties}).to_string())?;
+    j.state("lab_live_measure", &serde_json::json!({"rows": events.len(), "read_secs": read_secs, "peak_rss_bytes": peak}).to_string())?;
     j.close()?;
     Ok(())
 }
