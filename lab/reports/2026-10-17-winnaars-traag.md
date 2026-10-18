@@ -2,6 +2,8 @@
 
 LAB research, 2026-10-17. Vervolg op `2026-10-15-winnaars.md` (E24): daar bleek snel kopiëren dood (reactielatentie 1 slot, vertraagde replay negatief). Opdracht (coördinator, 2026-10-16): kijk in groep C (797 wallets) naar de **trage** archetypen, houdtijd minuten tot uren, met instaptrigger, pooltype en grootte; welke overleven onze 2–3 slots vertraging; open rondes ook op de laatste prijs. Alleen dev-data epochs 1033–1046; hold-out (1047–1051) en clean (1055–1063) niet gelezen. Verkennend, geen lat; labels **feit** / **reconstructie** / **modelaanname** / **onbekend**.
 
+> **Correctie 2026-10-18 (niet-SOL-quote, feit):** `slow_legs.py` las alle curves, ook die met een andere quote-mint dan SOL (PUMP e.a.); daar staat `q` in eenheden van dat token. In `c_pos.parquet` zijn 78.439 van de 1.375.901 curve-posities (5,7 %) zulke posities, maar met Σ 'netto' 653.005 eenheden tegen 116.526 SOL op de SOL-curves, en bij een eerste koop ≥ 5e9 zijn het er 29.038 tegen 4.640. De sommen in §0–§3 (Σ +781 k, 393 k ≤ 1 min, de inzetten > 20 'SOL') zijn dus grotendeels geen SOL; alleen de 116 k SOL op SOL-curves telt. Niet opnieuw uitgesplitst (verbruikte data); de K1-vraag wordt point-in-time en SOL-only beantwoord in `2026-10-17-k1-rollend-label.md` §5. De engine (K3/F7) filtert wel op quote; K2 (reversed pools) is niet geraakt. Register E33.
+
 ## 0. Samenvatting
 
 - Groep C verdient op de **curve**, en vooral snel: van Σ +781 k SOL op gesloten rondes (dev, 18 dagen) komt 393 k uit houdtijden ≤ 1 min. De trage curve-rondes zijn wel groot: 1–5 min +163 k, 5–15 min +114 k, 15–60 min +73 k, 1–6 u +14 k, > 6 u +12 k. Pools (normaal) leveren honderden SOL, reversed pools ±1,3 k uit één cluster van 25 wallets.

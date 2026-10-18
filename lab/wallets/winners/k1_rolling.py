@@ -1,6 +1,7 @@
 """K1 with a rolling, point-in-time label (lab/reports/2026-10-17-k1-houdbaarheid.md §3, register E40). NAS job.
 
-Candidates = every wallet with at least one curve buy >= 3 SOL in the period (the sensitivity set); the fixed threshold
+Candidates = every wallet with at least one curve buy >= 3 SOL in the period on a SOL-quoted curve (SOL_QUOTE; the
+sensitivity set); the fixed threshold
 of the copy is 5 SOL (chosen once, E39), with 3 and 10 SOL shown as sensitivity only. Per candidate: curve rounds
 (wallet x mint over the period), cash per UTC day. Label for day t: over the 9 days before t the wallet had >= 7 days
 with positive cash on rounds that were closed **as of t** (tokens sold within 5 % of bought, counted over the days
@@ -22,7 +23,7 @@ no round was ever NULL, and such rounds were valued at the last curve state (the
 s.mints.complete_slot; a round whose curve completes before the entry (fb + d) is not entered (observable at the entry);
 one that completes between entry and exit is sold on its PumpSwap pool (s.mints.pool) at the last pool state before
 xs + d (constant product, the pool's fee bps), or at the pool's initial reserves when the pool has no row before xs + d
-(then a few slots later than xs + d: migration is a median 2 slots after completion); without a pool state the result is
+(then a few slots later than xs + d: migration is a median 2 slots after completion; its own settle label); without a pool state the result is
 unknown (NULL). The capacity simulation takes every entered round in causal order (fb, fb_tx of the signal buy), never
 on the exit; an unknown round keeps its slot busy and is counted apart, with a lower bound that books it as a total loss.
 
@@ -59,6 +60,11 @@ MIN_CAND = 3e9
 SIZE = 5e8
 CAP_SLOTS = 100_000  # ~6 h at 218 ms: the copy's time cap when the wallet has not sold (E39 §0 point 4)
 POOL_BPS = 30  # PumpSwap fee bps when the pool row carries none (lp 20 + protocol 5 + creator 5)
+SOL_KEY = "11111111111111111111111111111111"  # s.mints.quote_mint of a SOL-quoted curve (store default; pda.DEFAULT_KEY)
+# Only SOL-quoted curves: on a curve with another quote mint (PUMP, …) c.q is in that token's units, not lamports, so
+# "a buy >= 5 SOL" and the copy's 0.5 SOL would be in the wrong currency. Known at the creation (point-in-time). Found
+# 2026-10-18: in the E40 run 64 % of the rounds >= 5 "SOL" sat on such curves; see register E33/E39/E40.
+SOL_QUOTE = f"COALESCE(m.quote_mint, '{SOL_KEY}') = '{SOL_KEY}'"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 from backtest import costs  # noqa: E402
 from backtest.store import load_defaults  # noqa: E402
@@ -118,7 +124,7 @@ def main(argv=None):
     con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
     lo_all, hi_all = epochs[0][0], epochs[-1][1]
     con.execute("CREATE TABLE days AS SELECT day, slot0, row_number() OVER (ORDER BY slot0) AS di FROM (SELECT strftime(to_timestamp(block_time), '%Y-%m-%d') AS day, min(slot)::BIGINT AS slot0 FROM s.blocks GROUP BY 1)")
-    con.execute(f"CREATE TABLE cand AS SELECT DISTINCT trader AS wallet FROM s.curve WHERE is_buy AND q >= {MIN_CAND} AND slot >= {lo_all} AND slot < {hi_all} AND NOT mayhem_trade")
+    con.execute(f"CREATE TABLE cand AS SELECT DISTINCT c.trader AS wallet FROM s.curve c JOIN s.mints m USING (mint) WHERE c.is_buy AND c.q >= {MIN_CAND} AND c.slot >= {lo_all} AND c.slot < {hi_all} AND NOT c.mayhem_trade AND {SOL_QUOTE}")
     log("candidates", con.execute("SELECT count(*) FROM cand").fetchone()[0])
     first = True
     for lo, hi in epochs:
@@ -126,7 +132,7 @@ def main(argv=None):
             SELECT c.trader AS wallet, c.mint, c.slot::BIGINT AS slot, c.tx_index::BIGINT AS tx_index, c.is_buy, c.q::DOUBLE AS sol, c.t::DOUBLE AS tok,
                    (c.fee_bps + c.creator_bps) AS bps, c.tx_fee + c.priority_fee + c.jito_tip AS fee
             FROM s.curve c JOIN cand ON cand.wallet = c.trader LEFT JOIN s.mints m USING (mint)
-            WHERE c.slot >= {lo} AND c.slot < {hi} AND NOT c.mayhem_trade AND NOT COALESCE(m.mayhem, false)""")
+            WHERE c.slot >= {lo} AND c.slot < {hi} AND NOT c.mayhem_trade AND NOT COALESCE(m.mayhem, false) AND {SOL_QUOTE}""")
         con.execute("""CREATE OR REPLACE TABLE ag AS
             SELECT wallet, mint, d.day,
                    sum(CASE WHEN is_buy THEN -sol ELSE sol END) AS cash, sum(CASE WHEN is_buy THEN tok END) AS tok_in, sum(CASE WHEN NOT is_buy THEN tok END) AS tok_out,
@@ -215,7 +221,8 @@ def main(argv=None):
         cols.append(f"complete_slot IS NULL OR complete_slot >= fb + {d} AS entered_{d}")
         cols.append(f"""CASE WHEN NOT (complete_slot IS NULL OR complete_slot >= fb + {d}) THEN '{NOT_ENTERED}'
                              WHEN complete_slot IS NULL OR complete_slot >= xs + {d} THEN 'curve'
-                             WHEN COALESCE(p{d}, pinit) IS NOT NULL THEN 'pool (na migratie)' ELSE '{UNKNOWN}' END AS settle_{d}""")
+                             WHEN p{d} IS NOT NULL THEN 'pool (na migratie)'
+                             WHEN pinit IS NOT NULL THEN 'pool (na migratie, startreserves: nog geen poolrij vóór xs + d)' ELSE '{UNKNOWN}' END AS settle_{d}""")
         cols.append(f"""CASE WHEN NOT (complete_slot IS NULL OR complete_slot >= fb + {d}) THEN NULL
                              WHEN complete_slot IS NULL OR complete_slot >= xs + {d} THEN sell_sol(x{d}, {tok}, COALESCE(bps, 125)) - {SIZE} - {COST}
                              ELSE sell_sol(COALESCE(p{d}, pinit), {tok}, COALESCE(pbps, {POOL_BPS})) - {SIZE} - {COST} END AS h{d}""")
@@ -224,7 +231,7 @@ def main(argv=None):
     con.execute(f"COPY out TO '{W}/k1_rolling_rounds.parquet' (FORMAT PARQUET)")
     # tables
     L = ["# K1 met een rollend point-in-time label (E40, point-in-time versie na Codex-bevinding 6 en Codex-ronde 2)", "",
-         f"Kandidaten: wallets met een curve-koop ≥ {MIN_CAND/1e9:.0f} SOL in de periode; label voor dag t: in de {win} dagen vóór t ≥ {min_pos} dagen met positieve kas op rondes die *op dag t* gesloten waren (verkocht binnen 5 %, geteld over de dagen vóór t) en > {min_sol/1e9:.0f} SOL. "
+         f"Kandidaten: wallets met een curve-koop ≥ {MIN_CAND/1e9:.0f} SOL in de periode, alleen curves met SOL als quote (niet-SOL-quotes zoals PUMP tellen hun q in eigen eenheden); label voor dag t: in de {win} dagen vóór t ≥ {min_pos} dagen met positieve kas op rondes die *op dag t* gesloten waren (verkocht binnen 5 %, geteld over de dagen vóór t) en > {min_sol/1e9:.0f} SOL. "
          f"Kopie 0,5 SOL op fb + d van élke ronde van een gelabelde wallet (gesloten of niet), verkoop op xs + d met xs = hun eerste verkoop na de koop in transactievolgorde (ook later in hetzelfde slot), anders het plafond ({CAP_SLOTS:,} slots ≈ 6 u) of het einde van het epoch; "
          f"kosten 2 × {COST//2:,} lamports (base: fee, tip, verwachte mislukte pogingen). Vaste drempel {MIN_BUY/1e9:.0f} SOL; 3 en 10 SOL alleen als gevoeligheid. "
          "Voltooit de curve vóór de instap, dan wordt niet ingestapt; voltooit hij tussen instap en uitstap, dan verkoopt de kopie op de PumpSwap-pool (laatste poolstand vóór xs + d, anders de startreserves van de pool); zonder poolstand is de uitkomst onbekend (NULL). "
