@@ -115,6 +115,12 @@ const projectItem = (
   ...overrides,
 });
 
+// A direct node read of one Project item, from the same scripted snapshot sequence as the list.
+const projectItemNode = (nodes: Array<{ id: string }>, variables: unknown) => {
+  const found = nodes.find((node) => node.id === (variables as { itemId: string }).itemId);
+  return { node: found ? { project: { id: PROJECT.id }, ...found } : null };
+};
+
 const projectItemsResponse = (nodes: unknown[]) => ({
   node: {
     items: {
@@ -233,7 +239,8 @@ describe('Roadmap Sync exact managed-field clearing', () => {
       selectValue(phase, '0 Cutover & Cleanup'),
     ]);
     const cleared = projectItem(pullRequest, [selectValue(status, 'Done')]);
-    const reads = [[stale], [cleared]];
+    // The planning read, then one stale verification read before absence.
+    const reads = [[stale], [stale], [cleared]];
     const mutationInputs: unknown[] = [];
     const api = {
       request: vi.fn(async (query: string, variables: unknown, label: string) => {
@@ -242,6 +249,7 @@ describe('Roadmap Sync exact managed-field clearing', () => {
           expect(query).toContain('clearProjectV2ItemFieldValue');
           return clearResult('ITEM_69');
         }
+        if (label === 'read project item') return projectItemNode(reads.shift() ?? [cleared], variables);
         if (label === 'list project items') return projectItemsResponse(reads.shift() ?? [cleared]);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -285,7 +293,7 @@ describe('Roadmap Sync exact managed-field clearing', () => {
     const secondAlreadyClear = projectItem(second, []);
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'set Status') {
           mutations.push(label);
           return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'ITEM_90' } } };
@@ -293,6 +301,11 @@ describe('Roadmap Sync exact managed-field clearing', () => {
         if (label.startsWith('clear ')) {
           mutations.push(label);
           return clearResult('ITEM_91');
+        }
+        // Issue #91's stale V2 Phase was cleared elsewhere after the planning read: its fresh direct
+        // read before any field mutation shows it absent.
+        if (label === 'read project item') {
+          return projectItemNode([mutations.includes('set Status') ? firstReady : firstBefore, secondAlreadyClear], variables);
         }
         if (label === 'list project items') return projectItemsResponse([firstReady, secondAlreadyClear]);
         throw new Error(`unexpected GraphQL operation ${label}`);
@@ -342,11 +355,12 @@ describe('Roadmap Sync exact managed-field clearing', () => {
     ]);
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label.startsWith('clear ')) {
           mutations.push(label);
           return clearResult('ITEM_69');
         }
+        if (label === 'read project item') return projectItemNode([stale], variables);
         if (label === 'list project items') return projectItemsResponse([stale]);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -582,7 +596,8 @@ describe('Roadmap Sync exact managed-field clearing', () => {
     const afterEffort = projectItem(repositoryIssue, [dateValue(start, '2026-09-01'), dateValue(target, '2026-09-30')]);
     const afterStart = projectItem(repositoryIssue, [dateValue(target, '2026-09-30')]);
     const afterTarget = projectItem(repositoryIssue, []);
-    const reads = [[afterEffort], [afterStart], [afterTarget]];
+    // The first read is the fresh direct read that plans the item's clears.
+    const reads = [[initial], [afterEffort], [afterStart], [afterTarget]];
     const mutations: Array<{ label: string; variables: unknown }> = [];
     const api = {
       request: vi.fn(async (_query: string, variables: unknown, label: string) => {
@@ -590,6 +605,7 @@ describe('Roadmap Sync exact managed-field clearing', () => {
           mutations.push({ label, variables });
           return clearResult('ITEM_90');
         }
+        if (label === 'read project item') return projectItemNode(reads.shift() ?? [afterTarget], variables);
         if (label === 'list project items') return projectItemsResponse(reads.shift() ?? [afterTarget]);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),

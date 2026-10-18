@@ -194,7 +194,7 @@ describe('Roadmap Sync item visibility after ADD_ITEM', () => {
     expect(verifier.sleeps).toEqual(PROJECT_ITEM_VISIBILITY_DELAYS_MS.slice(1, 8));
   });
 
-  it('finds a new item through a direct read when the item list keeps lagging, without repeating the add', async () => {
+  it('verifies a new item through a direct read while the item list keeps lagging, without repeating the add', async () => {
     const target = issue(95);
     const labels: string[] = [];
     let listReads = 0;
@@ -218,9 +218,11 @@ describe('Roadmap Sync item visibility after ADD_ITEM', () => {
       new Map(), addPlan(target), verifier.options);
 
     expect(labels.filter((label) => label === 'add Issue #95')).toHaveLength(1);
-    // The standard window reads only the list; the direct read joins from the next read on.
-    expect(labels.indexOf('read project item')).toBe(1 + PROJECT_VERIFICATION_DELAYS_MS.length + 1);
-    expect(listReads).toBe(PROJECT_VERIFICATION_DELAYS_MS.length + 1);
+    // ADD_ITEM reads only its target item; the final audit then reads the full list once, joined at
+    // once by a direct read of the added item the list does not show yet.
+    expect(labels).toEqual(['add Issue #95', 'read project item', 'list project items', 'read project item']);
+    expect(listReads).toBe(1);
+    expect(verifier.sleeps).toEqual([]);
     expect(summary.executed).toEqual({ added: 1, archived: 0, unarchived: 0, fieldUpdates: 0, fieldClears: 0 });
     expect(summary.verified).toEqual({ active: 1, archived: 0, absent: 0 });
   });

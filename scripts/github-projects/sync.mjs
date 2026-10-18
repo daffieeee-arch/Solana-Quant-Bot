@@ -2636,8 +2636,8 @@ async function readProjectItem(api, projectId, itemId) {
 }
 
 /**
- * The Project's item list, and from the second read after the standard verification window on also
- * a direct node read of every item this run added that the list does not show yet. The list can lag
+ * The Project's item list, and from read `directFromRead` on also a direct node read of every item
+ * this run added that the list does not show yet (the final item audit passes 1). The list can lag
  * behind the item itself; both are reads of the same Project, so an item counts as visible when
  * either shows it (deduplicated by item id).
  */
@@ -2656,6 +2656,22 @@ export function itemListWithAddedItems(api, projectId, addedItemIds, directFromR
         seen.add(itemId);
       }
     }
+    return items;
+  };
+}
+
+/**
+ * Verification read for a mutation of one Project item: the latest gated snapshot with only the
+ * target item replaced by a direct node read (dropped when the node is not, or not yet, visible in
+ * this Project). The full item list is ~4 s per read and lags behind new items by up to minutes;
+ * the direct read sees the target at once. The other items are re-read in full by the final item
+ * audit, which still fails closed on any duplicate, unexpected or missing item.
+ */
+export function targetItemRead(api, projectId, baseItems, targetItemId) {
+  return async () => {
+    const direct = await readProjectItem(api, projectId, targetItemId);
+    const items = baseItems.filter((item) => item.id !== targetItemId);
+    if (direct) items.push(direct);
     return items;
   };
 }
@@ -3162,6 +3178,7 @@ export async function reconcileItems(
   let fieldClears = 0;
   const plannedFieldActions = { SET: 0, CLEAR: 0, NO_OP: 0 };
   let lastObservedItems = projectItems ?? repositoryItems;
+  const plannedItems = lastObservedItems;
   const knownItemsById = new Map(lastObservedItems.map((item) => [item.id, {
     contentId: item.content.id,
     kind: item.content.__typename,
@@ -3211,7 +3228,7 @@ export async function reconcileItems(
         ...verificationOptions,
         operationType: 'ADD_ITEM',
         identity: `${content.kind} #${content.number}`,
-        read: itemListWithAddedItems(api, project.id, [itemId]),
+        read: targetItemRead(api, project.id, lastObservedItems, itemId),
         classify: (items) => evaluateItemLifecycleProjection({
           items,
           targetItemId: itemId,
@@ -3240,7 +3257,7 @@ export async function reconcileItems(
         ...verificationOptions,
         operationType: 'UNARCHIVE_ITEM',
         identity: `${content.kind} #${content.number}`,
-        read: () => listProjectItems(api, project.id),
+        read: targetItemRead(api, project.id, lastObservedItems, item.id),
         classify: (items) => evaluateItemLifecycleProjection({
           items,
           targetItemId: item.id,
@@ -3268,7 +3285,7 @@ export async function reconcileItems(
         ...verificationOptions,
         operationType: 'ARCHIVE_ITEM',
         identity: `${content.kind} #${content.number}`,
-        read: () => listProjectItems(api, project.id),
+        read: targetItemRead(api, project.id, lastObservedItems, item.id),
         classify: (items) => evaluateItemLifecycleProjection({
           items,
           targetItemId: item.id,
@@ -3289,6 +3306,24 @@ export async function reconcileItems(
     }
 
     assert(item?.id, `${operation.action} ${content.kind} #${content.number} did not produce an active Project item`);
+    // Item verifications read only their target, so a later item's snapshot may be the planning read.
+    // Field mutations are planned from a fresh direct read of their item, as when every verification
+    // read the whole list: only an item the snapshot shows as needing a field change is read again.
+    if (operation.action !== 'ADD' && operation.action !== 'UNARCHIVE' && planManagedFieldReconciliation({
+      configuredFields: config.fields,
+      fieldsByName,
+      metadata,
+      currentValues: currentValueMap(item.fieldValues),
+    }).some((action) => action.action !== MANAGED_FIELD_ACTIONS.NO_OP)) {
+      lastObservedItems = await targetItemRead(api, project.id, lastObservedItems, item.id)();
+      item = rebindItemFromLatestProjection({
+        item,
+        content,
+        items: lastObservedItems,
+        repository: config.repository,
+        repositoryAliases: configuredRepositoryAliases(config),
+      });
+    }
     let current = currentValueMap(item.fieldValues);
     const capturedValues = new Map(current);
     const fieldActions = planManagedFieldReconciliation({
@@ -3341,7 +3376,7 @@ export async function reconcileItems(
           ...verificationOptions,
           operationType: fieldWasMutated ? 'UPDATE_ITEM_FIELD' : 'VERIFY_ITEM_FIELD',
           identity: `${content.kind} #${content.number} field=${action.fieldName}`,
-          read: () => listProjectItems(api, project.id),
+          read: targetItemRead(api, project.id, lastObservedItems, item.id),
           classify: (items) => evaluateItemFieldProjection({
             items,
             targetItemId: item.id,
@@ -3369,7 +3404,7 @@ export async function reconcileItems(
         ...verificationOptions,
         operationType: 'CLEAR_ITEM_FIELD',
         identity: `${content.kind} #${content.number} field=${action.fieldName}`,
-        read: () => listProjectItems(api, project.id),
+        read: targetItemRead(api, project.id, lastObservedItems, item.id),
         classify: (items) => evaluateItemFieldClearProjection({
           items,
           targetItemId: item.id,
@@ -3387,11 +3422,12 @@ export async function reconcileItems(
       current = currentValueMap(item.fieldValues);
     }
   }
-  let useCapturedSnapshot = true;
-  // Its first call is the audit's second read (the first is the captured snapshot), so the direct
-  // read joins at the audit's sixth read, as in ADD_ITEM.
-  const readFinalItems = itemListWithAddedItems(api, project.id, [...projectionLagEligibleItemIds],
-    PROJECT_VERIFICATION_DELAYS_MS.length);
+  // Item verifications read only their target item, so after any of them the latest snapshot is
+  // partly the planning read: the audit then starts from a fresh full list, joined at once by a
+  // direct read of every item this run added that the list does not show yet. Without them the
+  // planning read is the audit's first snapshot.
+  let useCapturedSnapshot = lastObservedItems === plannedItems;
+  const readFinalItems = itemListWithAddedItems(api, project.id, [...projectionLagEligibleItemIds], 1);
   const finalProjection = await verifyProjectProjection({
     delays: PROJECT_ITEM_VISIBILITY_DELAYS_MS,
     ...verificationOptions,
