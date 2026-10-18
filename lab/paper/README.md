@@ -173,9 +173,17 @@ segment, so at most ~3 h for the window. Up to the HWM it:
 So the positions open at the HWM are the first run's, rebuilt over the same events from their entry on.
 
 At the HWM the journal's state is taken: its open positions, its pending entries, and busy, cooldowns, the daily loss
-and the wallets from `hwm_state`. A journal-open position the replay does not hold is closed at the HWM at its last
-journaled mark, `exit_reason` `restart_lost` (no sell fill). This happens when its entry lies before the window,
-when its entry does not fill again, or when the replay exits before the HWM where the journal does not. A position of a
+and the wallets from `hwm_state` (a later day the replay has dated already keeps its own daily loss: a journaled exit
+counts in the daily loss of its own day). A journal-open position the replay does not hold is closed at the HWM at its last
+journaled mark, `exit_reason` `restart_lost` (no sell fill), with the journal's tokens and cost. This happens when its
+entry lies before the window, when its entry does not fill again or fills differently (other tokens or cost: the
+replay's position rests on its own fill and the pool state after it, so it cannot carry the journal's; it stays busy
+until its close), or when the replay exits before the HWM where the journal does not. Such exits are booked on the HWM's
+day (state `hwm`), also when the replay resumes before it saw any block time (every segment up to the HWM removed, or a
+catch-up without events); that day then closes with its export and report. A catch-up without events leaves the HWM
+where it was but writes its state again, with the restart's closes. Only a slot at or after the HWM's that the replay has
+dated already keeps its own day: a run that ended has its HWM at its last slot + 1, with the day of that last slot,
+which it closed itself. A position of a
 variant whose group is not configured now (runbook §5, "Group H off") is closed so too, without touching any current
 group's daily loss, wallet or cooldowns. At the HWM the open positions' pools go to `open-pools.json` at once (they are
 current); after that the file waits until the engine has caught up. The counts go to state `restarts` and the daily report ("## Restarts"). There, the last 6 h before

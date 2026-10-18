@@ -326,6 +326,8 @@ class Engine:
         self._end_of_data()
         if self.last_slot is not None:  # everything up to the last slot is committed now
             self._checkpoint(self.last_slot + 1, self.minute)
+        elif self.rs is not None:  # resumed without any event: the HWM stays, its state takes the restart's closes
+            self._checkpoint(self.rs.slot, self.rs.hwm.get("minute"))
         self.j.commit()
 
     def _journal_seed(self, seed):
@@ -367,7 +369,7 @@ class Engine:
             self._resume(slot)
         self._clock(slot, block_time)
         if self.replaying and slot >= self.rs.slot:  # the HWM was committed before this slot's events
-            self._resume(slot)
+            self._resume(slot, dated=block_time is not None)
         # 1. open positions on tokens with events in this slot
         for (venue, key), legs in by_key.items():
             for o in list(self.open.get(key, ())):
@@ -469,7 +471,7 @@ class Engine:
             self._load_risk()
             self._live_minute(minute)
             if self.replaying and slot >= self.rs.slot:  # the first run's commit at the HWM was here
-                self._resume(slot)
+                self._resume(slot, dated=True)
             self._checkpoint(slot, minute)
             self.j.commit()
         if self.last_slot is not None and slot - self.last_slot > GAP_SLOTS:
@@ -915,7 +917,12 @@ class Engine:
                 return
             b = self.rs.buys.get(k)
             if b is None or (b["slot"], b["tokens"], b["quote"]) != (slot, r.tokens, r.cost):
-                self.rs.counts["fills_different"] += 1
+                # Refilled differently (Codex 2): the replay's position rests on its own fill and on the pool state
+                # after it (its own impact included), so it cannot carry the journal's. Not opened: at the HWM the
+                # journal's position is closed at its last mark (restart_lost, the journal's tokens and cost), or the
+                # journal's exit applies.
+                self.rs.counts["fills_different"] += 1  # busy stays 'open', as journaled
+                return
         self.j.put("orders", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
                    size=size, status=status, reason=r.exit_reason if status != "filled" else None)
         if status != "filled":
@@ -1036,9 +1043,12 @@ class Engine:
         self._exit_effects(p, pnl, r.exit_slot, r.tokens, r.proceeds, r.cost, slot)
         self._drop(o)
 
-    def _exit_effects(self, p, pnl, exit_slot, tokens, proceeds, cost, slot):
-        """An exit's effect on the risk state: the daily loss, the paper wallet, the pool cooldown and busy."""
-        self._book_loss(p, pnl)
+    def _exit_effects(self, p, pnl, exit_slot, tokens, proceeds, cost, slot, day=None):
+        """An exit's effect on the risk state: the daily loss, the paper wallet, the pool cooldown and busy. day: a
+        journaled exit's day; its loss counts in that day only (an exit filled at an end-of-run HWM's slot, the next
+        day, is booked on the run's last day)."""
+        if day is None or day == self.day:
+            self._book_loss(p, pnl)
         self._wallet_tx(p, "sell", exit_slot or slot, pnl + self.scn.entry_total(cost) if tokens else pnl, settled=pnl)
         g = self._group(p)
         if (not p.family.startswith("N2_") and g.risk is not None and g.risk.pool_cooldown_h > 0 and tokens
@@ -1074,7 +1084,7 @@ class Engine:
         self.rs.closed.add(k)
         if (x["exit_slot"], x["exit_reason"], x["proceeds"]) != (r.exit_slot, r.exit_reason, r.proceeds):
             self.rs.counts["exits_different"] += 1
-        self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot)
+        self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot, day=x["day"])
 
     def _journal_exits(self, slot):
         """Replaying: the journal's exits up to this slot that the replay has not made itself. A position the replay
@@ -1099,14 +1109,23 @@ class Engine:
                     self.rs.counts["journal_exits_before_the_replay"] += 1
                 elif x["tokens"]:
                     self.rs.counts["journal_exits_of_positions_not_in_replay"] += 1
-            self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot)
+            self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot, day=x["day"])
 
-    def _resume(self, slot):
+    def _resume(self, slot, dated=False):
         """The HWM is reached (its commit point, or the first slot after it): the replay is checked against the
         journal, the journal's state is taken, and the engine writes again (paper/restart.py). The counts go to state
-        'restarts' and the daily report."""
+        'restarts' and the daily report. dated: _clock has dated this slot (at or after the HWM's) already."""
         rs, j = self.rs, self.journal
         slot = rs.slot if slot is None else slot
+        # The day the restart books on (its restart_lost exits, its record) and whose daily loss it takes. Before _clock
+        # dated a slot at or after the HWM's (the HWM's slot not in this replay, a catch-up that ends before it, or no
+        # block time at all: the keeper removed every segment up to the HWM; Codex 1), the HWM's day: the replay's own
+        # may be older or None. A dated slot keeps its own day: a run that ended has its HWM at its last slot + 1 with
+        # that last slot's day, which it closed itself, so a later day there starts with no loss.
+        hwm_day, replay_day = rs.hwm.get("day"), self.day
+        if hwm_day and not (dated and self.day):
+            self.day = hwm_day
+        same_day = not hwm_day or self.day == hwm_day
         if rs.first_slot is None:  # no event before the HWM in this replay
             self._load_replay(slot)
         c = rs.counts
@@ -1129,9 +1148,14 @@ class Engine:
                 continue
             if {k: v for k, v in g.cool.items() if v >= rs.slot} != gs["cool"]:
                 c["cooldowns_different"] += 1
-            if g.day_loss != gs["day_loss"]:  # a replay that started on the HWM's day lacks the day's exits before it
-                c["day_loss_from_before_the_replay" if rs.first_day == self.day else "day_loss_different"] += 1
-            g.cool, g.day_loss = dict(gs["cool"]), gs["day_loss"]
+            # A replay that started on the HWM's day lacks the day's exits before it; one that was not on the HWM's
+            # day itself (no event before the HWM, or an older day) rebuilt nothing of it.
+            if same_day and g.day_loss != gs["day_loss"]:
+                c["day_loss_from_before_the_replay" if rs.first_day == self.day or replay_day != self.day
+                  else "day_loss_different"] += 1
+            g.cool = dict(gs["cool"])
+            if same_day:  # a dated later day keeps its own loss: _exit_effects books each journal exit on its own day
+                g.day_loss = gs["day_loss"]
             g.wallet["realized"], g.wallet["txs"] = gs["realized"], deque(gs["txs"], maxlen=50)
             g.wallet_dirty = True
         # From here on the engine writes.

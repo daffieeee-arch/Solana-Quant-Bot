@@ -19,8 +19,9 @@ retained one (a replay runs at a few times real time). Up to the HWM:
 At the HWM the engine checks the replay against the journal and takes the journal's state (Engine._resume):
 - Open positions are the journal's `positions`.
   - Some position the replay cannot carry is closed at the HWM: exit_reason 'restart_lost', at its last journaled
-    mark (mark_pnl).
-  - That happens when the entry lies before the retained segments, when the entry does not fill again, or when the
+    mark (mark_pnl), with the journal's tokens and cost, on the HWM's day.
+  - That happens when the entry lies before the retained segments, when the entry does not fill again or fills
+    differently (tokens or cost: the replay's position rests on its own fill and the pool state after it), or when the
     replay exits before the HWM where the journal has the position still open.
 - Pending entries are the journal's entered signals without an order.
 - Busy, cooldowns, the daily loss and the wallets come from 'hwm_state'.
