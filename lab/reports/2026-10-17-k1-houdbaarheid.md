@@ -1,5 +1,7 @@
 # K1-houdbaarheid (E39): een kleine kopie van de curve-kopen van persistente wallets blijft op dag 10–18 positief — kandidaat, geen claim
 
+> **Correctie 2026-10-18 (Codex-bevinding 6):** naast de houdtijd-look-ahead (E40) selecteerde ook het universum 'gesloten rondes' (binnen 5 % verkocht, over de hele periode; uitstap in hetzelfde epoch; verkoop na hun laatste verkoop) op de uitkomst. Zie `2026-10-17-k1-rollend-label.md` §3 en register E33/E39/E40.
+
 LAB research, 2026-10-17. Vervolg op winnaars II (E33, §5: steekproef van 400 rondes per cel) en de agenda (idee 5). NAS-job 97 (`python -m wallets.winners.slow_replay 100000 out curve`, 3e1bd84) herhaalde de 0,5 SOL-kopie voor **alle** trage, gesloten curve-rondes (houdtijd ≥ 1 min) van groep C op dag 10–18; groep C is op dag 1–9 gelabeld (gesloten rondes, ≥ 7 van 9 dagen positief, > 10 SOL), dus de uitkomst op dag 10–18 is point-in-time ten opzichte van het label. Alleen dev; hold-out en clean niet gelezen. Verkennend; labels **feit** / **modelaanname** / **reconstructie**. Uitvoer `wallets/winners-v1/c_replay-out-curve.parquet` (sha 40974ae6…).
 
 ## 0. Samenvatting
