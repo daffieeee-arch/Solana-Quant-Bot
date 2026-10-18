@@ -2,6 +2,8 @@
 
 LAB research, 2026-10-17. Vervolg op `2026-10-17-winnaars-traag.md` §3c/§6 (E33, kandidaat K2). Opdracht (coördinator): herken de fabriekspools zonder het cluster te kennen, met alleen wat in minuut 1–2 zichtbaar is; instap in minuut 2–7 met de kosten en vertraging van de engine (d 2/3); per dagblok; aandeel van één operator; dagtrend. Alleen dev 1033–1046; hold-out en clean niet gelezen. Verkennend; labels **feit** / **reconstructie** / **modelaanname** / **onbekend**.
 
+> **Correctie 2026-10-18 (Codex-bevinding 7, bevestigd):** het kenmerk "creator die nooit handelde" was in `k2_pools.py` geteld over de **hele** dev-periode (`creator_n_trades IS NULL`), dus ook met trades ná de poolcreatie; dat is geen point-in-time kenmerk. Herteld op dezelfde `k2_pools.parquet` met het wel point-in-time kenmerk `creator_traded_before` (eerste trade van de creator vóór de create_slot): R0 13.877 → 20.518 matches (precisie 24 → 16 %), **R1 3.518 → 3.535 (precisie 92,0 → 91,6 %, recall 97,7 % gelijk)**, R2 2.996 → 3.008 (99,3 → 98,9 %), R3 ongewijzigd (2.980; 99,3 %, 89,3 %). De zin "alles point-in-time" hieronder gold dus niet voor R0–R2 zoals gedraaid; de conclusie (herkenbaar, maar niet te verhandelen door de 5-minutencyclus) verandert niet, want die rust op de draintiming, niet op dit kenmerk. Scripts `k2_pools.py` (nu `creator_trades_before` en `creator_n_trades_period`), `k2_sim.py`, `drain_features.py`, `drain_classes.py` gebruiken sindsdien het point-in-time kenmerk; de simulatie van §3 is niet herdraaid (R3-selectie gelijk); E34 en E37 zijn wel herdraaid (zie die noten). Het `factory`-label (cluster-wallet handelde ooit in de pool, ook ná t) is een periode-label: hier het doel van de regels, geen kenmerk.
+
 ## 0. Samenvatting
 
 - **Herkenbaar:** ja, scherp. Een reversed pool met een eenmalige creator die nooit eerder handelde en ≥ 300 SOL startliquiditeit (b0) is in 92 % een fabriekspool en vangt 98 % van de 3.312; met ≥ 40 traders en ≥ 30 SOL netto-instroom in de eerste 2 minuten erbij 99 % precisie bij 89 % recall. Alles point-in-time (creator-historie, b0, instroom) — *feit*.
@@ -33,10 +35,10 @@ LAB research, 2026-10-17. Vervolg op `2026-10-17-winnaars-traag.md` §3c/§6 (E3
 
 | regel (alleen minuut-1–2-informatie) | matches | fabriek | precisie | recall | dag 1–9 / 10–18 |
 |---|---|---|---|---|---|
-| R0 eenmalige creator, nooit gehandeld | 13.877 | 3.312 | 24 % | 100 % | 6.171 / 7.706 |
-| R1 R0 + b0 ≥ 300 SOL | 3.518 | 3.237 | 92 % | 98 % | 1.364 / 2.154 |
-| R2 R1 + ≥ 40 traders + instroom ≥ 30 SOL | 2.996 | 2.974 | 99 % | 90 % | 1.103 / 1.893 |
-| **R3** R2 + geen tips, geen creator-trades | **2.980** | 2.959 | **99 %** | 89 % | 1.097 / 1.883 |
+| R0 eenmalige creator, nooit gehandeld (periode; point-in-time: 20.518, 16 %) | 13.877 | 3.312 | 24 % | 100 % | 6.171 / 7.706 |
+| R1 R0 + b0 ≥ 300 SOL (point-in-time: 3.535, 91,6 %, 98 %) | 3.518 | 3.237 | 92 % | 98 % | 1.364 / 2.154 |
+| R2 R1 + ≥ 40 traders + instroom ≥ 30 SOL (point-in-time: 3.008, 98,9 %, 90 %) | 2.996 | 2.974 | 99 % | 90 % | 1.103 / 1.893 |
+| **R3** R2 + geen tips, geen creator-trades (point-in-time gelijk) | **2.980** | 2.959 | **99 %** | 89 % | 1.097 / 1.883 |
 | R4 alleen b0 ≥ 300 | 5.816 | 3.237 | 56 % | 98 % | 2.566 / 3.250 |
 | R5 alleen ≥ 40 traders + instroom ≥ 30 | 11.757 | 3.039 | 26 % | 92 % | 4.686 / 7.071 |
 

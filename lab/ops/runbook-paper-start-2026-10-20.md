@@ -46,6 +46,7 @@ Job 91 (arms on, 2c3e5fe) counts as green when all of these hold:
 - unexplained = 0, with `farm_incomplete` and `farm_label_order` as allowed causes:
   - `farm_label_order`: the farm label differs although live received every trade of the pool's farm hour, because the pool's backfill arrived after its first recorded trades;
   - compare.md counts it apart (1 trigger of 943 in job 91);
+  - it counts only where the label decided the signal (one side skipped `farm flagged` in an organic-only group), never for an order, fill or exit that differs on its own (Codex 4). Checked 2026-10-18 for job 92y: its 2 rows are the H arms `flow300_H6` and `flow300_tp100_H6` at that trigger, skipped `farm flagged` in the replay and `busy` live (the same earlier H position on both sides), without orders; K3 there is the same on both sides;
 - RSS plateaus in `state.jsonl`;
 - reconcile is clean outside the simulated gaps: `ok_outside_gaps` in `reconcile.json`. Its `ok` also counts the rows the gap segments miss by design (49,249 in job 91, all in the 15 gap segments).
 
@@ -274,6 +275,15 @@ systemctl --user stop lab-paper lab-recorder
 2. report it to the coordinator;
 3. a new NAS build replaces the binary (`/lab/ops/build-recorder-bookworm.sh <sha>`).
 
+**Replacing the recorder binary** (the first nightly bundle brings the build of #358, the budget reservation; the coordinator notes its sha256 at the NAS build). Stop the old recorder cleanly first. A clean stop writes the last segment and leaves no unfinished segment directory. The new binary counts such a directory as unknown spend (exit 75) when today's `budget.json` is an older recorder's, without a reservation.
+```bash
+systemctl --user stop lab-paper lab-recorder                     # clean stop: the last segment is written
+ln -sfn lab-recorder-<sha7>-bookworm $LAB/bin/lab-recorder        # the build copied from the NAS, as in 0.4
+sha256sum $LAB/bin/lab-recorder-<sha7>-bookworm                  # as noted at the NAS build
+systemctl --user start lab-recorder lab-paper
+grep -c reserved_bytes $LAB/recorder/budget.json                  # 1: the new binary saved its first reservation
+```
+
 **The engine.** The paper engine and the retention timer run from the run checkout. Stop them before you replace it; the recorder runs from `$LAB/bin` and keeps running.
 ```bash
 systemctl --user disable --now lab-paper.timer lab-live-retention.timer
@@ -285,12 +295,12 @@ systemctl --user enable --now lab-paper.timer lab-live-retention.timer
 ```
 The journal stays; writes are idempotent per key.
 
-**The recorder stops with "today's spend is unknown"** (exit 75, `recorder.log`). This happens after an unreadable `budget.json` or `_segment.json` of today, or after an interrupted segment write when there is no `budget.json` of today. Check what is broken. Then the owner restarts it once for that day with the spend the Triton dashboard shows:
+**The recorder stops with "today's spend is unknown"** (exit 75, `recorder.log`). This happens after an unreadable `budget.json` or `_segment.json` of today, or after an interrupted segment write when there is no `budget.json` of today. From the build of #358 on, it also happens when today's `budget.json` has no reservation (`reserved_bytes`), for example one written by the older recorder. Check what is broken. Then the owner restarts it once for that day with the spend the Triton dashboard shows:
 ```bash
 sed -i 's/^RECORDER_ARGS="\(.*\)"$/RECORDER_ARGS="\1 --budget-assume-spent <YYYY-MM-DD>=<bytes>"/' ~/.config/solana-lab/live.env
 systemctl --user start lab-recorder lab-paper
 sed -i 's/ --budget-assume-spent [^"]*//' ~/.config/solana-lab/live.env       # off again (it holds for that day only)
 ```
-Exit 74 (a segment could not be written, e.g. a full disk) restarts by itself and resumes after the last segment on disk.
+Exit 74 (a segment could not be written, e.g. a full disk; from the build of #358 on also `budget.json`) restarts by itself and resumes after the last segment on disk. From #358 on, the restart counts the budget reservation on disk: at most one sustainable minute more than came, with a `budget` row.
 
 **A disk emergency** writes `locks/disk-stopped` (README, "Disk guard"). Only the coordinator removes it, after checking.

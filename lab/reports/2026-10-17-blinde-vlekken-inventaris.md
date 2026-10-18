@@ -21,6 +21,6 @@ LAB research, 2026-10-17, op verzoek van de eigenaar (via de coördinator): "sla
 
 ## Wat ik hieruit haal (inschatting)
 
-- **Niets in deze lijst wijzigt een bestaande uitkomst op dev.** De punten die het kostenmodel of de veiligheid raken zijn 7 (landingskans en slippage-fouten: meetbaar uit failed_txs van meer epochs), 4 en 5 (authorities en Token-2022: een live-check vóór de instap, en een kleine extractie om de frequentie op dev te tellen).
+- **Niets in deze lijst wijzigt een bestaande uitkomst op dev.** De punten die het kostenmodel of de veiligheid raken zijn 7 (uitvoeringssucces van opgenomen transacties en slippage-fouten: meetbaar uit failed_txs van meer epochs; de landingskans zelf niet — nooit opgenomen transacties staan in geen enkele bron, correctie 2026-10-18), 4 en 5 (authorities en Token-2022: een live-check vóór de instap, en een kleine extractie om de frequentie op dev te tellen).
 - **Wat ik zou doen, in volgorde:** (a) de slippage-/landingsmeting uit `failed_txs` van 1040/1045 als één tabel (VPS, bestaat al), en zo nodig tx_ctx voor twee extra dev-epochs in een vrij OF1-venster; (b) de spec voor Lab Backtest: `InitializeMint`/`SetAuthority`/Token-2022-extensie-initialisaties voor een mint-lijst (na de HWM-PR), gecombineerd met de live `getAccountInfo`-check; (c) de rest alleen op verzoek.
 - **Wat ik niet zou doen:** logs en volledige accountlijsten bewaren (volume zonder vraag), houdersledgers voor reversed-tokens (1,6 TB per 2 epochs, E22-besluit), leader/rewards.
