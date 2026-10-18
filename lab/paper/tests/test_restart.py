@@ -502,13 +502,16 @@ def test_the_live_start_takes_its_window_from_a_hwm_without_a_minute(tmp_path, m
 
 
 @pytest.mark.parametrize("from_slot", [501_301, 10**9], ids=["first-event-past-the-hwm", "no-event"])
-def test_a_resume_before_any_block_time_books_on_the_hwms_day(tmp_path, from_slot):
+def test_a_resume_before_any_block_time_books_on_the_hwms_day(tmp_path, monkeypatch, from_slot):
     """Codex 1 (LAB review: confirmed). The keeper removed every segment up to the HWM (an outage of more than ~3 days,
     or a new recorder root), or a catch-up brings no event at all: the replay resumes before it saw a block time. B's
     restart_lost exit is booked on the HWM's day, the HWM's daily loss stays (no day change follows inside that day),
-    and that day closes with its export and report."""
+    and that day closes with its export and report. A's exit lies before the journal rows this replay reads (a margin
+    of 100 slots here): the day loss it lacks is from before the replay, no difference. Without any event the HWM stays
+    where it was, but its state takes the restart's closes, so the next start keeps B's loss and B is not busy."""
     from paper.report import daily_report
 
+    monkeypatch.setattr(RS, "MARGIN_SLOTS", 100)
     crashed(tmp_path)
     r = engine(tmp_path, "r", Later(TOKENS, from_slot=from_slot))
     day = r.rs.hwm["day"]
@@ -520,10 +523,19 @@ def test_a_resume_before_any_block_time_books_on_the_hwms_day(tmp_path, from_slo
     assert r.primary.day_loss == a["pnl"] + xs[0]["pnl"]
     rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[0]
     assert rec["day"] == day and rec["counts"]["restart_lost"] == 1 and "day_loss_different" not in rec["counts"]
+    assert rec["counts"]["day_loss_from_before_the_replay"] == 1
     report = open(os.path.join(r.journal.dir, day, "report.md")).read()
     assert "## Restarts" in report and "restart_lost 1" in report
     assert [x["key"] for x in pq.read_table(os.path.join(r.journal.dir, day, "exits.parquet")).to_pylist()] == ["A", "B"]
     daily_report(r.journal, day)  # every exit has a day: the stop rule's day comparison holds
+    exits, w = r.journal.rows("exits"), wallet(r.journal)
+    assert w["balance_lamports"] == 10 * SOL + a["pnl"] + xs[0]["pnl"]
+    r.journal.close()
+    again = engine(tmp_path, "r", Later(TOKENS, from_slot=500_500))  # the next start, on the whole window
+    again.run()
+    w2 = wallet(again.journal)
+    assert again.journal.rows("exits") == exits and (w2["balance_lamports"], w2["txs"]) == (w["balance_lamports"], w["txs"])
+    assert again.primary.day_loss == a["pnl"] + xs[0]["pnl"] and again.busy.get(("F7", "tp4_T600", "B")) != "open"
 
 
 def test_a_position_the_replay_refills_differently_is_closed_with_the_journals_fill(tmp_path):
@@ -547,4 +559,55 @@ def test_a_position_the_replay_refills_differently_is_closed_with_the_journals_f
     a = r.journal.rows("exits", "key = 'A'")[0]
     assert wallet(r.journal)["balance_lamports"] == 10 * SOL + a["pnl"] + xs[0]["pnl"]
     rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[0]
-    assert rec["counts"]["fills_different"] == 1 and rec["counts"]["restart_lost"] == 1
+    # B stays busy ('open', as journaled) until its close: no busy difference. The replay holds no B: its exposure.
+    assert {k: v for k, v in rec["counts"].items() if k not in RS.BEFORE} == {
+        "fills_different": 1, "restart_lost": 1, "exposure_different": 1}, rec["counts"]
+
+
+# Slot 520_000 is 00:00 UTC in the synthetic clock (1_790_000_000 + 0.4 s per slot).
+DAY_TOKENS = {"A": trig(500_000, [(500_100, "W", "buy", 150 * T)]),
+              "B": trig(519_500, [(519_700, "Z", "buy", T), (520_600, "Y", "buy", 150 * T)]),
+              "C": ("C2", [(519_800, "X", "buy", T), (520_000, "X2", "buy", T), (520_150, "V", "buy", T),
+                           (520_700, "U", "buy", T)])}
+
+
+def test_a_resume_before_the_hwms_slot_takes_the_hwms_day_not_the_replays(tmp_path):
+    """LAB review on Codex 1: the HWM is the first slot of a day (520_000) and the replay lacks it, so its last day is
+    the day before. It resumes before _clock dates the next slot (520_150): B's restart_lost exit, the restart and the
+    daily loss are the HWM's day's, not the replay's older one."""
+    from paper.engine import _day
+
+    e = engine(tmp_path, "r", Later(DAY_TOKENS, crash_after=11))  # dies after its commit at 520_000, B open
+    hwm = crash(e)
+    assert hwm["slot"] == 520_000 and hwm["day"] == _day(1_790_000_000 + int(520_000 * 0.4))
+    assert [p["key"] for p in e.journal.rows("positions")] == ["B"]
+    before = json.loads(e.journal.state(RS.HWM_STATE_KEY))["groups"]["K3"]["day_loss"]
+    e.journal.close()
+    r = engine(tmp_path, "r", Later(DAY_TOKENS, from_slot=519_600, skip={520_000}))  # B's entry before the window
+    r.run()
+    xs = r.journal.rows("exits", "key = 'B'")
+    assert len(xs) == 1 and xs[0]["exit_reason"] == "restart_lost" and xs[0]["day"] == hwm["day"]
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[0]
+    assert rec["day"] == hwm["day"] and r.primary.day_loss == before + xs[0]["pnl"]
+
+
+def test_a_dated_slot_at_an_end_of_run_hwm_keeps_its_own_day(tmp_path):
+    """LAB review on Codex 1: a run that ended has its HWM at its last slot + 1 with the last slot's day, which it closed
+    itself. When that slot starts the next day and the next start has an event there, _clock dates it before the
+    resume: the slot's signals are the new day's, and the new day starts without the old day's loss."""
+    from paper.engine import _day
+
+    first = {"A": TOKENS["A"], "C": ("C2", [(519_900, "X", "buy", T), (519_999, "X1", "buy", T)])}  # A: a loss on the old day
+    u = engine(tmp_path, "r", Later(first))
+    u.run()
+    hwm = json.loads(u.journal.state(RS.HWM_KEY))
+    old, new = _day(1_790_000_000 + int(519_999 * 0.4)), _day(1_790_000_000 + int(520_000 * 0.4))
+    assert (hwm["slot"], hwm["day"]) == (520_000, old) and old != new
+    u.journal.close()
+    later = {**first, "T": trig(519_960, creator="CT")}  # its trigger, the large sell, is at 520_000
+    r = engine(tmp_path, "r", Later(later))
+    r.run()
+    sig = r.journal.rows("signals", "key = 'T'")
+    assert sig and {s["t"] for s in sig} == {520_000} and {s["day"] for s in sig} == {new}
+    assert json.loads(r.journal.state(RS.RESTARTS_KEY))[0]["day"] == new
+    assert r.primary.day_loss == sum(x["pnl"] for x in r.journal.rows("exits", "day = ?", (new,)))
