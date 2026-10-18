@@ -11,8 +11,8 @@
   },
   "project": {
     "title": "Solana Quant Platform — Roadmap & Cockpit",
-    "shortDescription": "Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence, Research Observatory before Professional Workstation, and edge discovery or falsification. Profitability is not assumed.",
-    "readme": "# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/Solana-Quant-Bot/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation."
+    "shortDescription": "Solana memecoin-bot op pump.fun en PumpSwap, alleen met Triton One-data. Eerst bewijzen met paper trading; winst wordt niet aangenomen.",
+    "readme": "# Solana Quant Bot — roadmap\n\nDit bord toont de lab-taken en wat er is opgeleverd. Het plan staat in `data-old-faithful-one/lab/research/plan-week2-8-2026-10-09.md`.\n\n- **Nu bezig**: open taken per status.\n- **Opgeleverd**: samengevoegde PR's; afgeronde kaartjes gaan na 7 dagen naar het archief.\n- **Open PR's**: werk dat nog gecontroleerd of gemerged wordt.\n- **Onderzoek** en **Paper en live**: taken per gebied.\n- **Alle taken**: alle taken met start- en streefdatum.\n- **Archief V2** en **Migration Ledger**: het bevroren V2-programma, alleen ter referentie.\n\nAlleen paper trading, alleen Triton One-data. Een status op dit bord is planning, geen bewijs: resultaten staan in de rapporten en PR's.\n\nVelden worden bijgewerkt door de Roadmap Sync op main; handmatige wijzigingen in beheerde velden worden overschreven."
   },
   "fields": [
     {
@@ -152,7 +152,7 @@
     { "name": "Target date", "dataType": "DATE" }
   ],
   "itemRetention": {
-    "closed_item_retention_days": 30,
+    "closed_item_retention_days": 7,
     "pre_v2_merged_pr_max_number": 68,
     "pre_v2_merged_pr_numbers": [
       1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
@@ -167,53 +167,53 @@
   },
   "views": [
     {
-      "name": "Now",
+      "name": "Nu bezig",
       "layout": "BOARD",
-      "filter": "v2-disposition:\"ACTIVE NOW\" -status:Done,Cancelled -work-type:Program,Epic",
-      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
-      "aliases": ["Delivery Board"]
+      "filter": "is:issue is:open",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Evidence", "Start date", "Target date", "Assignees"],
+      "aliases": ["Now", "Delivery Board"]
     },
     {
-      "name": "Next",
+      "name": "Opgeleverd",
       "layout": "TABLE",
-      "filter": "v2-disposition:NEXT -status:Done,Cancelled -work-type:Program,Epic",
-      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
-      "aliases": ["P0 Blockers"]
+      "filter": "is:pr is:merged",
+      "visibleFields": ["Title", "Status", "Area", "Work Type", "Assignees"],
+      "aliases": ["Next", "P0 Blockers"]
     },
     {
-      "name": "Data",
+      "name": "Open PR's",
       "layout": "TABLE",
-      "filter": "v2-phase:\"1 Pump Protocol Truth\",\"2 Authentic Acquisition\",\"3 Bronze & Silver\",\"5 Scale & Data Sufficiency\" v2-disposition:\"ACTIVE NOW\",NEXT,LATER",
-      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
-      "aliases": ["Data & Research"]
+      "filter": "is:pr is:open",
+      "visibleFields": ["Title", "Status", "Area", "Work Type", "Assignees"],
+      "aliases": ["Data", "Data & Research"]
     },
     {
-      "name": "Observatory",
+      "name": "Onderzoek",
       "layout": "TABLE",
-      "filter": "v2-phase:\"4 Research Observatory\" v2-disposition:\"ACTIVE NOW\",NEXT,LATER",
-      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
-      "aliases": ["Frontend Cockpit"]
+      "filter": "is:issue area:Research,ML",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Evidence", "Start date", "Target date", "Assignees"],
+      "aliases": ["Observatory", "Frontend Cockpit"]
     },
     {
-      "name": "Research",
+      "name": "Paper en live",
       "layout": "TABLE",
-      "filter": "v2-phase:\"5 Scale & Data Sufficiency\",\"6 Gold & Edge Validation\" v2-disposition:\"ACTIVE NOW\",NEXT,LATER",
-      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
-      "aliases": ["Recently Updated"]
+      "filter": "is:issue area:\"Live Shadow\",Execution",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Evidence", "Start date", "Target date", "Assignees"],
+      "aliases": ["Research", "Recently Updated"]
     },
     {
-      "name": "Later",
+      "name": "Alle taken",
       "layout": "TABLE",
-      "filter": "v2-disposition:LATER",
-      "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
-      "aliases": ["Executive Roadmap"]
+      "filter": "is:issue",
+      "visibleFields": ["Title", "Status", "Priority", "Area", "Evidence", "Start date", "Target date", "Assignees"],
+      "aliases": ["Later", "Executive Roadmap"]
     },
     {
-      "name": "Retired",
+      "name": "Archief V2",
       "layout": "TABLE",
       "filter": "v2-disposition:SUPERSEDED,RETIRED",
       "visibleFields": ["Title", "Status", "V2 Disposition", "V2 Phase", "Priority", "Area", "Work Type", "Evidence", "Risk", "Assignees"],
-      "aliases": ["Done & Cancelled"]
+      "aliases": ["Retired", "Done & Cancelled"]
     },
     {
       "name": "Migration Ledger",

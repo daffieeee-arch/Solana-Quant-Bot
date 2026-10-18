@@ -163,7 +163,7 @@ describe('GitHub Projects roadmap config', () => {
     expect(validateProjectConfig(production).repository).toBe(production.repository);
   });
 
-  it('pins the reviewed V2 fields, Project copy, and eight migration-safe views', () => {
+  it('pins the reviewed V2 fields, the lab Project copy, and eight views renamed in place', () => {
     const production = JSON.parse(readFileSync('roadmap/project-config.json', 'utf8')) as {
       project: { shortDescription: string; readme: string };
       fields: Array<{ name: string; options?: Array<{ name: string }> }>;
@@ -194,50 +194,45 @@ describe('GitHub Projects roadmap config', () => {
     expect(optionNames('V2 Disposition')).toEqual([
       'ACTIVE NOW', 'NEXT', 'LATER', 'SPLIT', 'SUPERSEDED', 'RETIRED',
     ]);
-    expect(production.project.shortDescription).toBe('Data-first, Triton-only Solana/Pump quant program (E0): authentic evidence, Research Observatory before Professional Workstation, and edge discovery or falsification. Profitability is not assumed.');
-    expect(production.project.readme).toBe('# Solana Quant Platform V2\n\nProject #4 is the active delivery cockpit for program E0: build authentic, point-in-time Solana/Pump evidence and discover a defensible edge or falsify the hypothesis. Profitability is not assumed.\n\n- Authoritative handoff: [docs/HANDOFF_V2.md](https://github.com/daffieeee-arch/Solana-Quant-Bot/blob/main/docs/HANDOFF_V2.md)\n- Network boundary: Triton One only.\n- Product order: authentic data and Research Observatory before the Professional Trading Workstation, prospective shadow and new paper engine.\n- Project status is delivery metadata, never research evidence by itself.\n\nManual edits to synchronized fields can be overwritten by the next trusted-default-branch reconciliation.');
+    expect(production.project.shortDescription).toBe('Solana memecoin-bot op pump.fun en PumpSwap, alleen met Triton One-data. Eerst bewijzen met paper trading; winst wordt niet aangenomen.');
+    expect(production.project.readme).toBe('# Solana Quant Bot — roadmap\n\nDit bord toont de lab-taken en wat er is opgeleverd. Het plan staat in `data-old-faithful-one/lab/research/plan-week2-8-2026-10-09.md`.\n\n- **Nu bezig**: open taken per status.\n- **Opgeleverd**: samengevoegde PR\'s; afgeronde kaartjes gaan na 7 dagen naar het archief.\n- **Open PR\'s**: werk dat nog gecontroleerd of gemerged wordt.\n- **Onderzoek** en **Paper en live**: taken per gebied.\n- **Alle taken**: alle taken met start- en streefdatum.\n- **Archief V2** en **Migration Ledger**: het bevroren V2-programma, alleen ter referentie.\n\nAlleen paper trading, alleen Triton One-data. Een status op dit bord is planning, geen bewijs: resultaten staan in de rapporten en PR\'s.\n\nVelden worden bijgewerkt door de Roadmap Sync op main; handmatige wijzigingen in beheerde velden worden overschreven.');
 
-    const visibleFields = [
-      'Title', 'Status', 'V2 Disposition', 'V2 Phase', 'Priority', 'Area',
-      'Work Type', 'Evidence', 'Risk', 'Assignees',
-    ];
+    // Each view keeps its Project view id: its earlier name is its first alias.
+    const issueFields = ['Title', 'Status', 'Priority', 'Area', 'Evidence', 'Start date', 'Target date', 'Assignees'];
+    const pullRequestFields = ['Title', 'Status', 'Area', 'Work Type', 'Assignees'];
+    const v2Fields = ['Title', 'Status', 'V2 Disposition', 'V2 Phase', 'Priority', 'Area', 'Work Type', 'Evidence', 'Risk', 'Assignees'];
     expect(production.views).toEqual([
       {
-        name: 'Now', layout: 'BOARD',
-        filter: 'v2-disposition:"ACTIVE NOW" -status:Done,Cancelled -work-type:Program,Epic',
-        visibleFields, aliases: ['Delivery Board'],
+        name: 'Nu bezig', layout: 'BOARD', filter: 'is:issue is:open',
+        visibleFields: issueFields, aliases: ['Now', 'Delivery Board'],
       },
       {
-        name: 'Next', layout: 'TABLE',
-        filter: 'v2-disposition:NEXT -status:Done,Cancelled -work-type:Program,Epic',
-        visibleFields, aliases: ['P0 Blockers'],
+        name: 'Opgeleverd', layout: 'TABLE', filter: 'is:pr is:merged',
+        visibleFields: pullRequestFields, aliases: ['Next', 'P0 Blockers'],
       },
       {
-        name: 'Data', layout: 'TABLE',
-        filter: 'v2-phase:"1 Pump Protocol Truth","2 Authentic Acquisition","3 Bronze & Silver","5 Scale & Data Sufficiency" v2-disposition:"ACTIVE NOW",NEXT,LATER',
-        visibleFields, aliases: ['Data & Research'],
+        name: 'Open PR\'s', layout: 'TABLE', filter: 'is:pr is:open',
+        visibleFields: pullRequestFields, aliases: ['Data', 'Data & Research'],
       },
       {
-        name: 'Observatory', layout: 'TABLE',
-        filter: 'v2-phase:"4 Research Observatory" v2-disposition:"ACTIVE NOW",NEXT,LATER',
-        visibleFields, aliases: ['Frontend Cockpit'],
+        name: 'Onderzoek', layout: 'TABLE', filter: 'is:issue area:Research,ML',
+        visibleFields: issueFields, aliases: ['Observatory', 'Frontend Cockpit'],
       },
       {
-        name: 'Research', layout: 'TABLE',
-        filter: 'v2-phase:"5 Scale & Data Sufficiency","6 Gold & Edge Validation" v2-disposition:"ACTIVE NOW",NEXT,LATER',
-        visibleFields, aliases: ['Recently Updated'],
+        name: 'Paper en live', layout: 'TABLE', filter: 'is:issue area:\"Live Shadow\",Execution',
+        visibleFields: issueFields, aliases: ['Research', 'Recently Updated'],
       },
       {
-        name: 'Later', layout: 'TABLE', filter: 'v2-disposition:LATER',
-        visibleFields, aliases: ['Executive Roadmap'],
+        name: 'Alle taken', layout: 'TABLE', filter: 'is:issue',
+        visibleFields: issueFields, aliases: ['Later', 'Executive Roadmap'],
       },
       {
-        name: 'Retired', layout: 'TABLE', filter: 'v2-disposition:SUPERSEDED,RETIRED',
-        visibleFields, aliases: ['Done & Cancelled'],
+        name: 'Archief V2', layout: 'TABLE', filter: 'v2-disposition:SUPERSEDED,RETIRED',
+        visibleFields: v2Fields, aliases: ['Retired', 'Done & Cancelled'],
       },
       {
         name: 'Migration Ledger', layout: 'TABLE', filter: 'v2-disposition:SPLIT,SUPERSEDED,RETIRED',
-        visibleFields, aliases: ['Live Shadow & Execution'],
+        visibleFields: v2Fields, aliases: ['Live Shadow & Execution'],
       },
     ]);
   });
