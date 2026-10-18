@@ -32,10 +32,14 @@ log "start $STEP commit=$COMMIT out=$OUT"
 if [ "$STEP" = build ]; then
   cd "$REPO/lab/live"
   # lab/live needs no libclang (no clang-sys or bindgen in its Cargo.lock), so a fresh target builds; the newest earlier
-  # checkout's target only saves time (its registry crates are reused, this crate is rebuilt for its own path).
+  # checkout's target only saves time (its registry crates are reused). cp -a keeps that build's file times, so this
+  # crate's sources (and the extractor's, compiled in) are touched to make cargo rebuild it, as build-recorder-bookworm.sh
+  # does: never the other commit's binary or tests.
   if [ ! -d target ]; then
     prev=$(ls -dt /lab/code/repo-*/lab/live/target 2>/dev/null | head -1 || true)
-    if [ -n "$prev" ]; then cp -a --reflink=auto "$prev" target && log "target: a copy of $prev"; fi
+    if [ -n "$prev" ]; then
+      cp -a --reflink=auto "$prev" target && find src ../extractor/src -type f -exec touch {} + && log "target: a copy of $prev"
+    fi
   fi
   cargo test --release --locked > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
   grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
@@ -60,8 +64,8 @@ if [ "${BASELINE:-1}" = 1 ]; then
   # The baseline and gate of the in-memory read (LAB review on #367). One dev chunk (216,000 slots, 15.5 M rows) does
   # not fit this runner's 24 GB in memory (job 99u: killed after 33 s): streaming is a precondition for M1 parity on
   # whole chunks. So: 1/16 and 1/8 of the chunk for the scale, then its four quarters, which cover it for the gate:
-  # every range must have no key ties and no duplicate keys (exit 1 otherwise). A range lab-live cannot finish is logged
-  # (137: killed, the expected OOM above the limit) with its last progress line, and is no gate failure.
+  # every range must have no key ties and no duplicate keys (exit 1 otherwise). A range killed for its memory (137, the
+  # expected OOM above the limit) is logged with its last progress line and is no gate failure; any other failure is.
   CHUNKS=$("$PY" -c 'from backtest import data; print(data.root())')
   DEV_LO=450144000 DEV_N=216000
   BASE=$OUT/baseline && rm -rf "$BASE" && mkdir -p "$BASE"
@@ -72,8 +76,12 @@ if [ "${BASELINE:-1}" = 1 ]; then
     rc=0
     "$LAB_LIVE_BIN" replay --chunks-root "$CHUNKS" --from $a --to $b --journal "$dir" 2> "$dir.log" || rc=$?
     if [ $rc -ne 0 ]; then
-      why=$([ $rc -eq 137 ] && echo "killed: the expected OOM above the runner's memory limit" || echo "failed")
-      log "baseline $name [$a, $b): lab-live exited $rc ($why); last progress: $(grep -a 'so far' "$dir.log" | tail -1)"
+      if [ $rc -eq 137 ]; then
+        log "baseline $name [$a, $b): killed (137): the expected OOM above the runner's memory limit; last progress: $(grep -a 'so far' "$dir.log" | tail -1)"
+      else
+        gate=1  # any other failure leaves the range unchecked: red
+        log "baseline $name [$a, $b): lab-live FAILED ($rc): $(tail -1 "$dir.log")"
+      fi
       continue
     fi
     "$PY" - "$dir" "$name" $a $b $DEV_N <<'EOF' | tee -a "$OUT/job.log" || gate=1
@@ -107,6 +115,6 @@ if best:
           f"(the largest range read): ~{best['peak_rss_bytes'] / best['rows'] * full / 1e9:.0f} GB, against the runner's 24 GB; "
           "job 99u was killed after 33 s: streaming is a precondition for M1 parity")
 EOF
-  [ $gate = 0 ] || { log "baseline: key ties or duplicate keys in a range: RED"; exit 1; }
+  [ $gate = 0 ] || { log "baseline: key ties or duplicate keys in a range, or a range that failed: RED"; exit 1; }
 fi
 log "python: done"
