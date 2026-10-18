@@ -11,10 +11,10 @@ con=duckdb.connect(); con.execute(f"SET memory_limit='1400MB'; SET threads TO 2;
 con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
 con.execute(f"""CREATE TABLE p AS SELECT *, buy_sol - sell_sol AS inflow, b0/1e9 AS b0_sol, day >= '2026-09-20' AS out_block FROM '{W}/k2_pools.parquet' WHERE ft IS NOT NULL""")
 rules = {
- "R0 one-off creator, never traded": "creator_prior_pools = 0 AND creator_n_trades IS NULL",
- "R1 R0 + b0 >= 300 SOL": "creator_prior_pools = 0 AND creator_n_trades IS NULL AND b0_sol >= 300",
- "R2 R1 + >= 40 traders in 2 min + inflow >= 30 SOL": "creator_prior_pools = 0 AND creator_n_trades IS NULL AND b0_sol >= 300 AND n_traders >= 40 AND inflow >= 30e9",
- "R3 R2 + no tips, no creator trades": "creator_prior_pools = 0 AND creator_n_trades IS NULL AND b0_sol >= 300 AND n_traders >= 40 AND inflow >= 30e9 AND COALESCE(tip_share,0) = 0 AND COALESCE(creator_trades,0) = 0",
+ "R0 one-off creator, never traded before the creation": "creator_prior_pools = 0 AND NOT COALESCE(creator_traded_before, false)",
+ "R1 R0 + b0 >= 300 SOL": "creator_prior_pools = 0 AND NOT COALESCE(creator_traded_before, false) AND b0_sol >= 300",
+ "R2 R1 + >= 40 traders in 2 min + inflow >= 30 SOL": "creator_prior_pools = 0 AND NOT COALESCE(creator_traded_before, false) AND b0_sol >= 300 AND n_traders >= 40 AND inflow >= 30e9",
+ "R3 R2 + no tips, no creator trades": "creator_prior_pools = 0 AND NOT COALESCE(creator_traded_before, false) AND b0_sol >= 300 AND n_traders >= 40 AND inflow >= 30e9 AND COALESCE(tip_share,0) = 0 AND COALESCE(creator_trades,0) = 0",
  "R4 b0 >= 300 only": "b0_sol >= 300",
  "R5 >= 40 traders + inflow >= 30 SOL in 2 min (any creator)": "n_traders >= 40 AND inflow >= 30e9",
 }
