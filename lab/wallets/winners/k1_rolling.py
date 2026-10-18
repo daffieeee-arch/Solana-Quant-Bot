@@ -23,8 +23,8 @@ no round was ever NULL, and such rounds were valued at the last curve state (the
 s.mints.complete_slot; a round whose curve completes before the entry (fb + d) is not entered (observable at the entry);
 one that completes between entry and exit is sold on its PumpSwap pool (s.mints.pool) at the last pool state before
 xs + d (constant product, the pool's fee bps), or at the pool's initial reserves when the pool has no row before xs + d
-(then a few slots later than xs + d: migration is a median 2 slots after completion; its own settle label); without a pool state the result is
-unknown (NULL). The capacity simulation takes every entered round in causal order (fb, fb_tx of the signal buy), never
+(then settled at the pool's creation, which can be after xs + d, and the capacity slot stays busy until then; fee tier
+POOL_BPS_INIT; its own settle label); without a pool state the result is unknown (NULL). The capacity simulation takes every entered round in causal order (fb, fb_tx of the signal buy), never
 on the exit; an unknown round keeps its slot busy and is counted apart, with a lower bound that books it as a total loss.
 
 Codex finding 6 (2026-10-18, confirmed): the E40 run (b57ea02, NAS job 99k) decided `closed` over the whole period and
@@ -59,7 +59,10 @@ MIN_BUY = 5e9  # lamports: the copy follows buys of at least 5 SOL (fixed, E39);
 MIN_CAND = 3e9
 SIZE = 5e8
 CAP_SLOTS = 100_000  # ~6 h at 218 ms: the copy's time cap when the wallet has not sold (E39 §0 point 4)
-POOL_BPS = 30  # PumpSwap fee bps when the pool row carries none (lp 20 + protocol 5 + creator 5)
+# PumpSwap fee tier assumed when a round is settled at the pool's initial reserves (no pool row before the exit yet): the
+# highest tier. Measured on the 99t output: migrated pools carry 100-125 bps (lp + protocol + creator) and 426 of 449
+# change tier inside the window, so the bps are bound to the same row as the reserves (Codex round 3, point 3).
+POOL_BPS_INIT = 125
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 # Only SOL-quoted curves: on a curve with another quote mint (PUMP, …) c.q is in that token's units, not lamports, so
 # "a buy >= 5 SOL" and the copy's 0.5 SOL would be in the wrong currency. Known at the creation (point-in-time). Found
@@ -79,7 +82,40 @@ FIRST_SELL_SQL = """CREATE OR REPLACE TABLE fsl AS
     WHERE NOT lg.is_buy AND (lg.slot > b.fbe OR (lg.slot = b.fbe AND lg.tx_index > b.fbe_tx)) GROUP BY 1, 2"""
 
 NOT_ENTERED = "niet ingestapt (curve voltooid vóór de instap)"
+POOL = "pool (na migratie)"
+POOL_INIT = "pool (na migratie, startreserves: nog geen poolrij vóór xs + d)"
 UNKNOWN = "onbekend (geen poolstand)"
+
+
+def pool_states_sql(pool="s.pool", pools="s.pools"):
+    """The PumpSwap pool of a round whose curve completes before xs + 3 (table se: wallet, mint, pool, complete_slot,
+    xs): per d the last pool state before xs + d and the fee bps OF THAT ROW (p{d}, pb{d}; PumpSwap's tier moves with
+    the market cap, so any row's bps would be wrong: Codex round 3, point 3), nbps = distinct tiers in the window, and
+    the pool's initial reserves as the fallback when the pool has no row before xs + 3 (settled at POOL_BPS_INIT)."""
+    st = "CASE WHEN po.orientation = 'reversed' THEN struct_pack(q := p.b::DOUBLE, t := p.e::DOUBLE) ELSE struct_pack(q := p.e::DOUBLE, t := p.b::DOUBLE) END"
+    bps = "p.lp_bps + p.protocol_bps + p.creator_bps"
+    per_d = ", ".join(f"arg_max({st}, (p.slot, p.tx_index)) FILTER (WHERE p.slot < se.xs + {d}) AS p{d}, "
+                      f"arg_max({bps}, (p.slot, p.tx_index)) FILTER (WHERE p.slot < se.xs + {d}) AS pb{d}" for d in (0, 2, 3))
+    return f"""CREATE OR REPLACE TABLE pt AS
+        SELECT se.wallet, se.mint, {per_d}, count(DISTINCT {bps}) AS nbps,
+               any_value(CASE WHEN po.orientation = 'reversed' THEN struct_pack(q := po.b0::DOUBLE, t := po.q0::DOUBLE) ELSE struct_pack(q := po.q0::DOUBLE, t := po.b0::DOUBLE) END) AS pinit
+        FROM se LEFT JOIN {pools} po ON po.pool = se.pool LEFT JOIN {pool} p ON p.pool = se.pool AND p.slot < se.xs + 3
+        WHERE se.complete_slot IS NOT NULL AND se.complete_slot < se.xs + 3 GROUP BY 1, 2"""
+
+
+def settle_sql(d):
+    """How the copy's round is settled at delay d (columns of sel x states): the curve, the pool's last state before
+    xs + d, the pool's initial reserves (only when the migration slot is known: that is when it is settled), or unknown."""
+    return f"""CASE WHEN NOT (complete_slot IS NULL OR complete_slot >= fb + {d}) THEN '{NOT_ENTERED}'
+                 WHEN complete_slot IS NULL OR complete_slot >= xs + {d} THEN 'curve'
+                 WHEN p{d} IS NOT NULL THEN '{POOL}'
+                 WHEN pinit IS NOT NULL AND migrate_slot IS NOT NULL THEN '{POOL_INIT}' ELSE '{UNKNOWN}' END"""
+
+
+def exit_slot_sql(d):
+    """The slot at which the copy's position is settled and its capacity slot frees: xs + d, or the pool's creation when
+    the round falls back on the initial reserves and the pool only exists after xs + d (Codex round 3, point 1)."""
+    return f"CASE WHEN {settle_sql(d)} = '{POOL_INIT}' THEN greatest(xs + {d}, migrate_slot) ELSE xs + {d} END"
 
 
 def log(*a):
@@ -184,7 +220,6 @@ def main(argv=None):
         con.execute("SELECT exit_kind, count(*) FROM sel GROUP BY 1 ORDER BY 1").fetchall(),
         "curve completes before xs + 3:", con.execute("SELECT count(*) FROM sel WHERE complete_slot < xs + 3").fetchone()[0])
     first = True
-    pst = lambda d: f"arg_max(CASE WHEN po.orientation = 'reversed' THEN struct_pack(q := p.b::DOUBLE, t := p.e::DOUBLE) ELSE struct_pack(q := p.e::DOUBLE, t := p.b::DOUBLE) END, (p.slot, p.tx_index)) FILTER (WHERE p.slot < se.xs + {d}) AS p{d}"
     for lo, hi in epochs:
         con.execute(f"CREATE OR REPLACE TABLE se AS SELECT wallet, mint, pool, complete_slot, fb, xs, lsx, greatest(xs, COALESCE(lsx, 0)) AS hx FROM sel WHERE fb >= {lo} AND fb < {hi}")
         con.execute(f"""CREATE OR REPLACE TABLE st AS
@@ -197,34 +232,27 @@ def main(argv=None):
                    arg_max(struct_pack(q := c.vq::DOUBLE, t := c.vt::DOUBLE), (c.slot, c.tx_index)) FILTER (WHERE c.slot < se.xs + 3) AS x3,
                    arg_max(struct_pack(q := c.vq::DOUBLE, t := c.vt::DOUBLE), (c.slot, c.tx_index)) FILTER (WHERE se.lsx IS NOT NULL AND c.slot < se.lsx + 3) AS l3s
             FROM se JOIN s.curve c ON c.mint = se.mint AND c.slot >= se.fb - 2000 AND c.slot < se.hx + 3 GROUP BY 1, 2""")
-        # the PumpSwap pool of a round whose curve completes before xs + 3: last pool state before xs + d, the pool's fee
-        # bps, and the initial reserves as the fallback when the pool has no row yet
-        con.execute(f"""CREATE OR REPLACE TABLE pt AS
-            SELECT se.wallet, se.mint, {pst(0)}, {pst(2)}, {pst(3)},
-                   any_value(p.lp_bps + p.protocol_bps + p.creator_bps) AS pbps,
-                   any_value(CASE WHEN po.orientation = 'reversed' THEN struct_pack(q := po.b0::DOUBLE, t := po.q0::DOUBLE) ELSE struct_pack(q := po.q0::DOUBLE, t := po.b0::DOUBLE) END) AS pinit
-            FROM se LEFT JOIN s.pools po ON po.pool = se.pool LEFT JOIN s.pool p ON p.pool = se.pool AND p.slot < se.xs + 3
-            WHERE se.complete_slot IS NOT NULL AND se.complete_slot < se.xs + 3 GROUP BY 1, 2""")
-        con.execute("CREATE OR REPLACE TABLE stp AS SELECT st.*, pt.p0, pt.p2, pt.p3, pt.pbps, pt.pinit FROM st LEFT JOIN pt USING (wallet, mint)")
+        con.execute(pool_states_sql())
+        con.execute("CREATE OR REPLACE TABLE stp AS SELECT st.*, pt.p0, pt.p2, pt.p3, pt.pb0, pt.pb2, pt.pb3, pt.nbps, pt.pinit FROM st LEFT JOIN pt USING (wallet, mint)")
         if first:
             con.execute("CREATE TABLE states AS SELECT * FROM stp")
             first = False
         else:
             con.execute("INSERT INTO states SELECT * FROM stp")
-        log("states", lo, con.execute("SELECT count(*), count(p3), count(pinit) FROM stp").fetchone())
+        log("states", lo, con.execute("SELECT count(*), count(p3), count(pinit), count(*) FILTER (WHERE nbps > 1) FROM stp").fetchone(), "(rounds, pool state before xs + 3, pool initial reserves, pools changing fee tier in the window)")
     con.execute("CREATE MACRO buy_tok(st, sol, f) AS CASE WHEN st IS NULL OR st.q <= 0 OR st.t <= 0 THEN NULL ELSE st.t - st.t * st.q / (st.q + sol * (1 - f/10000.0)) END")
     con.execute("CREATE MACRO sell_sol(st, tok, f) AS CASE WHEN st IS NULL OR tok IS NULL OR st.q <= 0 OR st.t <= 0 THEN NULL ELSE (st.q - st.q * st.t / (st.t + tok)) * (1 - f/10000.0) END")
     cols = []
     for d in (0, 2, 3):
         tok = f"buy_tok(e{d}, {SIZE}, COALESCE(bps, 125))"
         cols.append(f"complete_slot IS NULL OR complete_slot >= fb + {d} AS entered_{d}")
-        cols.append(f"""CASE WHEN NOT (complete_slot IS NULL OR complete_slot >= fb + {d}) THEN '{NOT_ENTERED}'
-                             WHEN complete_slot IS NULL OR complete_slot >= xs + {d} THEN 'curve'
-                             WHEN p{d} IS NOT NULL THEN 'pool (na migratie)'
-                             WHEN pinit IS NOT NULL THEN 'pool (na migratie, startreserves: nog geen poolrij vóór xs + d)' ELSE '{UNKNOWN}' END AS settle_{d}""")
+        cols.append(f"{settle_sql(d)} AS settle_{d}")
         cols.append(f"""CASE WHEN NOT (complete_slot IS NULL OR complete_slot >= fb + {d}) THEN NULL
                              WHEN complete_slot IS NULL OR complete_slot >= xs + {d} THEN sell_sol(x{d}, {tok}, COALESCE(bps, 125)) - {SIZE} - {COST}
-                             ELSE sell_sol(COALESCE(p{d}, pinit), {tok}, COALESCE(pbps, {POOL_BPS})) - {SIZE} - {COST} END AS h{d}""")
+                             WHEN p{d} IS NOT NULL THEN sell_sol(p{d}, {tok}, pb{d}) - {SIZE} - {COST}
+                             WHEN pinit IS NOT NULL AND migrate_slot IS NOT NULL THEN sell_sol(pinit, {tok}, {POOL_BPS_INIT}) - {SIZE} - {COST}
+                             ELSE NULL END AS h{d}""")
+        cols.append(f"{exit_slot_sql(d)} AS exit_slot_{d}")
     cols.append(f"CASE WHEN lsx IS NULL OR complete_slot < lsx + 3 THEN NULL ELSE sell_sol(l3s, buy_tok(e3, {SIZE}, COALESCE(bps, 125)), COALESCE(bps, 125)) - {SIZE} - {COST} END AS l3")
     con.execute(f"CREATE TABLE out AS SELECT sel.*, {', '.join(cols)} FROM sel JOIN states USING (wallet, mint)")
     con.execute(f"COPY out TO '{W}/k1_rolling_rounds.parquet' (FORMAT PARQUET)")
@@ -250,10 +278,10 @@ def main(argv=None):
         L += ["", "| afwikkeling (d3) | rondes | kopie d3 gem. | Σ d3 |", "|---|---|---|---|"]
         for r in con.execute(f"SELECT settle_3, count(*), round(avg(h3)/1e9,4), round(sum(h3)/1e9,1) FROM out WHERE first_buy_sol >= {thr} GROUP BY 1 ORDER BY 1").fetchall():
             L.append("| " + " | ".join(str(x) for x in r) + " |")
-        rows = con.execute(f"SELECT fb + 3, xs + 3, h3, entry_day, mint FROM out WHERE entered_3 AND first_buy_sol >= {thr} ORDER BY fb, fb_tx, wallet, mint").fetchall()
+        rows = con.execute(f"SELECT fb + 3, exit_slot_3, h3, entry_day, mint FROM out WHERE entered_3 AND first_buy_sol >= {thr} ORDER BY fb, fb_tx, wallet, mint").fetchall()
         days = sorted({r[3] for r in rows})
         rng = np.random.default_rng(7)
-        L += ["", f"Capaciteitssimulatie ≥ {thr/1e9:.0f} SOL (gretig in signaalvolgorde (fb, tx_index), één per token, busy tot de exit xs + 3; onbekende uitkomst houdt de plek bezet; ondergrens boekt onbekend als totaal verlies):", "",
+        L += ["", f"Capaciteitssimulatie ≥ {thr/1e9:.0f} SOL (gretig in signaalvolgorde (fb, tx_index), één per token, busy tot de afwikkeling: xs + 3, of de poolcreatie als die later komt; onbekende uitkomst houdt de plek bezet; ondergrens boekt onbekend als totaal verlies):", "",
               "| max open | genomen / beschikbaar | onbekend | Σ | per dag [2,5 %; 97,5 %] | Σ ondergrens | slechtste dag | dagen < 0 |", "|---|---|---|---|---|---|---|---|"]
         for mo in (5, 20):
             taken, unknown, pnl, nunk = capacity(rows, mo)

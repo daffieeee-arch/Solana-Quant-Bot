@@ -19,7 +19,10 @@ SOL = 1_000_000_000
 # (known at the creation: point-in-time). The engine does the same (strategies.py); 2026-10-18 audit:
 # lab/reports/2026-10-18-audit-niet-sol-quote.md. Pools: `quote_class IN ('sol', 'reversed')`.
 SOL_KEY = "11111111111111111111111111111111"  # mints.quote_mint of a SOL curve (store default, pda.DEFAULT_KEY)
-SOL_QUOTE = f"COALESCE(m.quote_mint, '{SOL_KEY}') = '{SOL_KEY}'"  # with `mints m` in scope
+# with `mints m` in scope (LEFT JOIN allowed): a mint without a mints row is NOT admitted (its quote is unknown; Codex
+# round 3, point 2: measured 0 of 1,023,461 curve buys >= 3 SOL on dev without a row). A row always has a quote_mint
+# (the store writes SOL_KEY for CreateEvents without the field).
+SOL_QUOTE = f"m.mint IS NOT NULL AND m.quote_mint = '{SOL_KEY}'"
 POOL_SOL = "quote_class IN ('sol', 'reversed')"  # with the pools row in scope
 
 
