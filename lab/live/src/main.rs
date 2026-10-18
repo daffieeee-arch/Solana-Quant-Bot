@@ -12,6 +12,15 @@
 //! - `--order-out` writes one line per row, `table slot tx_index outer_ix inner_ix event_seq sha256` (tab
 //!   separated, `null` for a missing value). paper/tests/test_lab_live.py compares it with DuckDB's reading of the
 //!   same files.
+//!
+//! M1 part 3, the Rust half: the store snapshot without DuckDB (snapshot.rs, the export of paper/snapshot_export.py):
+//!
+//!   lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE
+//!
+//! - It loads the export as LiveFeed loads the store (with `--before`, what a live start there knew), and with a first
+//!   live slot the farmer-history window of that start.
+//! - `--out` gets the snapshot as sorted lines; paper/tests/test_lab_live_snapshot.py compares them with Python's
+//!   own load of the same store.
 
 #[allow(dead_code)]
 #[path = "../../extractor/src/idl.rs"]
@@ -22,6 +31,7 @@ mod sink;
 
 mod journal;
 mod rows;
+mod snapshot;
 
 use anyhow::{bail, Context, Result};
 use std::io::Write;
@@ -44,7 +54,8 @@ fn parse_args(argv: &[String]) -> Result<Args> {
             println!("lab-live {}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
-        _ => bail!("usage: lab-live replay (--chunks-root DIR | --segments-root DIR) --from SLOT --to SLOT --journal DIR [--order-out FILE]"),
+        _ => bail!("usage: lab-live replay (--chunks-root DIR | --segments-root DIR) --from SLOT --to SLOT --journal DIR [--order-out FILE]\n       \
+                    lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE"),
     }
     let (mut chunks_root, mut segments_root, mut from, mut to, mut journal, mut order_out) = (None, None, None, None, None, None);
     while let Some(flag) = it.next() {
@@ -97,16 +108,71 @@ fn replay(a: &Args) -> Result<()> {
     Ok(())
 }
 
+struct SnapArgs {
+    dir: PathBuf,
+    before: Option<u64>,
+    window: Option<(u64, u64)>,
+    out: PathBuf,
+}
+
+fn parse_snapshot_args(argv: &[String]) -> Result<SnapArgs> {
+    let mut it = argv.iter();
+    let (mut dir, mut before, mut first, mut h24, mut out) = (None, None, None, None, None);
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--dir" => dir = Some(PathBuf::from(val()?)),
+            "--before" => before = Some(val()?.parse::<u64>().context("--before")?),
+            "--first-slot" => first = Some(val()?.parse::<u64>().context("--first-slot")?),
+            "--h24" => h24 = Some(val()?.parse::<u64>().context("--h24")?),
+            "--out" => out = Some(PathBuf::from(val()?)),
+            other => bail!("unknown argument {other}"),
+        }
+    }
+    let window = match (first, h24) {
+        (Some(f), Some(h)) => Some((f, h)),
+        (None, None) => None,
+        _ => bail!("give --first-slot and --h24 together"),
+    };
+    Ok(SnapArgs { dir: dir.context("--dir")?, before, window, out: out.context("--out")? })
+}
+
+fn snapshot_cmd(a: &SnapArgs) -> Result<()> {
+    let s = snapshot::Snapshot::load(&a.dir, a.before)?;
+    let w = a.window.map(|(first, h24)| s.seed_window(first, h24)).transpose()?;
+    log::info!("snapshot {}: {} tokens, {} pools ({} SOL markets), {} seeded pools", a.dir.display(), s.tokens.len(),
+               s.pool_class.len(), s.pools.len(), s.seed.len());
+    let mut f = std::io::BufWriter::new(std::fs::File::create(&a.out).with_context(|| format!("create {}", a.out.display()))?);
+    for line in snapshot::dump(&s, w.as_ref()) {
+        writeln!(f, "{line}")?;
+    }
+    f.flush()?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().map(String::as_str) == Some("snapshot") {
+        return snapshot_cmd(&parse_snapshot_args(&argv[1..])?);
+    }
     let a = parse_args(&argv)?;
     replay(&a)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::parse_args;
+    use super::{parse_args, parse_snapshot_args};
+
+    #[test]
+    fn the_snapshot_command_takes_a_dir_an_out_and_a_whole_window() {
+        let a = parse_snapshot_args(&args("--dir /s --before 7 --first-slot 9 --h24 3 --out /o")).unwrap();
+        assert_eq!((a.before, a.window), (Some(7), Some((9, 3))));
+        assert!(parse_snapshot_args(&args("--dir /s --out /o")).unwrap().window.is_none());
+        for bad in ["--out /o", "--dir /s", "--dir /s --out /o --first-slot 9", "--dir /s --out /o --h24 3", "--dir /s --out /o --x 1"] {
+            assert!(parse_snapshot_args(&args(bad)).is_err(), "{bad}");
+        }
+    }
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(str::to_owned).collect()
