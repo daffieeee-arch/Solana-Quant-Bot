@@ -9,8 +9,10 @@
 //!   replay's order (rows.rs).
 //! - It writes a paper journal (journal.rs) with the state `feed`, `lab_live_rows` (rows per table, parts,
 //!   duplicate keys, and key ties: rows the Python side, which orders by (slot, tx, outer, inner) only, could put in
-//!   another order; parity needs 0) and `lab_live_measure` (the read time and the peak RSS, a baseline for the
-//!   streaming step: every row is held in memory before the sort).
+//!   another order; parity needs 0) and `lab_live_measure` (the time to read and sort, and the peak RSS: every row
+//!   is held in memory before the sort). One dev chunk (216,000 slots, 15.5 M event rows) does not fit the NAS
+//!   runner's 24 GB that way (job 99u, killed after 33 s): streaming is a precondition for M1 parity on whole chunks,
+//!   not an optimisation (design §10). The read logs its progress with the RSS per table and per million rows.
 //! - `--order-out` writes one line per row, `table slot tx_index outer_ix inner_ix event_seq sha256` (tab
 //!   separated, `null` for a missing value). paper/tests/test_lab_live.py compares it with DuckDB's reading of the
 //!   same files.
@@ -23,6 +25,7 @@ mod idl;
 mod sink;
 
 mod journal;
+mod mem;
 mod rows;
 
 use anyhow::{bail, Context, Result};
@@ -83,9 +86,9 @@ fn replay(a: &Args) -> Result<()> {
     };
     let t0 = std::time::Instant::now();
     let (events, stats) = rows::read_rows(&parts, a.from, a.to, &rows::EVENT_PREFIXES)?;
-    let (read_secs, peak) = (t0.elapsed().as_secs_f64(), peak_rss_bytes());
-    log::info!("{} rows from {} parts in {:.1} s, peak RSS {} MB, key ties {}", events.len(), stats.parts, read_secs,
-               peak.map_or_else(|| "?".to_owned(), |b| (b / 1_000_000).to_string()), stats.key_ties);
+    let (read_secs, peak) = (t0.elapsed().as_secs_f64(), mem::peak_rss_bytes()); // read and sorted
+    log::info!("{} rows from {} parts read and sorted in {:.1} s, peak RSS {} MB, key ties {}, duplicate keys {}", events.len(),
+               stats.parts, read_secs, mem::mb(peak), stats.key_ties, stats.duplicate_keys);
     if let Some(path) = &a.order_out {
         let mut f = std::io::BufWriter::new(std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?);
         for r in &events {
@@ -103,13 +106,6 @@ fn replay(a: &Args) -> Result<()> {
     Ok(())
 }
 
-/// The process's peak resident memory (VmHWM in /proc/self/status, Linux), in bytes.
-fn peak_rss_bytes() -> Option<u64> {
-    let s = std::fs::read_to_string("/proc/self/status").ok()?;
-    let kb: u64 = s.lines().find_map(|l| l.strip_prefix("VmHWM:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
-    Some(kb * 1024)
-}
-
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -119,12 +115,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, peak_rss_bytes};
-
-    #[test]
-    fn the_peak_rss_is_read_from_proc() {
-        assert!(peak_rss_bytes().is_some_and(|b| b > 1_000_000)); // a test binary holds more than 1 MB
-    }
+    use super::parse_args;
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(str::to_owned).collect()

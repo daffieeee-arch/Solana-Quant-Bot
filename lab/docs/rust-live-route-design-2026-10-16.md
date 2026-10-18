@@ -327,6 +327,10 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
   - per (pool, wallet): the 24 h farmer sums (a compact struct);
   - legs at ~48 B: 24 h of watched pools at ~5 M legs/day is ~240 MB.
 - Every map is bounded by pruning, as `TOKEN_KEEP_DAYS` / `pool_seen` are in Python (#299).
+- **Measured 2026-10-19 (NAS job 99u, #367): the in-memory read does not fit one chunk.** M1 part 1's `lab-live replay` holds every event row of the range in memory before the sort, at roughly 1.5 KB a row. One dev chunk (216,000 slots, 15.5 M event rows, 4.4 GB Parquet) was killed after 33 s at the runner's 24 GB.
+  - Streaming is therefore a **precondition** for M1 parity on the whole dev chunk and fwd1053-1054, not an optimisation.
+  - The plan: read slot windows (row-group pruning on the slot statistics), sort, process and drop each window in order. The order key is unique (key_ties 0), so the windows keep the replay order.
+  - It is its own PR before C1. #367's baseline (1/16, 1/8 and the quarters of the chunk) gives the bytes per row it starts from.
 
 **Profiling plan:**
 1. Replay a recorded day at full speed on the NAS: throughput and the step histograms.

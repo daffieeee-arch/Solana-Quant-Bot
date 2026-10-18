@@ -8,6 +8,7 @@
 //! (the store's SQL: SOL side, depth, farmer flags, backfills, duplicates) come in later steps.
 
 use crate::idl::Val;
+use crate::mem;
 use anyhow::{anyhow, bail, Context, Result};
 use arrow_array::{Array, BooleanArray, Int64Array, LargeStringArray, StringArray, StringViewArray, UInt64Array};
 use arrow_schema::DataType;
@@ -167,6 +168,9 @@ fn read_file(path: &Path, table: &Arc<str>, lo: u64, hi: u64, out: &mut Vec<Even
             }
             let values = (0..batch.num_columns()).map(|c| cell(batch.column(c).as_ref(), i)).collect::<Result<Vec<_>>>()?;
             out.push(EventRow { table: table.clone(), columns: columns.clone(), values });
+            if out.len() % 1_000_000 == 0 {
+                log::info!("{} rows so far ({table}), RSS {} MB", out.len(), mem::mb(mem::rss_bytes()));
+            }
         }
     }
     Ok(())
@@ -204,9 +208,10 @@ pub struct Stats {
     pub rows: BTreeMap<String, u64>,
     pub parts: usize,
     pub duplicate_keys: u64,
-    /// Rows whose (slot, tx_index, outer_ix, inner_ix) equals the row before them (another table, or another
-    /// event_seq). The Python side orders by those four only, so its order is this one exactly when this is 0 (LAB
-    /// review on #319). Measured 0 on the dev chunk 450144000-450360000: 15,522,384 rows, no inner_ix NULL.
+    /// Rows whose (slot, tx_index, outer_ix, inner_ix) equals the row before them: in another table, with another
+    /// event_seq, or a duplicate (so key_ties >= duplicate_keys). The Python side orders by those four only, so its
+    /// order is this one exactly when this is 0 (LAB review on #319). Measured 0 on the dev chunk
+    /// 450144000-450360000: 15,522,384 rows, no inner_ix NULL.
     pub key_ties: u64,
 }
 
@@ -222,6 +227,7 @@ pub fn read_rows(parts: &[Part], lo: u64, hi: u64, prefixes: &[&str]) -> Result<
             for f in files {
                 read_file(&f, &table, lo.max(p.lo), hi.min(p.hi), &mut rows)?; // a part's rows belong to its own range
             }
+            log::info!("{name}: {} rows, {} so far, RSS {} MB", rows.len() - before, rows.len(), mem::mb(mem::rss_bytes()));
             *stats.rows.entry(name).or_default() += (rows.len() - before) as u64;
         }
     }
