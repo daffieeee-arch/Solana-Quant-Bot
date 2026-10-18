@@ -46,6 +46,7 @@ Job 91 (arms on, 2c3e5fe) counts as green when all of these hold:
 - unexplained = 0, with `farm_incomplete` and `farm_label_order` as allowed causes:
   - `farm_label_order`: the farm label differs although live received every trade of the pool's farm hour, because the pool's backfill arrived after its first recorded trades;
   - compare.md counts it apart (1 trigger of 943 in job 91);
+  - it counts only where the label decided the signal (one side skipped `farm flagged` in an organic-only group), never for an order, fill or exit that differs on its own (Codex 4). Checked 2026-10-18 for job 92y: its 2 rows are the H arms `flow300_H6` and `flow300_tp100_H6` at that trigger, skipped `farm flagged` in the replay and `busy` live (the same earlier H position on both sides), without orders; K3 there is the same on both sides;
 - RSS plateaus in `state.jsonl`;
 - reconcile is clean outside the simulated gaps: `ok_outside_gaps` in `reconcile.json`. Its `ok` also counts the rows the gap segments miss by design (49,249 in job 91, all in the 15 gap segments).
 

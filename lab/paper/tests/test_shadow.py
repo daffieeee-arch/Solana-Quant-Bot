@@ -5,6 +5,7 @@ difference between live and replay has a cause other than 'unexplained'."""
 import argparse
 import json
 import os
+import shutil
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from types import SimpleNamespace as NS
@@ -345,6 +346,79 @@ def test_a_farm_label_computed_before_the_pools_backfill_is_its_own_cause(tmp_pa
     seg(hole, 1, 1_100, recorded=range(1_101, 1_200))
     seg(hole, 2, 1_200, backfill=range(1_000, 1_100), backfills=[1])
     assert cause(hole) != "farm_label_order"
+
+
+def test_a_farm_label_difference_never_explains_an_independent_fill_or_exit_difference(tmp_path):
+    """Codex 4 (LAB review: confirmed). K3 (farm 'all') enters on either label, and `same` does not compare the label: a
+    K3 row is only different when its order, fill or exit differs, and that difference is independent of the label.
+    Every condition of the late backfill holds here (as in the test above). farm_label_order is the cause only where
+    the label decided the signal: the flagged side of an organic-only arm skipped it 'farm flagged', in either
+    direction, with the rest (the organic side's order, fill and exit) following from it. A K3 row whose buy fill or
+    exit differs, a K3 row skipped 'busy' on its flagged side, and an arm row whose trigger columns differ keep their
+    own cause."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from paper.journal import Journal
+
+    store = str(tmp_path / "s.duckdb")
+    con = duckdb.connect(store)
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, kind VARCHAR)")
+    con.executemany("INSERT INTO pool VALUES ('P', ?, 0, ?)", [(s, "buy" if s % 2 else "sell") for s in range(1_000, 1_200)]
+                    + [(s, "buy") for s in (1_700, 1_701, 1_750)])  # the trigger, the entry and the exit slot
+    con.close()
+    root = str(tmp_path / "rec")
+    for seq, first, sub, slots in ((1, 1_100, "", range(1_100, 1_200)), (2, 1_200, "backfill", range(1_000, 1_100)),
+                                   (3, 1_700, "", (1_700, 1_701, 1_750))):
+        d = os.path.join(root, "segments", f"{seq:09d}")
+        os.makedirs(os.path.join(d, sub, "pump_amm", "BuyEvent"), exist_ok=True)
+        pq.write_table(pa.table({"pool": ["P"] * len(slots), "slot": list(slots), "tx_index": [0] * len(slots)}),
+                       os.path.join(d, sub, "pump_amm", "BuyEvent", "part-0.parquet"))
+        with open(os.path.join(d, "_segment.json"), "w") as f:  # the backfill arrives after the first recorded trades
+            json.dump({"seq": seq, "first_slot": first, "last_slot": first + 99, "complete": True,
+                       "backfills": [{"pool": "P", "from_slot": 1_000, "to_slot": 1_099, "status": "complete", "rows": 100}]
+                       if sub else []}, f)
+
+    def side(farm, status="entered", reason=None, tokens=1_000, pnl=-5, depth=1, trader="X"):
+        return dict(farm=farm, status=status, reason=reason, tokens=tokens, pnl=pnl, depth=depth, trader=trader)
+
+    def cause(r, l, variant="tp4_T600", family="F7"):
+        dirs = []
+        for name, x in (("r", r), ("l", l)):
+            j = Journal(str(tmp_path / name))
+            k = dict(family=family, variant=variant, key="P", t=1_700)
+            j.put("signals", **k, venue="pool", orientation="reversed", status=x["status"], reason=x["reason"],
+                  farm=x["farm"], depth=x["depth"], trigger_trader=x["trader"])
+            if x["status"] == "entered":
+                j.put("orders", **k, entry_slot=1_701, size=100, status="filled", reason=None)
+                j.put("fills", **k, side="buy", slot=1_701, tokens=x["tokens"], quote=100)
+                j.put("exits", **k, entry_slot=1_701, exit_slot=1_750, exit_reason="take_profit", tokens=x["tokens"],
+                      cost=100, proceeds=100 + x["pnl"], pnl=x["pnl"])
+            j.close()
+            dirs.append(str(tmp_path / name))
+        scon = streams.open_store(store, threads=1, memory="256MB")
+        rows = shadow.compare(*dirs, shadow.Coverage([], []), scon, root, d=1, hour_slots=1_000)
+        scon.close()
+        shutil.rmtree(dirs[0]), shutil.rmtree(dirs[1])
+        assert len(rows) == 1 and (rows[0]["replay_farm"], rows[0]["live_farm"]) == (r["farm"], l["farm"])
+        return rows[0]["same"], rows[0]["cause"]
+
+    # K3: the labels alone are no difference; a different buy fill or exit is unexplained.
+    assert cause(side("flagged"), side("organic")) == (True, None)
+    assert cause(side("flagged"), side("organic", tokens=999)) == (False, "unexplained")
+    assert cause(side("flagged"), side("organic", pnl=-7)) == (False, "unexplained")
+    # K3 skipped 'busy' on its flagged side (an earlier position differed): that is the cause, not the label.
+    assert cause(side("flagged", "skipped", "busy"), side("organic")) == (False, "busy_follows")
+    # An organic-only arm: the label decided the signal, in either direction, its order on one side only.
+    flagged_skip = side("flagged", "skipped", "farm flagged")
+    assert cause(flagged_skip, side("organic"), "flow300_H6") == (False, "farm_label_order")
+    assert cause(side("organic"), flagged_skip, "flow300_H6") == (False, "farm_label_order")
+    assert cause(flagged_skip, side("organic", "skipped", "busy"), "flow300_H6") == (False, "farm_label_order")  # 92y
+    # ... but not when the trigger's own columns differ: they come from the trigger leg, before the label.
+    assert cause(flagged_skip, side("organic", "skipped", "busy", depth=2), "flow300_H6") == (False, "unexplained")
+    assert cause(flagged_skip, side("organic", "skipped", "busy", trader="Y"), "flow300_H6") == (False, "unexplained")
+    # ... and not for an N2 row: it carries its trigger's label, while this history is its own pick's pool.
+    assert cause(flagged_skip, side("organic"), "flow300_H6", family="N2_F7") == (False, "unexplained")
 
 
 def test_compare_refuses_a_replay_and_a_live_run_of_two_commits(tmp_path):
