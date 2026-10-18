@@ -55,6 +55,12 @@ const projectItem = (
   ...overrides,
 });
 
+// A direct node read of one Project item, from the same scripted snapshot sequence as the list.
+const projectItemNode = (nodes: Array<{ id: string }>, variables: unknown) => {
+  const found = nodes.find((node) => node.id === (variables as { itemId: string }).itemId);
+  return { node: found ? { project: { id: 'PROJECT_4' }, ...found } : null };
+};
+
 const projectItemsResponse = (nodes: unknown[]) => ({
   node: {
     items: {
@@ -130,7 +136,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     });
     const labels: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         labels.push(label);
         if (label === 'list repository issues') {
           return {
@@ -160,6 +166,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
             },
           };
         }
+        if (label === 'read project item') return projectItemNode([foreignItem], variables);
         if (label === 'list project items') return projectItemsResponse([foreignItem]);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -208,7 +215,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const labels: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         labels.push(label);
         if (label === 'list repository issues') {
           return {
@@ -241,6 +248,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
             },
           };
         }
+        if (label === 'read project item') return projectItemNode([], variables);
         if (label === 'list project items') return projectItemsResponse([]);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -307,10 +315,12 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       [...existing, addedWithoutFields],
       [...existing, addedWithoutFields],
       ...Array.from({ length: fieldDefinitions.length }, (_, index) => withProjectedFieldCount(index + 1)),
+      // The final audit's fresh list.
+      withProjectedFieldCount(fieldDefinitions.length),
     ];
     const mutationLabels: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'add Issue #72') {
           mutationLabels.push(label);
           return { addProjectV2ItemById: { item: { id: 'ITEM_72' } } };
@@ -319,10 +329,10 @@ describe('Roadmap Sync bounded Project projection verification', () => {
           mutationLabels.push(label);
           return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'ITEM_72' } } };
         }
-        if (label === 'list project items') {
+        if (label === 'list project items' || label === 'read project item') {
           const snapshot = reads.shift();
           if (!snapshot) throw new Error('unexpected extra Project items read');
-          return projectItemsResponse(snapshot);
+          return label === 'list project items' ? projectItemsResponse(snapshot) : projectItemNode(snapshot, variables);
         }
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -391,7 +401,10 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       'add Issue #72',
       ...fieldDefinitions.map(([name]) => `set ${name}`),
     ]);
-    expect(api.request.mock.calls.filter((call) => call[2] === 'list project items')).toHaveLength(11);
+    // Eleven reads of the target item only (ADD and Status twice each, the seven other fields once),
+    // then one read of the full list by the final audit.
+    expect(api.request.mock.calls.filter((call) => call[2] === 'read project item')).toHaveLength(11);
+    expect(api.request.mock.calls.filter((call) => call[2] === 'list project items')).toHaveLength(1);
     expect(verifier.sleeps).toEqual([500, 500]);
     expect(summary.planned).toEqual({
       ADD: 1,
@@ -430,14 +443,18 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       fieldValues: fieldProjection([fieldValue('Status', 'READY', 'Ready')]),
     });
     const secondActive = projectItem(second);
+    // #90's fresh planning read and Status verification, ADD #91, then a final list that still shows
+    // #90's old Status once.
     const snapshots = [
+      [firstBacklog],
       [firstReady],
+      [secondActive],
       [firstBacklog, secondActive],
       [firstReady, secondActive],
     ];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'set Status') {
           mutations.push(label);
           return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'ITEM_90' } } };
@@ -446,6 +463,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
           mutations.push(label);
           return { addProjectV2ItemById: { item: { id: 'ITEM_91' } } };
         }
+        if (label === 'read project item') return projectItemNode(snapshots.shift() ?? [], variables);
         if (label === 'list project items') return projectItemsResponse(snapshots.shift() ?? []);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -549,10 +567,11 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const visibleWithField = projectItem(target, {
       fieldValues: fieldProjection([fieldValue('Status', 'READY', 'Ready')]),
     });
-    const snapshots = [[visibleWithoutFields], [], [visibleWithField]];
+    // ADD_ITEM, two Status verifications, then the final audit's fresh list.
+    const snapshots = [[visibleWithoutFields], [], [visibleWithField], [visibleWithField]];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'add Issue #73') {
           mutations.push(label);
           return { addProjectV2ItemById: { item: { id: 'ITEM_73' } } };
@@ -561,6 +580,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
           mutations.push(label);
           return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'ITEM_73' } } };
         }
+        if (label === 'read project item') return projectItemNode(snapshots.shift() ?? [], variables);
         if (label === 'list project items') return projectItemsResponse(snapshots.shift() ?? []);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -598,19 +618,22 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     });
   });
 
-  it('allows an earlier mutation-created item to disappear during a later ADD verification', async () => {
+  it('fills an earlier added item that the final list read still lags on by a direct read', async () => {
     const first = issue(73);
     const second = issue(74);
     const firstItem = projectItem(first);
     const secondItem = projectItem(second);
+    // ADD #73 and ADD #74 read only their target; the final list still lacks #73, whose direct read
+    // shows it at once.
     const snapshots = [
       [firstItem],
       [secondItem],
-      [firstItem, secondItem],
+      [secondItem],
+      [firstItem],
     ];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'add Issue #73') {
           mutations.push(label);
           return { addProjectV2ItemById: { item: { id: 'ITEM_73' } } };
@@ -619,6 +642,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
           mutations.push(label);
           return { addProjectV2ItemById: { item: { id: 'ITEM_74' } } };
         }
+        if (label === 'read project item') return projectItemNode(snapshots.shift() ?? [], variables);
         if (label === 'list project items') return projectItemsResponse(snapshots.shift() ?? []);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -645,14 +669,10 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     expect(mutations).toEqual(['add Issue #73', 'add Issue #74']);
     expect(summary.executed).toEqual({ added: 2, archived: 0, unarchived: 0, fieldUpdates: 0, fieldClears: 0 });
     expect(summary.verified).toEqual({ active: 2, archived: 0, absent: 0 });
-    expect(verifier.sleeps).toEqual([500]);
-    expect(verifier.logs).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        operationType: 'ADD_ITEM',
-        identity: 'Issue #74',
-        reason: 'ITEM_NOT_VISIBLE',
-      }),
-    ]));
+    expect(verifier.sleeps).toEqual([]);
+    expect(api.request.mock.calls.map((call) => call[2])).toEqual([
+      'add Issue #73', 'read project item', 'add Issue #74', 'read project item', 'list project items', 'read project item',
+    ]);
   });
 
   it('waits read-only for a preserved option name while performing no item-field mutation', async () => {
@@ -663,11 +683,13 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const exact = projectItem(target, {
       fieldValues: fieldProjection([fieldValue('Status', 'READY', 'Ready')]),
     });
-    const snapshots = [[stale], [exact]];
+    // The fresh planning read, one stale verification read, the exact one, then the final list.
+    const snapshots = [[stale], [stale], [exact], [exact]];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label.startsWith('set ')) mutations.push(label);
+        if (label === 'read project item') return projectItemNode(snapshots.shift() ?? [], variables);
         if (label === 'list project items') return projectItemsResponse(snapshots.shift() ?? []);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -711,17 +733,19 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const snapshots = [
       [targetItem],
       [projectItem(target, { isArchived: expected })],
+      [projectItem(target, { isArchived: expected })],
     ];
     const mutationLabel = operationType === 'ARCHIVE_ITEM' ? 'archive Issue #80' : 'unarchive Issue #80';
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === mutationLabel) {
           mutations.push(label);
           return operationType === 'ARCHIVE_ITEM'
             ? { archiveProjectV2Item: { item: { id: 'ITEM_80' } } }
             : { unarchiveProjectV2Item: { item: { id: 'ITEM_80' } } };
         }
+        if (label === 'read project item') return projectItemNode(snapshots.shift() ?? [], variables);
         if (label === 'list project items') return projectItemsResponse(snapshots.shift() ?? []);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -786,16 +810,79 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     expect(verifier.logs).toHaveLength(5);
   });
 
+  it('reads an item afresh before its field mutation and fails closed when it was deleted meanwhile', async () => {
+    const target = issue(82);
+    const targetItem = projectItem(target);
+    const mutations: string[] = [];
+    const api = {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
+        if (label.startsWith('set ')) mutations.push(label);
+        if (label === 'read project item') return projectItemNode([], variables);
+        throw new Error(`unexpected GraphQL operation ${label}`);
+      }),
+    };
+    const statusField = {
+      id: 'FIELD_Status', name: 'Status', dataType: 'SINGLE_SELECT', options: [{ id: 'READY', name: 'Ready' }],
+    };
+
+    await expect(reconcileItems(api, { repository: REPOSITORY, fields: [statusField] }, { id: 'PROJECT_4', number: 4 },
+      new Map([['Status', statusField]]), {
+        issues: [target],
+        pullRequests: [],
+        projectItems: [targetItem],
+        repositoryItems: [targetItem],
+        metadataByContentId: new Map([[target.id, { workflow: 'Ready' }]]),
+        plan: {
+          operations: [{ content: target, item: targetItem, action: 'KEEP_ACTIVE', reason: 'test', eligible: true }],
+          counts: { ADD: 0, KEEP_ACTIVE: 1, ARCHIVE: 0, UNARCHIVE: 0, KEEP_ARCHIVED: 0, SKIP: 0 },
+          reasonCounts: { test: 1 },
+          baselines: { expectedPreV2MergedPullRequests: 0, observedPreV2MergedPullRequests: 0 },
+        },
+      }, verificationOptions().options)).rejects.toThrow(/PRE_MUTATION_ITEM_BINDING identity=Issue #82 reason=ITEM_DELETED/);
+    expect(mutations).toEqual([]);
+    expect(api.request.mock.calls.map((call) => call[2])).toEqual(['read project item']);
+  });
+
+  it('still fails closed on an unexpected item in the final full read after target-only verifications', async () => {
+    const target = issue(83);
+    const added = projectItem(target);
+    const stranger = projectItem(issue(99));
+    const api = {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
+        if (label === 'add Issue #83') return { addProjectV2ItemById: { item: { id: 'ITEM_83' } } };
+        if (label === 'read project item') return projectItemNode([added], variables);
+        if (label === 'list project items') return projectItemsResponse([added, stranger]);
+        throw new Error(`unexpected GraphQL operation ${label}`);
+      }),
+    };
+
+    await expect(reconcileItems(api, { repository: REPOSITORY, fields: [] }, { id: 'PROJECT_4', number: 4 }, new Map(), {
+      issues: [target],
+      pullRequests: [],
+      projectItems: [],
+      repositoryItems: [],
+      metadataByContentId: new Map([[target.id, {}]]),
+      plan: {
+        operations: [{ content: target, item: undefined, action: 'ADD', reason: 'add', eligible: true }],
+        counts: { ADD: 1, KEEP_ACTIVE: 0, ARCHIVE: 0, UNARCHIVE: 0, KEEP_ARCHIVED: 0, SKIP: 0 },
+        reasonCounts: { add: 1 },
+        baselines: { expectedPreV2MergedPullRequests: 0, observedPreV2MergedPullRequests: 0 },
+      },
+    }, verificationOptions().options)).rejects.toThrow(/PROJECT_HARD_DRIFT operation=FINAL_ITEM_AUDIT/);
+    expect(api.request.mock.calls.map((call) => call[2])).toEqual(['add Issue #83', 'read project item', 'list project items']);
+  });
+
   it('stops reconciliation before a second field mutation when the first field never projects', async () => {
     const target = issue(81);
     const targetItem = projectItem(target);
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label.startsWith('set ')) {
           mutations.push(label);
           return { updateProjectV2ItemFieldValue: { projectV2Item: { id: 'ITEM_81' } } };
         }
+        if (label === 'read project item') return projectItemNode([targetItem], variables);
         if (label === 'list project items') return projectItemsResponse([targetItem]);
         throw new Error(`unexpected GraphQL operation ${label}`);
       }),
@@ -1032,7 +1119,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const reads = [before, expected];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'update project') {
           mutations.push(label);
           return { updateProjectV2: { projectV2: { id: 'PROJECT_4' } } };
@@ -1074,7 +1161,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const reads = [before, expected];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'link project to repository') {
           mutations.push(label);
           return { linkProjectV2ToRepository: { repository: { id: 'TARGET_REPO' } } };
@@ -1116,7 +1203,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       repositories: { nodes: [{ id: 'TARGET_REPO', nameWithOwner: REPOSITORY }] },
     };
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'update project') return { updateProjectV2: { projectV2: { id: 'PROJECT_4' } } };
         if (label === 'verify project') return { node: drifted };
         throw new Error(`unexpected GraphQL operation ${label}`);
@@ -1153,7 +1240,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const reads = [[beforeField], [expectedField]];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'update field Evidence') {
           mutations.push(label);
           return { updateProjectV2Field: { projectV2Field: { id: 'FIELD_EVIDENCE' } } };
@@ -1183,7 +1270,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const reads = [[], [projected]];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'create field Evidence') {
           mutations.push(label);
           return { createProjectV2Field: { projectV2Field: { id: 'FIELD_EVIDENCE' } } };
@@ -1212,7 +1299,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'create field Evidence') {
           mutations.push(label);
           return { createProjectV2Field: { projectV2Field: { id: 'EXPECTED_FIELD' } } };
@@ -1242,7 +1329,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     };
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'update field Status') {
           mutations.push(label);
           return { updateProjectV2Field: { projectV2Field: { id: 'FIELD_STATUS' } } };
@@ -1282,7 +1369,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
       options: [{ name: 'Unproven', color: 'GRAY', description: 'Current' }],
     };
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'update field Evidence') return { updateProjectV2Field: { projectV2Field: { id: 'FIELD_EVIDENCE' } } };
         if (label === 'list project fields') return projectFieldsResponse([targetExpected, unrelatedDrift]);
         throw new Error(`unexpected GraphQL operation ${label}`);
@@ -1308,7 +1395,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const reads = [[beforeView], [expectedView]];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'update view Now') {
           mutations.push(label);
           return { updateProjectV2View: { projectV2View: { id: 'VIEW_NOW' } } };
@@ -1338,7 +1425,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const reads = [[], [createdView], [createdView], [expectedView]];
     const mutations: string[] = [];
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'create view Now') {
           mutations.push(label);
           return { createProjectV2View: { projectV2View: { id: 'VIEW_NOW', name: 'Now', layout: 'BOARD_LAYOUT' } } };
@@ -1375,7 +1462,7 @@ describe('Roadmap Sync bounded Project projection verification', () => {
     const targetExpected = { ...targetBefore, filter: 'new' };
     const unrelatedDrift = { ...unrelatedBefore, filter: 'changed' };
     const api = {
-      request: vi.fn(async (_query: string, _variables: unknown, label: string) => {
+      request: vi.fn(async (_query: string, variables: unknown, label: string) => {
         if (label === 'update view Now') return { updateProjectV2View: { projectV2View: { id: 'VIEW_NOW' } } };
         if (label === 'list project views') return projectViewsResponse([targetExpected, unrelatedDrift]);
         throw new Error(`unexpected GraphQL operation ${label}`);

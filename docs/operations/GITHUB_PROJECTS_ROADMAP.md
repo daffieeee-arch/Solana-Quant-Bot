@@ -62,9 +62,15 @@ mutate once
 
 The fixed verification reads occur immediately and then after `500`, `1,000`, `2,000` and `4,000` milliseconds: five reads with at most `7,500` milliseconds total waiting per changed logical operation.
 
-**Item visibility window.** Item visibility after `ADD_ITEM`, and in the final item audit, has a longer window (`PROJECT_ITEM_VISIBILITY_DELAYS_MS`). It starts with the same reads, then continues with `8,000`, `16,000`, `32,000`, `60,000` and `60,000` milliseconds: ten reads with at most `183,500` milliseconds (~3 minutes) of waiting. The Project's item list can lag behind an added item.
-- Within that window, an item the run added and that the list still does not show is also read directly by its node id. This starts from the read after the standard five.
+**What a verification reads (2026-10-18).** A verification after a mutation of one item (`ADD_ITEM`, `ARCHIVE_ITEM`, `UNARCHIVE_ITEM`, `UPDATE_ITEM_FIELD`, `VERIFY_ITEM_FIELD`, `CLEAR_ITEM_FIELD`) reads only that item, directly by its node id. The other items keep their last verified state.
+- Before: every verification read the whole item list, ~4 s for ~160 items, and the list can lag minutes behind a new item. A new item with eight fields took 1–2 minutes, and a backlog of ~100 items did not fit the 15-minute job (run `39115726554`, cancelled after 8 items).
+- Now an item costs a few seconds.
+- Before an existing item gets a field mutation, it is read again directly, and its field actions are planned from that read. An item deleted meanwhile fails closed (`PRE_MUTATION_ITEM_BINDING … ITEM_DELETED`), and a value changed elsewhere is re-planned, not overwritten. Items that need no change are not read again.
+- The final item audit always reads the full list afresh after any item verification. It still fails closed on a duplicate, unexpected, missing or drifted item.
 - A directly read item counts only when it belongs to this Project.
+
+**Item visibility window.** Item visibility after `ADD_ITEM`, and in the final item audit, has a longer window (`PROJECT_ITEM_VISIBILITY_DELAYS_MS`). It starts with the same reads, then continues with `8,000`, `16,000`, `32,000`, `60,000` and `60,000` milliseconds: ten reads with at most `183,500` milliseconds (~3 minutes) of waiting.
+- In the final audit, an item the run added that the full list does not show yet is read directly by its node id from the audit's first read on.
 - The verification schedules have no environment override or unbounded fallback.
 
 **Transient errors on queries.** A read-only GraphQL query (`query …`, for example the issue, pull-request and Project-item lists) that fails transiently is repeated after `2,000`, `4,000`, `8,000`, `16,000` and `30,000` milliseconds, each plus up to 25% jitter. Transient means HTTP 5xx or 429, a non-JSON body such as a 504 gateway page, or a network error or timeout. That is six attempts at most: 60 s of delays plus up to 25% jitter, so 75 s of waiting at most, plus the 30 s request timeout of each attempt. When a transient reply carries a `retry-after` header (seconds or an HTTP date; GitHub sends it with rate limits), the wait is that long instead if it is longer, at most 60 s. Each retry is logged with its label, reason code and wait.
