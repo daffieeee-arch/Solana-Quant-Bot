@@ -1119,7 +1119,7 @@ class Engine:
         # block time at all: the keeper removed every segment up to the HWM; Codex 1), the HWM's day: the replay's own
         # may be older or None. A dated slot keeps its own day: a run that ended has its HWM at its last slot + 1 with
         # that last slot's day, which it closed itself, so a later day there starts with no loss.
-        hwm_day = rs.hwm.get("day")
+        hwm_day, replay_day = rs.hwm.get("day"), self.day
         if hwm_day and not (dated and self.day):
             self.day = hwm_day
         same_day = not hwm_day or self.day == hwm_day
@@ -1145,14 +1145,14 @@ class Engine:
                 continue
             if {k: v for k, v in g.cool.items() if v >= rs.slot} != gs["cool"]:
                 c["cooldowns_different"] += 1
-            # A replay that started on the HWM's day lacks the day's exits before it; one whose first event lies at or
-            # after the HWM (or that has none) rebuilt nothing of it.
+            # A replay that started on the HWM's day lacks the day's exits before it; one that was not on the HWM's
+            # day itself (no event before the HWM, or an older day) rebuilt nothing of it.
             if same_day and g.day_loss != gs["day_loss"]:
-                c["day_loss_from_before_the_replay" if rs.first_day == self.day or rs.first_slot >= rs.slot
+                c["day_loss_from_before_the_replay" if rs.first_day == self.day or replay_day != self.day
                   else "day_loss_different"] += 1
-            g.cool = dict(gs["cool"])
-            if same_day:
-                g.day_loss = gs["day_loss"]
+            # A dated later day starts without loss: the journal's exits applied here (one filled at an end-of-run
+            # HWM's slot) are booked on the HWM's day, in its daily loss.
+            g.cool, g.day_loss = dict(gs["cool"]), gs["day_loss"] if same_day else 0
             g.wallet["realized"], g.wallet["txs"] = gs["realized"], deque(gs["txs"], maxlen=50)
             g.wallet_dirty = True
         # From here on the engine writes.

@@ -568,16 +568,18 @@ def test_a_position_the_replay_refills_differently_is_closed_with_the_journals_f
 DAY_TOKENS = {"A": trig(500_000, [(500_100, "W", "buy", 150 * T)]),
               "B": trig(519_500, [(519_700, "Z", "buy", T), (520_600, "Y", "buy", 150 * T)]),
               "C": ("C2", [(519_800, "X", "buy", T), (520_000, "X2", "buy", T), (520_150, "V", "buy", T),
-                           (520_700, "U", "buy", T)])}
+                           (520_700, "U", "buy", T)]),
+              "E": trig(519_610, [(519_750, "W2", "buy", 150 * T)])}  # entered and closed on the old day
 
 
 def test_a_resume_before_the_hwms_slot_takes_the_hwms_day_not_the_replays(tmp_path):
     """LAB review on Codex 1: the HWM is the first slot of a day (520_000) and the replay lacks it, so its last day is
     the day before. It resumes before _clock dates the next slot (520_150): B's restart_lost exit, the restart and the
-    daily loss are the HWM's day's, not the replay's older one."""
+    daily loss are the HWM's day's, not the replay's older one. The replay's own day loss (E, closed on the old day) is
+    no difference to the HWM's."""
     from paper.engine import _day
 
-    e = engine(tmp_path, "r", Later(DAY_TOKENS, crash_after=11))  # dies after its commit at 520_000, B open
+    e = engine(tmp_path, "r", Later(DAY_TOKENS, crash_after=15))  # dies after its commit at 520_000, B open
     hwm = crash(e)
     assert hwm["slot"] == 520_000 and hwm["day"] == _day(1_790_000_000 + int(520_000 * 0.4))
     assert [p["key"] for p in e.journal.rows("positions")] == ["B"]
@@ -589,6 +591,7 @@ def test_a_resume_before_the_hwms_slot_takes_the_hwms_day_not_the_replays(tmp_pa
     assert len(xs) == 1 and xs[0]["exit_reason"] == "restart_lost" and xs[0]["day"] == hwm["day"]
     rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[0]
     assert rec["day"] == hwm["day"] and r.primary.day_loss == before + xs[0]["pnl"]
+    assert r.journal.rows("exits", "key = 'E'") and "day_loss_different" not in rec["counts"], rec["counts"]
 
 
 def test_a_dated_slot_at_an_end_of_run_hwm_keeps_its_own_day(tmp_path):
@@ -611,3 +614,26 @@ def test_a_dated_slot_at_an_end_of_run_hwm_keeps_its_own_day(tmp_path):
     assert sig and {s["t"] for s in sig} == {520_000} and {s["day"] for s in sig} == {new}
     assert json.loads(r.journal.state(RS.RESTARTS_KEY))[0]["day"] == new
     assert r.primary.day_loss == sum(x["pnl"] for x in r.journal.rows("exits", "day = ?", (new,)))
+
+
+def test_an_exit_the_journal_booked_on_the_old_day_at_an_end_of_run_hwm_is_not_the_new_days_loss(tmp_path):
+    """Second review round: the run that ended decided B's stop loss at its last slot (519_999), filled at the HWM's
+    slot (520_000, the next day) and booked by its end on the old day, whose daily loss holds it. The next start
+    dates 520_000 before it resumes: that journal exit does not count against the new day's daily loss as well."""
+    from paper.engine import _day
+
+    first = {"B": trig(519_500, [(519_700, "Z", "buy", T), (519_999, "S", "sell", 150 * T)]),
+             "C": ("C2", [(519_900, "X", "buy", T), (519_999, "X1", "buy", T)])}
+    u = engine(tmp_path, "r", Later(first))
+    u.run()
+    old, new = _day(1_790_000_000 + int(519_999 * 0.4)), _day(1_790_000_000 + int(520_000 * 0.4))
+    xb = u.journal.rows("exits", "key = 'B'")
+    assert [(x["exit_slot"], x["day"]) for x in xb] == [(520_000, old)] and xb[0]["pnl"] < 0
+    assert json.loads(u.journal.state(RS.HWM_KEY))["slot"] == 520_000
+    u.journal.close()
+    later = {**first, "C": ("C2", [(519_900, "X", "buy", T), (519_999, "X1", "buy", T), (520_000, "X2", "buy", T),
+                                   (520_100, "X3", "buy", T)])}
+    r = engine(tmp_path, "r", Later(later))
+    r.run()
+    assert json.loads(r.journal.state(RS.RESTARTS_KEY))[0]["day"] == new
+    assert r.primary.day_loss == sum(x["pnl"] for x in r.journal.rows("exits", "day = ?", (new,))) == 0
