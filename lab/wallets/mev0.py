@@ -47,6 +47,7 @@ Attempts need the winners of every epoch, so they are written after all epochs' 
 before the hold-out (common.guard). Heavy (two epochs of tx_ctx and store trades): NAS.
 """
 
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import argparse
 import glob
 import json

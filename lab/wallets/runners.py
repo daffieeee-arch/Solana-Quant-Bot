@@ -43,6 +43,7 @@ the hold-out. Heavy on a full epoch (every trade of every new token joined to it
 thousand slots on the VPS as a smoke test.
 """
 
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import argparse
 import json
 import os

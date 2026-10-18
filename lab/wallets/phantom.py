@@ -26,6 +26,7 @@ same names are launched again and again (copycats). Per chosen mint:
 Writes timelines-phantom-<tag>.json; phantom_report.py merges the tags into the owner's report.
 """
 
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import argparse
 import bisect
 import datetime as dt

@@ -2,6 +2,7 @@
 moment, the buyer's farmer/known-wallet status, and the marks 1 / 5 / 15 / 60 min later for a 0.5 SOL follower entering
 3 slots after the buy (engine curve math on the logged post-state; base costs; the curve's completion/migration = exit at the
 last curve state). Output whale-<epoch>.parquet + tables."""
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import duckdb, time, sys, os
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab"); S = os.environ.get("LAB_STORE", f"{DATA}/store/dev2.duckdb"); W = os.path.join(os.environ.get("LAB_WALLETS_OUT", f"{DATA}/wallets"), "winners-v1")
 E=int(sys.argv[1]) if len(sys.argv) > 1 else 1040; LO=E*432000; HI=LO+432000; MS=316.4 if E <= 1036 else 267.1

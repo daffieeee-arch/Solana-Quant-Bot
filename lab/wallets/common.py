@@ -14,6 +14,13 @@ HOLDOUT_START = 452_304_000  # week2-defaults.yaml windows.holdout.start_slot
 EPOCH_SLOTS = 432_000
 REF_MS = 267.3
 SOL = 1_000_000_000
+# Curves with another quote mint than SOL (PUMP, …; 11.6 % of the dev mints) log `q` in that token's units, and the
+# store loads no pool trades for their migration pools. Every read of `curve` joins `mints m` and keeps SOL quotes only
+# (known at the creation: point-in-time). The engine does the same (strategies.py); 2026-10-18 audit:
+# lab/reports/2026-10-18-audit-niet-sol-quote.md. Pools: `quote_class IN ('sol', 'reversed')`.
+SOL_KEY = "11111111111111111111111111111111"  # mints.quote_mint of a SOL curve (store default, pda.DEFAULT_KEY)
+SOL_QUOTE = f"COALESCE(m.quote_mint, '{SOL_KEY}') = '{SOL_KEY}'"  # with `mints m` in scope
+POOL_SOL = "quote_class IN ('sol', 'reversed')"  # with the pools row in scope
 
 
 def guard(hi):

@@ -60,12 +60,11 @@ MIN_CAND = 3e9
 SIZE = 5e8
 CAP_SLOTS = 100_000  # ~6 h at 218 ms: the copy's time cap when the wallet has not sold (E39 §0 point 4)
 POOL_BPS = 30  # PumpSwap fee bps when the pool row carries none (lp 20 + protocol 5 + creator 5)
-SOL_KEY = "11111111111111111111111111111111"  # s.mints.quote_mint of a SOL-quoted curve (store default; pda.DEFAULT_KEY)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
 # Only SOL-quoted curves: on a curve with another quote mint (PUMP, …) c.q is in that token's units, not lamports, so
 # "a buy >= 5 SOL" and the copy's 0.5 SOL would be in the wrong currency. Known at the creation (point-in-time). Found
 # 2026-10-18: in the E40 run 64 % of the rounds >= 5 "SOL" sat on such curves; see register E33/E39/E40.
-SOL_QUOTE = f"COALESCE(m.quote_mint, '{SOL_KEY}') = '{SOL_KEY}'"
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+from wallets.common import SOL_KEY, SOL_QUOTE  # noqa: E402
 from backtest import costs  # noqa: E402
 from backtest.store import load_defaults  # noqa: E402
 COST = 2 * costs.Scenario.from_cfg("base", load_defaults()).per_tx()  # 2 x 720,618 lamports: fee, tip and expected failed attempts
@@ -124,7 +123,7 @@ def main(argv=None):
     con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
     lo_all, hi_all = epochs[0][0], epochs[-1][1]
     con.execute("CREATE TABLE days AS SELECT day, slot0, row_number() OVER (ORDER BY slot0) AS di FROM (SELECT strftime(to_timestamp(block_time), '%Y-%m-%d') AS day, min(slot)::BIGINT AS slot0 FROM s.blocks GROUP BY 1)")
-    con.execute(f"CREATE TABLE cand AS SELECT DISTINCT c.trader AS wallet FROM s.curve c JOIN s.mints m USING (mint) WHERE c.is_buy AND c.q >= {MIN_CAND} AND c.slot >= {lo_all} AND c.slot < {hi_all} AND NOT c.mayhem_trade AND {SOL_QUOTE}")
+    con.execute(f"CREATE TABLE cand AS SELECT DISTINCT c.trader AS wallet FROM s.curve c LEFT JOIN s.mints m USING (mint) WHERE c.is_buy AND c.q >= {MIN_CAND} AND c.slot >= {lo_all} AND c.slot < {hi_all} AND NOT c.mayhem_trade AND {SOL_QUOTE}")
     log("candidates", con.execute("SELECT count(*) FROM cand").fetchone()[0])
     first = True
     for lo, hi in epochs:

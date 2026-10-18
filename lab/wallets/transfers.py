@@ -25,6 +25,7 @@ Checks: conservation per mint-day (all holdings incl. vaults = minted - burned) 
   LAB_STORE=<store> python -m wallets.transfers --chunks <root> [--from-slot A --to-slot B] [--triggers P] [--labels P | --money DIR] --out DIR
 """
 
+# no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import argparse
 import glob
 import json
