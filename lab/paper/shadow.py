@@ -777,7 +777,7 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
         i = bisect.bisect_left(xs, (s, -1))
         return i > 0 and (pool,) + xs[i - 1] not in got
 
-    def farm_label_order(pool, t, r, l):
+    def farm_label_order(fam, pool, t, r, l):
         """Both runs labelled the trigger and the labels differ; live received every trade of the pool's farm hour
         [t - 1 h, t) (recorded or backfilled) and none the store lacks (trades: the farm label counts buys and sells
         only); and the pool's backfill arrived in a segment after its first recorded trade, with the trades recorded
@@ -789,11 +789,13 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
         organic-only group), the other side's label is organic, so it got past that check (entered, or skipped later on).
         Its order, fill and exit (one side only) follow from that decision. Where the label decided nothing (a farm
         'all' variant such as K3, or both past the check), the label is no difference (`same` does not compare it): an
-        order, fill or exit that differs is independent of it and keeps its own cause (Codex 4)."""
-        if not (r and l and r.get("farm") != l.get("farm") and {r.get("farm"), l.get("farm")} == {"organic", "flagged"}):
+        order, fill or exit that differs is independent of it and keeps its own cause (Codex 4). So does a difference in
+        the trigger's own columns (depth, trigger trader: from the trigger leg, before the label). F7 rows only: an N2
+        row carries its trigger's label, while the history checked here is its own pick's pool."""
+        if not (fam == "F7" and r and l and {r.get("farm"), l.get("farm")} == {"organic", "flagged"}):
             return False
         flagged = r if r.get("farm") == "flagged" else l
-        if not (flagged["status"] == "skipped" and flagged["reason"] == "farm flagged"):
+        if not (flagged["status"] == "skipped" and flagged["reason"] == "farm flagged" and _same(r, l, ("depth", "trigger_trader"))):
             return False
         lo_ = t - hour_slots
         store_hour = {x for x in trades.get(pool, ()) if lo_ <= x[0] < t}
@@ -838,7 +840,7 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
                 trig_r = {x for x in f7_at[(var, t)] if R["signals"].get(("F7", var, x, t))}
                 trig_l = {x for x in f7_at[(var, t)] if L["signals"].get(("F7", var, x, t))}
                 cause = "follows_f7" if trig_r != trig_l else "n2_pick"
-            elif farm_label_order(key, t, r, l):
+            elif farm_label_order(fam, key, t, r, l):
                 cause = "farm_label_order"
             elif any(x and x["status"] == "skipped" and x["reason"] in FARM_INCOMPLETE for x in (r, l)):
                 cause = "farm_incomplete"
