@@ -150,8 +150,9 @@ fn parse_snapshot_args(argv: &[String]) -> Result<SnapArgs> {
 fn snapshot_cmd(a: &SnapArgs) -> Result<()> {
     let s = snapshot::Snapshot::load(&a.dir, a.before)?;
     let w = a.window.map(|(first, h24)| s.seed_window(first, h24)).transpose()?;
-    log::info!("snapshot {}: {} tokens, {} pools ({} SOL markets), {} seeded pools", a.dir.display(), s.tokens.len(),
-               s.pool_class.len(), s.pools.len(), s.seed.len());
+    log::info!("snapshot {}: {} tokens, {} pools ({} SOL markets), {} seeded pools ({} trades, {} traders), peak RSS {} MB",
+               a.dir.display(), s.tokens.len(), s.pool_class.len(), s.pools.len(), s.seed.len(),
+               s.seed.values().map(Vec::len).sum::<usize>(), s.traders.len(), mem::mb(mem::peak_rss_bytes()));
     let mut f = std::io::BufWriter::new(std::fs::File::create(&a.out).with_context(|| format!("create {}", a.out.display()))?);
     for line in snapshot::dump(&s, w.as_ref()) {
         writeln!(f, "{line}")?;

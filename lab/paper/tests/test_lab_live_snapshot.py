@@ -44,8 +44,13 @@ def export(tmp_path_factory):
 
 
 def _rust(snap, tmp, *args):
+    """lab-live's dump; its log line (counts and peak RSS) goes to LAB_LIVE_MEASURE_LOG when set (nas_m1a.sh: job.log)."""
     out = os.path.join(tmp, "dump.txt")
-    subprocess.run([BIN, "snapshot", "--dir", snap, *args, "--out", out], check=True, timeout=3600)
+    run = subprocess.run([BIN, "snapshot", "--dir", snap, *args, "--out", out], check=True, timeout=3600, capture_output=True, text=True)
+    if os.environ.get("LAB_LIVE_MEASURE_LOG"):
+        with open(os.environ["LAB_LIVE_MEASURE_LOG"], "a") as f:
+            f.writelines(f"lab-live snapshot {' '.join(args) or '(whole store)'}: {line.split('] ', 1)[-1]}\n"
+                         for line in run.stderr.splitlines() if "peak RSS" in line)
     with open(out) as f:
         return f.read().splitlines()
 

@@ -63,7 +63,7 @@ cd "$REPO/lab"
 "$LAB_LIVE_BIN" --version | tee -a "$OUT/job.log"
 # The snapshot test exports a store (fwd1053: a seed day of ~21 M trades) and sorts it in DuckDB: its files and spill go
 # under this job's directory, not the container's /tmp (removed when green, kept for a look when red).
-export LAB_SPILL_DIR=$OUT/spill LAB_SPILL_MAX=16GB
+export LAB_SPILL_DIR=$OUT/spill LAB_SPILL_MAX=16GB LAB_LIVE_MEASURE_LOG=$OUT/job.log  # the snapshot's peak RSS into job.log
 "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-tmp" paper/tests/test_lab_live.py paper/tests/test_lab_live_snapshot.py \
   paper/tests/test_journal_schema.py paper/tests/test_journal_diff.py 2>&1 | tee -a "$OUT/job.log" | tail -8
 rm -rf "$OUT/pytest-tmp" "$OUT/spill"
