@@ -1043,9 +1043,12 @@ class Engine:
         self._exit_effects(p, pnl, r.exit_slot, r.tokens, r.proceeds, r.cost, slot)
         self._drop(o)
 
-    def _exit_effects(self, p, pnl, exit_slot, tokens, proceeds, cost, slot):
-        """An exit's effect on the risk state: the daily loss, the paper wallet, the pool cooldown and busy."""
-        self._book_loss(p, pnl)
+    def _exit_effects(self, p, pnl, exit_slot, tokens, proceeds, cost, slot, day=None):
+        """An exit's effect on the risk state: the daily loss, the paper wallet, the pool cooldown and busy. day: a
+        journaled exit's day; its loss counts in that day only (an exit filled at an end-of-run HWM's slot, the next
+        day, is booked on the run's last day)."""
+        if day is None or day == self.day:
+            self._book_loss(p, pnl)
         self._wallet_tx(p, "sell", exit_slot or slot, pnl + self.scn.entry_total(cost) if tokens else pnl, settled=pnl)
         g = self._group(p)
         if (not p.family.startswith("N2_") and g.risk is not None and g.risk.pool_cooldown_h > 0 and tokens
@@ -1081,7 +1084,7 @@ class Engine:
         self.rs.closed.add(k)
         if (x["exit_slot"], x["exit_reason"], x["proceeds"]) != (r.exit_slot, r.exit_reason, r.proceeds):
             self.rs.counts["exits_different"] += 1
-        self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot)
+        self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot, day=x["day"])
 
     def _journal_exits(self, slot):
         """Replaying: the journal's exits up to this slot that the replay has not made itself. A position the replay
@@ -1106,7 +1109,7 @@ class Engine:
                     self.rs.counts["journal_exits_before_the_replay"] += 1
                 elif x["tokens"]:
                     self.rs.counts["journal_exits_of_positions_not_in_replay"] += 1
-            self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot)
+            self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot, day=x["day"])
 
     def _resume(self, slot, dated=False):
         """The HWM is reached (its commit point, or the first slot after it): the replay is checked against the
@@ -1150,9 +1153,9 @@ class Engine:
             if same_day and g.day_loss != gs["day_loss"]:
                 c["day_loss_from_before_the_replay" if rs.first_day == self.day or replay_day != self.day
                   else "day_loss_different"] += 1
-            # A dated later day starts without loss: the journal's exits applied here (one filled at an end-of-run
-            # HWM's slot) are booked on the HWM's day, in its daily loss.
-            g.cool, g.day_loss = dict(gs["cool"]), gs["day_loss"] if same_day else 0
+            g.cool = dict(gs["cool"])
+            if same_day:  # a dated later day keeps its own loss: _exit_effects books each journal exit on its own day
+                g.day_loss = gs["day_loss"]
             g.wallet["realized"], g.wallet["txs"] = gs["realized"], deque(gs["txs"], maxlen=50)
             g.wallet_dirty = True
         # From here on the engine writes.

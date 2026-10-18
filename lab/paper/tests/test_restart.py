@@ -619,7 +619,8 @@ def test_a_dated_slot_at_an_end_of_run_hwm_keeps_its_own_day(tmp_path):
 def test_an_exit_the_journal_booked_on_the_old_day_at_an_end_of_run_hwm_is_not_the_new_days_loss(tmp_path):
     """Second review round: the run that ended decided B's stop loss at its last slot (519_999), filled at the HWM's
     slot (520_000, the next day) and booked by its end on the old day, whose daily loss holds it. The next start
-    dates 520_000 before it resumes: that journal exit does not count against the new day's daily loss as well."""
+    dates 520_000 before it resumes: that journal exit does not count against the new day's daily loss as well, and a
+    third start that replays 520_000 on the new day finds no difference to the journal."""
     from paper.engine import _day
 
     first = {"B": trig(519_500, [(519_700, "Z", "buy", T), (519_999, "S", "sell", 150 * T)]),
@@ -632,8 +633,16 @@ def test_an_exit_the_journal_booked_on_the_old_day_at_an_end_of_run_hwm_is_not_t
     assert json.loads(u.journal.state(RS.HWM_KEY))["slot"] == 520_000
     u.journal.close()
     later = {**first, "C": ("C2", [(519_900, "X", "buy", T), (519_999, "X1", "buy", T), (520_000, "X2", "buy", T),
-                                   (520_100, "X3", "buy", T)])}
+                                   (520_100, "X3", "buy", T), (520_150, "X4", "buy", T), (520_300, "X5", "buy", T),
+                                   (520_400, "X6", "buy", T)])}
+    e = engine(tmp_path, "r", Later(later, crash_after=11))  # dies after its commit at 520_150, on the new day
+    assert crash(e)["slot"] == 520_150
+    rec = json.loads(e.journal.state(RS.RESTARTS_KEY))[0]
+    assert rec["day"] == new and json.loads(e.journal.state(RS.HWM_STATE_KEY))["groups"]["K3"]["day_loss"] == 0
+    e.journal.close()
+    # A third start replays 520_000 on the new day: the old day's exit is no difference there either (review round 3).
     r = engine(tmp_path, "r", Later(later))
     r.run()
-    assert json.loads(r.journal.state(RS.RESTARTS_KEY))[0]["day"] == new
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[-1]
+    assert rec["hwm"] == 520_150 and {k: v for k, v in rec["counts"].items() if k not in RS.BEFORE} == {}, rec["counts"]
     assert r.primary.day_loss == sum(x["pnl"] for x in r.journal.rows("exits", "day = ?", (new,))) == 0
