@@ -65,8 +65,53 @@ def test_k2_rule_per_entry_window():
 
 
 def test_k1_only_sol_quoted_curves():
-    # a curve with another quote mint logs q in that token's units: it is out, known at the creation (NULL = SOL default)
+    # a curve with another quote mint logs q in that token's units: it is out, known at the creation; a mint without a
+    # mints row is out too (quote unknown)
     con = _con()
     con.execute("CREATE TABLE m (mint VARCHAR, quote_mint VARCHAR)")
-    con.execute(f"INSERT INTO m VALUES ('A', '{k1_rolling.SOL_KEY}'), ('B', NULL), ('C', 'pumpCmXqMfrsxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')")
-    assert con.execute(f"SELECT list(mint ORDER BY mint) FROM m WHERE {k1_rolling.SOL_QUOTE}").fetchone()[0] == ["A", "B"]
+    con.execute(f"INSERT INTO m VALUES ('A', '{k1_rolling.SOL_KEY}'), ('C', 'pumpCmXqMfrsxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')")
+    con.execute("CREATE TABLE c (mint VARCHAR)")
+    con.execute("INSERT INTO c VALUES ('A'), ('C'), ('Z')")
+    assert con.execute(f"SELECT list(c.mint ORDER BY c.mint) FROM c LEFT JOIN m USING (mint) WHERE {k1_rolling.SOL_QUOTE}").fetchone()[0] == ["A"]
+
+
+def _pool_fixture(con):
+    # round R: curve completes at 100, their exit xs = 110; pool rows at 104 (bps 125) and 108 (bps 100) and after the
+    # exit at 120 (bps 120); round S: completes at 200, xs = 210, pool created (migrate) at 215: no row before 213
+    con.execute("CREATE TABLE se (wallet VARCHAR, mint VARCHAR, pool VARCHAR, complete_slot BIGINT, xs BIGINT)")
+    con.execute("INSERT INTO se VALUES ('w', 'R', 'PR', 100, 110), ('w', 'S', 'PS', 200, 210)")
+    con.execute("CREATE TABLE pools (pool VARCHAR, orientation VARCHAR, b0 BIGINT, q0 BIGINT)")
+    con.execute("INSERT INTO pools VALUES ('PR', 'normal', 200000, 85000), ('PS', 'normal', 300000, 90000)")
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot BIGINT, tx_index BIGINT, b BIGINT, e BIGINT, lp_bps INT, protocol_bps INT, creator_bps INT)")
+    con.execute("""INSERT INTO pool VALUES ('PR', 104, 1, 190000, 90000, 100, 20, 5), ('PR', 108, 7, 180000, 95000, 80, 15, 5),
+                                           ('PR', 120, 1, 170000, 99000, 95, 20, 5)""")
+
+
+def test_pool_state_bps_bound_to_the_reserves_row():
+    con = _con()
+    _pool_fixture(con)
+    con.execute(k1_rolling.pool_states_sql(pool="pool", pools="pools"))
+    r = con.execute("SELECT p3.q, p3.t, pb3, p0.q, pb0, nbps, pinit.q, pinit.t FROM pt WHERE mint = 'R'").fetchone()
+    # d = 3: the last row before 113 is slot 108 (bps 100), not the first row's 125 and not the later row's 120
+    assert r == (95000.0, 180000.0, 100, 95000.0, 100, 2, 85000.0, 200000.0)
+    s = con.execute("SELECT p3, pb3, nbps, pinit.q FROM pt WHERE mint = 'S'").fetchone()
+    assert s == (None, None, 0, 90000.0)
+
+
+def test_fallback_round_settles_at_the_pool_creation():
+    con = _con()
+    con.execute("CREATE TABLE o (fb BIGINT, xs BIGINT, complete_slot BIGINT, migrate_slot BIGINT, p3 INT, pinit INT)")
+    con.execute("""INSERT INTO o VALUES (90, 110, 100, 103, 1, 1),      -- pool state before the exit: settled at xs + 3
+                                         (190, 210, 200, 215, NULL, 1),  -- no row yet: settled at the creation, 215 > 213
+                                         (290, 310, 300, 305, NULL, 1),  -- created before the exit but no trade yet: xs + 3
+                                         (390, 410, 400, NULL, NULL, 1), -- never migrated in the store: unknown
+                                         (490, 510, NULL, NULL, NULL, NULL)""")
+    rows = con.execute(f"SELECT {k1_rolling.settle_sql(3)}, {k1_rolling.exit_slot_sql(3)} FROM o ORDER BY fb").fetchall()
+    assert rows == [(k1_rolling.POOL, 113), (k1_rolling.POOL_INIT, 215), (k1_rolling.POOL_INIT, 313), (k1_rolling.UNKNOWN, 413), ("curve", 513)]
+
+
+def test_capacity_delayed_settlement_blocks_a_new_signal():
+    # the fallback round frees its slot at the pool creation (215), not at xs + 3 (213): a signal at 214 is refused
+    rows = [(193, 215, 0.1, "d", "S"), (214, 230, 1.0, "d", "T"), (216, 230, 1.0, "d", "U")]
+    taken, unknown, pnl, _ = k1_rolling.capacity(rows, 1)
+    assert taken == 2 and pnl == {"d": 1.1}

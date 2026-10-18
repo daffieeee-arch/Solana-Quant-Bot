@@ -19,11 +19,15 @@ READS_CURVE = re.compile(r"\b(FROM|JOIN)\s+(s\.)?curve\b")
 
 
 def test_sol_quote_predicate():
+    # after a LEFT JOIN on mints: a SOL row passes, another quote fails, and a trade whose mint has no mints row is NOT
+    # admitted (its quote is unknown; Codex round 3, point 2)
     import duckdb
     con = duckdb.connect()
     con.execute("CREATE TABLE m (mint VARCHAR, quote_mint VARCHAR)")
-    con.execute(f"INSERT INTO m VALUES ('A', '{common.SOL_KEY}'), ('B', NULL), ('C', 'pumpCmXqMfrs')")
-    assert con.execute(f"SELECT list(mint ORDER BY mint) FROM m WHERE {common.SOL_QUOTE}").fetchone()[0] == ["A", "B"]
+    con.execute(f"INSERT INTO m VALUES ('A', '{common.SOL_KEY}'), ('C', 'pumpCmXqMfrs')")
+    con.execute("CREATE TABLE c (mint VARCHAR, q BIGINT)")
+    con.execute("INSERT INTO c VALUES ('A', 1), ('C', 1), ('Z', 1)")
+    assert con.execute(f"SELECT list(c.mint ORDER BY c.mint) FROM c LEFT JOIN m USING (mint) WHERE {common.SOL_QUOTE}").fetchone()[0] == ["A"]
 
 
 def scan(root=ROOT):
