@@ -7,8 +7,10 @@
 //!
 //! - It reads the extractor's event rows of the OF1 chunks (or recorder segments) in [from, to), in the Python
 //!   replay's order (rows.rs).
-//! - It writes a paper journal (journal.rs) with the state `feed` and `lab_live_rows` (rows per table, parts,
-//!   duplicate keys).
+//! - It writes a paper journal (journal.rs) with the state `feed`, `lab_live_rows` (rows per table, parts,
+//!   duplicate keys, and key ties: rows the Python side, which orders by (slot, tx, outer, inner) only, could put in
+//!   another order; parity needs 0) and `lab_live_measure` (the read time and the peak RSS, a baseline for the
+//!   streaming step: every row is held in memory before the sort).
 //! - `--order-out` writes one line per row, `table slot tx_index outer_ix inner_ix event_seq sha256` (tab
 //!   separated, `null` for a missing value). paper/tests/test_lab_live.py compares it with DuckDB's reading of the
 //!   same files.
@@ -81,7 +83,9 @@ fn replay(a: &Args) -> Result<()> {
     };
     let t0 = std::time::Instant::now();
     let (events, stats) = rows::read_rows(&parts, a.from, a.to, &rows::EVENT_PREFIXES)?;
-    log::info!("{} rows from {} parts in {:.1} s", events.len(), stats.parts, t0.elapsed().as_secs_f64());
+    let (read_secs, peak) = (t0.elapsed().as_secs_f64(), peak_rss_bytes());
+    log::info!("{} rows from {} parts in {:.1} s, peak RSS {} MB, key ties {}", events.len(), stats.parts, read_secs,
+               peak.map_or_else(|| "?".to_owned(), |b| (b / 1_000_000).to_string()), stats.key_ties);
     if let Some(path) = &a.order_out {
         let mut f = std::io::BufWriter::new(std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?);
         for r in &events {
@@ -92,9 +96,18 @@ fn replay(a: &Args) -> Result<()> {
     }
     let mut j = journal::Journal::open(&a.journal)?;
     j.state("feed", &serde_json::json!({"kind": "replay", "engine": "lab-live", "source": source, "input": root, "from": a.from, "to": a.to}).to_string())?;
-    j.state("lab_live_rows", &serde_json::json!({"parts": stats.parts, "rows": stats.rows, "duplicate_keys": stats.duplicate_keys}).to_string())?;
+    j.state("lab_live_rows", &serde_json::json!({"parts": stats.parts, "rows": stats.rows, "duplicate_keys": stats.duplicate_keys,
+                                                  "key_ties": stats.key_ties}).to_string())?;
+    j.state("lab_live_measure", &serde_json::json!({"rows": events.len(), "read_secs": read_secs, "peak_rss_bytes": peak}).to_string())?;
     j.close()?;
     Ok(())
+}
+
+/// The process's peak resident memory (VmHWM in /proc/self/status, Linux), in bytes.
+fn peak_rss_bytes() -> Option<u64> {
+    let s = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kb: u64 = s.lines().find_map(|l| l.strip_prefix("VmHWM:"))?.trim().trim_end_matches("kB").trim().parse().ok()?;
+    Some(kb * 1024)
 }
 
 fn main() -> Result<()> {
@@ -106,7 +119,12 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_args;
+    use super::{parse_args, peak_rss_bytes};
+
+    #[test]
+    fn the_peak_rss_is_read_from_proc() {
+        assert!(peak_rss_bytes().is_some_and(|b| b > 1_000_000)); // a test binary holds more than 1 MB
+    }
 
     fn args(s: &str) -> Vec<String> {
         s.split_whitespace().map(str::to_owned).collect()

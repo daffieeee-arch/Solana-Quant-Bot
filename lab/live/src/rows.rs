@@ -94,8 +94,13 @@ impl EventRow {
     }
 
     fn key(&self) -> Key {
-        (nulls_last(self.u64("slot")), nulls_last(self.u64("tx_index")), nulls_last(self.u64("outer_ix")),
-         nulls_last(self.u64("inner_ix")), nulls_last(self.u64("event_seq")))
+        let (s, t, o, i) = self.position();
+        (s, t, o, i, nulls_last(self.u64("event_seq")))
+    }
+
+    /// The key the Python side orders by (the store, LiveFeed): (slot, tx_index, outer_ix, inner_ix), NULLs last.
+    fn position(&self) -> ((bool, u64), (bool, u64), (bool, u64), (bool, u64)) {
+        (nulls_last(self.u64("slot")), nulls_last(self.u64("tx_index")), nulls_last(self.u64("outer_ix")), nulls_last(self.u64("inner_ix")))
     }
 
     /// sha256 of the row's columns and values, rendered `name=value` and joined by U+001F (null `null`, booleans
@@ -199,6 +204,10 @@ pub struct Stats {
     pub rows: BTreeMap<String, u64>,
     pub parts: usize,
     pub duplicate_keys: u64,
+    /// Rows whose (slot, tx_index, outer_ix, inner_ix) equals the row before them (another table, or another
+    /// event_seq). The Python side orders by those four only, so its order is this one exactly when this is 0 (LAB
+    /// review on #319). Measured 0 on the dev chunk 450144000-450360000: 15,522,384 rows, no inner_ix NULL.
+    pub key_ties: u64,
 }
 
 /// Every event row of `parts` with a slot in [lo, hi), in the replay's order.
@@ -218,6 +227,7 @@ pub fn read_rows(parts: &[Part], lo: u64, hi: u64, prefixes: &[&str]) -> Result<
     }
     rows.sort_by(|a, b| a.key().cmp(&b.key()).then_with(|| a.table.cmp(&b.table)));
     stats.duplicate_keys = rows.windows(2).filter(|w| w[0].key() == w[1].key() && w[0].table == w[1].table).count() as u64;
+    stats.key_ties = rows.windows(2).filter(|w| w[0].position() == w[1].position()).count() as u64;
     Ok((rows, stats))
 }
 
@@ -280,6 +290,25 @@ mod tests {
         assert_eq!(stats.rows.get("pump_amm/BuyEvent"), Some(&1)); // its row beyond the range is not read
         let (narrow, _) = read_rows(&parts, 1002, 2000, &EVENT_PREFIXES).unwrap();
         assert_eq!(narrow.len(), 1);
+        assert_eq!((stats.duplicate_keys, stats.key_ties), (0, 0));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rows_sharing_the_pythons_key_are_counted_as_ties() {
+        // Two tables with one (slot, tx_index, outer_ix, inner_ix): this side orders them by event_seq and the table,
+        // the Python side by the four columns only, so the two orders can differ there.
+        let root = tmp("ties");
+        let dir = root.join("1000-2000");
+        let trade = cols(&[("mint", Kind::Utf8)]);
+        write_parquet(&dir, "pump/TradeEvent", 0, &trade, &[row(1001, 7, 0, Some(2), Val::Str("A".into())),
+                                                           row(1001, 7, 0, None, Val::Str("B".into())),
+                                                           row(1001, 7, 0, None, Val::Str("C".into()))]).unwrap();
+        let buy = cols(&[("is_x", Kind::Bool)]);
+        write_parquet(&dir, "pump_amm/BuyEvent", 0, &buy, &[row(1001, 7, 0, Some(2), Val::Bool(true))]).unwrap();
+        fs::write(dir.join("_manifest.json"), serde_json::json!({"status": "complete", "slot_start": 1000, "slot_end_exclusive": 2000}).to_string()).unwrap();
+        let (_, stats) = read_rows(&chunks(&root).unwrap(), 1000, 2000, &EVENT_PREFIXES).unwrap();
+        assert_eq!((stats.key_ties, stats.duplicate_keys), (2, 1)); // inner 2 in two tables; two NULL inner_ix in one
         fs::remove_dir_all(&root).unwrap();
     }
 

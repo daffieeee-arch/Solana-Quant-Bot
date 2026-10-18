@@ -2,10 +2,13 @@
 M3 of lab/docs/rust-live-route-design-2026-10-16.md §3), or any two runs of the same engine.
 
   python -m paper.journal_diff --journal-a <dir> --journal-b <dir> --out <dir> [--from-day D] [--to-day D]
+                                [--new-table NAME ...]
   python -m paper.parity --journal-a <dir> --journal-b <dir> --out <dir>          # the same
 
 First the schema: every table's columns, types and primary key (PRAGMA table_info) must be the same in both, so
-the Rust journal writer cannot drift from paper/journal.py. Then per table, keyed as the journal keys it
+the Rust journal writer cannot drift from paper/journal.py. A table named with --new-table (one a newer engine adds,
+such as `learned` in #331) may exist in only one of them: listed, not a difference (a regression of main against a PR
+that adds a table; LAB review on #319). Its schema still counts where both have it. Then per table, keyed as the journal keys it
 (paper/journal.py TABLES): rows only in A, rows only in B, and rows in
 both that differ in a compared column. Compared are the decisions and their outcome: signal status, reason, farm
 labels, entry, fills, exit, proceeds, P&L, the exit windows. Not compared are the measured arrival times (receive,
@@ -72,15 +75,23 @@ def schema_of(path):
         db.close()
 
 
-def schema_diff(path_a, path_b):
-    """The schema differences of two journals: tables only in one, and columns that differ (name, type, not null,
-    default or primary key position)."""
+def schema_diff(path_a, path_b, new_tables=()):
+    """The schema differences of two journals: tables only in one (except `new_tables`, see new_tables_only), and
+    columns that differ (name, type, not null, default or primary key position)."""
     a, b = schema_of(path_a), schema_of(path_b)
-    out = [f"table {t} only in A" for t in sorted(set(a) - set(b))] + [f"table {t} only in B" for t in sorted(set(b) - set(a))]
+    out = ([f"table {t} only in A" for t in sorted(set(a) - set(b) - set(new_tables))]
+           + [f"table {t} only in B" for t in sorted(set(b) - set(a) - set(new_tables))])
     for t in sorted(set(a) & set(b)):
         if a[t] != b[t]:
             out.append(f"table {t}: A {a[t]} / B {b[t]}")
     return out
+
+
+def new_tables_only(path_a, path_b, new_tables=()):
+    """The tables of `new_tables` that only one journal has: expected, listed in the report."""
+    a, b = schema_of(path_a), schema_of(path_b)
+    return ([f"table {t} only in A" for t in sorted((set(a) - set(b)) & set(new_tables))]
+            + [f"table {t} only in B" for t in sorted((set(b) - set(a)) & set(new_tables))])
 
 
 def _state(path):
@@ -91,12 +102,13 @@ def _state(path):
         db.close()
 
 
-def compare(path_a, path_b, lo_day=None, hi_day=None, causes=()):
+def compare(path_a, path_b, lo_day=None, hi_day=None, causes=(), new_tables=()):
     """The comparison as a dict: per table the row counts, only-A, only-B and differing rows (the first SHOWN
     of each with their columns), the shared state, and `unexplained` (every difference no cause in `causes`
-    explains; causes: callables (table, key, row_a, row_b) -> a cause name or None)."""
+    explains; causes: callables (table, key, row_a, row_b) -> a cause name or None). new_tables: tables that may
+    exist in one journal only (--new-table)."""
     res = {"a": path_a, "b": path_b, "days": [lo_day, hi_day], "tables": {}, "unexplained": 0, "explained": {},
-           "schema_diff": schema_diff(path_a, path_b)}
+           "schema_diff": schema_diff(path_a, path_b, new_tables), "new_tables": new_tables_only(path_a, path_b, new_tables)}
     sa, sb = _state(path_a), _state(path_b)
     res["state"] = {k: {"a": sa.get(k), "b": sb.get(k), "equal": sa.get(k) == sb.get(k)} for k in STATE_KEYS}
     # The feed may differ (a replay against a live run); groups and costs may not.
@@ -136,7 +148,8 @@ def report(res):
              f"**{'GREEN' if res['green'] else 'RED'}**: {res['unexplained']} unexplained"
              + (f", explained {res['explained']}" if res["explained"] else "")
              + (f"; state differs in {res['state_mismatch']} (groups and costs must be equal)" if res["state_mismatch"] else "")
-             + (f"; **schema differs**: {res['schema_diff']}" if res["schema_diff"] else ""),
+             + (f"; **schema differs**: {res['schema_diff']}" if res["schema_diff"] else "")
+             + (f"; expected new tables (--new-table): {res['new_tables']}" if res.get("new_tables") else ""),
              "", "| table | rows A | rows B | only A | only B | different | unexplained |", "|---|---|---|---|---|---|---|"]
     for t, r in res["tables"].items():
         lines.append(f"| {t} | {r['rows_a']} | {r['rows_b']} | {r['only_a']} | {r['only_b']} | {r['different']} | {r['unexplained']} |")
@@ -150,8 +163,8 @@ def report(res):
     return lines
 
 
-def run(journal_a, journal_b, out, lo_day=None, hi_day=None):
-    res = compare(journal_a, journal_b, lo_day, hi_day)
+def run(journal_a, journal_b, out, lo_day=None, hi_day=None, new_tables=()):
+    res = compare(journal_a, journal_b, lo_day, hi_day, new_tables=new_tables)
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "journal_diff.json"), "w") as f:
         json.dump(res, f, indent=1, default=str)
@@ -169,8 +182,10 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--from-day", help="first UTC day (YYYY-MM-DD) compared")
     ap.add_argument("--to-day", help="last UTC day compared")
+    ap.add_argument("--new-table", action="append", default=[], metavar="NAME",
+                    help="a table a newer engine adds: in one journal only it is no schema difference (repeatable)")
     a = ap.parse_args(argv)
-    res = run(a.journal_a, a.journal_b, a.out, a.from_day, a.to_day)
+    res = run(a.journal_a, a.journal_b, a.out, a.from_day, a.to_day, tuple(a.new_table))
     return 0 if res["green"] else 1
 
 
