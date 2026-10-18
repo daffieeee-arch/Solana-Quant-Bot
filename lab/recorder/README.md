@@ -127,11 +127,14 @@ code 75, like a spent budget.
 reservation, `reserved_bytes`: the spend the run may reach before its next save. A byte is only
 counted below it.
 - Before its first byte the recorder saves one: the spend plus one sustainable minute (cap / 1440,
-  at least 1 MiB). Once the spend comes within half of it, the next one is saved.
+  at least 1 MiB). It does so before the unfinished segment directories are removed, so an owner's
+  override is on disk before the evidence for it goes. Once the spend comes within half of it, the
+  next one is saved. (A single update larger than half a reservation is covered only once its save
+  succeeds; the recorder's updates are a few KB.)
 - A save that fails ends the recorder with code 74, like a segment write error. A reconnect in the
   same process would stream on unmetered: past the cap, reconnecting on every tick.
-- The stop at the cap never waits for a save. The reservation on disk is past the cap already, so a
-  restart stops again.
+- The stop at the cap never waits for a save, also on a minute's roll. The reservation on disk is past
+  the cap already, so a restart stops again.
 - A restart counts the larger of `spent_bytes` and `reserved_bytes`. After a crash, a kill or a failed
   write that is the whole reservation: at most one sustainable minute more than came, and a `budget`
   row notes it. A clean end (shutdown, the stop, an exit on a write error) settles the reservation to

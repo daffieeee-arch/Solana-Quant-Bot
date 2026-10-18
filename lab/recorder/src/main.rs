@@ -453,6 +453,13 @@ async fn run(a: Args) -> Result<i32> {
         } // an unknown spend is logged by the meter, with the override
         return Ok(EXIT_BUDGET);
     }
+    // Before anything else, a reservation on disk (meter.rs): without one nothing is streamed. It comes before
+    // Segments::open removes unfinished segment directories, so an owner's override for an unknown spend is on disk
+    // before the evidence that stopped the day is gone (LAB review).
+    if let Err(e) = meter.reserve_ahead() {
+        log::error!("{e:#}; exiting with {EXIT_SEGMENT} before streaming");
+        return Ok(EXIT_SEGMENT);
+    }
     if let Some(w) = creation_warning(&a) {
         log::warn!("{w}");
     }
@@ -470,11 +477,6 @@ async fn run(a: Args) -> Result<i32> {
         backfill_max: 8,
     };
     let resume_from = a.from_slot.map(|s| s.saturating_sub(1)).or(last);
-    // Before the first byte, a reservation on disk (meter.rs); without one nothing is streamed.
-    if let Err(e) = meter.reserve_ahead() {
-        log::error!("{e:#}; exiting with {EXIT_SEGMENT} before streaming");
-        return Ok(EXIT_SEGMENT);
-    }
     let mut rec = Recorder::new(cfg, plugin, segs, meter, watch, resume_from, a.close_lag);
     let deadline = (a.max_runtime_secs > 0).then(|| Instant::now() + Duration::from_secs(a.max_runtime_secs));
     // failures: sessions in a row without data (transport errors included), for the backoff and

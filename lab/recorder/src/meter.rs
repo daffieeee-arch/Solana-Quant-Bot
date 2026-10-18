@@ -17,10 +17,13 @@
 //! below it. Before the first byte the run saves one (`reserve_ahead`), and once the spend comes within
 //! half a reservation of it a new one is saved (`add`). A save that fails ends the recorder
 //! (`BudgetWriteError`, exit 74 like a segment write error), so nothing is received that the disk does
-//! not cover. A restart takes the larger of `spent_bytes` and `reserved_bytes`: after a crash, a kill
-//! or a failed write it counts the whole reservation (at most one sustainable minute more than came);
-//! a clean end settles it to the spend (`settle`). Only a budget.json with a reservation covers a
-//! segment directory of today without `_segment.json`. The stop at the cap never waits for a save.
+//! not cover. (A single update larger than half a reservation, at least 512 KiB, is covered only once
+//! its save succeeds; the recorder's updates are a few KB, sliced accounts and transactions.) A
+//! restart takes the larger of `spent_bytes` and `reserved_bytes`: after a crash, a kill or a failed
+//! write it counts the whole reservation (at most one sustainable minute more than came); a clean end
+//! settles it to the spend (`settle`). Only a budget.json with a reservation covers a segment directory
+//! of today without `_segment.json`. The stop at the cap never waits for a save, also on a minute's
+//! roll.
 //!
 //! When the day's spend projects above the cap (current rate until midnight), the
 //! lowest-priority stream is dropped (downscale), one level at a time; at the cap itself the
@@ -386,7 +389,13 @@ impl Meter {
                 self.recent.clear();
                 restore = true;
             }
-            self.save()?;
+            // A failed save ends the run (below), unless the cap stops it here anyway.
+            if let Err(e) = self.save() {
+                if self.spent < self.cap_bytes {
+                    return Err(e);
+                }
+                log::error!("budget: {e:#} at the cap; the stop goes on");
+            }
         }
         if self.spent >= self.cap_bytes {
             // The stop never waits for the disk (LAB review): the reservation there already counts every
@@ -732,9 +741,40 @@ mod tests {
         block_saves(&root);
         assert!(matches!(m.tick(T0 + 5).unwrap(), Decision::Stop(_)));
         assert!(matches!(m.tick(T0 + 6).unwrap(), Decision::Stop(_)));
+        assert!(matches!(m.tick(T0 + 61).unwrap(), Decision::Stop(_))); // also on a minute's roll, whose save fails
         drop(m);
         unblock_saves(&root);
-        assert!(Meter::load(&root, cap, 1.0, T0 + 10).unwrap().stopped); // the reservation on disk is past the cap
+        assert!(Meter::load(&root, cap, 1.0, T0 + 70).unwrap().stopped); // the reservation on disk is past the cap
+        // The cap crossed in one minute, first seen on the next minute's roll with budget.json not writable.
+        let root2 = tmp("budget-stop-roll");
+        let mut m = Meter::load(&root2, cap, 1.0, T0).unwrap();
+        m.no_downscale = true;
+        m.reserve_ahead().unwrap();
+        while m.spent < cap {
+            m.add("tx", 100_000).unwrap();
+        }
+        block_saves(&root2);
+        assert!(matches!(m.tick(T0 + 61).unwrap(), Decision::Stop(_)));
+        std::fs::remove_dir_all(&root).unwrap();
+        std::fs::remove_dir_all(&root2).unwrap();
+    }
+
+    #[test]
+    fn an_owners_override_is_on_disk_before_the_unfinished_segment_is_removed() {
+        // LAB review: main.rs saves the reservation before Segments::open removes the directory that made today's
+        // spend unknown, so a run that ends right after keeps the override's spend for the next start.
+        let root = tmp("budget-override");
+        let (cap, today) = (25_000_000_000, day_of(T0));
+        std::fs::write(root.join("budget.json"), json!({"day": today, "spent_bytes": 1_000}).to_string()).unwrap();
+        std::fs::create_dir_all(root.join("segments/000000000/blocks")).unwrap();
+        assert!(Meter::load_with(&root, cap, 1.0, T0 + 60, None).unwrap().unknown.is_some());
+        let mut m = Meter::load_with(&root, cap, 1.0, T0 + 60, Some((today, 5_000_000_000))).unwrap();
+        assert!(!m.stopped && m.spent == 5_000_000_000);
+        m.reserve_ahead().unwrap();
+        std::fs::remove_dir_all(root.join("segments/000000000")).unwrap(); // Segments::open; then the run ends
+        drop(m);
+        let again = Meter::load_with(&root, cap, 1.0, T0 + 90, None).unwrap(); // the next start, without the override
+        assert!(again.spent >= 5_000_000_000 && again.unknown.is_none(), "{}", again.spent);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
