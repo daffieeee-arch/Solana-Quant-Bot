@@ -3,7 +3,10 @@
 - the event rows of a dev chunk in a slot range, in the replay's order, with the same values (a digest per row)
   as DuckDB reads them;
 - the same rows from a recorder-style segment built from that range;
-- its journal has paper/journal.py's schema exactly (paper.journal_diff.schema_diff).
+- its journal has paper/journal.py's schema exactly (paper.journal_diff.schema_diff);
+- no two rows share the Python side's order key (slot, tx_index, outer_ix, inner_ix): the store and LiveFeed order by
+  those four only, lab-live then by event_seq and the table, so the orders are equal only without such ties (LAB
+  review on #319; `key_ties` in state lab_live_rows), and the read time and peak RSS are journaled (lab_live_measure).
 
 Needs the built binary: LAB_LIVE_BIN=<path to lab-live> (lab/live/nas_m1a.sh builds it on the NAS). Skips without it.
 """
@@ -129,7 +132,8 @@ def test_its_journal_has_journal_pys_schema(chunk_run, tmp_path):
     ref.close()
     assert journal_diff.schema_diff(jdir, str(tmp_path / "python")) == []
     j = Journal(jdir)
-    feed, counts = json.loads(j.state("feed")), json.loads(j.state("lab_live_rows"))
+    feed, counts, measure = (json.loads(j.state(k)) for k in ("feed", "lab_live_rows", "lab_live_measure"))
     j.close()
     assert (feed["engine"], feed["kind"], feed["from"], feed["to"]) == ("lab-live", "replay", LO, HI)
-    assert sum(counts["rows"].values()) == len(rows) and counts["duplicate_keys"] == 0
+    assert sum(counts["rows"].values()) == len(rows) and counts["duplicate_keys"] == 0 and counts["key_ties"] == 0
+    assert measure["rows"] == len(rows) and measure["read_secs"] >= 0 and measure["peak_rss_bytes"] > 0

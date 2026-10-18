@@ -79,6 +79,36 @@ def test_a_schema_difference_is_red(tmp_path):
     assert res["schema_diff"][0] == "table extra_table only in B" and res["schema_diff"][1].startswith("table exits:")
 
 
+def test_an_expected_new_table_is_listed_not_a_difference(tmp_path):
+    """LAB review on #319: a regression of main against a PR that adds a journal table (as #331 added `learned`) is
+    not red on that table alone. Named with --new-table, a table in one journal only is listed; a column difference
+    in a shared table stays red, and so does the new table's schema where both have it."""
+    import sqlite3
+
+    a, b = _journal(tmp_path / "a"), _journal(tmp_path / "b")
+    db = sqlite3.connect(os.path.join(b, "journal.sqlite"))
+    db.execute("CREATE TABLE newer (x INTEGER)")
+    db.commit()
+    db.close()
+    assert not journal_diff.compare(a, b)["green"]
+    res = journal_diff.compare(a, b, new_tables=("newer",))
+    assert res["green"] and res["schema_diff"] == [] and res["new_tables"] == ["table newer only in B"]
+    assert journal_diff.main(["--journal-a", a, "--journal-b", b, "--out", str(tmp_path / "o"), "--new-table", "newer"]) == 0
+    assert "expected new tables (--new-table): ['table newer only in B']" in open(tmp_path / "o" / "journal_diff.md").read()
+    db = sqlite3.connect(os.path.join(b, "journal.sqlite"))
+    db.execute("ALTER TABLE exits ADD COLUMN extra INTEGER")
+    db.commit()
+    db.close()
+    assert not journal_diff.compare(a, b, new_tables=("newer",))["green"]
+    c = _journal(tmp_path / "c")
+    for path, col in ((a, "x INTEGER"), (c, "x TEXT")):  # both have it: its schema counts
+        db = sqlite3.connect(os.path.join(path, "journal.sqlite"))
+        db.execute(f"CREATE TABLE newer ({col})")
+        db.commit()
+        db.close()
+    assert journal_diff.compare(a, c, new_tables=("newer",))["schema_diff"][0].startswith("table newer:")
+
+
 def test_the_command_writes_its_report_and_exits_by_colour(tmp_path):
     a, b = _journal(tmp_path / "a"), _journal(tmp_path / "b", pnl=0)
     assert journal_diff.main(["--journal-a", a, "--journal-b", a, "--out", str(tmp_path / "o1")]) == 0
