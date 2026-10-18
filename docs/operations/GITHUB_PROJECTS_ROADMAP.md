@@ -66,6 +66,7 @@ The fixed verification reads occur immediately and then after `500`, `1,000`, `2
 - Before: every verification read the whole item list, ~4 s for ~160 items, and the list can lag minutes behind a new item. A new item with eight fields took 1–2 minutes, and a backlog of ~100 items did not fit the 15-minute job (run `39115726554`, cancelled after 8 items).
 - Now an item costs a few seconds.
 - Before an existing item gets a field mutation, it is read again directly, and its field actions are planned from that read. An item deleted meanwhile fails closed (`PRE_MUTATION_ITEM_BINDING … ITEM_DELETED`), and a value changed elsewhere is re-planned, not overwritten. Items that need no change are not read again.
+- An item that needed no change in the planning read, but whose managed field is changed elsewhere during the run, is therefore not corrected in that run. The final audit fails closed on it (`UNEXPECTED_FIELD_VALUE`), and the next run plans it from a fresh read. Before 2026-10-18 the same run would have corrected it from a later full-list read.
 - The final item audit always reads the full list afresh after any item verification. It still fails closed on a duplicate, unexpected, missing or drifted item.
 - A directly read item counts only when it belongs to this Project.
 
