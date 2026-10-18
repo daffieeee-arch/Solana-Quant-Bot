@@ -499,3 +499,52 @@ def test_the_live_start_takes_its_window_from_a_hwm_without_a_minute(tmp_path, m
         E.main(["--live", str(root), "--catch-up", "--journal", str(tmp_path / "j"), "--store", store, "--no-backup",
                 "--no-watchlist"])
     assert seen["from_seq"] == 0
+
+
+@pytest.mark.parametrize("from_slot", [501_301, 10**9], ids=["first-event-past-the-hwm", "no-event"])
+def test_a_resume_before_any_block_time_books_on_the_hwms_day(tmp_path, from_slot):
+    """Codex 1 (LAB review: confirmed). The keeper removed every segment up to the HWM (an outage of more than ~3 days,
+    or a new recorder root), or a catch-up brings no event at all: the replay resumes before it saw a block time. B's
+    restart_lost exit is booked on the HWM's day, the HWM's daily loss stays (no day change follows inside that day),
+    and that day closes with its export and report."""
+    from paper.report import daily_report
+
+    crashed(tmp_path)
+    r = engine(tmp_path, "r", Later(TOKENS, from_slot=from_slot))
+    day = r.rs.hwm["day"]
+    assert day
+    r.run()
+    xs = r.journal.rows("exits", "key = 'B'")
+    assert len(xs) == 1 and xs[0]["exit_reason"] == "restart_lost" and xs[0]["day"] == day
+    a = r.journal.rows("exits", "key = 'A'")[0]
+    assert r.primary.day_loss == a["pnl"] + xs[0]["pnl"]
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[0]
+    assert rec["day"] == day and rec["counts"]["restart_lost"] == 1 and "day_loss_different" not in rec["counts"]
+    report = open(os.path.join(r.journal.dir, day, "report.md")).read()
+    assert "## Restarts" in report and "restart_lost 1" in report
+    assert [x["key"] for x in pq.read_table(os.path.join(r.journal.dir, day, "exits.parquet")).to_pylist()] == ["A", "B"]
+    daily_report(r.journal, day)  # every exit has a day: the stop rule's day comparison holds
+
+
+def test_a_position_the_replay_refills_differently_is_closed_with_the_journals_fill(tmp_path):
+    """Codex 2 (LAB review: confirmed). The replay refills B differently from the journal's buy (here the first run's
+    fill had fewer tokens). The replay's position rests on its own fill and pool state, so it cannot carry the
+    journal's: B is closed at the HWM at its last journaled mark (restart_lost) with the journal's tokens and cost.
+    The buy fill, the exit and the wallet agree; the difference is counted (fills_different)."""
+    crashed(tmp_path)
+    j = Journal(str(tmp_path / "r"))
+    j.db.execute("UPDATE fills SET tokens = tokens - 1000 WHERE key = 'B' AND side = 'buy'")
+    j.db.execute("UPDATE positions SET tokens = tokens - 1000 WHERE key = 'B'")
+    j.db.commit()
+    buy, mark = j.rows("fills", "key = 'B' AND side = 'buy'")[0], j.rows("positions", "key = 'B'")[0]
+    j.close()
+    r = engine(tmp_path, "r", Later(TOKENS, from_slot=500_500))
+    r.run()
+    xs = r.journal.rows("exits", "key = 'B'")
+    assert len(xs) == 1 and xs[0]["exit_reason"] == "restart_lost" and xs[0]["exit_slot"] == 501_300
+    assert (xs[0]["tokens"], xs[0]["cost"], xs[0]["pnl"]) == (buy["tokens"], buy["quote"], mark["mark_pnl"])
+    assert r.journal.rows("fills", "key = 'B'") == [buy] and not r.journal.rows("positions")
+    a = r.journal.rows("exits", "key = 'A'")[0]
+    assert wallet(r.journal)["balance_lamports"] == 10 * SOL + a["pnl"] + xs[0]["pnl"]
+    rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[0]
+    assert rec["counts"]["fills_different"] == 1 and rec["counts"]["restart_lost"] == 1

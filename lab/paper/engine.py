@@ -915,7 +915,13 @@ class Engine:
                 return
             b = self.rs.buys.get(k)
             if b is None or (b["slot"], b["tokens"], b["quote"]) != (slot, r.tokens, r.cost):
+                # Refilled differently (Codex 2): the replay's position rests on its own fill and on the pool state
+                # after it (its own impact included), so it cannot carry the journal's. Not opened: at the HWM the
+                # journal's position is closed at its last mark (restart_lost, the journal's tokens and cost), or the
+                # journal's exit applies.
                 self.rs.counts["fills_different"] += 1
+                self.busy[k[:3]] = p.t
+                return
         self.j.put("orders", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
                    size=size, status=status, reason=r.exit_reason if status != "filled" else None)
         if status != "filled":
@@ -1107,6 +1113,11 @@ class Engine:
         'restarts' and the daily report."""
         rs, j = self.rs, self.journal
         slot = rs.slot if slot is None else slot
+        # The HWM's day (the first run's at its commit), also when this replay resumes before any block time: the
+        # keeper removed every segment up to the HWM, or a catch-up has no event (Codex 1). Its restart_lost exits are
+        # booked on it, its daily loss is the HWM's, and the day closes with its report.
+        if rs.hwm.get("day"):
+            self.day = rs.hwm["day"]
         if rs.first_slot is None:  # no event before the HWM in this replay
             self._load_replay(slot)
         c = rs.counts
