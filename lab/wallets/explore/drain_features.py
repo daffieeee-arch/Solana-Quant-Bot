@@ -6,7 +6,7 @@ t0=time.time(); log=lambda *a: print(round(time.time()-t0,1), *a, flush=True)
 con=duckdb.connect(); con.execute(f"SET memory_limit='1400MB'; SET threads TO 2; SET preserve_insertion_order=false; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='20GB'")
 con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
 con.execute(f"""CREATE TABLE tr AS SELECT DISTINCT pool, t FROM '{W}/d1_h45_pools.parquet'""")   # one row per (pool, t): the trigger
-con.execute(f"""CREATE TABLE k AS SELECT pool, creator, create_slot, b0, creator_prior_pools, creator_n_trades IS NULL AS creator_never_traded, ft, ms, day, factory FROM '{W}/k2_pools.parquet'""")
+con.execute(f"""CREATE TABLE k AS SELECT pool, creator, create_slot, b0, creator_prior_pools, NOT COALESCE(creator_traded_before, false) AS creator_never_traded  -- point-in-time (Codex 7), ft, ms, day, factory FROM '{W}/k2_pools.parquet'""")
 con.execute("CREATE TABLE trk AS SELECT tr.*, k.* EXCLUDE (pool) FROM tr JOIN k USING (pool)")
 log("triggers", con.execute("SELECT count(*), count(DISTINCT pool) FROM trk").fetchone())
 # all rows of those pools from the create to t + 6 h (bounded): features before t, outcome after t

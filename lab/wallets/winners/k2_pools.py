@@ -16,10 +16,14 @@ log("pools", con.execute("SELECT count(*), sum(factory::INT) FROM pools").fetcho
 con.execute("""CREATE TABLE ch AS SELECT p.pool, count(q.pool) AS creator_prior_pools, count(q.pool) FILTER (WHERE q.orientation = 'reversed') AS creator_prior_reversed
   FROM pools p LEFT JOIN s.pools q ON q.coin_creator = p.creator AND q.create_slot < p.create_slot GROUP BY 1""")
 con.execute("CREATE TABLE creators AS SELECT DISTINCT creator FROM pools")
-con.execute("""CREATE TABLE ct AS SELECT trader AS creator, min(slot)::BIGINT AS first_trade_slot, count(*) AS n_trades FROM (
-  SELECT p.trader, p.slot FROM s.pool p JOIN creators c ON c.creator = p.trader WHERE p.kind IN ('buy','sell')
-  UNION ALL SELECT c2.trader, c2.slot FROM s.curve c2 JOIN creators c ON c.creator = c2.trader) GROUP BY 1""")
-log("creator history", con.execute("SELECT count(*) FROM ct").fetchone())
+# Codex finding 7 (2026-10-18): n_trades counts the creator's trades over the WHOLE dev period (also after the pool's
+# creation): kept as creator_n_trades_period for reporting only. Point-in-time: creator_trades_before = the creator's
+# trades before the pool's create_slot (creator_traded_before = that count > 0).
+con.execute("""CREATE TABLE ctr AS SELECT p.trader AS creator, p.slot::BIGINT AS slot FROM s.pool p JOIN creators c ON c.creator = p.trader WHERE p.kind IN ('buy','sell')
+  UNION ALL SELECT c2.trader, c2.slot::BIGINT FROM s.curve c2 JOIN creators c ON c.creator = c2.trader""")
+con.execute("CREATE TABLE ct AS SELECT creator, min(slot) AS first_trade_slot, count(*) AS n_trades FROM ctr GROUP BY 1")
+con.execute("CREATE TABLE ctb AS SELECT p.pool, count(ctr.slot) AS creator_trades_before FROM pools p LEFT JOIN ctr ON ctr.creator = p.creator AND ctr.slot < p.create_slot GROUP BY 1")
+log("creator history", con.execute("SELECT count(*) FROM ct").fetchone(), con.execute("SELECT sum((creator_trades_before > 0)::INT) FROM ctb").fetchone())
 EP=[(446256000+432000*i, 446256000+432000*(i+1)) for i in range(14)]
 first=True
 for lo,hi in EP:
@@ -49,10 +53,10 @@ for lo,hi in EP:
         min(slot) FILTER (WHERE kind = 'withdraw') AS first_withdraw, max(slot) FILTER (WHERE kind IN ('buy','sell')) AS last_trade_seen,
         any_value(bps) AS bps, count(*) FILTER (WHERE kind IN ('buy','sell') AND slot >= ft.ft + {ent} AND slot < ft.ft + {ent} + {hold}) AS trades_in_hold
       FROM r JOIN ft USING (pool) GROUP BY 1""")
-    con.execute(f"""CREATE OR REPLACE TABLE e AS SELECT pe.*, ch.creator_prior_pools, ch.creator_prior_reversed, ct.first_trade_slot AS creator_first_trade, ct.n_trades AS creator_n_trades,
-        (ct.first_trade_slot < pe.create_slot) AS creator_traded_before, ft.ft, ft.p0, ft.depth0, ft.first_trader = pe.creator AS creator_first_trade_in_pool, ft.ft - pe.create_slot AS create_to_first,
+    con.execute(f"""CREATE OR REPLACE TABLE e AS SELECT pe.*, ch.creator_prior_pools, ch.creator_prior_reversed, ct.first_trade_slot AS creator_first_trade, ct.n_trades AS creator_n_trades_period,
+        ctb.creator_trades_before, (ctb.creator_trades_before > 0) AS creator_traded_before, ft.ft, ft.p0, ft.depth0, ft.first_trader = pe.creator AS creator_first_trade_in_pool, ft.ft - pe.create_slot AS create_to_first,
         f2.* EXCLUDE (pool), st.* EXCLUDE (pool), {ms} AS ms, {ent} AS ent_slots, {hold} AS hold_slots, d.day
-      FROM pe LEFT JOIN ch USING (pool) LEFT JOIN ct ON ct.creator = pe.creator LEFT JOIN ft USING (pool) LEFT JOIN f2 USING (pool) LEFT JOIN st USING (pool)
+      FROM pe LEFT JOIN ch USING (pool) LEFT JOIN ct ON ct.creator = pe.creator LEFT JOIN ctb USING (pool) LEFT JOIN ft USING (pool) LEFT JOIN f2 USING (pool) LEFT JOIN st USING (pool)
       ASOF LEFT JOIN days d ON d.slot0 <= pe.create_slot""")
     if first: con.execute("CREATE TABLE allp AS SELECT * FROM e"); first=False
     else: con.execute("INSERT INTO allp SELECT * FROM e")

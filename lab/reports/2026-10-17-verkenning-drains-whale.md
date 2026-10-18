@@ -11,7 +11,7 @@ LAB research, 2026-10-17. Eerste stappen van `2026-10-17-onderzoeksagenda.md`, i
 
 Data: H5 = `bigtp-dev-1033-1046-4dbd34b` (flow300_tp100_H6, organic, d 1/2: 3.089 / 3.222 posities), H4 = `long-dev-1033-1046-fc4173c` (flow300_H6, organic, d 1/2: 2.934 / 3.075); netto per positie via `costs.settle_sql` (base). Alle 6.000+ instappools zijn in dev gecreëerd (`k2_pools.parquet`: 51.248 reversed pools), mediaan leeftijd bij de trigger 4 min. "Verlies-alles" = proceeds 0 of geen exit.
 
-**Fabrieksveto (K2, R1: eenmalige creator die nooit handelde + b0 ≥ 300 SOL):** raakt 7–9 posities per cel; Σ-effect ±2 SOL. Irrelevant voor H4/H5: de F7-trigger komt in die pools zelden, en als hij komt is het ná de cyclus.
+**Fabrieksveto (K2, R1: eenmalige creator die nooit handelde + b0 ≥ 300 SOL):** raakt 7–9 posities per cel; Σ-effect ±2 SOL. *Correctie 2026-10-18 (Codex 7): 'nooit handelde' was over de hele periode geteld; point-in-time (`creator_traded_before`) verschuift R1 met 17 pools op 3.535 (K2-noot, correctie bovenaan); het veto-effect hier (±2 SOL, 2 % van de posities) is niet herdraaid. De creator-klasse (system-program, eerdere pools) is wél point-in-time en staat los hiervan.* Irrelevant voor H4/H5: de F7-trigger komt in die pools zelden, en als hij komt is het ná de cyclus.
 
 **Creator-klasse op het moment van de poolcreatie** (point-in-time; H5 d = 1, dag 1–9 / dag 10–18):
 

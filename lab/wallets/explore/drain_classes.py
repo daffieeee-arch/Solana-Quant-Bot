@@ -13,7 +13,7 @@ con.execute(f"""CREATE TABLE pos AS
   SELECT 'H4', variant, d, pool, t, entry_slot, exit_slot, exit_reason, proceeds, cost, tokens, day, regime, {pnl} FROM '{DATA}/backtests/long-dev-1033-1046-fc4173c/parts/*.parquet' WHERE variant = 'flow300_H6' AND farm = 'organic' AND NOT COALESCE(skipped, false)""")
 print(con.execute("SELECT h, d, count(*), round(sum(pnl)/1e9,1) FROM pos GROUP BY 1,2 ORDER BY 1,2").fetchall())
 print("exit reasons H5 d1:", con.execute("SELECT exit_reason, count(*), round(sum(pnl)/1e9,1) FROM pos WHERE h='H5' AND d=1 GROUP BY 1 ORDER BY 2 DESC").fetchall())
-con.execute(f"""CREATE TABLE k AS SELECT pool, creator, create_slot, b0/1e9 AS b0_sol, creator_prior_pools, creator_n_trades IS NULL AS creator_never_traded, ft, ms, n_traders, buy_sol - sell_sol AS inflow, max_buy, tip_share, factory, first_withdraw FROM '{W}/k2_pools.parquet'""")
+con.execute(f"""CREATE TABLE k AS SELECT pool, creator, create_slot, b0/1e9 AS b0_sol, creator_prior_pools, NOT COALESCE(creator_traded_before, false) AS creator_never_traded  -- point-in-time (Codex 7), ft, ms, n_traders, buy_sol - sell_sol AS inflow, max_buy, tip_share, factory, first_withdraw FROM '{W}/k2_pools.parquet'""")
 # point-in-time: the 2-minute features only when t >= ft + 2 min; creator features are known at the create
 con.execute("""CREATE TABLE j AS SELECT p.*, k.pool IS NOT NULL AS in_dev_pools, k.factory, k.b0_sol, k.creator_prior_pools, k.creator_never_traded,
   CASE WHEN p.t >= k.ft + round(120000/k.ms) THEN k.n_traders END AS n_traders2, CASE WHEN p.t >= k.ft + round(120000/k.ms) THEN k.inflow END AS inflow2,

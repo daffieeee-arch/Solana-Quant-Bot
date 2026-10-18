@@ -2,6 +2,8 @@
 
 LAB research, 2026-10-17. Vervolg op E34 (creator-klasse) en E36 (elke reversed pool wordt leeggetrokken; het voordeel is "wij eerst"). Vraag: kan de tijd tot de LP-drain op het triggermoment t point-in-time worden geschat, en helpt een veto op de riskantste triggers H4/H5? Alleen dev 1033–1046; fit op dag 1–9, meting op dag 10–18; hold-out en clean niet gelezen. Verkennend; register E37. Labels **feit** / **reconstructie** / **modelaanname**. Scripts `lab/wallets/explore/drain_features.py`, `drain_model.py`.
 
+> **Correctie 2026-10-18 (Codex-bevinding 7, bevestigd):** het kenmerk `creator_never_traded` kwam uit `k2_pools.parquet` als `creator_n_trades IS NULL`, geteld over de hele dev-periode (ook ná t): geen point-in-time kenmerk. Het zat in de AUC-tabel (0,563 / 0,518) en in de logistische en LightGBM-fits. Een lekkend kenmerk kan de AUC alleen opblazen, dus de echte point-in-time AUC's zijn hooguit gelijk (≤ 0,63) en de conclusie (niet te voorspellen op t, veto kost winst) blijft; `drain_features.py` gebruikt sindsdien `creator_traded_before` (point-in-time); niet herdraaid.
+
 ## 0. Samenvatting
 
 - **Op t is de drain nauwelijks te voorspellen.** Over 3.383 H4/H5-triggers (dag 10–18: 1.200) valt de drain mediaan 22,7 min na t; 33 % binnen 10 min, 72 % binnen 60 min. Geen enkel point-in-time kenmerk haalt een AUC boven 0,57 (beste: `n_trades_1m` 0,565 voor 60 min, `creator_never_traded` 0,563 voor 10 min; leeftijd van de pool 0,40 / 0,52; b0 0,52 / 0,44). Een logistisch model geeft AUC 0,59 (10 en 60 min), LightGBM 0,52 / 0,63 — *feit*.
@@ -23,7 +25,7 @@ LAB research, 2026-10-17. Vervolg op E34 (creator-klasse) en E36 (elke reversed 
 | leeftijd pool (min) | 0,395 | 0,516 |
 | b0 (startliquiditeit) | 0,515 | 0,441 |
 | creator: eerdere pools | 0,530 | 0,385 |
-| creator nooit gehandeld | 0,563 | 0,518 |
+| creator nooit gehandeld (periode-kenmerk, zie correctie bovenaan) | 0,563 | 0,518 |
 | creator onbekend | 0,550 | 0,429 |
 | traders sinds creatie | 0,418 | 0,549 |
 | instroom sinds creatie | 0,476 | 0,561 |
