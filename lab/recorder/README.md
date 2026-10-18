@@ -134,7 +134,11 @@ counted below it.
 - A save that fails ends the recorder with code 74, like a segment write error. A reconnect in the
   same process would stream on unmetered: past the cap, reconnecting on every tick.
 - The stop at the cap never waits for a save, also on a minute's roll. The reservation on disk is past
-  the cap already, so a restart stops again.
+  the cap already, so a restart stops again. A new reservation that cannot be saved while bytes come in
+  ends the run with code 74, also at the cap; the restart then stops at once with 75, without the open
+  segment's last slots.
+- A configuration error at the start (no endpoint) reserves nothing, and a later failed start settles
+  its reservation again, so failed starts do not use up the day.
 - A restart counts the larger of `spent_bytes` and `reserved_bytes`. After a crash, a kill or a failed
   write that is the whole reservation: at most one sustainable minute more than came, and a `budget`
   row notes it. A clean end (shutdown, the stop, an exit on a write error) settles the reservation to

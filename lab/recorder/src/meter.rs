@@ -22,8 +22,10 @@
 //! restart takes the larger of `spent_bytes` and `reserved_bytes`: after a crash, a kill or a failed
 //! write it counts the whole reservation (at most one sustainable minute more than came); a clean end
 //! settles it to the spend (`settle`). Only a budget.json with a reservation covers a segment directory
-//! of today without `_segment.json`. The stop at the cap never waits for a save, also on a minute's
-//! roll.
+//! of today without `_segment.json`. The stop at the cap never waits for a save in `tick`, also on a
+//! minute's roll. A reservation that `add` cannot save ends the run with exit 74, also at the cap: the
+//! restart then stops at once (75), because the reservation on disk is past the cap, but the open
+//! segment's last slots are not written.
 //!
 //! When the day's spend projects above the cap (current rate until midnight), the
 //! lowest-priority stream is dropped (downscale), one level at a time; at the cap itself the

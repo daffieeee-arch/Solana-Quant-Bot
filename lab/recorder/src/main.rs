@@ -49,7 +49,7 @@ use meter::{BudgetWriteError, Meter, GB};
 use recorder::{Action, Config, Recorder};
 use segment::{SegmentWriteError, Segments};
 use sink::Sink;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use watch::{Extra, Files, Filter, Opts};
@@ -208,6 +208,24 @@ fn end_on(e: anyhow::Error, meter: &mut Meter) -> Result<i32> {
     match write_exit(&e, meter) {
         Some(code) => Ok(code),
         None => Err(e),
+    }
+}
+
+/// Before the stream: the budget reservation on disk (meter.rs), then the segments. The reservation comes first:
+/// Segments::open removes the unfinished segment directories that made today's spend unknown, so an owner's override
+/// is on disk before its evidence goes (LAB review). None: the reservation could not be saved (nothing removed; exit
+/// 74). A failed open settles the reservation again: no byte has come.
+fn reserve_and_open(meter: &mut Meter, root: &Path, seg_slots: u64, seg_secs: u64) -> Result<Option<(Segments, Option<u64>)>> {
+    if let Err(e) = meter.reserve_ahead() {
+        log::error!("{e:#}; exiting with {EXIT_SEGMENT} before streaming");
+        return Ok(None);
+    }
+    match Segments::open(root, seg_slots, seg_secs) {
+        Ok(opened) => Ok(Some(opened)),
+        Err(e) => {
+            save_before_exit(meter);
+            Err(e)
+        }
     }
 }
 
@@ -453,20 +471,22 @@ async fn run(a: Args) -> Result<i32> {
         } // an unknown spend is logged by the meter, with the override
         return Ok(EXIT_BUDGET);
     }
-    // Before anything else, a reservation on disk (meter.rs): without one nothing is streamed. It comes before
-    // Segments::open removes unfinished segment directories, so an owner's override for an unknown spend is on disk
-    // before the evidence that stopped the day is gone (LAB review).
-    if let Err(e) = meter.reserve_ahead() {
-        log::error!("{e:#}; exiting with {EXIT_SEGMENT} before streaming");
-        return Ok(EXIT_SEGMENT);
-    }
     if let Some(w) = creation_warning(&a) {
         log::warn!("{w}");
     }
+    // A configuration error reserves nothing (each failed start would add a reservation; LAB review).
     let endpoint = a.endpoint.clone().context("pass --endpoint or set LAB_TRITON_GRPC_ENDPOINT")?;
-    let (segs, last) = Segments::open(&a.root, a.segment_slots, a.segment_secs)?;
+    let Some((segs, last)) = reserve_and_open(&mut meter, &a.root, a.segment_slots, a.segment_secs)? else {
+        return Ok(EXIT_SEGMENT);
+    };
     // The extractor's plugin decodes; its own Parquet sink stays unused (the segments write).
-    let plugin = LabPlugin::new(Arc::new(Sink::start(a.root.join(".extractor-sink-unused"))), Arc::new(Coverage::new(0, 0)))?;
+    let plugin = match LabPlugin::new(Arc::new(Sink::start(a.root.join(".extractor-sink-unused"))), Arc::new(Coverage::new(0, 0))) {
+        Ok(p) => p,
+        Err(e) => {
+            save_before_exit(&mut meter); // no byte has come: the reservation comes down again
+            return Err(e);
+        }
+    };
     let cfg = Config {
         opts: opts(&a),
         min_update_secs: a.min_update_secs,
@@ -553,7 +573,30 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_session, end_on, parse_assume, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
+    use super::{count_session, end_on, parse_assume, reserve_and_open, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
+
+    #[test]
+    fn the_budget_reservation_is_on_disk_before_the_segments_remove_an_unfinished_directory() {
+        // LAB review: Segments::open removes the directory that made today's spend unknown. The owner's override is
+        // on disk first; when it cannot be saved nothing is removed, and the restart finds the same unknown spend.
+        let root = std::env::temp_dir().join(format!("lab-recorder-reserve-open-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("segments/000000000/blocks")).unwrap();
+        let (cap, now) = (25_000_000_000, unix());
+        let today = now / 86_400;
+        std::fs::write(root.join("budget.json"), format!("{{\"day\": {today}, \"spent_bytes\": 1000}}")).unwrap();
+        assert!(Meter::load_with(&root, cap, 1.0, now, None).unwrap().unknown.is_some());
+        let mut meter = Meter::load_with(&root, cap, 1.0, now, Some((today, 5_000_000_000))).unwrap();
+        std::fs::create_dir_all(root.join("budget.json.tmp")).unwrap(); // budget.json cannot be written
+        assert!(reserve_and_open(&mut meter, &root, 150, 60).unwrap().is_none());
+        assert!(root.join("segments/000000000").exists()); // the evidence stays
+        std::fs::remove_dir_all(root.join("budget.json.tmp")).unwrap();
+        assert!(reserve_and_open(&mut meter, &root, 150, 60).unwrap().is_some());
+        assert!(!root.join("segments/000000000").exists());
+        let again = Meter::load_with(&root, cap, 1.0, unix(), None).unwrap(); // the next start, without the override
+        assert!(again.spent >= 5_000_000_000 && again.unknown.is_none());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 
     #[test]
     fn a_segment_or_budget_write_error_settles_the_meter_and_ends_the_recorder_other_errors_do_not() {
