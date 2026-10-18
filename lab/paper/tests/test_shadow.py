@@ -379,16 +379,16 @@ def test_a_farm_label_difference_never_explains_an_independent_fill_or_exit_diff
                        "backfills": [{"pool": "P", "from_slot": 1_000, "to_slot": 1_099, "status": "complete", "rows": 100}]
                        if sub else []}, f)
 
-    def side(farm, status="entered", reason=None, tokens=1_000, pnl=-5, depth=1):
-        return dict(farm=farm, status=status, reason=reason, tokens=tokens, pnl=pnl, depth=depth)
+    def side(farm, status="entered", reason=None, tokens=1_000, pnl=-5, depth=1, trader="X"):
+        return dict(farm=farm, status=status, reason=reason, tokens=tokens, pnl=pnl, depth=depth, trader=trader)
 
-    def cause(r, l, variant="tp4_T600"):
+    def cause(r, l, variant="tp4_T600", family="F7"):
         dirs = []
         for name, x in (("r", r), ("l", l)):
             j = Journal(str(tmp_path / name))
-            k = dict(family="F7", variant=variant, key="P", t=1_700)
+            k = dict(family=family, variant=variant, key="P", t=1_700)
             j.put("signals", **k, venue="pool", orientation="reversed", status=x["status"], reason=x["reason"],
-                  farm=x["farm"], depth=x["depth"], trigger_trader="X")
+                  farm=x["farm"], depth=x["depth"], trigger_trader=x["trader"])
             if x["status"] == "entered":
                 j.put("orders", **k, entry_slot=1_701, size=100, status="filled", reason=None)
                 j.put("fills", **k, side="buy", slot=1_701, tokens=x["tokens"], quote=100)
@@ -416,6 +416,9 @@ def test_a_farm_label_difference_never_explains_an_independent_fill_or_exit_diff
     assert cause(flagged_skip, side("organic", "skipped", "busy"), "flow300_H6") == (False, "farm_label_order")  # 92y
     # ... but not when the trigger's own columns differ: they come from the trigger leg, before the label.
     assert cause(flagged_skip, side("organic", "skipped", "busy", depth=2), "flow300_H6") == (False, "unexplained")
+    assert cause(flagged_skip, side("organic", "skipped", "busy", trader="Y"), "flow300_H6") == (False, "unexplained")
+    # ... and not for an N2 row: it carries its trigger's label, while this history is its own pick's pool.
+    assert cause(flagged_skip, side("organic"), "flow300_H6", family="N2_F7") == (False, "unexplained")
 
 
 def test_compare_refuses_a_replay_and_a_live_run_of_two_commits(tmp_path):
