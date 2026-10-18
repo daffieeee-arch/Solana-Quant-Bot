@@ -76,7 +76,7 @@ describe('GitHub Project item lifecycle', () => {
     };
 
     expect(production.itemRetention).toMatchObject({
-      closed_item_retention_days: 30,
+      closed_item_retention_days: 7,
       pre_v2_merged_pr_max_number: 68,
     });
     expect(production.itemRetention?.pinned_items).toContainEqual({ kind: 'Issue', number: 56 });

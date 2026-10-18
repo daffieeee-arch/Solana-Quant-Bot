@@ -23,6 +23,32 @@ The controlled content migration created E0–E7 as #72/#74–#80 and B2A–B8 a
 
 The immutable preflight recorded issue #63 as `CLOSED` / `COMPLETED`, contrary to the accepted migration plan. Its close was temporally associated with PR #69's merge, but the exact initiating mechanism remains unproven. A separately authorized governance correction reopened it after the snapshot; current-schema Roadmap Sync run `33555734237` passed, and the snapshot and hashes remain unchanged. Issue #63 stayed open and pinned through the completed G0/E0 audit. PR #90 removed the pin; only after that gate passed was #63 closed individually as `not planned / superseded`. The immutable preflight remains unchanged and correctly differs from these documented later events.
 
+## Lab layout — 2026-10-18
+
+By owner decision, 2026-10-18 ("de nieuwe roadmap-indeling mag ook"), the Project is laid out for the lab plan instead of the frozen V2 program.
+
+**Views.** The eight views are renamed in place. Each view's earlier name is its first alias, so it keeps its Project view id, and no view is created or deleted.
+
+| View | Was | Filter |
+|---|---|---|
+| Nu bezig (board) | Now | `is:issue is:open` |
+| Opgeleverd | Next | `is:pr is:merged` |
+| Open PR's | Data | `is:pr is:open` |
+| Onderzoek | Observatory | `is:issue area:Research,ML` |
+| Paper en live | Research | `is:issue area:"Live Shadow",Execution` |
+| Alle taken | Later | `is:issue` |
+| Archief V2 | Retired | unchanged |
+| Migration Ledger | Migration Ledger | unchanged |
+
+**Item fields.**
+- Issue views show Status, Priority, Area, Evidence, Start date, Target date and Assignees.
+- PR views show Status, Area, Work Type and Assignees.
+- The V2 fields stay defined and synchronized, and are shown only in the two V2 archive views.
+
+**Retention and Project text.**
+- Closed items are archived after 7 days instead of 30. Merged PRs therefore no longer crowd the board, and older merged PRs are not added at all.
+- The Project's short description and README are in Dutch, for the owner. The title is unchanged, because it identifies the Project.
+
 ## Synchronization cadence and delivery status — 2026-09-23
 
 The owner approved only `push` to main, the existing daily `17 4 * * *` schedule
@@ -195,7 +221,7 @@ The Evidence field is, in order: `Not Applicable`, `Unproven`, `Fixture`, `Opera
 
 The merged config replaced the Project short description and README with the approved E0 data-first text and a link to [`../HANDOFF_V2.md`](../HANDOFF_V2.md), explicitly naming edge discovery or falsification, Observatory before Workstation, Triton-only and no profitability assumption.
 
-Retention keeps open V2 issues/open PRs active and binds the exact 30 linked merged pre-V2 PRs—#1–#26, #64, #65, #67 and #68—to the root snapshot hash, a separate candidate-set hash and a sorted config allowlist. The approved value is `closed_item_retention_days: 30`; there is no fallback or implicit default. Those 30 items remain archived, while the grace interval keeps newly closed anchors active temporarily. Archived closed items remain archived unless an actual GitHub reopen transition is evidenced; no item or GitHub history is deleted. Issue #56 remains the sole pinned continuing control. Issue #63 is unpinned and closed after its separate post-PR-#90 gate. Tests cover eligibility before both add and unarchive, audited-set/initial-membership drift, the configured grace period, closed-item non-reactivation, evidence-backed reopen behavior and deterministic planned counts.
+Retention keeps open V2 issues/open PRs active and binds the exact 30 linked merged pre-V2 PRs—#1–#26, #64, #65, #67 and #68—to the root snapshot hash, a separate candidate-set hash and a sorted config allowlist. The approved value was `closed_item_retention_days: 30` and is `7` since 2026-10-18 (owner); there is no fallback or implicit default. Those 30 items remain archived, while the grace interval keeps newly closed anchors active temporarily. Archived closed items remain archived unless an actual GitHub reopen transition is evidenced; no item or GitHub history is deleted. Issue #56 remains the sole pinned continuing control. Issue #63 is unpinned and closed after its separate post-PR-#90 gate. Tests cover eligibility before both add and unarchive, audited-set/initial-membership drift, the configured grace period, closed-item non-reactivation, evidence-backed reopen behavior and deterministic planned counts.
 
 GitHub exposes `ProjectV2Item.updatedAt`, not a dedicated archive timestamp. Reopen eligibility therefore requires the underlying item to be open and its latest `ReopenedEvent.createdAt` to be strictly newer than that Project timestamp. Ambiguity remains archived. This tested fail-closed limitation is accepted for G0 and must be audited during the first controlled migration; no reopen event is manufactured for testing.
 
