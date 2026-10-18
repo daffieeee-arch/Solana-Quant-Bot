@@ -11,8 +11,9 @@
 //!   duplicate keys, and key ties: rows the Python side, which orders by (slot, tx, outer, inner) only, could put in
 //!   another order; parity needs 0) and `lab_live_measure` (the time to read and sort, and the peak RSS: every row
 //!   is held in memory before the sort). One dev chunk (216,000 slots, 15.5 M event rows) does not fit the NAS
-//!   runner's 24 GB that way (job 99u, killed after 33 s): streaming is a precondition for M1 parity on whole chunks,
-//!   not an optimisation (design §10). The read logs its progress with the RSS per table and per million rows.
+//!   runner's 24 GB that way (job 99u, killed after 33 s): streaming (part by part, compact legs) is a precondition for
+//!   M1 parity on whole chunks, not an optimisation (design §10). The read logs its progress with the RSS per table and
+//!   per million rows.
 //! - `--order-out` writes one line per row, `table slot tx_index outer_ix inner_ix event_seq sha256` (tab
 //!   separated, `null` for a missing value). paper/tests/test_lab_live.py compares it with DuckDB's reading of the
 //!   same files.

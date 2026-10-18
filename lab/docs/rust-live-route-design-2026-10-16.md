@@ -329,8 +329,13 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
 - Every map is bounded by pruning, as `TOKEN_KEEP_DAYS` / `pool_seen` are in Python (#299).
 - **Measured 2026-10-19 (NAS job 99u, #367): the in-memory read does not fit one chunk.** M1 part 1's `lab-live replay` holds every event row of the range in memory before the sort, at roughly 1.5 KB a row. One dev chunk (216,000 slots, 15.5 M event rows, 4.4 GB Parquet) was killed after 33 s at the runner's 24 GB.
   - Streaming is therefore a **precondition** for M1 parity on the whole dev chunk and fwd1053-1054, not an optimisation.
-  - The plan: read slot windows (row-group pruning on the slot statistics), sort, process and drop each window in order. The order key is unique (key_ties 0), so the windows keep the replay order.
-  - It is its own PR before C1. #367's baseline (1/16, 1/8 and the quarters of the chunk) gives the bytes per row it starts from.
+  - Slot windows with row-group pruning do not work on these files. Each part file (200,000 rows, one row group) spans almost the whole chunk, e.g. slots 450144003–450327858, because the extractor writes in parallel. A window would read all 4.4 GB again.
+  - The rows are wide: 57–64 columns each. Trades are 14.8 M of the 15.5 M rows (SellEvent 7.1 M, BuyEvent 5.6 M, TradeEvent 2.1 M).
+  - The plan, as its own PR before C1's decisions:
+    - process part by part in slot order (chunks are disjoint slot ranges; recorded segments are small);
+    - turn each row into a compact typed leg as the store builds it, with interned keys and only the engine's fields (~150 B instead of ~1.5 KB a row), instead of holding the generic rows.
+    - One chunk then needs ~2 GB. The order key is unique (key_ties 0), so the sort within a part keeps the replay order.
+  - #367's baseline (1/16, 1/8 and the quarters of the chunk) gives the bytes per row it starts from.
 
 **Profiling plan:**
 1. Replay a recorded day at full speed on the NAS: throughput and the step histograms.
