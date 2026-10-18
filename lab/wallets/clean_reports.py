@@ -1,5 +1,9 @@
-"""Report template for the clean test: E20 (clean_test result.json), H3 / H4 / H5 (clean_hx result.json) -> four Dutch
-notes in lab/reports plus a short owner summary. Fills only what the result files hold; every number comes from them.
+"""Report template for the clean test: E20 (clean_test result.json), H3 (clean_h3), H4 (clean_h4) and H5 (clean_hx) ->
+four Dutch notes in lab/reports plus a short owner summary. Fills only what the result files hold; every number comes
+from them. The producers differ in shape (Codex finding 5, 2026-10-18): clean_h3 writes its test under "H3" (the daily
+difference hold180 - tp4_T600 over all farms, an improvement test against K3, with "h3-parts/" beside result.json),
+clean_h4 under "H4" (flow300_H6 organic, net SOL per day above 0, "h4-parts/"), clean_hx under "test" with "hypothesis"
+= "H5" ("run-parts/"); test_block() picks the right one and main() refuses a result of the wrong shape.
 
   python -m wallets.clean_reports --date 2026-10-2X --out lab/reports [--e20 .../result.json] [--h3 ...] [--h4 ...] [--h5 ...]
                                   [--h3-parts DIR] [--store clean.duckdb] [--watch-wallets watch-wallets-2026-10-17.json]
@@ -25,6 +29,32 @@ PREREG = {
     "H5": ("hypothesis-h5-flow300-tp100-organic-2026-10-16.md", "c59c6dfd", "flow300_tp100_H6", "flow300-tp100-clean"),
 }
 PINS = {"E20": "46a0236", "H3": "dbef1b8", "H4": "165bb04", "H5": "15fa3dd"}
+# the producer per note, its test key in result.json and the parts it writes beside result.json (the run's F7 pool_reversed
+# rows in the window minus the exclusions)
+PRODUCER = {"H3": ("clean_h3", "H3", "h3-parts"), "H4": ("clean_h4", "H4", "h4-parts"), "H5": ("clean_hx", "test", "run-parts")}
+
+
+def test_block(name, o):
+    """The producer's test block of result.json, or None when the file is not that producer's decided result: clean_h3
+    writes o["H3"], clean_h4 o["H4"], clean_hx o["test"] with o["hypothesis"] naming the hypothesis (H5). A result with
+    another hypothesis name, or without the block (the control failed before the test), gives None."""
+    if o is None:
+        return None
+    if o.get("hypothesis") not in (None, name):
+        return None
+    key = PRODUCER[name][1]
+    if key in o:
+        return o[key]
+    return o.get("test") if o.get("hypothesis") == name else None
+
+
+def control_line(o):
+    """'1055: 100 = 100, ...' from the control block, whatever the producer named the run's row count (h3_rows, h4_rows, run_rows)."""
+    parts = []
+    for e, v in (o.get("control") or {}).items():
+        run = [k for k in v if k.endswith("_rows") and k != "e20_rows"]
+        parts.append(f"{e}: {v.get(run[0]) if run else '?'} = {v.get('e20_rows')}")
+    return ", ".join(parts)
 # the exclusions document last registered on #167 (case-exclusions-clean-data.md)
 EXCL_SHA = "ccfaed98e50516a7e433187e274fc8e94eacd4d3f5fc56a5e175242c8b33fd19"
 DAYDEF = ("Dagdefinitie: E20 telt per UTC-dag van de trigger-slot (`tournament._days`), H3/H4/H5 per UTC-dag van de entry-slot (trigger + d ≈ 0,6 s); "
@@ -72,12 +102,25 @@ def load(p):
     return json.load(open(p)) if p else None
 
 
-def _parts_table(result_path, variant, parts=None, o=None, memory="1GB"):
-    """A DuckDB connection with TEMP TABLE p: the run's F7 pool_reversed rows of `variant` (run-parts/ beside result.json, or
-    an explicit parts dir with the result's window and exclusions applied as clean_hx does), net per row via costs.settle_sql
-    (base). None without parts."""
-    d = parts or os.path.join(os.path.dirname(os.path.abspath(result_path)), "run-parts")
-    if not os.path.isdir(d):
+def parts_dir(result_path, parts=None, name=None):
+    """The parts the producer wrote beside result.json (h3-parts / h4-parts / run-parts, already filtered to the window
+    minus the exclusions), or an explicit parts dir; None when none exists."""
+    if parts:
+        return parts if os.path.isdir(parts) else None
+    base = os.path.dirname(os.path.abspath(result_path))
+    names = ([PRODUCER[name][2]] if name else []) + [d for _, _, d in PRODUCER.values()]
+    for d in names:
+        if os.path.isdir(os.path.join(base, d)):
+            return os.path.join(base, d)
+    return None
+
+
+def _parts_table(result_path, variant, parts=None, o=None, memory="1GB", name=None):
+    """A DuckDB connection with TEMP TABLE p: the run's F7 pool_reversed rows of `variant` (the producer's parts beside
+    result.json, or an explicit parts dir with the result's window and exclusions applied as the producers do), net per
+    row via costs.settle_sql (base). None without parts."""
+    d = parts_dir(result_path, parts, name)
+    if d is None:
         return None, None
     sys.path.insert(0, LAB)
     import duckdb
@@ -100,12 +143,12 @@ def _parts_table(result_path, variant, parts=None, o=None, memory="1GB"):
     return con, d
 
 
-def unsold(result_path, variant, parts=None, o=None):
-    """unsold / unsold_busy of a variant on the result's `run-parts/` (clean_hx: the run's F7 pool_reversed rows in the
-    window minus the exclusions). unsold: a position that never sold (exit_slot NULL; proceeds 0). The tournament frees
-    the pool from the trigger (busy_until = exit_slot or t), so later triggers of the same variant / d in that pool are
-    taken: unsold_busy (live the engine keeps the pool busy; conservative, only extra loss). None without run-parts."""
-    con, d = _parts_table(result_path, variant, parts, o)
+def unsold(result_path, variant, parts=None, o=None, name=None):
+    """unsold / unsold_busy of a variant on the producer's parts beside result.json (the run's F7 pool_reversed rows in
+    the window minus the exclusions). unsold: a position that never sold (exit_slot NULL; proceeds 0). The tournament
+    frees the pool from the trigger (busy_until = exit_slot or t), so later triggers of the same variant / d in that pool
+    are taken: unsold_busy (live the engine keeps the pool busy; conservative, only extra loss). None without parts."""
+    con, d = _parts_table(result_path, variant, parts, o, name=name)
     if con is None:
         return None
     con.execute("CREATE TEMP TABLE u AS SELECT * FROM p WHERE exit_slot IS NULL")
@@ -131,14 +174,14 @@ def unsold(result_path, variant, parts=None, o=None):
     return out
 
 
-def classes(result_path, variant, parts=None, o=None, store=None, watch=None):
+def classes(result_path, variant, parts=None, o=None, store=None, watch=None, name=None):
     """Descriptive point-in-time pool classes of the variant's organic positions (all d), from the store's pools and pool
     tables (read-only): creator class at the creation (earlier pools of the same coin_creator within the store), b0 band,
     bot-in-pool-before-t (the bot query scans the store's pool table: run it in a 3G scope on the VPS or as a NAS step).
     None without parts or store."""
     if not store or not os.path.exists(store):
         return None
-    con, d = _parts_table(result_path, variant, parts, o)
+    con, d = _parts_table(result_path, variant, parts, o, name=name)
     if con is None:
         return None
     con.execute(f"ATTACH '{store}' AS s (READ_ONLY)")
@@ -176,56 +219,90 @@ def classes(result_path, variant, parts=None, o=None, store=None, watch=None):
     return out
 
 
+def h_line(name, o):
+    """One sentence with the test's outcome, in the producer's own terms: H3 the daily difference hold180 - tp4_T600 (all
+    farms), H4/H5 the mean net SOL per day of the series (organic)."""
+    h = test_block(name, o) or {}
+    if name == "H3":
+        return (f"Σ/dag hold180 − tp4_T600 (farm alle) {sol(h.get('mean_daily_diff_sol'))} SOL [{sol(h.get('lo'))} … {sol(h.get('hi'))}]; "
+                f"hold180 {sol(h.get('hold180_sol_per_day'))}, tp4_T600 {sol(h.get('tp4_T600_sol_per_day'))} SOL/dag op {h.get('days')} dagen")
+    return (f"Σ/dag {sol(h.get('mean_daily_net_sol'))} SOL [{sol(h.get('lo'))} … {sol(h.get('hi'))}], {h.get('days_with_a_position')}/{h.get('days')} dagen met positie, "
+            f"slechtste dag {sol(h.get('worst_day_sol'))}, grootste positie {sol(h.get('largest_position_sol'))} SOL")
+
+
 def hx_report(name, o, date, others, ub=None, cl=None):
     f, sha, variant, slug = PREREG[name]
-    h, w, ds, pb = o["test"], o["window"], o.get("DSR", {}), o.get("PBO", {})
-    L = [f"# {name} op schone data: F7 organic met {variant} ({date})", "",
+    producer, tkey, pdir = PRODUCER[name]
+    h, w, ds, pb = test_block(name, o), o["window"], o.get("DSR", {}), o.get("PBO", {})
+    if h is None:
+        raise ValueError(f"{name}: result.json has no `{tkey}` block of {producer} (hypothesis {o.get('hypothesis')}, keys {sorted(o)})")
+    farm_txt = "farm alle" if name == "H3" else "organic"
+    L = [(f"# H3 op schone data: hold180 tegen tp4_T600 (K3), farm alle — verbeteringstoets ({date})" if name == "H3"
+          else f"# {name} op schone data: F7 organic met {variant} ({date})"), "",
          f"Sessie LAB research (#167). Vastlegging `{f}` (sha256 `{sha}…`), register E{'28' if name == 'H3' else '29' if name == 'H4' else '31'}; "
          f"engine-pin {PINS[name]} (`engine_commit` {w.get('engine_commit')}), store sha256 `{w.get('store_sha256')}` (= clean.lock van E20), "
          f"extractor `{w.get('extractor_sha256')}`. Labels: **feit** (telling), **reconstructie** (kostenmodel, replay, gereconstrueerde labels), **modelaanname**, **onbekend**.", "",
          *([excl_warning(o), ""] if excl_warning(o) else []),
-         *([f"> **Let op:** `sum(mayhem_reverted)` = {ub['mayhem_reverted']} in de run-parts van {variant} (moet 0 zijn).", ""]
+         *([f"> **Let op:** `sum(mayhem_reverted)` = {ub['mayhem_reverted']} in de {pdir} van {variant} (moet 0 zijn).", ""]
            if ub and ub.get("mayhem_reverted") else []),
-         "## 0. Uitslag", "",
-         f"**{name}: gemiddeld Σ netto SOL per UTC-dag van {variant} (organic) = {sol(h.get('mean_daily_net_sol'))} SOL, 95 %-interval "
-         f"{sol(h.get('lo'))} … {sol(h.get('hi'))} (dagbootstrap {h.get('draws')}, seed 7) → {'**geslaagd**' if h.get('pass') else '**niet geslaagd**'}. "
-         f"Beslissing (vooraf vastgelegd): {o.get('decision')}.** (reconstructie met het kostenmodel)", "",
-         f"- {h.get('days_with_a_position')} van {h.get('days')} UTC-dagen met een organic rij (mislukte instappen meegeteld; hierop rust het minimum van 5); "
-         + (f"dagen met een **gevulde** organic positie: {ub['days']['filled_organic']} (uit run-parts, dag van de trigger-slot)" if ub and ub.get("days") else "dagen met een gevulde positie: onbekend (geen run-parts)")
-         + f"; beoordeeld: {'ja' if h.get('judged') else 'nee'}.",
-         f"- Slechtste dag {sol(h.get('worst_day_sol'))} SOL; grootste positie {sol(h.get('largest_position_sol'))} SOL van {sol(h.get('net_sol'))} SOL netto "
-         f"(aandeel {num(h.get('largest_position_share'))}); top-10 posities / top-10 pools / top-1 % posities "
-         f"{num(h.get('top10_positions_share'))} / {num(h.get('top10_pools_share'))} / {num(h.get('top1pct_positions_share'))}.",
-         f"- Controle K3 (fail-closed): tp4_T600 farm alle per epoch rij voor rij gelijk aan E20-run (1): "
-         + ", ".join(f"{e}: {v.get('run_rows')} = {v.get('e20_rows')}" for e, v in o.get("control", {}).items()) + ".",
-         (f"- `unsold_busy` (organic, alle d): {ub['organic|alle d']['unsold_busy']} posities, Σ {sol(ub['organic|alle d']['unsold_busy_sol'])} SOL — "
-          f"vervolgposities in een pool die een eerdere, nooit verkochte positie ({ub['organic|alle d']['unsold']} unsold, Σ {sol(ub['organic|alle d']['unsold_sol'])} SOL) "
-          "in het toernooi vrijgaf (busy_until = exit_slot or t); live houdt de engine de pool bezet, dus dit is een conservatieve vertekening (alleen extra verlies, zie §2)."
-          if ub else "- `unsold_busy`: onbekend (geen run-parts naast result.json)."),
-         ("- `sum(mayhem_reverted)` over de run-parts van " + variant + " = " + (str(ub["mayhem_reverted"]) if ub and ub.get("mayhem_reverted") is not None else "onbekend (kolom of run-parts ontbreekt)") + " (moet 0 zijn)."),
-         f"- Venster slots [{w.get('slot_from')}, {w.get('slot_to')}); d per epoch {w.get('d_per_epoch')}; ms per slot {w.get('ms_per_slot_per_epoch')}; "
-         f"uitsluitingen {len(o.get('exclusions', {}).get('mints', []))} mints, {len(o.get('exclusions', {}).get('pools', []))} pools.", "",
-         "## 1. Dagreeks (feit op de replay)", "",
-         "| UTC-dag | Σ netto SOL |", "|---|---|"]
-    for d, v in sorted(h.get("daily", {}).items()):
-        L.append(f"| {d} | {sol(v)} |")
+         "## 0. Uitslag", ""]
+    if name == "H3":
+        L += [f"**H3: gemiddeld dagverschil hold180 − tp4_T600 (Σ netto SOL per UTC-dag, farm alle) = {sol(h.get('mean_daily_diff_sol'))} SOL, 95 %-interval "
+              f"{sol(h.get('lo'))} … {sol(h.get('hi'))} (dagbootstrap {h.get('draws')}, seed 7) → {'**geslaagd**' if h.get('pass') else '**niet geslaagd**'}. "
+              f"Beslissing (vooraf vastgelegd): {o.get('decision')}.** (reconstructie met het kostenmodel)", "",
+              "H3 is een verbeteringstoets tegen K3 (hold180 beter dan tp4_T600 op dezelfde triggers, alle farm-labels), geen toets of hold180 op zichzelf boven 0 verdient; "
+              "dat laatste staat beschrijvend in §2.", "",
+              f"- Gemiddeld per UTC-dag: hold180 {sol(h.get('hold180_sol_per_day'))} SOL, tp4_T600 {sol(h.get('tp4_T600_sol_per_day'))} SOL, over {h.get('days')} dagen"
+              + (f"; dagen met een **gevulde** organic hold180-positie: {ub['days']['filled_organic']} (uit {pdir}, dag van de trigger-slot)" if ub and ub.get("days") else "") + "."]
+    else:
+        L += [f"**{name}: gemiddeld Σ netto SOL per UTC-dag van {variant} (organic) = {sol(h.get('mean_daily_net_sol'))} SOL, 95 %-interval "
+              f"{sol(h.get('lo'))} … {sol(h.get('hi'))} (dagbootstrap {h.get('draws')}, seed 7) → {'**geslaagd**' if h.get('pass') else '**niet geslaagd**'}. "
+              f"Beslissing (vooraf vastgelegd): {o.get('decision')}.** (reconstructie met het kostenmodel)", "",
+              f"- {h.get('days_with_a_position')} van {h.get('days')} UTC-dagen met een organic rij (mislukte instappen meegeteld; hierop rust het minimum van 5); "
+              + (f"dagen met een **gevulde** organic positie: {ub['days']['filled_organic']} (uit {pdir}, dag van de trigger-slot)" if ub and ub.get("days") else f"dagen met een gevulde positie: onbekend (geen {pdir})")
+              + f"; beoordeeld: {'ja' if h.get('judged') else 'nee'}.",
+              f"- Slechtste dag {sol(h.get('worst_day_sol'))} SOL; grootste positie {sol(h.get('largest_position_sol'))} SOL van {sol(h.get('net_sol'))} SOL netto "
+              f"(aandeel {num(h.get('largest_position_share'))}); top-10 posities / top-10 pools / top-1 % posities "
+              f"{num(h.get('top10_positions_share'))} / {num(h.get('top10_pools_share'))} / {num(h.get('top1pct_positions_share'))}."]
+    L += [f"- Controle K3 (fail-closed): tp4_T600 farm alle per epoch rij voor rij gelijk aan E20-run (1): {control_line(o)}.",
+          (f"- `unsold_busy` (organic, alle d): {ub['organic|alle d']['unsold_busy']} posities, Σ {sol(ub['organic|alle d']['unsold_busy_sol'])} SOL — "
+           f"vervolgposities in een pool die een eerdere, nooit verkochte positie ({ub['organic|alle d']['unsold']} unsold, Σ {sol(ub['organic|alle d']['unsold_sol'])} SOL) "
+           "in het toernooi vrijgaf (busy_until = exit_slot or t); live houdt de engine de pool bezet, dus dit is een conservatieve vertekening (alleen extra verlies, zie §2)."
+           if ub else f"- `unsold_busy`: onbekend (geen {pdir} naast result.json)."),
+          (f"- `sum(mayhem_reverted)` over de {pdir} van " + variant + " = " + (str(ub["mayhem_reverted"]) if ub and ub.get("mayhem_reverted") is not None else "onbekend (kolom of parts ontbreekt)") + " (moet 0 zijn)."),
+          f"- Venster slots [{w.get('slot_from')}, {w.get('slot_to')}); d per epoch {w.get('d_per_epoch')}; ms per slot {w.get('ms_per_slot_per_epoch')}; "
+          f"uitsluitingen {len(o.get('exclusions', {}).get('mints', []))} mints, {len(o.get('exclusions', {}).get('pools', []))} pools.", "",
+          "## 1. Dagreeks (feit op de replay)", ""]
+    if name == "H3":
+        L += ["| UTC-dag | hold180 Σ netto SOL | tp4_T600 Σ netto SOL | verschil |", "|---|---|---|---|"]
+        for d, (x, y) in sorted(h.get("series", {}).items()):
+            L.append(f"| {d} | {sol(x)} | {sol(y)} | {sol(x - y)} |")
+    else:
+        L += ["| UTC-dag | Σ netto SOL |", "|---|---|"]
+        for d, v in sorted(h.get("daily", {}).items()):
+            L.append(f"| {d} | {sol(v)} |")
     if o.get("per_regime"):
         L += ["", f"Per regime: {o['per_regime']}."]
-    L += ["", "## 2. Beschrijvend (geen lat)", "", DAYDEF, "",
-          "| reeks | farm | Σ netto SOL per dag | 95 %-interval | slechtste dag | top-10 pos. / top-10 pools / top-1 % |", "|---|---|---|---|---|---|"]
-    for k, s in o.get("series", {}).items():
-        v, farm = k.split("|")
-        L.append(f"| {v} | {farm} | {sol(s.get('mean_daily_net_sol'))} | {sol(s.get('lo'))} … {sol(s.get('hi'))} | {sol(s.get('worst_day_sol'))} | "
-                 f"{num(s.get('top10_positions_share'))} / {num(s.get('top10_pools_share'))} / {num(s.get('top1pct_positions_share'))} |")
-    vs = o.get("vs_tp4_T600", {})
-    L += ["", f"- {variant} − tp4_T600 (organic), gemiddeld per dag: {sol(vs.get('mean_daily_diff_sol'))} SOL ({sol(vs.get('lo'))} … {sol(vs.get('hi'))}) — beschrijvend."]
+    L += ["", "## 2. Beschrijvend (geen lat)", "", DAYDEF, ""]
+    if o.get("series"):
+        L += ["| reeks | farm | Σ netto SOL per dag | 95 %-interval | slechtste dag | top-10 pos. / top-10 pools / top-1 % |", "|---|---|---|---|---|---|"]
+        for k, s in o["series"].items():
+            v, farm = k.split("|")
+            L.append(f"| {v} | {farm} | {sol(s.get('mean_daily_net_sol'))} | {sol(s.get('lo'))} … {sol(s.get('hi'))} | {sol(s.get('worst_day_sol'))} | "
+                     f"{num(s.get('top10_positions_share'))} / {num(s.get('top10_pools_share'))} / {num(s.get('top1pct_positions_share'))} |")
+        L.append("")
+    vs = o.get("vs_tp4_T600") or o.get("vs_tp4_T600_organic")
+    if vs:
+        L.append(f"- {variant} − tp4_T600 ({vs.get('farm', 'organic')}), gemiddeld per dag: {sol(vs.get('mean_daily_diff_sol'))} SOL ({sol(vs.get('lo'))} … {sol(vs.get('hi'))}) — beschrijvend.")
     for k, r in o.get("exit_reasons", {}).items():
         L.append(f"- Exit-redenen {k}: {r}.")
     for k, t in o.get("tp_exits", {}).items():
         if t and t.get("n"):
             L.append(f"- Take-profit-exits {k}: n {t['n']}, proceeds/kosten p5 / mediaan / p95 = {num(t.get('p5'))} / {num(t.get('median'))} / {num(t.get('p95'))}.")
     for k, p in o.get("positions", {}).items():
-        L.append(f"- Posities {k}: {p.get('rows')} rijen, {p.get('failed_entries')} mislukte instappen, netto {sol(p.get('net_sol'))} SOL.")
+        L.append(f"- Posities {k}{'' if '|' in k else ' (farm alle)'}: {p.get('rows')} rijen, {p.get('failed_entries')} mislukte instappen, netto {sol(p.get('net_sol'))} SOL.")
+    if name == "H3":
+        L.append(f"- Beschrijvend per farm en d (exits_report-maten, ook hold300 en flow60_T600): `result.json` onder `descriptive`; de organic-rijen van hold180 hieronder (unsold, §2b) zijn een deel van de {farm_txt}-toets.")
     if o.get("common_with"):
         c = o["common_with"]
         L.append(f"- Gemeenschappelijke triggers met {c['other']} ({c['farm']}): {c['common']}; Σ op die triggers {variant} {sol(c.get(variant + '_sol'))} SOL, "
@@ -266,14 +343,13 @@ def hx_report(name, o, date, others, ub=None, cl=None):
         if n2 == "E20":
             L.append(f"- E20 (K3, H1/H2): {o2.get('decision')}.")
         else:
-            L.append(f"- {n2} ({PREREG[n2][2]} organic): {o2.get('decision')} (Σ/dag {sol(o2.get('test', {}).get('mean_daily_net_sol'))} "
-                     f"[{sol(o2.get('test', {}).get('lo'))} … {sol(o2.get('test', {}).get('hi'))}]).")
+            L.append(f"- {n2} ({PREREG[n2][2]} {'farm alle, tegen K3' if n2 == 'H3' else 'organic'}): {o2.get('decision')} ({h_line(n2, o2)}).")
     L += ["", "## 5. Kanttekeningen (vastgelegd, horen bij de conclusie)", ""]
     L += [f"{i + 1}. {c}" for i, c in enumerate(CAVEATS[name])]
     L += [f"{len(CAVEATS[name]) + 1}. {FORWARD}", "",
           "## 6. Reproductie", "",
-          f"`research/clean-test/{name.lower()}-{PINS[name]}/result.json` en `result.md` (clean_hx, Lab Backtest); deze noot leest alleen die bestanden. "
-          "Beschrijvende exits_report-maten per farm en d staan in `result.json` onder `descriptive`."]
+          f"`research/clean-test/{name.lower()}-{PINS[name]}/result.json` en `result.md` ({producer}, Lab Backtest; toetsblok `{tkey}`, rijen in `{pdir}/`); "
+          "deze noot leest alleen die bestanden. Beschrijvende exits_report-maten per farm en d staan in `result.json` onder `descriptive`."]
     return f"{date}-{slug}.md", "\n".join(L) + "\n"
 
 
@@ -326,9 +402,7 @@ def summary(results, date):
             L.append(f"- E20 (K3 zonder/met rt_tx): **{o.get('decision')}**; H1 {pct(o.get('H1', {}).get('mean'))} [{pct(o.get('H1', {}).get('lo'))} … {pct(o.get('H1', {}).get('hi'))}], "
                      f"H2 {pct(o.get('H2', {}).get('diff'))} [{pct(o.get('H2', {}).get('lo'))} … {pct(o.get('H2', {}).get('hi'))}]; {o.get('positions', {}).get('trading_days')} handelsdagen.")
         else:
-            h = o.get("test", {})
-            L.append(f"- {n} ({PREREG[n][2]} organic): **{o.get('decision')}**; Σ/dag {sol(h.get('mean_daily_net_sol'))} SOL [{sol(h.get('lo'))} … {sol(h.get('hi'))}], "
-                     f"{h.get('days_with_a_position')}/{h.get('days')} dagen met positie, slechtste dag {sol(h.get('worst_day_sol'))}, grootste positie {sol(h.get('largest_position_sol'))} SOL.")
+            L.append(f"- {n} ({PREREG[n][2]} {'farm alle, verbetering tegen K3' if n == 'H3' else 'organic'}): **{o.get('decision')}**; {h_line(n, o)}.")
     L += ["", "H3/H4/H5 zijn één bevinding als er meerdere slagen; busy_until gezamenlijk (paper organic-only); forward-toets E32 alleen beslissend voor H's die hier niet verworpen zijn."]
     return "\n".join(L) + "\n"
 
@@ -339,11 +413,19 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     for n in ("e20", "h3", "h4", "h5"):
         ap.add_argument(f"--{n}")
-        ap.add_argument(f"--{n}-parts", help="parts dir for the unsold count when the result has no run-parts/ (H3: the run's parts)")
+        ap.add_argument(f"--{n}-parts", help="explicit parts dir when the producer wrote none beside result.json (h3-parts / h4-parts / run-parts)")
     ap.add_argument("--store", help="the clean store (read-only), for the descriptive pool classes; only after the four runs")
     ap.add_argument("--watch-wallets", help="watch-wallets-2026-10-17.json (group reversed_bots) for the bot-before-t class")
     a = ap.parse_args(argv)
     results = {"E20": load(a.e20), "H3": load(a.h3), "H4": load(a.h4), "H5": load(a.h5)}
+    # each file must be its producer's result: E20 from clean_test (positions / H1 or the 'te weinig dagen' exit), H3 / H4 / H5
+    # with the producer's test block (clean_h3 "H3", clean_h4 "H4", clean_hx "test" + hypothesis "H5")
+    for n, o in results.items():
+        if o is None:
+            continue
+        if n == "E20" and not ("H1" in o or o.get("decision") == "te weinig dagen") or n != "E20" and test_block(n, o) is None:
+            ap.error(f"--{n.lower()}: not a decided {n} result of {PRODUCER.get(n, ('clean_test',))[0]} "
+                     f"(hypothesis {o.get('hypothesis')}, keys {sorted(o)})")
     if a.store:
         # the clean store is read only after the four registered runs (the clean_unspent rule of store.py): all four
         # results present, none a dry run, each with a decision
@@ -359,8 +441,8 @@ def main(argv=None):
     for n in ("H3", "H4", "H5"):
         if results[n]:
             rp, pp = getattr(a, n.lower()), getattr(a, n.lower() + "_parts")
-            fn, md = hx_report(n, results[n], a.date, results, unsold(rp, PREREG[n][2], pp, results[n]),
-                               classes(rp, PREREG[n][2], pp, results[n], a.store, a.watch_wallets))
+            fn, md = hx_report(n, results[n], a.date, results, unsold(rp, PREREG[n][2], pp, results[n], name=n),
+                               classes(rp, PREREG[n][2], pp, results[n], a.store, a.watch_wallets, name=n))
             open(os.path.join(a.out, fn), "w").write(md)
             written.append(fn)
     open(os.path.join(a.out, f"{a.date}-clean-samenvatting.txt"), "w").write(summary(results, a.date))
