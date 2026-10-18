@@ -130,7 +130,7 @@ pub fn render(v: &Val) -> String {
     }
 }
 
-fn cell(col: &dyn Array, i: usize) -> Result<Val> {
+pub(crate) fn cell(col: &dyn Array, i: usize) -> Result<Val> {
     if col.is_null(i) {
         return Ok(Val::Null);
     }
