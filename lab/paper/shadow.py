@@ -45,8 +45,9 @@ Under DIR:
      with require_farm_complete, the arms of --groups, skipped the trigger on one side: a farm label without
      full history), farm_label_order (the farm label differs although live received every trade of the pool's
      farm hour: its backfill arrived after its first recorded trades, inside that hour, and live computed their
-     farmer flags before it knew the earlier trades; counted apart, with its direction), or unexplained, which
-     must be 0.
+     farmer flags before it knew the earlier trades; only where the label decided the signal, one side skipped
+     'farm flagged' in an organic-only group; counted apart, with its direction), or unexplained, which must
+     be 0.
   5. live-risk/: `engine --live` as it runs live (risk.yaml limits, the clock measured from the
      segments' block times, decisions from the first segment) on the same segments, with its daily
      reports; reconcile.json: paper.reconcile against the chunks on every segment with a simulated
@@ -783,8 +784,16 @@ def compare(replay_dir, live_dir, cov, scon, root, d=1, hour_slots=13_500, snaps
         before it, [first recorded, backfill segment), inside this trigger's farm hour (LAB review S1: a backfill that
         came before the hour cannot explain a label difference later on). Live computed those trades' farmer flags
         before it knew the pool's earlier trades (job 91, pool 4reQ..., t 455516057: 0.5051 flagged in the store,
-        0.4886 organic in arrival order)."""
+        0.4886 organic in arrival order).
+        Only when the label decided the signal: one side skipped it on its flagged label ('farm flagged', an
+        organic-only group), the other side's label is organic, so it got past that check (entered, or skipped later on).
+        Its order, fill and exit (one side only) follow from that decision. Where the label decided nothing (a farm
+        'all' variant such as K3, or both past the check), the label is no difference (`same` does not compare it): an
+        order, fill or exit that differs is independent of it and keeps its own cause (Codex 4)."""
         if not (r and l and r.get("farm") != l.get("farm") and {r.get("farm"), l.get("farm")} == {"organic", "flagged"}):
+            return False
+        flagged = r if r.get("farm") == "flagged" else l
+        if not (flagged["status"] == "skipped" and flagged["reason"] == "farm flagged"):
             return False
         lo_ = t - hour_slots
         store_hour = {x for x in trades.get(pool, ()) if lo_ <= x[0] < t}
@@ -1223,7 +1232,9 @@ def render(info, rows):
           "[t − 200 v1 slots, t]; farm_incomplete = an arm (require_farm_complete) skipped the trigger on one side: its farm "
           "label lacked full history; farm_label_order = the farm label differs although live received every trade of the "
           "pool's farm hour: the pool's backfill arrived after its first recorded trades, inside that hour, and live computed "
-          "their farmer flags before it knew the pool's earlier trades (counted apart below: how often it happens live).", ""]
+          "their farmer flags before it knew the pool's earlier trades; only where the label decided the signal (one side "
+          "skipped 'farm flagged' in an organic-only group), never for an order, fill or exit that differs on its own "
+          "(counted apart below: how often it happens live).", ""]
     flo = [r for r in rows if r["cause"] == "farm_label_order"]
     if flo:
         n_org = sum(1 for r in flo if r["live_farm"] == "organic")
