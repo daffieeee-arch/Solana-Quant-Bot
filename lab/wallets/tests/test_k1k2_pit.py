@@ -70,4 +70,3 @@ def test_k1_only_sol_quoted_curves():
     con.execute("CREATE TABLE m (mint VARCHAR, quote_mint VARCHAR)")
     con.execute(f"INSERT INTO m VALUES ('A', '{k1_rolling.SOL_KEY}'), ('B', NULL), ('C', 'pumpCmXqMfrsxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')")
     assert con.execute(f"SELECT list(mint ORDER BY mint) FROM m WHERE {k1_rolling.SOL_QUOTE}").fetchone()[0] == ["A", "B"]
-
