@@ -336,8 +336,15 @@ def journal_view(path, now):
     shadow_today = sorted((x for (f, v), xs in by_group.items() if shade(f, v) for x in xs),
                           key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
     shadow_rows = [pos_row(x, x) for x in shadow_today[:POSITIONS_SHOWN]]
-    names = token_names([r["key"] for r in pos + shadow_rows])
-    for r in pos + shadow_rows:
+    # Further groups' (H) open positions and the day's exits, each row with its group: the arms' own fills and exits.
+    arm_of = {v: g for g, vs in further.items() for v in vs}
+    arm = lambda f, v: f == "F7" and v in arm_of  # noqa: E731
+    arm_rows = [dict(pos_row(p), group=arm_of[p["variant"]]) for p in positions if arm(p["family"], p["variant"])]
+    arm_closed = sorted((x for (f, v), xs in by_group.items() if arm(f, v) for x in xs),
+                        key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
+    arm_rows += [dict(pos_row(x, x), group=arm_of[x["variant"]]) for x in arm_closed[:POSITIONS_SHOWN]]
+    names = token_names([r["key"] for r in pos + shadow_rows + arm_rows])
+    for r in pos + shadow_rows + arm_rows:
         r.update(names.get(r["key"], {}))
 
     traded = [x for x in exits if ours(x["family"], x["variant"])]
@@ -375,7 +382,7 @@ def journal_view(path, now):
             "source": {"feed": feed, "paper_trading": feed == "live" and not run.startswith("parity"), "journal": run},
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
             "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
-            "arms": arm_groups(exits, positions, further, day), "journal_usage_rows": len(usage),
+            "arms": arm_groups(exits, positions, further, day), "arm_positions": arm_rows, "journal_usage_rows": len(usage),
             "holdout_rows_dropped": j.dropped}
 
 
