@@ -70,15 +70,15 @@ impl KeyNames for Keys {
 }
 
 /// What the snapshot gives the engine: the universe, the clock and the bounds, and what the load saw.
-struct Loaded {
-    universe: Universe,
-    clock: Clock,
-    bounds: Bounds,
-    load: UniverseLoad,
+pub(crate) struct Loaded {
+    pub universe: Universe,
+    pub clock: Clock,
+    pub bounds: Bounds,
+    pub load: UniverseLoad,
 }
 
 /// The universe, clock and bounds from the snapshot (inside `Replay::open`, before the snapshot is dropped).
-fn load(snap: &crate::snapshot::Snapshot, keys: &mut Keys, dev_bounds: Option<(u64, u64)>) -> Result<Loaded> {
+pub(crate) fn load(snap: &crate::snapshot::Snapshot, keys: &mut Keys, dev_bounds: Option<(u64, u64)>) -> Result<Loaded> {
     let export = "export it again with paper.snapshot_export (snapshot_version 2)";
     let meta_bounds = snap.meta_bounds.with_context(|| format!("the snapshot's meta.json has no meta_bounds: {export}"))?;
     if snap.ms_per_slot.is_empty() {
@@ -207,7 +207,7 @@ pub fn log_line(v: &Value) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::idl::Val;
     use crate::legs_read::tests::{chunks, edit_meta, export, pool_cols, ptrade, put, tmp, BUY, SELL};
@@ -226,7 +226,7 @@ mod tests {
     /// legs_read's store of two chunks (its tests' export and chunks) with a trigger in the reversed pool P3: a sell of
     /// 10 SOL by Z at 2500 (inflow), then a buy of 20 SOL by Y at 2501 at depth 300 SOL. With 10^12 ms a slot every
     /// window is one slot: the trigger's F7 passes in [dlo, dhi] = [1001, 2999], and each event slot is an hour of its own.
-    fn store(root: &Path) {
+    pub(crate) fn store(root: &Path) {
         fs::create_dir_all(root.join("snap")).unwrap();
         export(&root.join("snap"));
         chunks(&root.join("chunks"));

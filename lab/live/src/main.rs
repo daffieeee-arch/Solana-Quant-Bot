@@ -63,15 +63,14 @@ mod idl;
 #[path = "../../extractor/src/sink.rs"]
 mod sink;
 
-// Read and checked, not used by a command yet: `lab-live paper` takes it in C2-4b.
+// `lab-live paper` reads it; its lookups (`of`, `net`) serve the tests and the seed proof's debugging.
 #[allow(dead_code)]
 mod curve_hold;
 mod journal;
 mod legs;
 mod legs_read;
 mod mem;
-// The paper engine's journal side (C2-4b); `lab-live paper` wires it in C2-6.
-#[cfg_attr(not(test), allow(dead_code))]
+mod paper;
 mod paper_core;
 mod rows;
 mod signals;
@@ -103,7 +102,9 @@ fn parse_args(argv: &[String]) -> Result<Args> {
                     lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE\n       \
                     lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]\n       \
                     lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR [--dev-bounds LO HI] \
-                    [--summary FILE] [--trace FILE]"),
+                    [--summary FILE] [--trace FILE]\n       \
+                    lab-live paper --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...] \
+                    --cost-scenario FILE --ignore-risk --journal DIR [--summary FILE] [--trace FILE]"),
     }
     let (mut chunks_root, mut segments_root, mut from, mut to, mut journal, mut order_out) = (None, None, None, None, None, None);
     while let Some(flag) = it.next() {
@@ -281,6 +282,40 @@ fn parse_signals_args(argv: &[String]) -> Result<signals::SignalsArgs> {
     })
 }
 
+fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
+    let mut it = argv.iter();
+    let (mut chunks_root, mut snapshot, mut from, mut to, mut groups, mut journal) = (None, None, None, None, None, None);
+    let (mut variants, mut cost_scenario, mut ignore_risk, mut summary, mut trace) = (None, None, false, None, None);
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--chunks-root" => chunks_root = Some(PathBuf::from(val()?)),
+            "--snapshot" => snapshot = Some(PathBuf::from(val()?)),
+            "--from" => from = Some(val()?.parse::<u64>().context("--from")?),
+            "--to" => to = Some(val()?.parse::<u64>().context("--to")?),
+            "--groups" => groups = Some(PathBuf::from(val()?)),
+            // paper.engine's own form: specs separated by commas (engine.py:1467)
+            "--variants" => variants = Some(val()?.split(',').filter(|v| !v.is_empty()).map(str::to_owned).collect::<Vec<_>>()),
+            "--cost-scenario" => cost_scenario = Some(PathBuf::from(val()?)),
+            "--ignore-risk" => ignore_risk = true,
+            "--journal" => journal = Some(PathBuf::from(val()?)),
+            "--summary" => summary = Some(PathBuf::from(val()?)),
+            "--trace" => trace = Some(PathBuf::from(val()?)),
+            other => bail!("unknown argument {other}"),
+        }
+    }
+    let (from, to) = (from.context("--from")?, to.context("--to")?);
+    if from >= to {
+        bail!("--from must be below --to");
+    }
+    let variants = variants.filter(|v| !v.is_empty()).context("--variants: the primary group's specs (paper.engine's default F7 grid is M4)")?;
+    Ok(paper::PaperArgs {
+        chunks_root: chunks_root.context("--chunks-root")?, snapshot: snapshot.context("--snapshot")?, from, to,
+        groups: groups.context("--groups")?, variants, cost_scenario: cost_scenario.context("--cost-scenario")?, ignore_risk,
+        journal: journal.context("--journal")?, summary, trace,
+    })
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -288,6 +323,7 @@ fn main() -> Result<()> {
         Some("snapshot") => return snapshot_cmd(&parse_snapshot_args(&argv[1..])?),
         Some("legs") => return legs_cmd(&parse_legs_args(&argv[1..])?),
         Some("signals") => return signals::run(&parse_signals_args(&argv[1..])?).map(|_| ()),
+        Some("paper") => return paper::run(&parse_paper_args(&argv[1..])?).map(|_| ()),
         _ => {}
     }
     let a = parse_args(&argv)?;
@@ -296,7 +332,21 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, parse_legs_args, parse_signals_args, parse_snapshot_args};
+    use super::{parse_args, parse_legs_args, parse_paper_args, parse_signals_args, parse_snapshot_args};
+
+    #[test]
+    fn the_paper_command_takes_its_inputs_the_variants_and_the_costs() {
+        let base = "--chunks-root /c --snapshot /s --from 10 --to 20 --groups /g --variants 0.04:600,flow300_H6 --cost-scenario /k --journal /j";
+        let a = parse_paper_args(&args(&format!("{base} --ignore-risk --summary /m --trace /t"))).unwrap();
+        assert_eq!((a.from, a.to, a.variants.clone(), a.ignore_risk, a.summary.is_some(), a.trace.is_some()),
+                   (10, 20, vec!["0.04:600".to_owned(), "flow300_H6".to_owned()], true, true, true));
+        assert!(!parse_paper_args(&args(base)).unwrap().ignore_risk); // run() refuses it, naming C3
+        for bad in [base.replace("--variants 0.04:600,flow300_H6 ", ""), base.replace("0.04:600,flow300_H6", ","),
+                    base.replace("--cost-scenario /k ", ""), base.replace("--groups /g ", ""), base.replace("--to 20", "--to 10"),
+                    format!("{base} --dev-bounds 0 5")] {
+            assert!(parse_paper_args(&args(&bad)).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn the_signals_command_takes_its_inputs_a_range_the_groups_and_a_journal() {
