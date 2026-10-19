@@ -135,17 +135,18 @@ if [ "$STEP" = repro ]; then
     log "repro: $sha (paths left in it: $left)"
   done
   rust_repro "$REPO"  # the link back to this checkout
-  ref=""
+  ref="" same="" other=""
   if [ -x "$OUT/bin/lab-live" ]; then
     ref=$(sha256sum "$OUT/bin/lab-live" | cut -d' ' -f1)
-    log "repro: STEP=build's binary $ref (from $REPO)"
+    log "repro: the STEP=build binary $ref (from $REPO)"
+    same=", equal to the STEP=build binary" other=" (the STEP=build binary: $ref)"
   fi
   if [ "${shas[0]}" = "${shas[1]}" ] && { [ -z "$ref" ] || [ "$ref" = "${shas[0]}" ]; }; then
-    log "lab-live repro: two copies at other paths give ${shas[0]}${ref:+, equal to STEP=build's}: GREEN"
+    log "lab-live repro: two copies at other paths give ${shas[0]}$same: GREEN"
     rm -rf "${dirs[0]}/lab/live/target" "${dirs[1]}/lab/live/target"
   else
     cmp "${dirs[0]}/lab/live/target/release/lab-live" "${dirs[1]}/lab/live/target/release/lab-live" | head -3 | tee -a "$OUT/job.log" || true
-    log "lab-live repro: ${shas[0]} vs ${shas[1]}${ref:+ (STEP=build's $ref)}: RED (both target dirs kept)"
+    log "lab-live repro: ${shas[0]} vs ${shas[1]}$other: RED (both target dirs kept)"
     exit 1
   fi
   exit 0
