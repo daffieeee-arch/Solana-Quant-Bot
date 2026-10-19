@@ -195,14 +195,73 @@ def test_the_cli_writes_the_report_and_one_line(tmp_path, capsys):
     assert plateau.main(["--p1", str(tmp_path / "none.jsonl"), "--spec-sha", "x", "--out", str(out)]) == 2
 
 
+SPEC_NAME = "m1-c4-plateau-spec-2026-10-19.md"
+# Spec v0.7 §2's window-bounded structures as this test pins them where the spec file is not at hand (CI).
+WINDOWED_V07 = {
+    "recent_keys", "recent_legs", "farm_pools", "farm_items", "hour_events", "pool_seen", "pool_last", "slot_legs",
+    "slot_written", "legs_buffer", "slot_buf", "pending", "pending_keys", "grad_keys", "open_positions", "open_order",
+    "grad_wait", "ops", "wallet_txs"}
+
+
+def spec_path():
+    """The pinned spec: LAB_PLATEAU_SPEC when set (nas_m1c4.sh's plateau and long-a steps set it, so it must exist), else
+    the data root's research/ copy when there (the VPS), else None (CI)."""
+    p = os.environ.get("LAB_PLATEAU_SPEC")
+    if p:
+        assert os.path.exists(p), f"LAB_PLATEAU_SPEC={p} does not exist"
+        return p
+    p = os.path.join(os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab"), "research", SPEC_NAME)
+    return p if os.path.exists(p) else None
+
+
+def spec_windowed(text):
+    """Spec §2's window-bounded structures: its list from '**The window-bounded structures' between the dashes up to
+    '— are' (annotations in brackets dropped; 'recent_keys/legs' is recent_keys and recent_legs, 'pending(_keys)' pending
+    and pending_keys), and the bound bullets that name a structure with its version (`- wallet_txs (v0.5, E7): ...`)."""
+    import re
+
+    i = text.index("**The window-bounded structures")
+    a = text.index("—", i) + 1
+    body = text[a:text.index("— are", a)]
+    names = set()
+    body = re.sub(r"\s*\((?!_)[^)]*\)", "", re.sub(r"\s+", " ", body))  # annotations first: they hold commas
+    for item in (x.strip() for x in body.split(",")):
+        if m := re.fullmatch(r"(\w+)\(_(\w+)\)", item):
+            names |= {m[1], f"{m[1]}_{m[2]}"}
+        elif "/" in item:
+            first, second = item.split("/")
+            names |= {first, first[:first.rindex("_") + 1] + second}
+        elif item:
+            names.add(item)
+    return names | set(re.findall(r"^- (\w+) \(v[\d.]+, E\d+\):", text, re.M))
+
+
+def test_the_spec_list_parses():
+    # the parser on v0.7's own lines (CI has no spec file)
+    text = ("**The window-bounded structures (v0.4, E6)** — recent_keys/legs, farm_pools/items, hour_events, pool_seen, "
+            "pool_last,\nslot_legs, slot_written, legs_buffer, slot_buf (v0.7, E9), pending(_keys), grad_keys, open_positions, "
+            "open_order, grad_wait,\nops — are\n**reported, not gated**.\n- legs_buffer: one segment unit (or chunk) at a "
+            "time;\n- slot_buf (M3-07, v0.7, E9): one slot's events\n- wallet_txs (v0.5, E7): each group wallet keeps\n")
+    assert spec_windowed(text) == WINDOWED_V07
+
+
 def test_the_windowed_set_is_the_specs():
-    # research/m1-c4-plateau-spec-2026-10-19.md v0.7 (sha 2ddd41bb..., lab/live/nas_m1c4.sh SPEC_SHA) §2 lists the
-    # window-bounded structures (E6, E7 wallet_txs, E9 slot_buf). A change here needs a new spec version and a new pin.
-    assert plateau.WINDOWED == {
-        "recent_keys", "recent_legs", "farm_pools", "farm_items", "hour_events", "pool_seen", "pool_last", "slot_legs",
-        "slot_written", "legs_buffer", "slot_buf", "pending", "pending_keys", "grad_keys", "open_positions", "open_order",
-        "grad_wait", "ops", "wallet_txs"}
+    """WINDOWED is spec §2's list: with the spec file at hand (the VPS, and nas_m1c4.sh's plateau and long-a steps through
+    LAB_PLATEAU_SPEC) parsed from it, whose sha256 must be nas_m1c4.sh's SPEC_SHA; without it (CI) WINDOWED_V07. A change
+    of the list needs a new spec version and pin (LAB review on #423)."""
+    import hashlib
+    import re
+
     assert not plateau.GATE_WINDOWED and plateau.KEYS not in plateau.WINDOWED
+    p = spec_path()
+    if p is None:
+        assert plateau.WINDOWED == WINDOWED_V07
+        return
+    data = open(p, "rb").read()
+    nas = open(os.path.join(HERE, "..", "..", "live", "nas_m1c4.sh")).read()
+    pinned = re.search(r"^SPEC_SHA=([0-9a-f]{64})", nas, re.M)
+    assert pinned and hashlib.sha256(data).hexdigest() == pinned[1], f"{p} is not the spec nas_m1c4.sh pins"
+    assert plateau.WINDOWED == spec_windowed(data.decode())
 
 
 @pytest.mark.parametrize("name", sorted(plateau.WINDOWED))

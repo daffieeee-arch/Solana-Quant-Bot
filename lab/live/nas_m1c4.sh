@@ -327,7 +327,7 @@ if [ "$STEP" = long-a ]; then
   got=$(sha256sum "$SPEC" | cut -d' ' -f1)
   log "spec $SPEC sha256 $got (pinned $SPEC_SHA)"
   [ "$got" = "$SPEC_SHA" ] || { log "long-a: the spec is not v0.7 as pinned: refused"; exit 1; }
-  "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
+  LAB_PLATEAU_SPEC=$SPEC "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
     || { tail -15 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"; log "plateau.py tests: RED"; exit 1; }
   tail -1 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"
   SEGS=${LONG_SEGMENTS:-$LONG_SHADOW/rec/segments}
@@ -439,7 +439,7 @@ if [ "$STEP" = plateau ]; then
   got=$(sha256sum "$SPEC" | cut -d' ' -f1)
   log "spec $SPEC sha256 $got (pinned $SPEC_SHA)"
   [ "$got" = "$SPEC_SHA" ] || { log "plateau: the spec is not v0.7 as pinned: refused"; exit 1; }
-  "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
+  LAB_PLATEAU_SPEC=$SPEC "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
     || { tail -15 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"; log "plateau.py tests: RED"; exit 1; }
   tail -1 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"
   [ -d "$SEGMENTS" ] || { log "no segments at $SEGMENTS"; exit 1; }
