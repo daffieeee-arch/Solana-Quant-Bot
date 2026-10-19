@@ -33,9 +33,21 @@ sha256 pinned in nas_m1c4.sh): over `lab-live paper --mem-log` (lab/live/src/mem
   heap and RSS (both gated as they are), and their tombstones.
 - MB and GB are 10^6 and 10^9 bytes.
 
-Writes plateau.md and prints one measure line `lab-live plateau ... GREEN|RED`. Exit 0 either way (RED is a result);
-exit 2 when an input is missing or unreadable.
+- C4 option (c), the long replay (research/m1-c4-long-replay-design-2026-10-19.md), report only, nothing gated by it:
+  --daily adds a view per 24 h day counted back from the gate's window (day 0), so a step or a slow grower before the
+  window is seen: each day's RSS and heap growth, its largest line-to-line step, the residue (heap - the structures),
+  the table resizes and the structures that grew. A day after the warm-up whose RSS or heap grows or steps by more than
+  150 MB must be explained in the report before M3 builds on it (coordinator, 2026-10-19: not a gate, no silent pass);
+  the view attributes it to the structures' bytes that grew that day, "attributed" when they make up at least half of
+  it, else "UNATTRIBUTED". A long-run line gives MB/day after the warm-up, the level at 7 days (M3's weekly restart),
+  the days to 6.0 and 8 GB and to 1 GB of interned keys. --form chunks (a replay of OF1 chunks, spec E5: the upper
+  bound) reports the same without a verdict, and adds one row per chunk read.
+
+Writes plateau.md and prints one measure line `lab-live plateau ... GREEN|RED` (with --form chunks: `lab-live long
+... reported`). Exit 0 either way (RED is a result); exit 2 when an input is missing or unreadable.
 """
+
+import bisect
 
 import argparse
 import hashlib
@@ -56,6 +68,8 @@ RSS_EDGE = 150 * MB
 RSS_MAX = 6 * GB
 STRUCT_SLOPE = 0.10  # x its mean in the window, per 24 h
 STRUCT_EDGE = 1.10
+STEP_EXPLAIN = 150 * MB  # option (c): a day's RSS or heap growth or step above this after the warm-up must be explained
+ATTRIBUTED = 0.5  # the structures' bytes that grew make up at least this share of it
 STRUCT_FLOOR = 1 * MB  # spec v0.5 (E7): a gated structure fails only when its bytes also grow by this in 24 h
 KEYS = "interned_keys"  # spec v0.6 (E8 a): an absolute bound on its bytes growth instead of the 10 % test
 KEYS_BOUND = 100 * MB  # per 24 h
@@ -389,6 +403,179 @@ def measure_line(res):
             f"{'GREEN' if res['ok'] else 'RED: ' + '; '.join(fail)}")
 
 
+def day_bounds(first, last):
+    """The 24 h days of a log, counted back from its last minute: day 0 is the gate's window [last - 1439, last], day k
+    ends the minute before day k - 1 starts; the earliest is partial when the log does not fill it. Oldest first."""
+    out, hi, k = [], last, 0
+    while hi >= first:
+        lo = hi - DAY + 1
+        out.append({"day": k, "lo": max(lo, first), "hi": hi, "partial": lo < first})
+        hi, k = lo - 1, k + 1
+    return out[::-1]
+
+
+def residue(v):
+    """The heap less the structures' bytes (the part no structure reports: rounding, small buffers, untracked state)."""
+    return v["heap_bytes"] - sum(x.get("bytes_est", 0) for x in v["structures"].values())
+
+
+def largest_step(prev, sl, key):
+    """The largest line-to-line increase of `key` over the day's lines (from the line before the day): (bytes, minute)."""
+    best, at, before = 0, None, prev
+    for v in sl:
+        if before is not None and v.get(key) is not None and before.get(key) is not None and v[key] - before[key] > best:
+            best, at = v[key] - before[key], v["minute"]
+        before = v
+    return best, at
+
+
+def daily(lines, first, last, tables=None):
+    """The per-day view (module doc, --daily): one dict per day, oldest first. Each day's lines are a bisect slice, so the
+    whole view is O(lines x structures)."""
+    minutes = [v["minute"] for v in lines]
+    out = []
+    for d in day_bounds(first, last):
+        i, j = bisect.bisect_left(minutes, d["lo"]), bisect.bisect_right(minutes, d["hi"])
+        sl, prev = lines[i:j], lines[i - 1] if i > 0 else None
+        if not sl:
+            out.append({**d, "lines": 0})
+            continue
+        rss = growth(sl, d["lo"], d["hi"], lambda v: v.get("rss_bytes"))
+        heap = growth(sl, d["lo"], d["hi"], lambda v: v.get("heap_bytes"))
+        res = growth(sl, d["lo"], d["hi"], residue)
+        steps = {k: largest_step(prev, sl, k) for k in ("rss_bytes", "heap_bytes")}
+        base = prev or sl[0]
+        grew = {}
+        for name, x in sl[-1]["structures"].items():
+            b0 = base["structures"].get(name, {}).get("bytes_est", 0)
+            if x.get("bytes_est", 0) - b0 >= MB:
+                grew[name] = x["bytes_est"] - b0
+        resizes = [dict(st, table=name) for name, t in (tables or {}).items() for st in t.get("steps", []) if d["lo"] <= st["minute"] <= d["hi"]]
+        size = lambda g: max(g["slope_day"], g["last2"] - g["first2"]) if g["n"] else 0  # noqa: E731
+        worst = max(size(rss), size(heap), steps["rss_bytes"][0], steps["heap_bytes"][0])
+        after_warmup = d["lo"] >= first + WARMUP
+        explain = None
+        if after_warmup and worst > STEP_EXPLAIN:
+            share = sum(grew.values()) / worst
+            explain = {"mb": worst / MB, "share": share, "attributed": share >= ATTRIBUTED,
+                       "by": sorted(grew.items(), key=lambda kv: -kv[1])[:4]}
+        out.append({**d, "lines": len(sl), "events": sl[-1].get("events", 0) - (base.get("events", 0) if prev else 0),
+                    "rss": rss, "heap": heap, "residue": res, "steps": steps, "grew": grew, "resizes": resizes,
+                    "after_warmup": after_warmup, "explain": explain})
+    return out
+
+
+def long_run(lines, first, last):
+    """MB per day from the 2 h after the warm-up to the last 2 h, for RSS, heap and interned_keys' bytes; the level at 7
+    days after the warm-up (M3's weekly restart) and the days to 6.0 and 8 GB (to 1 GB for the keys) at that rate."""
+    w = first + WARMUP
+    if last - w < 2 * EDGE:
+        return None
+    keys = lambda v: v["structures"].get(KEYS, {}).get("bytes_est")  # noqa: E731
+    out = {"days": (last - w) / DAY}
+    for name, get, limits in (("rss", lambda v: v.get("rss_bytes"), (6 * GB, 8 * GB)), ("heap", lambda v: v.get("heap_bytes"), (6 * GB, 8 * GB)),
+                              ("interned_keys", keys, (1 * GB,))):
+        xa = [get(v) for v in lines if w <= v["minute"] < w + EDGE and get(v) is not None]
+        xb = [get(v) for v in lines if v["minute"] > last - EDGE and get(v) is not None]
+        if not xa or not xb:  # no lines there (mean() would read 0)
+            continue
+        a, b = mean(xa), mean(xb)
+        rate = (b - a) / out["days"]
+        out[name] = {"start": a, "end": b, "per_day": rate, "at_7_days": a + 7 * rate,
+                     "days_to": {lim: ((lim - b) / rate if rate > 0 and b < lim else None) for lim in limits}}
+    return out
+
+
+def chunk_view(lines):
+    """For a replay of chunks: one row per chunk read (the legs buffer's entries change at each), with its minutes, the
+    buffer, the heap's min and max, the heap less the buffer, and the keys and curve sums at its end."""
+    rows, cur = [], None
+    for v in lines:
+        lb = v["structures"].get("legs_buffer", {})
+        key = (lb.get("entries"), lb.get("bytes_est"))
+        if cur is None or key != cur["key"]:
+            cur = {"key": key, "lo": v["minute"], "legs": lb.get("bytes_est", 0), "heap": [], "rest": []}
+            rows.append(cur)
+        cur["hi"] = v["minute"]
+        cur["heap"].append(v["heap_bytes"])
+        cur["rest"].append(v["heap_bytes"] - lb.get("bytes_est", 0))
+        cur["keys"] = v["structures"].get(KEYS, {}).get("entries")
+        cur["curve_sums"] = v["structures"].get("run_curve_sums", {}).get("entries")
+    return [{"lo": r["lo"], "hi": r["hi"], "legs": r["legs"], "heap_min": min(r["heap"]), "heap_max": max(r["heap"]),
+             "rest_max": max(r["rest"]), "keys": r["keys"], "curve_sums": r["curve_sums"]} for r in rows]
+
+
+def report_daily(res, lines, chunks=False):
+    """The --daily sections (report only)."""
+    first, last = res["first"], res["last"]
+    days = daily(lines, first, last, res.get("tables"))
+    mb = lambda x: f"{x / MB:+,.0f}"  # noqa: E731
+    g = lambda gr: "-" if not gr["n"] else f"{mb(gr['slope_day'])} / {mb(gr['last2'] - gr['first2'])}"  # noqa: E731
+    out = ["", "## Per day (reported, not gated)", "",
+           "Days of 24 h counted back from the gate's window (day 0); slope / last 2 h - first 2 h in MB; a step is the largest "
+           "line-to-line increase. A day after the warm-up whose RSS or heap grows or steps by more than "
+           f"{STEP_EXPLAIN // MB} MB must be explained here before M3 builds on it (not a gate): it is attributed to the structures "
+           f"whose bytes grew that day, 'attributed' when they make up >= {ATTRIBUTED:.0%} of it.", "",
+           "| day | minutes | lines | events | RSS slope / last-first | heap slope / last-first | residue slope / last-first | "
+           "largest step RSS / heap (minute) | table resizes | structures +MB |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
+    for d in days:
+        label = f"{d['day']}{' (window)' if d['day'] == 0 else ''}{' (partial)' if d['partial'] else ''}{'' if d.get('after_warmup', True) else ' (warm-up)'}"
+        if not d["lines"]:
+            out.append(f"| {label} | {d['lo']}..{d['hi']} | 0 | | | | | | | |")
+            continue
+        st = d["steps"]
+        steps = f"{mb(st['rss_bytes'][0])} / {mb(st['heap_bytes'][0])} ({st['heap_bytes'][1] or st['rss_bytes'][1] or '-'})"
+        rz = "; ".join(f"{r['table']} {r['buckets'][0]:,} -> {r['buckets'][1]:,} @{r['minute']}" for r in d["resizes"]) or "-"
+        gr = ", ".join(f"{n} {mb(b)}" for n, b in sorted(d["grew"].items(), key=lambda kv: -kv[1])[:5]) or "-"
+        out.append(f"| {label} | {d['lo']}..{d['hi']} | {d['lines']:,} | {d['events']:,} | {g(d['rss'])} | {g(d['heap'])} | "
+                   f"{g(d['residue'])} | {steps} | {rz} | {gr} |")
+    flagged = [d for d in days if d.get("explain")]
+    out += ["", f"Days after the warm-up above {STEP_EXPLAIN // MB} MB: " + ("none." if not flagged else "")]
+    for d in flagged:
+        e = d["explain"]
+        by = ", ".join(f"{n} {b / MB:+,.0f} MB" for n, b in e["by"]) or "no structure grew"
+        out.append(f"- day {d['day']} ({d['lo']}..{d['hi']}): {e['mb']:,.0f} MB; "
+                   f"{'attributed' if e['attributed'] else '**UNATTRIBUTED**'} ({e['share']:.0%}): {by}.")
+    lr = long_run(lines, first, last)
+    if lr:
+        out += ["", f"Long run (reported): from the 2 h after the warm-up to the last 2 h, {lr['days']:.1f} days.", "",
+                "| measure | after the warm-up | last 2 h | MB per day | at 7 days | days to the limits |", "|---|---|---|---|---|---|"]
+        for name in ("rss", "heap", "interned_keys"):
+            x = lr.get(name)
+            if not x:
+                continue
+            to = ", ".join(f"{lim / GB:g} GB: " + ("-" if dd is None else f"{dd:,.1f}") for lim, dd in x["days_to"].items())
+            out.append(f"| {name} | {x['start'] / GB:.3f} GB | {x['end'] / GB:.3f} GB | {x['per_day'] / MB:+,.1f} | "
+                       f"{x['at_7_days'] / GB:.3f} GB | {to} |")
+    if chunks:
+        out += ["", "Per chunk read (chunk form): the legs buffer holds one chunk's legs, so the heap moves with it.", "",
+                "| minutes | legs buffer MB | heap min / max GB | heap - buffer max GB | interned keys | run_curve_sums |", "|---|---|---|---|---|---|"]
+        for r in chunk_view(lines):
+            out.append(f"| {r['lo']}..{r['hi']} | {r['legs'] / MB:,.0f} | {r['heap_min'] / GB:.3f} / {r['heap_max'] / GB:.3f} | "
+                       f"{r['rest_max'] / GB:.3f} | {r['keys'] or 0:,} | {r['curve_sums'] or 0:,} |")
+    return "\n".join(out) + "\n", days
+
+
+def chunk_form(md):
+    """A chunk replay's report: the same tables, its title and the checks marked as information (spec E5)."""
+    head, _, rest = md.partition("\n")
+    return ("# lab-live long replay, chunk form: reported, not gated (spec E5; the checks below are information)\n" + rest
+            .replace("## Gates (spec §2)", "## Checks (spec §2), for information: the chunk form is not gated"))
+
+
+def reported_line(res, days):
+    """The measure line of a chunk replay: the values, no verdict."""
+    c = {x["check"]: x for x in res["checks"]}
+    g = lambda k: c[k]["value"] if k in c else None  # noqa: E731
+    flagged = [d for d in days if d.get("explain")]
+    un = [d["day"] for d in flagged if not d["explain"]["attributed"]]
+    return (f"lab-live long (chunk form) minutes [{res['first']}, {res['last']}] ({(res['last'] - res['first']) / 60:.1f} h): RSS max "
+            f"{g('RSS max of the run (GB)')} GB; last 24 h RSS slope {g('RSS slope (MB per 24 h)')} MB/24h, heap slope "
+            f"{g('heap slope (MB per 24 h)')} MB/24h; days above {STEP_EXPLAIN // MB} MB after the warm-up {len(flagged)} "
+            f"(unattributed {un}); reported, not gated")
+
+
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
@@ -409,6 +596,9 @@ def main(argv=None):
     ap.add_argument("--run")
     ap.add_argument("--spec-sha", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--daily", action="store_true", help="add the per-day view (report only)")
+    ap.add_argument("--form", choices=("segments", "chunks"), default="segments",
+                    help="chunks: a replay of OF1 chunks, reported without a verdict (spec E5)")
     a = ap.parse_args(argv)
     try:
         p1 = load(a.p1)
@@ -426,9 +616,16 @@ def main(argv=None):
         except (OSError, ValueError, KeyError) as e:
             others.append((label, {"error": str(e)}))
     res = evaluate(p1, run)
+    md = report(res, a.spec_sha, others, run)
+    days = []
+    if a.daily or a.form == "chunks":
+        extra, days = report_daily(res, p1[0], chunks=a.form == "chunks")
+        md += extra
+    if a.form == "chunks":
+        md = chunk_form(md)
     with open(a.out, "w") as f:
-        f.write(report(res, a.spec_sha, others, run))
-    print(measure_line(res))
+        f.write(md)
+    print(measure_line(res) if a.form == "segments" else reported_line(res, days))
     return 0
 
 

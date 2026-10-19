@@ -240,3 +240,99 @@ def test_the_journal_sha_ignores_the_runs_summary_and_row_order(tmp_path, capsys
     assert plateau.main(["--journal-sha", str(d), "--tables-only"]) == 0
     assert capsys.readouterr().out.strip() == plateau.journal_sha(a, tables_only=True)
     assert plateau.main(["--journal-sha", str(d), "--tables"]) == 2 and plateau.main(["--journal-sha", str(d), "x", "--tables-only"]) == 2
+
+
+def long_log(path, days=7.0, rss_day=0.0, heap_day=0.0, steps=(), struct_steps=(), chunk_hours=None):
+    """C4 option (c): a --mem-log of `days` at a line per minute. RSS 1 GB and heap 0.8 GB, growing by rss_day/heap_day
+    a day; steps [(hour, bytes)] lift RSS and heap from that hour on; struct_steps [(name, hour, bytes)] lift a
+    structure's bytes_est and the heap and RSS by as much; chunk_hours cycles legs_buffer (1.0/1.5 GB) per chunk."""
+    with open(path, "w") as f:
+        for i in range(int(days * 1440)):
+            h, day = i / 60, i / 1440
+            lift = sum(b for at, b in steps if h >= at)
+            st = {"farmer_hist": {"entries": 1_000_000, "bytes_est": 100 * MB, "group": "state"},
+                  "interned_keys": {"entries": 2_000_000, "bytes_est": 100 * MB + int(5 * MB * day), "group": "snapshot"},
+                  "busy": {"entries": 300, "bytes_est": 12_000, "group": "state"},
+                  "legs_buffer": {"entries": 10, "bytes_est": 1_000_000, "group": "legs_buffer"}}
+            for name, at, b in struct_steps:
+                if h >= at:
+                    st[name]["bytes_est"] += b
+                    lift += b
+            if chunk_hours:
+                k = int(h // chunk_hours)
+                st["legs_buffer"] = {"entries": 1000 + k, "bytes_est": (GB if k % 2 == 0 else 3 * GB // 2), "group": "legs_buffer"}
+                lift += st["legs_buffer"]["bytes_est"]
+            f.write(json.dumps({"minute": M0 + i, "slot": 446_256_000 + i * 200, "events": 100 * (i + 1), "segments": i,
+                                "rss_bytes": int(GB + rss_day * day + lift), "heap_bytes": int(0.8 * GB + heap_day * day + lift),
+                                "heap_allocs": 1000, "structures": st,
+                                "time_ns": {"n": 100, "p50": 1500, "p90": 2500, "p99": 2900, "p999": 2900, "max": 3000,
+                                            "buckets": [[1472, 50], [2496, 50]]}}) + "\n")
+    return path
+
+
+def test_the_days_are_counted_back_from_the_gate_window():
+    days = plateau.day_bounds(1000, 1000 + int(2.5 * 1440) - 1)
+    assert [d["day"] for d in days] == [2, 1, 0] and days[-1]["hi"] == 1000 + 3599 and days[-1]["lo"] == 1000 + 3599 - 1439
+    assert days[0]["partial"] and not days[1]["partial"] and days[0]["lo"] == 1000 and days[1]["hi"] == days[2]["lo"] - 1
+
+
+def test_the_daily_view_changes_no_check_and_names_an_unexplained_step(tmp_path, capsys):
+    """A +300 MB step in RSS and heap on day 3 of 7 (before the gate's window) stays GREEN, as v0.6 judges the last 24 h;
+    --daily shows it on its day, above 150 MB and unattributed (no structure grew); the measure line is the same."""
+    p = long_log(tmp_path / "p.jsonl", days=7, steps=[(72, 300 * MB)])
+    (tmp_path / "run.json").write_text(json.dumps(RUN))
+    res = plateau.evaluate(plateau.load(p), RUN)
+    assert res["ok"], failing(res)
+    args = ["--p1", str(p), "--run", str(tmp_path / "run.json"), "--spec-sha", "f" * 64]
+    assert plateau.main(args + ["--out", str(tmp_path / "a.md")]) == 0
+    plain = capsys.readouterr().out
+    assert plateau.main(args + ["--out", str(tmp_path / "b.md"), "--daily"]) == 0
+    assert capsys.readouterr().out == plain and plain.strip().endswith("GREEN")
+    md = (tmp_path / "b.md").read_text()
+    assert md.startswith((tmp_path / "a.md").read_text()) and "## Per day (reported, not gated)" in md
+    days = plateau.daily(plateau.load(p)[0], res["first"], res["last"], res.get("tables"))
+    flagged = [d for d in days if d.get("explain")]
+    assert [(d["day"], round(d["explain"]["mb"]), d["explain"]["attributed"]) for d in flagged] == [(3, 300, False)]
+    assert flagged[0]["steps"]["rss_bytes"] == (300 * MB, M0 + 72 * 60)
+    # only interned_keys grew that day (+5 MB a day in this log): 2 % of the step
+    assert f"- day 3 ({M0 + 4320}..{M0 + 5759}): 300 MB; **UNATTRIBUTED** (2%): interned_keys +5 MB." in md
+
+
+def test_a_step_a_structure_explains_is_attributed(tmp_path):
+    p = long_log(tmp_path / "p.jsonl", days=5, struct_steps=[("farmer_hist", 50, 300 * MB)])
+    lines, _ = plateau.load(p)
+    days = plateau.daily(lines, lines[0]["minute"], lines[-1]["minute"])
+    (d,) = [d for d in days if d.get("explain")]
+    assert d["explain"]["attributed"] and d["explain"]["by"][0] == ("farmer_hist", 300 * MB) and d["explain"]["share"] >= 1.0
+    assert d["grew"]["farmer_hist"] == 300 * MB and "interned_keys" in d["grew"]  # +5 MB a day
+
+
+def test_a_slow_grower_is_green_on_the_last_day_and_seen_in_the_long_run(tmp_path):
+    """+90 MB a day for 10 days passes v0.6 (<= +100 per 24 h); no day is above 150 MB; the long-run line has the rate,
+    the level at 7 days and the days to 6 GB."""
+    p = long_log(tmp_path / "p.jsonl", days=10, rss_day=90 * MB, heap_day=90 * MB)
+    lines, end = plateau.load(p)
+    res = plateau.evaluate((lines, end), RUN)
+    assert res["ok"], failing(res)
+    assert not [d for d in plateau.daily(lines, res["first"], res["last"]) if d.get("explain")]
+    lr = plateau.long_run(lines, res["first"], res["last"])
+    assert abs(lr["rss"]["per_day"] - 90 * MB) < 2 * MB and abs(lr["heap"]["per_day"] - 90 * MB) < 2 * MB
+    assert abs(lr["rss"]["at_7_days"] - (lr["rss"]["start"] + 7 * 90 * MB)) < 15 * MB
+    # RSS ends at ~1.9 GB: (6.0 - 1.9) / 0.09 = ~45.6 days to 6 GB
+    assert 44 < lr["rss"]["days_to"][6 * GB] < 48 and abs(lr["interned_keys"]["per_day"] - 5 * MB) < MB
+
+
+def test_the_chunk_form_is_reported_without_a_verdict(tmp_path, capsys):
+    """--form chunks: a log that fails v0.6 (+300 MB a day) gets no GREEN/RED, a chunk-form title, and a row per chunk
+    read (the legs buffer moves at each)."""
+    p = long_log(tmp_path / "p.jsonl", days=4, rss_day=300 * MB, heap_day=300 * MB, chunk_hours=16)
+    assert not plateau.evaluate(plateau.load(p), RUN)["ok"]
+    out = tmp_path / "long.md"
+    assert plateau.main(["--p1", str(p), "--spec-sha", "f" * 64, "--out", str(out), "--form", "chunks"]) == 0
+    line = capsys.readouterr().out.strip()
+    assert line.startswith("lab-live long (chunk form)") and line.endswith("reported, not gated") and "GREEN" not in line and "RED" not in line
+    md = out.read_text()
+    assert md.startswith("# lab-live long replay, chunk form: reported, not gated") and "## Checks (spec §2), for information" in md
+    assert "## Per day (reported, not gated)" in md
+    chunk_rows = [r for r in md.split("Per chunk read")[1].splitlines() if r.startswith("| ") and ".." in r]
+    assert len(chunk_rows) == 6  # 96 h in chunks of 16 h

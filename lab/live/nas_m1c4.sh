@@ -43,6 +43,17 @@
 #                (plateau.py --journal-sha --tables-only): `state` holds the inputs as given (the groups text names the
 #                checkout's risk files, a path per commit; the inputs' sha256 are in each job.log) and the run's summary.
 #                AB_REF_DIR= (empty) skips it. The line adds farmer_hist's table at the end.
+#   STEP=long-b, long-shadow, long-a (the lab Python 3.13 runner, its 24G; C4 option (c), the design
+#                research/m1-c4-long-replay-design-2026-10-19.md): a replay of dev2's epochs 1033-1036 from the store's
+#                start ([446,256,000, 447,984,000), 151.9 h, ~5.3 days of decisions after the 24 h burn-in). Each builds
+#                (or checks) $LONG_ROOT first: a symlink to each of the 8 chunks, nothing else, each complete with the
+#                store's extractor build (long_root, fail-closed; never under events/v1/chunks, so neither shadow.py nor
+#                lab-live sees another chunk, the hold-out's files among them).
+#                long-b: lab-live on those chunks (the chunk form, the upper bound), plateau.py --form chunks: reported,
+#                not gated (spec E5). long-shadow: paper.shadow on dev2 over the range with job 91's flags, writing the
+#                recorder's segments to $LONG_SHADOW (36-43 h, ended after LONG_SHADOW_HOURS, default 46). long-a:
+#                lab-live P1 and P2 on those segments, judged by spec v0.6 as pinned on the last 24 h, plus plateau.py
+#                --daily (reported: a day after the warm-up above 150 MB must be explained there before M3 builds on it).
 #   STEP=m2      (the lab Python 3.13 runner; C4-3, M2 in replay): on fwd1053-1054 [LO, HI) the legs parity (the whole
 #                store), then the signals parity and RC4 (lab-live paper against paper.engine, the paper start's files,
 #                config mode) side by side, each with its GREEN measure line in job.log.
@@ -53,6 +64,9 @@
 #   STEP=plateau LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                     (lab runner; short: 3 runs over ~52 h of input, P1 ~1 min)
 #   STEP=m2 LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                          (lab runner; long: paper.engine twice)
 #   STEP=ab LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                          (lab runner; short: two runs side by side)
+#   STEP=long-b LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                      (lab runner, 24G; short: ~15-30 min, heap ~7 GB)
+#   STEP=long-shadow LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                 (lab runner, 24G; long: 36-43 h)
+#   STEP=long-a LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                      (lab runner; short: after long-shadow)
 #
 # Every step writes to $DATA/backtests/live-m1c4-<commit7>/.
 set -euo pipefail
@@ -63,7 +77,7 @@ COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
 OUT=$DATA/backtests/live-m1c4-${COMMIT:0:7}
 mkdir -p "$OUT"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
-: "${STEP:?STEP=build, repro, smoke, ab, plateau or m2}"
+: "${STEP:?STEP=build, repro, smoke, ab, plateau, m2, long-b, long-shadow or long-a}"
 log "start $STEP commit=$COMMIT out=$OUT"
 SEGMENTS=$DATA/backtests/shadow-arms-1053-1054-2c3e5fe/rec/segments  # job 91's (#299, 2c3e5fe), read again by 99m
 STORE=$DATA/store/fwd1053-1054.duckdb
@@ -71,6 +85,14 @@ LO=454896000
 HI=455760000
 SPEC_SHA=e14bdf24c75c00318daef017a96a5ebe56545b835a0e31ef05be7c5cb2e23291   # research/m1-c4-plateau-spec-2026-10-19.md v0.6 (E8)
 AB_REF_DIR=${AB_REF_DIR-$DATA/backtests/live-m1c4-8a3d21b/ab1}   # C4-4's P1 journal on these segments (8a3d21b, 99zza)
+# C4 option (c), research/m1-c4-long-replay-design-2026-10-19.md: dev2's epochs 1033-1036 from its start (8 chunks)
+LONG_STORE=$DATA/store/dev2.duckdb
+LONG_LO=446256000
+LONG_HI=447984000
+LONG_N=8
+LONG_ROOT=${LONG_ROOT:-$DATA/events/v1/chunks-1033-1036}   # beside events/v1/chunks, not under it (long_root)
+LONG_SHADOW=${LONG_SHADOW:-$OUT/long-shadow}               # the output of STEP=long-shadow; long-a reads its rec/segments
+LONG_SPILL=${LONG_SPILL:-/lab/tmp/shadow-long}            # the DuckDB spill of paper.shadow (job 91: /lab/tmp/shadow-arms)
 
 if [ "$STEP" = build ]; then
   cd "$REPO/lab/live"
@@ -161,18 +183,21 @@ if [ "$STEP" = repro ]; then
   exit 0
 fi
 
-case "$STEP" in smoke | ab | plateau | m2) ;; *) log "unknown STEP=$STEP"; exit 2 ;; esac
+case "$STEP" in smoke | ab | plateau | m2 | long-b | long-shadow | long-a) ;; *) log "unknown STEP=$STEP"; exit 2 ;; esac
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 BIN=$OUT/bin/lab-live
 [ -x "$BIN" ] || { log "no binary at $BIN: run STEP=build first"; exit 1; }
 export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1
 cd "$REPO/lab"
 
-prepare() {  # the paper start's groups and cost scenario as paper.engine journals them (one slot), fwd1053-1054's snapshot
-  rm -rf "$OUT/ref-states" "$OUT/snap"
-  "$PY" -m paper.engine --from $LO --to $((LO + 1)) --config paper/k3-paper-2026-10-12.yaml --groups paper/h-arms-2026-10-16.yaml \
-    --no-backup --store "$STORE" --journal "$OUT/ref-states" > "$OUT/ref-states.log" 2>&1 || { tail -20 "$OUT/ref-states.log" | tee -a "$OUT/job.log"; exit 1; }
-  "$PY" - "$OUT" <<'EOF'
+prepare() {  # [store lo hi dir]: the paper start's groups and cost scenario as paper.engine journals them (one slot) and the
+  # store's snapshot into dir; without arguments job 91's (fwd1053-1054, [LO, HI), into $OUT)
+  local store=${1:-$STORE} lo=${2:-$LO} hi=${3:-$HI} dir=${4:-$OUT}
+  mkdir -p "${dir:?}"
+  rm -rf "${dir:?}/ref-states" "${dir:?}/snap"
+  "$PY" -m paper.engine --from $lo --to $((lo + 1)) --config paper/k3-paper-2026-10-12.yaml --groups paper/h-arms-2026-10-16.yaml \
+    --no-backup --store "$store" --journal "$dir/ref-states" > "$dir/ref-states.log" 2>&1 || { tail -20 "$dir/ref-states.log" | tee -a "$OUT/job.log"; exit 1; }
+  "$PY" - "$dir" <<'EOF'
 import os, sqlite3, sys
 out = sys.argv[1]
 db = sqlite3.connect(f"file:{os.path.join(out, 'ref-states', 'journal.sqlite')}?mode=ro", uri=True)
@@ -182,10 +207,154 @@ for k in ("groups", "cost_scenario"):
         f.write(v)
 EOF
   sha256sum paper/k3-paper-2026-10-12.yaml paper/h-arms-2026-10-16.yaml paper/risk.yaml paper/risk-h.yaml | tee -a "$OUT/job.log"
-  # a replay of the whole store: no farmer history or curve seed before its start
-  "$PY" -c "from paper import snapshot_export as s; s.export('$STORE', '$OUT/snap', history=($LO, $HI), seed=False)" \
-    > "$OUT/snap.log" 2>&1 || { tail -20 "$OUT/snap.log" | tee -a "$OUT/job.log"; exit 1; }
+  # a replay from the store's start: no farmer history or curve seed before it
+  "$PY" -c "from paper import snapshot_export as s; s.export('$store', '$dir/snap', history=($lo, $hi), seed=False)" \
+    > "$dir/snap.log" 2>&1 || { tail -20 "$dir/snap.log" | tee -a "$OUT/job.log"; exit 1; }
 }
+
+long_root() {  # $LONG_ROOT: a symlink per chunk of [LONG_LO, LONG_HI) under events/v1/chunks, nothing else, checked fail-closed
+  "$PY" - "$DATA/events/v1/chunks" "$LONG_ROOT" $LONG_LO $LONG_HI $LONG_N "$OUT/long/snap/meta.json" <<'EOF' | tee -a "$OUT/job.log"
+import json, os, sys
+src, root, lo, hi, n, meta = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
+fail = lambda why: sys.exit(f"long_root: {why}: refused")
+if os.path.realpath(root).startswith(os.path.realpath(src) + os.sep):
+    fail(f"{root} lies under {src}")
+# the store's chunks of the range (the snapshot copies its chunk_list): they tile [lo, hi), n of them
+want = sorted((c["slots"][0], c["slots"][1], c["extractor_sha256"]) for c in json.load(open(meta))["chunk_list"]
+              if c["slots"][0] < hi and c["slots"][1] > lo)
+if len(want) != n or want[0][0] != lo or want[-1][1] != hi or any(a[1] != b[0] for a, b in zip(want, want[1:])):
+    fail(f"the store's chunks of [{lo}, {hi}) are {[(a, b) for a, b, _ in want]}, not {n} that tile it")
+links = {}
+for a, b, sha in want:
+    d = os.path.join(src, f"{a}-{b}")
+    man = json.load(open(os.path.join(d, "_manifest.json")))
+    if (man.get("status"), man.get("slot_start"), man.get("slot_end_exclusive"), man.get("extractor_sha256")) != ("complete", a, b, sha):
+        fail(f"{d}: status {man.get('status')}, slots {man.get('slot_start')}-{man.get('slot_end_exclusive')}, "
+             f"extractor {str(man.get('extractor_sha256'))[:12]} (the store's {sha[:12]})")
+    links[f"{a}-{b}"] = os.path.realpath(d)
+if os.path.lexists(root):
+    have = sorted(os.listdir(root))
+    if have != sorted(links) or any(not os.path.islink(os.path.join(root, k)) or os.path.realpath(os.path.join(root, k)) != v
+                                    for k, v in links.items()):
+        fail(f"{root} exists and holds {have}, not exactly the {n} links (left as it is)")
+else:
+    tmp = root + ".tmp"
+    if os.path.lexists(tmp):
+        fail(f"{tmp} exists (left as it is)")
+    os.makedirs(tmp)
+    for k, v in links.items():
+        os.symlink(v, os.path.join(tmp, k))
+    os.rename(tmp, root)
+print(f"long_root: {root}: {n} chunks [{lo}, {hi}), each complete with the store's extractor build {want[0][2][:12]}... "
+      f"({len({x[2] for x in want})} build(s))")
+EOF
+  [ "${PIPESTATUS[0]}" = 0 ] || { log "long_root: FAILED"; exit 1; }
+}
+
+if [ "$STEP" = long-b ]; then
+  # C4 option (c) B: lab-live on dev2's chunks of epochs 1033-1036 from the store's start, risk on, the paper start's
+  # files: the chunk form, the upper bound, reported and not gated (spec E5; plateau.py --form chunks)
+  prepare "$LONG_STORE" $LONG_LO $LONG_HI "$OUT/long"
+  long_root
+  rm -rf "${OUT:?}/long-b" "${OUT:?}/long-b.json" "${OUT:?}/long-b.jsonl" "${OUT:?}/long-b.md"
+  "$BIN" paper --chunks-root "$LONG_ROOT" --snapshot "$OUT/long/snap" --from $LONG_LO --to $LONG_HI --groups "$OUT/long/groups.json" \
+    --variants 0.04:600 --cost-scenario "$OUT/long/cost_scenario.json" --journal "$OUT/long-b" --summary "$OUT/long-b.json" \
+    --mem-log "$OUT/long-b.jsonl" > "$OUT/long-b.log" 2>&1 || { tail -20 "$OUT/long-b.log" | tee -a "$OUT/job.log"; log "long-b: lab-live FAILED"; exit 1; }
+  tail -2 "$OUT/long-b.log" | tee -a "$OUT/job.log"
+  "$PY" - "$OUT/long-b.json" $LONG_N <<'EOF' | tee -a "$OUT/job.log"
+import json, sys
+v = json.load(open(sys.argv[1]))
+n = len(v.get("h24", []))
+print(f"long-b: {n} chunks read (expected {sys.argv[2]}), chunks_verified {v.get('chunks_verified')}, events {v.get('events')}, "
+      f"peak RSS {v.get('peak_rss_bytes', 0) / 1e9:.2f} GB, {v.get('secs', 0):.0f} s")
+sys.exit(0 if n == int(sys.argv[2]) and v.get("chunks_verified") is True else 1)
+EOF
+  [ "${PIPESTATUS[0]}" = 0 ] || { log "long-b: not the expected chunks"; exit 1; }
+  "$PY" "$REPO/lab/live/plateau.py" --p1 "$OUT/long-b.jsonl" --spec-sha "$SPEC_SHA" --out "$OUT/long-b.md" --form chunks | tee -a "$OUT/job.log"
+  (cd "$OUT" && sha256sum long-b.md long-b.json long-b.jsonl) | tee -a "$OUT/job.log"
+  log "long-b: done (reported, not gated)"
+  exit 0
+fi
+
+if [ "$STEP" = long-shadow ]; then
+  # C4 option (c) A, part 1: the recorder's segments of epochs 1033-1036, simulated by paper.shadow from dev2 and its
+  # chunks with job 91's flags (coordinator 2026-10-19: no --d, no --pump-creates, the default gaps and reconnects), the
+  # chunks root filtered to the range. Expect 36-43 h; LONG_SHADOW_HOURS (default 46) ends it before the next job.
+  prepare "$LONG_STORE" $LONG_LO $LONG_HI "$OUT/long"  # long_root checks the chunks against this snapshot's chunk_list
+  long_root
+  [ ! -e "$LONG_SHADOW" ] || { log "long-shadow: $LONG_SHADOW exists (left as it is): move it away first"; exit 1; }
+  mkdir -p "$LONG_SPILL"
+  log "long-shadow: paper.shadow into $LONG_SHADOW for [$LONG_LO, $LONG_HI), at most ${LONG_SHADOW_HOURS:-46} h"
+  rc=0
+  LAB_ENGINE_COMMIT=$COMMIT LAB_SPILL_DIR=$LONG_SPILL LAB_SPILL_MAX=16GB nice -n 10 timeout "${LONG_SHADOW_HOURS:-46}h" "$PY" -m paper.shadow \
+    --store "$LONG_STORE" --chunks "$LONG_ROOT" --out "$LONG_SHADOW" --from $LONG_LO --to $LONG_HI --memory 1GB --seed 1033 \
+    --variants 0.04:600 --groups "$REPO/lab/paper/h-arms-2026-10-16.yaml" > "$OUT/long-shadow.log" 2>&1 || rc=$?
+  tail -5 "$OUT/long-shadow.log" | tee -a "$OUT/job.log"
+  segs=$(find "$LONG_SHADOW/rec/segments" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+  complete=$(grep -l '"complete": *true' "$LONG_SHADOW"/rec/segments/*/_segment.json 2>/dev/null | wc -l || true)
+  log "long-shadow: rc $rc; status $(cat "$LONG_SHADOW/STATUS" 2>/dev/null || echo none); $segs segments, $complete complete; $(du -sh "$LONG_SHADOW/rec/segments" 2>/dev/null | cut -f1)"
+  exit $rc
+fi
+
+if [ "$STEP" = long-a ]; then
+  # C4 option (c) A, part 2: lab-live P1 and P2 on long-shadow's segments (risk on, the paper start's files, a dev2
+  # snapshot from the store's start), judged by spec v0.6 as pinned on the last 24 h, plus the per-day view (reported:
+  # a day after the warm-up above 150 MB must be explained in it before M3 builds on it).
+  SPEC=$DATA/research/m1-c4-plateau-spec-2026-10-19.md
+  got=$(sha256sum "$SPEC" | cut -d' ' -f1)
+  log "spec $SPEC sha256 $got (pinned $SPEC_SHA)"
+  [ "$got" = "$SPEC_SHA" ] || { log "long-a: the spec is not v0.6 as pinned: refused"; exit 1; }
+  "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
+    || { tail -15 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"; log "plateau.py tests: RED"; exit 1; }
+  tail -1 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"
+  SEGS=${LONG_SEGMENTS:-$LONG_SHADOW/rec/segments}
+  [ -d "$SEGS" ] || { log "long-a: no segments at $SEGS (STEP=long-shadow first, or LONG_SEGMENTS)"; exit 1; }
+  expected=$(find "$SEGS" -mindepth 1 -maxdepth 1 -type d | wc -l)
+  prepare "$LONG_STORE" $LONG_LO $LONG_HI "$OUT/long"
+  arun() {  # name
+    "$BIN" paper --segments "$SEGS" --snapshot "$OUT/long/snap" --from $LONG_LO --to $LONG_HI --groups "$OUT/long/groups.json" \
+      --variants 0.04:600 --cost-scenario "$OUT/long/cost_scenario.json" --journal "$OUT/$1" --summary "$OUT/$1.json" \
+      --mem-log "$OUT/$1.jsonl" > "$OUT/$1.log" 2>&1
+  }
+  rm -rf "${OUT:?}/long-a1" "${OUT:?}/long-a2" "${OUT:?}"/long-a[12].json "${OUT:?}"/long-a[12].jsonl "${OUT:?}/long-a-run.json" "${OUT:?}/long-a.md"
+  log "long-a: P1 and P2 on $SEGS ($expected segment directories), side by side"
+  arun long-a1 & a=$!
+  arun long-a2 & b=$!
+  rc1=0 rc2=0
+  wait $a || rc1=$?
+  wait $b || rc2=$?
+  for n in long-a1 long-a2; do tail -2 "$OUT/$n.log" | tee -a "$OUT/job.log"; done
+  "$PY" - "$OUT" "$REPO/lab/live/plateau.py" "$rc1" "$rc2" "$expected" <<'EOF'
+import filecmp, json, os, subprocess, sys
+out, plateau, rc1, rc2, expected = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5])
+
+
+def sha(name, rc):
+    if rc != 0:
+        return None
+    r = subprocess.run([sys.executable, plateau, "--journal-sha", os.path.join(out, name)], capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+wallets = sorted(f for f in os.listdir(os.path.join(out, "long-a1")) if f.startswith("wallet") and f.endswith(".json")) if rc1 == 0 else []
+p1 = json.load(open(os.path.join(out, "long-a1.json"))) if rc1 == 0 else {}
+seg = p1.get("segments", {})
+run = {"p1_journal_sha": sha("long-a1", rc1), "p2_journal_sha": sha("long-a2", rc2),
+       "wallets_equal": bool(wallets) and rc2 == 0
+       and all(filecmp.cmp(os.path.join(out, "long-a1", f), os.path.join(out, "long-a2", f), shallow=False) for f in wallets),
+       "exit_codes": {"p1": rc1, "p2": rc2}, "segments_read": seg.get("read"), "segments_expected": expected,
+       "incomplete_skipped": seg.get("incomplete_skipped", []), "p1_secs": p1.get("secs")}
+json.dump(run, open(os.path.join(out, "long-a-run.json"), "w"), indent=1)
+print(f"long-a run: journals {'equal' if run['p1_journal_sha'] and run['p1_journal_sha'] == run['p2_journal_sha'] else 'DIFFER'}, "
+      f"wallets {'equal' if run['wallets_equal'] else 'DIFFER'}, segments {run['segments_read']} of {expected}")
+EOF
+  "$PY" "$REPO/lab/live/plateau.py" --p1 "$OUT/long-a1.jsonl" --p2 "$OUT/long-a2.jsonl" --run "$OUT/long-a-run.json" --spec-sha "$SPEC_SHA" \
+    --out "$OUT/long-a.md" --daily | tee -a "$OUT/job.log"
+  sed -n '/^Days after the warm-up above/,/^$/p' "$OUT/long-a.md" | tee -a "$OUT/job.log"
+  (cd "$OUT" && sha256sum long-a.md long-a-run.json long-a1.jsonl long-a2.jsonl) | tee -a "$OUT/job.log"
+  if tail -n 40 "$OUT/job.log" | grep -q "^lab-live plateau .*GREEN$"; then log "long-a: GREEN (v0.6, last 24 h)"; else log "long-a: RED (long-a.md says why)"; fi
+  exit 0
+fi
 
 if [ "$STEP" = ab ]; then
   # C4-4's A/B: the farmer-history prune changes no row. P0 without it (--keep-farmer-history) and P1 with it, on job 91's
