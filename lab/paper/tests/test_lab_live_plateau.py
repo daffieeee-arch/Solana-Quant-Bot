@@ -296,6 +296,7 @@ def test_the_daily_view_changes_no_check_and_names_an_unexplained_step(tmp_path,
     assert capsys.readouterr().out == plain and plain.strip().endswith("GREEN")
     md = (tmp_path / "b.md").read_text()
     assert md.startswith((tmp_path / "a.md").read_text()) and "## Per day (reported, not gated)" in md
+    assert "With an RSS measure the contributions and the residue are the heap's" in md  # LAB review on #415
     days = plateau.daily(plateau.load(p)[0], res["first"], res["last"], res.get("tables"))
     flagged = [d for d in days if d.get("explain")]
     assert [(d["day"], round(d["explain"]["mb"]), d["explain"]["attributed"]) for d in flagged] == [(3, 300, False)]
