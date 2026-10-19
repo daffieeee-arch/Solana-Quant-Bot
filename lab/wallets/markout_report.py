@@ -12,7 +12,15 @@ horizon and block (days 1-9, days 10-18, all), gross and net:
   10-18 and the N2 twin without it);
   and, with --parts, the exit-rule cost per variant: realized net return per position (settle_sql,
   base, 0.5 SOL, q = 0.5) against the net markout at the horizon nearest the variant's median hold,
-  on the same signals, with the paired difference and its day CI.
+  on the same signals, with the paired difference and its day CI;
+  and, when the rows carry the --tx-delays codes (markout.TX_DELAYS, or d = 0 / 3), the entry-delay
+  comparison of spec M-a: per code, paired per signal against the reference delay REF_D (d = 2, the
+  paper's d_ms 600 in the 266-316 ms regimes of the dev days): the entry mid advantage (mid_ref /
+  mid_code - 1, > 0 = a cheaper entry) and the net markout difference per horizon, trimmed means with
+  day CIs, the coverage (signals with both entries) and the share of code entries capped at the slot's
+  last leg; the screen verdict (coordinator's rule, 2026-10-19) on days 10-18: a causal code (0 or
+  2001) with net Δ >= SCREEN_PT and its day CI above 0 at h = 1m, 5m or 15m. k-codes (1xxx) need a
+  same-slot fill and are shown as an upper bound only.
 
   python -m wallets.markout_report --markout DIR [--parts DIR --cfg FILE] [--boot 10000] [--out FILE]
 """
@@ -47,6 +55,10 @@ DEDUP = "family, segment, venue, mint, pool, t, d, h"  # the same trigger appear
 H_ORDER = ("1s", "10s", "1m", "5m", "15m", "1h", "6h")
 K_ROWS = (("K1/K2 (F7 pool_reversed, organic)", "family = 'F7' AND segment = 'pool_reversed' AND farm = 'organic'"),
           ("K3 (F7 pool_reversed, all pools)", "family = 'F7' AND segment = 'pool_reversed'"))
+REF_D = 2  # the entry-delay comparison's reference: the paper's d_ms 600 = 2 slots in the dev days' 266-316 ms regimes
+SCREEN_PT = 0.002  # the screen's threshold: 0.2 pt per trade on the paired net Δ (coordinator, 2026-10-19)
+SCREEN_H = ("1m", "5m", "15m")
+CAUSAL = (0, 2001)  # entries without a same-slot fill: the end of t (first in t + 1) and after the first leg of t + 1
 
 
 def trimmed_mean(x, trim=TRIM):
@@ -252,6 +264,89 @@ def exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot=None):
     return "\n".join(L)
 
 
+def delay_codes(con):
+    """The entry-delay codes in the rows beside REF_D (the --tx-delays run), in display order."""
+    ds = [r[0] for r in con.execute(f"SELECT DISTINCT d FROM m WHERE d <> {REF_D} ORDER BY d").fetchall()]
+    return ds if any(d == 0 or d >= 1000 for d in ds) else []
+
+
+def delay_pairs(con):
+    """dpairs: per signal, horizon and code the code's and the reference's entry mid and net (both present),
+    with the code entry's capped flag; and dcover: per code the signals with a reference entry."""
+    con.execute(f"""
+      CREATE OR REPLACE TABLE dpairs AS
+      SELECT a.family, a.segment, a.mint, a.pool, a.t, a.day, a.regime, a.farm, a.d, a.h, a.net, b.net AS ref_net,
+             ea.mid AS mid, eb.mid AS ref_mid, ea.capped
+      FROM m a JOIN m b ON b.family = a.family AND b.segment = a.segment AND b.venue = a.venue AND b.mint = a.mint
+                       AND COALESCE(b.pool, '') = COALESCE(a.pool, '') AND b.t = a.t AND b.h = a.h AND b.d = {REF_D}
+      JOIN entries ea ON ea.family = a.family AND ea.segment = a.segment AND ea.venue = a.venue AND ea.mint = a.mint
+                       AND COALESCE(ea.pool, '') = COALESCE(a.pool, '') AND ea.t = a.t AND ea.d = a.d
+      JOIN entries eb ON eb.family = a.family AND eb.segment = a.segment AND eb.venue = a.venue AND eb.mint = a.mint
+                       AND COALESCE(eb.pool, '') = COALESCE(a.pool, '') AND eb.t = a.t AND eb.d = {REF_D}
+      WHERE a.d <> {REF_D} AND a.family NOT LIKE 'N2\\_%' ESCAPE '\\' AND a.net IS NOT NULL AND b.net IS NOT NULL
+        AND ea.mid IS NOT NULL AND eb.mid IS NOT NULL""")
+
+
+def delay_table(con, label, where, boot, codes):
+    """One group's entry-delay table: per code the entry mid advantage and, per block and horizon, the paired net Δ
+    against d = REF_D with its day CI, the coverage and the capped share; the screen verdict on the binding block."""
+    L = [f"### Entry delay vs d = {REF_D} · {label}\n",
+         f"| block | entry | h | n pairs | coverage | capped | entry mid Δ (trim) | 95% CI | **net Δ (trim)** | 95% CI (days) | Δ > 0 | screen |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    verdict = []
+    for bname, bwhere in blocks(con):
+        n_ref = con.execute(f"SELECT count(*) FROM m WHERE ({where}) AND d = {REF_D} AND h = '1m' AND net IS NOT NULL AND ({bwhere})").fetchone()[0]
+        for d in codes:
+            for h in H_ORDER:
+                rows = con.execute(f"SELECT net - ref_net, ref_mid / mid - 1, day, capped FROM dpairs WHERE ({where}) AND d = {d} AND h = '{h}' AND ({bwhere})").fetchall()
+                if not rows:
+                    continue
+                dn = np.array([r[0] for r in rows], dtype=float)
+                dm = np.array([r[1] for r in rows], dtype=float)
+                days = np.array([r[2] for r in rows])
+                capped = np.array([bool(r[3]) for r in rows])
+                lo, hi = day_ci(dn, days, boot)
+                mlo, mhi = day_ci(dm, days, boot)
+                tr = trimmed_mean(dn)
+                ok = tr >= SCREEN_PT and lo is not None and lo > 0
+                screen = ""
+                if bname == BINDING and d in CAUSAL and h in SCREEN_H:
+                    screen = f"**{'yes' if ok else 'no'}**"
+                    verdict.append((d, h, ok))
+                elif d >= 1000 and bname == BINDING and h in SCREEN_H:
+                    screen = "upper bound"
+                L.append(f"| {bname} | {markout.delay_label(d)} | {h} | {fmt(len(dn))} | {fmt(len(dn) / n_ref if n_ref else float('nan'), 0, True)} | "
+                         f"{fmt(float(capped.mean()), 0, True)} | {fmt(trimmed_mean(dm), 2, True, True)} | {fmt(mlo, 2, True, True)} … {fmt(mhi, 2, True, True)} | "
+                         f"**{fmt(tr, 2, True, True)}** | {fmt(lo, 2, True, True)} … {fmt(hi, 2, True, True)} | {fmt(float((dn > 0).mean()), 0, True)} | {screen} |")
+    yes = [(d, h) for d, h, ok in verdict if ok]
+    L.append("")
+    L.append(f"{BINDING} screen (net Δ ≥ {SCREEN_PT * 100:.1f} pt with its day CI above 0, causal entries {', '.join(markout.delay_label(d) for d in CAUSAL)}, "
+             f"h in {', '.join(SCREEN_H)}): " + (("positive at " + ", ".join(f"{markout.delay_label(d)} / {h}" for d, h in yes)) if yes else "not met") + ".")
+    L.append("")
+    return "\n".join(L)
+
+
+def delay_section(con, boot):
+    """The entry-delay comparison (spec M-a) for every family x segment with codes, and the K rows."""
+    codes = delay_codes(con)
+    if not codes:
+        return ""
+    delay_pairs(con)
+    L = [f"## Entry delay (spec M-a): paired per signal against d = {REF_D}\n",
+         f"Reference d = {REF_D} = the paper's d_ms 600 in the dev days' slot regimes. Entry mid Δ = mid_ref / mid_entry − 1 (> 0: the entry is cheaper than the reference); "
+         "net Δ = net markout of the entry − net markout of the reference at the same horizon (each from its own entry slot: the horizons differ by at most 3 slots, "
+         "negligible from 1 m on); trimmed means with day CIs; coverage = pairs / reference signals with a 1 m net; capped = share of the entries that fell on the slot's "
+         "last leg (k beyond the slot's legs) or, for t+1, on the end of t (no leg in t + 1). The k-codes inside t need a same-slot fill (bundles) and are an upper bound; "
+         "d = 0 (the end of t: a fill as the first transaction of t + 1) and t+1 first tx are the causal entries without bundles, still without competition, TOL or landing. "
+         "Not a P&L: the exit rule, busy and the fill are not recomputed per entry (route (ii)).\n"]
+    for fam, seg in con.execute("SELECT DISTINCT family, segment FROM dpairs ORDER BY 1, 2").fetchall():
+        L.append(delay_table(con, f"{fam} · {seg}", f"family = '{fam}' AND segment = '{seg}'", boot, codes))
+    for label, where in K_ROWS:
+        if con.execute(f"SELECT count(*) FROM dpairs WHERE {where}").fetchone()[0]:
+            L.append(delay_table(con, label, where, boot, codes))
+    return "\n".join(L)
+
+
 def render(con, markout_dir, boot, parts_dir=None, cfg_path=None, ms_per_slot=None):
     runs = sorted(glob.glob(os.path.join(markout_dir, "run-markout-*.json")))
     infos = [json.load(open(r)) for r in runs]
@@ -267,9 +362,11 @@ def render(con, markout_dir, boot, parts_dir=None, cfg_path=None, ms_per_slot=No
     for fam, seg, d in groups(con):
         L.append(table(con, f"{fam} · {seg} · d = {markout.delay_label(d)}", f"family = '{fam}' AND segment = '{seg}' AND d = {d}", boot))
     for label, where in K_ROWS:
-        for d in (1, 2):
-            if con.execute(f"SELECT count(*) FROM m WHERE {where} AND d = {d}").fetchone()[0]:
-                L.append(table(con, f"{label} · d = {markout.delay_label(d)}", f"{where} AND d = {d}", boot))
+        for (d,) in con.execute(f"SELECT DISTINCT d FROM m WHERE {where} ORDER BY d").fetchall():
+            L.append(table(con, f"{label} · d = {markout.delay_label(d)}", f"{where} AND d = {d}", boot))
+    sec = delay_section(con, boot)
+    if sec:
+        L.append(sec)
     if parts_dir:
         L.append(exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot))
     return "\n".join(L)
