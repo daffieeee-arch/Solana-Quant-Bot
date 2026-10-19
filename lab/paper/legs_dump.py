@@ -23,7 +23,8 @@ on: a window that differs, in a run from the store's start, whose pool context a
 it at a first start (store snapshot, seeded farmer history, follow off). The directory is the recorder's, whose
 segments/ LiveFeed reads (lab-live's --segments takes segments/ itself); a segments/ directory, a run that reads no
 segment or other than --expect-segments, and a dump without events are refused. --from is the window grid's origin and --to
-its end (default none); no event is left out. --snapshot-before SLOT takes the snapshot as known before that slot and
+its end (default none: the last window's end is then nominal, its start + --window); no event is left out. --memory is
+LiveFeed's DuckDB limit, so it goes with --segments only (the store form reads at ReplayFeed's own 1 GB). --snapshot-before SLOT takes the snapshot as known before that slot and
 the farmer window h24 from the store's clock there, as paper.shadow's `engine --live` step does on segments simulated
 inside the store's period (job 91: --snapshot-before 454896000); --h24 sets that window. The event lines are the
 store form's, so a window can be compared with it. Every window also has the sha256 of its lines with a pool line's
@@ -34,7 +35,9 @@ events, each as a count and the sha256 of its lines:
 - flag_fixes: drain_flag_fixes at the same points: `at pool slot tx outer inner farmer`;
 - learned: drain_learned's rows (`kind key seq slot info`) and new_pools, each drain's in sorted order (LiveFeed appends a
   segment's in DuckDB's GROUP BY order, which differs between processes); usage: drain_usage's (as sorted JSON); and
-  arrivals: each event's position and (received ns, created ns, segment written) when it has them;
+  arrivals: each event's position and (received ns, created ns, segment written) when it has them. The dump drains usage
+  and learned at every slot end, the engine at every live minute (engine.py `_live_minute`): the same rows, usage in the
+  same order (first in, first out, with no `at`), so only how often they are taken differs;
 and LiveFeed's stats and its farmer seed (without the store's path).
 """
 
@@ -271,20 +274,20 @@ def main(argv=None):
     ap.add_argument("--window", type=int, default=10_000)
     ap.add_argument("--snapshot-before", dest="snapshot_before", type=int)
     ap.add_argument("--h24", type=int)
-    ap.add_argument("--memory", default="1GB")
+    ap.add_argument("--memory", help="--segments: LiveFeed's DuckDB memory limit (default 1GB)")
     ap.add_argument("--max-rss-gb", dest="max_rss_gb", type=float, help="stop the run when its peak RSS passes this")
     ap.add_argument("--expect-segments", dest="expect_segments", type=int,
                     help="--segments: refuse another number of complete segments read")
     a = ap.parse_args(argv)
     cap = None if a.max_rss_gb is None else int(a.max_rss_gb * 1024)
     if a.segments:
-        res = dump_segments(a.segments, a.store, a.lo, a.hi, a.window, a.out, a.out_from, a.snapshot_before, a.h24, a.memory,
-                            cap, a.expect_segments)
+        res = dump_segments(a.segments, a.store, a.lo, a.hi, a.window, a.out, a.out_from, a.snapshot_before, a.h24,
+                            a.memory or "1GB", cap, a.expect_segments)
     else:
         if a.hi is None:
             ap.error("--to is needed without --segments")
-        if a.snapshot_before is not None or a.h24 is not None or a.expect_segments is not None:
-            ap.error("--snapshot-before, --h24 and --expect-segments go with --segments")
+        if a.snapshot_before is not None or a.h24 is not None or a.expect_segments is not None or a.memory is not None:
+            ap.error("--snapshot-before, --h24, --expect-segments and --memory go with --segments")
         res = dump(a.store, a.lo, a.hi, a.window, a.out, a.out_from, cap)
     if not res["events"]:
         raise SystemExit("legs_dump: no event: an empty dump is no result: refused")
