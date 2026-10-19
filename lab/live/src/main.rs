@@ -79,9 +79,6 @@ mod signals;
 mod signals_core;
 mod snapshot;
 
-/// The live heap for `--mem-log` (mem.rs; M1 C4-2): System, counted.
-#[global_allocator]
-static ALLOC: mem::Counting = mem::Counting;
 
 use anyhow::{bail, Context, Result};
 use std::io::Write;

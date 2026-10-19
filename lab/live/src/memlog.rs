@@ -1,19 +1,24 @@
 //! `--mem-log FILE` of `lab-live paper` (M1 C4-2; the spec is research/m1-c4-plateau-spec-2026-10-19.md §3): one JSON
 //! line per minute of chain time and one at the end, for C4's plateau gate (lab/live/plateau.py).
 //!
-//! - A minute is the paper engine's: the block time's minute of the last slot it ended (the heartbeat's). When an
-//!   event's push moves it on, the line of the minute before is written: `{minute, slot, events, segments, rss_bytes,
-//!   heap_bytes, heap_allocs, structures: {name: {entries, bytes, group}}, time_ns}`. `slot` is that event's (the first
-//!   after the minute's last slot), `events` the events before it, `segments` the segments read so far (null on chunks);
-//!   `group` is snapshot, legs_buffer or state (`group`).
-//! - The heap is the counting allocator's (mem.rs); the structures are lab_core's `mem_report` (the snapshot's tables
+//! - A minute is the paper engine's: the block time's minute of the last slot it ended (the heartbeat's). The engine ends
+//!   a slot when the first event of a later slot arrives, so minute M's line is written after the push that ended minute
+//!   M+1's first slot: `{minute, slot, events, segments, rss_bytes, heap_bytes, heap_allocs, sqlite_bytes, structures:
+//!   {name: {entries, bytes_est, group}}, time_ns}`. `slot` is that push's event's, `events` the events before it,
+//!   `segments` the segments read so far (null on chunks); `group` is snapshot, legs_buffer or state (`group`); the
+//!   structures' keys come sorted by name (serde_json's map).
+//! - The heap is the counting allocator's (mem.rs): the live **Rust** heap. The bundled SQLite's own memory is
+//!   `sqlite_bytes`; libzstd's contexts are only in RSS. The structures are lab_core's `mem_report` (the snapshot's tables
 //!   and the engines' state) and the replay's own (legs_read.rs `ReplayMem`: the interned keys, the 24 h farmer
-//!   histories, the pool contexts and the legs buffer of the chunk or segment being emitted). Bytes are capacity ×
+//!   histories, the pool contexts and the legs buffer of the chunk or segment being emitted). `bytes_est` is capacity ×
 //!   size_of, a lower bound (lab_core::mem).
 //! - `time_ns`: the wall time of each event's `PaperEngine::push` plus the drain into the journal, in log buckets (`Hist`),
-//!   for the minute's events: n, p50, p90, p99, p999, max and the buckets `[[lower bound, count], ...]` (so hours can be
-//!   summed). **Processing time in a replay, not live latency** (Triton's stamp to the decision is M3's, design §10).
-//! - The last line has `"end": true` and the whole run's `time_ns`.
+//!   for the pushes between two lines: n, p50, p90, p99, p999, max and the buckets `[[lower bound, count], ...]` (so hours
+//!   can be summed). **Processing time in a replay, not live latency** (Triton's stamp to the decision is M3's, design
+//!   §10).
+//! - At the end (after `finish`): the last minute's line, a line for the minute `finish` started if it did (with no
+//!   events), then the end line, `"end": true`, with the whole run's `time_ns` and the replay's structures after its last
+//!   chunk or unit. Every line is flushed when written, so a killed run leaves whole lines.
 
 use crate::mem;
 use anyhow::{Context, Result};
@@ -107,12 +112,12 @@ pub fn group(name: &str) -> &'static str {
     }
 }
 
-/// The structures as the line's `structures` object, in their report order.
+/// The structures as the line's `structures` object (keys sorted by name). A name reported twice is a bug: refused.
 pub fn structures(mems: &[Mem]) -> Value {
     let mut m = Map::new();
     for x in mems {
-        let prev = m.insert(x.name.to_owned(), json!({"entries": x.entries, "bytes": x.bytes, "group": group(x.name)}));
-        debug_assert!(prev.is_none(), "structure {} reported twice", x.name);
+        let prev = m.insert(x.name.to_owned(), json!({"entries": x.entries, "bytes_est": x.bytes, "group": group(x.name)}));
+        assert!(prev.is_none(), "structure {} reported twice", x.name);
     }
     Value::Object(m)
 }
@@ -156,23 +161,30 @@ impl MemLog {
         v["rss_bytes"] = json!(mem::rss_bytes());
         v["heap_bytes"] = json!(mem::heap_bytes());
         v["heap_allocs"] = json!(mem::heap_allocs());
+        v["sqlite_bytes"] = json!(mem::sqlite_bytes());
         v["structures"] = structures(mems);
         v["time_ns"] = self.this_minute.json();
         serde_json::to_writer(&mut self.out, &v)?;
         self.out.write_all(b"\n")?;
+        self.out.flush()?; // once per chain minute: a killed run leaves whole lines
         self.lines += 1;
         Ok(())
     }
 
-    /// The end of the replay (after `finish` and its drain): the last minute's line, then the end line with the whole
-    /// run's times. Returns the lines written.
-    pub fn end(mut self, slot: u64, segments: Option<u64>, mems: &[Mem]) -> Result<u64> {
+    /// The end of the replay (after `finish` and its drain), with the engine's minute after `finish`: the last minute's
+    /// line; a line for the minute `finish` started, if it started one (no events: its histogram is empty); then the end
+    /// line with the whole run's times. Returns the lines written.
+    pub fn end(mut self, minute_after: Option<i64>, slot: u64, segments: Option<u64>, mems: &[Mem]) -> Result<u64> {
         if let Some(m) = self.minute {
             self.line(json!({"minute": m}), slot, segments, mems)?;
         }
+        if minute_after.is_some() && minute_after != self.minute {
+            self.this_minute = Hist::default();
+            self.line(json!({"minute": minute_after}), slot, segments, mems)?;
+            self.minute = minute_after;
+        }
         self.this_minute = self.all.clone();
         self.line(json!({"minute": self.minute, "end": true}), slot, segments, mems)?;
-        self.out.flush()?;
         Ok(self.lines)
     }
 }
@@ -229,7 +241,7 @@ mod tests {
             .unwrap();
         }
         assert_eq!(asked, 1);
-        assert_eq!(log.end(5, Some(2), &mems()).unwrap(), 3);
+        assert_eq!(log.end(Some(11), 5, Some(2), &mems()).unwrap(), 3);
         let lines: Vec<Value> = fs::read_to_string(&path).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(lines.len(), 3);
         // minute 10: written at slot 4's event; its time histogram holds the events since None moved to 10 (7, 9, 11),
@@ -237,11 +249,23 @@ mod tests {
         let l = &lines[0];
         assert_eq!((l["minute"].as_i64(), l["slot"].as_u64(), l["events"].as_u64(), l["segments"].as_u64()), (Some(10), Some(4), Some(4), Some(1)));
         assert_eq!((l["time_ns"]["n"].as_u64(), l["time_ns"]["max"].as_u64()), (Some(4), Some(11)));
-        assert_eq!(l["structures"], json!({"a": {"entries": 1, "bytes": 8, "group": "state"}, "b": {"entries": 2, "bytes": 16, "group": "state"}}));
+        assert_eq!(l["structures"], json!({"a": {"entries": 1, "bytes_est": 8, "group": "state"}, "b": {"entries": 2, "bytes_est": 16, "group": "state"}}));
+        assert!(l["sqlite_bytes"].is_i64());
         assert_eq!([group("curve_hold"), group("interned_keys"), group("legs_buffer"), group("recent_legs")], ["snapshot", "snapshot", "legs_buffer", "state"]);
         assert!(l["heap_bytes"].as_u64().unwrap() > 0 && l["rss_bytes"].as_u64().unwrap() > 0);
         assert_eq!((lines[1]["minute"].as_i64(), lines[1]["time_ns"]["n"].as_u64(), lines[1]["events"].as_u64()), (Some(11), Some(1), Some(5)));
         assert_eq!((lines[2]["end"].as_bool(), lines[2]["minute"].as_i64(), lines[2]["time_ns"]["n"].as_u64()), (Some(true), Some(11), Some(5)));
+        // finish started minute 12: its own line (no events), then the end line labelled 12
+        let path2 = dir.join("mem2.jsonl");
+        let mut log = MemLog::create(&path2).unwrap();
+        for (ns, minute) in [(5, Some(10)), (6, Some(11))] {
+            log.event(ns, minute, 1, None, mems).unwrap();
+        }
+        assert_eq!(log.end(Some(12), 2, None, &mems()).unwrap(), 4);
+        let l2: Vec<Value> = fs::read_to_string(&path2).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let got: Vec<(Option<i64>, Option<u64>, bool)> =
+            l2.iter().map(|l| (l["minute"].as_i64(), l["time_ns"]["n"].as_u64(), l["end"].as_bool() == Some(true))).collect();
+        assert_eq!(got, [(Some(10), Some(1), false), (Some(11), Some(1), false), (Some(12), Some(0), false), (Some(12), Some(2), true)]);
         let _ = fs::remove_dir_all(&dir);
     }
 }

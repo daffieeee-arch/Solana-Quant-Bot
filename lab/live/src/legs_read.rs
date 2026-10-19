@@ -806,6 +806,8 @@ pub struct Replay {
     pub mem_log: bool,
     /// The farmer histories' trades and bytes (`FarmHist::mem`): summed once at the open, then `flag_chunk`'s deltas.
     hist_mem: (usize, usize),
+    /// With `mem_log`: the replay's structures after the last chunk or unit handed out (the end line's).
+    last_mem: ReplayMem,
 }
 
 /// Where a replay's rows come from.
@@ -955,7 +957,7 @@ impl Replay {
         let replay = Replay {
             hist_mem: hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
             from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false, seg,
-            mem_log: false,
+            mem_log: false, last_mem: ReplayMem::default(),
         };
         Ok((replay, with))
     }
@@ -964,6 +966,11 @@ impl Replay {
     /// interned so far (every key of the event among them). An error of `f` ends the replay.
     pub fn for_each_event(&mut self, mut f: impl FnMut(&Keys, &Event) -> Result<()>) -> Result<()> {
         self.for_each_event_mem(|keys, _, ev| f(keys, ev))
+    }
+
+    /// With `mem_log`, the replay's structures after the last chunk or unit handed out (for the end line); empty before.
+    pub fn last_mem(&self) -> &ReplayMem {
+        &self.last_mem
     }
 
     /// `for_each_event` with the replay's structures of the current chunk or segment unit (`ReplayMem`; empty unless
@@ -990,6 +997,9 @@ impl Replay {
             let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
             let keys = &self.adm.keys;
             emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, &mem, ev))?;
+            if self.mem_log {
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None);
+            }
             log::info!("chunk {}: {} curve and {} pool rows of [{}, {}), h24 {}, {} keys, RSS {} MB", p.dir.display(), curve.len(), pool.len(),
                        from.max(p.lo), to.min(p.hi), bl.h24, keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
             self.h24s.push(json!([p.lo, p.hi, bl.h24]));
@@ -1017,6 +1027,9 @@ impl Replay {
             };
             let keys = &self.adm.keys;
             emit_chunk(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), |ev| f(keys, &mem, ev))?;
+            if self.mem_log {
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1));
+            }
         }
         for &(lo, hi, h24) in &sg.chunks {
             self.h24s.push(json!([lo, hi, h24]));

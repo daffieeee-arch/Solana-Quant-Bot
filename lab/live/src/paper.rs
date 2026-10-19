@@ -250,7 +250,7 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
         v.extend(r.mems.iter().cloned());
         v
     };
-    let (mut last_rmem, mut last_slot) = (ReplayMem::default(), 0);
+    let mut last_slot = 0;
     replay.for_each_event_mem(|keys, rmem, ev| {
         let t = Instant::now();
         eng.push(ev, &mut seeds.with(keys))?;
@@ -258,18 +258,19 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
         if let Some(m) = memlog.as_mut() {
             let ns = u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
             last_slot = ev.leg.slot();
-            m.event(ns, eng.paper.minute(), last_slot, rmem.segments, || {
-                last_rmem = rmem.clone();
-                mems(&eng, &seeds, &tally, rmem)
-            })?;
+            m.event(ns, eng.paper.minute(), last_slot, rmem.segments, || mems(&eng, &seeds, &tally, rmem))?;
         }
         Ok(())
     })?;
     let keys = &replay.adm.keys;
     eng.finish(&mut seeds.with(keys))?; // the last slot, then the end of data (engine.py:321-324)
     drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())?;
+    // the end line: the engines after finish, the replay after its last chunk or unit
     let mem_lines = match memlog {
-        Some(m) => Some(m.end(last_slot, last_rmem.segments, &mems(&eng, &seeds, &tally, &last_rmem))?),
+        Some(m) => {
+            let r = replay.last_mem();
+            Some(m.end(eng.paper.minute(), last_slot, r.segments, &mems(&eng, &seeds, &tally, r))?)
+        }
         None => None,
     };
     if let Some(mut f) = trace {
@@ -476,8 +477,12 @@ mod tests {
         }
         assert_eq!((plain.get("mem_log"), &logged["journal"]), (None, &plain["journal"]));
         let lines: Vec<Value> = fs::read_to_string(root.join("mem.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
-        let beats = plain["journal"]["puts"]["heartbeat"].as_u64().unwrap();
-        assert_eq!((lines.len() as u64, logged["mem_log"]["lines"].as_u64()), (beats + 1, Some(beats + 1)), "{lines:?}");
+        // one line per dated minute the engine passed (its heartbeat rows without a note; a feed-gap row has one), then the end
+        let minutes: i64 = rusqlite::Connection::open(root.join("jm").join("journal.sqlite")).unwrap()
+            .query_row("SELECT count(*) FROM heartbeat WHERE note = ''", [], |r| r.get(0)).unwrap();
+        let minutes = minutes as u64;
+        assert!(minutes >= 1);
+        assert_eq!((lines.len() as u64, logged["mem_log"]["lines"].as_u64()), (minutes + 1, Some(minutes + 1)), "{lines:?}");
         let (last, end) = (&lines[lines.len() - 2], &lines[lines.len() - 1]);
         assert_eq!((end["end"].as_bool(), &end["minute"], &end["time_ns"]["n"]), (Some(true), &last["minute"], &logged["events"]));
         let n: u64 = lines[..lines.len() - 1].iter().map(|l| l["time_ns"]["n"].as_u64().unwrap()).sum();
@@ -488,6 +493,7 @@ mod tests {
             assert!(end["structures"][name]["entries"].is_u64(), "{name} missing: {}", end["structures"]);
         }
         assert_eq!((&end["structures"]["ops"]["entries"], &end["segments"]), (&json!(0), &Value::Null)); // drained; chunks
+        assert!(end["structures"]["recent_keys"]["bytes_est"].is_u64() && end["sqlite_bytes"].is_i64(), "{end}");
         assert!(end["structures"]["interned_keys"]["entries"].as_u64() == logged["keys"].as_u64() && end["heap_bytes"].as_u64() > Some(0), "{end}");
         fs::remove_dir_all(&root).unwrap();
     }

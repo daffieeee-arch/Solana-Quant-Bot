@@ -4,19 +4,38 @@
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
-static LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
-static LIVE_ALLOCS: AtomicU64 = AtomicU64::new(0);
+/// The global allocator: `System`, counting the live Rust heap's bytes (as requested, so the allocator's own rounding and
+/// retained pages are RSS's part) and its live allocations, with two relaxed atomics per call. C code allocates outside it:
+/// the bundled SQLite (`sqlite_bytes` in the memory log, its own counter) and libzstd's contexts are only in RSS.
+pub struct Counting {
+    bytes: AtomicU64,
+    allocs: AtomicU64,
+}
 
-/// The global allocator (main.rs): `System`, counting the live heap's bytes (as requested, so the allocator's own
-/// rounding and retained pages are RSS's part) and its live allocations, with two relaxed atomics per call.
-pub struct Counting;
+impl Counting {
+    pub const fn new() -> Self {
+        Counting { bytes: AtomicU64::new(0), allocs: AtomicU64::new(0) }
+    }
+
+    pub fn bytes(&self) -> u64 {
+        self.bytes.load(Relaxed)
+    }
+
+    pub fn allocs(&self) -> u64 {
+        self.allocs.load(Relaxed)
+    }
+}
+
+/// lab-live's allocator (the binary and its tests).
+#[global_allocator]
+pub static ALLOC: Counting = Counting::new();
 
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
         let p = unsafe { System.alloc(l) };
         if !p.is_null() {
-            LIVE_BYTES.fetch_add(l.size() as u64, Relaxed);
-            LIVE_ALLOCS.fetch_add(1, Relaxed);
+            self.bytes.fetch_add(l.size() as u64, Relaxed);
+            self.allocs.fetch_add(1, Relaxed);
         }
         p
     }
@@ -24,39 +43,46 @@ unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
         let p = unsafe { System.alloc_zeroed(l) };
         if !p.is_null() {
-            LIVE_BYTES.fetch_add(l.size() as u64, Relaxed);
-            LIVE_ALLOCS.fetch_add(1, Relaxed);
+            self.bytes.fetch_add(l.size() as u64, Relaxed);
+            self.allocs.fetch_add(1, Relaxed);
         }
         p
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
         unsafe { System.dealloc(p, l) };
-        LIVE_BYTES.fetch_sub(l.size() as u64, Relaxed);
-        LIVE_ALLOCS.fetch_sub(1, Relaxed);
+        self.bytes.fetch_sub(l.size() as u64, Relaxed);
+        self.allocs.fetch_sub(1, Relaxed);
     }
 
     unsafe fn realloc(&self, p: *mut u8, l: Layout, new_size: usize) -> *mut u8 {
         let q = unsafe { System.realloc(p, l, new_size) };
         if !q.is_null() {
             if new_size >= l.size() {
-                LIVE_BYTES.fetch_add((new_size - l.size()) as u64, Relaxed);
+                self.bytes.fetch_add((new_size - l.size()) as u64, Relaxed);
             } else {
-                LIVE_BYTES.fetch_sub((l.size() - new_size) as u64, Relaxed);
+                self.bytes.fetch_sub((l.size() - new_size) as u64, Relaxed);
             }
         }
         q
     }
 }
 
-/// The live heap's bytes now (0 when `Counting` is not the global allocator).
+/// The live Rust heap's bytes now.
 pub fn heap_bytes() -> u64 {
-    LIVE_BYTES.load(Relaxed)
+    ALLOC.bytes()
 }
 
-/// The live heap's allocations now.
+/// The live Rust heap's allocations now.
 pub fn heap_allocs() -> u64 {
-    LIVE_ALLOCS.load(Relaxed)
+    ALLOC.allocs()
+}
+
+/// The bundled SQLite's own outstanding memory (`sqlite3_memory_used`; its MEMSTATUS is on by default): the journal's
+/// page cache and statements, which the counting allocator does not see.
+pub fn sqlite_bytes() -> i64 {
+    // SAFETY: a plain read of SQLite's global counter; no pointer, no state change.
+    unsafe { rusqlite::ffi::sqlite3_memory_used() }
 }
 
 fn status_kb(key: &str) -> Option<u64> {
@@ -91,17 +117,30 @@ mod tests {
     }
 
     #[test]
-    fn the_counting_allocator_holds_every_live_byte() {
-        // Other tests allocate and free on their threads, so only a lower bound holds: while this test holds a block,
-        // the live heap is at least that block (alloc, alloc_zeroed and realloc each counted).
-        const MB: usize = 1 << 20;
-        let mut v: Vec<u8> = Vec::with_capacity(16 * MB);
-        v.push(1);
-        assert!(heap_bytes() >= 16 * MB as u64 && heap_allocs() >= 1, "{} bytes in {} allocations", heap_bytes(), heap_allocs());
-        v.reserve_exact(24 * MB); // realloc to 24 MB + 1
-        assert!(heap_bytes() >= 24 * MB as u64);
-        let z = vec![0u8; 20 * MB]; // alloc_zeroed
-        assert!(heap_bytes() >= 44 * MB as u64 && z[MB] == 0);
-        drop((v, z));
+    fn the_counting_allocator_counts_every_path_exactly() {
+        // On its own instance (the global one sees every thread's allocations): alloc, a growing and a shrinking realloc,
+        // alloc_zeroed and dealloc, each exact; back to 0 at the end.
+        let c = Counting::new();
+        let l = |n: usize| Layout::from_size_align(n, 8).unwrap();
+        unsafe {
+            let p = c.alloc(l(100));
+            assert!(!p.is_null());
+            assert_eq!((c.bytes(), c.allocs()), (100, 1));
+            let p = c.realloc(p, l(100), 300);
+            assert_eq!((c.bytes(), c.allocs()), (300, 1));
+            let p = c.realloc(p, l(300), 50);
+            assert_eq!((c.bytes(), c.allocs()), (50, 1));
+            let z = c.alloc_zeroed(l(64));
+            assert!(std::slice::from_raw_parts(z, 64).iter().all(|&b| b == 0));
+            assert_eq!((c.bytes(), c.allocs()), (114, 2));
+            c.dealloc(p, l(50));
+            c.dealloc(z, l(64));
+        }
+        assert_eq!((c.bytes(), c.allocs()), (0, 0));
+        // the global allocator is this one: while this test holds a block, the live heap is at least that block
+        let v: Vec<u8> = Vec::with_capacity(8 << 20);
+        assert!(heap_bytes() >= 8 << 20 && heap_allocs() >= 1, "{} bytes in {} allocations", heap_bytes(), heap_allocs());
+        drop(v);
+        assert!(sqlite_bytes() >= 0);
     }
 }

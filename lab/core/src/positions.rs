@@ -594,9 +594,9 @@ impl PositionSim {
         self.done
     }
 
-    /// The memory log (C4-2): the position as it is boxed, its holdings and its applied sales.
+    /// The memory log (C4-2): the position as it is boxed, its holdings, its applied sales and its exit rule's flow index.
     pub fn heap_bytes(&self) -> usize {
-        std::mem::size_of::<Self>() + self.hold.heap_bytes() + crate::mem::vec(&self.applied)
+        std::mem::size_of::<Self>() + self.hold.heap_bytes() + crate::mem::vec(&self.applied) + self.rule.heap_bytes()
     }
 
     pub fn venue(&self) -> SimVenue {

@@ -39,6 +39,11 @@ pub struct LiveFlowIndex {
 }
 
 impl LiveFlowIndex {
+    /// The memory log (C4-2): the legs' slots and prefix sums and the orders seen (`crate::mem`).
+    pub fn heap_bytes(&self) -> usize {
+        crate::mem::vec(&self.slots) + crate::mem::vec(&self.cum) + crate::mem::set(&self.seen)
+    }
+
     /// An empty index for a pool position; `reversed` is the position's orientation (engine.py:886,
     /// `LiveFlowIndex(p.orientation)`).
     pub fn new(reversed: bool) -> Self {

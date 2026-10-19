@@ -55,7 +55,7 @@ if [ "$STEP" = build ]; then
            legs_read::tests::the_mem_log_view_keeps_the_farmer_totals_and_counts_the_segments \
            paper::tests::the_mem_log_writes_a_line_per_minute_and_changes_no_journal_row memlog::tests::a_line_per_minute_then_the_end \
            memlog::tests::the_buckets_are_contiguous_and_at_most_a_32nd_wide memlog::tests::the_quantiles_are_their_buckets_top_capped_by_the_max \
-           mem::tests::the_counting_allocator_holds_every_live_byte \
+           mem::tests::the_counting_allocator_counts_every_path_exactly \
            paper_core::tests::every_c3_case_gives_the_engines_writes_with_risk_on paper::tests::with_risk_on_each_group_reads_its_own_file \
            paper::tests::a_replay_writes_its_paper_journal_the_states_and_the_summary; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
@@ -148,7 +148,7 @@ mins, end = [l for l in lines if not l.get("end")], lines[-1]
 s0, s1 = json.load(open(os.path.join(out, "smoke.json"))), json.load(open(os.path.join(out, "smoke-mem.json")))
 rss = [l["rss_bytes"] for l in mins if l.get("rss_bytes")]
 t = end["time_ns"]
-top = sorted(end["structures"].items(), key=lambda kv: -kv[1]["bytes"])[:8]
+top = sorted(end["structures"].items(), key=lambda kv: -kv[1]["bytes_est"])[:8]
 grow = {n: (mins[0]["structures"][n]["entries"], end["structures"][n]["entries"]) for n, _ in top}
 ok = a == b and w_equal and bool(end.get("end")) and t["n"] == s1["events"] and sum(l["time_ns"]["n"] for l in mins) == s1["events"]
 print(f"lab-live mem-log smoke: journals {'equal' if a == b else 'DIFFER'} ({a[:12]}), wallets {'equal' if w_equal else 'DIFFER'} "
@@ -156,8 +156,8 @@ print(f"lab-live mem-log smoke: journals {'equal' if a == b else 'DIFFER'} ({a[:
       f"{bool(end.get('end'))}; RSS {min(rss) / 1e9:.2f}-{max(rss) / 1e9:.2f} GB, heap at the end {end['heap_bytes'] / 1e9:.2f} GB; "
       f"time per event (replay processing, not live latency) p50 {t['p50'] / 1e3:.2f} us, p99 {t['p99'] / 1e3:.2f} us, "
       f"p999 {t['p999'] / 1e3:.2f} us, max {t['max'] / 1e6:.1f} ms over {t['n']:,} events; largest at the end (bytes, entries "
-      f"first -> last): " + ", ".join(f"{n} {v['bytes'] / 1e6:.0f} MB {grow[n][0]:,}->{grow[n][1]:,}" for n, v in top)
-      + f"; seconds without / with the log {s0['secs']:.0f} / {s1['secs']:.0f}; {'GREEN' if ok else 'RED'}")
+      f"first -> last): " + ", ".join(f"{n} {v['bytes_est'] / 1e6:.0f} MB {grow[n][0]:,}->{grow[n][1]:,}" for n, v in top)
+      + f"; seconds of the first run (cold cache) and of the run with the log {s0['secs']:.0f} / {s1['secs']:.0f} (not an overhead measure); {'GREEN' if ok else 'RED'}")
 sys.exit(0 if ok else 1)
 EOF
 log "smoke: done"

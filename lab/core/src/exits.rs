@@ -281,6 +281,14 @@ pub enum ExitRule {
 }
 
 impl ExitRule {
+    /// The memory log (C4-2): a flow rule's index (the pool's legs since the entry, pruned to its window); 0 otherwise.
+    pub fn heap_bytes(&self) -> usize {
+        match self {
+            ExitRule::TpSlTime { .. } => 0,
+            ExitRule::FlowTime { flows, .. } | ExitRule::FlowTpTime { flows, .. } => flows.heap_bytes(),
+        }
+    }
+
     pub fn kind(&self) -> Kind {
         match self {
             ExitRule::TpSlTime { .. } => Kind::TpSlTime,
