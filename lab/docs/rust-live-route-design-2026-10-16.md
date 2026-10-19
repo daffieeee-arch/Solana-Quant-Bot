@@ -376,14 +376,19 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
     - Source: [Jito: Low latency transaction send](https://docs.jito.wtf/lowlatencytxnsend/).
   - **BAM:** direct bundle ingest, whitelist-only so far.
 - **Every exit closes the token account** (a requirement from the cost model, Codex review of c29c545, decided 2026-10-19):
-  - The paper and backtest settle every exit as full: the ATA rent comes back, and any remainder is worth 0 (lab/core `costs.rs` and backtest/costs.py `exit_net`).
-  - The real exit must therefore end, in the same transaction, with a `Burn` of the remainder and a `CloseAccount`. A non-native account closes only at a zero token amount (SPL Token `interface/src/instruction.rs`, CloseAccount and Burn).
-  - The remainder is mostly fee dust: a reversed-pool sale leaves 1–3 raw units in about 0.3 % of the exits.
-  - **Token-2022:** an account with withheld transfer fees closes only after the permissionless `HarvestWithheldTokensToMint` (token-2022 `interface/src/instruction.rs` CloseAccount; the Token-2022 extension guide).
+  - **The model.** The paper and backtest settle every exit as full: the ATA rent comes back, and any remainder is worth 0 (lab/core `costs.rs` and backtest/costs.py `exit_net`). The week-2 prep note already meant this ("terug via CloseAccount bij volledige exit (+~3k CU)").
+  - **What the real exit must do.** Empty the account and close it. A non-native account closes only at a zero token amount (SPL Token `interface/src/instruction.rs`, CloseAccount and Burn).
+    - **The cheapest route:** in the exit transaction, sell, then `BurnChecked` the remainder, then `CloseAccount`. A later transaction also works, for one more fee. A Token-2022 close costs about 1.5k CU.
+    - **Where the remainder comes from:** mostly fee dust. A reversed-pool sale leaves at most one raw unit per fee component (≤ 3–4) in about 0.3 % of the exits. A failed final exit (proceeds 0) leaves the whole balance, and needs the same close.
+  - **What can block it (Token-2022):**
+    - **withheld transfer fees:** these need the permissionless `HarvestWithheldTokensToMint` first (token-2022 `interface/src/instruction.rs` CloseAccount; the Token-2022 extension guide);
+    - **PermissionedBurn:** the owner cannot burn, so the remainder is transferred out instead;
+    - **a frozen account or a paused mint:** the account cannot be emptied, and the rent is lost.
   - **The data (2026-10-19):**
-    - New pump coins are Token-2022: in 30 shadow segments, 1,307 of 1,314 creates were `create_v2` on `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`, and 7 were the classic `create` on `TokenkegQ…`.
-    - pump's own COIN_CREATION.md describes the mint as "initialized with `decimals = 6`, `mint_authority`, `token_program`, and metadata pointer set to `mint`", with no transfer fee.
-    - Not checked per mint: that needs a read of the mint accounts (an RPC call, the owner's OK). Check it before the first real exit.
+    - **Pump-created mints are Token-2022:** CreateEvents of epochs 1033–1051 show 1,055,323 `create_v2` (Token-2022) against 3,883 classic `create`. pump's COIN_CREATION.md describes the mint as "initialized with `decimals = 6`, `mint_authority`, `token_program`, and metadata pointer set to `mint`", with no transfer fee.
+    - **The scenario's `ata_rent` of 1,513,840** matches a 170-byte Token-2022 ATA on mainnet.
+    - **But most modelled positions are on other mints.** In long-dev-1033-1046, 93 % of the traded positions are reversed pools on 20,204 mints that pump did not create in that window, and their token programs and extensions are unknown. A transfer-fee mint needs the harvest above, and has a larger ATA (≥ 182 B, about 1,574,800 lamports).
+    - **Before the first real exit, read the mint accounts** (an RPC call, the owner's OK): the program, the extensions, the freeze and pause state, PermissionedBurn. Either refuse mints the close cannot handle, or count their rent as lost.
 - **Landing measurement:** record the send time and signature; measure the time to `processed` and `finalized`, and the execution result. Preconfirmations are an earlier signal, not a confirmation (Triton docs).
 - **The paper parallel:** the Rust journal's simulated fills become the benchmark for real fills.
 
