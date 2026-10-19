@@ -26,7 +26,7 @@ from paper.tests import c2_position_cases as C2
 SOL = C1.SOL
 T = C1.T
 PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "m3_live_cases.json")
-CASE = (*C2.CASE[:-2], "learn", "cost_scenario", "expect_ops")
+CASE = (*C2.CASE[:-2], "window_rule", "learn", "cost_scenario", "expect_ops")
 
 FORMAT = {
     **{k: v for k, v in C2.FORMAT.items() if k not in ("case", "regenerate")},
@@ -34,9 +34,12 @@ FORMAT = {
             "learn, cost_scenario, expect_ops. tokens and pools are the snapshot: what the feed knows at the start.",
     "learn": "what the feed learns while it reads, in order: {at_slot, token} (a tokens row: the token is replaced), "
              "{at_slot, pool} (a pools row: added when the pool is not known yet, as a SOL market when its quote_class is "
-             "sol or reversed) or {at_slot, epoch, ms} (the epoch's ms per slot in the engine's clock). An item applies "
-             "right before the first event whose slot is >= at_slot, after the last event when there is none (lab/core: "
-             "learn_token, learn_pool, set_epoch_ms before that push).",
+             "sol or reversed), {at_slot, history: {pool, events}} (M3-08b: a backfill's trades of the pool, history only, "
+             "drained at the next slot end as LiveFeed's drain_history) or {at_slot, epoch, ms} (the epoch's ms per slot in "
+             "the engine's clock). An item applies right before the first event whose slot is >= at_slot, after the last "
+             "event when there is none (lab/core: learn_token, learn_pool, add_history, set_epoch_ms before that push).",
+    "window_rule": "the feed's farm-window rule: all_pools (a replay's, CaseFeed) or live (M3-08b: LiveFeed's per pool, "
+                   "engine.py:806-813; lab/core WindowRule::Live).",
     "regenerate": "M3_CASES_REGEN=1 pytest paper/tests/test_live_cases.py (or python -m paper.tests.m3_live_cases).",
 }
 
@@ -50,12 +53,22 @@ class LearnFeed(C1.CaseFeed):
         self.learn = list(case["learn"])
         self.classed = {p["pool"] for p in case["pools"]}  # LiveFeed's pool_class: every pool it knows, of any class
         self.clock = None  # the engine's (run sets it)
+        self.all_pools = case["window_rule"] == "all_pools"  # live: the engine's per-pool farm-window rule
+        self.history = []
+
+    def drain_history(self):
+        """Backfill trades since the last call, as (pool, [leg]): history only (LiveFeed.drain_history)."""
+        out, self.history = self.history, []
+        return out
 
     def _apply(self, x):
         if "token" in x:
             t = x["token"]
             self.tokens[t["mint"]] = TokenInfo(t["mint"], t["create_slot"], t["creator"], t["mayhem"], t["quote_mint"],
                                                t["complete_slot"], t["pool"])
+        elif "history" in x:
+            h = x["history"]
+            self.history.append((h["pool"], [C1.event(e).leg for e in h["events"]]))
         elif "pool" in x:
             p = x["pool"]
             if p["pool"] not in self.classed:
@@ -91,9 +104,9 @@ def run(case):
 class Case(C2.Case):
     """C2's case builder with a learn list: a token or pool built as usual is moved out of the snapshot into `learn`."""
 
-    def __init__(self, *a, **kw):
+    def __init__(self, *a, window_rule="all_pools", **kw):
         super().__init__(*a, **kw)
-        self.learn = []
+        self.learn, self.window_rule = [], window_rule
 
     def learn_token(self, mint, at_slot, **change):
         """The token leaves the snapshot (or, with `keep`, stays there as it is) and is learned at at_slot with `change`."""
@@ -109,10 +122,19 @@ class Case(C2.Case):
     def learn_epoch(self, epoch, ms, at_slot):
         self.learn.append({"at_slot": at_slot, "epoch": epoch, "ms": ms})
 
+    def learn_history(self, pool, at_slot, before, copy_upto=None):
+        """The pool's events before `before` leave the feed and come as a backfill learned at at_slot (history only);
+        with copy_upto, its events from `before` to copy_upto come in it too and stay events (an overlap)."""
+        moved = [e for e in self.evs if e.key == pool and e.slot < before]
+        self.evs = [e for e in self.evs if not (e.key == pool and e.slot < before)]
+        copied = [e for e in self.evs if e.key == pool and copy_upto is not None and before <= e.slot <= copy_upto]
+        evs = sorted(moved + copied, key=lambda e: e.order)
+        self.learn.append({"at_slot": at_slot, "history": {"pool": pool, "events": [C1.fields(e) for e in evs]}})
+
     def build(self):
         case = C1.Case.build(self)
         assert [x["at_slot"] for x in self.learn] == sorted(x["at_slot"] for x in self.learn), f"{self.name}: learn order"
-        case["learn"] = self.learn
+        case["window_rule"], case["learn"] = self.window_rule, self.learn
         with tempfile.TemporaryDirectory(prefix="m3-case-") as d:  # the engine's own groups and cost scenario text
             j = Journal(d)
             eng = C1.engine(case, j)
@@ -238,11 +260,88 @@ def clock_learned_mid_run():
     return case
 
 
+def h_rows(c, key):
+    """Group H's rows of a key (pool_reversed, organic, require_farm_complete)."""
+    return [r for r in c.rows("signals", key=key) if r["variant"].startswith("flow300")]
+
+
+def window_rule_live():
+    """The live farm-window rule (engine.py:806-813) for group H (require_farm_complete): a pool seen for less than an
+    hour is incomplete, one seen for an hour or followed since its creation is complete."""
+    c = Case("window_rule_live", "Live rule. PA is first seen 30 slots before its trigger (at t), created long before: "
+                                 "farm_window_complete 0, H skips 'farm window incomplete'. PB was seen 14,000 slots "
+                                 "before its trigger (t + 100), over the hour (13,441): 1. PC was created 100 slots before "
+                                 "its trigger (t + 200) and first seen 70 slots after that, within SINCE_CREATION_MS (225 "
+                                 "slots): 1. K3 (farm all, no window gate) enters all three.", n2_k=0, window_rule="live")
+    t = 450_160_000
+    pa, pb, pc = c.pool("PA"), c.pool("PB"), c.pool("PC", create_slot=t + 100)
+    reversed_trigger(c, pa, t, 400 * SOL)
+    reversed_trigger(c, pb, t + 100, 400 * SOL, early=[(t + 100 - 14_000, 0, "early buyer", "buy", SOL // 10, False)])
+    reversed_trigger(c, pc, t + 200, 400 * SOL)
+    case = c.build()
+    for key, want in ((pa, 0), (pb, 1), (pc, 1)):
+        rows = h_rows(c, key)
+        ok(rows and all(r["farm_window_complete"] == want for r in rows), c, f"{key} {rows}")
+        ok(all((r["reason"] == "farm window incomplete") == (want == 0) for r in rows), c, f"{key} gate {rows}")
+        ok(c.one("orders", key=key, variant="tp4_T600")["status"] == "filled", c, f"{key} K3")
+    return case
+
+
+def backfill_as_history():
+    """A backfill is history (engine.py:416-421): it makes the pool's window complete (backfilled), sets its
+    pool_seen_slot, and its farmer trades flag the farm label; an overlap with the recorded trades counts once."""
+    c = Case("backfill_as_history", "Live rule. PD is recorded from t - 30 (its trigger's inflow) and triggers at t. With "
+                                    "that first recorded trade comes a backfill of PD's earlier trades: t - 3,000 (a "
+                                    "farmer's 60 SOL buy, within the hour) and t - 20,000, plus the recorded inflow again "
+                                    "(an overlap, counted once). PD's rows: farm_window_complete 1 (backfilled), "
+                                    "pool_seen_slot t - 20,000, farm 'flagged' (the farmer's volume is over half the "
+                                    "hour's): H (organic) skips 'farm flagged', K3 enters.", n2_k=0, window_rule="live")
+    t = 450_160_000
+    pd = c.pool("PD")
+    reversed_trigger(c, pd, t, 400 * SOL, early=[(t - 20_000, 0, "old buyer", "buy", SOL // 10, False),
+                                                 (t - 3_000, 0, "farmer", "buy", 60 * SOL, True)])
+    c.learn_history(pd, t - 30, before=t - 30, copy_upto=t - 30)
+    case = c.build()
+    rows = h_rows(c, pd)
+    ok(rows and all(r["farm_window_complete"] == 1 and r["pool_seen_slot"] == t - 20_000 for r in rows), c, f"{rows}")
+    ok(all(r["farm"] == "flagged" and r["reason"] == "farm flagged" for r in rows), c, f"H {rows}")
+    ok(c.one("orders", key=pd, variant="tp4_T600")["status"] == "filled", c, "K3")
+    ok(len(case["learn"][0]["history"]["events"]) == 3, c, "the backfill holds the overlap")
+    return case
+
+
+def backfill_of_an_unknown_pool():
+    """A backfill of a pool the feed does not know yet marks it seen and backfilled, but keeps no farm window
+    (engine.py:570-572): learned later, the pool's farm label sees only the trades from then on."""
+    c = Case("backfill_of_an_unknown_pool", "Live rule. PU is not in the snapshot. A backfill of its earlier trades "
+                                            "(t - 3,000: a farmer's 60 SOL buy) comes with O's event at t - 2,000 and is "
+                                            "drained at that slot's end (O's next event, t - 1,000), before the feed "
+                                            "knows PU; PU is learned with its trigger's inflow (t - 30). Its rows: "
+                                            "farm_window_complete 1 (backfilled), pool_seen_slot t - 3,000, but farm "
+                                            "'organic': the farmer's trade never reached a farm window, so H enters. "
+                                            "(Learned with the event at t - 1,000 instead, PU would be known at that "
+                                            "drain: LiveFeed's learns come before the end of the slot before.)",
+             n2_k=0, window_rule="live")
+    t = 450_160_000
+    pu, o = c.pool("PU"), c.pool("O")
+    reversed_trigger(c, pu, t, 400 * SOL, early=[(t - 3_000, 0, "farmer", "buy", 60 * SOL, True)])
+    c.trades(o, "reversed", 5_000 * SOL, 10**15, [(t - 2_000, 0, "small buyer", "buy", SOL, False),
+                                                   (t - 1_000, 0, "small buyer", "buy", SOL, False)])
+    c.learn_history(pu, t - 2_000, before=t - 30)
+    c.learn_pool(pu, t - 30)
+    case = c.build()
+    rows = h_rows(c, pu)
+    ok(rows and all(r["farm_window_complete"] == 1 and r["pool_seen_slot"] == t - 3_000 for r in rows), c, f"{rows}")
+    ok(all(r["farm"] == "organic" and r["status"] == "entered" for r in rows), c, f"H {rows}")
+    return case
+
+
 def reversed_trigger(c, pool, t, depth, **kw):
     return C1._reversed_trigger(c, pool, t, depth, **kw)
 
 
-CASES = [pool_learned_mid_run, graduation_learned_after_the_entry, completion_learned_too_late, clock_learned_mid_run]
+CASES = [pool_learned_mid_run, graduation_learned_after_the_entry, completion_learned_too_late, clock_learned_mid_run,
+         window_rule_live, backfill_as_history, backfill_of_an_unknown_pool]
 
 
 # ---------------------------------------------------------------------------------------------- the file

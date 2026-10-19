@@ -110,7 +110,7 @@ impl Hist {
 /// chunk or segment being emitted (with M3-07's slot buffer), and the engines' and the replay's state.
 pub fn group(name: &str) -> &'static str {
     match name {
-        "universe_tokens" | "universe_sol_markets" | "grad_tokens" | "grad_sol_markets" | "curve_hold" | "interned_keys" | "block_times" => {
+        "universe_tokens" | "universe_sol_markets" | "grad_tokens" | "curve_hold" | "interned_keys" | "block_times" => {
             "snapshot"
         }
         "legs_buffer" | "slot_buf" => "legs_buffer",

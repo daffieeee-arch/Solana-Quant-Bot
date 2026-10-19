@@ -211,9 +211,6 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
             let pool = t.pool.as_deref().map(|p| adm.keys.id(p));
             grad.add_token(adm.keys.id(&t.mint), t.complete_slot, pool);
         }
-        for p in snap.pools.values() {
-            grad.add_pool(adm.keys.id(&p.pool), p.create_slot);
-        }
         let store_lo = snap.store_slots.context("the snapshot's meta.json has no store_slots")?.0;
         let hold = curve_hold::load(&snapshot, snap.curve_hold.as_ref(), store_lo, a.from, a.to, &mut adm.keys)?;
         Ok((loaded, grad, hold))

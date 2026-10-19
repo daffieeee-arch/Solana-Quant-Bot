@@ -37,7 +37,7 @@ use crate::positions::{
 use crate::risk::Risk;
 use crate::signals::{Family, Hooks, SignalEngine, SignalError, SignalRow, SlotLegs, Status};
 use crate::tau::Tau;
-use crate::universe::{MintMeta, PoolMeta, Segment};
+use crate::universe::{MintMeta, PoolMeta, Segment, Universe};
 use crate::venues::{self as v, Curve, Pool};
 
 /// A jump of more slots between events is a feed gap's heartbeat row (engine.py:75).
@@ -50,21 +50,16 @@ pub const TOL: f64 = 0.05;
 
 // ---------------------------------------------------------------------------------------------- inputs
 
-/// What a graduation needs to know (spec D7): per token its complete_slot and pool (feed.py TokenInfo), per SOL market
-/// (quote_class 'sol' or 'reversed', as ReplayFeed loads them, feed.py:96-99) its create_slot.
+/// What a graduation needs to know (spec D7): per token its complete_slot and pool (feed.py TokenInfo). The pool's
+/// create_slot is its SOL market's in the Universe (`PoolMeta::create_slot`, M3-08b D4: one store, not two).
 #[derive(Clone, Debug, Default)]
 pub struct GradInfo {
     tokens: HashMap<Id, (Option<u64>, Option<Id>)>,
-    pools: HashMap<Id, Option<u64>>,
 }
 
 impl GradInfo {
     pub fn add_token(&mut self, mint: Id, complete_slot: Option<u64>, pool: Option<Id>) {
         self.tokens.insert(mint, (complete_slot, pool));
-    }
-
-    pub fn add_pool(&mut self, pool: Id, create_slot: Option<u64>) {
-        self.pools.insert(pool, create_slot);
     }
 }
 
@@ -542,8 +537,8 @@ impl Paper {
         self.minute
     }
 
-    /// The memory log (C4-2, read-only): the snapshot's part (the graduation info and the store's curve_hold, entries
-    /// per mint), then the state: busy, the pending entries and their keys, the keys waiting for a graduation, the open
+    /// The memory log (C4-2, read-only): the snapshot's part (the graduation info, its tokens only since M3-08b moved
+    /// the pools' create slot into the Universe, and the store's curve_hold, entries per mint), then the state: busy, the pending entries and their keys, the keys waiting for a graduation, the open
     /// positions (with each PositionSim), their order and the graduation queue, the run's curve sums (entries per
     /// trader), the cooldowns (all groups), the wallets' transactions and the ops queue (drained per event, so ~0).
     pub fn mem_report(&self) -> Vec<Mem> {
@@ -551,7 +546,6 @@ impl Paper {
         let sims: usize = self.opens.values().filter_map(|o| o.sim.as_ref()).map(|s| s.heap_bytes()).sum();
         vec![
             Mem::new("grad_tokens", g.tokens.len(), mem::map(&g.tokens)),
-            Mem::new("grad_sol_markets", g.pools.len(), mem::map(&g.pools)),
             Mem::new("curve_hold", hold.len(), mem::map(hold) + hold.values().map(mem::vec).sum::<usize>()),
             Mem::new("busy", self.busy.len(), mem::map(&self.busy)),
             Mem::new("pending", self.pending.values().map(Vec::len).sum(),
@@ -851,7 +845,7 @@ impl Paper {
         let mut o = OpenPos { p, sim, r, opened: slot, grad: None, windows };
         if o.sim.is_none() {
             // our own buy completed the curve: on_complete at the entry slot (replay.py:666-669)
-            let grad = on_complete(&self.cfg.grad, &mut self.counts, o.p.key, o.r_mut(), slot);
+            let grad = on_complete(&self.cfg.grad, &eng.universe, &mut self.counts, o.p.key, o.r_mut(), slot);
             o.grad = grad;
             self.opens.insert(id, o);
             if let Some(g) = grad {
@@ -879,7 +873,7 @@ impl Paper {
         if i < legs.len() {
             // the entry slot's legs after ours (engine.py:956-958)
             let step = self.sim_mut(id).on_slot(slot, &legs[a..], i - a);
-            self.after_step(id, step);
+            self.after_step(&eng.universe, id, step);
         }
         self.settle_if_done(eng, id, false, slot);
     }
@@ -889,11 +883,11 @@ impl Paper {
     }
 
     /// A completion inside the position's feed: the engine's on_complete (engine.py:977-1000).
-    fn after_step(&mut self, id: usize, step: Step) {
+    fn after_step(&mut self, uni: &Universe, id: usize, step: Step) {
         if let Step::Completed { slot } = step {
             let o = self.opens.get_mut(&id).expect("an open position");
             let key = o.p.key;
-            let grad = on_complete(&self.cfg.grad, &mut self.counts, key, o.r_mut(), slot);
+            let grad = on_complete(&self.cfg.grad, uni, &mut self.counts, key, o.r_mut(), slot);
             if let Some(g) = grad {
                 o.grad = Some(g);
                 self.grad_wait.push(g.pool, id);
@@ -1028,7 +1022,7 @@ impl Paper {
                 let Some(o) = self.opens.get_mut(&id) else { continue };
                 let Some(sim) = o.sim.as_deref_mut() else { continue }; // waiting for its pool: below
                 let step = sim.end();
-                self.after_step(id, step);
+                self.after_step(&eng.universe, id, step);
                 self.settle_if_done(eng, id, false, last);
             }
         }
@@ -1053,16 +1047,16 @@ impl Paper {
 
 /// The engine's on_complete (engine.py:977-1000) for the curve position of `mint`, completed at `slot`: cf_graduation
 /// unless the token completed historically at or before it, reason 'graduation'; with a SOL-market pool that has a
-/// create slot the sale waits for open + 1 (the Grad); else it sells now into the standard seed pool (uncapped) at
-/// slot + 1, one attempt.
-fn on_complete(grad: &GradInfo, counts: &mut PaperCounts, mint: Id, r: &mut PosResult, slot: u64) -> Option<Grad> {
+/// create slot (the Universe's, `feed.pool(pool).create_slot`) the sale waits for open + 1 (the Grad); else it sells
+/// now into the standard seed pool (uncapped) at slot + 1, one attempt.
+fn on_complete(grad: &GradInfo, uni: &Universe, counts: &mut PaperCounts, mint: Id, r: &mut PosResult, slot: u64) -> Option<Grad> {
     let tok = grad.tokens.get(&mint);
     if tok.is_none_or(|&(complete, _)| complete.is_none_or(|c| slot < c)) {
         r.cf_graduation = true;
     }
     r.exit_reason = Some(crate::positions::Reason::Graduation);
     let pool = tok.and_then(|t| t.1);
-    match pool.and_then(|p| grad.pools.get(&p).copied().flatten().map(|open_slot| Grad { pool: p, open_slot })) {
+    match pool.and_then(|p| uni.pool(p).and_then(|m| m.create_slot).map(|open_slot| Grad { pool: p, open_slot })) {
         Some(g) => Some(g),
         None => {
             r.seed_pool = true;
@@ -1134,7 +1128,7 @@ impl Hooks for Paper {
                     f.add(legs); // before the position decides on them
                 }
                 let step = sim.on_slot(slot, legs, 0);
-                self.after_step(id, step);
+                self.after_step(&eng.universe, id, step);
                 self.settle_if_done(eng, id, false, slot);
                 if self.opens.get(&id).is_some_and(|o| !o.done()) {
                     self.put_position(id);
@@ -1367,16 +1361,23 @@ impl PaperEngine {
         self.paper.cfg.grad.add_token(mint, complete_slot, pool);
     }
 
-    /// Live (spec D3): a SOL market the feed learned while it read (live.py:451-485), into the Universe and into
-    /// GradInfo with its create slot. A pool already known changes nothing (false), as LiveFeed never classes a pool
-    /// twice; pools of another class are the source's (its admission) and never reach the core.
-    pub fn learn_pool(&mut self, pool: Id, meta: PoolMeta, create_slot: Option<u64>) -> bool {
+    /// Live (spec D3; M3-08b D4): a SOL market the feed learned while it read (live.py:451-485), into the Universe with
+    /// its create slot (`meta.create_slot`: the graduation's open slot and the live window rule read it there). A pool
+    /// already known changes nothing (false), as LiveFeed never classes a pool twice; pools of another class are the
+    /// source's (its admission) and never reach the core.
+    pub fn learn_pool(&mut self, pool: Id, meta: PoolMeta) -> bool {
         if self.sig.universe.pool(pool).is_some() {
             return false;
         }
         self.sig.universe.add_pool(pool, meta);
-        self.paper.cfg.grad.add_pool(pool, create_slot);
         true
+    }
+
+    /// Live (M3-08b D1): a backfill's trades of `pool`, history only (LiveFeed `drain_history`), taken at the next slot
+    /// end after the recorded legs' farm windows (engine.py:416-421). Like learn_*, it goes in before the event it
+    /// precedes in the feed, and a source that closes slots early gives what it read first.
+    pub fn add_history(&mut self, pool: Id, legs: Vec<Leg>) {
+        self.sig.add_history(pool, legs);
     }
 
     /// Live (spec D4): an epoch's ms per slot as LiveFeed measures it while it reads (live.py:637-650), in the one

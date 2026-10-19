@@ -108,7 +108,7 @@ fn run(c: &Case) -> (SignalEngine, Vec<SignalRow>) {
         u.add_mint(id, MintMeta::new(create, creator, mayhem, quote));
     }
     for &(id, reversed, mayhem, mint_tok, coin_creator) in c.pools {
-        u.add_pool(id, PoolMeta { reversed, mayhem, mint_tok, coin_creator });
+        u.add_pool(id, PoolMeta { reversed, mayhem, mint_tok, coin_creator, create_slot: None });
     }
     let mut eng = SignalEngine::new(u, clock, groups(c.n2_k), WindowRule::AllPools).unwrap();
     eng.trace = Some(Vec::new());

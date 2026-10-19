@@ -100,7 +100,8 @@ pub(crate) fn load(snap: &crate::snapshot::Snapshot, keys: &mut Keys, dev_bounds
                 Some("reversed") => true,
                 o => bail!("pool {}: orientation {o:?} (normal or reversed expected)", p.pool),
             };
-            Ok(Market { pool: &p.pool, mint: &p.mint, reversed, mayhem: p.mayhem, coin_creator: p.coin_creator.as_deref() })
+            Ok(Market { pool: &p.pool, mint: &p.mint, reversed, mayhem: p.mayhem, coin_creator: p.coin_creator.as_deref(),
+                        create_slot: p.create_slot })
         })
         .collect::<Result<Vec<_>>>()?;
     let (universe, load) = signals_core::universe(keys, bounds, &tokens, &markets);
@@ -238,6 +239,27 @@ pub(crate) mod tests {
         buy[8] = Val::U64(300 * SOL);
         put(&c2, "pump_amm/BuyEvent", 0, &pool_cols(&BUY), &[buy]);
         fs::write(root.join("groups.json"), format!("{GROUPS}\n")).unwrap();
+    }
+
+    #[test]
+    fn every_markets_create_slot_reaches_its_pool_meta() {
+        // M3-08b D4 (LAB: one store): the snapshot's pools row create_slot is the Universe's PoolMeta, which a
+        // graduation's open slot and the live farm-window rule read (GradInfo keeps no pool map).
+        let root = tmp("create-slot");
+        store(&root);
+        let snap = root.join("snap");
+        edit_meta(&snap, |v| {
+            v["meta_bounds"] = json!([1000, 3000]);
+            v["ms_per_slot"] = json!({"0": 1e12});
+        });
+        let s = crate::snapshot::Snapshot::load_universe(&snap).unwrap();
+        let mut keys = Keys::default();
+        let loaded = load(&s, &mut keys, None).unwrap();
+        assert!(!s.pools.is_empty());
+        for p in s.pools.values() {
+            let id = keys.get(&p.pool).unwrap();
+            assert_eq!((loaded.universe.pool(id).map(|m| m.create_slot), p.create_slot), (Some(Some(10)), Some(10)), "{}", p.pool);
+        }
     }
 
     #[test]

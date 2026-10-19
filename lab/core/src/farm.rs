@@ -8,10 +8,11 @@
 //! - Trades are added after the slot's signals (step 4b), so a decision at t never sees slot t's trades.
 //! - The two prunes are lazy and take n at other slots than the query: Rust copies them, it does not "fix" them. Where
 //!   n grows at an epoch change, Python can drop items a later window would include.
-//! - Live only, not ported (M3): `farm_fixes` (late farmer flags, engine.py:588-597), backfills (`drain_history`) and
-//!   the live farm_window_complete rule.
+//! - Live (M3-08b): backfills reach the windows as history (signals.rs `add_history`, engine.py:417-421) and the live
+//!   farm_window_complete rule is `live_complete`. Not ported yet: `farm_fixes` (late farmer flags, engine.py:588-597,
+//!   M3-10).
 
-use crate::clock::{Clock, F6_FARM_MS, F6_FARM_SHARE};
+use crate::clock::{Clock, F6_FARM_MS, F6_FARM_SHARE, SINCE_CREATION_MS};
 use crate::exact::gt;
 use crate::legs::{Id, Leg, Order, FARMER};
 use crate::mem::{self, Mem};
@@ -113,19 +114,29 @@ pub enum WindowRule {
     /// A feed of every pool's every trade (ReplayFeed.all_pools, feed.py:88): the hour [t - 1 h, t) is complete
     /// from an hour after the feed's first slot on.
     AllPools,
-    /// LiveFeed: per pool, seen for an hour, backfilled, or followed since its creation (engine.py:806-813). Not
-    /// ported: M3. `SignalEngine::new` refuses it.
+    /// LiveFeed: per pool, seen for an hour, backfilled, or followed since its creation (engine.py:806-813;
+    /// `live_complete`, M3-08b).
     Live,
 }
 
 impl WindowRule {
-    /// 1 or 0 for a pool row; None for `Live` (not ported).
-    pub fn complete(self, first_slot: Option<u64>, t: u64, clock: &Clock) -> Option<u8> {
-        match self {
-            WindowRule::AllPools => Some(u8::from(first_slot.is_some_and(|f| t.saturating_sub(f) >= clock.slots(F6_FARM_MS, t)))),
-            WindowRule::Live => None,
-        }
+    /// `AllPools`' 1 or 0 for a pool row at t: an hour after the feed's first slot. `Live` reads the pool's own state:
+    /// `live_complete`.
+    pub fn all_pools(first_slot: Option<u64>, t: u64, clock: &Clock) -> u8 {
+        u8::from(first_slot.is_some_and(|f| t.saturating_sub(f) >= clock.slots(F6_FARM_MS, t)))
     }
+}
+
+/// engine.py `_farm_window_complete` on a live feed (:806-813), for a pool row at t: 0 for a pool never seen; 1 when it
+/// was seen an hour before t (`t - seen >= hour(t)`) or has a backfill; else 1 when it was first seen within
+/// SINCE_CREATION_MS of its known create slot (`seen - created <= slots(SINCE_CREATION_MS, t)`, Python's signed ints:
+/// a pool seen before its create slot counts), else 0.
+pub fn live_complete(seen: Option<u64>, backfilled: bool, created: Option<u64>, t: u64, clock: &Clock) -> u8 {
+    let Some(seen) = seen else { return 0 };
+    if i128::from(t) - i128::from(seen) >= i128::from(clock.slots(F6_FARM_MS, t)) || backfilled {
+        return 1;
+    }
+    u8::from(created.is_some_and(|c| i128::from(seen) - i128::from(c) <= i128::from(clock.slots(SINCE_CREATION_MS, t))))
 }
 
 #[cfg(test)]
@@ -269,9 +280,24 @@ mod tests {
         // R1: first_slot 450128159 in epoch 1041 (h 13542): the flip is at 450141701.
         let c = dev2();
         let f = Some(450_128_159);
-        assert_eq!(WindowRule::AllPools.complete(f, 450_141_700, &c), Some(0));
-        assert_eq!(WindowRule::AllPools.complete(f, 450_141_701, &c), Some(1));
-        assert_eq!(WindowRule::AllPools.complete(None, 450_141_701, &c), Some(0));
-        assert_eq!(WindowRule::Live.complete(f, 450_141_701, &c), None);
+        assert_eq!(WindowRule::all_pools(f, 450_141_700, &c), 0);
+        assert_eq!(WindowRule::all_pools(f, 450_141_701, &c), 1);
+        assert_eq!(WindowRule::all_pools(None, 450_141_701, &c), 0);
+    }
+
+    #[test]
+    fn the_live_rule_reads_the_pools_own_hour_backfill_and_creation() {
+        // engine.py:806-813 at t in epoch 1041 (h 13542 slots, SINCE_CREATION_MS 226 slots at 265.83 ms).
+        let c = dev2();
+        let t = 450_141_701;
+        assert_eq!((c.slots(F6_FARM_MS, t), c.slots(SINCE_CREATION_MS, t)), (13_542, 226));
+        let live = |seen, backfilled, created| live_complete(seen, backfilled, created, t, &c);
+        assert_eq!(live(None, true, Some(t)), 0); // never seen
+        assert_eq!((live(Some(t - 13_542), false, None), live(Some(t - 13_541), false, None)), (1, 0)); // an hour
+        assert_eq!(live(Some(t - 10), true, None), 1); // a backfill
+        let seen = t - 10;
+        assert_eq!((live(Some(seen), false, Some(seen - 226)), live(Some(seen), false, Some(seen - 227))), (1, 0)); // since creation
+        assert_eq!(live(Some(seen), false, Some(seen + 5)), 1); // seen before its create slot: Python's negative difference
+        assert_eq!(live(Some(t + 3), false, None), 0); // a seen slot after t: no hour (Python's negative t - seen)
     }
 }

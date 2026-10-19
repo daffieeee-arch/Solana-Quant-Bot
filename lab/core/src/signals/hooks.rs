@@ -32,7 +32,7 @@ const G: Id = 6;
 fn feed() -> (SignalEngine, Vec<Event>) {
     let mut u = Universe::new(Bounds::new((446_256_000, 452_304_000), &dev2()), MAYHEM);
     for p in [P, Q, R, X, F, G] {
-        u.add_pool(p, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9 });
+        u.add_pool(p, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9, create_slot: None });
     }
     let s = SOL as i64;
     // A reversed pool's SOL inflow (a WSOL sell: a token buy) and its trigger (a WSOL buy of `a` at depth `b`), in SOL.

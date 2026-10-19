@@ -154,8 +154,8 @@ enum Close {
 }
 
 /// One item of a case's `learn` (m3_live_cases.py FORMAT) into the engine's live API: a token replaced, a SOL market
-/// added (its mint interned, so its token is looked up when it is used, as Python's `feed.token(p.mint)`), an epoch's ms
-/// per slot.
+/// added (its mint interned, so its token is looked up when it is used, as Python's `feed.token(p.mint)`; its
+/// create_slot in its PoolMeta), a backfill as history (M3-08b), an epoch's ms per slot.
 fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<()> {
     if let Some(t) = x.get("token") {
         let mayhem = field(t, "mayhem")?;
@@ -173,10 +173,16 @@ fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<(
                 o => bail!("orientation {o}"),
             };
             let coin_creator = os(p, "coin_creator")?.map_or(NONE, |c| keys.id(c));
-            let meta = PoolMeta { reversed, mayhem: b(p, "mayhem")?, mint_tok: Some(keys.id(s(p, "mint")?)), coin_creator };
+            let meta = PoolMeta { reversed, mayhem: b(p, "mayhem")?, mint_tok: Some(keys.id(s(p, "mint")?)), coin_creator,
+                                  create_slot: ou(p, "create_slot")? };
             let pool = keys.id(s(p, "pool")?);
-            eng.learn_pool(pool, meta, ou(p, "create_slot")?);
+            eng.learn_pool(pool, meta);
         }
+    } else if let Some(h) = x.get("history") {
+        // M3-08b: a backfill's trades of the pool, history only (LiveFeed drain_history)
+        let legs = field(h, "events")?.as_array().context("history events")?.iter().map(|e| event(e, keys).map(|ev| ev.leg))
+            .collect::<Result<Vec<_>>>()?;
+        eng.add_history(keys.id(s(h, "pool")?), legs);
     } else {
         eng.set_epoch_ms(field(x, "epoch")?.as_u64().context("epoch")?, field(x, "ms")?.as_f64().context("ms")?);
     }
@@ -199,11 +205,6 @@ fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Clo
         let complete = if t.get("complete_slot").is_some() { ou(t, "complete_slot")? } else { None };
         let pool = if t.get("pool").is_some() { os(t, "pool")?.map(|p| keys.id(p)) } else { None };
         grad.add_token(mint, complete, pool);
-    }
-    for p in field(case, "pools")?.as_array().context("pools")? {
-        if matches!(s(p, "quote_class")?, "sol" | "reversed") {
-            grad.add_pool(keys.id(s(p, "pool")?), ou(p, "create_slot")?);
-        }
     }
     let cfg = PaperCfg::new(groups.q, parse_scenario(scenario)?, grad, HashMap::new());
     let mut files = None;
@@ -308,18 +309,27 @@ fn every_m3_case_gives_the_engines_writes_with_what_it_learns() {
     for case in doc["cases"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
         let scenario = case["cost_scenario"].as_str().unwrap();
-        assert!(!case["learn"].as_array().unwrap().is_empty(), "{name}");
+        assert!(!case["learn"].as_array().unwrap().is_empty() || case["window_rule"] == "live", "{name}");
         for close in [Close::Replay, Close::Early, Close::Late] {
             let (writes, eng, _, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
             n += same_writes(&format!("{name} {close:?}"), &writes, case, &cols);
             assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name} {close:?}");
         }
-        // Without the learns the case writes something else: it shows what the live API carries.
+        // Without the learns, or with the other farm-window rule, the case writes something else (test_live_cases.py SAME:
+        // completion_learned_too_late's learn comes too late, window_rule_live learns nothing, M3-08's cases have no
+        // window-gated row): it shows what the live API carries.
+        let same = |c: &Value| {
+            let (writes, _, _, _) = run_case_closing(c, scenario, None, Close::Replay).unwrap();
+            let got: Vec<Value> = writes.iter().filter(|w| c2_write(w)).map(|w| write_json(w, &cols, &[])).collect();
+            got == *case["expect_ops"].as_array().unwrap()
+        };
         let mut bare = case.clone();
         bare["learn"] = json!([]);
-        let (writes, _, _, _) = run_case_closing(&bare, scenario, None, Close::Replay).unwrap();
-        let got: Vec<Value> = writes.iter().filter(|w| c2_write(w)).map(|w| write_json(w, &cols, &[])).collect();
-        assert_eq!(got == *case["expect_ops"].as_array().unwrap(), name == "completion_learned_too_late", "{name}");
+        let mut other = case.clone();
+        other["window_rule"] = json!(if case["window_rule"] == "live" { "all_pools" } else { "live" });
+        let live = case["window_rule"] == "live";
+        assert_eq!((same(&bare), same(&other)),
+                   (["completion_learned_too_late", "window_rule_live"].contains(&name), !live), "{name}");
     }
     assert!(n > 0);
 }
