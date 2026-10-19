@@ -375,6 +375,15 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
     - The default limit is 1 request/s per IP per region.
     - Source: [Jito: Low latency transaction send](https://docs.jito.wtf/lowlatencytxnsend/).
   - **BAM:** direct bundle ingest, whitelist-only so far.
+- **Every exit closes the token account** (a requirement from the cost model, Codex review of c29c545, decided 2026-10-19):
+  - The paper and backtest settle every exit as full: the ATA rent comes back, and any remainder is worth 0 (lab/core `costs.rs` and backtest/costs.py `exit_net`).
+  - The real exit must therefore end, in the same transaction, with a `Burn` of the remainder and a `CloseAccount`. A non-native account closes only at a zero token amount (SPL Token `interface/src/instruction.rs`, CloseAccount and Burn).
+  - The remainder is mostly fee dust: a reversed-pool sale leaves 1–3 raw units in about 0.3 % of the exits.
+  - **Token-2022:** an account with withheld transfer fees closes only after the permissionless `HarvestWithheldTokensToMint` (token-2022 `interface/src/instruction.rs` CloseAccount; the Token-2022 extension guide).
+  - **The data (2026-10-19):**
+    - New pump coins are Token-2022: in 30 shadow segments, 1,307 of 1,314 creates were `create_v2` on `TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`, and 7 were the classic `create` on `TokenkegQ…`.
+    - pump's own COIN_CREATION.md describes the mint as "initialized with `decimals = 6`, `mint_authority`, `token_program`, and metadata pointer set to `mint`", with no transfer fee.
+    - Not checked per mint: that needs a read of the mint accounts (an RPC call, the owner's OK). Check it before the first real exit.
 - **Landing measurement:** record the send time and signature; measure the time to `processed` and `finalized`, and the execution result. Preconfirmations are an earlier signal, not a confirmation (Triton docs).
 - **The paper parallel:** the Rust journal's simulated fills become the benchmark for real fills.
 

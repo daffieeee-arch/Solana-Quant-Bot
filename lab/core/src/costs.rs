@@ -66,6 +66,16 @@ impl Scenario {
 
     /// An exit's net: the proceeds after the adverse execution and the network cost, with the rent back where the
     /// scenario refunds it (the engine always exits fully).
+    ///
+    /// **The model's exit closes the token account** (Codex review of c29c545, decided 2026-10-19): every exit ends with a
+    /// Burn of any remainder and a CloseAccount, in the exit transaction, so the rent comes back and the remainder is
+    /// worth 0. A remainder is mostly fee dust: a reversed pool's sale (`venues::rev_sell_token`) leaves 1-3 raw units
+    /// in about sum(bps)/10,000 of the exits, flagged `vault_capped`; a real vault cap is rare. On-chain a non-native
+    /// account closes only at a zero token amount and its owner may burn the rest first (SPL Token
+    /// interface/src/instruction.rs `CloseAccount`, `Burn`: "Non-native accounts may only be closed if its token amount
+    /// is zero"); a Token-2022 account with withheld transfer fees also needs the permissionless
+    /// `HarvestWithheldTokensToMint` first (token-2022 interface/src/instruction.rs `CloseAccount`; the Token-2022
+    /// extension guide). So `settle` passes `full_exit = true` for every exit, `vault_capped` or not.
     pub fn exit_net(&self, proceeds: i128, full_exit: bool) -> i128 {
         let refund = match self.rent_mode {
             RentMode::Refunded => self.ata_rent,
@@ -76,7 +86,8 @@ impl Scenario {
     }
 
     /// costs.py `settle`: a failed entry costs one failed transaction and has no return; else the exit's net (each
-    /// exit attempt after the first a failed transaction) against the entry's total.
+    /// exit attempt after the first a failed transaction) against the entry's total. Every exit is a full exit: the
+    /// remainder, if any, is burned and the account closed (`exit_net`).
     pub fn settle(&self, entry_failed: bool, cost: i128, proceeds: i128, exit_attempts: i128) -> Settled {
         if entry_failed {
             return Settled { pnl: -self.failed_tx, ret: None, total_cost: self.failed_tx };
@@ -142,5 +153,24 @@ mod tests {
             let got = scenario(name).settle(failed, cost, proceeds, attempts);
             assert_eq!((got.pnl, got.ret.map(f64::to_bits), got.total_cost), (pnl, ret, total), "{name} {cost} {proceeds} {attempts}");
         }
+    }
+
+    #[test]
+    fn a_vault_capped_exit_with_dust_gets_the_rent_back() {
+        // Codex on c29c545, decided 2026-10-19: the exit burns the remainder and closes the account (exit_net's doc), so a
+        // vault_capped exit settles as any other. The dust case: a reversed pool (80 SOL, 3e14 tokens, fees 25+5 bps)
+        // sells 1,850,000,000,202 of 1,850,000,000,203 held tokens (1 raw unit of fee dust) for 488,852,188 lamports.
+        // The numbers are lab-py's (backtest/tests/test_settle_sql.py has the same case): Rust = Python.
+        use crate::venues::{rev_sell_token, Pool};
+        let p = Pool { b: 80_000_000_000, e: 300_000_000_000_000, lp_bps: 25, protocol_bps: 5, creator_bps: 0, cashback_bps: 0, virt: 0 };
+        let held = 1_850_000_000_203;
+        let f = rev_sell_token(&p, held).unwrap();
+        assert_eq!((held - f.tokens, f.trader_quote), (1, 488_852_188)); // vault_capped: f.tokens < held
+        let base = scenario("base");
+        let s = base.settle(false, 500_000_000, f.trader_quote, 1);
+        assert_eq!((s.pnl, s.ret.map(f64::to_bits), s.total_cost), (-12_589_048, Some(0xbf99aaec01a04340), 502_234_458));
+        // the rent is in it: without the close the net would be 1,513,840 lower
+        assert_eq!(base.exit_net(f.trader_quote, true) - base.exit_net(f.trader_quote, false), base.ata_rent);
+        assert_eq!(s.pnl, base.exit_net(f.trader_quote, true) - base.entry_total(500_000_000));
     }
 }

@@ -158,6 +158,7 @@ def settle_chunk(con, cfg, pos_keys, k_sql, where, has_base):
     """Settle temp table `pos` (one family x variant) under every cost scenario, check its group totals
     against strategy_summary, and append its curves (and, for base, its positions to strategy_results)."""
     for name, per_tx, failed, rent, rent_mode, adverse in scenarios(cfg):
+        # Every exit is full: the remainder is burned and the account closed (backtest/costs.py exit_net's doc).
         refund = rent if rent_mode in ("refunded", "refunded_on_full_exit") else 0
         # Same arithmetic as costs.settle_sql: the factors are Python floats, so multiply as DOUBLE (a bare
         # 0.995 literal is DECIMAL in DuckDB and truncates differently by one lamport).
