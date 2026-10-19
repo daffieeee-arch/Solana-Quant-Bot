@@ -223,6 +223,11 @@ impl Seeds {
     pub fn len(&self) -> usize {
         self.by_id.len()
     }
+
+    /// The memory log (C4-2): every key's N2 seed drawn so far.
+    pub fn mem(&self) -> lab_core::mem::Mem {
+        lab_core::mem::Mem::new("n2_seeds", self.by_id.len(), lab_core::mem::map(&self.by_id))
+    }
 }
 
 /// N2's view of the key strings (lab_core::n2::N2Keys): their order is Python's str order (base58 is ASCII, so byte

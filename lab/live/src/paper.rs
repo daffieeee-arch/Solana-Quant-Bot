@@ -38,7 +38,8 @@
 use crate::curve_hold;
 use crate::journal::Journal;
 use crate::legs::Keys;
-use crate::legs_read::Replay;
+use crate::legs_read::{Replay, ReplayMem};
+use crate::memlog::MemLog;
 use crate::paper_core::{op_write, parse_scenario, Write};
 use crate::signals::load;
 use crate::signals_core::{counts_json, feed_state, parse_groups, Cell, KeyNames, Seeds};
@@ -72,6 +73,8 @@ pub struct PaperArgs {
     pub journal: PathBuf,
     pub summary: Option<PathBuf>,
     pub trace: Option<PathBuf>,
+    /// `--mem-log FILE` (M1 C4-2, memlog.rs): a JSON line per minute of chain time with the memory and the time per event.
+    pub mem_log: Option<PathBuf>,
 }
 
 fn sql(c: Cell) -> Sql {
@@ -237,13 +240,39 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
         None => None,
     };
     let (mut seeds, mut tally) = (Seeds::default(), Tally::default());
-    replay.for_each_event(|keys, ev| {
+    let mut memlog = a.mem_log.as_deref().map(MemLog::create).transpose()?;
+    replay.mem_log = memlog.is_some();
+    // memlog.rs: the engines' structures, the N2 seeds, the entered rows' segments and the replay's (per chunk)
+    let mems = |eng: &PaperEngine, seeds: &Seeds, tally: &Tally, r: &ReplayMem| {
+        let mut v = eng.mem_report();
+        v.push(seeds.mem());
+        v.push(lab_core::mem::Mem::new("entered_rows", tally.entered.len(), lab_core::mem::map(&tally.entered)));
+        v.extend(r.mems.iter().cloned());
+        v
+    };
+    let mut last_slot = 0;
+    replay.for_each_event_mem(|keys, rmem, ev| {
+        let t = Instant::now();
         eng.push(ev, &mut seeds.with(keys))?;
-        drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())
+        drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())?;
+        if let Some(m) = memlog.as_mut() {
+            let ns = u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            last_slot = ev.leg.slot();
+            m.event(ns, eng.paper.minute(), last_slot, rmem.segments, || mems(&eng, &seeds, &tally, rmem))?;
+        }
+        Ok(())
     })?;
     let keys = &replay.adm.keys;
     eng.finish(&mut seeds.with(keys))?; // the last slot, then the end of data (engine.py:321-324)
     drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())?;
+    // the end line: the engines after finish, the replay after its last chunk or unit
+    let mem_lines = match memlog {
+        Some(m) => {
+            let r = replay.last_mem();
+            Some(m.end(eng.paper.minute(), last_slot, r.segments, &mems(&eng, &seeds, &tally, r))?)
+        }
+        None => None,
+    };
     if let Some(mut f) = trace {
         f.flush()?;
     }
@@ -267,6 +296,9 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
     v["journal"] = json!({"puts": tally.puts, "deletes": tally.deletes, "signals": j.count("signals")?, "orders": j.count("orders")?,
                           "fills": j.count("fills")?, "exits": j.count("exits")?, "positions": j.count("positions")?});
     v["n2_seeds"] = json!(seeds.len());
+    if let (Some(p), Some(n)) = (&a.mem_log, mem_lines) {
+        v["mem_log"] = json!({"file": p.display().to_string(), "lines": n, "heap_bytes_at_end": crate::mem::heap_bytes()});
+    }
     replay.describe(&mut v);
     v["secs"] = json!(t0.elapsed().as_secs_f64());
     j.state("lab_live_paper", &v.to_string())?;
@@ -304,7 +336,7 @@ mod tests {
         PaperArgs {
             chunks_root: root.join("chunks"), segments: None, snapshot: root.join("snap"), from: 1000, to: 3000, groups: root.join("groups.json"),
             variants: vec!["0.04:600".into()], cost_scenario: root.join("scn.json"), ignore_risk: true, journal: root.join(journal),
-            summary: Some(root.join(format!("{journal}.json"))), trace: None,
+            summary: Some(root.join(format!("{journal}.json"))), trace: None, mem_log: None,
         }
     }
 
@@ -413,6 +445,56 @@ mod tests {
         assert!(err(&PaperArgs { cost_scenario: root.join("s2.json"), ..args(&root, "j1") }).contains("latency_ms"));
         assert!(err(&args(&root, "j")).contains("rows already"));
         assert!(err(&PaperArgs { from: 452_304_000, to: 452_305_000, ..args(&root, "j3") }).contains("hold-out"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_mem_log_writes_a_line_per_minute_and_changes_no_journal_row() {
+        // C4-2: the same replay with and without --mem-log gives the same rows in every table and the same wallets; the
+        // log has a line per dated minute (the heartbeat's) and an end line, with the engines' and the replay's
+        // structures and the time per event.
+        let root = tmp("paper-memlog");
+        store(&root);
+        edit_meta(&root.join("snap"), |v| {
+            v["meta_bounds"] = json!([1000, 3000]);
+            v["ms_per_slot"] = json!({"0": 1e12});
+        });
+        fs::write(root.join("scn.json"), format!("{BASE_SCENARIO}\n")).unwrap();
+        let plain = run(&args(&root, "j")).unwrap();
+        let logged = run(&PaperArgs { mem_log: Some(root.join("mem.jsonl")), ..args(&root, "jm") }).unwrap();
+        let rows = |j: &str| {
+            let db = rusqlite::Connection::open(root.join(j).join("journal.sqlite")).unwrap();
+            ["signals", "orders", "fills", "exits", "positions", "heartbeat"].map(|t| {
+                let mut st = db.prepare(&format!("SELECT * FROM {t} ORDER BY 1, 2, 3, 4")).unwrap();
+                let n = st.column_count();
+                st.query_map([], |r| (0..n).map(|i| r.get::<_, Sql>(i)).collect::<Result<Vec<_>, _>>()).unwrap().map(Result::unwrap)
+                    .collect::<Vec<_>>()
+            })
+        };
+        assert_eq!(rows("j"), rows("jm"));
+        for w in ["wallet.json", "wallet-h.json"] {
+            assert_eq!(fs::read(root.join("j").join(w)).unwrap(), fs::read(root.join("jm").join(w)).unwrap(), "{w}");
+        }
+        assert_eq!((plain.get("mem_log"), &logged["journal"]), (None, &plain["journal"]));
+        let lines: Vec<Value> = fs::read_to_string(root.join("mem.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        // one line per dated minute the engine passed (its heartbeat rows without a note; a feed-gap row has one), then the end
+        let minutes: i64 = rusqlite::Connection::open(root.join("jm").join("journal.sqlite")).unwrap()
+            .query_row("SELECT count(*) FROM heartbeat WHERE note = ''", [], |r| r.get(0)).unwrap();
+        let minutes = minutes as u64;
+        assert!(minutes >= 1);
+        assert_eq!((lines.len() as u64, logged["mem_log"]["lines"].as_u64()), (minutes + 1, Some(minutes + 1)), "{lines:?}");
+        let (last, end) = (&lines[lines.len() - 2], &lines[lines.len() - 1]);
+        assert_eq!((end["end"].as_bool(), &end["minute"], &end["time_ns"]["n"]), (Some(true), &last["minute"], &logged["events"]));
+        let n: u64 = lines[..lines.len() - 1].iter().map(|l| l["time_ns"]["n"].as_u64().unwrap()).sum();
+        assert_eq!(Some(n), logged["events"].as_u64()); // each event's time in exactly one minute
+        for name in ["universe_tokens", "recent_keys", "farm_items", "pool_seen", "busy", "open_positions", "run_curve_sums", "cooldowns",
+                     "wallet_txs", "ops", "n2_seeds", "entered_rows", "interned_keys", "farmer_hist", "farmer_hist_trades", "pool_ctx",
+                     "legs_buffer"] {
+            assert!(end["structures"][name]["entries"].is_u64(), "{name} missing: {}", end["structures"]);
+        }
+        assert_eq!((&end["structures"]["ops"]["entries"], &end["segments"]), (&json!(0), &Value::Null)); // drained; chunks
+        assert!(end["structures"]["recent_keys"]["bytes_est"].is_u64() && end["sqlite_bytes"].is_i64(), "{end}");
+        assert!(end["structures"]["interned_keys"]["entries"].as_u64() == logged["keys"].as_u64() && end["heap_bytes"].as_u64() > Some(0), "{end}");
         fs::remove_dir_all(&root).unwrap();
     }
 }

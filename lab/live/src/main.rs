@@ -70,6 +70,7 @@ mod journal;
 mod legs;
 mod legs_read;
 mod mem;
+mod memlog;
 mod paper;
 mod paper_core;
 mod risk;
@@ -77,6 +78,7 @@ mod rows;
 mod signals;
 mod signals_core;
 mod snapshot;
+
 
 use anyhow::{bail, Context, Result};
 use std::io::Write;
@@ -105,7 +107,7 @@ fn parse_args(argv: &[String]) -> Result<Args> {
                     lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR [--dev-bounds LO HI] \
                     [--summary FILE] [--trace FILE]\n       \
                     lab-live paper (--chunks-root DIR | --segments DIR) --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...] \
-                    --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--trace FILE]"),
+                    --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--trace FILE] [--mem-log FILE]"),
     }
     let (mut chunks_root, mut segments_root, mut from, mut to, mut journal, mut order_out) = (None, None, None, None, None, None);
     while let Some(flag) = it.next() {
@@ -287,6 +289,7 @@ fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
     let mut it = argv.iter();
     let (mut chunks_root, mut snapshot, mut from, mut to, mut groups, mut journal) = (None, None, None, None, None, None);
     let (mut variants, mut cost_scenario, mut ignore_risk, mut summary, mut trace, mut segments) = (None, None, false, None, None, None);
+    let mut mem_log = None;
     while let Some(flag) = it.next() {
         let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
         match flag.as_str() {
@@ -303,6 +306,7 @@ fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
             "--journal" => journal = Some(PathBuf::from(val()?)),
             "--summary" => summary = Some(PathBuf::from(val()?)),
             "--trace" => trace = Some(PathBuf::from(val()?)),
+            "--mem-log" => mem_log = Some(PathBuf::from(val()?)),
             other => bail!("unknown argument {other}"),
         }
     }
@@ -320,7 +324,7 @@ fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
     Ok(paper::PaperArgs {
         chunks_root, segments, snapshot: snapshot.context("--snapshot")?, from, to,
         groups: groups.context("--groups")?, variants, cost_scenario: cost_scenario.context("--cost-scenario")?, ignore_risk,
-        journal: journal.context("--journal")?, summary, trace,
+        journal: journal.context("--journal")?, summary, trace, mem_log,
     })
 }
 
@@ -345,9 +349,10 @@ mod tests {
     #[test]
     fn the_paper_command_takes_its_inputs_the_variants_and_the_costs() {
         let base = "--chunks-root /c --snapshot /s --from 10 --to 20 --groups /g --variants 0.04:600,flow300_H6 --cost-scenario /k --journal /j";
-        let a = parse_paper_args(&args(&format!("{base} --ignore-risk --summary /m --trace /t"))).unwrap();
+        let a = parse_paper_args(&args(&format!("{base} --ignore-risk --summary /m --trace /t --mem-log /l"))).unwrap();
         assert_eq!((a.from, a.to, a.variants.clone(), a.ignore_risk, a.summary.is_some(), a.trace.is_some()),
                    (10, 20, vec!["0.04:600".to_owned(), "flow300_H6".to_owned()], true, true, true));
+        assert_eq!((a.mem_log.as_deref(), parse_paper_args(&args(base)).unwrap().mem_log), (Some(std::path::Path::new("/l")), None));
         assert!(!parse_paper_args(&args(base)).unwrap().ignore_risk); // risk on (C3)
         // the recorder's segments instead of the chunks (C4-1): one of the two, never both
         let seg = parse_paper_args(&args(&base.replace("--chunks-root /c", "--segments /seg"))).unwrap();

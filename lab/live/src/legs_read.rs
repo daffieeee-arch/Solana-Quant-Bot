@@ -28,6 +28,7 @@ use crate::rows::{chunks, Part};
 use crate::snapshot::{FarmHistMeta, Snapshot};
 use anyhow::{bail, Context, Result};
 use arrow_array::{Array, BooleanArray, Int64Array, LargeStringArray, RecordBatch, StringArray, StringViewArray, UInt64Array};
+use lab_core::mem::{self as lmem, Mem};
 use lab_core::legs::{
     CurveLeg, CurveVariant, Event, Id, Order, PoolCtx, PoolKind, BOOST_BUY_DISC, DEFAULT_KEY, DIRECT, EXACT_OUT, HOLDOUT, NONE,
     POOL_EXACT_OUT, PUMP, PUMP_AMM, X0, X1,
@@ -50,6 +51,36 @@ pub struct Admission {
     is_mint: Vec<bool>,
     /// per id: 0 not a SOL market, 1 normal, 2 reversed
     pool: Vec<u8>,
+}
+
+/// The replay's own structures for `--mem-log` (M1 C4-2, memlog.rs), taken once per chunk (or segment unit) after its
+/// rows are read and flagged, before its events: the interned keys (with the admission's tables), the 24 h farmer
+/// histories (the (pool, trader) pairs, then their trades), the pool contexts and the legs buffer of that chunk.
+#[derive(Clone, Debug, Default)]
+pub struct ReplayMem {
+    pub mems: Vec<Mem>,
+    /// Segments handed out so far (None on chunks).
+    pub segments: Option<u64>,
+}
+
+/// A running total plus `flag_chunk`'s delta (the farmer histories' trades and bytes).
+fn add_mem((trades, bytes): (usize, usize), (dt, db): (isize, isize)) -> (usize, usize) {
+    (trades.checked_add_signed(dt).expect("farmer history trades below 0"), bytes.checked_add_signed(db).expect("farmer history bytes below 0"))
+}
+
+/// O(1): the histories' trades and bytes are the replay's running total (`flag_chunk`'s deltas), never a walk over them.
+fn replay_mem<C, P>(adm: &Admission, hist: &HashMap<(Id, Id), FarmHist>, (trades, bytes): (usize, usize), ctx: &HashMap<Id, PoolCtx>,
+                    legs: (&Vec<C>, &Vec<P>), segments: Option<u64>) -> ReplayMem {
+    ReplayMem {
+        mems: vec![
+            Mem::new("interned_keys", adm.keys.len(), adm.keys.heap_bytes() + lmem::vec(&adm.is_mint) + lmem::vec(&adm.pool)),
+            Mem::new("farmer_hist", hist.len(), lmem::map(hist)),
+            Mem::new("farmer_hist_trades", trades, bytes),
+            Mem::new("pool_ctx", ctx.len(), lmem::map(ctx)),
+            Mem::new("legs_buffer", legs.0.len() + legs.1.len(), lmem::vec(legs.0) + lmem::vec(legs.1)),
+        ],
+        segments,
+    }
 }
 
 impl Admission {
@@ -770,6 +801,13 @@ pub struct Replay {
     done: bool,
     /// Some: a replay on segments (`open_segments`); `emit` and `blocks` are then empty.
     seg: Option<SegSource>,
+    /// `--mem-log` (C4-2): take the replay's structures per chunk or segment unit for `for_each_event_mem`; off, they are
+    /// not counted.
+    pub mem_log: bool,
+    /// The farmer histories' trades and bytes (`FarmHist::mem`): summed once at the open, then `flag_chunk`'s deltas.
+    hist_mem: (usize, usize),
+    /// With `mem_log`: the replay's structures after the last chunk or unit handed out (the end line's).
+    last_mem: ReplayMem,
 }
 
 /// Where a replay's rows come from.
@@ -917,7 +955,9 @@ impl Replay {
             farm = json!({"lo": m.lo, "hi": m.hi, "to": m.to, "rows": rows, "kept": kept, "keys": hist.len()});
         }
         let replay = Replay {
+            hist_mem: hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
             from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false, seg,
+            mem_log: false, last_mem: ReplayMem::default(),
         };
         Ok((replay, with))
     }
@@ -925,6 +965,17 @@ impl Replay {
     /// Step 4 of the module doc, once: chunk by chunk, every event of [from, to) in chain order to `f`, with the keys
     /// interned so far (every key of the event among them). An error of `f` ends the replay.
     pub fn for_each_event(&mut self, mut f: impl FnMut(&Keys, &Event) -> Result<()>) -> Result<()> {
+        self.for_each_event_mem(|keys, _, ev| f(keys, ev))
+    }
+
+    /// With `mem_log`, the replay's structures after the last chunk or unit handed out (for the end line); empty before.
+    pub fn last_mem(&self) -> &ReplayMem {
+        &self.last_mem
+    }
+
+    /// `for_each_event` with the replay's structures of the current chunk or segment unit (`ReplayMem`; empty unless
+    /// `mem_log`).
+    pub fn for_each_event_mem(&mut self, mut f: impl FnMut(&Keys, &ReplayMem, &Event) -> Result<()>) -> Result<()> {
         if std::mem::replace(&mut self.done, true) {
             bail!("a replay hands out its events once");
         }
@@ -941,9 +992,14 @@ impl Replay {
             curve.sort_unstable_by_key(|l| l.order);
             pool.sort_unstable_by_key(|r| r.order);
             check_ties(&curve, &pool).with_context(|| format!("{}", p.dir.display()))?;
-            flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
+            let d = flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
+            self.hist_mem = add_mem(self.hist_mem, d);
+            let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
             let keys = &self.adm.keys;
-            emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, ev))?;
+            emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, &mem, ev))?;
+            if self.mem_log {
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None);
+            }
             log::info!("chunk {}: {} curve and {} pool rows of [{}, {}), h24 {}, {} keys, RSS {} MB", p.dir.display(), curve.len(), pool.len(),
                        from.max(p.lo), to.min(p.hi), bl.h24, keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
             self.h24s.push(json!([p.lo, p.hi, bl.h24]));
@@ -952,7 +1008,8 @@ impl Replay {
     }
 
     /// Step 4 on segments: unit by unit (a segment's part in one store chunk), as a chunk is.
-    fn each_segment_event(&mut self, sg: &SegSource, ctx: &mut HashMap<Id, PoolCtx>, f: &mut impl FnMut(&Keys, &Event) -> Result<()>) -> Result<()> {
+    fn each_segment_event(&mut self, sg: &SegSource, ctx: &mut HashMap<Id, PoolCtx>, f: &mut impl FnMut(&Keys, &ReplayMem, &Event) -> Result<()>)
+                          -> Result<()> {
         for u in &sg.units {
             let (s, bl) = (&sg.segs[u.seg], &sg.blocks[u.seg]);
             let mut curve = read_curve(&s.part, &mut self.adm, (u.lo, u.hi), &mut self.counts)?;
@@ -960,9 +1017,19 @@ impl Replay {
             curve.sort_unstable_by_key(|l| l.order);
             pool.sort_unstable_by_key(|r| r.order);
             check_ties(&curve, &pool).with_context(|| format!("{}", s.part.dir.display()))?;
-            flag_chunk(&mut pool, &mut self.hist, u.h24, u.chunk, self.keep[u.chunk as usize]);
+            let d = flag_chunk(&mut pool, &mut self.hist, u.h24, u.chunk, self.keep[u.chunk as usize]);
+            self.hist_mem = add_mem(self.hist_mem, d);
+            // segments handed out so far: this unit's segment is the (seg + 1)-th
+            let mem = if self.mem_log {
+                replay_mem(&self.adm, &self.hist, self.hist_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1))
+            } else {
+                ReplayMem::default()
+            };
             let keys = &self.adm.keys;
-            emit_chunk(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), |ev| f(keys, ev))?;
+            emit_chunk(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), |ev| f(keys, &mem, ev))?;
+            if self.mem_log {
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1));
+            }
         }
         for &(lo, hi, h24) in &sg.chunks {
             self.h24s.push(json!([lo, hi, h24]));
@@ -1302,6 +1369,55 @@ pub(crate) mod tests {
         fs::rename(root.join("segments/000000001"), root.join("gone")).unwrap();
         let err = format!("{:#}", Replay::open_segments(&root.join("segments"), &root.join("snap"), 1000, 3000, |_, _| Ok(())).err().unwrap());
         assert!(err.contains("no complete segment for slots [1150, 2050)"), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_mem_log_view_keeps_the_farmer_totals_and_counts_the_segments() {
+        // C4-2: with mem_log, every event carries the replay's structures of its chunk or unit. The farmer histories'
+        // running totals (flag_chunk's deltas) equal a walk over them at the end; on segments the count runs up to the
+        // segments read. The events themselves are the same with and without mem_log.
+        let root = tmp("memlog");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        export(&root.join("snap"));
+        chunks(&root.join("chunks"));
+        segments(&root.join("segments"), true);
+        for seg in [false, true] {
+            let run = |mem_log: bool| {
+                let snap = root.join("snap");
+                let (mut r, ()) = if seg { Replay::open_segments(&root.join("segments"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() }
+                                  else { Replay::open(&root.join("chunks"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() };
+                r.mem_log = mem_log;
+                let (mut lines, mut views) = (Vec::new(), Vec::new());
+                r.for_each_event_mem(|keys, m, ev| {
+                    lines.push(crate::legs::event_line(keys, ev));
+                    views.push(m.clone());
+                    Ok(())
+                }).unwrap();
+                let walk = r.hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+                (lines, views, r.hist_mem, walk, r.hist.len(), r.last_mem().clone())
+            };
+            let (plain, empty, ..) = run(false);
+            let (lines, views, total, walk, pairs, last_mem) = run(true);
+            // the view after the last chunk or unit (the end line's): the final totals, and on segments all three read
+            let fin = |name: &str| last_mem.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
+            assert_eq!((fin("farmer_hist"), fin("farmer_hist_trades"), last_mem.segments), (pairs, walk.0, seg.then_some(3)), "seg {seg}");
+            assert_eq!(lines, plain, "seg {seg}");
+            assert!(empty.iter().all(|m| m.mems.is_empty() && m.segments.is_none()), "seg {seg}: no view without mem_log");
+            assert_eq!(total, walk, "seg {seg}");
+            assert!(walk.0 > 0 && pairs > 0, "seg {seg}: the fixture has farmer history");
+            let last = views.last().unwrap();
+            let get = |name: &str| last.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
+            assert_eq!((get("farmer_hist"), get("farmer_hist_trades")), (pairs, walk.0), "seg {seg}: the last unit's view");
+            assert!(get("interned_keys") > 0 && get("legs_buffer") > 0, "seg {seg}");
+            let segs: Vec<Option<u64>> = views.iter().map(|m| m.segments).collect();
+            if seg {
+                // three complete segments read; the count never goes down
+                assert!(segs.windows(2).all(|w| w[0] <= w[1]) && segs.first() >= Some(&Some(1)) && segs.last() == Some(&Some(3)), "{segs:?}");
+            } else {
+                assert!(segs.iter().all(Option::is_none), "chunks have no segment count");
+            }
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 

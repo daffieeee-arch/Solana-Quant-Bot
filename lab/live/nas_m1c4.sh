@@ -14,6 +14,11 @@
 #                incomplete ones skipped, and as measured facts the backfill rows not read (per segment min, median,
 #                max; total; their share of all rows); the journal's rows, peak RSS and seconds. No reference: parity in
 #                live form is M3's.
+#                C4-2: the same run again with --mem-log (the counting allocator, each structure, the time per event):
+#                its journal must equal the first run's (every table but the run's own summary) and the wallet files
+#                too; a second measure line gives the log's lines and minutes, RSS and heap, the time per event (replay
+#                processing time, not live latency), the largest structures at the end, and the seconds with and
+#                without the log.
 #
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m1c4.sh      (bookworm runner)
 #   STEP=smoke LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                       (lab runner)
@@ -47,6 +52,10 @@ if [ "$STEP" = build ]; then
   cargo test --release --locked > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
   grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
   for t in legs_read::tests::segments_give_the_chunks_events_and_count_their_backfill legs_read::tests::the_chunks_become_the_stores_event_stream \
+           legs_read::tests::the_mem_log_view_keeps_the_farmer_totals_and_counts_the_segments \
+           paper::tests::the_mem_log_writes_a_line_per_minute_and_changes_no_journal_row memlog::tests::a_line_per_minute_then_the_end \
+           memlog::tests::the_buckets_are_contiguous_and_at_most_a_32nd_wide memlog::tests::the_quantiles_are_their_buckets_top_capped_by_the_max \
+           mem::tests::the_counting_allocator_counts_every_path_exactly \
            paper_core::tests::every_c3_case_gives_the_engines_writes_with_risk_on paper::tests::with_risk_on_each_group_reads_its_own_file \
            paper::tests::a_replay_writes_its_paper_journal_the_states_and_the_summary; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
@@ -54,6 +63,9 @@ if [ "$STEP" = build ]; then
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
   (cd ../core && cargo test --release --locked > "$OUT/cargo-test-core.log" 2>&1) || { tail -40 "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"; log "cargo test lab-core: FAILED"; exit 1; }
   grep -E "^test result" "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"
+  for t in signals::tests::the_windowed_structures_stay_bounded_over_thirty_hours mem::tests::the_estimates_are_capacity_times_size; do
+    grep -q "^test $t ... ok$" "$OUT/cargo-test-core.log" || { log "cargo test lab-core: $t did not run: FAILED"; exit 1; }
+  done
   log "cargo test lab-core: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test-core.log") tests ok)"
   cargo build --release --locked >> "$OUT/cargo-test.log" 2>&1 || { tail -20 "$OUT/cargo-test.log"; log "cargo build: FAILED"; exit 1; }
   mkdir -p "$OUT/bin" && install -m 755 target/release/lab-live "$OUT/bin/lab-live"
@@ -69,7 +81,7 @@ BIN=$OUT/bin/lab-live
 export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1
 cd "$REPO/lab"
 [ -d "$SEGMENTS" ] || { log "no segments at $SEGMENTS"; exit 1; }
-rm -rf "$OUT/ref-states" "$OUT/snap" "$OUT/smoke"
+rm -rf "$OUT/ref-states" "$OUT/snap" "$OUT/smoke" "$OUT/smoke-mem" "$OUT/smoke-mem.jsonl"
 # The paper start's groups and cost scenario as paper.engine journals them (the state's text, verbatim), on one slot.
 "$PY" -m paper.engine --from $LO --to $((LO + 1)) --config paper/k3-paper-2026-10-12.yaml --groups paper/h-arms-2026-10-16.yaml \
   --no-backup --store "$STORE" --journal "$OUT/ref-states" > "$OUT/ref-states.log" 2>&1 || { tail -20 "$OUT/ref-states.log" | tee -a "$OUT/job.log"; exit 1; }
@@ -102,5 +114,50 @@ print(f"lab-live paper segments [{v['from']}, {v['to']}): {s['read']} segments r
       f"{b['min']}, median {b['median']}, max {b['max']}, share of all rows {b['share_of_all_rows']:.4%} (measured); "
       f"{v['events']:,} events; journal signals {j['signals']}, orders {j['orders']}, fills {j['fills']}, exits {j['exits']}, "
       f"positions {j['positions']}; risk skips {p['risk_skips']}; peak RSS {v['peak_rss_bytes'] / 1e9:.2f} GB, {v['secs']:.0f} s")
+EOF
+# C4-2: the same run with --mem-log; its journal and wallets must be the first run's.
+rc=0
+"$BIN" paper --segments "$SEGMENTS" --snapshot "$OUT/snap" --from $LO --to $HI --groups "$OUT/groups.json" --variants 0.04:600 \
+  --cost-scenario "$OUT/cost_scenario.json" --journal "$OUT/smoke-mem" --summary "$OUT/smoke-mem.json" --mem-log "$OUT/smoke-mem.jsonl" \
+  > "$OUT/smoke-mem.log" 2>&1 || rc=$?
+tail -3 "$OUT/smoke-mem.log" | tee -a "$OUT/job.log"
+[ $rc = 0 ] || { log "smoke: lab-live paper --mem-log FAILED (exit $rc)"; exit 1; }
+"$PY" - "$OUT" <<'EOF' | tee -a "$OUT/job.log" || { log "smoke: the mem-log run is RED"; exit 1; }
+import filecmp, hashlib, json, os, sqlite3, sys
+out = sys.argv[1]
+
+
+def journal_sha(d):  # every table, rows sorted; the run's own summary (seconds, RSS, the mem-log entry) left out
+    db = sqlite3.connect(f"file:{os.path.join(d, 'journal.sqlite')}?mode=ro", uri=True)
+    h = hashlib.sha256()
+    for (t,) in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").fetchall():
+        rows = db.execute(f'SELECT * FROM "{t}"').fetchall()
+        if t == "state":
+            rows = [r for r in rows if r[0] != "lab_live_paper"]
+        h.update(t.encode() + b"\n")
+        for r in sorted(rows, key=repr):
+            h.update(repr(r).encode() + b"\n")
+    return h.hexdigest()
+
+
+a, b = journal_sha(os.path.join(out, "smoke")), journal_sha(os.path.join(out, "smoke-mem"))
+wallets = sorted(f for f in os.listdir(os.path.join(out, "smoke")) if f.startswith("wallet") and f.endswith(".json"))
+w_equal = bool(wallets) and all(filecmp.cmp(os.path.join(out, "smoke", f), os.path.join(out, "smoke-mem", f), shallow=False) for f in wallets)
+lines = [json.loads(l) for l in open(os.path.join(out, "smoke-mem.jsonl"))]
+mins, end = [l for l in lines if not l.get("end")], lines[-1]
+s0, s1 = json.load(open(os.path.join(out, "smoke.json"))), json.load(open(os.path.join(out, "smoke-mem.json")))
+rss = [l["rss_bytes"] for l in mins if l.get("rss_bytes")]
+t = end["time_ns"]
+top = sorted(end["structures"].items(), key=lambda kv: -kv[1]["bytes_est"])[:8]
+grow = {n: (mins[0]["structures"][n]["entries"], end["structures"][n]["entries"]) for n, _ in top}
+ok = a == b and w_equal and bool(end.get("end")) and t["n"] == s1["events"] and sum(l["time_ns"]["n"] for l in mins) == s1["events"]
+print(f"lab-live mem-log smoke: journals {'equal' if a == b else 'DIFFER'} ({a[:12]}), wallets {'equal' if w_equal else 'DIFFER'} "
+      f"({len(wallets)}); {len(mins)} minute lines over {(mins[-1]['minute'] - mins[0]['minute']) / 60:.1f} h, end line "
+      f"{bool(end.get('end'))}; RSS {min(rss) / 1e9:.2f}-{max(rss) / 1e9:.2f} GB, heap at the end {end['heap_bytes'] / 1e9:.2f} GB; "
+      f"time per event (replay processing, not live latency) p50 {t['p50'] / 1e3:.2f} us, p99 {t['p99'] / 1e3:.2f} us, "
+      f"p999 {t['p999'] / 1e3:.2f} us, max {t['max'] / 1e6:.1f} ms over {t['n']:,} events; largest at the end (bytes, entries "
+      f"first -> last): " + ", ".join(f"{n} {v['bytes_est'] / 1e6:.0f} MB {grow[n][0]:,}->{grow[n][1]:,}" for n, v in top)
+      + f"; seconds of the first run (cold cache) and of the run with the log {s0['secs']:.0f} / {s1['secs']:.0f} (not an overhead measure); {'GREEN' if ok else 'RED'}")
+sys.exit(0 if ok else 1)
 EOF
 log "smoke: done"
