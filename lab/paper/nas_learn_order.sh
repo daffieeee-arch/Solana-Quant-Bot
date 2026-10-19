@@ -47,7 +47,10 @@ for side in main new; do
   root=$OUT/rec-$side
   rm -rf "${root:?}"
   mkdir -p "$root/segments"
-  ls "$REC/segments" | sort | head -n "$SEGS" | while read -r s; do ln -s "$REC/segments/$s" "$root/segments/$s"; done
+  # the whole listing read first: `| head` under pipefail fails the pipeline once sort is cut off (SIGPIPE, rc 141,
+  # 99zzs; the VPS smoke's 12 segments never reached the limit)
+  mapfile -t names < <(ls "$REC/segments" | sort)
+  for s in "${names[@]:0:$SEGS}"; do ln -s "$REC/segments/$s" "$root/segments/$s"; done
 done
 n=$(ls "$OUT/rec-new/segments" | wc -l)
 [ "$n" = "$SEGS" ] || { log "RED: $n segments linked, not $SEGS"; exit 1; }
