@@ -7,7 +7,8 @@
 //! (`clock`), exact int-against-float tests (`exact`), the universe (`universe`), the trigger and its windows (`f7`),
 //! the farm label (`farm`) and the N2 shadow (`n2`). M1 C2: Python's int/int division and int(i * f) (`exact`), the
 //! costs and settle (`costs`), the empirical tolerance of trades without a known limit (`tau`), the exit rules of M1's
-//! three variants (`exits`) and a flow position's pool flow index (`flow`). Later steps: PositionSim.
+//! three variants (`exits`), a flow position's pool flow index (`flow`) and the position itself, slot by slot
+//! (`positions`: PositionSim, its entries and the re-run of the token's trades). Later steps: the paper engine.
 
 pub mod clock;
 pub mod costs;
@@ -18,6 +19,7 @@ pub mod farm;
 pub mod flow;
 pub mod legs;
 pub mod n2;
+pub mod positions;
 pub mod signals;
 pub mod tau;
 pub mod universe;
