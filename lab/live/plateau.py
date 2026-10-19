@@ -11,13 +11,17 @@ sha256 pinned in nas_m1c4.sh): over `lab-live paper --mem-log` (lab/live/src/mem
 - The window is the last 24 h of input by chain time (the lines' minutes, block time), after a warm-up of >= 24 h.
 - Gates (all must hold, spec §2):
   RSS: the linear fit's slope over the window <= +100 MB per 24 h; the mean of the window's last 2 h <= the mean of its
-  first 2 h + 150 MB; the run's max <= 6.0 GB. Heap: the same two growth tests. Each gated structure (entries): slope
-  x 24 h <= 10 % of its mean in the window; last 2 h mean <= first 2 h mean x 1.10. Determinism: P1's and P2's journal
-  sha256 equal, wallet files equal. The run: exit 0, every segment read or the incomplete ones named.
-- Spec v0.4 (coordinator, 2026-10-19): the structure gate applies to the structures that are not bounded by
-  construction. The window-bounded ones (WINDOWED: lab-core's 30 h unit test) follow the chain's activity, so they are
-  reported only, each with the ratio of its max in the window to its max in the 24 h before it (visible if one still
-  climbs); RSS and the heap stay gated and catch a leak in any structure.
+  first 2 h + 150 MB; the run's max <= 6.0 GB. Heap: the same two growth tests. Each gated structure fails only when
+  both hold: on its entries, slope x 24 h > 10 % of its mean in the window or last 2 h mean > first 2 h mean x 1.10;
+  and its bytes_est grows by >= 1 MB in the 24 h (the larger of the bytes' slope x 24 h and last 2 h - first 2 h).
+  Determinism: P1's and P2's journal sha256 equal, wallet files equal. The run: exit 0, every segment read or the
+  incomplete ones named.
+- Spec v0.4 (E6): the structure gate applies to the structures that are not bounded by construction. The bounded ones
+  (WINDOWED: lab-core's 30 h unit test, a slot or unit, the positions in flight, the ops queue, WALLET_DEPTH) follow the
+  chain's activity, so they are reported only, each with the ratio of its max in the window to its max in the 24 h
+  before it (visible if one still climbs); RSS and the heap stay gated and catch a leak in any structure.
+- Spec v0.5 (E7): wallet_txs is bounded (WALLET_DEPTH 50 per group); the 1 MB floor (under 1 MB a day is under 30 MB a
+  month, negligible against M3's ~8 GB), so a few-KB insert-only map cannot turn the gate RED.
 - Reported, not gated: the time per event (replay processing time on the NAS, not live latency: M3's), per hour from
   the minutes' buckets; the events per second; the peak RSS and its minute; P3's curves.
 - MB and GB are 10^6 and 10^9 bytes.
@@ -45,13 +49,16 @@ RSS_EDGE = 150 * MB
 RSS_MAX = 6 * GB
 STRUCT_SLOPE = 0.10  # x its mean in the window, per 24 h
 STRUCT_EDGE = 1.10
-# Bounded by a window by construction (lab-core's the_windowed_structures_stay_bounded_over_thirty_hours, and the slot
-# or chunk they belong to). They follow the chain's activity.
+STRUCT_FLOOR = 1 * MB  # spec v0.5 (E7): a gated structure fails only when its bytes_est also grows by this in 24 h
+# Bounded by construction: a window (lab-core's the_windowed_structures_stay_bounded_over_thirty_hours), the slot or
+# unit they belong to, the positions in flight, the ops queue (drained per event), WALLET_DEPTH (wallet_txs, v0.5).
+# They follow the chain's activity.
 WINDOWED = frozenset({
     "recent_keys", "recent_legs", "farm_pools", "farm_items", "hour_events", "pool_seen", "pool_last", "slot_legs",
     "slot_written", "legs_buffer", "pending", "pending_keys", "grad_keys", "open_positions", "open_order", "grad_wait", "ops",
+    "wallet_txs",
 })
-# Spec v0.4: the windowed ones are reported (with their max ratio), not gated.
+# Spec v0.4 (E6): the windowed ones are reported (with their max ratio), not gated.
 GATE_WINDOWED = False
 
 
@@ -162,9 +169,16 @@ def max_ratio(lines, start, last, get):
     return max(win) / max(warm) if win and warm and max(warm) > 0 else None
 
 
-def struct_ok(g):
-    """Spec §2 on a structure's entries: slope x 24 h <= 10 % of its mean; last 2 h <= first 2 h x 1.10."""
-    return g["slope_day"] <= STRUCT_SLOPE * g["mean"] and g["last2"] <= g["first2"] * STRUCT_EDGE
+def bytes_growth(b):
+    """A structure's bytes_est growth in the 24 h: the larger of the slope x 24 h and last 2 h - first 2 h."""
+    return max(b["slope_day"], b["last2"] - b["first2"])
+
+
+def struct_ok(g, b):
+    """Spec §2 (v0.5): a structure fails only when its entries grow (slope x 24 h > 10 % of its mean, or last 2 h > first
+    2 h x 1.10) and its bytes_est grows by >= 1 MB in the 24 h."""
+    entries_grow = g["slope_day"] > STRUCT_SLOPE * g["mean"] or g["last2"] > g["first2"] * STRUCT_EDGE
+    return not (entries_grow and bytes_growth(b) >= STRUCT_FLOOR)
 
 
 def hourly_times(lines):
@@ -201,11 +215,13 @@ def evaluate(p1, run=None):
     names = list(lines[-1]["structures"])
     structs = {}
     for name in names:
-        g = growth(lines, start, last, lambda v, n=name: v["structures"].get(n, {}).get("entries"))
         get = lambda v, n=name: v["structures"].get(n, {}).get("entries")  # noqa: E731
+        g = growth(lines, start, last, get)
+        b = growth(lines, start, last, lambda v, n=name: v["structures"].get(n, {}).get("bytes_est"))
         gated = GATE_WINDOWED or name not in WINDOWED
-        g.update(group=lines[-1]["structures"][name].get("group"), windowed=name in WINDOWED, gated=gated, ok=struct_ok(g),
-                 bytes_last=lines[-1]["structures"][name].get("bytes"), max_ratio=max_ratio(lines, start, last, get))
+        g.update(group=lines[-1]["structures"][name].get("group"), windowed=name in WINDOWED, gated=gated, ok=struct_ok(g, b),
+                 bytes_last=lines[-1]["structures"][name].get("bytes_est"), bytes_growth=bytes_growth(b),
+                 max_ratio=max_ratio(lines, start, last, get))
         structs[name] = g
     failing = sorted(n for n, g in structs.items() if g["gated"] and not g["ok"])
     check("structures gated: failing", failing, "none", not failing)
@@ -249,16 +265,17 @@ def report(res, spec_sha, others, run):
            "## Gates (spec §2)", "", "| check | value | limit | ok |", "|---|---|---|---|"]
     for c in res["checks"]:
         out.append(f"| {c['check']} | {c['value']} | {c['limit']} | {'yes' if c['ok'] else '**no**'} |")
-    out += ["", f"Structures: gated {'all' if GATE_WINDOWED else 'the ones not bounded by construction (spec v0.4)'}; entries over "
-            "the window; `max / warm-up max` is the window's max over the max of the 24 h before it (reported, for the windowed "
-            "ones above all); bytes are capacity x size_of at the last line, a lower bound.", "",
-            "| structure | group | windowed | gated | mean | slope / 24 h | % of mean | first 2 h | last 2 h | max | max / warm-up max | bytes | ok |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    out += ["", f"Structures: gated {'all' if GATE_WINDOWED else 'the ones not bounded by construction (spec v0.4, v0.5)'}; entries "
+            "over the window; a gated one fails only when its entries grow and its bytes grow by >= 1 MB in 24 h (v0.5); `max / "
+            "warm-up max` is the window's max over the max of the 24 h before it (reported, for the windowed ones above all); "
+            "bytes are bytes_est, capacity x size_of, a lower bound.", "",
+            "| structure | group | windowed | gated | mean | slope / 24 h | % of mean | first 2 h | last 2 h | max | max / warm-up max | bytes at the end | bytes growth / 24 h | ok |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, g in res["structures"].items():
         pct = f"{100 * g['slope_day'] / g['mean']:.1f}" if g["mean"] else "-"
         out.append(f"| {name} | {g['group']} | {'yes' if g['windowed'] else ''} | {'yes' if g['gated'] else ''} | {g['mean']:,.0f} | "
                    f"{g['slope_day']:,.0f} | {pct} | {g['first2']:,.0f} | {g['last2']:,.0f} | {g['max'] if g['max'] is None else f'{g['max']:,}'} | "
-                   f"{'-' if g['max_ratio'] is None else f'{g['max_ratio']:.2f}'} | {g['bytes_last']:,} | "
+                   f"{'-' if g['max_ratio'] is None else f'{g['max_ratio']:.2f}'} | {g['bytes_last']:,} | {g['bytes_growth'] / MB:,.2f} MB | "
                    f"{'yes' if g['ok'] else ('**no**' if g['gated'] else 'no (reported)')} |")
     pk = res["peak"]
     out += ["", "## Reported, not gated", "",

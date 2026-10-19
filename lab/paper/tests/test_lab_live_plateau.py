@@ -19,20 +19,25 @@ RUN = {"p1_journal_sha": "a" * 64, "p2_journal_sha": "a" * 64, "wallets_equal": 
        "segments_read": 3145, "segments_expected": 3145, "incomplete_skipped": [], "p1_secs": 600.0}
 
 
-def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, jitter=5 * MB):
-    """A --mem-log of `hours` of chain time: RSS 3 GB, heap 2.5 GB and interned_keys 5 M, each growing by its per-day
-    amount; recent_keys (windowed) swinging +-diurnal over the day; every minute 100 events of 1-3 us."""
+def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, jitter=5 * MB, busy_day=0.0):
+    """A --mem-log of `hours` of chain time: RSS 3 GB, heap 2.5 GB and interned_keys 5 M (64 B each), each growing by its
+    per-day amount; recent_keys (windowed) swinging +-diurnal over the day; busy, a small insert-only map (40 B an entry),
+    growing by busy_day entries a day; wallet_txs filling up to its cap of 100; every minute 100 events of 1-3 us."""
     with open(path, "w") as f:
         events = 0
         for i in range(hours * 60):
             day = i / 1440
             wave = 1 + diurnal * math.sin(2 * math.pi * day)
             noise = jitter * math.sin(i * 7.3)
+            keys = int(5_000_000 + keys_day * day)
+            busy = int(200 + busy_day * day)
             structs = {
-                "recent_keys": {"entries": int(4000 * wave), "bytes": 100_000, "group": "state"},
-                "interned_keys": {"entries": int(5_000_000 + keys_day * day), "bytes": 300 * MB, "group": "snapshot"},
-                "run_curve_sums": {"entries": 1_000_000, "bytes": 50 * MB, "group": "state"},
-                "ops": {"entries": 0, "bytes": 0, "group": "state"},
+                "recent_keys": {"entries": int(4000 * wave), "bytes_est": 100_000, "group": "state"},
+                "interned_keys": {"entries": keys, "bytes_est": 64 * keys, "group": "snapshot"},
+                "run_curve_sums": {"entries": 1_000_000, "bytes_est": 50 * MB, "group": "state"},
+                "busy": {"entries": busy, "bytes_est": 40 * busy, "group": "state"},
+                "wallet_txs": {"entries": min(100, i // 20), "bytes_est": 200 * min(100, i // 20), "group": "state"},
+                "ops": {"entries": 0, "bytes_est": 0, "group": "state"},
             }
             events += 100
             f.write(json.dumps({"minute": M0 + i, "slot": 454_896_000 + i * 275, "events": events, "segments": i // 1,
@@ -55,9 +60,10 @@ def test_a_flat_run_is_green_and_the_windowed_swing_is_reported_only(tmp_path):
     assert res["ok"], failing(res)
     assert res["last"] - res["start"] + 1 == 1440 and (res["start"] - res["first"]) / 60 == 28.0
     rk = res["structures"]["recent_keys"]
-    # a 30 % daily swing that rises over the window fails the 10 % test (slope and last 2 h); v0.4 reports it, with its
-    # max ratio (the window's max over the 24 h before it: the same swing, so 1)
-    assert rk["windowed"] and not rk["gated"] and not rk["ok"] and rk["slope_day"] > 0.1 * rk["mean"] and rk["max_ratio"] == 1.0
+    # a 30 % daily swing that rises over the window is above the 10 % entries test (slope and last 2 h); v0.4 reports it
+    # without gating it, with its max ratio (the window's max over the 24 h before it: the same swing, so 1)
+    assert rk["windowed"] and not rk["gated"] and rk["slope_day"] > 0.1 * rk["mean"] and rk["last2"] > 1.1 * rk["first2"]
+    assert rk["max_ratio"] == 1.0
     assert res["structures"]["interned_keys"]["gated"] and res["structures"]["interned_keys"]["ok"]
 
 
@@ -71,12 +77,26 @@ def test_rss_and_heap_growth_fail_their_gates(tmp_path):
 
 
 def test_a_growing_cumulative_structure_fails(tmp_path):
-    # interned_keys + 600 k a day: 12 % of its ~5.9 M mean per 24 h
+    # interned_keys + 600 k a day: 12 % of its ~5.9 M mean per 24 h, and 38 MB a day
     res = plateau.evaluate(plateau.load(log(tmp_path / "p1.jsonl", keys_day=600_000)), RUN)
     assert failing(res) == ["structures gated: failing"]
     assert next(c for c in res["checks"] if c["check"] == "structures gated: failing")["value"] == ["interned_keys"]
+    assert res["structures"]["interned_keys"]["bytes_growth"] > 30 * MB
     res = plateau.evaluate(plateau.load(log(tmp_path / "p1b.jsonl", keys_day=400_000)), RUN)  # ~7 %: passes
     assert res["ok"], failing(res)
+
+
+def test_the_1_mb_floor_and_the_bounded_wallets(tmp_path):
+    # spec v0.5 (E7): busy doubles in a day (200 -> 400 entries, +100 % of its mean) but grows by only 8 KB: it passes
+    # the floor; wallet_txs fills up to its cap in the window and is reported, not gated
+    res = plateau.evaluate(plateau.load(log(tmp_path / "p1.jsonl", busy_day=200)), RUN)
+    assert res["ok"], failing(res)
+    busy, wallets = res["structures"]["busy"], res["structures"]["wallet_txs"]
+    assert busy["gated"] and busy["ok"] and busy["slope_day"] > 0.1 * busy["mean"] and busy["bytes_growth"] < plateau.STRUCT_FLOOR
+    assert wallets["windowed"] and not wallets["gated"]
+    # the same growth at 1 MB or more fails: 30,000 entries of 40 B a day is 1.2 MB
+    res = plateau.evaluate(plateau.load(log(tmp_path / "p1b.jsonl", busy_day=30_000)), RUN)
+    assert next(c for c in res["checks"] if c["check"] == "structures gated: failing")["value"] == ["busy"]
 
 
 def test_short_input_missing_facts_and_nondeterminism_are_red(tmp_path):
