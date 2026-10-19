@@ -54,6 +54,10 @@
 #                recorder's segments to $LONG_SHADOW (36-43 h, ended after LONG_SHADOW_HOURS, default 46). long-a:
 #                lab-live P1 and P2 on those segments, judged by spec v0.6 as pinned on the last 24 h, plus plateau.py
 #                --daily (reported: a day after the warm-up above 150 MB must be explained there before M3 builds on it).
+#   STEP=engine-only (the lab Python 3.13 runner, its 24G; M3-04): paper.shadow --engine-only on fwd1053-1054 with job
+#                91's flags, through a root of only that store's 4 chunks ($DATA/events/v1/chunks-fwd1053-1054, long_root
+#                with arguments): recorder A's segments and recorder B's (b2's engine-only filter), B's rows checked within
+#                A's, both volumes in GB/day and the transactions per stream into job.log. ~13 h; EO_HOURS (default 20).
 #   STEP=m2      (the lab Python 3.13 runner; C4-3, M2 in replay): on fwd1053-1054 [LO, HI) the legs parity (the whole
 #                store), then the signals parity and RC4 (lab-live paper against paper.engine, the paper start's files,
 #                config mode) side by side, each with its GREEN measure line in job.log.
@@ -67,6 +71,7 @@
 #   STEP=long-b LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                      (lab runner, 24G; short: ~15-30 min, heap ~7 GB)
 #   STEP=long-shadow LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                 (lab runner, 24G; long: 36-43 h)
 #   STEP=long-a LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                      (lab runner; short: after long-shadow)
+#   STEP=engine-only LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                 (lab runner, 24G; long: ~13 h)
 #
 # Every step writes to $DATA/backtests/live-m1c4-<commit7>/.
 set -euo pipefail
@@ -77,7 +82,7 @@ COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
 OUT=$DATA/backtests/live-m1c4-${COMMIT:0:7}
 mkdir -p "$OUT"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
-: "${STEP:?STEP=build, repro, smoke, ab, plateau, m2, long-b, long-shadow or long-a}"
+: "${STEP:?STEP=build, repro, smoke, ab, plateau, m2, long-b, long-shadow, long-a or engine-only}"
 log "start $STEP commit=$COMMIT out=$OUT"
 SEGMENTS=$DATA/backtests/shadow-arms-1053-1054-2c3e5fe/rec/segments  # job 91's (#299, 2c3e5fe), read again by 99m
 STORE=$DATA/store/fwd1053-1054.duckdb
@@ -193,7 +198,7 @@ if [ "$STEP" = repro ]; then
   exit 0
 fi
 
-case "$STEP" in smoke | ab | plateau | m2 | long-b | long-shadow | long-a) ;; *) log "unknown STEP=$STEP"; exit 2 ;; esac
+case "$STEP" in smoke | ab | plateau | m2 | long-b | long-shadow | long-a | engine-only) ;; *) log "unknown STEP=$STEP"; exit 2 ;; esac
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 BIN=$OUT/bin/lab-live
 [ -x "$BIN" ] || { log "no binary at $BIN: run STEP=build first"; exit 1; }
@@ -222,9 +227,12 @@ EOF
     > "$dir/snap.log" 2>&1 || { tail -20 "$dir/snap.log" | tee -a "$OUT/job.log"; exit 1; }
 }
 
-long_root() {  # $LONG_ROOT: a symlink per chunk of [LONG_LO, LONG_HI) under events/v1/chunks, nothing else, checked fail-closed
-  local rc=0  # (not `| tee`: under set -e and pipefail a refusal would end the job before its reason reached job.log)
-  "$PY" - "$DATA/events/v1/chunks" "$LONG_ROOT" $LONG_LO $LONG_HI $LONG_N "$OUT/long/snap/meta.json" > "$OUT/long_root.log" 2>&1 <<'EOF' || rc=$?
+long_root() {  # [lo hi n root meta]: a symlink per chunk of [lo, hi) under events/v1/chunks in root, nothing else, checked
+  # fail-closed against the store chunk_list in meta (a snapshot's meta.json); without arguments the long steps' range
+  # (LONG_LO, LONG_HI, LONG_N, LONG_ROOT, $OUT/long/snap/meta.json)
+  local lo=${1:-$LONG_LO} hi=${2:-$LONG_HI} n=${3:-$LONG_N} root=${4:-$LONG_ROOT} meta=${5:-$OUT/long/snap/meta.json} rc=0
+  # (not `| tee`: under set -e and pipefail a refusal would end the job before its reason reached job.log)
+  "$PY" - "$DATA/events/v1/chunks" "$root" $lo $hi $n "$meta" > "$OUT/long_root.log" 2>&1 <<'EOF' || rc=$?
 import json, os, sys
 src, root, lo, hi, n, meta = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
 fail = lambda why: sys.exit(f"long_root: {why}: refused")
@@ -262,6 +270,44 @@ EOF
   tee -a "$OUT/job.log" < "$OUT/long_root.log"
   [ $rc = 0 ] || { log "long_root: FAILED (rc $rc)"; exit 1; }
 }
+
+if [ "$STEP" = engine-only ]; then
+  # M3-04 (research/m3-design-2026-10-19.md): paper.shadow --engine-only on fwd1053-1054 with job 91's flags (the whole
+  # store, --seed 1053, K3 0.04:600 and the H arms, --memory 1GB), its chunks through a root of only that store's 4 chunks
+  # (long_root, checked against the store's chunk_list): recorder A's segments as job 91's, recorder B's (b2's
+  # engine-only filter) beside them, B's rows checked within A's and both volumes. Expect ~13 h; EO_HOURS (default 20)
+  # ends it before the next job. The measure lines go to job.log.
+  EO_ROOT=${EO_ROOT:-$DATA/events/v1/chunks-fwd1053-1054}
+  EO_OUT=${EO_OUT:-$OUT/engine-only}
+  prepare "$STORE" $LO $HI "$OUT/eo"  # for long_root: the store's chunk_list in the snapshot's meta.json
+  long_root $LO $HI 4 "$EO_ROOT" "$OUT/eo/snap/meta.json"
+  [ ! -e "$EO_OUT" ] || { log "engine-only: $EO_OUT exists (left as it is): move it away first"; exit 1; }
+  mkdir -p "${EO_SPILL:=/lab/tmp/shadow-b}"
+  log "engine-only: paper.shadow --engine-only into $EO_OUT (fwd1053-1054, the whole store), at most ${EO_HOURS:-20} h"
+  rc=0
+  LAB_ENGINE_COMMIT=$COMMIT LAB_SPILL_DIR=$EO_SPILL LAB_SPILL_MAX=16GB nice -n 10 timeout "${EO_HOURS:-20}h" "$PY" -m paper.shadow \
+    --store "$STORE" --chunks "$EO_ROOT" --out "$EO_OUT" --memory 1GB --seed 1053 --variants 0.04:600 \
+    --groups "$REPO/lab/paper/h-arms-2026-10-16.yaml" --engine-only > "$OUT/engine-only.log" 2>&1 || rc=$?
+  tail -5 "$OUT/engine-only.log" | tee -a "$OUT/job.log"
+  sum=0
+  "$PY" - "$EO_OUT/compare.json" > "$OUT/engine-only-summary.log" 2>&1 <<'EOF' || sum=$?
+import json, sys
+v = json.load(open(sys.argv[1]))
+ck, a, b = v.get("engine_only_check", {}), v.get("recorder", {}), v.get("recorder_b", {})
+streams = ("tx_watchlist", "tx_probes", "tx_new_pools", "tx_new_reversed", "tx_pump_creates", "backfill_txs", "pool_creations")
+print(f"engine-only: B's rows within A's {ck.get('ok')} (blocks equal {ck.get('blocks_equal')}, "
+      f"{sum(t['b_rows'] for t in ck.get('tables', {}).values()):,} rows of B in {len(ck.get('tables', {}))} tables); "
+      f"GB/day A {v.get('estimated_gb_per_day')} B {v.get('estimated_gb_per_day_b')} (3 KB per transaction); unexplained {v.get('unexplained')}")
+print("engine-only: transactions per stream A " + ", ".join(f"{s} {a.get(s, 0):,}" for s in streams))
+print("engine-only: transactions per stream B " + ", ".join(f"{s} {b.get(s, 0):,}" for s in streams))
+sys.exit(0 if ck.get("ok") else 1)
+EOF
+  tee -a "$OUT/job.log" < "$OUT/engine-only-summary.log"
+  status=$("$PY" -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["step"], "at", d.get("time"))' "$EO_OUT/STATUS.json" 2>/dev/null || echo none)
+  log "engine-only: rc $rc; summary rc $sum; status $status"
+  [ $rc = 0 ] && [ $sum = 0 ] || exit 1
+  exit 0
+fi
 
 if [ "$STEP" = long-b ]; then
   # C4 option (c) B: lab-live on dev2's chunks of epochs 1033-1036 from the store's start, risk on, the paper start's
