@@ -291,20 +291,22 @@ def delay_table(con, label, where, boot, codes):
     """One group's entry-delay table: per code the entry mid advantage and, per block and horizon, the paired net Δ
     against d = REF_D with its day CI, the coverage and the capped share; the screen verdict on the binding block."""
     L = [f"### Entry delay vs d = {REF_D} · {label}\n",
-         f"| block | entry | h | n pairs | coverage | capped | entry mid Δ (trim) | 95% CI | **net Δ (trim)** | 95% CI (days) | Δ > 0 | screen |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+         f"| block | entry | h | n pairs | coverage | capped | entry mid Δ (trim) | 95% CI | **net Δ (trim)** | 95% CI (days) | Δ > 0 | same state | net Δ ex capped (trim) | n ex capped | screen |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     verdict = []
     for bname, bwhere in blocks(con):
-        n_ref = con.execute(f"SELECT count(*) FROM m WHERE ({where}) AND d = {REF_D} AND h = '1m' AND net IS NOT NULL AND ({bwhere})").fetchone()[0]
         for d in codes:
             for h in H_ORDER:
-                rows = con.execute(f"SELECT net - ref_net, ref_mid / mid - 1, day, capped FROM dpairs WHERE ({where}) AND d = {d} AND h = '{h}' AND ({bwhere})").fetchall()
+                n_ref = con.execute(f"SELECT count(*) FROM m WHERE ({where}) AND d = {REF_D} AND h = '{h}' AND net IS NOT NULL AND ({bwhere})").fetchone()[0]
+                rows = con.execute(f"SELECT net - ref_net, ref_mid / mid - 1, day, capped, mid = ref_mid FROM dpairs WHERE ({where}) AND d = {d} AND h = '{h}' AND ({bwhere})").fetchall()
                 if not rows:
                     continue
                 dn = np.array([r[0] for r in rows], dtype=float)
                 dm = np.array([r[1] for r in rows], dtype=float)
                 days = np.array([r[2] for r in rows])
                 capped = np.array([bool(r[3]) for r in rows])
+                same = np.array([bool(r[4]) for r in rows])
+                ex = dn[~capped]
                 lo, hi = day_ci(dn, days, boot)
                 mlo, mhi = day_ci(dm, days, boot)
                 tr = trimmed_mean(dn)
@@ -317,7 +319,8 @@ def delay_table(con, label, where, boot, codes):
                     screen = "upper bound"
                 L.append(f"| {bname} | {markout.delay_label(d)} | {h} | {fmt(len(dn))} | {fmt(len(dn) / n_ref if n_ref else float('nan'), 0, True)} | "
                          f"{fmt(float(capped.mean()), 0, True)} | {fmt(trimmed_mean(dm), 2, True, True)} | {fmt(mlo, 2, True, True)} … {fmt(mhi, 2, True, True)} | "
-                         f"**{fmt(tr, 2, True, True)}** | {fmt(lo, 2, True, True)} … {fmt(hi, 2, True, True)} | {fmt(float((dn > 0).mean()), 0, True)} | {screen} |")
+                         f"**{fmt(tr, 2, True, True)}** | {fmt(lo, 2, True, True)} … {fmt(hi, 2, True, True)} | {fmt(float((dn > 0).mean()), 0, True)} | "
+                         f"{fmt(float(same.mean()), 0, True)} | {fmt(trimmed_mean(ex), 2, True, True) if len(ex) else '–'} | {fmt(int(len(ex)))} | {screen} |")
     yes = [(d, h) for d, h, ok in verdict if ok]
     L.append("")
     L.append(f"{BINDING} screen (net Δ ≥ {SCREEN_PT * 100:.1f} pt with its day CI above 0, causal entries {', '.join(markout.delay_label(d) for d in CAUSAL)}, "
@@ -335,8 +338,12 @@ def delay_section(con, boot):
     L = [f"## Entry delay (spec M-a): paired per signal against d = {REF_D}\n",
          f"Reference d = {REF_D} = the paper's d_ms 600 in the dev days' slot regimes. Entry mid Δ = mid_ref / mid_entry − 1 (> 0: the entry is cheaper than the reference); "
          "net Δ = net markout of the entry − net markout of the reference at the same horizon (each from its own entry slot: the horizons differ by at most 3 slots, "
-         "negligible from 1 m on); trimmed means with day CIs; coverage = pairs / reference signals with a 1 m net; capped = share of the entries that fell on the slot's "
-         "last leg (k beyond the slot's legs) or, for t+1, on the end of t (no leg in t + 1). The k-codes inside t need a same-slot fill (bundles) and are an upper bound; "
+         "negligible from 1 m on); trimmed means with day CIs; coverage = pairs / reference signals with a net at that horizon. **Capped entries count at their fallback state**: a k-code "
+         "beyond the slot's legs enters at the end of t (the slot's last leg), and t+1 first tx without a leg in t + 1 enters at the end of t too; both equal d = 0 then, "
+         "which is what such an entry would get (nobody traded before it), so they stay in the paired Δ; 'capped' is their share, 'net Δ ex capped' the Δ on the "
+         "signals that did have the leg (a selection on pools that traded, not a cleaner estimate). 'same state' = share of pairs whose entry state equals the "
+         "reference's (the pool did not trade between the two entries: their Δ is the fee-free zero), so a mean advantage comes from the other signals. "
+         "The k-codes inside t need a same-slot fill (bundles) and are an upper bound; "
          "d = 0 (the end of t: a fill as the first transaction of t + 1) and t+1 first tx are the causal entries without bundles, still without competition, TOL or landing. "
          "Not a P&L: the exit rule, busy and the fill are not recomputed per entry (route (ii)).\n"]
     for fam, seg in con.execute("SELECT DISTINCT family, segment FROM dpairs ORDER BY 1, 2").fetchall():
