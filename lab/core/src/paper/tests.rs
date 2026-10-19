@@ -56,7 +56,7 @@ fn engine(groups: Vec<GroupSpec>, q: Vec<f64>) -> Result<PaperEngine, PaperError
 fn engine_with(groups: Vec<GroupSpec>, q: Vec<f64>, risk: RiskSource) -> Result<PaperEngine, PaperError> {
     let mut u = Universe::new(Bounds::new((446_256_000, 452_304_000), &dev2()), MAYHEM);
     for p in [P, Q] {
-        u.add_pool(p, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9 });
+        u.add_pool(p, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9, create_slot: None });
     }
     let sig = SignalEngine::new(u, dev2(), groups, WindowRule::AllPools).map_err(PaperError::Signal)?;
     PaperEngine::with_risk(sig, PaperCfg::new(q, base(), GradInfo::default(), HashMap::new()), risk)
@@ -314,11 +314,11 @@ fn a_pool_learned_live_is_known_from_then_on() {
     let entered = |learn: bool| {
         let mut eng = engine(vec![k3()], vec![0.5]).unwrap();
         let mut keys = FakeKeys { names: vec![""; 4], seeds: vec![0; 4], triggers: HashMap::new() };
-        let meta = PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9 };
+        let meta = PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9, create_slot: Some(T - 100) };
         if learn {
-            assert!(eng.learn_pool(R, meta, Some(T - 100)));
-            assert!(!eng.learn_pool(R, PoolMeta { mayhem: true, ..meta }, None)); // known: unchanged
-            assert!(!eng.learn_pool(P, meta, None));
+            assert!(eng.learn_pool(R, meta));
+            assert!(!eng.learn_pool(R, PoolMeta { mayhem: true, create_slot: None, ..meta })); // known: unchanged
+            assert!(!eng.learn_pool(P, meta));
         }
         for l in legs {
             eng.push(&Event::new(l, Some(BT0 + (l.slot() as i64 - T as i64) * 2 / 5)), &mut keys).unwrap();
@@ -332,7 +332,7 @@ fn a_pool_learned_live_is_known_from_then_on() {
     assert!(absent > 0);
     let (n, absent, meta) = entered(true);
     assert_eq!((n, absent), (1, 0));
-    assert!(meta.is_some_and(|m| !m.mayhem));
+    assert!(meta.is_some_and(|m| !m.mayhem && m.create_slot == Some(T - 100)));
 }
 
 #[test]
@@ -358,4 +358,71 @@ fn an_epoch_learned_live_sets_the_slots_from_then_on() {
         _ => None,
     }).collect();
     assert_eq!(entries, [(P, T + 2), (Q, T + 56)]);
+}
+
+// ---------------------------------------------------------------------------------------------- live (M3-08b)
+
+fn engine_live(groups: Vec<GroupSpec>, q: Vec<f64>) -> PaperEngine {
+    let mut u = Universe::new(Bounds::new((446_256_000, 452_304_000), &dev2()), MAYHEM);
+    for p in [P, Q] {
+        u.add_pool(p, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9, create_slot: None });
+    }
+    let sig = SignalEngine::new(u, dev2(), groups, WindowRule::Live).unwrap();
+    PaperEngine::new(sig, PaperCfg::new(q, base(), GradInfo::default(), HashMap::new())).unwrap()
+}
+
+#[test]
+fn a_backfill_is_history_at_the_next_slot_end_never_an_event() {
+    // M3-08b D1 (engine.py:416-421): P's earlier trades come as a backfill with the first recorded one. At that slot's
+    // end they widen pool_seen to their first slot, mark P backfilled and enter its farm window (an overlapping trade
+    // once); they make no row and no position. An unknown pool's backfill (U): seen and marked, but no farm window.
+    const U: Id = 7;
+    let mut eng = engine_live(vec![k3()], vec![0.5]);
+    let mut keys = FakeKeys { names: vec![""; 8], seeds: vec![0; 8], triggers: HashMap::new() };
+    let ev = |l: Leg| Event::new(l, Some(BT0 + (l.slot() as i64 - T as i64) * 2 / 5));
+    let first = inflow(T - 10, P, 580);
+    eng.add_history(P, vec![inflow(T - 5_000, P, 600), inflow(T - 4_000, P, 590), first]);
+    eng.add_history(U, vec![inflow(T - 3_000, U, 600)]);
+    eng.push(&ev(first), &mut keys).unwrap();
+    assert!(eng.sig.backfilled.is_empty(), "taken at the slot end, not before");
+    eng.close_through(T - 10, &mut keys).unwrap();
+    assert_eq!((eng.sig.pool_seen.get(&P), eng.sig.pool_last.get(&P)), (Some(&(T - 5_000)), Some(&(T - 10))));
+    assert!(eng.sig.backfilled.contains(&P) && eng.sig.backfilled.contains(&U));
+    assert_eq!(eng.sig.pool_seen.get(&U), Some(&(T - 3_000)));
+    assert_eq!(eng.sig.farm.items(P).map(<[_]>::len), Some(3)); // the recorded trade once (FarmWindow::add's check)
+    assert!(eng.sig.farm.items(U).is_none(), "an unknown pool keeps no farm window");
+    assert!(eng.paper.ops.iter().all(|o| !matches!(o, Op::Signal(..) | Op::Order { .. } | Op::Fill { .. })));
+    // P's live window is complete from the backfill on (a pool seen for 10 slots only)
+    assert_eq!(eng.sig.window_complete(P, T), 1);
+    assert_eq!(eng.sig.window_complete(Q, T), 0); // never seen
+    let names: Vec<&str> = eng.mem_report().iter().map(|m| m.name).collect();
+    assert!(names.contains(&"backfilled") && names.contains(&"history_pending"), "{names:?}");
+}
+
+#[test]
+fn one_create_slot_serves_the_graduation_and_the_live_window() {
+    // M3-08b D4 (LAB: one store, not two): a pool learned with create_slot s gives a graduation's open slot s and the
+    // live window's "followed since its creation" from the same PoolMeta field; GradInfo keeps no pool map (it cannot
+    // disagree), and a pool learned without one sends the sale to the seed pool.
+    const G: Id = 4;
+    const M: Id = 5;
+    const N: Id = 6;
+    let mut eng = engine_live(vec![k3()], vec![0.5]);
+    let s = T + 150;
+    let pm = PoolMeta { reversed: false, mayhem: false, mint_tok: Some(M), coin_creator: 9, create_slot: Some(s) };
+    assert!(eng.learn_pool(G, pm));
+    assert!(eng.learn_pool(N, PoolMeta { create_slot: None, ..pm }));
+    eng.learn_token(M, MintMeta::new(Some(T - 1_000), 9, Some(false), None), Some(T + 10), Some(G));
+    let mut r = PosResult::new(T, T + 2, 1, crate::legs::Venue::Curve);
+    let g = on_complete(&eng.paper.cfg.grad, &eng.sig.universe, &mut eng.paper.counts, M, &mut r, T + 10);
+    assert_eq!(g, Some(Grad { pool: G, open_slot: s }));
+    eng.learn_token(M, MintMeta::new(Some(T - 1_000), 9, Some(false), None), Some(T + 10), Some(N));
+    let mut r = PosResult::new(T, T + 2, 1, crate::legs::Venue::Curve);
+    assert_eq!(on_complete(&eng.paper.cfg.grad, &eng.sig.universe, &mut eng.paper.counts, M, &mut r, T + 10), None);
+    assert!(r.seed_pool);
+    // G first seen 10 slots after its create slot: followed since creation; 300 slots after: not
+    eng.sig.pool_seen.insert(G, s + 10);
+    assert_eq!(eng.sig.window_complete(G, s + 20), 1);
+    eng.sig.pool_seen.insert(G, s + 300);
+    assert_eq!(eng.sig.window_complete(G, s + 310), 0);
 }

@@ -71,6 +71,8 @@ pub struct Market<'a> {
     pub reversed: bool,
     pub mayhem: bool,
     pub coin_creator: Option<&'a str>,
+    /// The pools row's create_slot (M3-08b D4: into `PoolMeta`, the one store a graduation and the live rule read).
+    pub create_slot: Option<u64>,
 }
 
 /// What building the universe saw: tokens, SOL markets, tokens with a NULL quote_mint (never SOL, counted, no error:
@@ -105,7 +107,7 @@ pub fn universe(keys: &mut impl KeyNames, bounds: Bounds, tokens: &[Token], mark
         u.add_mint(keys.id(t.mint), MintMeta::new(t.create_slot, creator, t.mayhem, t.quote_mint));
     }
     for (m, coin_creator) in markets.iter().zip(coin_creators) {
-        let p = PoolMeta { reversed: m.reversed, mayhem: m.mayhem, mint_tok: keys.get(m.mint), coin_creator };
+        let p = PoolMeta { reversed: m.reversed, mayhem: m.mayhem, mint_tok: keys.get(m.mint), coin_creator, create_slot: m.create_slot };
         u.add_pool(keys.id(m.pool), p);
     }
     load.interned = (keys.len() - before) as u64;
@@ -566,10 +568,14 @@ pub(crate) mod tests {
                 "reversed" => true,
                 o => bail!("orientation {o}"),
             };
-            markets.push(Market { pool: s(p, "pool")?, mint: s(p, "mint")?, reversed, mayhem: b(p, "mayhem")?, coin_creator: os(p, "coin_creator")? });
+            markets.push(Market { pool: s(p, "pool")?, mint: s(p, "mint")?, reversed, mayhem: b(p, "mayhem")?, coin_creator: os(p, "coin_creator")?,
+                                  create_slot: ou(p, "create_slot")? });
         }
         let (u_, _) = universe(&mut keys, bounds, &tokens, &markets);
-        let eng = SignalEngine::new(u_, clock, groups.specs.clone(), WindowRule::AllPools)?;
+        // M3-08b's cases name the live farm-window rule (m3_live_cases.py: LearnFeed's all_pools off); every other case
+        // is a replay's (CaseFeed.all_pools)
+        let rule = if case.get("window_rule").and_then(Value::as_str) == Some("live") { WindowRule::Live } else { WindowRule::AllPools };
+        let eng = SignalEngine::new(u_, clock, groups.specs.clone(), rule)?;
         Ok((eng, groups, keys))
     }
 
@@ -755,8 +761,8 @@ pub(crate) mod tests {
             Token { mint: "M2", create_slot: Some(450_000_000), creator: None, mayhem: Some(false), quote_mint: None },
         ];
         let markets = [
-            Market { pool: "P1", mint: "M1", reversed: false, mayhem: false, coin_creator: Some("CC") },
-            Market { pool: "P2", mint: "P2", reversed: true, mayhem: false, coin_creator: Some("C1") },
+            Market { pool: "P1", mint: "M1", reversed: false, mayhem: false, coin_creator: Some("CC"), create_slot: Some(450_000_100) },
+            Market { pool: "P2", mint: "P2", reversed: true, mayhem: false, coin_creator: Some("C1"), create_slot: None },
         ];
         let dev2 = Clock::new(SLOT_TIMES[..14].iter().map(|&(e, _, bits)| (e, f64::from_bits(bits))).collect());
         let (u, load) = universe(&mut keys, Bounds::new((446_256_000, 452_304_000), &dev2), &tokens, &markets);
@@ -766,6 +772,8 @@ pub(crate) mod tests {
         let k = |p| u.f7_key(lab_core::legs::Venue::Pool, p).unwrap();
         assert_eq!((k(2).creator, k(2).coin, k(3).creator, k(3).coin, k(3).seg), (4, 5, 4, 4, Segment::PoolReversed));
         assert_eq!(u.f7_key(lab_core::legs::Venue::Curve, 1), Err(Reject::QuoteNull));
+        // M3-08b D4: each market's create_slot is its pools row's, in the one store
+        assert_eq!((u.pool(2).and_then(|p| p.create_slot), u.pool(3).and_then(|p| p.create_slot)), (Some(450_000_100), None));
     }
 
     #[test]

@@ -98,6 +98,9 @@ pub struct PoolMeta {
     pub mint_tok: Option<Id>,
     /// NONE for a NULL coin_creator.
     pub coin_creator: Id,
+    /// The pool's create slot (feed.py `PoolInfo.create_slot`, NULL: None): the one store of it (M3-08b D4), read by a
+    /// graduation's open slot (paper.rs `on_complete`) and the live farm-window rule (signals.rs `window_complete`).
+    pub create_slot: Option<u64>,
 }
 
 /// Why `f7_key` refused a key; the summary counts each cause.
@@ -310,7 +313,7 @@ mod tests {
         let mut u = uni();
         u.add_mint(1, MintMeta::new(Some(450_000_000), 50, None, Some(PUMP_QUOTE))); // a PUMP-quoted token: no test on pools
         u.add_mint(2, MintMeta::new(Some(450_000_000), NONE, None, Some(ONES))); // creator NULL
-        let p = PoolMeta { reversed: false, mayhem: false, mint_tok: Some(1), coin_creator: 60 };
+        let p = PoolMeta { reversed: false, mayhem: false, mint_tok: Some(1), coin_creator: 60, create_slot: None };
         u.add_pool(20, p);
         u.add_pool(21, PoolMeta { mint_tok: Some(2), ..p });
         u.add_pool(22, PoolMeta { mint_tok: Some(23), ..p }); // the mint (here the pool's own address) is no token
@@ -338,7 +341,7 @@ mod tests {
         assert_eq!(u.f7_key(Venue::Curve, 1), Err(Reject::CurveAge));
         assert_eq!(u.n2_bucket(1, &curve_leg(1, 42)), Some((Segment::Curve, 42)));
         assert_eq!([2, 3, 4, 5].map(|m| u.n2_bucket(m, &curve_leg(m, 42))), [None; 4]);
-        let p = PoolMeta { reversed: false, mayhem: false, mint_tok: None, coin_creator: 60 };
+        let p = PoolMeta { reversed: false, mayhem: false, mint_tok: None, coin_creator: 60, create_slot: None };
         u.add_pool(20, p);
         u.add_pool(21, PoolMeta { reversed: true, ..p });
         u.add_pool(22, PoolMeta { mayhem: true, ..p });

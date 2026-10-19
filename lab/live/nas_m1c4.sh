@@ -8,7 +8,8 @@
 #
 #   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (the segments against the
 #                chunks on the fixture, and every earlier test) and of ALL of lab/core, named tests required to have run
-#                (M3-08: lab/core's live API, the m3_live_cases golden and C2's cases with the slots closed live);
+#                (M3-08: lab/core's live API, the m3_live_cases golden and C2's cases with the slots closed live; M3-08b:
+#                the live farm-window rule, backfills as history and the one create_slot store);
 #                then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab. Since
 #                STEP=repro, through lab/scripts/rust-repro.sh: cargo reaches the checkout by one fixed path
 #                ($LAB_RUST_ROOT/lab, a symlink, under a lock) and maps it and CARGO_HOME to /src and /cargo, so the
@@ -137,7 +138,8 @@ if [ "$STEP" = build ]; then
            memlog::tests::a_churned_table_resizes_once_then_stays legs_read::tests::the_slots_are_whole_and_flatten_to_the_events \
            paper_core::tests::every_m3_case_gives_the_engines_writes_with_what_it_learns \
            paper_core::tests::every_c2_case_gives_the_engines_writes_with_the_slots_closed_live \
-           paper_core::tests::every_c3_case_gives_the_engines_writes_with_the_slots_closed_live_where_the_files_stay; do
+           paper_core::tests::every_c3_case_gives_the_engines_writes_with_the_slots_closed_live_where_the_files_stay \
+           signals::tests::every_markets_create_slot_reaches_its_pool_meta; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
@@ -145,7 +147,10 @@ if [ "$STEP" = build ]; then
   grep -E "^test result" "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"
   for t in signals::tests::the_windowed_structures_stay_bounded_over_thirty_hours mem::tests::the_estimates_are_capacity_times_size \
            paper::tests::closing_a_complete_slot_early_writes_what_the_next_event_writes paper::tests::a_late_event_and_input_after_stop_are_refused \
-           paper::tests::a_pool_learned_live_is_known_from_then_on paper::tests::an_epoch_learned_live_sets_the_slots_from_then_on; do
+           paper::tests::a_pool_learned_live_is_known_from_then_on paper::tests::an_epoch_learned_live_sets_the_slots_from_then_on \
+           farm::tests::the_live_rule_reads_the_pools_own_hour_backfill_and_creation \
+           paper::tests::a_backfill_is_history_at_the_next_slot_end_never_an_event \
+           paper::tests::one_create_slot_serves_the_graduation_and_the_live_window; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test-core.log" || { log "cargo test lab-core: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test lab-core: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test-core.log") tests ok)"

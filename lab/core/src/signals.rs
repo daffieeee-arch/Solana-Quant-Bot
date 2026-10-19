@@ -20,7 +20,7 @@
 
 use crate::clock::{day_of, Clock, EPOCH_SLOTS, HISTORY_SLOTS, POOL_SEEN_KEEP_MS};
 use crate::f7::{f7_signal, trigger, Recent};
-use crate::farm::{FarmWindow, WindowRule};
+use crate::farm::{live_complete, FarmWindow, WindowRule};
 use crate::legs::{Event, Id, Leg, Venue, NONE};
 use crate::mem::{self, Mem};
 use crate::n2::{HourIndex, N2Keys};
@@ -366,6 +366,10 @@ pub struct SignalEngine {
     pub hours: HourIndex,
     pub pool_seen: HashMap<Id, u64>,
     pub pool_last: HashMap<Id, u64>,
+    /// Live (M3-08b): the pools with a backfill (engine.py `backfilled`), pruned with pool_last.
+    pub backfilled: HashSet<Id>,
+    /// Live (M3-08b): backfills given since the last slot end (`add_history`), drained at the next one.
+    history: Vec<(Id, Vec<Leg>)>,
     pub counts: Counts,
     /// Some: F7 passes and rollovers are recorded here for the caller to drain.
     pub trace: Option<Vec<Trace>>,
@@ -386,6 +390,9 @@ impl SignalEngine {
         v.push(self.hours.mem());
         v.push(Mem::new("pool_seen", self.pool_seen.len(), mem::map(&self.pool_seen)));
         v.push(Mem::new("pool_last", self.pool_last.len(), mem::map(&self.pool_last)));
+        v.push(Mem::new("backfilled", self.backfilled.len(), mem::set(&self.backfilled)));
+        let legs: usize = self.history.iter().map(|(_, l)| l.len()).sum();
+        v.push(Mem::new("history_pending", legs, mem::vec(&self.history) + self.history.iter().map(|(_, l)| mem::vec(l)).sum::<usize>()));
         v.push(self.by_key.mem());
         v.push(Mem::new("slot_written", self.written.len(), mem::set(&self.written)));
         v
@@ -393,8 +400,7 @@ impl SignalEngine {
 }
 
 impl SignalEngine {
-    /// Refuses: not exactly one primary group, a group or variant name used twice (engine.py:237-239), and the live
-    /// farm-window rule (M3).
+    /// Refuses: not exactly one primary group, a group or variant name used twice (engine.py:237-239).
     pub fn new(universe: Universe, clock: Clock, groups: Vec<GroupSpec>, window_rule: WindowRule) -> Result<Self, SignalError> {
         let config = |s: String| Err(SignalError::Config(s));
         if groups.iter().filter(|g| g.primary).count() != 1 {
@@ -404,9 +410,6 @@ impl SignalEngine {
         let variants: Vec<&str> = groups.iter().flat_map(|g| g.variants.iter().map(String::as_str)).collect();
         if names.len() != groups.len() || variants.iter().collect::<HashSet<_>>().len() != variants.len() {
             return config("groups and their variants must have distinct names".to_owned());
-        }
-        if window_rule == WindowRule::Live {
-            return config("the live farm-window rule is not ported (M3, engine.py:806-813)".to_owned());
         }
         Ok(SignalEngine {
             universe,
@@ -421,6 +424,8 @@ impl SignalEngine {
             hours: HourIndex::default(),
             pool_seen: HashMap::new(),
             pool_last: HashMap::new(),
+            backfilled: HashSet::new(),
+            history: Vec::new(),
             counts: Counts::default(),
             trace: None,
             cur: None,
@@ -468,6 +473,13 @@ impl SignalEngine {
     /// The slot whose events are being collected (it ends with the next slot's first event, `finish` or `close_with`).
     pub fn open_slot(&self) -> Option<u64> {
         self.cur.map(|c| c.0)
+    }
+
+    /// Live (M3-08b D1): a backfill's trades of `pool` (LiveFeed `drain_history`: earlier transactions of a pool the
+    /// recorder started to follow), history only, never events. Queued, and taken at the next slot end after the
+    /// recorded legs' farm windows (engine.py:416-421), as the engine drains them; legs in chain order.
+    pub fn add_history(&mut self, pool: Id, legs: Vec<Leg>) {
+        self.history.push((pool, legs));
     }
 
     fn flush(&mut self, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<(), SignalError> {
@@ -536,6 +548,20 @@ impl SignalEngine {
                     let reversed = p.reversed;
                     self.farm.add(key, reversed, legs, &self.clock);
                 }
+            }
+        }
+        // 4c. live: the backfills given since the last slot end, as history (engine.py:416-421: `_see_pool(backfill=
+        // True)`, then `_farm_add`): the pool seen from its legs' first slot to their last and marked backfilled, any
+        // pool; their trades into the farm window of a known SOL market (FarmWindow::add skips a trade already there).
+        for (pool, legs) in self.history.drain(..) {
+            let (Some(lo), Some(hi)) = (legs.iter().map(Leg::slot).min(), legs.iter().map(Leg::slot).max()) else { continue };
+            let seen = self.pool_seen.entry(pool).or_insert(lo);
+            *seen = (*seen).min(lo);
+            let last = self.pool_last.entry(pool).or_insert(hi);
+            *last = (*last).max(hi);
+            self.backfilled.insert(pool);
+            if let Some(p) = self.universe.pool(pool) {
+                self.farm.add(pool, p.reversed, &legs, &self.clock);
             }
         }
         // 5. time passes for the open positions on keys without an event here, and the graduations waiting
@@ -613,7 +639,7 @@ impl SignalEngine {
         let Trig { t, seg, depth, farm } = *trig;
         let pool = seg.venue() == Venue::Pool;
         let farm_complete = self.farm_complete_from.map(|c| u8::from(t >= c));
-        let window = if pool { self.window_rule.complete(self.first_slot, t, &self.clock) } else { None };
+        let window = pool.then(|| self.window_complete(key, t));
         SignalRow {
             family,
             group,
@@ -632,6 +658,15 @@ impl SignalEngine {
         }
     }
 
+    /// engine.py `_farm_window_complete` (:799-813) for a pool row's own key at t, by the feed's rule.
+    pub(crate) fn window_complete(&self, key: Id, t: u64) -> u8 {
+        match self.window_rule {
+            WindowRule::AllPools => WindowRule::all_pools(self.first_slot, t, &self.clock),
+            WindowRule::Live => live_complete(self.pool_seen.get(&key).copied(), self.backfilled.contains(&key),
+                                              self.universe.pool(key).and_then(|p| p.create_slot), t, &self.clock),
+        }
+    }
+
     /// engine.py `_hour_index`: a new hour first (its prunes with n at this slot), then the key's N2 candidacy with its
     /// last leg's depth.
     fn hour_index(&mut self, venue: Venue, key: Id, legs: &[Leg], slot: u64, hooks: &impl Hooks) {
@@ -643,13 +678,15 @@ impl SignalEngine {
             self.farm.rollover(slot, &self.clock);
             // (farm_fixes: live only, M3.) The hooks keep the keys with an open, pending or graduating position.
             self.recent.sweep(slot.saturating_sub(HISTORY_SLOTS.max(h)), |k| hooks.keep(k));
-            // pool_seen of pools without a trade for 24 h goes; the test reads pool_last (engine.py:697-701).
+            // pool_seen of pools without a trade for 24 h goes, and their backfill mark (live); the test reads pool_last
+            // (engine.py:697-701).
             let old = slot.saturating_sub(self.clock.slots(POOL_SEEN_KEEP_MS, slot));
-            let seen = &mut self.pool_seen;
+            let (seen, backfilled) = (&mut self.pool_seen, &mut self.backfilled);
             self.pool_last.retain(|p, last| {
                 let keep = *last >= old;
                 if !keep {
                     seen.remove(p);
+                    backfilled.remove(p);
                 }
                 keep
             });
@@ -741,8 +778,8 @@ mod tests {
         // A curve without a token: no row, no candidacy. A SOL-market pool whose mint is no token signals, with the
         // coin creator as its creator: the coin creator's small sell in the creator window blocks it.
         let mut u = dev2_universe();
-        u.add_pool(60, PoolMeta { reversed: false, mayhem: false, mint_tok: Some(61), coin_creator: 62 });
-        u.add_pool(70, PoolMeta { reversed: false, mayhem: false, mint_tok: Some(71), coin_creator: 72 });
+        u.add_pool(60, PoolMeta { reversed: false, mayhem: false, mint_tok: Some(61), coin_creator: 62, create_slot: None });
+        u.add_pool(70, PoolMeta { reversed: false, mayhem: false, mint_tok: Some(71), coin_creator: 72, create_slot: None });
         let t = 450_200_000;
         let s = SOL as i64;
         let mut legs = vec![curve((t - 10, 0), 50, 3, true, 6 * SOL as u64, 100 * SOL as u64, 40 * SOL as u64),
@@ -819,7 +856,7 @@ mod tests {
     fn farm_complete_follows_the_live_seed() {
         // Live only (farm_seed's complete_from): NULL in a replay, else 1 from complete_from on.
         let mut u = dev2_universe();
-        u.add_pool(1, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9 });
+        u.add_pool(1, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9, create_slot: None });
         let s = SOL as i64;
         let t = 450_200_000;
         let legs = [pool((t - 10, 0), 1, 3, PoolKind::Sell, (20 * s, 0), (300 * s, 0)),
@@ -879,7 +916,7 @@ mod tests {
     fn the_engine_refuses_groups_it_cannot_run() {
         let new = |g: Vec<GroupSpec>, rule| SignalEngine::new(dev2_universe(), dev2(), g, rule).map(|_| ());
         assert_eq!(new(groups(1), WindowRule::AllPools), Ok(()));
-        assert!(matches!(new(groups(1), WindowRule::Live), Err(SignalError::Config(_))));
+        assert_eq!(new(groups(1), WindowRule::Live), Ok(())); // M3-08b: the live farm-window rule is ported (no longer refused)
         let mut two = groups(1);
         two[1].primary = true;
         assert!(new(two, WindowRule::AllPools).is_err());
@@ -908,7 +945,7 @@ mod tests {
         let mut u = dev2_universe();
         let pools = (n / 50 + 1) as Id;
         for i in 0..pools {
-            u.add_pool(1000 + i, PoolMeta { reversed: false, mayhem: false, mint_tok: None, coin_creator: 5 });
+            u.add_pool(1000 + i, PoolMeta { reversed: false, mayhem: false, mint_tok: None, coin_creator: 5, create_slot: None });
         }
         let mut eng = engine(u, 0);
         let mut keys = FakeKeys::default();
