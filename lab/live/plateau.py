@@ -532,7 +532,9 @@ def report_daily(res, lines, chunks=False):
            "line-to-line increase. A day after the warm-up whose RSS or heap grows or steps by more than "
            f"{STEP_EXPLAIN // MB} MB must be explained here before M3 builds on it (not a gate): it is attributed to the structures "
            "in the same measure (their slopes, their last 2 h - first 2 h, or their bytes across the step; these add up to the "
-           f"heap's with the residue), 'attributed' when they make up >= {ATTRIBUTED:.0%} of it.", "",
+           f"heap's with the residue), 'attributed' when they make up >= {ATTRIBUTED:.0%} of it. With an RSS measure the "
+           "contributions and the residue are the heap's: a share under 100 % with a residue near 0 is the allocator's "
+           "pages (RSS above the heap), not a structure.", "",
            "| day | minutes | lines | events | RSS slope / last-first | heap slope / last-first | residue slope / last-first | "
            "largest step RSS / heap (minute) | table resizes | structures growing (slope MB/24 h) |",
            "|---|---|---|---|---|---|---|---|---|---|"]
