@@ -105,7 +105,8 @@ def run(tmp_path_factory):
     out = str(tmp_path_factory.mktemp("shadow"))
     a = argparse.Namespace(store=STORE, out=out, lo=LO, hi=HI, chunks=os.path.dirname(chunk[0][2]), variants="0.04:600,0.06:600",
                            d=1, q=0.5, gaps=1, reconnects=2, seed=7, no_probes=False, watch_warmup=360,
-                           risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB")
+                           risk=os.path.join(os.path.dirname(shadow.__file__), "risk.yaml"), reconcile_every=1, memory="700MB",
+                           engine_only=True)
     window = shadow.WINDOW_SLOTS
     shadow.WINDOW_SLOTS = 300  # the work tables are built in 7 slot windows
     yield out, shadow.run(a, log=lambda m: None)
@@ -131,6 +132,35 @@ def test_segments_follow_the_minutes_with_reconnects_and_a_gap(run):
             w = json.load(fh)
         assert w["new_pools"] and isinstance(w["pools"], list)
     assert info["recorder"].get("tx_watchlist", 0) > 0 and info["estimated_gb_per_day"] > 0
+
+
+def test_engine_only_segments_are_a_subset_of_a_with_their_volume(run):
+    """M3-04 (--engine-only): recorder B's segments beside A's, the same slots and reconnects; its pools are A's f7_rev
+    list pools and open pools; no graduations or pump.fun creates; every row of B is A's (check_engine_only); its volume
+    is reported beside A's."""
+    out, info = run
+    a_segs, b_segs = segment_dirs(os.path.join(out, "rec")), segment_dirs(os.path.join(out, "rec-b"))
+    assert len(b_segs) == len(a_segs) == info["recorder_b"]["segments"]
+    for (_, sa, ma), (_, sb, mb) in zip(a_segs, b_segs):
+        assert (mb["first_slot"], mb["last_slot"], mb["reconnects"]) == (ma["first_slot"], ma["last_slot"], ma["reconnects"])
+        with open(os.path.join(sa, "watchlist.json")) as fa, open(os.path.join(sb, "watchlist.json")) as fb:
+            wa, wb = json.load(fa), json.load(fb)
+        assert {p["pool"] for p in wb["pools"]} <= {p["pool"] for p in wa["pools"]} and wb["engine_only"] and not wb["new_pools"]
+        assert not {u["stream"] for u in mb["usage"]} & {"tx_new_pools", "tx_pump_creates"}
+    ck = info["engine_only_check"]
+    assert ck["ok"] and ck["blocks_equal"] and all(t["not_in_a"] == 0 for t in ck["tables"].values()), ck
+    assert sum(t["b_rows"] for t in ck["tables"].values()) <= sum(t["a_rows"] for t in ck["tables"].values())
+    assert 0 <= info["estimated_gb_per_day_b"] <= info["estimated_gb_per_day"]
+    with open(os.path.join(out, "compare.md")) as f:
+        md = f.read()
+    assert "### Recorder B: the engine-only filter (M3-04, rec-b/)" in md and "B's rows within A's: **yes**" in md
+
+
+def test_engine_only_is_refused_with_from_compare_or_from_segments(tmp_path):
+    for flag in ("from_compare", "from_segments"):
+        a = argparse.Namespace(store=STORE, out=str(tmp_path), engine_only=True, **{flag: True})
+        with pytest.raises(SystemExit, match="--engine-only"):
+            shadow.run(a, log=lambda m: None)
 
 
 def test_progress_lines_write_the_state_of_every_structure(run):
