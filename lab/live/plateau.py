@@ -2,7 +2,8 @@
 sha256 pinned in nas_m1c4.sh): over `lab-live paper --mem-log` (lab/live/src/memlog.rs), is the memory flat?
 
   python lab/live/plateau.py --p1 p1.jsonl [--p2 p2.jsonl] [--p3 p3.jsonl] [--run run.json] --spec-sha SHA --out plateau.md
-  python lab/live/plateau.py --journal-sha DIR      (the determinism check's sha256 of a journal, for run.json)
+  python lab/live/plateau.py --journal-sha DIR [--tables-only]   (the determinism check's sha256 of a journal, for
+                                                                  run.json; --tables-only: the A/B across commits)
 
 - p1: the segments (the live form), the gated run. p2: the same again (determinism; its log is reported, not gated).
   p3: the same range from the chunks, the upper bound (reported, not gated: spec E5).
@@ -74,14 +75,21 @@ GATE_WINDOWED = False
 RUN_STATE = ("lab_live_paper",)
 
 
-def journal_sha(directory):
+def journal_sha(directory, tables_only=False):
     """sha256 over every table of <directory>/journal.sqlite, each table's rows sorted, without the run's own summary
-    (RUN_STATE): two runs with the same rows give the same sha256 whatever their timing."""
+    (RUN_STATE): two runs with the same rows give the same sha256 whatever their timing.
+
+    tables_only (C4-5, an A/B across two commits): every table but `state`, i.e. the rows the engines write (signals,
+    orders, fills, exits, heartbeat, positions and the rest). `state` holds the run's inputs as given and its summary.
+    The groups text names the checkout's risk files, so its path differs per commit, and the summary holds the run's
+    seconds, RSS and mem-log path. The inputs' own sha256 are in each job's log (nas_m1c4.sh `prepare`)."""
     db = sqlite3.connect(f"file:{os.path.join(directory, 'journal.sqlite')}?mode=ro", uri=True)
     try:
         h = hashlib.sha256()
         tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
         for t in tables:
+            if tables_only and t == "state":
+                continue
             rows = db.execute(f'SELECT * FROM "{t}"').fetchall()
             if t == "state":
                 rows = [r for r in rows if r[0] not in RUN_STATE]
@@ -385,11 +393,11 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
     if argv[:1] == ["--journal-sha"]:
-        if len(argv) != 2:
-            print("usage: plateau.py --journal-sha DIR", file=sys.stderr)
+        if len(argv) not in (2, 3) or argv[2:] not in ([], ["--tables-only"]):
+            print("usage: plateau.py --journal-sha DIR [--tables-only]", file=sys.stderr)
             return 2
         try:
-            print(journal_sha(argv[1]))
+            print(journal_sha(argv[1], tables_only=argv[2:] == ["--tables-only"]))
         except sqlite3.Error as e:
             print(f"lab-live plateau: {argv[1]}: {e}", file=sys.stderr)
             return 2

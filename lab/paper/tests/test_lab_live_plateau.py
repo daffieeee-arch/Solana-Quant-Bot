@@ -228,3 +228,15 @@ def test_the_journal_sha_ignores_the_runs_summary_and_row_order(tmp_path, capsys
     assert plateau.journal_sha(a) == plateau.journal_sha(b) != plateau.journal_sha(c)
     assert plateau.main(["--journal-sha", str(a)]) == 0 and capsys.readouterr().out.strip() == plateau.journal_sha(a)
     assert plateau.main(["--journal-sha", str(tmp_path / "none")]) == 2
+    # C4-5, across commits: another checkout's risk path in the groups text changes the journal's sha256 but not its
+    # tables' (every table but state); a row that differs changes both
+    d = journal(tmp_path / "d", [("k1", 1), ("k2", 2)], '{"secs": 9.0}')
+    db = sqlite3.connect(d / "journal.sqlite")
+    db.execute("UPDATE state SET v = 'g /lab/code/repo-a662d75/lab/paper/risk.yaml' WHERE k = 'groups'")
+    db.commit()
+    db.close()
+    assert plateau.journal_sha(d) != plateau.journal_sha(a)
+    assert plateau.journal_sha(d, tables_only=True) == plateau.journal_sha(a, tables_only=True) != plateau.journal_sha(c, tables_only=True)
+    assert plateau.main(["--journal-sha", str(d), "--tables-only"]) == 0
+    assert capsys.readouterr().out.strip() == plateau.journal_sha(a, tables_only=True)
+    assert plateau.main(["--journal-sha", str(d), "--tables"]) == 2 and plateau.main(["--journal-sha", str(d), "x", "--tables-only"]) == 2

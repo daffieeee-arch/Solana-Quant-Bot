@@ -30,8 +30,11 @@
 #   STEP=ab      (the lab Python 3.13 runner; C4-4): the farmer-history prune's A/B on job 91's segments: P0 with
 #                --keep-farmer-history and P1 with the prune, side by side; their journals and wallet files must be
 #                byte-identical. The measure line gives the sweeps, the pairs dropped and both runs' memory at the end.
-#                C4-5: both journals must also equal C4-4's (8a3d21b, job 99zza: sha256 prefix AB_REF below), so the
-#                boxed histories and the key buffer change no row; the line adds farmer_hist's table at the end.
+#                C4-5: P1's rows must also equal C4-4's P1 (8a3d21b, job 99zza: its ab1 journal, AB_REF_DIR below), so
+#                the boxed histories and the key buffer change no row. Across commits that is every table but `state`
+#                (plateau.py --journal-sha --tables-only): `state` holds the inputs as given (the groups text names the
+#                checkout's risk files, a path per commit; the inputs' sha256 are in each job.log) and the run's summary.
+#                AB_REF_DIR= (empty) skips it. The line adds farmer_hist's table at the end.
 #   STEP=m2      (the lab Python 3.13 runner; C4-3, M2 in replay): on fwd1053-1054 [LO, HI) the legs parity (the whole
 #                store), then the signals parity and RC4 (lab-live paper against paper.engine, the paper start's files,
 #                config mode) side by side, each with its GREEN measure line in job.log.
@@ -58,7 +61,7 @@ STORE=$DATA/store/fwd1053-1054.duckdb
 LO=454896000
 HI=455760000
 SPEC_SHA=e14bdf24c75c00318daef017a96a5ebe56545b835a0e31ef05be7c5cb2e23291   # research/m1-c4-plateau-spec-2026-10-19.md v0.6 (E8)
-AB_REF=${AB_REF:-34e74a4e0ff1}   # the journal sha256 (plateau.py --journal-sha) of C4-4's A/B on these segments (8a3d21b, 99zza)
+AB_REF_DIR=${AB_REF_DIR-$DATA/backtests/live-m1c4-8a3d21b/ab1}   # C4-4's P1 journal on these segments (8a3d21b, 99zza)
 
 if [ "$STEP" = build ]; then
   cd "$REPO/lab/live"
@@ -144,11 +147,16 @@ if [ "$STEP" = ab ]; then
   wait $b || r1=$?
   for n in ab0 ab1; do tail -2 "$OUT/$n.log" | tee -a "$OUT/job.log"; done
   [ $r0 = 0 ] && [ $r1 = 0 ] || { log "ab: a run failed (exit $r0 / $r1)"; exit 1; }
-  "$PY" - "$OUT" "$REPO/lab/live/plateau.py" "$AB_REF" <<'EOF' | tee -a "$OUT/job.log" || { log "ab: RED"; exit 1; }
+  "$PY" - "$OUT" "$REPO/lab/live/plateau.py" "$AB_REF_DIR" <<'EOF' | tee -a "$OUT/job.log" || { log "ab: RED"; exit 1; }
 import filecmp, json, os, subprocess, sys
-out, plateau, ref = sys.argv[1], sys.argv[2], sys.argv[3]
-sha = lambda n: subprocess.run([sys.executable, plateau, "--journal-sha", os.path.join(out, n)], capture_output=True, text=True).stdout.strip()
+out, plateau, ref_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+run = lambda *a: subprocess.run([sys.executable, plateau, "--journal-sha", *a], capture_output=True, text=True).stdout.strip()
+sha = lambda n: run(os.path.join(out, n))
 a, b = sha("ab0"), sha("ab1")
+# C4-5 across commits: P1's tables (every table but state) against C4-4's P1; None: not asked (AB_REF_DIR empty)
+t_new = run(os.path.join(out, "ab1"), "--tables-only")
+t_ref = run(ref_dir, "--tables-only") if ref_dir and os.path.isfile(os.path.join(ref_dir, "journal.sqlite")) else ""
+cross = None if not ref_dir else bool(t_new) and t_new == t_ref
 wallets = sorted(f for f in os.listdir(os.path.join(out, "ab0")) if f.startswith("wallet") and f.endswith(".json"))
 w_equal = bool(wallets) and all(filecmp.cmp(os.path.join(out, "ab0", f), os.path.join(out, "ab1", f), shallow=False) for f in wallets)
 s0, s1 = (json.load(open(os.path.join(out, f"{n}.json"))) for n in ("ab0", "ab1"))
@@ -157,9 +165,10 @@ e0, e1 = end("ab0"), end("ab1")
 p0, p1 = s0["farm_hist_pruned"], s1["farm_hist_pruned"]
 st = lambda e, k, f: e["structures"][k][f]
 ft = e1.get("tables", {}).get("farmer_hist", {})
-ok = bool(a) and a == b and a.startswith(ref) and w_equal and not p0["on"] and p1["on"] and p1["sweeps"] > 0
-print(f"lab-live farm prune A/B on job 91's segments: journals {'equal' if a and a == b else 'DIFFER'} ({a[:12]}; C4-4's {ref}: "
-      f"{'equal' if a.startswith(ref) else 'DIFFER'}), wallets "
+ok = bool(a) and a == b and cross is not False and w_equal and not p0["on"] and p1["on"] and p1["sweeps"] > 0
+vs = "not asked" if cross is None else f"{'equal' if cross else 'DIFFER'} ({t_new[:12]} vs {t_ref[:12] or 'no journal at ' + ref_dir})"
+print(f"lab-live farm prune A/B on job 91's segments: journals {'equal' if a and a == b else 'DIFFER'} ({a[:12]}); P1's tables vs "
+      f"C4-4's P1: {vs}; wallets "
       f"{'equal' if w_equal else 'DIFFER'} ({len(wallets)}); prune {p1['sweeps']} sweeps, {p1['pairs_dropped']:,} pairs dropped, "
       f"{p1['pairs_left']:,} left (without: {p0['pairs_left']:,}); at the end farmer_hist_trades {st(e0, 'farmer_hist_trades', 'entries'):,} -> "
       f"{st(e1, 'farmer_hist_trades', 'entries'):,}, heap {e0['heap_bytes'] / 1e9:.2f} -> {e1['heap_bytes'] / 1e9:.2f} GB, peak RSS "
