@@ -414,6 +414,11 @@ def day_bounds(first, last):
     return out[::-1]
 
 
+def measures(g):
+    """A growth()'s two measures per 24 h: the slope and the last 2 h less the first 2 h."""
+    return {"slope": g["slope_day"], "edge": g["last2"] - g["first2"]} if g["n"] else {"slope": 0.0, "edge": 0.0}
+
+
 def residue(v):
     """The heap less the structures' bytes (the part no structure reports: rounding, small buffers, untracked state)."""
     return v["heap_bytes"] - sum(x.get("bytes_est", 0) for x in v["structures"].values())
@@ -445,20 +450,31 @@ def daily(lines, first, last, tables=None):
         res = growth(sl, d["lo"], d["hi"], residue)
         steps = {k: largest_step(prev, sl, k) for k in ("rss_bytes", "heap_bytes")}
         base = prev or sl[0]
-        grew = {}
-        for name, x in sl[-1]["structures"].items():
-            b0 = base["structures"].get(name, {}).get("bytes_est", 0)
-            if x.get("bytes_est", 0) - b0 >= MB:
-                grew[name] = x["bytes_est"] - b0
+        # each structure's growth over the day in the heap's own two measures (like for like: the slopes and the edges
+        # add up, heap = the structures + the residue); a windowed structure's hourly sawtooth leaves end - start
+        # meaningless, its slope is not
+        per = {name: measures(growth(sl, d["lo"], d["hi"], lambda v, n=name: v["structures"].get(n, {}).get("bytes_est")))
+               for name in sl[-1]["structures"]}
+        grew = {n: m["slope"] for n, m in per.items() if m["slope"] >= MB}
         resizes = [dict(st, table=name) for name, t in (tables or {}).items() for st in t.get("steps", []) if d["lo"] <= st["minute"] <= d["hi"]]
-        size = lambda g: max(g["slope_day"], g["last2"] - g["first2"]) if g["n"] else 0  # noqa: E731
-        worst = max(size(rss), size(heap), steps["rss_bytes"][0], steps["heap_bytes"][0])
+        # the day's worst: RSS or heap, by slope, by last 2 h - first 2 h, or by its largest line-to-line step
+        cands = ([(m, "rss", k) for k, m in measures(rss).items()] + [(m, "heap", k) for k, m in measures(heap).items()]
+                 + [(steps["rss_bytes"][0], "rss", "step"), (steps["heap_bytes"][0], "heap", "step")])
+        worst, what, kind = max(cands, key=lambda c: c[0])
         after_warmup = d["lo"] >= first + WARMUP
         explain = None
         if after_warmup and worst > STEP_EXPLAIN:
-            share = sum(grew.values()) / worst
-            explain = {"mb": worst / MB, "share": share, "attributed": share >= ATTRIBUTED,
-                       "by": sorted(grew.items(), key=lambda kv: -kv[1])[:4]}
+            if kind == "step":  # the structures' bytes from the line before the step to the line at it
+                k = bisect.bisect_left(minutes, steps[f"{what}_bytes"][1])
+                b, a = lines[k - 1], lines[k]
+                contrib = {n: x.get("bytes_est", 0) - b["structures"].get(n, {}).get("bytes_est", 0) for n, x in a["structures"].items()}
+                rest = residue(a) - residue(b)
+            else:
+                contrib = {n: m[kind] for n, m in per.items()}
+                rest = measures(res)[kind]
+            share = sum(contrib.values()) / worst
+            explain = {"mb": worst / MB, "measure": f"{what} {kind}", "share": share, "attributed": share >= ATTRIBUTED,
+                       "residue": rest, "by": sorted(((n, c) for n, c in contrib.items() if c >= MB), key=lambda kv: -kv[1])[:4]}
         out.append({**d, "lines": len(sl), "events": sl[-1].get("events", 0) - (base.get("events", 0) if prev else 0),
                     "rss": rss, "heap": heap, "residue": res, "steps": steps, "grew": grew, "resizes": resizes,
                     "after_warmup": after_warmup, "explain": explain})
@@ -515,9 +531,10 @@ def report_daily(res, lines, chunks=False):
            "Days of 24 h counted back from the gate's window (day 0); slope / last 2 h - first 2 h in MB; a step is the largest "
            "line-to-line increase. A day after the warm-up whose RSS or heap grows or steps by more than "
            f"{STEP_EXPLAIN // MB} MB must be explained here before M3 builds on it (not a gate): it is attributed to the structures "
-           f"whose bytes grew that day, 'attributed' when they make up >= {ATTRIBUTED:.0%} of it.", "",
+           "in the same measure (their slopes, their last 2 h - first 2 h, or their bytes across the step; these add up to the "
+           f"heap's with the residue), 'attributed' when they make up >= {ATTRIBUTED:.0%} of it.", "",
            "| day | minutes | lines | events | RSS slope / last-first | heap slope / last-first | residue slope / last-first | "
-           "largest step RSS / heap (minute) | table resizes | structures +MB |",
+           "largest step RSS / heap (minute) | table resizes | structures growing (slope MB/24 h) |",
            "|---|---|---|---|---|---|---|---|---|---|"]
     for d in days:
         label = f"{d['day']}{' (window)' if d['day'] == 0 else ''}{' (partial)' if d['partial'] else ''}{'' if d.get('after_warmup', True) else ' (warm-up)'}"
@@ -535,8 +552,8 @@ def report_daily(res, lines, chunks=False):
     for d in flagged:
         e = d["explain"]
         by = ", ".join(f"{n} {b / MB:+,.0f} MB" for n, b in e["by"]) or "no structure grew"
-        out.append(f"- day {d['day']} ({d['lo']}..{d['hi']}): {e['mb']:,.0f} MB; "
-                   f"{'attributed' if e['attributed'] else '**UNATTRIBUTED**'} ({e['share']:.0%}): {by}.")
+        out.append(f"- day {d['day']} ({d['lo']}..{d['hi']}): {e['mb']:,.0f} MB ({e['measure']}); "
+                   f"{'attributed' if e['attributed'] else '**UNATTRIBUTED**'} ({e['share']:.0%}): {by}; residue {e['residue'] / MB:+,.0f} MB.")
     lr = long_run(lines, first, last)
     if lr:
         out += ["", f"Long run (reported): from the 2 h after the warm-up to the last 2 h, {lr['days']:.1f} days.", "",

@@ -242,10 +242,12 @@ def test_the_journal_sha_ignores_the_runs_summary_and_row_order(tmp_path, capsys
     assert plateau.main(["--journal-sha", str(d), "--tables"]) == 2 and plateau.main(["--journal-sha", str(d), "x", "--tables-only"]) == 2
 
 
-def long_log(path, days=7.0, rss_day=0.0, heap_day=0.0, steps=(), struct_steps=(), chunk_hours=None):
+def long_log(path, days=7.0, rss_day=0.0, heap_day=0.0, steps=(), struct_steps=(), chunk_hours=None, saw=None):
     """C4 option (c): a --mem-log of `days` at a line per minute. RSS 1 GB and heap 0.8 GB, growing by rss_day/heap_day
     a day; steps [(hour, bytes)] lift RSS and heap from that hour on; struct_steps [(name, hour, bytes)] lift a
-    structure's bytes_est and the heap and RSS by as much; chunk_hours cycles legs_buffer (1.0/1.5 GB) per chunk."""
+    structure's bytes_est and the heap and RSS by as much; chunk_hours cycles legs_buffer (1.0/1.5 GB) per chunk; saw
+    (name, bytes) grows a structure (and the heap and RSS) by that much over each day and drops it back at the day's
+    start, as a windowed structure's sawtooth whose end minus start says nothing."""
     with open(path, "w") as f:
         for i in range(int(days * 1440)):
             h, day = i / 60, i / 1440
@@ -258,6 +260,10 @@ def long_log(path, days=7.0, rss_day=0.0, heap_day=0.0, steps=(), struct_steps=(
                 if h >= at:
                     st[name]["bytes_est"] += b
                     lift += b
+            if saw:
+                b = int(saw[1] * (i % 1440) / 1440)
+                st[saw[0]]["bytes_est"] += b
+                lift += b
             if chunk_hours:
                 k = int(h // chunk_hours)
                 st["legs_buffer"] = {"entries": 1000 + k, "bytes_est": (GB if k % 2 == 0 else 3 * GB // 2), "group": "legs_buffer"}
@@ -294,8 +300,8 @@ def test_the_daily_view_changes_no_check_and_names_an_unexplained_step(tmp_path,
     flagged = [d for d in days if d.get("explain")]
     assert [(d["day"], round(d["explain"]["mb"]), d["explain"]["attributed"]) for d in flagged] == [(3, 300, False)]
     assert flagged[0]["steps"]["rss_bytes"] == (300 * MB, M0 + 72 * 60)
-    # only interned_keys grew that day (+5 MB a day in this log): 2 % of the step
-    assert f"- day 3 ({M0 + 4320}..{M0 + 5759}): 300 MB; **UNATTRIBUTED** (2%): interned_keys +5 MB." in md
+    # a step: the structures' bytes across it (interned_keys' +5 MB a day is ~3.5 KB a minute) explain nothing of it
+    assert f"- day 3 ({M0 + 4320}..{M0 + 5759}): 300 MB (rss step); **UNATTRIBUTED** (0%): no structure grew; residue +300 MB." in md
 
 
 def test_a_step_a_structure_explains_is_attributed(tmp_path):
@@ -303,8 +309,27 @@ def test_a_step_a_structure_explains_is_attributed(tmp_path):
     lines, _ = plateau.load(p)
     days = plateau.daily(lines, lines[0]["minute"], lines[-1]["minute"])
     (d,) = [d for d in days if d.get("explain")]
-    assert d["explain"]["attributed"] and d["explain"]["by"][0] == ("farmer_hist", 300 * MB) and d["explain"]["share"] >= 1.0
-    assert d["grew"]["farmer_hist"] == 300 * MB and "interned_keys" in d["grew"]  # +5 MB a day
+    # the step falls 2 h into its day, so its last 2 h - first 2 h (+300 MB and the keys' +5 MB/day) is the day's worst;
+    # farmer_hist's own last 2 h - first 2 h is the 300 MB
+    assert d["explain"]["measure"] == "rss edge" and d["explain"]["by"][0] == ("farmer_hist", 300 * MB)
+    assert d["explain"]["attributed"] and 0.99 < d["explain"]["share"] < 1.03 and abs(d["explain"]["residue"]) < 6 * MB
+    assert d["grew"]["farmer_hist"] > 100 * MB and abs(d["grew"]["interned_keys"] - 5 * MB) < MB  # slopes per 24 h
+
+
+def test_a_windowed_sawtooth_is_attributed_by_its_slope_not_its_end_minus_start(tmp_path):
+    """long-b's day 0 (2026-10-19): farm_items rose +119 MB/24 h within the day while its end minus the line before the
+    day was +5 MB (an hourly sweep at the boundary), so the first attribution read 38 %. Like for like, a structure's
+    slope against the heap's slope, the sawtooth is all of it."""
+    p = long_log(tmp_path / "p.jsonl", days=4, saw=("busy", 250 * MB))
+    lines, _ = plateau.load(p)
+    days = plateau.daily(lines, lines[0]["minute"], lines[-1]["minute"])
+    flagged = [d for d in days if d.get("explain")]
+    assert [d["day"] for d in flagged] == [2, 1, 0]  # every day after the warm-up rises 250 MB
+    for d in flagged:
+        e = d["explain"]
+        # (the log's interned_keys grows 5 MB a day outside its heap: the residue's -5 MB)
+        assert e["measure"] == "rss slope" and e["attributed"] and abs(e["share"] - 1.0) < 0.05 and abs(e["residue"]) < 6 * MB, e
+        assert e["by"][0][0] == "busy" and abs(e["by"][0][1] - 250 * MB) < 5 * MB
 
 
 def test_a_slow_grower_is_green_on_the_last_day_and_seen_in_the_long_run(tmp_path):
