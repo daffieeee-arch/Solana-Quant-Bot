@@ -56,13 +56,26 @@ stoprule = _load_stoprule()
 MIN_TRADES, MIN_DAYS_CI = stoprule.MIN_TRADES, stoprule.MIN_DAYS_CI
 
 
+PAPER_RUN = "paper-k3"  # the paper run's journal, <data>/journal/paper-k3/journal (lab-paper.service, runbook §4)
+
+
+def _activity(db):
+    """When a journal last changed: in WAL mode the writes land in journal.sqlite-wal until a checkpoint."""
+    return max(os.path.getmtime(f) for f in (db, db + "-wal") if os.path.exists(f))
+
+
 def journal_path():
+    """LAB_PAPER_JOURNAL, else the paper run's journal (paper-k3) once it exists, else the most recently written
+    journal: a measuring-hour chain test or a parity run never takes the page from the paper run."""
     p = os.environ.get("LAB_PAPER_JOURNAL")
     if p:
         p = os.path.join(p, "journal.sqlite") if os.path.isdir(p) else p
         return p if os.path.isfile(p) else None
+    run = os.path.join(DATA, "journal", PAPER_RUN, "journal", "journal.sqlite")
+    if os.path.isfile(run):
+        return run
     found = glob.glob(os.path.join(DATA, "journal", "*", "journal", "journal.sqlite"))
-    return max(found, key=os.path.getmtime) if found else None
+    return max(found, key=_activity) if found else None
 
 
 def recorder_root():

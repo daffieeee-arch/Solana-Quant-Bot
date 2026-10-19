@@ -88,6 +88,36 @@ class ParityJournal(unittest.TestCase):
         self.assertTrue(any(p["venue"] == "pool" and p.get("mint") and p["mint"] != p["key"] for p in named))
 
 
+class JournalChoice(unittest.TestCase):
+    """The page shows the paper run's journal (paper-k3) once it exists, also when a measuring-hour chain test or
+    a parity run was written later; before it, the journal written last, counting its WAL file."""
+
+    def test_paper_run_first_then_the_latest_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            def journal(name, mtime, wal=None):
+                db = make_journal(os.path.join(d, "journal", name, "journal"), [])
+                os.utime(db, (mtime, mtime))
+                for f in (db + "-wal",):
+                    if os.path.exists(f):
+                        os.remove(f)
+                if wal:
+                    open(db + "-wal", "wb").close()
+                    os.utime(db + "-wal", (wal, wal))
+                return db
+            old, data = paper.DATA, d
+            paper.DATA = data
+            try:
+                parity = journal("parity-450144000-450360000", 1_000)
+                measure = journal("measure-20261020", 500, wal=2_000)  # its writes are still in the WAL
+                self.assertEqual(paper.journal_path(), measure)
+                os.utime(parity, (3_000, 3_000))
+                self.assertEqual(paper.journal_path(), parity)
+                run = journal(paper.PAPER_RUN, 100)
+                self.assertEqual(paper.journal_path(), run)  # the paper run wins however old its file looks
+            finally:
+                paper.DATA = old
+
+
 class Synthetic(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -390,11 +420,17 @@ class Marks(unittest.TestCase):
 
 class WalletAndTriton(unittest.TestCase):
     def test_wallet_paper_part_is_the_capital_simulation_and_onchain_is_marked_sample(self):
-        if not paper.journal_path():
-            self.skipTest("no paper journal")
-        w = paper.wallet_view(1_791_800_000)
+        # The parity journal (no wallet.json), not whichever journal the page picks: from the paper start on that
+        # is paper-k3, which has the engine's wallet.
+        if not os.path.exists(os.path.join(PARITY, "journal.sqlite")):
+            self.skipTest("no parity journal")
+        os.environ["LAB_PAPER_JOURNAL"] = PARITY
+        try:
+            w = paper.wallet_view(1_791_800_000)
+        finally:
+            del os.environ["LAB_PAPER_JOURNAL"]
         p = w["paper"]
-        v = paper.journal_view(paper.journal_path(), 1_791_800_000)
+        v = paper.journal_view(os.path.join(PARITY, "journal.sqlite"), 1_791_800_000)
         self.assertAlmostEqual(p["balance_sol"], v["capital"]["final_sol"])
         self.assertTrue(all(t["status"] in ("filled", "entry_failed", "skipped") for t in p["txs"]))
         self.assertTrue(w["onchain"]["sample"])  # no live wallet.json yet
