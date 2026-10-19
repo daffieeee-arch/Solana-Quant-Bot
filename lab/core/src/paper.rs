@@ -592,7 +592,9 @@ impl Paper {
         if is_n2(p.family) || risk.pool_cooldown_h <= 0.0 || tokens == 0 || !lt(proceeds, 0.1 * cost as f64) {
             return;
         }
-        let end = exit_slot.filter(|&s| s != 0).unwrap_or(slot) + eng.clock.slots(risk.pool_cooldown_h * 3_600_000.0, slot);
+        // Python's ints do not overflow: a cooldown beyond 64 bits of slots (a finite but huge pool_cooldown_h) is forever
+        // there, so it saturates here (review of #384).
+        let end = exit_slot.filter(|&s| s != 0).unwrap_or(slot).saturating_add(eng.clock.slots(risk.pool_cooldown_h * 3_600_000.0, slot));
         let c = self.cool[p.group].entry(p.key).or_insert(0);
         *c = (*c).max(end);
     }

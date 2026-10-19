@@ -581,6 +581,27 @@ def cooldown_across_a_clock_change():
     return case
 
 
+def a_cooldown_beyond_64_bits_is_forever():
+    """A finite but huge pool_cooldown_h (1e16 h): Clock.slots is 1.3e20 slots, an int Python adds to the exit slot without
+    overflow, so the pool stays closed (review of #384: lab-core saturates instead of overflowing)."""
+    c = Case("a_cooldown_beyond_64_bits_is_forever", "pool_cooldown_h 10000000000000000.0. P stops out at a total loss (a 350 "
+                                                     "SOL token sell after the entry); a whale refills it; P triggers again at "
+                                                     "t + 300: 'pool cooldown' (the cooldown is 1.3e20 slots long).",
+             k3=risk(pool_cooldown_h="10000000000000000.0"))
+    t = 450_160_000
+    p = c.pool("P")
+    legs = trigger(c, p, t, 400 * SOL)
+    legs = c.more(p, "reversed", legs[-1], [(t + 5, 0, "dumper", "sell", 350 * SOL, False), (t + 12, 0, "buyer 3", "buy", SOL // 10, False),
+                                            (t + 20, 0, "whale", "buy", 350 * SOL, False)])
+    c.more(p, "reversed", legs[-1], [(t + 270, 0, "buyer", "buy", 2 * SOL, False), (t + 300, 0, "seller", "sell", 20 * SOL, False)])
+    case = c.build()
+    x = c.one("exits", key=p, t=t)
+    ok(x["proceeds"] < 0.1 * x["cost"], c, f"a total loss {x}")
+    r = c.one("signals", key=p, t=t + 300, variant="tp4_T600")
+    ok((r["status"], r["reason"]) == ("skipped", "pool cooldown"), c, f"P again {r}")
+    return case
+
+
 def exposure_counts_the_open_cost():
     """An open position counts at its venue cost (engine.py:841), the pending and the new one at the file's size now."""
     c = Case("exposure_counts_the_open_cost", "size 0.3, max_exposure 0.7. P1 fills at 0.3 SOL. The file changes to size 0.4 "
@@ -784,7 +805,8 @@ CASES = [max_open_counts_pending_and_open, max_exposure_at_its_edge, kill_switch
          daily_loss_one_lamport_over_passes, failed_entry_books_its_fee, n2_positions_do_not_count, h_group_has_its_own_file,
          at_entry_the_limits_are_not_checked_again, cooldown_ends_at_its_slot, exposure_counts_the_open_cost,
          n2_pending_does_not_count, other_groups_do_not_count, n2_loss_is_not_booked, cooldown_across_a_clock_change,
-         a_sale_of_exactly_a_tenth_is_no_total_loss, the_cooldown_keeps_the_later_end, the_wallet_keeps_its_last_fifty]
+         a_sale_of_exactly_a_tenth_is_no_total_loss, the_cooldown_keeps_the_later_end, the_wallet_keeps_its_last_fifty,
+         a_cooldown_beyond_64_bits_is_forever]
 
 
 def table():
