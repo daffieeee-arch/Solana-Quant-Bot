@@ -1,17 +1,21 @@
 use std::collections::{BTreeMap, HashMap};
 
+use lab_core::legs::NONE;
 use lab_core::paper::{GradInfo, PaperCfg, PaperEngine, RiskSource};
+use lab_core::universe::{MintMeta, PoolMeta};
 use serde_json::{json, Map, Value};
 
 use super::*;
-use crate::signals_core::tests::{case_engine, event, field, os, ou, projection, s, CaseKeys, Row};
-use crate::signals_core::{parse_groups, Seeds};
+use crate::signals_core::tests::{b, case_engine, event, field, os, ou, projection, s, CaseKeys, Row};
+use crate::signals_core::{parse_groups, KeyNames, Seeds};
 
 /// The shared golden cases (paper/tests/c2_position_cases.py and c1b_signal_cases.py write them from the engine).
 const C2: &str = include_str!("../../../paper/tests/data/c2_position_cases.json");
 const C1B: &str = include_str!("../../../paper/tests/data/c1b_signal_cases.json");
 /// M1 C3-2's cases: risk on, each group's risk file in versions (paper/tests/c3_risk_cases.py).
 const C3: &str = include_str!("../../../paper/tests/data/c3_risk_cases.json");
+/// M3-08's cases: what a live feed learns while it reads (paper/tests/m3_live_cases.py).
+const M3: &str = include_str!("../../../paper/tests/data/m3_live_cases.json");
 /// The journal's tables and columns (paper/journal.py TABLES), as journal.rs compiles them in.
 const SCHEMA: &str = include_str!("../../../paper/journal_schema.json");
 
@@ -134,7 +138,51 @@ fn write_risk(path: &std::path::Path, text: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// How a case's slots end (M3-08 spec D1): as the next event ends them (the replay), or live with `close_through` after
+/// each slot's last event, through that slot (`Early`) or through the slot before the next event's (`Late`). Live, what
+/// the feed learned with the next event goes first, as a source learns what it read before it closes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Close {
+    Replay,
+    Early,
+    Late,
+}
+
+/// One item of a case's `learn` (m3_live_cases.py FORMAT) into the engine's live API: a token replaced, a SOL market
+/// added (its mint interned, so its token is looked up when it is used, as Python's `feed.token(p.mint)`), an epoch's ms
+/// per slot.
+fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<()> {
+    if let Some(t) = x.get("token") {
+        let mayhem = field(t, "mayhem")?;
+        let mayhem = if mayhem.is_null() { None } else { Some(mayhem.as_bool().context("mayhem")?) };
+        let creator = os(t, "creator")?.map_or(NONE, |c| keys.id(c));
+        let meta = MintMeta::new(ou(t, "create_slot")?, creator, mayhem, os(t, "quote_mint")?);
+        let pool = os(t, "pool")?.map(|p| keys.id(p));
+        let mint = keys.id(s(t, "mint")?);
+        eng.learn_token(mint, meta, ou(t, "complete_slot")?, pool);
+    } else if let Some(p) = x.get("pool") {
+        if matches!(s(p, "quote_class")?, "sol" | "reversed") {
+            let reversed = match s(p, "orientation")? {
+                "normal" => false,
+                "reversed" => true,
+                o => bail!("orientation {o}"),
+            };
+            let coin_creator = os(p, "coin_creator")?.map_or(NONE, |c| keys.id(c));
+            let meta = PoolMeta { reversed, mayhem: b(p, "mayhem")?, mint_tok: Some(keys.id(s(p, "mint")?)), coin_creator };
+            let pool = keys.id(s(p, "pool")?);
+            eng.learn_pool(pool, meta, ou(p, "create_slot")?);
+        }
+    } else {
+        eng.set_epoch_ms(field(x, "epoch")?.as_u64().context("epoch")?, field(x, "ms")?.as_f64().context("ms")?);
+    }
+    Ok(())
+}
+
 fn run_case(case: &Value, scenario: &str, risk: Option<&str>) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
+    run_case_closing(case, scenario, risk, Close::Replay)
+}
+
+fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Close) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
     let (sig, groups, mut keys) = case_engine(case)?;
     let mut grad = GradInfo::default();
     for t in field(case, "tokens")?.as_array().context("tokens")? {
@@ -160,16 +208,42 @@ fn run_case(case: &Value, scenario: &str, risk: Option<&str>) -> Result<(Vec<Wri
     };
     let mut seeds = Seeds::default();
     let mut writes = Vec::new();
-    for e in field(case, "events")?.as_array().context("events")? {
+    // What the feed learns, each item before the first event with a slot >= its at_slot (m3_live_cases.py LearnFeed).
+    let learn: Vec<&Value> = case.get("learn").and_then(Value::as_array).map(|v| v.iter().collect()).unwrap_or_default();
+    let mut learned = 0;
+    let mut learn_upto = |eng: &mut PaperEngine, keys: &mut CaseKeys, slot: u64| -> Result<()> {
+        while let Some(x) = learn.get(learned) {
+            if field(x, "at_slot")?.as_u64().context("at_slot")? > slot {
+                break;
+            }
+            learn_item(eng, x, keys)?;
+            learned += 1;
+        }
+        Ok(())
+    };
+    let events = field(case, "events")?.as_array().context("events")?;
+    for (i, e) in events.iter().enumerate() {
         let ev = event(e, &mut keys)?;
+        let slot = ev.leg.slot();
+        learn_upto(&mut eng, &mut keys, slot)?;
         if let Some(f) = files.as_mut() {
-            f.before(ev.leg.slot())?;
+            f.before(slot)?;
         }
         eng.push(&ev, &mut seeds.with(&keys))?;
         for op in eng.paper.ops.drain(..) {
             writes.push(op_write(&op, &keys)?);
         }
+        let next = events.get(i + 1).map(|n| ou(n, "slot")).transpose()?.flatten().filter(|&n| n != slot);
+        if let (Some(next), true) = (next, close != Close::Replay) {
+            learn_upto(&mut eng, &mut keys, next)?;
+            let c = if close == Close::Early { slot } else { next - 1 };
+            ensure!(eng.close_through(c, &mut seeds.with(&keys))? == Some(slot), "close_through({c}) did not end slot {slot}");
+            for op in eng.paper.ops.drain(..) {
+                writes.push(op_write(&op, &keys)?);
+            }
+        }
     }
+    learn_upto(&mut eng, &mut keys, u64::MAX)?;
     eng.finish(&mut seeds.with(&keys))?;
     for op in eng.paper.ops.drain(..) {
         writes.push(op_write(&op, &keys)?);
@@ -194,6 +268,62 @@ fn every_c2_case_gives_the_engines_writes() {
         }
         assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name}");
         n += want.len();
+    }
+    assert!(n > 0);
+}
+
+/// A C2-format case's writes against its expect_ops, write by write; the writes compared.
+fn same_writes(name: &str, writes: &[Write], case: &Value, cols: &HashMap<String, Vec<String>>) -> usize {
+    let got: Vec<Value> = writes.iter().filter(|w| c2_write(w)).map(|w| write_json(w, cols, &[])).collect();
+    let want = case["expect_ops"].as_array().unwrap();
+    if let Some(i) = (0..got.len().max(want.len())).find(|&i| got.get(i) != want.get(i)) {
+        panic!("{name}: write {i} of {} (Rust) / {} (Python)\n rust:   {}\n python: {}", got.len(), want.len(),
+               got.get(i).map_or("(none)".into(), Value::to_string), want.get(i).map_or("(none)".into(), Value::to_string));
+    }
+    want.len()
+}
+
+#[test]
+fn every_m3_case_gives_the_engines_writes_with_what_it_learns() {
+    // M3-08 spec §3: the feed learns tokens, pools and an epoch's ms per slot while it reads; lab/core's learn_token,
+    // learn_pool and set_epoch_ms before the same events give the engine's writes, also with the slots closed live.
+    let doc: Value = serde_json::from_str(M3).unwrap();
+    let cols = columns();
+    let mut n = 0;
+    for case in doc["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let scenario = case["cost_scenario"].as_str().unwrap();
+        assert!(!case["learn"].as_array().unwrap().is_empty(), "{name}");
+        for close in [Close::Replay, Close::Early, Close::Late] {
+            let (writes, eng, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
+            n += same_writes(&format!("{name} {close:?}"), &writes, case, &cols);
+            assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name} {close:?}");
+        }
+        // Without the learns the case writes something else: it shows what the live API carries.
+        let mut bare = case.clone();
+        bare["learn"] = json!([]);
+        let (writes, _, _) = run_case_closing(&bare, scenario, None, Close::Replay).unwrap();
+        let got: Vec<Value> = writes.iter().filter(|w| c2_write(w)).map(|w| write_json(w, &cols, &[])).collect();
+        assert_eq!(got == *case["expect_ops"].as_array().unwrap(), name == "completion_learned_too_late", "{name}");
+    }
+    assert!(n > 0);
+}
+
+#[test]
+fn every_c2_case_gives_the_engines_writes_with_the_slots_closed_live() {
+    // M3-08 spec D1: close_through after each slot's last event, through that slot or through the slot before the next
+    // event's, writes what the next event's push alone writes (C2's cases: risk inert, so no file is read at a close).
+    let doc: Value = serde_json::from_str(C2).unwrap();
+    let cols = columns();
+    let mut n = 0;
+    for case in doc["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let scenario = case["cost_scenario"].as_str().unwrap();
+        for close in [Close::Early, Close::Late] {
+            let (writes, eng, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
+            n += same_writes(&format!("{name} {close:?}"), &writes, case, &cols);
+            assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name} {close:?}");
+        }
     }
     assert!(n > 0);
 }

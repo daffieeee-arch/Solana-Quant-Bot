@@ -1,0 +1,339 @@
+{
+ "format": {
+  "file": "{format, spec, cases: [case]}; every case runs on its own, from an empty engine, with risk inert (ignore_risk).",
+  "tokens": "the mints table as c1b's, plus complete_slot (the token's historical completion, null: none) and pool (its PumpSwap pool, null: none), which the engine's graduation reads (engine.py:977-992).",
+  "cost_scenario": "the journal's state 'cost_scenario' as paper.engine main writes it (json.dumps(asdict(scn), sort_keys=True), engine.py:1494): the base scenario of week2-defaults.yaml. Parse it with float_roundtrip.",
+  "expect_ops": "every journal write of the five tables in the engine's order: [\"put\", table, row] with the table's columns (journal.py TABLES; null where the engine writes none) or [\"delete\", \"positions\", key]. The final positions table is empty.",
+  "integers": "every integer fits i64; ret is a float, parse it with float_roundtrip.",
+  "case": "name, why, clock, dev_bounds, groups, labels, tokens, pools, events (as in c2_position_cases.json FORMAT), learn, cost_scenario, expect_ops. tokens and pools are the snapshot: what the feed knows at the start.",
+  "learn": "what the feed learns while it reads, in order: {at_slot, token} (a tokens row: the token is replaced), {at_slot, pool} (a pools row: added when the pool is not known yet, as a SOL market when its quote_class is sol or reversed) or {at_slot, epoch, ms} (the epoch's ms per slot in the engine's clock). An item applies right before the first event whose slot is >= at_slot, after the last event when there is none (lab/core: learn_token, learn_pool, set_epoch_ms before that push).",
+  "regenerate": "M3_CASES_REGEN=1 pytest paper/tests/test_live_cases.py (or python -m paper.tests.m3_live_cases)."
+ },
+ "spec": "research/m3-08-core-live-api-spec-2026-10-19.md \u00a73 (lab/paper/tests/m3_live_cases.py)",
+ "cases": [
+  {
+   "name": "pool_learned_mid_run",
+   "why": "P1 is in the snapshot (the control). P2 is learned with its first trade (t + 70): its trigger at t + 100 enters. P3 is learned with the first event after its trigger slot (O at t + 201): the end of t + 200 runs when that event arrives, after the learn, so P3's trigger enters too. P4 is learned with the event after that (O at t + 302), past the end of its trigger slot t + 300: no row for it. C, a curve token created after the snapshot, is learned with its first trade: its trigger at t + 400 enters.",
+   "clock": {
+    "1033": 316.36,
+    "1034": 315.9,
+    "1035": 316.53,
+    "1036": 317.13,
+    "1037": 266.46,
+    "1038": 266.83,
+    "1039": 267.12,
+    "1040": 266.17,
+    "1041": 265.83,
+    "1042": 267.83,
+    "1043": 267.93,
+    "1044": 268.26,
+    "1045": 267.65,
+    "1046": 267.35
+   },
+   "dev_bounds": [
+    446256000,
+    452304000
+   ],
+   "groups": "{\"H\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"organic\", \"n2_k\": 0, \"primary\": false, \"q\": 0.5, \"require_farm_complete\": true, \"risk\": null, \"segments\": [\"pool_reversed\"], \"variants\": [\"flow300_H6\", \"flow300_tp100_H6\"], \"wallet\": \"wallet-h.json\"}, \"K3\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"all\", \"n2_k\": 0, \"primary\": true, \"q\": 0.5, \"require_farm_complete\": false, \"risk\": null, \"segments\": null, \"variants\": [\"tp4_T600\"], \"wallet\": \"wallet.json\"}}",
+   "labels": {
+    "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4": "C",
+    "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ": "O",
+    "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6": "P1",
+    "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6": "P2",
+    "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ": "P3",
+    "3NxCmcHXYV4XkBty3MXSHj2KtWQjA8HVEEkJXU9RkfCN": "P4",
+    "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy": "buyer",
+    "5JAVKXzkNAXtGCsPqwggcxijL62VSXrx3vkkBvCWKygs": "buyer 2",
+    "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx": "coin creator",
+    "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56": "creator",
+    "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D": "seller",
+    "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2": "small buyer"
+   },
+   "tokens": [],
+   "pools": [
+    {"pool": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "mint": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000},
+    {"pool": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "mint": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}
+   ],
+   "events": [
+    {"venue": "pool", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "slot": 450159970, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042711, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 4985000000000, "b": 398000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -4990000000000, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "slot": 450160000, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042720, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 52526054210529, "b": 400000000000, "e": 995010000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 52473685263159, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "slot": 450160070, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042738, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 4985000000000, "b": 398000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -4990000000000, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "slot": 450160100, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042746, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 52526054210529, "b": 400000000000, "e": 995010000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 52473685263159, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "slot": 450160170, "tx": 20, "outer": 0, "inner": 0, "block_time": 1790042765, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 4985000000000, "b": 398000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -4990000000000, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "slot": 450160200, "tx": 20, "outer": 0, "inner": 0, "block_time": 1790042773, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 52526054210529, "b": 400000000000, "e": 995010000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 52473685263159, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450160201, "tx": 40, "outer": 0, "inner": 0, "block_time": 1790042773, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199360127974, "b": 5000000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199560087982, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "3NxCmcHXYV4XkBty3MXSHj2KtWQjA8HVEEkJXU9RkfCN", "slot": 450160270, "tx": 30, "outer": 0, "inner": 0, "block_time": 1790042792, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 4985000000000, "b": 398000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -4990000000000, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "3NxCmcHXYV4XkBty3MXSHj2KtWQjA8HVEEkJXU9RkfCN", "slot": 450160300, "tx": 30, "outer": 0, "inner": 0, "block_time": 1790042800, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 52526054210529, "b": 400000000000, "e": 995010000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 52473685263159, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450160301, "tx": 40, "outer": 0, "inner": 0, "block_time": 1790042800, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199280495520, "b": 5001000000000, "e": 999800439912018, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199480375656, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450160302, "tx": 40, "outer": 0, "inner": 0, "block_time": 1790042800, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199200910784, "b": 5002000000000, "e": 999600959536362, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199400711096, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "curve", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "slot": 450160360, "tx": 50, "outer": 0, "inner": 0, "block_time": 1790042816, "variant": "buy", "is_buy": true, "t": 20000000000000, "q": 2143950996, "fee": 26799388, "vt": 653000000000000, "vq": 72143950996, "rt": 373100000000000, "rq": 42143950996, "fee_bps": 95, "creator_bps": 30, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "curve", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "slot": 450160370, "tx": 50, "outer": 0, "inner": 0, "block_time": 1790042818, "variant": "buy", "is_buy": true, "t": 20000000000000, "q": 2279429732, "fee": 28492873, "vt": 633000000000000, "vq": 74423380728, "rt": 353100000000000, "rq": 44423380728, "fee_bps": 95, "creator_bps": 30, "trader": "5JAVKXzkNAXtGCsPqwggcxijL62VSXrx3vkkBvCWKygs", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "curve", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "slot": 450160400, "tx": 50, "outer": 0, "inner": 0, "block_time": 1790042826, "variant": "sell", "is_buy": false, "t": 60000000000000, "q": 6443582747, "fee": 80544786, "vt": 693000000000000, "vq": 67979797981, "rt": 413100000000000, "rq": 37979797981, "fee_bps": 95, "creator_bps": 30, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "budget": null, "max_cost": null, "min_tokens": null, "min_out": 0, "direct": true},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450163000, "tx": 40, "outer": 0, "inner": 0, "block_time": 1790043521, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199121373729, "b": 5003000000000, "e": 999401558825266, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199321094265, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false}
+   ],
+   "learn": [
+    {"at_slot": 450160070, "pool": {"pool": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "mint": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}},
+    {"at_slot": 450160201, "pool": {"pool": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "mint": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}},
+    {"at_slot": 450160302, "pool": {"pool": "3NxCmcHXYV4XkBty3MXSHj2KtWQjA8HVEEkJXU9RkfCN", "mint": "3NxCmcHXYV4XkBty3MXSHj2KtWQjA8HVEEkJXU9RkfCN", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}},
+    {"at_slot": 450160360, "token": {"mint": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "create_slot": 450160300, "creator": "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56", "mayhem": false, "quote_mint": "11111111111111111111111111111111", "complete_slot": null, "pool": null}}
+   ],
+   "cost_scenario": "{\"adverse_per_side\": 0.0, \"ata_rent\": 1513840, \"failed_tx\": 505000, \"fee_per_tx\": 605000, \"land_prob\": 0.97, \"name\": \"base\", \"rent_mode\": \"refunded_on_full_exit\", \"tip\": 100000}",
+   "expect_ops": [
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_H6", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_tp100_H6", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "side": "buy", "day": "2026-09-22", "slot": 450160002, "tokens": 1372327508813, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160070, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_H6", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160070, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_tp100_H6", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160070, "farm_window_complete": 0}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "day": "2026-09-22", "entry_slot": 450160102, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "side": "buy", "day": "2026-09-22", "slot": 450160102, "tokens": 1372327508813, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "entry_slot": 450160102, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160002, "mark_pnl": -4429663}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "entry_slot": 450160102, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160170, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_H6", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160170, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_tp100_H6", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160170, "farm_window_complete": 0}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "day": "2026-09-22", "entry_slot": 450160202, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "side": "buy", "day": "2026-09-22", "slot": 450160202, "tokens": 1372327508813, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "entry_slot": 450160202, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160002, "mark_pnl": -4429663}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "entry_slot": 450160102, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160102, "mark_pnl": -4429663}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "entry_slot": 450160202, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160202, "mark_pnl": -4429663}],
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400, "day": "2026-09-22", "venue": "curve", "orientation": "curve", "depth": 44423380728, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "n/a", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": null, "farm_window_complete": null}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400, "day": "2026-09-22", "entry_slot": 450160402, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400, "side": "buy", "day": "2026-09-22", "slot": 450160402, "tokens": 4997869176625, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400, "entry_slot": 450160402, "cost": 500000000, "tokens": 4997869176625, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160002, "mark_pnl": -4429663}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "entry_slot": 450160102, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160102, "mark_pnl": -4429663}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "entry_slot": 450160202, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160202, "mark_pnl": -4429663}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400, "entry_slot": 450160402, "cost": 500000000, "tokens": 4997869176625, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "side": "sell", "day": "2026-09-22", "slot": 450160603, "tokens": 1372327508813, "quote": 497011573}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "exit_decision_slot": 450160601, "exit_slot": 450160603, "exit_reason": "time", "tokens": 1372327508813, "cost": 500000000, "proceeds": 497011573, "pnl": -4429663, "ret": -0.008819910560577293, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 497011573, "peak_slot": 450160002, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "D3D7tMkFW8dDfWifYbQ7aRXJhZSknwmEDWx7EZzdDvS6", "t": 450160000}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "side": "sell", "day": "2026-09-22", "slot": 450160703, "tokens": 1372327508813, "quote": 497011573}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100, "day": "2026-09-22", "entry_slot": 450160102, "exit_decision_slot": 450160701, "exit_slot": 450160703, "exit_reason": "time", "tokens": 1372327508813, "cost": 500000000, "proceeds": 497011573, "pnl": -4429663, "ret": -0.008819910560577293, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 497011573, "peak_slot": 450160102, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "57NPjEkSxF3ZrbQXmBZSugeHZtYtA87UpRLh3XfxiHj6", "t": 450160100}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "side": "sell", "day": "2026-09-22", "slot": 450160803, "tokens": 1372327508813, "quote": 497011573}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200, "day": "2026-09-22", "entry_slot": 450160202, "exit_decision_slot": 450160801, "exit_slot": 450160803, "exit_reason": "time", "tokens": 1372327508813, "cost": 500000000, "proceeds": 497011573, "pnl": -4429663, "ret": -0.008819910560577293, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 497011573, "peak_slot": 450160202, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "9xQ1mL7B4Vhd7CL1p8eGSyzsZKHeGPbZcg9FnpYuUaQJ", "t": 450160200}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400, "side": "sell", "day": "2026-09-22", "slot": 450161003, "tokens": 4997869176625, "quote": 487654317}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400, "day": "2026-09-22", "entry_slot": 450160402, "exit_decision_slot": 450161001, "exit_slot": 450161003, "exit_reason": "time", "tokens": 4997869176625, "cost": 500000000, "proceeds": 487654317, "pnl": -13786919, "ret": -0.02745116106708867, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 487654317, "peak_slot": 450160402, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "EWKWfAhiRsNf1bfKckddLAsZjcofquPqbLvST5RLQHa4", "t": 450160400}]
+   ]
+  },
+  {
+   "name": "graduation_learned_after_the_entry",
+   "why": "H's snapshot row has no completion and no pool, and its pool PH is not known. Our entry (t + 2) fills when O's event at t + 3 arrives; the feed then learns H's completion at t + 10 and migration to PH, and PH (created t + 150), with the whale's event at t + 10. That buy, re-run after ours, completes the curve: the sale waits for PH and fills at its open + 1, t + 151; cf_graduation is 0, as H completed at that slot.",
+   "clock": {
+    "1033": 316.36,
+    "1034": 315.9,
+    "1035": 316.53,
+    "1036": 317.13,
+    "1037": 266.46,
+    "1038": 266.83,
+    "1039": 267.12,
+    "1040": 266.17,
+    "1041": 265.83,
+    "1042": 267.83,
+    "1043": 267.93,
+    "1044": 268.26,
+    "1045": 267.65,
+    "1046": 267.35
+   },
+   "dev_bounds": [
+    446256000,
+    452304000
+   ],
+   "groups": "{\"H\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"organic\", \"n2_k\": 0, \"primary\": false, \"q\": 0.5, \"require_farm_complete\": true, \"risk\": null, \"segments\": [\"pool_reversed\"], \"variants\": [\"flow300_H6\", \"flow300_tp100_H6\"], \"wallet\": \"wallet-h.json\"}, \"K3\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"all\", \"n2_k\": 0, \"primary\": true, \"q\": 0.5, \"require_farm_complete\": false, \"risk\": null, \"segments\": null, \"variants\": [\"tp4_T600\"], \"wallet\": \"wallet.json\"}}",
+   "labels": {
+    "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt": "H",
+    "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ": "O",
+    "7XwcK8os2bcp1gZv7GACTokUPGbca2Rgg4wupWYWUXa8": "PH",
+    "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy": "buyer",
+    "5JAVKXzkNAXtGCsPqwggcxijL62VSXrx3vkkBvCWKygs": "buyer 2",
+    "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx": "coin creator",
+    "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56": "creator",
+    "6hRxeWMdd3REfNmw6KzUChidTUWsLGRF7mBiZQNMdtkD": "first buyer",
+    "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D": "seller",
+    "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2": "small buyer",
+    "HvZRuTM17e5BvJtkmePHd3X6syKnQD7SnBcDutd61V7f": "whale"
+   },
+   "tokens": [
+    {"mint": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "create_slot": 450100000, "creator": "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56", "mayhem": false, "quote_mint": "11111111111111111111111111111111", "complete_slot": null, "pool": null}
+   ],
+   "pools": [
+    {"pool": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "mint": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}
+   ],
+   "events": [
+    {"venue": "curve", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "slot": 450159960, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042709, "variant": "buy", "is_buy": true, "t": 20000000000000, "q": 2143950996, "fee": 26799388, "vt": 653000000000000, "vq": 72143950996, "rt": 373100000000000, "rq": 42143950996, "fee_bps": 95, "creator_bps": 30, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "curve", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "slot": 450159970, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042711, "variant": "buy", "is_buy": true, "t": 20000000000000, "q": 2279429732, "fee": 28492873, "vt": 633000000000000, "vq": 74423380728, "rt": 353100000000000, "rq": 44423380728, "fee_bps": 95, "creator_bps": 30, "trader": "5JAVKXzkNAXtGCsPqwggcxijL62VSXrx3vkkBvCWKygs", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "curve", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "slot": 450160000, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042720, "variant": "sell", "is_buy": false, "t": 60000000000000, "q": 6443582747, "fee": 80544786, "vt": 693000000000000, "vq": 67979797981, "rt": 413100000000000, "rq": 37979797981, "fee_bps": 95, "creator_bps": 30, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "budget": null, "max_cost": null, "min_tokens": null, "min_out": 0, "direct": true},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450160003, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042720, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199360127974, "b": 5000000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199560087982, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "curve", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "slot": 450160010, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042722, "variant": "buy", "is_buy": true, "t": 412100000000000, "q": 99731131179, "fee": 1246639141, "vt": 280900000000000, "vq": 167710929160, "rt": 1000000000000, "rq": 137710929160, "fee_bps": 95, "creator_bps": 30, "trader": "HvZRuTM17e5BvJtkmePHd3X6syKnQD7SnBcDutd61V7f", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "pool", "key": "7XwcK8os2bcp1gZv7GACTokUPGbca2Rgg4wupWYWUXa8", "slot": 450160150, "tx": 20, "outer": 0, "inner": 0, "block_time": 1790042760, "kind": "buy", "exact_out": false, "base": 12309207261677, "quote_net": 1000000000, "b": 1000000000000000, "e": 80000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 999002990, "trader": "6hRxeWMdd3REfNmw6KzUChidTUWsLGRF7mBiZQNMdtkD", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "7XwcK8os2bcp1gZv7GACTokUPGbca2Rgg4wupWYWUXa8", "slot": 450160151, "tx": 20, "outer": 0, "inner": 0, "block_time": 1790042760, "kind": "buy", "exact_out": false, "base": 12009566775059, "quote_net": 1000000000, "b": 987690792738323, "e": 80999002990, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 999002990, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false}
+   ],
+   "learn": [
+    {"at_slot": 450160005, "pool": {"pool": "7XwcK8os2bcp1gZv7GACTokUPGbca2Rgg4wupWYWUXa8", "mint": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "orientation": "normal", "quote_class": "sol", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450160150}},
+    {"at_slot": 450160005, "token": {"mint": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "create_slot": 450100000, "creator": "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56", "mayhem": false, "quote_mint": "11111111111111111111111111111111", "complete_slot": 450160010, "pool": "7XwcK8os2bcp1gZv7GACTokUPGbca2Rgg4wupWYWUXa8"}}
+   ],
+   "cost_scenario": "{\"adverse_per_side\": 0.0, \"ata_rent\": 1513840, \"failed_tx\": 505000, \"fee_per_tx\": 605000, \"land_prob\": 0.97, \"name\": \"base\", \"rent_mode\": \"refunded_on_full_exit\", \"tip\": 100000}",
+   "expect_ops": [
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000, "day": "2026-09-22", "venue": "curve", "orientation": "curve", "depth": 44423380728, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "n/a", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": null, "farm_window_complete": null}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000, "side": "buy", "day": "2026-09-22", "slot": 450160002, "tokens": 4997869176625, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 4997869176625, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 4997869176625, "status": "open", "mark_proceeds": 488447539, "mark_slot": 450160002, "mark_pnl": -13786919}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000, "side": "sell", "day": "2026-09-22", "slot": 450160151, "tokens": 4997869176625, "quote": 406580598}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "exit_decision_slot": 450160150, "exit_slot": 450160151, "exit_reason": "graduation", "tokens": 4997869176625, "cost": 500000000, "proceeds": 406580598, "pnl": -94860638, "ret": -0.1888771996604024, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 487654317, "peak_slot": 450160002, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "rPsx28HKAoWHoTF6rXikkRrJ5fK6rn8ggPLJH74Mrkt", "t": 450160000}]
+   ]
+  },
+  {
+   "name": "completion_learned_too_late",
+   "why": "K as H in graduation_learned_after_the_entry, but the feed learns K's completion and pool only with O's second event (t + 14), after the whale's buy completed the curve at t + 10 (that slot ends when O's first event, t + 12, arrives): the sale is in the seed pool at t + 11, cf_graduation 1.",
+   "clock": {
+    "1033": 316.36,
+    "1034": 315.9,
+    "1035": 316.53,
+    "1036": 317.13,
+    "1037": 266.46,
+    "1038": 266.83,
+    "1039": 267.12,
+    "1040": 266.17,
+    "1041": 265.83,
+    "1042": 267.83,
+    "1043": 267.93,
+    "1044": 268.26,
+    "1045": 267.65,
+    "1046": 267.35
+   },
+   "dev_bounds": [
+    446256000,
+    452304000
+   ],
+   "groups": "{\"H\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"organic\", \"n2_k\": 0, \"primary\": false, \"q\": 0.5, \"require_farm_complete\": true, \"risk\": null, \"segments\": [\"pool_reversed\"], \"variants\": [\"flow300_H6\", \"flow300_tp100_H6\"], \"wallet\": \"wallet-h.json\"}, \"K3\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"all\", \"n2_k\": 0, \"primary\": true, \"q\": 0.5, \"require_farm_complete\": false, \"risk\": null, \"segments\": null, \"variants\": [\"tp4_T600\"], \"wallet\": \"wallet.json\"}}",
+   "labels": {
+    "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT": "K",
+    "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ": "O",
+    "Byw78jtLsAdVA4Y3vCNp3av9hinzkkoR6SfhGwFeV7CL": "PK",
+    "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy": "buyer",
+    "5JAVKXzkNAXtGCsPqwggcxijL62VSXrx3vkkBvCWKygs": "buyer 2",
+    "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx": "coin creator",
+    "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56": "creator",
+    "6hRxeWMdd3REfNmw6KzUChidTUWsLGRF7mBiZQNMdtkD": "first buyer",
+    "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D": "seller",
+    "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2": "small buyer",
+    "HvZRuTM17e5BvJtkmePHd3X6syKnQD7SnBcDutd61V7f": "whale"
+   },
+   "tokens": [
+    {"mint": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "create_slot": 450100000, "creator": "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56", "mayhem": false, "quote_mint": "11111111111111111111111111111111", "complete_slot": null, "pool": null}
+   ],
+   "pools": [
+    {"pool": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "mint": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}
+   ],
+   "events": [
+    {"venue": "curve", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "slot": 450159960, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042709, "variant": "buy", "is_buy": true, "t": 20000000000000, "q": 2143950996, "fee": 26799388, "vt": 653000000000000, "vq": 72143950996, "rt": 373100000000000, "rq": 42143950996, "fee_bps": 95, "creator_bps": 30, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "curve", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "slot": 450159970, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042711, "variant": "buy", "is_buy": true, "t": 20000000000000, "q": 2279429732, "fee": 28492873, "vt": 633000000000000, "vq": 74423380728, "rt": 353100000000000, "rq": 44423380728, "fee_bps": 95, "creator_bps": 30, "trader": "5JAVKXzkNAXtGCsPqwggcxijL62VSXrx3vkkBvCWKygs", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "curve", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "slot": 450160000, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042720, "variant": "sell", "is_buy": false, "t": 60000000000000, "q": 6443582747, "fee": 80544786, "vt": 693000000000000, "vq": 67979797981, "rt": 413100000000000, "rq": 37979797981, "fee_bps": 95, "creator_bps": 30, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "budget": null, "max_cost": null, "min_tokens": null, "min_out": 0, "direct": true},
+    {"venue": "curve", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "slot": 450160010, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042722, "variant": "buy", "is_buy": true, "t": 412100000000000, "q": 99731131179, "fee": 1246639141, "vt": 280900000000000, "vq": 167710929160, "rt": 1000000000000, "rq": 137710929160, "fee_bps": 95, "creator_bps": 30, "trader": "HvZRuTM17e5BvJtkmePHd3X6syKnQD7SnBcDutd61V7f", "budget": null, "max_cost": 1000000000000000, "min_tokens": null, "min_out": null, "direct": true},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450160012, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042723, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199360127974, "b": 5000000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199560087982, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450160014, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042723, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199280495520, "b": 5001000000000, "e": 999800439912018, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199480375656, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "Byw78jtLsAdVA4Y3vCNp3av9hinzkkoR6SfhGwFeV7CL", "slot": 450160150, "tx": 20, "outer": 0, "inner": 0, "block_time": 1790042760, "kind": "buy", "exact_out": false, "base": 12309207261677, "quote_net": 1000000000, "b": 1000000000000000, "e": 80000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 999002990, "trader": "6hRxeWMdd3REfNmw6KzUChidTUWsLGRF7mBiZQNMdtkD", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "Byw78jtLsAdVA4Y3vCNp3av9hinzkkoR6SfhGwFeV7CL", "slot": 450160151, "tx": 20, "outer": 0, "inner": 0, "block_time": 1790042760, "kind": "buy", "exact_out": false, "base": 12009566775059, "quote_net": 1000000000, "b": 987690792738323, "e": 80999002990, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 999002990, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false}
+   ],
+   "learn": [
+    {"at_slot": 450160014, "pool": {"pool": "Byw78jtLsAdVA4Y3vCNp3av9hinzkkoR6SfhGwFeV7CL", "mint": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "orientation": "normal", "quote_class": "sol", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450160150}},
+    {"at_slot": 450160014, "token": {"mint": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "create_slot": 450100000, "creator": "6UvY75yTpM9cnVTCNz1ZwnT1DM7VQADEddSM5dhPPe56", "mayhem": false, "quote_mint": "11111111111111111111111111111111", "complete_slot": 450160010, "pool": "Byw78jtLsAdVA4Y3vCNp3av9hinzkkoR6SfhGwFeV7CL"}}
+   ],
+   "cost_scenario": "{\"adverse_per_side\": 0.0, \"ata_rent\": 1513840, \"failed_tx\": 505000, \"fee_per_tx\": 605000, \"land_prob\": 0.97, \"name\": \"base\", \"rent_mode\": \"refunded_on_full_exit\", \"tip\": 100000}",
+   "expect_ops": [
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "t": 450160000, "day": "2026-09-22", "venue": "curve", "orientation": "curve", "depth": 44423380728, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "n/a", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": null, "farm_window_complete": null}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "t": 450160000, "side": "buy", "day": "2026-09-22", "slot": 450160002, "tokens": 4997869176625, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 4997869176625, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "t": 450160000, "side": "sell", "day": "2026-09-22", "slot": 450160011, "tokens": 4997869176625, "quote": 1979543557}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "exit_decision_slot": 450160010, "exit_slot": 450160011, "exit_reason": "graduation", "tokens": 4997869176625, "cost": 500000000, "proceeds": 1979543557, "pnl": 1478102321, "ret": 2.9430523880940083, "exit_attempts": 1, "cf_graduation": 1, "seed_pool": 1, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 487654317, "peak_slot": 450160002, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "CY4iSfsEtyBeo1xxDUTUfMNzR5maH9bfXxZwtFp8KMHT", "t": 450160000}]
+   ]
+  },
+  {
+   "name": "clock_learned_mid_run",
+   "why": "Epoch 1042 starts at dev2's 267.83 ms a slot: P's trigger at t enters at t + 2 with tp4_T600's cap 599. The feed then learns 150 ms a slot (at t + 50): Q's trigger at t + 100 enters at t + 4 after it, with the cap 1,069; P's position keeps its cap.",
+   "clock": {
+    "1033": 316.36,
+    "1034": 315.9,
+    "1035": 316.53,
+    "1036": 317.13,
+    "1037": 266.46,
+    "1038": 266.83,
+    "1039": 267.12,
+    "1040": 266.17,
+    "1041": 265.83,
+    "1042": 267.83,
+    "1043": 267.93,
+    "1044": 268.26,
+    "1045": 267.65,
+    "1046": 267.35
+   },
+   "dev_bounds": [
+    446256000,
+    452304000
+   ],
+   "groups": "{\"H\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"organic\", \"n2_k\": 0, \"primary\": false, \"q\": 0.5, \"require_farm_complete\": true, \"risk\": null, \"segments\": [\"pool_reversed\"], \"variants\": [\"flow300_H6\", \"flow300_tp100_H6\"], \"wallet\": \"wallet-h.json\"}, \"K3\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"all\", \"n2_k\": 0, \"primary\": true, \"q\": 0.5, \"require_farm_complete\": false, \"risk\": null, \"segments\": null, \"variants\": [\"tp4_T600\"], \"wallet\": \"wallet.json\"}}",
+   "labels": {
+    "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA": "P",
+    "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR": "Q",
+    "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy": "buyer",
+    "9yZukrytCmbt2b5EPeveypPSuAjBZAt5TSTDDcHbVu57": "buyer 3",
+    "34UPtM6vAsCxa64PftPG8PHaeJzoLYuC7VoixQNhH9Ei": "buyer 4",
+    "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx": "coin creator",
+    "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D": "seller"
+   },
+   "tokens": [],
+   "pools": [
+    {"pool": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "mint": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000},
+    {"pool": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "mint": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}
+   ],
+   "events": [
+    {"venue": "pool", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "slot": 450159970, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042711, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 4985000000000, "b": 398000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -4990000000000, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "slot": 450160000, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042720, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 52526054210529, "b": 400000000000, "e": 995010000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 52473685263159, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "slot": 450160020, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042725, "kind": "sell", "exact_out": false, "base": 40000000000, "quote_net": 99461069924510, "b": 380000000000, "e": 1047483685263159, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -99560830275488, "trader": "9yZukrytCmbt2b5EPeveypPSuAjBZAt5TSTDDcHbVu57", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "slot": 450160030, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042728, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 2244843435681, "b": 420000000000, "e": 947922854987671, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -2247095033913, "trader": "34UPtM6vAsCxa64PftPG8PHaeJzoLYuC7VoixQNhH9Ei", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "slot": 450160070, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042738, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 4985000000000, "b": 398000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -4990000000000, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "slot": 450160100, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042746, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 52526054210529, "b": 400000000000, "e": 995010000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 52473685263159, "trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "slot": 450160120, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042752, "kind": "sell", "exact_out": false, "base": 40000000000, "quote_net": 99461069924510, "b": 380000000000, "e": 1047483685263159, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -99560830275488, "trader": "9yZukrytCmbt2b5EPeveypPSuAjBZAt5TSTDDcHbVu57", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "slot": 450160130, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042754, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 2244843435681, "b": 420000000000, "e": 947922854987671, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -2247095033913, "trader": "34UPtM6vAsCxa64PftPG8PHaeJzoLYuC7VoixQNhH9Ei", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false}
+   ],
+   "learn": [
+    {"at_slot": 450160050, "epoch": 1042, "ms": 150.0}
+   ],
+   "cost_scenario": "{\"adverse_per_side\": 0.0, \"ata_rent\": 1513840, \"failed_tx\": 505000, \"fee_per_tx\": 605000, \"land_prob\": 0.97, \"name\": \"base\", \"rent_mode\": \"refunded_on_full_exit\", \"tip\": 100000}",
+   "expect_ops": [
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_H6", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_tp100_H6", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "side": "buy", "day": "2026-09-22", "slot": 450160002, "tokens": 1372327508813, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "entry_slot": 450160002, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160002, "mark_pnl": -4429663}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "side": "sell", "day": "2026-09-22", "slot": 450160022, "tokens": 1372327508813, "quote": 606789951}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000, "day": "2026-09-22", "entry_slot": 450160002, "exit_decision_slot": 450160020, "exit_slot": 450160022, "exit_reason": "take_profit", "tokens": 1372327508813, "cost": 500000000, "proceeds": 606789951, "pnl": 105348715, "ret": 0.20976003004556887, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 606789951, "peak_slot": 450160020, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "6qEBct5nEhdVHQMn9udh6YBC6vFYLjvy3AZ5RqEwxeXA", "t": 450160000}],
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "entered", "reason": null, "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160070, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_H6", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160070, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_tp100_H6", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 400000000000, "trigger_trader": "3uBhcy3dzKpfCokRL4kCTS1FHQaJqpV1NaUuGBvor81D", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450160070, "farm_window_complete": 0}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "day": "2026-09-22", "entry_slot": 450160104, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "side": "buy", "day": "2026-09-22", "slot": 450160104, "tokens": 1372327508813, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "entry_slot": 450160104, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "entry_slot": 450160104, "cost": 500000000, "tokens": 1372327508813, "status": "open", "mark_proceeds": 497804795, "mark_slot": 450160104, "mark_pnl": -4429663}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "side": "sell", "day": "2026-09-22", "slot": 450160124, "tokens": 1372327508813, "quote": 606789951}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100, "day": "2026-09-22", "entry_slot": 450160104, "exit_decision_slot": 450160120, "exit_slot": 450160124, "exit_reason": "take_profit", "tokens": 1372327508813, "cost": 500000000, "proceeds": 606789951, "pnl": 105348715, "ret": 0.20976003004556887, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 606789951, "peak_slot": 450160120, "n_flow_slots": null, "cap_slots": 1069}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "2aob3W3NxLZT77Fp8E2WFu3M69PukNN1NELkDYyMZmRR", "t": 450160100}]
+   ]
+  }
+ ]
+}

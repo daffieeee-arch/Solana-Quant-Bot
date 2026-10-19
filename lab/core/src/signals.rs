@@ -457,6 +457,19 @@ impl SignalEngine {
         self.flush(keys, hooks)
     }
 
+    /// Live (M3-08): the open slot ends now, as the next slot's first event would end it (`PaperEngine::close_through`,
+    /// when the source knows the slot is complete). The slot it ended, if any.
+    pub fn close_with(&mut self, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<Option<u64>, SignalError> {
+        let slot = self.open_slot();
+        self.flush(keys, hooks)?;
+        Ok(slot)
+    }
+
+    /// The slot whose events are being collected (it ends with the next slot's first event, `finish` or `close_with`).
+    pub fn open_slot(&self) -> Option<u64> {
+        self.cur.map(|c| c.0)
+    }
+
     fn flush(&mut self, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<(), SignalError> {
         let Some((slot, bt)) = self.cur.take() else { return Ok(()) };
         let by_key = std::mem::take(&mut self.by_key);
