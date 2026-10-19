@@ -18,7 +18,9 @@ anyhow = "1"
 # idl.rs encodes pubkeys (bs58) and byte arrays (hex): the extractor's versions (lab/extractor/Cargo.toml).
 bs58 = "0.5"
 hex = "0.4"
-serde_json = "1"
+# float_roundtrip: meta.json's ms_per_slot and the golden cases' clocks parse to Python's bits (json.loads rounds
+# correctly; the default parser may be one ULP off, and one ULP can flip a window's rounding: spec D9).
+serde_json = { version = "1", features = ["float_roundtrip"] }
 sha2 = "0.10"
 log = "0.4"
 env_logger = "0.11"

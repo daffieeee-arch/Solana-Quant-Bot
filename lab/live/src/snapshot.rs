@@ -9,9 +9,12 @@
 //! - `seed`: the store's last day of pool buys and sells, per pool in LiveFeed's order (slot, tx, outer, inner). A live
 //!   start seeds the farmer history of a pool from the window `seed_window` gives (as `_init_seed`), when the pool is
 //!   first seen (`seed_trades`, as `_seed_pool`).
+//! - `meta_bounds` and `ms_per_slot` (export version 2): the engine's dev bounds and clock in a replay of the store
+//!   (`lab-live signals`, M1 C1b). The slot times are parsed to Python's bits (serde_json `float_roundtrip`).
 
 use crate::idl::Val;
 use crate::rows::cell;
+use crate::signals_core::ms_per_slot;
 use anyhow::{bail, Context, Result};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use serde_json::Value;
@@ -89,6 +92,12 @@ pub struct Snapshot {
     pub farm_hist: Option<FarmHistMeta>,
     /// The store's farmer rule (meta.json `farmer`: ratio, min_trades, window_ms), as the store computed its flags.
     pub farmer: Value,
+    /// The whole store's blocks [min slot, max slot + 1) (meta.json `meta_bounds`): a replay's dev bounds, never the
+    /// replay's own range (feed.py:100, engine.py:250). None in an export from before version 2.
+    pub meta_bounds: Option<(u64, u64)>,
+    /// The store's measured ms per slot by epoch (meta.json `ms_per_slot`, its keys epoch strings): the replay's clock
+    /// (strategies.py `Clock.from_store`). Empty in an export from before version 2.
+    pub ms_per_slot: BTreeMap<u64, f64>,
 }
 
 /// One chunk the store was built from: its slots, the extractor build that wrote it, and its farmer h24 as the store
@@ -189,8 +198,17 @@ impl Snapshot {
             store_slots: meta["store_slots"][0].as_u64().zip(meta["store_slots"][1].as_u64()),
             version: meta["snapshot_version"].as_u64().unwrap_or(1),
             farmer: meta["farmer"].clone(),
+            ms_per_slot: ms_per_slot(&meta["ms_per_slot"]).with_context(|| format!("{}/meta.json: ms_per_slot", dir.display()))?,
             ..Default::default()
         };
+        if !meta["meta_bounds"].is_null() {
+            let b = &meta["meta_bounds"];
+            let (lo, hi) = (slot(&b[0], "meta_bounds")?, slot(&b[1], "meta_bounds")?);
+            if b.as_array().map(Vec::len) != Some(2) || lo >= hi {
+                bail!("{}/meta.json: meta_bounds {b} is no [min slot, max slot + 1)", dir.display());
+            }
+            s.meta_bounds = Some((lo, hi));
+        }
         if with_seed || !meta["farm_seed"].is_null() {
             s.export_seed = (slot(&meta["farm_seed"]["lo"], "farm_seed.lo")?, slot(&meta["farm_seed"]["hi"], "farm_seed.hi")?);
         }
@@ -430,6 +448,34 @@ mod tests {
         assert_eq!(lines.iter().filter(|l| l.starts_with("token\t")).count(), 3);
         assert!(lines.contains(&"pool\tP3\tM3\treversed\treversed\tfalse\tnull\t950".to_owned()));
         assert!(lines.last().unwrap().starts_with("seed_trades\t3\t"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn meta_bounds_and_the_slot_times_parse_to_pythons_bits() {
+        // dev2's 14 and fwd1053's slot times as the export's meta.json has them (json.dump, indent 1), each to the bits
+        // lab-py's float.hex gives (spec D9: serde_json float_roundtrip); the store's blocks as meta_bounds.
+        use crate::signals_core::tests::SLOT_TIMES;
+        let dir = tmp("clock");
+        export(&dir);
+        let times = SLOT_TIMES.iter().map(|(e, t, _)| format!("  \"{e}\": {t}")).collect::<Vec<_>>().join(",\n");
+        fs::write(dir.join("meta.json"), format!("{{\n \"pool_slots\": [\n  500,\n  1000\n ],\n \"meta_bounds\": [\n  446256000,\n  452304000\n ],\n \
+                                                 \"ms_per_slot\": {{\n{times}\n }}\n}}")).unwrap();
+        let s = Snapshot::load_universe(&dir).unwrap();
+        assert_eq!(s.meta_bounds, Some((446_256_000, 452_304_000)));
+        assert_eq!(s.ms_per_slot.iter().map(|(e, ms)| (*e, ms.to_bits())).collect::<Vec<_>>(), SLOT_TIMES.map(|(e, _, bits)| (e, bits)));
+        // An export from before version 2 has neither; malformed ones are refused.
+        export(&dir);
+        let old = Snapshot::load_universe(&dir).unwrap();
+        assert_eq!((old.meta_bounds, old.ms_per_slot.len()), (None, 0));
+        for (k, v) in [("meta_bounds", serde_json::json!([5, 5])), ("meta_bounds", serde_json::json!([5])), ("meta_bounds", serde_json::json!([1, 2, 3])),
+                       ("ms_per_slot", serde_json::json!({"x": 1.0})), ("ms_per_slot", serde_json::json!({"1042": "267.83"}))] {
+            let mut m: Value = serde_json::from_slice(&fs::read(dir.join("meta.json")).unwrap()).unwrap();
+            m[k] = v.clone();
+            fs::write(dir.join("meta.json"), m.to_string()).unwrap();
+            assert!(Snapshot::load_universe(&dir).is_err(), "{k} {v}");
+            export(&dir);
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 }

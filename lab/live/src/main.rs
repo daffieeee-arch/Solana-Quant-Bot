@@ -37,6 +37,20 @@
 //!   plus each chunk's h24, the kept and dropped rows per table and the peak RSS; `--out` the lines themselves (with
 //!   `--out-from`, those of the slots from there on: a window that differs, in a run from the store's start).
 //!   paper/tests/test_lab_live_legs.py compares them with paper.legs_dump on the same store.
+//!
+//! M1 C1b, the engine's F7 signals (signals.rs, signals_core.rs; lab_core's signal state; spec
+//! research/m1-c1b-signals-spec-2026-10-19.md):
+//!
+//!   lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR
+//!                    [--dev-bounds LO HI] [--summary FILE] [--trace FILE]
+//!
+//! - The same events as `legs` (now handed out typed: lab_core::legs::Event), through the engine's signal state, into a
+//!   paper journal: its signals rows up to the farm gates (a row past them has no status yet: busy and risk are C2/C3),
+//!   state 'groups' (the --groups text, normally the Python journal's own), 'feed' and 'lab_live_signals' (the summary).
+//! - The dev bounds and the clock are the snapshot's (meta_bounds, ms_per_slot); `--dev-bounds` replaces the bounds.
+//! - paper/tests/test_lab_live_signals.py runs paper.engine on the same range and compares the two journals with
+//!   `paper.journal_diff --scope signals` (lab/live/nas_m1b.sh: the dev range of dev2 and the whole of fwd1053); the shared
+//!   golden cases (paper/tests/data/c1b_signal_cases.json) run in signals_core.rs's tests.
 
 #[allow(dead_code)]
 #[path = "../../extractor/src/idl.rs"]
@@ -50,6 +64,8 @@ mod legs;
 mod legs_read;
 mod mem;
 mod rows;
+mod signals;
+mod signals_core;
 mod snapshot;
 
 use anyhow::{bail, Context, Result};
@@ -75,7 +91,9 @@ fn parse_args(argv: &[String]) -> Result<Args> {
         }
         _ => bail!("usage: lab-live replay (--chunks-root DIR | --segments-root DIR) --from SLOT --to SLOT --journal DIR [--order-out FILE]\n       \
                     lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE\n       \
-                    lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]"),
+                    lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]\n       \
+                    lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR [--dev-bounds LO HI] \
+                    [--summary FILE] [--trace FILE]"),
     }
     let (mut chunks_root, mut segments_root, mut from, mut to, mut journal, mut order_out) = (None, None, None, None, None, None);
     while let Some(flag) = it.next() {
@@ -218,12 +236,48 @@ fn legs_cmd(a: &legs_read::LegsArgs) -> Result<()> {
     Ok(())
 }
 
+fn parse_signals_args(argv: &[String]) -> Result<signals::SignalsArgs> {
+    let mut it = argv.iter();
+    let (mut chunks_root, mut snapshot, mut from, mut to, mut groups, mut journal) = (None, None, None, None, None, None);
+    let (mut dev_bounds, mut summary, mut trace) = (None, None, None);
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--chunks-root" => chunks_root = Some(PathBuf::from(val()?)),
+            "--snapshot" => snapshot = Some(PathBuf::from(val()?)),
+            "--from" => from = Some(val()?.parse::<u64>().context("--from")?),
+            "--to" => to = Some(val()?.parse::<u64>().context("--to")?),
+            "--groups" => groups = Some(PathBuf::from(val()?)),
+            "--journal" => journal = Some(PathBuf::from(val()?)),
+            "--dev-bounds" => {
+                let lo = val()?.parse::<u64>().context("--dev-bounds LO")?;
+                dev_bounds = Some((lo, val()?.parse::<u64>().context("--dev-bounds HI")?));
+            }
+            "--summary" => summary = Some(PathBuf::from(val()?)),
+            "--trace" => trace = Some(PathBuf::from(val()?)),
+            other => bail!("unknown argument {other}"),
+        }
+    }
+    let (from, to) = (from.context("--from")?, to.context("--to")?);
+    if from >= to {
+        bail!("--from must be below --to");
+    }
+    if dev_bounds.is_some_and(|(lo, hi)| lo >= hi) {
+        bail!("--dev-bounds LO HI needs LO below HI");
+    }
+    Ok(signals::SignalsArgs {
+        chunks_root: chunks_root.context("--chunks-root")?, snapshot: snapshot.context("--snapshot")?, from, to,
+        groups: groups.context("--groups")?, journal: journal.context("--journal")?, dev_bounds, summary, trace,
+    })
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match argv.first().map(String::as_str) {
         Some("snapshot") => return snapshot_cmd(&parse_snapshot_args(&argv[1..])?),
         Some("legs") => return legs_cmd(&parse_legs_args(&argv[1..])?),
+        Some("signals") => return signals::run(&parse_signals_args(&argv[1..])?).map(|_| ()),
         _ => {}
     }
     let a = parse_args(&argv)?;
@@ -232,7 +286,24 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, parse_legs_args, parse_snapshot_args};
+    use super::{parse_args, parse_legs_args, parse_signals_args, parse_snapshot_args};
+
+    #[test]
+    fn the_signals_command_takes_its_inputs_a_range_the_groups_and_a_journal() {
+        let base = "--chunks-root /c --snapshot /s --from 10 --to 20 --groups /g --journal /j";
+        let a = parse_signals_args(&args(&format!("{base} --dev-bounds 0 9223372036854775807 --summary /m --trace /t"))).unwrap();
+        assert_eq!((a.from, a.to, a.dev_bounds, a.summary.is_some(), a.trace.is_some()), (10, 20, Some((0, (1 << 63) - 1)), true, true));
+        let a = parse_signals_args(&args(base)).unwrap();
+        assert_eq!((a.dev_bounds, a.summary, a.trace), (None, None, None));
+        for bad in ["--snapshot /s --from 1 --to 2 --groups /g --journal /j", "--chunks-root /c --from 1 --to 2 --groups /g --journal /j",
+                    "--chunks-root /c --snapshot /s --from 1 --to 2 --journal /j", "--chunks-root /c --snapshot /s --from 1 --to 2 --groups /g",
+                    "--chunks-root /c --snapshot /s --from 2 --to 2 --groups /g --journal /j",
+                    "--chunks-root /c --snapshot /s --from 1 --to 2 --groups /g --journal /j --dev-bounds 5",
+                    "--chunks-root /c --snapshot /s --from 1 --to 2 --groups /g --journal /j --dev-bounds 5 5",
+                    "--chunks-root /c --snapshot /s --from 1 --to 2 --groups /g --journal /j --out /o"] {
+            assert!(parse_signals_args(&args(bad)).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn the_legs_command_takes_its_inputs_a_range_and_a_summary() {
