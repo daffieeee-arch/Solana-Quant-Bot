@@ -68,11 +68,14 @@ fn add_mem((trades, bytes): (usize, usize), (dt, db): (isize, isize)) -> (usize,
     (trades.checked_add_signed(dt).expect("farmer history trades below 0"), bytes.checked_add_signed(db).expect("farmer history bytes below 0"))
 }
 
-/// O(1): the histories' trades and bytes are the replay's running total (`flag_chunk`'s deltas), never a walk over them.
-fn replay_mem<C, P>(adm: &Admission, hist: &HashMap<(Id, Id), FarmHist>, (trades, bytes): (usize, usize), ctx: &HashMap<Id, PoolCtx>,
-                    legs: (&Vec<C>, &Vec<P>), segments: Option<u64>) -> ReplayMem {
+/// O(1): the histories' trades and bytes are the replay's running total (`flag_chunk`'s deltas), never a walk over them;
+/// the block-time tables (`blocks`: slots, bytes) are counted once at the open (constant for the run).
+#[allow(clippy::too_many_arguments)]
+fn replay_mem<C, P>(adm: &Admission, hist: &HashMap<(Id, Id), FarmHist>, (trades, bytes): (usize, usize), blocks: (usize, usize),
+                    ctx: &HashMap<Id, PoolCtx>, legs: (&Vec<C>, &Vec<P>), segments: Option<u64>) -> ReplayMem {
     ReplayMem {
         mems: vec![
+            Mem::new("block_times", blocks.0, blocks.1),
             Mem::new("interned_keys", adm.keys.len(), adm.keys.heap_bytes() + lmem::vec(&adm.is_mint) + lmem::vec(&adm.pool)),
             Mem::new("farmer_hist", hist.len(), lmem::map(hist)),
             Mem::new("farmer_hist_trades", trades, bytes),
@@ -399,6 +402,11 @@ pub struct Blocks {
 }
 
 impl Blocks {
+    /// The memory log (C4-2/C4-3, LAB review's nit on #393): the slots held and the table's bytes.
+    pub fn mem(&self) -> (usize, usize) {
+        (self.time.len(), lmem::vec(&self.time))
+    }
+
     pub fn read(part: &Part) -> Result<Self> {
         let mut by_slot: BTreeMap<u64, Option<i64>> = BTreeMap::new();
         each_row(&part.dir, "blocks", &["slot", "block_time", "skipped"], &["slot", "block_time", "skipped"], |c, i| {
@@ -808,6 +816,8 @@ pub struct Replay {
     hist_mem: (usize, usize),
     /// With `mem_log`: the replay's structures after the last chunk or unit handed out (the end line's).
     last_mem: ReplayMem,
+    /// The block-time tables of every chunk or segment (`Blocks::mem`): slots and bytes, loaded at the open, constant.
+    blocks_mem: (usize, usize),
 }
 
 /// Where a replay's rows come from.
@@ -956,6 +966,7 @@ impl Replay {
         }
         let replay = Replay {
             hist_mem: hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
+            blocks_mem: blocks.iter().chain(seg.iter().flat_map(|s| s.blocks.iter())).map(Blocks::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
             from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false, seg,
             mem_log: false, last_mem: ReplayMem::default(),
         };
@@ -994,11 +1005,11 @@ impl Replay {
             check_ties(&curve, &pool).with_context(|| format!("{}", p.dir.display()))?;
             let d = flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
             self.hist_mem = add_mem(self.hist_mem, d);
-            let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
+            let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
             let keys = &self.adm.keys;
             emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, &mem, ev))?;
             if self.mem_log {
-                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None);
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), None);
             }
             log::info!("chunk {}: {} curve and {} pool rows of [{}, {}), h24 {}, {} keys, RSS {} MB", p.dir.display(), curve.len(), pool.len(),
                        from.max(p.lo), to.min(p.hi), bl.h24, keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
@@ -1021,14 +1032,14 @@ impl Replay {
             self.hist_mem = add_mem(self.hist_mem, d);
             // segments handed out so far: this unit's segment is the (seg + 1)-th
             let mem = if self.mem_log {
-                replay_mem(&self.adm, &self.hist, self.hist_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1))
+                replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1))
             } else {
                 ReplayMem::default()
             };
             let keys = &self.adm.keys;
             emit_chunk(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), |ev| f(keys, &mem, ev))?;
             if self.mem_log {
-                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1));
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1));
             }
         }
         for &(lo, hi, h24) in &sg.chunks {
@@ -1410,6 +1421,9 @@ pub(crate) mod tests {
             let get = |name: &str| last.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
             assert_eq!((get("farmer_hist"), get("farmer_hist_trades")), (pairs, walk.0), "seg {seg}: the last unit's view");
             assert!(get("interned_keys") > 0 && get("legs_buffer") > 0, "seg {seg}");
+            // the block-time tables: one entry per non-skipped slot of every chunk or segment read, the same in every view
+            assert!(get("block_times") > 0 && views.iter().all(|m| m.mems.iter().any(|x| x.name == "block_times" && x.entries == get("block_times"))),
+                    "seg {seg}");
             let segs: Vec<Option<u64>> = views.iter().map(|m| m.segments).collect();
             if seg {
                 // three complete segments read; the count never goes down

@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(Some(n), logged["events"].as_u64()); // each event's time in exactly one minute
         for name in ["universe_tokens", "recent_keys", "farm_items", "pool_seen", "busy", "open_positions", "run_curve_sums", "cooldowns",
                      "wallet_txs", "ops", "n2_seeds", "entered_rows", "interned_keys", "farmer_hist", "farmer_hist_trades", "pool_ctx",
-                     "legs_buffer"] {
+                     "legs_buffer", "block_times"] {
             assert!(end["structures"][name]["entries"].is_u64(), "{name} missing: {}", end["structures"]);
         }
         assert_eq!((&end["structures"]["ops"]["entries"], &end["segments"]), (&json!(0), &Value::Null)); // drained; chunks
