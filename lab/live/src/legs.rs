@@ -504,6 +504,39 @@ pub fn emit_chunk(
     Ok(())
 }
 
+/// M3-07: `emit_chunk` slot by slot. `f` gets each slot's events (in chain order, its slot in the range) once the slot
+/// is complete in this chunk or unit, the last slot at its end. The events, their order and the pool contexts are
+/// `emit_chunk`'s; only the hand-out is grouped. `buf` holds one slot's events (the caller's, reused). An error of a
+/// later event of the slot (a pool context overflow) now surfaces before the slot's earlier events are handed out; the
+/// run stops on it either way.
+pub fn emit_slots(
+    curve: &[CurveLeg],
+    pool: &[PoolRow],
+    bt: impl Fn(u64) -> Option<i64>,
+    ctx: &mut HashMap<Id, PoolCtx>,
+    range: (u64, u64),
+    buf: &mut Vec<Event>,
+    mut f: impl FnMut(u64, &[Event]) -> Result<()>,
+) -> Result<()> {
+    buf.clear();
+    let mut cur: Option<u64> = None;
+    emit_chunk(curve, pool, bt, ctx, range, |ev| {
+        let s = ev.leg.slot();
+        if let Some(c) = cur.filter(|&c| c != s) {
+            f(c, buf)?;
+            buf.clear();
+        }
+        cur = Some(s);
+        buf.push(*ev);
+        Ok(())
+    })?;
+    if let Some(c) = cur {
+        f(c, buf)?;
+        buf.clear();
+    }
+    Ok(())
+}
+
 /// The gate: no two rows of the chunk (curve and pool) share an order, which also excludes duplicates. Both sorted.
 pub fn check_ties(curve: &[CurveLeg], pool: &[PoolRow]) -> Result<()> {
     if let Some(w) = curve.windows(2).find(|w| w[0].order == w[1].order) {
@@ -895,6 +928,25 @@ mod tests {
         assert_eq!(lines[4], "pool\tPoolBBB\t101\t1\t0\t4\tnull\t132\tboost\tfalse\t20000000\t2000000001\t1000000000000\t\
                               86500000000\t0\t0\t0\t0\t1500000000\t999980000000\t88500000001\t0\t0\t0\t0\t1500000000\tTraderDDD\tnull\t\
                               null\t3000000000\ttrue\tnull\tnull\tfalse");
+        // M3-07: emit_slots hands out the same events slot by slot, whole slots in order, each event of its slot
+        let (mut slots, mut flat, mut buf) = (Vec::new(), Vec::new(), vec![]);
+        emit_slots(&curve, &pool, |s| (s != 101).then_some(1_790_000_000 + s as i64), &mut HashMap::new(), (100, 103), &mut buf, |slot, evs| {
+            assert!(!evs.is_empty() && evs.iter().all(|e| e.leg.slot() == slot), "slot {slot}");
+            slots.push((slot, evs.len()));
+            flat.extend(evs.iter().map(|e| event_line(&keys, e)));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!((slots, flat), (vec![(100, 3), (101, 2), (102, 2)], lines.clone()));
+        assert!(buf.is_empty());
+        let mut n = 0; // a range that cuts the rows: only slot 101's
+        emit_slots(&curve, &pool, |_| None, &mut HashMap::new(), (101, 102), &mut buf, |slot, evs| {
+            n += 1;
+            assert_eq!((slot, evs.len()), (101, 2));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(n, 1);
         let want = concat!(
             r#"{"events":7,"from":100,"kinds":{"curve":2,"pool/boost":1,"pool/buy":1,"pool/deposit":1,"pool/sell":1,"pool/withdraw":1}"#,
             r#","sha256":"5ebe6470d455ac492a3e4b8af91845b448ee518c61ee2783d9ccdd93d3358612","to":103,"window":2"#,

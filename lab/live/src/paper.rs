@@ -40,6 +40,7 @@ use crate::journal::Journal;
 use crate::legs::Keys;
 use crate::legs_read::{Replay, ReplayMem};
 use crate::memlog::{MemLog, Report};
+use crate::source::{Item, Source};
 use crate::paper_core::{op_write, parse_scenario, Write};
 use crate::signals::load;
 use crate::signals_core::{counts_json, feed_state, parse_groups, Cell, KeyNames, Seeds};
@@ -255,14 +256,21 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
         Report { mems: v, tables: r.tables.clone() }
     };
     let mut last_slot = 0;
-    replay.for_each_event_mem(|keys, rmem, ev| {
-        let t = Instant::now();
-        eng.push(ev, &mut seeds.with(keys))?;
-        drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())?;
-        if let Some(m) = memlog.as_mut() {
-            let ns = u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
-            last_slot = ev.leg.slot();
-            m.event(ns, eng.paper.minute(), last_slot, rmem.segments, || mems(&eng, &seeds, &tally, rmem))?;
+    // M3-07: through the Source interface, slot by slot; each event is pushed and drained as before
+    replay.for_each_item(&mut |keys, rmem, item| {
+        match item {
+            Item::Slot(sl) => {
+                last_slot = sl.slot; // every event of the item is of this slot
+                for ev in sl.events {
+                    let t = Instant::now();
+                    eng.push(ev, &mut seeds.with(keys))?;
+                    drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())?;
+                    if let Some(m) = memlog.as_mut() {
+                        let ns = u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                        m.event(ns, eng.paper.minute(), last_slot, rmem.segments, || mems(&eng, &seeds, &tally, rmem))?;
+                    }
+                }
+            }
         }
         Ok(())
     })?;

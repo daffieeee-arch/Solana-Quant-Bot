@@ -78,6 +78,7 @@ mod rows;
 mod signals;
 mod signals_core;
 mod snapshot;
+mod source;
 
 
 use anyhow::{bail, Context, Result};

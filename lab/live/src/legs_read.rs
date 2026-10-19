@@ -23,8 +23,8 @@
 //! segment's `backfill/` (watchlist backfills: rows of earlier slots, LiveFeed's late-row semantics, M3's) is not read,
 //! only counted per segment, so a measurement on segments is a lower bound for the live form.
 
-use crate::legs::{check_ties, emit_chunk, event_kind, event_line, farm_mem, flag_chunk, h24_of, keeps, prune_hist, FarmHists, Keys, PoolRow,
-                  Summary, REVERSED};
+use crate::legs::{check_ties, emit_slots, event_kind, event_line, farm_mem, flag_chunk, h24_of, keeps, prune_hist, FarmHists,
+                  Keys, PoolRow, Summary, REVERSED};
 use crate::memlog::Table;
 use crate::rows::{chunks, Part};
 use crate::snapshot::{FarmHistMeta, Snapshot};
@@ -59,7 +59,7 @@ pub struct Admission {
 /// rows are read and flagged, before its events: the interned keys (with the admission's tables), the 24 h farmer
 /// histories (the (pool, trader) pairs, then their trades), the pool contexts and the legs buffer of that chunk; C4-5: the
 /// shape of the two hash tables (interned_keys, farmer_hist).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ReplayMem {
     pub mems: Vec<Mem>,
     pub tables: Vec<Table>,
@@ -1010,13 +1010,26 @@ impl Replay {
     /// `for_each_event` with the replay's structures of the current chunk or segment unit (`ReplayMem`; empty unless
     /// `mem_log`).
     pub fn for_each_event_mem(&mut self, mut f: impl FnMut(&Keys, &ReplayMem, &Event) -> Result<()>) -> Result<()> {
+        self.for_each_slot_mem(|keys, mem, _, events| {
+            for ev in events {
+                f(keys, mem, ev)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// M3-07: the events slot by slot, each slot's (in chain order, its slot in [from, to)) with the structures of the
+    /// chunk or unit it is in. A slot never spans two chunks or units (they split at slot bounds), so a slot is handed
+    /// out once it is complete in its chunk or unit, with the same view `for_each_event_mem` gives each of its events.
+    pub fn for_each_slot_mem(&mut self, mut f: impl FnMut(&Keys, &ReplayMem, u64, &[Event]) -> Result<()>) -> Result<()> {
         if std::mem::replace(&mut self.done, true) {
             bail!("a replay hands out its events once");
         }
         let (from, to) = (self.from, self.to);
         let mut ctx: HashMap<Id, PoolCtx> = HashMap::new();
+        let mut buf: Vec<Event> = Vec::new(); // one slot's events, reused
         if let Some(sg) = self.seg.take() {
-            let r = self.each_segment_event(&sg, &mut ctx, &mut f);
+            let r = self.each_segment_event(&sg, &mut ctx, &mut buf, &mut f);
             self.seg = Some(sg);
             return r;
         }
@@ -1034,7 +1047,7 @@ impl Replay {
             self.hist_mem = add_mem(self.hist_mem, d);
             let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
             let keys = &self.adm.keys;
-            emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, &mem, ev))?;
+            emit_slots(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), &mut buf, |slot, evs| f(keys, &mem, slot, evs))?;
             if self.mem_log {
                 self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), None);
             }
@@ -1046,7 +1059,8 @@ impl Replay {
     }
 
     /// Step 4 on segments: unit by unit (a segment's part in one store chunk), as a chunk is.
-    fn each_segment_event(&mut self, sg: &SegSource, ctx: &mut HashMap<Id, PoolCtx>, f: &mut impl FnMut(&Keys, &ReplayMem, &Event) -> Result<()>)
+    fn each_segment_event(&mut self, sg: &SegSource, ctx: &mut HashMap<Id, PoolCtx>, buf: &mut Vec<Event>,
+                          f: &mut impl FnMut(&Keys, &ReplayMem, u64, &[Event]) -> Result<()>)
                           -> Result<()> {
         for u in &sg.units {
             let (s, bl) = (&sg.segs[u.seg], &sg.blocks[u.seg]);
@@ -1069,7 +1083,7 @@ impl Replay {
                 ReplayMem::default()
             };
             let keys = &self.adm.keys;
-            emit_chunk(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), |ev| f(keys, &mem, ev))?;
+            emit_slots(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), buf, |slot, evs| f(keys, &mem, slot, evs))?;
             if self.mem_log {
                 self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1));
             }
@@ -1415,6 +1429,48 @@ pub(crate) mod tests {
         let err = format!("{:#}", Replay::open_segments(&root.join("segments"), &root.join("snap"), 1000, 3000, |_, _| Ok(())).err().unwrap());
         assert!(err.contains("no complete segment for slots [1150, 2050)"), "{err}");
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_slots_are_whole_and_flatten_to_the_events() {
+        // M3-07: on chunks and on segments (where a store chunk boundary splits a segment into units), for_each_slot_mem
+        // hands out whole slots in increasing order, each event of its slot, with the view for_each_event_mem gives each
+        // of its events; flattened they are for_each_event_mem's events in its order
+        let root = tmp("slots");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        export(&root.join("snap"));
+        chunks(&root.join("chunks"));
+        segments(&root.join("segments"), true);
+        for seg in [false, true] {
+            let open = || {
+                let snap = root.join("snap");
+                let (mut r, ()) = if seg { Replay::open_segments(&root.join("segments"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() }
+                                  else { Replay::open(&root.join("chunks"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() };
+                r.mem_log = true;
+                r
+            };
+            let mut by_event = Vec::new();
+            open().for_each_event_mem(|keys, m, ev| {
+                by_event.push((crate::legs::event_line(keys, ev), m.clone()));
+                Ok(())
+            }).unwrap();
+            let (mut by_slot, mut slots) = (Vec::new(), Vec::new());
+            let mut r = open();
+            crate::source::Source::for_each_item(&mut r, &mut |keys, m, item| {
+                let crate::source::Item::Slot(sl) = item;
+                assert!(!sl.events.is_empty() && sl.events.iter().all(|e| e.leg.slot() == sl.slot), "seg {seg}: slot {}", sl.slot);
+                slots.push(sl.slot);
+                by_slot.extend(sl.events.iter().map(|e| (crate::legs::event_line(keys, e), m.clone())));
+                Ok(())
+            }).unwrap();
+            assert!(slots.windows(2).all(|w| w[0] < w[1]), "seg {seg}: {slots:?}");
+            assert_eq!(by_slot, by_event, "seg {seg}");
+            assert!(by_event.len() >= 9 && slots.len() >= 8, "seg {seg}: the fixture's events ({}) and slots ({})", by_event.len(), slots.len());
+            assert!(open().for_each_slot_mem(|_, _, _, _| Ok(())).is_ok());
+            let mut once = open();
+            once.for_each_slot_mem(|_, _, _, _| Ok(())).unwrap();
+            assert!(once.for_each_slot_mem(|_, _, _, _| Ok(())).is_err(), "seg {seg}: a replay hands out its events once");
+        }
     }
 
     #[test]
