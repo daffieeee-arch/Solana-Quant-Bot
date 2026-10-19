@@ -81,6 +81,33 @@ pub struct Snapshot {
     /// The store's period [slot_start, slot_end_exclusive) (meta.json `store_slots`): a replay of the store's events
     /// (`lab-live legs`) lies inside it.
     pub store_slots: Option<(u64, u64)>,
+    /// meta.json `snapshot_version` (2: the chunks and the farmer history below; none before).
+    pub version: u64,
+    /// The store's chunks (meta.json `chunk_list` with `chunk_h24`): what a replay must read.
+    pub chunks: Vec<StoreChunk>,
+    /// The farmer history of a replay (meta.json `farm_hist`, the file farm_hist.parquet).
+    pub farm_hist: Option<FarmHistMeta>,
+    /// The store's farmer rule (meta.json `farmer`: ratio, min_trades, window_ms), as the store computed its flags.
+    pub farmer: Value,
+}
+
+/// One chunk the store was built from: its slots, the extractor build that wrote it, and its farmer h24 as the store
+/// computed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreChunk {
+    pub lo: u64,
+    pub hi: u64,
+    pub extractor_sha256: Option<String>,
+    pub h24: u64,
+}
+
+/// farm_hist.parquet: the store's buys and sells over [lo, hi) of the (pool, trader) keys that trade in [hi, to).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FarmHistMeta {
+    pub lo: u64,
+    pub hi: u64,
+    pub to: u64,
+    pub rows: u64,
 }
 
 /// Each row of a Parquet file as the extractor's values of `names`, in that order, batch by batch: the file is never
@@ -159,10 +186,36 @@ impl Snapshot {
         let slot = |v: &Value, what: &str| v.as_u64().with_context(|| format!("{}/meta.json: no {what}", dir.display()));
         let mut s = Snapshot {
             pool_slots: (slot(&meta["pool_slots"][0], "pool_slots")?, slot(&meta["pool_slots"][1], "pool_slots")?),
-            export_seed: (slot(&meta["farm_seed"]["lo"], "farm_seed.lo")?, slot(&meta["farm_seed"]["hi"], "farm_seed.hi")?),
             store_slots: meta["store_slots"][0].as_u64().zip(meta["store_slots"][1].as_u64()),
+            version: meta["snapshot_version"].as_u64().unwrap_or(1),
+            farmer: meta["farmer"].clone(),
             ..Default::default()
         };
+        if with_seed || !meta["farm_seed"].is_null() {
+            s.export_seed = (slot(&meta["farm_seed"]["lo"], "farm_seed.lo")?, slot(&meta["farm_seed"]["hi"], "farm_seed.hi")?);
+        }
+        if let Some(list) = meta["chunk_list"].as_array() {
+            let h24 = meta["chunk_h24"].as_array().with_context(|| format!("{}/meta.json: chunk_list without chunk_h24", dir.display()))?;
+            if h24.len() != list.len() {
+                bail!("{}/meta.json: {} chunks but {} chunk_h24 entries", dir.display(), list.len(), h24.len());
+            }
+            for (c, h) in list.iter().zip(h24) {
+                let (lo, hi) = (slot(&c["slots"][0], "chunk_list slots")?, slot(&c["slots"][1], "chunk_list slots")?);
+                if (slot(&h[0], "chunk_h24")?, slot(&h[1], "chunk_h24")?) != (lo, hi) {
+                    bail!("{}/meta.json: chunk_h24 {h} is not chunk {lo}-{hi}", dir.display());
+                }
+                s.chunks.push(StoreChunk { lo, hi, extractor_sha256: c["extractor_sha256"].as_str().map(str::to_owned), h24: slot(&h[2], "chunk_h24")? });
+            }
+        }
+        if !meta["farm_hist"].is_null() {
+            let m = &meta["farm_hist"];
+            s.farm_hist = Some(FarmHistMeta {
+                lo: slot(&m["lo"], "farm_hist.lo")?,
+                hi: slot(&m["hi"], "farm_hist.hi")?,
+                to: slot(&m["to"], "farm_hist.to")?,
+                rows: slot(&m["rows"], "farm_hist.rows")?,
+            });
+        }
         let known = |slot: Option<u64>| before.is_none_or(|b| slot.is_none_or(|x| x < b));
 
         each_row(&dir.join("mints.parquet"), &["mint", "create_slot", "creator", "mayhem", "quote_mint", "complete_slot", "pool"], |r| {

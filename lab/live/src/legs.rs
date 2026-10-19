@@ -3,12 +3,13 @@
 //! and the store snapshot instead of the store's tables. This module is the logic without Arrow (legs_read.rs reads
 //! the Parquet into it):
 //!
-//! - `Keys`: one interner for every pubkey (snapshot mints and pools first, then traders).
+//! - `Keys`: one interner for every pubkey (snapshot mints and pools first, then traders), each key stored once.
 //! - `PoolRow`: the store's `pool` row, reduced to what the leg and the farmer flag read (store.py `_pool_trades`,
 //!   `_pool_other`, the SOL-market join).
 //! - `h24_of`: a chunk's day in slots from its blocks (store.py:486-488).
 //! - `FarmHist`: the store's farmer flag per (pool, trader): the trades of [s - h24, s - 1] (h24 of the trade's
-//!   chunk), a farmer when there are 2 or more and 20 |net| < gross, exactly (store.py:500-519).
+//!   chunk), a farmer when there are 2 or more and 20 |net| < gross, exactly (store.py:500-519). `keeps` gives each
+//!   emitted chunk the slot below which no window of it or of a later chunk reaches.
 //! - `pool_leg`: a PoolRow and the pool's context into the engine's leg (streams.py `pool_leg`).
 //! - `Line` and `Summary`: the dump paper/legs_dump.py writes too, line for line.
 //!
@@ -16,44 +17,60 @@
 //! in slot order. key_ties (two rows with one (slot, tx, outer, inner)) and duplicates are an error.
 
 use anyhow::{bail, Context, Result};
+use hashbrown::{DefaultHashBuilder, HashTable};
 use lab_core::legs::{CurveLeg, Id, Order, PoolCtx, PoolKind, PoolLeg, DIRECT, EXACT_OUT, FARMER, NONE, X0, X1};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
+use std::hash::BuildHasher;
 
 pub const DAY_MS: f64 = 86_400_000.0;
 /// The store's slot time when a chunk has no usable blocks (store.py `ms or 267.3`).
 pub const REF_MS: f64 = 267.3;
 
-/// One interner for every pubkey: ids are dense, the snapshot's keys first.
+/// One interner for every pubkey: ids are dense, the snapshot's keys first. Each key is stored once, in one buffer
+/// (`ends[i]` is the end of key i); the table holds only ids and finds a key through the buffer: ~50 B a 44-character
+/// key plus the buffer's and the table's growth slack (up to ~2x), against ~160-200 B for a map of owned strings plus
+/// a list of them.
 #[derive(Default)]
 pub struct Keys {
-    ids: HashMap<Box<str>, Id>,
-    names: Vec<Box<str>>,
+    table: HashTable<Id>,
+    hasher: DefaultHashBuilder,
+    buf: String,
+    ends: Vec<u32>,
+}
+
+fn key_at<'a>(buf: &'a str, ends: &[u32], id: Id) -> &'a str {
+    let i = id as usize;
+    let start = if i == 0 { 0 } else { ends[i - 1] as usize };
+    &buf[start..ends[i] as usize]
 }
 
 impl Keys {
     pub fn id(&mut self, key: &str) -> Id {
-        if let Some(&id) = self.ids.get(key) {
+        let hash = self.hasher.hash_one(key);
+        if let Some(&id) = self.table.find(hash, |&i| key_at(&self.buf, &self.ends, i) == key) {
             return id;
         }
-        let id = Id::try_from(self.names.len()).expect("fewer than 2^32 keys");
+        let id = Id::try_from(self.ends.len()).expect("fewer than 2^32 keys");
         assert!(id != NONE, "fewer than 2^32 - 1 keys");
-        self.names.push(key.into());
-        self.ids.insert(key.into(), id);
+        self.buf.push_str(key);
+        self.ends.push(u32::try_from(self.buf.len()).expect("keys in less than 4 GiB"));
+        let (buf, ends, hasher) = (&self.buf, &self.ends, &self.hasher);
+        self.table.insert_unique(hash, id, |&i| hasher.hash_one(key_at(buf, ends, i)));
         id
     }
 
     pub fn get(&self, key: &str) -> Option<Id> {
-        self.ids.get(key).copied()
+        self.table.find(self.hasher.hash_one(key), |&i| key_at(&self.buf, &self.ends, i) == key).copied()
     }
 
     /// The key of an id; None for NONE.
     pub fn name(&self, id: Id) -> Option<&str> {
-        (id != NONE).then(|| &*self.names[id as usize])
+        (id != NONE).then(|| key_at(&self.buf, &self.ends, id))
     }
 
     pub fn len(&self) -> usize {
-        self.names.len()
+        self.ends.len()
     }
 }
 
@@ -138,13 +155,14 @@ pub struct FarmHist {
 }
 
 impl FarmHist {
-    /// The flag of a trade at slot `s` in chunk `chunk` [chunk_lo, ...) with that chunk's `h24`: its trades in
-    /// [s - h24, s - 1]. A new chunk re-anchors the window (h24 changes, so its start can move back) after dropping
-    /// what no window of the chunk reaches (before chunk_lo - h24); inside a chunk the window slides forward.
-    pub fn flag(&mut self, s: u64, h24: u64, chunk: u32, chunk_lo: u64) -> bool {
+    /// The flag of a trade at slot `s` in chunk `chunk` with that chunk's `h24`: its trades in [s - h24, s - 1]. A new
+    /// chunk re-anchors the window (h24 changes, so its start can move back) after dropping what no window of this
+    /// chunk or a later one reaches: the trades before `keep` (`keeps`; at most s - h24). Inside a chunk the window
+    /// slides forward.
+    pub fn flag(&mut self, s: u64, h24: u64, chunk: u32, keep: u64) -> bool {
         let lo = s.saturating_sub(h24);
+        debug_assert!(keep <= lo, "keep {keep} above the window start {lo}");
         if self.anchor != chunk + 1 {
-            let keep = chunk_lo.saturating_sub(h24);
             let cut = self.a.partition_point(|x| x.0 < keep);
             self.a.drain(..cut);
             self.start = self.a.partition_point(|x| x.0 < lo);
@@ -177,12 +195,25 @@ impl FarmHist {
     }
 }
 
+/// For emitted chunks k (in slot order) with their first emitted slot `start_k` (the replay's from in the first, else
+/// the chunk's lo) and h24: the slot below which no farmer window of chunk k or a later one reaches,
+/// min over j >= k of (start_j - h24_j). It never decreases, so dropping below it is exact even when a later chunk's
+/// h24 is longer by more than a chunk (its window then reaches further back than an earlier chunk's); keeps[0] is the
+/// replay's H0 (before the store's start).
+pub fn keeps(chunks: &[(u64, u64)]) -> Vec<u64> {
+    let mut out: Vec<u64> = chunks.iter().map(|&(start, h24)| start.saturating_sub(h24)).collect();
+    for k in (1..out.len()).rev() {
+        out[k - 1] = out[k - 1].min(out[k]);
+    }
+    out
+}
+
 /// The farmer flags of one chunk's pool trades, in chain order (rows sorted): set on the rows, history kept in `hist`.
-pub fn flag_chunk(rows: &mut [PoolRow], hist: &mut HashMap<(Id, Id), FarmHist>, h24: u64, chunk: u32, chunk_lo: u64) {
+pub fn flag_chunk(rows: &mut [PoolRow], hist: &mut HashMap<(Id, Id), FarmHist>, h24: u64, chunk: u32, keep: u64) {
     for r in rows.iter_mut() {
         let Some((buy, amount)) = r.token_side() else { continue };
         let h = hist.entry((r.pool, r.trader)).or_default();
-        if h.flag(r.order.slot, h24, chunk, chunk_lo) {
+        if h.flag(r.order.slot, h24, chunk, keep) {
             r.flags |= FARMER;
         } else {
             r.flags &= !FARMER;
@@ -332,6 +363,8 @@ pub fn emit_chunk(
             (None, None) => break,
             (Some(_), None) => true,
             (None, Some(_)) => false,
+            // curve first on a tie, as heapq.merge takes its first stream first; unreachable after check_ties (an
+            // equal order on both sides is refused there), kept so the merge alone is ReplayFeed's
             (Some(c), Some(p)) => c.order <= p.order,
         };
         if take_curve {
@@ -404,6 +437,21 @@ mod tests {
     }
 
     #[test]
+    fn keys_are_interned_once_with_dense_ids() {
+        let mut k = Keys::default();
+        let names: Vec<String> = (0..5_000).map(|i| format!("Key{i:040}")).collect();
+        for (i, n) in names.iter().enumerate() {
+            assert_eq!(k.id(n), i as Id);
+        }
+        for (i, n) in names.iter().enumerate().rev() {
+            assert_eq!((k.id(n), k.get(n), k.name(i as Id)), (i as Id, Some(i as Id), Some(n.as_str())));
+        }
+        assert_eq!((k.len(), k.get("absent"), k.name(NONE)), (5_000, None, None));
+        assert_eq!(k.id(""), 5_000); // an empty key is a key too
+        assert_eq!((k.name(5_000), k.name(4_999)), (Some(""), Some(names[4_999].as_str())));
+    }
+
+    #[test]
     fn h24_follows_the_store() {
         // 1,000 slots in 400 s: 400 ms a slot, 216,000 slots a day; one block or none: 267.3 ms.
         assert_eq!(h24_of(&[(100, Some(1_000)), (600, None), (1_100, Some(1_400))]), 216_000);
@@ -435,14 +483,85 @@ mod tests {
         let mut hist = HashMap::new();
         let split = rows.partition_point(|r| r.order.slot < 700);
         let (a, b) = rows.split_at_mut(split);
-        flag_chunk(a, &mut hist, 120, 0, 100);
-        flag_chunk(b, &mut hist, 300, 1, 700);
+        let k = keeps(&[(100, 120), (700, 300)]);
+        assert_eq!(k, [0, 400]);
+        flag_chunk(a, &mut hist, 120, 0, k[0]);
+        flag_chunk(b, &mut hist, 300, 1, k[1]);
         let flagged = rows.iter().filter(|r| r.flags & FARMER != 0).count();
         assert!(flagged > 10, "{flagged}");
         for i in 0..rows.len() {
             let h24 = if rows[i].order.slot < 700 { 120 } else { 300 };
             assert_eq!(rows[i].flags & FARMER != 0, brute(&rows, i, h24), "row {i} {:?}", rows[i].order);
         }
+    }
+
+    /// History rows (added before the first chunk) and chunks of `len` slots whose h24 jumps up by more than a chunk, the
+    /// replay starting `skip` slots into the first: the flags against the brute-force rule, each trade with its own
+    /// chunk's h24.
+    fn history_and_jumping_h24(seed: u64, len: u64, h24s: &[u64], skip: u64) {
+        let mut seed = seed;
+        let mut next = || {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            seed >> 33
+        };
+        let from = 5_000;
+        let chunk_of = |slot: u64| ((slot - from) / len) as usize;
+        let mut rows = Vec::new();
+        let first = from.saturating_sub(*h24s.iter().max().unwrap() + 3 * len);
+        let (mut slot, mut washes) = (first, 0u64);
+        while slot < from + len * h24s.len() as u64 {
+            slot += 1 + next() % 7;
+            let (trader, kind) = match next() % 5 {
+                0 | 1 => {
+                    washes += 1; // the wash trader alternates, so its windows are often near net 0
+                    (1, if washes % 2 == 0 { PoolKind::Buy } else { PoolKind::Sell })
+                }
+                2 => (2, PoolKind::Sell),
+                3 => (3, PoolKind::Buy),
+                _ => (NONE, PoolKind::Buy),
+            };
+            rows.push(trade(slot, next() as u32 % 3, 9, trader, kind, 40 + (next() % 3) as i64));
+        }
+        rows.sort_by_key(|r| r.order);
+        rows.dedup_by_key(|r| r.order);
+        rows.retain(|r| r.order.slot < from + len * h24s.len() as u64);
+        let start = |k: usize| from + k as u64 * len + if k == 0 { skip } else { 0 };
+        let starts: Vec<(u64, u64)> = h24s.iter().enumerate().map(|(k, &h)| (start(k), h)).collect();
+        let k = keeps(&starts);
+        let h0 = k[0];
+        let mut hist: HashMap<(Id, Id), FarmHist> = HashMap::new();
+        let split = rows.partition_point(|r| r.order.slot < from + skip);
+        for r in rows[..split].iter().filter(|r| r.order.slot >= h0) {
+            let (buy, a) = r.token_side().unwrap();
+            hist.entry((r.pool, r.trader)).or_default().add(r.order.slot, if buy { a } else { -a });
+        }
+        let mut emitted = rows[split..].to_vec();
+        let mut at = 0;
+        for c in 0..h24s.len() {
+            let n = emitted[at..].partition_point(|r| chunk_of(r.order.slot) == c);
+            flag_chunk(&mut emitted[at..at + n], &mut hist, h24s[c], c as u32, k[c]);
+            at += n;
+        }
+        let mut flagged = 0;
+        for (i, r) in emitted.iter().enumerate() {
+            let want = brute(&rows, split + i, h24s[chunk_of(r.order.slot)]);
+            assert_eq!(r.flags & FARMER != 0, want, "trade {:?} in chunk {}", r.order, chunk_of(r.order.slot));
+            flagged += usize::from(want);
+        }
+        assert!(flagged > 5, "{flagged}");
+    }
+
+    #[test]
+    fn the_farmer_flag_with_history_is_the_stores_also_when_h24_jumps_by_more_than_a_chunk() {
+        // h24 up by 500 over chunks of 100 slots: the old rule (keep = chunk_lo - h24 of the current chunk) dropped what
+        // the next chunk's window still reaches
+        history_and_jumping_h24(11, 100, &[50, 550, 60, 900], 0);
+        history_and_jumping_h24(12, 100, &[300, 120, 700], 0);
+        history_and_jumping_h24(13, 250, &[400, 400, 400], 0);
+        // a start inside the first chunk: its rows before the start are history, H0 is the start's window
+        history_and_jumping_h24(14, 200, &[150, 160, 900], 120);
+        history_and_jumping_h24(15, 200, &[600, 50, 50], 199);
+        assert_eq!(keeps(&[(1000, 10), (1100, 500), (1200, 20)]), [600, 600, 1180]);
     }
 
     #[test]
