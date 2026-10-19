@@ -43,6 +43,32 @@ def test_settle_sql_matches_settle():
                 assert abs(r_sql - r) < 1e-12, (scn.name, row)
 
 
+def test_a_vault_capped_exit_with_dust_gets_the_rent_back():
+    """Codex on c29c545, decided 2026-10-19: the exit burns the remainder and closes the account (costs.exit_net's doc),
+    so a vault_capped exit settles as any other, in settle and in settle_sql. The dust case: a reversed pool (80 SOL,
+    3e14 tokens, fees 25+5 bps) sells all but 1 raw unit of 1,850,000,000,203 tokens; lab/core costs.rs
+    a_vault_capped_exit_with_dust_gets_the_rent_back pins the same numbers (Rust = Python)."""
+    import struct
+
+    from backtest.venues import Pool, rev_sell_token
+
+    held = 1_850_000_000_203
+    f = rev_sell_token(Pool(b=80_000_000_000, e=300_000_000_000_000, lp_bps=25, protocol_bps=5, creator_bps=0), held)
+    assert (held - f.tokens, f.trader_quote) == (1, 488_852_188)  # vault_capped: f.tokens < held
+    base = SCENARIOS[1]
+    res = Result("M", 0, cost=500_000_000, proceeds=f.trader_quote, exit_attempts=1, vault_capped=True)
+    pnl, ret, total = settle(res, base)
+    assert (pnl, struct.unpack("<Q", struct.pack("<d", ret))[0], total) == (-12_589_048, 0xBF99AAEC01A04340, 502_234_458)
+    assert base.exit_net(f.trader_quote) - base.exit_net(f.trader_quote, full_exit=False) == base.ata_rent
+    # settle_sql: the same row with vault_capped true and false settles the same
+    table = pa.table({"skipped": [False, False], "entry_failed": [False, False], "cost": [500_000_000] * 2,
+                      "proceeds": [f.trader_quote] * 2, "exit_attempts": [1, 1], "vault_capped": [True, False]})
+    con = duckdb.connect()
+    con.register("r", table)
+    sql_pnl, sql_ret = settle_sql(base)
+    assert con.execute(f"SELECT {sql_pnl}, {sql_ret} FROM r").fetchall() == [(pnl, ret)] * 2
+
+
 def test_capital_sim():
     from backtest.report import capital_sim
 

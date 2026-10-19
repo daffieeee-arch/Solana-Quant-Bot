@@ -33,13 +33,23 @@ class Scenario:
         return int(venue_cost * (1 + self.adverse_per_side)) + self.per_tx() + rent
 
     def exit_net(self, proceeds, full_exit=True):
+        """The exit's net: proceeds after adverse execution and the network cost, plus the rent where refunded.
+
+        The model's exit closes the token account (Codex review of c29c545, decided 2026-10-19): it burns any remainder
+        and closes the account in the exit transaction, so the rent comes back and the remainder is worth 0. A remainder
+        is mostly fee dust (venues.rev_sell_token leaves 1-3 raw units in about sum(bps)/10,000 of reversed-pool exits,
+        flagged vault_capped). On-chain a non-native account closes only at a zero token amount, and the owner may burn
+        the rest first (SPL Token interface/src/instruction.rs CloseAccount, Burn); Token-2022 withheld transfer fees
+        need the permissionless HarvestWithheldTokensToMint first (token-2022 interface/src/instruction.rs). So settle
+        and settle_sql treat every exit as full, vault_capped or not; full_exit=False is for tests only."""
         refund = self.ata_rent if (self.rent_mode == "refunded" or
                                    (self.rent_mode == "refunded_on_full_exit" and full_exit)) else 0
         return int(proceeds * (1 - self.adverse_per_side)) - self.per_tx() + refund
 
 
 def settle(result, scn):
-    """(pnl_lamports, return, total_cost) for a replay Result under a scenario."""
+    """(pnl_lamports, return, total_cost) for a replay Result under a scenario. Every exit is full (exit_net): a
+    vault_capped remainder is burned and the account closed, so its rent comes back too."""
     if result.entry_failed:
         loss = scn.failed_tx  # the entry transaction landed and failed on its slippage limit
         return -loss, None, loss
@@ -52,7 +62,8 @@ def settle(result, scn):
 def settle_sql(scn):
     """(pnl_lamports, return) SQL expressions over results columns: the twin of settle().
 
-    Skipped positions (no transaction) give NULL for both; a failed entry has no return."""
+    Skipped positions (no transaction) give NULL for both; a failed entry has no return. Every exit is full, as in
+    settle: a vault_capped row gets the rent back too (exit_net's doc)."""
     a = float(scn.adverse_per_side)
     refund = scn.ata_rent if scn.rent_mode in ("refunded", "refunded_on_full_exit") else 0
     cost = f"(CAST(trunc(cost::DOUBLE * {1 + a!r}::DOUBLE) AS BIGINT) + {scn.per_tx() + scn.ata_rent})"
