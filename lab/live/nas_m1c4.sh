@@ -213,7 +213,8 @@ EOF
 }
 
 long_root() {  # $LONG_ROOT: a symlink per chunk of [LONG_LO, LONG_HI) under events/v1/chunks, nothing else, checked fail-closed
-  "$PY" - "$DATA/events/v1/chunks" "$LONG_ROOT" $LONG_LO $LONG_HI $LONG_N "$OUT/long/snap/meta.json" <<'EOF' | tee -a "$OUT/job.log"
+  local rc=0  # (not `| tee`: under set -e and pipefail a refusal would end the job before its reason reached job.log)
+  "$PY" - "$DATA/events/v1/chunks" "$LONG_ROOT" $LONG_LO $LONG_HI $LONG_N "$OUT/long/snap/meta.json" > "$OUT/long_root.log" 2>&1 <<'EOF' || rc=$?
 import json, os, sys
 src, root, lo, hi, n, meta = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), sys.argv[6]
 fail = lambda why: sys.exit(f"long_root: {why}: refused")
@@ -248,7 +249,8 @@ else:
 print(f"long_root: {root}: {n} chunks [{lo}, {hi}), each complete with the store's extractor build {want[0][2][:12]}... "
       f"({len({x[2] for x in want})} build(s))")
 EOF
-  [ "${PIPESTATUS[0]}" = 0 ] || { log "long_root: FAILED"; exit 1; }
+  tee -a "$OUT/job.log" < "$OUT/long_root.log"
+  [ $rc = 0 ] || { log "long_root: FAILED (rc $rc)"; exit 1; }
 }
 
 if [ "$STEP" = long-b ]; then
@@ -261,7 +263,8 @@ if [ "$STEP" = long-b ]; then
     --variants 0.04:600 --cost-scenario "$OUT/long/cost_scenario.json" --journal "$OUT/long-b" --summary "$OUT/long-b.json" \
     --mem-log "$OUT/long-b.jsonl" > "$OUT/long-b.log" 2>&1 || { tail -20 "$OUT/long-b.log" | tee -a "$OUT/job.log"; log "long-b: lab-live FAILED"; exit 1; }
   tail -2 "$OUT/long-b.log" | tee -a "$OUT/job.log"
-  "$PY" - "$OUT/long-b.json" $LONG_N <<'EOF' | tee -a "$OUT/job.log"
+  rc=0
+  "$PY" - "$OUT/long-b.json" $LONG_N > "$OUT/long-b-check.log" 2>&1 <<'EOF' || rc=$?
 import json, sys
 v = json.load(open(sys.argv[1]))
 n = len(v.get("h24", []))
@@ -269,7 +272,8 @@ print(f"long-b: {n} chunks read (expected {sys.argv[2]}), chunks_verified {v.get
       f"peak RSS {v.get('peak_rss_bytes', 0) / 1e9:.2f} GB, {v.get('secs', 0):.0f} s")
 sys.exit(0 if n == int(sys.argv[2]) and v.get("chunks_verified") is True else 1)
 EOF
-  [ "${PIPESTATUS[0]}" = 0 ] || { log "long-b: not the expected chunks"; exit 1; }
+  tee -a "$OUT/job.log" < "$OUT/long-b-check.log"
+  [ $rc = 0 ] || { log "long-b: not the expected chunks"; exit 1; }
   "$PY" "$REPO/lab/live/plateau.py" --p1 "$OUT/long-b.jsonl" --spec-sha "$SPEC_SHA" --out "$OUT/long-b.md" --form chunks | tee -a "$OUT/job.log"
   (cd "$OUT" && sha256sum long-b.md long-b.json long-b.jsonl) | tee -a "$OUT/job.log"
   log "long-b: done (reported, not gated)"
@@ -292,7 +296,9 @@ if [ "$STEP" = long-shadow ]; then
   tail -5 "$OUT/long-shadow.log" | tee -a "$OUT/job.log"
   segs=$(find "$LONG_SHADOW/rec/segments" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
   complete=$(grep -l '"complete": *true' "$LONG_SHADOW"/rec/segments/*/_segment.json 2>/dev/null | wc -l || true)
-  log "long-shadow: rc $rc; status $(cat "$LONG_SHADOW/STATUS" 2>/dev/null || echo none); $segs segments, $complete complete; $(du -sh "$LONG_SHADOW/rec/segments" 2>/dev/null | cut -f1)"
+  # shadow.py writes <out>/STATUS.json, {"step": the last finished step, "time": ...} (LAB review on #412)
+  status=$("$PY" -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["step"], "at", d.get("time"))' "$LONG_SHADOW/STATUS.json" 2>/dev/null || echo none)
+  log "long-shadow: rc $rc; status $status; $segs segments, $complete complete; $(du -sh "$LONG_SHADOW/rec/segments" 2>/dev/null | cut -f1)"
   exit $rc
 fi
 
