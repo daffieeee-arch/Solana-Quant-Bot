@@ -221,25 +221,30 @@ cd $R/lab && systemd-run --user --scope -p MemoryMax=3G -p CPUQuota=100% -- $PY 
     - The recorder service logs to `$LAB/logs/recorder.log` (`StandardOutput=append:`, `StandardError=inherit`), **not to the journal**: `journalctl` shows only systemd's own lines. In the measuring hour the log is `$M.log`.
     - Every session that ends on an error is logged as `disconnected: <reason>` (`main.rs:501`). The network reasons are `main stream…`, `vault stream…`, `no update for…`, `connect…`, `subscribe…` and `update the main/vault subscription…`.
     - A failed save gives another reason: `write …/budget.json.tmp: …`, or a bare I/O error when the fsync, the rename or an open fails.
-    - The watcher stops at the **first disconnect with any other reason**, or at **10 or more disconnects within 60 s** whatever the reason. A network outage does not give 10, because its backoff grows to 60 s.
+    - The watcher **stops at the first disconnect with any other reason**. The save loop always logs such a reason, because its sessions end on the failed save, never on the network.
+    - **10 or more disconnects within 60 s** only raise an **alarm**, and the watcher keeps watching. A reconnect wave, for example around the Alpenglow switch (2026-10-21 ~14:50 UTC), must not stop the recorder.
+      - On the alarm, look at the reasons. If they are all network reasons, it is the network or Triton, not the save loop.
+      - The age of `budget.json` and the segments do not tell the two apart: both stand still in a network wave too, because there are no ticks and no data between sessions.
   - **Stop it durably.**
     - The timers go first: `lab-paper.timer` starts `lab-paper` every 15 minutes, and that unit `Requires=` the recorder.
     - In the loop a SIGTERM is likely lost (tokio's handler listens only inside a session), so `systemctl stop` waits for the timeout. A SIGKILL while the stop job runs ends it at once, and systemd does not restart a unit it is stopping.
     - **Do not start the recorder again that UTC day** until the save fault is found and fixed. A restart starts below the cap, because the loop's spend reached neither `budget.json` nor a segment, and can fall into the loop again. Take the day's billed amount from the dashboard.
     ```bash
-    # The watcher: in the background from the start (the coordinator). On the first sign it prints the line and stops
-    # durably. gawk reads tail through a process substitution, so the stop runs at once, without waiting for another log
-    # line. Measuring hour: LOG=$M.log, and replace the three stop lines with: pkill -KILL -x lab-recorder
+    # The watcher: in the background from the start (the coordinator; under Monitor, so each printed line arrives). A local
+    # disconnect reason prints STOP and stops durably (exit 1); a burst of 10 in 60 s prints ALARM (at most once per 5 min)
+    # and it keeps watching. gawk reads tail through a process substitution, so the stop runs at once, without waiting for
+    # another log line. Measuring hour: LOG=$M.log, and replace the three stop lines with: pkill -KILL -x lab-recorder
     LOG=$LAB/logs/recorder.log
     gawk '
       function ts() { return strftime("%FT%TZ", systime(), 1) }
       /\] disconnected: / {
         r = $0; sub(/.*\] disconnected: /, "", r)
         if (r !~ /^(main stream|vault stream|no update for|connect|subscribe|update the (main|vault) subscription)/) {
-          print ts(), "recorder: a session ended on a local error (a budget.json save?), stop:", $0; fflush(); exit 1 }
+          print ts(), "STOP recorder: a session ended on a local error (a budget.json save?):", $0; fflush(); exit 1 }
         now = systime(); seen[now]++; n = 0
         for (s in seen) if (s + 0 >= now - 60) n += seen[s]; else delete seen[s]
-        if (n >= 10) { print ts(), "recorder:", n, "disconnects in 60 s, stop:", $0; fflush(); exit 1 }
+        if (n >= 10 && now >= alarmed + 300) { alarmed = now
+          print ts(), "ALARM recorder:", n, "disconnects in 60 s (network reasons; look, no stop):", $0; fflush() }
       }' < <(tail -n0 -F "$LOG") || {
       systemctl --user disable --now lab-paper.timer lab-recorder.timer
       systemctl --user stop --no-block lab-paper.service lab-recorder.service
