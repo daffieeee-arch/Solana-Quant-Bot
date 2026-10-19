@@ -190,9 +190,15 @@ fn parse_snapshot_args(argv: &[String]) -> Result<SnapArgs> {
         (None, None) => None,
         _ => bail!("give --first-slot and --h24 together"),
     };
+    // One live start: it knows the store up to its first slot (`--before`) and seeds its farmer window up to the same slot.
+    // A later --before is metadata from that start's future (pools and tokens created in [first, before); Codex on
+    // c29c545); an earlier one seeds trades of pools the snapshot does not know yet (created in [before, first); LAB review
+    // on #368). A mirror of paper.shadow passes its first segment's slot for both: the shadow's snapshot_before is `lo`,
+    // which can be a skipped slot just before it (harmless there, no rows in the gap).
     if let (Some(b), Some((f, _))) = (before, window) {
-        if f > b {
-            bail!("--first-slot {f} is after --before {b}: a live start knows the store only up to its first slot");
+        if f != b {
+            bail!("--before {b} and --first-slot {f} differ: a live start at slot S knows the store up to S and seeds up to S: give the \
+                   same slot (or leave out --before for a start after the store)");
         }
     }
     Ok(SnapArgs { dir: dir.context("--dir")?, before, window, out: out.context("--out")? })
@@ -397,13 +403,19 @@ mod tests {
 
     #[test]
     fn the_snapshot_command_takes_a_dir_an_out_and_a_whole_window() {
-        let a = parse_snapshot_args(&args("--dir /s --before 9 --first-slot 7 --h24 3 --out /o")).unwrap();
-        assert_eq!((a.before, a.window), (Some(9), Some((7, 3))));
+        let a = parse_snapshot_args(&args("--dir /s --before 9 --first-slot 9 --h24 3 --out /o")).unwrap();
+        assert_eq!((a.before, a.window), (Some(9), Some((9, 3))));
         assert!(parse_snapshot_args(&args("--dir /s --out /o")).unwrap().window.is_none());
-        assert!(parse_snapshot_args(&args("--dir /s --before 9 --first-slot 9 --h24 3 --out /o")).is_ok());
-        for bad in ["--out /o", "--dir /s", "--dir /s --out /o --first-slot 9", "--dir /s --out /o --h24 3", "--dir /s --out /o --x 1",
-                    "--dir /s --before 8 --first-slot 9 --h24 3 --out /o"] {
+        // a start after the store: the whole store, a window at the start
+        assert_eq!(parse_snapshot_args(&args("--dir /s --first-slot 9 --h24 3 --out /o")).unwrap().before, None);
+        assert_eq!(parse_snapshot_args(&args("--dir /s --before 9 --out /o")).unwrap().window, None);
+        for bad in ["--out /o", "--dir /s", "--dir /s --out /o --first-slot 9", "--dir /s --out /o --h24 3", "--dir /s --out /o --x 1"] {
             assert!(parse_snapshot_args(&args(bad)).is_err(), "{bad}");
+        }
+        // one live start: --before and --first-slot differ in neither direction (Codex on c29c545; LAB review on #368)
+        for bad in ["--dir /s --before 9 --first-slot 7 --h24 3 --out /o", "--dir /s --before 7 --first-slot 9 --h24 3 --out /o"] {
+            let e = parse_snapshot_args(&args(bad)).err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(e.contains("differ"), "{bad}: {e}");
         }
     }
 

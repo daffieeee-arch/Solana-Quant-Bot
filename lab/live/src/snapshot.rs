@@ -455,6 +455,28 @@ mod tests {
     }
 
     #[test]
+    fn a_live_start_knows_the_store_up_to_its_first_slot_only() {
+        // Why `lab-live snapshot` takes --before and --first-slot only equal: pool P3 is created at 950 and trades at 960.
+        let dir = tmp("bounds");
+        export(&dir);
+        // --before 1000 with a start at 920 (before > first): the snapshot knows P3, a pool of that start's future.
+        let late = Snapshot::load(&dir, Some(1000)).unwrap();
+        assert!(late.pools.contains_key("P3"));
+        // --before 950 with a start at 1000 (before < first): the snapshot does not know P3, yet the seed window of the
+        // start at 1000 holds P3's trade at 960.
+        let early = Snapshot::load(&dir, Some(950)).unwrap();
+        assert!(!early.pools.contains_key("P3") && !early.pool_class.contains_key("P3"));
+        let w = early.seed_window(1000, 450).unwrap();
+        assert_eq!(early.seed_trades("P3", &w).map(|t| t.slot).collect::<Vec<_>>(), [960]);
+        // equal bounds: a start at 960 knows P3 (created at 950) and seeds the trades of [560, 960), none of them P3's
+        let same = Snapshot::load(&dir, Some(960)).unwrap();
+        let w = same.seed_window(960, 400).unwrap();
+        assert_eq!((w.lo, w.hi), (560, 960));
+        assert!(same.pools.contains_key("P3") && same.seed_trades("P3", &w).next().is_none());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn the_seed_window_follows_init_seed_and_needs_the_exports_day() {
         let dir = tmp("seed");
         export(&dir);
