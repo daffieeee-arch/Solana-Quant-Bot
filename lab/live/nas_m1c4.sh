@@ -135,7 +135,8 @@ if [ "$STEP" = build ]; then
            legs::tests::a_boxed_farm_history_is_72_bytes_and_its_sums_stay_exact_beyond_i64 legs::tests::the_key_buffer_grows_by_steps_not_doublings \
            memlog::tests::a_churned_table_resizes_once_then_stays legs_read::tests::the_slots_are_whole_and_flatten_to_the_events \
            paper_core::tests::every_m3_case_gives_the_engines_writes_with_what_it_learns \
-           paper_core::tests::every_c2_case_gives_the_engines_writes_with_the_slots_closed_live; do
+           paper_core::tests::every_c2_case_gives_the_engines_writes_with_the_slots_closed_live \
+           paper_core::tests::every_c3_case_gives_the_engines_writes_with_the_slots_closed_live_where_the_files_stay; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
