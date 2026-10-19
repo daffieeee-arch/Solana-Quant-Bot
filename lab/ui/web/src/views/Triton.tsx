@@ -11,7 +11,9 @@ import type { PaperRecorder } from "../paperTypes";
 // hand in ui-cache/triton.json until Triton offers an API. Sample data is marked as such.
 interface TritonData {
   triton: {
-    sample: boolean; recorder: PaperRecorder | null; month_usd: number; month_gb: number; forecast_usd: number;
+    sample: boolean; recorder: PaperRecorder | null; month_usd: number; month_gb: number;
+    // The month: spent so far plus the rate per day (from the month's first recorded minute, at most the cap).
+    forecast_usd: number; rate_usd_per_day: number; since_unix: number | null;
     balance: { usd: number; as_of: string } | null;
     streams: { stream: string; gb: number; messages: number; per_min: number; dropped: boolean }[];
     latency: { p50: number; p90: number; n: number; edges_ms: number[]; hist: number[] } | null;
@@ -42,8 +44,13 @@ export default function Triton() {
           <span className="text-xs text-muted">Live data van de recorder · {r.is_today ? "vandaag" : r.day} (UTC)</span>
         </div>
         {t.sample ? <Badge tone="warn">voorbeelddata</Badge>
-          : r.stopped ? <Badge tone="sell">gestopt: budget op</Badge> : r.level ? <Badge tone="warn">afgeschaald {r.level}</Badge> : <Badge tone="buy">alle streams</Badge>}
+          : r.stopped ? <Badge tone="sell">{r.unknown ? "gestopt: verbruik onbekend" : "gestopt: budget op"}</Badge> : r.level ? <Badge tone="warn">afgeschaald {r.level}</Badge> : <Badge tone="buy">alle streams</Badge>}
       </div>
+      {r.unknown && (
+        <p className="m-0 px-3 py-2.5 rounded-xl bg-sell-soft border border-sell-soft text-sell text-xs">
+          De recorder is gestopt omdat het verbruik van vandaag niet vast te stellen was ({r.unknown}). Alleen de eigenaar start hem opnieuw, met het bedrag uit het Triton-dashboard (runbook §5).
+        </p>
+      )}
       {t.sample && <p className="m-0 px-3 py-2.5 rounded-xl bg-warn-soft border border-warn-line text-warn text-xs">De recorder draait nog niet: alles op deze pagina is een voorbeeld in het echte bestandsformaat. Zodra de recorder schrijft, staan hier de echte cijfers.</p>}
 
       <div className="grid gap-3.5 lg:grid-cols-2 lg:items-start">
@@ -60,10 +67,12 @@ export default function Triton() {
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="flex flex-col gap-0.5"><span className="text-[11px] text-muted">Deze maand</span><span className="num font-semibold">{usd(t.month_usd)}</span></div>
-              <div className="flex flex-col gap-0.5"><span className="text-[11px] text-muted">Prognose</span><span className="num font-semibold">{usd(t.forecast_usd)}</span></div>
+              <div className="flex flex-col gap-0.5" title={t.since_unix ? `Gerekend vanaf de eerste opname deze maand (${unixTime(t.since_unix)} UTC), hoogstens de daglimiet per dag.` : undefined}>
+                <span className="text-[11px] text-muted">Prognose maand</span><span className="num font-semibold">{usd(t.forecast_usd)}</span>
+                <span className="text-[10px] text-muted num">≈ {usd(t.rate_usd_per_day)} per dag</span></div>
               <div className="flex flex-col gap-0.5"><span className="text-[11px] text-muted">Tegoed</span>
-                <span className="num font-semibold">{t.balance ? usd(t.balance.usd) : "[SALDO]"}</span>
-                <span className="text-[10px] text-muted">{t.balance ? `handmatig · ${t.balance.as_of}` : "handmatig"}</span></div>
+                <span className="num font-semibold">{t.balance ? usd(t.balance.usd) : "–"}</span>
+                <span className="text-[10px] text-muted">{t.balance ? `handmatig · ${t.balance.as_of}` : "nog niet ingevuld"}</span></div>
             </div>
           </section>
 

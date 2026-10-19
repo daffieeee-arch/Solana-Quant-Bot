@@ -430,6 +430,36 @@ class WalletAndTriton(unittest.TestCase):
         self.assertEqual(sum(t["latency"]["hist"]), t["latency"]["n"])
         self.assertTrue(any(s["dropped"] for s in t["streams"]))
 
+    def test_triton_forecast_from_the_first_recorded_minute(self):
+        """A recorder that starts mid-month: the forecast is the spend so far plus the rate since its first minute
+        (at most the daily cap) over the days left, not the spend spread over the month from the 1st. The budget is
+        the recorder's own cap, and a day stopped on an unknown spend says why."""
+        now = 1_792_497_600  # 2026-10-20 12:00 UTC: 12 days left in October
+        start = now - 6 * 3600  # the recorder ran 6 hours
+        with tempfile.TemporaryDirectory() as root:
+            for i in range(6):  # one segment per hour, 0.1 GB each: 0.6 GB, $0.048
+                minute = (start + i * 3600) // 60
+                d = os.path.join(root, "segments", f"{i:09d}")
+                os.makedirs(d)
+                with open(os.path.join(d, "_segment.json"), "w") as f:
+                    json.dump({"seq": i, "first_slot": 460_000_000 + i, "last_slot": 460_000_000 + i, "complete": True,
+                               "written_unix": minute * 60 + 60, "usage": [{"minute": minute, "stream": "tx_watchlist",
+                                                                         "bytes": 100_000_000, "messages": 10}]}, f)
+            with open(os.path.join(root, "budget.json"), "w") as f:
+                json.dump({"day": now // 86_400, "spent_bytes": 600_000_000, "cap_bytes": 50_000_000_000, "spent_gb": 0.6,
+                           "stopped": True, "wire_ratio": 1.0, "unknown": "segments/000000009 has no _segment.json"}, f)
+            os.environ["LAB_RECORDER_ROOT"] = root
+            try:
+                t = paper.triton_view(now)
+            finally:
+                del os.environ["LAB_RECORDER_ROOT"]
+        self.assertAlmostEqual(t["month_usd"], 0.048)
+        self.assertEqual(t["since_unix"], start // 60 * 60)
+        self.assertAlmostEqual(t["rate_usd_per_day"], 0.048 * 4, places=6)  # 6 hours: a quarter of a day
+        self.assertAlmostEqual(t["forecast_usd"], 0.048 + 0.192 * 11.5, places=6)  # 11.5 days left after noon
+        self.assertEqual(t["recorder"]["budget_usd"], 4.0)  # 50 GB at $0.08
+        self.assertIn("no _segment.json", t["recorder"]["unknown"])
+
     def test_risk_limits_parse(self):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:
             fh.write("size_sol: 0.5   # per trade\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\n")

@@ -57,6 +57,7 @@ export interface PaperAssessment {
 export interface PaperRecorder {
   sample: boolean; day: string; is_today: boolean; streams: { stream: string; gb: number; messages: number }[];
   spent_gb: number | null; cap_gb: number; usd_per_gb: number; budget_usd: number; stopped: boolean; budget_day: string | null;
+  unknown?: string | null; // why the recorder stopped the day: today's spend could not be known (meter.rs, exit 75)
   level: number | null; dropped: string[]; last_segment_unix: number | null; segments_today: number; reconnects: number;
   notes: { unix: number; note: string }[];
 }
