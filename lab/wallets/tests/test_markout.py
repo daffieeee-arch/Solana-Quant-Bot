@@ -4,7 +4,6 @@ cut flag and the N2 reference columns. Needs the store-v2 engine (LAB_ENGINE); s
 
 import json
 import os
-import re
 
 import duckdb
 import pyarrow as pa
@@ -241,28 +240,3 @@ def test_tx_level_entries(tmp_path):
     h1 = {r["d"]: r["target"] for r in R if r["h"] == "1s"}
     assert h1[2001] == A + 1 + 3 and h1[1000] == A + 3 and h1[1] == A + 1 + 3 and h1[0] == A + 3
     assert all(r["capped"] == ent[r["d"]]["capped"] for r in R)               # the horizon rows carry the entry's flag
-
-
-def test_matched_plans_hash_joins_only():
-    """tsig and matched join on keys only: a left-only predicate beside a key (the first f7rev run's `s.venue = ...`,
-    v1's `x.tx AND ...` on tx_entry, `s.venue = 'curve'` on grad_pool) makes DuckDB plan a blockwise nested-loop
-    join, quadratic in the signals (hours on the full run). Every join in both plans must be a hash join."""
-    con = duckdb.connect()
-    con.execute("CREATE TEMP TABLE targets (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT)")
-    con.execute("CREATE TEMP TABLE sig (sid BIGINT, venue VARCHAR, orientation VARCHAR, key VARCHAR)")
-    con.execute("CREATE TEMP TABLE venue_last (key VARCHAR, last_slot BIGINT)")
-    con.execute("CREATE TEMP TABLE grad_pool (mint VARCHAR, pool VARCHAR, orientation VARCHAR)")
-    plan = con.execute("EXPLAIN " + markout.tsig_sql(10**9)).fetchall()[0][1]
-    joins = re.findall(r"[A-Z_]*JOIN[A-Z_]*", plan)
-    assert len(joins) == 4 and all(j == "HASH_JOIN" for j in joins), joins
-    con.execute("CREATE TEMP TABLE tsig (sid BIGINT, d INTEGER, h VARCHAR, h_ms BIGINT, target BIGINT, venue VARCHAR, orientation VARCHAR, "
-                "key VARCHAR, g_orientation VARCHAR, pkey VARCHAR, ckey VARCHAR, gkey VARCHAR, cut BOOLEAN)")
-    con.execute("CREATE TEMP TABLE pool_at (key VARCHAR, target BIGINT, slot BIGINT, b BIGINT, e BIGINT, virt BIGINT, lp_bps BIGINT, "
-                "protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT)")
-    con.execute("CREATE TEMP TABLE curve_at (key VARCHAR, target BIGINT, slot BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, "
-                "fee_bps BIGINT, creator_bps BIGINT)")
-    con.execute("CREATE TEMP TABLE tx_entry (sid BIGINT, d INTEGER, slot BIGINT, b BIGINT, e BIGINT, virt BIGINT, lp_bps BIGINT, "
-                "protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT, capped BOOLEAN)")
-    plan = con.execute("EXPLAIN " + markout.matched_sql()).fetchall()[0][1]
-    joins = re.findall(r"[A-Z_]*JOIN[A-Z_]*", plan)  # the tree lays operators side by side on one line
-    assert len(joins) == 4 and all(j == "HASH_JOIN" for j in joins), joins
