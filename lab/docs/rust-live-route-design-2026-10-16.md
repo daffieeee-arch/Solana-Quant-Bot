@@ -89,6 +89,12 @@ Most of "new" is a port of existing Python. §12 moves it to a shared crate, so 
 3. **The comparison.** `paper.parity` gets `--journal-a/--journal-b` (Python against Rust). It compares row for row on (family, variant, key, t): status, entry slot, tokens, cost, exit slot and reason, proceeds, attempts, P&L.
    - **Requirement: 0 unexplained.** The causes are named like the existing ones (`unsold_busy`, `farm_incomplete`, …).
 4. **Fixtures:** the dev chunk 450144000–450360000 (jobs 90/92), fwd1053-1054 (shadow 91), then a recorded day.
+   - **The event stream first (M1 C1a).** `lab-live legs` writes every event `paper.feed.ReplayFeed` hands the engine, built from the chunks and the snapshot, as `paper.legs_dump` writes it from the store. The two are compared by count and sha256 per slot window (`paper/tests/test_lab_live_legs.py`; the spec is `research/m1-c1a-legs-spec-2026-10-19.md`). C1a-1 covers fwd1053, which starts at its store's first slot. C1a-2 adds the store's earlier trades for a start inside a store, such as the dev chunk.
+   - **The farmer flag in replay is the store's, not LiveFeed's.** The reference for M1 is ReplayFeed, which reads the flag the store computed. LiveFeed's `FarmerFlags` (paper/live.py) differs from it in three ways:
+     1. **The boundary.** It compares `abs(net) < 0.05 * gross` in floats. The store compares exactly (DECIMAL), so the Rust replay uses `20 * |net| < gross` in i128. Near the boundary the float version can flag a trade the store does not (spec §3.4).
+     2. **h24.** LiveFeed derives the 24 h window in slots from a rolling slot time. The store uses one h24 per chunk, from that chunk's own blocks.
+     3. **The window only moves forward** in LiveFeed. With h24 changing per chunk, the store's window start can move back at a chunk boundary (by ~394 slots in fwd1053).
+     - Rust replay stays store-exact. After the paper start, a NAS job measures how many farm flags and signals LiveFeed and ReplayFeed differ by on the same chunk. With that number the coordinator decides before M3 whether Python's LiveFeed becomes exact (an engine PR with LAB review) or M3's Rust LiveFeed copies it with a documented difference.
 5. **In CI:** a small recorded fixture (a few segments) with a checked-in expected journal hash, run with `cargo test` on the NAS.
 6. **Live (M3):** each day the Rust live journal is compared with the Python paper journal of the same day. Only `finalized` decisions count (§9); the decisions on a bank that was later discarded are reported apart.
 
@@ -336,6 +342,7 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
     - turn each row into a compact typed leg as the store builds it, with interned keys and only the engine's fields (~150 B instead of ~1.5 KB a row), instead of holding the generic rows.
     - One chunk then needs ~2 GB. The order key is unique (key_ties 0), so the sort within a part keeps the replay order.
   - #367's baseline (1/16, 1/8 and the quarters of the chunk) gives the bytes per row it starts from.
+  - **As built in C1a (`lab-live legs`):** the sort unit is the **chunk**, not the part. Each part file spans almost the whole chunk, so sorting part by part would not give chain order, and a k-way merge of 70+ unsorted parts buys nothing. Per chunk, every row of the range is read with only its columns (a Parquet projection), turned into a compact leg (`CurveLeg` 128 B, `PoolRow` 112 B, keys interned) and sorted once. Then key ties are checked (the gate: none, or an error), the farmer flags are set and the events emitted, before the next chunk. The chunks are disjoint and read in slot order. The first NAS run logs the peak RSS per chunk.
 
 **Profiling plan:**
 1. Replay a recorded day at full speed on the NAS: throughput and the step histograms.

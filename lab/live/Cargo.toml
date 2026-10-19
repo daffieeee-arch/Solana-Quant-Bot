@@ -27,6 +27,8 @@ arrow-array = "60"
 arrow-schema = "60"
 # The paper journal is SQLite (paper/journal.py); bundled, so the NAS and the VPS link the same version.
 rusqlite = { version = "0.40", features = ["bundled"] }
+# The shared per-event math and legs (lab/core, design §12): no dependencies of its own.
+lab-core = { path = "../core" }
 
 [profile.release]
 overflow-checks = true

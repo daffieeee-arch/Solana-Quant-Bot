@@ -26,6 +26,17 @@
 //!   live slot the farmer-history window of that start.
 //! - `--out` gets the snapshot as sorted lines; paper/tests/test_lab_live_snapshot.py compares them with Python's
 //!   own load of the same store.
+//!
+//! M1 C1a, the engine's event stream from the chunks (legs.rs, legs_read.rs; spec research/m1-c1a-legs-spec-2026-10-19.md):
+//!
+//!   lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]
+//!
+//! - Every event paper.feed.ReplayFeed hands the engine over [from, to), store-exact (admission by the snapshot, the
+//!   store's casts and farmer flag), built from the chunk rows instead of the store's tables.
+//! - `--summary` gets the count and sha256 of the lines, per kind and per slot window (as paper/legs_dump.py writes it),
+//!   plus each chunk's h24, the kept and dropped rows per table and the peak RSS; `--out` the lines themselves (with
+//!   `--out-from`, those of the slots from there on: a window that differs, in a run from the store's start).
+//!   paper/tests/test_lab_live_legs.py compares them with paper.legs_dump on the same store.
 
 #[allow(dead_code)]
 #[path = "../../extractor/src/idl.rs"]
@@ -35,6 +46,8 @@ mod idl;
 mod sink;
 
 mod journal;
+mod legs;
+mod legs_read;
 mod mem;
 mod rows;
 mod snapshot;
@@ -61,7 +74,8 @@ fn parse_args(argv: &[String]) -> Result<Args> {
             std::process::exit(0);
         }
         _ => bail!("usage: lab-live replay (--chunks-root DIR | --segments-root DIR) --from SLOT --to SLOT --journal DIR [--order-out FILE]\n       \
-                    lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE"),
+                    lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE\n       \
+                    lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]"),
     }
     let (mut chunks_root, mut segments_root, mut from, mut to, mut journal, mut order_out) = (None, None, None, None, None, None);
     while let Some(flag) = it.next() {
@@ -144,13 +158,18 @@ fn parse_snapshot_args(argv: &[String]) -> Result<SnapArgs> {
         (None, None) => None,
         _ => bail!("give --first-slot and --h24 together"),
     };
+    if let (Some(b), Some((f, _))) = (before, window) {
+        if f > b {
+            bail!("--first-slot {f} is after --before {b}: a live start knows the store only up to its first slot");
+        }
+    }
     Ok(SnapArgs { dir: dir.context("--dir")?, before, window, out: out.context("--out")? })
 }
 
 fn snapshot_cmd(a: &SnapArgs) -> Result<()> {
     let s = snapshot::Snapshot::load(&a.dir, a.before)?;
     let w = a.window.map(|(first, h24)| s.seed_window(first, h24)).transpose()?;
-    log::info!("snapshot {}: {} tokens, {} pools ({} SOL markets), {} seeded pools ({} trades, {} traders), peak RSS {} MB",
+    log::info!("snapshot {}: {} tokens, {} pools ({} SOL markets), {} pools with seed trades ({} trades, {} traders), peak RSS {} MB",
                a.dir.display(), s.tokens.len(), s.pool_class.len(), s.pools.len(), s.seed.len(),
                s.seed.values().map(Vec::len).sum::<usize>(), s.traders.len(), mem::mb(mem::peak_rss_bytes()));
     let mut f = std::io::BufWriter::new(std::fs::File::create(&a.out).with_context(|| format!("create {}", a.out.display()))?);
@@ -161,11 +180,51 @@ fn snapshot_cmd(a: &SnapArgs) -> Result<()> {
     Ok(())
 }
 
+fn parse_legs_args(argv: &[String]) -> Result<legs_read::LegsArgs> {
+    let mut it = argv.iter();
+    let (mut chunks_root, mut snapshot, mut from, mut to, mut summary, mut out) = (None, None, None, None, None, None);
+    let (mut window, mut out_from) = (10_000, 0);
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--chunks-root" => chunks_root = Some(PathBuf::from(val()?)),
+            "--snapshot" => snapshot = Some(PathBuf::from(val()?)),
+            "--from" => from = Some(val()?.parse::<u64>().context("--from")?),
+            "--to" => to = Some(val()?.parse::<u64>().context("--to")?),
+            "--summary" => summary = Some(PathBuf::from(val()?)),
+            "--out" => out = Some(PathBuf::from(val()?)),
+            "--window" => window = val()?.parse::<u64>().context("--window")?,
+            "--out-from" => out_from = val()?.parse::<u64>().context("--out-from")?,
+            other => bail!("unknown argument {other}"),
+        }
+    }
+    let (from, to) = (from.context("--from")?, to.context("--to")?);
+    if from >= to || window == 0 {
+        bail!("--from must be below --to, and --window above 0");
+    }
+    Ok(legs_read::LegsArgs {
+        chunks_root: chunks_root.context("--chunks-root")?, snapshot: snapshot.context("--snapshot")?, from, to, window,
+        summary: summary.context("--summary")?, out, out_from,
+    })
+}
+
+fn legs_cmd(a: &legs_read::LegsArgs) -> Result<()> {
+    let t0 = std::time::Instant::now();
+    let mut v = legs_read::run(a)?;
+    v["secs"] = serde_json::json!(t0.elapsed().as_secs_f64());
+    std::fs::write(&a.summary, serde_json::to_string_pretty(&v)?).with_context(|| format!("write {}", a.summary.display()))?;
+    log::info!("legs [{}, {}): {} events in {:.1} s, sha256 {}, peak RSS {} MB", a.from, a.to, v["events"], t0.elapsed().as_secs_f64(),
+               v["sha256"].as_str().unwrap_or("?"), mem::mb(mem::peak_rss_bytes()));
+    Ok(())
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    if argv.first().map(String::as_str) == Some("snapshot") {
-        return snapshot_cmd(&parse_snapshot_args(&argv[1..])?);
+    match argv.first().map(String::as_str) {
+        Some("snapshot") => return snapshot_cmd(&parse_snapshot_args(&argv[1..])?),
+        Some("legs") => return legs_cmd(&parse_legs_args(&argv[1..])?),
+        _ => {}
     }
     let a = parse_args(&argv)?;
     replay(&a)
@@ -173,14 +232,28 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, parse_snapshot_args};
+    use super::{parse_args, parse_legs_args, parse_snapshot_args};
+
+    #[test]
+    fn the_legs_command_takes_its_inputs_a_range_and_a_summary() {
+        let a = parse_legs_args(&args("--chunks-root /c --snapshot /s --from 10 --to 20 --summary /m --out /o --out-from 15 --window 5")).unwrap();
+        assert_eq!((a.from, a.to, a.window, a.out.is_some(), a.out_from), (10, 20, 5, true, 15));
+        assert_eq!(parse_legs_args(&args("--chunks-root /c --snapshot /s --from 10 --to 20 --summary /m")).unwrap().window, 10_000);
+        for bad in ["--snapshot /s --from 1 --to 2 --summary /m", "--chunks-root /c --from 1 --to 2 --summary /m",
+                    "--chunks-root /c --snapshot /s --from 2 --to 2 --summary /m", "--chunks-root /c --snapshot /s --from 1 --to 2",
+                    "--chunks-root /c --snapshot /s --from 1 --to 2 --summary /m --window 0"] {
+            assert!(parse_legs_args(&args(bad)).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn the_snapshot_command_takes_a_dir_an_out_and_a_whole_window() {
-        let a = parse_snapshot_args(&args("--dir /s --before 7 --first-slot 9 --h24 3 --out /o")).unwrap();
-        assert_eq!((a.before, a.window), (Some(7), Some((9, 3))));
+        let a = parse_snapshot_args(&args("--dir /s --before 9 --first-slot 7 --h24 3 --out /o")).unwrap();
+        assert_eq!((a.before, a.window), (Some(9), Some((7, 3))));
         assert!(parse_snapshot_args(&args("--dir /s --out /o")).unwrap().window.is_none());
-        for bad in ["--out /o", "--dir /s", "--dir /s --out /o --first-slot 9", "--dir /s --out /o --h24 3", "--dir /s --out /o --x 1"] {
+        assert!(parse_snapshot_args(&args("--dir /s --before 9 --first-slot 9 --h24 3 --out /o")).is_ok());
+        for bad in ["--out /o", "--dir /s", "--dir /s --out /o --first-slot 9", "--dir /s --out /o --h24 3", "--dir /s --out /o --x 1",
+                    "--dir /s --before 8 --first-slot 9 --h24 3 --out /o"] {
             assert!(parse_snapshot_args(&args(bad)).is_err(), "{bad}");
         }
     }
