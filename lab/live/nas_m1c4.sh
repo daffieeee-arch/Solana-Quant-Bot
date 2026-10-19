@@ -276,7 +276,8 @@ if [ "$STEP" = engine-only ]; then
   # store, --seed 1053, K3 0.04:600 and the H arms, --memory 1GB), its chunks through a root of only that store's 4 chunks
   # (long_root, checked against the store's chunk_list): recorder A's segments as job 91's, recorder B's (b2's
   # engine-only filter) beside them, B's rows checked within A's and both volumes. Expect ~13 h; EO_HOURS (default 20)
-  # ends it before the next job. The measure lines go to job.log.
+  # ends it before the next job. The measure lines go to job.log. LAB_DUCKDB_TMP: the B-within-A check's EXCEPT ALL over
+  # all of A's rows (--memory 1GB) spills into EO_SPILL, not the checkout.
   EO_ROOT=${EO_ROOT:-$DATA/events/v1/chunks-fwd1053-1054}
   EO_OUT=${EO_OUT:-$OUT/engine-only}
   prepare "$STORE" $LO $HI "$OUT/eo"  # for long_root: the store's chunk_list in the snapshot's meta.json
@@ -285,7 +286,7 @@ if [ "$STEP" = engine-only ]; then
   mkdir -p "${EO_SPILL:=/lab/tmp/shadow-b}"
   log "engine-only: paper.shadow --engine-only into $EO_OUT (fwd1053-1054, the whole store), at most ${EO_HOURS:-20} h"
   rc=0
-  LAB_ENGINE_COMMIT=$COMMIT LAB_SPILL_DIR=$EO_SPILL LAB_SPILL_MAX=16GB nice -n 10 timeout "${EO_HOURS:-20}h" "$PY" -m paper.shadow \
+  LAB_ENGINE_COMMIT=$COMMIT LAB_SPILL_DIR=$EO_SPILL LAB_SPILL_MAX=16GB LAB_DUCKDB_TMP=$EO_SPILL nice -n 10 timeout "${EO_HOURS:-20}h" "$PY" -m paper.shadow \
     --store "$STORE" --chunks "$EO_ROOT" --out "$EO_OUT" --memory 1GB --seed 1053 --variants 0.04:600 \
     --groups "$REPO/lab/paper/h-arms-2026-10-16.yaml" --engine-only > "$OUT/engine-only.log" 2>&1 || rc=$?
   tail -5 "$OUT/engine-only.log" | tee -a "$OUT/job.log"
@@ -300,7 +301,10 @@ print(f"engine-only: B's rows within A's {ck.get('ok')} (blocks equal {ck.get('b
       f"GB/day A {v.get('estimated_gb_per_day')} B {v.get('estimated_gb_per_day_b')} (3 KB per transaction); unexplained {v.get('unexplained')}")
 print("engine-only: transactions per stream A " + ", ".join(f"{s} {a.get(s, 0):,}" for s in streams))
 print("engine-only: transactions per stream B " + ", ".join(f"{s} {b.get(s, 0):,}" for s in streams))
-sys.exit(0 if ck.get("ok") else 1)
+# GREEN only with B within A and the live side's differences all explained (LAB review on #418)
+ok = ck.get("ok") is True and v.get("unexplained") == 0
+print(f"engine-only: {'GREEN' if ok else 'RED'} (B within A {ck.get('ok')}, unexplained {v.get('unexplained')})")
+sys.exit(0 if ok else 1)
 EOF
   tee -a "$OUT/job.log" < "$OUT/engine-only-summary.log"
   status=$("$PY" -c 'import json, sys; d = json.load(open(sys.argv[1])); print(d["step"], "at", d.get("time"))' "$EO_OUT/STATUS.json" 2>/dev/null || echo none)
