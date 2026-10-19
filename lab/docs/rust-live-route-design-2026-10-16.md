@@ -198,6 +198,14 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
 
 **VPS limits for M3:** `lab-live` gets its own unit with `MemoryMax=2G`, `CPUQuota=100%` and `Nice=5`, like `lab-recorder`. The recorder stays at 2G. Together they fit the owner's VPS rules: 16 GB, sessions at 4G, live services first.
 
+**M3 requirements from C4's plateau (spec research/m1-c4-plateau-spec-2026-10-19.md v0.6, E8, decided 2026-10-19):**
+- **Why they are needed.** `lab-live`'s key interner grows with every new key, mostly new traders: about 0.25 M keys and 15–55 MB a day on job 91's segments. Every `Id` is shared by almost every structure, so a sweep or refcount would mean renumbering them all.
+- **What C4 does instead.** C4 bounds the interner explicitly: ≤ 100 MB of growth per 24 h, and more than 100 days of room under `MemoryMax=8G`.
+- **That bound holds only with these two requirements:**
+  - **A scheduled restart through the HWM replay at least weekly**, besides deploys. A restart interns only the keys still in the state.
+  - **A metric with an alarm when the interned keys pass 1 GB** (`interned_keys` bytes from the memory report, design §13).
+- **What the restart does not solve.** The farmer histories are pruned in the run itself (C4-4): pairs no later window reads are dropped, so their growth does not depend on the restart.
+
 ## 6. Risks, and what we deliberately do not do
 
 **Risks:**

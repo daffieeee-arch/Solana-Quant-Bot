@@ -75,6 +75,8 @@ pub struct PaperArgs {
     pub trace: Option<PathBuf>,
     /// `--mem-log FILE` (M1 C4-2, memlog.rs): a JSON line per minute of chain time with the memory and the time per event.
     pub mem_log: Option<PathBuf>,
+    /// `--keep-farmer-history` (M1 C4-4): no prune of the farmer histories (legs_read.rs `prune_farm`); for the A/B only.
+    pub keep_farmer_history: bool,
 }
 
 fn sql(c: Cell) -> Sql {
@@ -242,6 +244,7 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
     let (mut seeds, mut tally) = (Seeds::default(), Tally::default());
     let mut memlog = a.mem_log.as_deref().map(MemLog::create).transpose()?;
     replay.mem_log = memlog.is_some();
+    replay.prune_farm = !a.keep_farmer_history;
     // memlog.rs: the engines' structures, the N2 seeds, the entered rows' segments and the replay's (per chunk)
     let mems = |eng: &PaperEngine, seeds: &Seeds, tally: &Tally, r: &ReplayMem| {
         let mut v = eng.mem_report();
@@ -337,6 +340,7 @@ mod tests {
             chunks_root: root.join("chunks"), segments: None, snapshot: root.join("snap"), from: 1000, to: 3000, groups: root.join("groups.json"),
             variants: vec!["0.04:600".into()], cost_scenario: root.join("scn.json"), ignore_risk: true, journal: root.join(journal),
             summary: Some(root.join(format!("{journal}.json"))), trace: None, mem_log: None,
+            keep_farmer_history: false,
         }
     }
 

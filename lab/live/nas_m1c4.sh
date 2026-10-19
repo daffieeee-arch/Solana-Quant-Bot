@@ -19,12 +19,15 @@
 #                too; a second measure line gives the log's lines and minutes, RSS and heap, the time per event (replay
 #                processing time, not live latency), the largest structures at the end, and the seconds of the first
 #                (cold) run and of the run with the log.
-#   STEP=plateau (the lab Python 3.13 runner; C4-3): spec v0.5's gate (SPEC_SHA below; refused otherwise, logged before the
+#   STEP=plateau (the lab Python 3.13 runner; C4-3): spec v0.6's gate (SPEC_SHA below; refused otherwise, logged before the
 #                first event). plateau.py's tests first; then P1 and P2 (lab-live paper --mem-log on job 91's segments,
 #                risk on, the paper start's files) and P3 (the same range from the chunks, the upper bound) side by side;
 #                run.json (P1/P2 journal sha256 without the run's summary, the wallets, exit codes, segments read);
 #                plateau.py writes plateau.md and the measure line `lab-live plateau ... GREEN|RED`. A RED gate is a
 #                result, not a failed job.
+#   STEP=ab      (the lab Python 3.13 runner; C4-4): the farmer-history prune's A/B on job 91's segments: P0 with
+#                --keep-farmer-history and P1 with the prune, side by side; their journals and wallet files must be
+#                byte-identical. The measure line gives the sweeps, the pairs dropped and both runs' memory at the end.
 #   STEP=m2      (the lab Python 3.13 runner; C4-3, M2 in replay): on fwd1053-1054 [LO, HI) the legs parity (the whole
 #                store), then the signals parity and RC4 (lab-live paper against paper.engine, the paper start's files,
 #                config mode) side by side, each with its GREEN measure line in job.log.
@@ -33,6 +36,7 @@
 #   STEP=smoke LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                       (lab runner; short)
 #   STEP=plateau LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                     (lab runner; long: 3 runs of ~52 h)
 #   STEP=m2 LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                          (lab runner; long: paper.engine twice)
+#   STEP=ab LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                          (lab runner; short: two runs side by side)
 #
 # Every step writes to $DATA/backtests/live-m1c4-<commit7>/.
 set -euo pipefail
@@ -43,13 +47,13 @@ COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
 OUT=$DATA/backtests/live-m1c4-${COMMIT:0:7}
 mkdir -p "$OUT"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
-: "${STEP:?STEP=build, smoke, plateau or m2}"
+: "${STEP:?STEP=build, smoke, ab, plateau or m2}"
 log "start $STEP commit=$COMMIT out=$OUT"
 SEGMENTS=$DATA/backtests/shadow-arms-1053-1054-2c3e5fe/rec/segments  # job 91's (#299, 2c3e5fe), read again by 99m
 STORE=$DATA/store/fwd1053-1054.duckdb
 LO=454896000
 HI=455760000
-SPEC_SHA=70d8945caa5c22220322812f03e0210424c11f96ad69dbac3edf61e9b9fe3317   # research/m1-c4-plateau-spec-2026-10-19.md v0.5 (E7)
+SPEC_SHA=e14bdf24c75c00318daef017a96a5ebe56545b835a0e31ef05be7c5cb2e23291   # research/m1-c4-plateau-spec-2026-10-19.md v0.6 (E8)
 
 if [ "$STEP" = build ]; then
   cd "$REPO/lab/live"
@@ -68,6 +72,7 @@ if [ "$STEP" = build ]; then
            paper::tests::the_mem_log_writes_a_line_per_minute_and_changes_no_journal_row memlog::tests::a_line_per_minute_then_the_end \
            memlog::tests::the_buckets_are_contiguous_and_at_most_a_32nd_wide memlog::tests::the_quantiles_are_their_buckets_top_capped_by_the_max \
            mem::tests::the_counting_allocator_counts_every_path_exactly \
+           legs::tests::the_prune_keeps_every_flag_and_gives_back_the_idle_pairs legs_read::tests::the_farm_prune_changes_no_event \
            paper_core::tests::every_c3_case_gives_the_engines_writes_with_risk_on paper::tests::with_risk_on_each_group_reads_its_own_file \
            paper::tests::a_replay_writes_its_paper_journal_the_states_and_the_summary; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
@@ -86,7 +91,7 @@ if [ "$STEP" = build ]; then
   exit 0
 fi
 
-case "$STEP" in smoke | plateau | m2) ;; *) log "unknown STEP=$STEP"; exit 2 ;; esac
+case "$STEP" in smoke | ab | plateau | m2) ;; *) log "unknown STEP=$STEP"; exit 2 ;; esac
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 BIN=$OUT/bin/lab-live
 [ -x "$BIN" ] || { log "no binary at $BIN: run STEP=build first"; exit 1; }
@@ -112,12 +117,57 @@ EOF
     > "$OUT/snap.log" 2>&1 || { tail -20 "$OUT/snap.log" | tee -a "$OUT/job.log"; exit 1; }
 }
 
+if [ "$STEP" = ab ]; then
+  # C4-4's A/B: the farmer-history prune changes no row. P0 without it (--keep-farmer-history) and P1 with it, on job 91's
+  # segments with --mem-log, side by side: their journals (every table but the run's summary) and wallet files must be
+  # byte-identical; the measure line gives the prune's sweeps and pairs dropped and both runs' memory at the end.
+  [ -d "$SEGMENTS" ] || { log "no segments at $SEGMENTS"; exit 1; }
+  prepare
+  rm -rf "$OUT/ab0" "$OUT/ab1" "$OUT"/ab[01].json "$OUT"/ab[01].jsonl
+  abrun() {  # name, then extra flags
+    local name=$1; shift
+    "$BIN" paper --segments "$SEGMENTS" --snapshot "$OUT/snap" --from $LO --to $HI --groups "$OUT/groups.json" --variants 0.04:600 \
+      --cost-scenario "$OUT/cost_scenario.json" --journal "$OUT/$name" --summary "$OUT/$name.json" --mem-log "$OUT/$name.jsonl" "$@" \
+      > "$OUT/$name.log" 2>&1
+  }
+  abrun ab0 --keep-farmer-history & a=$!
+  abrun ab1 & b=$!
+  r0=0 r1=0
+  wait $a || r0=$?
+  wait $b || r1=$?
+  for n in ab0 ab1; do tail -2 "$OUT/$n.log" | tee -a "$OUT/job.log"; done
+  [ $r0 = 0 ] && [ $r1 = 0 ] || { log "ab: a run failed (exit $r0 / $r1)"; exit 1; }
+  "$PY" - "$OUT" "$REPO/lab/live/plateau.py" <<'EOF' | tee -a "$OUT/job.log" || { log "ab: RED"; exit 1; }
+import filecmp, json, os, subprocess, sys
+out, plateau = sys.argv[1], sys.argv[2]
+sha = lambda n: subprocess.run([sys.executable, plateau, "--journal-sha", os.path.join(out, n)], capture_output=True, text=True).stdout.strip()
+a, b = sha("ab0"), sha("ab1")
+wallets = sorted(f for f in os.listdir(os.path.join(out, "ab0")) if f.startswith("wallet") and f.endswith(".json"))
+w_equal = bool(wallets) and all(filecmp.cmp(os.path.join(out, "ab0", f), os.path.join(out, "ab1", f), shallow=False) for f in wallets)
+s0, s1 = (json.load(open(os.path.join(out, f"{n}.json"))) for n in ("ab0", "ab1"))
+end = lambda n: [json.loads(l) for l in open(os.path.join(out, f"{n}.jsonl"))][-1]
+e0, e1 = end("ab0"), end("ab1")
+p0, p1 = s0["farm_hist_pruned"], s1["farm_hist_pruned"]
+st = lambda e, k, f: e["structures"][k][f]
+ok = bool(a) and a == b and w_equal and not p0["on"] and p1["on"] and p1["sweeps"] > 0
+print(f"lab-live farm prune A/B on job 91's segments: journals {'equal' if a and a == b else 'DIFFER'} ({a[:12]}), wallets "
+      f"{'equal' if w_equal else 'DIFFER'} ({len(wallets)}); prune {p1['sweeps']} sweeps, {p1['pairs_dropped']:,} pairs dropped, "
+      f"{p1['pairs_left']:,} left (without: {p0['pairs_left']:,}); at the end farmer_hist_trades {st(e0, 'farmer_hist_trades', 'entries'):,} -> "
+      f"{st(e1, 'farmer_hist_trades', 'entries'):,}, heap {e0['heap_bytes'] / 1e9:.2f} -> {e1['heap_bytes'] / 1e9:.2f} GB, peak RSS "
+      f"{s0['peak_rss_bytes'] / 1e9:.2f} -> {s1['peak_rss_bytes'] / 1e9:.2f} GB; seconds {s0['secs']:.0f} / {s1['secs']:.0f}; "
+      f"{'GREEN' if ok else 'RED'}")
+sys.exit(0 if ok else 1)
+EOF
+  log "ab: done"
+  exit 0
+fi
+
 if [ "$STEP" = plateau ]; then
-  # The spec as pinned (v0.5, E7), into job.log before the first event; refused otherwise.
+  # The spec as pinned (v0.6, E8), into job.log before the first event; refused otherwise.
   SPEC=$DATA/research/m1-c4-plateau-spec-2026-10-19.md
   got=$(sha256sum "$SPEC" | cut -d' ' -f1)
   log "spec $SPEC sha256 $got (pinned $SPEC_SHA)"
-  [ "$got" = "$SPEC_SHA" ] || { log "plateau: the spec is not v0.5 as pinned: refused"; exit 1; }
+  [ "$got" = "$SPEC_SHA" ] || { log "plateau: the spec is not v0.6 as pinned: refused"; exit 1; }
   "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
     || { tail -15 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"; log "plateau.py tests: RED"; exit 1; }
   tail -1 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"

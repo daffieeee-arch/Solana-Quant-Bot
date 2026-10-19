@@ -22,6 +22,10 @@ sha256 pinned in nas_m1c4.sh): over `lab-live paper --mem-log` (lab/live/src/mem
   before it (visible if one still climbs); RSS and the heap stay gated and catch a leak in any structure.
 - Spec v0.5 (E7): wallet_txs is bounded (WALLET_DEPTH 50 per group); the 1 MB floor (under 1 MB a day is under 30 MB a
   month, negligible against M3's ~8 GB), so a few-KB insert-only map cannot turn the gate RED.
+- Spec v0.6 (E8, after the v0.5 run): (b) the floor's bytes growth is the entries' growth x bytes_est per entry at the
+  window's last line (stricter; a hash map's capacity steps hid farmer_hist's growth); (a) interned_keys, post-hoc after
+  the v0.5 run (linear in new traders, ~0.25 M a day, bounded by restarts, > 100 days of room at 8G), is gated by an
+  absolute bound instead: its bytes growth <= 100 MB per 24 h, valid with M3's weekly HWM restart and > 1 GB alarm.
 - Reported, not gated: the time per event (replay processing time on the NAS, not live latency: M3's), per hour from
   the minutes' buckets; the events per second; the peak RSS and its minute; P3's curves.
 - MB and GB are 10^6 and 10^9 bytes.
@@ -49,7 +53,9 @@ RSS_EDGE = 150 * MB
 RSS_MAX = 6 * GB
 STRUCT_SLOPE = 0.10  # x its mean in the window, per 24 h
 STRUCT_EDGE = 1.10
-STRUCT_FLOOR = 1 * MB  # spec v0.5 (E7): a gated structure fails only when its bytes_est also grows by this in 24 h
+STRUCT_FLOOR = 1 * MB  # spec v0.5 (E7): a gated structure fails only when its bytes also grow by this in 24 h
+KEYS = "interned_keys"  # spec v0.6 (E8 a): an absolute bound on its bytes growth instead of the 10 % test
+KEYS_BOUND = 100 * MB  # per 24 h
 # Bounded by construction: a window (lab-core's the_windowed_structures_stay_bounded_over_thirty_hours), the slot or
 # unit they belong to, the positions in flight, the ops queue (drained per event), WALLET_DEPTH (wallet_txs, v0.5).
 # They follow the chain's activity.
@@ -169,16 +175,23 @@ def max_ratio(lines, start, last, get):
     return max(win) / max(warm) if win and warm and max(warm) > 0 else None
 
 
-def bytes_growth(b):
-    """A structure's bytes_est growth in the 24 h: the larger of the slope x 24 h and last 2 h - first 2 h."""
-    return max(b["slope_day"], b["last2"] - b["first2"])
+def bytes_growth(g, entries_last, bytes_last):
+    """Spec v0.6 (E8 b): a structure's bytes growth in the 24 h = its entries' growth (the larger of the slope x 24 h and
+    last 2 h - first 2 h) x bytes_est per entry at the window's last line. bytes_est is capacity-based, so the factor
+    holds the table's slack (stricter), and a map growing between two capacity doublings is seen."""
+    if not entries_last or not bytes_last:
+        return 0.0
+    return max(g["slope_day"], g["last2"] - g["first2"]) * bytes_last / entries_last
 
 
-def struct_ok(g, b):
-    """Spec §2 (v0.5): a structure fails only when its entries grow (slope x 24 h > 10 % of its mean, or last 2 h > first
-    2 h x 1.10) and its bytes_est grows by >= 1 MB in the 24 h."""
+def struct_ok(name, g, grown):
+    """Spec §2 (v0.6): interned_keys passes while its bytes grow by <= 100 MB per 24 h (E8 a); any other structure fails
+    only when its entries grow (slope x 24 h > 10 % of its mean, or last 2 h > first 2 h x 1.10) and its bytes grow by
+    >= 1 MB in the 24 h (E7, E8 b)."""
+    if name == KEYS:
+        return grown <= KEYS_BOUND
     entries_grow = g["slope_day"] > STRUCT_SLOPE * g["mean"] or g["last2"] > g["first2"] * STRUCT_EDGE
-    return not (entries_grow and bytes_growth(b) >= STRUCT_FLOOR)
+    return not (entries_grow and grown >= STRUCT_FLOOR)
 
 
 def hourly_times(lines):
@@ -217,10 +230,12 @@ def evaluate(p1, run=None):
     for name in names:
         get = lambda v, n=name: v["structures"].get(n, {}).get("entries")  # noqa: E731
         g = growth(lines, start, last, get)
-        b = growth(lines, start, last, lambda v, n=name: v["structures"].get(n, {}).get("bytes_est"))
+        at_end = [v["structures"][name] for v in lines if start <= v["minute"] <= last and name in v["structures"]]
+        e_last, b_last = (at_end[-1].get("entries"), at_end[-1].get("bytes_est")) if at_end else (None, None)
+        grown = bytes_growth(g, e_last, b_last)
         gated = GATE_WINDOWED or name not in WINDOWED
-        g.update(group=lines[-1]["structures"][name].get("group"), windowed=name in WINDOWED, gated=gated, ok=struct_ok(g, b),
-                 bytes_last=lines[-1]["structures"][name].get("bytes_est"), bytes_growth=bytes_growth(b),
+        g.update(group=lines[-1]["structures"][name].get("group"), windowed=name in WINDOWED, gated=gated, ok=struct_ok(name, g, grown),
+                 bytes_last=lines[-1]["structures"][name].get("bytes_est"), bytes_growth=grown,
                  max_ratio=max_ratio(lines, start, last, get))
         structs[name] = g
     failing = sorted(n for n, g in structs.items() if g["gated"] and not g["ok"])
@@ -268,8 +283,8 @@ def report(res, spec_sha, others, run):
            "## Gates (spec §2)", "", "| check | value | limit | ok |", "|---|---|---|---|"]
     for c in res["checks"]:
         out.append(f"| {c['check']} | {c['value']} | {c['limit']} | {'yes' if c['ok'] else '**no**'} |")
-    out += ["", f"Structures: gated {'all' if GATE_WINDOWED else 'the ones not bounded by construction (spec v0.4, v0.5)'}; entries "
-            "over the window; a gated one fails only when its entries grow and its bytes grow by >= 1 MB in 24 h (v0.5); `max / "
+    out += ["", f"Structures: gated {'all' if GATE_WINDOWED else 'the ones not bounded by construction (spec v0.4-v0.6)'}; entries "
+            "over the window; a gated one fails only when its entries grow and its bytes (entries' growth x bytes per entry, v0.6) grow by >= 1 MB in 24 h; interned_keys only when its bytes grow by > 100 MB in 24 h (v0.6, post-hoc after the v0.5 run); `max / "
             "warm-up max` is the window's max over the max of the 24 h before it (reported, for the windowed ones above all); "
             "bytes are bytes_est, capacity x size_of, a lower bound.", "",
             "| structure | group | windowed | gated | mean | slope / 24 h | % of mean | first 2 h | last 2 h | max | max / warm-up max | bytes at the end | bytes growth / 24 h | ok |",

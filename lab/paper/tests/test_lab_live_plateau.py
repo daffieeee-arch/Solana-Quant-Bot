@@ -19,7 +19,7 @@ RUN = {"p1_journal_sha": "a" * 64, "p2_journal_sha": "a" * 64, "wallets_equal": 
        "segments_read": 3145, "segments_expected": 3145, "incomplete_skipped": [], "p1_secs": 600.0}
 
 
-def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, jitter=5 * MB, busy_day=0.0):
+def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, jitter=5 * MB, busy_day=0.0, farm_day=0.0):
     """A --mem-log of `hours` of chain time: RSS 3 GB, heap 2.5 GB and interned_keys 5 M (64 B each), each growing by its
     per-day amount; recent_keys (windowed) swinging +-diurnal over the day; busy, a small insert-only map (40 B an entry),
     growing by busy_day entries a day; wallet_txs filling up to its cap of 100; every minute 100 events of 1-3 us."""
@@ -36,6 +36,8 @@ def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, ji
                 "interned_keys": {"entries": keys, "bytes_est": 64 * keys, "group": "snapshot"},
                 "run_curve_sums": {"entries": 1_000_000, "bytes_est": 50 * MB, "group": "state"},
                 "busy": {"entries": busy, "bytes_est": 40 * busy, "group": "state"},
+                # a hash map between two capacity doublings: entries grow, bytes_est (capacity) stays (spec v0.6, E8 b)
+                "farmer_hist": {"entries": int(2_000_000 + farm_day * day), "bytes_est": 415 * MB, "group": "state"},
                 "wallet_txs": {"entries": min(100, i // 20), "bytes_est": 200 * min(100, i // 20), "group": "state"},
                 "ops": {"entries": 0, "bytes_est": 0, "group": "state"},
             }
@@ -77,13 +79,25 @@ def test_rss_and_heap_growth_fail_their_gates(tmp_path):
 
 
 def test_a_growing_cumulative_structure_fails(tmp_path):
-    # interned_keys + 600 k a day: 12 % of its ~5.9 M mean per 24 h, and 38 MB a day
-    res = plateau.evaluate(plateau.load(log(tmp_path / "p1.jsonl", keys_day=600_000)), RUN)
+    # spec v0.6 (E8 b): farmer_hist + 600 k entries a day while its bytes_est (capacity) stays at 415 MB: 25 % a day, and
+    # 600 k x 415 MB / ~3.1 M entries = ~80 MB a day by the entries' growth: it fails (v0.5's bytes slope said 0)
+    res = plateau.evaluate(plateau.load(log(tmp_path / "p1.jsonl", farm_day=600_000)), RUN)
     assert failing(res) == ["structures gated: failing"]
-    assert next(c for c in res["checks"] if c["check"] == "structures gated: failing")["value"] == ["interned_keys"]
-    assert res["structures"]["interned_keys"]["bytes_growth"] > 30 * MB
-    res = plateau.evaluate(plateau.load(log(tmp_path / "p1b.jsonl", keys_day=400_000)), RUN)  # ~7 %: passes
+    assert next(c for c in res["checks"] if c["check"] == "structures gated: failing")["value"] == ["farmer_hist"]
+    assert res["structures"]["farmer_hist"]["bytes_growth"] > 50 * MB
+    res = plateau.evaluate(plateau.load(log(tmp_path / "p1b.jsonl", farm_day=100_000)), RUN)  # ~4 %: passes
     assert res["ok"], failing(res)
+
+
+def test_interned_keys_have_an_absolute_bound(tmp_path):
+    # spec v0.6 (E8 a, post-hoc after the v0.5 run): interned_keys passes while its bytes grow by <= 100 MB per 24 h,
+    # whatever its share: + 600 k keys a day (12 %) at 64 B is ~38 MB a day: passes; + 2 M a day (~128 MB) fails
+    res = plateau.evaluate(plateau.load(log(tmp_path / "p1.jsonl", keys_day=600_000)), RUN)
+    assert res["ok"], failing(res)
+    k = res["structures"]["interned_keys"]
+    assert k["slope_day"] > 0.1 * k["mean"] and 30 * MB < k["bytes_growth"] < 50 * MB
+    res = plateau.evaluate(plateau.load(log(tmp_path / "p1b.jsonl", keys_day=2_000_000)), RUN)
+    assert next(c for c in res["checks"] if c["check"] == "structures gated: failing")["value"] == ["interned_keys"]
 
 
 def test_the_1_mb_floor_and_the_bounded_wallets(tmp_path):
@@ -93,6 +107,7 @@ def test_the_1_mb_floor_and_the_bounded_wallets(tmp_path):
     assert res["ok"], failing(res)
     busy, wallets = res["structures"]["busy"], res["structures"]["wallet_txs"]
     assert busy["gated"] and busy["ok"] and busy["slope_day"] > 0.1 * busy["mean"] and busy["bytes_growth"] < plateau.STRUCT_FLOOR
+    assert abs(busy["bytes_growth"] - 40 * 200) < 400  # 200 entries a day x 40 B an entry
     assert wallets["windowed"] and not wallets["gated"]
     # the same growth at 1 MB or more fails: 30,000 entries of 40 B a day is 1.2 MB
     res = plateau.evaluate(plateau.load(log(tmp_path / "p1b.jsonl", busy_day=30_000)), RUN)
