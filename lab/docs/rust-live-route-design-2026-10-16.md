@@ -201,7 +201,7 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
 **Reproducible binaries for M3's deploy:**
 - Every lab Rust build goes through `lab/scripts/rust-repro.sh`. `rust_repro <checkout>` points one fixed path, `$LAB_RUST_ROOT/lab`, at the checkout under a lock. Cargo is given `--manifest-path` through that path; otherwise cargo's crate hashes hold the absolute path of `../core`.
 - It also maps that root to `/src` and CARGO_HOME to `/cargo`, in RUSTFLAGS and in CFLAGS.
-- So a commit's binary has the same sha256 from any checkout path, on every host with the same `LAB_RUST_ROOT`. `nas_m1c4.sh` `STEP=repro` proves this with two clean builds at two paths.
+- So a commit's binary has the same sha256 from any checkout path, on every host with the same `LAB_RUST_ROOT` and the same toolchain (rustc, cargo and the C compiler). `nas_m1c4.sh` `STEP=repro` proves this with two clean builds at two paths.
 - The deploy can then check the binary it runs against the NAS build's sha256 of the same commit.
 
 **M3 requirements from C4's plateau (spec research/m1-c4-plateau-spec-2026-10-19.md v0.6, E8, decided 2026-10-19):**

@@ -11,7 +11,8 @@
 #                then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab. Since
 #                STEP=repro, through lab/scripts/rust-repro.sh: cargo reaches the checkout by one fixed path
 #                ($LAB_RUST_ROOT/lab, a symlink, under a lock) and maps it and CARGO_HOME to /src and /cargo, so the
-#                binary's sha256 does not depend on the checkout's path.
+#                binary's sha256 does not depend on the checkout's path. lab/scripts/test-rust-repro.sh runs first (the
+#                helper's refusals and its lock, without cargo); STEP=repro runs it too.
 #   STEP=repro   (bookworm runner): the proof of that: two release builds of this commit from two copies of lab/ at
 #                other paths (another depth and length), each with a fresh target dir; their sha256 must be equal, and
 #                equal to STEP=build's binary when it is there (run STEP=build first). Each binary is searched for its
@@ -81,8 +82,12 @@ if [ "$STEP" = build ]; then
       touch src/*.rs src/*/*.rs ../extractor/src/*.rs 2>/dev/null || true
     fi
   fi
+  if ! bash "$REPO/lab/scripts/test-rust-repro.sh" > "$OUT/test-rust-repro.log" 2>&1; then
+    tail -5 "$OUT/test-rust-repro.log" | tee -a "$OUT/job.log"; log "test-rust-repro: FAILED"; exit 1
+  fi
+  tail -1 "$OUT/test-rust-repro.log" | tee -a "$OUT/job.log"
   . "$REPO/lab/scripts/rust-repro.sh"
-  rust_repro "$REPO"
+  rust_repro "$REPO" || { log "rust_repro: FAILED"; exit 1; }
   log "cargo through $LAB_RUST -> $(readlink "$LAB_RUST"); RUSTFLAGS=$RUSTFLAGS CFLAGS=$CFLAGS"
   cargo test --release --locked --manifest-path "$LAB_RUST/live/Cargo.toml" > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
   grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
@@ -115,6 +120,10 @@ fi
 if [ "$STEP" = repro ]; then
   rustc -V | tee -a "$OUT/job.log"
   cargo -V | tee -a "$OUT/job.log"
+  if ! bash "$REPO/lab/scripts/test-rust-repro.sh" > "$OUT/test-rust-repro.log" 2>&1; then
+    tail -5 "$OUT/test-rust-repro.log" | tee -a "$OUT/job.log"; log "test-rust-repro: FAILED"; exit 1
+  fi
+  tail -1 "$OUT/test-rust-repro.log" | tee -a "$OUT/job.log"
   . "$REPO/lab/scripts/rust-repro.sh"
   home=${CARGO_HOME:-$HOME/.cargo}
   rm -rf "$OUT/repro"
@@ -123,7 +132,7 @@ if [ "$STEP" = repro ]; then
   for d in "${dirs[@]}"; do
     mkdir -p "$d"
     tar -C "$REPO" --exclude=target --exclude=__pycache__ --exclude=.pytest_cache -cf - lab | tar -xf - -C "$d"
-    rust_repro "$d"
+    rust_repro "$d" || { log "rust_repro $d: FAILED"; exit 1; }
     log "repro: building $d through $LAB_RUST (RUSTFLAGS=$RUSTFLAGS)"
     cargo build --release --locked --manifest-path "$LAB_RUST/live/Cargo.toml" > "$d.log" 2>&1 \
       || { tail -20 "$d.log" | tee -a "$OUT/job.log"; log "repro: the build of $d FAILED"; exit 1; }
@@ -134,7 +143,7 @@ if [ "$STEP" = repro ]; then
              printf '%s:%s ' "$p" "$(grep -c -F -a "$p" "$bin" || true)"; done)
     log "repro: $sha (paths left in it: $left)"
   done
-  rust_repro "$REPO"  # the link back to this checkout
+  rust_repro "$REPO" || { log "rust_repro: FAILED"; exit 1; }  # the link back to this checkout
   ref="" same="" other=""
   if [ -x "$OUT/bin/lab-live" ]; then
     ref=$(sha256sum "$OUT/bin/lab-live" | cut -d' ' -f1)
