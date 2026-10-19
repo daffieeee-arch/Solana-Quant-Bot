@@ -4,11 +4,13 @@
 //! exits, positions and heartbeat, which `paper.journal_diff` (default scope) compares with paper.engine's own, and each
 //! group's paper wallet file.
 //!
-//!   lab-live paper --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...]
-//!                  --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--trace FILE]
+//!   lab-live paper (--chunks-root DIR | --segments DIR) --snapshot DIR --from SLOT --to SLOT --groups FILE
+//!                  --variants SPEC[,SPEC...] --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--trace FILE]
 //!
 //! - The events are `lab-live signals`'s (legs_read.rs `Replay`, its refusals included: the hold-out, the clean period, a
-//!   range outside the store, another extraction); the universe, clock and bounds too (signals.rs `load`).
+//!   range outside the store, another extraction); the universe, clock and bounds too (signals.rs `load`). With
+//!   `--segments` (M1 C4-1) they come from the recorder's segments instead (the live form; their backfill rows are
+//!   counted, not read: the summary's `segments`).
 //! - The engine is lab_core's PaperEngine. Without `--ignore-risk` each group's risk file is the one the groups name
 //!   (`"risk"`, the path paper.engine journaled), read by risk.rs at every new dated minute and at every entry (C3-4).
 //!   Refused before the first event, naming M4 where M4 brings it: risk on with a group whose groups text names no risk
@@ -58,6 +60,8 @@ use std::time::Instant;
 
 pub struct PaperArgs {
     pub chunks_root: PathBuf,
+    /// Some: the recorder's segments under this directory instead of the chunks (M1 C4-1, legs_read.rs `open_segments`).
+    pub segments: Option<PathBuf>,
     pub snapshot: PathBuf,
     pub from: u64,
     pub to: u64,
@@ -194,7 +198,7 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
     let scn_text = text(&a.cost_scenario, "--cost-scenario")?;
     let scn = parse_scenario(&scn_text).with_context(|| format!("--cost-scenario {}", a.cost_scenario.display()))?;
     let snapshot = a.snapshot.clone();
-    let (mut replay, (loaded, grad, hold)) = Replay::open(&a.chunks_root, &a.snapshot, a.from, a.to, |snap, adm| {
+    let with_snapshot = |snap: &crate::snapshot::Snapshot, adm: &mut crate::legs_read::Admission| {
         let loaded = load(snap, &mut adm.keys, None)?;
         let mut grad = GradInfo::default();
         for t in snap.tokens.values() {
@@ -207,7 +211,11 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
         let store_lo = snap.store_slots.context("the snapshot's meta.json has no store_slots")?.0;
         let hold = curve_hold::load(&snapshot, snap.curve_hold.as_ref(), store_lo, a.from, a.to, &mut adm.keys)?;
         Ok((loaded, grad, hold))
-    })?;
+    };
+    let (mut replay, (loaded, grad, hold)) = match &a.segments {
+        Some(dir) => Replay::open_segments(dir, &a.snapshot, a.from, a.to, with_snapshot)?,
+        None => Replay::open(&a.chunks_root, &a.snapshot, a.from, a.to, with_snapshot)?,
+    };
     let hold_rows = hold.rows;
     let curve_hold: HashMap<Id, Vec<(Id, i128)>> = hold.nets.into_iter().map(|(m, ts)| (m, ts.into_iter().collect())).collect();
     let bounds = loaded.bounds;
@@ -294,7 +302,7 @@ mod tests {
 
     fn args(root: &Path, journal: &str) -> PaperArgs {
         PaperArgs {
-            chunks_root: root.join("chunks"), snapshot: root.join("snap"), from: 1000, to: 3000, groups: root.join("groups.json"),
+            chunks_root: root.join("chunks"), segments: None, snapshot: root.join("snap"), from: 1000, to: 3000, groups: root.join("groups.json"),
             variants: vec!["0.04:600".into()], cost_scenario: root.join("scn.json"), ignore_risk: true, journal: root.join(journal),
             summary: Some(root.join(format!("{journal}.json"))), trace: None,
         }
