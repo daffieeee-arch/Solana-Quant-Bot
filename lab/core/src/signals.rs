@@ -11,6 +11,10 @@
 //!   triggers of a slot pick the same N2 key the later row wins.
 //! - Only the farm gates are decided here; a row that passes them has no status yet (spec D10). Busy, risk and the
 //!   pending entry are C2/C3, behind `Gate::Pass`.
+//! - C2 (research/m1-c2-positionsim-spec-2026-10-19.md §3.2-§3.4, §5.1) adds the rest of `_end_slot` through `Hooks`,
+//!   called where the engine runs each step: steps 1-2b before the history, busy and the Pending per row past the gates,
+//!   the sweep's keep-set, step 5 after the farm windows. `push`, `finish` and `end_slot` are C1b's, with `NoHooks`: no
+//!   step runs and a row past the gates stays NULL.
 //! - A replay row has NULL block_time, the latency columns and d_ms (ReplayFeed events carry no arrival), and NULL
 //!   farm_complete (no farm_seed).
 
@@ -20,6 +24,7 @@ use crate::farm::{FarmWindow, WindowRule};
 use crate::legs::{Event, Id, Leg, Venue, NONE};
 use crate::n2::{HourIndex, N2Keys};
 use crate::universe::{Reject, Segment, Universe};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
@@ -142,13 +147,50 @@ pub struct SignalRow {
 }
 
 impl SignalRow {
-    /// 'skipped' for a gated row; NULL (undecided until C2/C3) for one that passed the gates.
+    /// 'skipped' for a gated row; NULL (undecided until C2/C3) for one that passed the gates. This is C1b's row; with
+    /// hooks the journal's status is the `Status` emitted with it.
     pub fn status(&self) -> Option<&'static str> {
         self.gate.reason().map(|_| "skipped")
     }
 
     pub fn reason(&self) -> Option<&'static str> {
         self.gate.reason()
+    }
+}
+
+/// A row's status and reason as the journal writes them (engine.py `_signal`, :757-763). Here only the farm gates are
+/// decided; past them, `Hooks::on_pass_row` decides (C2's busy and Pending, C3's risk).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Past the farm gates with nothing deciding it: NULL and NULL (C1b, spec D10).
+    Undecided,
+    /// 'entered', reason NULL: busy 'open' and a Pending (engine.py:759-763).
+    Entered,
+    /// 'skipped' and its reason: a farm gate's, 'busy', or the risk gate's (engine.py:737-746, written at :758); owned
+    /// where the reason is built at run time (C3's risk file errors, risk.py:35-48).
+    Skipped(Cow<'static, str>),
+}
+
+impl Status {
+    /// A row's status before any hook: 'skipped' with its gate, or Undecided past the gates (as `SignalRow::status` and
+    /// `reason`).
+    pub fn of(gate: Gate) -> Status {
+        gate.reason().map_or(Status::Undecided, |r| Status::Skipped(Cow::Borrowed(r)))
+    }
+
+    pub fn status(&self) -> Option<&'static str> {
+        match self {
+            Status::Undecided => None,
+            Status::Entered => Some("entered"),
+            Status::Skipped(_) => Some("skipped"),
+        }
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Status::Skipped(r) => Some(r),
+            Status::Undecided | Status::Entered => None,
+        }
     }
 }
 
@@ -171,6 +213,12 @@ impl SlotLegs {
 
     pub fn iter(&self) -> impl Iterator<Item = (Venue, Id, &[Leg])> {
         self.keys.iter().map(|(v, k, legs)| (*v, *k, legs.as_slice()))
+    }
+
+    /// The slot's legs of (venue, key): `by_key.get((venue, key))` of an entry (engine.py:387) and step 5's
+    /// `("pool", pool) not in by_key` (:437).
+    pub fn get(&self, venue: Venue, key: Id) -> Option<&[Leg]> {
+        self.index.get(&(venue, key)).map(|&i| self.keys[i].2.as_slice())
     }
 
     pub fn clear(&mut self) {
@@ -237,6 +285,54 @@ impl fmt::Display for SignalError {
 }
 
 impl std::error::Error for SignalError {}
+
+/// What a slot's end runs besides the signals: C2's positions (research/m1-c2-positionsim-spec-2026-10-19.md §3.2-§3.4,
+/// §5.1). Each method is called where engine.py `_end_slot` (:362-444) and `_signal` (:726-763) run that step, and sees
+/// the signal state as the engine's is there, so an implementation keeps the engine's order as it is.
+///
+/// The rows come through `emit` too, so a PaperEngine writes them and its own journal rows to one sink in the engine's
+/// write order. Quiet entries (engine.py:310, 353-360) and the end of data (:1289-1308) lie outside a slot: the caller
+/// runs them after a `push_with` whose event started a new slot, and after `finish_with`.
+pub trait Hooks {
+    /// After `_clock` and before step 3 (engine.py:370-391): steps 1, 2 and 2b, the open positions on the slot's keys,
+    /// the entries due and the graduation sales. `eng.day` is this slot's (`_clock` keeps the day of a slot without a
+    /// block time); `eng.recent` does not hold the slot's legs yet. `_clock`'s new-day and new-minute parts (:455-476:
+    /// the day loss reset, the positions put, the risk loaded) are the hook's, from `block_time`.
+    fn before_history(&mut self, _eng: &SignalEngine, _slot: u64, _block_time: Option<i64>, _by_key: &SlotLegs) {}
+
+    /// A row past the farm gates, right before it is emitted (engine.py:743-763): busy, the risk gate, and for an entry
+    /// busy 'open' and the Pending. The rows before it are emitted with their hooks run, so the second row of an N2 key
+    /// that two triggers of a slot picked finds the first one's busy (C2 spec §3.3). The answer is the row's status and
+    /// reason; Undecided leaves both NULL.
+    fn on_pass_row(&mut self, _eng: &SignalEngine, _row: &SignalRow) -> Status {
+        Status::Undecided
+    }
+
+    /// The hourly sweep's keep-set (engine.py `_sweep_history`, :677-678): the keys of open and pending positions, and
+    /// the pools a graduation waits for with the keys of the positions waiting. Asked during step 4, after the rows of
+    /// the key whose hour index rolled the hour and before the next key's (C2 spec §8.2 risk 5), only for keys without
+    /// an event since the sweep's bound, in no set order.
+    fn keep(&self, _key: Id) -> bool {
+        false
+    }
+
+    /// Step 5 after the farm windows (engine.py:429-441): time passes for the open positions on keys without an event in
+    /// this slot, and the graduations still waiting are sold. (The feed drains at :416-428 are LiveFeed's.)
+    fn after_farm(&mut self, _eng: &SignalEngine, _slot: u64, _by_key: &SlotLegs) {}
+
+    /// A row and its status, in the engine's write order; the journal's INSERT OR REPLACE is the implementation's.
+    fn emit(&mut self, row: SignalRow, status: Status);
+}
+
+/// C1b's hooks (`push`, `finish`, `end_slot`; `lab-live signals`): no step around the signals, no key kept through the
+/// sweep, nothing decided past the farm gates, and each row to the closure.
+pub struct NoHooks<F>(pub F);
+
+impl<F: FnMut(SignalRow)> Hooks for NoHooks<F> {
+    fn emit(&mut self, row: SignalRow, _: Status) {
+        (self.0)(row)
+    }
+}
 
 /// A trigger that passed F7: what each of its rows carries.
 #[derive(Clone, Copy)]
@@ -310,11 +406,17 @@ impl SignalEngine {
     }
 
     /// One event of the feed, in chain order (engine.py `run`, :301-316): an event of a new slot first ends the slot
-    /// before it. The slot's block time is its first event's.
+    /// before it. The slot's block time is its first event's. C1b's, with no hooks.
     pub fn push(&mut self, ev: &Event, keys: &mut impl N2Keys, emit: &mut impl FnMut(SignalRow)) -> Result<(), SignalError> {
+        self.push_with(ev, keys, &mut NoHooks(emit))
+    }
+
+    /// `push` with the hooks. After a push whose event started a new slot, the slot before it has ended: the caller's
+    /// quiet entries go there (engine.py:310), before the next push.
+    pub fn push_with(&mut self, ev: &Event, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<(), SignalError> {
         let slot = ev.leg.slot();
         if self.cur.map(|c| c.0) != Some(slot) {
-            self.flush(keys, emit)?;
+            self.flush(keys, hooks)?;
             self.cur = Some((slot, ev.block_time));
         }
         self.by_key.push(ev.venue, ev.key, ev.leg);
@@ -323,20 +425,24 @@ impl SignalEngine {
 
     /// The end of the feed: its last slot runs too (engine.py:321-323).
     pub fn finish(&mut self, keys: &mut impl N2Keys, emit: &mut impl FnMut(SignalRow)) -> Result<(), SignalError> {
-        self.flush(keys, emit)
+        self.finish_with(keys, &mut NoHooks(emit))
     }
 
-    fn flush(&mut self, keys: &mut impl N2Keys, emit: &mut impl FnMut(SignalRow)) -> Result<(), SignalError> {
+    /// `finish` with the hooks; the end of data (engine.py:1289-1308) is the caller's after it.
+    pub fn finish_with(&mut self, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<(), SignalError> {
+        self.flush(keys, hooks)
+    }
+
+    fn flush(&mut self, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<(), SignalError> {
         let Some((slot, bt)) = self.cur.take() else { return Ok(()) };
         let by_key = std::mem::take(&mut self.by_key);
-        let done = self.end_slot(slot, bt, &by_key, keys, emit);
+        let done = self.end_slot_with(slot, bt, &by_key, keys, hooks);
         self.by_key = by_key;
         self.by_key.clear();
         done
     }
 
-    /// One slot with at least one event (engine.py `_end_slot`, its signal parts). Steps 1-2 (positions, entries) and
-    /// the graduation exits are C2 and touch no signal state.
+    /// One slot with at least one event (engine.py `_end_slot`, its signal parts), with no hooks.
     pub fn end_slot(
         &mut self,
         slot: u64,
@@ -344,6 +450,19 @@ impl SignalEngine {
         by_key: &SlotLegs,
         keys: &mut impl N2Keys,
         emit: &mut impl FnMut(SignalRow),
+    ) -> Result<(), SignalError> {
+        self.end_slot_with(slot, block_time, by_key, keys, &mut NoHooks(emit))
+    }
+
+    /// One slot with at least one event (engine.py `_end_slot`, :362-444): `_clock`'s day, the hooks' steps 1-2b, the
+    /// history (3), the signals with the hooks' busy and Pending (4), the farm windows (4b), the hooks' step 5.
+    pub fn end_slot_with(
+        &mut self,
+        slot: u64,
+        block_time: Option<i64>,
+        by_key: &SlotLegs,
+        keys: &mut impl N2Keys,
+        hooks: &mut impl Hooks,
     ) -> Result<(), SignalError> {
         if self.first_slot.is_none() {
             self.first_slot = Some(slot);
@@ -354,6 +473,9 @@ impl SignalEngine {
         self.counts.slots += 1;
         self.counts.events += by_key.events() as u64;
         self.counts.windows.entry(slot / EPOCH_SLOTS).or_insert_with(|| self.clock.windows(slot));
+        // 1, 2, 2b. the open positions, the entries due and the graduation sales (engine.py:373-391), on the history
+        // before this slot.
+        hooks.before_history(self, slot, block_time, by_key);
         // 3. history (engine.py:392-401): every key, the pools' first and last slot (mayhem pools too).
         for (venue, key, legs) in by_key.iter() {
             if venue == Venue::Pool {
@@ -367,8 +489,8 @@ impl SignalEngine {
         // 4. signals (engine.py:402-406): per key its F7, then its hour index.
         self.written.clear();
         for (venue, key, legs) in by_key.iter() {
-            self.f7(venue, key, legs, slot, keys, emit)?;
-            self.hour_index(venue, key, legs, slot);
+            self.f7(venue, key, legs, slot, keys, hooks)?;
+            self.hour_index(venue, key, legs, slot, &*hooks);
         }
         // 4b. the pools' farm windows, after the signals (engine.py:409-413).
         for (venue, key, legs) in by_key.iter() {
@@ -379,6 +501,9 @@ impl SignalEngine {
                 }
             }
         }
+        // 5. time passes for the open positions on keys without an event here, and the graduations waiting
+        // (engine.py:429-441).
+        hooks.after_farm(self, slot, by_key);
         Ok(())
     }
 
@@ -391,7 +516,7 @@ impl SignalEngine {
         legs: &[Leg],
         t: u64,
         keys: &mut impl N2Keys,
-        emit: &mut impl FnMut(SignalRow),
+        hooks: &mut impl Hooks,
     ) -> Result<(), SignalError> {
         if !self.universe.bounds.decides(t) {
             return Ok(());
@@ -434,10 +559,13 @@ impl SignalEngine {
                 }
             }
         }
+        // engine.py:743-763 past the gates, row by row: the hooks decide each row before it is written and before the
+        // next row is decided (`_n2` between two `_signal`s reads only the hour index, so the picks may come first).
         for (id, row) in rows {
             self.counts.overwrites += u64::from(!self.written.insert(id));
             self.counts.rows[row.family as usize][row.gate as usize] += 1;
-            emit(row);
+            let status = if row.gate == Gate::Pass { hooks.on_pass_row(self, &row) } else { Status::of(row.gate) };
+            hooks.emit(row, status);
         }
         Ok(())
     }
@@ -469,15 +597,15 @@ impl SignalEngine {
 
     /// engine.py `_hour_index`: a new hour first (its prunes with n at this slot), then the key's N2 candidacy with its
     /// last leg's depth.
-    fn hour_index(&mut self, venue: Venue, key: Id, legs: &[Leg], slot: u64) {
+    fn hour_index(&mut self, venue: Venue, key: Id, legs: &[Leg], slot: u64, hooks: &impl Hooks) {
         if let Some(h) = self.hours.roll(slot, &self.clock) {
             self.counts.rollovers += 1;
             if let Some(tr) = self.trace.as_mut() {
                 tr.push(Trace::Hour { slot, venue, key });
             }
             self.farm.rollover(slot, &self.clock);
-            // (farm_fixes: live only, M3.) C2 keeps the keys with an open, pending or graduating position.
-            self.recent.sweep(slot.saturating_sub(HISTORY_SLOTS.max(h)), |_| false);
+            // (farm_fixes: live only, M3.) The hooks keep the keys with an open, pending or graduating position.
+            self.recent.sweep(slot.saturating_sub(HISTORY_SLOTS.max(h)), |k| hooks.keep(k));
             // pool_seen of pools without a trade for 24 h goes; the test reads pool_last (engine.py:697-701).
             let old = slot.saturating_sub(self.clock.slots(POOL_SEEN_KEEP_MS, slot));
             let seen = &mut self.pool_seen;
@@ -497,6 +625,9 @@ impl SignalEngine {
 
 #[cfg(test)]
 mod cases;
+
+#[cfg(test)]
+mod hooks;
 
 #[cfg(test)]
 mod tests {
