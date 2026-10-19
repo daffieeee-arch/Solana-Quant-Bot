@@ -1,22 +1,43 @@
-# M3-01: the paper-only binaries carry no signing-capable crate (lab/docs/rust-live-route-design-2026-10-16.md §1;
-# research/m3-design-2026-10-19.md §7). lab-live, and lab-core which it links, must never be able to hold or use a key:
-# no Ed25519 implementation, no Solana keypair, signer, seed or wallet crate in their Cargo.lock.
+# M3-01: the paper-only binaries can neither sign nor build or send a transaction (lab/docs/rust-live-route-design-
+# 2026-10-16.md §1: "no code path that builds or sends a transaction"; research/m3-design-2026-10-19.md §7). lab-live,
+# and lab-core which it links, carry none of the crates below in their Cargo.lock:
+# - a signature implementation: Ed25519 and its trait, the curve under it, ECDSA (secp256k1, P-256);
+# - a general crypto provider that can sign: ring (ring::signature::Ed25519KeyPair), aws-lc-rs, openssl;
+# - a Solana keypair, signer, seed or wallet crate, and the seed-phrase crates;
+# - a Solana crate that builds or sends a transaction: solana-transaction, solana-message, and the RPC, TPU, QUIC
+#   and UDP clients and the connection cache.
+# Allowed: hashing (sha2 and the like) and solana-signature (a type only). rustls as a TLS client is not denied by
+# name, but its crypto providers are, so TLS cannot enter lab-live either (M3 option X keeps the stream and the
+# decoding in a recorder process).
 #
 # dependency_audit.py checks these lockfiles on every `cargo` audit (the dependency-audit workflow, which runs on any PR
 # that changes a lab lockfile or lab/security/) and on its own (`dependency_audit.py no-signing`; nas_m1c4.sh STEP=build).
 # A hit fails; there is no ignore list for this rule.
 #
-# Not on the list: lab/recorder and lab/extractor. They decode with Agave and Jetstreamer crates, which pull in
-# ed25519-dalek and solana-keypair transitively (the audit-ignore exceptions); they sign nothing, but they are not
-# paper-only binaries in this sense, and M3 keeps the decoding there (option X) so that lab-live stays free of them.
+# Not on the list: lab/recorder and lab/extractor. They decode with Agave and Jetstreamer crates, which pull in many of
+# these crates transitively (the audit-ignore exceptions). They sign nothing, but they are not paper-only binaries in
+# this sense, and M3 keeps the decoding there (option X) so that lab-live stays free of them.
 
 paper_only = ["lab/core/Cargo.lock", "lab/live/Cargo.lock"]
 
 deny = [
+  # signature implementations
+  "ed25519",
   "ed25519-dalek",
   "ed25519-dalek-bip32",
   "ed25519-zebra",
   "ed25519-compact",
+  "curve25519-dalek",
+  "k256",
+  "secp256k1",
+  "p256",
+  # general crypto providers that can sign
+  "ring",
+  "aws-lc-rs",
+  "aws-lc-sys",
+  "openssl",
+  "openssl-sys",
+  # Solana keys, signers, seeds and wallets
   "solana-keypair",
   "solana-signer",
   "solana-presigner",
@@ -27,4 +48,14 @@ deny = [
   "solana-sdk",
   "tiny-bip39",
   "bip39",
+  # building or sending a transaction
+  "solana-transaction",
+  "solana-message",
+  "solana-rpc-client",
+  "solana-rpc-client-api",
+  "solana-client",
+  "solana-tpu-client",
+  "solana-quic-client",
+  "solana-udp-client",
+  "solana-connection-cache",
 ]

@@ -286,11 +286,15 @@ class NoSigning(unittest.TestCase):
     def test_the_repo_paper_only_locks_pass_and_the_recorder_lock_is_caught(self):
         locks, deny = da.load_no_signing()
         self.assertEqual(sorted(os.path.relpath(x, da.REPO) for x in locks), ["lab/core/Cargo.lock", "lab/live/Cargo.lock"])
-        self.assertTrue({"ed25519-dalek", "solana-keypair", "solana-signer", "solana-sdk"} <= deny)
+        self.assertTrue({"ed25519-dalek", "solana-keypair", "solana-signer", "solana-sdk", "ring", "solana-transaction"} <= deny)
+        self.assertFalse({"sha2", "rustls", "solana-signature"} & deny)  # hashing, a TLS client, a type: allowed
         self.assertEqual(da.no_signing(locks, deny, out=io.StringIO()), [])
-        # the positive control: the recorder decodes with Agave crates, which pull signing crates in
+        # the positive control: the recorder decodes with Agave crates, which pull in signing, crypto-provider and
+        # transaction-building crates (LAB review on #413: ring, k256, solana-rpc-client, solana-transaction caught too)
         hits = da.no_signing([os.path.join(da.REPO, "lab/recorder/Cargo.lock")], deny, out=io.StringIO())
-        self.assertTrue({"ed25519-dalek", "solana-keypair"} <= {n for _, n, _ in hits}, hits)
+        need = {"ed25519-dalek", "solana-keypair", "ring", "k256", "solana-rpc-client", "solana-transaction", "curve25519-dalek",
+                "solana-message", "openssl", "aws-lc-rs", "solana-tpu-client"}
+        self.assertTrue(need <= {n for _, n, _ in hits}, sorted(need - {n for _, n, _ in hits}))
 
     def test_the_command_exits_1_on_a_hit(self):
         with contextlib.redirect_stdout(io.StringIO()) as out:

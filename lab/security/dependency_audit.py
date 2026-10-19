@@ -12,9 +12,10 @@ Fail rule:
 An ignore entry (with reason, evidence that no compatible patched version exists, date and review
 date) turns a failing finding into a printed "ignored" line. A tool error or unreadable output always fails.
 
-No signing crates (M3-01, no-signing.toml): the paper-only lockfiles (lab-core, lab-live) must hold no signing-capable
-crate (Ed25519 implementations, Solana keypair/signer/seed/wallet crates). Every `cargo` run checks them too, so the
-dependency-audit workflow catches a new dependency that pulls one in; `no-signing` checks them alone. No ignore list.
+No signing crates (M3-01, no-signing.toml): the paper-only lockfiles (lab-core, lab-live) must hold no crate that can sign
+or build or send a transaction (signature implementations, crypto providers, Solana keypair/signer/seed/wallet crates,
+transaction and RPC/TPU client crates). Every `cargo` run checks them too, so the dependency-audit workflow catches a
+new dependency that pulls one in; `no-signing` checks them alone. No ignore list.
 
 Usage:
   dependency_audit.py cargo LOCKFILE... [--optional LOCKFILE]...
