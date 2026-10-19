@@ -19,6 +19,12 @@ CRASHED = [
     ("infinity for an int", BASE.replace("max_open_positions: 5", "max_open_positions: .inf").encode(),
      "risk config invalid: OverflowError cannot convert float infinity to integer"),
     ("not UTF-8", BASE.replace("[F7]", "[F7]  # caf\xe9").encode("latin-1"), "risk config unreadable: UnicodeDecodeError"),
+    # load passed these, and the engine raised at their first use: size_lamports of an infinite size, Clock.slots of an
+    # infinite cooldown (found by the review of lab-live's reader, #383)
+    ("an infinite size", BASE.replace("size_sol: 0.5", "size_sol: .inf").replace("max_exposure_sol: 2.5", "max_exposure_sol: .inf").encode(),
+     "risk config invalid: sizes and limits must be finite"),
+    ("an infinite cooldown", BASE.replace("pool_cooldown_h: 24", "pool_cooldown_h: .inf").encode(),
+     "risk config invalid: sizes and limits must be finite"),
 ]
 
 
