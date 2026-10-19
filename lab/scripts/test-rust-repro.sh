@@ -1,7 +1,10 @@
 #!/bin/bash
 # Tests of lab/scripts/rust-repro.sh (no cargo, no build): bash lab/scripts/test-rust-repro.sh. Each case runs in its
 # own bash under a fresh LAB_RUST_ROOT inside one mktemp directory, removed at the end. The last line is
-# "test-rust-repro: N passed" (exit 0) or the failed cases (exit 1). nas_m1c4.sh runs it before STEP=build and repro.
+# "test-rust-repro: N passed, M skipped (...)" (exit 0) or the failed cases (exit 1). A case is skipped only where it
+# cannot fail by construction, named with the reason: rootro as root (root can write a 0555 directory, so the refusal
+# of a root this user cannot write is not testable there; root still gets the ownership and symlink checks).
+# nas_m1c4.sh runs it before STEP=build and repro.
 set -uo pipefail
 
 export HELPER=$(cd "$(dirname "$0")" && pwd -P)/rust-repro.sh
@@ -11,7 +14,7 @@ trap cleanup EXIT
 mkdir -p "$TMP/co-a/lab" "$TMP/co-b/deeper/lab" "$TMP/home"
 export CARGO_HOME=$TMP/home
 unset RUST_REPRO_FD RUST_REPRO_RUSTFLAGS RUST_REPRO_CFLAGS RUSTFLAGS CFLAGS LAB_RUST
-passed=0 failed=()
+passed=0 failed=() skipped=()
 
 check() {  # name, expected rc (0 or "nonzero"), then the case's bash code (rust-repro.sh sourced, R the root)
   local name=$1 want=$2 code=$3 rc
@@ -52,6 +55,8 @@ check rootlink nonzero 'mkdir -p "$T/elsewhere" && ln -s "$T/elsewhere" "$R" && 
 # a root this user cannot write (skipped as root, who can)
 if [ "$(id -u)" != 0 ]; then
   check rootro nonzero 'mkdir -p "$R" && chmod 0555 "$R" && rust_repro "$T/co-a"; rc=$?; chmod 0755 "$R"; exit $rc'
+else
+  skipped+=("rootro: running as root, who can write a 0555 directory")
 fi
 # the lock: held by the first call; a second shell waits; a subshell runs under it
 check lock 0 '
@@ -74,10 +79,12 @@ check otherfd 0 '
   flock -n "$R/.lock" true && exit 3
   exit 0'
 
+skips="${#skipped[@]} skipped"
+[ ${#skipped[@]} = 0 ] || skips="$skips ($(printf '%s; ' "${skipped[@]}" | sed 's/; $//'))"
 if [ ${#failed[@]} = 0 ]; then
-  echo "test-rust-repro: $passed passed"
+  echo "test-rust-repro: $passed passed, $skips"
   exit 0
 fi
 printf 'test-rust-repro: FAILED %s\n' "${failed[@]}"
-echo "test-rust-repro: $passed passed, ${#failed[@]} failed"
+echo "test-rust-repro: $passed passed, ${#failed[@]} failed, $skips"
 exit 1
