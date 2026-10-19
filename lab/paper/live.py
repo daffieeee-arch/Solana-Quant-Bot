@@ -307,10 +307,12 @@ class LiveFeed(Feed):
         # The engine's Clock: ms per slot per epoch, measured from the block times received.
         self.clock = Clock()
         self.epoch_span = {}  # epoch -> [(first slot, time), (last slot, time)]
-        self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "unknown_pool_rows": 0, "backfill_rows": 0,
+        self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "unknown_pool_rows": 0, "unknown_pool_other_rows": 0,
+                      "unknown_mints": 0, "unknown_mint_rows": 0, "backfill_rows": 0,
                       "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0, "tokens_dropped": 0,
                       "farmer_flags_fixed": 0}
-        self.unknown_seen = set()  # pools whose trades were dropped (not in the snapshot, creation not received)
+        self.unknown_seen = set()  # pools whose rows were dropped (not in the snapshot, creation not received)
+        self.unknown_mints_seen = set()  # mints whose curve rows were dropped (the same, for tokens)
         self.seen_keys, self.seen_order, self.seen_hi = {}, deque(), 0  # key -> "rec" | "hist" (SEEN_KEEP_SLOTS)
         # Pools with a backfill: positions of their trades already in the farmer history, so the
         # backfill's overlap with the recorded transactions counts once.
@@ -528,22 +530,44 @@ class LiveFeed(Feed):
         self.stats["seeded_pools"] += 1
 
     def _unknown_pools(self, c, seq):
-        """Count (and log the new) pools whose trades pool_select drops: not in the snapshot and their
-        creation not received (a store that ends long before the recorder started)."""
-        trades = _pool_trades(c)
-        if not trades:
+        """Count (and log the new) pools whose rows pool_select drops: not in the snapshot and their creation not
+        received (a store that ends long before the recorder started, or a creation the recorder missed). Their buys and
+        sells are unknown_pool_rows, their withdraw, deposit and boost rows unknown_pool_other_rows (M3-09a's note v0.3:
+        2 such withdraws were the last of job 91's 11,717)."""
+        new = 0
+        for sql, stat in ((_pool_trades(c), "unknown_pool_rows"), (_pool_other(c), "unknown_pool_other_rows")):
+            if not sql:
+                continue
+            for pool, n in self.con.execute(f"SELECT pool, count(*) FROM ({sql}) x ANTI JOIN live_pools USING (pool) GROUP BY pool").fetchall():
+                self.stats[stat] += n
+                if pool not in self.unknown_seen:
+                    new += 1
+                    self.stats["unknown_pools"] += 1
+                    if len(self.unknown_seen) < 1_000_000:
+                        self.unknown_seen.add(pool)
+        if new:
+            log.warning("segment %d: %d new unknown pools, their rows dropped (%d unknown pools, %d trade and %d other rows "
+                        "so far)", seq, new, self.stats["unknown_pools"], self.stats["unknown_pool_rows"],
+                        self.stats["unknown_pool_other_rows"])
+
+    def _unknown_mints(self, c, seq):
+        """Count (and log the new) mints whose curve rows curve_select drops: not in the snapshot and their CreateEvent
+        not received, or pruned (TOKEN_KEEP_DAYS). M3-09a's note v0.3: 11,606 of job 91's 11,717 (the recording ran
+        without --pump-creates); before this, LiveFeed dropped them without a count."""
+        sql = _curve_trades(c, mints=None)
+        if not sql:
             return
         new = 0
-        for pool, n in self.con.execute(f"SELECT pool, count(*) FROM ({trades}) x ANTI JOIN live_pools USING (pool) GROUP BY pool").fetchall():
-            self.stats["unknown_pool_rows"] += n
-            if pool not in self.unknown_seen:
+        for mint, n in self.con.execute(f"SELECT mint, count(*) FROM ({sql}) x ANTI JOIN live_mints USING (mint) GROUP BY mint").fetchall():
+            self.stats["unknown_mint_rows"] += n
+            if mint not in self.unknown_mints_seen:
                 new += 1
-                self.stats["unknown_pools"] += 1
-                if len(self.unknown_seen) < 1_000_000:
-                    self.unknown_seen.add(pool)
+                self.stats["unknown_mints"] += 1
+                if len(self.unknown_mints_seen) < 1_000_000:
+                    self.unknown_mints_seen.add(mint)
         if new:
-            log.warning("segment %d: %d new unknown pools, their trades dropped (%d unknown pools, %d rows so far)",
-                        seq, new, self.stats["unknown_pools"], self.stats["unknown_pool_rows"])
+            log.warning("segment %d: %d new unknown mints, their curve rows dropped (%d unknown mints, %d rows so far)",
+                        seq, new, self.stats["unknown_mints"], self.stats["unknown_mint_rows"])
 
     def _h24(self):
         if self.fixed_h24:
@@ -651,6 +675,7 @@ class LiveFeed(Feed):
         if self.seed_farmers and self.farm_seed is None:
             self._init_seed(meta["first_slot"], h24)
         self._unknown_pools(c, seq)
+        self._unknown_mints(c, seq)
         out = []
         sql = curve_select(c, "live_mints")
         if sql:

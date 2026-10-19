@@ -138,6 +138,45 @@ def test_unknown_pools_are_counted_and_logged(caplog):
     assert len(msgs) == 1 and msgs[0].startswith("segment 7:")  # the second segment brought no new pool
 
 
+def test_unknown_mints_are_counted_and_logged(caplog):
+    # M3-09a's note v0.3: LiveFeed dropped the curve rows of mints it does not know without a count (11,606 of job 91's
+    # 11,717). Now every such row is counted, and each new mint logged once.
+    import os
+
+    from backtest.store import _curve_trades
+
+    fix = os.path.join(os.path.dirname(live.__file__), "..", "backtest", "tests", "fixtures", "smoke1054_multihop")
+    c = Chunk((455_328_000, 455_329_000, fix))
+    f = LiveFeed("/nonexistent-recorder-root", store=None, follow=False)
+    rows = f.con.execute(f"SELECT mint, count(*) FROM ({_curve_trades(c, mints=None)}) x GROUP BY mint ORDER BY 2 DESC, 1").fetchall()
+    assert rows and sum(n for _, n in rows) > rows[0][1]  # more than one mint
+    with caplog.at_level("WARNING", logger="paper.live"):
+        f._unknown_mints(c, 7)
+        f._unknown_mints(c, 8)
+    total = sum(n for _, n in rows)
+    assert (f.stats["unknown_mint_rows"], f.stats["unknown_mints"], len(f.unknown_mints_seen)) == (2 * total, len(rows), len(rows))
+    msgs = [r.getMessage() for r in caplog.records]
+    assert len(msgs) == 1 and msgs[0].startswith("segment 7:")
+    # a mint the feed knows (live_mints) is admitted, so its rows are not counted
+    g = LiveFeed("/nonexistent-recorder-root", store=None, follow=False)
+    g.con.execute("INSERT INTO live_mints VALUES (?)", [rows[0][0]])
+    g._unknown_mints(c, 7)
+    assert (g.stats["unknown_mint_rows"], g.stats["unknown_mints"]) == (total - rows[0][1], len(rows) - 1)
+
+
+def test_unknown_pools_count_their_withdraw_deposit_and_boost_rows():
+    # M3-09a's note v0.3: the last 2 of job 91's 11,717 were withdraws of the 2 unknown pools, which unknown_pool_rows
+    # (buys and sells only) did not count. Two withdraws, a deposit and a boost of dev2's epoch 1043, no pool known.
+    import os
+
+    fix = os.path.join(os.path.dirname(live.__file__), "..", "backtest", "tests", "fixtures", "pool_other_1043")
+    c = Chunk((450_576_000, 450_578_000, fix))
+    f = LiveFeed("/nonexistent-recorder-root", store=None, follow=False)
+    pools = f.con.execute(f"SELECT count(DISTINCT pool) FROM read_parquet('{fix}/pump_amm/*/*.parquet', union_by_name = true)").fetchone()[0]
+    f._unknown_pools(c, 3)
+    assert (f.stats["unknown_pool_rows"], f.stats["unknown_pool_other_rows"], f.stats["unknown_pools"]) == (0, 4, pools)
+
+
 def fake_store(path, slots):
     import duckdb
 
