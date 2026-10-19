@@ -1,5 +1,5 @@
 {
- "format": "cases: {name, kind: text|missing|dir, text (kind text), rust: same|refused, python: {risk: {size_sol, max_open_positions, max_exposure_sol, daily_loss_limit_sol, kill_switch, families, pool_cooldown_h, size_lamports}} | {reason} (same) or {record: text} (refused)}; floats as Python's repr",
+ "format": "cases: {name, kind: text|missing|dir|notdir, text (kind text), rust: same|refused, python: {risk: {size_sol, max_open_positions, max_exposure_sol, daily_loss_limit_sol, kill_switch, families, pool_cooldown_h, size_lamports}} | {reason} (same) or {record: text} (refused)}; floats as Python's repr",
  "own_reason_prefix": "risk config unreadable: outside lab-live's YAML subset",
  "cases": [
   {
@@ -664,6 +664,34 @@
    "python": {
     "reason": "risk config unreadable: IsADirectoryError"
    }
+  },
+  {
+   "name": "a_path_through_a_file",
+   "kind": "notdir",
+   "rust": "same",
+   "python": {
+    "reason": "risk config unreadable: NotADirectoryError"
+   }
+  },
+  {
+   "name": "unknown_key_of_64_characters",
+   "kind": "text",
+   "rust": "same",
+   "python": {
+    "risk": {
+     "size_sol": 0.5,
+     "max_open_positions": 5,
+     "max_exposure_sol": 2.5,
+     "daily_loss_limit_sol": 1.0,
+     "kill_switch": false,
+     "pool_cooldown_h": 24.0,
+     "families": [
+      "F7"
+     ],
+     "size_lamports": 500000000
+    }
+   },
+   "text": "size_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 1\n"
   },
   {
    "name": "kill_switch_yes",
@@ -1375,6 +1403,96 @@
     "record": "reason: risk config unreadable: ScannerError"
    },
    "text": "# a\u0085b\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "unknown_key_of_65_characters",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "Risk(size_sol=0.5, max_open_positions=5, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=24.0, families=['F7'], size_lamports=500000000)"
+   },
+   "text": "size_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 1\n"
+  },
+  {
+   "name": "unknown_key_of_1025_characters",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "reason: risk config unreadable: ScannerError"
+   },
+   "text": "size_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 1\n"
+  },
+  {
+   "name": "cr_hides_a_key_after_a_comment",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "Risk(size_sol=0.5, max_open_positions=5, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=True, pool_cooldown_h=24.0, families=['F7'], size_lamports=500000000)"
+   },
+   "text": "size_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false # x\rkill_switch: true\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "ls_hides_a_key_after_a_comment",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "Risk(size_sol=2.0, max_open_positions=5, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=24.0, families=['F7'], size_lamports=2000000000)"
+   },
+   "text": "size_sol: 0.5 # x\u2028size_sol: 2.0\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "ps_hides_a_key_after_a_comment",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "Risk(size_sol=2.0, max_open_positions=5, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=24.0, families=['F7'], size_lamports=2000000000)"
+   },
+   "text": "size_sol: 0.5 # x\u2029size_sol: 2.0\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "decimal_beyond_64_bits_for_an_int",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "Risk(size_sol=0.5, max_open_positions=1000000000000000019884624838656, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=24.0, families=['F7'], size_lamports=500000000)"
+   },
+   "text": "max_open_positions: 1000000000000000000000000000000.0\nsize_sol: 0.5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "decimal_that_is_infinite",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "raises: OverflowError: cannot convert float infinity to integer"
+   },
+   "text": "size_sol: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0\nmax_exposure_sol: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0\nmax_open_positions: 5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "cooldown_that_is_infinite",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "Risk(size_sol=0.5, max_open_positions=5, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=inf, families=['F7'], size_lamports=500000000)"
+   },
+   "text": "pool_cooldown_h: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\n"
+  },
+  {
+   "name": "size_beyond_64_bits_of_lamports",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "Risk(size_sol=10000000000.0, max_open_positions=5, max_exposure_sol=20000000000.0, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=24.0, families=['F7'], size_lamports=10000000000000000000)"
+   },
+   "text": "size_sol: 10000000000\nmax_exposure_sol: 20000000000\nmax_open_positions: 5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "a_list_for_a_number",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "reason: risk config invalid: TypeError float() argument must be a string or a real number, not 'list'"
+   },
+   "text": "size_sol: [F7]\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
   }
  ]
 }

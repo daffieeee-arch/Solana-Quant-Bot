@@ -1,13 +1,16 @@
 #!/bin/bash
 # M1 C3 of the Rust live route (lab/docs/rust-live-route-design-2026-10-16.md §3; the porting spec is
-# research/m1-c3-risk-spec-2026-10-19.md) on the NAS: risk on in lab-live paper. C3-1 adds the risk files' reader; the
-# acceptance runs RC1-RC3 come with C3-4 and extend STEP=python.
+# research/m1-c3-risk-spec-2026-10-19.md) on the NAS: risk on in lab-live paper. C3-1 added the risk files' reader, C3-2
+# the paper engine's risk (the gate, the entry's re-read, the size, the day's loss, the pool cooldown) with its golden
+# cases; the acceptance runs RC1-RC3 come with C3-4 and extend STEP=python.
 #
 #   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (the risk reader against
-#                paper/tests/data/c3_risk_load_cases.json, and every earlier test) and of ALL of lab/core, named tests
-#                required to have run; then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab.
-#   STEP=python  (the lab Python 3.13 runner): the fast tests, the risk.load golden table first (risk.load still gives
-#                every stored result, and regenerating the file gives the same file), then C2's golden cases and pins.
+#                paper/tests/data/c3_risk_load_cases.json, the paper engine with risk on against c3_risk_cases.json, and
+#                every earlier test) and of ALL of lab/core, named tests required to have run; then the release binary into
+#                $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab.
+#   STEP=python  (the lab Python 3.13 runner): the C3 golden tables first (risk.load and the engine with risk on still give
+#                every stored result, and regenerating each file gives the same file), then C2's golden cases and pins. The
+#                *_CASES_REGEN switches are cleared: a regenerated table would test itself.
 #
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m1c3.sh      (bookworm runner)
 #   STEP=python LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c3.sh                      (lab runner)
@@ -41,6 +44,7 @@ if [ "$STEP" = build ]; then
   grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
   # The new tests and C2's acceptance tests must have run, not only passed.
   for t in risk::tests::every_risk_load_case_gives_pythons_result_or_is_refused risk::tests::a_file_that_is_not_utf8_is_refused \
+           paper_core::tests::every_c3_case_gives_the_engines_writes_with_risk_on \
            risk::tests::values_are_typed_as_pyyaml_types_them paper_core::tests::every_c2_case_gives_the_engines_writes \
            paper::tests::a_replay_writes_its_paper_journal_the_states_and_the_summary journal::tests::a_delete_removes_the_row_put_wrote_and_refuses_a_bad_key \
            signals_core::tests::every_golden_case_gives_the_engines_rows_and_state; do
@@ -67,14 +71,18 @@ PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1
 cd "$REPO/lab"
 
-# The risk.load table (C3-1) on its own: both its tests must pass, not be skipped.
-"$PY" -m pytest -q -rs -p no:cacheprovider paper/tests/test_risk_load_cases.py > "$OUT/risk.log" 2>&1 || { tail -15 "$OUT/risk.log" | tee -a "$OUT/job.log"; log "risk.load table: RED"; exit 1; }
+NOREGEN="env -u C3_RISK_CASES_REGEN -u C3_CASES_REGEN -u C2_CASES_REGEN -u C1B_CASES_REGEN"
+
+# The C3 tables on their own (C3-1's risk.load table, C3-2's cases with risk on): every test must pass, none skipped.
+$NOREGEN "$PY" -m pytest -q -rs -p no:cacheprovider paper/tests/test_risk_load_cases.py paper/tests/test_risk_cases.py > "$OUT/risk.log" 2>&1 \
+  || { tail -15 "$OUT/risk.log" | tee -a "$OUT/job.log"; log "C3 tables: RED"; exit 1; }
 tail -1 "$OUT/risk.log" | tee -a "$OUT/job.log"
-grep -q "^2 passed" "$OUT/risk.log" || { log "risk.load table: not 2 passed"; exit 1; }
+want=$((4 + $("$PY" -c "import json; print(len(json.load(open('paper/tests/data/c3_risk_cases.json'))['cases']))")))
+grep -q "^$want passed in" "$OUT/risk.log" || { log "C3 tables: not exactly $want passed"; exit 1; }
 
 # The fast tests: C2's golden cases and the lab/core table pins (the engine still makes their writes).
 fast=0
-LAB_SPILL_DIR=$OUT/spill "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-fast" paper/tests/test_position_cases.py \
+LAB_SPILL_DIR=$OUT/spill $NOREGEN "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-fast" paper/tests/test_position_cases.py \
   paper/tests/test_signal_cases.py paper/tests/test_journal_diff.py paper/tests/test_engine.py backtest/tests/test_position_table.py \
   backtest/tests/test_exit_table.py backtest/tests/test_tau_table.py > "$OUT/fast.log" 2>&1 || fast=$?
 tail -15 "$OUT/fast.log" | tee -a "$OUT/job.log"

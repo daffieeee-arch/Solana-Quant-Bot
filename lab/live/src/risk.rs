@@ -13,8 +13,11 @@
 //!   - a flow list `[a, b]` of plain words and quoted words (`'…'`, `"…"` over `[A-Za-z0-9_]*`).
 //!
 //!   Refused: anything else (an empty or null value, a quoted scalar, an exponent, a block list, a flow mapping, a
-//!   trailing comma, a list item that is not a string, an indented or duplicate key, a document marker, a tab, a control
-//!   character, a lone CR, NEL, LS or PS, a file that is not UTF-8). Python accepts some of these (`1e9`, a duplicate key:
+//!   trailing comma, a list item that is not a string, an indented or duplicate key, a key over 64 characters (PyYAML
+//!   refuses one over 1024), a document marker, a tab, a control character, a lone CR, NEL, LS or PS, a file that is
+//!   not UTF-8). Also refused, though written in the subset: a list for a number, an int beyond 128 bits, a decimal
+//!   that is infinite as a float, a decimal for max_open_positions at or beyond ±9.2e18, and a size_sol whose
+//!   lamports reach 9.2e18 (Python carries these as big ints or infinities, which its engine cannot use). Python accepts some of these (`1e9`, a duplicate key:
 //!   the last wins, a block list), refuses others with a YAML error, and raises on two (a list mixing a number and a word;
 //!   a file that is not UTF-8). The golden table `paper/tests/data/c3_risk_load_cases.json` records each.
 //! - **Inside the subset, Python's steps.** Keys are looked up in risk.py's argument order (a missing one is
@@ -110,7 +113,13 @@ pub fn parse(text: &str) -> Result<Risk, String> {
     build(&map)
 }
 
+/// The longest key this reader takes (PyYAML drops a simple key over 1024 characters; no risk key is near 64).
+const MAX_KEY: usize = 64;
+
 fn is_key(s: &str) -> bool {
+    if s.len() > MAX_KEY {
+        return false;
+    }
     let mut c = s.chars();
     c.next().is_some_and(|f| f.is_ascii_alphabetic() || f == '_') && c.all(|x| x.is_ascii_alphanumeric() || x == '_')
 }
@@ -171,7 +180,7 @@ fn value_of(s: &str) -> Option<Val> {
         return s.parse::<i128>().ok().map(Val::Int);
     }
     if is_decimal(s) {
-        return s.parse::<f64>().ok().map(Val::Float);
+        return s.parse::<f64>().ok().filter(|f| f.is_finite()).map(Val::Float); // 400 digits are infinite as a float
     }
     is_str_word(s).then(|| Val::Word(s.to_owned()))
 }
@@ -243,6 +252,9 @@ fn build(map: &[(&str, Val)]) -> Result<Risk, String> {
         return Err(format!("{INVALID} unknown families [{}]", names.join(", ")));
     }
     let Val::Bool(kill_switch) = *kill else { return Err(format!("{INVALID} kill_switch must be true or false")) };
+    if (size_sol * 1e9).abs() >= 9.2e18 {
+        return Err(format!("{OWN} (size_sol: {size_sol}, beyond 64 bits of lamports)")); // Python's file would pass here
+    }
     Ok(Risk { size_sol, max_open_positions, max_exposure_sol, daily_loss_limit_sol, kill_switch, families, pool_cooldown_h })
 }
 
@@ -280,6 +292,11 @@ mod tests {
                 }
                 "missing" => load(&dir.join("no-such-file.yaml")),
                 "dir" => load(&dir),
+                "notdir" => {
+                    let f = dir.join("a-file");
+                    std::fs::write(&f, "").unwrap();
+                    load(&f.join("risk.yaml"))
+                }
                 k => panic!("{name}: kind {k}"),
             };
             if c["rust"] == "refused" {

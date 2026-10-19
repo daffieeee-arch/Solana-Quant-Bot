@@ -50,12 +50,16 @@ fn k3() -> GroupSpec {
 }
 
 fn engine(groups: Vec<GroupSpec>, q: Vec<f64>) -> Result<PaperEngine, PaperError> {
+    engine_with(groups, q, RiskSource::Ignore)
+}
+
+fn engine_with(groups: Vec<GroupSpec>, q: Vec<f64>, risk: RiskSource) -> Result<PaperEngine, PaperError> {
     let mut u = Universe::new(Bounds::new((446_256_000, 452_304_000), &dev2()), MAYHEM);
     for p in [P, Q] {
         u.add_pool(p, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9 });
     }
     let sig = SignalEngine::new(u, dev2(), groups, WindowRule::AllPools).map_err(PaperError::Signal)?;
-    PaperEngine::new(sig, PaperCfg::new(q, base(), GradInfo::default(), HashMap::new()))
+    PaperEngine::with_risk(sig, PaperCfg::new(q, base(), GradInfo::default(), HashMap::new()), risk)
 }
 
 #[test]
@@ -182,4 +186,37 @@ fn rows_before_the_first_dated_slot_are_not_loaded() {
     let st: Vec<Option<&str>> = eng.paper.ops.iter().filter_map(|o| if let Op::Signal(_, s) = o { Some(s.reason()) } else { None }).collect();
     assert_eq!(st, [Some("not loaded")]);
     assert_eq!((eng.paper.counts.not_loaded, eng.paper.counts.orders.len()), (1, 0));
+}
+
+#[test]
+fn the_risk_source_is_read_at_the_minute_and_the_entry_and_sizes_the_order() {
+    // RiskSource::Files (spec §3): a group without a valid risk skips its rows with the source's reason; with one, the
+    // order's size is its size_sol in lamports. The source is read at each new dated minute and again at each entry.
+    let legs = [inflow(T - 10, P, 580), trig((T, 0), P, 30, 600), inflow(T + 2, P, 560)];
+    let run_with = |answer: Result<Risk, String>| {
+        let reads = std::rc::Rc::new(std::cell::Cell::new(0));
+        let r = reads.clone();
+        let src = RiskSource::Files(Box::new(move |g: usize| {
+            assert_eq!(g, 0);
+            r.set(r.get() + 1);
+            answer.clone()
+        }));
+        let mut eng = engine_with(vec![k3()], vec![0.5], src).unwrap();
+        let mut keys = FakeKeys { names: vec![""; 3], seeds: vec![0; 3], triggers: HashMap::new() };
+        for l in legs {
+            eng.push(&Event::new(l, Some(BT0 + (l.slot() as i64 - T as i64) * 2 / 5)), &mut keys).unwrap();
+        }
+        eng.finish(&mut keys).unwrap();
+        (eng, reads.get())
+    };
+    let (eng, reads) = run_with(Err("risk config unreadable: FileNotFoundError".into()));
+    let st: Vec<Option<&str>> = eng.paper.ops.iter().filter_map(|o| if let Op::Signal(_, s) = o { Some(s.reason()) } else { None }).collect();
+    assert_eq!(st, [Some("risk config unreadable: FileNotFoundError")]);
+    assert_eq!(eng.paper.counts.risk_skips.get("K3: risk config unreadable: FileNotFoundError"), Some(&1));
+    assert_eq!(reads, 1, "one dated minute, no entry");
+    let risk = Risk { size_sol: 0.3, ..Risk::ignore() };
+    let (eng, reads) = run_with(Ok(risk));
+    let sizes: Vec<i128> = eng.paper.ops.iter().filter_map(|o| if let Op::Order { size, .. } = o { Some(*size) } else { None }).collect();
+    assert_eq!(sizes, [300_000_000]);
+    assert_eq!(reads, 2, "the minute and the entry");
 }
