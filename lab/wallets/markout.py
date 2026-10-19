@@ -80,6 +80,24 @@ def engine():
 V = None
 
 DELAYS = (1, 2)
+# Transaction-level entries (spec M-a, research/spec-rust-ma-instap-per-transactie-2026-10-19.md; --tx-delays): the
+# entry state is the post-state of a leg of the signal's own pool instead of the state at a slot's end. Codes in the
+# `d` column: 1000 + k = the k-th leg of the pool after the trigger leg inside the trigger slot t (capped at the slot's
+# last leg; k = 0 is the trigger leg itself = the upper bound that needs a same-slot fill); 2001 = the first leg of the
+# pool in slot t + 1 (the earliest reaction on `processed`; the slot's end of t when t + 1 has no leg). The horizons
+# run from the entry slot (t for 1xxx, t + 1 for 2001). The trigger leg is the pool's last leg in slot t by the
+# signal's trigger wallet (`trigger_trader` of the parts), or the slot's last leg when the parts do not carry it.
+# Pool signals only: curve signals keep the slot delays.
+TX_DELAYS = {1000: 0, 1001: 1, 1003: 3, 1010: 10, 2001: None}
+
+
+def delay_label(d):
+    """Human label of a `d` value: slots, or the transaction-level code."""
+    if d < 1000:
+        return f"{d} slot{'s' if d != 1 else ''}"
+    if d >= 2000:
+        return "t+1, first tx"
+    return f"t, trigger tx + {d - 1000}"
 HORIZONS_MS = (("1s", 1_000), ("10s", 10_000), ("1m", 60_000), ("5m", 300_000), ("15m", 900_000), ("1h", 3_600_000), ("6h", 21_600_000))
 SIZE = SOL // 2
 DEFAULTS = os.environ.get("LAB_DEFAULTS", "/home/chupa/Solana-project/data-old-faithful-one/lab/research/week2-defaults.yaml")
@@ -119,6 +137,7 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
         where.append(f"t >= {lo}")
     if hi is not None:
         where.append(f"t < {hi}")
+    tt = "trigger_trader" if "trigger_trader" in [r[0] for r in con.execute(f"DESCRIBE SELECT * FROM read_parquet({lit}, union_by_name = true)").fetchall()] else "NULL::VARCHAR"
     per_epoch = clock.per_epoch if clock and clock.per_epoch else {}
     ms_case = ("CASE t // {e} " + " ".join(f"WHEN {ep} THEN {ms!r}" for ep, ms in sorted(per_epoch.items())) + f" ELSE {REF_MS!r} END").format(e=EPOCH) \
         if per_epoch else repr(REF_MS)
@@ -129,7 +148,7 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
       CREATE OR REPLACE TEMP TABLE sig AS
       SELECT row_number() OVER (ORDER BY family, segment, mint, t, pool) AS sid, *, ({ms_case})::DOUBLE AS ms_per_slot, {reg_case} AS regime
       FROM (SELECT family, segment, venue, orientation, mint, pool, t, any_value(day) AS day, any_value(farm) AS farm,
-                   any_value(ref_mint) AS ref_mint, any_value(ref_t) AS ref_t,
+                   any_value(ref_mint) AS ref_mint, any_value(ref_t) AS ref_t, any_value({tt}) AS trigger_trader,
                    list_sort(list_distinct(list(variant))) AS variants,
                    CASE WHEN venue = 'curve' THEN mint ELSE pool END AS key
             FROM read_parquet({lit}, union_by_name = true) WHERE {' AND '.join(where)}
@@ -160,12 +179,12 @@ def pool_legs_sql(lo, hi):
       WITH keys AS (SELECT DISTINCT key FROM pool_targets),
       raw AS (
         SELECT p.pool AS key, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, p.vq, p.base, p.e_delta, p.quote_user,
-               p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps
+               p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps, p.trader
         FROM pool p SEMI JOIN keys k ON k.key = p.pool WHERE p.slot BETWEEN {lo} AND {hi}),
       trades AS (
         SELECT key, slot, tx_index, outer_ix, inner_ix, CASE WHEN kind = 'sell' THEN b + base ELSE b - base END AS b, e + e_delta AS e,
                COALESCE(vq, 0) AS virt, COALESCE(lp_bps, 0) AS lp_bps, COALESCE(protocol_bps, 0) AS protocol_bps,
-               COALESCE(creator_bps, 0) AS creator_bps, COALESCE(cashback_bps, 0) AS cashback_bps
+               COALESCE(creator_bps, 0) AS creator_bps, COALESCE(cashback_bps, 0) AS cashback_bps, kind, trader
         FROM raw WHERE kind IN ('buy', 'sell')),
       virts AS (  -- the virtual quote after every buy, sell or boost (the LP legs take the last one)
         SELECT key, slot, tx_index, COALESCE(vq, 0) AS virt FROM raw WHERE kind IN ('buy', 'sell', 'boost')),
@@ -177,7 +196,7 @@ def pool_legs_sql(lo, hi):
                     ELSE o.vault + COALESCE(v.virt, 0) + o.quote_user END AS e,
                CASE WHEN o.kind = 'boost' THEN COALESCE(o.vq, 0) ELSE COALESCE(v.virt, 0) END AS virt,
                COALESCE(t.lp_bps, 0) AS lp_bps, COALESCE(t.protocol_bps, 0) AS protocol_bps, COALESCE(t.creator_bps, 0) AS creator_bps,
-               COALESCE(t.cashback_bps, 0) AS cashback_bps
+               COALESCE(t.cashback_bps, 0) AS cashback_bps, o.kind AS kind, NULL::VARCHAR AS trader
         FROM (SELECT * FROM raw WHERE kind IN ('boost', 'withdraw', 'deposit')) o
         ASOF LEFT JOIN trades t ON t.key = o.key AND o.slot >= t.slot
         ASOF LEFT JOIN virts v ON v.key = o.key AND o.slot >= v.slot)
@@ -202,7 +221,7 @@ def buckets():
     return n
 
 
-def match_states(con, lo, hi):
+def match_states(con, lo, hi, tx_delays=False):
     """The venue state at every target slot, without materialising a state per slot: each leg is mapped to the
     first target slot at or after it (ASOF), the last leg per (key, target) wins (one aggregation), and targets
     without a leg since the previous target carry the previous state forward (a window over the targets only).
@@ -271,6 +290,8 @@ def match_states(con, lo, hi):
         WINDOW w AS (PARTITION BY kt.key ORDER BY kt.target ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
       SELECT * FROM filled WHERE slot IS NOT NULL"""
     _per_bucket(con, "curve_at", curve_at_sql, nb, "curve_at (curve legs ASOF targets)")
+    if tx_delays:
+        tx_entries(con)  # needs the legs: before they are dropped
     con.execute("DROP TABLE pool_legs; DROP TABLE curve_legs")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE venue_last AS
@@ -303,20 +324,46 @@ def ms_case(clock, slot_sql):
     return "CASE " + " ".join(parts) + " END"
 
 
-def build_targets(con, clock, end_slot):
+def build_targets(con, clock, end_slot, tx_delays=False):
     """signal x d x (entry, horizons) -> target slot; the entry is horizon '' at t + d. In SQL (the Python
     executemany took 100 s per 190k rows on the NAS): the same arithmetic as horizon_slots, ms of the entry
-    slot's epoch, ceil(h_ms / ms)."""
+    slot's epoch, ceil(h_ms / ms). With tx_delays the TX_DELAYS codes are added for pool signals: their entry slot
+    is t (1xxx) or t + 1 (2001) and the entry state comes from tx_entries(), not from the slot's end."""
     hz = "('', 0), " + ", ".join(f"('{n}', {h})" for n, h in HORIZONS_MS)
-    ds = ", ".join(str(d) for d in DELAYS)
+    ds = ", ".join(str(d) for d in (tuple(DELAYS) + tuple(TX_DELAYS) if tx_delays else DELAYS))
+    dslot = "CASE WHEN d.d >= 2000 THEN 1 WHEN d.d >= 1000 THEN 0 ELSE d.d END"
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE targets AS
       SELECT s.sid::BIGINT AS sid, d.d::INTEGER AS d, hz.h::VARCHAR AS h, hz.h_ms::BIGINT AS h_ms,
-             (s.t + d.d + CASE WHEN hz.h_ms = 0 THEN 0 ELSE ceil(hz.h_ms / ({ms_case(clock, 's.t + d.d')}))::BIGINT END)::BIGINT AS target
-      FROM sig s, (SELECT unnest([{ds}]) AS d) d, (SELECT * FROM (VALUES {hz}) v(h, h_ms)) hz""")
+             (s.t + {dslot} + CASE WHEN hz.h_ms = 0 THEN 0 ELSE ceil(hz.h_ms / ({ms_case(clock, 's.t + ' + dslot)}))::BIGINT END)::BIGINT AS target
+      FROM sig s, (SELECT unnest([{ds}]) AS d) d, (SELECT * FROM (VALUES {hz}) v(h, h_ms)) hz
+      {"WHERE d.d < 1000 OR s.venue = 'pool'" if tx_delays else ""}""")
     n = _count(con, "targets")
     progress("targets", n)
     return n
+
+
+def tx_entries(con):
+    """The entry state per (signal, TX_DELAYS code) from the pool's own legs in slots t and t + 1 (pool_legs, so
+    after match_states): the k-th leg after the trigger leg inside t (capped at t's last leg), or the first leg of
+    t + 1 (else t's last leg). Writes tx_entry(sid, d, slot, b, e, virt, bps…); a signal whose trigger slot has no
+    leg gets no entry (its tx-level rows stay without a state)."""
+    ks = ", ".join(f"({d}, {k if k is not None else 'NULL'})" for d, k in TX_DELAYS.items())
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE tx_entry AS
+      WITH L AS (
+        SELECT s.sid, s.t, s.trigger_trader, l.*, row_number() OVER (PARTITION BY s.sid ORDER BY l.slot, l.tx_index, l.outer_ix, l.inner_ix) AS rn
+        FROM sig s JOIN pool_legs l ON l.key = s.key AND l.slot IN (s.t, s.t + 1) WHERE s.venue = 'pool'),
+      R AS (
+        SELECT sid, max(rn) FILTER (WHERE slot = t) AS rn_last_t, min(rn) FILTER (WHERE slot = t + 1) AS rn_n1,
+               COALESCE(max(rn) FILTER (WHERE slot = t AND trader = trigger_trader), max(rn) FILTER (WHERE slot = t)) AS rn_trig
+        FROM L GROUP BY sid),
+      E AS (
+        SELECT r.sid, c.d, CASE WHEN c.d >= 2000 THEN COALESCE(r.rn_n1, r.rn_last_t) ELSE least(r.rn_trig + c.k, r.rn_last_t) END AS rn
+        FROM R r, (SELECT * FROM (VALUES {ks}) v(d, k)) c WHERE r.rn_last_t IS NOT NULL)
+      SELECT e.sid, e.d::INTEGER AS d, l.slot, l.b, l.e, l.virt, l.lp_bps, l.protocol_bps, l.creator_bps, l.cashback_bps
+      FROM E e JOIN L l ON l.sid = e.sid AND l.rn = e.rn""")
+    progress("tx entries", _count(con, "tx_entry"))
 
 
 def build_matched(con, end_slot):
@@ -338,14 +385,18 @@ def build_matched(con, end_slot):
     con.execute("""
       CREATE OR REPLACE TEMP TABLE matched AS
       SELECT x.sid, x.d, x.h, x.h_ms, x.target, x.venue, x.orientation, x.key,
-             ps.slot AS p_slot, ps.b, ps.e, ps.virt, ps.lp_bps, ps.protocol_bps, ps.creator_bps, ps.cashback_bps,
+             CASE WHEN tx THEN te.slot ELSE ps.slot END AS p_slot, CASE WHEN tx THEN te.b ELSE ps.b END AS b, CASE WHEN tx THEN te.e ELSE ps.e END AS e,
+             CASE WHEN tx THEN te.virt ELSE ps.virt END AS virt, CASE WHEN tx THEN te.lp_bps ELSE ps.lp_bps END AS lp_bps,
+             CASE WHEN tx THEN te.protocol_bps ELSE ps.protocol_bps END AS protocol_bps, CASE WHEN tx THEN te.creator_bps ELSE ps.creator_bps END AS creator_bps,
+             CASE WHEN tx THEN te.cashback_bps ELSE ps.cashback_bps END AS cashback_bps,
              cs.slot AS c_slot, cs.vt, cs.vq, cs.rt, cs.rq, cs.fee_bps AS c_fee_bps, cs.creator_bps AS c_creator_bps,
              x.g_orientation, gs.slot AS g_slot, gs.b AS g_b, gs.e AS g_e, gs.virt AS g_virt, gs.lp_bps AS g_lp_bps,
              gs.protocol_bps AS g_protocol_bps, gs.creator_bps AS g_creator_bps, gs.cashback_bps AS g_cashback_bps, x.cut
-      FROM tsig x
+      FROM (SELECT *, d >= 1000 AND h = '' AS tx FROM tsig) x
       LEFT JOIN pool_at ps ON ps.key = x.pkey AND ps.target = x.target
       LEFT JOIN curve_at cs ON cs.key = x.ckey AND cs.target = x.target
-      LEFT JOIN pool_at gs ON gs.key = x.gkey AND gs.target = x.target""")
+      LEFT JOIN pool_at gs ON gs.key = x.gkey AND gs.target = x.target
+      LEFT JOIN tx_entry te ON x.tx AND te.sid = x.sid AND te.d = x.d""")
     con.execute("DROP TABLE tsig")
     progress("matched", _count(con, "matched"))
 
@@ -486,7 +537,7 @@ def round_trips(con, per_order, mk_path, size=SIZE):
     return n
 
 
-def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS):
+def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS, tx_delays=False):
     import yaml
     t0 = time.time()
     _T0[0] = t0
@@ -504,8 +555,10 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     scn = costs.Scenario.from_cfg("base", cfg)
     per_order = scn.per_tx()
     n_sig = load_signals(con, parts_dir, families, lo, hi, clock)
-    n_targets = build_targets(con, clock, end_slot)
-    n_pool, n_curve = match_states(con, *slot_bounds(con, clock))
+    n_targets = build_targets(con, clock, end_slot, tx_delays)
+    if not tx_delays:
+        con.execute("CREATE OR REPLACE TEMP TABLE tx_entry (sid BIGINT, d INTEGER, slot BIGINT, b BIGINT, e BIGINT, virt BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT)")
+    n_pool, n_curve = match_states(con, *slot_bounds(con, clock), tx_delays=tx_delays)
     build_matched(con, end_slot)
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"markout-{run_name}.parquet")
@@ -523,7 +576,8 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     progress("parquet written", n_rows)
     info = {"run": run_name, "parts": parts_dir, "families": families, "slots": [lo, hi], "signals": n_sig, "pool_states": n_pool,
             "curve_states": n_curve, "states": "at target slots only", "buckets": buckets(), "targets": n_targets, "rows": n_rows, "size_sol": SIZE / SOL,
-            "per_order_lamports": per_order, "delays": list(DELAYS), "horizons": dict(HORIZONS_MS), "commit": git_commit(),
+            "per_order_lamports": per_order, "delays": list(DELAYS) + (list(TX_DELAYS) if tx_delays else []), "tx_delays": {d: delay_label(d) for d in TX_DELAYS} if tx_delays else None,
+            "horizons": dict(HORIZONS_MS), "commit": git_commit(),
             "seconds": round(time.time() - t0, 1), "phases_seconds": dict(PHASES)}
     with open(os.path.join(out_dir, f"run-markout-{run_name}.json"), "w") as f:
         json.dump(info, f, indent=1)
@@ -539,8 +593,9 @@ def main():
     ap.add_argument("--to-slot", type=int)
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "markout-v1"))
     ap.add_argument("--cfg", default=DEFAULTS)
+    ap.add_argument("--tx-delays", action="store_true", help="add the transaction-level entries (TX_DELAYS codes in d; spec M-a)")
     a = ap.parse_args()
-    info = run(a.parts, a.run, a.out, a.families.split(",") if a.families else None, a.from_slot, a.to_slot, cfg_path=a.cfg)
+    info = run(a.parts, a.run, a.out, a.families.split(",") if a.families else None, a.from_slot, a.to_slot, cfg_path=a.cfg, tx_delays=a.tx_delays)
     print(json.dumps(info), file=sys.stderr)
 
 

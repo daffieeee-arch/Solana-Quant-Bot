@@ -27,6 +27,7 @@ import sys
 import duckdb
 import numpy as np
 
+from wallets import markout
 from wallets.common import REF_MS
 
 BOOT = 10_000
@@ -264,11 +265,11 @@ def render(con, markout_dir, boot, parts_dir=None, cfg_path=None, ms_per_slot=No
          "net trimmed mean (the matched entries of exactly these triggers) not > 0 with its own CI > 0 on the same horizon; the paired Δ is informative, not a criterion. "
          "Rows are deduplicated over runs on (family, segment, venue, mint, pool, t, d, h).\n"]
     for fam, seg, d in groups(con):
-        L.append(table(con, f"{fam} · {seg} · d = {d}", f"family = '{fam}' AND segment = '{seg}' AND d = {d}", boot))
+        L.append(table(con, f"{fam} · {seg} · d = {markout.delay_label(d)}", f"family = '{fam}' AND segment = '{seg}' AND d = {d}", boot))
     for label, where in K_ROWS:
         for d in (1, 2):
             if con.execute(f"SELECT count(*) FROM m WHERE {where} AND d = {d}").fetchone()[0]:
-                L.append(table(con, f"{label} · d = {d}", f"{where} AND d = {d}", boot))
+                L.append(table(con, f"{label} · d = {markout.delay_label(d)}", f"{where} AND d = {d}", boot))
     if parts_dir:
         L.append(exit_costs(con, parts_dir, cfg_path, boot, ms_per_slot))
     return "\n".join(L)
