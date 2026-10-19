@@ -3,14 +3,17 @@
 # reads the same event rows as Python, in the replay's order, and writes journal.py's schema; its store snapshot reader
 # loads what LiveFeed loads.
 #
-#   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (rows, journal, CLI and
-#                the extractor's idl/sink tests compiled in), then the release binary into $OUT/bin/.
+#   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (rows, journal, CLI, the
+#                legs reader and the extractor's idl/sink tests compiled in) and of lab/core's legs module, then the
+#                release binary into $OUT/bin/.
 #                Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab (the container mounts only /lab).
 #   STEP=python  (the lab Python 3.13 runner): paper/tests/test_lab_live.py with LAB_LIVE_BIN=the binary
 #                (the dev chunk's rows and order against DuckDB, a segment of the same range, the journal schema,
 #                no key ties), test_lab_live_snapshot (lab-live's store snapshot against LiveFeed's own load of
 #                fwd1053: tokens, pool classes, PoolInfo, a live start's seed window and every seed trade; M1 part 3),
-#                plus test_journal_schema and test_journal_diff. Then the baseline and gate of the
+#                plus test_journal_schema and test_journal_diff; M1 C1a: test_legs_dump (the Python reference dump) and
+#                test_lab_live_legs (lab-live legs against paper.legs_dump on the whole of fwd1053: every event ReplayFeed
+#                hands the engine, by count and sha256 per 10,000-slot window; ~30 min, the Python side). Then the baseline and gate of the
 #                in-memory read (LAB review on #319 and #367): 1/16, 1/8 and the four quarters of the dev chunk
 #                450144000-450360000, one lab-live run each, one job.log line each (rows, fraction, key ties,
 #                duplicate keys, read and sort time, peak RSS, bytes per row) and an extrapolation to the whole chunk,
@@ -19,6 +22,7 @@
 #
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m1a.sh      (bookworm runner)
 #   STEP=python LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1a.sh                      (lab runner)
+#   STEP=python BASELINE=0 LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1a.sh           (without the baseline, done in #367)
 #
 # Both steps write to $DATA/backtests/live-m1a-<commit7>/ (job.log, cargo-test.log, bin/).
 set -euo pipefail
@@ -47,6 +51,10 @@ if [ "$STEP" = build ]; then
   cargo test --release --locked > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
   grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
+  # lab-core's legs module (the leg types lab-live uses; a dependency's own tests do not run above)
+  (cd ../core && cargo test --release --locked legs:: > "$OUT/cargo-test-core.log" 2>&1) || { tail -40 "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"; log "cargo test lab-core legs: FAILED"; exit 1; }
+  grep -E "^test legs|^test result: ok. [1-9]" "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"
+  log "cargo test lab-core legs: ok"
   cargo build --release --locked >> "$OUT/cargo-test.log" 2>&1 || { tail -20 "$OUT/cargo-test.log"; log "cargo build: FAILED"; exit 1; }
   mkdir -p "$OUT/bin" && install -m 755 target/release/lab-live "$OUT/bin/lab-live"
   sha256sum "$OUT/bin/lab-live" | tee -a "$OUT/job.log"
@@ -65,7 +73,8 @@ cd "$REPO/lab"
 # under this job's directory, not the container's /tmp (removed when green, kept for a look when red).
 export LAB_SPILL_DIR=$OUT/spill LAB_SPILL_MAX=16GB LAB_LIVE_MEASURE_LOG=$OUT/job.log  # the snapshot's peak RSS into job.log
 "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-tmp" paper/tests/test_lab_live.py paper/tests/test_lab_live_snapshot.py \
-  paper/tests/test_journal_schema.py paper/tests/test_journal_diff.py 2>&1 | tee -a "$OUT/job.log" | tail -8
+  paper/tests/test_journal_schema.py paper/tests/test_journal_diff.py paper/tests/test_legs_dump.py \
+  paper/tests/test_lab_live_legs.py 2>&1 | tee -a "$OUT/job.log" | tail -30
 rm -rf "$OUT/pytest-tmp" "$OUT/spill"
 if [ "${BASELINE:-1}" = 1 ]; then
   # The baseline and gate of the in-memory read (LAB review on #367). One dev chunk (216,000 slots, 15.5 M rows) does

@@ -78,6 +78,9 @@ pub struct Snapshot {
     pub pool_slots: (u64, u64),
     /// The export's seed window [lo, hi).
     pub export_seed: (u64, u64),
+    /// The store's period [slot_start, slot_end_exclusive) (meta.json `store_slots`): a replay of the store's events
+    /// (`lab-live legs`) lies inside it.
+    pub store_slots: Option<(u64, u64)>,
 }
 
 /// Each row of a Parquet file as the extractor's values of `names`, in that order, batch by batch: the file is never
@@ -142,12 +145,22 @@ impl Snapshot {
     /// The export in `dir` (meta.json, mints, pools and farm_seed Parquet). before: only what was known before that
     /// slot (paper/live.py `_load_snapshot`).
     pub fn load(dir: &Path, before: Option<u64>) -> Result<Self> {
+        Self::read(dir, before, true)
+    }
+
+    /// The tokens and pools alone, without the seed day (a replay of the store's events: `lab-live legs`).
+    pub fn load_universe(dir: &Path) -> Result<Self> {
+        Self::read(dir, None, false)
+    }
+
+    fn read(dir: &Path, before: Option<u64>, with_seed: bool) -> Result<Self> {
         let meta: Value = serde_json::from_slice(&fs::read(dir.join("meta.json")).with_context(|| format!("read {}/meta.json", dir.display()))?)
             .with_context(|| format!("{}/meta.json", dir.display()))?;
         let slot = |v: &Value, what: &str| v.as_u64().with_context(|| format!("{}/meta.json: no {what}", dir.display()));
         let mut s = Snapshot {
             pool_slots: (slot(&meta["pool_slots"][0], "pool_slots")?, slot(&meta["pool_slots"][1], "pool_slots")?),
             export_seed: (slot(&meta["farm_seed"]["lo"], "farm_seed.lo")?, slot(&meta["farm_seed"]["hi"], "farm_seed.hi")?),
+            store_slots: meta["store_slots"][0].as_u64().zip(meta["store_slots"][1].as_u64()),
             ..Default::default()
         };
         let known = |slot: Option<u64>| before.is_none_or(|b| slot.is_none_or(|x| x < b));
@@ -190,6 +203,9 @@ impl Snapshot {
             Ok(())
         })?;
 
+        if !with_seed {
+            return Ok(s);
+        }
         let mut ids: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
         let (seed, traders) = (&mut s.seed, &mut s.traders);
         each_row(&dir.join("farm_seed.parquet"), &["pool", "trader", "slot", "token_buy", "token_amount"], |r| {

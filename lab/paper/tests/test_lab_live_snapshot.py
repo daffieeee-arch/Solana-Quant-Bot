@@ -124,3 +124,6 @@ def test_the_seed_window_and_its_trades_are_livefeeds(export, tmp_path):
         want, n, sampled, added = _python_seed(first, h24)
         assert rust[-2:] == want, first
         assert n > 0 and added == sampled
+        if first < hi:  # a start inside the store, with what it knew: --before = --first-slot pinned (LAB review on #368)
+            both = _rust(snap, str(tmp_path), "--before", str(first), "--first-slot", str(first), "--h24", str(h24))
+            assert both[-2:] == want and both[:-2] == _python(first), first
