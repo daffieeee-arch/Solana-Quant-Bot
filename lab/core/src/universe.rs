@@ -12,6 +12,7 @@
 
 use crate::clock::Bounds;
 use crate::legs::{Id, Leg, Venue, NONE, SOL_QUOTES};
+use crate::mem::{self, Mem};
 
 /// Where a key trades: the group segments (engine.py:617) and the N2 buckets `(venue, orientation)` (engine.py:704-709).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -188,6 +189,14 @@ impl Universe {
 
     pub fn pool(&self, id: Id) -> Option<&PoolMeta> {
         self.pools.get(id as usize)?.as_ref()
+    }
+
+    /// The memory log (C4-2): the tokens and SOL markets (entries are the ones present; the tables are indexed by id).
+    pub fn mem(&self) -> [Mem; 2] {
+        [
+            Mem::new("universe_tokens", self.mints.iter().flatten().count(), mem::vec(&self.mints)),
+            Mem::new("universe_sol_markets", self.pools.iter().flatten().count(), mem::vec(&self.pools)),
+        ]
     }
 
     /// The key's creator, coin creator and segment when F7 may decide on it (engine.py `_universe`), else why not.

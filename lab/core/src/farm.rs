@@ -14,6 +14,7 @@
 use crate::clock::{Clock, F6_FARM_MS, F6_FARM_SHARE};
 use crate::exact::gt;
 use crate::legs::{Id, Leg, Order, FARMER};
+use crate::mem::{self, Mem};
 use std::collections::HashMap;
 
 /// (slot, order, SOL amount, farmer SOL amount) of one trade; tuples order as Python's.
@@ -94,6 +95,15 @@ impl FarmWindow {
 
     pub fn is_empty(&self) -> bool {
         self.win.is_empty()
+    }
+
+    /// The memory log (C4-2): the pools with a list and the items in them. `add`'s lazy prune keeps a list within about
+    /// two hours of its last item; the hour rollover drops a pool without a trade in the last hour.
+    pub fn mem(&self) -> [Mem; 2] {
+        [
+            Mem::new("farm_pools", self.win.len(), mem::map(&self.win)),
+            Mem::new("farm_items", self.len(), self.win.values().map(mem::vec).sum()),
+        ]
     }
 }
 

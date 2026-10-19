@@ -74,6 +74,11 @@ impl Keys {
     pub fn len(&self) -> usize {
         self.ends.len()
     }
+
+    /// The memory log (C4-2): the table (an id and a control byte per slot), the key buffer and the ends.
+    pub fn heap_bytes(&self) -> usize {
+        self.table.capacity() * (std::mem::size_of::<Id>() + 1) + self.buf.capacity() + self.ends.capacity() * std::mem::size_of::<u32>()
+    }
 }
 
 /// The store's `pool` row of one PumpSwap event (a SOL market's), as the leg and the farmer read it.
@@ -194,6 +199,12 @@ impl FarmHist {
     /// After `flag`: the trade joins the history (same-slot trades never see each other).
     pub fn add(&mut self, s: u64, signed: i64) {
         self.a.push((s, signed));
+    }
+
+    /// The memory log (C4-2): the trades held and their bytes. The trades before a chunk's `keep` go only at the
+    /// (pool, trader)'s next trade in a later chunk, so a pair that never trades again keeps its list.
+    pub fn mem(&self) -> (usize, usize) {
+        (self.a.len(), lab_core::mem::vec(&self.a))
     }
 }
 

@@ -29,6 +29,7 @@ use crate::exact::{ge, gt, lt};
 use crate::exits::{check_groups, rule_for, variant, ExitRule, VariantError};
 use crate::flow::LiveFlowIndex;
 use crate::legs::{Event, Id, Leg, Order, Venue};
+use crate::mem::{self, Mem};
 use crate::n2::N2Keys;
 use crate::positions::{
     insertion_index, open_curve_entry, open_pool_position, Cfg, Opened, PosError, PosResult, PositionSim, SimVenue, Step, MAX_HOLD, SEED_POOL,
@@ -411,6 +412,11 @@ impl Ordered {
     fn positions(&self) -> usize {
         self.map.values().map(|e| e.1.len()).sum()
     }
+
+    /// The memory log (C4-2): its keys; the order, the map and each key's position ids.
+    fn mem(&self, name: &'static str) -> Mem {
+        Mem::new(name, self.map.len(), mem::btree(&self.order) + mem::map(&self.map) + self.map.values().map(|e| mem::vec(&e.1)).sum::<usize>())
+    }
 }
 
 /// The paper engine's own state: the hooks on SignalEngine.
@@ -520,6 +526,38 @@ impl Paper {
 
     fn ignore_risk(&self) -> bool {
         matches!(self.risk_src, RiskSource::Ignore)
+    }
+
+    /// The minute of the last dated event (the heartbeat's), None before the first.
+    pub fn minute(&self) -> Option<i64> {
+        self.minute
+    }
+
+    /// The memory log (C4-2, read-only): the snapshot's part (the graduation info and the store's curve_hold, entries
+    /// per mint), then the state: busy, the pending entries and their keys, the keys waiting for a graduation, the open
+    /// positions (with each PositionSim), their order and the graduation queue, the run's curve sums (entries per
+    /// trader), the cooldowns (all groups), the wallets' transactions and the ops queue (drained per event, so ~0).
+    pub fn mem_report(&self) -> Vec<Mem> {
+        let (g, hold) = (&self.cfg.grad, &self.cfg.curve_hold);
+        let sims: usize = self.opens.values().filter_map(|o| o.sim.as_ref()).map(|s| s.heap_bytes()).sum();
+        vec![
+            Mem::new("grad_tokens", g.tokens.len(), mem::map(&g.tokens)),
+            Mem::new("grad_sol_markets", g.pools.len(), mem::map(&g.pools)),
+            Mem::new("curve_hold", hold.len(), mem::map(hold) + hold.values().map(mem::vec).sum::<usize>()),
+            Mem::new("busy", self.busy.len(), mem::map(&self.busy)),
+            Mem::new("pending", self.pending.values().map(Vec::len).sum(),
+                     mem::btree(&self.pending) + self.pending.values().map(mem::vec).sum::<usize>()),
+            Mem::new("pending_keys", self.pending_keys.len(), mem::map(&self.pending_keys)),
+            Mem::new("grad_keys", self.grad_keys.len(), mem::map(&self.grad_keys)),
+            Mem::new("open_positions", self.opens.len(), mem::map(&self.opens) + sims),
+            self.open.mem("open_order"),
+            self.grad_wait.mem("grad_wait"),
+            Mem::new("run_curve_sums", self.run_sums.values().map(HashMap::len).sum(),
+                     mem::map(&self.run_sums) + self.run_sums.values().map(mem::map).sum::<usize>()),
+            Mem::new("cooldowns", self.cool.iter().map(HashMap::len).sum(), self.cool.iter().map(mem::map).sum()),
+            Mem::new("wallet_txs", self.wallets.iter().map(|w| w.txs.len()).sum(), self.wallets.iter().map(|w| mem::deque(&w.txs)).sum()),
+            Mem::new("ops", self.ops.len(), mem::vec(&self.ops)),
+        ]
     }
 
     /// `_load_risk` (engine.py:532-537): every group's risk, read again.
@@ -1234,6 +1272,13 @@ impl PaperEngine {
         self.paper.events += 1;
         self.paper.last_event = Some(ev.leg.order());
         self.paper.take_error()
+    }
+
+    /// The memory log (C4-2, read-only): the signal engine's structures, then the paper engine's.
+    pub fn mem_report(&self) -> Vec<Mem> {
+        let mut v = self.sig.mem_report();
+        v.extend(self.paper.mem_report());
+        v
     }
 
     /// The feed's end: its last slot, then the end of data (engine.py:321-324, 1289-1308).
