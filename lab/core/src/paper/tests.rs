@@ -225,3 +225,137 @@ fn the_risk_source_is_read_at_the_minute_and_the_entry_and_sizes_the_order() {
     assert_eq!(sizes, [300_000_000]);
     assert_eq!(reads, 2, "the minute and the entry");
 }
+
+// ---------------------------------------------------------------------------------------------- live (M3-08)
+
+/// The first test's legs (two positions, a busy skip, quiet entries at T + 2 and T + 703).
+fn two_positions() -> Vec<Leg> {
+    let mut legs = vec![inflow(T - 10, P, 580), trig((T, 0), P, 30, 600), inflow(T + 90, P, 570), trig((T + 100, 0), P, 30, 600),
+                        inflow(T + 700, P, 540), inflow(T + 690, Q, 580), trig((T + 701, 0), Q, 30, 600)];
+    legs.sort_by_key(Leg::order);
+    legs
+}
+
+/// `run`, with `close_through` after each slot's last event: `early` closes that slot, else every slot before the
+/// next event's (the entries due in between fill at the close).
+fn run_closing(legs: &[Leg], early: bool) -> (PaperEngine, Vec<Op>) {
+    let mut eng = engine(vec![k3()], vec![0.5]).unwrap();
+    let mut keys = FakeKeys { names: vec![""; 3], seeds: vec![0; 3], triggers: HashMap::new() };
+    let mut ops = Vec::new();
+    for (i, &l) in legs.iter().enumerate() {
+        let bt = BT0 + (l.slot() as i64 - T as i64) * 2 / 5;
+        eng.push(&Event::new(l, Some(bt)), &mut keys).unwrap();
+        ops.append(&mut eng.paper.ops);
+        if let Some(next) = legs.get(i + 1).map(Leg::slot).filter(|&s| s != l.slot()) {
+            let c = if early { l.slot() } else { next - 1 };
+            assert_eq!(eng.close_through(c, &mut keys).unwrap(), Some(l.slot()));
+            ops.append(&mut eng.paper.ops);
+        }
+    }
+    eng.finish(&mut keys).unwrap();
+    ops.append(&mut eng.paper.ops);
+    (eng, ops)
+}
+
+#[test]
+fn closing_a_complete_slot_early_writes_what_the_next_event_writes() {
+    // Spec D1: close_through(c) for any c from the last slot up to the slot before the next event, then that event's
+    // push, writes exactly what the push alone writes (the slot's end, then the quiet entries in order).
+    let legs = two_positions();
+    let (_, want) = run(&legs);
+    assert!(want.iter().any(|o| matches!(o, Op::Exit(_))));
+    for early in [true, false] {
+        let (eng, got) = run_closing(&legs, early);
+        assert_eq!(got, want, "early {early}");
+        assert_eq!(eng.closed(), Some(T + 700)); // the last slot before T + 701 in both
+    }
+    // Late: the entry due at T + 2 (no event there) fills at the close through T + 89, before the event at T + 90.
+    let mut eng = engine(vec![k3()], vec![0.5]).unwrap();
+    let mut keys = FakeKeys { names: vec![""; 3], seeds: vec![0; 3], triggers: HashMap::new() };
+    for &l in &legs[..2] {
+        eng.push(&Event::new(l, Some(BT0 + (l.slot() as i64 - T as i64) * 2 / 5)), &mut keys).unwrap();
+    }
+    eng.paper.ops.clear();
+    assert_eq!((eng.close_through(T + 89, &mut keys).unwrap(), eng.paper.pending(), eng.paper.open_positions()), (Some(T), 0, 1));
+    assert!(eng.paper.ops.iter().any(|o| matches!(o, Op::Fill { .. })), "{:?}", eng.paper.ops);
+}
+
+#[test]
+fn a_late_event_and_input_after_stop_are_refused() {
+    let legs = two_positions();
+    let mut eng = engine(vec![k3()], vec![0.5]).unwrap();
+    let mut keys = FakeKeys { names: vec![""; 3], seeds: vec![0; 3], triggers: HashMap::new() };
+    let ev = |l: Leg| Event::new(l, Some(BT0 + (l.slot() as i64 - T as i64) * 2 / 5));
+    eng.push(&ev(legs[0]), &mut keys).unwrap();
+    assert_eq!(eng.close_through(T - 5, &mut keys).unwrap(), Some(T - 10));
+    assert_eq!(eng.close_through(T - 8, &mut keys).unwrap(), None); // closed never moves back
+    assert_eq!(eng.closed(), Some(T - 5));
+    let late = eng.push(&ev(inflow(T - 5, Q, 580)), &mut keys).unwrap_err();
+    assert!(matches!(late, PaperError::Late { slot, closed } if slot == T - 5 && closed == T - 5), "{late}");
+    eng.push(&ev(legs[1]), &mut keys).unwrap(); // T: P's trigger, the entry due at T + 2
+    eng.push(&ev(legs[2]), &mut keys).unwrap(); // T + 90 ends T; the entry fills
+    assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (1, 0));
+    eng.paper.ops.clear();
+    // Spec D2: stop writes nothing, leaves the open slot and the position, and refuses what comes after.
+    eng.stop();
+    assert!(eng.stopped() && eng.paper.ops.is_empty() && eng.sig.open_slot() == Some(T + 90));
+    assert!(matches!(eng.push(&ev(legs[3]), &mut keys), Err(PaperError::Stopped)));
+    assert!(matches!(eng.close_through(T + 200, &mut keys), Err(PaperError::Stopped)));
+    assert!(matches!(eng.finish(&mut keys), Err(PaperError::Stopped)));
+    assert!(eng.paper.ops.is_empty() && eng.paper.open_positions() == 1);
+}
+
+#[test]
+fn a_pool_learned_live_is_known_from_then_on() {
+    // Spec D3: R is not in the snapshot. Its trigger is refused (PoolAbsent) until the feed learns it; a second learn
+    // of a known pool changes nothing.
+    const R: Id = 3;
+    let legs = [inflow(T - 10, R, 580), trig((T, 0), R, 30, 600)];
+    let entered = |learn: bool| {
+        let mut eng = engine(vec![k3()], vec![0.5]).unwrap();
+        let mut keys = FakeKeys { names: vec![""; 4], seeds: vec![0; 4], triggers: HashMap::new() };
+        let meta = PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9 };
+        if learn {
+            assert!(eng.learn_pool(R, meta, Some(T - 100)));
+            assert!(!eng.learn_pool(R, PoolMeta { mayhem: true, ..meta }, None)); // known: unchanged
+            assert!(!eng.learn_pool(P, meta, None));
+        }
+        for l in legs {
+            eng.push(&Event::new(l, Some(BT0 + (l.slot() as i64 - T as i64) * 2 / 5)), &mut keys).unwrap();
+        }
+        eng.close_through(T, &mut keys).unwrap();
+        let n = eng.paper.ops.iter().filter(|o| matches!(o, Op::Signal(r, _) if r.key == R)).count();
+        (n, eng.sig.counts.rejects[crate::universe::Reject::PoolAbsent as usize], eng.sig.universe.pool(R).copied())
+    };
+    let (n, absent, meta) = entered(false);
+    assert_eq!((n, meta), (0, None));
+    assert!(absent > 0);
+    let (n, absent, meta) = entered(true);
+    assert_eq!((n, absent), (1, 0));
+    assert!(meta.is_some_and(|m| !m.mayhem));
+}
+
+#[test]
+fn an_epoch_learned_live_sets_the_slots_from_then_on() {
+    // Spec D4: K3's d_ms 600 is 2 slots at dev2's 267.83 ms; at 100 ms it is 6, for the signals after the learn only.
+    let mut eng = engine(vec![k3()], vec![0.5]).unwrap();
+    let mut keys = FakeKeys { names: vec![""; 3], seeds: vec![0; 3], triggers: HashMap::new() };
+    let ev = |l: Leg| Event::new(l, Some(BT0 + (l.slot() as i64 - T as i64) * 2 / 5));
+    let e = T / crate::clock::EPOCH_SLOTS;
+    assert_eq!(eng.sig.clock.slots(600.0, T), 2);
+    for l in [inflow(T - 10, P, 580), trig((T, 0), P, 30, 600), inflow(T - 10 + 50, Q, 580)] {
+        eng.push(&ev(l), &mut keys).unwrap();
+    }
+    eng.set_epoch_ms(e, 100.0);
+    let c = &eng.sig.clock;
+    assert_eq!((c.slots(600.0, T), c.ms_per_slot(T), c.ms_per_slot(T + 432_000)), (6, 100.0, 267.93)); // 1043 its own
+    for l in [trig((T + 50, 0), Q, 30, 600), inflow(T + 300, P, 580)] {
+        eng.push(&ev(l), &mut keys).unwrap();
+    }
+    eng.close_through(T + 300, &mut keys).unwrap();
+    let entries: Vec<(Id, u64)> = eng.paper.ops.iter().filter_map(|o| match o {
+        Op::Fill { k, slot: Some(slot), side: "buy", .. } => Some((k.key, *slot)),
+        _ => None,
+    }).collect();
+    assert_eq!(entries, [(P, T + 2), (Q, T + 56)]);
+}

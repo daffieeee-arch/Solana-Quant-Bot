@@ -162,15 +162,15 @@ class CaseFeed(Feed):
         yield from self.evs
 
 
-def engine(case, journal):
+def engine(case, journal, feed=None):
     """The engine of a case: its groups (the primary first, the others in the state's name order), clock and bounds,
-    without risk limits."""
+    without risk limits. feed: the case's feed (default CaseFeed; M3-08's cases give one that learns while it reads)."""
     gs = json.loads(case["groups"])
     (name, p), = [(n, g) for n, g in gs.items() if g["primary"]]
     others = [Group(n, [TP_T.get(v, v) for v in g["variants"]], farm=g["farm"], segments=g["segments"], d=g["d"],
                     d_ms=g["d_ms"], q=g["q"], n2_k=g["n2_k"], risk_path=g["risk"], wallet_file=g["wallet"],
                     require_farm_complete=g["require_farm_complete"]) for n, g in gs.items() if not g["primary"]]
-    eng = Engine(CaseFeed(case), journal, p["risk"], variants=[TP_T.get(v, v) for v in p["variants"]], d=p["d"], d_ms=p["d_ms"],
+    eng = Engine(CaseFeed(case) if feed is None else feed, journal, p["risk"], variants=[TP_T.get(v, v) for v in p["variants"]], d=p["d"], d_ms=p["d_ms"],
                  q=p["q"], n2_k=p["n2_k"], segments=p["segments"], farm=p["farm"], name=name, groups=others,
                  ignore_risk=True, clock=Clock(case["clock"]), dev_bounds=tuple(case["dev_bounds"]), backup=False)
     if groups_state(eng) != case["groups"]:

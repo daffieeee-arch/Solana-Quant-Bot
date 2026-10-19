@@ -37,7 +37,7 @@ use crate::positions::{
 use crate::risk::Risk;
 use crate::signals::{Family, Hooks, SignalEngine, SignalError, SignalRow, SlotLegs, Status};
 use crate::tau::Tau;
-use crate::universe::Segment;
+use crate::universe::{MintMeta, PoolMeta, Segment};
 use crate::venues::{self as v, Curve, Pool};
 
 /// A jump of more slots between events is a feed gap's heartbeat row (engine.py:75).
@@ -116,6 +116,11 @@ pub enum PaperError {
     Config(String),
     Signal(SignalError),
     Position(PosError),
+    /// Live (M3-08): an event at a slot `close_through` already closed (LiveFeed drops such rows as late_rows; the
+    /// source must too).
+    Late { slot: u64, closed: u64 },
+    /// Live (M3-08): input after `stop`.
+    Stopped,
 }
 
 impl fmt::Display for PaperError {
@@ -125,6 +130,10 @@ impl fmt::Display for PaperError {
             PaperError::Config(s) => write!(f, "paper: {s}"),
             PaperError::Signal(e) => write!(f, "paper: {e}"),
             PaperError::Position(e) => write!(f, "paper: {e}"),
+            PaperError::Late { slot, closed } => {
+                write!(f, "paper: an event at slot {slot} after every slot up to {closed} was closed (a late row: the source drops it)")
+            }
+            PaperError::Stopped => write!(f, "paper: input after stop (a live run's end)"),
         }
     }
 }
@@ -1239,11 +1248,18 @@ impl Hooks for Paper {
 
 /// The paper engine of a replay (engine.py `Engine.run` under `--ignore-risk`): the signal engine with `Paper` as its
 /// hooks. Push the feed's events in chain order, then `finish`; drain `ops` as they come.
+///
+/// Live (M3-08, research/m3-08-core-live-api-spec-2026-10-19.md): `close_through` ends a slot the source knows is
+/// complete, `stop` ends the run without the end of data, `learn_token`/`learn_pool` and `set_epoch_ms` take what the
+/// feed learns while it reads, each before the event it precedes in the feed.
 #[derive(Debug)]
 pub struct PaperEngine {
     pub sig: SignalEngine,
     pub paper: Paper,
     cur: Option<u64>,
+    /// Every slot up to here is complete (`close_through`): an event there is refused (`PaperError::Late`).
+    closed: Option<u64>,
+    stopped: bool,
 }
 
 impl PaperEngine {
@@ -1256,13 +1272,14 @@ impl PaperEngine {
     /// With the groups' risk from `risk` (`RiskSource::Files`: risk on, as paper.engine without `--ignore-risk`).
     pub fn with_risk(sig: SignalEngine, cfg: PaperCfg, risk: RiskSource) -> Result<Self, PaperError> {
         let paper = Paper::new(&sig, cfg, risk)?;
-        Ok(PaperEngine { sig, paper, cur: None })
+        Ok(PaperEngine { sig, paper, cur: None, closed: None, stopped: false })
     }
 
     /// One event (engine.py `run`, :301-316): a new slot ends the one before it, then the entries due in the quiet
     /// slots between them (:310).
     pub fn push(&mut self, ev: &Event, keys: &mut impl N2Keys) -> Result<(), PaperError> {
         let slot = ev.leg.slot();
+        self.accepts(Some(slot))?;
         self.sig.push_with(ev, keys, &mut self.paper)?;
         if self.cur != Some(slot) {
             self.cur = Some(slot);
@@ -1283,10 +1300,84 @@ impl PaperEngine {
 
     /// The feed's end: its last slot, then the end of data (engine.py:321-324, 1289-1308).
     pub fn finish(&mut self, keys: &mut impl N2Keys) -> Result<(), PaperError> {
+        self.accepts(None)?;
         self.sig.finish_with(keys, &mut self.paper)?;
         self.paper.take_error()?;
         self.paper.end_of_data(&self.sig);
         self.paper.take_error()
+    }
+
+    /// Input is refused after `stop`, and an event at a closed slot.
+    fn accepts(&self, slot: Option<u64>) -> Result<(), PaperError> {
+        if self.stopped {
+            return Err(PaperError::Stopped);
+        }
+        match (slot, self.closed) {
+            (Some(slot), Some(closed)) if slot <= closed => Err(PaperError::Late { slot, closed }),
+            _ => Ok(()),
+        }
+    }
+
+    /// Live (spec D1): every slot up to `c` is complete. The open slot ends now when it is one of them, as the next
+    /// slot's first event would end it (engine.py:304-307); then the entries due in the empty slots up to `c` fill on
+    /// the state they have (`_quiet_entries(c + 1)`, :353-360). The next event's push runs the rest (its
+    /// `_quiet_entries`), so `close_through(c)` and then that push write what the push alone writes, for any c from the
+    /// open slot up to the slot before the next event. An event at a slot <= c is refused afterwards. The slot it
+    /// ended, if any.
+    pub fn close_through(&mut self, c: u64, keys: &mut impl N2Keys) -> Result<Option<u64>, PaperError> {
+        self.accepts(None)?;
+        let ended = match self.sig.open_slot() {
+            Some(open) if open <= c => self.sig.close_with(keys, &mut self.paper)?,
+            _ => None,
+        };
+        self.paper.take_error()?;
+        self.paper.quiet_entries(&self.sig, c.saturating_add(1));
+        self.closed = Some(self.closed.map_or(c, |x| x.max(c)));
+        self.paper.take_error()?;
+        Ok(ended)
+    }
+
+    /// Live (spec D2): the run ends without the end of data, as a stopped Python process ends: no `_end_of_data`
+    /// (engine.py:1289-1308), the open slot not ended, nothing written. Push, close_through and finish are refused
+    /// afterwards. A source that knows the open slot is complete closes it first.
+    pub fn stop(&mut self) {
+        self.stopped = true;
+    }
+
+    pub fn stopped(&self) -> bool {
+        self.stopped
+    }
+
+    /// Every slot up to here is complete (`close_through`).
+    pub fn closed(&self) -> Option<u64> {
+        self.closed
+    }
+
+    /// Live (spec D3): a token the feed learned while it read (LiveFeed's create, completion or migration,
+    /// live.py:420-450). It replaces the token's metadata (Universe) and its graduation fields (GradInfo), as LiveFeed
+    /// replaces its TokenInfo; every later lookup sees it (`_universe`, `_on_complete`'s "what the feed knows now").
+    pub fn learn_token(&mut self, mint: Id, meta: MintMeta, complete_slot: Option<u64>, pool: Option<Id>) {
+        self.sig.universe.add_mint(mint, meta);
+        self.paper.cfg.grad.add_token(mint, complete_slot, pool);
+    }
+
+    /// Live (spec D3): a SOL market the feed learned while it read (live.py:451-485), into the Universe and into
+    /// GradInfo with its create slot. A pool already known changes nothing (false), as LiveFeed never classes a pool
+    /// twice; pools of another class are the source's (its admission) and never reach the core.
+    pub fn learn_pool(&mut self, pool: Id, meta: PoolMeta, create_slot: Option<u64>) -> bool {
+        if self.sig.universe.pool(pool).is_some() {
+            return false;
+        }
+        self.sig.universe.add_pool(pool, meta);
+        self.paper.cfg.grad.add_pool(pool, create_slot);
+        true
+    }
+
+    /// Live (spec D4): an epoch's ms per slot as LiveFeed measures it while it reads (live.py:637-650), in the one
+    /// Clock (the signal engine's; Paper reads it there). Every later `slots()` uses it; what the Clock gave before
+    /// stays (an entry's exit rule, a cooldown's end, the run's bounds), as in Python.
+    pub fn set_epoch_ms(&mut self, epoch: u64, ms: f64) {
+        self.sig.clock.per_epoch.insert(epoch, ms);
     }
 }
 

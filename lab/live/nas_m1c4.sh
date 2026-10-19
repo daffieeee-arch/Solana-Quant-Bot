@@ -7,7 +7,8 @@
 # in the memory log (reported in plateau.md, not gated).
 #
 #   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (the segments against the
-#                chunks on the fixture, and every earlier test) and of ALL of lab/core, named tests required to have run;
+#                chunks on the fixture, and every earlier test) and of ALL of lab/core, named tests required to have run
+#                (M3-08: lab/core's live API, the m3_live_cases golden and C2's cases with the slots closed live);
 #                then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab. Since
 #                STEP=repro, through lab/scripts/rust-repro.sh: cargo reaches the checkout by one fixed path
 #                ($LAB_RUST_ROOT/lab, a symlink, under a lock) and maps it and CARGO_HOME to /src and /cargo, so the
@@ -132,13 +133,17 @@ if [ "$STEP" = build ]; then
            paper_core::tests::every_c3_case_gives_the_engines_writes_with_risk_on paper::tests::with_risk_on_each_group_reads_its_own_file \
            paper::tests::a_replay_writes_its_paper_journal_the_states_and_the_summary \
            legs::tests::a_boxed_farm_history_is_72_bytes_and_its_sums_stay_exact_beyond_i64 legs::tests::the_key_buffer_grows_by_steps_not_doublings \
-           memlog::tests::a_churned_table_resizes_once_then_stays; do
+           memlog::tests::a_churned_table_resizes_once_then_stays \
+           paper_core::tests::every_m3_case_gives_the_engines_writes_with_what_it_learns \
+           paper_core::tests::every_c2_case_gives_the_engines_writes_with_the_slots_closed_live; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
   cargo test --release --locked --manifest-path "$LAB_RUST/core/Cargo.toml" > "$OUT/cargo-test-core.log" 2>&1 || { tail -40 "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"; log "cargo test lab-core: FAILED"; exit 1; }
   grep -E "^test result" "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"
-  for t in signals::tests::the_windowed_structures_stay_bounded_over_thirty_hours mem::tests::the_estimates_are_capacity_times_size; do
+  for t in signals::tests::the_windowed_structures_stay_bounded_over_thirty_hours mem::tests::the_estimates_are_capacity_times_size \
+           paper::tests::closing_a_complete_slot_early_writes_what_the_next_event_writes paper::tests::a_late_event_and_input_after_stop_are_refused \
+           paper::tests::a_pool_learned_live_is_known_from_then_on paper::tests::an_epoch_learned_live_sets_the_slots_from_then_on; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test-core.log" || { log "cargo test lab-core: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test lab-core: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test-core.log") tests ok)"
