@@ -190,15 +190,19 @@ cd $R/lab && systemd-run --user --scope -p MemoryMax=3G -p CPUQuota=100% -- $PY 
 - At `--wire-ratio 1` the daily cap is therefore conservative by the zstd ratio r: `--budget-usd 2` stops at 25 GB decoded, which is about $2 × r billed. The real spend is lower than the meter says.
 - Measuring r is required, not optional. Triton has no usage API, so it is read in two ways:
   1. **Triton's figure:** the dashboard's usage (or the balance) just before step 1 and right after the hour; billed GB = the difference in USD / 0.08. Nothing else may use the token in between: no token-meta-rpc, no other recorder or session. r = billed GB / `spent_gb` in `$M/budget.json`.
-  2. **Our own cross-check, read-only:** the TLS bytes of the recorder's connection against the meter, each taken right after a minute roll (budget.json is saved at every minute roll), twice, about 45 minutes apart. This includes TLS and HTTP/2 overhead, so it is an upper bound of r. A reconnect between the two readings (a new socket) voids it; take two new readings.
+  2. **Our own cross-check, read-only:** the TLS bytes of the recorder's connection against the meter, each taken right after a minute roll (budget.json is saved at every minute roll), twice, about 45 minutes apart. This includes TLS and HTTP/2 overhead, so it is an upper bound of r.
+     - Both readings must be on **the same socket** (the same local address and port in the output). A reconnect between them gives a new socket and voids the pair; take two new readings.
+     - Both must fall on **the same UTC day**: `spent_bytes` starts again at 0 at UTC midnight.
+     - The pid: in the measuring hour the recorder runs in a `systemd-run --scope`, not as `lab-recorder.service`, so take it with `pgrep -x lab-recorder` (the service is not running yet). After the start, for a later check against the dashboard, take `systemctl --user show -p MainPID --value lab-recorder.service` and `B=$LAB/recorder/budget.json`.
      ```bash
-     P=$(pgrep -f "lab-recorder --root $M" | head -1)
-     t=$(stat -c %Y $M/budget.json); while [ "$(stat -c %Y $M/budget.json)" = "$t" ]; do sleep 1; done   # the next minute roll
-     ss -tinpH state established '( dport = :443 )' | awk -v p="pid=$P," 'index($0, p) {w = 1; next}
-       w && /bytes_received/ {match($0, /bytes_received:[0-9]+/); b += substr($0, RSTART + 15, RLENGTH - 15); w = 0}
-       END {print "tls_bytes", b + 0}'
-     grep -o '"spent_bytes": *[0-9]*' $M/budget.json
-     # r (upper bound) = (tls_bytes 2 - tls_bytes 1) / (spent_bytes 2 - spent_bytes 1)
+     P=$(pgrep -x lab-recorder); B=$M/budget.json        # after the start: P=$(systemctl --user show -p MainPID --value lab-recorder.service); B=$LAB/recorder/budget.json
+     [ "$(echo $P | wc -w)" = 1 ] && [ "$P" != 0 ] || echo "not exactly one recorder pid: '$P'"
+     t=$(stat -c %Y $B); while [ "$(stat -c %Y $B)" = "$t" ]; do sleep 1; done   # the next minute roll
+     date -u +%FT%TZ
+     ss -tinpH state established '( dport = :443 )' | awk -v p="pid=$P," 'index($0, p) {w = 1; sock = $3; next}
+       w && /bytes_received/ {match($0, /bytes_received:[0-9]+/); print "socket", sock, "tls_bytes", substr($0, RSTART + 15, RLENGTH - 15); w = 0}'
+     grep -o '"spent_bytes": *[0-9]*' $B
+     # r (upper bound) = (tls_bytes 2 - tls_bytes 1) / (spent_bytes 2 - spent_bytes 1), on the same socket and the same UTC day
      ```
 - **The decision (§2, the owner's):**
   - keep `--wire-ratio 1`: the safe default, where the cap errs low and stops the streams before $2 is billed; or
@@ -206,7 +210,45 @@ cd $R/lab && systemd-run --user --scope -p MemoryMax=3G -p CPUQuota=100% -- $PY 
   - One hour's r may differ from a full day's mix of streams. Check it again against the dashboard after the first day.
 - **The brakes:**
   - Our daily cap and auto-stop are the only brake we set. Triton offers no limit you can set and no usage API. A pay-as-you-go stream stops when the prepaid balance reaches 0; the pricing FAQ calls that a "hard cap on spend". Keep the balance modest.
-  - The 5e2d1b7 build saves `budget.json` before it stops at the cap. If that save fails (a write error, not a full disk: the disk guard stops the units first), the recorder reconnects instead of exiting (`main.rs:480-482`) and keeps receiving until a save works. Watch `recorder.log` for repeated `disconnected` lines that name `budget.json`, and stop the units if they appear.
+  - **The save loop in the 5e2d1b7 build: on and on, at an unknown rate.** The build saves `budget.json` before it stops at the cap. If that save fails, the recorder does not exit but reconnects (`main.rs:480-482`).
+    - This takes a write fault in the root directory: permissions, a read-only remount, or `budget.json.tmp` being a directory. A full disk does not count, because the disk guard stops the units first. Segment writes can still work while this happens.
+    - Each new session resumes from the same last closed slot (`recorder.rs:363-365`), or from the start of the server's replay window once that slot is older. It ends at its first tick, a few milliseconds in, because the cap is still reached and the save fails again. A tokio interval's first tick completes immediately.
+    - Most sessions handle an update first (tokio's `select!`), and `count_session` then sets the failures back to 1 (`main.rs:520-523`). So `MAX_FAILURES` is practically never reached, and the recorder reconnects about every 2 s: a new TLS connection, a replay-info call and two subscribes each time.
+    - The meter counts only the few updates each session decodes. What Triton sends before each socket closes is billed but not metered: it can be up to the HTTP/2 flow-control window, hyper's defaults of 5 MiB per connection and 2 MiB per stream, from a replay that is always ready. As a bound only, that is up to about 2 MB/s billed. The real rate is unknown and **not necessarily lower than normal streaming**.
+    - The loop writes no segments (the paper engine starves) and no "daily budget reached" line. The unit stays `active (running)`. `budget.json` keeps its last good save, so `spent_gb` looks below the cap and `stopped` is false.
+    - It ends at UTC midnight: the new day resets the spend, and the same fault then shows as one `disconnected:` line a minute, the failing save at each minute roll. In the measuring hour it ends at `--max-runtime-secs 3600` with exit 1. In production nothing else ends it.
+  - **Detect it mechanically,** not by the error text alone.
+    - The recorder service logs to `$LAB/logs/recorder.log` (`StandardOutput=append:`, `StandardError=inherit`), **not to the journal**: `journalctl` shows only systemd's own lines. In the measuring hour the log is `$M.log`.
+    - Every session that ends on an error is logged as `disconnected: <reason>` (`main.rs:501`). The network reasons are `main stream…`, `vault stream…`, `no update for…`, `connect…`, `subscribe…` and `update the main/vault subscription…`.
+    - A failed save gives another reason: `write …/budget.json.tmp: …`, or a bare I/O error when the fsync, the rename or an open fails.
+    - The watcher stops at the **first disconnect with any other reason**, or at **10 or more disconnects within 60 s** whatever the reason. A network outage does not give 10, because its backoff grows to 60 s.
+  - **Stop it durably.**
+    - The timers go first: `lab-paper.timer` starts `lab-paper` every 15 minutes, and that unit `Requires=` the recorder.
+    - In the loop a SIGTERM is likely lost (tokio's handler listens only inside a session), so `systemctl stop` waits for the timeout. A SIGKILL while the stop job runs ends it at once, and systemd does not restart a unit it is stopping.
+    - **Do not start the recorder again that UTC day** until the save fault is found and fixed. A restart starts below the cap, because the loop's spend reached neither `budget.json` nor a segment, and can fall into the loop again. Take the day's billed amount from the dashboard.
+    ```bash
+    # The watcher: in the background from the start (the coordinator). On the first sign it prints the line and stops
+    # durably. gawk reads tail through a process substitution, so the stop runs at once, without waiting for another log
+    # line. Measuring hour: LOG=$M.log, and replace the three stop lines with: pkill -KILL -x lab-recorder
+    LOG=$LAB/logs/recorder.log
+    gawk '
+      function ts() { return strftime("%FT%TZ", systime(), 1) }
+      /\] disconnected: / {
+        r = $0; sub(/.*\] disconnected: /, "", r)
+        if (r !~ /^(main stream|vault stream|no update for|connect|subscribe|update the (main|vault) subscription)/) {
+          print ts(), "recorder: a session ended on a local error (a budget.json save?), stop:", $0; fflush(); exit 1 }
+        now = systime(); seen[now]++; n = 0
+        for (s in seen) if (s + 0 >= now - 60) n += seen[s]; else delete seen[s]
+        if (n >= 10) { print ts(), "recorder:", n, "disconnects in 60 s, stop:", $0; fflush(); exit 1 }
+      }' < <(tail -n0 -F "$LOG") || {
+      systemctl --user disable --now lab-paper.timer lab-recorder.timer
+      systemctl --user stop --no-block lab-paper.service lab-recorder.service
+      sleep 5; systemctl --user kill -s SIGKILL lab-recorder.service 2>/dev/null || true; }
+    ```
+  - **A check by hand** (also §4.3): while the recorder streams, `budget.json` is rewritten at every minute roll. An mtime older than about 150 s means saves fail; so does a `budget.json.tmp` newer than `budget.json`. During a network outage it also goes stale, because there are no ticks between sessions, so look at the log before you act.
+    ```bash
+    B=$LAB/recorder/budget.json; echo "budget.json saved $(( $(date +%s) - $(stat -c %Y $B) )) s ago"; ls -l --time-style=+%T $B ${B}.tmp 2>/dev/null
+    ```
   - The #358 build (the first nightly bundle, §5) stops at the cap without waiting for a save, and ends on a failed budget write (exit 74).
 
 Exit 75 means the cap was reached, or today's spend is unknown (`recorder.log` says which; see §5). Do not restart; report it.
@@ -231,6 +273,7 @@ Run these every 10 min in the first hour, then daily. Set the journal path first
 systemctl --user status lab-recorder lab-paper --no-pager | grep -E "Active|Memory"   # paper ≤ 4G, recorder ≤ 2G
 tail -n 20 $LAB/logs/recorder.log $LAB/logs/paper-engine.log
 cat $LAB/recorder/budget.json                                                       # spent_gb against 25 GB
+echo "budget.json saved $(( $(date +%s) - $(stat -c %Y $LAB/recorder/budget.json) )) s ago"     # under ~150 s while it streams (§4.1, the save loop)
 sqlite3 -readonly $J "SELECT k, v FROM state WHERE k IN ('config_sha256', 'groups_sha256', 'risk_sha256_at_start', 'risk_sha256_at_start:H', 'groups', 'farmer_seed')"
 sqlite3 -readonly $J "SELECT max(minute), count(*) FROM heartbeat"                   # a row every minute
 sqlite3 -readonly $J "SELECT count(*), sum(gap_slots) FROM heartbeat WHERE note LIKE 'feed gap%'"   # feed gaps
