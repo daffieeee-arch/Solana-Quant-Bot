@@ -423,12 +423,17 @@ class LiveFeed(Feed):
         self.stats["learned_loaded"] = len(mints) + len(pools)
 
     def _new_tokens_and_pools(self, c):
-        """Tokens and pools created in this segment (the store's mints and create_pool rules)."""
+        """Tokens and pools created in this segment (the store's mints and create_pool rules). Each query has its own
+        ORDER BY (first slot, then key): DuckDB returns GROUP BY and QUALIFY rows in an order that differs between
+        processes (threads 2, preserve_insertion_order off), and these rows are learned (the journal's 'learned', the
+        live watchlist's new_pools) in the order they come. Only the order is fixed; which rows are learned is not
+        changed (M3-09a found it, 2026-10-20)."""
         create = c.src("pump/CreateEvent")
         if create:
             rows = self.con.execute(f"""
               SELECT mint, slot, "user", COALESCE(is_mayhem_mode, false), COALESCE(quote_mint, '{pda.DEFAULT_KEY}')
-              FROM {create} QUALIFY row_number() OVER (PARTITION BY mint ORDER BY slot, tx_index) = 1""").fetchall()
+              FROM {create} QUALIFY row_number() OVER (PARTITION BY mint ORDER BY slot, tx_index) = 1
+              ORDER BY slot, mint""").fetchall()
             new = [r for r in rows if r[0] not in self.tokens]
             for mint, slot, creator, mayhem, quote in new:
                 self.tokens[mint] = TokenInfo(mint, slot, creator, mayhem, quote, None, None)
@@ -436,14 +441,15 @@ class LiveFeed(Feed):
                 self.con.executemany("INSERT INTO live_mints VALUES (?)", [(r[0],) for r in new])
         done = c.src("pump/CompleteEvent")
         if done:
-            for mint, slot in self.con.execute(f"SELECT mint, min(slot) FROM {done} GROUP BY mint").fetchall():
+            for mint, slot in self.con.execute(f"SELECT mint, min(slot) FROM {done} GROUP BY mint ORDER BY 2, 1").fetchall():
                 t = self.tokens.get(mint)
                 if t and t.complete_slot is None:
                     self.tokens[mint] = TokenInfo(t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint, slot, t.pool)
                     self._learn_token(self.tokens[mint])
         mig = c.src("pump/CompletePumpAmmMigrationEvent")
         if mig:
-            for mint, pool in self.con.execute(f"SELECT mint, any_value(pool) FROM {mig} GROUP BY mint").fetchall():
+            for mint, pool in self.con.execute(f"SELECT mint, any_value(pool) FROM {mig} GROUP BY mint "
+                                               "ORDER BY min(slot), mint").fetchall():
                 t = self.tokens.get(mint)
                 if t and t.pool is None:
                     self.tokens[mint] = TokenInfo(t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint, t.complete_slot, pool)
@@ -452,13 +458,13 @@ class LiveFeed(Feed):
         # (pool_creations, pool_accounts: the same mints and coin creator, slot = first seen).
         for table, sql in (("pump_amm/CreatePoolEvent", """
               SELECT pool, base_mint, quote_mint, slot, coin_creator, COALESCE(is_mayhem_mode, false)
-              FROM {src} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1"""),
+              FROM {src} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1 ORDER BY slot, pool"""),
                            ("pool_creations", None), ("pool_accounts", None)):
             src = c.src(table)
             if not src:
                 continue
             sql = sql or """SELECT pool, any_value(base_mint), any_value(quote_mint), min(slot), any_value(coin_creator),
-                                   bool_or(COALESCE(is_mayhem_mode, false)) FROM {src} GROUP BY pool"""
+                                   bool_or(COALESCE(is_mayhem_mode, false)) FROM {src} GROUP BY pool ORDER BY 4, 1"""
             for pool, base, quote, slot, creator, mayhem in self.con.execute(sql.format(src=src)).fetchall():
                 if pool in self.pool_class:
                     continue
