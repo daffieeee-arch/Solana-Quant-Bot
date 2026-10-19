@@ -33,7 +33,7 @@ against the paper engine's own journal on the same replay with risk inert (resea
   risk on; their sha256 must be c1e36a0's, D5) or 'risk' (RC3: C2's arguments without --ignore-risk, so paper/risk.yaml
   and risk-h.yaml). With risk on, lab-live runs without --ignore-risk and reads the risk files the groups name; A2 then
   allows the risk gate's reasons and the 'at entry' orders; the heartbeat table must be equal row for row and each
-  group's wallet file byte for byte; the measure line counts the risk reasons per side.
+  group's wallet file byte for byte; the measure line counts the risk reasons per group on each side.
 - LAB_PAPER_REPORT=1 (RC1, spec D3): Python's daily export and report made from lab-live's journal equal the reference's
   own: every day's Parquet tables, and the last day's report.md and report.parquet (an earlier day's report counts the
   journal up to its close, so only the last day's can be made again afterwards).
@@ -147,10 +147,23 @@ def wallet_diff(dir_a, dir_b):
 
 
 def risk_reasons(journal):
-    """The risk gate's skips and the 'at entry' orders, per reason (the farm gates and busy left out)."""
-    skip = dict(_all(journal, "SELECT reason, count(*) FROM signals WHERE status = 'skipped' AND reason NOT IN (?, ?, ?, 'busy') "
-                              "GROUP BY reason ORDER BY reason", list(journal_diff.FARM_GATES)))
-    entry = dict(_all(journal, "SELECT reason, count(*) FROM orders WHERE reason LIKE 'at entry:%' GROUP BY reason ORDER BY reason"))
+    """The risk gate's skips and the 'at entry' orders per group and reason (spec §1; the farm gates and busy left out):
+    {group: {reason: n}}, every group of state 'groups' present, so a group whose gate counted nothing shows {}. A row's
+    group is its variant's (N2 rows carry the primary's variant)."""
+    groups = json.loads(_state(journal, "groups") or "{}")
+    of = {v: g for g, spec in groups.items() for v in spec["variants"]}
+
+    def per_group(rows):
+        out = {g: {} for g in sorted(groups)}
+        for variant, reason, n in rows:
+            g = of.get(variant, "?")
+            out.setdefault(g, {})[reason] = out.get(g, {}).get(reason, 0) + n
+        return out
+
+    skip = per_group(_all(journal, "SELECT variant, reason, count(*) FROM signals WHERE status = 'skipped' AND reason NOT IN "
+                                   "(?, ?, ?, 'busy') GROUP BY variant, reason ORDER BY variant, reason", list(journal_diff.FARM_GATES)))
+    entry = per_group(_all(journal, "SELECT variant, reason, count(*) FROM orders WHERE reason LIKE 'at entry:%' GROUP BY variant, "
+                                    "reason ORDER BY variant, reason"))
     return skip, entry
 
 
@@ -586,8 +599,11 @@ def test_the_heartbeat_wallet_and_risk_checks(tmp_path):
     n_a, n_b, diff = heartbeat_diff(str(tmp_path / "a"), str(tmp_path / "b"))
     assert (n_a, n_b, len(diff)) == (2, 2, 1) and diff[0][0][4] == 3 and diff[0][1][4] == 4
     assert heartbeat_diff(str(tmp_path / "a"), str(tmp_path / "a"))[2] == []
-    assert risk_reasons(str(tmp_path / "b")) == ({"max open positions": 1}, {"at entry: kill switch": 1})
-    assert risk_reasons(str(tmp_path / "a")) == ({}, {})
+    assert risk_reasons(str(tmp_path / "a")) == ({}, {})  # no state 'groups': no group
+    with sqlite3.connect(os.path.join(tmp_path / "b", "journal.sqlite")) as db:
+        db.execute("INSERT OR REPLACE INTO state (k, v) VALUES ('groups', ?)",
+                   [json.dumps({"K3": {"variants": ["tp4_T600"]}, "H": {"variants": ["flow300_H6", "flow300_tp100_H6"]}})])
+    assert risk_reasons(str(tmp_path / "b")) == ({"H": {}, "K3": {"max open positions": 1}}, {"H": {}, "K3": {"at entry: kill switch": 1}})
     # wallets: equal bytes pass; a different or a missing file is a difference
     for d in ("a", "b"):
         (tmp_path / d / "wallet.json").write_text('{"mode": "paper"}')

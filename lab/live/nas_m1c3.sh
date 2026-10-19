@@ -21,7 +21,7 @@
 #                  seed proof.
 #                Each: journal_diff 0 unexplained, the heartbeat row for row, the wallet files byte for byte, the per-chain
 #                report 0 chains, no curve order at or after `to`, and its GREEN measure line in job.log with the risk
-#                reasons per side. Both journals of each run and the wallet files stay in journals-rc1/2/3.
+#                reasons per group on each side. Both journals of each run and the wallet files stay in journals-rc1/2/3.
 #
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m1c3.sh      (bookworm runner)
 #   STEP=python LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c3.sh                      (lab runner)
