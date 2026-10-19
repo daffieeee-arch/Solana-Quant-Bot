@@ -12,23 +12,26 @@
 #   STEP=python  (the lab Python 3.13 runner):
 #                1. the fast tests: the C2 and C1b golden cases (the engine still makes their writes), journal_diff,
 #                   test_engine, the lab/core table pins (positions, exits, tau) and test_lab_live_paper's own checks
-#                   (the per-chain report on a synthetic red pair, the reference checks, the structure rules);
+#                   (the per-chain report on a synthetic red pair, the reference checks, the structure rules, the count of
+#                   curve orders at or after `to`, the keep of both journals);
 #                2. test_lab_live_paper for R1 (dev2 450128159-450380000, with the seed proof) and R2 (the whole of
 #                   fwd1053 454896000-455328000) side by side: paper.engine with the literal --variants 0.04:600 in its own
-#                   process and lab-live paper beside it; A1-A5, no curve entry at or after `to`, and one measure line
-#                   each in job.log (`lab-live paper [LO, HI) on <store>.duckdb: GREEN, ...`); on red the per-chain report
-#                   goes there first. Their logs are r1.log and r2.log;
+#                   process and lab-live paper beside it; A1-A5, no curve order with entry_slot >= `to` (in both
+#                   journals and lab-live's summary), the per-chain report (0 chains), and one measure line each in job.log
+#                   (`lab-live paper [LO, HI) on <store>.duckdb: GREEN, ...`); on red the report's lines go there first.
+#                   Their logs are r1.log and r2.log;
 #                3. the curve_hold proof again (paper/tests/curve_hold_proof.py over every mint: R1 142,498 rows over
 #                   8,039 mints, R2 0), its EQUAL lines in job.log.
-#                The reference journals stay (coordinator, D9): ref-r1/ and ref-r2/ with ref-engine.sha256 (the engine
-#                files they were made with). The pytest directories and spill go on green.
+#                Both journals of each run stay, green or red (coordinator): journals-r1/ and journals-r2/, each with
+#                python/journal.sqlite (the reference) and rust/journal.sqlite (lab-live), lab-live's summary (rust.json)
+#                and trace, the groups and cost scenario, and chains.md; their sha256 in job.log, and ref-engine.sha256 (the
+#                engine files the references were made with). The pytest directories and spill go on green.
 #
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m1c2.sh      (bookworm runner)
 #   STEP=python LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c2.sh                      (lab runner)
 #
 # Both steps write to $DATA/backtests/live-m1c2-<commit7>/ (job.log, cargo-test.log, cargo-test-core.log, bin/; r1.log,
-# r2.log, the proofs' logs, ref-r1/, ref-r2/; on a red run its pytest directory with both journals, journal_diff.md and
-# chains.md).
+# r2.log, the proofs' logs, journals-r1/, journals-r2/; on a red run also its pytest directory with journal_diff.md).
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -93,6 +96,8 @@ LAB_SPILL_DIR=$OUT/spill "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-fast" pa
   paper/tests/test_journal_diff.py paper/tests/test_engine.py backtest/tests/test_position_table.py backtest/tests/test_exit_table.py \
   backtest/tests/test_tau_table.py "paper/tests/test_lab_live_paper.py::test_the_chain_report_finds_the_root_of_a_red_pair" \
   "paper/tests/test_lab_live_paper.py::test_the_reference_checks_and_the_structure_rules" "paper/tests/test_lab_live_paper.py::test_the_seed_hash_is_lab_lives" \
+  "paper/tests/test_lab_live_paper.py::test_curve_orders_at_or_after_to_are_counted_whatever_their_status" \
+  "paper/tests/test_lab_live_paper.py::test_the_keep_copies_both_journals_whole" \
   > "$OUT/fast.log" 2>&1 || fast=$?
 tail -15 "$OUT/fast.log" | tee -a "$OUT/job.log"
 rm -rf "$OUT/pytest-fast" "$OUT/spill"
@@ -100,9 +105,9 @@ rm -rf "$OUT/pytest-fast" "$OUT/spill"
 
 # 2. The paper journals, R1 and R2 side by side (two paper.engine runs at once, each with lab-live beside it).
 paper() {  # name store from to seed_proof
-  rm -rf "$OUT/ref-$1"
+  rm -rf "$OUT/journals-$1"
   LAB_SPILL_DIR=$OUT/spill-$1 LAB_PAPER_STORE=$DATA/store/$2.duckdb LAB_PAPER_FROM=$3 LAB_PAPER_TO=$4 LAB_PAPER_SEED_PROOF=$5 \
-    LAB_PAPER_KEEP=$OUT/ref-$1 "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-$1" \
+    LAB_PAPER_KEEP=$OUT/journals-$1 "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-$1" \
     "paper/tests/test_lab_live_paper.py::test_the_rust_paper_journal_is_the_engines" > "$OUT/$1.log" 2>&1
 }
 sha256sum $ENGINE_FILES | tee "$OUT/ref-engine.sha256" | tee -a "$OUT/job.log"
@@ -119,8 +124,15 @@ for r in r1 r2; do
   tail -30 "$OUT/$r.log" | tee -a "$OUT/job.log"
 done
 rm -rf "$OUT/spill-r1" "$OUT/spill-r2"
-[ $rc1 = 0 ] || log "R1 red: its journals, journal_diff.md and chains.md stay under $OUT/pytest-r1"
-[ $rc2 = 0 ] || log "R2 red: its journals, journal_diff.md and chains.md stay under $OUT/pytest-r2"
+for r in r1 r2; do
+  if [ -f "$OUT/journals-$r/python/journal.sqlite" ] && [ -f "$OUT/journals-$r/rust/journal.sqlite" ]; then
+    (cd "$OUT" && sha256sum journals-$r/python/journal.sqlite journals-$r/rust/journal.sqlite) | tee -a "$OUT/job.log"
+  else
+    log "$r: its journals were not kept (the run stopped before its comparison)"
+  fi
+done
+[ $rc1 = 0 ] || log "R1 red: both journals and chains.md in $OUT/journals-r1, journal_diff.md under $OUT/pytest-r1"
+[ $rc2 = 0 ] || log "R2 red: both journals and chains.md in $OUT/journals-r2, journal_diff.md under $OUT/pytest-r2"
 # The comparison must have run and be green, not only its pytest exit: each run's measure line in job.log.
 for run in "r1 dev2 450128159 450380000" "r2 fwd1053 454896000 455328000"; do
   read -r name store lo hi <<< "$run"
@@ -162,4 +174,4 @@ for run in "r1 dev2 450128159 450380000 142,498 8,039" "r2 fwd1053 454896000 455
 done
 [ $rc1 = 0 ] && [ $rc2 = 0 ] || { log "curve_hold proof: RED (the exports stay under $OUT/export-r1, export-r2)"; exit 1; }
 rm -rf "$OUT/export-r1" "$OUT/export-r2"
-log "python: done (references kept in $OUT/ref-r1, $OUT/ref-r2, ref-engine.sha256)"
+log "python: done (both journals kept in $OUT/journals-r1, $OUT/journals-r2; ref-engine.sha256)"

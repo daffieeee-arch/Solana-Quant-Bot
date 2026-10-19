@@ -16,13 +16,17 @@ against the paper engine's own journal on the same replay with risk inert (resea
 - A4: rows in signals, orders, fills and exits on both sides; the positions table empty on both.
 - A5 (`structure`): entered signals ⊆ orders ⊆ signals; a filled order has a buy and a sell fill and an exit; a failed
   one an exit and no fill; a skipped one neither.
-- The reference has no curve entry at or after `to` (its seed and fill would read store legs past the replay): red with
-  the count otherwise (coordinator, 2026-10-19).
+- No curve order with entry_slot >= `to` (its seed and fill would read store legs past the replay), counted in both
+  journals by the same query and in lab-live's summary: red with the counts otherwise (coordinator, 2026-10-19).
 - The seed proof (LAB_PAPER_SEED_PROOF=1, R1): every curve position's holdings at its fill, as lab-live's --trace hashes
   them, equal `Holdings.seed(feed.curve_history(mint, S)[:i])` with backtest.replay's own functions.
-- The measure (A7): one line `lab-live paper [LO, HI) on <store>.duckdb: GREEN, ...` to LAB_LIVE_MEASURE_LOG. On red
-  the per-chain report goes there first (`chains`): every difference of the five tables grouped by (family, variant,
-  key), the earliest t of a chain its root, the rest its consequences.
+- The per-chain report (`chains`), on every run: every difference of the five tables grouped by (family, variant, key),
+  the earliest t of a chain its root, the rest its consequences. Its count is in the measure line; on red its lines go
+  to LAB_LIVE_MEASURE_LOG first.
+- The measure (A7): one line `lab-live paper [LO, HI) on <store>.duckdb: GREEN, ...` to LAB_LIVE_MEASURE_LOG.
+- LAB_PAPER_KEEP=DIR (nas_m1c2.sh, coordinator): both journals stay, green or red, as DIR/python/journal.sqlite and
+  DIR/rust/journal.sqlite (each one whole file, by SQLite's backup), with lab-live's summary and trace, the groups and
+  cost scenario it ran with, and chains.md. `python -m paper.journal_diff DIR/python DIR/rust OUT` compares them again.
 
 Needs the built binary: LAB_LIVE_BIN=<path to lab-live> (lab/live/nas_m1c2.sh builds it); those tests skip without it, and
 fail instead with LAB_LEGS_REQUIRE=1. A NAS job, never on the VPS. The report's, the reference checks' and the structure
@@ -120,7 +124,8 @@ def structure(journal):
 
 
 def curve_entries_at_or_after(journal, to):
-    """The reference's curve entries at or after the replay's end: their seed and fill would read store legs past it."""
+    """A journal's curve orders with entry_slot >= the replay's end, whatever their status: their seed and fill would read
+    store legs past it."""
     return _all(journal, """SELECT count(*) FROM orders o JOIN signals s USING (family, variant, key, t)
                            WHERE s.venue = 'curve' AND o.entry_slot >= ?""", [to])[0][0]
 
@@ -160,6 +165,32 @@ def chains(journal_a, journal_b):
         lines.append(f"- {'/'.join(map(str, chain))}: root {table} t {t}{' ' + str(extra) if extra else ''} {what}; "
                      f"{len(diffs) - 1} consequences {[(d[2], d[0]) for d in diffs[1:6]]}{' ...' if len(diffs) > 6 else ''}")
     return summary, lines
+
+
+def keep(dst, journals, files):
+    """Copies each journal directory's journal.sqlite whole (SQLite's backup: the WAL included, the source only read) to
+    dst/<name>/journal.sqlite, and the files to dst/. journals: {name: directory}; files: paths, a missing one skipped.
+    Returns the kept paths."""
+    import shutil
+
+    kept = []
+    for name, src in journals.items():
+        os.makedirs(os.path.join(dst, name), exist_ok=True)
+        out = os.path.join(dst, name, "journal.sqlite")
+        if os.path.exists(out):
+            os.remove(out)
+        a, b = _db(src), sqlite3.connect(out)
+        try:
+            a.backup(b)
+        finally:
+            a.close()
+            b.close()
+        kept.append(out)
+    for f in files:
+        if os.path.exists(f):
+            shutil.copyfile(f, os.path.join(dst, os.path.basename(f)))
+            kept.append(os.path.join(dst, os.path.basename(f)))
+    return kept
 
 
 def seed_sha(hist):
@@ -285,20 +316,22 @@ def test_the_rust_paper_journal_is_the_engines(export, store_meta, tmp_path):
         if empty or rows[j]["positions"]:
             problems.append(f"A4: {side} has no rows in {empty}, {rows[j]['positions']} open positions")
         problems += [f"A5 {side}: {p}" for p in structure(j)[:SHOWN]]
-    at_to = curve_entries_at_or_after(py_j, hi)
-    if at_to or s["paper"]["curve_entries_at_or_after_to"]:
-        problems.append(f"curve entries at or after to {hi}: reference {at_to}, lab-live {s['paper']['curve_entries_at_or_after_to']}")
+    at_to = (curve_entries_at_or_after(py_j, hi), curve_entries_at_or_after(rs_j, hi), s["paper"]["curve_entries_at_or_after_to"])
+    if any(at_to):
+        problems.append(f"curve orders with entry_slot >= to {hi}: reference {at_to[0]}, lab-live journal {at_to[1]}, its summary {at_to[2]}")
     proof = ""
     if os.environ.get("LAB_PAPER_SEED_PROOF") == "1":
         n, bad, filled = seed_proof(STORE, lo, hi, trace, py_j)
         proof = f"; seed proof {n - len([b for b in bad if b[1] == 'another seed'])}/{n} equal over {filled} filled curve orders"
         if bad or not n:
             problems.append(f"seed proof: {len(bad)} of {n} lines wrong, the first {bad[:5]}")
+    summary, lines = chains(py_j, rs_j)
+    with open(tmp_path / "chains.md", "w") as f:
+        f.write("\n".join(lines) + "\n")
+    if summary["chains"]:
+        problems.append(f"per-chain report: {summary['chains']} chains, {summary['differences']} differences")
     green = not problems
     if not green:
-        summary, lines = chains(py_j, rs_j)
-        with open(tmp_path / "chains.md", "w") as f:
-            f.write("\n".join(lines) + "\n")
         for line in [f"lab-live paper [{lo}, {hi}) on {os.path.basename(STORE)}: RED, the per-chain report:", *lines, *problems]:
             _measure(line)
     tb = res["tables"]
@@ -308,20 +341,13 @@ def test_the_rust_paper_journal_is_the_engines(export, store_meta, tmp_path):
              f"{_counts(py_j, 'SELECT status, count(*) FROM orders GROUP BY 1')}, Rust {_counts(rs_j, 'SELECT status, count(*) FROM orders GROUP BY 1')}; "
              f"exits Python {_counts(py_j, 'SELECT exit_reason, count(*) FROM exits GROUP BY 1')}, Rust "
              f"{_counts(rs_j, 'SELECT exit_reason, count(*) FROM exits GROUP BY 1')}; curve entries {s['paper']['curve_entries']} "
-             f"({s['paper']['curve_seeded']} with a seed from before {lo}, {s['paper']['curve_hold_rows']} curve_hold rows; at or after "
-             f"to: reference {at_to}){proof}; lab-live {s['events']:,} events, {rs_secs:.0f} s, peak RSS {(rs_peak or 0) / 1e9:.2f} GB; "
+             f"({s['paper']['curve_seeded']} with a seed from before {lo}, {s['paper']['curve_hold_rows']} curve_hold rows); curve "
+             f"orders with entry_slot >= to: reference {at_to[0]}, lab-live {at_to[1]} (summary {at_to[2]}); per-chain report "
+             f"{summary['chains']} chains, {summary['differences']} differences{proof}; lab-live {s['events']:,} events, {rs_secs:.0f} s, peak RSS {(rs_peak or 0) / 1e9:.2f} GB; "
              f"paper.engine {py_secs:.0f} s, peak RSS {(py_peak or 0) / 1e9:.2f} GB")
-    if os.environ.get("LAB_PAPER_KEEP"):  # nas_m1c2.sh keeps the references (coordinator: D9)
-        os.makedirs(os.environ["LAB_PAPER_KEEP"], exist_ok=True)
-        for name in ("journal.sqlite",):
-            src = os.path.join(py_j, name)
-            db = sqlite3.connect(src)
-            try:
-                db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            finally:
-                db.close()
-            with open(src, "rb") as f, open(os.path.join(os.environ["LAB_PAPER_KEEP"], name), "wb") as g:
-                g.write(f.read())
+    if os.environ.get("LAB_PAPER_KEEP"):  # nas_m1c2.sh keeps both journals, green or red (coordinator)
+        keep(os.environ["LAB_PAPER_KEEP"], {"python": py_j, "rust": rs_j},
+             [groups, scn, trace, str(tmp_path / "rust.json"), str(tmp_path / "chains.md")])
     assert green, "\n".join(problems)
 
 
@@ -381,6 +407,36 @@ def test_the_reference_checks_and_the_structure_rules(tmp_path):
                                      "1 orders skipped at entry by risk", "1 orders of size 1"]
     assert sorted(structure(bad)) == sorted([("a filled order with (buy, sell, exit) (True, True, False)", ("F7", "tp4_T600", "P", 100)),
                                              ("an order without a signal", ("F7", "tp4_T600", "S", 9))])
+
+
+def test_curve_orders_at_or_after_to_are_counted_whatever_their_status(tmp_path):
+    def curve(t, status, reason=None):
+        return [(tb, {**r, "venue": "curve"} if tb == "signals" else r) for tb, r in _pos(t, status, t + 50, reason)]
+
+    j = _journal(tmp_path / "j", [*curve(100, "filled"), *curve(197, "entry_failed", "no_curve_state"), *curve(198, "skipped", "x"),
+                                  *_pos(300, "filled", 400)])
+    # entry slots 102, 199, 200 on the curve and 302 in a pool: `to` counts entry_slot >= to, on the curve only
+    assert [curve_entries_at_or_after(j, to) for to in (103, 199, 200, 201, 302)] == [2, 2, 1, 0, 0]
+
+
+def test_the_keep_copies_both_journals_whole(tmp_path):
+    a = _journal(tmp_path / "a", _pos(100, "filled", 300))
+    j = Journal(str(tmp_path / "b"))  # still open: its rows are in the WAL, not yet in journal.sqlite
+    for table, row in _pos(100, "filled", 300):
+        j.put(table, **row)
+    j.state("venue_math", "python")
+    j.commit()
+    (tmp_path / "trace.txt").write_text("seed F7 tp4_T600 P 100 x\n")
+    try:
+        kept = keep(str(tmp_path / "keep"), {"python": a, "rust": str(tmp_path / "b")},
+                    [str(tmp_path / "trace.txt"), str(tmp_path / "missing.json")])
+    finally:
+        j.close()
+    assert [os.path.relpath(k, tmp_path / "keep") for k in kept] == ["python/journal.sqlite", "rust/journal.sqlite", "trace.txt"]
+    for side in ("python", "rust"):
+        assert not os.path.exists(tmp_path / "keep" / side / "journal.sqlite-wal")
+        assert _all(str(tmp_path / "keep" / side), "SELECT count(*) FROM fills")[0][0] == 2
+    assert journal_diff.run(str(tmp_path / "keep" / "python"), str(tmp_path / "keep" / "rust"), str(tmp_path / "diff"))["green"]
 
 
 def test_the_seed_hash_is_lab_lives():
