@@ -72,6 +72,7 @@ mod legs_read;
 mod mem;
 mod paper;
 mod paper_core;
+mod risk;
 mod rows;
 mod signals;
 mod signals_core;

@@ -28,6 +28,16 @@ against the paper engine's own journal on the same replay with risk inert (resea
   DIR/rust/journal.sqlite (each one whole file, by SQLite's backup), with lab-live's summary and trace, the groups and
   cost scenario it ran with, and chains.md. `python -m paper.journal_diff DIR/python DIR/rust OUT` compares them again.
 
+- LAB_PAPER_MODE (M1 C3-4, research/m1-c3-risk-spec-2026-10-19.md §1): 'inert' (the default: C2's runs above), 'config'
+  (RC1/RC2: the paper start's own files, `--config paper/k3-paper-2026-10-12.yaml --groups paper/h-arms-2026-10-16.yaml`,
+  risk on; their sha256 must be c1e36a0's, D5) or 'risk' (RC3: C2's arguments without --ignore-risk, so paper/risk.yaml
+  and risk-h.yaml). With risk on, lab-live runs without --ignore-risk and reads the risk files the groups name; A2 then
+  allows the risk gate's reasons and the 'at entry' orders; the heartbeat table must be equal row for row and each
+  group's wallet file byte for byte; the measure line counts the risk reasons per group on each side.
+- LAB_PAPER_REPORT=1 (RC1, spec D3): Python's daily export and report made from lab-live's journal equal the reference's
+  own: every day's Parquet tables, and the last day's report.md and report.parquet (an earlier day's report counts the
+  journal up to its close, so only the last day's can be made again afterwards).
+
 Needs the built binary: LAB_LIVE_BIN=<path to lab-live> (lab/live/nas_m1c2.sh builds it); those tests skip without it, and
 fail instead with LAB_LEGS_REQUIRE=1. A NAS job, never on the VPS. The report's, the reference checks' and the structure
 rules' own tests run anywhere.
@@ -36,18 +46,22 @@ rules' own tests run anywhere.
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
+import tempfile
 import time
 from collections import Counter, defaultdict
 
 import duckdb
+import pyarrow.parquet as pq
 import pytest
 
 from backtest import data
 from backtest.replay import Holdings, _insertion_index
 from paper import journal_diff, snapshot_export
 from paper.feed import ReplayFeed
-from paper.journal import Journal
+from paper.journal import DAILY, Journal
+from paper.report import daily_report
 from paper.tests.test_lab_live_signals import ENGINE_ARGS, _start, _state, _wait, _wait_groups
 
 LAB = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -59,6 +73,16 @@ FIVE = ("signals", "orders", "fills", "exits", "positions")
 SHOWN = 20
 
 REQUIRE = os.environ.get("LAB_LEGS_REQUIRE") == "1"
+MODE = os.environ.get("LAB_PAPER_MODE", "inert")
+assert MODE in ("inert", "config", "risk"), MODE
+RISK_ON = MODE != "inert"
+# The paper start's files at c1e36a0 (spec D5): RC1/RC2 run with exactly these.
+START_FILES = {"paper/k3-paper-2026-10-12.yaml": "04b5e652eb0301ae768745adeb7127c5c69be3af889e209715ff3122d3e81f64",
+               "paper/h-arms-2026-10-16.yaml": "0fdd1750e2dab2e097bf08179d03554424071b2cc7168cd550abd6a6597ff13b",
+               "paper/risk.yaml": "f484714528521f3e73beeafe45535c3018c97e23cc38899a64b71cc3f5bcc9ee",
+               "paper/risk-h.yaml": "18c495b5c7604f2a6f75994617e1cb9a09bbf43d804a9eb993f8a6a0ff5ce92e"}
+CONFIG_ARGS = ["--config", "paper/k3-paper-2026-10-12.yaml", "--groups", "paper/h-arms-2026-10-16.yaml", "--no-backup"]
+WALLETS = ("wallet.json", "wallet-h.json")
 needs_bin = pytest.mark.skipif(not (BIN and os.access(BIN, os.X_OK)) and not REQUIRE,
                                reason="set LAB_LIVE_BIN to the built lab-live (NAS)")
 
@@ -83,21 +107,95 @@ def _all(journal, sql, params=()):
 
 # ---------------------------------------------------------------------------------------------- the checks
 
-def reference_checks(journal):
-    """A2: what is wrong with the reference for C2 (empty: nothing)."""
+def reference_checks(journal, risk_on=False):
+    """A2: what is wrong with the reference for C2 (empty: nothing). With risk on (C3) the risk gate's reasons and the 'at
+    entry' orders are the point, so only Python venue math and the 0.5 SOL orders (both risk files' size) are required."""
     bad = []
     if _state(journal, "venue_math") != "python":
         bad.append(f"venue_math {_state(journal, 'venue_math')!r}, not 'python'")
     allowed = ("busy", *journal_diff.FARM_GATES)
-    for reason, n in _all(journal, "SELECT reason, count(*) FROM signals WHERE status = 'skipped' GROUP BY reason"):
+    for reason, n in [] if risk_on else _all(journal, "SELECT reason, count(*) FROM signals WHERE status = 'skipped' GROUP BY reason"):
         if reason not in allowed:
             bad.append(f"{n} signals skipped for {reason!r}")
-    n = _all(journal, "SELECT count(*) FROM orders WHERE reason LIKE 'at entry:%'")[0][0]
+    n = 0 if risk_on else _all(journal, "SELECT count(*) FROM orders WHERE reason LIKE 'at entry:%'")[0][0]
     if n:
         bad.append(f"{n} orders skipped at entry by risk")
-    for size, n in _all(journal, "SELECT size, count(*) FROM orders WHERE size != ? GROUP BY size", [SIZE]):
+    at_entry_ok = " AND (reason IS NULL OR reason NOT LIKE 'at entry:%')" if risk_on else ""  # an 'at entry' order has size 0
+    for size, n in _all(journal, f"SELECT size, count(*) FROM orders WHERE size != ?{at_entry_ok} GROUP BY size", [SIZE]):
         bad.append(f"{n} orders of size {size}")
     return bad
+
+
+def heartbeat_diff(journal_a, journal_b):
+    """C3-3: the heartbeat tables row for row (key minute, note; every column). Returns (rows a, rows b, differences)."""
+    q = "SELECT minute, day, last_slot, last_event, events, open_positions, gap_slots, note FROM heartbeat ORDER BY minute, note"
+    a, b = _all(journal_a, q), _all(journal_b, q)
+    diff = [(x, y) for x, y in zip(a, b) if x != y] + [(x, None) for x in a[len(b):]] + [(None, y) for y in b[len(a):]]
+    return len(a), len(b), diff
+
+
+def wallet_diff(dir_a, dir_b):
+    """C3-3: each group's wallet file byte for byte (a missing file on one side is a difference)."""
+    out = []
+    for name in WALLETS:
+        pa_, pb = os.path.join(dir_a, name), os.path.join(dir_b, name)
+        a = open(pa_, "rb").read() if os.path.exists(pa_) else None
+        b = open(pb, "rb").read() if os.path.exists(pb) else None
+        if a != b:
+            out.append(f"{name}: {'missing' if a is None else len(a)} / {'missing' if b is None else len(b)} bytes, different")
+    return out
+
+
+def risk_reasons(journal):
+    """The risk gate's skips and the 'at entry' orders per group and reason (spec §1; the farm gates and busy left out):
+    {group: {reason: n}}, every group of state 'groups' present, so a group whose gate counted nothing shows {}. A row's
+    group is its variant's (N2 rows carry the primary's variant)."""
+    groups = json.loads(_state(journal, "groups") or "{}")
+    of = {v: g for g, spec in groups.items() for v in spec["variants"]}
+
+    def per_group(rows):
+        out = {g: {} for g in sorted(groups)}
+        for variant, reason, n in rows:
+            g = of.get(variant, "?")
+            out.setdefault(g, {})[reason] = out.get(g, {}).get(reason, 0) + n
+        return out
+
+    skip = per_group(_all(journal, "SELECT variant, reason, count(*) FROM signals WHERE status = 'skipped' AND reason NOT IN "
+                                   "(?, ?, ?, 'busy') GROUP BY variant, reason ORDER BY variant, reason", list(journal_diff.FARM_GATES)))
+    entry = per_group(_all(journal, "SELECT variant, reason, count(*) FROM orders WHERE reason LIKE 'at entry:%' GROUP BY variant, "
+                                    "reason ORDER BY variant, reason"))
+    return skip, entry
+
+
+def report_diff(ref, rust):
+    """Spec D3 (RC1): Python's daily export and report made from a copy of lab-live's journal against the reference's own
+    (paper.engine's _close_day): every day's Parquet tables, and the last day's report. Returns (days, problems)."""
+    days = sorted(d for d in os.listdir(ref) if len(d) == 10 and d[4] == "-" and os.path.isdir(os.path.join(ref, d)))
+    bad = []
+    with tempfile.TemporaryDirectory(prefix="c3-report-") as tmp:
+        copy = os.path.join(tmp, "rust")
+        keep(copy, {".": rust}, [])
+        j = Journal(copy)
+        try:
+            for day in days:
+                j.export_day(day)
+                for t in DAILY:
+                    a, b = pq.read_table(os.path.join(ref, day, f"{t}.parquet")), pq.read_table(os.path.join(copy, day, f"{t}.parquet"))
+                    if not a.equals(b):
+                        bad.append(f"{day} {t}.parquet: {a.num_rows} / {b.num_rows} rows, different")
+            if days:
+                daily_report(j, days[-1])
+                for name in ("report.md",):
+                    if open(os.path.join(ref, days[-1], name), "rb").read() != open(os.path.join(copy, days[-1], name), "rb").read():
+                        bad.append(f"{days[-1]} {name}: different")
+                a, b = pq.read_table(os.path.join(ref, days[-1], "report.parquet")), pq.read_table(os.path.join(copy, days[-1], "report.parquet"))
+                if not a.equals(b):
+                    bad.append(f"{days[-1]} report.parquet: different")
+        finally:
+            j.close()
+    if not days:
+        bad.append("the reference closed no day")
+    return days, bad
 
 
 def structure(journal):
@@ -257,17 +355,24 @@ def export(tmp_path_factory, store_meta):
     return out, snapshot_export.export(STORE, out, history=_range(store_meta), seed=False)
 
 
+def engine_args():
+    """paper.engine's arguments by LAB_PAPER_MODE: C1b's (risk inert), the paper start's files, or C1b's with risk on."""
+    if MODE == "config":
+        return CONFIG_ARGS
+    return [a for a in ENGINE_ARGS if not (RISK_ON and a == "--ignore-risk")]
+
+
 def _python(lo, hi, journal, log):
     import sys
 
-    return _start([sys.executable, "-m", "paper.engine", "--from", str(lo), "--to", str(hi), *ENGINE_ARGS, "--store", STORE,
+    return _start([sys.executable, "-m", "paper.engine", "--from", str(lo), "--to", str(hi), *engine_args(), "--store", STORE,
                    "--journal", journal], log, cwd=LAB, env={**os.environ, "PYTHONPATH": LAB})
 
 
 def _rust(snap, lo, hi, groups, scn, journal, summary, trace):
     return _start([BIN, "paper", "--chunks-root", data.root(), "--snapshot", snap, "--from", str(lo), "--to", str(hi), "--groups",
-                   groups, "--variants", "0.04:600", "--cost-scenario", scn, "--ignore-risk", "--journal", journal, "--summary",
-                   summary, "--trace", trace], summary + ".log")
+                   groups, "--variants", "0.04:600", "--cost-scenario", scn, *([] if RISK_ON else ["--ignore-risk"]), "--journal",
+                   journal, "--summary", summary, "--trace", trace], summary + ".log")
 
 
 def _counts(journal, sql):
@@ -304,7 +409,23 @@ def test_the_rust_paper_journal_is_the_engines(export, store_meta, tmp_path):
     if not res["green"]:
         problems.append(f"A1: journal_diff red, {res['unexplained']} unexplained, state mismatch {res['state_mismatch']}, schema "
                         f"{bool(res['schema_diff'])}")
-    problems += [f"A2: {p}" for p in reference_checks(py_j)]
+    problems += [f"A2: {p}" for p in reference_checks(py_j, RISK_ON)]
+    if MODE == "config":  # spec D5: exactly the paper start's files
+        for f, want in START_FILES.items():
+            with open(os.path.join(LAB, f), "rb") as fh:
+                got = hashlib.sha256(fh.read()).hexdigest()
+            if got != want:
+                problems.append(f"D5: {f} sha256 {got[:12]}, not c1e36a0's {want[:12]}")
+            _measure(f"lab-live paper config file {f} sha256 {got}")
+    beats = heartbeat_diff(py_j, rs_j)
+    if beats[2]:
+        problems.append(f"heartbeat: {beats[0]} / {beats[1]} rows, {len(beats[2])} different, the first {beats[2][:3]}")
+    wallets = wallet_diff(py_j, rs_j)
+    problems += [f"wallet {w}" for w in wallets]
+    days = None
+    if os.environ.get("LAB_PAPER_REPORT") == "1":
+        days, rbad = report_diff(py_j, rs_j)
+        problems += [f"D3: {b}" for b in rbad]
     if not (_state(py_j, "feed") == _state(rs_j, "feed") == json.dumps({"kind": "replay", "from": lo, "to": hi})):
         problems.append(f"A3: feed {_state(py_j, 'feed')!r} / {_state(rs_j, 'feed')!r}")
     for key in ("groups", "cost_scenario"):
@@ -335,7 +456,13 @@ def test_the_rust_paper_journal_is_the_engines(export, store_meta, tmp_path):
         for line in [f"lab-live paper [{lo}, {hi}) on {os.path.basename(STORE)}: RED, the per-chain report:", *lines, *problems]:
             _measure(line)
     tb = res["tables"]
+    skip_py, entry_py = risk_reasons(py_j)
+    skip_rs, entry_rs = risk_reasons(rs_j)
     _measure(f"lab-live paper [{lo}, {hi}) on {os.path.basename(STORE)}: {'GREEN' if green else 'RED'}, {res['unexplained']} unexplained; "
+             f"mode {MODE}; heartbeat rows {beats[0]} / {beats[1]} ({len(beats[2])} different); wallet files "
+             f"{sum(os.path.exists(os.path.join(py_j, w)) for w in WALLETS)} ({len(wallets)} different); risk skips Python {skip_py}, "
+             f"Rust {skip_rs}; at entry Python {entry_py}, Rust {entry_rs}"
+             + ("" if days is None else f"; daily export and report from lab-live's journal: {len(days)} days equal") + "; "
              f"rows Python {rows[py_j]}, Rust {rows[rs_j]} (only Python {sum(t['only_a'] for t in tb.values())}, only Rust "
              f"{sum(t['only_b'] for t in tb.values())}, different {sum(t['different'] for t in tb.values())}); orders Python "
              f"{_counts(py_j, 'SELECT status, count(*) FROM orders GROUP BY 1')}, Rust {_counts(rs_j, 'SELECT status, count(*) FROM orders GROUP BY 1')}; "
@@ -348,6 +475,10 @@ def test_the_rust_paper_journal_is_the_engines(export, store_meta, tmp_path):
     if os.environ.get("LAB_PAPER_KEEP"):  # nas_m1c2.sh keeps both journals, green or red (coordinator)
         keep(os.environ["LAB_PAPER_KEEP"], {"python": py_j, "rust": rs_j},
              [groups, scn, trace, str(tmp_path / "rust.json"), str(tmp_path / "chains.md")])
+        for side, d in (("python", py_j), ("rust", rs_j)):  # C3-3: the wallet files beside each journal
+            for w in WALLETS:
+                if os.path.exists(os.path.join(d, w)):
+                    shutil.copyfile(os.path.join(d, w), os.path.join(os.environ["LAB_PAPER_KEEP"], side, w))
     assert green, "\n".join(problems)
 
 
@@ -443,3 +574,60 @@ def test_the_seed_hash_is_lab_lives():
     # paper.rs tests: sha256 of "A 3\nNone 5\n"; the empty seed hashes nothing.
     assert seed_sha({"A": 3, None: 5, "B": 0}) == "28e498e804832e66a8e61f51bef07a5f2429392794fb16539b740d56123494fb"
     assert seed_sha({}) == hashlib.sha256(b"").hexdigest()
+
+
+def _day_journal(path, pnl=-1_000):
+    """A journal of one day: a filled position with its exit (pnl given), two heartbeat rows and its states."""
+    j = Journal(str(path))
+    for table, row in _pos(100, "filled", 300):
+        j.put(table, **{**row, "day": "2026-09-22", **({"pnl": pnl, "cost": SIZE, "tokens": 10} if table == "exits" else {})})
+    for minute, note in ((1, ""), (1, "feed gap 5..40")):
+        j.put("heartbeat", minute=minute, day="2026-09-22", last_slot=5, last_event="5:0:0:0", events=3, open_positions=1,
+              gap_slots=34 if note else 0, note=note)
+    j.state("venue_math", "python")
+    j.commit()
+    return j
+
+
+def test_the_heartbeat_wallet_and_risk_checks(tmp_path):
+    a, b = _day_journal(tmp_path / "a"), _day_journal(tmp_path / "b")
+    a.close()
+    b.put("heartbeat", minute=1, day="2026-09-22", last_slot=5, last_event="5:0:0:0", events=4, open_positions=1, gap_slots=0, note="")
+    b.put("signals", family="F7", variant="tp4_T600", key="Q", t=7, venue="pool", status="skipped", reason="max open positions")
+    b.put("orders", family="F7", variant="tp4_T600", key="R", t=8, size=0, status="skipped", reason="at entry: kill switch")
+    b.close()
+    n_a, n_b, diff = heartbeat_diff(str(tmp_path / "a"), str(tmp_path / "b"))
+    assert (n_a, n_b, len(diff)) == (2, 2, 1) and diff[0][0][4] == 3 and diff[0][1][4] == 4
+    assert heartbeat_diff(str(tmp_path / "a"), str(tmp_path / "a"))[2] == []
+    assert risk_reasons(str(tmp_path / "a")) == ({}, {})  # no state 'groups': no group
+    with sqlite3.connect(os.path.join(tmp_path / "b", "journal.sqlite")) as db:
+        db.execute("INSERT OR REPLACE INTO state (k, v) VALUES ('groups', ?)",
+                   [json.dumps({"K3": {"variants": ["tp4_T600"]}, "H": {"variants": ["flow300_H6", "flow300_tp100_H6"]}})])
+    assert risk_reasons(str(tmp_path / "b")) == ({"H": {}, "K3": {"max open positions": 1}}, {"H": {}, "K3": {"at entry: kill switch": 1}})
+    # wallets: equal bytes pass; a different or a missing file is a difference
+    for d in ("a", "b"):
+        (tmp_path / d / "wallet.json").write_text('{"mode": "paper"}')
+    assert wallet_diff(str(tmp_path / "a"), str(tmp_path / "b")) == []
+    (tmp_path / "b" / "wallet.json").write_text('{"mode": "paper", "txs": []}')
+    (tmp_path / "a" / "wallet-h.json").write_text("{}")
+    assert wallet_diff(str(tmp_path / "a"), str(tmp_path / "b")) == ["wallet.json: 17 / 28 bytes, different",
+                                                                     "wallet-h.json: 2 / missing bytes, different"]
+    # with risk on, A2 allows the gate's reasons and the 'at entry' orders (size 0)
+    assert reference_checks(str(tmp_path / "b"), risk_on=True) == []
+    assert reference_checks(str(tmp_path / "b")) == ["1 signals skipped for 'max open positions'", "1 orders skipped at entry by risk",
+                                                     "1 orders of size 0"]
+
+
+def test_the_report_check_makes_the_reference_again(tmp_path):
+    """Spec D3: the reference's day exports and last report, made again from an equal journal, are equal; from a journal
+    whose exit differs, the day's exits.parquet and the report differ."""
+    ref = _day_journal(tmp_path / "ref")
+    ref.export_day("2026-09-22")
+    daily_report(ref, "2026-09-22")
+    ref.close()
+    _day_journal(tmp_path / "same").close()
+    _day_journal(tmp_path / "other", pnl=-50_000_000).close()
+    assert report_diff(str(tmp_path / "ref"), str(tmp_path / "same")) == (["2026-09-22"], [])
+    days, bad = report_diff(str(tmp_path / "ref"), str(tmp_path / "other"))
+    assert days == ["2026-09-22"] and "2026-09-22 exits.parquet: 1 / 1 rows, different" in bad and "2026-09-22 report.md: different" in bad, bad
+    assert not os.path.exists(tmp_path / "same" / "2026-09-22")  # made in a copy, not in lab-live's journal

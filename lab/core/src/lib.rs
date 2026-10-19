@@ -9,7 +9,8 @@
 //! costs and settle (`costs`), the empirical tolerance of trades without a known limit (`tau`), the exit rules of M1's
 //! three variants (`exits`), a flow position's pool flow index (`flow`) and the position itself, slot by slot
 //! (`positions`: PositionSim, its entries and the re-run of the token's trades), and the paper engine of a replay with
-//! risk inert (`paper`: busy, the entries, the exits, the graduations and the journal's rows).
+//! risk inert (`paper`: busy, the entries, the exits, the graduations and the journal's rows). M1 C3: a group's risk
+//! limits (`risk`).
 
 pub mod clock;
 pub mod costs;
@@ -22,6 +23,7 @@ pub mod legs;
 pub mod n2;
 pub mod paper;
 pub mod positions;
+pub mod risk;
 pub mod signals;
 pub mod tau;
 pub mod universe;
