@@ -87,5 +87,59 @@ def test_pairing_k_rows_and_verdict(tmp_path):
     assert R.fmt(None) == "–" and R.fmt(0.1234, 1, True, True) == "+12.3%" and R.fmt(12345) == "12,345"
 
 
+def test_entry_delay_section(tmp_path):
+    """Spec M-a: the --tx-delays codes are paired per signal against d = 2; the entry mid advantage and the net Δ get
+    day CIs; the screen fires only for a causal code (0 / t+1 first tx) at 1m / 5m / 15m on days 10-18 with Δ >= 0.2 pt
+    and the CI above 0; k-codes are an upper bound; the capped share and the coverage are shown."""
+    out = tmp_path / "mk"
+    os.makedirs(out)
+    rows = []
+    hs = (("1s", 1000), ("1m", 60000), ("5m", 300000))
+    for i in range(40):
+        day = f"2026-09-{11 + i % 18:02d}"
+        for d in (2, 0, 2001, 1000):
+            # d = 0 enters 1 % cheaper than d = 2 (mid 0.99) and nets +1 pt more at every horizon; t+1 first tx +0.1 pt (below the threshold);
+            # the trigger tx (k0) +3 pt (upper bound); signal 39 has no t+1 entry (coverage 39/40 there)
+            if d == 2001 and i == 39:
+                continue
+            gain = {2: 0.0, 0: 0.01, 2001: 0.001, 1000: 0.03}[d]
+            entry = {"family": "F7", "segment": "pool_reversed", "venue": "pool", "orientation": "reversed", "mint": f"M{i}", "pool": f"P{i}",
+                     "t": 446_300_000 + i * 1000, "day": day, "regime": "270ms", "ms_per_slot": 267.1, "farm": "organic" if i % 2 else "flagged",
+                     "ref_mint": None, "ref_t": None, "variants": ["tp4_T600"], "d": d, "h": "", "h_ms": 0, "target": 446_300_000 + i * 1000,
+                     "cut": False, "mid": 1.0 - gain, "gross": None, "net": None, "impact": 0.01, "capped": (i % 4 == 0) if d >= 1000 else None}
+            rows.append(entry)
+            for h, ms in hs:
+                rows.append({**entry, "h": h, "h_ms": ms, "mid": 1.02, "gross": 0.02 + gain, "net": 0.01 + gain + (0.001 * (i % 3))})
+    pq.write_table(pa.Table.from_pylist(rows), out / "markout-tx.parquet")
+    with open(out / "run-markout-tx.json", "w") as f:
+        json.dump({"run": "tx", "signals": 40}, f)
+    con = duckdb.connect()
+    con.execute("SET memory_limit = '200MB'; SET threads TO 1")
+    R.load(con, str(out))
+    assert R.delay_codes(con) == [0, 1000, 2001]
+    md = R.delay_section(con, boot=200)
+    assert "## Entry delay (spec M-a): paired per signal against d = 2" in md
+    assert "### Entry delay vs d = 2 · F7 · pool_reversed" in md and "### Entry delay vs d = 2 · K1/K2 (F7 pool_reversed, organic)" in md
+    b = R.BINDING
+    lines = md.splitlines()
+    k = lines.index("### Entry delay vs d = 2 · F7 · pool_reversed")
+    fam = lines[k:lines.index("### Entry delay vs d = 2 · K1/K2 (F7 pool_reversed, organic)")]
+    r0 = next(l for l in fam if l.startswith(f"| {b} | 0 slots | 1m |"))
+    assert "| 100% | 0% | +1.01% |" in r0 and "**+1.00%**" in r0 and r0.endswith("**yes** |")  # mid 0.99 → 1/0.99 − 1 = +1.01 %; net Δ +1 pt
+    r1 = next(l for l in fam if l.startswith(f"| {b} | t+1, first tx | 1m |"))
+    assert "**+0.10%**" in r1 and r1.endswith("**no** |")  # below 0.2 pt
+    rk = next(l for l in fam if l.startswith(f"| {b} | t, trigger tx + 0 | 1m |"))
+    assert "**+3.00%**" in rk and rk.endswith("upper bound |")
+    rka = next(l for l in fam if l.startswith("| all days | t, trigger tx + 0 | 1m |"))
+    assert "| 40 | 100% | 25% |" in rka  # capped: every fourth signal
+    r1s = next(l for l in fam if l.startswith(f"| {b} | 0 slots | 1s |"))
+    assert r1s.endswith("|  |")  # 1 s is no screen horizon
+    allrow = next(l for l in fam if l.startswith("| all days | t+1, first tx | 1m |"))
+    assert "| 39 | 98% |" in allrow  # coverage: 39 of 40 reference signals have a t+1 entry
+    assert "screen (net Δ ≥ 0.2 pt" in md and "positive at 0 slots / 1m, 0 slots / 5m" in md
+    full = R.render(con, str(out), 200)
+    assert "## Entry delay (spec M-a)" in full and "### K3 (F7 pool_reversed, all pools) · d = t+1, first tx" in full
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

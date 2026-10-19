@@ -38,7 +38,7 @@ def _store(path):
     con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'MP', ?), ('R', 'reversed', 'reversed', 'MR', ?), ('PC', 'sol', 'normal', 'C', ?)",
                 [A - 500, B - 500, D + 120])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, b BIGINT, e BIGINT, "
-                "vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT)")
+                "vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT, trader VARCHAR)")
     rows = [
         # normal pool P (base token, quote WSOL): pre-trade reserves; post = b -/+ base, e + e_delta
         ("buy", "P", A, 5, 0, 0, 10**12, 100 * SOL, 100 * SOL, 0, 5 * 10**10, 5 * SOL, 5 * SOL, 20, 5, 0, 0),      # post b 9.5e11, e 105
@@ -54,7 +54,7 @@ def _store(path):
         # migration pool PC of curve token C, first leg at D + 120 (pre b 2e14, e 85 SOL): post b 1.9e14, e 90
         ("buy", "PC", D + 120, 1, 0, 0, 2 * 10**14, 85 * SOL, 85 * SOL, 0, 10**13, 5 * SOL, 5 * SOL, 20, 5, 0, 0),
     ]
-    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)", rows)
     con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, "
                 "fee_bps BIGINT, creator_bps BIGINT)")
     con.executemany("INSERT INTO curve VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, 95, 30)", [
@@ -179,3 +179,55 @@ def test_sql_targets_equal_the_python_formula_across_an_epoch_boundary():
             for name, h_ms in markout.HORIZONS_MS:
                 want[(sid, d, name)] = entry + markout.horizon_slots(ms, h_ms)
     assert n == len(want) == len(got) and got == want
+
+
+def test_tx_level_entries(tmp_path):
+    """Spec M-a (--tx-delays): the entry state is a leg's post-state inside the trigger slot or the first leg of
+    t + 1, chosen by the trigger wallet's FIRST leg of the trigger kind (the backtest's first qualifying leg, not the
+    wallet's last leg); horizons still run from the entry slot; d = 0 and 3 are added; capped entries and the counts
+    (wallet with more than one leg, creator sell after the trigger) are reported."""
+    store = tmp_path / "s.duckdb"
+    con = duckdb.connect(str(store))
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": SLOT0, "slot_end_exclusive": SLOT0 + 432_000, "ms_per_slot": {str(SLOT0 // 432_000): 400.0}})])
+    con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, mint VARCHAR, create_slot BIGINT, coin_creator VARCHAR)")
+    con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'MP', ?, 'CR')", [A - 500])
+    con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, b BIGINT, e BIGINT, "
+                "vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT, trader VARCHAR)")
+    # normal pool: a token sell is kind 'sell' (post b + base, e + e_delta). Slot A: tx 2 W buys (not the trigger kind), tx 5 = the
+    # trigger (W sells 4 SOL), tx 7 Y buys, tx 8 W sells again (the wallet's last leg: the old choice), tx 9 the creator CR sells
+    # (the slot rule's creator veto); slot A + 1: tx 1; slot A + 2: tx 1. (kind, slot, tx, pre b, pre e, base, e_delta, trader)
+    legs = [("buy", A, 2, 10**12, 100 * SOL, 10**10, 1 * SOL, "W"), ("sell", A, 5, 99 * 10**10, 101 * SOL, 4 * 10**10, -4 * SOL, "W"),
+            ("buy", A, 7, 103 * 10**10, 97 * SOL, 10**10, 1 * SOL, "Y"), ("sell", A, 8, 102 * 10**10, 98 * SOL, 10**10, -1 * SOL, "W"),
+            ("sell", A, 9, 103 * 10**10, 97 * SOL, 10**10, -1 * SOL, "CR"),
+            ("buy", A + 1, 1, 104 * 10**10, 96 * SOL, 10**10, 1 * SOL, "Q"), ("buy", A + 2, 1, 103 * 10**10, 97 * SOL, 10**10, 1 * SOL, "Q")]
+    con.executemany("INSERT INTO pool VALUES (?, 'P', ?, ?, 0, 0, ?, ?, ?, 0, ?, ?, ?, 20, 5, 0, 0, ?)",
+                    [(k, sl, tx, b, e, e, base, dq, abs(dq), w) for k, sl, tx, b, e, base, dq, w in legs])
+    con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, fee_bps BIGINT, creator_bps BIGINT)")
+    con.close()
+    parts = tmp_path / "parts"
+    os.makedirs(parts)
+    pq.write_table(pa.Table.from_pylist([{"family": "F7", "variant": "tp4_T600", "segment": "pool_normal", "venue": "pool", "orientation": "normal", "mint": "MP",
+                                          "pool": "P", "t": A, "day": "2026-09-11", "farm": "organic", "ref_mint": None, "ref_t": None, "trigger_trader": "W"}]),
+                   os.path.join(parts, "part-0.parquet"))
+    info = markout.run(str(parts), "tx", str(tmp_path / "out"), store=str(store), cfg_path=_cfg(tmp_path), tx_delays=True)
+    assert info["tx_delays"] == {1000: "t, trigger tx + 0", 1001: "t, trigger tx + 1", 1003: "t, trigger tx + 3", 1010: "t, trigger tx + 10", 2001: "t+1, first tx"}
+    assert info["delays"] == [0, 1, 2, 3, 1000, 1001, 1003, 1010, 2001]
+    assert info["tx_stats"] == {"pool_signals": 1, "with_leg_in_t": 1, "trigger_trader_multi_leg": 1, "trigger_kind_missing": 0,
+                                "creator_sell_after_trigger": 1, "capped": {1000: 0, 1001: 0, 1003: 0, 1010: 1, 2001: 0}}
+    R = pq.read_table(str(tmp_path / "out" / "markout-tx.parquet")).to_pylist()
+    ent = {r["d"]: r for r in R if r["h"] == ""}
+    post = lambda b, e: e / b  # mid of a normal pool = e / b (virt 0)
+    assert ent[1000]["mid"] == pytest.approx(post(103 * 10**10, 97 * SOL))   # the trigger leg's post-state (tx 5: b 9.9e11 + 4e10, e 101 - 4), not W's last leg (tx 8)
+    assert ent[1001]["mid"] == pytest.approx(post(102 * 10**10, 98 * SOL))   # one leg after it (tx 7)
+    assert ent[1003]["mid"] == pytest.approx(post(104 * 10**10, 96 * SOL))   # three legs after it = the slot's last leg (tx 9)
+    assert ent[1010]["mid"] == ent[1003]["mid"] and ent[1010]["capped"] and not ent[1003]["capped"] and ent[1]["capped"] is None
+    assert ent[0]["mid"] == ent[1003]["mid"]                                  # d = 0 = the end of slot A: the same state
+    assert ent[2001]["mid"] == pytest.approx(post(103 * 10**10, 97 * SOL))   # the first leg of A + 1
+    assert ent[1]["mid"] == ent[2001]["mid"]                                  # d = 1 = the end of A + 1: the same single leg
+    assert ent[2001]["target"] == A + 1 and ent[1000]["target"] == A and ent[0]["target"] == A and ent[3]["target"] == A + 3
+    assert ent[3]["mid"] == pytest.approx(post(102 * 10**10, 98 * SOL))      # d = 3 = the end of A + 3: the last leg (A + 2) carried forward
+    # horizons of a tx-level entry run from its entry slot: the 1 s horizon (400 ms slots → 3 slots) of 2001 ends at A + 4
+    h1 = {r["d"]: r["target"] for r in R if r["h"] == "1s"}
+    assert h1[2001] == A + 1 + 3 and h1[1000] == A + 3 and h1[1] == A + 1 + 3 and h1[0] == A + 3
+    assert all(r["capped"] == ent[r["d"]]["capped"] for r in R)               # the horizon rows carry the entry's flag
