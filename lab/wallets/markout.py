@@ -85,7 +85,11 @@ DELAYS = (1, 2)
 # `d` column: 1000 + k = the k-th leg of the pool after the trigger leg inside the trigger slot t (capped at the slot's
 # last leg; k = 0 is the trigger leg itself = the upper bound that needs a same-slot fill); 2001 = the first leg of the
 # pool in slot t + 1 (the earliest reaction on `processed` after one other leg; the slot's end of t when t + 1 has no
-# leg). The horizons run from the entry slot (t for 1xxx, t + 1 for 2001). The trigger leg is the pool's FIRST leg in
+# leg). Every tx-level entry is the state at the END of that leg's transaction (slot, tx_index): a transaction with
+# two legs on the pool (a buy and a sell-back in one transaction: on the one-day smoke 10 % of the first transactions
+# of t + 1, 15 % of all transactions in t and t + 1, with a 6-8 % price gap between the legs) is atomic, so an entry
+# between its legs is impossible (`tx_end` flags the moved entries). The horizons run from the entry slot (t for 1xxx,
+# t + 1 for 2001). The trigger leg is the pool's FIRST leg in
 # slot t by the signal's trigger wallet (`trigger_trader` of the parts) of the trigger's kind (a token sell: 'buy' in a
 # reversed pool, 'sell' in a normal one), as the backtest picks the slot's first qualifying leg (strategies.f7_signals_sql);
 # else the wallet's first leg in t, else the slot's first leg. With --tx-delays the slot delays 0 (the end of t = a fill
@@ -358,7 +362,11 @@ def build_targets(con, clock, end_slot, tx_delays=False):
 def tx_entries(con):
     """The entry state per (signal, TX_DELAYS code) from the pool's own legs in slots t and t + 1 (pool_legs, so
     after match_states): the k-th leg after the trigger leg inside t (capped at t's last leg), or the first leg of
-    t + 1 (else t's last leg). The trigger leg is the trigger wallet's first leg in t that qualifies as the backtest's
+    t + 1 (else t's last leg), each taken at the end of that leg's transaction (slot, tx_index): a transaction with
+    several legs on the pool (a round trip in one transaction) is atomic, our entry cannot land between its legs
+    (Codex review 2026-10-19; on the one-day smoke 10 % of the first transactions of t + 1 had two legs, with a
+    6.5 % mid gap between them). `tx_end` flags an entry moved to its transaction's end; tx_stats counts them per
+    code. The trigger leg is the trigger wallet's first leg in t that qualifies as the backtest's
     trigger (a token sell >= max(3 SOL, 4 % of the SOL depth), depth >= 150 SOL), else its first token sell, else its
     first leg, else the slot's first leg. Writes tx_entry(sid, d, slot, b, e, virt, bps…, capped); a signal whose
     trigger slot has no leg gets no entry (its tx-level rows stay without a state).
@@ -377,6 +385,7 @@ def tx_entries(con):
                NOT COALESCE(l.token_buy, true) AND l.sol_amount >= greatest({3 * SOL}, 0.04 * l.sol_depth) AND l.sol_depth >= {150 * SOL} AS trig_size
         FROM sig s JOIN pool_legs l ON l.key = s.key AND l.slot IN (s.t, s.t + 1)
         LEFT JOIN sig_creator cr ON cr.sid = s.sid WHERE s.venue = 'pool'),
+      L2 AS (SELECT *, max(rn) OVER (PARTITION BY sid, slot, tx_index) AS rn_tx_end FROM L),
       R AS (
         SELECT sid, max(rn) FILTER (WHERE slot = t) AS rn_last_t, min(rn) FILTER (WHERE slot = t + 1) AS rn_n1,
                COALESCE(min(rn) FILTER (WHERE mine AND trig_size), min(rn) FILTER (WHERE mine AND tsell), min(rn) FILTER (WHERE mine),
@@ -392,10 +401,12 @@ def tx_entries(con):
                CASE WHEN c.d >= 2000 THEN r.rn_n1 IS NULL ELSE r.rn_trig + c.k > r.rn_last_t END AS capped,
                r.rn_trader_last <> r.rn_trig AS trader_multi, NOT COALESCE(r.sell_found, false) AS kind_missing,
                NOT COALESCE(r.size_found, false) AS size_missing, r.rn_first_sell < r.rn_trig AS smaller_before, r.creator_veto
-        FROM R2 r, (SELECT * FROM (VALUES {ks}) v(d, k)) c WHERE r.rn_last_t IS NOT NULL)
+        FROM R2 r, (SELECT * FROM (VALUES {ks}) v(d, k)) c WHERE r.rn_last_t IS NOT NULL),
+      E2 AS (  -- the entry lands after the whole transaction of the chosen leg, not between its legs
+        SELECT e.*, l.rn_tx_end AS rn_end, l.rn_tx_end <> e.rn AS tx_end FROM E e JOIN L2 l ON l.sid = e.sid AND l.rn = e.rn)
       SELECT e.sid, e.d::INTEGER AS d, l.slot, l.b, l.e, l.virt, l.lp_bps, l.protocol_bps, l.creator_bps, l.cashback_bps,
-             e.capped, e.trader_multi, e.kind_missing, e.size_missing, e.smaller_before, e.creator_veto
-      FROM E e JOIN L l ON l.sid = e.sid AND l.rn = e.rn""")
+             e.capped, e.tx_end, e.trader_multi, e.kind_missing, e.size_missing, e.smaller_before, e.creator_veto
+      FROM E2 e JOIN L2 l ON l.sid = e.sid AND l.rn = e.rn_end""")
     con.execute("""
       CREATE OR REPLACE TEMP TABLE tx_stats AS
       WITH f AS (SELECT e.* FROM tx_entry_all e JOIN sig s ON s.sid = e.sid WHERE s.family NOT LIKE 'N2\\_%' ESCAPE '\\')
@@ -408,7 +419,7 @@ def tx_entries(con):
              (SELECT count(DISTINCT sid) FROM f WHERE creator_veto) AS creator_sell_after_trigger""")
     con.execute("""
       CREATE OR REPLACE TEMP TABLE tx_capped AS
-      SELECT e.d, count(*) FILTER (WHERE e.capped) AS n FROM tx_entry_all e JOIN sig s ON s.sid = e.sid
+      SELECT e.d, count(*) FILTER (WHERE e.capped) AS n, count(*) FILTER (WHERE e.tx_end) AS n_tx_end FROM tx_entry_all e JOIN sig s ON s.sid = e.sid
       WHERE s.family NOT LIKE 'N2\\_%' ESCAPE '\\' GROUP BY e.d ORDER BY e.d""")
     con.execute("""
       CREATE OR REPLACE TEMP TABLE tx_entry AS
@@ -424,6 +435,7 @@ def tx_stats(con):
     cur = con.execute("SELECT * FROM tx_stats")
     out = {c[0]: int(v) for c, v in zip(cur.description, cur.fetchone())}
     out["capped"] = {int(d): int(n) for d, n in con.execute("SELECT d, n FROM tx_capped").fetchall()}
+    out["tx_end"] = {int(d): int(n) for d, n in con.execute("SELECT d, n_tx_end FROM tx_capped").fetchall()}
     return out
 
 

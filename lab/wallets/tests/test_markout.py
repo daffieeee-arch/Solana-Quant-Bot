@@ -208,6 +208,10 @@ def test_tx_level_entries(tmp_path):
             ("buy", A + 1, 1, 109 * 10**10, 91 * SOL, 10**10, 1 * SOL, "Q"), ("buy", A + 2, 1, 108 * 10**10, 92 * SOL, 10**10, 1 * SOL, "Q")]
     con.executemany("INSERT INTO pool VALUES (?, 'P', ?, ?, 0, 0, ?, ?, ?, 0, ?, ?, ?, 20, 5, 0, 0, ?, ?, ?, ?)",
                     [(k, sl, tx, b, e, e, base, dq, abs(dq), w, k == "buy", abs(dq), 150 * SOL) for k, sl, tx, b, e, base, dq, w in legs])
+    # slot A + 1, tx 1 is a round trip: Q buys (above) and sells again in the same transaction (inner_ix 1); the first
+    # transaction of A + 1 ends after the sell, so the t+1 entry (2001) takes that state, not the state between the legs.
+    con.execute("INSERT INTO pool VALUES ('sell', 'P', ?, 1, 0, 1, ?, ?, ?, 0, ?, ?, ?, 20, 5, 0, 0, 'Q', false, ?, ?)",
+                [A + 1, 108 * 10**10, 92 * SOL, 92 * SOL, 10**10, -1 * SOL, 1 * SOL, 1 * SOL, 150 * SOL])
     con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, fee_bps BIGINT, creator_bps BIGINT)")
     con.close()
     parts = tmp_path / "parts"
@@ -221,7 +225,8 @@ def test_tx_level_entries(tmp_path):
     assert info["tx_delays"] == {1000: "t, trigger tx + 0", 1001: "t, trigger tx + 1", 1003: "t, trigger tx + 3", 1010: "t, trigger tx + 10", 2001: "t+1, first tx"}
     assert info["delays"] == [0, 1, 2, 3, 1000, 1001, 1003, 1010, 2001]
     assert info["tx_stats"] == {"pool_signals": 1, "with_leg_in_t": 1, "trigger_trader_multi_leg": 1, "trigger_kind_missing": 0, "trigger_size_missing": 0,
-                                "trigger_smaller_sell_before": 1, "creator_sell_after_trigger": 1, "capped": {1000: 0, 1001: 0, 1003: 0, 1010: 1, 2001: 0}}
+                                "trigger_smaller_sell_before": 1, "creator_sell_after_trigger": 1, "capped": {1000: 0, 1001: 0, 1003: 0, 1010: 1, 2001: 0},
+                                "tx_end": {1000: 0, 1001: 0, 1003: 0, 1010: 0, 2001: 1}}
     R = pq.read_table(str(tmp_path / "out" / "markout-tx.parquet")).to_pylist()
     assert {r["d"] for r in R if r["segment"] == "curve"} == {1, 2}            # curve signals keep the slot delays
     R = [r for r in R if r["segment"] != "curve"]
@@ -232,8 +237,8 @@ def test_tx_level_entries(tmp_path):
     assert ent[1003]["mid"] == pytest.approx(post(109 * 10**10, 91 * SOL))   # three legs after it = the slot's last leg (tx 9)
     assert ent[1010]["mid"] == ent[1003]["mid"] and ent[1010]["capped"] and not ent[1003]["capped"] and ent[1]["capped"] is None
     assert ent[0]["mid"] == ent[1003]["mid"]                                  # d = 0 = the end of slot A: the same state
-    assert ent[2001]["mid"] == pytest.approx(post(108 * 10**10, 92 * SOL))   # the first leg of A + 1
-    assert ent[1]["mid"] == ent[2001]["mid"]                                  # d = 1 = the end of A + 1: the same single leg
+    assert ent[2001]["mid"] == pytest.approx(post(109 * 10**10, 91 * SOL))   # the first transaction of A + 1 ends after its second leg (the sell)
+    assert ent[1]["mid"] == ent[2001]["mid"]                                  # d = 1 = the end of A + 1: the same single transaction
     assert ent[2001]["target"] == A + 1 and ent[1000]["target"] == A and ent[0]["target"] == A and ent[3]["target"] == A + 3
     assert ent[3]["mid"] == pytest.approx(post(107 * 10**10, 93 * SOL))      # d = 3 = the end of A + 3: the last leg (A + 2) carried forward
     # horizons of a tx-level entry run from its entry slot: the 1 s horizon (400 ms slots → 3 slots) of 2001 ends at A + 4
