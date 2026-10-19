@@ -1,4 +1,4 @@
-# Wat kan alleen (of pas goed) in Rust — strategievoordelen en hoe we ze meten (versie 0.2, 2026-10-19)
+# Wat kan alleen (of pas goed) in Rust — strategievoordelen en hoe we ze meten (versie 1.0, 2026-10-19)
 
 Opdracht van de eigenaar (19 okt, via de coördinator): een lijst van wat de Rust-route (M3 live-shadow, M4 gedeelde kern) aan strategievoordeel kan geven, te bouwen zodra M1 bewezen gelijk is aan Python. LAB research schrijft het inhoudelijke deel (§1–§4: welk voordeel, hoe groot, hoe meten); Lab Backtest vult §5 (technische haalbaarheid per idee, wat M3/M4 kan, kosten). Alleen paper, alleen Triton/OF1-data; hold-out 1047–1051 en de schone set 1055–1063 blijven dicht; geen nieuwe betaalde dienst zonder eigenaarsbesluit. Labels: **feit** (bron of meting), **reconstructie**, **modelaanname**, **onbekend**.
 
@@ -65,7 +65,7 @@ De grootste strategiewinst zit bij 1 en 2 en is pas te geloven na de meting in �
 
 ## 3. Meetplan (alles zonder geld; volgorde)
 
-**Data-regel:** M-a t/m M-e gebruiken alleen dev (1033–1046) en forward (≥ 1064, na pre-registratie); de hold-out 1047–1051 en de schone set 1055–1063 worden er niet voor gelezen. De hold-out-getallen in §2.1 zijn een diagnose uit de eenmalige eindrangschikking, geen invoer voor deze metingen. **Volgorde na de paperstart:** M-a eerst (grootste kandidaat), als NAS-job met de spec vooraf in `research/`; dan M-b en M-c; M-d en M-e lopen met M3 en paper mee.
+**Data-regel:** M-a t/m M-e gebruiken alleen dev (1033–1046) en forward (≥ 1064, na pre-registratie); de hold-out 1047–1051 en de schone set 1055–1063 worden er niet voor gelezen. De hold-out-getallen in §2.1 zijn een diagnose uit de eenmalige eindrangschikking, geen invoer voor deze metingen. **Volgorde na de paperstart:** M-a eerst (grootste kandidaat), als NAS-job met de spec vooraf in `research/`; dan M-b en M-c; M-d en M-e lopen met M3 en paper mee. Spec M-a: `research/spec-rust-ma-instap-per-transactie-2026-10-19.md` (v0.1). Twee uitvoeringsroutes, keuze bij de inplanning: (i) een uitbreiding van `wallets/markout.py` met instapdoelen op transactieniveau (onderzoekscode, geen kernwijziging, markout-horizonten plus de eigen exit van de engine uit de parts); (ii) de bewezen M1-kern vanuit Python met een instap op transactie-index (§5, Lab Backtest; na C2). Route (i) kan direct na de paperstart, route (ii) geeft dezelfde exits als de engine.
 
 | # | meting | data | wanneer | levert |
 |---|---|---|---|---|
