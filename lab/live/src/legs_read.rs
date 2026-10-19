@@ -85,10 +85,11 @@ fn sweep_farm(hist: &mut FarmHists, hist_mem: &mut (usize, usize), pruned: &mut 
 }
 
 /// O(1): the histories' trades and bytes are the replay's running total (`flag_chunk`'s deltas), never a walk over them;
-/// the block-time tables (`blocks`: slots, bytes) are counted once at the open (constant for the run).
+/// the block-time tables (`blocks`: slots, bytes) are counted once at the open (constant for the run). `slot_buf` (M3-07's
+/// one slot's events, reused): its capacity as the entries, the largest slot so far (a Vec never shrinks).
 #[allow(clippy::too_many_arguments)]
 fn replay_mem<C, P>(adm: &Admission, hist: &FarmHists, (trades, bytes): (usize, usize), blocks: (usize, usize),
-                    ctx: &HashMap<Id, PoolCtx>, legs: (&Vec<C>, &Vec<P>), segments: Option<u64>) -> ReplayMem {
+                    ctx: &HashMap<Id, PoolCtx>, legs: (&Vec<C>, &Vec<P>), slot_buf: &Vec<Event>, segments: Option<u64>) -> ReplayMem {
     let (farm_bytes, farm_table) = farm_mem(hist);
     ReplayMem {
         mems: vec![
@@ -98,6 +99,7 @@ fn replay_mem<C, P>(adm: &Admission, hist: &FarmHists, (trades, bytes): (usize, 
             Mem::new("farmer_hist_trades", trades, bytes),
             Mem::new("pool_ctx", ctx.len(), lmem::map(ctx)),
             Mem::new("legs_buffer", legs.0.len() + legs.1.len(), lmem::vec(legs.0) + lmem::vec(legs.1)),
+            Mem::new("slot_buf", slot_buf.capacity(), lmem::vec(slot_buf)),
         ],
         tables: vec![adm.keys.table(), farm_table],
         segments,
@@ -1045,11 +1047,11 @@ impl Replay {
             }
             let d = flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
             self.hist_mem = add_mem(self.hist_mem, d);
-            let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
+            let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), &buf, None) } else { ReplayMem::default() };
             let keys = &self.adm.keys;
             emit_slots(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), &mut buf, |slot, evs| f(keys, &mem, slot, evs))?;
             if self.mem_log {
-                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), None);
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, &ctx, (&curve, &pool), &buf, None);
             }
             log::info!("chunk {}: {} curve and {} pool rows of [{}, {}), h24 {}, {} keys, RSS {} MB", p.dir.display(), curve.len(), pool.len(),
                        from.max(p.lo), to.min(p.hi), bl.h24, keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
@@ -1078,14 +1080,14 @@ impl Replay {
             self.hist_mem = add_mem(self.hist_mem, d);
             // segments handed out so far: this unit's segment is the (seg + 1)-th
             let mem = if self.mem_log {
-                replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1))
+                replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, ctx, (&curve, &pool), buf, Some(u.seg as u64 + 1))
             } else {
                 ReplayMem::default()
             };
             let keys = &self.adm.keys;
             emit_slots(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), buf, |slot, evs| f(keys, &mem, slot, evs))?;
             if self.mem_log {
-                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1));
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, self.blocks_mem, ctx, (&curve, &pool), buf, Some(u.seg as u64 + 1));
             }
         }
         for &(lo, hi, h24) in &sg.chunks {
@@ -1519,6 +1521,15 @@ pub(crate) mod tests {
             let get = |name: &str| last.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
             assert_eq!((get("farmer_hist"), get("farmer_hist_trades")), (pairs, walk.0), "seg {seg}: the last unit's view");
             assert!(get("interned_keys") > 0 && get("legs_buffer") > 0, "seg {seg}");
+            // M3-07's slot buffer: at the end its capacity holds the largest slot handed out (and the first view's, before
+            // any slot, is empty)
+            let mut per_slot: BTreeMap<u64, usize> = BTreeMap::new();
+            for l in &lines {
+                *per_slot.entry(l.split('\t').nth(2).unwrap().parse().unwrap()).or_default() += 1;
+            }
+            let largest = *per_slot.values().max().unwrap();
+            assert!(fin("slot_buf") >= largest && largest > 1, "seg {seg}: {} < {largest}", fin("slot_buf"));
+            assert_eq!(views[0].mems.iter().find(|m| m.name == "slot_buf").map(|m| m.entries), Some(0), "seg {seg}");
             // the block-time tables: one entry per non-skipped slot of every chunk or segment read, the same in every view
             assert!(get("block_times") > 0 && views.iter().all(|m| m.mems.iter().any(|x| x.name == "block_times" && x.entries == get("block_times"))),
                     "seg {seg}");

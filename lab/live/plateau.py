@@ -75,11 +75,12 @@ KEYS = "interned_keys"  # spec v0.6 (E8 a): an absolute bound on its bytes growt
 KEYS_BOUND = 100 * MB  # per 24 h
 # Bounded by construction: a window (lab-core's the_windowed_structures_stay_bounded_over_thirty_hours), the slot or
 # unit they belong to, the positions in flight, the ops queue (drained per event), WALLET_DEPTH (wallet_txs, v0.5).
-# They follow the chain's activity.
+# They follow the chain's activity. slot_buf (M3-07, added after spec v0.6 with LAB's OK pending): one slot's events,
+# reused, so its capacity is the largest slot so far, the same bound as slot_legs.
 WINDOWED = frozenset({
     "recent_keys", "recent_legs", "farm_pools", "farm_items", "hour_events", "pool_seen", "pool_last", "slot_legs",
-    "slot_written", "legs_buffer", "pending", "pending_keys", "grad_keys", "open_positions", "open_order", "grad_wait", "ops",
-    "wallet_txs",
+    "slot_written", "legs_buffer", "slot_buf", "pending", "pending_keys", "grad_keys", "open_positions", "open_order",
+    "grad_wait", "ops", "wallet_txs",
 })
 # Spec v0.4 (E6): the windowed ones are reported (with their max ratio), not gated.
 GATE_WINDOWED = False

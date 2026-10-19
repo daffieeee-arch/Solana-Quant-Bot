@@ -1322,8 +1322,14 @@ impl PaperEngine {
     /// slot's first event would end it (engine.py:304-307); then the entries due in the empty slots up to `c` fill on
     /// the state they have (`_quiet_entries(c + 1)`, :353-360). The next event's push runs the rest (its
     /// `_quiet_entries`), so `close_through(c)` and then that push write what the push alone writes, for any c from the
-    /// open slot up to the slot before the next event. An event at a slot <= c is refused afterwards. The slot it
-    /// ended, if any.
+    /// open slot up to the slot before the next event. The slot it ended, if any.
+    ///
+    /// **The contract: `c` is below the slot of every event still to come.** An event at a slot <= c is refused
+    /// afterwards (`PaperError::Late`), the source's own next event included when it closes too far: fail-closed, never
+    /// a slot ended twice.
+    ///
+    /// A risk file is read when the code runs (an entry's `_load_risk`, a dated minute's): a change takes effect from the
+    /// next close or entry, up to one slot earlier than Python's read at the next event's arrival. Wall time, not logic.
     pub fn close_through(&mut self, c: u64, keys: &mut impl N2Keys) -> Result<Option<u64>, PaperError> {
         self.accepts(None)?;
         let ended = match self.sig.open_slot() {

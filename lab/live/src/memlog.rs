@@ -107,13 +107,13 @@ impl Hist {
 
 /// A structure's group in the breakdown the coordinator asked for (spec §3): what the snapshot loads (the universe, the
 /// graduation info, the store's curve_hold, the interned keys, which the run's traders extend), the legs buffer of the
-/// chunk or segment being emitted, and the engines' and the replay's state.
+/// chunk or segment being emitted (with M3-07's slot buffer), and the engines' and the replay's state.
 pub fn group(name: &str) -> &'static str {
     match name {
         "universe_tokens" | "universe_sol_markets" | "grad_tokens" | "grad_sol_markets" | "curve_hold" | "interned_keys" | "block_times" => {
             "snapshot"
         }
-        "legs_buffer" => "legs_buffer",
+        "legs_buffer" | "slot_buf" => "legs_buffer",
         _ => "state",
     }
 }
@@ -307,8 +307,8 @@ mod tests {
         assert_eq!(l["structures"], json!({"a": {"entries": 1, "bytes_est": 8, "group": "state"}, "b": {"entries": 2, "bytes_est": 16, "group": "state"}}));
         assert_eq!(l["tables"], json!({"t": {"len": 3, "capacity": 7, "buckets": 8, "tombstones": 0, "bytes": 152}}));
         assert!(l["sqlite_bytes"].is_i64());
-        assert_eq!([group("curve_hold"), group("interned_keys"), group("block_times"), group("legs_buffer"), group("recent_legs")],
-                   ["snapshot", "snapshot", "snapshot", "legs_buffer", "state"]);
+        assert_eq!([group("curve_hold"), group("interned_keys"), group("block_times"), group("legs_buffer"), group("slot_buf"), group("recent_legs")],
+                   ["snapshot", "snapshot", "snapshot", "legs_buffer", "legs_buffer", "state"]);
         assert!(l["heap_bytes"].as_u64().unwrap() > 0 && l["rss_bytes"].as_u64().unwrap() > 0);
         assert_eq!((lines[1]["minute"].as_i64(), lines[1]["time_ns"]["n"].as_u64(), lines[1]["events"].as_u64()), (Some(11), Some(1), Some(5)));
         assert_eq!((lines[2]["end"].as_bool(), lines[2]["minute"].as_i64(), lines[2]["time_ns"]["n"].as_u64()), (Some(true), Some(11), Some(5)));

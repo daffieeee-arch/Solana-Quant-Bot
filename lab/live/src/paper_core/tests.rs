@@ -109,6 +109,11 @@ impl RiskFiles {
         Ok((RiskFiles { dir, flips, next: 0 }, paths))
     }
 
+    /// Whether a file changes before an event at `slot` (a flip not written yet is due by then).
+    fn changes_by(&self, slot: u64) -> bool {
+        self.flips.get(self.next).is_some_and(|f| f.0 <= slot)
+    }
+
     /// The flips due before an event at `slot`.
     fn before(&mut self, slot: u64) -> Result<()> {
         while let Some((at, path, text)) = self.flips.get(self.next) {
@@ -179,10 +184,14 @@ fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<(
 }
 
 fn run_case(case: &Value, scenario: &str, risk: Option<&str>) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
-    run_case_closing(case, scenario, risk, Close::Replay)
+    run_case_closing(case, scenario, risk, Close::Replay).map(|(w, e, k, _)| (w, e, k))
 }
 
-fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Close) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
+/// The case run with its slots closed as `close` says; with risk files, a slot is closed only where no file changes
+/// before the next event (a close reads the files then, the next event's push after its flips: M3-08 spec D1). Also
+/// the closes made and skipped.
+fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Close)
+                    -> Result<(Vec<Write>, PaperEngine, CaseKeys, (usize, usize))> {
     let (sig, groups, mut keys) = case_engine(case)?;
     let mut grad = GradInfo::default();
     for t in field(case, "tokens")?.as_array().context("tokens")? {
@@ -222,6 +231,7 @@ fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Clo
         Ok(())
     };
     let events = field(case, "events")?.as_array().context("events")?;
+    let mut closes = (0, 0);
     for (i, e) in events.iter().enumerate() {
         let ev = event(e, &mut keys)?;
         let slot = ev.leg.slot();
@@ -235,6 +245,11 @@ fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Clo
         }
         let next = events.get(i + 1).map(|n| ou(n, "slot")).transpose()?.flatten().filter(|&n| n != slot);
         if let (Some(next), true) = (next, close != Close::Replay) {
+            if files.as_ref().is_some_and(|f| f.changes_by(next)) {
+                closes.1 += 1;
+                continue;
+            }
+            closes.0 += 1;
             learn_upto(&mut eng, &mut keys, next)?;
             let c = if close == Close::Early { slot } else { next - 1 };
             ensure!(eng.close_through(c, &mut seeds.with(&keys))? == Some(slot), "close_through({c}) did not end slot {slot}");
@@ -248,7 +263,7 @@ fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Clo
     for op in eng.paper.ops.drain(..) {
         writes.push(op_write(&op, &keys)?);
     }
-    Ok((writes, eng, keys))
+    Ok((writes, eng, keys, closes))
 }
 
 #[test]
@@ -295,14 +310,14 @@ fn every_m3_case_gives_the_engines_writes_with_what_it_learns() {
         let scenario = case["cost_scenario"].as_str().unwrap();
         assert!(!case["learn"].as_array().unwrap().is_empty(), "{name}");
         for close in [Close::Replay, Close::Early, Close::Late] {
-            let (writes, eng, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
+            let (writes, eng, _, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
             n += same_writes(&format!("{name} {close:?}"), &writes, case, &cols);
             assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name} {close:?}");
         }
         // Without the learns the case writes something else: it shows what the live API carries.
         let mut bare = case.clone();
         bare["learn"] = json!([]);
-        let (writes, _, _) = run_case_closing(&bare, scenario, None, Close::Replay).unwrap();
+        let (writes, _, _, _) = run_case_closing(&bare, scenario, None, Close::Replay).unwrap();
         let got: Vec<Value> = writes.iter().filter(|w| c2_write(w)).map(|w| write_json(w, &cols, &[])).collect();
         assert_eq!(got == *case["expect_ops"].as_array().unwrap(), name == "completion_learned_too_late", "{name}");
     }
@@ -320,12 +335,40 @@ fn every_c2_case_gives_the_engines_writes_with_the_slots_closed_live() {
         let name = case["name"].as_str().unwrap();
         let scenario = case["cost_scenario"].as_str().unwrap();
         for close in [Close::Early, Close::Late] {
-            let (writes, eng, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
+            let (writes, eng, _, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
             n += same_writes(&format!("{name} {close:?}"), &writes, case, &cols);
             assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name} {close:?}");
         }
     }
     assert!(n > 0);
+}
+
+#[test]
+fn every_c3_case_gives_the_engines_writes_with_the_slots_closed_live_where_the_files_stay() {
+    // LAB review on #420: risk on, close_through after a slot's last event wherever no risk file changes before the
+    // next event (a close reads the files earlier than that push: spec D1's exception, wall time). Every write, the
+    // wallet files included, equals the engine's.
+    let doc: Value = serde_json::from_str(C3).unwrap();
+    let cols = columns();
+    let (mut made, mut skipped) = (0, 0);
+    for case in doc["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let scenario = case["cost_scenario"].as_str().unwrap();
+        let wallets = parse_groups(case["groups"].as_str().unwrap()).unwrap().wallet;
+        for close in [Close::Early, Close::Late] {
+            let (writes, eng, _, (m, k)) =
+                run_case_closing(case, scenario, Some(name), close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
+            let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols, &wallets)).collect();
+            let want = case["expect_ops"].as_array().unwrap();
+            if let Some(i) = (0..got.len().max(want.len())).find(|&i| got.get(i) != want.get(i)) {
+                panic!("{name} {close:?}: write {i} of {} (Rust) / {} (Python)\n rust:   {}\n python: {}", got.len(), want.len(),
+                       got.get(i).map_or("(none)".into(), Value::to_string), want.get(i).map_or("(none)".into(), Value::to_string));
+            }
+            assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name} {close:?}");
+            (made, skipped) = (made + m, skipped + k);
+        }
+    }
+    assert!(made > 0 && skipped > 0, "closes made {made}, skipped where a file changes {skipped}");
 }
 
 #[test]
