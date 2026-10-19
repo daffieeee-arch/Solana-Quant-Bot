@@ -188,12 +188,12 @@ def pool_legs_sql(lo, hi):
       WITH keys AS (SELECT DISTINCT key FROM pool_targets),
       raw AS (
         SELECT p.pool AS key, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, p.vq, p.base, p.e_delta, p.quote_user,
-               p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps, p.trader
+               p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps, p.trader, p.token_buy, p.sol_amount, p.sol_depth
         FROM pool p SEMI JOIN keys k ON k.key = p.pool WHERE p.slot BETWEEN {lo} AND {hi}),
       trades AS (
         SELECT key, slot, tx_index, outer_ix, inner_ix, CASE WHEN kind = 'sell' THEN b + base ELSE b - base END AS b, e + e_delta AS e,
                COALESCE(vq, 0) AS virt, COALESCE(lp_bps, 0) AS lp_bps, COALESCE(protocol_bps, 0) AS protocol_bps,
-               COALESCE(creator_bps, 0) AS creator_bps, COALESCE(cashback_bps, 0) AS cashback_bps, kind, trader
+               COALESCE(creator_bps, 0) AS creator_bps, COALESCE(cashback_bps, 0) AS cashback_bps, kind, trader, token_buy, sol_amount, sol_depth
         FROM raw WHERE kind IN ('buy', 'sell')),
       virts AS (  -- the virtual quote after every buy, sell or boost (the LP legs take the last one)
         SELECT key, slot, tx_index, COALESCE(vq, 0) AS virt FROM raw WHERE kind IN ('buy', 'sell', 'boost')),
@@ -205,7 +205,8 @@ def pool_legs_sql(lo, hi):
                     ELSE o.vault + COALESCE(v.virt, 0) + o.quote_user END AS e,
                CASE WHEN o.kind = 'boost' THEN COALESCE(o.vq, 0) ELSE COALESCE(v.virt, 0) END AS virt,
                COALESCE(t.lp_bps, 0) AS lp_bps, COALESCE(t.protocol_bps, 0) AS protocol_bps, COALESCE(t.creator_bps, 0) AS creator_bps,
-               COALESCE(t.cashback_bps, 0) AS cashback_bps, o.kind AS kind, NULL::VARCHAR AS trader
+               COALESCE(t.cashback_bps, 0) AS cashback_bps, o.kind AS kind, NULL::VARCHAR AS trader, NULL::BOOLEAN AS token_buy,
+               NULL::BIGINT AS sol_amount, NULL::BIGINT AS sol_depth
         FROM (SELECT * FROM raw WHERE kind IN ('boost', 'withdraw', 'deposit')) o
         ASOF LEFT JOIN trades t ON t.key = o.key AND o.slot >= t.slot
         ASOF LEFT JOIN virts v ON v.key = o.key AND o.slot >= v.slot)
@@ -348,7 +349,7 @@ def build_targets(con, clock, end_slot, tx_delays=False):
       SELECT s.sid::BIGINT AS sid, d.d::INTEGER AS d, hz.h::VARCHAR AS h, hz.h_ms::BIGINT AS h_ms,
              (s.t + {dslot} + CASE WHEN hz.h_ms = 0 THEN 0 ELSE ceil(hz.h_ms / ({ms_case(clock, 's.t + ' + dslot)}))::BIGINT END)::BIGINT AS target
       FROM sig s, (SELECT unnest([{ds}]) AS d) d, (SELECT * FROM (VALUES {hz}) v(h, h_ms)) hz
-      {"WHERE d.d < 1000 OR s.venue = 'pool'" if tx_delays else ""}""")
+      {"WHERE s.venue = 'pool' OR d.d IN (" + ", ".join(str(d) for d in DELAYS) + ")" if tx_delays else ""}""")
     n = _count(con, "targets")
     progress("targets", n)
     return n
@@ -357,39 +358,43 @@ def build_targets(con, clock, end_slot, tx_delays=False):
 def tx_entries(con):
     """The entry state per (signal, TX_DELAYS code) from the pool's own legs in slots t and t + 1 (pool_legs, so
     after match_states): the k-th leg after the trigger leg inside t (capped at t's last leg), or the first leg of
-    t + 1 (else t's last leg). The trigger leg is the trigger wallet's first leg of the trigger kind in t (the backtest's
-    first qualifying leg), else its first leg, else the slot's first leg. Writes tx_entry(sid, d, slot, b, e, virt,
-    bps…, capped); a signal whose trigger slot has no leg gets no entry (its tx-level rows stay without a state).
+    t + 1 (else t's last leg). The trigger leg is the trigger wallet's first leg in t that qualifies as the backtest's
+    trigger (a token sell >= max(3 SOL, 4 % of the SOL depth), depth >= 150 SOL), else its first token sell, else its
+    first leg, else the slot's first leg. Writes tx_entry(sid, d, slot, b, e, virt, bps…, capped); a signal whose
+    trigger slot has no leg gets no entry (its tx-level rows stay without a state).
     Writes tx_stats (one row) too: how many pool signals have a leg in t, how often the trigger wallet has more
-    than one leg in t (the old 'last leg' choice would differ), how often it has no leg of the trigger kind, how many
-    signals see a token sell by the pool's creator after the trigger leg in t (the slot rule's creator veto, which a
-    per-transaction decision cannot see yet), per code how many entries are capped at t's last leg, and how many 2001
-    entries fall back to t's last leg (no leg in t + 1)."""
+    than one leg in t (the v1 'last leg' choice would differ), how often it has no token sell in t and how often none
+    of its token sells passes the size (fallbacks), how often it sold a smaller amount earlier in t (where v2, without
+    the size condition, would differ), how many signals see a token sell by the pool's creator after the trigger leg
+    in t (the slot rule's creator veto, which a per-transaction decision cannot see yet), per code how many entries
+    are capped at t's last leg, and how many 2001 entries fall back to t's last leg (no leg in t + 1)."""
     ks = ", ".join(f"({d}, {k if k is not None else 'NULL'})" for d, k in TX_DELAYS.items())
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE tx_entry_all AS
       WITH L AS (
-        SELECT s.sid, s.t, s.trigger_trader, CASE WHEN s.orientation = 'reversed' THEN 'buy' ELSE 'sell' END AS trig_kind,
-               cr.creator, l.*, row_number() OVER (PARTITION BY s.sid ORDER BY l.slot, l.tx_index, l.outer_ix, l.inner_ix) AS rn
+        SELECT s.sid, s.t, s.trigger_trader, cr.creator, l.*, row_number() OVER (PARTITION BY s.sid ORDER BY l.slot, l.tx_index, l.outer_ix, l.inner_ix) AS rn,
+               l.slot = s.t AND l.trader = s.trigger_trader AS mine, NOT COALESCE(l.token_buy, true) AS tsell,
+               NOT COALESCE(l.token_buy, true) AND l.sol_amount >= greatest({3 * SOL}, 0.04 * l.sol_depth) AND l.sol_depth >= {150 * SOL} AS trig_size
         FROM sig s JOIN pool_legs l ON l.key = s.key AND l.slot IN (s.t, s.t + 1)
         LEFT JOIN sig_creator cr ON cr.sid = s.sid WHERE s.venue = 'pool'),
       R AS (
         SELECT sid, max(rn) FILTER (WHERE slot = t) AS rn_last_t, min(rn) FILTER (WHERE slot = t + 1) AS rn_n1,
-               COALESCE(min(rn) FILTER (WHERE slot = t AND trader = trigger_trader AND kind = trig_kind),
-                        min(rn) FILTER (WHERE slot = t AND trader = trigger_trader), min(rn) FILTER (WHERE slot = t)) AS rn_trig,
-               max(rn) FILTER (WHERE slot = t AND trader = trigger_trader) AS rn_trader_last,
-               bool_or(slot = t AND trader = trigger_trader AND kind = trig_kind) AS trig_kind_found
+               COALESCE(min(rn) FILTER (WHERE mine AND trig_size), min(rn) FILTER (WHERE mine AND tsell), min(rn) FILTER (WHERE mine),
+                        min(rn) FILTER (WHERE slot = t)) AS rn_trig,
+               max(rn) FILTER (WHERE mine) AS rn_trader_last, min(rn) FILTER (WHERE mine AND tsell) AS rn_first_sell,
+               bool_or(mine AND tsell) AS sell_found, bool_or(mine AND trig_size) AS size_found
         FROM L GROUP BY sid),
       R2 AS (
-        SELECT r.*, bool_or(l.slot = l.t AND l.rn > r.rn_trig AND l.kind = l.trig_kind AND l.trader = l.creator) AS creator_veto
+        SELECT r.*, bool_or(l.slot = l.t AND l.rn > r.rn_trig AND l.tsell AND l.trader = l.creator) AS creator_veto
         FROM R r JOIN L l ON l.sid = r.sid GROUP BY ALL),
       E AS (
         SELECT r.sid, c.d, CASE WHEN c.d >= 2000 THEN COALESCE(r.rn_n1, r.rn_last_t) ELSE least(r.rn_trig + c.k, r.rn_last_t) END AS rn,
                CASE WHEN c.d >= 2000 THEN r.rn_n1 IS NULL ELSE r.rn_trig + c.k > r.rn_last_t END AS capped,
-               r.rn_trader_last <> r.rn_trig AS trader_multi, NOT COALESCE(r.trig_kind_found, false) AS kind_missing, r.creator_veto
+               r.rn_trader_last <> r.rn_trig AS trader_multi, NOT COALESCE(r.sell_found, false) AS kind_missing,
+               NOT COALESCE(r.size_found, false) AS size_missing, r.rn_first_sell < r.rn_trig AS smaller_before, r.creator_veto
         FROM R2 r, (SELECT * FROM (VALUES {ks}) v(d, k)) c WHERE r.rn_last_t IS NOT NULL)
       SELECT e.sid, e.d::INTEGER AS d, l.slot, l.b, l.e, l.virt, l.lp_bps, l.protocol_bps, l.creator_bps, l.cashback_bps,
-             e.capped, e.trader_multi, e.kind_missing, e.creator_veto
+             e.capped, e.trader_multi, e.kind_missing, e.size_missing, e.smaller_before, e.creator_veto
       FROM E e JOIN L l ON l.sid = e.sid AND l.rn = e.rn""")
     con.execute("""
       CREATE OR REPLACE TEMP TABLE tx_stats AS
@@ -398,6 +403,8 @@ def tx_entries(con):
              (SELECT count(DISTINCT sid) FROM f) AS with_leg_in_t,
              (SELECT count(DISTINCT sid) FROM f WHERE trader_multi) AS trigger_trader_multi_leg,
              (SELECT count(DISTINCT sid) FROM f WHERE kind_missing) AS trigger_kind_missing,
+             (SELECT count(DISTINCT sid) FROM f WHERE size_missing) AS trigger_size_missing,
+             (SELECT count(DISTINCT sid) FROM f WHERE smaller_before) AS trigger_smaller_sell_before,
              (SELECT count(DISTINCT sid) FROM f WHERE creator_veto) AS creator_sell_after_trigger""")
     con.execute("""
       CREATE OR REPLACE TEMP TABLE tx_capped AS
@@ -421,15 +428,16 @@ def tx_stats(con):
 
 
 def sig_creators(con):
-    """sig_creator(sid, creator): the pool's coin creator (pools.coin_creator, else mints.creator of its mint) for the
-    creator-veto count; the tables may lack the columns (small fixtures): then no creator is known."""
+    """sig_creator(sid, creator): the creator as the backtest's trigger filter sees it (mints.creator of the pool's
+    mint, else pools.coin_creator; strategies.f7_signals_sql) for the creator-veto count; the tables may lack the
+    columns (small fixtures): then no creator is known."""
     have = lambda t, c: bool(con.execute(f"SELECT count(*) FROM information_schema.columns WHERE table_name = '{t}' AND column_name = '{c}'").fetchone()[0])  # noqa: E731
     pc = "p.coin_creator" if have("pools", "coin_creator") else "NULL::VARCHAR"
     mc = "m.creator" if have("mints", "creator") else "NULL::VARCHAR"
     mj = "LEFT JOIN mints m ON m.mint = p.mint" if have("mints", "mint") else "LEFT JOIN (SELECT NULL::VARCHAR AS mint, NULL::VARCHAR AS creator) m ON false"
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sig_creator AS
-      SELECT s.sid, COALESCE({pc}, {mc}) AS creator FROM sig s JOIN pools p ON p.pool = s.key {mj} WHERE s.venue = 'pool'""")
+      SELECT s.sid, COALESCE({mc}, {pc}) AS creator FROM sig s JOIN pools p ON p.pool = s.key {mj} WHERE s.venue = 'pool'""")
 
 
 def build_matched(con, end_slot):
