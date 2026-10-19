@@ -222,17 +222,25 @@ pub fn keeps(chunks: &[(u64, u64)]) -> Vec<u64> {
 }
 
 /// The farmer flags of one chunk's pool trades, in chain order (rows sorted): set on the rows, history kept in `hist`.
-pub fn flag_chunk(rows: &mut [PoolRow], hist: &mut HashMap<(Id, Id), FarmHist>, h24: u64, chunk: u32, keep: u64) {
+/// Returns the change in the histories' trades and their bytes (`FarmHist::mem`), so the memory log (C4-2) keeps a running
+/// total instead of walking every history.
+pub fn flag_chunk(rows: &mut [PoolRow], hist: &mut HashMap<(Id, Id), FarmHist>, h24: u64, chunk: u32, keep: u64) -> (isize, isize) {
+    let (mut trades, mut bytes) = (0isize, 0isize);
     for r in rows.iter_mut() {
         let Some((buy, amount)) = r.token_side() else { continue };
         let h = hist.entry((r.pool, r.trader)).or_default();
+        let before = h.mem();
         if h.flag(r.order.slot, h24, chunk, keep) {
             r.flags |= FARMER;
         } else {
             r.flags &= !FARMER;
         }
         h.add(r.order.slot, if buy { amount } else { -amount });
+        let after = h.mem();
+        trades += after.0 as isize - before.0 as isize;
+        bytes += after.1 as isize - before.1 as isize;
     }
+    (trades, bytes)
 }
 
 /// A PoolRow and its pool's context into the engine's leg (streams.py `pool_leg`): withdraw and deposit take the

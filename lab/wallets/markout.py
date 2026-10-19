@@ -445,19 +445,33 @@ def build_matched(con, end_slot):
     curve signals, and the cut flag (past the store end or the venue's last leg). Two steps of pure equi-joins:
     the state key per venue is computed first (NULL where the venue does not apply), so every state join is a
     hash join (the f7rev run spent 15,901 of 16,300 s in one query whose LEFT JOINs carried `s.venue = ...`
-    beside the key match)."""
-    con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE tsig AS
+    beside the key match). The same holds for the tx-level entry join: its key is NULL unless the row is a
+    tx-level entry (tsid), because a left-only predicate (`x.tx AND ...`) beside the key makes DuckDB plan a
+    blockwise nested-loop join: 35.7 s on the one-day smoke, hours on the full f7rev run (14.4 M targets x 1 M
+    entries). test_matched_plans_hash_joins_only checks the plan."""
+    con.execute(f"CREATE OR REPLACE TEMP TABLE tsig AS {tsig_sql(end_slot)}")
+    con.execute(f"CREATE OR REPLACE TEMP TABLE matched AS {matched_sql()}")
+    con.execute("DROP TABLE tsig")
+    progress("matched", _count(con, "matched"))
+
+
+def tsig_sql(end_slot):
+    """The SELECT behind tsig (targets x signals with the state keys and the cut flag); the migration pool joins on
+    a key that is NULL for pool signals, not on `s.venue = 'curve'` beside the key (see build_matched)."""
+    return f"""
       SELECT tg.sid, tg.d, tg.h, tg.h_ms, tg.target, s.venue, s.orientation, s.key, gp.orientation AS g_orientation,
              CASE WHEN s.venue = 'pool' THEN s.key END AS pkey, CASE WHEN s.venue = 'curve' THEN s.key END AS ckey,
              CASE WHEN s.venue = 'curve' THEN gp.pool END AS gkey,
              (tg.target >= {end_slot} OR tg.target > greatest(vl.last_slot, COALESCE(gl.last_slot, 0))) AS cut
       FROM targets tg JOIN sig s ON s.sid = tg.sid
       LEFT JOIN venue_last vl ON vl.key = s.key
-      LEFT JOIN grad_pool gp ON gp.mint = s.key AND s.venue = 'curve'
-      LEFT JOIN venue_last gl ON gl.key = gp.pool""")
-    con.execute("""
-      CREATE OR REPLACE TEMP TABLE matched AS
+      LEFT JOIN grad_pool gp ON gp.mint = CASE WHEN s.venue = 'curve' THEN s.key END
+      LEFT JOIN venue_last gl ON gl.key = gp.pool"""
+
+
+def matched_sql():
+    """The SELECT behind the matched table (tsig x the states); pure equi-joins, see build_matched."""
+    return """
       SELECT x.sid, x.d, x.h, x.h_ms, x.target, x.venue, x.orientation, x.key,
              CASE WHEN tx THEN te.slot ELSE ps.slot END AS p_slot, CASE WHEN tx THEN te.b ELSE ps.b END AS b, CASE WHEN tx THEN te.e ELSE ps.e END AS e,
              CASE WHEN tx THEN te.virt ELSE ps.virt END AS virt, CASE WHEN tx THEN te.lp_bps ELSE ps.lp_bps END AS lp_bps,
@@ -466,13 +480,11 @@ def build_matched(con, end_slot):
              cs.slot AS c_slot, cs.vt, cs.vq, cs.rt, cs.rq, cs.fee_bps AS c_fee_bps, cs.creator_bps AS c_creator_bps,
              x.g_orientation, gs.slot AS g_slot, gs.b AS g_b, gs.e AS g_e, gs.virt AS g_virt, gs.lp_bps AS g_lp_bps,
              gs.protocol_bps AS g_protocol_bps, gs.creator_bps AS g_creator_bps, gs.cashback_bps AS g_cashback_bps, x.cut
-      FROM (SELECT *, d >= 1000 AND h = '' AS tx FROM tsig) x
+      FROM (SELECT *, d >= 1000 AND h = '' AS tx, CASE WHEN d >= 1000 AND h = '' THEN sid END AS tsid FROM tsig) x
       LEFT JOIN pool_at ps ON ps.key = x.pkey AND ps.target = x.target
       LEFT JOIN curve_at cs ON cs.key = x.ckey AND cs.target = x.target
       LEFT JOIN pool_at gs ON gs.key = x.gkey AND gs.target = x.target
-      LEFT JOIN tx_entry te ON x.tx AND te.sid = x.sid AND te.d = x.d""")
-    con.execute("DROP TABLE tsig")
-    progress("matched", _count(con, "matched"))
+      LEFT JOIN tx_entry te ON te.sid = x.tsid AND te.d = x.d"""
 
 
 # --- round trips with the engine -----------------------------------------------------------------------
