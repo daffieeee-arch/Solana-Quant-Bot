@@ -119,6 +119,10 @@ pub fn universe(keys: &mut impl KeyNames, bounds: Bounds, tokens: &[Token], mark
 pub struct Groups {
     pub specs: Vec<GroupSpec>,
     pub q: Vec<f64>,
+    /// Each group's risk file and paper wallet file as groups_state names them (C3: lab-live reads the one and writes
+    /// the other); null where the state has null.
+    pub risk: Vec<Option<String>>,
+    pub wallet: Vec<Option<String>>,
 }
 
 /// The keys of a group in groups_state: lab-live reads them all, and refuses others (a newer engine's groups could mean
@@ -132,7 +136,7 @@ const GROUP_KEYS: [&str; 11] = ["d", "d_ms", "farm", "n2_k", "primary", "q", "re
 pub fn parse_groups(text: &str) -> Result<Groups> {
     let v: Value = serde_json::from_str(text).context("the groups are no JSON")?;
     let all = v.as_object().context("the groups are no object of name -> group")?;
-    let mut groups: Vec<(GroupSpec, f64)> = Vec::new();
+    let mut groups: Vec<(GroupSpec, f64, Option<String>, Option<String>)> = Vec::new();
     for (name, g) in all {
         let g = g.as_object().with_context(|| format!("group {name} is no object"))?;
         if let Some(k) = g.keys().find(|k| !GROUP_KEYS.contains(&k.as_str())) {
@@ -180,7 +184,8 @@ pub fn parse_groups(text: &str) -> Result<Groups> {
             d: g["d"].as_u64().with_context(|| what("d", "delay in slots"))?,
             d_ms,
         };
-        groups.push((spec, g["q"].as_f64().with_context(|| what("q", "number"))?));
+        let path = |k: &str| g[k].as_str().map(str::to_owned);
+        groups.push((spec, g["q"].as_f64().with_context(|| what("q", "number"))?, path("risk"), path("wallet")));
     }
     let primaries: Vec<&str> = groups.iter().filter(|g| g.0.primary).map(|g| g.0.name.as_str()).collect();
     ensure!(primaries.len() == 1, "exactly one primary group, not {} ({primaries:?})", primaries.len());
@@ -189,7 +194,12 @@ pub fn parse_groups(text: &str) -> Result<Groups> {
         ensure!(seen.insert(v.as_str()), "variant {v} is in the groups twice (variant names are distinct across groups)");
     }
     groups.sort_by_key(|g| !g.0.primary); // stable: the others stay in name order
-    Ok(Groups { specs: groups.iter().map(|g| g.0.clone()).collect(), q: groups.iter().map(|g| g.1).collect() })
+    Ok(Groups {
+        specs: groups.iter().map(|g| g.0.clone()).collect(),
+        q: groups.iter().map(|g| g.1).collect(),
+        risk: groups.iter().map(|g| g.2.clone()).collect(),
+        wallet: groups.iter().map(|g| g.3.clone()).collect(),
+    })
 }
 
 /// `_seed(*parts)` (strategies.py:573-574): the first 8 bytes of sha256 of the parts joined by '|', little-endian.

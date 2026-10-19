@@ -1,6 +1,6 @@
-"""The golden cases of M1 C3-2 (research/m1-c3-risk-spec-2026-10-19.md §2.2-§2.5, §5): small feeds that the real paper
-engine (paper/engine.py, unchanged) runs with risk ON, from each group's own risk file, and whose journal writes the
-Rust route must reproduce one by one. test_risk_cases.py asserts that the engine still writes exactly the stored ones;
+"""The golden cases of M1 C3-2 and C3-3 (research/m1-c3-risk-spec-2026-10-19.md §2.2-§2.7, §5): small feeds that the real
+paper engine (paper/engine.py, unchanged) runs with risk ON, from each group's own risk file, and whose journal writes
+(the five tables and the heartbeat) and wallet files the Rust route must reproduce one by one. test_risk_cases.py asserts that the engine still writes exactly the stored ones;
 lab/live's paper_core tests read the same file.
 
   C3_CASES_REGEN=1 pytest paper/tests/test_risk_cases.py      # rewrite data/c3_risk_cases.json from the engine
@@ -36,6 +36,9 @@ FORMAT = {
     "file": "{format, spec, cases: [case]}; every case runs on its own, from an empty engine, with risk on.",
     "case": "C2's case (c2_position_cases.json FORMAT: name, why, clock, dev_bounds, groups, labels, tokens, pools, events, "
             "cost_scenario, expect_ops) plus risk. groups names each group's risk file: risk-K3.yaml, risk-H.yaml.",
+    "expect_ops": "C2's writes of the five tables, plus every heartbeat put ([\"put\", \"heartbeat\", row], engine.py:461-465, "
+                  "477-480) and every wallet file the engine writes ([\"wallet\", file, the file's text: json.dump's], engine.py:1267-1283: "
+                  "each new dated minute and the end of data, a group only when its wallet changed), in the engine's order.",
     "risk": "group name -> [[at, text], ...]: the first item's at is null, the text the run starts with; each later item "
             "replaces the file's text when the feed hands out its first event with slot >= at, before that event (the "
             "engine has not ended the slot before it yet). A null text is a missing file. Several items with the same at "
@@ -76,6 +79,29 @@ def write(path, text):
             f.write(text)
 
 
+class RecJournal(C2.RecJournal):
+    """C2's recording journal, the heartbeat table too."""
+
+    def put(self, table, **row):
+        if table == "heartbeat":
+            self.ops.append(["put", table, {c: row.get(c) for c in self.cols[table]}])
+        super().put(table, **row)
+
+
+def record_wallets(eng, j):
+    """Each wallet file `_write_wallet` writes, as ["wallet", file, its text], in the groups' order."""
+    write = eng._write_wallet
+
+    def recorded(block_time=None):
+        dirty = [g for g in eng.groups if g.wallet_dirty and not eng.replaying]
+        write(block_time)
+        for g in dirty:
+            with open(os.path.join(j.dir, g.wallet_file)) as f:
+                j.ops.append(["wallet", g.wallet_file, f.read()])
+
+    eng._write_wallet = recorded
+
+
 def engine(case, journal):
     """C1.engine with risk on: the groups' risk files (relative to the working directory) and FlipFeed."""
     gs = json.loads(case["groups"])
@@ -98,8 +124,9 @@ def run(case):
     with tempfile.TemporaryDirectory(prefix="c3-case-") as d, contextlib.chdir(d):
         for g, vs in case["risk"].items():
             write(FILES[g], vs[0][1])
-        j = C2.RecJournal(os.path.join(d, "journal"))
+        j = RecJournal(os.path.join(d, "journal"))
         eng = engine(case, j)
+        record_wallets(eng, j)
         eng.run()
         ops = j.ops
         j.close()
@@ -644,12 +671,120 @@ def n2_loss_is_not_booked():
     return case
 
 
+def _ten_percent_case(name, why, dump, again=True):
+    """P (K3, 0.5 SOL at a venue cost of exactly 0.5 SOL) stops out after a token sell that takes `dump` lamports out;
+    its sale fills on that state. A whale refills P; P triggers again 90 slots after its trigger, inside 36 s."""
+    c = Case(name, why, k3=risk(pool_cooldown_h="0.01"))
+    t = 450_160_000
+    p = c.pool("P")
+    legs = trigger(c, p, t, 400 * SOL)
+    legs = c.more(p, "reversed", legs[-1], [(t + 5, 0, "dumper", "sell", dump, False), (t + 12, 0, "buyer 3", "buy", SOL // 10, False),
+                                            (t + 20, 0, "whale", "buy", 350 * SOL, False)])
+    if again:
+        c.more(p, "reversed", legs[-1], [(t + 60, 0, "buyer", "buy", 2 * SOL, False), (t + 90, 0, "seller", "sell", 20 * SOL, False)])
+    return c
+
+
+def a_sale_of_exactly_a_tenth_is_no_total_loss():
+    """The total loss is `proceeds < 0.1 * cost` (engine.py:1055), strict: 0.1 * 500,000,000 is exactly 50,000,000.0 as a
+    float, and a sale that pays exactly 50,000,000 lamports sets no cooldown (LAB review on #384)."""
+    def proceeds(dump):
+        c = _ten_percent_case("probe", "", dump, again=False)
+        c.build()
+        x = c.one("exits", key=c.key("P"))
+        assert x["cost"] == 500_000_000 and x["exit_reason"] == "stop_loss", x
+        return x["proceeds"]
+
+    lo, hi = 100 * SOL, 300 * SOL  # proceeds fall as the dump grows
+    assert proceeds(lo) > 50_000_000 > proceeds(hi)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if proceeds(mid) > 50_000_000:
+            lo = mid
+        else:
+            hi = mid
+    dump = hi
+    assert proceeds(dump) == 50_000_000, (dump, proceeds(dump))
+    assert 0.1 * 500_000_000 == 50_000_000.0
+    c = _ten_percent_case("a_sale_of_exactly_a_tenth_is_no_total_loss",
+                          f"pool_cooldown_h 0.01. A token sell takes {dump:,} lamports out of P after K3's entry (cost "
+                          f"500,000,000): the stop loss sells for exactly 50,000,000 lamports, a tenth of the cost, which is "
+                          f"no total loss (proceeds < 0.1 * cost is strict). P triggers again at t + 90, inside what would "
+                          f"be the cooldown: entered.", dump)
+    case = c.build()
+    x = c.one("exits", key=c.key("P"), t=450_160_000)
+    ok((x["proceeds"], x["cost"]) == (50_000_000, 500_000_000), c, f"exactly a tenth {x}")
+    ok(c.one("signals", key=c.key("P"), t=450_160_090, variant="tp4_T600")["status"] == "entered", c, "P again")
+    return case
+
+
+def the_cooldown_keeps_the_later_end():
+    """`g.cool[key] = max(g.cool.get(key, 0), end)` (engine.py:1057): a later total loss with a shorter cooldown does not
+    shorten the one before (LAB review on #384). Group H's two variants (no stop loss) hold one pool to deadlines 400
+    slots apart and lose it all there; the file's pool_cooldown_h drops from 24 to 0.01 between their settles."""
+    t0, t = 450_150_000, 450_165_000
+    t2 = t + 400
+    da = t + 2 + C1.Clock(C1.DEV2_CLOCK).slots(6 * 3_600_000, t)  # flow300_H6's deadline (entry t + 2, 6 h)
+    db = da + 400  # flow300_tp100_H6's, entered again at t2 + 2
+    c = Case("the_cooldown_keeps_the_later_end", "The feed starts an hour before (H's farm window is complete). P triggers at "
+                                                 "t: K3 and both H variants enter. A 400 SOL token buy at t + 50: K3 and "
+                                                 "flow300_tp100_H6 take profit; flow300_H6 (no take-profit, no stop loss) holds. "
+                                                 "P triggers again at t + 400: flow300_tp100_H6 enters again, flow300_H6 is "
+                                                 "busy. At t + 500 the LPs withdraw 99.999 % of P (no trade, no flow). Both H "
+                                                 "positions hold to their 6 h deadlines, da and da + 400, and sell there for "
+                                                 "under a tenth of the cost: total losses, settled at O's events da + 10 and "
+                                                 "da + 410. H's file changes pool_cooldown_h from 24 to 0.01 at da + 30 "
+                                                 "(after the first settle; a later minute reloads it before the second). A "
+                                                 "whale refills P at da + 450. P triggers at da + 800, past the 0.01 h end "
+                                                 "(about da + 547) and inside the 24 h one: H's rows are 'pool cooldown'.")
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t0, 0, "small buyer", "buy", SOL, False)] +
+             [(da + d, 0, "small buyer", "buy", SOL, False) for d in (10, 20, 30, 410, 420)])
+    p = c.pool("P")
+    legs = trigger(c, p, t, 400 * SOL)
+    legs = c.more(p, "reversed", legs[-1], [(t + 50, 0, "whale", "buy", 400 * SOL, False), (t + 52, 0, "buyer 3", "buy", SOL // 10, False),
+                                            (t2 - 30, 0, "buyer", "buy", 2 * SOL, False), (t2, 0, "seller", "sell", 40 * SOL, False)])
+    w = c.withdraw(p, legs[-1], t + 500, 0, 999_990, 1_000_000)
+    legs = c.more(p, "reversed", w, [(da + 450, 0, "whale 2", "buy", 400 * SOL, False), (da + 770, 0, "buyer", "buy", 2 * SOL, False),
+                                     (da + 800, 0, "seller", "sell", 20 * SOL, False)])
+    c.flip("H", da + 30, risk(pool_cooldown_h="0.01"))
+    case = c.build()
+    a, b = c.one("exits", key=p, t=t, variant="flow300_H6"), c.one("exits", key=p, t=t2, variant="flow300_tp100_H6")
+    ok(a["exit_slot"] == da + 2 and a["proceeds"] < 0.1 * a["cost"], c, f"flow300_H6 {a}")
+    ok(b["exit_slot"] == db + 2 and b["proceeds"] < 0.1 * b["cost"], c, f"flow300_tp100_H6 {b}")
+    for v in ("flow300_H6", "flow300_tp100_H6"):
+        r = c.one("signals", key=p, t=da + 800, variant=v)
+        ok((r["status"], r["reason"]) == ("skipped", "pool cooldown"), c, f"H {v} at da + 800 {r}")
+    return case
+
+
+def the_wallet_keeps_its_last_fifty():
+    """The paper wallet (engine.py:1252-1283): newest first, 50 deep (`deque(maxlen=50)`): 26 positions buy and sell, 52
+    transactions; the file at the end of data holds the last 50. Its balance is 10 SOL + the realized P&L."""
+    c = Case("the_wallet_keeps_its_last_fifty", "max_open_positions 30, max_exposure 20 SOL. 26 pools trigger 100 slots apart; "
+                                                "each K3 position enters and closes (by time, or at the end of data). 26 buys "
+                                                "and 26 sells: the last wallet file holds the newest 50, newest first; P0's "
+                                                "buy is dropped.",
+             k3=risk(max_open_positions=30, max_exposure_sol="20"))
+    t = 450_160_000
+    for i in range(26):
+        trigger(c, c.pool(f"P{i}"), t + 100 * i, 400 * SOL)
+    case = c.build()
+    walls = [w for w in c.ops if w[0] == "wallet"]
+    last = json.loads(walls[-1][2])
+    ok(len(c.rows("orders", status="filled")) == 26 and len(last["txs"]) == 50, c, f"{len(last['txs'])} txs")
+    slots = [x["slot"] for x in last["txs"]]
+    ok(slots == sorted(slots, reverse=True) and min(slots) > t + 2, c, f"newest first, P0's buy at t + 2 dropped: {slots[-3:]}")
+    ok(last["balance_lamports"] == 10 * SOL + sum(x["pnl"] for x in c.rows("exits")), c, "the balance")
+    return case
+
+
 CASES = [max_open_counts_pending_and_open, max_exposure_at_its_edge, kill_switch_stops_n2_too, family_off_leaves_n2,
          files_invalid_or_missing, at_entry_the_file_is_read_again, size_from_the_file_n2_at_half_a_sol,
          daily_loss_blocks_until_midnight, cooldown_after_a_total_loss, daily_loss_is_signed_and_its_limit_inclusive,
          daily_loss_one_lamport_over_passes, failed_entry_books_its_fee, n2_positions_do_not_count, h_group_has_its_own_file,
          at_entry_the_limits_are_not_checked_again, cooldown_ends_at_its_slot, exposure_counts_the_open_cost,
-         n2_pending_does_not_count, other_groups_do_not_count, n2_loss_is_not_booked, cooldown_across_a_clock_change]
+         n2_pending_does_not_count, other_groups_do_not_count, n2_loss_is_not_booked, cooldown_across_a_clock_change,
+         a_sale_of_exactly_a_tenth_is_no_total_loss, the_cooldown_keeps_the_later_end, the_wallet_keeps_its_last_fifty]
 
 
 def table():

@@ -12,7 +12,7 @@
 
 use anyhow::{bail, ensure, Context, Result};
 use lab_core::costs::{RentMode, Scenario};
-use lab_core::paper::{ExitRow, Op, PosKey};
+use lab_core::paper::{ExitRow, Op, PosKey, WalletFile};
 use serde_json::Value;
 
 use crate::signals_core::{row_cells, Cell, KeyNames};
@@ -52,11 +52,52 @@ pub fn parse_scenario(text: &str) -> Result<Scenario> {
     })
 }
 
-/// One journal write: a put (INSERT OR REPLACE) of a row's cells, or a delete by the key's cells (journal.py:83-89).
+/// One journal write: a put (INSERT OR REPLACE) of a row's cells, or a delete by the key's cells (journal.py:83-89); or a
+/// group's paper wallet file (its index in the signal engine's order), its whole text as json.dump writes it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Write {
     Put(&'static str, Vec<(&'static str, Cell)>),
     Delete(&'static str, Vec<(&'static str, Cell)>),
+    Wallet(usize, String),
+}
+
+/// The wallet file's note (engine.py:1278).
+const WALLET_NOTE: &str = "paper trading: no wallet, no transactions; amounts are the engine's simulated fills after costs";
+
+fn json_int<T: ToString>(v: Option<T>) -> String {
+    v.map_or_else(|| "null".to_owned(), |x| x.to_string())
+}
+
+fn json_str(s: &str) -> String {
+    serde_json::to_string(s).expect("a string is JSON")
+}
+
+/// `json.dump(w, f)` of `_write_wallet`'s dict (engine.py:1275-1281): its keys in their order, ", " and ": " as Python's
+/// separators, None as null. Every value is an int, None or an ASCII string (base58 mints, the family and variant).
+pub fn wallet_json(w: &WalletFile, names: &impl KeyNames) -> Result<String> {
+    let mut txs = Vec::with_capacity(w.txs.len());
+    for t in &w.txs {
+        let mint = names.name(t.mint).context("a wallet transaction of an id without a key")?;
+        txs.push(format!(
+            "{{\"signature\": null, \"slot\": {}, \"time_unix\": null, \"kind\": {}, \"mint\": {}, \"symbol\": null, \"amount_lamports\": {}, \
+             \"fee_lamports\": {}, \"tip_lamports\": null, \"status\": \"paper\", \"landed_slot_delta\": {}, \"note\": {}}}",
+            t.slot,
+            json_str(t.kind),
+            json_str(mint),
+            t.amount_lamports,
+            t.fee_lamports,
+            json_int(t.landed_slot_delta),
+            json_str(&format!("{} {}", t.family.as_str(), t.variant)),
+        ));
+    }
+    Ok(format!(
+        "{{\"mode\": \"paper\", \"address\": null, \"slot\": {}, \"time_unix\": {}, \"balance_lamports\": {}, \"txs\": [{}], \"note\": {}}}",
+        json_int(w.slot),
+        json_int(w.time_unix),
+        w.balance_lamports,
+        txs.join(", "),
+        json_str(WALLET_NOTE),
+    ))
 }
 
 fn int(v: i128, what: &str) -> Result<Cell> {
@@ -174,6 +215,17 @@ pub fn op_write(op: &Op, names: &impl KeyNames) -> Result<Write> {
             Write::Put("positions", c)
         }
         Op::DeletePosition(k) => Write::Delete("positions", key_cells(k, names)?),
+        Op::Heartbeat(h) => Write::Put("heartbeat", vec![
+            ("minute", Cell::Int(h.minute)),
+            ("day", day(&h.day)),
+            ("last_slot", opt_u(h.last_slot, "last_slot")?),
+            ("last_event", h.last_event.map_or(Cell::Null, |o| Cell::Text(format!("{}:{}:{}:{}", o.slot, o.tx, o.outer, o.inner)))),
+            ("events", int(i128::from(h.events), "events")?),
+            ("open_positions", int(h.open_positions as i128, "open_positions")?),
+            ("gap_slots", int(i128::from(h.gap_slots), "gap_slots")?),
+            ("note", text(&h.note)),
+        ]),
+        Op::Wallet(w) => Write::Wallet(w.group, wallet_json(w, names)?),
     })
 }
 
