@@ -23,7 +23,8 @@
 //! segment's `backfill/` (watchlist backfills: rows of earlier slots, LiveFeed's late-row semantics, M3's) is not read,
 //! only counted per segment, so a measurement on segments is a lower bound for the live form.
 
-use crate::legs::{check_ties, emit_chunk, event_kind, event_line, flag_chunk, h24_of, keeps, FarmHist, Keys, PoolRow, Summary, REVERSED};
+use crate::legs::{check_ties, emit_chunk, event_kind, event_line, flag_chunk, h24_of, keeps, prune_hist, FarmHist, Keys, PoolRow, Summary,
+                  REVERSED};
 use crate::rows::{chunks, Part};
 use crate::snapshot::{FarmHistMeta, Snapshot};
 use anyhow::{bail, Context, Result};
@@ -66,6 +67,18 @@ pub struct ReplayMem {
 /// A running total plus `flag_chunk`'s delta (the farmer histories' trades and bytes).
 fn add_mem((trades, bytes): (usize, usize), (dt, db): (isize, isize)) -> (usize, usize) {
     (trades.checked_add_signed(dt).expect("farmer history trades below 0"), bytes.checked_add_signed(db).expect("farmer history bytes below 0"))
+}
+
+/// C4-4: prune the farmer histories at `bound` (`Replay::prune_farm`) once it moved by h24 / 24 (about an hour of slots)
+/// since the last sweep (`pruned`: the last bound, sweeps, pairs dropped): a sweep walks every pair, so not at every unit.
+/// A free function over the replay's fields, so the chunk loop (which borrows the chunk list) can call it.
+fn sweep_farm(hist: &mut HashMap<(Id, Id), FarmHist>, hist_mem: &mut (usize, usize), pruned: &mut (u64, u64, u64), bound: u64, h24: u64) {
+    if bound < pruned.0.saturating_add((h24 / 24).max(1)) {
+        return;
+    }
+    let (pairs, dt, db) = prune_hist(hist, bound);
+    *hist_mem = add_mem(*hist_mem, (dt, db));
+    *pruned = (bound, pruned.1 + 1, pruned.2 + pairs as u64);
 }
 
 /// O(1): the histories' trades and bytes are the replay's running total (`flag_chunk`'s deltas), never a walk over them.
@@ -808,6 +821,11 @@ pub struct Replay {
     hist_mem: (usize, usize),
     /// With `mem_log`: the replay's structures after the last chunk or unit handed out (the end line's).
     last_mem: ReplayMem,
+    /// M1 C4-4: drop the farmer histories no later window reads (`legs::prune_hist`), before a chunk or unit once the
+    /// bound moved by about an hour of slots; off with `--keep-farmer-history` (the A/B: the same flags either way).
+    pub prune_farm: bool,
+    /// (the last bound pruned at, sweeps, pairs dropped)
+    pruned: (u64, u64, u64),
 }
 
 /// Where a replay's rows come from.
@@ -957,7 +975,7 @@ impl Replay {
         let replay = Replay {
             hist_mem: hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
             from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false, seg,
-            mem_log: false, last_mem: ReplayMem::default(),
+            mem_log: false, last_mem: ReplayMem::default(), prune_farm: true, pruned: (0, 0, 0),
         };
         Ok((replay, with))
     }
@@ -992,6 +1010,10 @@ impl Replay {
             curve.sort_unstable_by_key(|l| l.order);
             pool.sort_unstable_by_key(|r| r.order);
             check_ties(&curve, &pool).with_context(|| format!("{}", p.dir.display()))?;
+            // a chunk's bound is its keep: no window of this chunk or a later one reaches before it
+            if self.prune_farm {
+                sweep_farm(&mut self.hist, &mut self.hist_mem, &mut self.pruned, self.keep[chunk as usize], bl.h24);
+            }
             let d = flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
             self.hist_mem = add_mem(self.hist_mem, d);
             let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
@@ -1017,6 +1039,11 @@ impl Replay {
             curve.sort_unstable_by_key(|l| l.order);
             pool.sort_unstable_by_key(|r| r.order);
             check_ties(&curve, &pool).with_context(|| format!("{}", s.part.dir.display()))?;
+            // a unit's bound: its trades' windows start at or after lo - h24, a later chunk's at or after its keep
+            let next = self.keep.get(u.chunk as usize + 1).copied().unwrap_or(u64::MAX);
+            if self.prune_farm {
+                sweep_farm(&mut self.hist, &mut self.hist_mem, &mut self.pruned, u.lo.saturating_sub(u.h24).min(next), u.h24);
+            }
             let d = flag_chunk(&mut pool, &mut self.hist, u.h24, u.chunk, self.keep[u.chunk as usize]);
             self.hist_mem = add_mem(self.hist_mem, d);
             // segments handed out so far: this unit's segment is the (seg + 1)-th
@@ -1046,6 +1073,8 @@ impl Replay {
         v["h24"] = json!(self.h24s);
         v["h0"] = json!(self.h0);
         v["farm_hist"] = self.farm.clone();
+        v["farm_hist_pruned"] = json!({"on": self.prune_farm, "sweeps": self.pruned.1, "pairs_dropped": self.pruned.2, "last_bound": self.pruned.0,
+                                        "pairs_left": self.hist.len()});
         v["chunks_verified"] = json!(self.seg.is_none());
         if let Some(sg) = &self.seg {
             let mut bf: Vec<u64> = sg.segs.iter().map(|s| s.backfill_rows).collect();
@@ -1417,6 +1446,39 @@ pub(crate) mod tests {
             } else {
                 assert!(segs.iter().all(Option::is_none), "chunks have no segment count");
             }
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_farm_prune_changes_no_event() {
+        // M1 C4-4: the same replay with and without the farmer-history prune (the default and --keep-farmer-history) gives
+        // the same event lines on the chunks and on the segments; the summary says whether it pruned.
+        let root = tmp("prune");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        export(&root.join("snap"));
+        chunks(&root.join("chunks"));
+        segments(&root.join("segments"), true);
+        for seg in [false, true] {
+            let run = |prune: bool| {
+                let snap = root.join("snap");
+                let (mut r, ()) = if seg { Replay::open_segments(&root.join("segments"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() }
+                                  else { Replay::open(&root.join("chunks"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() };
+                r.prune_farm = prune;
+                let mut lines = Vec::new();
+                r.for_each_event(|keys, ev| {
+                    lines.push(crate::legs::event_line(keys, ev));
+                    Ok(())
+                }).unwrap();
+                let mut v = json!({});
+                r.describe(&mut v);
+                (lines, v["farm_hist_pruned"].clone())
+            };
+            let ((on, p_on), (off, p_off)) = (run(true), run(false));
+            assert_eq!(on, off, "seg {seg}");
+            assert!(!on.is_empty());
+            assert_eq!((&p_on["on"], &p_off["on"], &p_off["sweeps"]), (&json!(true), &json!(false), &json!(0)), "seg {seg}");
+            assert!(p_on["pairs_left"].as_u64() <= p_off["pairs_left"].as_u64(), "seg {seg}: {p_on} {p_off}"); // legs.rs's test drops pairs
         }
         fs::remove_dir_all(&root).unwrap();
     }

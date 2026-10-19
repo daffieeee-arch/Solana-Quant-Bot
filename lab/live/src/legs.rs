@@ -201,6 +201,11 @@ impl FarmHist {
         self.a.push((s, signed));
     }
 
+    /// The slot of its last trade kept (None: none).
+    pub fn last_slot(&self) -> Option<u64> {
+        self.a.last().map(|x| x.0)
+    }
+
     /// The memory log (C4-2): the trades held and their bytes. The trades before a chunk's `keep` go only at the
     /// (pool, trader)'s next trade in a later chunk, so a pair that never trades again keeps its list.
     pub fn mem(&self) -> (usize, usize) {
@@ -219,6 +224,27 @@ pub fn keeps(chunks: &[(u64, u64)]) -> Vec<u64> {
         out[k - 1] = out[k - 1].min(out[k]);
     }
     out
+}
+
+/// M1 C4-4: drop the histories of the (pool, trader) pairs whose last trade is before `bound`, the first slot any later
+/// farmer window can reach (`Replay`: the current unit's first slot minus its chunk's h24, and no later than the next
+/// chunk's `keeps`). No later flag reads such a history, and a pair that trades again starts empty, which gives the same
+/// window (n, net and gross over no trade). So the flags are the same with and without the prune; only the memory of
+/// pairs that stopped trading is given back. Returns the pairs dropped and the change in trades and bytes
+/// (`FarmHist::mem`, for the replay's running totals).
+pub fn prune_hist(hist: &mut HashMap<(Id, Id), FarmHist>, bound: u64) -> (usize, isize, isize) {
+    let (mut pairs, mut trades, mut bytes) = (0usize, 0isize, 0isize);
+    hist.retain(|_, h| {
+        let keep = h.last_slot().is_some_and(|s| s >= bound);
+        if !keep {
+            let (n, b) = h.mem();
+            pairs += 1;
+            trades -= n as isize;
+            bytes -= b as isize;
+        }
+        keep
+    });
+    (pairs, trades, bytes)
 }
 
 /// The farmer flags of one chunk's pool trades, in chain order (rows sorted): set on the rows, history kept in `hist`.
@@ -592,6 +618,59 @@ mod tests {
             flagged += usize::from(want);
         }
         assert!(flagged > 5, "{flagged}");
+    }
+
+    #[test]
+    fn the_prune_keeps_every_flag_and_gives_back_the_idle_pairs() {
+        // M1 C4-4: 40 traders in 3 pools over four chunks of 1,000 slots with h24 from 300 to 700 (up and down), each
+        // chunk handed out in units of 100 slots, as segments are; most traders stop after a while. Before each unit the
+        // replay's bound (the unit's first slot - its h24, no later than the next chunk's keep) prunes one history map;
+        // the other is never pruned. Every flag is the same in both and the brute-force rule's; pairs were dropped.
+        let mut seed = 11u64;
+        let mut next = || {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            seed >> 33
+        };
+        let (from, len, h24s) = (10_000u64, 1_000u64, [300u64, 700, 400, 500]);
+        let mut rows = Vec::new();
+        for k in 0..2_400u64 {
+            let slot = from + next() % (len * h24s.len() as u64);
+            let trader = 1 + (next() % 40) as Id;
+            // trader t trades only before its own stop slot: an idle pair later
+            if slot > from + 400 + u64::from(trader) * 90 && trader % 4 != 0 {
+                continue;
+            }
+            let kind = if next() % 2 == 0 { PoolKind::Buy } else { PoolKind::Sell };
+            rows.push(trade(slot, k as u32, 100 + (next() % 3) as Id, trader, kind, 30 + (next() % 4) as i64));
+        }
+        rows.sort_by_key(|r| r.order);
+        rows.dedup_by_key(|r| r.order);
+        let starts: Vec<(u64, u64)> = h24s.iter().enumerate().map(|(c, &h)| (from + c as u64 * len, h)).collect();
+        let keep = keeps(&starts);
+        let (mut a, mut b) = (rows.clone(), rows.clone());
+        let (mut ha, mut hb): (HashMap<(Id, Id), FarmHist>, HashMap<(Id, Id), FarmHist>) = (HashMap::new(), HashMap::new());
+        let (mut dropped, mut at) = (0, 0);
+        for (c, &h24) in h24s.iter().enumerate() {
+            for u in 0..len / 100 {
+                let lo = from + c as u64 * len + u * 100;
+                let n = a[at..].partition_point(|r| r.order.slot < lo + 100);
+                let bound = lo.saturating_sub(h24).min(keep.get(c + 1).copied().unwrap_or(u64::MAX));
+                let (pairs, _, _) = prune_hist(&mut ha, bound);
+                dropped += pairs;
+                flag_chunk(&mut a[at..at + n], &mut ha, h24, c as u32, keep[c]);
+                flag_chunk(&mut b[at..at + n], &mut hb, h24, c as u32, keep[c]);
+                at += n;
+            }
+        }
+        assert_eq!(at, rows.len());
+        let flags = |v: &[PoolRow]| v.iter().map(|r| r.flags & FARMER != 0).collect::<Vec<_>>();
+        assert_eq!(flags(&a), flags(&b));
+        for i in 0..rows.len() {
+            let h24 = h24s[((rows[i].order.slot - from) / len) as usize];
+            assert_eq!(a[i].flags & FARMER != 0, brute(&rows, i, h24), "row {i} {:?}", rows[i].order);
+        }
+        assert!(flags(&a).iter().filter(|&&f| f).count() > 5 && dropped > 20 && ha.len() < hb.len(),
+                "flagged, dropped {dropped}, kept {} of {}", ha.len(), hb.len());
     }
 
     #[test]
