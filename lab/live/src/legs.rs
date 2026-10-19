@@ -11,14 +11,16 @@
 //!   chunk), a farmer when there are 2 or more and 20 |net| < gross, exactly (store.py:500-519). `keeps` gives each
 //!   emitted chunk the slot below which no window of it or of a later chunk reaches.
 //! - `pool_leg`: a PoolRow and the pool's context into the engine's leg (streams.py `pool_leg`).
-//! - `Line` and `Summary`: the dump paper/legs_dump.py writes too, line for line.
+//! - `emit_chunk`: a chunk's events in chain order, typed (lab_core::legs::Event, the feed's event: M1 C1b), for
+//!   `lab-live legs` and `lab-live signals` alike.
+//! - `event_line` and `Summary`: the dump paper/legs_dump.py writes too, line for line, rendered from the typed event.
 //!
 //! The sort unit is the chunk: all its rows, clipped to the range, fully sorted before any is emitted, and the chunks
 //! in slot order. key_ties (two rows with one (slot, tx, outer, inner)) and duplicates are an error.
 
 use anyhow::{bail, Context, Result};
 use hashbrown::{DefaultHashBuilder, HashTable};
-use lab_core::legs::{CurveLeg, Id, Order, PoolCtx, PoolKind, PoolLeg, DIRECT, EXACT_OUT, FARMER, NONE, X0, X1};
+use lab_core::legs::{CurveLeg, Event, Id, Leg, Order, PoolCtx, PoolKind, PoolLeg, DIRECT, EXACT_OUT, FARMER, NONE, X0, X1};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::hash::BuildHasher;
@@ -291,6 +293,28 @@ pub fn pool_line(keys: &Keys, l: &PoolLeg, block_time: Option<i64>) -> String {
     f.join("\t")
 }
 
+/// One event's dump line, from the typed event: its leg's venue picks the fields, its slot's block time is the event's.
+pub fn event_line(keys: &Keys, ev: &Event) -> String {
+    match &ev.leg {
+        Leg::Curve(l) => curve_line(keys, l, ev.block_time),
+        Leg::Pool(l) => pool_line(keys, l, ev.block_time),
+    }
+}
+
+/// The dump's kind of an event: `curve`, or `pool/` and the pool event's kind.
+pub fn event_kind(ev: &Event) -> &'static str {
+    match &ev.leg {
+        Leg::Curve(_) => "curve",
+        Leg::Pool(l) => match l.kind {
+            PoolKind::Buy => "pool/buy",
+            PoolKind::Sell => "pool/sell",
+            PoolKind::Boost => "pool/boost",
+            PoolKind::Withdraw => "pool/withdraw",
+            PoolKind::Deposit => "pool/deposit",
+        },
+    }
+}
+
 /// The dump's summary (paper/legs_dump.py `dump`): the count and sha256 of all lines, the count per venue and pool
 /// kind, and per slot window [from + k*window, ...) its count and sha256.
 pub struct Summary {
@@ -346,16 +370,16 @@ fn hex(h: Sha256) -> String {
 }
 
 /// The emission of one chunk: its curve legs and pool rows (each sorted) merged in chain order, curve first on a
-/// tie (none: gated before), only [from, to); each pool row becomes its leg with the pool's context. `emit` gets
-/// (slot, kind, line).
+/// tie (none: gated before), only [from, to); each pool row becomes its leg with the pool's context. `emit` gets each
+/// event as the feed hands it to the engine (paper/feed.py `Event`: the leg and its slot's block time); its error
+/// ends the emission.
 pub fn emit_chunk(
-    keys: &Keys,
     curve: &[CurveLeg],
     pool: &[PoolRow],
     bt: impl Fn(u64) -> Option<i64>,
     ctx: &mut HashMap<Id, PoolCtx>,
     (from, to): (u64, u64),
-    mut emit: impl FnMut(u64, &str, String),
+    mut emit: impl FnMut(&Event) -> Result<()>,
 ) -> Result<()> {
     let (mut i, mut j) = (0, 0);
     loop {
@@ -371,14 +395,14 @@ pub fn emit_chunk(
             let l = &curve[i];
             i += 1;
             if (from..to).contains(&l.order.slot) {
-                emit(l.order.slot, "curve", curve_line(keys, l, bt(l.order.slot)));
+                emit(&Event::new(Leg::Curve(*l), bt(l.order.slot)))?;
             }
         } else {
             let r = &pool[j];
             j += 1;
             if (from..to).contains(&r.order.slot) {
                 let leg = pool_leg(r, ctx.entry(r.pool).or_default())?;
-                emit(r.order.slot, &format!("pool/{}", r.kind.as_str()), pool_line(keys, &leg, bt(r.order.slot)));
+                emit(&Event::new(Leg::Pool(leg), bt(r.order.slot)))?;
             }
         }
     }
@@ -617,9 +641,11 @@ mod tests {
         check_ties(&curve, &pool).unwrap();
         let mut seen = Vec::new();
         let mut sum = Summary::new(10, 30, 10);
-        emit_chunk(&keys, &curve, &pool, |s| (s != 12).then_some(s as i64), &mut HashMap::new(), (10, 30), |s, k, l| {
+        emit_chunk(&curve, &pool, |s| (s != 12).then_some(s as i64), &mut HashMap::new(), (10, 30), |ev| {
+            let (s, k, l) = (ev.leg.slot(), event_kind(ev), event_line(&keys, ev));
             seen.push((s, k.to_owned(), l.split('\t').nth(3).unwrap().to_owned()));
             sum.add(s, k, &l);
+            Ok(())
         })
         .unwrap();
         // (10, tx 0) pool before (10, tx 1) curve; slot 12: curve tx 0 inner 2 after pool tx 0 inner 1; 30 is out
@@ -630,5 +656,58 @@ mod tests {
         assert_eq!(v["kinds"]["curve"], 2);
         assert!(check_ties(&[CurveLeg { order: pool[0].order, ..c(10, 0) }], &pool).is_err()); // one order on both sides
         assert!(check_ties(&curve, &[pool[0], pool[0]]).is_err());
+    }
+
+    #[test]
+    fn typed_events_render_the_c1a_lines_byte_for_byte() {
+        // Every field of both venues and every pool kind (args, limits, boost_left, lp amounts present and absent, a
+        // NULL trader, a slot without a block time, the pool context): the lines and summary the emission wrote before
+        // it handed out typed events (C1a, 9260095/f95bf33), against the same rows through the events now.
+        let mut keys = Keys::default();
+        let (m, p, q, t) = (keys.id("MintAAA"), keys.id("PoolBBB"), keys.id("PoolCCC"), keys.id("TraderDDD"));
+        let curve = vec![
+            CurveLeg {
+                order: Order { slot: 100, tx: 3, outer: 1, inner: 2 }, mint: m, trader: t, t: 1_234_567, q: 89_000_000_001, fee: 950_000,
+                vt: 1_000_000_000_000_000, vq: 30_000_000_000, rt: 793_000_000_000_000, rq: 12_345_678_901, args: [5, 6, 7, 8], fee_bps: 95,
+                creator_bps: 30, args_set: 0b1011, variant: CurveVariant::SellV2, is_buy: false, direct: false,
+            },
+            CurveLeg {
+                order: Order { slot: 101, tx: 0, outer: 0, inner: 0 }, mint: m, trader: NONE, t: 7, q: 3, fee: 0, vt: 10, vq: 20, rt: 5, rq: 4,
+                args: [0; 4], fee_bps: 0, creator_bps: 0, args_set: 0, variant: CurveVariant::Other, is_buy: true, direct: true,
+            },
+        ];
+        let row = |slot, tx, pool, trader, kind, flags| PoolRow {
+            order: Order { slot, tx, outer: 0, inner: 4 }, pool, trader, b: 1_000_000_000_000, vault: 85_000_000_000, vq: 1_500_000_000,
+            base: 20_000_000, e_delta: 2_000_000_001, quote_user: 1_990_000_000, x: [3_000_000_000, 19_000_000], bps: [20, 5, 5, 1], kind,
+            flags,
+        };
+        let pool = vec![
+            row(100, 1, p, t, PoolKind::Buy, EXACT_OUT | DIRECT | FARMER | X0 | X1),
+            row(100, 4, q, NONE, PoolKind::Sell, REVERSED | X0),
+            row(101, 1, p, t, PoolKind::Boost, X0),
+            row(102, 0, p, t, PoolKind::Withdraw, DIRECT | X0 | X1),
+            row(102, 9, q, t, PoolKind::Deposit, REVERSED | X0),
+        ];
+        let (mut lines, mut sum) = (Vec::new(), Summary::new(100, 103, 2));
+        emit_chunk(&curve, &pool, |s| (s != 101).then_some(1_790_000_000 + s as i64), &mut HashMap::new(), (100, 103), |ev| {
+            let line = event_line(&keys, ev);
+            sum.add(ev.leg.slot(), event_kind(ev), &line);
+            lines.push(line);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(lines[1], "curve\tMintAAA\t100\t3\t1\t2\t1790000100\t6681\tsell_v2\tfalse\t1234567\t89000000001\t950000\t\
+                              999999998765433\t119000000001\t792999998765433\t101345678902\t1000000000000000\t30000000000\t\
+                              793000000000000\t12345678901\t95\t30\tTraderDDD\t5\t6\tnull\t8\tfalse");
+        assert_eq!(lines[4], "pool\tPoolBBB\t101\t1\t0\t4\tnull\t132\tboost\tfalse\t20000000\t2000000001\t1000000000000\t\
+                              86500000000\t0\t0\t0\t0\t1500000000\t999980000000\t88500000001\t0\t0\t0\t0\t1500000000\tTraderDDD\tnull\t\
+                              null\t3000000000\ttrue\tnull\tnull\tfalse");
+        let want = concat!(
+            r#"{"events":7,"from":100,"kinds":{"curve":2,"pool/boost":1,"pool/buy":1,"pool/deposit":1,"pool/sell":1,"pool/withdraw":1}"#,
+            r#","sha256":"5ebe6470d455ac492a3e4b8af91845b448ee518c61ee2783d9ccdd93d3358612","to":103,"window":2"#,
+            r#","windows":[[100,102,5,"138b6c07c9d3068050b30d7987c929c0c2eac4c028b0b8941a2059a035a8a367"],"#,
+            r#"[102,103,2,"a063ab011418266dc05251fda1866e71d87836e3e5c378262751b0be35228e21"]]}"#,
+        );
+        assert_eq!(sum.finish().to_string(), want);
     }
 }

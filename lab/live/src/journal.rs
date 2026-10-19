@@ -112,6 +112,13 @@ impl Journal {
         })
     }
 
+    /// The rows of a table (this connection's, uncommitted ones included).
+    pub fn count(&self, table: &str) -> Result<u64> {
+        let t = self.table(table)?;
+        let n: i64 = self.db.query_row(&format!("SELECT count(*) FROM {}", t.name), [], |r| r.get(0))?;
+        Ok(u64::try_from(n)?)
+    }
+
     pub fn commit(&mut self) -> Result<()> {
         if self.in_tx {
             self.db.execute_batch("COMMIT")?;
@@ -157,7 +164,8 @@ mod tests {
         let j = Journal::open(&dir).unwrap(); // reopening keeps the rows and adds nothing
         assert_eq!(j.get_state("feed").unwrap().as_deref(), Some(r#"{"kind": "replay"}"#));
         let n: i64 = j.db.query_row("SELECT count(*) FROM signals WHERE status = 'entered' AND depth IS NULL", [], |r| r.get(0)).unwrap();
-        assert_eq!(n, 1);
+        assert_eq!((n, j.count("signals").unwrap(), j.count("fills").unwrap()), (1, 1, 0));
+        assert!(j.count("nope").is_err());
         for t in schema().unwrap() {
             let cols: Vec<(String, String, i64)> = j.db.prepare(&format!("PRAGMA table_info({})", t.name)).unwrap()
                 .query_map([], |r| Ok((r.get(1)?, r.get(2)?, r.get(5)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();

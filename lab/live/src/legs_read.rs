@@ -1,25 +1,27 @@
 //! The Parquet side of the legs reader (legs.rs): the chunk event tables into CurveLegs and PoolRows exactly as the
 //! store's SQL builds its `curve` and `pool` rows (backtest/store.py `_curve_trades`, `_pool_trades`, `_pool_other`,
-//! the SOL-market join; DuckDB's casts: research/m1-c1a-legs-spec-2026-10-19.md §2-§3), and `run`, the replay over
-//! [from, to):
+//! the SOL-market join; DuckDB's casts: research/m1-c1a-legs-spec-2026-10-19.md §2-§3), and `Replay`, the replay over
+//! [from, to) that `lab-live legs` (`run`) and `lab-live signals` (signals.rs) share:
 //!
-//! 1. refused: the hold-out, a range outside the snapshot's store period, one not covered by complete chunks, a chunk
-//!    that is not the store's (its slots, the extractor build in its manifest, its h24), and one whose farmer windows
-//!    reach before `from` without the store's history for exactly this replay (farm_hist.parquet, C1a-2);
+//! 1. refused (`Replay::open`): the hold-out, the clean period, a range outside the snapshot's store period, one not
+//!    covered by complete chunks, a chunk that is not the store's (its slots, the extractor build in its manifest, its
+//!    h24), another farmer rule than the store's, and a range whose farmer windows reach before `from` without the
+//!    store's history for exactly this replay (farm_hist.parquet, C1a-2);
 //! 2. each emitted chunk's h24 from its own blocks, over the whole chunk, equal to the store's;
 //! 3. the farmer history over [H0, from) from the snapshot (research/m1-c1a2-spec-2026-10-19.md), H0 the earliest
 //!    slot a window of an emitted trade reaches (legs.rs `keeps`);
-//! 4. chunk by chunk: its curve and pool rows read (admitted by the snapshot: its mints for curve rows, its SOL markets
-//!    for pool rows), sorted, gated (no key ties), the farmer flags set, and the events emitted in chain order.
+//! 4. chunk by chunk (`Replay::for_each_event`): its curve and pool rows read (admitted by the snapshot: its mints for
+//!    curve rows, its SOL markets for pool rows), sorted, gated (no key ties), the farmer flags set, and the events
+//!    handed out in chain order, typed (lab_core::legs::Event).
 
-use crate::legs::{check_ties, emit_chunk, flag_chunk, h24_of, keeps, FarmHist, Keys, PoolRow, Summary, REVERSED};
+use crate::legs::{check_ties, emit_chunk, event_kind, event_line, flag_chunk, h24_of, keeps, FarmHist, Keys, PoolRow, Summary, REVERSED};
 use crate::rows::{chunks, Part};
 use crate::snapshot::{FarmHistMeta, Snapshot};
 use anyhow::{bail, Context, Result};
 use arrow_array::{Array, BooleanArray, Int64Array, LargeStringArray, RecordBatch, StringArray, StringViewArray, UInt64Array};
 use lab_core::legs::{
-    CurveLeg, CurveVariant, Id, Order, PoolCtx, PoolKind, BOOST_BUY_DISC, DEFAULT_KEY, DIRECT, EXACT_OUT, HOLDOUT, NONE, POOL_EXACT_OUT,
-    PUMP, PUMP_AMM, X0, X1,
+    CurveLeg, CurveVariant, Event, Id, Order, PoolCtx, PoolKind, BOOST_BUY_DISC, DEFAULT_KEY, DIRECT, EXACT_OUT, HOLDOUT, NONE,
+    POOL_EXACT_OUT, PUMP, PUMP_AMM, X0, X1,
 };
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::ProjectionMask;
@@ -666,130 +668,183 @@ fn covering(parts: &[Part], lo: u64, hi: u64, what: &str) -> Result<Vec<Part>> {
     Ok(sel)
 }
 
-/// The replay over [from, to): the summary (and with `out`, the lines), see the module doc.
+/// A replay over [from, to), opened and checked (steps 1-3 of the module doc), that hands out its events once
+/// (step 4). Between the two it holds the snapshot's keys (`adm`), each emitted chunk's blocks and the farmer history.
+pub struct Replay {
+    pub from: u64,
+    pub to: u64,
+    /// The snapshot's admission and every key interned so far (traders as the chunks are read).
+    pub adm: Admission,
+    emit: Vec<Part>,
+    blocks: Vec<Blocks>,
+    keep: Vec<u64>,
+    pub h0: u64,
+    hist: HashMap<(Id, Id), FarmHist>,
+    /// The farmer history read (null without one), for the summary.
+    farm: Value,
+    pub counts: Counts,
+    h24s: Vec<Value>,
+    done: bool,
+}
+
+impl Replay {
+    /// Steps 1-3 of the module doc. `with_snapshot` sees the snapshot and the admission (its keys: the mints, then the
+    /// pools) after the checks of the snapshot and before the snapshot is dropped and the farmer history interns its
+    /// traders: `lab-live signals` builds its universe there. `lab-live legs` passes a no-op, so its keys are as in C1a.
+    pub fn open<T>(
+        chunks_root: &Path,
+        snapshot: &Path,
+        from: u64,
+        to: u64,
+        with_snapshot: impl FnOnce(&Snapshot, &mut Admission) -> Result<T>,
+    ) -> Result<(Self, T)> {
+        if from >= to {
+            bail!("--from must be below --to");
+        }
+        if from < HOLDOUT.1 && to > HOLDOUT.0 {
+            bail!("[{from}, {to}) overlaps the hold-out [{}, {}): it is never read", HOLDOUT.0, HOLDOUT.1);
+        }
+        if from < CLEAN.1 && to > CLEAN.0 {
+            bail!("[{from}, {to}) overlaps the clean period [{}, {}) (epochs 1055-1063): it stays locked", CLEAN.0, CLEAN.1);
+        }
+        let mut snap = Snapshot::load_universe(snapshot)?;
+        let (store_lo, store_hi) = snap.store_slots.context("the snapshot's meta.json has no store_slots")?;
+        if from < store_lo || to > store_hi {
+            bail!("[{from}, {to}) is outside the snapshot's store period [{store_lo}, {store_hi}): no ReplayFeed reference there");
+        }
+        if snap.version < 2 || snap.chunks.is_empty() {
+            bail!("the snapshot (version {}) has no chunk_list: export it again with paper.snapshot_export (snapshot_version 2)", snap.version);
+        }
+        // the rule FarmHist computes: n >= 2 and 20 |net| < gross over a day of slots
+        if snap.farmer != json!({"ratio": 0.05, "min_trades": 2, "window_ms": 86_400_000}) {
+            bail!("the store's farmer rule {} is not the one lab-live computes (ratio 0.05, 2 trades, a day)", snap.farmer);
+        }
+        let store_chunks = std::mem::take(&mut snap.chunks);
+        let farm_meta = snap.farm_hist;
+        let mut adm = Admission::from_snapshot(&snap)?;
+        let with = with_snapshot(&snap, &mut adm)?;
+        drop(snap);
+        let parts = chunks(chunks_root)?;
+        let emit = covering(&parts, from, to, "the range")?;
+        // The store's own chunks: their slots, the extractor build that wrote them, and their h24 (review on #369).
+        let mut blocks = Vec::new();
+        for p in &emit {
+            let c = store_chunks.iter().find(|c| (c.lo, c.hi) == (p.lo, p.hi))
+                .with_context(|| format!("chunk {} ([{}, {})) is not one of the store's chunks", p.dir.display(), p.lo, p.hi))?;
+            let want = c.extractor_sha256.as_deref().with_context(|| format!("the store names no extractor build for chunk {}-{}", c.lo, c.hi))?;
+            let sha = manifest_sha(p)?;
+            if sha.as_deref() != Some(want) {
+                bail!("chunk {}: extractor_sha256 {sha:?}, the store was built from {want}", p.dir.display());
+            }
+            let bl = Blocks::read(p)?;
+            if bl.h24 != c.h24 {
+                bail!("chunk {}: h24 {} from its blocks, {} in the store", p.dir.display(), bl.h24, c.h24);
+            }
+            blocks.push(bl);
+        }
+        // The farmer windows of the emitted trades reach back to H0 (spec §3.4), and never before the store's start; each
+        // chunk keeps what its own and later windows reach (legs.rs `keeps`).
+        let starts: Vec<(u64, u64)> = emit.iter().zip(&blocks).map(|(p, b)| (p.lo.max(from), b.h24)).collect();
+        let keep = keeps(&starts);
+        let h0 = keep[0].max(store_lo);
+        let mut hist: HashMap<(Id, Id), FarmHist> = HashMap::new();
+        let mut farm = Value::Null;
+        if h0 < from {
+            let m = farm_meta.with_context(|| {
+                format!("rows from {from} need the store's farmer history from {h0} (the store starts at {store_lo}): export the snapshot \
+                         with --history-from {from} --history-to {to}")
+            })?;
+            if m.hi != from || m.lo > h0 || to > m.to {
+                bail!("the snapshot's farmer history [{}, {}) for rows to {} does not cover [{h0}, {from}) for rows to {to}", m.lo, m.hi, m.to);
+            }
+            let (rows, kept) = read_farm_hist(&snapshot.join("farm_hist.parquet"), &mut adm, &m, h0, &mut hist)?;
+            if rows != m.rows {
+                bail!("farm_hist.parquet has {rows} rows, its meta.json {}", m.rows);
+            }
+            log::info!("farmer history [{}, {}): {rows} rows, {kept} from H0 {h0} on, {} keys, RSS {} MB", m.lo, m.hi, hist.len(),
+                       crate::mem::mb(crate::mem::rss_bytes()));
+            farm = json!({"lo": m.lo, "hi": m.hi, "to": m.to, "rows": rows, "kept": kept, "keys": hist.len()});
+        }
+        let replay = Replay {
+            from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false,
+        };
+        Ok((replay, with))
+    }
+
+    /// Step 4 of the module doc, once: chunk by chunk, every event of [from, to) in chain order to `f`, with the keys
+    /// interned so far (every key of the event among them). An error of `f` ends the replay.
+    pub fn for_each_event(&mut self, mut f: impl FnMut(&Keys, &Event) -> Result<()>) -> Result<()> {
+        if std::mem::replace(&mut self.done, true) {
+            bail!("a replay hands out its events once");
+        }
+        let (from, to) = (self.from, self.to);
+        let mut ctx: HashMap<Id, PoolCtx> = HashMap::new();
+        for (chunk, (p, bl)) in (0u32..).zip(self.emit.iter().zip(&self.blocks)) {
+            let mut curve = read_curve(p, &mut self.adm, (from, to), &mut self.counts)?;
+            let mut pool = read_pool(p, &mut self.adm, (from, to), &mut self.counts)?;
+            curve.sort_unstable_by_key(|l| l.order);
+            pool.sort_unstable_by_key(|r| r.order);
+            check_ties(&curve, &pool).with_context(|| format!("{}", p.dir.display()))?;
+            flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
+            let keys = &self.adm.keys;
+            emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, ev))?;
+            log::info!("chunk {}: {} curve and {} pool rows of [{}, {}), h24 {}, {} keys, RSS {} MB", p.dir.display(), curve.len(), pool.len(),
+                       from.max(p.lo), to.min(p.hi), bl.h24, keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
+            self.h24s.push(json!([p.lo, p.hi, bl.h24]));
+        }
+        Ok(())
+    }
+
+    /// The replay's part of a summary: each emitted chunk's h24, H0, the farmer history, the chunks verified against the
+    /// store, the kept and dropped rows per table, the keys interned and the peak RSS.
+    pub fn describe(&self, v: &mut Value) {
+        v["h24"] = json!(self.h24s);
+        v["h0"] = json!(self.h0);
+        v["farm_hist"] = self.farm.clone();
+        v["chunks_verified"] = json!(true);
+        v["admission"] = self.counts.json();
+        v["keys"] = json!(self.adm.keys.len());
+        v["peak_rss_bytes"] = json!(crate::mem::peak_rss_bytes());
+    }
+}
+
+/// `lab-live legs`: the replay over [from, to) as paper.legs_dump writes it, the summary (and with `out`, the lines);
+/// see the module doc.
 pub fn run(a: &LegsArgs) -> Result<Value> {
     if a.from >= a.to || a.window == 0 {
         bail!("--from must be below --to, and --window above 0");
     }
-    if a.from < HOLDOUT.1 && a.to > HOLDOUT.0 {
-        bail!("[{}, {}) overlaps the hold-out [{}, {}): it is never read", a.from, a.to, HOLDOUT.0, HOLDOUT.1);
-    }
-    if a.from < CLEAN.1 && a.to > CLEAN.0 {
-        bail!("[{}, {}) overlaps the clean period [{}, {}) (epochs 1055-1063): it stays locked", a.from, a.to, CLEAN.0, CLEAN.1);
-    }
-    let mut snap = Snapshot::load_universe(&a.snapshot)?;
-    let (store_lo, store_hi) = snap.store_slots.context("the snapshot's meta.json has no store_slots")?;
-    if a.from < store_lo || a.to > store_hi {
-        bail!("[{}, {}) is outside the snapshot's store period [{store_lo}, {store_hi}): no ReplayFeed reference there", a.from, a.to);
-    }
-    if snap.version < 2 || snap.chunks.is_empty() {
-        bail!("the snapshot (version {}) has no chunk_list: export it again with paper.snapshot_export (snapshot_version 2)", snap.version);
-    }
-    // the rule FarmHist computes: n >= 2 and 20 |net| < gross over a day of slots
-    if snap.farmer != json!({"ratio": 0.05, "min_trades": 2, "window_ms": 86_400_000}) {
-        bail!("the store's farmer rule {} is not the one lab-live computes (ratio 0.05, 2 trades, a day)", snap.farmer);
-    }
-    let store_chunks = std::mem::take(&mut snap.chunks);
-    let farm_meta = snap.farm_hist;
-    let mut adm = Admission::from_snapshot(&snap)?;
-    drop(snap);
-    let parts = chunks(&a.chunks_root)?;
-    let emit = covering(&parts, a.from, a.to, "the range")?;
-    // The store's own chunks: their slots, the extractor build that wrote them, and their h24 (review on #369).
-    let mut blocks = Vec::new();
-    for p in &emit {
-        let c = store_chunks.iter().find(|c| (c.lo, c.hi) == (p.lo, p.hi))
-            .with_context(|| format!("chunk {} ([{}, {})) is not one of the store's chunks", p.dir.display(), p.lo, p.hi))?;
-        let want = c.extractor_sha256.as_deref().with_context(|| format!("the store names no extractor build for chunk {}-{}", c.lo, c.hi))?;
-        let sha = manifest_sha(p)?;
-        if sha.as_deref() != Some(want) {
-            bail!("chunk {}: extractor_sha256 {sha:?}, the store was built from {want}", p.dir.display());
-        }
-        let bl = Blocks::read(p)?;
-        if bl.h24 != c.h24 {
-            bail!("chunk {}: h24 {} from its blocks, {} in the store", p.dir.display(), bl.h24, c.h24);
-        }
-        blocks.push(bl);
-    }
-    // The farmer windows of the emitted trades reach back to H0 (spec §3.4), and never before the store's start; each
-    // chunk keeps what its own and later windows reach (legs.rs `keeps`).
-    let starts: Vec<(u64, u64)> = emit.iter().zip(&blocks).map(|(p, b)| (p.lo.max(a.from), b.h24)).collect();
-    let keep = keeps(&starts);
-    let h0 = keep[0].max(store_lo);
-    let mut counts = Counts::default();
-    let mut hist: HashMap<(Id, Id), FarmHist> = HashMap::new();
-    let mut farm = Value::Null;
-    if h0 < a.from {
-        let m = farm_meta.with_context(|| {
-            format!("rows from {} need the store's farmer history from {h0} (the store starts at {store_lo}): export the snapshot \
-                     with --history-from {} --history-to {}", a.from, a.from, a.to)
-        })?;
-        if m.hi != a.from || m.lo > h0 || a.to > m.to {
-            bail!("the snapshot's farmer history [{}, {}) for rows to {} does not cover [{h0}, {}) for rows to {}", m.lo, m.hi, m.to,
-                  a.from, a.to);
-        }
-        let (rows, kept) = read_farm_hist(&a.snapshot.join("farm_hist.parquet"), &mut adm, &m, h0, &mut hist)?;
-        if rows != m.rows {
-            bail!("farm_hist.parquet has {rows} rows, its meta.json {}", m.rows);
-        }
-        log::info!("farmer history [{}, {}): {rows} rows, {kept} from H0 {h0} on, {} keys, RSS {} MB", m.lo, m.hi, hist.len(),
-                   crate::mem::mb(crate::mem::rss_bytes()));
-        farm = json!({"lo": m.lo, "hi": m.hi, "to": m.to, "rows": rows, "kept": kept, "keys": hist.len()});
-    }
+    let (mut replay, ()) = Replay::open(&a.chunks_root, &a.snapshot, a.from, a.to, |_, _| Ok(()))?;
     let mut summary = Summary::new(a.from, a.to, a.window);
     let mut file = match &a.out {
         Some(p) => Some(std::io::BufWriter::new(fs::File::create(p).with_context(|| format!("create {}", p.display()))?)),
         None => None,
     };
-    let mut ctx: HashMap<Id, PoolCtx> = HashMap::new();
-    let mut h24s = Vec::new();
-    for (chunk, (p, bl)) in (0u32..).zip(emit.iter().zip(&blocks)) {
-        let mut curve = read_curve(p, &mut adm, (a.from, a.to), &mut counts)?;
-        let mut pool = read_pool(p, &mut adm, (a.from, a.to), &mut counts)?;
-        curve.sort_unstable_by_key(|l| l.order);
-        pool.sort_unstable_by_key(|r| r.order);
-        check_ties(&curve, &pool).with_context(|| format!("{}", p.dir.display()))?;
-        flag_chunk(&mut pool, &mut hist, bl.h24, chunk, keep[chunk as usize]);
-        let mut err = None;
-        emit_chunk(&adm.keys, &curve, &pool, |s| bl.at(s), &mut ctx, (a.from, a.to), |slot, kind, line| {
-            if let Some(f) = file.as_mut().filter(|_| slot >= a.out_from) {
-                if let Err(e) = writeln!(f, "{line}") {
-                    err.get_or_insert(e);
-                }
-            }
-            summary.add(slot, kind, &line);
-        })?;
-        if let Some(e) = err {
-            return Err(e).context("write the lines");
+    replay.for_each_event(|keys, ev| {
+        let (slot, line) = (ev.leg.slot(), event_line(keys, ev));
+        if let Some(f) = file.as_mut().filter(|_| slot >= a.out_from) {
+            writeln!(f, "{line}").context("write the lines")?;
         }
-        log::info!("chunk {}: {} curve and {} pool rows of [{}, {}), h24 {}, {} keys, RSS {} MB", p.dir.display(), curve.len(), pool.len(),
-                   a.from.max(p.lo), a.to.min(p.hi), bl.h24, adm.keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
-        h24s.push(json!([p.lo, p.hi, bl.h24]));
-    }
+        summary.add(slot, event_kind(ev), &line);
+        Ok(())
+    })?;
     if let Some(mut f) = file {
         f.flush()?;
     }
     let mut v = summary.finish();
-    v["h24"] = json!(h24s);
-    v["h0"] = json!(h0);
-    v["farm_hist"] = farm;
-    v["chunks_verified"] = json!(true);
-    v["admission"] = counts.json();
-    v["keys"] = json!(adm.keys.len());
-    v["peak_rss_bytes"] = json!(crate::mem::peak_rss_bytes());
+    replay.describe(&mut v);
     Ok(v)
 }
 
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::idl::{Kind, Val};
     use crate::sink::write_parquet;
     use arrow_array::{StringArray, UInt64Array};
     use sha2::{Digest, Sha256};
 
-    fn tmp(name: &str) -> PathBuf {
+    pub(crate) fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("lab-live-legs-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
@@ -804,14 +859,14 @@ mod tests {
         Val::U64(x)
     }
 
-    fn put(dir: &Path, table: &str, part: usize, cols: &[(&str, Kind)], rows: &[Vec<Val>]) -> PathBuf {
+    pub(crate) fn put(dir: &Path, table: &str, part: usize, cols: &[(&str, Kind)], rows: &[Vec<Val>]) -> PathBuf {
         let c: Vec<(String, Kind)> = cols.iter().map(|(n, k)| ((*n).to_owned(), *k)).collect();
         write_parquet(dir, table, part, &c, rows).unwrap()
     }
 
     /// The export (paper/snapshot_export.py) of a store over [1000, 3000): mint M1; pools P1 (normal), P3 (reversed),
     /// PX (quoted in another token: not a SOL market).
-    fn export(dir: &Path) {
+    pub(crate) fn export(dir: &Path) {
         let file = |name: &str, cols: &[(&str, Kind)], rows: &[Vec<Val>]| {
             fs::rename(put(&dir.join("t"), name, 0, cols, rows), dir.join(format!("{name}.parquet"))).unwrap();
         };
@@ -834,7 +889,7 @@ mod tests {
                                                 "farmer": {"ratio": 0.05, "min_trades": 2, "window_ms": 86_400_000}}).to_string()).unwrap();
     }
 
-    fn edit_meta(dir: &Path, f: impl FnOnce(&mut Value)) {
+    pub(crate) fn edit_meta(dir: &Path, f: impl FnOnce(&mut Value)) {
         let mut v: Value = serde_json::from_slice(&fs::read(dir.join("meta.json")).unwrap()).unwrap();
         f(&mut v);
         fs::write(dir.join("meta.json"), v.to_string()).unwrap();
@@ -868,7 +923,7 @@ mod tests {
              u(30), u(900_000), Val::Null, u(30_000), u(700_000), Val::Null, u(20_000), s("T"), s(PUMP), args.map_or(Val::Null, s)]
     }
 
-    fn pool_cols(specific: &[&'static str]) -> Vec<(&'static str, Kind)> {
+    pub(crate) fn pool_cols(specific: &[&'static str]) -> Vec<(&'static str, Kind)> {
         let mut c = vec![("slot", Kind::U64), ("tx_index", Kind::U64), ("outer_ix", Kind::U64), ("inner_ix", Kind::U64), ("pool", Kind::Utf8),
                          ("user", Kind::Utf8), ("outer_program", Kind::Utf8), ("parent_ix_disc", Kind::Utf8),
                          ("pool_base_token_reserves", Kind::U64), ("pool_quote_token_reserves", Kind::U64),
@@ -879,12 +934,12 @@ mod tests {
         c
     }
 
-    const BUY: [&str; 6] = ["base_amount_out", "quote_amount_in_with_lp_fee", "user_quote_amount_in", "quote_amount_in", "max_quote_amount_in",
-                            "min_base_amount_out"];
-    const SELL: [&str; 4] = ["base_amount_in", "quote_amount_out_without_lp_fee", "user_quote_amount_out", "min_quote_amount_out"];
+    pub(crate) const BUY: [&str; 6] = ["base_amount_out", "quote_amount_in_with_lp_fee", "user_quote_amount_in", "quote_amount_in",
+                                       "max_quote_amount_in", "min_base_amount_out"];
+    pub(crate) const SELL: [&str; 4] = ["base_amount_in", "quote_amount_out_without_lp_fee", "user_quote_amount_out", "min_quote_amount_out"];
 
     /// A pool trade of `base` against `quote` (fees 20/5, no coin creator, virtual quote 7).
-    fn ptrade(slot: u64, pool: &str, trader: &str, disc: Option<&str>, base: u64, quote: u64, sell: bool) -> Vec<Val> {
+    pub(crate) fn ptrade(slot: u64, pool: &str, trader: &str, disc: Option<&str>, base: u64, quote: u64, sell: bool) -> Vec<Val> {
         let mut r = vec![u(slot), u(0), u(0), u(2), s(pool), s(trader), s(PUMP_AMM), disc.map_or(Val::Null, s), u(1_000_000), u(500_000),
                          u(20), u(5), s(DEFAULT_KEY), u(5), s("7"), Val::Null];
         if sell {
@@ -898,7 +953,7 @@ mod tests {
     /// Two chunks of the store, [1000, 2000) at 400 ms a slot (h24 216,000) and [2000, 3000) at 100 s a slot (h24 864):
     /// a curve trade of M1 and one of an unknown mint; P1 trades of B and of the wash trader W (buy 1200, sell 1300,
     /// buy 1400, sell 2100), a P3 buy, a PX buy and a boost-crank inner buy; a P1 boost and withdraw.
-    fn chunks(root: &Path) {
+    pub(crate) fn chunks(root: &Path) {
         let c1 = root.join("1000-2000");
         let c2 = root.join("2000-3000");
         for (dir, lo, hi) in [(&c1, 1000, 2000), (&c2, 2000, 3000)] {
