@@ -92,17 +92,25 @@ def workers():
     return n
 
 
-_POOL = [None]
+_POOL = [None, 0]  # the fork pool and its size
 _CI_CACHE = {}
 
 
 def _pool(n):
-    if _POOL[0] is None or _POOL[0]._processes != n:
+    """The pool of n processes for the draws; main() creates it before duckdb.connect() (a fork after DuckDB's
+    threads exist may deadlock), day_ci only reuses it or, outside main (tests), creates it on demand."""
+    if _POOL[0] is None or _POOL[1] != n:
         import multiprocessing as mp
-        if _POOL[0] is not None:
-            _POOL[0].close()
-        _POOL[0] = mp.get_context("fork").Pool(n)
+        close_pool()
+        _POOL[0], _POOL[1] = mp.get_context("fork").Pool(n), n
     return _POOL[0]
+
+
+def close_pool():
+    if _POOL[0] is not None:
+        _POOL[0].close()
+        _POOL[0].join()
+        _POOL[0], _POOL[1] = None, 0
 
 
 def _draws(args):
@@ -430,14 +438,19 @@ def main():
     ap.add_argument("--boot", type=int, default=BOOT)
     ap.add_argument("--out")
     a = ap.parse_args()
-    con = duckdb.connect()
-    con.execute(f"SET memory_limit = '{os.environ.get('LAB_WALLETS_MEMORY', '1500MB')}'; SET threads TO 2")
-    spill = os.environ.get("LAB_SPILL_DIR")
-    if spill:
-        os.makedirs(spill, exist_ok=True)
-        con.execute(f"SET temp_directory = '{spill}'; SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'")
-    load(con, a.markout)
-    md = render(con, a.markout, a.boot, a.parts, a.cfg, a.ms_per_slot)
+    if workers() > 1:
+        _pool(workers())  # before DuckDB starts its threads
+    try:
+        con = duckdb.connect()
+        con.execute(f"SET memory_limit = '{os.environ.get('LAB_WALLETS_MEMORY', '1500MB')}'; SET threads TO 2")
+        spill = os.environ.get("LAB_SPILL_DIR")
+        if spill:
+            os.makedirs(spill, exist_ok=True)
+            con.execute(f"SET temp_directory = '{spill}'; SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'")
+        load(con, a.markout)
+        md = render(con, a.markout, a.boot, a.parts, a.cfg, a.ms_per_slot)
+    finally:
+        close_pool()
     if a.out:
         with open(a.out, "w") as f:
             f.write(md + "\n")

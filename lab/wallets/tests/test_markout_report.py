@@ -162,3 +162,5 @@ def test_day_ci_parallel_is_bit_identical(monkeypatch):
     r._CI_CACHE.clear()
     assert r.day_ci(v, days, boot=600) == serial
     assert r.day_ci(v, days, boot=600, seed=8) != serial  # another seed is another key, not a cache hit
+    r.close_pool()
+    assert r._POOL == [None, 0]
