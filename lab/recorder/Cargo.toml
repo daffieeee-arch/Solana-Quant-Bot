@@ -27,10 +27,11 @@ solana-message = "4"
 solana-transaction = "4"
 solana-transaction-status = "4"
 futures = "0.3"
-# Yellowstone gRPC, pinned exactly: client 14.0.1 speaks proto 13.0.0 (Dragon's Mouth; tonic 0.14
-# and prost 0.14, already in the extractor's tree). No solana-* crates beyond solana-pubkey ^4.
-yellowstone-grpc-client = "=14.0.1"
-yellowstone-grpc-proto = { version = "=13.0.0", default-features = false, features = ["tonic", "tonic-compression"] }
+# Yellowstone gRPC, pinned exactly: client 15.0.0 speaks proto 14.0.1 (Dragon's Mouth; tonic 0.14
+# and prost 0.14, already in the extractor's tree), the versions Triton names for Alpenglow. No solana-*
+# crates beyond solana-pubkey ^4.
+yellowstone-grpc-client = "=15.0.0"
+yellowstone-grpc-proto = { version = "=14.0.1", default-features = false, features = ["tonic", "tonic-compression"] }
 
 [profile.release]
 debug = 0

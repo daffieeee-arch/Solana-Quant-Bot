@@ -183,7 +183,7 @@ target/release/lab-recorder --root /tmp/rec-dry --watchlist <watchlist-current.j
 ```
 
 `Cargo.lock` started as a copy of the extractor's and only adds the Yellowstone crates
-(`yellowstone-grpc-client =14.0.1`, `yellowstone-grpc-proto =13.0.0`, `tonic-health`, vendored
+(`yellowstone-grpc-client =15.0.0`, `yellowstone-grpc-proto =14.0.1`, `tonic-health`, vendored
 `protoc`); every Agave/Jetstreamer version is the extractor's.
 
 Probe costs, measured in the store (one day of epoch 1046): 57% of all trades of same-day reversed
