@@ -5,7 +5,9 @@ Step 1, `aggregate` (NAS: one scan of the pool legs): per (pool, UTC hour) the t
 (sol_amount, the SOL side of every leg), unique traders and buyers, net SOL inflow (token buys - token sells, in SOL),
 farmer trades and SOL, the first and last leg, the end-of-hour state (sol_depth, b, e, vq, bps) and, per threshold D
 in THRESHOLDS (SOL), the first leg at which the hour's cumulative SOL volume reaches D: its slot and tx_index, the
-unique traders up to and including that leg, and the SOL depth after it. Only hours with >= 1 trade. The hour is the
+unique traders up to and including that leg, and the SOL depth after it. Every 'state at a leg' (end state, threshold
+leg) keys on the full block order (slot, tx_index, outer_ix, inner_ix): a round-trip transaction has two trade legs with
+the same (slot, tx_index), and a key on those two alone would pick one of them arbitrarily (per thread count or bucket). Only hours with >= 1 trade. The hour is the
 UTC hour of the leg's block time (blocks.block_time), so an hour row can span two UTC days at an epoch edge only through
 the slot bounds of a smoke (`--from-slot` / `--to-slot` cut hours, flagged in the run json).
 
@@ -16,7 +18,8 @@ created_in_period, create_slot, mayhem, coin_creator, b0, q0) and <out>/run-aggr
 key-hash bucket of the pool (LAB_MARKOUT_BUCKETS-style, `--buckets`), the union over the buckets is the unbucketed
 result; one bucket on the VPS smoke, 8-16 on the NAS. Slots stay before the hold-out (common.guard).
 
-Steps 2 and 3 (`detect`: sleeping pools and revivals on the aggregate; markout on the signals) come after this job.
+The NAS script skips the aggregate when pool_hour.parquet exists (resumable), so a run on a new commit needs a fresh
+REVIVAL_DIR. Steps 2 and 3 (`detect`: sleeping pools and revivals on the aggregate; markout on the signals) come after this job.
 """
 import argparse
 import json
@@ -56,7 +59,7 @@ def legs_sql(lo, hi, bucket, nb):
     if nb > 1:
         where.append(f"hash(p.pool) % {nb} = {bucket}")
     return f"""
-      SELECT pool, slot, tx_index, trader, token_buy, sol_amount, sol_depth, b, e, vq, bps, farmer, hour,
+      SELECT pool, slot, tx_index, outer_ix, inner_ix, trader, token_buy, sol_amount, sol_depth, b, e, vq, bps, farmer, hour,
              sum(sol_amount) OVER w - sol_amount AS cum_before, sum(sol_amount) OVER w AS cum
       FROM (SELECT p.pool, p.slot::BIGINT AS slot, p.tx_index, p.outer_ix, p.inner_ix, p.trader, p.token_buy,
                    COALESCE(p.sol_amount, 0)::BIGINT AS sol_amount, p.sol_depth, p.b, p.e, p.vq,
@@ -73,9 +76,9 @@ def hour_sql(legs="legs"):
     for d in THRESHOLDS:
         lam = d * SOL
         thr += [f"min(slot) FILTER (WHERE cum >= {lam}) AS t{d}_slot",
-                f"arg_min(tx_index, (slot, tx_index)) FILTER (WHERE cum >= {lam}) AS t{d}_tx",
+                f"arg_min(tx_index, (slot, tx_index, outer_ix, inner_ix)) FILTER (WHERE cum >= {lam}) AS t{d}_tx",
                 f"count(DISTINCT trader) FILTER (WHERE cum_before < {lam}) AS t{d}_traders",
-                f"arg_min(sol_depth, (slot, tx_index)) FILTER (WHERE cum >= {lam}) AS t{d}_depth"]
+                f"arg_min(sol_depth, (slot, tx_index, outer_ix, inner_ix)) FILTER (WHERE cum >= {lam}) AS t{d}_depth"]
     return f"""
       SELECT pool, hour, count(*) AS trades, count(*) FILTER (WHERE token_buy) AS buys, count(*) FILTER (WHERE NOT token_buy) AS sells,
              sum(sol_amount) AS sol_volume, COALESCE(sum(sol_amount) FILTER (WHERE token_buy), 0) AS sol_buy,
@@ -84,8 +87,8 @@ def hour_sql(legs="legs"):
              count(DISTINCT trader) AS traders, count(DISTINCT trader) FILTER (WHERE token_buy) AS buyers,
              count(*) FILTER (WHERE farmer) AS farmer_trades, COALESCE(sum(sol_amount) FILTER (WHERE farmer), 0) AS farmer_sol,
              min(slot) AS first_slot, max(slot) AS last_slot,
-             arg_max(sol_depth, (slot, tx_index)) AS end_depth, arg_max(b, (slot, tx_index)) AS end_b,
-             arg_max(e, (slot, tx_index)) AS end_e, arg_max(vq, (slot, tx_index)) AS end_vq, arg_max(bps, (slot, tx_index)) AS end_bps,
+             arg_max(sol_depth, (slot, tx_index, outer_ix, inner_ix)) AS end_depth, arg_max(b, (slot, tx_index, outer_ix, inner_ix)) AS end_b,
+             arg_max(e, (slot, tx_index, outer_ix, inner_ix)) AS end_e, arg_max(vq, (slot, tx_index, outer_ix, inner_ix)) AS end_vq, arg_max(bps, (slot, tx_index, outer_ix, inner_ix)) AS end_bps,
              {', '.join(thr)}
       FROM {legs} GROUP BY pool, hour"""
 

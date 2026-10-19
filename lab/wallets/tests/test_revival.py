@@ -35,8 +35,16 @@ def _store(path):
         ("buy", "P", SLOT0 + 12, 1, 0, 0, "c", True, 0, 111 * SOL, 1, 2, 3, 20, 5, 0, False),   # earlier tx in the slot, zero SOL (order check)
         ("sell", "P", SLOT0 + 15, 1, 0, 0, "a", False, 2 * SOL, 109 * SOL, 9, 8, 7, 20, 5, 0, True),
         ("withdraw", "P", SLOT0 + 16, 1, 0, 0, "lp", None, None, 50 * SOL, 1, 2, 3, None, None, None, None),  # not a trade
-        # P, hour A + 1: one sell
+        # P, hour A + 1: one sell, then a round-trip transaction (buy 3 SOL, sell 3 SOL in one tx: two legs with the same
+        # (slot, tx_index), ordered by outer_ix / inner_ix): the hour ends at the sell leg (depth 48), the 10 SOL threshold
+        # is never reached, and the end state must not depend on which of the two legs a (slot, tx_index) key would pick
         ("sell", "P", SLOT0 + 21, 1, 0, 0, "d", False, 1 * SOL, 49 * SOL, 1, 2, 3, 20, 5, 0, False),
+        ("buy", "P", SLOT0 + 25, 4, 2, 0, "rt", True, 3 * SOL, 52 * SOL, 5, 5, 5, 20, 5, 0, False),
+        ("sell", "P", SLOT0 + 25, 4, 2, 1, "rt", False, 3 * SOL, 48 * SOL, 6, 6, 6, 20, 5, 0, False),
+        # R, hour A + 1: a round trip of 6 + 6 SOL crosses 10 SOL on its second leg: t10 keys on that leg (depth 118),
+        # traders up to it = 1
+        ("sell", "R", SLOT0 + 26, 7, 1, 0, "g", True, 6 * SOL, 124 * SOL, 1, 2, 3, 25, 5, 0, False),
+        ("buy", "R", SLOT0 + 26, 7, 1, 1, "g", False, 6 * SOL, 118 * SOL, 1, 2, 3, 25, 5, 0, False),
         # R (reversed; a token buy is a pool 'sell'), hour A: 30 SOL by one trader -> crosses 10 and 20 at once
         ("sell", "R", SLOT0 + 13, 2, 0, 0, "e", True, 30 * SOL, 130 * SOL, 1, 2, 3, 25, 5, 0, False),
         # X: not SOL-quoted, left out
@@ -60,7 +68,7 @@ def test_aggregate(tmp_path, monkeypatch):
     info = revival.aggregate(str(out), store=str(tmp_path / "mini.duckdb"))
     rows, cols = _rows(out)
     c = {n: i for i, n in enumerate(cols)}
-    assert set(rows) == {("P", hour_a), ("P", hour_a + 3600), ("R", hour_a)}
+    assert set(rows) == {("P", hour_a), ("P", hour_a + 3600), ("R", hour_a), ("R", hour_a + 3600)}
     p = rows[("P", hour_a)]
     assert (p[c["trades"]], p[c["buys"]], p[c["sells"]]) == (4, 3, 1)
     assert (p[c["sol_volume"]], p[c["sol_buy"]], p[c["sol_sell"]], p[c["net_inflow"]]) == (13 * SOL, 11 * SOL, 2 * SOL, 9 * SOL)
@@ -74,8 +82,12 @@ def test_aggregate(tmp_path, monkeypatch):
     assert (r[c["trades"]], r[c["buys"]], r[c["net_inflow"]], r[c["traders"]]) == (1, 1, 30 * SOL, 1)
     assert (r[c["t10_slot"]], r[c["t20_slot"]], r[c["t20_traders"]], r[c["t50_slot"]]) == (SLOT0 + 13, SLOT0 + 13, 1, None)
     p2 = rows[("P", hour_a + 3600)]
-    assert (p2[c["trades"]], p2[c["net_inflow"]], p2[c["end_depth"]]) == (1, -1 * SOL, 49 * SOL)
-    assert info["rows"] == 3 and info["sol_pools"] == 2 and info["hours_reaching"] == {"10": 2, "20": 1, "50": 0}
+    assert (p2[c["trades"]], p2[c["net_inflow"]], p2[c["sol_volume"]], p2[c["traders"]]) == (3, -1 * SOL, 7 * SOL, 2)
+    assert (p2[c["end_depth"]], p2[c["end_b"]], p2[c["end_e"]], p2[c["end_vq"]]) == (48 * SOL, 6, 6, 6) and p2[c["t10_slot"]] is None
+    r2 = rows[("R", hour_a + 3600)]
+    assert (r2[c["trades"]], r2[c["net_inflow"]], r2[c["t10_slot"]], r2[c["t10_tx"]], r2[c["t10_traders"]], r2[c["t10_depth"]], r2[c["end_depth"]]) == \
+        (2, 0, SLOT0 + 26, 7, 1, 118 * SOL, 118 * SOL)
+    assert info["rows"] == 4 and info["sol_pools"] == 2 and info["hours_reaching"] == {"10": 3, "20": 1, "50": 0}
     assert info["partial_edge_hours"] is False
     pools = duckdb.connect().execute(f"SELECT pool, orientation, created_in_period FROM read_parquet('{out}/pools.parquet') ORDER BY 1").fetchall()
     assert pools == [("P", "normal", False), ("R", "reversed", True)]
@@ -88,7 +100,7 @@ def test_buckets_and_bounds_equal(tmp_path, monkeypatch):
     four = revival.aggregate(str(tmp_path / "four"), buckets=4, store=str(tmp_path / "mini.duckdb"))
     a, _ = _rows(tmp_path / "one")
     b, _ = _rows(tmp_path / "four")
-    assert a == b and one["rows"] == four["rows"] == 3 and four["buckets"] == 4
+    assert a == b and one["rows"] == four["rows"] == 4 and four["buckets"] == 4
     # a smoke on slots [10, 20): hour A only, flagged as cut
     sm = revival.aggregate(str(tmp_path / "smoke"), lo=SLOT0 + 10, hi=SLOT0 + 20, store=str(tmp_path / "mini.duckdb"))
     s, _ = _rows(tmp_path / "smoke")

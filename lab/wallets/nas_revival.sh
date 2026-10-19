@@ -7,7 +7,7 @@
 # Tunables (env): MEMORY (DuckDB limit), BUCKETS (key-hash buckets; the union is the unbucketed result), THREADS,
 # REVIVAL_DIR (output, default $OUT/revival-v1), REVIVAL_ARGS (e.g. "--from-slot A --to-slot B" for a smoke).
 # Output: $REVIVAL_DIR/pool_hour.parquet, pools.parquet, run-aggregate.json; progress per bucket in $REVIVAL_DIR/log/aggregate.log.
-# Resumable: an existing pool_hour.parquet is not rebuilt.
+# Resumable: an existing pool_hour.parquet is not rebuilt, so a run on a new commit needs a fresh REVIVAL_DIR.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
