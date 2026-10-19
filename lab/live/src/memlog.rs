@@ -106,7 +106,9 @@ impl Hist {
 /// chunk or segment being emitted, and the engines' and the replay's state.
 pub fn group(name: &str) -> &'static str {
     match name {
-        "universe_tokens" | "universe_sol_markets" | "grad_tokens" | "grad_sol_markets" | "curve_hold" | "interned_keys" => "snapshot",
+        "universe_tokens" | "universe_sol_markets" | "grad_tokens" | "grad_sol_markets" | "curve_hold" | "interned_keys" | "block_times" => {
+            "snapshot"
+        }
         "legs_buffer" => "legs_buffer",
         _ => "state",
     }
@@ -251,7 +253,8 @@ mod tests {
         assert_eq!((l["time_ns"]["n"].as_u64(), l["time_ns"]["max"].as_u64()), (Some(4), Some(11)));
         assert_eq!(l["structures"], json!({"a": {"entries": 1, "bytes_est": 8, "group": "state"}, "b": {"entries": 2, "bytes_est": 16, "group": "state"}}));
         assert!(l["sqlite_bytes"].is_i64());
-        assert_eq!([group("curve_hold"), group("interned_keys"), group("legs_buffer"), group("recent_legs")], ["snapshot", "snapshot", "legs_buffer", "state"]);
+        assert_eq!([group("curve_hold"), group("interned_keys"), group("block_times"), group("legs_buffer"), group("recent_legs")],
+                   ["snapshot", "snapshot", "snapshot", "legs_buffer", "state"]);
         assert!(l["heap_bytes"].as_u64().unwrap() > 0 && l["rss_bytes"].as_u64().unwrap() > 0);
         assert_eq!((lines[1]["minute"].as_i64(), lines[1]["time_ns"]["n"].as_u64(), lines[1]["events"].as_u64()), (Some(11), Some(1), Some(5)));
         assert_eq!((lines[2]["end"].as_bool(), lines[2]["minute"].as_i64(), lines[2]["time_ns"]["n"].as_u64()), (Some(true), Some(11), Some(5)));
