@@ -28,8 +28,9 @@ pub const DAY_MS: f64 = 86_400_000.0;
 pub const REF_MS: f64 = 267.3;
 
 /// One interner for every pubkey: ids are dense, the snapshot's keys first. Each key is stored once, in one buffer
-/// (`ends[i]` is the end of key i); the table holds only ids and finds a key through the buffer (~54 B a 44-character
-/// key, against ~160 B for a map of owned strings plus a list of them).
+/// (`ends[i]` is the end of key i); the table holds only ids and finds a key through the buffer: ~50 B a 44-character
+/// key plus the buffer's and the table's growth slack (up to ~2x), against ~160-200 B for a map of owned strings plus
+/// a list of them.
 #[derive(Default)]
 pub struct Keys {
     table: HashTable<Id>,

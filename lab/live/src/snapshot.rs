@@ -87,6 +87,8 @@ pub struct Snapshot {
     pub chunks: Vec<StoreChunk>,
     /// The farmer history of a replay (meta.json `farm_hist`, the file farm_hist.parquet).
     pub farm_hist: Option<FarmHistMeta>,
+    /// The store's farmer rule (meta.json `farmer`: ratio, min_trades, window_ms), as the store computed its flags.
+    pub farmer: Value,
 }
 
 /// One chunk the store was built from: its slots, the extractor build that wrote it, and its farmer h24 as the store
@@ -186,6 +188,7 @@ impl Snapshot {
             pool_slots: (slot(&meta["pool_slots"][0], "pool_slots")?, slot(&meta["pool_slots"][1], "pool_slots")?),
             store_slots: meta["store_slots"][0].as_u64().zip(meta["store_slots"][1].as_u64()),
             version: meta["snapshot_version"].as_u64().unwrap_or(1),
+            farmer: meta["farmer"].clone(),
             ..Default::default()
         };
         if with_seed || !meta["farm_seed"].is_null() {

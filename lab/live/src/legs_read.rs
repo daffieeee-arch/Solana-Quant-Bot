@@ -29,6 +29,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// Epochs 1055-1063: the clean test period, locked (like the hold-out, never replayed here).
+const CLEAN: (u64, u64) = (455_760_000, 459_648_000);
+
 /// The snapshot's keys and what the feed admits: curve rows of its mints, pool rows of its SOL markets (with their
 /// orientation). Interned first, so their ids are dense from 0.
 pub struct Admission {
@@ -671,6 +674,9 @@ pub fn run(a: &LegsArgs) -> Result<Value> {
     if a.from < HOLDOUT.1 && a.to > HOLDOUT.0 {
         bail!("[{}, {}) overlaps the hold-out [{}, {}): it is never read", a.from, a.to, HOLDOUT.0, HOLDOUT.1);
     }
+    if a.from < CLEAN.1 && a.to > CLEAN.0 {
+        bail!("[{}, {}) overlaps the clean period [{}, {}) (epochs 1055-1063): it stays locked", a.from, a.to, CLEAN.0, CLEAN.1);
+    }
     let mut snap = Snapshot::load_universe(&a.snapshot)?;
     let (store_lo, store_hi) = snap.store_slots.context("the snapshot's meta.json has no store_slots")?;
     if a.from < store_lo || a.to > store_hi {
@@ -678,6 +684,10 @@ pub fn run(a: &LegsArgs) -> Result<Value> {
     }
     if snap.version < 2 || snap.chunks.is_empty() {
         bail!("the snapshot (version {}) has no chunk_list: export it again with paper.snapshot_export (snapshot_version 2)", snap.version);
+    }
+    // the rule FarmHist computes: n >= 2 and 20 |net| < gross over a day of slots
+    if snap.farmer != json!({"ratio": 0.05, "min_trades": 2, "window_ms": 86_400_000}) {
+        bail!("the store's farmer rule {} is not the one lab-live computes (ratio 0.05, 2 trades, a day)", snap.farmer);
     }
     let store_chunks = std::mem::take(&mut snap.chunks);
     let farm_meta = snap.farm_hist;
@@ -690,9 +700,10 @@ pub fn run(a: &LegsArgs) -> Result<Value> {
     for p in &emit {
         let c = store_chunks.iter().find(|c| (c.lo, c.hi) == (p.lo, p.hi))
             .with_context(|| format!("chunk {} ([{}, {})) is not one of the store's chunks", p.dir.display(), p.lo, p.hi))?;
+        let want = c.extractor_sha256.as_deref().with_context(|| format!("the store names no extractor build for chunk {}-{}", c.lo, c.hi))?;
         let sha = manifest_sha(p)?;
-        if sha != c.extractor_sha256 {
-            bail!("chunk {}: extractor_sha256 {sha:?}, the store was built from {:?}", p.dir.display(), c.extractor_sha256);
+        if sha.as_deref() != Some(want) {
+            bail!("chunk {}: extractor_sha256 {sha:?}, the store was built from {want}", p.dir.display());
         }
         let bl = Blocks::read(p)?;
         if bl.h24 != c.h24 {
@@ -819,7 +830,8 @@ mod tests {
                                                 "farm_seed": {"lo": 2000, "hi": 3000, "h24": 1000}, "snapshot_version": 2,
                                                 "chunk_list": [{"slots": [1000, 2000], "extractor_sha256": "S"},
                                                                {"slots": [2000, 3000], "extractor_sha256": "S"}],
-                                                "chunk_h24": [[1000, 2000, 216_000], [2000, 3000, 864]]}).to_string()).unwrap();
+                                                "chunk_h24": [[1000, 2000, 216_000], [2000, 3000, 864]],
+                                                "farmer": {"ratio": 0.05, "min_trades": 2, "window_ms": 86_400_000}}).to_string()).unwrap();
     }
 
     fn edit_meta(dir: &Path, f: impl FnOnce(&mut Value)) {
@@ -982,6 +994,8 @@ mod tests {
         let err = |a: LegsArgs| format!("{:#}", run(&a).unwrap_err());
         assert!(err(args(&root, HOLDOUT.0 - 10, HOLDOUT.0 + 10)).contains("hold-out"));
         assert!(err(args(&root, HOLDOUT.1 - 1, HOLDOUT.1 + 10)).contains("hold-out"));
+        assert!(err(args(&root, CLEAN.0 - 10, CLEAN.0 + 10)).contains("clean period"));
+        assert!(err(args(&root, CLEAN.1 - 1, CLEAN.1 + 10)).contains("clean period"));
         assert!(err(args(&root, 900, 2000)).contains("store period"));
         assert!(err(args(&root, 1000, 3001)).contains("store period"));
         assert!(err(args(&root, 1500, 3000)).contains("farmer history")); // windows reach back to the store's start
@@ -1051,6 +1065,13 @@ mod tests {
         edit_meta(&snap, |v| v["chunk_h24"][1][2] = json!(864));
         edit_meta(&snap, |v| v["chunk_list"][1]["extractor_sha256"] = json!("T")); // another extraction
         assert!(err(args(&root, 1000, 3000)).contains("extractor_sha256"));
+        edit_meta(&snap, |v| v["chunk_list"][1]["extractor_sha256"] = Value::Null); // a store that names none
+        assert!(err(args(&root, 1000, 3000)).contains("no extractor build"));
+        edit_meta(&snap, |v| v["chunk_list"][1]["extractor_sha256"] = json!("S"));
+        edit_meta(&snap, |v| v["farmer"]["ratio"] = json!(0.1)); // another farmer rule
+        assert!(err(args(&root, 1000, 3000)).contains("farmer rule"));
+        edit_meta(&snap, |v| v["farmer"]["ratio"] = json!(0.05));
+        assert!(run(&args(&root, 1000, 3000)).is_ok());
         edit_meta(&snap, |v| {
             v["chunk_list"][1] = json!({"slots": [2000, 3500], "extractor_sha256": "S"});
             v["chunk_h24"][1] = json!([2000, 3500, 864]);

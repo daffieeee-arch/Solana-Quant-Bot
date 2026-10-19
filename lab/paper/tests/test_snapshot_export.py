@@ -153,7 +153,9 @@ def test_the_farmer_history_is_the_stores_over_h0_to_from_for_the_keys_that_trad
         con.close()
 
 
-def test_a_history_range_outside_the_store_is_refused(hist, tmp_path):
-    _, _, store_meta, _ = hist
+def test_a_history_range_outside_the_store_is_refused_and_leaves_an_export_as_it_was(hist, tmp_path):
+    out, meta, store_meta, _ = hist
+    before = {f.name: f.stat().st_mtime_ns for f in out.iterdir()}
     with pytest.raises(ValueError, match="store period"):
-        export(STORE, str(tmp_path), history=(store_meta["slot_end_exclusive"] - 10, store_meta["slot_end_exclusive"] + 10), seed=False)
+        export(STORE, str(out), history=(store_meta["slot_end_exclusive"] - 10, store_meta["slot_end_exclusive"] + 10), seed=False)
+    assert {f.name: f.stat().st_mtime_ns for f in out.iterdir()} == before and json.load(open(out / "meta.json")) == meta

@@ -87,9 +87,6 @@ def export(store, out, history=None, seed=True):
     """The snapshot of `store` into `out`; history=(from, to) adds farm_hist.parquet for a replay of [from, to);
     seed=False leaves farm_seed out."""
     os.makedirs(out, exist_ok=True)
-    for name in ("farm_seed", "farm_hist"):  # never a file of an earlier export that meta.json does not describe
-        if os.path.exists(os.path.join(out, f"{name}.parquet")):
-            os.remove(os.path.join(out, f"{name}.parquet"))
     con = streams.open_store(store, threads=2, memory="1GB")
     try:
         start, end = con.execute("SELECT min(slot), max(slot) + 1 FROM pool").fetchone()
@@ -98,6 +95,7 @@ def export(store, out, history=None, seed=True):
         lo = max(start, end - h24)
         store_meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
         s0, s1 = store_meta["slot_start"], store_meta["slot_end_exclusive"]
+        ms_per_slot, farmer = store_meta["ms_per_slot"], store_meta["farmer"]
         chunks = [[int(c["slots"][0]), int(c["slots"][1]), chunk_h24(con, *c["slots"])] for c in store_meta["chunk_list"]]
         hist = None
         if history is not None:
@@ -109,6 +107,11 @@ def export(store, out, history=None, seed=True):
                 if _overlaps(h0, b, period):
                     raise ValueError(f"history range [{h0}, {b}) touches the {name} [{period[0]}, {period[1]})")
             hist = {"lo": h0, "hi": a, "to": b}
+        # Checked: now the directory changes. meta.json goes first and comes back last, so a refused or broken export
+        # never leaves a meta.json that describes other files (the readers refuse a directory without one).
+        for name in ("meta.json", "farm_seed.parquet", "farm_hist.parquet"):
+            if os.path.exists(os.path.join(out, name)):
+                os.remove(os.path.join(out, name))
         counts = {}
         for name, sql in (("mints", MINTS), ("pools", POOLS)):
             counts[name] = _copy(con, out, name, sql)
@@ -121,7 +124,7 @@ def export(store, out, history=None, seed=True):
         con.close()
     meta = {"store": os.path.abspath(store), "store_slots": [s0, s1], "store_commit": store_meta.get("git_commit"),
             "pool_slots": [start, end], "counts": counts, "snapshot_version": SNAPSHOT_VERSION, "meta_bounds": meta_bounds,
-            "ms_per_slot": store_meta["ms_per_slot"], "farmer": store_meta["farmer"], "chunk_list": store_meta["chunk_list"],
+            "ms_per_slot": ms_per_slot, "farmer": farmer, "chunk_list": store_meta["chunk_list"],
             "chunk_h24": chunks, "exported_unix": int(time.time())}
     if seed:
         meta["farm_seed"] = {"lo": lo, "hi": end, "h24": h24}

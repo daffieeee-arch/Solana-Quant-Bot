@@ -15,7 +15,8 @@
 #                test_snapshot_export (the export's meta and farmer history, on dev2) and test_lab_live_legs (lab-live legs
 #                against paper.legs_dump: every event ReplayFeed hands the engine, by count and sha256 per 10,000-slot
 #                window), on the whole of fwd1053 (~15 min) and, with the store's farmer history from before it, on the
-#                dev chunk 450144000-450360000 of dev2 (LEGS_DEV=0 skips it; ~20 min). Then the baseline and gate of the
+#                dev chunk 450144000-450360000 of dev2 (LEGS_DEV=0 skips it; ~20 min) and on the arm-parity range
+#                450128159-450380000 (three chunks, a start inside a chunk; LEGS_ARM=0 skips it; ~15 min). Then the baseline and gate of the
 #                in-memory read (LAB review on #319 and #367): 1/16, 1/8 and the four quarters of the dev chunk
 #                450144000-450360000, one lab-live run each, one job.log line each (rows, fraction, key ties,
 #                duplicate keys, read and sort time, peak RSS, bytes per row) and an extrapolation to the whole chunk,
@@ -74,17 +75,21 @@ cd "$REPO/lab"
 # The snapshot test exports a store (fwd1053: a seed day of ~21 M trades) and sorts it in DuckDB: its files and spill go
 # under this job's directory, not the container's /tmp (removed when green, kept for a look when red).
 export LAB_SPILL_DIR=$OUT/spill LAB_SPILL_MAX=16GB LAB_LIVE_MEASURE_LOG=$OUT/job.log  # the snapshot's peak RSS into job.log
+export LAB_LEGS_REQUIRE=1  # the legs parity fails, never skips, on a missing store or binary
 "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-tmp" paper/tests/test_lab_live.py paper/tests/test_lab_live_snapshot.py \
   paper/tests/test_journal_schema.py paper/tests/test_journal_diff.py paper/tests/test_legs_dump.py \
   paper/tests/test_snapshot_export.py paper/tests/test_lab_live_legs.py 2>&1 | tee -a "$OUT/job.log" | tail -30
 rm -rf "$OUT/pytest-tmp" "$OUT/spill"
-if [ "${LEGS_DEV:-1}" = 1 ]; then
-  # M1 C1a-2: the dev chunk, a start inside dev2 whose farmer windows reach two chunks back (H0 449820226)
-  log "legs parity on the dev chunk of dev2"
-  LAB_LEGS_STORE=$DATA/store/dev2.duckdb LAB_LEGS_FROM=450144000 LAB_LEGS_TO=450360000 \
+# M1 C1a-2 on dev2: the dev chunk (a start whose farmer windows reach two chunks back, H0 449820226) and the arm-parity
+# range (paper.parity's feed for a = 450144000: three chunks, a start inside a chunk with history rows inside it)
+for case in dev:450144000:450360000:${LEGS_DEV:-1} arm:450128159:450380000:${LEGS_ARM:-1}; do
+  IFS=: read -r name a b on <<< "$case"
+  [ "$on" = 1 ] || continue
+  log "legs parity on dev2 [$a, $b) ($name)"
+  LAB_LEGS_STORE=$DATA/store/dev2.duckdb LAB_LEGS_FROM=$a LAB_LEGS_TO=$b \
     "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-tmp" paper/tests/test_lab_live_legs.py 2>&1 | tee -a "$OUT/job.log" | tail -30
   rm -rf "$OUT/pytest-tmp" "$OUT/spill"
-fi
+done
 if [ "${BASELINE:-1}" = 1 ]; then
   # The baseline and gate of the in-memory read (LAB review on #367). One dev chunk (216,000 slots, 15.5 M rows) does
   # not fit this runner's 24 GB in memory (job 99u: killed after 33 s): streaming is a precondition for M1 parity on

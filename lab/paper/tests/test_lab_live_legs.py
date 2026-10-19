@@ -30,7 +30,10 @@ BIN = os.environ.get("LAB_LIVE_BIN", "")
 STORE = os.environ.get("LAB_LEGS_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/fwd1053.duckdb")
 HOLDOUT = (452304000, 454464000)
 
-pytestmark = pytest.mark.skipif(not (BIN and os.access(BIN, os.X_OK)), reason="set LAB_LIVE_BIN to the built lab-live (NAS)")
+REQUIRE = os.environ.get("LAB_LEGS_REQUIRE") == "1"  # nas_m1a.sh: a missing binary, store or chunk fails, never skips
+
+pytestmark = pytest.mark.skipif(not (BIN and os.access(BIN, os.X_OK)) and not REQUIRE,
+                                reason="set LAB_LIVE_BIN to the built lab-live (NAS)")
 
 
 def _measure(line):
@@ -42,7 +45,7 @@ def _measure(line):
 @pytest.fixture(scope="module")
 def store_meta():
     if not os.path.exists(STORE):
-        pytest.skip(f"no store at {STORE}")
+        (pytest.fail if REQUIRE else pytest.skip)(f"no store at {STORE}")
     con = duckdb.connect(STORE, read_only=True)
     try:
         return json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
