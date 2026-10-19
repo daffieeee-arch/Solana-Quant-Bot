@@ -83,7 +83,9 @@ pub fn true_div(n: i128, d: i128) -> f64 {
     let extra = bits(q) - MANT; // 2 or 3 bits to round away
     debug_assert!(extra == 2 || extra == 3, "{extra}");
     let mask = 1u128 << (extra - 1);
-    let low = (q & (2 * mask - 1)) | u128::from(inexact);
+    // the bits to round away, the half bit (mask), the sticky bits below it and the last kept bit (2 * mask): CPython
+    // takes the whole low digit, so a tie sees whether the kept part is odd (LAB review on #374)
+    let low = (q & (4 * mask - 1)) | u128::from(inexact);
     if low & mask != 0 && low & (3 * mask - 1) != 0 {
         q += mask; // round half to even: above half, or exactly half with an odd last kept bit
     }
@@ -190,9 +192,34 @@ mod tests {
         (3845052097659395125894, 59859223120, 0x422de96607f27185),
     ];
 
+    /// Exact ties (the quotient halfway between two f64): lab-py rounds them to the even neighbour. The first eight are
+    /// small (2^53 + 3 is 2^53 + 4, 2^53 + 1 is 2^53); the rest are (m + 1/2) * 2^e times k over k at random scales.
+    const TIES: [(i128, i128, u64); 20] = [
+        (9007199254740995, 1, 0x4340000000000002),
+        (27021597764222985, 3, 0x4340000000000002),
+        (1152921504606847360, 1, 0x43b0000000000002),
+        (9007199254740993, 1, 0x4340000000000000),
+        (18014398509481986, 1, 0x4350000000000000),
+        (18014398509481990, 1, 0x4350000000000002),
+        (-9007199254740995, 1, 0xc340000000000002),
+        (9007199254740995, -1, 0xc340000000000002),
+        (14385243481321580528, 632, 0x4354375b6a6ae768),
+        (4682015779936591404859392, 282, 0x448c205b63e8540e),
+        (1641785715696713481282650112, 162, 0x4520c41e7e5fe382),
+        (2903452557338029060, 130, 0x4353d63879f74d60),
+        (8172460749282509015040, 345, 0x43f48bdb817af708),
+        (103840562859320335700383242387456, 244, 0x46157c711f07a224),
+        (223523405277364105921953792, 63, 0x45077a87a114f27e),
+        (146257092192158047272960, 5, 0x4498c6e3e9a462ce),
+        (12904250573858523970535424, 756, 0x448cea8c64ffc604),
+        (2399941153614413140530244354048, 574, 0x45ab05052af2003c),
+        (300802573048699300714905600, 81, 0x4508931a7c213c12),
+        (13956791393201396736000, 1000, 0x43e8360f7a6d7ff4),
+    ];
+
     #[test]
     fn true_div_is_pythons() {
-        for (n, d, want) in TRUE_DIV {
+        for (n, d, want) in TRUE_DIV.into_iter().chain(TIES) {
             assert_eq!(true_div(n, d).to_bits(), want, "{n} / {d}");
             if n != 0 {
                 assert_eq!(true_div(-n, -d).to_bits(), want, "{n} / {d} negated twice"); // (0 / 5 is +0.0)
@@ -203,7 +230,8 @@ mod tests {
         assert!(std::panic::catch_unwind(|| true_div(1, 0)).is_err());
     }
 
-    /// The exact quotient's neighbours: true_div(n, d) is the f64 nearest to n / d, ties to even, by integer arithmetic.
+    /// The exact quotient's neighbours: true_div(n, d) is the f64 nearest to n / d, by integer arithmetic; on an exact tie
+    /// only the even neighbour (its last significand bit 0) counts as nearest.
     fn nearest(n: i128, d: i128, q: f64) -> bool {
         // n / d against the midpoints between q and its neighbours, for n, d > 0 and q = m * 2^e with m < 2^53
         let (m, e) = {
@@ -213,7 +241,8 @@ mod tests {
         };
         // |n / d - m 2^e| <= 2^(e-1) <=> |n 2^-e - m d| * 2 <= d (scaled to integers on the larger side)
         let (lhs, rhs) = if e >= 0 { (n, (i128::from(m) * d) << e) } else { (n << (-e), i128::from(m) * d) };
-        2 * (lhs - rhs).abs() <= (if e >= 0 { d << e } else { d })
+        let (twice, step) = (2 * (lhs - rhs).abs(), if e >= 0 { d << e } else { d });
+        twice < step || (twice == step && m % 2 == 0)
     }
 
     #[test]
@@ -227,6 +256,14 @@ mod tests {
             let d = i128::from(next() % 1_000_000_000_000 + 1);
             let n = (i128::from(next()) * i128::from(next() % 100_000 + 1)).max(d); // up to ~1.8e18, quotients >= 1
             assert!(nearest(n, d, true_div(n, d)), "{n} / {d}");
+        }
+        // and on constructed exact ties: (m + 1/2) * 2^e * k / k, odd and even m
+        for _ in 0..20_000 {
+            let m = i128::from(next() % (1 << 52)) + (1 << 52);
+            let e = (next() % 40 + 1) as u32;
+            let k = i128::from(next() % 1_000 + 1);
+            let n = k * ((2 * m + 1) << (e - 1));
+            assert!(nearest(n, k, true_div(n, k)), "tie {n} / {k}");
         }
     }
 }
