@@ -1,0 +1,3 @@
+# The golden cases of M1 C1b (data/c1b_signal_cases.json) are test data, not runtime data, which the root .gitignore
+# keeps out of Git in every data/ directory.
+!/data/

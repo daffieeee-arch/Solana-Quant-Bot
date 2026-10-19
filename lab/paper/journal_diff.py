@@ -2,7 +2,7 @@
 M3 of lab/docs/rust-live-route-design-2026-10-16.md §3), or any two runs of the same engine.
 
   python -m paper.journal_diff --journal-a <dir> --journal-b <dir> --out <dir> [--from-day D] [--to-day D]
-                                [--new-table NAME ...]
+                                [--new-table NAME ...] [--scope all|signals]
   python -m paper.parity --journal-a <dir> --journal-b <dir> --out <dir>          # the same
 
 First the schema: every table's columns, types and primary key (PRAGMA table_info) must be the same in both, so
@@ -15,6 +15,14 @@ labels, entry, fills, exit, proceeds, P&L, the exit windows. Not compared are th
 created_at, latency, segment lag), which two engines on one stream measure differently by design. Every
 difference is unexplained until a cause is named (`causes`, empty now). Green: 0 unexplained. Writes
 journal_diff.md and journal_diff.json; exit 1 when red.
+
+`--scope signals` is M1 C1b's comparison (research/m1-c1b-signals-spec-2026-10-19.md §1.3, §6.3): B is a journal of
+the Rust route that decides the signals only. Only the signals table counts, with the columns that follow from the
+stream alone and the farm gate a row stopped at (`gate`). Busy and the risk limits need positions (C2) and risk state
+(C3), so status and reason are not compared: a B row has a NULL status and reason, or is 'skipped' at a farm gate; any
+other B row is decided beyond C1b and unexplained. A's status among its rows that passed the farm gates is reported as
+decided in C2/C3. State 'groups' must be present and equal; 'cost_scenario' and 'feed' are only reported. Green: 0
+unexplained, the same schema, the same groups, and rows in both journals.
 """
 
 import argparse
@@ -22,6 +30,7 @@ import json
 import os
 import sqlite3
 import sys
+from collections import Counter
 
 # Per table: the key columns and the compared columns (the journal schema of paper/journal.py).
 TABLES = {
@@ -39,6 +48,37 @@ TABLES = {
 # State the two runs must share: the same groups and the same costs, or the comparison means nothing.
 STATE_KEYS = ("groups", "cost_scenario", "feed")
 SHOWN = 50
+# The signals scope (C1b): the signal columns that do not depend on positions (block_time, d_ms and farm_complete are
+# NULL in a replay, engine.py:656-659, 731-732), and the farm gates, which _signal checks before busy (engine.py:737-742).
+SIGNAL_COLS = ("day", "venue", "orientation", "depth", "trigger_trader", "farm", "pool_seen_slot", "farm_window_complete",
+               "block_time", "d_ms", "farm_complete")
+FARM_GATES = ("farm flagged", "farm history incomplete", "farm window incomplete")
+
+
+def gate(status, reason):
+    """The farm gate a signal row stopped at, or 'pass': what comes after the gates (busy, risk) is C2/C3's."""
+    return reason if status == "skipped" and reason in FARM_GATES else "pass"
+
+
+def signal_row(row):
+    """A signals row in the C1b projection: its key, SIGNAL_COLS and `gate`; status and reason ride along (reported)."""
+    return {**{c: row.get(c) for c in (*TABLES["signals"][0], *SIGNAL_COLS)}, "gate": gate(row.get("status"), row.get("reason")),
+            "status": row.get("status"), "reason": row.get("reason")}
+
+
+def _beyond_c1b(row):
+    """A Rust row decided further than C1b decides (spec D10): passed rows have a NULL status and reason, gated rows are
+    'skipped' with the gate as reason. Anything else (entered, busy, a risk reason) belongs to C2/C3."""
+    if row["status"] is None:
+        return row["reason"] is not None
+    return not (row["status"] == "skipped" and row["reason"] in FARM_GATES)
+
+
+def _decided(row):
+    """A's decision on a row that passed the farm gates, as the report counts it: entered, busy or risk: <reason>."""
+    if row["status"] == "entered" or row["status"] is None:
+        return row["status"] or "NULL"
+    return "busy" if row["reason"] == "busy" else f"risk: {row['reason']}"
 
 
 def _rows(path, table, keys, cols, lo_day, hi_day):
@@ -115,30 +155,63 @@ def compare(path_a, path_b, lo_day=None, hi_day=None, causes=(), new_tables=()):
     res["state_mismatch"] = [k for k in ("groups", "cost_scenario") if not res["state"][k]["equal"]]
     for table, (keys, cols) in TABLES.items():
         ra, rb = _rows(path_a, table, keys, cols, lo_day, hi_day), _rows(path_b, table, keys, cols, lo_day, hi_day)
-        only_a = sorted(k for k in ra if k not in rb)
-        only_b = sorted(k for k in rb if k not in ra)
-        diff = []
-        for k in sorted(set(ra) & set(rb)):
-            cols_diff = [c for c in cols if ra[k][c] != rb[k][c]]
-            if cols_diff:
-                diff.append((k, {c: [ra[k][c], rb[k][c]] for c in cols_diff}))
-        explained, unexplained = {}, 0
-        for k, row_a, row_b in ([(k, ra[k], None) for k in only_a] + [(k, None, rb[k]) for k in only_b]
-                                + [(k, ra[k], rb[k]) for k, _ in diff]):
-            cause = next((c for c in (f(table, k, row_a, row_b) for f in causes) if c), None)
-            if cause:
-                explained[cause] = explained.get(cause, 0) + 1
-            else:
-                unexplained += 1
-        res["tables"][table] = {"rows_a": len(ra), "rows_b": len(rb), "only_a": len(only_a), "only_b": len(only_b),
-                                "different": len(diff), "unexplained": unexplained, "explained": explained,
-                                "only_a_first": [list(k) for k in only_a[:SHOWN]], "only_b_first": [list(k) for k in only_b[:SHOWN]],
-                                "different_first": [{"key": list(k), "columns": c} for k, c in diff[:SHOWN]]}
-        res["unexplained"] += unexplained
-        for c, n in explained.items():
+        t = res["tables"][table] = _table_diff(table, ra, rb, cols, causes)
+        res["unexplained"] += t["unexplained"]
+        for c, n in t["explained"].items():
             res["explained"][c] = res["explained"].get(c, 0) + n
     res["green"] = res["unexplained"] == 0 and not res["state_mismatch"] and not res["schema_diff"] and any(
         t["rows_a"] for t in res["tables"].values())
+    return res
+
+
+def _table_diff(table, ra, rb, cols, causes):
+    """One table compared: {key: row} of A and B, rows only in one of them and rows that differ in `cols`; a difference
+    a cause in `causes` names is explained, every other one unexplained."""
+    only_a = sorted(k for k in ra if k not in rb)
+    only_b = sorted(k for k in rb if k not in ra)
+    diff = []
+    for k in sorted(set(ra) & set(rb)):
+        cols_diff = [c for c in cols if ra[k][c] != rb[k][c]]
+        if cols_diff:
+            diff.append((k, {c: [ra[k][c], rb[k][c]] for c in cols_diff}))
+    explained, unexplained = {}, 0
+    for k, row_a, row_b in ([(k, ra[k], None) for k in only_a] + [(k, None, rb[k]) for k in only_b]
+                            + [(k, ra[k], rb[k]) for k, _ in diff]):
+        cause = next((c for c in (f(table, k, row_a, row_b) for f in causes) if c), None)
+        if cause:
+            explained[cause] = explained.get(cause, 0) + 1
+        else:
+            unexplained += 1
+    return {"rows_a": len(ra), "rows_b": len(rb), "only_a": len(only_a), "only_b": len(only_b),
+            "different": len(diff), "unexplained": unexplained, "explained": explained,
+            "only_a_first": [list(k) for k in only_a[:SHOWN]], "only_b_first": [list(k) for k in only_b[:SHOWN]],
+            "different_first": [{"key": list(k), "columns": c} for k, c in diff[:SHOWN]]}
+
+
+def compare_signals(path_a, path_b, lo_day=None, hi_day=None, causes=(), new_tables=()):
+    """The signals scope (C1b) as a dict shaped like compare()'s: the signals table only, its SIGNAL_COLS and `gate`
+    compared. Unexplained are the differences no cause explains and every B row decided beyond C1b (`decided_beyond_c1b`).
+    `gates`: the rows per gate in A and B; `decided_in_c2_c3`: A's status among its rows that passed the gates."""
+    keys = TABLES["signals"][0]
+    res = {"scope": "signals", "a": path_a, "b": path_b, "days": [lo_day, hi_day], "tables": {}, "unexplained": 0,
+           "explained": {}, "schema_diff": schema_diff(path_a, path_b, new_tables),
+           "new_tables": new_tables_only(path_a, path_b, new_tables)}
+    sa, sb = _state(path_a), _state(path_b)
+    res["state"] = {k: {"a": sa.get(k), "b": sb.get(k), "equal": sa.get(k) == sb.get(k)} for k in STATE_KEYS}
+    # The Rust route writes the groups it read (the Python journal's), verbatim; it has no costs (C2).
+    res["state_mismatch"] = [] if sa.get("groups") is not None and res["state"]["groups"]["equal"] else ["groups"]
+    ra, rb = ({k: signal_row(dict(zip(keys, k), **r)) for k, r in _rows(path, "signals", keys, (*SIGNAL_COLS, "status", "reason"),
+                                                                         lo_day, hi_day).items()} for path in (path_a, path_b))
+    t = res["tables"]["signals"] = _table_diff("signals", ra, rb, (*SIGNAL_COLS, "gate"), causes)
+    beyond = sorted(k for k, r in rb.items() if _beyond_c1b(r))
+    t["decided_beyond_c1b"] = len(beyond)
+    t["decided_beyond_c1b_first"] = [{"key": list(k), "status": rb[k]["status"], "reason": rb[k]["reason"]} for k in beyond[:SHOWN]]
+    t["unexplained"] += len(beyond)
+    res["unexplained"], res["explained"] = t["unexplained"], dict(t["explained"])
+    res["gates"] = {side: dict(sorted(Counter(r["gate"] for r in rows.values()).items())) for side, rows in (("a", ra), ("b", rb))}
+    res["decided_in_c2_c3"] = dict(sorted(Counter(_decided(r) for r in ra.values() if r["gate"] == "pass").items()))
+    res["green"] = (res["unexplained"] == 0 and not res["state_mismatch"] and not res["schema_diff"] and t["rows_a"] > 0
+                    and t["rows_b"] > 0)
     return res
 
 
@@ -163,12 +236,47 @@ def report(res):
     return lines
 
 
-def run(journal_a, journal_b, out, lo_day=None, hi_day=None, new_tables=()):
-    res = compare(journal_a, journal_b, lo_day, hi_day, new_tables=new_tables)
+def report_signals(res):
+    """The signals scope's report: the counts, the gates, A's decisions C1b leaves to C2/C3, and the first differences."""
+    t, st = res["tables"]["signals"], res["state"]
+    lines = [f"# Journal diff, scope signals (C1b): {res['a']} against {res['b']}", "",
+             f"- days {res['days'][0] or 'all'} … {res['days'][1] or 'all'}; "
+             f"**{'GREEN' if res['green'] else 'RED'}**: {res['unexplained']} unexplained"
+             + (f", explained {res['explained']}" if res["explained"] else "")
+             + ("; state groups differs or is missing (it must be present and equal)" if res["state_mismatch"] else "")
+             + (f"; **schema differs**: {res['schema_diff']}" if res["schema_diff"] else "")
+             + (f"; expected new tables (--new-table): {res['new_tables']}" if res.get("new_tables") else ""),
+             f"- compared: the signals rows by (family, variant, key, t) on {', '.join(SIGNAL_COLS)} and gate; status and "
+             "reason are not (busy and risk: C2/C3)",
+             f"- rows per gate: A {res['gates']['a']}, B {res['gates']['b']}",
+             f"- decided in C2/C3 (A's status among its 'pass' rows): {res['decided_in_c2_c3']}",
+             f"- B rows decided beyond C1b (a status other than NULL or 'skipped' at a farm gate): {t['decided_beyond_c1b']}",
+             f"- state (reported): cost_scenario {'equal' if st['cost_scenario']['equal'] else 'differs'}; "
+             f"feed A {st['feed']['a']}, B {st['feed']['b']}",
+             "", "| table | rows A | rows B | only A | only B | different | decided beyond C1b | unexplained |",
+             "|---|---|---|---|---|---|---|---|",
+             f"| signals | {t['rows_a']} | {t['rows_b']} | {t['only_a']} | {t['only_b']} | {t['different']} | "
+             f"{t['decided_beyond_c1b']} | {t['unexplained']} |"]
+    for d in t["different_first"][:10]:
+        lines.append(f"- signals {d['key']}: {d['columns']}")
+    for k in t["only_a_first"][:5]:
+        lines.append(f"- signals only in A: {k}")
+    for k in t["only_b_first"][:5]:
+        lines.append(f"- signals only in B: {k}")
+    for d in t["decided_beyond_c1b_first"][:5]:
+        lines.append(f"- signals decided beyond C1b in B: {d['key']} status {d['status']}, reason {d['reason']}")
+    return lines
+
+
+def run(journal_a, journal_b, out, lo_day=None, hi_day=None, new_tables=(), scope="all"):
+    if scope == "signals":
+        res = compare_signals(journal_a, journal_b, lo_day, hi_day, new_tables=new_tables)
+    else:
+        res = compare(journal_a, journal_b, lo_day, hi_day, new_tables=new_tables)
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "journal_diff.json"), "w") as f:
         json.dump(res, f, indent=1, default=str)
-    lines = report(res)
+    lines = report_signals(res) if scope == "signals" else report(res)
     with open(os.path.join(out, "journal_diff.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines[:3]))
@@ -184,8 +292,10 @@ def main(argv=None):
     ap.add_argument("--to-day", help="last UTC day compared")
     ap.add_argument("--new-table", action="append", default=[], metavar="NAME",
                     help="a table a newer engine adds: in one journal only it is no schema difference (repeatable)")
+    ap.add_argument("--scope", choices=("all", "signals"), default="all",
+                    help="signals: M1 C1b's comparison, the signals table only and no status beyond the farm gates")
     a = ap.parse_args(argv)
-    res = run(a.journal_a, a.journal_b, a.out, a.from_day, a.to_day, tuple(a.new_table))
+    res = run(a.journal_a, a.journal_b, a.out, a.from_day, a.to_day, tuple(a.new_table), a.scope)
     return 0 if res["green"] else 1
 
 
