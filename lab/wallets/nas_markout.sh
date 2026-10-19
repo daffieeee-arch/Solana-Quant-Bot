@@ -11,7 +11,8 @@
 #
 # Tunables (env): RUNS (space-separated "<name>:<parts dir>"), MEMORY (DuckDB limit per run), BUCKETS (key-hash
 # buckets of the venue-state match, default 1 = unbucketed; the union over the buckets is the unbucketed result),
-# BOOT, MARKOUT_DIR (output, default $OUT/markout-v1), MARKOUT_ARGS (e.g. "--from-slot A --to-slot B" for a smoke).
+# BOOT, WORKERS (LAB_REPORT_WORKERS: processes for the report's bootstrap draws, default 1; the lab runner has 6; the CIs are
+# bit-identical to the serial loop), MARKOUT_DIR (output, default $OUT/markout-v1), MARKOUT_ARGS (e.g. "--from-slot A --to-slot B" for a smoke).
 # Progress: every phase writes a timed line to $MARKOUT_DIR/log/markout-<run>.log (signals, targets, pool_at,
 # curve_at, matched, round trips per 500k rows, parquet), and run-markout-<run>.json has phases_seconds.
 #
@@ -32,7 +33,7 @@ BOOT=${BOOT:-10000}
 
 case "${LAB_ENGINE:-}" in */backtest) export LAB_ENGINE=${LAB_ENGINE%/backtest} ;; esac
 export PYTHONPATH=$REPO/lab LAB_STORE=$STORE LAB_WALLETS_OUT=$OUT LAB_WALLETS_MEMORY=${MEMORY:-6GB} LAB_MARKOUT_BUCKETS=${BUCKETS:-1}
-export LAB_SPILL_DIR=${LAB_SPILL_DIR:-/lab/tmp/nas-markout} LAB_SPILL_MAX=${LAB_SPILL_MAX:-8GB}
+export LAB_SPILL_DIR=${LAB_SPILL_DIR:-/lab/tmp/nas-markout} LAB_SPILL_MAX=${LAB_SPILL_MAX:-8GB} LAB_REPORT_WORKERS=${WORKERS:-1}
 mkdir -p "$MK" "$LOG" "$LAB_SPILL_DIR"
 log() { echo "$(date +%FT%T) $*" | tee -a "$LOG/nas_markout.log"; }
 log "start repo=$REPO commit=$(git -C "$REPO" rev-parse --short HEAD) store=$STORE out=$MK engine=${LAB_ENGINE:-?} memory=$LAB_WALLETS_MEMORY buckets=$LAB_MARKOUT_BUCKETS spill=$LAB_SPILL_DIR/$LAB_SPILL_MAX"
@@ -52,6 +53,6 @@ done
 
 # The report: all runs together; the exit-rule cost from the F7 tournament's positions (0.5 SOL, q = 0.5).
 F7PARTS=$DATA/backtests/f7rev-1033-1046/parts
-log "report (boot $BOOT)"
+log "report (boot $BOOT, workers $LAB_REPORT_WORKERS)"
 nice -n 10 "$PY" -m wallets.markout_report --markout "$MK" --parts "$F7PARTS" --boot "$BOOT" --out "$MK/markout.md" > "$LOG/report.log" 2>&1
 log "done: $MK/markout.md"

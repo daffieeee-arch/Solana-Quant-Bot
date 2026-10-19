@@ -143,3 +143,22 @@ def test_entry_delay_section(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_day_ci_parallel_is_bit_identical(monkeypatch):
+    """LAB_REPORT_WORKERS splits the draws into ordered blocks over a process pool: the CI must equal the serial
+    loop bit for bit (same seed, same draw order), and the input cache must answer an identical input the same."""
+    from wallets import markout_report as r
+    rng = np.random.default_rng(3)
+    v = rng.standard_t(3, size=5000) / 100
+    days = rng.integers(0, 12, size=5000).astype(str)
+    r._CI_CACHE.clear()
+    serial = r.day_ci(v, days, boot=600, n_workers=1)
+    r._CI_CACHE.clear()
+    par = r.day_ci(v, days, boot=600, n_workers=3)
+    assert serial == par and serial[0] is not None and serial[0] < serial[1]
+    assert r.day_ci(v.copy(), days.copy(), boot=600, n_workers=1) == par  # cache: same values/days/boot/seed
+    monkeypatch.setenv("LAB_REPORT_WORKERS", "2")
+    r._CI_CACHE.clear()
+    assert r.day_ci(v, days, boot=600) == serial
+    assert r.day_ci(v, days, boot=600, seed=8) != serial  # another seed is another key, not a cache hit
