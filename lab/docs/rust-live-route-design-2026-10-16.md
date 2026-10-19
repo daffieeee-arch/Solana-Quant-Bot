@@ -205,6 +205,11 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
   - **A scheduled restart through the HWM replay at least weekly**, besides deploys. A restart interns only the keys still in the state.
   - **A metric with an alarm when the interned keys pass 1 GB** (`interned_keys` bytes from the memory report, design §13).
 - **What the restart does not solve.** The farmer histories are pruned in the run itself (C4-4): pairs no later window reads are dropped, so their growth does not depend on the restart.
+- **Hash-table steps (C4-5).** The prune leaves tombstones in the farmer-history table. hashbrown rehashes in place only while the live pairs are at most half its full capacity; above that it doubles. So the table settles at the smallest power of two of buckets with live pairs ≤ 7/16 of them, and never shrinks.
+  - On job 91's segments that was 2²² buckets for ~1.6–1.7 M pairs, reached at hour 34.
+  - C4-5 boxes each history, so a bucket holds 16 bytes and not 112: a resize is +36 MB at 2²² buckets (it was +237 MB), and +71 MB at 2²³ (above 1.84 M live pairs).
+  - The key buffer grows by 1 MiB at a time, not by doubling.
+  - The memory log reports both tables' buckets and tombstones, so M3's metrics can show a resize by name.
 
 ## 6. Risks, and what we deliberately do not do
 

@@ -1,8 +1,9 @@
-"""C4's plateau gate (M1 C4-3 of the Rust live route; the spec is research/m1-c4-plateau-spec-2026-10-19.md §2, its
+"""C4's plateau gate (M1 C4 of the Rust live route, since C4-3; the spec is research/m1-c4-plateau-spec-2026-10-19.md §2, its
 sha256 pinned in nas_m1c4.sh): over `lab-live paper --mem-log` (lab/live/src/memlog.rs), is the memory flat?
 
   python lab/live/plateau.py --p1 p1.jsonl [--p2 p2.jsonl] [--p3 p3.jsonl] [--run run.json] --spec-sha SHA --out plateau.md
-  python lab/live/plateau.py --journal-sha DIR      (the determinism check's sha256 of a journal, for run.json)
+  python lab/live/plateau.py --journal-sha DIR [--tables-only]   (the determinism check's sha256 of a journal, for
+                                                                  run.json; --tables-only: the A/B across commits)
 
 - p1: the segments (the live form), the gated run. p2: the same again (determinism; its log is reported, not gated).
   p3: the same range from the chunks, the upper bound (reported, not gated: spec E5).
@@ -27,7 +28,9 @@ sha256 pinned in nas_m1c4.sh): over `lab-live paper --mem-log` (lab/live/src/mem
   the v0.5 run (linear in new traders, ~0.25 M a day, bounded by restarts, > 100 days of room at 8G), is gated by an
   absolute bound instead: its bytes growth <= 100 MB per 24 h, valid with M3's weekly HWM restart and > 1 GB alarm.
 - Reported, not gated: the time per event (replay processing time on the NAS, not live latency: M3's), per hour from
-  the minutes' buckets; the events per second; the peak RSS and its minute; P3's curves.
+  the minutes' buckets; the events per second; the peak RSS and its minute; P3's curves; C4-5: the replay's hash tables
+  (memlog's `tables`: interned_keys, farmer_hist) with their resizes, a resize being a step of the whole table in the
+  heap and RSS (both gated as they are), and their tombstones.
 - MB and GB are 10^6 and 10^9 bytes.
 
 Writes plateau.md and prints one measure line `lab-live plateau ... GREEN|RED`. Exit 0 either way (RED is a result);
@@ -72,14 +75,21 @@ GATE_WINDOWED = False
 RUN_STATE = ("lab_live_paper",)
 
 
-def journal_sha(directory):
+def journal_sha(directory, tables_only=False):
     """sha256 over every table of <directory>/journal.sqlite, each table's rows sorted, without the run's own summary
-    (RUN_STATE): two runs with the same rows give the same sha256 whatever their timing."""
+    (RUN_STATE): two runs with the same rows give the same sha256 whatever their timing.
+
+    tables_only (C4-5, an A/B across two commits): every table but `state`, i.e. the rows the engines write (signals,
+    orders, fills, exits, heartbeat, positions and the rest). `state` holds the run's inputs as given and its summary.
+    The groups text names the checkout's risk files, so its path differs per commit, and the summary holds the run's
+    seconds, RSS and mem-log path. The inputs' own sha256 are in each job's log (nas_m1c4.sh `prepare`)."""
     db = sqlite3.connect(f"file:{os.path.join(directory, 'journal.sqlite')}?mode=ro", uri=True)
     try:
         h = hashlib.sha256()
         tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
         for t in tables:
+            if tables_only and t == "state":
+                continue
             rows = db.execute(f'SELECT * FROM "{t}"').fetchall()
             if t == "state":
                 rows = [r for r in rows if r[0] not in RUN_STATE]
@@ -194,6 +204,29 @@ def struct_ok(name, g, grown):
     return not (entries_grow and grown >= STRUCT_FLOOR)
 
 
+def table_steps(lines, start, last):
+    """C4-5, reported: per hash table in the lines' `tables` (memlog.rs `Table`), its buckets at the run's start, at the
+    window's start and at the end, every resize (a change of buckets: minute, buckets and bytes before and after, in the
+    window or not), and its tombstones (most in the window, at the end) against its full capacity. {} without tables."""
+    out = {}
+    prev = {}
+    for v in lines:
+        for name, t in (v.get("tables") or {}).items():
+            o = out.setdefault(name, {"buckets_first": t["buckets"], "buckets_window": None, "steps": [], "tombstones_max": 0})
+            p = prev.get(name)
+            if p is not None and t["buckets"] != p["buckets"]:
+                o["steps"].append({"minute": v["minute"], "buckets": (p["buckets"], t["buckets"]), "bytes": (p["bytes"], t["bytes"]),
+                                   "len": t["len"], "in_window": start <= v["minute"] <= last})
+            if start <= v["minute"] <= last:
+                if o["buckets_window"] is None:
+                    o["buckets_window"] = t["buckets"]
+                o["tombstones_max"] = max(o["tombstones_max"], t["tombstones"])
+            o.update(buckets_end=t["buckets"], bytes_end=t["bytes"], len_end=t["len"], tombstones_end=t["tombstones"],
+                     full_end=t["buckets"] // 8 * 7 if t["buckets"] >= 8 else max(t["buckets"] - 1, 0))
+            prev[name] = t
+    return out
+
+
 def hourly_times(lines):
     """Per hour of chain time: the summed buckets' quantiles and the max."""
     hours = defaultdict(lambda: [defaultdict(int), 0])
@@ -257,7 +290,8 @@ def evaluate(p1, run=None):
         check("run facts (run.json)", None, "given", False)
     ok = all(c["ok"] for c in checks)
     return {"ok": ok, "checks": checks, "first": first, "start": start, "last": last, "rss": rss, "heap": heap, "peak": peak,
-            "peak_minute": peak_minute, "structures": structs, "times": end["time_ns"] if end else None, "hours": hourly_times(lines)}
+            "peak_minute": peak_minute, "structures": structs, "times": end["time_ns"] if end else None, "hours": hourly_times(lines),
+            "tables": table_steps(lines, start, last)}
 
 
 def summary_of(log):
@@ -275,7 +309,7 @@ def us(ns):
 
 
 def report(res, spec_sha, others, run):
-    out = [f"# lab-live plateau (M1 C4-3): {'GREEN' if res['ok'] else 'RED'}", "",
+    out = [f"# lab-live plateau (M1 C4): {'GREEN' if res['ok'] else 'RED'}", "",
            f"Spec research/m1-c4-plateau-spec-2026-10-19.md sha256 `{spec_sha}`. Input P1 (the segments, the live form; built by "
            "the shadow recorder from OF1, no live recording): minutes "
            f"{res['first']}..{res['last']} ({(res['last'] - res['first']) / 60:.1f} h of chain time); window {res['start']}..{res['last']} "
@@ -286,7 +320,8 @@ def report(res, spec_sha, others, run):
     out += ["", f"Structures: gated {'all' if GATE_WINDOWED else 'the ones not bounded by construction (spec v0.4-v0.6)'}; entries "
             "over the window; a gated one fails only when its entries grow and its bytes (entries' growth x bytes per entry, v0.6) grow by >= 1 MB in 24 h; interned_keys only when its bytes grow by > 100 MB in 24 h (v0.6, post-hoc after the v0.5 run); `max / "
             "warm-up max` is the window's max over the max of the 24 h before it (reported, for the windowed ones above all); "
-            "bytes are bytes_est, capacity x size_of, a lower bound.", "",
+            "bytes are bytes_est, capacity x size_of, a lower bound (interned_keys and farmer_hist: their table's allocation, every bucket, "
+            "since C4-5).", "",
             "| structure | group | windowed | gated | mean | slope / 24 h | % of mean | first 2 h | last 2 h | max | max / warm-up max | bytes at the end | bytes growth / 24 h | ok |",
             "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, g in res["structures"].items():
@@ -306,6 +341,18 @@ def report(res, spec_sha, others, run):
                    f"p99 {us(t['p99'])} µs, p999 {us(t['p999'])} µs, max {us(t['max'])} µs.")
     if run and run.get("p1_secs") and t:
         out.append(f"- Events per second (P1's wall time {run['p1_secs']:.0f} s): {t['n'] / run['p1_secs']:,.0f}.")
+    if res.get("tables"):
+        out += ["", "Hash tables (C4-5, reported, not gated): a resize is a step of the whole table in the heap and RSS, which are "
+                "gated; tombstones (removed entries' slots) bring the next resize closer, and above half the full capacity hashbrown "
+                "doubles instead of rehashing in place.", "",
+                "| table | buckets: start / window / end | resizes (minute: buckets, MB, entries) | tombstones: max in window / end | entries / full at the end | MB at the end |",
+                "|---|---|---|---|---|---|"]
+        for name, t in res["tables"].items():
+            steps = "; ".join(f"{s['minute']}{' (window)' if s['in_window'] else ''}: {s['buckets'][0]:,} -> {s['buckets'][1]:,}, "
+                              f"{s['bytes'][0] / MB:,.1f} -> {s['bytes'][1] / MB:,.1f}, {s['len']:,}" for s in t["steps"]) or "none"
+            win = "-" if t["buckets_window"] is None else f"{t['buckets_window']:,}"
+            out.append(f"| {name} | {t['buckets_first']:,} / {win} / {t['buckets_end']:,} | {steps} | {t['tombstones_max']:,} / "
+                       f"{t['tombstones_end']:,} | {t['len_end']:,} / {t['full_end']:,} | {t['bytes_end'] / MB:,.1f} |")
     out += ["", "Per hour of chain time (µs):", "", "| hour (unix) | n | p50 | p99 | p999 | max |", "|---|---|---|---|---|---|"]
     for hr, q in res["hours"].items():
         out.append(f"| {hr} | {q['n']:,} | {us(q['p50'])} | {us(q['p99'])} | {us(q['p999'])} | {us(q['max'])} |")
@@ -346,11 +393,11 @@ def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
     if argv[:1] == ["--journal-sha"]:
-        if len(argv) != 2:
-            print("usage: plateau.py --journal-sha DIR", file=sys.stderr)
+        if len(argv) not in (2, 3) or argv[2:] not in ([], ["--tables-only"]):
+            print("usage: plateau.py --journal-sha DIR [--tables-only]", file=sys.stderr)
             return 2
         try:
-            print(journal_sha(argv[1]))
+            print(journal_sha(argv[1], tables_only=argv[2:] == ["--tables-only"]))
         except sqlite3.Error as e:
             print(f"lab-live plateau: {argv[1]}: {e}", file=sys.stderr)
             return 2
