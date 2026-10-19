@@ -19,10 +19,13 @@ RUN = {"p1_journal_sha": "a" * 64, "p2_journal_sha": "a" * 64, "wallets_equal": 
        "segments_read": 3145, "segments_expected": 3145, "incomplete_skipped": [], "p1_secs": 600.0}
 
 
-def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, jitter=5 * MB, busy_day=0.0, farm_day=0.0):
+def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, jitter=5 * MB, busy_day=0.0, farm_day=0.0,
+        table_step_h=None):
     """A --mem-log of `hours` of chain time: RSS 3 GB, heap 2.5 GB and interned_keys 5 M (64 B each), each growing by its
     per-day amount; recent_keys (windowed) swinging +-diurnal over the day; busy, a small insert-only map (40 B an entry),
-    growing by busy_day entries a day; wallet_txs filling up to its cap of 100; every minute 100 events of 1-3 us."""
+    growing by busy_day entries a day; wallet_txs filling up to its cap of 100; every minute 100 events of 1-3 us. With
+    table_step_h, the lines carry memlog's `tables` (C4-5): farmer_hist's table, 1.6 M entries in 2^21 buckets gathering
+    tombstones until it doubles at that hour."""
     with open(path, "w") as f:
         events = 0
         for i in range(hours * 60):
@@ -42,9 +45,16 @@ def log(path, hours=52, rss_day=0.0, heap_day=0.0, keys_day=0.0, diurnal=0.3, ji
                 "ops": {"entries": 0, "bytes_est": 0, "group": "state"},
             }
             events += 100
+            extra = {}
+            if table_step_h is not None:
+                step = int(table_step_h * 60)
+                b = 2**21 if i < step else 2**22
+                tomb = int(235_000 * i / step) if i < step else 0
+                extra["tables"] = {"farmer_hist": {"len": 1_600_000, "capacity": b // 8 * 7 - tomb, "buckets": b, "tombstones": tomb,
+                                                   "bytes": b * 17 + 16}}
             f.write(json.dumps({"minute": M0 + i, "slot": 454_896_000 + i * 275, "events": events, "segments": i // 1,
                                 "rss_bytes": int(3 * GB + rss_day * day + noise), "heap_bytes": int(2.5 * GB + heap_day * day + noise),
-                                "heap_allocs": 1000, "structures": structs,
+                                "heap_allocs": 1000, "structures": structs, **extra,
                                 "time_ns": {"n": 100, "p50": 1500, "p90": 2500, "p99": 2900, "p999": 2900, "max": 3000,
                                             "buckets": [[1472, 50], [2496, 49], [2944, 1]]}}) + "\n")
         f.write(json.dumps({"minute": M0 + hours * 60 - 1, "end": True, "slot": 0, "events": events, "segments": None,
@@ -127,6 +137,23 @@ def test_short_input_missing_facts_and_nondeterminism_are_red(tmp_path):
     assert plateau.evaluate(p1, {**RUN, "segments_read": 3140, "incomplete_skipped": ["1", "2", "3", "4", "5"]})["ok"]
 
 
+def test_the_tables_are_reported_not_gated(tmp_path):
+    """C4-5: memlog's `tables` (farmer_hist doubling in the window after its tombstones used up its inserts left) go into
+    plateau.md; the checks and the measure line are the same with and without them."""
+    plain = plateau.evaluate(plateau.load(log(tmp_path / "a.jsonl")), RUN)
+    res = plateau.evaluate(plateau.load(log(tmp_path / "b.jsonl", table_step_h=34.2)), RUN)
+    assert res["ok"] and res["checks"] == plain["checks"] and plain["tables"] == {}
+    t = res["tables"]["farmer_hist"]
+    assert (t["buckets_first"], t["buckets_window"], t["buckets_end"], t["full_end"]) == (2**21, 2**21, 2**22, 3_670_016)
+    assert [(s["minute"] - M0, s["buckets"], s["in_window"]) for s in t["steps"]] == [(2052, (2**21, 2**22), True)]
+    assert t["tombstones_max"] > 200_000 and t["tombstones_end"] == 0 and t["len_end"] == 1_600_000
+    md = plateau.report(res, "s" * 64, [], RUN)
+    assert "| farmer_hist | 2,097,152 / 2,097,152 / 4,194,304 |" in md and "(window): 2,097,152 -> 4,194,304, 35.7 -> 71.3, 1,600,000" in md
+    assert "Hash tables" not in plateau.report(plain, "s" * 64, [], RUN)
+    assert plateau.measure_line(res) == plateau.measure_line(plain)
+    assert plateau.report(res, "s" * 64, [], RUN).startswith("# lab-live plateau (M1 C4): GREEN")
+
+
 def test_the_quantiles_follow_memlog_buckets():
     # memlog.rs: one bucket per ns below 64, then 32 per power of two; a quantile is its bucket's top, at most the max
     assert [plateau.bucket_top(x) for x in (5, 63, 64, 90, 126, 1472, 2944)] == [5, 63, 65, 91, 127, 1503, 3007]
@@ -162,7 +189,7 @@ def test_the_cli_writes_the_report_and_one_line(tmp_path, capsys):
     line = capsys.readouterr().out.strip()
     assert line.startswith("lab-live plateau minutes [") and line.endswith("GREEN") and "replay, not live latency" in line
     md = out.read_text()
-    for part in ("# lab-live plateau (M1 C4-3): GREEN", "f" * 64, "| recent_keys | state | yes |  |", "max / warm-up max",
+    for part in ("# lab-live plateau (M1 C4): GREEN", "f" * 64, "| recent_keys | state | yes |  |", "max / warm-up max",
                  "not live latency", "## P3 (the chunks, the upper bound) (reported)", "Events per second"):
         assert part in md, part
     assert plateau.main(["--p1", str(tmp_path / "none.jsonl"), "--spec-sha", "x", "--out", str(out)]) == 2

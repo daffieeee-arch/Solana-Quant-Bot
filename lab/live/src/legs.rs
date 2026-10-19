@@ -19,6 +19,7 @@
 //! in slot order. key_ties (two rows with one (slot, tx, outer, inner)) and duplicates are an error.
 
 use anyhow::{bail, Context, Result};
+use crate::memlog::Table;
 use hashbrown::{DefaultHashBuilder, HashTable};
 use lab_core::legs::{CurveLeg, Event, Id, Leg, Order, PoolCtx, PoolKind, PoolLeg, DIRECT, EXACT_OUT, FARMER, NONE, X0, X1};
 use sha2::{Digest, Sha256};
@@ -55,6 +56,14 @@ impl Keys {
         }
         let id = Id::try_from(self.ends.len()).expect("fewer than 2^32 keys");
         assert!(id != NONE, "fewer than 2^32 - 1 keys");
+        // M1 C4-5: the buffer and the ends grow by KEYS_STEP, not by doubling; a doubling is a step of the whole buffer
+        // in the live heap (+45 MB at 1.03M keys in 99zzb) while its new pages stay untouched (RSS did not move)
+        if self.buf.capacity() - self.buf.len() < key.len() {
+            self.buf.reserve_exact(key.len().max(KEYS_STEP));
+        }
+        if self.ends.len() == self.ends.capacity() {
+            self.ends.reserve_exact(KEYS_STEP / std::mem::size_of::<u32>());
+        }
         self.buf.push_str(key);
         self.ends.push(u32::try_from(self.buf.len()).expect("keys in less than 4 GiB"));
         let (buf, ends, hasher) = (&self.buf, &self.ends, &self.hasher);
@@ -75,11 +84,20 @@ impl Keys {
         self.ends.len()
     }
 
-    /// The memory log (C4-2): the table (an id and a control byte per slot), the key buffer and the ends.
+    /// The memory log (C4-2): the table's allocation (C4-5: hashbrown's own size, every bucket), the key buffer and the
+    /// ends.
     pub fn heap_bytes(&self) -> usize {
-        self.table.capacity() * (std::mem::size_of::<Id>() + 1) + self.buf.capacity() + self.ends.capacity() * std::mem::size_of::<u32>()
+        self.table.allocation_size() + self.buf.capacity() + self.ends.capacity() * std::mem::size_of::<u32>()
+    }
+
+    /// The memory log's view of the table (C4-5): its ids, its capacity and its allocation.
+    pub fn table(&self) -> Table {
+        Table::new("interned_keys", self.table.len(), self.table.capacity(), self.table.allocation_size(), std::mem::size_of::<Id>())
     }
 }
+
+/// How much the key buffer (bytes) and the ends (bytes / 4 entries) grow at a time: 1 MiB, ~23,000 keys.
+const KEYS_STEP: usize = 1 << 20;
 
 /// The store's `pool` row of one PumpSwap event (a SOL market's), as the leg and the farmer read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,17 +166,33 @@ pub fn h24_of(blocks: &[(u64, Option<i64>)]) -> u64 {
     (DAY_MS / ms).round_ties_even() as u64
 }
 
-/// The store's farmer history of one (pool, trader): its trades in chain order as (slot, signed token amount).
+/// The store's farmer history of one (pool, trader): its trades in chain order as (slot, signed token amount), and the
+/// window [start, end) of them with its net and gross amounts. M1 C4-5: 72 bytes, each in its own box (`FarmHists`): the
+/// window's trade count is end - start (no field of its own), the indices are u32 and the sums i128s in two words, so the
+/// struct is 8-byte aligned (it was 96 bytes: 84 of fields, padded to an i128's 16-byte alignment).
 #[derive(Default)]
 pub struct FarmHist {
     a: Vec<(u64, i64)>,
-    start: usize,
-    end: usize,
-    n: u64,
-    net: i128,
-    gross: i128,
+    start: u32,
+    end: u32,
+    net: [u64; 2],
+    gross: [u64; 2],
     /// the chunk the window was anchored in, + 1 (0: none)
     anchor: u32,
+}
+
+/// An i128 from its two words (low, high) and back: exact for every value.
+fn wide(w: [u64; 2]) -> i128 {
+    (u128::from(w[0]) | (u128::from(w[1]) << 64)) as i128
+}
+
+fn words(v: i128) -> [u64; 2] {
+    let u = v as u128;
+    [u as u64, (u >> 64) as u64]
+}
+
+fn index(i: usize) -> u32 {
+    u32::try_from(i).expect("fewer than 2^32 trades in a farmer history")
 }
 
 impl FarmHist {
@@ -169,31 +203,33 @@ impl FarmHist {
     pub fn flag(&mut self, s: u64, h24: u64, chunk: u32, keep: u64) -> bool {
         let lo = s.saturating_sub(h24);
         debug_assert!(keep <= lo, "keep {keep} above the window start {lo}");
+        let (mut start, mut end) = (self.start as usize, self.end as usize);
+        let (mut net, mut gross) = (wide(self.net), wide(self.gross));
         if self.anchor != chunk + 1 {
             let cut = self.a.partition_point(|x| x.0 < keep);
             self.a.drain(..cut);
-            self.start = self.a.partition_point(|x| x.0 < lo);
-            self.end = self.a.partition_point(|x| x.0 < s);
-            (self.n, self.net, self.gross) = (0, 0, 0);
-            for &(_, v) in &self.a[self.start..self.end] {
-                self.n += 1;
-                self.net += i128::from(v);
-                self.gross += i128::from(v).abs();
+            start = self.a.partition_point(|x| x.0 < lo);
+            end = self.a.partition_point(|x| x.0 < s);
+            (net, gross) = (0, 0);
+            for &(_, v) in &self.a[start..end] {
+                net += i128::from(v);
+                gross += i128::from(v).abs();
             }
             self.anchor = chunk + 1;
         } else {
-            while self.end < self.a.len() && self.a[self.end].0 < s {
-                let v = i128::from(self.a[self.end].1);
-                (self.n, self.net, self.gross) = (self.n + 1, self.net + v, self.gross + v.abs());
-                self.end += 1;
+            while end < self.a.len() && self.a[end].0 < s {
+                let v = i128::from(self.a[end].1);
+                (net, gross) = (net + v, gross + v.abs());
+                end += 1;
             }
-            while self.start < self.end && self.a[self.start].0 < lo {
-                let v = i128::from(self.a[self.start].1);
-                (self.n, self.net, self.gross) = (self.n - 1, self.net - v, self.gross - v.abs());
-                self.start += 1;
+            while start < end && self.a[start].0 < lo {
+                let v = i128::from(self.a[start].1);
+                (net, gross) = (net - v, gross - v.abs());
+                start += 1;
             }
         }
-        self.n >= 2 && 20 * self.net.abs() < self.gross
+        (self.start, self.end, self.net, self.gross) = (index(start), index(end), words(net), words(gross));
+        end - start >= 2 && 20 * net.abs() < gross
     }
 
     /// After `flag`: the trade joins the history (same-slot trades never see each other).
@@ -211,6 +247,20 @@ impl FarmHist {
     pub fn mem(&self) -> (usize, usize) {
         (self.a.len(), lab_core::mem::vec(&self.a))
     }
+}
+
+/// The farmer histories per (pool, trader), each boxed (M1 C4-5): the table holds 16 bytes per bucket, not the whole
+/// history (113 bytes per bucket made the table 474 MB at 2^22 buckets in 99zzb, and its doubling a 237 MB step). A
+/// hashbrown map, so the memory log reads its allocation (`allocation_size`, every bucket), and so its tombstones (memlog
+/// `Table`). Nothing iterates it in an order that reaches a flag or a row.
+pub type FarmHists = hashbrown::HashMap<(Id, Id), Box<FarmHist>>;
+
+/// The memory log's farmer_hist (C4-5): the table's allocation (every bucket) and the boxed histories (their trades are
+/// farmer_hist_trades), and the table's shape (memlog `Table`).
+pub fn farm_mem(hist: &FarmHists) -> (usize, Table) {
+    let entry = std::mem::size_of::<((Id, Id), Box<FarmHist>)>();
+    let bytes = hist.allocation_size() + hist.len() * std::mem::size_of::<FarmHist>();
+    (bytes, Table::new("farmer_hist", hist.len(), hist.capacity(), hist.allocation_size(), entry))
 }
 
 /// For emitted chunks k (in slot order) with their first emitted slot `start_k` (the replay's from in the first, else
@@ -232,7 +282,7 @@ pub fn keeps(chunks: &[(u64, u64)]) -> Vec<u64> {
 /// window (n, net and gross over no trade). So the flags are the same with and without the prune; only the memory of
 /// pairs that stopped trading is given back. Returns the pairs dropped and the change in trades and bytes
 /// (`FarmHist::mem`, for the replay's running totals).
-pub fn prune_hist(hist: &mut HashMap<(Id, Id), FarmHist>, bound: u64) -> (usize, isize, isize) {
+pub fn prune_hist(hist: &mut FarmHists, bound: u64) -> (usize, isize, isize) {
     let (mut pairs, mut trades, mut bytes) = (0usize, 0isize, 0isize);
     hist.retain(|_, h| {
         let keep = h.last_slot().is_some_and(|s| s >= bound);
@@ -250,7 +300,7 @@ pub fn prune_hist(hist: &mut HashMap<(Id, Id), FarmHist>, bound: u64) -> (usize,
 /// The farmer flags of one chunk's pool trades, in chain order (rows sorted): set on the rows, history kept in `hist`.
 /// Returns the change in the histories' trades and their bytes (`FarmHist::mem`), so the memory log (C4-2) keeps a running
 /// total instead of walking every history.
-pub fn flag_chunk(rows: &mut [PoolRow], hist: &mut HashMap<(Id, Id), FarmHist>, h24: u64, chunk: u32, keep: u64) -> (isize, isize) {
+pub fn flag_chunk(rows: &mut [PoolRow], hist: &mut FarmHists, h24: u64, chunk: u32, keep: u64) -> (isize, isize) {
     let (mut trades, mut bytes) = (0isize, 0isize);
     for r in rows.iter_mut() {
         let Some((buy, amount)) = r.token_side() else { continue };
@@ -549,7 +599,7 @@ mod tests {
             rows.push(trade(slot, k as u32, 9, trader, kind, 50 + (next() % 5) as i64));
         }
         rows.sort_by_key(|r| r.order);
-        let mut hist = HashMap::new();
+        let mut hist = FarmHists::default();
         let split = rows.partition_point(|r| r.order.slot < 700);
         let (a, b) = rows.split_at_mut(split);
         let k = keeps(&[(100, 120), (700, 300)]);
@@ -598,7 +648,7 @@ mod tests {
         let starts: Vec<(u64, u64)> = h24s.iter().enumerate().map(|(k, &h)| (start(k), h)).collect();
         let k = keeps(&starts);
         let h0 = k[0];
-        let mut hist: HashMap<(Id, Id), FarmHist> = HashMap::new();
+        let mut hist = FarmHists::default();
         let split = rows.partition_point(|r| r.order.slot < from + skip);
         for r in rows[..split].iter().filter(|r| r.order.slot >= h0) {
             let (buy, a) = r.token_side().unwrap();
@@ -648,7 +698,7 @@ mod tests {
         let starts: Vec<(u64, u64)> = h24s.iter().enumerate().map(|(c, &h)| (from + c as u64 * len, h)).collect();
         let keep = keeps(&starts);
         let (mut a, mut b) = (rows.clone(), rows.clone());
-        let (mut ha, mut hb): (HashMap<(Id, Id), FarmHist>, HashMap<(Id, Id), FarmHist>) = (HashMap::new(), HashMap::new());
+        let (mut ha, mut hb) = (FarmHists::default(), FarmHists::default());
         let (mut dropped, mut at) = (0, 0);
         for (c, &h24) in h24s.iter().enumerate() {
             for u in 0..len / 100 {
@@ -702,6 +752,51 @@ mod tests {
         h.add(100, 5);
         assert!(h.flag(100, 50, 0, 0)); // a trade of the same slot is not in the window
         assert!(!h.flag(101, 50, 0, 0)); // now n 3, net 6, gross 44: 120 >= 44
+    }
+
+    #[test]
+    fn a_boxed_farm_history_is_72_bytes_and_its_sums_stay_exact_beyond_i64() {
+        // M1 C4-5: the table holds a key and a box; the history is 8-byte aligned (no i128 field)
+        assert_eq!((std::mem::size_of::<FarmHist>(), std::mem::align_of::<FarmHist>()), (72, 8));
+        assert_eq!(std::mem::size_of::<((Id, Id), Box<FarmHist>)>(), 16);
+        for v in [0, 1, -1, i128::from(i64::MAX) * 3, i128::from(i64::MIN) * 5, i128::MAX, i128::MIN] {
+            assert_eq!(wide(words(v)), v);
+        }
+        // 40 trades of ±i64::MAX, three slots apart: the window's gross passes 2^64 (the high word is used) and every
+        // flag, as the window slides and re-anchors, is the brute-force count's
+        let amounts: Vec<(u64, i64)> = (0..40u64).map(|k| (100 + 3 * k, if k % 3 == 0 { i64::MAX } else { -i64::MAX })).collect();
+        let brute = |s: u64, h24: u64| {
+            let w: Vec<i128> = amounts.iter().filter(|x| x.0 >= s.saturating_sub(h24) && x.0 < s).map(|x| i128::from(x.1)).collect();
+            w.len() >= 2 && 20 * w.iter().sum::<i128>().abs() < w.iter().map(|v| v.abs()).sum::<i128>()
+        };
+        let mut h = FarmHist::default();
+        let mut hi_used = false;
+        for (k, &(slot, v)) in amounts.iter().enumerate() {
+            let (h24, chunk) = if k < 25 { (200, 0) } else { (40, 1) };
+            assert_eq!(h.flag(slot, h24, chunk, 0), brute(slot, h24), "trade {k}");
+            hi_used |= wide(h.gross) > i128::from(u64::MAX);
+            h.add(slot, v);
+        }
+        assert!(hi_used && h.end - h.start <= 14, "the window slid: [{}, {})", h.start, h.end);
+    }
+
+    #[test]
+    fn the_key_buffer_grows_by_steps_not_doublings() {
+        // M1 C4-5: past 3 MiB of keys the buffer never holds more than a step of spare room, and each growth is at most
+        // a step (a doubling at 1M keys was +45 MB of the live heap at once); every id still names its key
+        let mut keys = Keys::default();
+        let key = |i: usize| format!("{i:0>44}");
+        let (mut cap, mut ends_cap) = (0, 0);
+        for i in 0..80_000 {
+            assert_eq!(keys.id(&key(i)) as usize, i);
+            assert!(keys.buf.capacity() - keys.buf.len() < KEYS_STEP + 44, "key {i}: spare {}", keys.buf.capacity() - keys.buf.len());
+            assert!(keys.buf.capacity() - cap <= KEYS_STEP + 44 || cap == keys.buf.capacity(), "key {i}");
+            assert!(keys.ends.capacity() - ends_cap <= KEYS_STEP / 4 || ends_cap == keys.ends.capacity(), "key {i}");
+            (cap, ends_cap) = (keys.buf.capacity(), keys.ends.capacity());
+        }
+        assert!(keys.buf.len() > 3 << 20);
+        assert_eq!((keys.id(&key(17)), keys.get(&key(79_999)), keys.name(41_000)), (17, Some(79_999), Some(key(41_000).as_str())));
+        assert_eq!(keys.heap_bytes(), keys.table.allocation_size() + keys.buf.capacity() + 4 * keys.ends.capacity());
     }
 
     #[test]

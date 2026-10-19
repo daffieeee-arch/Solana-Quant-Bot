@@ -39,7 +39,7 @@ use crate::curve_hold;
 use crate::journal::Journal;
 use crate::legs::Keys;
 use crate::legs_read::{Replay, ReplayMem};
-use crate::memlog::MemLog;
+use crate::memlog::{MemLog, Report};
 use crate::paper_core::{op_write, parse_scenario, Write};
 use crate::signals::load;
 use crate::signals_core::{counts_json, feed_state, parse_groups, Cell, KeyNames, Seeds};
@@ -245,13 +245,14 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
     let mut memlog = a.mem_log.as_deref().map(MemLog::create).transpose()?;
     replay.mem_log = memlog.is_some();
     replay.prune_farm = !a.keep_farmer_history;
-    // memlog.rs: the engines' structures, the N2 seeds, the entered rows' segments and the replay's (per chunk)
+    // memlog.rs: the engines' structures, the N2 seeds, the entered rows' segments and the replay's (per chunk), and the
+    // replay's hash tables
     let mems = |eng: &PaperEngine, seeds: &Seeds, tally: &Tally, r: &ReplayMem| {
         let mut v = eng.mem_report();
         v.push(seeds.mem());
         v.push(lab_core::mem::Mem::new("entered_rows", tally.entered.len(), lab_core::mem::map(&tally.entered)));
         v.extend(r.mems.iter().cloned());
-        v
+        Report { mems: v, tables: r.tables.clone() }
     };
     let mut last_slot = 0;
     replay.for_each_event_mem(|keys, rmem, ev| {
@@ -499,6 +500,12 @@ mod tests {
         assert_eq!((&end["structures"]["ops"]["entries"], &end["segments"]), (&json!(0), &Value::Null)); // drained; chunks
         assert!(end["structures"]["recent_keys"]["bytes_est"].is_u64() && end["sqlite_bytes"].is_i64(), "{end}");
         assert!(end["structures"]["interned_keys"]["entries"].as_u64() == logged["keys"].as_u64() && end["heap_bytes"].as_u64() > Some(0), "{end}");
+        // C4-5: the two hash tables' shape; their len is the structures' entries
+        for name in ["interned_keys", "farmer_hist"] {
+            let t = &end["tables"][name];
+            assert_eq!(t["len"], end["structures"][name]["entries"], "{name}: {t}");
+            assert!(t["buckets"].as_u64().is_some_and(|b| b == 0 || b.is_power_of_two()) && t["tombstones"].is_u64() && t["bytes"].is_u64(), "{name}: {t}");
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 }

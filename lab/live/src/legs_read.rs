@@ -23,8 +23,9 @@
 //! segment's `backfill/` (watchlist backfills: rows of earlier slots, LiveFeed's late-row semantics, M3's) is not read,
 //! only counted per segment, so a measurement on segments is a lower bound for the live form.
 
-use crate::legs::{check_ties, emit_chunk, event_kind, event_line, flag_chunk, h24_of, keeps, prune_hist, FarmHist, Keys, PoolRow, Summary,
-                  REVERSED};
+use crate::legs::{check_ties, emit_chunk, event_kind, event_line, farm_mem, flag_chunk, h24_of, keeps, prune_hist, FarmHists, Keys, PoolRow,
+                  Summary, REVERSED};
+use crate::memlog::Table;
 use crate::rows::{chunks, Part};
 use crate::snapshot::{FarmHistMeta, Snapshot};
 use anyhow::{bail, Context, Result};
@@ -56,10 +57,12 @@ pub struct Admission {
 
 /// The replay's own structures for `--mem-log` (M1 C4-2, memlog.rs), taken once per chunk (or segment unit) after its
 /// rows are read and flagged, before its events: the interned keys (with the admission's tables), the 24 h farmer
-/// histories (the (pool, trader) pairs, then their trades), the pool contexts and the legs buffer of that chunk.
+/// histories (the (pool, trader) pairs, then their trades), the pool contexts and the legs buffer of that chunk; C4-5: the
+/// shape of the two hash tables (interned_keys, farmer_hist).
 #[derive(Clone, Debug, Default)]
 pub struct ReplayMem {
     pub mems: Vec<Mem>,
+    pub tables: Vec<Table>,
     /// Segments handed out so far (None on chunks).
     pub segments: Option<u64>,
 }
@@ -72,7 +75,7 @@ fn add_mem((trades, bytes): (usize, usize), (dt, db): (isize, isize)) -> (usize,
 /// C4-4: prune the farmer histories at `bound` (`Replay::prune_farm`) once it moved by h24 / 24 (about an hour of slots)
 /// since the last sweep (`pruned`: the last bound, sweeps, pairs dropped): a sweep walks every pair, so not at every unit.
 /// A free function over the replay's fields, so the chunk loop (which borrows the chunk list) can call it.
-fn sweep_farm(hist: &mut HashMap<(Id, Id), FarmHist>, hist_mem: &mut (usize, usize), pruned: &mut (u64, u64, u64), bound: u64, h24: u64) {
+fn sweep_farm(hist: &mut FarmHists, hist_mem: &mut (usize, usize), pruned: &mut (u64, u64, u64), bound: u64, h24: u64) {
     if bound < pruned.0.saturating_add((h24 / 24).max(1)) {
         return;
     }
@@ -84,17 +87,19 @@ fn sweep_farm(hist: &mut HashMap<(Id, Id), FarmHist>, hist_mem: &mut (usize, usi
 /// O(1): the histories' trades and bytes are the replay's running total (`flag_chunk`'s deltas), never a walk over them;
 /// the block-time tables (`blocks`: slots, bytes) are counted once at the open (constant for the run).
 #[allow(clippy::too_many_arguments)]
-fn replay_mem<C, P>(adm: &Admission, hist: &HashMap<(Id, Id), FarmHist>, (trades, bytes): (usize, usize), blocks: (usize, usize),
+fn replay_mem<C, P>(adm: &Admission, hist: &FarmHists, (trades, bytes): (usize, usize), blocks: (usize, usize),
                     ctx: &HashMap<Id, PoolCtx>, legs: (&Vec<C>, &Vec<P>), segments: Option<u64>) -> ReplayMem {
+    let (farm_bytes, farm_table) = farm_mem(hist);
     ReplayMem {
         mems: vec![
             Mem::new("block_times", blocks.0, blocks.1),
             Mem::new("interned_keys", adm.keys.len(), adm.keys.heap_bytes() + lmem::vec(&adm.is_mint) + lmem::vec(&adm.pool)),
-            Mem::new("farmer_hist", hist.len(), lmem::map(hist)),
+            Mem::new("farmer_hist", hist.len(), farm_bytes),
             Mem::new("farmer_hist_trades", trades, bytes),
             Mem::new("pool_ctx", ctx.len(), lmem::map(ctx)),
             Mem::new("legs_buffer", legs.0.len() + legs.1.len(), lmem::vec(legs.0) + lmem::vec(legs.1)),
         ],
+        tables: vec![adm.keys.table(), farm_table],
         segments,
     }
 }
@@ -366,7 +371,7 @@ fn each_file_row<F: FnMut(&[Col], usize) -> Result<()>>(path: &Path, cols: &[&st
 /// The farmer history of the snapshot (farm_hist.parquet, paper/snapshot_export.py): the store's buys and sells over
 /// [m.lo, m.hi) of the keys that trade in the replay, in strict chain order, each a SOL market's with its token side.
 /// The rows from `h0` on join `hist` (the rest no window reaches); returns (rows, rows kept).
-fn read_farm_hist(path: &Path, adm: &mut Admission, m: &FarmHistMeta, h0: u64, hist: &mut HashMap<(Id, Id), FarmHist>) -> Result<(u64, u64)> {
+fn read_farm_hist(path: &Path, adm: &mut Admission, m: &FarmHistMeta, h0: u64, hist: &mut FarmHists) -> Result<(u64, u64)> {
     const COLS: [&str; 8] = ["slot", "tx_index", "outer_ix", "inner_ix", "pool", "trader", "token_buy", "token_amount"];
     let (mut prev, mut kept, mut seen) = (None::<Order>, 0u64, [false; 8]);
     let n = each_file_row(path, &COLS, &mut seen, &mut |c: &[Col], i: usize| {
@@ -814,7 +819,7 @@ pub struct Replay {
     blocks: Vec<Blocks>,
     keep: Vec<u64>,
     pub h0: u64,
-    hist: HashMap<(Id, Id), FarmHist>,
+    hist: FarmHists,
     /// The farmer history read (null without one), for the summary.
     farm: Value,
     pub counts: Counts,
@@ -964,7 +969,7 @@ impl Replay {
         // chunk keeps what its own and later windows reach (legs.rs `keeps`).
         let keep = keeps(&starts);
         let h0 = keep[0].max(store_lo);
-        let mut hist: HashMap<(Id, Id), FarmHist> = HashMap::new();
+        let mut hist = FarmHists::default();
         let mut farm = Value::Null;
         if h0 < from {
             let m = farm_meta.with_context(|| {
@@ -983,7 +988,7 @@ impl Replay {
             farm = json!({"lo": m.lo, "hi": m.hi, "to": m.to, "rows": rows, "kept": kept, "keys": hist.len()});
         }
         let replay = Replay {
-            hist_mem: hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
+            hist_mem: hist.values().map(|h| h.mem()).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
             blocks_mem: blocks.iter().chain(seg.iter().flat_map(|s| s.blocks.iter())).map(Blocks::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
             from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false, seg,
             mem_log: false, last_mem: ReplayMem::default(), prune_farm: true, pruned: (0, 0, 0),
@@ -1434,7 +1439,7 @@ pub(crate) mod tests {
                     views.push(m.clone());
                     Ok(())
                 }).unwrap();
-                let walk = r.hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+                let walk = r.hist.values().map(|h| h.mem()).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
                 (lines, views, r.hist_mem, walk, r.hist.len(), r.last_mem().clone())
             };
             let (plain, empty, ..) = run(false);
@@ -1446,6 +1451,14 @@ pub(crate) mod tests {
             assert!(empty.iter().all(|m| m.mems.is_empty() && m.segments.is_none()), "seg {seg}: no view without mem_log");
             assert_eq!(total, walk, "seg {seg}");
             assert!(walk.0 > 0 && pairs > 0, "seg {seg}: the fixture has farmer history");
+            // C4-5: farmer_hist's bytes are its table's allocation and the boxed histories; both tables' shape is in the view
+            let names: Vec<&str> = last_mem.tables.iter().map(|t| t.name).collect();
+            assert_eq!(names, ["interned_keys", "farmer_hist"], "seg {seg}");
+            let ft = &last_mem.tables[1];
+            let fin_bytes = last_mem.mems.iter().find(|m| m.name == "farmer_hist").map(|m| m.bytes).unwrap();
+            assert_eq!((ft.len, fin_bytes), (pairs, ft.bytes + pairs * std::mem::size_of::<crate::legs::FarmHist>()), "seg {seg}");
+            assert!(ft.buckets.is_power_of_two() && ft.len <= ft.full(), "seg {seg}: {ft:?}");
+            assert!(empty.iter().all(|m| m.tables.is_empty()), "seg {seg}");
             let last = views.last().unwrap();
             let get = |name: &str| last.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
             assert_eq!((get("farmer_hist"), get("farmer_hist_trades")), (pairs, walk.0), "seg {seg}: the last unit's view");
