@@ -11,6 +11,9 @@
 //!   first seen (`seed_trades`, as `_seed_pool`).
 //! - `meta_bounds` and `ms_per_slot` (export version 2): the engine's dev bounds and clock in a replay of the store
 //!   (`lab-live signals`, M1 C1b). The slot times are parsed to Python's bits (serde_json `float_roundtrip`).
+//! - `curve_hold` (an export with a history range, M1 C2-5): the window of curve_hold.parquet, the curve seed before a
+//!   replay's from (curve_hold.rs reads the file). Optional: an export without a history range, or from before C2-5,
+//!   has none.
 
 use crate::idl::Val;
 use crate::rows::cell;
@@ -90,6 +93,8 @@ pub struct Snapshot {
     pub chunks: Vec<StoreChunk>,
     /// The farmer history of a replay (meta.json `farm_hist`, the file farm_hist.parquet).
     pub farm_hist: Option<FarmHistMeta>,
+    /// The curve seed before a replay's from (meta.json `curve_hold`, the file curve_hold.parquet).
+    pub curve_hold: Option<CurveHoldMeta>,
     /// The store's farmer rule (meta.json `farmer`: ratio, min_trades, window_ms), as the store computed its flags.
     pub farmer: Value,
     /// The whole store's blocks [min slot, max slot + 1) (meta.json `meta_bounds`): a replay's dev bounds, never the
@@ -119,9 +124,21 @@ pub struct FarmHistMeta {
     pub rows: u64,
 }
 
+/// curve_hold.parquet: per (mint, trader) the net curve tokens of the store's legs over [lo, hi), lo the store's start
+/// and hi the replay's from, of the mints with a curve row in [hi, to); `rows` non-zero nets, after skipping
+/// `skipped_null_is_buy` legs without is_buy (paper/snapshot_export.py; curve_hold.rs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CurveHoldMeta {
+    pub lo: u64,
+    pub hi: u64,
+    pub to: u64,
+    pub rows: u64,
+    pub skipped_null_is_buy: u64,
+}
+
 /// Each row of a Parquet file as the extractor's values of `names`, in that order, batch by batch: the file is never
 /// held whole (a seed day is ~21 M rows). An export without one of the columns is not this format.
-fn each_row(path: &Path, names: &[&str], mut f: impl FnMut(&[Val]) -> Result<()>) -> Result<()> {
+pub(crate) fn each_row(path: &Path, names: &[&str], mut f: impl FnMut(&[Val]) -> Result<()>) -> Result<()> {
     let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
     let columns: Vec<String> = builder.schema().fields().iter().map(|f| f.name().clone()).collect();
@@ -143,7 +160,7 @@ fn each_row(path: &Path, names: &[&str], mut f: impl FnMut(&[Val]) -> Result<()>
     Ok(())
 }
 
-fn text(v: &Val) -> Result<Option<String>> {
+pub(crate) fn text(v: &Val) -> Result<Option<String>> {
     Ok(match v {
         Val::Null => None,
         Val::Str(s) => Some(s.clone()),
@@ -160,7 +177,7 @@ fn unsigned(v: &Val) -> Result<Option<u64>> {
     })
 }
 
-fn signed(v: &Val) -> Result<Option<i64>> {
+pub(crate) fn signed(v: &Val) -> Result<Option<i64>> {
     Ok(match v {
         Val::Null => None,
         Val::I64(x) => Some(*x),
@@ -232,6 +249,16 @@ impl Snapshot {
                 hi: slot(&m["hi"], "farm_hist.hi")?,
                 to: slot(&m["to"], "farm_hist.to")?,
                 rows: slot(&m["rows"], "farm_hist.rows")?,
+            });
+        }
+        if !meta["curve_hold"].is_null() {
+            let m = &meta["curve_hold"];
+            s.curve_hold = Some(CurveHoldMeta {
+                lo: slot(&m["lo"], "curve_hold.lo")?,
+                hi: slot(&m["hi"], "curve_hold.hi")?,
+                to: slot(&m["to"], "curve_hold.to")?,
+                rows: slot(&m["rows"], "curve_hold.rows")?,
+                skipped_null_is_buy: slot(&m["skipped_null_is_buy"], "curve_hold.skipped_null_is_buy")?,
             });
         }
         let known = |slot: Option<u64>| before.is_none_or(|b| slot.is_none_or(|x| x < b));
@@ -475,6 +502,29 @@ mod tests {
             fs::write(dir.join("meta.json"), m.to_string()).unwrap();
             assert!(Snapshot::load_universe(&dir).is_err(), "{k} {v}");
             export(&dir);
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_curve_hold_window_is_optional_and_whole() {
+        let dir = tmp("hold");
+        export(&dir);
+        assert_eq!(Snapshot::load_universe(&dir).unwrap().curve_hold, None); // an export without a history range
+        let mut v: Value = serde_json::from_slice(&fs::read(dir.join("meta.json")).unwrap()).unwrap();
+        v["curve_hold"] = serde_json::json!({"lo": 1000, "hi": 2000, "to": 3000, "rows": 5, "skipped_null_is_buy": 1});
+        fs::write(dir.join("meta.json"), v.to_string()).unwrap();
+        let want = CurveHoldMeta { lo: 1000, hi: 2000, to: 3000, rows: 5, skipped_null_is_buy: 1 };
+        assert_eq!(Snapshot::load(&dir, None).unwrap().curve_hold, Some(want));
+        assert_eq!(Snapshot::load_universe(&dir).unwrap().curve_hold, Some(want));
+        // every field, as a count or a slot: one missing or negative is refused
+        for k in ["lo", "hi", "to", "rows", "skipped_null_is_buy"] {
+            for bad in [Value::Null, serde_json::json!(-1)] {
+                let mut m = v.clone();
+                m["curve_hold"][k] = bad.clone();
+                fs::write(dir.join("meta.json"), m.to_string()).unwrap();
+                assert!(Snapshot::load_universe(&dir).is_err(), "{k} {bad}");
+            }
         }
         fs::remove_dir_all(&dir).unwrap();
     }

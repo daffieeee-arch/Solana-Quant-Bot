@@ -51,6 +51,10 @@
 //! - paper/tests/test_lab_live_signals.py runs paper.engine on the same range and compares the two journals with
 //!   `paper.journal_diff --scope signals` (lab/live/nas_m1b.sh: the dev range of dev2 and the whole of fwd1053); the shared
 //!   golden cases (paper/tests/data/c1b_signal_cases.json) run in signals_core.rs's tests.
+//!
+//! M1 C2-5, the curve seed before a replay's from (curve_hold.rs; spec research/m1-c2-positionsim-spec-2026-10-19.md §4.1):
+//! curve_hold.parquet of paper.snapshot_export, read per (mint, trader) and checked against the replay's from and to. No
+//! command uses it yet; `lab-live paper` (C2-4b) seeds its curve positions with it.
 
 #[allow(dead_code)]
 #[path = "../../extractor/src/idl.rs"]
@@ -59,6 +63,9 @@ mod idl;
 #[path = "../../extractor/src/sink.rs"]
 mod sink;
 
+// Read and checked, not used by a command yet: `lab-live paper` takes it in C2-4b.
+#[allow(dead_code)]
+mod curve_hold;
 mod journal;
 mod legs;
 mod legs_read;
