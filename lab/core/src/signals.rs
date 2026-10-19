@@ -916,7 +916,7 @@ mod tests {
     fn the_engine_refuses_groups_it_cannot_run() {
         let new = |g: Vec<GroupSpec>, rule| SignalEngine::new(dev2_universe(), dev2(), g, rule).map(|_| ());
         assert_eq!(new(groups(1), WindowRule::AllPools), Ok(()));
-        assert!(matches!(new(groups(1), WindowRule::Live), Err(SignalError::Config(_))));
+        assert_eq!(new(groups(1), WindowRule::Live), Ok(())); // M3-08b: the live farm-window rule is ported (no longer refused)
         let mut two = groups(1);
         two[1].primary = true;
         assert!(new(two, WindowRule::AllPools).is_err());
