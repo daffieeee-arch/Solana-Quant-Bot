@@ -13,21 +13,22 @@
 //!   entry, as `_load_risk` does (engine.py:471, 532-537, 869). Before the first dated minute every row past the gates
 //!   is skipped with 'not loaded' (:151). The gate (`_risk_block`, :824-848), the 'at entry: …' orders (:868-877), the
 //!   size (:878-883), the day's loss and its reset (:455-460, 1285-1287) and the pool cooldown after a total loss
-//!   (:1054-1057) follow. Wallets, heartbeat and the daily close are C3-3; the restart paths M3 (spec D11).
+//!   (:1054-1057) follow. C3-3: the heartbeat rows (:461-465, 477-480) and each group's paper wallet (:1252-1283), the
+//!   wallet files as `Op::Wallet`s for lab-live to write. The daily close is Python's (spec D3); the restart paths M3.
 //! - The curve entry takes the engine's own view instead of a curve history (spec D4): the state after the signal slot
 //!   (kept on the Pending), Recent's last leg before the entry, and the seed from the store's curve_hold plus the run's
 //!   own per-(mint, trader) sums.
 //! - Python's dicts keep insertion order, and step 5, the minute's position puts and the end of data iterate them: the
 //!   open positions and the graduations waiting are kept in that order here too (`Ordered`).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
 
 use crate::costs::Scenario;
 use crate::exact::{ge, gt, lt};
 use crate::exits::{check_groups, rule_for, variant, ExitRule, VariantError};
 use crate::flow::LiveFlowIndex;
-use crate::legs::{Event, Id, Leg, Venue};
+use crate::legs::{Event, Id, Leg, Order, Venue};
 use crate::n2::N2Keys;
 use crate::positions::{
     insertion_index, open_curve_entry, open_pool_position, Cfg, Opened, PosError, PosResult, PositionSim, SimVenue, Step, MAX_HOLD, SEED_POOL,
@@ -38,6 +39,8 @@ use crate::tau::Tau;
 use crate::universe::Segment;
 use crate::venues::{self as v, Curve, Pool};
 
+/// A jump of more slots between events is a feed gap's heartbeat row (engine.py:75).
+const GAP_SLOTS: u64 = 25;
 /// Every order's size under ignore-risk: `int(g.risk.size_sol * SOL)` with Risk(0.5, ...) (engine.py:882-883); and every
 /// N2 order's with risk on, `int(0.5 * SOL)` (:881).
 pub const SIZE: i128 = 500_000_000;
@@ -173,8 +176,61 @@ pub struct ExitRow {
     pub cap_slots: u64,
 }
 
-/// One journal write, in the engine's order: a put (INSERT OR REPLACE) of a row of signals, orders, fills, exits or
-/// positions, or the delete of a position (journal.py:83-89).
+/// A heartbeat row (journal.py heartbeat; engine.py:461-465, 477-480): a new dated minute's, or a feed gap's (note
+/// "feed gap a..b").
+#[derive(Clone, Debug, PartialEq)]
+pub struct Heartbeat {
+    pub minute: i64,
+    pub day: Option<String>,
+    pub last_slot: Option<u64>,
+    /// The last event seen, "slot:tx:outer:inner".
+    pub last_event: Option<Order>,
+    pub events: u64,
+    pub open_positions: usize,
+    pub gap_slots: u64,
+    pub note: String,
+}
+
+/// One paper wallet transaction (engine.py `_wallet_tx`, :1252-1265); the other fields are constants (signature,
+/// time_unix, symbol and tip null, status "paper").
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalletTx {
+    pub slot: u64,
+    pub kind: &'static str,
+    pub mint: Id,
+    pub amount_lamports: i128,
+    pub fee_lamports: i128,
+    pub landed_slot_delta: Option<u64>,
+    pub family: Family,
+    pub variant: String,
+}
+
+/// A group's wallet file as `_write_wallet` writes it whole (engine.py:1267-1283).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalletFile {
+    /// The group's index in the signal engine's order (lab-live names its file).
+    pub group: usize,
+    pub slot: Option<u64>,
+    pub time_unix: Option<i64>,
+    pub balance_lamports: i128,
+    /// Newest first, at most 50.
+    pub txs: Vec<WalletTx>,
+}
+
+/// A group's paper wallet: 10 SOL at the start, the realized P&L and the last 50 transactions (engine.py Group, :154).
+#[derive(Clone, Debug, Default)]
+struct Wallet {
+    realized: i128,
+    txs: VecDeque<WalletTx>,
+    dirty: bool,
+}
+
+/// The paper wallet's start (engine.py:154, `int(10 * SOL)`) and depth (`deque(maxlen=50)`).
+pub const WALLET_START: i128 = 10_000_000_000;
+const WALLET_DEPTH: usize = 50;
+
+/// One journal write, in the engine's order: a put (INSERT OR REPLACE) of a row of signals, orders, fills, exits,
+/// positions or heartbeat, or the delete of a position (journal.py:83-89); and the wallet files, written whole.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
     Signal(SignalRow, Status),
@@ -184,6 +240,8 @@ pub enum Op {
     /// status 'open'; mark: (mark_proceeds, mark_slot, mark_pnl) of the last mark, NULL without one.
     PutPosition { k: PosKey, entry_slot: u64, cost: i128, tokens: i128, mark: Option<(i128, u64, i128)> },
     DeletePosition(PosKey),
+    Heartbeat(Box<Heartbeat>),
+    Wallet(Box<WalletFile>),
 }
 
 /// A curve entry's holdings right after the fill (`Holdings.seed(legs[:i])`): (trader, hist, cf) by trader. The seed
@@ -382,6 +440,10 @@ pub struct Paper {
     day_loss: Vec<i128>,
     cool: Vec<HashMap<Id, u64>>,
     day: Option<String>,
+    wallets: Vec<Wallet>,
+    /// The events the engine has seen and the last one (engine.py run, :319-320), for the heartbeat.
+    pub(crate) events: u64,
+    pub(crate) last_event: Option<Order>,
     minute: Option<i64>,
     last_slot: Option<u64>,
     pub ops: Vec<Op>,
@@ -428,6 +490,9 @@ impl Paper {
             day_loss: vec![0; n],
             cool: vec![HashMap::new(); n],
             day: None,
+            wallets: vec![Wallet::default(); n],
+            events: 0,
+            last_event: None,
             minute: None,
             last_slot: None,
             ops: Vec::new(),
@@ -527,9 +592,71 @@ impl Paper {
         if is_n2(p.family) || risk.pool_cooldown_h <= 0.0 || tokens == 0 || !lt(proceeds, 0.1 * cost as f64) {
             return;
         }
-        let end = exit_slot.filter(|&s| s != 0).unwrap_or(slot) + eng.clock.slots(risk.pool_cooldown_h * 3_600_000.0, slot);
+        // Python's ints do not overflow: a cooldown beyond 64 bits of slots (a finite but huge pool_cooldown_h) is forever
+        // there, so it saturates here (review of #384).
+        let end = exit_slot.filter(|&s| s != 0).unwrap_or(slot).saturating_add(eng.clock.slots(risk.pool_cooldown_h * 3_600_000.0, slot));
         let c = self.cool[p.group].entry(p.key).or_insert(0);
         *c = (*c).max(end);
+    }
+
+    // -- the paper wallets and the heartbeat
+
+    /// `_wallet_tx(p, kind, slot, amount, settled)` (engine.py:1252-1265): F7 only, newest first, 50 deep.
+    fn wallet_tx(&mut self, p: &Pending, kind: &'static str, slot: u64, amount: i128, settled: Option<i128>) {
+        if is_n2(p.family) {
+            return;
+        }
+        let fee = self.cfg.scn.per_tx();
+        let w = &mut self.wallets[p.group];
+        if let Some(s) = settled {
+            w.realized += s;
+        }
+        w.txs.push_front(WalletTx {
+            slot,
+            kind,
+            mint: p.key,
+            amount_lamports: amount,
+            fee_lamports: fee,
+            landed_slot_delta: (kind == "buy").then_some(p.entry_slot - p.t),
+            family: p.family,
+            variant: p.variant.clone(),
+        });
+        w.txs.truncate(WALLET_DEPTH);
+        w.dirty = true;
+    }
+
+    /// `_write_wallet(block_time)` (engine.py:1267-1283): each group whose wallet changed, its balance (10 SOL + the
+    /// realized P&L - its open F7 positions at their entry total) at the last ended slot.
+    fn write_wallets(&mut self, block_time: Option<i64>) {
+        for g in 0..self.wallets.len() {
+            if !self.wallets[g].dirty {
+                continue;
+            }
+            let open_cost: i128 =
+                self.opens.values().filter(|o| o.p.group == g && !is_n2(o.p.family)).map(|o| self.cfg.scn.entry_total(o.r().cost)).sum();
+            let w = &mut self.wallets[g];
+            self.ops.push(Op::Wallet(Box::new(WalletFile {
+                group: g,
+                slot: self.last_slot,
+                time_unix: block_time,
+                balance_lamports: WALLET_START + w.realized - open_cost,
+                txs: w.txs.iter().cloned().collect(),
+            })));
+            w.dirty = false;
+        }
+    }
+
+    fn heartbeat(&mut self, eng: &SignalEngine, minute: i64, gap_slots: u64, note: String) {
+        self.ops.push(Op::Heartbeat(Box::new(Heartbeat {
+            minute,
+            day: eng.day.clone(),
+            last_slot: self.last_slot,
+            last_event: self.last_event,
+            events: self.events,
+            open_positions: self.opens.len(),
+            gap_slots,
+            note,
+        })));
     }
 
     fn inc(m: &mut HashMap<Id, u32>, k: Id) {
@@ -631,6 +758,7 @@ impl Paper {
                 if r.entry_failed {
                     let s = self.cfg.scn.settle(true, 0, 0, 0);
                     self.book_loss(&p, s.pnl); // the failed transaction's fee (engine.py:931)
+                    self.wallet_tx(&p, "buy", slot, s.pnl, Some(s.pnl));
                     *self.counts.exits.entry(reason.unwrap_or("")).or_default() += 1;
                     self.ops.push(Op::Exit(Box::new(ExitRow {
                         k: k.clone(),
@@ -684,6 +812,8 @@ impl Paper {
                 Self::inc(&mut self.grad_keys, key);
             }
             self.put_position(id);
+            let p = self.opens[&id].p.clone();
+            self.wallet_tx(&p, "buy", slot, -self.cfg.scn.entry_total(cost), None); // engine.py:948
             if grad.is_some() {
                 self.open.push(key, id);
             } else {
@@ -694,6 +824,8 @@ impl Paper {
         }
         self.opens.insert(id, o);
         self.put_position(id);
+        let p = self.opens[&id].p.clone();
+        self.wallet_tx(&p, "buy", slot, -self.cfg.scn.entry_total(cost), None); // engine.py:948
         self.open.push(key, id);
         self.counts.max_open = self.counts.max_open.max(self.opens.len());
         let i = i.expect("an open position has its insertion index");
@@ -781,6 +913,9 @@ impl Paper {
         self.ops.push(Op::DeletePosition(k));
         // `_exit_effects` (engine.py:1046-1058): the day's loss, the pool cooldown, busy (the wallet is C3-3)
         self.book_loss(&p, s.pnl);
+        let (exit_slot, tokens, _, cost) = effect;
+        let amount = if tokens != 0 { s.pnl + self.cfg.scn.entry_total(cost) } else { s.pnl };
+        self.wallet_tx(&p, "sell", exit_slot.filter(|&x| x != 0).unwrap_or(slot), amount, Some(s.pnl)); // engine.py:1052
         self.cooldown(eng, &p, effect, slot);
         self.busy.insert(busy, Busy::Until(until));
         self.drop_position(id);
@@ -865,6 +1000,7 @@ impl Paper {
         }
         self.grad_wait.clear();
         self.grad_keys.clear();
+        self.write_wallets(None); // engine.py:1306 (the day's close is Python's, spec D3)
     }
 }
 
@@ -923,13 +1059,19 @@ impl Hooks for Paper {
             }
             let minute = bt.div_euclid(60);
             if self.minute != Some(minute) {
+                let gap = self.last_slot.map_or(0, |l| slot.saturating_sub(l + 1));
+                self.heartbeat(eng, minute, gap, String::new());
                 self.minute = Some(minute);
                 for (_, ids) in self.open.snapshot() {
                     for id in ids {
                         self.put_position(id);
                     }
                 }
+                self.write_wallets(Some(bt));
                 self.load_risk();
+            }
+            if let Some(l) = self.last_slot.filter(|&l| slot - l > GAP_SLOTS) {
+                self.heartbeat(eng, minute, slot - l - 1, format!("feed gap {l}..{slot}"));
             }
         }
         // 1. the open positions on the slot's keys (engine.py:373-384)
@@ -1088,6 +1230,9 @@ impl PaperEngine {
             self.cur = Some(slot);
             self.paper.quiet_entries(&self.sig, slot);
         }
+        // after the slot before it ended (engine.py:319-320), so a heartbeat there counts up to the event before
+        self.paper.events += 1;
+        self.paper.last_event = Some(ev.leg.order());
         self.paper.take_error()
     }
 

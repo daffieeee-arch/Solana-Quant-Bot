@@ -2,7 +2,8 @@
 # M1 C3 of the Rust live route (lab/docs/rust-live-route-design-2026-10-16.md §3; the porting spec is
 # research/m1-c3-risk-spec-2026-10-19.md) on the NAS: risk on in lab-live paper. C3-1 added the risk files' reader, C3-2
 # the paper engine's risk (the gate, the entry's re-read, the size, the day's loss, the pool cooldown) with its golden
-# cases; the acceptance runs RC1-RC3 come with C3-4 and extend STEP=python.
+# cases, C3-3 the heartbeat rows and the paper wallets (their files byte for byte); the acceptance runs RC1-RC3 come with
+# C3-4 and extend STEP=python.
 #
 #   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (the risk reader against
 #                paper/tests/data/c3_risk_load_cases.json, the paper engine with risk on against c3_risk_cases.json, and

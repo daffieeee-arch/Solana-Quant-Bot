@@ -111,10 +111,13 @@ struct Tally {
     /// The segment of each entered row's position, for its order (an Op::Order carries no venue).
     entered: HashMap<PosKey, Segment>,
     curve_at_or_after_to: u64,
+    /// Wallet files written (each a whole file, replaced).
+    wallets: u64,
 }
 
 /// The engine's ops into the journal, and its seed and settle lines into the trace.
-fn drain(eng: &mut PaperEngine, keys: &Keys, to: u64, j: &mut Journal, tally: &mut Tally, mut trace: Option<&mut BufWriter<fs::File>>) -> Result<()> {
+fn drain(eng: &mut PaperEngine, keys: &Keys, to: u64, j: &mut Journal, tally: &mut Tally, wallets: &[Option<String>],
+         mut trace: Option<&mut BufWriter<fs::File>>) -> Result<()> {
     if let (Some(f), Some(seeds)) = (trace.as_deref_mut(), eng.paper.seeds.as_mut()) {
         for SeedTrace { k, holdings } in seeds.drain(..) {
             writeln!(f, "seed {} {} {} {} {}", k.family.as_str(), k.variant, keys.name(k.key).unwrap_or("?"), k.t, seed_sha(&holdings, keys))?;
@@ -147,6 +150,15 @@ fn drain(eng: &mut PaperEngine, keys: &Keys, to: u64, j: &mut Journal, tally: &m
                 tally.deletes += 1;
                 let key: Vec<(&str, Sql)> = key.into_iter().map(|(c, v)| (c, sql(v))).collect();
                 j.delete(table, &key)?;
+            }
+            Write::Wallet(g, text) => {
+                // <journal dir>/<wallet file>, replaced whole as engine.py:1279-1282 does (a .tmp, then rename)
+                let name = wallets.get(g).cloned().flatten().with_context(|| format!("group {g} has no wallet file"))?;
+                let path = j.dir.join(&name);
+                let tmp = j.dir.join(format!("{name}.tmp"));
+                fs::write(&tmp, text).with_context(|| format!("write {}", tmp.display()))?;
+                fs::rename(&tmp, &path).with_context(|| format!("rename to {}", path.display()))?;
+                tally.wallets += 1;
             }
         }
     }
@@ -203,11 +215,11 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
     let (mut seeds, mut tally) = (Seeds::default(), Tally::default());
     replay.for_each_event(|keys, ev| {
         eng.push(ev, &mut seeds.with(keys))?;
-        drain(&mut eng, keys, a.to, &mut j, &mut tally, trace.as_mut())
+        drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())
     })?;
     let keys = &replay.adm.keys;
     eng.finish(&mut seeds.with(keys))?; // the last slot, then the end of data (engine.py:321-324)
-    drain(&mut eng, keys, a.to, &mut j, &mut tally, trace.as_mut())?;
+    drain(&mut eng, keys, a.to, &mut j, &mut tally, &groups.wallet, trace.as_mut())?;
     if let Some(mut f) = trace {
         f.flush()?;
     }
@@ -225,7 +237,7 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
         "entered": c.entered, "busy": c.busy, "not_loaded": c.not_loaded, "orders": c.orders, "exits": c.exits,
         "curve_entries": c.curve_entries, "curve_seeded": c.curve_seeded, "curve_hold_rows": hold_rows,
         "seed_pool_sales": c.seed_pool_sales, "pool_sales": c.pool_sales, "max_open": c.max_open,
-        "curve_entries_at_or_after_to": tally.curve_at_or_after_to,
+        "curve_entries_at_or_after_to": tally.curve_at_or_after_to, "wallet_files_written": tally.wallets,
     });
     v["journal"] = json!({"puts": tally.puts, "deletes": tally.deletes, "signals": j.count("signals")?, "orders": j.count("orders")?,
                           "fills": j.count("fills")?, "exits": j.count("exits")?, "positions": j.count("positions")?});
@@ -318,8 +330,20 @@ mod tests {
         assert_eq!(j.get_state("cost_scenario").unwrap().as_deref(), Some(BASE_SCENARIO));
         assert_eq!(j.get_state("feed").unwrap().as_deref(), Some(r#"{"kind": "replay", "from": 1000, "to": 3000}"#));
         assert_eq!(serde_json::from_str::<Value>(&j.get_state("lab_live_paper").unwrap().unwrap()).unwrap(), v);
-        assert_eq!((j.get_state("venue_math").unwrap(), j.count("heartbeat").unwrap()), (None, 0));
+        assert_eq!(j.get_state("venue_math").unwrap(), None);
+        // C3-3: a heartbeat row per dated minute (the journal's count is the run's puts), and each group's wallet file,
+        // written whole (both groups traded: K3 and H).
+        let beats = j.count("heartbeat").unwrap();
+        assert!(beats >= 1 && jr["puts"]["heartbeat"].as_u64() == Some(beats), "{beats} heartbeat rows, {jr}");
         drop(j);
+        for (file, group_txs) in [("wallet.json", 1), ("wallet-h.json", 2)] {
+            let w: Value = serde_json::from_str(&fs::read_to_string(root.join("j").join(file)).unwrap()).unwrap();
+            let txs = w["txs"].as_array().unwrap();
+            assert!(w["mode"] == "paper" && w["address"].is_null() && txs.len() >= group_txs, "{file}: {w}");
+            assert!(txs.iter().all(|t| t["status"] == "paper" && t["signature"].is_null()), "{file}: {w}");
+        }
+        assert!(p["wallet_files_written"].as_u64().is_some_and(|n| n >= 2), "{p}");
+        assert!(!root.join("j").join("wallet.json.tmp").exists());
         let trace = fs::read_to_string(root.join("trace.txt")).unwrap();
         assert_eq!(trace.lines().filter(|l| l.starts_with("settle F7 ")).count() as u64, filled + failed, "{trace}");
         assert!(log_line(&v).contains("lab-live paper [1000, 3000)"));

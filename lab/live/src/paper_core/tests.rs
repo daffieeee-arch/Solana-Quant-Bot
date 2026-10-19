@@ -37,8 +37,9 @@ fn cell_json(c: &Cell) -> Value {
     }
 }
 
-/// A write as the generator records it: ["put", table, {every column: value or null}] or ["delete", table, {key}].
-fn write_json(w: &Write, cols: &HashMap<String, Vec<String>>) -> Value {
+/// A write as the generator records it: ["put", table, {every column: value or null}], ["delete", table, {key}] or
+/// ["wallet", file, text] (c3_risk_cases.py; `wallets` names each group's file).
+fn write_json(w: &Write, cols: &HashMap<String, Vec<String>>, wallets: &[Option<String>]) -> Value {
     match w {
         Write::Put(table, cells) => {
             for (c, _) in cells {
@@ -54,14 +55,22 @@ fn write_json(w: &Write, cols: &HashMap<String, Vec<String>>) -> Value {
             delete_key_ok(w, &cols[*table].iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
             json!(["delete", table, key.iter().map(|(c, v)| (c.to_string(), cell_json(v))).collect::<Map<_, _>>()])
         }
+        Write::Wallet(g, text) => json!(["wallet", wallets[*g].as_deref().expect("a group with a wallet file"), text]),
     }
+}
+
+/// C2's five tables: its goldens record no heartbeat and no wallet.
+fn c2_write(w: &Write) -> bool {
+    matches!(w, Write::Put(t, _) | Write::Delete(t, _) if ["signals", "orders", "fills", "exits", "positions"].contains(t))
 }
 
 /// A case run as the generator runs it: the paper engine on its events (its groups and cost scenario; risk inert, or
 /// with `risk` the groups' files as `files` writes them), every journal write in order, and the engine and interner
 /// after it.
 fn run_paper(case: &Value, scenario: &str) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
-    run_case(case, scenario, None)
+    let (mut writes, eng, keys) = run_case(case, scenario, None)?;
+    writes.retain(c2_write);
+    Ok((writes, eng, keys))
 }
 
 /// A C3 case's risk files in a directory of their own: each group's first text, then its flips as the feed reaches
@@ -177,7 +186,7 @@ fn every_c2_case_gives_the_engines_writes() {
         let name = case["name"].as_str().unwrap();
         let scenario = case["cost_scenario"].as_str().unwrap();
         let (writes, eng, _) = run_paper(case, scenario).unwrap_or_else(|e| panic!("{name}: {e:#}"));
-        let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols)).collect();
+        let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols, &[])).collect();
         let want = case["expect_ops"].as_array().unwrap();
         if let Some(i) = (0..got.len().max(want.len())).find(|&i| got.get(i) != want.get(i)) {
             panic!("{name}: write {i} of {} (Rust) / {} (Python)\n rust:   {}\n python: {}", got.len(), want.len(),
@@ -198,7 +207,8 @@ fn every_c3_case_gives_the_engines_writes_with_risk_on() {
         let name = case["name"].as_str().unwrap();
         let scenario = case["cost_scenario"].as_str().unwrap();
         let (writes, eng, _) = run_case(case, scenario, Some(name)).unwrap_or_else(|e| panic!("{name}: {e:#}"));
-        let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols)).collect();
+        let wallets = parse_groups(case["groups"].as_str().unwrap()).unwrap().wallet;
+        let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols, &wallets)).collect();
         let want = case["expect_ops"].as_array().unwrap();
         if let Some(i) = (0..got.len().max(want.len())).find(|&i| got.get(i) != want.get(i)) {
             panic!("{name}: write {i} of {} (Rust) / {} (Python)\n rust:   {}\n python: {}", got.len(), want.len(),
