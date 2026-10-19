@@ -3,15 +3,18 @@
 //! the SOL-market join; DuckDB's casts: research/m1-c1a-legs-spec-2026-10-19.md §2-§3), and `run`, the replay over
 //! [from, to):
 //!
-//! 1. refused: the hold-out, a range outside the snapshot's store period, one not covered by complete chunks, and
-//!    (until C1a-2 brings the store's earlier trades) one whose farmer windows reach before `from`;
-//! 2. each emitted chunk's h24 from its own blocks, over the whole chunk;
-//! 3. chunk by chunk: its curve and pool rows read (admitted by the snapshot: its mints for curve rows, its SOL markets
+//! 1. refused: the hold-out, a range outside the snapshot's store period, one not covered by complete chunks, a chunk
+//!    that is not the store's (its slots, the extractor build in its manifest, its h24), and one whose farmer windows
+//!    reach before `from` without the store's history for exactly this replay (farm_hist.parquet, C1a-2);
+//! 2. each emitted chunk's h24 from its own blocks, over the whole chunk, equal to the store's;
+//! 3. the farmer history over [H0, from) from the snapshot (research/m1-c1a2-spec-2026-10-19.md), H0 the earliest
+//!    slot a window of an emitted trade reaches (legs.rs `keeps`);
+//! 4. chunk by chunk: its curve and pool rows read (admitted by the snapshot: its mints for curve rows, its SOL markets
 //!    for pool rows), sorted, gated (no key ties), the farmer flags set, and the events emitted in chain order.
 
-use crate::legs::{check_ties, emit_chunk, flag_chunk, h24_of, FarmHist, Keys, PoolRow, Summary, REVERSED};
+use crate::legs::{check_ties, emit_chunk, flag_chunk, h24_of, keeps, FarmHist, Keys, PoolRow, Summary, REVERSED};
 use crate::rows::{chunks, Part};
-use crate::snapshot::Snapshot;
+use crate::snapshot::{FarmHistMeta, Snapshot};
 use anyhow::{bail, Context, Result};
 use arrow_array::{Array, BooleanArray, Int64Array, LargeStringArray, RecordBatch, StringArray, StringViewArray, UInt64Array};
 use lab_core::legs::{
@@ -267,22 +270,7 @@ fn each_row(dir: &Path, table: &str, cols: &[&str], required: &[&str], mut f: im
     files.sort();
     let (mut seen, mut n) = (vec![false; cols.len()], 0u64);
     for path in &files {
-        let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        let names: Vec<String> = builder.schema().fields().iter().map(|f| f.name().clone()).collect();
-        let roots: Vec<usize> = (0..names.len()).filter(|&i| cols.contains(&names[i].as_str())).collect();
-        for (k, c) in cols.iter().enumerate() {
-            seen[k] |= names.iter().any(|x| x.as_str() == *c);
-        }
-        let mask = ProjectionMask::roots(builder.parquet_schema(), roots);
-        for batch in builder.with_projection(mask).build()? {
-            let batch = batch.with_context(|| format!("read {}", path.display()))?;
-            let c = cols.iter().map(|name| Col::of(&batch, name)).collect::<Result<Vec<_>>>()?;
-            for i in 0..batch.num_rows() {
-                f(&c, i).with_context(|| format!("{}", path.display()))?;
-                n += 1;
-            }
-        }
+        n += each_file_row(path, cols, &mut seen, &mut f)?;
     }
     if n > 0 {
         if let Some(k) = required.iter().find(|r| !cols.iter().zip(&seen).any(|(c, s)| c == *r && *s)) {
@@ -290,6 +278,72 @@ fn each_row(dir: &Path, table: &str, cols: &[&str], required: &[&str], mut f: im
         }
     }
     Ok(n)
+}
+
+/// Every row of one Parquet file with only `cols` read (`seen[k]`: the file has `cols[k]`); its row count.
+fn each_file_row<F: FnMut(&[Col], usize) -> Result<()>>(path: &Path, cols: &[&str], seen: &mut [bool], f: &mut F) -> Result<u64> {
+    let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let names: Vec<String> = builder.schema().fields().iter().map(|f| f.name().clone()).collect();
+    let roots: Vec<usize> = (0..names.len()).filter(|&i| cols.contains(&names[i].as_str())).collect();
+    for (k, c) in cols.iter().enumerate() {
+        seen[k] |= names.iter().any(|x| x.as_str() == *c);
+    }
+    let mask = ProjectionMask::roots(builder.parquet_schema(), roots);
+    let mut n = 0u64;
+    for batch in builder.with_projection(mask).build()? {
+        let batch = batch.with_context(|| format!("read {}", path.display()))?;
+        let c = cols.iter().map(|name| Col::of(&batch, name)).collect::<Result<Vec<_>>>()?;
+        for i in 0..batch.num_rows() {
+            f(&c, i).with_context(|| format!("{}", path.display()))?;
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
+/// The farmer history of the snapshot (farm_hist.parquet, paper/snapshot_export.py): the store's buys and sells over
+/// [m.lo, m.hi) of the keys that trade in the replay, in strict chain order, each a SOL market's with its token side.
+/// The rows from `h0` on join `hist` (the rest no window reaches); returns (rows, rows kept).
+fn read_farm_hist(path: &Path, adm: &mut Admission, m: &FarmHistMeta, h0: u64, hist: &mut HashMap<(Id, Id), FarmHist>) -> Result<(u64, u64)> {
+    const COLS: [&str; 8] = ["slot", "tx_index", "outer_ix", "inner_ix", "pool", "trader", "token_buy", "token_amount"];
+    let (mut prev, mut kept, mut seen) = (None::<Order>, 0u64, [false; 8]);
+    let n = each_file_row(path, &COLS, &mut seen, &mut |c: &[Col], i: usize| {
+        let slot = c[0].u64(i)?.context("a history row without its slot")?;
+        let o = order(c, i, slot)?;
+        if prev.is_some_and(|p| o <= p) {
+            bail!("farm_hist.parquet is not in strict chain order at {o:?}");
+        }
+        prev = Some(o);
+        if slot < m.lo || slot >= m.hi {
+            bail!("a history row at slot {slot}, outside the history's [{}, {})", m.lo, m.hi);
+        }
+        let (pool, _) = c[4].str(i)?.and_then(|p| adm.pool(p))
+            .with_context(|| format!("a history row at {o:?} of a pool that is no SOL market of the snapshot"))?;
+        let buy = need(c[6].bool(i)?, "token_buy", &o)?;
+        let amount = need(c[7].bigint(i)?, "token_amount", &o)?;
+        if amount < 0 {
+            bail!("a negative token_amount at {o:?} (the store's gross is its sum)");
+        }
+        if slot >= h0 {
+            let trader = adm.trader(c[5].str(i)?);
+            hist.entry((pool, trader)).or_default().add(slot, if buy { amount } else { -amount });
+            kept += 1;
+        }
+        Ok(())
+    })?;
+    if let Some((k, _)) = COLS.iter().zip(seen).find(|(_, s)| !s) {
+        bail!("{}: no column {k}", path.display());
+    }
+    Ok((n, kept))
+}
+
+/// The extractor build (`extractor_sha256`) a chunk's manifest names.
+fn manifest_sha(p: &Part) -> Result<Option<String>> {
+    let path = p.dir.join("_manifest.json");
+    let m: Value = serde_json::from_slice(&fs::read(&path).with_context(|| format!("read {}", path.display()))?)
+        .with_context(|| format!("{}", path.display()))?;
+    Ok(m["extractor_sha256"].as_str().map(str::to_owned))
 }
 
 /// A chunk's block times (its non-skipped blocks, one per slot) and h24.
@@ -617,28 +671,60 @@ pub fn run(a: &LegsArgs) -> Result<Value> {
     if a.from < HOLDOUT.1 && a.to > HOLDOUT.0 {
         bail!("[{}, {}) overlaps the hold-out [{}, {}): it is never read", a.from, a.to, HOLDOUT.0, HOLDOUT.1);
     }
-    let snap = Snapshot::load_universe(&a.snapshot)?;
+    let mut snap = Snapshot::load_universe(&a.snapshot)?;
     let (store_lo, store_hi) = snap.store_slots.context("the snapshot's meta.json has no store_slots")?;
     if a.from < store_lo || a.to > store_hi {
         bail!("[{}, {}) is outside the snapshot's store period [{store_lo}, {store_hi}): no ReplayFeed reference there", a.from, a.to);
     }
+    if snap.version < 2 || snap.chunks.is_empty() {
+        bail!("the snapshot (version {}) has no chunk_list: export it again with paper.snapshot_export (snapshot_version 2)", snap.version);
+    }
+    let store_chunks = std::mem::take(&mut snap.chunks);
+    let farm_meta = snap.farm_hist;
     let mut adm = Admission::from_snapshot(&snap)?;
     drop(snap);
     let parts = chunks(&a.chunks_root)?;
     let emit = covering(&parts, a.from, a.to, "the range")?;
+    // The store's own chunks: their slots, the extractor build that wrote them, and their h24 (review on #369).
     let mut blocks = Vec::new();
     for p in &emit {
-        blocks.push(Blocks::read(p)?);
+        let c = store_chunks.iter().find(|c| (c.lo, c.hi) == (p.lo, p.hi))
+            .with_context(|| format!("chunk {} ([{}, {})) is not one of the store's chunks", p.dir.display(), p.lo, p.hi))?;
+        let sha = manifest_sha(p)?;
+        if sha != c.extractor_sha256 {
+            bail!("chunk {}: extractor_sha256 {sha:?}, the store was built from {:?}", p.dir.display(), c.extractor_sha256);
+        }
+        let bl = Blocks::read(p)?;
+        if bl.h24 != c.h24 {
+            bail!("chunk {}: h24 {} from its blocks, {} in the store", p.dir.display(), bl.h24, c.h24);
+        }
+        blocks.push(bl);
     }
-    // The farmer windows of the emitted rows reach back to H0 (spec §3.4); from the store's first slot on, there is
-    // nothing before it. A start later in the store needs the store's earlier trades: C1a-2 (an export of them).
-    let h0 = emit.iter().zip(&blocks).map(|(p, b)| p.lo.saturating_sub(b.h24)).min().unwrap_or(a.from).max(store_lo);
-    if h0 < a.from {
-        bail!("rows from {} need the store's farmer history from {h0} (the store starts at {store_lo}): not available yet (M1 C1a-2)",
-              a.from);
-    }
+    // The farmer windows of the emitted trades reach back to H0 (spec §3.4), and never before the store's start; each
+    // chunk keeps what its own and later windows reach (legs.rs `keeps`).
+    let starts: Vec<(u64, u64)> = emit.iter().zip(&blocks).map(|(p, b)| (p.lo.max(a.from), b.h24)).collect();
+    let keep = keeps(&starts);
+    let h0 = keep[0].max(store_lo);
     let mut counts = Counts::default();
     let mut hist: HashMap<(Id, Id), FarmHist> = HashMap::new();
+    let mut farm = Value::Null;
+    if h0 < a.from {
+        let m = farm_meta.with_context(|| {
+            format!("rows from {} need the store's farmer history from {h0} (the store starts at {store_lo}): export the snapshot \
+                     with --history-from {} --history-to {}", a.from, a.from, a.to)
+        })?;
+        if m.hi != a.from || m.lo > h0 || a.to > m.to {
+            bail!("the snapshot's farmer history [{}, {}) for rows to {} does not cover [{h0}, {}) for rows to {}", m.lo, m.hi, m.to,
+                  a.from, a.to);
+        }
+        let (rows, kept) = read_farm_hist(&a.snapshot.join("farm_hist.parquet"), &mut adm, &m, h0, &mut hist)?;
+        if rows != m.rows {
+            bail!("farm_hist.parquet has {rows} rows, its meta.json {}", m.rows);
+        }
+        log::info!("farmer history [{}, {}): {rows} rows, {kept} from H0 {h0} on, {} keys, RSS {} MB", m.lo, m.hi, hist.len(),
+                   crate::mem::mb(crate::mem::rss_bytes()));
+        farm = json!({"lo": m.lo, "hi": m.hi, "to": m.to, "rows": rows, "kept": kept, "keys": hist.len()});
+    }
     let mut summary = Summary::new(a.from, a.to, a.window);
     let mut file = match &a.out {
         Some(p) => Some(std::io::BufWriter::new(fs::File::create(p).with_context(|| format!("create {}", p.display()))?)),
@@ -652,7 +738,7 @@ pub fn run(a: &LegsArgs) -> Result<Value> {
         curve.sort_unstable_by_key(|l| l.order);
         pool.sort_unstable_by_key(|r| r.order);
         check_ties(&curve, &pool).with_context(|| format!("{}", p.dir.display()))?;
-        flag_chunk(&mut pool, &mut hist, bl.h24, chunk, p.lo);
+        flag_chunk(&mut pool, &mut hist, bl.h24, chunk, keep[chunk as usize]);
         let mut err = None;
         emit_chunk(&adm.keys, &curve, &pool, |s| bl.at(s), &mut ctx, (a.from, a.to), |slot, kind, line| {
             if let Some(f) = file.as_mut().filter(|_| slot >= a.out_from) {
@@ -674,6 +760,9 @@ pub fn run(a: &LegsArgs) -> Result<Value> {
     }
     let mut v = summary.finish();
     v["h24"] = json!(h24s);
+    v["h0"] = json!(h0);
+    v["farm_hist"] = farm;
+    v["chunks_verified"] = json!(true);
     v["admission"] = counts.json();
     v["keys"] = json!(adm.keys.len());
     v["peak_rss_bytes"] = json!(crate::mem::peak_rss_bytes());
@@ -727,7 +816,29 @@ mod tests {
                             ("token_amount", Kind::I64)],
              &[vec![s("P1"), s("W"), u(2500), Val::Bool(true), Val::I64(1)]]);
         fs::write(dir.join("meta.json"), json!({"store_slots": [1000, 3000], "pool_slots": [1000, 3000],
-                                                "farm_seed": {"lo": 2000, "hi": 3000, "h24": 1000}}).to_string()).unwrap();
+                                                "farm_seed": {"lo": 2000, "hi": 3000, "h24": 1000}, "snapshot_version": 2,
+                                                "chunk_list": [{"slots": [1000, 2000], "extractor_sha256": "S"},
+                                                               {"slots": [2000, 3000], "extractor_sha256": "S"}],
+                                                "chunk_h24": [[1000, 2000, 216_000], [2000, 3000, 864]]}).to_string()).unwrap();
+    }
+
+    fn edit_meta(dir: &Path, f: impl FnOnce(&mut Value)) {
+        let mut v: Value = serde_json::from_slice(&fs::read(dir.join("meta.json")).unwrap()).unwrap();
+        f(&mut v);
+        fs::write(dir.join("meta.json"), v.to_string()).unwrap();
+    }
+
+    /// farm_hist.parquet as paper/snapshot_export.py writes it, and its meta.json entry.
+    fn history(dir: &Path, rows: &[Vec<Val>], m: Value) {
+        let cols = [("pool", Kind::Utf8), ("trader", Kind::Utf8), ("slot", Kind::U64), ("tx_index", Kind::I64), ("outer_ix", Kind::I64),
+                    ("inner_ix", Kind::I64), ("token_buy", Kind::Bool), ("token_amount", Kind::I64)];
+        let _ = fs::remove_dir_all(dir.join("t/farm_hist"));
+        fs::rename(put(&dir.join("t"), "farm_hist", 0, &cols, rows), dir.join("farm_hist.parquet")).unwrap();
+        edit_meta(dir, |v| v["farm_hist"] = m);
+    }
+
+    fn hrow(pool: &str, trader: &str, slot: u64, buy: bool, amount: i64) -> Vec<Val> {
+        vec![s(pool), s(trader), u(slot), Val::I64(0), Val::I64(0), Val::I64(2), Val::Bool(buy), Val::I64(amount)]
     }
 
     const TRADE: [(&str, Kind); 23] = [
@@ -780,7 +891,8 @@ mod tests {
         let c2 = root.join("2000-3000");
         for (dir, lo, hi) in [(&c1, 1000, 2000), (&c2, 2000, 3000)] {
             fs::create_dir_all(dir).unwrap();
-            fs::write(dir.join("_manifest.json"), json!({"status": "complete", "slot_start": lo, "slot_end_exclusive": hi}).to_string()).unwrap();
+            fs::write(dir.join("_manifest.json"), json!({"status": "complete", "slot_start": lo, "slot_end_exclusive": hi,
+                                                          "extractor_sha256": "S"}).to_string()).unwrap();
         }
         let blocks = [("slot", Kind::U64), ("block_time", Kind::I64), ("skipped", Kind::Bool)];
         put(&c1, "blocks", 0, &blocks, &[vec![u(1000), Val::I64(1_000_000), Val::Bool(false)], vec![u(1100), Val::I64(1_000_040), Val::Bool(false)],
@@ -823,6 +935,7 @@ mod tests {
         chunks(&root.join("chunks"));
         let v = run(&args(&root, 1000, 3000)).unwrap();
         assert_eq!(v["events"], 9);
+        assert_eq!((&v["h0"], &v["farm_hist"], &v["chunks_verified"]), (&json!(1000), &Value::Null, &json!(true)));
         assert_eq!(v["kinds"], json!({"curve": 1, "pool/boost": 1, "pool/buy": 4, "pool/sell": 2, "pool/withdraw": 1}));
         assert_eq!(v["h24"], json!([[1000, 2000, 216_000], [2000, 3000, 864]]));
         assert_eq!(v["windows"].as_array().unwrap().iter().map(|w| w[2].as_u64().unwrap()).collect::<Vec<_>>(), [8, 1]);
@@ -879,6 +992,77 @@ mod tests {
         assert!(run(&args(&root, 1000, 2000)).is_ok());
         fs::remove_file(root.join("chunks/2000-3000/_manifest.json")).unwrap();
         assert!(err(args(&root, 1000, 3000)).contains("no complete chunk"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_start_inside_the_store_takes_the_farmer_history_of_exactly_its_replay() {
+        let root = tmp("hist");
+        let snap = root.join("snap");
+        fs::create_dir_all(&snap).unwrap();
+        export(&snap);
+        chunks(&root.join("chunks"));
+        let err = |a: LegsArgs| format!("{:#}", run(&a).unwrap_err());
+        run(&args(&root, 1000, 3000)).unwrap();
+        let full = fs::read_to_string(root.join("lines.txt")).unwrap();
+        let last = full.lines().last().unwrap().to_owned(); // W's sell at 2100, a farmer by 1300 and 1400 (h24 864)
+        assert!(last.starts_with("pool\tP1\t2100\t") && last.ends_with("\ttrue"), "{last}");
+        // [2000, 3000): H0 = 2000 - 864 = 1136, after the store's start; without the history: refused
+        assert!(err(args(&root, 2000, 3000)).contains("farmer history"));
+        // W's buys and sells before 2000 (a row at 1110 before H0, which no window reaches)
+        let rows = [hrow("P1", "W", 1110, true, 100), hrow("P1", "W", 1200, true, 100), hrow("P1", "W", 1300, false, 100),
+                    hrow("P1", "W", 1400, true, 100)];
+        history(&snap, &rows, json!({"lo": 1100, "hi": 2000, "to": 3000, "rows": 4}));
+        let v = run(&args(&root, 2000, 3000)).unwrap();
+        assert_eq!((&v["events"], &v["h0"]), (&json!(1), &json!(1136)));
+        assert_eq!(v["farm_hist"], json!({"lo": 1100, "hi": 2000, "to": 3000, "rows": 4, "kept": 3, "keys": 1}));
+        assert_eq!(fs::read_to_string(root.join("lines.txt")).unwrap(), format!("{last}\n")); // the same line as from the start
+        // the history must be this replay's: from its hi, to at most its to, from its lo at most H0, every row counted
+        assert!(run(&args(&root, 2000, 2999)).is_ok()); // a replay that ends earlier needs no other history
+        history(&snap, &rows, json!({"lo": 1100, "hi": 2000, "to": 2900, "rows": 4}));
+        assert!(err(args(&root, 2000, 3000)).contains("does not cover"));
+        history(&snap, &rows[1..], json!({"lo": 1200, "hi": 2000, "to": 3000, "rows": 3}));
+        assert!(err(args(&root, 2000, 3000)).contains("does not cover"));
+        history(&snap, &rows, json!({"lo": 1100, "hi": 2000, "to": 3000, "rows": 4}));
+        assert!(err(args(&root, 2500, 3000)).contains("farmer history")); // H0 1636: another replay's history
+        history(&snap, &rows, json!({"lo": 1100, "hi": 2000, "to": 3000, "rows": 5}));
+        assert!(err(args(&root, 2000, 3000)).contains("rows"));
+        // rows out of chain order, outside the history, of a pool that is no SOL market, a negative amount
+        for (bad, why) in [(vec![rows[2].clone(), rows[1].clone()], "chain order"), (vec![hrow("P1", "W", 1050, true, 1)], "outside"),
+                           (vec![hrow("PX", "W", 1200, true, 1)], "SOL market"), (vec![hrow("P1", "W", 1200, true, -1)], "negative")] {
+            history(&snap, &bad, json!({"lo": 1100, "hi": 2000, "to": 3000, "rows": bad.len()}));
+            assert!(err(args(&root, 2000, 3000)).contains(why), "{why}");
+        }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_chunks_must_be_the_stores_own() {
+        let root = tmp("own");
+        let snap = root.join("snap");
+        fs::create_dir_all(&snap).unwrap();
+        export(&snap);
+        chunks(&root.join("chunks"));
+        let err = |a: LegsArgs| format!("{:#}", run(&a).unwrap_err());
+        assert!(run(&args(&root, 1000, 3000)).is_ok());
+        edit_meta(&snap, |v| v["chunk_h24"][1][2] = json!(865)); // the store's h24 of the second chunk differs
+        assert!(err(args(&root, 1000, 3000)).contains("h24 864 from its blocks, 865 in the store"));
+        assert!(run(&args(&root, 1000, 2000)).is_ok());
+        edit_meta(&snap, |v| v["chunk_h24"][1][2] = json!(864));
+        edit_meta(&snap, |v| v["chunk_list"][1]["extractor_sha256"] = json!("T")); // another extraction
+        assert!(err(args(&root, 1000, 3000)).contains("extractor_sha256"));
+        edit_meta(&snap, |v| {
+            v["chunk_list"][1] = json!({"slots": [2000, 3500], "extractor_sha256": "S"});
+            v["chunk_h24"][1] = json!([2000, 3500, 864]);
+        });
+        assert!(err(args(&root, 1000, 3000)).contains("not one of the store's chunks"));
+        edit_meta(&snap, |v| v["chunk_h24"][1] = json!([2000, 3000, 864])); // chunk_h24 for another chunk than chunk_list's
+        assert!(err(args(&root, 1000, 3000)).contains("chunk_h24"));
+        edit_meta(&snap, |v| {
+            v.as_object_mut().unwrap().remove("snapshot_version");
+            v.as_object_mut().unwrap().remove("chunk_list");
+        });
+        assert!(err(args(&root, 1000, 3000)).contains("no chunk_list")); // an export from before C1a-2
         fs::remove_dir_all(&root).unwrap();
     }
 

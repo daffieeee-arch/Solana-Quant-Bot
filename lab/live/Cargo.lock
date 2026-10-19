@@ -637,6 +637,7 @@ dependencies = [
  "arrow-schema",
  "bs58",
  "env_logger",
+ "hashbrown 0.17.1",
  "hex",
  "lab-core",
  "log",
