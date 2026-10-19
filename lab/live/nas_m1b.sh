@@ -53,7 +53,8 @@ if [ "$STEP" = build ]; then
   grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
   # The golden cases and the C1a line pin must have run, not only passed (a test that is gone passes nothing).
   for t in signals_core::tests::every_golden_case_gives_the_engines_rows_and_state legs::tests::typed_events_render_the_c1a_lines_byte_for_byte \
-           signals::tests::a_replay_writes_its_signals_the_states_and_the_summary; do
+           signals::tests::a_replay_writes_its_signals_the_states_and_the_summary signals_core::tests::the_seeds_are_pythons \
+           signals_core::tests::t1_and_t2_with_the_sha256_keys; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
@@ -117,6 +118,15 @@ done
 rm -rf "$OUT/spill-r1" "$OUT/spill-r2"
 [ $rc1 = 0 ] || log "R1 red: its journals and journal_diff.md stay under $OUT/pytest-r1"
 [ $rc2 = 0 ] || log "R2 red: its journals and journal_diff.md stay under $OUT/pytest-r2"
+# The comparison itself must have run and be green, not only its pytest exit (LAB review on #373): each run's measure
+# line in job.log.
+for run in "r1 dev2 450128159 450380000" "r2 fwd1053 454896000 455328000"; do
+  read -r name store lo hi <<< "$run"
+  if ! grep -qF "lab-live signals [$lo, $hi) on $store.duckdb: GREEN" "$OUT/job.log"; then
+    log "$name: no GREEN measure line in job.log (the signals test did not run, or was red)"
+    if [ $name = r1 ]; then rc1=${rc1/#0/1}; else rc2=${rc2/#0/1}; fi  # a failing exit stays as it was
+  fi
+done
 [ $rc1 = 0 ] && [ $rc2 = 0 ] || { log "signals: RED"; exit 1; }
 rm -rf "$OUT/pytest-r1" "$OUT/pytest-r2"
 log "python: done"

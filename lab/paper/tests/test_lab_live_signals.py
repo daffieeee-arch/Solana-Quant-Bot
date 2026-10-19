@@ -127,7 +127,10 @@ def _wait(proc, timeout=7200):
     the process was reaped elsewhere or killed at the timeout)."""
     t0, peak = time.time(), None
     while proc.returncode is None:
-        pid, status, usage = os.wait4(proc.pid, os.WNOHANG)
+        try:
+            pid, status, usage = os.wait4(proc.pid, os.WNOHANG)
+        except ChildProcessError:  # reaped already (Popen.poll): the exit code is Popen's, None if unknown; show its output
+            break
         if pid:
             proc.returncode = os.waitstatus_to_exitcode(status)
             peak = usage.ru_maxrss * 1024

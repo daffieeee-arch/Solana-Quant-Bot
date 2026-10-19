@@ -5,14 +5,18 @@
 //! (backtest/venues.py, byte for byte). M1 C1a: `legs`, the engine's curve and pool legs and their order (the
 //! Python replay's dataclasses, compact). M1 C1b: the paper engine's F7 signals per slot (`signals`) with the clock
 //! (`clock`), exact int-against-float tests (`exact`), the universe (`universe`), the trigger and its windows (`f7`),
-//! the farm label (`farm`) and the N2 shadow (`n2`). Later steps: costs, exit rules and FlowIndex, PositionSim.
+//! the farm label (`farm`) and the N2 shadow (`n2`). M1 C2: Python's int/int division and int(i * f) (`exact`), the
+//! costs and settle (`costs`), the empirical tolerance of trades without a known limit (`tau`). Later steps: exit rules
+//! and FlowIndex, PositionSim.
 
 pub mod clock;
+pub mod costs;
 pub mod exact;
 pub mod f7;
 pub mod farm;
 pub mod legs;
 pub mod n2;
 pub mod signals;
+pub mod tau;
 pub mod universe;
 pub mod venues;
