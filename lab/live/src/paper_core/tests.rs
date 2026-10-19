@@ -1,15 +1,17 @@
 use std::collections::{BTreeMap, HashMap};
 
-use lab_core::paper::{GradInfo, PaperCfg, PaperEngine};
+use lab_core::paper::{GradInfo, PaperCfg, PaperEngine, RiskSource};
 use serde_json::{json, Map, Value};
 
 use super::*;
 use crate::signals_core::tests::{case_engine, event, field, os, ou, projection, s, CaseKeys, Row};
-use crate::signals_core::Seeds;
+use crate::signals_core::{parse_groups, Seeds};
 
 /// The shared golden cases (paper/tests/c2_position_cases.py and c1b_signal_cases.py write them from the engine).
 const C2: &str = include_str!("../../../paper/tests/data/c2_position_cases.json");
 const C1B: &str = include_str!("../../../paper/tests/data/c1b_signal_cases.json");
+/// M1 C3-2's cases: risk on, each group's risk file in versions (paper/tests/c3_risk_cases.py).
+const C3: &str = include_str!("../../../paper/tests/data/c3_risk_cases.json");
 /// The journal's tables and columns (paper/journal.py TABLES), as journal.rs compiles them in.
 const SCHEMA: &str = include_str!("../../../paper/journal_schema.json");
 
@@ -55,9 +57,75 @@ fn write_json(w: &Write, cols: &HashMap<String, Vec<String>>) -> Value {
     }
 }
 
-/// A case run as the generator runs it: the paper engine on its events (risk inert, its groups and cost scenario), every
-/// journal write in order, and the engine and interner after it.
+/// A case run as the generator runs it: the paper engine on its events (its groups and cost scenario; risk inert, or
+/// with `risk` the groups' files as `files` writes them), every journal write in order, and the engine and interner
+/// after it.
 fn run_paper(case: &Value, scenario: &str) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
+    run_case(case, scenario, None)
+}
+
+/// A C3 case's risk files in a directory of their own: each group's first text, then its flips as the feed reaches
+/// them (c3_risk_cases.py FlipFeed: before the first event with slot >= at). A null text is a missing file.
+struct RiskFiles {
+    dir: std::path::PathBuf,
+    flips: Vec<(u64, std::path::PathBuf, Option<String>)>,
+    next: usize,
+}
+
+impl RiskFiles {
+    fn new(case: &Value, name: &str) -> Result<(RiskFiles, Vec<std::path::PathBuf>)> {
+        let dir = std::env::temp_dir().join(format!("lab-live-c3-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)?;
+        let gs: Value = serde_json::from_str(s(case, "groups")?)?;
+        let file = |g: &str| -> Result<std::path::PathBuf> { Ok(dir.join(gs[g]["risk"].as_str().with_context(|| format!("group {g}'s risk"))?)) };
+        let mut flips = Vec::new();
+        for (g, vs) in field(case, "risk")?.as_object().context("risk")? {
+            for (i, v) in vs.as_array().context("versions")?.iter().enumerate() {
+                let text = v[1].as_str().map(str::to_owned);
+                if i == 0 {
+                    write_risk(&file(g)?, text.as_deref())?;
+                } else {
+                    flips.push((v[0].as_u64().context("at")?, file(g)?, text));
+                }
+            }
+        }
+        flips.sort_by_key(|f| f.0); // stable, as the generator's sort
+        let groups = parse_groups(s(case, "groups")?)?;
+        let paths = groups.specs.iter().map(|g| file(&g.name)).collect::<Result<_>>()?;
+        Ok((RiskFiles { dir, flips, next: 0 }, paths))
+    }
+
+    /// The flips due before an event at `slot`.
+    fn before(&mut self, slot: u64) -> Result<()> {
+        while let Some((at, path, text)) = self.flips.get(self.next) {
+            if *at > slot {
+                break;
+            }
+            write_risk(path, text.as_deref())?;
+            self.next += 1;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for RiskFiles {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn write_risk(path: &std::path::Path, text: Option<&str>) -> Result<()> {
+    match text {
+        Some(t) => std::fs::write(path, t)?,
+        None => {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    Ok(())
+}
+
+fn run_case(case: &Value, scenario: &str, risk: Option<&str>) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
     let (sig, groups, mut keys) = case_engine(case)?;
     let mut grad = GradInfo::default();
     for t in field(case, "tokens")?.as_array().context("tokens")? {
@@ -71,11 +139,23 @@ fn run_paper(case: &Value, scenario: &str) -> Result<(Vec<Write>, PaperEngine, C
             grad.add_pool(keys.id(s(p, "pool")?), ou(p, "create_slot")?);
         }
     }
-    let mut eng = PaperEngine::new(sig, PaperCfg::new(groups.q, parse_scenario(scenario)?, grad, HashMap::new()))?;
+    let cfg = PaperCfg::new(groups.q, parse_scenario(scenario)?, grad, HashMap::new());
+    let mut files = None;
+    let mut eng = match risk {
+        None => PaperEngine::new(sig, cfg)?,
+        Some(name) => {
+            let (f, paths) = RiskFiles::new(case, name)?;
+            files = Some(f);
+            PaperEngine::with_risk(sig, cfg, RiskSource::Files(Box::new(move |g: usize| crate::risk::load(&paths[g]))))?
+        }
+    };
     let mut seeds = Seeds::default();
     let mut writes = Vec::new();
     for e in field(case, "events")?.as_array().context("events")? {
         let ev = event(e, &mut keys)?;
+        if let Some(f) = files.as_mut() {
+            f.before(ev.leg.slot())?;
+        }
         eng.push(&ev, &mut seeds.with(&keys))?;
         for op in eng.paper.ops.drain(..) {
             writes.push(op_write(&op, &keys)?);
@@ -97,6 +177,27 @@ fn every_c2_case_gives_the_engines_writes() {
         let name = case["name"].as_str().unwrap();
         let scenario = case["cost_scenario"].as_str().unwrap();
         let (writes, eng, _) = run_paper(case, scenario).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols)).collect();
+        let want = case["expect_ops"].as_array().unwrap();
+        if let Some(i) = (0..got.len().max(want.len())).find(|&i| got.get(i) != want.get(i)) {
+            panic!("{name}: write {i} of {} (Rust) / {} (Python)\n rust:   {}\n python: {}", got.len(), want.len(),
+                   got.get(i).map_or("(none)".into(), Value::to_string), want.get(i).map_or("(none)".into(), Value::to_string));
+        }
+        assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name}");
+        n += want.len();
+    }
+    assert!(n > 0);
+}
+
+#[test]
+fn every_c3_case_gives_the_engines_writes_with_risk_on() {
+    let doc: Value = serde_json::from_str(C3).unwrap();
+    let cols = columns();
+    let mut n = 0;
+    for case in doc["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let scenario = case["cost_scenario"].as_str().unwrap();
+        let (writes, eng, _) = run_case(case, scenario, Some(name)).unwrap_or_else(|e| panic!("{name}: {e:#}"));
         let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols)).collect();
         let want = case["expect_ops"].as_array().unwrap();
         if let Some(i) = (0..got.len().max(want.len())).find(|&i| got.get(i) != want.get(i)) {

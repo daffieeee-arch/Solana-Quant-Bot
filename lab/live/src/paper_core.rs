@@ -140,7 +140,7 @@ pub fn op_write(op: &Op, names: &impl KeyNames) -> Result<Write> {
                 ("entry_slot", int(i128::from(*entry_slot), "entry_slot")?),
                 ("size", int(*size, "size")?),
                 ("status", text(status)),
-                ("reason", reason.map_or(Cell::Null, text)),
+                ("reason", reason.as_deref().map_or(Cell::Null, text)),
             ]);
             Write::Put("orders", c)
         }

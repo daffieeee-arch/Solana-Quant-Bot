@@ -13,7 +13,7 @@ reason of `(None, reason)`, or the exception risk.load lets through. `rust` says
 The subset (lab/live/src/risk.rs): `key: value` lines at column 0, blank lines, `#` comments (at a line's start, or after
 a space), LF or CRLF line ends and a leading BOM; no tab, no control character, no other YAML line break (a lone CR, NEL,
 LS, PS). A value is an int (`[-+]?(0|[1-9][0-9]*)`), a decimal without exponent
-(`[-+]?([0-9]+\\.[0-9]*|\\.[0-9]+)`), a YAML 1.1 bool word, a plain word (`[A-Za-z][A-Za-z0-9_]*`, not a bool, null or
+(`[-+]?[0-9]+\\.[0-9]*` or the unsigned `\\.[0-9]+`), a YAML 1.1 bool word, a plain word (`[A-Za-z][A-Za-z0-9_]*`, not a bool, null or
 inf/nan word), or a flow list `[a, b]` of plain or quoted words. Everything else is refused, never interpreted.
 """
 
@@ -27,7 +27,7 @@ from paper import risk as R
 PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "c3_risk_load_cases.json")
 PAPER = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OWN = "risk config unreadable: outside lab-live's YAML subset"
-FORMAT = ("cases: {name, kind: text|missing|dir, text (kind text), rust: same|refused, python: {risk: {size_sol, "
+FORMAT = ("cases: {name, kind: text|missing|dir|notdir, text (kind text), rust: same|refused, python: {risk: {size_sol, "
           "max_open_positions, max_exposure_sol, daily_loss_limit_sol, kill_switch, families, pool_cooldown_h, "
           "size_lamports}} | {reason} (same) or {record: text} (refused)}; floats as Python's repr")
 BASE = ("size_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\n"
@@ -100,13 +100,17 @@ def cases():
          ("daily_loss_negative", "text", _set("daily_loss_limit_sol", "-1"), same),
          ("cooldown_negative", "text", _set("pool_cooldown_h", "-1"), same),
          ("missing_file", "missing", None, same),
-         ("a_directory", "dir", None, same)]
+         ("a_directory", "dir", None, same),
+         ("a_path_through_a_file", "notdir", None, same),
+         ("unknown_key_of_64_characters", "text", BASE + "a" * 64 + ": 1\n", same)]
     c += [(f"kill_switch_{w}", "text", _set("kill_switch", w), same) for w in BOOLS]
     c += [(f"missing_{k}", "text", _set(k, None), same) for k in KEYS]
     c += [("missing_two_names_the_first", "text", _set("kill_switch", None, _set("max_exposure_sol", None)), same)]
     # Outside the subset: refused by lab-live whatever Python makes of it.
     c += [("exponent_no_dot", "text", _set("size_sol", "1e9"), refused),
           ("exponent_after_dot", "text", _set("max_exposure_sol", "2.5e+0"), refused),
+          ("signed_dot_decimal_for_an_int", "text", _set("max_open_positions", "-.5"), refused),  # a string to PyYAML
+          ("signed_dot_decimal_for_the_families", "text", _set("families", "+.5"), refused),
           ("octal_looking_int", "text", _set("max_open_positions", "010"), refused),
           ("leading_zero_int", "text", _set("max_open_positions", "09"), refused),
           ("int_beyond_i64", "text", _set("max_open_positions", "99999999999999999999"), refused),
@@ -134,7 +138,21 @@ def cases():
           ("not_a_mapping", "text", "hello\n", refused),
           ("control_character_in_a_comment", "text", "# bell \x07\n" + BASE, refused),
           ("lone_carriage_return", "text", BASE.replace("\n", "\r"), refused),
-          ("next_line_character", "text", "# a\x85b\n" + BASE, refused)]
+          ("next_line_character", "text", "# a\x85b\n" + BASE, refused),
+          # review of #383: a key PyYAML refuses (over 1024 characters), and one this reader caps (over 64)
+          ("unknown_key_of_65_characters", "text", BASE + "a" * 65 + ": 1\n", refused),
+          ("unknown_key_of_1025_characters", "text", BASE + "a" * 1025 + ": 1\n", refused),
+          # line breaks only PyYAML (or Python's universal newlines) sees: a key hidden after a comment
+          ("cr_hides_a_key_after_a_comment", "text", BASE.replace("kill_switch: false", "kill_switch: false # x\rkill_switch: true"), refused),
+          ("ls_hides_a_key_after_a_comment", "text", BASE.replace("size_sol: 0.5", "size_sol: 0.5 # x\u2028size_sol: 2.0"), refused),
+          ("ps_hides_a_key_after_a_comment", "text", BASE.replace("size_sol: 0.5", "size_sol: 0.5 # x\u2029size_sol: 2.0"), refused),
+          # numbers this reader does not carry: an int key beyond 64 bits, an infinite decimal, a size beyond 64 bits of
+          # lamports (Python's size_lamports raises on an infinite size, and pool_cooldown_h inf would raise in Clock.slots)
+          ("decimal_beyond_64_bits_for_an_int", "text", _set("max_open_positions", "1" + "0" * 30 + ".0"), refused),
+          ("decimal_that_is_infinite", "text", _set("size_sol", "1" + "0" * 400 + ".0", _set("max_exposure_sol", "1" + "0" * 400 + ".0")), refused),
+          ("cooldown_that_is_infinite", "text", _set("pool_cooldown_h", "1" + "0" * 400 + ".0"), refused),
+          ("size_beyond_64_bits_of_lamports", "text", _set("size_sol", "10000000000", _set("max_exposure_sol", "20000000000")), refused),
+          ("a_list_for_a_number", "text", _set("size_sol", "[F7]"), refused)]
     return c
 
 
@@ -147,17 +165,21 @@ def run(kind, text):
                 f.write(text)
         elif kind == "dir":
             os.mkdir(path)
+        elif kind == "notdir":  # a path through a regular file
+            with open(path, "w"):
+                pass
+            path = os.path.join(path, "risk.yaml")
         try:
             risk, reason = R.load(path)
+            if risk is None:
+                return {"reason": reason}
+            out = {k: getattr(risk, k) for k in ("size_sol", "max_open_positions", "max_exposure_sol", "daily_loss_limit_sol",
+                                                 "kill_switch", "pool_cooldown_h")}
+            out["families"] = list(risk.families)
+            out["size_lamports"] = risk.size_lamports  # raises on an infinite size (the engine would, at its first use)
+            return {"risk": out}
         except Exception as e:  # noqa: BLE001 - recorded: lab-live refuses these files
             return {"raises": f"{e.__class__.__name__}: {e}"}
-    if risk is None:
-        return {"reason": reason}
-    out = {k: getattr(risk, k) for k in ("size_sol", "max_open_positions", "max_exposure_sol", "daily_loss_limit_sol",
-                                         "kill_switch", "pool_cooldown_h")}
-    out["families"] = list(risk.families)
-    out["size_lamports"] = risk.size_lamports
-    return {"risk": out}
 
 
 def record(result):

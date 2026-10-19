@@ -8,9 +8,12 @@
 //!   between slots (engine.py:310, 353-360) and the end of data (:1289-1308).
 //! - The journal's rows come out as plain `Op`s in the engine's write order; the caller writes them (INSERT OR REPLACE
 //!   and the positions delete), so C4 can move the writer to its own thread.
-//! - Risk is inert: every group trades 0.5 SOL with no limit once `_clock` has loaded the risk at the first dated slot;
-//!   before that every row past the gates is skipped with 'not loaded' (engine.py:151, 471, 824-828). Day loss,
-//!   cooldowns, wallets, heartbeat and the daily close are C3; the restart paths M3 (spec D11).
+//! - Risk (M1 C3-2, research/m1-c3-risk-spec-2026-10-19.md §2): `RiskSource::Ignore` is `--ignore-risk`, every group
+//!   trading 0.5 SOL with no limit; `RiskSource::Files` reads each group's risk at every new dated minute and at every
+//!   entry, as `_load_risk` does (engine.py:471, 532-537, 869). Before the first dated minute every row past the gates
+//!   is skipped with 'not loaded' (:151). The gate (`_risk_block`, :824-848), the 'at entry: …' orders (:868-877), the
+//!   size (:878-883), the day's loss and its reset (:455-460, 1285-1287) and the pool cooldown after a total loss
+//!   (:1054-1057) follow. Wallets, heartbeat and the daily close are C3-3; the restart paths M3 (spec D11).
 //! - The curve entry takes the engine's own view instead of a curve history (spec D4): the state after the signal slot
 //!   (kept on the Pending), Recent's last leg before the entry, and the seed from the store's curve_hold plus the run's
 //!   own per-(mint, trader) sums.
@@ -21,6 +24,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 
 use crate::costs::Scenario;
+use crate::exact::{ge, gt, lt};
 use crate::exits::{check_groups, rule_for, variant, ExitRule, VariantError};
 use crate::flow::LiveFlowIndex;
 use crate::legs::{Event, Id, Leg, Venue};
@@ -28,12 +32,14 @@ use crate::n2::N2Keys;
 use crate::positions::{
     insertion_index, open_curve_entry, open_pool_position, Cfg, Opened, PosError, PosResult, PositionSim, SimVenue, Step, MAX_HOLD, SEED_POOL,
 };
+use crate::risk::Risk;
 use crate::signals::{Family, Hooks, SignalEngine, SignalError, SignalRow, SlotLegs, Status};
 use crate::tau::Tau;
 use crate::universe::Segment;
 use crate::venues::{self as v, Curve, Pool};
 
-/// Every order's size under ignore-risk: `int(g.risk.size_sol * SOL)` with Risk(0.5, ...) (engine.py:882-883).
+/// Every order's size under ignore-risk: `int(g.risk.size_sol * SOL)` with Risk(0.5, ...) (engine.py:882-883); and every
+/// N2 order's with risk on, `int(0.5 * SOL)` (:881).
 pub const SIZE: i128 = 500_000_000;
 /// The engine's slippage tolerance (engine.py:216 `tol=0.05`).
 pub const TOL: f64 = 0.05;
@@ -76,6 +82,25 @@ impl PaperCfg {
     /// The reference's settings: tau 'empirical' and tol 0.05 (engine.py:216).
     pub fn new(q: Vec<f64>, scn: Scenario, grad: GradInfo, curve_hold: HashMap<Id, Vec<(Id, i128)>>) -> Self {
         PaperCfg { q, scn, tau: Tau::Empirical, tol: TOL, grad, curve_hold }
+    }
+}
+
+/// Where the groups' risk comes from (spec §3).
+pub enum RiskSource {
+    /// `--ignore-risk`: `Risk::ignore()` for every group, loaded at the first dated minute; no re-read at the entry.
+    Ignore,
+    /// Each group's risk file, read at every new dated minute and at every entry (all groups each time, as
+    /// `_load_risk`): the group's index in the signal engine's order, to risk.py `load`'s `(Risk, None)` or
+    /// `(None, reason)`. lab-live reads the files (lab/live/src/risk.rs); lab-core reads none.
+    Files(Box<dyn FnMut(usize) -> Result<Risk, String>>),
+}
+
+impl fmt::Debug for RiskSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            RiskSource::Ignore => "RiskSource::Ignore",
+            RiskSource::Files(_) => "RiskSource::Files",
+        })
     }
 }
 
@@ -153,7 +178,7 @@ pub struct ExitRow {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Op {
     Signal(SignalRow, Status),
-    Order { k: PosKey, day: Option<String>, entry_slot: u64, size: i128, status: &'static str, reason: Option<&'static str> },
+    Order { k: PosKey, day: Option<String>, entry_slot: u64, size: i128, status: &'static str, reason: Option<String> },
     Fill { k: PosKey, side: &'static str, day: Option<String>, slot: Option<u64>, tokens: i128, quote: i128 },
     Exit(Box<ExitRow>),
     /// status 'open'; mark: (mark_proceeds, mark_slot, mark_pnl) of the last mark, NULL without one.
@@ -176,6 +201,9 @@ pub struct PaperCounts {
     pub entered: u64,
     pub busy: u64,
     pub not_loaded: u64,
+    /// Rows the risk gate skipped, and 'at entry: …' orders, by "<group>: <reason>".
+    pub risk_skips: BTreeMap<String, u64>,
+    pub at_entry: BTreeMap<String, u64>,
     /// Orders per status, exits per reason.
     pub orders: BTreeMap<&'static str, u64>,
     pub exits: BTreeMap<&'static str, u64>,
@@ -346,7 +374,14 @@ pub struct Paper {
     grad_wait: Ordered,
     /// The run's curve legs per mint: trader -> net tokens (spec §3.5).
     run_sums: HashMap<Id, HashMap<Id, i128>>,
-    risk_loaded: bool,
+    risk_src: RiskSource,
+    /// Per group (the signal engine's order): its risk or the reason it has none ('not loaded' before the first dated
+    /// minute), its day's realized loss (signed: a gain lowers it), and its pool cooldowns: key -> the slot before which
+    /// no new entry (engine.py Group, :150-153).
+    risk: Vec<Result<Risk, String>>,
+    day_loss: Vec<i128>,
+    cool: Vec<HashMap<Id, u64>>,
+    day: Option<String>,
     minute: Option<i64>,
     last_slot: Option<u64>,
     pub ops: Vec<Op>,
@@ -357,7 +392,7 @@ pub struct Paper {
 }
 
 impl Paper {
-    fn new(sig: &SignalEngine, cfg: PaperCfg) -> Result<Paper, PaperError> {
+    fn new(sig: &SignalEngine, cfg: PaperCfg, risk_src: RiskSource) -> Result<Paper, PaperError> {
         check_groups(&sig.groups).map_err(PaperError::Variant)?;
         let config = |s: String| Err(PaperError::Config(s));
         if cfg.q.len() != sig.groups.len() {
@@ -374,6 +409,7 @@ impl Paper {
         }
         let primary_q = cfg.q[sig.groups.iter().position(|g| g.primary).expect("SignalEngine has one primary group")];
         let pos = Cfg { tol: cfg.tol, tau: cfg.tau, max_hold: MAX_HOLD, window_end: None, mayhem_agent: sig.universe.mayhem_agent };
+        let n = sig.groups.len();
         Ok(Paper {
             cfg,
             pos,
@@ -387,7 +423,11 @@ impl Paper {
             open: Ordered::default(),
             grad_wait: Ordered::default(),
             run_sums: HashMap::new(),
-            risk_loaded: false,
+            risk_src,
+            risk: vec![Err("not loaded".to_owned()); n],
+            day_loss: vec![0; n],
+            cool: vec![HashMap::new(); n],
+            day: None,
             minute: None,
             last_slot: None,
             ops: Vec::new(),
@@ -409,6 +449,87 @@ impl Paper {
 
     fn take_error(&mut self) -> Result<(), PaperError> {
         self.error.take().map_or(Ok(()), Err)
+    }
+
+    // -- risk
+
+    fn ignore_risk(&self) -> bool {
+        matches!(self.risk_src, RiskSource::Ignore)
+    }
+
+    /// `_load_risk` (engine.py:532-537): every group's risk, read again.
+    fn load_risk(&mut self) {
+        match &mut self.risk_src {
+            RiskSource::Ignore => self.risk.iter_mut().for_each(|r| *r = Ok(Risk::ignore())),
+            RiskSource::Files(read) => {
+                for (g, r) in self.risk.iter_mut().enumerate() {
+                    *r = read(g);
+                }
+            }
+        }
+    }
+
+    /// `_risk_block(family, key, t, group)` (engine.py:824-848): the group's limits, in their order, or None.
+    fn risk_block(&self, family: Family, key: Id, t: u64, group: usize) -> Option<String> {
+        let r = match &self.risk[group] {
+            Err(reason) => return Some(reason.clone()),
+            Ok(r) => r,
+        };
+        if r.kill_switch {
+            return Some("kill switch".to_owned());
+        }
+        if is_n2(family) {
+            return None; // the shadow control is not limited (except by the kill switch)
+        }
+        if !r.families.iter().any(|f| f == family.as_str()) {
+            return Some("family not enabled".to_owned());
+        }
+        if self.cool[group].get(&key).is_some_and(|&c| c > t) {
+            return Some("pool cooldown".to_owned());
+        }
+        let opens: Vec<&OpenPos> = self.opens.values().filter(|o| o.p.group == group && !is_n2(o.p.family)).collect();
+        let pend = self.pending.values().flatten().filter(|p| p.group == group && !is_n2(p.family)).count();
+        if (opens.len() + pend) as i64 >= r.max_open_positions {
+            return Some("max open positions".to_owned());
+        }
+        let exposure: i128 = opens.iter().map(|o| o.r().cost).sum::<i128>() + r.size_lamports() * (pend as i128 + 1);
+        if gt(exposure, r.max_exposure_sol * 1e9) {
+            return Some("max exposure".to_owned());
+        }
+        if ge(-self.day_loss[group], r.daily_loss_limit_sol * 1e9) {
+            return Some("daily loss limit".to_owned());
+        }
+        None
+    }
+
+    /// The order's size (engine.py:878-883): the file's size_sol in lamports for F7, 0.5 SOL for N2; 0.5 SOL under
+    /// ignore-risk.
+    fn size(&self, p: &Pending) -> i128 {
+        match &self.risk[p.group] {
+            Ok(r) if !self.ignore_risk() && !is_n2(p.family) => r.size_lamports(),
+            _ => SIZE,
+        }
+    }
+
+    /// `_book_loss` (engine.py:1285-1287): N2 books nothing.
+    fn book_loss(&mut self, p: &Pending, pnl: i128) {
+        if !is_n2(p.family) {
+            self.day_loss[p.group] += pnl;
+        }
+    }
+
+    /// The pool cooldown of `_exit_effects` (engine.py:1053-1057): a total loss (tokens held, proceeds under 10 % of the
+    /// venue cost) closes the key for the group from the exit slot (or the settle slot) for pool_cooldown_h, in the
+    /// clock's slots at the settle slot.
+    fn cooldown(&mut self, eng: &SignalEngine, p: &Pending, r: (Option<u64>, i128, i128, i128), slot: u64) {
+        let (exit_slot, tokens, proceeds, cost) = r;
+        let Ok(risk) = &self.risk[p.group] else { return };
+        if is_n2(p.family) || risk.pool_cooldown_h <= 0.0 || tokens == 0 || !lt(proceeds, 0.1 * cost as f64) {
+            return;
+        }
+        let end = exit_slot.filter(|&s| s != 0).unwrap_or(slot) + eng.clock.slots(risk.pool_cooldown_h * 3_600_000.0, slot);
+        let c = self.cool[p.group].entry(p.key).or_insert(0);
+        *c = (*c).max(end);
     }
 
     fn inc(m: &mut HashMap<Id, u32>, k: Id) {
@@ -443,8 +564,27 @@ impl Paper {
         }
     }
 
-    /// `_enter(p, slot, slot_legs)` (engine.py:863-959), the ignore-risk replay path.
+    /// `_enter(p, slot, slot_legs)` (engine.py:863-959), a replay's path (no forced orders, M3).
     fn enter(&mut self, eng: &SignalEngine, p: Pending, slot: u64, slot_legs: &[Leg]) {
+        if !self.ignore_risk() {
+            // The file can change between the signal and the entry: read it again, and enter only with a valid file and
+            // the kill switch off (N2 included); the limits are not checked again (engine.py:868-877).
+            self.load_risk();
+            let why = match &self.risk[p.group] {
+                Err(reason) => Some(reason.clone()),
+                Ok(r) if r.kill_switch => Some("kill switch".to_owned()),
+                Ok(_) => None,
+            };
+            if let Some(why) = why {
+                *self.counts.orders.entry("skipped").or_default() += 1;
+                *self.counts.at_entry.entry(format!("{}: {why}", eng.groups[p.group].name)).or_default() += 1;
+                self.ops.push(Op::Order { k: p.k(), day: eng.day.clone(), entry_slot: slot, size: 0, status: "skipped",
+                                          reason: Some(format!("at entry: {why}")) });
+                self.busy.insert(p.busy(), Busy::Until(p.t));
+                return;
+            }
+        }
+        let size = self.size(&p);
         let mut rule = self.rule(eng, &p);
         let windows = (rule.n_flow(), rule.max_slots());
         let (d, q) = (p.entry_slot - p.t, self.cfg.q[p.group]);
@@ -456,7 +596,7 @@ impl Paper {
                 let before = eng.recent.back(p.key).map(curve_post);
                 let run = self.run_sums.get(&p.key);
                 let seed = hold.into_iter().flatten().copied().chain(run.into_iter().flatten().map(|(&t, &n)| (t, n)));
-                open_curve_entry(p.s_dec, before, slot_legs, seed, p.t, SIZE, d, q, rule, self.pos)
+                open_curve_entry(p.s_dec, before, slot_legs, seed, p.t, size, d, q, rule, self.pos)
                     .map(|o| (o, 0, slot_legs.to_vec()))
             }
             seg => {
@@ -469,7 +609,7 @@ impl Paper {
                     f.add(&legs); // engine.py:906-907
                 }
                 let venue = if seg.reversed() { SimVenue::PoolReversed } else { SimVenue::PoolNormal };
-                open_pool_position(venue, &legs, None, p.t, SIZE, d, q, rule, self.pos).map(|o| (o, a, legs))
+                open_pool_position(venue, &legs, None, p.t, size, d, q, rule, self.pos).map(|o| (o, a, legs))
             }
         };
         let (opened, a, legs) = match opened {
@@ -480,7 +620,8 @@ impl Paper {
             }
         };
         let (k, day) = (p.k(), eng.day.clone());
-        let order = |status, reason| Op::Order { k: k.clone(), day: day.clone(), entry_slot: slot, size: SIZE, status, reason };
+        let order = |status, reason: Option<&str>| Op::Order { k: k.clone(), day: day.clone(), entry_slot: slot, size, status,
+                                                              reason: reason.map(str::to_owned) };
         let (sim, i, r) = match opened {
             Opened::No(r) => {
                 let status = if r.skipped { "skipped" } else { "entry_failed" };
@@ -489,6 +630,7 @@ impl Paper {
                 self.ops.push(order(status, reason));
                 if r.entry_failed {
                     let s = self.cfg.scn.settle(true, 0, 0, 0);
+                    self.book_loss(&p, s.pnl); // the failed transaction's fee (engine.py:931)
                     *self.counts.exits.entry(reason.unwrap_or("")).or_default() += 1;
                     self.ops.push(Op::Exit(Box::new(ExitRow {
                         k: k.clone(),
@@ -545,7 +687,7 @@ impl Paper {
             if grad.is_some() {
                 self.open.push(key, id);
             } else {
-                self.settle_if_done(eng, id, true);
+                self.settle_if_done(eng, id, true, slot);
             }
             self.counts.max_open = self.counts.max_open.max(self.opens.len());
             return;
@@ -560,7 +702,7 @@ impl Paper {
             let step = self.sim_mut(id).on_slot(slot, &legs[a..], i - a);
             self.after_step(id, step);
         }
-        self.settle_if_done(eng, id, false);
+        self.settle_if_done(eng, id, false, slot);
     }
 
     fn sim_mut(&mut self, id: usize) -> &mut PositionSim {
@@ -597,7 +739,7 @@ impl Paper {
 
     /// `_settle_if_done` (engine.py:1025-1043): a closed position's sell fill and exit, the positions delete, busy, and
     /// the position leaves the open ones. A graduation waiting for its pool is not settled yet.
-    fn settle_if_done(&mut self, eng: &SignalEngine, id: usize, force: bool) {
+    fn settle_if_done(&mut self, eng: &SignalEngine, id: usize, force: bool, slot: u64) {
         let o = &self.opens[&id];
         if (!force && !o.done()) || o.grad.is_some() {
             return;
@@ -633,10 +775,14 @@ impl Paper {
         };
         let until = r.exit_slot.unwrap_or(o.p.t);
         let busy = o.p.busy();
+        let (p, effect) = (o.p.clone(), (r.exit_slot, r.tokens, r.proceeds, r.cost));
         *self.counts.exits.entry(reason.unwrap_or("")).or_default() += 1;
         self.ops.push(Op::Exit(Box::new(row)));
         self.ops.push(Op::DeletePosition(k));
-        self.busy.insert(busy, Busy::Until(until)); // engine.py:1058 (C3 adds the day loss, wallet and cooldown)
+        // `_exit_effects` (engine.py:1046-1058): the day's loss, the pool cooldown, busy (the wallet is C3-3)
+        self.book_loss(&p, s.pnl);
+        self.cooldown(eng, &p, effect, slot);
+        self.busy.insert(busy, Busy::Until(until));
         self.drop_position(id);
     }
 
@@ -683,7 +829,7 @@ impl Paper {
                 Self::dec(&mut self.grad_keys, key);
             }
             self.counts.pool_sales += 1;
-            self.settle_if_done(eng, id, true);
+            self.settle_if_done(eng, id, true, slot);
         }
         if self.grad_wait.get(pool).is_none_or(|v| v.is_empty()) {
             self.grad_wait.drop_key(pool);
@@ -701,7 +847,7 @@ impl Paper {
                 let Some(sim) = o.sim.as_deref_mut() else { continue }; // waiting for its pool: below
                 let step = sim.end();
                 self.after_step(id, step);
-                self.settle_if_done(eng, id, false);
+                self.settle_if_done(eng, id, false, last);
             }
         }
         for (_, ids) in self.grad_wait.snapshot() {
@@ -714,7 +860,7 @@ impl Paper {
                 r.exit_attempts += 1;
                 o.grad = None;
                 self.counts.seed_pool_sales += 1;
-                self.settle_if_done(eng, id, true);
+                self.settle_if_done(eng, id, true, last);
             }
         }
         self.grad_wait.clear();
@@ -747,6 +893,11 @@ fn on_complete(grad: &GradInfo, counts: &mut PaperCounts, mint: Id, r: &mut PosR
     }
 }
 
+/// `family.startswith("N2_")`.
+fn is_n2(f: Family) -> bool {
+    f == Family::N2F7
+}
+
 fn curve_post(l: &Leg) -> Curve {
     match l {
         Leg::Curve(c) => c.post(),
@@ -762,9 +913,14 @@ fn pool_post(l: &Leg) -> Pool {
 }
 
 impl Hooks for Paper {
-    /// `_clock`'s minute (engine.py:461-476: every open position put, the risk loaded), then steps 1, 2 and 2b.
+    /// `_clock` (engine.py:446-476): a new UTC day resets every group's day loss (:455-460); a new minute puts every
+    /// open position and loads the risk (:461-471). Then steps 1, 2 and 2b.
     fn before_history(&mut self, eng: &SignalEngine, slot: u64, block_time: Option<i64>, by_key: &SlotLegs) {
         if let Some(bt) = block_time {
+            if self.day != eng.day {
+                self.day = eng.day.clone();
+                self.day_loss.iter_mut().for_each(|l| *l = 0);
+            }
             let minute = bt.div_euclid(60);
             if self.minute != Some(minute) {
                 self.minute = Some(minute);
@@ -773,7 +929,7 @@ impl Hooks for Paper {
                         self.put_position(id);
                     }
                 }
-                self.risk_loaded = true; // ignore-risk: every group's Risk(0.5, 1e9, 1e12, 1e12) (engine.py:532-535)
+                self.load_risk();
             }
         }
         // 1. the open positions on the slot's keys (engine.py:373-384)
@@ -790,7 +946,7 @@ impl Hooks for Paper {
                 }
                 let step = sim.on_slot(slot, legs, 0);
                 self.after_step(id, step);
-                self.settle_if_done(eng, id, false);
+                self.settle_if_done(eng, id, false, slot);
                 if self.opens.get(&id).is_some_and(|o| !o.done()) {
                     self.put_position(id);
                 }
@@ -810,8 +966,8 @@ impl Hooks for Paper {
         }
     }
 
-    /// `_signal` past the farm gates (engine.py:743-763): busy, then the risk gate ('not loaded' before the first
-    /// dated slot), then busy 'open' and the Pending at t + d with d the group's.
+    /// `_signal` past the farm gates (engine.py:743-763): busy, then the risk gate (`_risk_block`; 'not loaded' before
+    /// the first dated minute), then busy 'open' and the Pending at t + d with d the group's.
     fn on_pass_row(&mut self, eng: &SignalEngine, row: &SignalRow) -> Status {
         let g = &eng.groups[row.group];
         let vi = g.variants.iter().position(|v| *v == row.variant).expect("a row of the group's variant");
@@ -827,9 +983,10 @@ impl Hooks for Paper {
             }
             _ => {}
         }
-        if !self.risk_loaded {
-            self.counts.not_loaded += 1;
-            return Status::Skipped("not loaded".into());
+        if let Some(why) = self.risk_block(row.family, row.key, row.t, row.group) {
+            self.counts.not_loaded += u64::from(why == "not loaded");
+            *self.counts.risk_skips.entry(format!("{}: {why}", g.name)).or_default() += 1;
+            return Status::Skipped(why.into());
         }
         self.busy.insert(bk, Busy::Open);
         let d = g.d_ms.map_or(g.d, |ms| eng.clock.slots(ms as f64, row.t)); // `_d_at` at t (engine.py:667-672)
@@ -884,7 +1041,7 @@ impl Hooks for Paper {
                 }
                 let Some(sim) = o.sim.as_deref_mut() else { continue };
                 sim.advance(slot);
-                self.settle_if_done(eng, id, false);
+                self.settle_if_done(eng, id, false, slot);
             }
         }
         for (pool, _) in self.grad_wait.snapshot() {
@@ -910,10 +1067,15 @@ pub struct PaperEngine {
 }
 
 impl PaperEngine {
-    /// Refuses what the reference never runs: a variant outside M1 or a flow variant outside [pool_reversed]
-    /// (check_groups), d = 0, a q outside [0, 1].
+    /// Under ignore-risk. Refuses what the reference never runs: a variant outside M1 or a flow variant outside
+    /// [pool_reversed] (check_groups), d = 0, a q outside [0, 1].
     pub fn new(sig: SignalEngine, cfg: PaperCfg) -> Result<Self, PaperError> {
-        let paper = Paper::new(&sig, cfg)?;
+        Self::with_risk(sig, cfg, RiskSource::Ignore)
+    }
+
+    /// With the groups' risk from `risk` (`RiskSource::Files`: risk on, as paper.engine without `--ignore-risk`).
+    pub fn with_risk(sig: SignalEngine, cfg: PaperCfg, risk: RiskSource) -> Result<Self, PaperError> {
+        let paper = Paper::new(&sig, cfg, risk)?;
         Ok(PaperEngine { sig, paper, cur: None })
     }
 

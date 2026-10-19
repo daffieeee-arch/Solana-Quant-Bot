@@ -18,6 +18,13 @@ pub struct Risk {
 }
 
 impl Risk {
+    /// The risk every group has under `--ignore-risk`: `Risk(0.5, 10**9, 1e12, 1e12, False, ("F7",))` (engine.py:534-535),
+    /// no pool cooldown.
+    pub fn ignore() -> Risk {
+        Risk { size_sol: 0.5, max_open_positions: 1_000_000_000, max_exposure_sol: 1e12, daily_loss_limit_sol: 1e12, kill_switch: false,
+               families: vec!["F7".into()], pool_cooldown_h: 0.0 }
+    }
+
     /// `int(round(self.size_sol * 1e9))`: the same float product, and Python's round() of a float goes half to even.
     pub fn size_lamports(&self) -> i128 {
         (self.size_sol * 1e9).round_ties_even() as i128
