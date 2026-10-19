@@ -184,6 +184,31 @@ cd $R/lab && systemd-run --user --scope -p MemoryMax=3G -p CPUQuota=100% -- $PY 
 - Lab Backtest analyses GB per stream (from `_segment.json`), probes and backfills, and latency;
 - the coordinator and owner decide the budget.
 
+**What the meter counts, for the budget decision** (Triton support to the owner, 2026-10-19; the triton.one/pricing FAQ: "We bill for compressed bandwidth for gRPC streaming. For other RPC calls we track and bill the uncompressed bandwidth."):
+- Triton bills Dragon's Mouth at $0.08/GB on the **compressed** bytes. The recorder asks for zstd (`main.rs:277` in the 5e2d1b7 build), but its meter counts each update's **decoded** protobuf size (`encoded_len`, `recorder.rs:309`, `:370`), times `--wire-ratio` (default 1).
+- So `spent_gb`, the `usage` rows, the GB per stream and shadow job 85's 23.2 GB/day are all decoded bytes. Summed over the hour they are most likely above the bill (zstd on KB-size transactions), but not provably so per message: gRPC compresses each message alone, with a 5-byte prefix, and the meter does not count the framing, the subscribe requests or the unary replay-info call.
+- At `--wire-ratio 1` the daily cap is therefore conservative by the zstd ratio r: `--budget-usd 2` stops at 25 GB decoded, which is about $2 × r billed. The real spend is lower than the meter says.
+- Measuring r is required, not optional. Triton has no usage API, so it is read in two ways:
+  1. **Triton's figure:** the dashboard's usage (or the balance) just before step 1 and right after the hour; billed GB = the difference in USD / 0.08. Nothing else may use the token in between: no token-meta-rpc, no other recorder or session. r = billed GB / `spent_gb` in `$M/budget.json`.
+  2. **Our own cross-check, read-only:** the TLS bytes of the recorder's connection against the meter, each taken right after a minute roll (budget.json is saved at every minute roll), twice, about 45 minutes apart. This includes TLS and HTTP/2 overhead, so it is an upper bound of r. A reconnect between the two readings (a new socket) voids it; take two new readings.
+     ```bash
+     P=$(pgrep -f "lab-recorder --root $M" | head -1)
+     t=$(stat -c %Y $M/budget.json); while [ "$(stat -c %Y $M/budget.json)" = "$t" ]; do sleep 1; done   # the next minute roll
+     ss -tinpH state established '( dport = :443 )' | awk -v p="pid=$P," 'index($0, p) {w = 1; next}
+       w && /bytes_received/ {match($0, /bytes_received:[0-9]+/); b += substr($0, RSTART + 15, RLENGTH - 15); w = 0}
+       END {print "tls_bytes", b + 0}'
+     grep -o '"spent_bytes": *[0-9]*' $M/budget.json
+     # r (upper bound) = (tls_bytes 2 - tls_bytes 1) / (spent_bytes 2 - spent_bytes 1)
+     ```
+- **The decision (§2, the owner's):**
+  - keep `--wire-ratio 1`: the safe default, where the cap errs low and stops the streams before $2 is billed; or
+  - set `--wire-ratio` in `RECORDER_ARGS` to the measured r, rounded up with a margin and never below the cross-check's upper bound, so that `--budget-usd 2` means about $2 billed.
+  - One hour's r may differ from a full day's mix of streams. Check it again against the dashboard after the first day.
+- **The brakes:**
+  - Our daily cap and auto-stop are the only brake we set. Triton offers no limit you can set and no usage API. A pay-as-you-go stream stops when the prepaid balance reaches 0; the pricing FAQ calls that a "hard cap on spend". Keep the balance modest.
+  - The 5e2d1b7 build saves `budget.json` before it stops at the cap. If that save fails (a write error, not a full disk: the disk guard stops the units first), the recorder reconnects instead of exiting (`main.rs:480-482`) and keeps receiving until a save works. Watch `recorder.log` for repeated `disconnected` lines that name `budget.json`, and stop the units if they appear.
+  - The #358 build (the first nightly bundle, §5) stops at the cap without waiting for a save, and ends on a failed budget write (exit 74).
+
 Exit 75 means the cap was reached, or today's spend is unknown (`recorder.log` says which; see §5). Do not restart; report it.
 
 ### 4.2 Start
