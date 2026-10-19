@@ -18,7 +18,7 @@ import json
 import os
 import sys
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from paper.engine import _day
 from paper.tests import c1b_signal_cases as C1
@@ -799,6 +799,349 @@ def the_wallet_keeps_its_last_fifty():
     return case
 
 
+# ---------------------------------------------------------------------------------------------- from the review of #384
+# (a workflow of four lenses, each finding checked by two skeptics: paths the cases above left open, each pinning a mutant
+# that passed them)
+
+MIN_START = 450_175_206  # a minute's first slot by C1.block_time (the next starts at 450,175,431)
+FIRST_0922 = 450_131_836  # the first dated slot of 2026-09-22 by C1.block_time
+
+
+def sig(c, key, t=None, family="F7", variant="tp4_T600"):
+    m = {"key": key, "family": family, "variant": variant} | ({} if t is None else {"t": t})
+    r = c.one("signals", **m)
+    return r["status"], r["reason"]
+
+
+def a_quiet_failed_entry_books_the_day_before():
+    """A failed quiet entry whose entry slot is past midnight is made before the next dated slot's clock (engine.py:310,
+    356): its fee goes into the old day, which that slot then resets (spec §2.4)."""
+    c = Case("a_quiet_failed_entry_books_the_day_before", "daily_loss_limit 1,000 lamports. ES triggers at t (2026-09-21); an "
+                                                          "undated whale buy at t + 1 (no clock, no reset); the quiet entry at "
+                                                          "t + 2 (past midnight) fails on its slippage and books its fee into "
+                                                          "09-21; O's event at t + 66 is 09-22's first dated slot and resets. P "
+                                                          "at t + 300: entered.", k3=risk(daily_loss_limit_sol="0.000001"))
+    t = FIRST_0922 - 2
+    assert _day(C1.block_time(t)) == "2026-09-21" and _day(C1.block_time(t + 2)) == "2026-09-22"
+    es = c.pool("ES")
+    legs = trigger(c, es, t, 400 * SOL)
+    c.more(es, "reversed", legs[-1], [(t + 1, 0, "whale", "buy", 100 * SOL, False)])
+    c.evs = [replace(e, block_time=None) if e.slot == t + 1 else e for e in c.evs]
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t + 66, 0, "small buyer", "buy", SOL, False)])
+    trigger(c, c.pool("P"), t + 300, 400 * SOL)
+    case = c.build()
+    o = c.one("orders", key=es)
+    ok((o["status"], o["day"]) == ("entry_failed", "2026-09-21"), c, f"ES {o}")
+    ok(sig(c, c.key("P"))[0] == "entered", c, "P")
+    return case
+
+
+def a_loss_settled_after_midnight_is_the_new_days():
+    """The reset comes first in _clock (engine.py:455-460), before step 1: a stop loss settled at the first dated slot of
+    a new day is that day's loss."""
+    c = Case("a_loss_settled_after_midnight_is_the_new_days", "daily_loss_limit 0.001 SOL. SL's stop loss is decided before "
+                                                             "midnight and settled at 09-22's first dated slot. P at 09-22 + 600: "
+                                                             "'daily loss limit'.", k3=risk(daily_loss_limit_sol="0.001"))
+    t = FIRST_0922 - 300
+    sl = c.pool("SL")
+    legs = trigger(c, sl, t, 400 * SOL)
+    c.more(sl, "reversed", legs[-1], [(FIRST_0922 - 30, 0, "seller 2", "sell", 20 * SOL, False),
+                                      (FIRST_0922 - 29, 0, "seller 3", "sell", 20 * SOL, False),
+                                      (FIRST_0922 - 20, 0, "buyer 4", "buy", SOL // 10, False),
+                                      (FIRST_0922, 0, "buyer 3", "buy", SOL // 10, False)])
+    trigger(c, c.pool("P"), FIRST_0922 + 600, 400 * SOL)
+    case = c.build()
+    x = c.one("exits", key=sl)
+    ok(x["exit_reason"] == "stop_loss" and x["day"] == "2026-09-22" and x["pnl"] < -1_000_000, c, f"SL {x}")
+    ok(sig(c, c.key("P")) == ("skipped", "daily loss limit"), c, "P")
+    return case
+
+
+def an_entry_reread_holds_for_the_gate():
+    """The entry's re-read stores every group's risk (engine.py:869, 532-537): the gate after it, in the same minute, uses
+    it. The minute at s1 loads an invalid file (P2's trigger at s1 skipped); valid again before P1's entry at s1 + 1."""
+    c = Case("an_entry_reread_holds_for_the_gate", "K3's file loses size_sol at s1 (a minute's first slot; P2's row there "
+                                                   "is skipped with risk.load's reason) and is valid again at s1 + 2; P1's "
+                                                   "entry at s1 + 1 reads the valid file, which the gate then keeps: P3 at "
+                                                   "s1 + 50, the same minute, enters.")
+    s1 = MIN_START
+    assert minute(s1 - 31) == minute(s1 - 1) < minute(s1) == minute(s1 + 50)
+    p1 = c.pool("P1")
+    legs = trigger(c, p1, s1 - 1, 400 * SOL)
+    c.more(p1, "reversed", legs[-1], [(s1 + 1, 0, "buyer 3", "buy", SOL // 10, False)])
+    trigger(c, c.pool("P2"), s1, 400 * SOL)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(s1 + 2, 0, "small buyer", "buy", SOL, False)])
+    c.flip("K3", s1, risk(size_sol=None))
+    c.flip("K3", s1 + 2, risk())
+    trigger(c, c.pool("P3"), s1 + 50, 400 * SOL)
+    case = c.build()
+    ok(sig(c, c.key("P2")) == ("skipped", "risk config invalid: KeyError 'size_sol'"), c, "P2")
+    ok(c.one("orders", key=p1)["status"] == "filled", c, "P1 filled")
+    ok(sig(c, c.key("P3"))[0] == "entered", c, "P3")
+    return case
+
+
+def a_missing_file_that_appears():
+    """A missing file appears: the minutes after it load it (engine.py:471)."""
+    c = Case("a_missing_file_that_appears", "K3's file is missing at the start and appears at t + 100: P1 at t and P2 at "
+                                            "t + 150 (no new minute since) are 'risk config unreadable: FileNotFoundError'; "
+                                            "P3 at t + 400 (a later minute) enters.")
+    c.risk["K3"] = [[None, None]]
+    t = MIN_START - 225 + 40
+    assert minute(t - 30) == minute(t) == minute(t + 150) < minute(t + 400 - 30)
+    trigger(c, c.pool("P1"), t, 400 * SOL)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t + 100, 0, "small buyer", "buy", SOL, False)])
+    c.flip("K3", t + 100, risk())
+    trigger(c, c.pool("P2"), t + 150, 400 * SOL)
+    trigger(c, c.pool("P3"), t + 400, 400 * SOL)
+    case = c.build()
+    for p in ("P1", "P2"):
+        ok(sig(c, c.key(p)) == ("skipped", "risk config unreadable: FileNotFoundError"), c, p)
+    ok(sig(c, c.key("P3"))[0] == "entered", c, "P3")
+    return case
+
+
+def _graduation_case(name, why, k3):
+    c = Case(name, why, k3=k3)
+    t = 450_160_000
+    pg = c.pool("PG", "normal", create_slot=t + 5_000)
+    g = c.token("G", pool=pg)
+    c.pools[0]["mint"] = g
+    C2.nearly_complete(c, g, t)
+    c.trades(pg, "normal", 10**15, 80 * SOL, [(t + 5_000, 0, "first buyer", "buy", SOL, False), (t + 5_001, 0, "buyer", "buy", SOL, False)])
+    trigger(c, c.pool("P"), t + 300, 400 * SOL)
+    trigger(c, c.pool("P2"), t + 5_300, 400 * SOL)
+    return c, g, t
+
+
+def a_position_waiting_for_its_pool_is_open():
+    """A curve position whose own buy completed the curve waits for its pool and stays open (engine.py:837, spec §4 item
+    10): it counts for max open."""
+    c, g, t = _graduation_case("a_position_waiting_for_its_pool_is_open", "max_open_positions 1. G's curve trigger: our buy "
+                                                                          "completes the curve; the position waits for PG "
+                                                                          "(created at t + 5,000). P at t + 300: 'max open "
+                                                                          "positions'. After the sale at PG's open + 1, P2 at "
+                                                                          "t + 5,300 enters.", risk(max_open_positions=1))
+    case = c.build()
+    x = c.one("exits", key=g)
+    ok(x["exit_reason"] == "graduation" and x["exit_slot"] == t + 5_001, c, f"G {x}")
+    ok(sig(c, c.key("P")) == ("skipped", "max open positions"), c, "P")
+    ok(sig(c, c.key("P2"))[0] == "entered", c, "P2")
+    return case
+
+
+def a_position_waiting_for_its_pool_has_exposure():
+    """The waiting position's venue cost counts in the exposure (engine.py:841)."""
+    c, g, t = _graduation_case("a_position_waiting_for_its_pool_has_exposure", "max_exposure 0.5006 SOL: G's waiting "
+                                                                               "position's 0.5 SOL plus P's 0.5 is above it: P "
+                                                                               "at t + 300 'max exposure'; P2 after the sale "
+                                                                               "enters.", risk(max_exposure_sol="0.5006"))
+    case = c.build()
+    ok(sig(c, c.key("P")) == ("skipped", "max exposure"), c, "P")
+    ok(sig(c, c.key("P2"))[0] == "entered", c, "P2")
+    return case
+
+
+def _curve_retrigger(c, mint, at):
+    """A curve trigger at `at` from the mint's last state: buys of 20T at at - 40 and at - 30, then a sell paying about
+    4 SOL."""
+    from backtest.venues import curve_buy_exact_out, curve_sell
+    legs = [e.leg for e in c.evs if e.key == mint and e.slot < at]
+    start = s = max(legs, key=lambda l: (l.slot, l.tx)).post
+    for n in (20 * T, 20 * T):
+        s = curve_buy_exact_out(s, n).state
+    lo, hi = 1, s.vt
+    while lo < hi:
+        m = (lo + hi) // 2
+        f = curve_sell(s, m)
+        if f is not None and f.curve_quote >= 4 * SOL:
+            hi = m
+        else:
+            lo = m + 1
+    return c.curve(mint, [(at - 40, 0, "buyer", "buy", 20 * T), (at - 30, 0, "buyer 2", "buy", 20 * T), (at, 0, "seller", "sell", lo)],
+                   start=start)
+
+
+def a_curve_with_risk_on():
+    """A curve position with risk on (RC3's paths): the file's size, and the pool cooldown on the mint after a total
+    loss."""
+    c = Case("a_curve_with_risk_on", "size 0.3, pool_cooldown_h 0.01. CB's curve trigger: K3 buys 0.3 SOL. A dump takes "
+                                     "the price under a tenth: the stop loss sells at a total loss, the mint cooled for 36 "
+                                     "s. A whale buys back; CB triggers again at t + 90 ('pool cooldown') and t + 300 "
+                                     "(entered).", k3=risk(size_sol="0.3", pool_cooldown_h="0.01"))
+    t = 450_160_000
+    cb = c.token("CB")
+    legs = C1._curve_trigger(c, cb, t, rq=70 * SOL)
+    s = legs[-1].post
+    dump = s.vt * s.vq // (20 * SOL) - s.vt
+    legs = c.curve(cb, [(t + 10, 0, "dumper", "sell", dump), (t + 11, 0, "seller 3", "sell", T), (t + 20, 0, "buyer 3", "buy", T)],
+                   start=s)
+    c.buy_in(cb, legs[-1].post, t + 30, 0, "whale", 35 * SOL)
+    _curve_retrigger(c, cb, t + 90)
+    _curve_retrigger(c, cb, t + 300)
+    case = c.build()
+    o = c.one("orders", key=cb, t=t)
+    x = c.one("exits", key=cb, t=t)
+    ok(o["size"] == 300_000_000 and x["proceeds"] < 0.1 * x["cost"], c, f"CB {o} {x}")
+    ok(sig(c, cb, t + 90) == ("skipped", "pool cooldown") and sig(c, cb, t + 300)[0] == "entered", c, "CB again")
+    return case
+
+
+def n2_passes_the_daily_loss_limit():
+    """N2 rows return before the daily loss limit (engine.py:831-832)."""
+    c = Case("n2_passes_the_daily_loss_limit", "daily_loss_limit 1,000 lamports. SL stops out at a loss far above it. P "
+                                               "at t + 300: its F7 row is 'daily loss limit', its N2 row for Q enters.",
+             n2_k=1, k3=risk(daily_loss_limit_sol="0.000001"))
+    t = 450_175_000
+    c.trades(c.pool("Q"), "reversed", 1_000 * SOL, 10**15, [(t - 300, 0, "small buyer", "buy", SOL, False),
+                                                           (t + 100, 0, "small buyer", "buy", SOL, False)])
+    sl = c.pool("SL")
+    legs = trigger(c, sl, t, 5_000 * SOL)
+    c.more(sl, "reversed", legs[-1], [(t + 10, 0, "seller 2", "sell", 300 * SOL, False), (t + 11, 0, "seller 3", "sell", 300 * SOL, False),
+                                      (t + 20, 0, "buyer 3", "buy", SOL // 10, False)])
+    trigger(c, c.pool("P"), t + 300, 1_050 * SOL)
+    case = c.build()
+    ok(sig(c, c.key("P")) == ("skipped", "daily loss limit"), c, "P's F7 row")
+    ok(c.one("signals", family="N2_F7", t=t + 300)["status"] == "entered", c, "P's N2 row")
+    return case
+
+
+def n2_passes_a_pool_cooldown():
+    """N2 rows return before the pool cooldown (engine.py:831-836)."""
+    c = Case("n2_passes_a_pool_cooldown", "pool_cooldown_h 0.01. Q stops out at a total loss and is refilled. P triggers "
+                                          "inside Q's cooldown; its N2 row picks Q: entered.", n2_k=1, k3=risk(pool_cooldown_h="0.01"))
+    t = 450_160_000
+    q = c.pool("Q")
+    legs = trigger(c, q, t, 400 * SOL)
+    c.more(q, "reversed", legs[-1], [(t + 5, 0, "dumper", "sell", 350 * SOL, False), (t + 9, 0, "buyer 3", "buy", SOL // 10, False),
+                                     (t + 20, 0, "whale", "buy", 350 * SOL, False)])
+    trigger(c, c.pool("P"), t + 60, 420 * SOL)
+    case = c.build()
+    x = c.one("exits", key=q, family="F7")
+    ok(x["proceeds"] < 0.1 * x["cost"], c, f"Q's total loss {x}")
+    r = c.one("signals", family="N2_F7", t=t + 60)
+    ok((r["key"], r["status"]) == (q, "entered"), c, f"P's N2 row {r}")
+    return case
+
+
+def max_open_from_a_later_minute():
+    """A file changed between minutes holds from the next minute's reload (engine.py:471)."""
+    c = Case("max_open_from_a_later_minute", "max_open 5 at the start; P1 opens. The file changes to max_open 1 at t + 300; "
+                                             "the minute before t + 470 reloads it: P2 at t + 470 is 'max open positions'.")
+    t = 450_175_000
+    assert minute(t + 300) < minute(t + 470 - 30)
+    trigger(c, c.pool("P1"), t, 1_050 * SOL)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t + 100, 0, "small buyer", "buy", SOL, False),
+                                                           (t + 300, 0, "small buyer", "buy", SOL, False)])
+    c.flip("K3", t + 300, risk(max_open_positions=1))
+    trigger(c, c.pool("P2"), t + 470, 1_050 * SOL)
+    case = c.build()
+    ok(sig(c, c.key("P2")) == ("skipped", "max open positions"), c, "P2")
+    return case
+
+
+def an_entry_reread_reaches_the_other_group():
+    """_load_risk at an entry reads every group (engine.py:532-537): K3's curve entry reads H's kill switch for H too."""
+    c = Case("an_entry_reread_reaches_the_other_group", "H's file turns its kill switch on at x + 2, after the minute's load; "
+                                                        "K3's curve entry at x + 2 reads it for H too, so H's rows on P2 at "
+                                                        "x + 50 (the same minute) are 'kill switch' and K3's row enters. CU is "
+                                                        "a curve: H trades no curve, so H has no entry of its own.")
+    t0, x = 450_150_000, MIN_START + 60
+    assert minute(x - 40) == minute(x) == minute(x + 50)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t0, 0, "small buyer", "buy", SOL, False)])
+    cu = c.token("CU")
+    legs = C1._curve_trigger(c, cu, x)
+    c.curve(cu, [(x + 2, 0, "buyer 3", "buy", T)], start=legs[-1].post)
+    c.flip("H", x + 2, risk(kill_switch=True))
+    trigger(c, c.pool("P2"), x + 50, 400 * SOL)
+    case = c.build()
+    ok(sig(c, c.key("P2"))[0] == "entered", c, "K3 on P2")
+    for v in ("flow300_H6", "flow300_tp100_H6"):
+        ok(sig(c, c.key("P2"), variant=v) == ("skipped", "kill switch"), c, f"H {v}")
+    return case
+
+
+def h_variants_count_each_other():
+    """A group's two variants count each other's pending entries (engine.py:838)."""
+    c = Case("h_variants_count_each_other", "H's max_open 1: P's flow300_H6 row enters (pending), its flow300_tp100_H6 row "
+                                            "then sees one pending: 'max open positions'.", h=risk(max_open_positions=1))
+    t0, t = 450_150_000, 450_165_000
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t0, 0, "small buyer", "buy", SOL, False)])
+    trigger(c, c.pool("P"), t, 400 * SOL)
+    case = c.build()
+    ok(sig(c, c.key("P"), variant="flow300_H6")[0] == "entered", c, "flow300_H6")
+    ok(sig(c, c.key("P"), variant="flow300_tp100_H6") == ("skipped", "max open positions"), c, "flow300_tp100_H6")
+    return case
+
+
+def the_size_is_the_entry_reads():
+    """The size is the entry's own read (engine.py:869, 880): the file changes between the signal and the entry, in one
+    minute."""
+    c = Case("the_size_is_the_entry_reads", "P triggers at t; the file changes to size 0.3 at its entry slot t + 2, in the "
+                                            "same minute: the order is 0.3 SOL.")
+    t = 450_175_120
+    assert minute(t - 30) == minute(t) == minute(t + 2)
+    p = c.pool("P")
+    legs = trigger(c, p, t, 400 * SOL)
+    c.more(p, "reversed", legs[-1], [(t + 2, 0, "buyer 3", "buy", SOL // 10, False)])
+    c.flip("K3", t + 2, risk(size_sol="0.3"))
+    case = c.build()
+    ok(c.one("orders", key=p)["size"] == 300_000_000, c, "P's size")
+    return case
+
+
+def busy_is_t_after_an_entry_skip():
+    """After 'at entry: …' busy is t (engine.py:876), not the entry slot: a row of the same key in the entry slot is
+    decided by the gate, not by busy."""
+    c = Case("busy_is_t_after_an_entry_skip", "P1 at t: its N2 row for Q pends to t + 2; the kill switch from t + 2: both "
+                                              "entries are skipped at entry. P2 triggers at t + 2: its N2 row for Q is "
+                                              "'kill switch' (busy is t < t + 2), not 'busy'.", n2_k=2)
+    t = 450_175_120
+    c.trades(c.pool("Q"), "reversed", 1_000 * SOL, 10**15, [(t - 300, 0, "small buyer", "buy", SOL, False)])
+    trigger(c, c.pool("P1"), t, 1_050 * SOL)
+    trigger(c, c.pool("P2"), t + 2, 1_050 * SOL)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t + 3, 0, "b", "buy", SOL, False)])
+    c.flip("K3", t + 2, risk(kill_switch=True))
+    case = c.build()
+    q = c.key("Q")
+    ok(c.one("orders", key=q, t=t, family="N2_F7")["reason"] == "at entry: kill switch", c, "Q at t")
+    ok(sig(c, q, t + 2, family="N2_F7") == ("skipped", "kill switch"), c, "Q at t + 2")
+    return case
+
+
+def a_flip_lands_before_the_quiet_entries():
+    """FlipFeed's timing (FORMAT): a flip lands when the feed hands out its event, before the quiet entries due before it
+    (engine.py:310): P's quiet entry at t + 2 reads a kill switch flipped at t + 50, the next event."""
+    c = Case("a_flip_lands_before_the_quiet_entries", "P triggers at t; no event until O's at t + 50, where K3's kill switch "
+                                                      "flips on: P's quiet entry at t + 2 (and its N2 entry) read it: 'at "
+                                                      "entry: kill switch'.", n2_k=1)
+    t = 450_175_120
+    c.trades(c.pool("Q"), "reversed", 1_000 * SOL, 10**15, [(t - 300, 0, "small buyer", "buy", SOL, False)])
+    trigger(c, c.pool("P"), t, 1_050 * SOL)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t + 50, 0, "b", "buy", SOL, False)])
+    c.flip("K3", t + 50, risk(kill_switch=True))
+    case = c.build()
+    ok({(o["family"], o["reason"]) for o in c.rows("orders")} == {("F7", "at entry: kill switch"), ("N2_F7", "at entry: kill switch")},
+       c, f"orders {c.rows('orders')}")
+    return case
+
+
+def a_flip_lands_before_the_slot_before_ends():
+    """FlipFeed's timing (FORMAT): a flip lands before the engine ends the slot before its event, so a minute that starts
+    in that slot reads it: t starts a minute, the kill switch flips at t + 1 (the next event), and t's minute loads it."""
+    s = MIN_START
+    c = Case("a_flip_lands_before_the_slot_before_ends", "P triggers at t, a minute's first slot; K3's kill switch flips on "
+                                                         "at t + 1, O's event: t's own minute reload reads it, so P's row is "
+                                                         "'kill switch'.")
+    assert minute(s - 30) < minute(s)
+    trigger(c, c.pool("P"), s, 400 * SOL)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(s + 1, 0, "b", "buy", SOL, False), (s + 300, 0, "b", "buy", SOL, False)])
+    c.flip("K3", s + 1, risk(kill_switch=True))
+    case = c.build()
+    ok(sig(c, c.key("P")) == ("skipped", "kill switch"), c, "P")
+    return case
+
+
 CASES = [max_open_counts_pending_and_open, max_exposure_at_its_edge, kill_switch_stops_n2_too, family_off_leaves_n2,
          files_invalid_or_missing, at_entry_the_file_is_read_again, size_from_the_file_n2_at_half_a_sol,
          daily_loss_blocks_until_midnight, cooldown_after_a_total_loss, daily_loss_is_signed_and_its_limit_inclusive,
@@ -806,7 +1149,12 @@ CASES = [max_open_counts_pending_and_open, max_exposure_at_its_edge, kill_switch
          at_entry_the_limits_are_not_checked_again, cooldown_ends_at_its_slot, exposure_counts_the_open_cost,
          n2_pending_does_not_count, other_groups_do_not_count, n2_loss_is_not_booked, cooldown_across_a_clock_change,
          a_sale_of_exactly_a_tenth_is_no_total_loss, the_cooldown_keeps_the_later_end, the_wallet_keeps_its_last_fifty,
-         a_cooldown_beyond_64_bits_is_forever]
+         a_cooldown_beyond_64_bits_is_forever, a_quiet_failed_entry_books_the_day_before,
+         a_loss_settled_after_midnight_is_the_new_days, an_entry_reread_holds_for_the_gate, a_missing_file_that_appears,
+         a_position_waiting_for_its_pool_is_open, a_position_waiting_for_its_pool_has_exposure, a_curve_with_risk_on,
+         n2_passes_the_daily_loss_limit, n2_passes_a_pool_cooldown, max_open_from_a_later_minute,
+         an_entry_reread_reaches_the_other_group, h_variants_count_each_other, the_size_is_the_entry_reads,
+         busy_is_t_after_an_entry_skip, a_flip_lands_before_the_quiet_entries, a_flip_lands_before_the_slot_before_ends]
 
 
 def table():

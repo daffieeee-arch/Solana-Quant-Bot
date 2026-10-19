@@ -127,6 +127,8 @@ fn kind(op: &Op) -> String {
         Op::Exit(x) => format!("exit {}", x.exit_reason.unwrap_or("-")),
         Op::PutPosition { mark, .. } => format!("put {}", if mark.is_some() { "marked" } else { "unmarked" }),
         Op::DeletePosition(_) => "delete".into(),
+        Op::Heartbeat(h) => format!("heartbeat {}", if h.note.is_empty() { "minute" } else { "gap" }),
+        Op::Wallet(w) => format!("wallet {}", w.group),
     }
 }
 
@@ -140,7 +142,10 @@ fn a_pool_position_from_its_signal_to_its_exit() {
                 inflow(T + 700, P, 540), inflow(T + 690, Q, 580), trig((T + 701, 0), Q, 30, 600)];
     let mut legs = legs.to_vec();
     legs.sort_by_key(Leg::order);
-    let (eng, ops) = run(&legs);
+    let (eng, all) = run(&legs);
+    // the journal's five tables in order; the heartbeat rows and wallet files (C3-3) come between them
+    assert!(all.iter().any(|o| matches!(o, Op::Heartbeat(_))) && all.iter().any(|o| matches!(o, Op::Wallet(_))));
+    let ops: Vec<Op> = all.into_iter().filter(|o| !matches!(o, Op::Heartbeat(_) | Op::Wallet(_))).collect();
     let seq: Vec<String> = ops.iter().map(kind).collect();
     let first_exit = seq.iter().position(|s| s.starts_with("exit")).unwrap();
     assert_eq!(&seq[..3], ["signal 1 entered", "order filled", "fill buy"], "{seq:?}");
