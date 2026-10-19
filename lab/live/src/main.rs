@@ -191,8 +191,10 @@ fn parse_snapshot_args(argv: &[String]) -> Result<SnapArgs> {
         _ => bail!("give --first-slot and --h24 together"),
     };
     // One live start: it knows the store up to its first slot (`--before`) and seeds its farmer window up to the same slot.
-    // A later --before is metadata from that start's future (pools and tokens created in [first, before)); an earlier one
-    // seeds trades of pools the snapshot does not know yet (created in [before, first); LAB review on #368).
+    // A later --before is metadata from that start's future (pools and tokens created in [first, before); Codex on
+    // c29c545); an earlier one seeds trades of pools the snapshot does not know yet (created in [before, first); LAB review
+    // on #368). A mirror of paper.shadow passes its first segment's slot for both: the shadow's snapshot_before is `lo`,
+    // which can be a skipped slot just before it (harmless there, no rows in the gap).
     if let (Some(b), Some((f, _))) = (before, window) {
         if f != b {
             bail!("--before {b} and --first-slot {f} differ: a live start at slot S knows the store up to S and seeds up to S: give the \
