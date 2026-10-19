@@ -11,6 +11,7 @@
 use crate::clock::{Clock, HOUR_MS, SOL};
 use crate::exact::{ge, le};
 use crate::legs::Id;
+use crate::mem::{self, Mem};
 use crate::universe::Segment;
 use std::cmp::Ordering;
 
@@ -71,6 +72,11 @@ impl HourIndex {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// The memory log (C4-2): the hour's candidate events, emptied at every new hour.
+    pub fn mem(&self) -> Mem {
+        Mem::new("hour_events", self.len(), self.events.iter().map(mem::vec).sum())
     }
 
     /// The trigger's N2 matches: up to k keys of its bucket that traded this hour at a similar depth (engine.py `_n2`).

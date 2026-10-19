@@ -22,6 +22,7 @@ use crate::clock::{day_of, Clock, EPOCH_SLOTS, HISTORY_SLOTS, POOL_SEEN_KEEP_MS}
 use crate::f7::{f7_signal, trigger, Recent};
 use crate::farm::{FarmWindow, WindowRule};
 use crate::legs::{Event, Id, Leg, Venue, NONE};
+use crate::mem::{self, Mem};
 use crate::n2::{HourIndex, N2Keys};
 use crate::universe::{Reject, Segment, Universe};
 use std::borrow::Cow;
@@ -231,6 +232,11 @@ impl SlotLegs {
         self.keys.len()
     }
 
+    /// The memory log (C4-2): the slot's (venue, key) entries, cleared at every slot.
+    pub fn mem(&self) -> Mem {
+        Mem::new("slot_legs", self.keys.len(), mem::vec(&self.keys) + mem::map(&self.index) + self.keys.iter().map(|k| mem::vec(&k.2)).sum::<usize>())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.keys.is_empty()
     }
@@ -366,6 +372,24 @@ pub struct SignalEngine {
     cur: Option<(u64, Option<i64>)>,
     by_key: SlotLegs,
     written: HashSet<(Family, usize, usize, Id)>,
+}
+
+impl SignalEngine {
+    /// The memory log (C4-2, read-only): the universe (the snapshot's part), then the state: the recent legs, the farm
+    /// windows, the hour's N2 candidates, pool_seen and pool_last (24 h after a pool's last trade), the slot's legs and
+    /// the slot's written rows.
+    pub fn mem_report(&self) -> Vec<Mem> {
+        let mut v = Vec::with_capacity(12);
+        v.extend(self.universe.mem());
+        v.extend(self.recent.mem());
+        v.extend(self.farm.mem());
+        v.push(self.hours.mem());
+        v.push(Mem::new("pool_seen", self.pool_seen.len(), mem::map(&self.pool_seen)));
+        v.push(Mem::new("pool_last", self.pool_last.len(), mem::map(&self.pool_last)));
+        v.push(self.by_key.mem());
+        v.push(Mem::new("slot_written", self.written.len(), mem::set(&self.written)));
+        v
+    }
 }
 
 impl SignalEngine {
@@ -634,7 +658,7 @@ mod tests {
     use super::cases::groups;
     use super::*;
     use crate::clock::tests::dev2;
-    use crate::clock::{Bounds, SOL};
+    use crate::clock::{Bounds, HOUR_MS, SOL};
     use crate::f7::tests::{curve, pool, t1_legs, MAYHEM, T1_CREATOR, T1_MINT, T1_TRADER};
     use crate::legs::{PoolKind, WSOL};
     use crate::n2::tests::FakeKeys;
@@ -856,5 +880,50 @@ mod tests {
         name[1].name = "K3".into();
         assert!(new(name, WindowRule::AllPools).is_err());
         assert!(groups(1)[1].trades(Segment::PoolReversed) && !groups(1)[1].trades(Segment::PoolNormal) && groups(1)[0].trades(Segment::Curve));
+    }
+
+    #[test]
+    fn the_windowed_structures_stay_bounded_over_thirty_hours() {
+        // M1 C4-2 (plateau spec §2): one pool buy per slot for 30 hours of dev2's clock, a new pool every 50 slots (each
+        // trades its 50 slots, then never again). A structure that kept every pool would hold all of them; each
+        // window-bounded one holds at most its window's pools or legs: recent and the farm windows about two hours (the
+        // hourly sweep and rollover, plus the hour since), pool_seen and pool_last 25 hours, the hour's N2 candidates one
+        // hour, the slot's legs and written rows one slot.
+        let start = 450_100_000u64;
+        let h = dev2().slots(HOUR_MS, start);
+        let n = 30 * h;
+        let mut u = dev2_universe();
+        let pools = (n / 50 + 1) as Id;
+        for i in 0..pools {
+            u.add_pool(1000 + i, PoolMeta { reversed: false, mayhem: false, mint_tok: None, coin_creator: 5 });
+        }
+        let mut eng = engine(u, 0);
+        let mut keys = FakeKeys::default();
+        let s = SOL as i64;
+        let entries = |eng: &SignalEngine, name: &str| eng.mem_report().iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
+        let mut peak: BTreeMap<&str, usize> = BTreeMap::new();
+        for k in 0..n {
+            let slot = start + k;
+            let l = pool((slot, 0), 1000 + (k / 50) as Id, 3, PoolKind::Buy, (0, s / 10), (0, 500 * s));
+            let bt = 1_790_000_000 + (slot as i64 - 450_000_000) * 2 / 5;
+            eng.push(&Event::new(l, Some(bt)), &mut keys, &mut |_| {}).unwrap();
+            if k % 500 != 0 {
+                continue;
+            }
+            let window = |hours: u64| (hours * h / 50 + 2) as usize; // pools that traded within so many hours
+            for (name, bound) in [("recent_keys", window(2)), ("recent_legs", (2 * h + 100) as usize), ("farm_pools", window(2)),
+                                  ("farm_items", (2 * h + 100) as usize), ("pool_seen", window(25)), ("pool_last", window(25)),
+                                  ("hour_events", (h + 1) as usize), ("slot_legs", 1), ("slot_written", 0)] {
+                let e = entries(&eng, name);
+                assert!(e <= bound, "slot {slot}: {name} {e} above its bound {bound}");
+                let p = peak.entry(name).or_default();
+                *p = (*p).max(e);
+            }
+        }
+        // The run saw every pool; the bounded structures did not keep them.
+        eng.finish(&mut keys, &mut |_| {}).unwrap();
+        assert_eq!(eng.counts.events, n);
+        assert!(entries(&eng, "pool_seen") < (pools as usize) * 5 / 6 && peak["recent_keys"] < (pools as usize) / 10, "{peak:?}");
+        assert!(peak["farm_items"] > 0 && peak["hour_events"] > 0, "the structures were used: {peak:?}");
     }
 }

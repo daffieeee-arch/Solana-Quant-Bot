@@ -11,6 +11,7 @@
 use crate::clock::{Clock, F7_CREATOR_MS, F7_GAP_MS, F7_INFLOW_MS, HISTORY_SLOTS, SOL};
 use crate::exact::ge;
 use crate::legs::{CurveLeg, Id, Leg, PoolLeg, NONE};
+use crate::mem::{self, Mem};
 use crate::universe::{F7Key, Segment};
 use std::collections::{HashMap, VecDeque};
 
@@ -70,6 +71,15 @@ impl Recent {
 
     pub fn is_empty(&self) -> bool {
         self.legs.is_empty()
+    }
+
+    /// The memory log (C4-2): the keys (with their last_seen) and the legs they hold. Each key's legs span at most
+    /// HISTORY_SLOTS slots after its last extend; a key leaves at the hourly sweep.
+    pub fn mem(&self) -> [Mem; 2] {
+        [
+            Mem::new("recent_keys", self.legs.len(), mem::map(&self.legs) + mem::map(&self.last_seen)),
+            Mem::new("recent_legs", self.legs.values().map(VecDeque::len).sum(), self.legs.values().map(mem::deque).sum()),
+        ]
     }
 }
 

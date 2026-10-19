@@ -214,6 +214,11 @@ impl Holdings {
         Holdings { exact, enabled, pairs: HashMap::new() }
     }
 
+    /// The memory log (C4-2): the traders' table (`crate::mem::map`).
+    pub fn heap_bytes(&self) -> usize {
+        crate::mem::map(&self.pairs)
+    }
+
     /// One seed leg (`seed`): a buy of t is +t, a sell -t, in both. Per-trader sums seed the same.
     pub fn seed(&mut self, trader: Id, net: i128) {
         self.apply(trader, net, net);
@@ -587,6 +592,11 @@ impl PositionSim {
 
     pub fn is_done(&self) -> bool {
         self.done
+    }
+
+    /// The memory log (C4-2): the position as it is boxed, its holdings, its applied sales and its exit rule's flow index.
+    pub fn heap_bytes(&self) -> usize {
+        std::mem::size_of::<Self>() + self.hold.heap_bytes() + crate::mem::vec(&self.applied) + self.rule.heap_bytes()
     }
 
     pub fn venue(&self) -> SimVenue {

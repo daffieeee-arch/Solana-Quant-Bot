@@ -13,12 +13,22 @@
 //! 4. chunk by chunk (`Replay::for_each_event`): its curve and pool rows read (admitted by the snapshot: its mints for
 //!    curve rows, its SOL markets for pool rows), sorted, gated (no key ties), the farmer flags set, and the events
 //!    handed out in chain order, typed (lab_core::legs::Event).
+//!
+//! **Segments** (M1 C4-1, research/m1-c4-plateau-spec-2026-10-19.md §3): `Replay::open_segments` reads the recorder's
+//! segments instead of the chunks (the live form: `<root>/<seq>/{pump,pump_amm,blocks}` and `_segment.json`). Steps 1
+//! and 3 are as above (no manifest: a segment is the recorder's, not the extractor's). Step 4 goes segment by segment
+//! in seq order, each split at the store's chunk bounds into units; a unit takes its store chunk's h24 and index, so the
+//! farmer flags follow the store-exact rule exactly as a chunk replay does, and only one segment's rows are held. The
+//! block times are the segment's own. An incomplete segment is skipped and counted; a gap in [from, to) is refused. A
+//! segment's `backfill/` (watchlist backfills: rows of earlier slots, LiveFeed's late-row semantics, M3's) is not read,
+//! only counted per segment, so a measurement on segments is a lower bound for the live form.
 
 use crate::legs::{check_ties, emit_chunk, event_kind, event_line, flag_chunk, h24_of, keeps, FarmHist, Keys, PoolRow, Summary, REVERSED};
 use crate::rows::{chunks, Part};
 use crate::snapshot::{FarmHistMeta, Snapshot};
 use anyhow::{bail, Context, Result};
 use arrow_array::{Array, BooleanArray, Int64Array, LargeStringArray, RecordBatch, StringArray, StringViewArray, UInt64Array};
+use lab_core::mem::{self as lmem, Mem};
 use lab_core::legs::{
     CurveLeg, CurveVariant, Event, Id, Order, PoolCtx, PoolKind, BOOST_BUY_DISC, DEFAULT_KEY, DIRECT, EXACT_OUT, HOLDOUT, NONE,
     POOL_EXACT_OUT, PUMP, PUMP_AMM, X0, X1,
@@ -41,6 +51,36 @@ pub struct Admission {
     is_mint: Vec<bool>,
     /// per id: 0 not a SOL market, 1 normal, 2 reversed
     pool: Vec<u8>,
+}
+
+/// The replay's own structures for `--mem-log` (M1 C4-2, memlog.rs), taken once per chunk (or segment unit) after its
+/// rows are read and flagged, before its events: the interned keys (with the admission's tables), the 24 h farmer
+/// histories (the (pool, trader) pairs, then their trades), the pool contexts and the legs buffer of that chunk.
+#[derive(Clone, Debug, Default)]
+pub struct ReplayMem {
+    pub mems: Vec<Mem>,
+    /// Segments handed out so far (None on chunks).
+    pub segments: Option<u64>,
+}
+
+/// A running total plus `flag_chunk`'s delta (the farmer histories' trades and bytes).
+fn add_mem((trades, bytes): (usize, usize), (dt, db): (isize, isize)) -> (usize, usize) {
+    (trades.checked_add_signed(dt).expect("farmer history trades below 0"), bytes.checked_add_signed(db).expect("farmer history bytes below 0"))
+}
+
+/// O(1): the histories' trades and bytes are the replay's running total (`flag_chunk`'s deltas), never a walk over them.
+fn replay_mem<C, P>(adm: &Admission, hist: &HashMap<(Id, Id), FarmHist>, (trades, bytes): (usize, usize), ctx: &HashMap<Id, PoolCtx>,
+                    legs: (&Vec<C>, &Vec<P>), segments: Option<u64>) -> ReplayMem {
+    ReplayMem {
+        mems: vec![
+            Mem::new("interned_keys", adm.keys.len(), adm.keys.heap_bytes() + lmem::vec(&adm.is_mint) + lmem::vec(&adm.pool)),
+            Mem::new("farmer_hist", hist.len(), lmem::map(hist)),
+            Mem::new("farmer_hist_trades", trades, bytes),
+            Mem::new("pool_ctx", ctx.len(), lmem::map(ctx)),
+            Mem::new("legs_buffer", legs.0.len() + legs.1.len(), lmem::vec(legs.0) + lmem::vec(legs.1)),
+        ],
+        segments,
+    }
 }
 
 impl Admission {
@@ -649,6 +689,80 @@ pub struct LegsArgs {
     pub out_from: u64,
 }
 
+/// A recorder segment (lab/recorder/src/segment.rs): its seq, its slots [first_slot, last_slot + 1) as a Part, the rows
+/// of its tables and of its `backfill/` (from the Parquet footers).
+pub struct Segment {
+    pub seq: u64,
+    pub part: Part,
+    pub rows: u64,
+    pub backfill_rows: u64,
+}
+
+/// The Parquet rows under `dir`, every file of every subdirectory, from the footers.
+fn parquet_rows(dir: &Path) -> Result<u64> {
+    let Ok(entries) = fs::read_dir(dir) else { return Ok(0) };
+    let mut n = 0u64;
+    for e in entries {
+        let path = e?.path();
+        if path.is_dir() {
+            n += parquet_rows(&path)?;
+        } else if path.extension().is_some_and(|x| x == "parquet") {
+            let file = fs::File::open(&path).with_context(|| format!("open {}", path.display()))?;
+            let rows = ParquetRecordBatchReaderBuilder::try_new(file)?.metadata().file_metadata().num_rows();
+            n += u64::try_from(rows).with_context(|| format!("{}: {rows} rows", path.display()))?;
+        }
+    }
+    Ok(n)
+}
+
+/// The complete segments under `root` by seq (their `_segment.json` says `complete`), and the seqs of the incomplete
+/// ones (skipped, as LiveFeed does).
+pub fn segments(root: &Path) -> Result<(Vec<Segment>, Vec<u64>)> {
+    let (mut out, mut incomplete) = (Vec::new(), Vec::new());
+    for e in fs::read_dir(root).with_context(|| format!("read {}", root.display()))? {
+        let dir = e?.path();
+        let Ok(raw) = fs::read(dir.join("_segment.json")) else { continue };
+        let m: Value = serde_json::from_slice(&raw).with_context(|| format!("{}/_segment.json", dir.display()))?;
+        let (Some(seq), Some(first), Some(last)) = (m["seq"].as_u64(), m["first_slot"].as_u64(), m["last_slot"].as_u64()) else {
+            bail!("{}/_segment.json: no seq, first_slot or last_slot", dir.display());
+        };
+        if m["complete"] != true {
+            incomplete.push(seq);
+            continue;
+        }
+        let rows = parquet_rows(&dir.join("pump"))? + parquet_rows(&dir.join("pump_amm"))?;
+        let backfill_rows = parquet_rows(&dir.join("backfill"))?;
+        out.push(Segment { seq, part: Part { lo: first, hi: last + 1, dir }, rows, backfill_rows });
+    }
+    out.sort_by_key(|s| s.seq);
+    incomplete.sort_unstable();
+    for w in out.windows(2) {
+        if w[0].seq == w[1].seq {
+            bail!("two segments with seq {}", w[0].seq);
+        }
+    }
+    Ok((out, incomplete))
+}
+
+/// A segment's part in one store chunk: the slots [lo, hi), the store chunk's index among the replay's chunks and h24.
+struct Unit {
+    seg: usize,
+    lo: u64,
+    hi: u64,
+    chunk: u32,
+    h24: u64,
+}
+
+/// What a replay on segments reads: the segments in [from, to), their block times, their units, the incomplete ones
+/// skipped, the store chunks' bounds and h24.
+struct SegSource {
+    segs: Vec<Segment>,
+    blocks: Vec<Blocks>,
+    units: Vec<Unit>,
+    incomplete: Vec<u64>,
+    chunks: Vec<(u64, u64, u64)>,
+}
+
 /// The chunks covering [lo, hi) without a gap, in slot order; an error otherwise.
 fn covering(parts: &[Part], lo: u64, hi: u64, what: &str) -> Result<Vec<Part>> {
     let sel: Vec<Part> = parts.iter().filter(|p| p.lo < hi && p.hi > lo).cloned().collect();
@@ -685,6 +799,21 @@ pub struct Replay {
     pub counts: Counts,
     h24s: Vec<Value>,
     done: bool,
+    /// Some: a replay on segments (`open_segments`); `emit` and `blocks` are then empty.
+    seg: Option<SegSource>,
+    /// `--mem-log` (C4-2): take the replay's structures per chunk or segment unit for `for_each_event_mem`; off, they are
+    /// not counted.
+    pub mem_log: bool,
+    /// The farmer histories' trades and bytes (`FarmHist::mem`): summed once at the open, then `flag_chunk`'s deltas.
+    hist_mem: (usize, usize),
+    /// With `mem_log`: the replay's structures after the last chunk or unit handed out (the end line's).
+    last_mem: ReplayMem,
+}
+
+/// Where a replay's rows come from.
+enum Source<'a> {
+    Chunks(&'a Path),
+    Segments(&'a Path),
 }
 
 impl Replay {
@@ -693,6 +822,27 @@ impl Replay {
     /// traders: `lab-live signals` builds its universe there. `lab-live legs` passes a no-op, so its keys are as in C1a.
     pub fn open<T>(
         chunks_root: &Path,
+        snapshot: &Path,
+        from: u64,
+        to: u64,
+        with_snapshot: impl FnOnce(&Snapshot, &mut Admission) -> Result<T>,
+    ) -> Result<(Self, T)> {
+        Self::open_from(Source::Chunks(chunks_root), snapshot, from, to, with_snapshot)
+    }
+
+    /// As `open`, on the recorder's segments under `segments_root` (see the module doc).
+    pub fn open_segments<T>(
+        segments_root: &Path,
+        snapshot: &Path,
+        from: u64,
+        to: u64,
+        with_snapshot: impl FnOnce(&Snapshot, &mut Admission) -> Result<T>,
+    ) -> Result<(Self, T)> {
+        Self::open_from(Source::Segments(segments_root), snapshot, from, to, with_snapshot)
+    }
+
+    fn open_from<T>(
+        source: Source,
         snapshot: &Path,
         from: u64,
         to: u64,
@@ -724,27 +874,66 @@ impl Replay {
         let mut adm = Admission::from_snapshot(&snap)?;
         let with = with_snapshot(&snap, &mut adm)?;
         drop(snap);
-        let parts = chunks(chunks_root)?;
-        let emit = covering(&parts, from, to, "the range")?;
-        // The store's own chunks: their slots, the extractor build that wrote them, and their h24 (review on #369).
-        let mut blocks = Vec::new();
-        for p in &emit {
-            let c = store_chunks.iter().find(|c| (c.lo, c.hi) == (p.lo, p.hi))
-                .with_context(|| format!("chunk {} ([{}, {})) is not one of the store's chunks", p.dir.display(), p.lo, p.hi))?;
-            let want = c.extractor_sha256.as_deref().with_context(|| format!("the store names no extractor build for chunk {}-{}", c.lo, c.hi))?;
-            let sha = manifest_sha(p)?;
-            if sha.as_deref() != Some(want) {
-                bail!("chunk {}: extractor_sha256 {sha:?}, the store was built from {want}", p.dir.display());
+        let (emit, blocks, starts, seg) = match source {
+            Source::Chunks(chunks_root) => {
+                let parts = chunks(chunks_root)?;
+                let emit = covering(&parts, from, to, "the range")?;
+                // The store's own chunks: their slots, the extractor build that wrote them, and their h24 (review on #369).
+                let mut blocks = Vec::new();
+                for p in &emit {
+                    let c = store_chunks.iter().find(|c| (c.lo, c.hi) == (p.lo, p.hi))
+                        .with_context(|| format!("chunk {} ([{}, {})) is not one of the store's chunks", p.dir.display(), p.lo, p.hi))?;
+                    let want = c.extractor_sha256.as_deref().with_context(|| format!("the store names no extractor build for chunk {}-{}", c.lo, c.hi))?;
+                    let sha = manifest_sha(p)?;
+                    if sha.as_deref() != Some(want) {
+                        bail!("chunk {}: extractor_sha256 {sha:?}, the store was built from {want}", p.dir.display());
+                    }
+                    let bl = Blocks::read(p)?;
+                    if bl.h24 != c.h24 {
+                        bail!("chunk {}: h24 {} from its blocks, {} in the store", p.dir.display(), bl.h24, c.h24);
+                    }
+                    blocks.push(bl);
+                }
+                let starts: Vec<(u64, u64)> = emit.iter().zip(&blocks).map(|(p, b)| (p.lo.max(from), b.h24)).collect();
+                (emit, blocks, starts, None)
             }
-            let bl = Blocks::read(p)?;
-            if bl.h24 != c.h24 {
-                bail!("chunk {}: h24 {} from its blocks, {} in the store", p.dir.display(), bl.h24, c.h24);
+            Source::Segments(root) => {
+                // The store's chunks over [from, to), without a gap: each unit takes its chunk's h24 and index.
+                let store_parts: Vec<Part> = store_chunks.iter().map(|c| Part { lo: c.lo, hi: c.hi, dir: PathBuf::new() }).collect();
+                let sel = covering(&store_parts, from, to, "the store's chunks")?;
+                let chunk_h24: Vec<(u64, u64, u64)> = sel.iter()
+                    .map(|p| (p.lo, p.hi, store_chunks.iter().find(|c| (c.lo, c.hi) == (p.lo, p.hi)).map_or(0, |c| c.h24)))
+                    .collect();
+                let (all, incomplete) = segments(root)?;
+                let segs: Vec<Segment> = all.into_iter().filter(|s| s.part.lo < to && s.part.hi > from).collect();
+                let mut units = Vec::new();
+                let mut at = from;
+                for (si, s) in segs.iter().enumerate() {
+                    let (lo, hi) = (s.part.lo.max(from), s.part.hi.min(to));
+                    if lo > at {
+                        bail!("the range: no complete segment for slots [{at}, {lo}) (incomplete segments skipped: {incomplete:?})");
+                    }
+                    if lo < at {
+                        bail!("segment {} ([{}, {})) overlaps the one before it", s.seq, s.part.lo, s.part.hi);
+                    }
+                    for (ci, &(clo, chi, h24)) in (0u32..).zip(&chunk_h24) {
+                        let (a, b) = (lo.max(clo), hi.min(chi));
+                        if a < b {
+                            units.push(Unit { seg: si, lo: a, hi: b, chunk: ci, h24 });
+                        }
+                    }
+                    at = hi;
+                }
+                if at < to {
+                    bail!("the range: no complete segment for slots [{at}, {to}) (incomplete segments skipped: {incomplete:?})");
+                }
+                let seg_blocks = segs.iter().map(|s| Blocks::read(&s.part)).collect::<Result<Vec<_>>>()?;
+                let starts: Vec<(u64, u64)> = chunk_h24.iter().map(|&(lo, _, h24)| (lo.max(from), h24)).collect();
+                (Vec::new(), Vec::new(), starts, Some(SegSource { segs, blocks: seg_blocks, units, incomplete, chunks: chunk_h24 }))
             }
-            blocks.push(bl);
-        }
+        };
         // The farmer windows of the emitted trades reach back to H0 (spec §3.4), and never before the store's start; each
         // chunk keeps what its own and later windows reach (legs.rs `keeps`).
-        let starts: Vec<(u64, u64)> = emit.iter().zip(&blocks).map(|(p, b)| (p.lo.max(from), b.h24)).collect();
         let keep = keeps(&starts);
         let h0 = keep[0].max(store_lo);
         let mut hist: HashMap<(Id, Id), FarmHist> = HashMap::new();
@@ -766,7 +955,9 @@ impl Replay {
             farm = json!({"lo": m.lo, "hi": m.hi, "to": m.to, "rows": rows, "kept": kept, "keys": hist.len()});
         }
         let replay = Replay {
-            from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false,
+            hist_mem: hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1)),
+            from, to, adm, emit, blocks, keep, h0, hist, farm, counts: Counts::default(), h24s: Vec::new(), done: false, seg,
+            mem_log: false, last_mem: ReplayMem::default(),
         };
         Ok((replay, with))
     }
@@ -774,20 +965,41 @@ impl Replay {
     /// Step 4 of the module doc, once: chunk by chunk, every event of [from, to) in chain order to `f`, with the keys
     /// interned so far (every key of the event among them). An error of `f` ends the replay.
     pub fn for_each_event(&mut self, mut f: impl FnMut(&Keys, &Event) -> Result<()>) -> Result<()> {
+        self.for_each_event_mem(|keys, _, ev| f(keys, ev))
+    }
+
+    /// With `mem_log`, the replay's structures after the last chunk or unit handed out (for the end line); empty before.
+    pub fn last_mem(&self) -> &ReplayMem {
+        &self.last_mem
+    }
+
+    /// `for_each_event` with the replay's structures of the current chunk or segment unit (`ReplayMem`; empty unless
+    /// `mem_log`).
+    pub fn for_each_event_mem(&mut self, mut f: impl FnMut(&Keys, &ReplayMem, &Event) -> Result<()>) -> Result<()> {
         if std::mem::replace(&mut self.done, true) {
             bail!("a replay hands out its events once");
         }
         let (from, to) = (self.from, self.to);
         let mut ctx: HashMap<Id, PoolCtx> = HashMap::new();
+        if let Some(sg) = self.seg.take() {
+            let r = self.each_segment_event(&sg, &mut ctx, &mut f);
+            self.seg = Some(sg);
+            return r;
+        }
         for (chunk, (p, bl)) in (0u32..).zip(self.emit.iter().zip(&self.blocks)) {
             let mut curve = read_curve(p, &mut self.adm, (from, to), &mut self.counts)?;
             let mut pool = read_pool(p, &mut self.adm, (from, to), &mut self.counts)?;
             curve.sort_unstable_by_key(|l| l.order);
             pool.sort_unstable_by_key(|r| r.order);
             check_ties(&curve, &pool).with_context(|| format!("{}", p.dir.display()))?;
-            flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
+            let d = flag_chunk(&mut pool, &mut self.hist, bl.h24, chunk, self.keep[chunk as usize]);
+            self.hist_mem = add_mem(self.hist_mem, d);
+            let mem = if self.mem_log { replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None) } else { ReplayMem::default() };
             let keys = &self.adm.keys;
-            emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, ev))?;
+            emit_chunk(&curve, &pool, |s| bl.at(s), &mut ctx, (from, to), |ev| f(keys, &mem, ev))?;
+            if self.mem_log {
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, &ctx, (&curve, &pool), None);
+            }
             log::info!("chunk {}: {} curve and {} pool rows of [{}, {}), h24 {}, {} keys, RSS {} MB", p.dir.display(), curve.len(), pool.len(),
                        from.max(p.lo), to.min(p.hi), bl.h24, keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
             self.h24s.push(json!([p.lo, p.hi, bl.h24]));
@@ -795,13 +1007,58 @@ impl Replay {
         Ok(())
     }
 
+    /// Step 4 on segments: unit by unit (a segment's part in one store chunk), as a chunk is.
+    fn each_segment_event(&mut self, sg: &SegSource, ctx: &mut HashMap<Id, PoolCtx>, f: &mut impl FnMut(&Keys, &ReplayMem, &Event) -> Result<()>)
+                          -> Result<()> {
+        for u in &sg.units {
+            let (s, bl) = (&sg.segs[u.seg], &sg.blocks[u.seg]);
+            let mut curve = read_curve(&s.part, &mut self.adm, (u.lo, u.hi), &mut self.counts)?;
+            let mut pool = read_pool(&s.part, &mut self.adm, (u.lo, u.hi), &mut self.counts)?;
+            curve.sort_unstable_by_key(|l| l.order);
+            pool.sort_unstable_by_key(|r| r.order);
+            check_ties(&curve, &pool).with_context(|| format!("{}", s.part.dir.display()))?;
+            let d = flag_chunk(&mut pool, &mut self.hist, u.h24, u.chunk, self.keep[u.chunk as usize]);
+            self.hist_mem = add_mem(self.hist_mem, d);
+            // segments handed out so far: this unit's segment is the (seg + 1)-th
+            let mem = if self.mem_log {
+                replay_mem(&self.adm, &self.hist, self.hist_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1))
+            } else {
+                ReplayMem::default()
+            };
+            let keys = &self.adm.keys;
+            emit_chunk(&curve, &pool, |x| bl.at(x), ctx, (u.lo, u.hi), |ev| f(keys, &mem, ev))?;
+            if self.mem_log {
+                self.last_mem = replay_mem(&self.adm, &self.hist, self.hist_mem, ctx, (&curve, &pool), Some(u.seg as u64 + 1));
+            }
+        }
+        for &(lo, hi, h24) in &sg.chunks {
+            self.h24s.push(json!([lo, hi, h24]));
+        }
+        log::info!("{} segments ({} units) of [{}, {}), {} incomplete skipped, {} keys, RSS {} MB", sg.segs.len(), sg.units.len(), self.from,
+                   self.to, sg.incomplete.len(), self.adm.keys.len(), crate::mem::mb(crate::mem::rss_bytes()));
+        Ok(())
+    }
+
     /// The replay's part of a summary: each emitted chunk's h24, H0, the farmer history, the chunks verified against the
-    /// store, the kept and dropped rows per table, the keys interned and the peak RSS.
+    /// store, the kept and dropped rows per table, the keys interned and the peak RSS; on segments their counts and the
+    /// backfill rows not read (spec §3: per segment min, median, max, their total and share of all rows).
     pub fn describe(&self, v: &mut Value) {
         v["h24"] = json!(self.h24s);
         v["h0"] = json!(self.h0);
         v["farm_hist"] = self.farm.clone();
-        v["chunks_verified"] = json!(true);
+        v["chunks_verified"] = json!(self.seg.is_none());
+        if let Some(sg) = &self.seg {
+            let mut bf: Vec<u64> = sg.segs.iter().map(|s| s.backfill_rows).collect();
+            bf.sort_unstable();
+            let (rows, backfill) = (sg.segs.iter().map(|s| s.rows).sum::<u64>(), bf.iter().sum::<u64>());
+            v["segments"] = json!({
+                "read": sg.segs.len(), "units": sg.units.len(), "incomplete_skipped": sg.incomplete,
+                "rows": rows, "backfill_rows_not_read": {
+                    "total": backfill, "min": bf.first(), "median": bf.get(bf.len() / 2), "max": bf.last(),
+                    "share_of_all_rows": if rows + backfill > 0 { backfill as f64 / (rows + backfill) as f64 } else { 0.0 },
+                },
+            });
+        }
         v["admission"] = self.counts.json();
         v["keys"] = json!(self.adm.keys.len());
         v["peak_rss_bytes"] = json!(crate::mem::peak_rss_bytes());
@@ -950,43 +1207,77 @@ pub(crate) mod tests {
         r
     }
 
+    /// The rows of the store's two chunks below, every table's rows in one list, by table: the chunks and the segments
+    /// (C4-1) are both written from it, split by slot.
+    fn fixture_rows() -> Vec<(&'static str, Vec<(&'static str, Kind)>, Vec<Vec<Val>>)> {
+        let blocks = vec![("slot", Kind::U64), ("block_time", Kind::I64), ("skipped", Kind::Bool)];
+        let args = r#"{"spendable_sol_in": 500, "min_tokens_out": "7", "track_volume": true}"#;
+        let boost = ["slot", "tx_index", "outer_ix", "inner_ix", "pool", "authority", "base_reserves_after", "base_amount_burned",
+                     "real_quote_reserves_after", "quote_amount_in_used", "virtual_quote_reserves", "boost_vault_remaining"];
+        let bk: Vec<(&str, Kind)> = boost.iter().map(|n| (*n, if matches!(*n, "pool" | "authority" | "virtual_quote_reserves") { Kind::Utf8 } else { Kind::U64 })).collect();
+        let wd = ["slot", "tx_index", "outer_ix", "inner_ix", "pool", "user", "outer_program", "pool_base_token_reserves",
+                  "pool_quote_token_reserves", "base_amount_out", "quote_amount_out", "lp_token_amount_in", "lp_mint_supply"];
+        let wk: Vec<(&str, Kind)> = wd.iter().map(|n| (*n, if matches!(*n, "pool" | "user" | "outer_program") { Kind::Utf8 } else { Kind::U64 })).collect();
+        vec![
+            ("blocks", blocks, vec![vec![u(1000), Val::I64(1_000_000), Val::Bool(false)], vec![u(1100), Val::I64(1_000_040), Val::Bool(false)],
+                                    vec![u(1200), Val::Null, Val::Bool(true)], vec![u(1900), Val::I64(1_000_360), Val::Bool(false)],
+                                    vec![u(2000), Val::I64(2_000_000), Val::Bool(false)], vec![u(2400), Val::I64(2_040_000), Val::Bool(false)]]),
+            ("pump/TradeEvent", TRADE.to_vec(), vec![trade(1100, 1, "MX", None), trade(1100, 0, "M1", Some(args))]),
+            ("pump_amm/BuyEvent", pool_cols(&BUY), vec![
+                ptrade(1400, "P1", "W", None, 100, 1_000, false),
+                ptrade(1100, "P1", "B", Some("66063d1201daebea"), 40, 400, false),
+                ptrade(1150, "PX", "B", None, 40, 400, false),
+                ptrade(1160, "P1", "K", Some(BOOST_BUY_DISC), 40, 400, false),
+                ptrade(1150, "P3", "R", None, 40, 400, false),
+                ptrade(1200, "P1", "W", None, 100, 1_000, false),
+            ]),
+            ("pump_amm/SellEvent", pool_cols(&SELL), vec![ptrade(1300, "P1", "W", None, 100, 1_000, true), ptrade(2100, "P1", "W", None, 100, 1_000, true)]),
+            ("pump_amm/BoostBuyAndBurnEvent", bk, vec![vec![u(1500), u(0), u(0), u(2), s("P1"), s("A"), u(990_000), u(10_000), u(500_300), u(300), s("9"), u(4)]]),
+            ("pump_amm/WithdrawEvent", wk,
+             vec![vec![u(1600), u(0), u(0), u(2), s("P1"), s("L"), s(PUMP_AMM), u(990_000), u(500_000), u(9_900), u(5_000), u(77), Val::Null]]),
+        ]
+    }
+
+    /// The fixture's rows of [lo, hi) into `dir`, table by table (a table without a row there is not written).
+    fn put_range(dir: &Path, lo: u64, hi: u64) {
+        for (table, cols, rows) in fixture_rows() {
+            let r: Vec<Vec<Val>> = rows.into_iter().filter(|r| matches!(r[0], Val::U64(x) if x >= lo && x < hi)).collect();
+            if !r.is_empty() {
+                put(dir, table, 0, &cols, &r);
+            }
+        }
+    }
+
     /// Two chunks of the store, [1000, 2000) at 400 ms a slot (h24 216,000) and [2000, 3000) at 100 s a slot (h24 864):
     /// a curve trade of M1 and one of an unknown mint; P1 trades of B and of the wash trader W (buy 1200, sell 1300,
     /// buy 1400, sell 2100), a P3 buy, a PX buy and a boost-crank inner buy; a P1 boost and withdraw.
     pub(crate) fn chunks(root: &Path) {
-        let c1 = root.join("1000-2000");
-        let c2 = root.join("2000-3000");
-        for (dir, lo, hi) in [(&c1, 1000, 2000), (&c2, 2000, 3000)] {
-            fs::create_dir_all(dir).unwrap();
+        for (lo, hi) in [(1000, 2000), (2000, 3000)] {
+            let dir = root.join(format!("{lo}-{hi}"));
+            fs::create_dir_all(&dir).unwrap();
             fs::write(dir.join("_manifest.json"), json!({"status": "complete", "slot_start": lo, "slot_end_exclusive": hi,
                                                           "extractor_sha256": "S"}).to_string()).unwrap();
+            put_range(&dir, lo, hi);
         }
-        let blocks = [("slot", Kind::U64), ("block_time", Kind::I64), ("skipped", Kind::Bool)];
-        put(&c1, "blocks", 0, &blocks, &[vec![u(1000), Val::I64(1_000_000), Val::Bool(false)], vec![u(1100), Val::I64(1_000_040), Val::Bool(false)],
-                                         vec![u(1200), Val::Null, Val::Bool(true)], vec![u(1900), Val::I64(1_000_360), Val::Bool(false)]]);
-        put(&c2, "blocks", 0, &blocks, &[vec![u(2000), Val::I64(2_000_000), Val::Bool(false)], vec![u(2400), Val::I64(2_040_000), Val::Bool(false)]]);
-        let args = r#"{"spendable_sol_in": 500, "min_tokens_out": "7", "track_volume": true}"#;
-        put(&c1, "pump/TradeEvent", 0, &TRADE, &[trade(1100, 1, "MX", None), trade(1100, 0, "M1", Some(args))]);
-        put(&c1, "pump_amm/BuyEvent", 0, &pool_cols(&BUY), &[
-            ptrade(1400, "P1", "W", None, 100, 1_000, false),
-            ptrade(1100, "P1", "B", Some("66063d1201daebea"), 40, 400, false),
-            ptrade(1150, "PX", "B", None, 40, 400, false),
-            ptrade(1160, "P1", "K", Some(BOOST_BUY_DISC), 40, 400, false),
-            ptrade(1150, "P3", "R", None, 40, 400, false),
-            ptrade(1200, "P1", "W", None, 100, 1_000, false),
-        ]);
-        put(&c1, "pump_amm/SellEvent", 0, &pool_cols(&SELL), &[ptrade(1300, "P1", "W", None, 100, 1_000, true)]);
-        put(&c2, "pump_amm/SellEvent", 0, &pool_cols(&SELL), &[ptrade(2100, "P1", "W", None, 100, 1_000, true)]);
-        let boost = ["slot", "tx_index", "outer_ix", "inner_ix", "pool", "authority", "base_reserves_after", "base_amount_burned",
-                     "real_quote_reserves_after", "quote_amount_in_used", "virtual_quote_reserves", "boost_vault_remaining"];
-        let bk: Vec<(&str, Kind)> = boost.iter().map(|n| (*n, if matches!(*n, "pool" | "authority" | "virtual_quote_reserves") { Kind::Utf8 } else { Kind::U64 })).collect();
-        put(&c1, "pump_amm/BoostBuyAndBurnEvent", 0, &bk,
-            &[vec![u(1500), u(0), u(0), u(2), s("P1"), s("A"), u(990_000), u(10_000), u(500_300), u(300), s("9"), u(4)]]);
-        let wd = ["slot", "tx_index", "outer_ix", "inner_ix", "pool", "user", "outer_program", "pool_base_token_reserves",
-                  "pool_quote_token_reserves", "base_amount_out", "quote_amount_out", "lp_token_amount_in", "lp_mint_supply"];
-        let wk: Vec<(&str, Kind)> = wd.iter().map(|n| (*n, if matches!(*n, "pool" | "user" | "outer_program") { Kind::Utf8 } else { Kind::U64 })).collect();
-        put(&c1, "pump_amm/WithdrawEvent", 0, &wk,
-            &[vec![u(1600), u(0), u(0), u(2), s("P1"), s("L"), s(PUMP_AMM), u(990_000), u(500_000), u(9_900), u(5_000), u(77), Val::Null]]);
+    }
+
+    /// The same rows as the recorder's segments (C4-1): [1000, 1150), [1150, 2050) across the store's chunk bound at
+    /// 2000, [2050, 3000); the second has a backfill table (not read, counted), and `incomplete` adds one segment that is
+    /// not complete (skipped).
+    pub(crate) fn segments(root: &Path, incomplete: bool) {
+        for (seq, (lo, hi)) in [(1000, 1150), (1150, 2050), (2050, 3000)].into_iter().enumerate() {
+            let dir = root.join(format!("{seq:09}"));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("_segment.json"), json!({"seq": seq, "first_slot": lo, "last_slot": hi - 1, "complete": true}).to_string()).unwrap();
+            put_range(&dir, lo, hi);
+        }
+        put(&root.join("000000001/backfill"), "pump_amm/BuyEvent", 0, &pool_cols(&BUY),
+            &[ptrade(1120, "P1", "B2", None, 40, 400, false), ptrade(1121, "P1", "B3", None, 40, 400, false)]);
+        if incomplete {
+            let dir = root.join("000000003");
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("_segment.json"), json!({"seq": 3, "first_slot": 3000, "last_slot": 3099, "complete": false}).to_string()).unwrap();
+        }
     }
 
     fn args(root: &Path, from: u64, to: u64) -> LegsArgs {
@@ -1037,6 +1328,96 @@ pub(crate) mod tests {
         let w = &lines[7];
         assert_eq!(&w[12..19], ["990000", "500009", "20", "5", "0", "0", "9"]);
         assert_eq!(&w[w.len() - 3..], ["77", "null", "false"]); // lp_amount, lp_supply, farmer
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn segments_give_the_chunks_events_and_count_their_backfill() {
+        // C4-1: the same rows as segments (one across the store's chunk bound, which splits it into two units with the two
+        // chunks' h24) give exactly the chunks' event stream; the backfill rows are counted, not read; an incomplete
+        // segment is skipped; a gap is refused.
+        let root = tmp("segments");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        export(&root.join("snap"));
+        chunks(&root.join("chunks"));
+        segments(&root.join("segments"), true);
+        let lines = |seg: bool| {
+            let snap = root.join("snap");
+            let (mut r, ()) = if seg { Replay::open_segments(&root.join("segments"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() }
+                              else { Replay::open(&root.join("chunks"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() };
+            let mut out = Vec::new();
+            r.for_each_event(|keys, ev| {
+                out.push(crate::legs::event_line(keys, ev));
+                Ok(())
+            }).unwrap();
+            let mut v = json!({});
+            r.describe(&mut v);
+            (out, v)
+        };
+        let (from_chunks, vc) = lines(false);
+        let (from_segments, vs) = lines(true);
+        assert_eq!(from_chunks.len(), 9);
+        assert_eq!(from_segments, from_chunks);
+        assert_eq!(vs["h24"], vc["h24"]);
+        assert_eq!((&vs["chunks_verified"], &vs["segments"]["read"], &vs["segments"]["units"]), (&json!(false), &json!(3), &json!(4)));
+        assert_eq!(vs["segments"]["incomplete_skipped"], json!([3]));
+        let bf = &vs["segments"]["backfill_rows_not_read"];
+        assert_eq!((&bf["total"], &bf["min"], &bf["median"], &bf["max"]), (&json!(2), &json!(0), &json!(0), &json!(2)));
+        let rows = vs["segments"]["rows"].as_u64().unwrap();
+        assert!(rows > 0 && (bf["share_of_all_rows"].as_f64().unwrap() - 2.0 / (rows + 2) as f64).abs() < 1e-12, "{vs}");
+        // a gap: without the middle segment [1150, 2050) is not covered
+        fs::rename(root.join("segments/000000001"), root.join("gone")).unwrap();
+        let err = format!("{:#}", Replay::open_segments(&root.join("segments"), &root.join("snap"), 1000, 3000, |_, _| Ok(())).err().unwrap());
+        assert!(err.contains("no complete segment for slots [1150, 2050)"), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_mem_log_view_keeps_the_farmer_totals_and_counts_the_segments() {
+        // C4-2: with mem_log, every event carries the replay's structures of its chunk or unit. The farmer histories'
+        // running totals (flag_chunk's deltas) equal a walk over them at the end; on segments the count runs up to the
+        // segments read. The events themselves are the same with and without mem_log.
+        let root = tmp("memlog");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        export(&root.join("snap"));
+        chunks(&root.join("chunks"));
+        segments(&root.join("segments"), true);
+        for seg in [false, true] {
+            let run = |mem_log: bool| {
+                let snap = root.join("snap");
+                let (mut r, ()) = if seg { Replay::open_segments(&root.join("segments"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() }
+                                  else { Replay::open(&root.join("chunks"), &snap, 1000, 3000, |_, _| Ok(())).unwrap() };
+                r.mem_log = mem_log;
+                let (mut lines, mut views) = (Vec::new(), Vec::new());
+                r.for_each_event_mem(|keys, m, ev| {
+                    lines.push(crate::legs::event_line(keys, ev));
+                    views.push(m.clone());
+                    Ok(())
+                }).unwrap();
+                let walk = r.hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+                (lines, views, r.hist_mem, walk, r.hist.len(), r.last_mem().clone())
+            };
+            let (plain, empty, ..) = run(false);
+            let (lines, views, total, walk, pairs, last_mem) = run(true);
+            // the view after the last chunk or unit (the end line's): the final totals, and on segments all three read
+            let fin = |name: &str| last_mem.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
+            assert_eq!((fin("farmer_hist"), fin("farmer_hist_trades"), last_mem.segments), (pairs, walk.0, seg.then_some(3)), "seg {seg}");
+            assert_eq!(lines, plain, "seg {seg}");
+            assert!(empty.iter().all(|m| m.mems.is_empty() && m.segments.is_none()), "seg {seg}: no view without mem_log");
+            assert_eq!(total, walk, "seg {seg}");
+            assert!(walk.0 > 0 && pairs > 0, "seg {seg}: the fixture has farmer history");
+            let last = views.last().unwrap();
+            let get = |name: &str| last.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
+            assert_eq!((get("farmer_hist"), get("farmer_hist_trades")), (pairs, walk.0), "seg {seg}: the last unit's view");
+            assert!(get("interned_keys") > 0 && get("legs_buffer") > 0, "seg {seg}");
+            let segs: Vec<Option<u64>> = views.iter().map(|m| m.segments).collect();
+            if seg {
+                // three complete segments read; the count never goes down
+                assert!(segs.windows(2).all(|w| w[0] <= w[1]) && segs.first() >= Some(&Some(1)) && segs.last() == Some(&Some(3)), "{segs:?}");
+            } else {
+                assert!(segs.iter().all(Option::is_none), "chunks have no segment count");
+            }
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 
