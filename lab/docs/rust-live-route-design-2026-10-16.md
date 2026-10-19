@@ -34,7 +34,7 @@ Every choice names its source. Facts from this repo cite the file. External fact
 - replacing the Python engine;
 - deciding the stop rule. The stop rule stays the Python paper journal's (`paper/stoprule.py`; AGENTS.md).
 
-**Paper only.** The process has no code path that builds or sends a transaction. A test asserts that the binary has no signing crate (`solana-sdk` signer, `ed25519-dalek`) in its dependency tree (`cargo tree -e normal`).
+**Paper only.** The process has no code path that builds or sends a transaction. Since M3-01 a check enforces that lab-live and lab-core have no signing-capable crate in their lockfiles (`lab/security/no-signing.toml`: Ed25519 implementations, Solana keypair/signer/seed/wallet crates, bip39). `lab/security/dependency_audit.py` runs it in every cargo audit, so the dependency-audit workflow fails a PR whose lab lockfile gains one. `nas_m1c4.sh STEP=build` runs it too. The recorder and the extractor are not on that list: their Agave decoding pulls such crates in, which is why M3 keeps decoding there.
 
 ## 2. Reuse and what is new
 

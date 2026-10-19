@@ -86,6 +86,16 @@ if [ "$STEP" = build ]; then
     tail -5 "$OUT/test-rust-repro.log" | tee -a "$OUT/job.log"; log "test-rust-repro: FAILED"; exit 1
   fi
   tail -1 "$OUT/test-rust-repro.log" | tee -a "$OUT/job.log"
+  # M3-01: no signing-capable crate in lab-live's and lab-core's locks (lab/security/no-signing.toml; CI runs it in the
+  # dependency-audit workflow); here when the runner has python3
+  if command -v python3 > /dev/null; then
+    nosign=0
+    python3 "$REPO/lab/security/dependency_audit.py" no-signing > "$OUT/no-signing.log" 2>&1 || nosign=$?
+    tee -a "$OUT/job.log" < "$OUT/no-signing.log"
+    [ $nosign = 0 ] || { log "no-signing: FAILED (rc $nosign)"; exit 1; }
+  else
+    log "no-signing: no python3 on this runner (CI checks it in the dependency-audit workflow)"
+  fi
   . "$REPO/lab/scripts/rust-repro.sh"
   rust_repro "$REPO" || { log "rust_repro: FAILED"; exit 1; }
   log "cargo through $LAB_RUST -> $(readlink "$LAB_RUST"); RUSTFLAGS=$RUSTFLAGS CFLAGS=$CFLAGS"

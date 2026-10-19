@@ -12,8 +12,13 @@ Fail rule:
 An ignore entry (with reason, evidence that no compatible patched version exists, date and review
 date) turns a failing finding into a printed "ignored" line. A tool error or unreadable output always fails.
 
+No signing crates (M3-01, no-signing.toml): the paper-only lockfiles (lab-core, lab-live) must hold no signing-capable
+crate (Ed25519 implementations, Solana keypair/signer/seed/wallet crates). Every `cargo` run checks them too, so the
+dependency-audit workflow catches a new dependency that pulls one in; `no-signing` checks them alone. No ignore list.
+
 Usage:
   dependency_audit.py cargo LOCKFILE... [--optional LOCKFILE]...
+  dependency_audit.py no-signing [LOCKFILE...]     (default: no-signing.toml's paper_only lockfiles)
   dependency_audit.py pip REQUIREMENTS [--tool PATH-TO-pip-audit]
   dependency_audit.py npm DIR [--include-dev]
 Exit: 0 pass, 1 failing findings, 2 tool or input error.
@@ -30,6 +35,8 @@ import tomllib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IGNORE_FILE = os.path.join(HERE, "audit-ignore.toml")
+NO_SIGNING_FILE = os.path.join(HERE, "no-signing.toml")
+REPO = os.path.dirname(os.path.dirname(HERE))  # the lockfiles in no-signing.toml are relative to the repository root
 IGNORE_FIELDS = ("id", "ecosystem", "package", "reason", "risk", "evidence", "approved", "approved_by", "review_by")
 OPTIONAL_FIELDS = ("version",)  # when set, the entry covers only that exact version
 FAILING = {"high", "critical", "unknown", "unsound"}
@@ -265,6 +272,50 @@ def report(label, ecosystem, findings, ignores, warnings=(), today=None, out=Non
 
 # --- tool runners ---------------------------------------------------------------------------------
 
+def lock_packages(path):
+    """(name, version) of every [[package]] in a Cargo.lock."""
+    out, name = [], None
+    with open(path) as f:
+        for raw in f:
+            line = raw.strip()
+            if line == "[[package]]":
+                name = None
+            elif line.startswith("name = "):
+                name = line.split("=", 1)[1].strip().strip('"')
+            elif line.startswith("version = ") and name is not None:
+                out.append((name, line.split("=", 1)[1].strip().strip('"')))
+                name = None
+    if not out:
+        raise AuditError(f"{path}: no [[package]] entries (not a Cargo.lock?)")
+    return out
+
+
+def load_no_signing(path=NO_SIGNING_FILE):
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
+    locks, deny = data.get("paper_only"), data.get("deny")
+    if not locks or not deny or not all(isinstance(x, str) for x in locks + deny):
+        raise AuditError(f"{path}: paper_only and deny must be non-empty lists of strings")
+    return [os.path.join(REPO, x) for x in locks], set(deny)
+
+
+def no_signing(locks, deny, out=None):
+    """The signing crates in each paper-only lockfile: a list of (lock, name, version); prints one line per lock."""
+    out = out or sys.stdout
+    hits = []
+    for lock in locks:
+        if not os.path.exists(lock):
+            raise AuditError(f"{lock} does not exist")
+        found = sorted((n, v) for n, v in lock_packages(lock) if n in deny)
+        hits += [(lock, n, v) for n, v in found]
+        rel = os.path.relpath(lock, REPO)
+        if found:
+            print(f"::error title=no signing crates::{rel}: " + ", ".join(f"{n} {v}" for n, v in found), file=out)
+        else:
+            print(f"{rel}: no signing crate ({len(deny)} denied names checked)", file=out)
+    return hits
+
+
 def run_json(cmd, cwd=None):
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     if proc.stderr.strip():
@@ -304,7 +355,19 @@ def main(argv=None):
     n = sub.add_parser("npm")
     n.add_argument("dir")
     n.add_argument("--include-dev", action="store_true", help="audit dev dependencies too")
+    s = sub.add_parser("no-signing")
+    s.add_argument("lockfiles", nargs="*", help="default: no-signing.toml's paper_only lockfiles")
     a = ap.parse_args(argv)
+
+    if a.ecosystem == "no-signing":
+        try:
+            locks, deny = load_no_signing()
+            hits = no_signing([os.path.abspath(x) for x in a.lockfiles] or locks, deny)
+        except (AuditError, OSError, tomllib.TOMLDecodeError) as exc:
+            print(f"::error title=no signing crates::{exc}")
+            return 2
+        print("FAIL: signing crates in a paper-only lockfile" if hits else "PASS")
+        return 1 if hits else 0
 
     try:
         ignores = load_ignores()
@@ -324,6 +387,9 @@ def main(argv=None):
                 findings, warnings = parse_cargo(run_json(["cargo", "audit", "--json", "--file", lock]))
                 findings_all += findings
                 failing += report(lock, "cargo", findings, ignores, warnings)
+            # M3-01: the paper-only lockfiles, whatever lockfiles were named (no ignore list)
+            nosign_locks, deny = load_no_signing()
+            nosign = no_signing(nosign_locks, deny)
         elif a.ecosystem == "pip":
             check_pinned(a.requirements)
             cmd = [a.tool, "-r", a.requirements, "--no-deps", "--disable-pip", "--format", "json",
@@ -339,8 +405,12 @@ def main(argv=None):
     except (AuditError, OSError, tomllib.TOMLDecodeError) as exc:
         print(f"::error title=dependency audit ({a.ecosystem})::{exc}")
         return 2
+    if a.ecosystem == "cargo" and nosign:
+        print(f"FAIL: {len(nosign)} signing crates in a paper-only lockfile (no-signing.toml)")
     if failing:
         print(f"FAIL: {len(failing)} high, critical, unknown-severity or unsound advisories without a valid ignore entry")
+        return 1
+    if a.ecosystem == "cargo" and nosign:
         return 1
     print("PASS")
     return 0

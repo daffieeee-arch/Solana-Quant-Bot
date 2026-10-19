@@ -1,0 +1,30 @@
+# M3-01: the paper-only binaries carry no signing-capable crate (lab/docs/rust-live-route-design-2026-10-16.md §1;
+# research/m3-design-2026-10-19.md §7). lab-live, and lab-core which it links, must never be able to hold or use a key:
+# no Ed25519 implementation, no Solana keypair, signer, seed or wallet crate in their Cargo.lock.
+#
+# dependency_audit.py checks these lockfiles on every `cargo` audit (the dependency-audit workflow, which runs on any PR
+# that changes a lab lockfile or lab/security/) and on its own (`dependency_audit.py no-signing`; nas_m1c4.sh STEP=build).
+# A hit fails; there is no ignore list for this rule.
+#
+# Not on the list: lab/recorder and lab/extractor. They decode with Agave and Jetstreamer crates, which pull in
+# ed25519-dalek and solana-keypair transitively (the audit-ignore exceptions); they sign nothing, but they are not
+# paper-only binaries in this sense, and M3 keeps the decoding there (option X) so that lab-live stays free of them.
+
+paper_only = ["lab/core/Cargo.lock", "lab/live/Cargo.lock"]
+
+deny = [
+  "ed25519-dalek",
+  "ed25519-dalek-bip32",
+  "ed25519-zebra",
+  "ed25519-compact",
+  "solana-keypair",
+  "solana-signer",
+  "solana-presigner",
+  "solana-seed-phrase",
+  "solana-seed-derivable",
+  "solana-derivation-path",
+  "solana-remote-wallet",
+  "solana-sdk",
+  "tiny-bip39",
+  "bip39",
+]
