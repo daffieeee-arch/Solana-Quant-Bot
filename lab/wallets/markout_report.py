@@ -27,6 +27,7 @@ horizon and block (days 1-9, days 10-18, all), gross and net:
 
 import argparse
 import glob
+import hashlib
 import json
 import math
 import os
@@ -83,24 +84,73 @@ def weighted_trimmed_mean(xs, w, trim=TRIM):
     return float((xs * keep).sum() / kw) if kw > 0 else float("nan")
 
 
-def day_ci(values, days, boot=BOOT, seed=7):
-    """95 % CI of the trimmed mean over a day bootstrap; (None, None) with fewer than 2 days."""
+def workers():
+    """LAB_REPORT_WORKERS: processes for the bootstrap draws of day_ci (1 = serial, the default); the lab runner has 6."""
+    n = int(os.environ.get("LAB_REPORT_WORKERS", "1"))
+    if n < 1:
+        raise SystemExit("LAB_REPORT_WORKERS must be >= 1")
+    return n
+
+
+_POOL = [None, 0]  # the fork pool and its size
+_CI_CACHE = {}
+
+
+def _pool(n):
+    """The pool of n processes for the draws; main() creates it before duckdb.connect() (a fork after DuckDB's
+    threads exist may deadlock), day_ci only reuses it or, outside main (tests), creates it on demand."""
+    if _POOL[0] is None or _POOL[1] != n:
+        import multiprocessing as mp
+        close_pool()
+        _POOL[0], _POOL[1] = mp.get_context("fork").Pool(n), n
+    return _POOL[0]
+
+
+def close_pool():
+    if _POOL[0] is not None:
+        _POOL[0].close()
+        _POOL[0].join()
+        _POOL[0], _POOL[1] = None, 0
+
+
+def _draws(args):
+    """The trimmed mean of each resample in `counts` (rows: the day multiplicities of one draw), in order."""
+    xs, di, counts = args
+    out = np.empty(len(counts))
+    for b in range(len(counts)):
+        out[b] = weighted_trimmed_mean(xs, counts[b][di].astype(float))
+    return out
+
+
+def day_ci(values, days, boot=BOOT, seed=7, n_workers=None):
+    """95 % CI of the trimmed mean over a day bootstrap; (None, None) with fewer than 2 days.
+    The draws (the day multiplicities, seed fixed) are generated once in order; with n_workers > 1 (default
+    LAB_REPORT_WORKERS) they are split into blocks over a process pool and concatenated back in order, so the
+    percentiles are bit-identical to the serial loop (test_day_ci_parallel_is_bit_identical). Identical inputs
+    (the same values and days, boot and seed: the K3 group is the F7 pool_reversed group) are answered from a
+    cache keyed by the arrays' bytes."""
     values = np.asarray(values, dtype=float)
     days = np.asarray(days)
     uniq, inv = np.unique(days, return_inverse=True)
     if len(uniq) < 2 or len(values) == 0:
         return None, None
+    key = (hashlib.sha1(values.tobytes()).hexdigest(), hashlib.sha1(np.ascontiguousarray(inv).tobytes()).hexdigest(), boot, seed)
+    if key in _CI_CACHE:
+        return _CI_CACHE[key]
     order = np.argsort(values, kind="stable")
     xs, di = values[order], inv[order]
     rng = np.random.default_rng(seed)
     counts = rng.multinomial(len(uniq), np.full(len(uniq), 1 / len(uniq)), size=boot)
-    out = np.empty(boot)
-    for b in range(boot):
-        out[b] = weighted_trimmed_mean(xs, counts[b][di].astype(float))
+    n = workers() if n_workers is None else n_workers
+    if n > 1 and boot >= 2 * n:
+        blocks = np.array_split(counts, 2 * n)
+        out = np.concatenate(_pool(n).map(_draws, [(xs, di, c) for c in blocks]))
+    else:
+        out = _draws((xs, di, counts))
     out = out[~np.isnan(out)]
-    if len(out) == 0:
-        return None, None
-    return float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))
+    res = (None, None) if len(out) == 0 else (float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5)))
+    _CI_CACHE[key] = res
+    return res
 
 
 def fmt(x, nd=2, pct=False, sign=False):
@@ -388,14 +438,19 @@ def main():
     ap.add_argument("--boot", type=int, default=BOOT)
     ap.add_argument("--out")
     a = ap.parse_args()
-    con = duckdb.connect()
-    con.execute(f"SET memory_limit = '{os.environ.get('LAB_WALLETS_MEMORY', '1500MB')}'; SET threads TO 2")
-    spill = os.environ.get("LAB_SPILL_DIR")
-    if spill:
-        os.makedirs(spill, exist_ok=True)
-        con.execute(f"SET temp_directory = '{spill}'; SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'")
-    load(con, a.markout)
-    md = render(con, a.markout, a.boot, a.parts, a.cfg, a.ms_per_slot)
+    if workers() > 1:
+        _pool(workers())  # before DuckDB starts its threads
+    try:
+        con = duckdb.connect()
+        con.execute(f"SET memory_limit = '{os.environ.get('LAB_WALLETS_MEMORY', '1500MB')}'; SET threads TO 2")
+        spill = os.environ.get("LAB_SPILL_DIR")
+        if spill:
+            os.makedirs(spill, exist_ok=True)
+            con.execute(f"SET temp_directory = '{spill}'; SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'")
+        load(con, a.markout)
+        md = render(con, a.markout, a.boot, a.parts, a.cfg, a.ms_per_slot)
+    finally:
+        close_pool()
     if a.out:
         with open(a.out, "w") as f:
             f.write(md + "\n")
