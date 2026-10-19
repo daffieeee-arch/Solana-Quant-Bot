@@ -4,6 +4,7 @@ and digests, and --out-from. No store needed: the events are built by backtest.s
 
 import hashlib
 import json
+import os
 
 import pytest
 
@@ -100,3 +101,192 @@ def test_the_summary_windows_digests_and_out_from(monkeypatch, tmp_path):
     summary = tmp_path / "s.json"
     legs_dump.main(["--store", "store", "--from", "1000", "--to", "3000", "--summary", str(summary), "--window", "1000"])
     assert json.loads(summary.read_text())["windows"] == res["windows"]
+
+
+def test_a_pool_lines_farmer_flag_is_masked_and_a_curve_line_kept():
+    ctx = {}
+    ev = _pool(1700, 0, "sell", ctx)
+    s = legs_dump.line(ev)
+    assert legs_dump.no_farmer(ev, s) == s[: -len("true")] + "-"
+    c = _curve(1100, 0)
+    assert legs_dump.no_farmer(c, legs_dump.line(c)) == legs_dump.line(c)
+
+
+class _LiveFeed:
+    """LiveFeed's interface as dump_segments uses it. The backfill of pool P2 arrives while the feed reads on to the
+    1500 event (the first event of a later slot), so the engine drains it at the end of slot 1100."""
+
+    made = []
+
+    def __init__(self, root, store=None, follow=True, snapshot_before=None, h24=None, memory="1GB", seed_farmers=False):
+        assert not follow and seed_farmers
+        self.args = (root, store, snapshot_before, h24, memory)
+        self.history, self.fixes, self.learned, self.usage, self.new_pools = [], [], [], [], []
+        self.stats = {"segments": 2, "late_rows": 0}
+        self.farm_seed = None
+        self.closed = False
+        _LiveFeed.made.append(self)
+
+    def events(self):
+        ctx, hctx = {}, {}
+        self.farm_seed = {"store": "/somewhere/s.duckdb", "lo": 1, "hi": 1100, "h24": 1099, "first_live_slot": 1100,
+                          "complete_from": 1100}
+        self.usage.append({"minute": 7, "stream": "tx", "bytes": 10, "messages": 1, "seq": 0, "note": None})
+        ev = _curve(1100, 0)
+        yield Event(*[getattr(ev, k) for k in ("slot", "tx_index", "outer_ix", "inner_ix", "block_time", "venue", "key",
+                                               "leg")], arrival=(5, 4, 3))
+        yield _pool(1100, 1, "buy", ctx)
+        self.history.append(("P2", [_pool(900, 0, "buy", hctx).leg]))
+        self.fixes.append(("P1", (1100, 1, 0, 2), True))
+        self.learned.append(("pool", "P3", 1, 1500, "[]"))
+        self.new_pools.append("P3")
+        yield _pool(1500, 1, "sell", ctx)
+        self.history.append(("P2", [_pool(950, 0, "sell", hctx).leg]))
+
+    def drain_history(self):
+        out, self.history = self.history, []
+        return out
+
+    def drain_flag_fixes(self):
+        out, self.fixes = self.fixes, []
+        return out
+
+    def drain_learned(self):
+        out, self.learned = self.learned, []
+        return out
+
+    def drain_usage(self):
+        out, self.usage = self.usage, []
+        return out
+
+    def close(self):
+        self.closed = True
+
+
+def _recorder(tmp_path):
+    """A recorder's directory as LiveFeed reads it: its segments under segments/ (the fake feed reads none of them)."""
+    seg = tmp_path / "rec" / "segments" / "000000000"
+    seg.mkdir(parents=True)
+    (seg / "_segment.json").write_text('{"seq": 0, "complete": true}')
+    return str(tmp_path / "rec")
+
+
+def test_the_segments_summary_drains_where_the_engine_does(monkeypatch, tmp_path):
+    import paper.live
+
+    monkeypatch.setattr(paper.live, "LiveFeed", _LiveFeed)
+    _LiveFeed.made.clear()
+    rec = _recorder(tmp_path)
+    res = legs_dump.dump_segments(rec, "store", 1000, None, window=1000, h24=1099, expect_segments=2)
+    feed = _LiveFeed.made[0]
+    assert feed.closed and feed.args == (rec, "store", None, 1099, "1GB")
+    assert res["events"] == 3 and res["to"] is None and res["kinds"] == {"curve": 1, "pool/buy": 1, "pool/sell": 1}
+    assert [w[:3] for w in res["windows"]] == [[1000, 2000, 3]] and len(res["windows"][0]) == 5
+    hctx = {}
+    first, last = _pool(900, 0, "buy", hctx).leg, _pool(950, 0, "sell", hctx).leg
+
+    def digest(lines):
+        return {"count": len(lines), "sha256": hashlib.sha256("".join(l + "\n" for l in lines).encode()).hexdigest()}
+
+    # The backfill read on the way to slot 1500 is drained at the end of slot 1100, the last one at the end of 1500.
+    assert res["history"] == digest([legs_dump.history_line(1100, "P2", first), legs_dump.history_line(1500, "P2", last)])
+    assert legs_dump.history_line(1100, "P2", first).split("\t")[:6] == ["1100", "P2", "900", "0", "0", "2"]
+    assert res["flag_fixes"] == digest(["1100\tP1\t1100\t1\t0\t2\ttrue"])
+    assert res["learned"] == digest(["pool\tP3\t1\t1500\t[]"]) and res["new_pools"] == digest(["P3"])
+    assert res["usage"] == digest(['{"bytes": 10, "messages": 1, "minute": 7, "note": null, "seq": 0, "stream": "tx"}'])
+    assert res["arrivals"] == digest(["1100\t0\t0\t1\t5\t4\t3"])
+    assert res["farm_seed"] == {"lo": 1, "hi": 1100, "h24": 1099, "first_live_slot": 1100, "complete_from": 1100}
+    assert res["stats"] == {"late_rows": 0, "segments": 2}
+    # The lines are the store form's; the farmer-free digest masks the pool lines' flag.
+    ctx = {}
+    evs = [_curve(1100, 0), _pool(1100, 1, "buy", ctx), _pool(1500, 1, "sell", ctx)]
+    lines = [legs_dump.line(e) for e in evs]
+    assert res["sha256"] == digest(lines)["sha256"] == res["windows"][0][3]
+    masked = [legs_dump.no_farmer(e, s) for e, s in zip(evs, lines)]
+    assert res["sha256_no_farmer"] == digest(masked)["sha256"] == res["windows"][0][4] != res["sha256"]
+    summary = tmp_path / "s.json"
+    legs_dump.main(["--segments", rec, "--store", "store", "--from", "1000", "--summary", str(summary), "--window", "1000",
+                    "--h24", "1099"])
+    assert json.loads(summary.read_text()) == json.loads(json.dumps(res))
+
+
+def test_learned_rows_and_new_pools_hash_alike_in_any_order_within_a_drain(monkeypatch, tmp_path):
+    """LiveFeed appends a segment's learned rows and new pools in DuckDB's GROUP BY order, which differs between
+    processes; the dump hashes each drain's in sorted order, so two runs of the same feed give one summary."""
+    import paper.live
+
+    rec = _recorder(tmp_path)
+    got = []
+    for flip in (False, True):
+        class _Two(_LiveFeed):
+            def events(self):
+                for ev in super().events():
+                    if self.learned:  # the segment read on the way to slot 1500: two pools, in either order
+                        rows = [("pool", "P3", 1, 1500, "[]"), ("pool", "P5", 1, 1500, "[]")]
+                        self.learned = rows[::-1] if flip else rows
+                        self.new_pools[:] = ["P5", "P3"] if flip else ["P3", "P5"]
+                    yield ev
+
+        monkeypatch.setattr(paper.live, "LiveFeed", _Two)
+        res = legs_dump.dump_segments(rec, "store", 1000, None, window=1000, h24=1099)
+        got.append((res["learned"], res["new_pools"]))
+    assert got[0] == got[1] and got[0][1]["count"] == 2 and got[0][0]["count"] == 2
+
+
+def test_a_directory_livefeed_reads_nothing_from_is_refused(monkeypatch, tmp_path):
+    """99zzo on c88c801: the NAS script gave rec/segments, LiveFeed read <that>/segments, found nothing, and the two
+    empty summaries were byte-equal (a false GREEN). The segments themselves, a directory named segments and a root
+    without segments/ are refused before LiveFeed is built; a run that reads no segment, or another number than
+    expected, is refused after it."""
+    import paper.live
+
+    monkeypatch.setattr(paper.live, "LiveFeed", _LiveFeed)
+    rec = _recorder(tmp_path)
+    for root, why in ((os.path.join(rec, "segments"), "give the recorder's directory, its parent"),
+                      (str(tmp_path), "no segments/ under"), (str(tmp_path / "segments"), "give the recorder's directory")):
+        os.makedirs(root, exist_ok=True)
+        _LiveFeed.made.clear()
+        with pytest.raises(SystemExit, match=why):
+            legs_dump.dump_segments(root, "store", 1000, h24=1099)
+        assert not _LiveFeed.made, root
+    _LiveFeed.made.clear()
+    with pytest.raises(SystemExit, match="read 2 complete segments, not the 3145 expected"):
+        legs_dump.dump_segments(rec, "store", 1000, h24=1099, expect_segments=3145)
+
+    class _Empty(_LiveFeed):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.stats = {"segments": 0}
+
+        def events(self):
+            return iter(())
+
+    monkeypatch.setattr(paper.live, "LiveFeed", _Empty)
+    with pytest.raises(SystemExit, match="read no complete segment"):
+        legs_dump.dump_segments(rec, "store", 1000, h24=1099)
+
+
+def test_an_empty_dump_is_refused(monkeypatch, tmp_path):
+    _Feed.events_list = []
+    monkeypatch.setattr(legs_dump, "ReplayFeed", _Feed)
+    with pytest.raises(SystemExit, match="no event"):
+        legs_dump.main(["--store", "store", "--from", "1000", "--to", "3000", "--summary", str(tmp_path / "s.json")])
+
+
+def test_the_segments_options_are_refused_without_segments(tmp_path):
+    s = str(tmp_path / "s.json")
+    for extra in (["--to", "3000", "--h24", "5"], ["--to", "3000", "--snapshot-before", "1000"], ["--to", "3000", "--expect-segments", "3"], []):
+        with pytest.raises(SystemExit):
+            legs_dump.main(["--store", "store", "--from", "1000", "--summary", s] + extra)
+
+
+def test_a_run_over_its_rss_cap_stops(monkeypatch, tmp_path):
+    evs = [_curve(1100, 0), _curve(1101, 0)]
+    assert list(legs_dump.capped(iter(evs), 1 << 30)) == evs
+    with pytest.raises(SystemExit, match="over the cap of 1 MB after 0 events"):
+        list(legs_dump.capped(iter(evs), 1))
+    _Feed.events_list = evs
+    monkeypatch.setattr(legs_dump, "ReplayFeed", _Feed)
+    with pytest.raises(SystemExit, match="peak RSS"):
+        legs_dump.main(["--store", "store", "--from", "1000", "--to", "3000", "--summary", str(tmp_path / "s.json"),
+                        "--max-rss-gb", "0.001"])

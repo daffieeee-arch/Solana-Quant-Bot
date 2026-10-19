@@ -92,6 +92,21 @@ def test_live_events_equal_the_replay(setup):
     assert sum(1 for k in live if k[0] == "pool" and k[4].farmer) > 0  # the farmer flag was exercised
 
 
+def test_the_segments_dump_gives_the_stores_lines(setup):
+    """paper.legs_dump --segments (M3-09a) as paper.engine --live builds the feed (the store's farmer seed, not the
+    test's): the same lines as the store form over the same slots, window by window."""
+    from paper import legs_dump
+
+    root, h24, _, replay = setup
+    live = legs_dump.dump_segments(root, STORE, LO, HI, window=SEG, h24=h24, memory="500MB")
+    store = legs_dump.dump(STORE, LO, HI, window=SEG)
+    assert live["events"] == len(replay) and live["kinds"] == store["kinds"]
+    assert [w[:4] for w in live["windows"]] == store["windows"] and live["sha256"] == store["sha256"]
+    assert live["history"]["count"] == live["flag_fixes"]["count"] == 0
+    assert live["usage"]["count"] == 4 and live["stats"]["segments"] == 4
+    assert live["farm_seed"]["first_live_slot"] == LO and live["farm_seed"]["h24"] == h24
+
+
 def test_segment_boundaries_and_order_do_not_matter(setup, tmp_path):
     """Segments of another size give the same events (a slot is never released early)."""
     root, h24, hist, replay = setup
