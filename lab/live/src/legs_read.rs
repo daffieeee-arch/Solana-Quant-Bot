@@ -1395,10 +1395,13 @@ pub(crate) mod tests {
                     Ok(())
                 }).unwrap();
                 let walk = r.hist.values().map(FarmHist::mem).fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
-                (lines, views, r.hist_mem, walk, r.hist.len())
+                (lines, views, r.hist_mem, walk, r.hist.len(), r.last_mem().clone())
             };
             let (plain, empty, ..) = run(false);
-            let (lines, views, total, walk, pairs) = run(true);
+            let (lines, views, total, walk, pairs, last_mem) = run(true);
+            // the view after the last chunk or unit (the end line's): the final totals, and on segments all three read
+            let fin = |name: &str| last_mem.mems.iter().find(|m| m.name == name).map(|m| m.entries).unwrap();
+            assert_eq!((fin("farmer_hist"), fin("farmer_hist_trades"), last_mem.segments), (pairs, walk.0, seg.then_some(3)), "seg {seg}");
             assert_eq!(lines, plain, "seg {seg}");
             assert!(empty.iter().all(|m| m.mems.is_empty() && m.segments.is_none()), "seg {seg}: no view without mem_log");
             assert_eq!(total, walk, "seg {seg}");
