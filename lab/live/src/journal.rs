@@ -100,8 +100,9 @@ impl Journal {
     }
 
     /// DELETE the rows whose key columns equal `key` (journal.py:88-89), in the open transaction as `put`'s writes. The
-    /// key cells bind with the types `put` binds (an integer t as INTEGER), so `k = ?` finds the row `put` wrote. Refused:
-    /// an empty key (Python would build `WHERE ` with nothing after it) and a column the table does not have.
+    /// statement is journal.py's, so `k = ?` compares as there: SQLite gives the bound cell the column's affinity, and a
+    /// text '6' finds the INTEGER t 6 as the integer 6 does. Refused: an empty key (Python would build `WHERE ` with
+    /// nothing after it) and a column the table does not have.
     pub fn delete(&mut self, table: &str, key: &[(&str, Value)]) -> Result<()> {
         let t = self.table(table)?.clone();
         if key.is_empty() {
@@ -176,20 +177,28 @@ mod tests {
         let mut j = Journal::open(&dir).unwrap();
         let key = |t: i64| vec![("family", Value::Text("F7".into())), ("variant", Value::Text("tp4_T600".into())),
                                 ("key", Value::Text("P".into())), ("t", Value::Integer(t))];
-        for t in [5, 6] {
+        for t in [5, 6, 7] {
             let mut row = key(t);
             row.push(("status", Value::Text("open".into())));
             j.put("positions", &row).unwrap();
         }
         j.delete("positions", &key(5)).unwrap();
-        assert_eq!(j.count("positions").unwrap(), 1);
-        j.delete("positions", &[("t", Value::Text("6".into()))]).unwrap(); // a text '6' is not the integer 6
+        assert_eq!(j.count("positions").unwrap(), 2);
+        j.delete("positions", &key(9)).unwrap(); // no such row: nothing goes
+        assert_eq!(j.count("positions").unwrap(), 2);
+        // journal.py's statement, so SQLite's affinity as there: t is INTEGER, and a text '6' finds the integer 6
+        // (Python's sqlite3 does the same: DELETE FROM positions WHERE t = '6' removes t 6).
+        let mut six = key(6);
+        six[3].1 = Value::Text("6".into());
+        j.delete("positions", &six).unwrap();
         assert_eq!(j.count("positions").unwrap(), 1);
         assert!(j.delete("positions", &[]).unwrap_err().to_string().contains("without a key"));
         assert!(j.delete("positions", &[("slot", Value::Integer(1))]).unwrap_err().to_string().contains("no column slot"));
         j.close().unwrap();
-        let j = Journal::open(&dir).unwrap(); // the delete was committed with the puts
-        assert_eq!(j.count("positions").unwrap(), 1);
+        let j = Journal::open(&dir).unwrap(); // the deletes were committed with the puts
+        let left: Vec<i64> = j.db.prepare("SELECT t FROM positions").unwrap().query_map([], |r| r.get(0)).unwrap()
+            .collect::<rusqlite::Result<_>>().unwrap();
+        assert_eq!(left, [7]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
