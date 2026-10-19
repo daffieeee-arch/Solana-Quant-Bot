@@ -20,6 +20,7 @@ import tempfile
 from dataclasses import asdict, replace
 
 from backtest.replay import CurveLeg, PoolLeg
+from backtest.strategies import Clock
 from backtest.venues import Pool, curve_buy_exact_in, pool_buy_exact_in, pool_withdraw
 from paper.feed import Event
 from paper.engine import _day
@@ -602,10 +603,37 @@ def graduation_sale_capped():
     return case
 
 
+def pending_n2_key_kept_through_the_sweep():
+    """A pending entry across the hourly sweep (engine.py:677-678; LAB review on #380): the sweep's bound is the new hour's
+    first event slot S less an hour, not the hour's start. With d = 3 an N2 key that traded only at the hour's start, picked
+    on the hour's last slot, is still pending when a late first event of the next hour sweeps: the keep holds its legs, and
+    its entry fills. (With d <= 2 the entry always comes first.)"""
+    clock = {**C1.DEV2_CLOCK, "1042": 218.29}  # fwd1053's slot time at epoch 1042: d_ms 600 is 3 slots, an hour 16,492
+    c = Case("pending_n2_key_kept_through_the_sweep",
+             "Epoch 1042 at 218.29 ms (an hour is 16,492 slots, d 3). K (reversed, 1,000 SOL) trades once, at the hour's first "
+             "slot H0. P triggers on the hour's last slot H0 + h - 1 and its N2 row picks K, entry H0 + h + 2. The next hour's "
+             "first event is O's at H0 + h + 1: its rollover sweeps the keys without an event since H0 + 1, K among them, but "
+             "K's pending entry keeps it, so the quiet entry at H0 + h + 2 fills on K's legs (else no_pool_state).", n2_k=1,
+             clock=clock)
+    h = Clock(clock).slots(3_600_000, 450_160_000)
+    h0 = (450_160_000 // h + 1) * h
+    assert (h, Clock(clock).slots(600, h0 + h - 1)) == (16_492, 3)
+    k = c.pool("K")
+    c.trades(k, "reversed", 1_000 * SOL, 10**15, [(h0, 0, "small buyer", "buy", SOL, False)])
+    reversed_trigger(c, c.pool("P"), h0 + h - 1, 1_000 * SOL)
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(h0 + h + 1, 0, "small buyer", "buy", SOL, False),
+                                                           (h0 + h + 10, 0, "small buyer", "buy", SOL, False)])
+    case = c.build()
+    o = c.one("orders", family="N2_F7", key=k)
+    ok((o["status"], o["entry_slot"]) == ("filled", h0 + h + 2), c, f"K's N2 order {o}")
+    return case
+
+
 CASES = [k3_pool_exits, busy_until_the_exit_slot, n2_overwrite, quiet_entry_across_midnight, n2_pool_and_curve_entries,
          not_loaded_before_the_first_dated_slot, curve_k3_exits, curve_entry_failures, our_buy_completes,
          completion_during_the_hold, graduation_kept_through_the_sweep, h_flow_exits, exits_that_fail, d_from_d_ms,
-         stale_decision_at_the_end, curve_seed_from_the_run, flow_index_from_the_entry, graduation_sale_capped]
+         stale_decision_at_the_end, curve_seed_from_the_run, flow_index_from_the_entry, graduation_sale_capped,
+         pending_n2_key_kept_through_the_sweep]
 
 
 # ---------------------------------------------------------------------------------------------- the file
