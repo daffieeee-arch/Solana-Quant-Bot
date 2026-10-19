@@ -32,8 +32,9 @@ events, each as a count and the sha256 of its lines:
 - history: the backfill trades of drain_history, drained where the engine drains them (when the next slot's first
   event arrives, and at the end): `at pool slot tx outer inner` and the pool leg's fields, at the slot whose end drains;
 - flag_fixes: drain_flag_fixes at the same points: `at pool slot tx outer inner farmer`;
-- learned: drain_learned's rows (`kind key seq slot info`), usage: drain_usage's (as sorted JSON), new_pools in order,
-  and arrivals: each event's position and (received ns, created ns, segment written) when it has them;
+- learned: drain_learned's rows (`kind key seq slot info`) and new_pools, each drain's in sorted order (LiveFeed appends a
+  segment's in DuckDB's GROUP BY order, which differs between processes); usage: drain_usage's (as sorted JSON); and
+  arrivals: each event's position and (received ns, created ns, segment written) when it has them;
 and LiveFeed's stats and its farmer seed (without the store's path).
 """
 
@@ -221,6 +222,7 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
     feed = LiveFeed(root, store=store, follow=False, snapshot_before=snapshot_before, h24=h24, memory=memory,
                     seed_farmers=True)
     side = {k: _Digest() for k in SIDE}
+    pools_seen = [0]  # new_pools taken so far
 
     def drain(at):
         for pool, legs in feed.drain_history():
@@ -228,16 +230,20 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
                 side["history"].add(history_line(at, pool, l))
         for pool, order, farmer in feed.drain_flag_fixes():
             side["flag_fixes"].add(_join([at, pool, *order, farmer]))
-        for row in feed.drain_learned():
-            side["learned"].add(_join(row))
+        # Learned rows and new pools in sorted order per drain: LiveFeed appends a segment's in the order DuckDB's
+        # GROUP BY returns them (live.py _new_tokens_and_pools, no ORDER BY; threads 2, preserve_insertion_order off),
+        # which differs between processes (measured 2026-10-20 on a job-91 segment: 49/11 of 60 runs).
+        for line in sorted(_join(row) for row in feed.drain_learned()):
+            side["learned"].add(line)
+        for pool in sorted(feed.new_pools[pools_seen[0]:]):
+            side["new_pools"].add(pool)
+        pools_seen[0] = len(feed.new_pools)
         for u in feed.drain_usage():
             side["usage"].add(json.dumps(u, sort_keys=True))
 
     try:
         events = feed.events() if max_rss_mb is None else capped(feed.events(), max_rss_mb)
         res = _summary(events, lo, hi, window, out, out_from, no_farm=True, slot_end=drain, arrivals=side["arrivals"])
-        for p in feed.new_pools:
-            side["new_pools"].add(p)
         seed = {k: v for k, v in (feed.farm_seed or {}).items() if k != "store"} or None
         windows = res.pop("windows")
         res.update({k: side[k].result() for k in SIDE})

@@ -5,11 +5,12 @@
 #      store and chunk are not at their VPS paths);
 #   2. `paper.legs_dump --segments` twice on job 91's recording (fwd1053-1054, [LO, HI), the snapshot before LO as
 #      paper.shadow's `engine --live` step takes it). GREEN needs two byte-equal summaries that are not empty: events
-#      > 0, a sha256 other than the empty input's, and exactly JOB91_SEGMENTS complete segments read. (99zzo on c88c801
+#      >= JOB91_MIN_EVENTS, a sha256 other than the empty input's, and exactly JOB91_SEGMENTS complete segments read. (99zzo on c88c801
 #      was a false GREEN: the script gave rec/segments, LiveFeed read <that>/segments, found nothing, and the two empty
 #      summaries were byte-equal. legs_dump now refuses that directory, 0 segments and 0 events.)
 #   3. the store form over the same slots once, and per window whether its lines equal LiveFeed's (information for
-#      M3-09b, no acceptance: LiveFeed differs from the replay by causes paper.shadow names, e.g. late rows).
+#      M3-09b, no acceptance: LiveFeed differs from the replay by causes paper.shadow names, e.g. late rows). Its
+#      failure is logged and leaves the job's rc to the acceptance.
 #
 #   LAB_PY=/lab/venv/bin/python bash lab/paper/nas_m3_09a.sh          (lab runner; short: three passes over ~2 days)
 #
@@ -32,6 +33,7 @@ PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 # SEGMENTS) takes REC/segments itself.
 REC=$DATA/backtests/shadow-arms-1053-1054-2c3e5fe/rec
 JOB91_SEGMENTS=3145   # job 91's complete segments: explicit, not derived from the directory (LAB review on 99zzo)
+JOB91_MIN_EVENTS=15000000   # a floor: lab-live read 16.4 M events from these segments (C4, 99zzd)
 STORE=$DATA/store/fwd1053-1054.duckdb
 LO=454896000
 HI=455760000
@@ -51,28 +53,36 @@ rc=0
 tail -3 "$OUT/pytest.log" | tee -a "$OUT/job.log"
 [ "$rc" = 0 ] || { log "tests: FAILED (rc $rc)"; exit 1; }
 
-run() {  # name, then legs_dump's arguments
+run() {  # name, then legs_dump's arguments; a failed pass ends the job RED, but the store form's only returns 1
   local name=$1 t0 rc=0
   shift
   mkdir -p "$OUT/$name"
+  rm -f "$OUT/$name/summary.json"  # a rerun on this commit never reads an earlier run's
   t0=$(date +%s)
   "$PY" -m paper.legs_dump --store "$STORE" --from $LO --to $HI --summary "$OUT/$name/summary.json" --memory 1GB \
     --max-rss-gb "$MAX_RSS_GB" "$@" \
     > "$OUT/$name/run.log" 2>&1 || rc=$?
-  [ "$rc" = 0 ] || { tail -20 "$OUT/$name/run.log" | tee -a "$OUT/job.log"; log "$name: FAILED (rc $rc)"; exit 1; }
+  if [ "$rc" != 0 ]; then
+    tail -20 "$OUT/$name/run.log" | tee -a "$OUT/job.log"
+    log "$name: FAILED (rc $rc)"
+    [ "$name" = store ] && return 1
+    exit 1
+  fi
   log "$name: $(($(date +%s) - t0)) s; $(tail -1 "$OUT/$name/run.log" | cut -c1-240)"   # starts with the peak RSS
 }
 run run1 --segments "$REC" --snapshot-before $LO --expect-segments "$JOB91_SEGMENTS"
 run run2 --segments "$REC" --snapshot-before $LO --expect-segments "$JOB91_SEGMENTS"
 # GREEN: byte-equal AND not empty (the degenerate case, two empty summaries, is byte-equal too: RED here).
 rc=0
-"$PY" - "$OUT" "$JOB91_SEGMENTS" > "$OUT/acceptance.log" 2>&1 <<'EOF' || rc=$?
+"$PY" - "$OUT" "$JOB91_SEGMENTS" "$JOB91_MIN_EVENTS" > "$OUT/acceptance.log" 2>&1 <<'EOF' || rc=$?
 import hashlib, json, os, sys
-out, want = sys.argv[1], int(sys.argv[2])
+out, want, floor = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 empty = hashlib.sha256(b"").hexdigest()
 texts = [open(os.path.join(out, r, "summary.json"), "rb").read() for r in ("run1", "run2")]
 v = json.loads(texts[0])
-why = [w for w, bad in (("the summaries differ", texts[0] != texts[1]), ("no event", not v.get("events")),
+differ = sorted(k for k in set(v) | set(json.loads(texts[1])) if v.get(k) != json.loads(texts[1]).get(k))
+why = [w for w, bad in ((f"the summaries differ in {', '.join(differ) or 'their bytes'}", texts[0] != texts[1]),
+                        ("no event", not v.get("events")), (f"{v.get('events', 0):,} events, under the floor {floor:,}", 0 < (v.get("events") or 0) < floor),
                         ("the empty input's sha256", v.get("sha256") in (None, empty)), ("no window", not v.get("windows")),
                         (f"{v.get('stats', {}).get('segments')} segments read, not {want}", v.get("stats", {}).get("segments") != want))
        if bad]
@@ -84,7 +94,12 @@ print(f"M3-09a: GREEN: run1 and run2 byte-equal and not empty: {v['events']:,} e
 EOF
 tee -a "$OUT/job.log" < "$OUT/acceptance.log"
 [ "$rc" = 0 ] || exit 1
-run store
+# 3. information only: a failed store pass or comparison leaves the job's verdict (and rc) to the acceptance above
+if ! run store; then
+  log "the store form: FAILED (information only; the acceptance above stands)"
+  log "done"
+  exit 0
+fi
 rc=0
 "$PY" - "$OUT" > "$OUT/compare.log" 2>&1 <<'EOF' || rc=$?
 import json, os, sys

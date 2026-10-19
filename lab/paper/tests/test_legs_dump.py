@@ -210,6 +210,29 @@ def test_the_segments_summary_drains_where_the_engine_does(monkeypatch, tmp_path
     assert json.loads(summary.read_text()) == json.loads(json.dumps(res))
 
 
+def test_learned_rows_and_new_pools_hash_alike_in_any_order_within_a_drain(monkeypatch, tmp_path):
+    """LiveFeed appends a segment's learned rows and new pools in DuckDB's GROUP BY order, which differs between
+    processes; the dump hashes each drain's in sorted order, so two runs of the same feed give one summary."""
+    import paper.live
+
+    rec = _recorder(tmp_path)
+    got = []
+    for flip in (False, True):
+        class _Two(_LiveFeed):
+            def events(self):
+                for ev in super().events():
+                    if self.learned:  # the segment read on the way to slot 1500: two pools, in either order
+                        rows = [("pool", "P3", 1, 1500, "[]"), ("pool", "P5", 1, 1500, "[]")]
+                        self.learned = rows[::-1] if flip else rows
+                        self.new_pools[:] = ["P5", "P3"] if flip else ["P3", "P5"]
+                    yield ev
+
+        monkeypatch.setattr(paper.live, "LiveFeed", _Two)
+        res = legs_dump.dump_segments(rec, "store", 1000, None, window=1000, h24=1099)
+        got.append((res["learned"], res["new_pools"]))
+    assert got[0] == got[1] and got[0][1]["count"] == 2 and got[0][0]["count"] == 2
+
+
 def test_a_directory_livefeed_reads_nothing_from_is_refused(monkeypatch, tmp_path):
     """99zzo on c88c801: the NAS script gave rec/segments, LiveFeed read <that>/segments, found nothing, and the two
     empty summaries were byte-equal (a false GREEN). The segments themselves, a directory named segments and a root
