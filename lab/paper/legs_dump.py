@@ -6,7 +6,7 @@ and with --segments for lab-live's live source (M3-09a of research/m3-design-202
                             [--window N]
   python -m paper.legs_dump --segments <recorder dir> --store <store.duckdb> --from SLOT [--to SLOT] --summary FILE
                             [--snapshot-before SLOT [--h24 N]] [--memory 1GB] [--out FILE [--out-from SLOT]] [--window N]
-                            [--max-rss-gb G]
+                            [--max-rss-gb G] [--expect-segments N]
 
 Every Event of ReplayFeed(store, from, to), in its order, as one tab-separated line:
 - common: venue key slot tx outer inner block_time tau_u (tau_u = hash(order) % 10_000, the PositionSim's draw);
@@ -20,7 +20,9 @@ found by window; --out writes the lines themselves (small ranges; with --out-fro
 on: a window that differs, in a run from the store's start, whose pool context and farmer history it needs).
 
 --segments: the events of LiveFeed over a recorder's complete segments instead, built as `paper.engine --live` builds
-it at a first start (store snapshot, seeded farmer history, follow off). --from is the window grid's origin and --to
+it at a first start (store snapshot, seeded farmer history, follow off). The directory is the recorder's, whose
+segments/ LiveFeed reads (lab-live's --segments takes segments/ itself); a segments/ directory, a run that reads no
+segment or other than --expect-segments, and a dump without events are refused. --from is the window grid's origin and --to
 its end (default none); no event is left out. --snapshot-before SLOT takes the snapshot as known before that slot and
 the farmer window h24 from the store's clock there, as paper.shadow's `engine --live` step does on segments simulated
 inside the store's period (job 91: --snapshot-before 454896000); --h24 sets that window. The event lines are the
@@ -36,8 +38,10 @@ and LiveFeed's stats and its farmer seed (without the store's path).
 """
 
 import argparse
+import glob
 import hashlib
 import json
+import os
 import resource
 
 from .feed import ReplayFeed
@@ -192,12 +196,26 @@ def store_h24(store, slot):
 SIDE = ("history", "flag_fixes", "learned", "usage", "new_pools", "arrivals")
 
 
+def check_root(root):
+    """LiveFeed reads the complete segments under <root>/segments (paper/live.py segment_dirs): `root` is the recorder's
+    directory, not its segments/ (which lab-live's --segments takes). Refuses a directory named segments, one holding
+    segment directories itself, and a root without segments/ (job 99zzo read 0 segments from rec/segments, and its two
+    empty summaries were byte-equal)."""
+    if os.path.basename(os.path.normpath(root)) == "segments" or glob.glob(os.path.join(root, "*", "_segment.json")):
+        raise SystemExit(f"legs_dump: {root} holds the segments themselves; give the recorder's directory, its parent "
+                         f"{os.path.dirname(os.path.abspath(root))}: LiveFeed reads <root>/segments")
+    if not os.path.isdir(os.path.join(root, "segments")):
+        raise SystemExit(f"legs_dump: no segments/ under {root}: refused")
+
+
 def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0, snapshot_before=None, h24=None,
-                  memory="1GB", max_rss_mb=None):
+                  memory="1GB", max_rss_mb=None, expect_segments=None):
     """The summary of LiveFeed's events over the recorder's complete segments under `root` (the module doc's
-    --segments), with what the engine takes from it beside them."""
+    --segments), with what the engine takes from it beside them. Refused (SystemExit): a root LiveFeed reads nothing
+    from, no complete segment read, or another number of segments than `expect_segments`."""
     from .live import LiveFeed
 
+    check_root(root)
     if snapshot_before is not None and h24 is None:
         h24 = store_h24(store, snapshot_before)
     feed = LiveFeed(root, store=store, follow=False, snapshot_before=snapshot_before, h24=h24, memory=memory,
@@ -225,9 +243,14 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
         res.update({k: side[k].result() for k in SIDE})
         res.update({"stats": dict(sorted(feed.stats.items())), "farm_seed": seed, "snapshot_before": snapshot_before,
                     "h24": h24, "windows": windows})
-        return res
     finally:
         feed.close()
+    read = res["stats"].get("segments", 0)
+    if not read:
+        raise SystemExit(f"legs_dump: LiveFeed read no complete segment under {root}/segments: refused")
+    if expect_segments is not None and read != expect_segments:
+        raise SystemExit(f"legs_dump: LiveFeed read {read} complete segments, not the {expect_segments} expected: refused")
+    return res
 
 
 def main(argv=None):
@@ -244,17 +267,21 @@ def main(argv=None):
     ap.add_argument("--h24", type=int)
     ap.add_argument("--memory", default="1GB")
     ap.add_argument("--max-rss-gb", dest="max_rss_gb", type=float, help="stop the run when its peak RSS passes this")
+    ap.add_argument("--expect-segments", dest="expect_segments", type=int,
+                    help="--segments: refuse another number of complete segments read")
     a = ap.parse_args(argv)
     cap = None if a.max_rss_gb is None else int(a.max_rss_gb * 1024)
     if a.segments:
         res = dump_segments(a.segments, a.store, a.lo, a.hi, a.window, a.out, a.out_from, a.snapshot_before, a.h24, a.memory,
-                            cap)
+                            cap, a.expect_segments)
     else:
         if a.hi is None:
             ap.error("--to is needed without --segments")
-        if a.snapshot_before is not None or a.h24 is not None:
-            ap.error("--snapshot-before and --h24 go with --segments")
+        if a.snapshot_before is not None or a.h24 is not None or a.expect_segments is not None:
+            ap.error("--snapshot-before, --h24 and --expect-segments go with --segments")
         res = dump(a.store, a.lo, a.hi, a.window, a.out, a.out_from, cap)
+    if not res["events"]:
+        raise SystemExit("legs_dump: no event: an empty dump is no result: refused")
     with open(a.summary, "w") as f:
         json.dump(res, f, indent=1)
     # The process's peak RSS beside the summary, not in it (two runs' summaries stay byte-equal).

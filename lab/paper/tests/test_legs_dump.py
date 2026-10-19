@@ -4,6 +4,7 @@ and digests, and --out-from. No store needed: the events are built by backtest.s
 
 import hashlib
 import json
+import os
 
 import pytest
 
@@ -162,14 +163,23 @@ class _LiveFeed:
         self.closed = True
 
 
+def _recorder(tmp_path):
+    """A recorder's directory as LiveFeed reads it: its segments under segments/ (the fake feed reads none of them)."""
+    seg = tmp_path / "rec" / "segments" / "000000000"
+    seg.mkdir(parents=True)
+    (seg / "_segment.json").write_text('{"seq": 0, "complete": true}')
+    return str(tmp_path / "rec")
+
+
 def test_the_segments_summary_drains_where_the_engine_does(monkeypatch, tmp_path):
     import paper.live
 
     monkeypatch.setattr(paper.live, "LiveFeed", _LiveFeed)
     _LiveFeed.made.clear()
-    res = legs_dump.dump_segments("rec", "store", 1000, None, window=1000, h24=1099)
+    rec = _recorder(tmp_path)
+    res = legs_dump.dump_segments(rec, "store", 1000, None, window=1000, h24=1099, expect_segments=2)
     feed = _LiveFeed.made[0]
-    assert feed.closed and feed.args == ("rec", "store", None, 1099, "1GB")
+    assert feed.closed and feed.args == (rec, "store", None, 1099, "1GB")
     assert res["events"] == 3 and res["to"] is None and res["kinds"] == {"curve": 1, "pool/buy": 1, "pool/sell": 1}
     assert [w[:3] for w in res["windows"]] == [[1000, 2000, 3]] and len(res["windows"][0]) == 5
     hctx = {}
@@ -195,14 +205,54 @@ def test_the_segments_summary_drains_where_the_engine_does(monkeypatch, tmp_path
     masked = [legs_dump.no_farmer(e, s) for e, s in zip(evs, lines)]
     assert res["sha256_no_farmer"] == digest(masked)["sha256"] == res["windows"][0][4] != res["sha256"]
     summary = tmp_path / "s.json"
-    legs_dump.main(["--segments", "rec", "--store", "store", "--from", "1000", "--summary", str(summary), "--window", "1000",
+    legs_dump.main(["--segments", rec, "--store", "store", "--from", "1000", "--summary", str(summary), "--window", "1000",
                     "--h24", "1099"])
     assert json.loads(summary.read_text()) == json.loads(json.dumps(res))
 
 
+def test_a_directory_livefeed_reads_nothing_from_is_refused(monkeypatch, tmp_path):
+    """99zzo on c88c801: the NAS script gave rec/segments, LiveFeed read <that>/segments, found nothing, and the two
+    empty summaries were byte-equal (a false GREEN). The segments themselves, a directory named segments and a root
+    without segments/ are refused before LiveFeed is built; a run that reads no segment, or another number than
+    expected, is refused after it."""
+    import paper.live
+
+    monkeypatch.setattr(paper.live, "LiveFeed", _LiveFeed)
+    rec = _recorder(tmp_path)
+    for root, why in ((os.path.join(rec, "segments"), "give the recorder's directory, its parent"),
+                      (str(tmp_path), "no segments/ under"), (str(tmp_path / "segments"), "give the recorder's directory")):
+        os.makedirs(root, exist_ok=True)
+        _LiveFeed.made.clear()
+        with pytest.raises(SystemExit, match=why):
+            legs_dump.dump_segments(root, "store", 1000, h24=1099)
+        assert not _LiveFeed.made, root
+    _LiveFeed.made.clear()
+    with pytest.raises(SystemExit, match="read 2 complete segments, not the 3145 expected"):
+        legs_dump.dump_segments(rec, "store", 1000, h24=1099, expect_segments=3145)
+
+    class _Empty(_LiveFeed):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.stats = {"segments": 0}
+
+        def events(self):
+            return iter(())
+
+    monkeypatch.setattr(paper.live, "LiveFeed", _Empty)
+    with pytest.raises(SystemExit, match="read no complete segment"):
+        legs_dump.dump_segments(rec, "store", 1000, h24=1099)
+
+
+def test_an_empty_dump_is_refused(monkeypatch, tmp_path):
+    _Feed.events_list = []
+    monkeypatch.setattr(legs_dump, "ReplayFeed", _Feed)
+    with pytest.raises(SystemExit, match="no event"):
+        legs_dump.main(["--store", "store", "--from", "1000", "--to", "3000", "--summary", str(tmp_path / "s.json")])
+
+
 def test_the_segments_options_are_refused_without_segments(tmp_path):
     s = str(tmp_path / "s.json")
-    for extra in (["--to", "3000", "--h24", "5"], ["--to", "3000", "--snapshot-before", "1000"], []):
+    for extra in (["--to", "3000", "--h24", "5"], ["--to", "3000", "--snapshot-before", "1000"], ["--to", "3000", "--expect-segments", "3"], []):
         with pytest.raises(SystemExit):
             legs_dump.main(["--store", "store", "--from", "1000", "--summary", s] + extra)
 
