@@ -127,3 +127,25 @@ def test_the_windowed_names_are_memlog_structures(name):
         os.path.join(HERE, "..", "..", "core", "src", "n2.rs")).read()
     live = os.path.join(HERE, "..", "..", "live", "src", "legs_read.rs")
     assert f'"{name}"' in core + open(live).read(), name
+
+
+def test_the_journal_sha_ignores_the_runs_summary_and_row_order(tmp_path, capsys):
+    import sqlite3
+
+    def journal(d, rows, summary):
+        d.mkdir()
+        db = sqlite3.connect(d / "journal.sqlite")
+        db.execute("CREATE TABLE signals (key TEXT, t INTEGER)")
+        db.execute("CREATE TABLE state (k TEXT PRIMARY KEY, v TEXT)")
+        db.executemany("INSERT INTO signals VALUES (?, ?)", rows)
+        db.executemany("INSERT INTO state VALUES (?, ?)", [("groups", "g"), ("lab_live_paper", summary)])
+        db.commit()
+        db.close()
+        return d
+
+    a = journal(tmp_path / "a", [("k1", 1), ("k2", 2)], '{"secs": 1.0}')
+    b = journal(tmp_path / "b", [("k2", 2), ("k1", 1)], '{"secs": 2.5}')  # another order, another summary
+    c = journal(tmp_path / "c", [("k1", 1), ("k2", 3)], '{"secs": 1.0}')  # one row differs
+    assert plateau.journal_sha(a) == plateau.journal_sha(b) != plateau.journal_sha(c)
+    assert plateau.main(["--journal-sha", str(a)]) == 0 and capsys.readouterr().out.strip() == plateau.journal_sha(a)
+    assert plateau.main(["--journal-sha", str(tmp_path / "none")]) == 2

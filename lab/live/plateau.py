@@ -2,6 +2,7 @@
 sha256 pinned in nas_m1c4.sh): over `lab-live paper --mem-log` (lab/live/src/memlog.rs), is the memory flat?
 
   python lab/live/plateau.py --p1 p1.jsonl [--p2 p2.jsonl] [--p3 p3.jsonl] [--run run.json] --spec-sha SHA --out plateau.md
+  python lab/live/plateau.py --journal-sha DIR      (the determinism check's sha256 of a journal, for run.json)
 
 - p1: the segments (the live form), the gated run. p2: the same again (determinism; its log is reported, not gated).
   p3: the same range from the chunks, the upper bound (reported, not gated: spec E5).
@@ -26,7 +27,10 @@ exit 2 when an input is missing or unreadable.
 """
 
 import argparse
+import hashlib
 import json
+import os
+import sqlite3
 import sys
 from collections import defaultdict
 
@@ -49,6 +53,29 @@ WINDOWED = frozenset({
 })
 # Spec v0.4: the windowed ones are reported (with their max ratio), not gated.
 GATE_WINDOWED = False
+
+
+# The state rows that differ between two equal runs: the run's summary (its seconds and peak RSS).
+RUN_STATE = ("lab_live_paper",)
+
+
+def journal_sha(directory):
+    """sha256 over every table of <directory>/journal.sqlite, each table's rows sorted, without the run's own summary
+    (RUN_STATE): two runs with the same rows give the same sha256 whatever their timing."""
+    db = sqlite3.connect(f"file:{os.path.join(directory, 'journal.sqlite')}?mode=ro", uri=True)
+    try:
+        h = hashlib.sha256()
+        tables = [r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")]
+        for t in tables:
+            rows = db.execute(f'SELECT * FROM "{t}"').fetchall()
+            if t == "state":
+                rows = [r for r in rows if r[0] not in RUN_STATE]
+            h.update(f"{t}\n".encode())
+            for r in sorted(rows, key=repr):
+                h.update(repr(r).encode() + b"\n")
+        return h.hexdigest()
+    finally:
+        db.close()
 
 
 def load(path):
@@ -274,6 +301,18 @@ def measure_line(res):
 
 
 def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv[:1] == ["--journal-sha"]:
+        if len(argv) != 2:
+            print("usage: plateau.py --journal-sha DIR", file=sys.stderr)
+            return 2
+        try:
+            print(journal_sha(argv[1]))
+        except sqlite3.Error as e:
+            print(f"lab-live plateau: {argv[1]}: {e}", file=sys.stderr)
+            return 2
+        return 0
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--p1", required=True)
     ap.add_argument("--p2")
