@@ -116,6 +116,7 @@ fn drain(eng: &mut SignalEngine, rows: &mut Vec<SignalRow>, keys: &Keys, j: &mut
             .map(|(c, v)| (c, match v {
                 Cell::Null => Sql::Null,
                 Cell::Int(i) => Sql::Integer(i),
+                Cell::Real(x) => Sql::Real(x),
                 Cell::Text(t) => Sql::Text(t),
             }))
             .collect();

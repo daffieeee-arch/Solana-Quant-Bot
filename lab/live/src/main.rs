@@ -70,6 +70,9 @@ mod journal;
 mod legs;
 mod legs_read;
 mod mem;
+// The paper engine's journal side (C2-4b); `lab-live paper` wires it in C2-6.
+#[cfg_attr(not(test), allow(dead_code))]
+mod paper_core;
 mod rows;
 mod signals;
 mod signals_core;

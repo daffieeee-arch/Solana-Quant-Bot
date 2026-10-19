@@ -221,7 +221,7 @@ fn positions_follow_the_replay_call_by_call() {
                 (slot, Pool { b, e, lp_bps: lp, protocol_bps: pr, creator_bps: cr, cashback_bps: cb, virt })
             });
             let (a, b) = (legs.partition_point(|l| l.slot() < s), legs.partition_point(|l| l.slot() <= s));
-            (open_pool_position(venue, &legs, prior, case.t, size, case.d, q, rule, cfg), a, b)
+            (open_pool_position(venue, &legs, prior, case.t, size, case.d, q, rule, cfg).expect(at), a, b)
         };
         let r = match (opened, &case.opened) {
             (Opened::No(r), Want::No) => {
@@ -462,10 +462,22 @@ fn a_curve_entry_without_a_state_before_it_fails_closed() {
 #[should_panic(expected = "fed to a position")]
 fn a_leg_of_the_other_venue_fails() {
     let st = Pool { b: 1_000_000_000, e: 1_000_000_000, lp_bps: 20, protocol_bps: 5, creator_bps: 5, cashback_bps: 0, virt: 0 };
-    let o = open_pool_position(SimVenue::PoolNormal, &[], Some((5, st)), 10, 1_000_000, 1, 0.5, tp4(10), cfg(0.05));
+    let o = open_pool_position(SimVenue::PoolNormal, &[], Some((5, st)), 10, 1_000_000, 1, 0.5, tp4(10), cfg(0.05)).unwrap();
     let Opened::Open(mut sim, _) = o else { panic!("{o:?}") };
     let c = [cleg(11, 0, 5, true, 1_000, [1_000_000, 1_000_000, 500_000, 0])];
     sim.on_slot(11, &c, 0); // the entry slot: no decision before the re-run
+}
+
+#[test]
+fn a_state_leg_at_or_after_the_entry_fails_closed() {
+    let st = Pool { b: 1_000_000_000, e: 1_000_000_000, lp_bps: 20, protocol_bps: 5, creator_bps: 5, cashback_bps: 0, virt: 0 };
+    for at in [11, 12] {
+        let err = open_pool_position(SimVenue::PoolNormal, &[], Some((at, st)), 10, 1_000_000, 1, 0.5, tp4(10), cfg(0.05)).unwrap_err();
+        assert_eq!(err, PosError::PriorNotBefore { prior_slot: at, entry_slot: 11 });
+        assert!(err.to_string().contains("not before it"));
+    }
+    let ok = open_pool_position(SimVenue::PoolNormal, &[], Some((10, st)), 10, 1_000_000, 1, 0.5, tp4(10), cfg(0.05)).unwrap();
+    assert!(matches!(ok, Opened::Open(_, 0)));
 }
 
 #[test]

@@ -8,8 +8,11 @@
 #                cases paper/tests/data/c1b_signal_cases.json in signals_core.rs) and of ALL of lab/core (the signal state:
 #                clock, exact, universe, f7, farm, n2, signals with its cases, legs, venues), then the release binary into
 #                $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab (the container mounts only /lab).
+#                Since M1 C2-4b also the paper engine's golden cases (paper_core.rs: c2_position_cases.json write by
+#                write, and the C1b cases with the engine's statuses) and lab-core's paper and positions tests, required.
 #   STEP=python  (the lab Python 3.13 runner):
-#                1. the fast tests: test_signal_cases (the engine still writes the golden cases), test_journal_diff (its
+#                1. the fast tests: test_signal_cases (the engine still writes the golden cases), since C2-4b also
+#                   test_position_cases (C2's golden writes) and lab/core's table pins (positions, exits, tau), test_journal_diff (its
 #                   signals scope), test_engine, and test_lab_live_signals's guard test;
 #                2. the legs regression after the typed-event refactor (A5): test_lab_live_legs on the whole of fwd1053
 #                   and on dev2's arm range 450128159-450380000, the same counts and sha256 per window as C1a (~15 min
@@ -54,13 +57,18 @@ if [ "$STEP" = build ]; then
   # The golden cases and the C1a line pin must have run, not only passed (a test that is gone passes nothing).
   for t in signals_core::tests::every_golden_case_gives_the_engines_rows_and_state legs::tests::typed_events_render_the_c1a_lines_byte_for_byte \
            signals::tests::a_replay_writes_its_signals_the_states_and_the_summary signals_core::tests::the_seeds_are_pythons \
-           signals_core::tests::t1_and_t2_with_the_sha256_keys; do
+           signals_core::tests::t1_and_t2_with_the_sha256_keys paper_core::tests::every_c2_case_gives_the_engines_writes \
+           paper_core::tests::the_c1b_cases_carry_the_engines_statuses; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
   # All of lab-core (a dependency's own tests do not run above): the signal state's unit tests and its cases.
   (cd ../core && cargo test --release --locked > "$OUT/cargo-test-core.log" 2>&1) || { tail -40 "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"; log "cargo test lab-core: FAILED"; exit 1; }
   grep -E "^test |^test result" "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"
+  for t in paper::tests::what_no_reference_runs_is_refused paper::tests::a_pool_position_from_its_signal_to_its_exit \
+           positions::tests::positions_follow_the_replay_call_by_call positions::tests::single_reruns_are_pythons; do
+    grep -q "^test $t ... ok$" "$OUT/cargo-test-core.log" || { log "cargo test lab-core: $t did not run: FAILED"; exit 1; }
+  done
   log "cargo test lab-core: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test-core.log") tests ok)"
   cargo build --release --locked >> "$OUT/cargo-test.log" 2>&1 || { tail -20 "$OUT/cargo-test.log"; log "cargo build: FAILED"; exit 1; }
   mkdir -p "$OUT/bin" && install -m 755 target/release/lab-live "$OUT/bin/lab-live"
@@ -83,6 +91,7 @@ export LAB_SPILL_MAX=16GB LAB_LIVE_MEASURE_LOG=$OUT/job.log LAB_LEGS_REQUIRE=1
 # 1. The fast tests.
 LAB_SPILL_DIR=$OUT/spill "$PY" -m pytest -q -rs --basetemp "$OUT/pytest-fast" paper/tests/test_signal_cases.py paper/tests/test_journal_diff.py \
   paper/tests/test_engine.py "paper/tests/test_lab_live_signals.py::test_the_guard_finds_rows_outside_the_universe_and_the_bounds" \
+  paper/tests/test_position_cases.py backtest/tests/test_position_table.py backtest/tests/test_exit_table.py backtest/tests/test_tau_table.py \
   2>&1 | tee -a "$OUT/job.log" | tail -15
 rm -rf "$OUT/pytest-fast" "$OUT/spill"
 

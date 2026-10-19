@@ -809,6 +809,25 @@ def tau_order(venue, side, amount, slot):
     raise AssertionError((venue, side, amount))
 
 
+def raw_x(venue, side, amount, order):
+    """Tau.tol's interpolated quantile before its `x >= 0.99` test (replay.py:146-153), to choose orders by it."""
+    t = replay._tau_table()
+    qs = t["table" if venue == "curve" else "pool_table"][f"{side}:{replay._bucket(amount, t['size_buckets_lamports'])}"]
+    u = (hash(order) % 10_000) / 10_000 * (len(qs) - 1)
+    lo = int(u)
+    hi = min(lo + 1, len(qs) - 1)
+    return qs[lo] + (qs[hi] - qs[lo]) * (u - lo)
+
+
+def order_where(venue, side, amount, slot, ok):
+    """The first order (slot, tx, 0, 0) whose interpolated quantile satisfies ok."""
+    for tx in range(20_000):
+        o = (slot, tx, 0, 0)
+        if ok(raw_x(venue, side, amount, o)):
+            return o
+    raise AssertionError((venue, side, amount))
+
+
 def pick(cands, f, target):
     """The first candidate with f(c) == target."""
     c = next((c for c in cands if f(c) == target), None)
@@ -963,6 +982,24 @@ def boundary_reruns():
                      expect="fail"))
     for n in (0, 1, 2, 3 * SOL):
         out.append(Rerun(f"pool_boost_{n}", pst, vpool(po, "D", "boost", 0, n, lpre), "inf", exact=False, expect="pass"))
+
+    # The tolerance's edge (replay.py:153): a draw just below 0.99 is a limit, int(t * (1 - x)) with 1 - x near 1 %; a
+    # draw at 0.99 or above (the 1.0 plateau of the table's top quantiles included) is none, so a re-run far below its
+    # log passes. The logged amounts are 200 times the re-run's fill.
+    f = V.curve_buy_exact_in(tiers, SOL)
+    q, fee = SOL - 10**7, 10**7
+    for label, ok, expect in (("below_0_99", lambda x: 0.98 <= x < 0.99, "fail"), ("at_0_99", lambda x: x >= 0.99, "pass")):
+        o = order_where("curve", "buy", q, 7_201, ok)
+        leg = vcurve(o, "A", True, 200 * f.tokens, q, fee, post, "buy_exact_sol_in", (SOL, None, None, None), direct=False)
+        out.append(Rerun(f"curve_tau_{label}", cst, leg, "empirical", expect=expect))
+    a = 10**9
+    fq = V.pool_sell(run, a).trader_quote
+    qn = 5 * SOL  # size bucket 2, where the table's top quantiles are 1.0
+    for label, ok, expect in (("below_0_99", lambda x: 0.98 <= x < 0.99, "fail"), ("plateau_1_0", lambda x: x == 1.0, "pass")):
+        o = order_where("pool", "sell", qn, 7_202, ok)
+        assert 100 * fq < qn
+        out.append(Rerun(f"pool_tau_{label}", pst, vpool(o, "B", "sell", a, qn, lpre, direct=False), "empirical", exact=False,
+                         expect=expect))
     return out
 
 

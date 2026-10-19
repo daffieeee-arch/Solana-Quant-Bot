@@ -579,6 +579,12 @@ impl PositionSim {
         self.r
     }
 
+    /// The Result, for the caller's on_complete after a `Step::Completed` (engine.py:977-986: the graduation's reason,
+    /// slots, proceeds and attempt are written into the closed position's Result).
+    pub fn result_mut(&mut self) -> &mut PosResult {
+        &mut self.r
+    }
+
     pub fn is_done(&self) -> bool {
         self.done
     }
@@ -898,6 +904,8 @@ pub enum PosError {
     NoStateBefore { entry_slot: u64 },
     /// The entry slot's legs are not the curve's legs of that slot.
     NotSlotLegs { entry_slot: u64 },
+    /// The engine's state leg is not before the entry slot (its slot is the key's last event, before the entry).
+    PriorNotBefore { prior_slot: u64, entry_slot: u64 },
 }
 
 impl fmt::Display for PosError {
@@ -907,6 +915,9 @@ impl fmt::Display for PosError {
                 write!(f, "a curve entry at {entry_slot} before the slot's first leg, with no earlier leg of the mint")
             }
             PosError::NotSlotLegs { entry_slot } => write!(f, "the legs of a curve entry at {entry_slot} are not that slot's curve legs"),
+            PosError::PriorNotBefore { prior_slot, entry_slot } => {
+                write!(f, "a pool entry at {entry_slot} with a state leg at {prior_slot}, not before it")
+            }
         }
     }
 }
@@ -924,7 +935,7 @@ fn pool_of(leg: &Leg) -> &PoolLeg {
 /// fill from the state after the decision slot, the fill at our insertion point (`q`) and the slippage check.
 /// `legs` are the pool's legs in chain order, covering the decision and the entry slot (the engine's Recent and the
 /// entry slot's; the batch replay's whole stream). `prior` is the engine's state leg in front of them (engine.py:903-
-/// 905: the last state and its slot, when Recent is empty); its slot must be before the entry.
+/// 905: the last state and its slot, when Recent is empty); its slot must be before the entry, else `PosError`.
 #[allow(clippy::too_many_arguments)]
 pub fn open_pool_position(
     venue: SimVenue,
@@ -936,15 +947,15 @@ pub fn open_pool_position(
     q: f64,
     rule: ExitRule,
     cfg: Cfg,
-) -> Opened {
+) -> Result<Opened, PosError> {
     assert!(venue != SimVenue::Curve, "open_pool_position on the curve");
     let entry = decision_slot + d;
     let r = PosResult::new(decision_slot, entry, size, Venue::Pool);
     if cfg.window_end.is_some_and(|w| entry >= w) {
-        return r.skip(Reason::AfterWindowEnd);
+        return Ok(r.skip(Reason::AfterWindowEnd));
     }
-    if let Some((s, _)) = prior {
-        assert!(s < entry, "the state leg at {s} is not before the entry at {entry}");
+    if let Some((s, _)) = prior.filter(|&(s, _)| s >= entry) {
+        return Err(PosError::PriorNotBefore { prior_slot: s, entry_slot: entry });
     }
     // the list with the state leg in front: (slot, tx -1, pre = post = the state)
     let off = usize::from(prior.is_some());
@@ -959,19 +970,19 @@ pub fn open_pool_position(
         }
     };
     let Some(s_dec) = hist(insertion_index_by(n, at, decision_slot + 1, 0.0)) else {
-        return r.skip(Reason::NoPoolState);
+        return Ok(r.skip(Reason::NoPoolState));
     };
     let expected = venue.pool_buy(&s_dec, size);
     let i = insertion_index_by(n, at, entry, q);
     let state = hist(i).expect("a nonempty list has a state");
     let fill = match (venue.pool_buy(&state, size), expected) {
         (Some(f), Some(e)) if !lt(f.tokens, e.tokens as f64 * (1.0 - cfg.tol)) => f,
-        _ => return r.fail(),
+        _ => return Ok(r.fail()),
     };
     let mut r = r;
     r.tokens = fill.tokens;
     r.cost = fill.trader_quote;
-    Opened::Open(Box::new(PositionSim::new(r, venue, State::Pool(fill.state), venue.holdings(), rule, d, q, cfg)), i - off)
+    Ok(Opened::Open(Box::new(PositionSim::new(r, venue, State::Pool(fill.state), venue.holdings(), rule, d, q, cfg)), i - off))
 }
 
 /// The paper engine's curve entry (replay.py open_curve_position on `feed.curve_history`, spec §3.5 D4) from what the
