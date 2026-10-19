@@ -514,6 +514,68 @@ def recorder_view(now):
     }
 
 
+LIVE_PAD = 9_000  # slots (~1 h) of live price around a paper position's trades
+LIVE_MAX_FILES = 800  # at most this many segment files per chart (about 6 hours of one-minute segments)
+SOL_MINT = "So11111111111111111111111111111111111111112"
+_live_candles = {}  # (pool, lo, hi, newest segment) -> candles; small and bounded (LIVE_CACHE)
+LIVE_CACHE = 16
+
+
+def live_pool_candles(pool, slots, reversed_, now=None):
+    """1-minute price candles of one PumpSwap pool from the live recorder's segments (pump_amm Buy/SellEvent
+    parquet, the watchlist's trades), around the bot's trades: for tokens newer than the development store. Price
+    in SOL per token as the store's (labstore: SOL reserve / token reserve / 1000 after the trade); `reversed_`: the
+    pool's base is WSOL. Read-only, DuckDB in memory with a fixed budget (256 MB, one thread): the recorder and the
+    paper engine come first on the VPS. [] without a recorder or without trades of the pool."""
+    root, sample = recorder_root()
+    if sample or not slots:
+        return []
+    lo, hi = max(HOLDOUT[1], min(slots) - LIVE_PAD), max(slots) + LIVE_PAD
+    segs = [x for x in _segments_since(root, (now or time.time()) - 3 * 86_400)
+            if x["first_slot"] is not None and x["last_slot"] is not None and x["last_slot"] >= lo and x["first_slot"] <= hi]
+    if not segs:
+        return []
+    key = (pool, lo, hi, segs[0]["seq"], len(segs), bool(reversed_))
+    if key in _live_candles:
+        return _live_candles[key]
+    files = {ev: [f for x in segs[:LIVE_MAX_FILES // 2] for f in glob.glob(os.path.join(x["dir"], "pump_amm", ev, "*.parquet"))]
+             for ev in ("BuyEvent", "SellEvent")}
+    parts, params = [], []
+    for ev, base_col, quote_col in (("BuyEvent", "base_amount_out", "quote_amount_in"), ("SellEvent", "base_amount_in", "quote_amount_out")):
+        if files[ev]:
+            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, "timestamp" AS ts, pool_base_token_reserves AS b,
+                                    pool_quote_token_reserves AS q, {base_col} AS base_amt, {quote_col} AS quote_amt, '{ev}' AS ev
+                             FROM read_parquet(?, union_by_name = true) WHERE pool = ? AND slot BETWEEN ? AND ?""")
+            params += [files[ev], pool, lo, hi]
+    if not parts:
+        return []
+    rev = "true" if reversed_ else "false"
+    sql = f"""
+        WITH t AS ({" UNION ALL ".join(parts)}),
+        p AS (SELECT *, CASE WHEN {rev} THEN b::DOUBLE / NULLIF(q::DOUBLE, 0) ELSE q::DOUBLE / NULLIF(b::DOUBLE, 0) END / 1000 AS price,
+                     CASE WHEN {rev} THEN base_amt ELSE quote_amt END AS sol,
+                     (ev = 'BuyEvent') <> {rev} AS token_buy FROM t)
+        SELECT 'pool' AS venue, (ts // 60 * 60)::BIGINT AS time,
+               arg_min(price, (slot, tx_index, outer_ix, inner_ix)) AS open, max(price) AS high, min(price) AS low,
+               arg_max(price, (slot, tx_index, outer_ix, inner_ix)) AS "close", count(*) AS trades,
+               sum(sol) / 1e9 AS volume_quote, coalesce(sum(sol) FILTER (WHERE token_buy), 0) / 1e9 AS buy_quote
+        FROM p WHERE price > 0 AND ts > 0 GROUP BY 2 ORDER BY 2"""
+    import duckdb
+    con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+    try:
+        cur = con.execute(sql, params)
+        cols = [c[0] for c in cur.description]
+        out = [dict(zip(cols, r)) for r in cur.fetchall()]
+    except duckdb.Error:
+        out = []
+    finally:
+        con.close()
+    if len(_live_candles) >= LIVE_CACHE:
+        _live_candles.pop(next(iter(_live_candles)))
+    _live_candles[key] = out
+    return out
+
+
 def _latency(dirs):
     """Transport latency per transaction (receive time minus the server's created_at) over the newest segments'
     arrivals/*.parquet: p50, p90 and a 10-bucket histogram in ms. None without arrivals."""

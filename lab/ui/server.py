@@ -454,7 +454,8 @@ def api_triton(q):
 
 def api_paper_chart(q):
     """One paper position's chart: the bot's entries and exits on that key (journal) and the token's 1-minute
-    candles from the development data when it has them (a live token newer than the store has none yet)."""
+    candles from the development data when it has them; a live pool newer than the store gets them from the
+    recorder's segments (paper.live_pool_candles, the last 3 days)."""
     key = (q.get("key", [""])[0] or "").strip()
     if not (32 <= len(key) <= 44 and key.isalnum()):
         raise ValueError("unknown key")
@@ -481,6 +482,11 @@ def api_paper_chart(q):
             FROM pool_trades p JOIN slot_time st USING (slot)
             WHERE p.pool = ? AND p.slot >= ? AND p.slot < ? AND p.price > 0 GROUP BY 2 ORDER BY 2""", [key, lo, hi])
         out["unit"] = "price"
+    elif not out["candles"] and t.get("venue") == "pool" and slots and min(slots) >= paper.HOLDOUT[1]:
+        # A live token, newer than the development store: candles from the recorder's segments (last 3 days).
+        out["candles"] = paper.live_pool_candles(key, slots, t.get("orientation") == "reversed")
+        if out["candles"]:
+            out.update(unit="price", source="recorder")
     return out
 
 

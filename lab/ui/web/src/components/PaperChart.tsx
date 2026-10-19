@@ -8,11 +8,12 @@ import { DexLink, SolscanLink } from "./ui";
 
 // One paper position's chart (design v1, dashboard): candles of its token from the development data, with the
 // bot's own entries ("in") and exits ("uit ±x%") as markers. Tokens without a pump.fun history (most reversed
-// pools) get price candles straight from the store's pool trades.
+// pools) get price candles straight from the store's pool trades; a live pool newer than the store gets them from the
+// recorder's segments (source "recorder", the last 3 days).
 interface ChartData {
   key: string; mint?: string | null; symbol?: string | null; name?: string | null; venue: string | null; orientation: string | null;
   trades: { family: string; variant: string; side: "entry" | "exit"; slot: number; time: number | null; ret?: number | null; open?: boolean }[];
-  token: { supply_tokens: number } | null; candles: Candle[]; unit: "mcap" | "price";
+  token: { supply_tokens: number } | null; candles: Candle[]; unit: "mcap" | "price"; source?: "recorder";
 }
 const FRAMES = [{ s: 60, label: "1m" }, { s: 300, label: "5m" }, { s: 900, label: "15m" }, { s: 3600, label: "1u" }];
 const fmtVal = (v: number, unit: "mcap" | "price") => unit === "price"
@@ -56,10 +57,11 @@ export default function PaperChart({ k, height = 320, compact = false }: { k: st
             <div className="flex gap-2 items-center flex-wrap">
               <span className="font-extrabold text-lg" title={label(d.name, 40) || undefined}>{sym} / SOL</span>
               <span className="text-[11px] px-[7px] py-[3px] rounded-md bg-surface-2 text-fg-2 font-bold">{kind}</span>
+              {d.source === "recorder" && <span className="text-[11px] px-[7px] py-[3px] rounded-md bg-accent-soft text-accent-fg font-bold" title="Uit de segmenten van de live recorder (laatste 3 dagen)">live</span>}
               <DexLink mint={d.mint ?? d.key}>Dex ↗</DexLink>
               <SolscanLink mint={d.mint ?? d.key} />
             </div>
-            <span className="text-xs text-muted">{d.unit === "price" ? "Prijs" : "Marktwaarde"} per {FRAMES.find((f) => f.s === bucket)?.label} · <span className="text-accent-fg">▲</span> instap, <span className="text-buy">▼</span>/<span className="text-sell">▼</span> uitstap van de bot ({own.filter((t) => t.side === "exit").length}×)</span>
+            <span className="text-xs text-muted">{d.unit === "price" ? "Prijs (SOL per token)" : "Marktwaarde"} per {FRAMES.find((f) => f.s === bucket)?.label} · <span className="text-accent-fg">▲</span> instap, <span className="text-buy">▼</span>/<span className="text-sell">▼</span> uitstap van de bot ({own.filter((t) => t.side === "exit").length}×)</span>
           </div>
           {last != null && (
             <div className="ml-auto flex items-baseline gap-2.5">
@@ -80,7 +82,7 @@ export default function PaperChart({ k, height = 320, compact = false }: { k: st
       </div>
       {d.candles.length
         ? <div className="rounded-xl overflow-hidden"><PriceChart candles={d.candles} supply={d.token?.supply_tokens ?? 1} unit={d.unit} bucket={bucket} markers={markers} focus={focus} height={height} /></div>
-        : <p className="text-sm text-muted m-0">Geen koersdata voor deze token in de ontwikkeldata (live koersen komen met de recorder).</p>}
+        : <p className="text-sm text-muted m-0">Geen koersdata voor deze token: niet in de ontwikkeldata en niet in de recorder-segmenten van de laatste 3 dagen.</p>}
     </div>
   );
 }
