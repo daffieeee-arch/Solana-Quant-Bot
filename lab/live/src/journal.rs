@@ -99,6 +99,24 @@ impl Journal {
         Ok(())
     }
 
+    /// DELETE the rows whose key columns equal `key` (journal.py:88-89), in the open transaction as `put`'s writes. The
+    /// key cells bind with the types `put` binds (an integer t as INTEGER), so `k = ?` finds the row `put` wrote. Refused:
+    /// an empty key (Python would build `WHERE ` with nothing after it) and a column the table does not have.
+    pub fn delete(&mut self, table: &str, key: &[(&str, Value)]) -> Result<()> {
+        let t = self.table(table)?.clone();
+        if key.is_empty() {
+            bail!("a delete from {table} without a key");
+        }
+        if let Some((bad, _)) = key.iter().find(|(k, _)| !t.cols.iter().any(|c| c == k)) {
+            bail!("{table} has no column {bad}");
+        }
+        let cond: Vec<String> = key.iter().map(|(k, _)| format!("{k} = ?")).collect();
+        let sql = format!("DELETE FROM {} WHERE {}", t.name, cond.join(" AND "));
+        self.begin()?;
+        self.db.execute(&sql, params_from_iter(key.iter().map(|(_, v)| v.clone())))?;
+        Ok(())
+    }
+
     pub fn state(&mut self, k: &str, v: &str) -> Result<()> {
         self.put("state", &[("k", Value::Text(k.to_owned())), ("v", Value::Text(v.to_owned()))])
     }
@@ -150,6 +168,29 @@ mod tests {
         let state = t.iter().find(|t| t.name == "state").unwrap();
         assert_eq!((state.decl.as_str(), state.key.as_str(), state.cols.clone()), ("k TEXT, v TEXT", "k", vec!["k".to_owned(), "v".to_owned()]));
         assert_eq!(t.iter().find(|t| t.name == "fills").unwrap().key, "family, variant, key, t, side");
+    }
+
+    #[test]
+    fn a_delete_removes_the_row_put_wrote_and_refuses_a_bad_key() {
+        let dir = tmp("journal-delete");
+        let mut j = Journal::open(&dir).unwrap();
+        let key = |t: i64| vec![("family", Value::Text("F7".into())), ("variant", Value::Text("tp4_T600".into())),
+                                ("key", Value::Text("P".into())), ("t", Value::Integer(t))];
+        for t in [5, 6] {
+            let mut row = key(t);
+            row.push(("status", Value::Text("open".into())));
+            j.put("positions", &row).unwrap();
+        }
+        j.delete("positions", &key(5)).unwrap();
+        assert_eq!(j.count("positions").unwrap(), 1);
+        j.delete("positions", &[("t", Value::Text("6".into()))]).unwrap(); // a text '6' is not the integer 6
+        assert_eq!(j.count("positions").unwrap(), 1);
+        assert!(j.delete("positions", &[]).unwrap_err().to_string().contains("without a key"));
+        assert!(j.delete("positions", &[("slot", Value::Integer(1))]).unwrap_err().to_string().contains("no column slot"));
+        j.close().unwrap();
+        let j = Journal::open(&dir).unwrap(); // the delete was committed with the puts
+        assert_eq!(j.count("positions").unwrap(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
