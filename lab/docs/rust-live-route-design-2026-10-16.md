@@ -198,6 +198,11 @@ The estimates are agent working days plus NAS test cycles. Rust is built and tes
 
 **VPS limits for M3:** `lab-live` gets its own unit with `MemoryMax=2G`, `CPUQuota=100%` and `Nice=5`, like `lab-recorder`. The recorder stays at 2G. Together they fit the owner's VPS rules: 16 GB, sessions at 4G, live services first.
 
+**Reproducible binaries for M3's deploy:**
+- Every lab Rust build sources `lab/scripts/rust-repro.sh`. It maps the checkout to `/src`, CARGO_HOME to `/cargo` and an outside target dir to `/target`, in RUSTFLAGS and in CFLAGS.
+- So a commit's binary has the same sha256 from any checkout path. `nas_m1c4.sh` `STEP=repro` proves this with two clean builds at two paths.
+- The deploy can then check the binary it runs against the NAS build's sha256 of the same commit.
+
 **M3 requirements from C4's plateau (spec research/m1-c4-plateau-spec-2026-10-19.md v0.6, E8, decided 2026-10-19):**
 - **Why they are needed.** `lab-live`'s key interner grows with every new key, mostly new traders: about 0.25 M keys and 15–55 MB a day on job 91's segments. Every `Id` is shared by almost every structure, so a sweep or refcount would mean renumbering them all.
 - **What C4 does instead.** C4 bounds the interner explicitly: ≤ 100 MB of growth per 24 h, and more than 100 days of room under `MemoryMax=8G`.

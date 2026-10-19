@@ -8,7 +8,14 @@
 #
 #   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (the segments against the
 #                chunks on the fixture, and every earlier test) and of ALL of lab/core, named tests required to have run;
-#                then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab.
+#                then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab. Since
+#                STEP=repro, through lab/scripts/rust-repro.sh: cargo reaches the checkout by one fixed path
+#                ($LAB_RUST_ROOT/lab, a symlink, under a lock) and maps it and CARGO_HOME to /src and /cargo, so the
+#                binary's sha256 does not depend on the checkout's path.
+#   STEP=repro   (bookworm runner): the proof of that: two release builds of this commit from two copies of lab/ at
+#                other paths (another depth and length), each with a fresh target dir; their sha256 must be equal, and
+#                equal to STEP=build's binary when it is there (run STEP=build first). Each binary is searched for its
+#                copy's path, CARGO_HOME, the link's root and /lab/code (expected: none).
 #   STEP=smoke   (the lab Python 3.13 runner): lab-live paper with risk on over job 91's segments (fwd1053-1054, slots
 #                454,896,000-455,759,999; built by the shadow recorder from OF1, the live form, no live recording), with
 #                the paper start's groups and cost scenario (paper.engine journals them on a one-slot run of the same
@@ -40,6 +47,7 @@
 #                config mode) side by side, each with its GREEN measure line in job.log.
 #
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m1c4.sh      (bookworm runner)
+#   STEP=repro LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m1c4.sh      (bookworm runner; short: two clean builds)
 #   STEP=smoke LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                       (lab runner; short)
 #   STEP=plateau LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                     (lab runner; short: 3 runs over ~52 h of input, P1 ~1 min)
 #   STEP=m2 LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                          (lab runner; long: paper.engine twice)
@@ -54,7 +62,7 @@ COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
 OUT=$DATA/backtests/live-m1c4-${COMMIT:0:7}
 mkdir -p "$OUT"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
-: "${STEP:?STEP=build, smoke, ab, plateau or m2}"
+: "${STEP:?STEP=build, repro, smoke, ab, plateau or m2}"
 log "start $STEP commit=$COMMIT out=$OUT"
 SEGMENTS=$DATA/backtests/shadow-arms-1053-1054-2c3e5fe/rec/segments  # job 91's (#299, 2c3e5fe), read again by 99m
 STORE=$DATA/store/fwd1053-1054.duckdb
@@ -73,7 +81,10 @@ if [ "$STEP" = build ]; then
       touch src/*.rs src/*/*.rs ../extractor/src/*.rs 2>/dev/null || true
     fi
   fi
-  cargo test --release --locked > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
+  . "$REPO/lab/scripts/rust-repro.sh"
+  rust_repro "$REPO"
+  log "cargo through $LAB_RUST -> $(readlink "$LAB_RUST"); RUSTFLAGS=$RUSTFLAGS CFLAGS=$CFLAGS"
+  cargo test --release --locked --manifest-path "$LAB_RUST/live/Cargo.toml" > "$OUT/cargo-test.log" 2>&1 || { tail -40 "$OUT/cargo-test.log" | tee -a "$OUT/job.log"; log "cargo test: FAILED"; exit 1; }
   grep -E "^test |^test result|^running" "$OUT/cargo-test.log" | tee -a "$OUT/job.log"
   for t in legs_read::tests::segments_give_the_chunks_events_and_count_their_backfill legs_read::tests::the_chunks_become_the_stores_event_stream \
            legs_read::tests::the_mem_log_view_keeps_the_farmer_totals_and_counts_the_segments \
@@ -88,16 +99,55 @@ if [ "$STEP" = build ]; then
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
-  (cd ../core && cargo test --release --locked > "$OUT/cargo-test-core.log" 2>&1) || { tail -40 "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"; log "cargo test lab-core: FAILED"; exit 1; }
+  cargo test --release --locked --manifest-path "$LAB_RUST/core/Cargo.toml" > "$OUT/cargo-test-core.log" 2>&1 || { tail -40 "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"; log "cargo test lab-core: FAILED"; exit 1; }
   grep -E "^test result" "$OUT/cargo-test-core.log" | tee -a "$OUT/job.log"
   for t in signals::tests::the_windowed_structures_stay_bounded_over_thirty_hours mem::tests::the_estimates_are_capacity_times_size; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test-core.log" || { log "cargo test lab-core: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test lab-core: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test-core.log") tests ok)"
-  cargo build --release --locked >> "$OUT/cargo-test.log" 2>&1 || { tail -20 "$OUT/cargo-test.log"; log "cargo build: FAILED"; exit 1; }
+  cargo build --release --locked --manifest-path "$LAB_RUST/live/Cargo.toml" >> "$OUT/cargo-test.log" 2>&1 || { tail -20 "$OUT/cargo-test.log"; log "cargo build: FAILED"; exit 1; }
   mkdir -p "$OUT/bin" && install -m 755 target/release/lab-live "$OUT/bin/lab-live"
   sha256sum "$OUT/bin/lab-live" | tee -a "$OUT/job.log"
   log "build: done"
+  exit 0
+fi
+
+if [ "$STEP" = repro ]; then
+  rustc -V | tee -a "$OUT/job.log"
+  cargo -V | tee -a "$OUT/job.log"
+  . "$REPO/lab/scripts/rust-repro.sh"
+  home=${CARGO_HOME:-$HOME/.cargo}
+  rm -rf "$OUT/repro"
+  dirs=("$OUT/repro/a" "$OUT/repro/another-checkout/one-level-deeper/x")
+  shas=()
+  for d in "${dirs[@]}"; do
+    mkdir -p "$d"
+    tar -C "$REPO" --exclude=target --exclude=__pycache__ --exclude=.pytest_cache -cf - lab | tar -xf - -C "$d"
+    rust_repro "$d"
+    log "repro: building $d through $LAB_RUST (RUSTFLAGS=$RUSTFLAGS)"
+    cargo build --release --locked --manifest-path "$LAB_RUST/live/Cargo.toml" > "$d.log" 2>&1 \
+      || { tail -20 "$d.log" | tee -a "$OUT/job.log"; log "repro: the build of $d FAILED"; exit 1; }
+    bin=$d/lab/live/target/release/lab-live
+    sha=$(sha256sum "$bin" | cut -d' ' -f1)
+    shas+=("$sha")
+    left=$(for p in "$d" "$(cd "$d" && pwd -P)" "$home" "$(dirname "$LAB_RUST")" /lab/code; do
+             printf '%s:%s ' "$p" "$(grep -c -F -a "$p" "$bin" || true)"; done)
+    log "repro: $sha (paths left in it: $left)"
+  done
+  rust_repro "$REPO"  # the link back to this checkout
+  ref=""
+  if [ -x "$OUT/bin/lab-live" ]; then
+    ref=$(sha256sum "$OUT/bin/lab-live" | cut -d' ' -f1)
+    log "repro: STEP=build's binary $ref (from $REPO)"
+  fi
+  if [ "${shas[0]}" = "${shas[1]}" ] && { [ -z "$ref" ] || [ "$ref" = "${shas[0]}" ]; }; then
+    log "lab-live repro: two copies at other paths give ${shas[0]}${ref:+, equal to STEP=build's}: GREEN"
+    rm -rf "${dirs[0]}/lab/live/target" "${dirs[1]}/lab/live/target"
+  else
+    cmp "${dirs[0]}/lab/live/target/release/lab-live" "${dirs[1]}/lab/live/target/release/lab-live" | head -3 | tee -a "$OUT/job.log" || true
+    log "lab-live repro: ${shas[0]} vs ${shas[1]}${ref:+ (STEP=build's $ref)}: RED (both target dirs kept)"
+    exit 1
+  fi
   exit 0
 fi
 
