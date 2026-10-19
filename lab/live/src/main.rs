@@ -104,8 +104,8 @@ fn parse_args(argv: &[String]) -> Result<Args> {
                     lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]\n       \
                     lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR [--dev-bounds LO HI] \
                     [--summary FILE] [--trace FILE]\n       \
-                    lab-live paper --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...] \
-                    --cost-scenario FILE --ignore-risk --journal DIR [--summary FILE] [--trace FILE]"),
+                    lab-live paper (--chunks-root DIR | --segments DIR) --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...] \
+                    --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--trace FILE]"),
     }
     let (mut chunks_root, mut segments_root, mut from, mut to, mut journal, mut order_out) = (None, None, None, None, None, None);
     while let Some(flag) = it.next() {
@@ -286,11 +286,12 @@ fn parse_signals_args(argv: &[String]) -> Result<signals::SignalsArgs> {
 fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
     let mut it = argv.iter();
     let (mut chunks_root, mut snapshot, mut from, mut to, mut groups, mut journal) = (None, None, None, None, None, None);
-    let (mut variants, mut cost_scenario, mut ignore_risk, mut summary, mut trace) = (None, None, false, None, None);
+    let (mut variants, mut cost_scenario, mut ignore_risk, mut summary, mut trace, mut segments) = (None, None, false, None, None, None);
     while let Some(flag) = it.next() {
         let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--chunks-root" => chunks_root = Some(PathBuf::from(val()?)),
+            "--segments" => segments = Some(PathBuf::from(val()?)),
             "--snapshot" => snapshot = Some(PathBuf::from(val()?)),
             "--from" => from = Some(val()?.parse::<u64>().context("--from")?),
             "--to" => to = Some(val()?.parse::<u64>().context("--to")?),
@@ -310,8 +311,14 @@ fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
         bail!("--from must be below --to");
     }
     let variants = variants.filter(|v| !v.is_empty()).context("--variants: the primary group's specs (paper.engine's default F7 grid is M4)")?;
+    let chunks_root = match (chunks_root, &segments) {
+        (Some(_), Some(_)) => bail!("--chunks-root or --segments, not both"),
+        (Some(c), None) => c,
+        (None, Some(_)) => PathBuf::new(),
+        (None, None) => bail!("--chunks-root or --segments"),
+    };
     Ok(paper::PaperArgs {
-        chunks_root: chunks_root.context("--chunks-root")?, snapshot: snapshot.context("--snapshot")?, from, to,
+        chunks_root, segments, snapshot: snapshot.context("--snapshot")?, from, to,
         groups: groups.context("--groups")?, variants, cost_scenario: cost_scenario.context("--cost-scenario")?, ignore_risk,
         journal: journal.context("--journal")?, summary, trace,
     })
@@ -341,7 +348,12 @@ mod tests {
         let a = parse_paper_args(&args(&format!("{base} --ignore-risk --summary /m --trace /t"))).unwrap();
         assert_eq!((a.from, a.to, a.variants.clone(), a.ignore_risk, a.summary.is_some(), a.trace.is_some()),
                    (10, 20, vec!["0.04:600".to_owned(), "flow300_H6".to_owned()], true, true, true));
-        assert!(!parse_paper_args(&args(base)).unwrap().ignore_risk); // run() refuses it, naming C3
+        assert!(!parse_paper_args(&args(base)).unwrap().ignore_risk); // risk on (C3)
+        // the recorder's segments instead of the chunks (C4-1): one of the two, never both
+        let seg = parse_paper_args(&args(&base.replace("--chunks-root /c", "--segments /seg"))).unwrap();
+        assert_eq!(seg.segments.as_deref(), Some(std::path::Path::new("/seg")));
+        assert!(parse_paper_args(&args(&format!("{base} --segments /seg"))).err().is_some_and(|e| e.to_string().contains("not both")));
+        assert!(parse_paper_args(&args(&base.replace("--chunks-root /c ", ""))).is_err());
         for bad in [base.replace("--variants 0.04:600,flow300_H6 ", ""), base.replace("0.04:600,flow300_H6", ","),
                     base.replace("--cost-scenario /k ", ""), base.replace("--groups /g ", ""), base.replace("--to 20", "--to 10"),
                     format!("{base} --dev-bounds 0 5")] {
