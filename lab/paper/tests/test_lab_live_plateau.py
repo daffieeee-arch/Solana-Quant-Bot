@@ -195,6 +195,16 @@ def test_the_cli_writes_the_report_and_one_line(tmp_path, capsys):
     assert plateau.main(["--p1", str(tmp_path / "none.jsonl"), "--spec-sha", "x", "--out", str(out)]) == 2
 
 
+def test_the_windowed_set_is_the_specs():
+    # research/m1-c4-plateau-spec-2026-10-19.md v0.7 (sha 2ddd41bb..., lab/live/nas_m1c4.sh SPEC_SHA) §2 lists the
+    # window-bounded structures (E6, E7 wallet_txs, E9 slot_buf). A change here needs a new spec version and a new pin.
+    assert plateau.WINDOWED == {
+        "recent_keys", "recent_legs", "farm_pools", "farm_items", "hour_events", "pool_seen", "pool_last", "slot_legs",
+        "slot_written", "legs_buffer", "slot_buf", "pending", "pending_keys", "grad_keys", "open_positions", "open_order",
+        "grad_wait", "ops", "wallet_txs"}
+    assert not plateau.GATE_WINDOWED and plateau.KEYS not in plateau.WINDOWED
+
+
 @pytest.mark.parametrize("name", sorted(plateau.WINDOWED))
 def test_the_windowed_names_are_memlog_structures(name):
     # every name the gate treats as windowed is one lab-core or the replay reports (memlog.rs `group` puts them in state

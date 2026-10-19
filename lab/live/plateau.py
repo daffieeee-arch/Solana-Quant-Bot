@@ -75,8 +75,8 @@ KEYS = "interned_keys"  # spec v0.6 (E8 a): an absolute bound on its bytes growt
 KEYS_BOUND = 100 * MB  # per 24 h
 # Bounded by construction: a window (lab-core's the_windowed_structures_stay_bounded_over_thirty_hours), the slot or
 # unit they belong to, the positions in flight, the ops queue (drained per event), WALLET_DEPTH (wallet_txs, v0.5).
-# They follow the chain's activity. slot_buf (M3-07, added after spec v0.6 with LAB's OK pending): one slot's events,
-# reused, so its capacity is the largest slot so far, the same bound as slot_legs.
+# They follow the chain's activity. slot_buf (M3-07; spec v0.7, E9): one slot's events, reused, so its capacity is the
+# largest slot so far, the same bound as slot_legs. The set is spec §2's list (test_the_windowed_set_is_the_specs).
 WINDOWED = frozenset({
     "recent_keys", "recent_legs", "farm_pools", "farm_items", "hour_events", "pool_seen", "pool_last", "slot_legs",
     "slot_written", "legs_buffer", "slot_buf", "pending", "pending_keys", "grad_keys", "open_positions", "open_order",
@@ -332,7 +332,7 @@ def report(res, spec_sha, others, run):
            "## Gates (spec §2)", "", "| check | value | limit | ok |", "|---|---|---|---|"]
     for c in res["checks"]:
         out.append(f"| {c['check']} | {c['value']} | {c['limit']} | {'yes' if c['ok'] else '**no**'} |")
-    out += ["", f"Structures: gated {'all' if GATE_WINDOWED else 'the ones not bounded by construction (spec v0.4-v0.6)'}; entries "
+    out += ["", f"Structures: gated {'all' if GATE_WINDOWED else 'the ones not bounded by construction (spec v0.4-v0.7)'}; entries "
             "over the window; a gated one fails only when its entries grow and its bytes (entries' growth x bytes per entry, v0.6) grow by >= 1 MB in 24 h; interned_keys only when its bytes grow by > 100 MB in 24 h (v0.6, post-hoc after the v0.5 run); `max / "
             "warm-up max` is the window's max over the max of the 24 h before it (reported, for the windowed ones above all); "
             "bytes are bytes_est, capacity x size_of, a lower bound (interned_keys and farmer_hist: their table's allocation, every bucket, "

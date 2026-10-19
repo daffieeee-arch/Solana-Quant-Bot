@@ -30,7 +30,7 @@
 #                too; a second measure line gives the log's lines and minutes, RSS and heap, the time per event (replay
 #                processing time, not live latency), the largest structures at the end, and the seconds of the first
 #                (cold) run and of the run with the log.
-#   STEP=plateau (the lab Python 3.13 runner; C4-3): spec v0.6's gate (SPEC_SHA below; refused otherwise, logged before the
+#   STEP=plateau (the lab Python 3.13 runner; C4-3): the spec's gate as pinned (v0.7, SPEC_SHA below; refused otherwise, logged before the
 #                first event). plateau.py's tests first; then P1 and P2 (lab-live paper --mem-log on job 91's segments,
 #                risk on, the paper start's files) and P3 (the same range from the chunks, the upper bound) side by side;
 #                run.json (P1/P2 journal sha256 without the run's summary, the wallets, exit codes, segments read);
@@ -53,7 +53,7 @@
 #                long-b: lab-live on those chunks (the chunk form, the upper bound), plateau.py --form chunks: reported,
 #                not gated (spec E5). long-shadow: paper.shadow on dev2 over the range with job 91's flags, writing the
 #                recorder's segments to $LONG_SHADOW (36-43 h, ended after LONG_SHADOW_HOURS, default 46). long-a:
-#                lab-live P1 and P2 on those segments, judged by spec v0.6 as pinned on the last 24 h, plus plateau.py
+#                lab-live P1 and P2 on those segments, judged by spec v0.7 as pinned on the last 24 h, plus plateau.py
 #                --daily (reported: a day after the warm-up above 150 MB must be explained there before M3 builds on it).
 #   STEP=m2      (the lab Python 3.13 runner; C4-3, M2 in replay): on fwd1053-1054 [LO, HI) the legs parity (the whole
 #                store), then the signals parity and RC4 (lab-live paper against paper.engine, the paper start's files,
@@ -84,7 +84,8 @@ SEGMENTS=$DATA/backtests/shadow-arms-1053-1054-2c3e5fe/rec/segments  # job 91's 
 STORE=$DATA/store/fwd1053-1054.duckdb
 LO=454896000
 HI=455760000
-SPEC_SHA=e14bdf24c75c00318daef017a96a5ebe56545b835a0e31ef05be7c5cb2e23291   # research/m1-c4-plateau-spec-2026-10-19.md v0.6 (E8)
+SPEC_SHA=2ddd41bb600d0d6f1d888371c4cd6e0319420d213e178d1cb62dee8474688d97   # research/m1-c4-plateau-spec-2026-10-19.md v0.7 (E9: slot_buf
+#   window-bounded; v0.6 e14bdf24 is archived beside it, and its thresholds are unchanged)
 AB_REF_DIR=${AB_REF_DIR-$DATA/backtests/live-m1c4-8a3d21b/ab1}   # C4-4's P1 journal on these segments (8a3d21b, 99zza)
 # C4 option (c), research/m1-c4-long-replay-design-2026-10-19.md: dev2's epochs 1033-1036 from its start (8 chunks)
 LONG_STORE=$DATA/store/dev2.duckdb
@@ -320,12 +321,12 @@ fi
 
 if [ "$STEP" = long-a ]; then
   # C4 option (c) A, part 2: lab-live P1 and P2 on long-shadow's segments (risk on, the paper start's files, a dev2
-  # snapshot from the store's start), judged by spec v0.6 as pinned on the last 24 h, plus the per-day view (reported:
+  # snapshot from the store's start), judged by spec v0.7 as pinned on the last 24 h, plus the per-day view (reported:
   # a day after the warm-up above 150 MB must be explained in it before M3 builds on it).
   SPEC=$DATA/research/m1-c4-plateau-spec-2026-10-19.md
   got=$(sha256sum "$SPEC" | cut -d' ' -f1)
   log "spec $SPEC sha256 $got (pinned $SPEC_SHA)"
-  [ "$got" = "$SPEC_SHA" ] || { log "long-a: the spec is not v0.6 as pinned: refused"; exit 1; }
+  [ "$got" = "$SPEC_SHA" ] || { log "long-a: the spec is not v0.7 as pinned: refused"; exit 1; }
   "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
     || { tail -15 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"; log "plateau.py tests: RED"; exit 1; }
   tail -1 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"
@@ -374,7 +375,7 @@ EOF
     --out "$OUT/long-a.md" --daily | tee -a "$OUT/job.log"
   sed -n '/^Days after the warm-up above/,/^$/p' "$OUT/long-a.md" | tee -a "$OUT/job.log"
   (cd "$OUT" && sha256sum long-a.md long-a-run.json long-a1.jsonl long-a2.jsonl) | tee -a "$OUT/job.log"
-  if tail -n 40 "$OUT/job.log" | grep -q "^lab-live plateau .*GREEN$"; then log "long-a: GREEN (v0.6, last 24 h)"; else log "long-a: RED (long-a.md says why)"; fi
+  if tail -n 40 "$OUT/job.log" | grep -q "^lab-live plateau .*GREEN$"; then log "long-a: GREEN (v0.7, last 24 h)"; else log "long-a: RED (long-a.md says why)"; fi
   exit 0
 fi
 
@@ -433,11 +434,11 @@ EOF
 fi
 
 if [ "$STEP" = plateau ]; then
-  # The spec as pinned (v0.6, E8), into job.log before the first event; refused otherwise.
+  # The spec as pinned (v0.7, E9), into job.log before the first event; refused otherwise.
   SPEC=$DATA/research/m1-c4-plateau-spec-2026-10-19.md
   got=$(sha256sum "$SPEC" | cut -d' ' -f1)
   log "spec $SPEC sha256 $got (pinned $SPEC_SHA)"
-  [ "$got" = "$SPEC_SHA" ] || { log "plateau: the spec is not v0.6 as pinned: refused"; exit 1; }
+  [ "$got" = "$SPEC_SHA" ] || { log "plateau: the spec is not v0.7 as pinned: refused"; exit 1; }
   "$PY" -m pytest -q -p no:cacheprovider paper/tests/test_lab_live_plateau.py > "$OUT/plateau-tests.log" 2>&1 \
     || { tail -15 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"; log "plateau.py tests: RED"; exit 1; }
   tail -1 "$OUT/plateau-tests.log" | tee -a "$OUT/job.log"
