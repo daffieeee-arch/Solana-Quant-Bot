@@ -1107,6 +1107,24 @@
    "text": "max_exposure_sol: 2.5e+0\nsize_sol: 0.5\nmax_open_positions: 5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
   },
   {
+   "name": "signed_dot_decimal_for_an_int",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "reason: risk config invalid: ValueError invalid literal for int() with base 10: '-.5'"
+   },
+   "text": "max_open_positions: -.5\nsize_sol: 0.5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
+  },
+  {
+   "name": "signed_dot_decimal_for_the_families",
+   "kind": "text",
+   "rust": "refused",
+   "python": {
+    "record": "reason: risk config invalid: unknown families ['+', '.', '5']"
+   },
+   "text": "families: +.5\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\npool_cooldown_h: 24\n"
+  },
+  {
    "name": "octal_looking_int",
    "kind": "text",
    "rust": "refused",

@@ -6,8 +6,8 @@
 //! - **The subset.** `key: value` lines at column 0, blank lines and `#` comments (at a line's start, or after a space),
 //!   LF or CRLF line ends and a leading BOM. A value is one of what PyYAML 1.1 resolves it to:
 //!   - an int `[-+]?(0|[1-9][0-9]*)` (no octal-looking `010`, no `_`, no `0x`);
-//!   - a decimal `[-+]?([0-9]+\.[0-9]*|\.[0-9]+)` (no exponent: PyYAML resolves `1e9` to a string, `1e+9` to a float,
-//!     and Python's int() treats them differently);
+//!   - a decimal `[-+]?[0-9]+\.[0-9]*` or `\.[0-9]+` (no exponent: PyYAML resolves `1e9` to a string, `1e+9` to a
+//!     float, and Python's int() treats them differently; no signed `-.5`, a string to PyYAML);
 //!   - a YAML 1.1 bool word (`yes`, `No`, `ON`, `off`, `true`, …);
 //!   - a plain word `[A-Za-z][A-Za-z0-9_]*` that is not a bool or null word (a string);
 //!   - a flow list `[a, b]` of plain words and quoted words (`'…'`, `"…"` over `[A-Za-z0-9_]*`).
@@ -138,10 +138,13 @@ fn is_int(s: &str) -> bool {
     d == "0" || (d.starts_with(|c: char| ('1'..='9').contains(&c)) && d.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// PyYAML 1.1's float forms without an exponent: `[-+]?[0-9]+\.[0-9]*` and the unsigned `\.[0-9]+`. A signed `-.5`
+/// is a string to PyYAML (LAB review on #383), so it is refused here, not read as a float.
 fn is_decimal(s: &str) -> bool {
+    let signed = s.starts_with(['+', '-']);
     let d = s.strip_prefix(['+', '-']).unwrap_or(s);
     let Some((a, b)) = d.split_once('.') else { return false };
-    a.bytes().all(|x| x.is_ascii_digit()) && b.bytes().all(|x| x.is_ascii_digit()) && !(a.is_empty() && b.is_empty())
+    a.bytes().all(|x| x.is_ascii_digit()) && b.bytes().all(|x| x.is_ascii_digit()) && !(a.is_empty() && (signed || b.is_empty()))
 }
 
 /// A list item: a plain or quoted word, as the string PyYAML makes of it.
@@ -329,7 +332,7 @@ mod tests {
         assert_eq!(value_of("ON"), Some(Val::Bool(true)));
         assert_eq!(value_of("F7"), Some(Val::Word("F7".into())));
         assert_eq!(value_of("[F7, 'a', \"\"]"), Some(Val::List(vec!["F7".into(), "a".into(), String::new()])));
-        for refused in ["", ".", "1e9", "1.5e+3", "010", "0x10", "1_000", "~", "null", "'x'", "[F7,]", "[yes]", "[7]", "[[F7]]", "{a: 1}",
+        for refused in ["", ".", "-.5", "+.5", "1e9", "1.5e+3", "010", "0x10", "1_000", "~", "null", "'x'", "[F7,]", "[yes]", "[7]", "[[F7]]", "{a: 1}",
                         "_x", "[\"a b\"]", "'"] {
             assert_eq!(value_of(refused), None, "{refused:?}");
         }

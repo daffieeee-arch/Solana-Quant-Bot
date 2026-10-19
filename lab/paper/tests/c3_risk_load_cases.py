@@ -13,7 +13,7 @@ reason of `(None, reason)`, or the exception risk.load lets through. `rust` says
 The subset (lab/live/src/risk.rs): `key: value` lines at column 0, blank lines, `#` comments (at a line's start, or after
 a space), LF or CRLF line ends and a leading BOM; no tab, no control character, no other YAML line break (a lone CR, NEL,
 LS, PS). A value is an int (`[-+]?(0|[1-9][0-9]*)`), a decimal without exponent
-(`[-+]?([0-9]+\\.[0-9]*|\\.[0-9]+)`), a YAML 1.1 bool word, a plain word (`[A-Za-z][A-Za-z0-9_]*`, not a bool, null or
+(`[-+]?[0-9]+\\.[0-9]*` or the unsigned `\\.[0-9]+`), a YAML 1.1 bool word, a plain word (`[A-Za-z][A-Za-z0-9_]*`, not a bool, null or
 inf/nan word), or a flow list `[a, b]` of plain or quoted words. Everything else is refused, never interpreted.
 """
 
@@ -107,6 +107,8 @@ def cases():
     # Outside the subset: refused by lab-live whatever Python makes of it.
     c += [("exponent_no_dot", "text", _set("size_sol", "1e9"), refused),
           ("exponent_after_dot", "text", _set("max_exposure_sol", "2.5e+0"), refused),
+          ("signed_dot_decimal_for_an_int", "text", _set("max_open_positions", "-.5"), refused),  # a string to PyYAML
+          ("signed_dot_decimal_for_the_families", "text", _set("families", "+.5"), refused),
           ("octal_looking_int", "text", _set("max_open_positions", "010"), refused),
           ("leading_zero_int", "text", _set("max_open_positions", "09"), refused),
           ("int_beyond_i64", "text", _set("max_open_positions", "99999999999999999999"), refused),
