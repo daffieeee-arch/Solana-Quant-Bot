@@ -116,6 +116,8 @@ pub static VARIANTS: [Variant; 3] = [
 pub enum VariantError {
     /// A name outside M1's table.
     Unknown { variant: String },
+    /// The same, named by a group of the run (check_groups): with the group's name and segments.
+    UnknownInGroup { group: String, segments: Option<[bool; 3]>, variant: String },
     /// A flow variant in a group whose segments are not exactly [pool_reversed].
     FlowSegments { group: String, variant: String, segments: Option<[bool; 3]> },
     /// A variant name used twice across the groups (engine.py:237-239 refuses it too).
@@ -134,11 +136,13 @@ impl fmt::Display for VariantError {
             VariantError::Unknown { variant } => {
                 write!(f, "variant {variant:?} is not one of M1's exit variants ({m1}): its exit rule comes in M4")
             }
+            VariantError::UnknownInGroup { group, segments, variant } => {
+                let segs = segments_text(*segments);
+                write!(f, "group {group:?} (segments {segs}): variant {variant:?} is not one of M1's exit variants ({m1}): ")?;
+                write!(f, "its exit rule comes in M4")
+            }
             VariantError::FlowSegments { group, variant, segments } => {
-                let segs = segments.map_or("null".to_owned(), |s| {
-                    let on: Vec<&str> = Segment::ALL.iter().filter(|g| s[g.index()]).map(|g| g.as_str()).collect();
-                    format!("[{}]", on.join(", "))
-                });
+                let segs = segments_text(*segments);
                 write!(f, "group {group:?}: the flow variant {variant:?} runs in M1 only with segments exactly [pool_reversed], ")?;
                 write!(f, "not {segs}; other flow setups come in M4")
             }
@@ -160,6 +164,14 @@ impl fmt::Display for VariantError {
 }
 
 impl std::error::Error for VariantError {}
+
+/// A group's segments as the groups state lists them: null, or the names in order.
+fn segments_text(segments: Option<[bool; 3]>) -> String {
+    segments.map_or("null".to_owned(), |s| {
+        let on: Vec<&str> = Segment::ALL.iter().filter(|g| s[g.index()]).map(|g| g.as_str()).collect();
+        format!("[{}]", on.join(", "))
+    })
+}
 
 /// The table row of a name; any other name is refused (M4).
 pub fn variant(name: &str) -> Result<&'static Variant, VariantError> {
@@ -198,7 +210,8 @@ pub fn check_groups(groups: &[GroupSpec]) -> Result<(), VariantError> {
     let mut names = HashSet::new();
     for g in groups {
         // Python's order (engine.py:162-166): every name of the group, then its segments
-        let vs = g.variants.iter().map(|n| variant(n)).collect::<Result<Vec<_>, _>>()?;
+        let named = |n: &String| VariantError::UnknownInGroup { group: g.name.clone(), segments: g.segments, variant: n.clone() };
+        let vs = g.variants.iter().map(|n| variant(n).map_err(|_| named(n))).collect::<Result<Vec<_>, _>>()?;
         if let Some(v) = vs.iter().find(|v| v.kind.needs_flows() && !flow_segments_ok(g.segments)) {
             return Err(VariantError::FlowSegments { group: g.name.clone(), variant: v.name.to_owned(), segments: g.segments });
         }
@@ -579,7 +592,13 @@ mod tests {
         }
         // An unknown name is refused before a duplicate and before the segments.
         let gs = [group("K3", true, &["tp4_T600"], None), group("H", false, &["tp4_T600", "trail3_T600"], None)];
-        assert_eq!(check_groups(&gs), Err(VariantError::Unknown { variant: "trail3_T600".into() }));
+        let e = check_groups(&gs).unwrap_err();
+        assert_eq!(e, VariantError::UnknownInGroup { group: "H".into(), segments: None, variant: "trail3_T600".into() });
+        // The refusal names the group and its segments (LAB review on #377).
+        let gs = [group("H", true, &["flow300_H6", "hold180"], Some([false, false, true]))];
+        let msg = check_groups(&gs).unwrap_err().to_string();
+        assert!(msg.contains(r#"group "H" (segments [pool_reversed]): variant "hold180""#) && msg.contains("M4"), "{msg}");
+        assert!(e.to_string().contains("(segments null)"), "{e}");
     }
 
     #[test]

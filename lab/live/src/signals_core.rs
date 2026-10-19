@@ -247,11 +247,12 @@ impl<K: KeyNames> N2Keys for Sha2Keys<'_, K> {
     }
 }
 
-/// One journal cell as SQLite stores it (signals.rs makes rusqlite values of them).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// One journal cell as SQLite stores it (signals.rs makes rusqlite values of them); Real is an exits row's ret.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Cell {
     Null,
     Int(i64),
+    Real(f64),
     Text(String),
 }
 
@@ -372,36 +373,36 @@ pub(crate) mod tests {
         }
     }
 
-    fn field<'a>(e: &'a Value, k: &str) -> Result<&'a Value> {
+    pub(crate) fn field<'a>(e: &'a Value, k: &str) -> Result<&'a Value> {
         e.get(k).with_context(|| format!("no field {k} in {e}"))
     }
 
-    fn u(e: &Value, k: &str) -> Result<u64> {
+    pub(crate) fn u(e: &Value, k: &str) -> Result<u64> {
         field(e, k)?.as_u64().with_context(|| format!("{k} is no u64 in {e}"))
     }
 
-    fn i(e: &Value, k: &str) -> Result<i64> {
+    pub(crate) fn i(e: &Value, k: &str) -> Result<i64> {
         field(e, k)?.as_i64().with_context(|| format!("{k} is no i64 in {e}"))
     }
 
-    fn small(e: &Value, k: &str) -> Result<u32> {
+    pub(crate) fn small(e: &Value, k: &str) -> Result<u32> {
         Ok(u32::try_from(u(e, k)?)?)
     }
 
-    fn b(e: &Value, k: &str) -> Result<bool> {
+    pub(crate) fn b(e: &Value, k: &str) -> Result<bool> {
         field(e, k)?.as_bool().with_context(|| format!("{k} is no bool in {e}"))
     }
 
-    fn s<'a>(e: &'a Value, k: &str) -> Result<&'a str> {
+    pub(crate) fn s<'a>(e: &'a Value, k: &str) -> Result<&'a str> {
         field(e, k)?.as_str().with_context(|| format!("{k} is no string in {e}"))
     }
 
-    fn ou(e: &Value, k: &str) -> Result<Option<u64>> {
+    pub(crate) fn ou(e: &Value, k: &str) -> Result<Option<u64>> {
         let v = field(e, k)?;
         if v.is_null() { Ok(None) } else { v.as_u64().map(Some).with_context(|| format!("{k} is no u64 in {e}")) }
     }
 
-    fn os<'a>(e: &'a Value, k: &str) -> Result<Option<&'a str>> {
+    pub(crate) fn os<'a>(e: &'a Value, k: &str) -> Result<Option<&'a str>> {
         let v = field(e, k)?;
         if v.is_null() { Ok(None) } else { v.as_str().map(Some).with_context(|| format!("{k} is no string in {e}")) }
     }
@@ -413,7 +414,7 @@ pub(crate) mod tests {
     ];
 
     /// A case's event (FORMAT events, events.curve, events.pool) as lab_core's Event, its keys interned.
-    fn event(e: &Value, keys: &mut CaseKeys) -> Result<Event> {
+    pub(crate) fn event(e: &Value, keys: &mut CaseKeys) -> Result<Event> {
         let order = Order {
             slot: u(e, "slot")?,
             tx: small(e, "tx")?,
@@ -492,10 +493,11 @@ pub(crate) mod tests {
 
     /// A row in the C1b projection of paper/journal_diff.py `signal_row` (FORMAT expect): the journal's columns of the
     /// row's cells (NULL where none), `gate`, then status and reason.
-    fn projection(cells: &[(&str, Cell)]) -> Map<String, Value> {
+    pub(crate) fn projection(cells: &[(&str, Cell)]) -> Map<String, Value> {
         let col = |c: &str| match cells.iter().find(|x| x.0 == c).map(|x| &x.1) {
             None | Some(Cell::Null) => Value::Null,
             Some(Cell::Int(v)) => json!(v),
+            Some(Cell::Real(v)) => json!(v),
             Some(Cell::Text(t)) => json!(t),
         };
         let mut m = Map::new();
@@ -512,12 +514,14 @@ pub(crate) mod tests {
     }
 
     /// A journal row in the C1b projection.
-    type Row = Map<String, Value>;
+    pub(crate) type Row = Map<String, Value>;
 
     /// A case run as test_signal_cases.py runs it in Python (a replay of its events from an empty engine, the groups from
     /// its state text, ignore_risk): the journal's rows in the C1b projection, sorted by key with the last write of a key
     /// kept (INSERT OR REPLACE), and the engine's signal state (FORMAT expect_state).
-    fn run_case(case: &Value) -> Result<(Vec<Row>, Value, SignalEngine)> {
+    /// A case's signal engine (its clock, dev bounds, universe and groups from the state text) with the case's interner
+    /// and the groups (their q for C2).
+    pub(crate) fn case_engine(case: &Value) -> Result<(SignalEngine, Groups, CaseKeys)> {
         let clock = Clock::new(ms_per_slot(field(case, "clock")?)?);
         let dev = field(case, "dev_bounds")?;
         let bounds = Bounds::new((dev[0].as_u64().context("dev_bounds")?, dev[1].as_u64().context("dev_bounds")?), &clock);
@@ -550,7 +554,12 @@ pub(crate) mod tests {
             markets.push(Market { pool: s(p, "pool")?, mint: s(p, "mint")?, reversed, mayhem: b(p, "mayhem")?, coin_creator: os(p, "coin_creator")? });
         }
         let (u_, _) = universe(&mut keys, bounds, &tokens, &markets);
-        let mut eng = SignalEngine::new(u_, clock, groups.specs, WindowRule::AllPools)?;
+        let eng = SignalEngine::new(u_, clock, groups.specs.clone(), WindowRule::AllPools)?;
+        Ok((eng, groups, keys))
+    }
+
+    fn run_case(case: &Value) -> Result<(Vec<Row>, Value, SignalEngine)> {
+        let (mut eng, _, mut keys) = case_engine(case)?;
         let mut seeds = Seeds::default();
         let mut journal: BTreeMap<(String, String, String, u64), Row> = BTreeMap::new();
         let mut rows = Vec::new();

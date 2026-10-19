@@ -1,0 +1,167 @@
+use std::collections::{BTreeMap, HashMap};
+
+use lab_core::paper::{GradInfo, PaperCfg, PaperEngine};
+use serde_json::{json, Map, Value};
+
+use super::*;
+use crate::signals_core::tests::{case_engine, event, field, os, ou, projection, s, CaseKeys, Row};
+use crate::signals_core::Seeds;
+
+/// The shared golden cases (paper/tests/c2_position_cases.py and c1b_signal_cases.py write them from the engine).
+const C2: &str = include_str!("../../../paper/tests/data/c2_position_cases.json");
+const C1B: &str = include_str!("../../../paper/tests/data/c1b_signal_cases.json");
+/// The journal's tables and columns (paper/journal.py TABLES), as journal.rs compiles them in.
+const SCHEMA: &str = include_str!("../../../paper/journal_schema.json");
+
+fn columns() -> HashMap<String, Vec<String>> {
+    let v: Value = serde_json::from_str(SCHEMA).unwrap();
+    v["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| {
+            let cols = t["cols"].as_str().unwrap().split(", ").map(|c| c.split(' ').next().unwrap().to_owned()).collect();
+            (t["name"].as_str().unwrap().to_owned(), cols)
+        })
+        .collect()
+}
+
+fn cell_json(c: &Cell) -> Value {
+    match c {
+        Cell::Null => Value::Null,
+        Cell::Int(i) => json!(i),
+        Cell::Real(x) => json!(x),
+        Cell::Text(t) => json!(t),
+    }
+}
+
+/// A write as the generator records it: ["put", table, {every column: value or null}] or ["delete", table, {key}].
+fn write_json(w: &Write, cols: &HashMap<String, Vec<String>>) -> Value {
+    match w {
+        Write::Put(table, cells) => {
+            for (c, _) in cells {
+                assert!(cols[*table].iter().any(|x| x == c), "{table} has no column {c}");
+            }
+            let row: Map<String, Value> = cols[*table]
+                .iter()
+                .map(|c| (c.clone(), cells.iter().find(|x| x.0 == c).map_or(Value::Null, |x| cell_json(&x.1))))
+                .collect();
+            json!(["put", table, row])
+        }
+        Write::Delete(table, key) => {
+            delete_key_ok(w, &cols[*table].iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+            json!(["delete", table, key.iter().map(|(c, v)| (c.to_string(), cell_json(v))).collect::<Map<_, _>>()])
+        }
+    }
+}
+
+/// A case run as the generator runs it: the paper engine on its events (risk inert, its groups and cost scenario), every
+/// journal write in order, and the engine and interner after it.
+fn run_paper(case: &Value, scenario: &str) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
+    let (sig, groups, mut keys) = case_engine(case)?;
+    let mut grad = GradInfo::default();
+    for t in field(case, "tokens")?.as_array().context("tokens")? {
+        let mint = keys.id(s(t, "mint")?);
+        let complete = if t.get("complete_slot").is_some() { ou(t, "complete_slot")? } else { None };
+        let pool = if t.get("pool").is_some() { os(t, "pool")?.map(|p| keys.id(p)) } else { None };
+        grad.add_token(mint, complete, pool);
+    }
+    for p in field(case, "pools")?.as_array().context("pools")? {
+        if matches!(s(p, "quote_class")?, "sol" | "reversed") {
+            grad.add_pool(keys.id(s(p, "pool")?), ou(p, "create_slot")?);
+        }
+    }
+    let mut eng = PaperEngine::new(sig, PaperCfg::new(groups.q, parse_scenario(scenario)?, grad, HashMap::new()))?;
+    let mut seeds = Seeds::default();
+    let mut writes = Vec::new();
+    for e in field(case, "events")?.as_array().context("events")? {
+        let ev = event(e, &mut keys)?;
+        eng.push(&ev, &mut seeds.with(&keys))?;
+        for op in eng.paper.ops.drain(..) {
+            writes.push(op_write(&op, &keys)?);
+        }
+    }
+    eng.finish(&mut seeds.with(&keys))?;
+    for op in eng.paper.ops.drain(..) {
+        writes.push(op_write(&op, &keys)?);
+    }
+    Ok((writes, eng, keys))
+}
+
+#[test]
+fn every_c2_case_gives_the_engines_writes() {
+    let doc: Value = serde_json::from_str(C2).unwrap();
+    let cols = columns();
+    let mut n = 0;
+    for case in doc["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let scenario = case["cost_scenario"].as_str().unwrap();
+        let (writes, eng, _) = run_paper(case, scenario).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let got: Vec<Value> = writes.iter().map(|w| write_json(w, &cols)).collect();
+        let want = case["expect_ops"].as_array().unwrap();
+        if let Some(i) = (0..got.len().max(want.len())).find(|&i| got.get(i) != want.get(i)) {
+            panic!("{name}: write {i} of {} (Rust) / {} (Python)\n rust:   {}\n python: {}", got.len(), want.len(),
+                   got.get(i).map_or("(none)".into(), Value::to_string), want.get(i).map_or("(none)".into(), Value::to_string));
+        }
+        assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name}");
+        n += want.len();
+    }
+    assert!(n > 0);
+}
+
+#[test]
+fn the_c1b_cases_carry_the_engines_statuses() {
+    // research/m1-c2-positionsim-spec-2026-10-19.md §6.3: with busy, risk and the Pendings the C1b rows match Python's
+    // status and reason too (the last write of a key kept, as INSERT OR REPLACE).
+    let doc: Value = serde_json::from_str(C1B).unwrap();
+    let (mut entered, mut busy) = (0, 0);
+    for case in doc["cases"].as_array().unwrap() {
+        let name = case["name"].as_str().unwrap();
+        let (writes, _, _) = run_paper(case, BASE_SCENARIO).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        let mut journal: BTreeMap<(String, String, String, i64), Row> = BTreeMap::new();
+        for w in &writes {
+            if let Write::Put("signals", cells) = w {
+                let m = projection(cells);
+                let k = (m["family"].as_str().unwrap().into(), m["variant"].as_str().unwrap().into(), m["key"].as_str().unwrap().into(),
+                         m["t"].as_i64().unwrap());
+                journal.insert(k, m);
+            }
+        }
+        let rows: Vec<Row> = journal.into_values().collect();
+        let want: Vec<Row> = case["expect"].as_array().unwrap().iter().map(|r| r.as_object().unwrap().clone()).collect();
+        assert_eq!(rows, want, "{name}");
+        entered += rows.iter().filter(|r| r["status"] == "entered").count();
+        busy += rows.iter().filter(|r| r["reason"] == "busy").count();
+    }
+    assert_eq!((entered, busy), (46, 1)); // spec §6.3
+}
+
+#[test]
+fn the_base_scenario_parses_to_pythons_costs() {
+    // lab-py Scenario.from_cfg("base", load_defaults()): per_tx 720,618, entry_total(5e8) 502,234,458, exit_net(0) 793,222
+    // (spec §3.9); land_prob to its bits (float.hex 0x1.f0a3d70a3d70ap-1).
+    let s = parse_scenario(BASE_SCENARIO).unwrap();
+    assert_eq!((s.per_tx(), s.entry_total(500_000_000), s.exit_net(0, true)), (720_618, 502_234_458, 793_222));
+    assert_eq!((s.land_prob.to_bits(), s.name.as_str(), s.rent_mode), (0x3fef_0a3d_70a3_d70a, "base", RentMode::RefundedOnFullExit));
+    let one = |from: &str, to: &str| parse_scenario(&BASE_SCENARIO.replacen(from, to, 1));
+    for (from, to, why) in [
+        (r#""tip": 100000"#, r#""tip": 100000, "latency_ms": 400"#, "no key"),
+        (r#", "tip": 100000"#, "", "no tip"),
+        (r#""refunded_on_full_exit""#, r#""refunded_at_noon""#, "rent_mode"),
+        (r#""land_prob": 0.97"#, r#""land_prob": 0.0"#, "land_prob"),
+        (r#""adverse_per_side": 0.0"#, r#""adverse_per_side": 1.0"#, "adverse_per_side"),
+        (r#""failed_tx": 505000"#, r#""failed_tx": -1"#, "failed_tx"),
+        (r#""fee_per_tx": 605000"#, r#""fee_per_tx": 605000.5"#, "fee_per_tx"),
+    ] {
+        let err = format!("{:#}", one(from, to).unwrap_err());
+        assert!(err.contains(why), "{to}: {err}");
+    }
+}
+
+#[test]
+fn a_delete_needs_a_key_of_the_tables_columns() {
+    let cols = ["family", "variant", "key", "t"];
+    let k = |c: &'static str| Write::Delete("positions", vec![(c, Cell::Int(1))]);
+    assert!(delete_key_ok(&k("t"), &cols).is_ok() && delete_key_ok(&k("slot"), &cols).is_err());
+    assert!(delete_key_ok(&Write::Delete("positions", vec![]), &cols).is_err());
+}

@@ -143,8 +143,9 @@ class CaseFeed(Feed):
 
     def __init__(self, case):
         self.meta_bounds = tuple(case["dev_bounds"])
-        self.tokens = {t["mint"]: TokenInfo(t["mint"], t["create_slot"], t["creator"], t["mayhem"], t["quote_mint"], None, None)
-                       for t in case["tokens"]}
+        # C1b's tokens have no complete_slot or pool (None); C2's cases (c2_position_cases.py) give them for graduations
+        self.tokens = {t["mint"]: TokenInfo(t["mint"], t["create_slot"], t["creator"], t["mayhem"], t["quote_mint"],
+                                            t.get("complete_slot"), t.get("pool")) for t in case["tokens"]}
         self.pools = {p["pool"]: PoolInfo(**p) for p in case["pools"] if p["quote_class"] in SOL_MARKETS}
         self.evs = [event(e) for e in case["events"]]
 
