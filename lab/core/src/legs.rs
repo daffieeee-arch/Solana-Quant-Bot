@@ -7,6 +7,7 @@
 //! - A pool leg is built from the store row and the pool's context (last virtual quote and fee tiers) at emission
 //!   (streams.py:45-68), so it holds the pre-state and the deltas; `post` follows.
 //! - All state arithmetic is in i128 through `crate::venues`, as Python's integers.
+//! - `Leg` and `Event` are the feed's event as the engine reads it (paper/feed.py `Event`), for the signals (M1 C1b).
 
 use crate::venues::{Curve, Pool};
 
@@ -28,7 +29,7 @@ pub const HOLDOUT: (u64, u64) = (452_304_000, 454_464_000);
 pub type Id = u32;
 pub const NONE: Id = u32::MAX;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Venue {
     Curve,
     Pool,
@@ -316,6 +317,65 @@ impl PoolLeg {
     }
 }
 
+/// One leg of either venue (paper/feed.py `Event.leg`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Leg {
+    Curve(CurveLeg),
+    Pool(PoolLeg),
+}
+
+impl Leg {
+    pub fn venue(&self) -> Venue {
+        match self {
+            Leg::Curve(_) => Venue::Curve,
+            Leg::Pool(_) => Venue::Pool,
+        }
+    }
+
+    pub fn order(&self) -> Order {
+        match self {
+            Leg::Curve(l) => l.order,
+            Leg::Pool(l) => l.order,
+        }
+    }
+
+    pub fn slot(&self) -> u64 {
+        self.order().slot
+    }
+
+    pub fn trader(&self) -> Id {
+        match self {
+            Leg::Curve(l) => l.trader,
+            Leg::Pool(l) => l.trader,
+        }
+    }
+
+    /// The feed's key: the mint of a curve leg, the pool of a pool leg.
+    pub fn key(&self) -> Id {
+        match self {
+            Leg::Curve(l) => l.mint,
+            Leg::Pool(l) => l.pool,
+        }
+    }
+}
+
+/// One event of the feed in chain order (paper/feed.py `Event`): the venue, the key (mint or pool), the slot's block
+/// time (None when the store has none) and the leg. A replay event has no arrival (feed.py:32-34), so no latency.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Event {
+    pub venue: Venue,
+    pub key: Id,
+    pub block_time: Option<i64>,
+    pub leg: Leg,
+}
+
+impl Event {
+    /// The venue and key from the leg, so the three always agree.
+    pub fn new(leg: Leg, block_time: Option<i64>) -> Self {
+        Event { venue: leg.venue(), key: leg.key(), block_time, leg }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,5 +427,21 @@ mod tests {
         assert_eq!((buy.limit_quote(), buy.limit_base(), buy.boost_left()), (Some(u64::MAX), None, None));
         let deposit = PoolLeg { kind: PoolKind::Deposit, e_delta: 7, flags: X0 | X1, ..buy };
         assert_eq!((deposit.post().b, deposit.post().e, deposit.lp_amount(), deposit.lp_supply()), (1_010, 607, Some(u64::MAX), Some(9)));
+    }
+
+    #[test]
+    fn an_events_venue_and_key_come_from_its_leg() {
+        let pool = PoolLeg {
+            order: o(7, 1, 2, 3), pool: 4, trader: 5, b: 0, e: 0, virt: 0, fees: [0; 4], base: 0, quote_net: 0, e_delta: 0, x: [0; 2],
+            kind: PoolKind::Sell, flags: 0,
+        };
+        let ev = Event::new(Leg::Pool(pool), Some(1_790_000_000));
+        assert_eq!((ev.venue, ev.key, ev.leg.slot(), ev.leg.trader(), ev.leg.order()), (Venue::Pool, 4, 7, 5, o(7, 1, 2, 3)));
+        let curve = CurveLeg {
+            order: o(8, 0, 0, 0), mint: 9, trader: NONE, t: 0, q: 0, fee: 0, vt: 0, vq: 0, rt: 0, rq: 0, args: [0; 4], fee_bps: 0,
+            creator_bps: 0, args_set: 0, variant: CurveVariant::Sell, is_buy: false, direct: true,
+        };
+        let ev = Event::new(Leg::Curve(curve), None);
+        assert_eq!((ev.venue, ev.key, ev.leg.slot(), ev.leg.trader(), ev.block_time), (Venue::Curve, 9, 8, NONE, None));
     }
 }

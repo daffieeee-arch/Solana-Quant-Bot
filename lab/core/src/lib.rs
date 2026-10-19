@@ -3,7 +3,16 @@
 //!
 //! M0: `venues`, the exact integer fills of the pump.fun bonding curve and PumpSwap pools
 //! (backtest/venues.py, byte for byte). M1 C1a: `legs`, the engine's curve and pool legs and their order (the
-//! Python replay's dataclasses, compact). Later steps: costs, exit rules and FlowIndex, PositionSim, F7.
+//! Python replay's dataclasses, compact). M1 C1b: the paper engine's F7 signals per slot (`signals`) with the clock
+//! (`clock`), exact int-against-float tests (`exact`), the universe (`universe`), the trigger and its windows (`f7`),
+//! the farm label (`farm`) and the N2 shadow (`n2`). Later steps: costs, exit rules and FlowIndex, PositionSim.
 
+pub mod clock;
+pub mod exact;
+pub mod f7;
+pub mod farm;
 pub mod legs;
+pub mod n2;
+pub mod signals;
+pub mod universe;
 pub mod venues;
