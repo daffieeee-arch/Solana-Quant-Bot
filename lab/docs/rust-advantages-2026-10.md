@@ -1,0 +1,97 @@
+# Wat kan alleen (of pas goed) in Rust — strategievoordelen en hoe we ze meten (versie 0.1, 2026-10-19)
+
+Opdracht van de eigenaar (19 okt, via de coördinator): een lijst van wat de Rust-route (M3 live-shadow, M4 gedeelde kern) aan strategievoordeel kan geven, te bouwen zodra M1 bewezen gelijk is aan Python. LAB research schrijft het inhoudelijke deel (§1–§4: welk voordeel, hoe groot, hoe meten); Lab Backtest vult §5 (technische haalbaarheid per idee, wat M3/M4 kan, kosten). Alleen paper, alleen Triton/OF1-data; hold-out 1047–1051 en de schone set 1055–1063 blijven dicht; geen nieuwe betaalde dienst zonder eigenaarsbesluit. Labels: **feit** (bron of meting), **reconstructie**, **modelaanname**, **onbekend**.
+
+## 0. Samenvatting voor de eigenaar
+
+| # | gewone naam | wat het is | voordeel | ruwe grootte (bron) | eerste meting | oordeel |
+|---|---|---|---|---|---|---|
+| 1 | **Sneller instappen** | per event beslissen op de `processed`-stream, in plaats van na afsluiting van het slot met een gesimuleerde vertraging van 600 ms | prijs (minder trades tussen trigger en instap), kans | hold-out K3: elk slot vertraging kost ≈ 0,45 procentpunt per trade (+0,68 % bij d 1, +0,04 % bij d 2, −0,26 % bij d 3); dev H-armen ≈ 13–14 % van het dagresultaat per slot | backtest op OF1 met instap per transactie binnen het slot (§3 M-a); M3-latencyhistogram | **meten, grootste kandidaat** |
+| 2 | **Sneller uitstappen** | de exit (take-profit, flow-stop, drain) op de eerste transactie die hem rechtvaardigt, niet na het slot + d | risico (slechtste dag, verlies-alles bij drains) | drains tijdens de positie kosten de H-armen −0,35 … −0,45 SOL per positie, Σ −220 … −240 per blok (E36); hoeveel daarvan binnen één slot verdwijnt is onbekend | backtest op OF1: prijs op de eerste exit-trigger-transactie tegen de prijs op slot-einde + d (§3 M-b); Triton-punt 4 (voorbode) | **meten** |
+| 3 | **Alle pools volgen** | het hele F7-universum in één proces, zonder watchlist-snoei; ook meer markten tegelijk | kans, capaciteit | de watchlist ziet 15,4 % van de pool-events en mist ≈ 150 organische F7-triggers per dag (2.857 in 19 dagen) omdat de lijst op dezelfde drempel instapt als F7 | trigger_gap op OF1 (bestaat); M3-shadow met de volledige filter tegen de recorder-watchlist (§3 M-c) | **meten; deels ook zonder Rust (lagere lijstdrempel)** |
+| 4 | **In hetzelfde slot reageren** | een reactie die nog in het blok van de trigger landt | prijs | de pump zit grotendeels in het triggerslot zelf (K1-kopie: d 0 +0,16 … +0,30 per ronde, d 2 −0,06) — maar wie een transactie op `processed` ziet, landt op zijn vroegst in het volgende blok | alleen als bovengrens meten (d 0 tegen d 1 in de backtest) | **weerlegd als strategie**: vraagt bundels/MEV-infrastructuur, buiten paper |
+| 5 | **MEV-achtig (fase 0)** | arbs en backruns rond pump/PumpSwap | prijs | NO-GO (E17): top-3 pakt 84 % van de bereikbare winst, nieuwkomers 3 %, mislukkingen ≤ 97 % | hermeting na Alpenglow, alleen meten | **geen bouw** |
+| 6 | **Sneller en meer toetsen** | M4: de gedeelde kern in de backtest met rayon | onderzoekscapaciteit (meer hypothesen met dezelfde DSR-discipline) | onbekend; wall-time per stap meten (ontwerp §16.4) | M4-rapport | **meten bij M4** |
+
+De grootste strategiewinst zit bij 1 en 2 en is pas te geloven na de meting in §3; 3 is deels zonder Rust te halen; 4 en 5 vragen zenden en bundels en vallen buiten paper.
+
+## 1. Waar de vertraging nu zit (reconstructie uit code en ontwerp)
+
+- De Python-paper-engine beslist op **afgesloten segmenten** (confirmed) en rekent met een **gesimuleerde** instapvertraging `d_ms 600` (≈ 2,75 slots bij de gemeten 218 ms per slot in epoch 1053–1054; `backtest/strategies.py Clock`). De echte afstand trigger → beslissing kan tot een minuut zijn; het journaal logt hem als `segment_lag_ms` (ontwerp `rust-live-route-design-2026-10-16.md` §1, §10).
+- De Rust-route beslist op **`processed`** per event, met per-(slot, bank) overlays en afwikkeling op `finalized` (na Alpenglow ≈ 150 ms). Een trigger op slot t wordt beoordeeld zodra de bank van t compleet is; de instap kan dan in t + 1 landen (ontwerp §9). Dat is d ≈ 1 slot plus netwerklatency, tegen 2,75 nu — **modelaanname tot M3 het meet** (ontwerp §10: tijdstempels per stap, HdrHistogram).
+- Alpenglow (epoch 1064, 21 okt) verandert de slottijd niet (doel 200 ms; meting beslist) maar wel de finaliteit (~150 ms) en de commitment-niveaus (`confirmed` = `finalized`), zie `2026-10-16-alpenglow-meetnotitie.md`.
+
+## 2. De ideeën
+
+### 2.1 Sneller instappen (per event beslissen)
+
+- **Wat.** De F7-trigger (grote koop in een reversed pool) wordt gezien zodra de transactie op `processed` binnenkomt; de instap gaat uit bij het eerstvolgende blok. Vertraging van ≈ 600 ms naar ≈ 1 slot + netwerk.
+- **Voordeel.** Minder transacties tussen trigger en instap, dus een lagere instapprijs en minder gemiste rondes (de take-profit van K3 wordt in 3–10 s gehaald; E11: +1,0 … +1,8 % in 3–10 s bij 270 ms).
+- **Grootte (feit, diagnose op de hold-out en dev; geen claim).**
+  - Hold-out 1047–1051, K3 flagged 0,5 SOL: d 1 **+0,68 %** per trade, d 2 +0,04 %, d 3 −0,26 % (dag-CI overal om 0); organisch −0,08 / −0,95 / −1,52 %. Elk slot vertraging kost ≈ 0,45 procentpunt per trade (`2026-10-12-holdout.md`).
+  - Dev 1033–1046, lange exits: `flow300_H6` organic Σ +7,20 (d 1) tegen +6,20 (d 2) SOL per dag; `flow300_tp100_H6` +10,68 tegen +9,30 (E28, E30): ≈ 13–14 % van het dagresultaat per slot.
+  - Lineair doortrekken van 2,75 naar 1 slot (**modelaanname**): +0,5 … +0,8 procentpunt per trade bij K3, +25 … +30 % van het dagresultaat bij de H-armen; de d 1-rij is de bovengrens. De markout op 1 s is nog negatief (round-trip-kosten ≈ 2 %), op 1 en 5 min positief (E11): de winst bestaat alleen als de prijs ná de trigger binnen die 2 slots doorstijgt, en dat is op transactieniveau nog niet gemeten.
+- **Meting zonder geld.** (a) OF1-backtest met instap **per transactie** in plaats van per slot: de store heeft `tx_index`, dus de toestand "na de trigger-tx + k transacties" en "eerste transactie van t + 1" bestaat; dat geeft de curve resultaat tegen vertraging in ms voor K3 en de H-armen (§3 M-a). (b) M3-shadow: histogram `t_recv − block_time` en `t_decision − block_time` per trigger, naast de gesimuleerde d (ontwerp §10). (c) Paper: `alpenglow_metrics` M1 (latency per trigger, aandeel later dan d).
+- **Nodig en risico.** `processed`-stream (b1 via de recorder of b2 eigen stream, eigenaarsbesluit vóór M3), de Rust-engine M1–M3. Risico: de volgorde binnen een slot is op `processed` niet gegarandeerd (ontwerp §9), en de landingskans van een snelle order is niet meetbaar zonder te zenden (Triton-punt 1 meet alleen uitvoeringssucces van opgenomen transacties).
+
+### 2.2 Sneller uitstappen (instorting, flow valt stil, drain)
+
+- **Wat.** Exits worden nu beoordeeld op de trades van de pool bij slot-afsluiting en uitgevoerd op t_exit + d. Per event kan de exit op de eerste verkoop die de regel haalt, of op de eerste tekenen van een LP-withdraw (accountfilter op de LP-token- en poolaccounts van open posities: Triton-punt 4).
+- **Voordeel.** Risico: slechtste dag en verlies-alles. Drains tijdens een positie kosten de H-armen −0,35 … −0,45 SOL per positie met 30–56 % verlies-alles (E36); een withdraw ná onze exit is juist +0,18 … +0,28.
+- **Grootte.** **Onbekend**: hoeveel van de dump binnen het exit-slot plus d valt (de rest is al weg voordat welke engine ook reageert). De drain zelf is één transactie; wat helpt is de voorbode (seconden ervoor; Triton-punt 4, nog niet gemeten) of de eerste grote verkoop.
+- **Meting.** (a) OF1-backtest: per gerealiseerde exit de prijs op de **eerste** transactie die de exit rechtvaardigt tegen de prijs op t_exit + d (het intra-slot-verlies van exits; §3 M-b). (b) Per drain op een open positie: tijd tussen de eerste voorbode-transactie (LP-account aangeraakt) en de withdraw (Triton-punt 4, tweede paperweek). (c) M3-shadow: latency van de exitbeslissing.
+- **Nodig en risico.** Accountfilter op een klein aantal accounts (≤ 5–20 open posities), `processed`. Risico: whipsaw (één verkoop is geen instorting); meet beide kanten (gemiste winst door te vroege exits).
+
+### 2.3 Alle pools volgen (capaciteit en meer markten)
+
+- **Wat.** De recorder volgt een watchlist (mediaan 161 pools, 15,4 % van de pool-events); een Rust-engine kan het hele F7-universum (21,6 M pool-events per dag ≈ 250 tx/s, pieken ×10) in één proces bijhouden, en ook de curve en normale pools naast de reversed pools.
+- **Voordeel.** Kans: de lijst mist ≈ 150 organische F7-triggers per dag (2.857 in 19 dagen) omdat ze instapt op dezelfde drempel (150 SOL) waarop F7 triggert (`2026-10-12-watchlist-meting.md`). Capaciteit: meer gelijktijdige markten zonder dat de Python-engine (≈ 90 tx/s gemiddeld) de bottleneck wordt.
+- **Grootte.** De waarde van de gemiste triggers is te berekenen uit `trigger-gap-v1` (OF1): **nog niet gedaan**. Een deel is zonder Rust te halen (lagere lijstdrempel, meer bytes).
+- **Meting.** (a) OF1: netto resultaat van de gemiste triggers met dezelfde exits (§3 M-c). (b) M3-shadow met de volledige engine-filter naast de recorder: triggers gezien door beide, alleen door de volledige filter, alleen door de watchlist.
+- **Nodig en risico.** Eigen stream (b2, 7–12 GB/dag ≈ $0,6–1/dag bij $0,08/GB) of een bredere recorder-filter; VPS-geheugen (ontwerp §10: 1–2 GB). Risico: bytes en budget, head-of-line-blocking achter de recorder bij b1.
+
+### 2.4 In hetzelfde slot reageren — weerlegd als strategie
+
+- Een transactie die wij op `processed` zien, zit al in een blok in aanbouw; onze reactie landt op zijn vroegst in het volgende blok (leader van t + 1). "Hetzelfde slot" vraagt bundels (Jito) of een plek bij de leader: zenden, buiten paper, en MEV-infrastructuur.
+- De bovengrens is wel meetbaar: d 0 tegen d 1 in de backtest. De K1-kopie laat zien hoe groot die is (d 0 +0,16 … +0,30 per ronde, d 2 −0,06: de pump zit in het triggerslot). Dat getal zegt wat we **niet** krijgen, niet wat Rust oplevert.
+
+### 2.5 MEV-achtig (fase 0) — geen bouw
+
+- E17 (`2026-10-15-mev-fase0.md`): 457 bereikbare kansen per dag, maar top-3 84 % van de winst, nieuwkomers 3 %, mislukkingen ≤ 97 %: NO-GO. Rust verandert de snelheid, niet de monopolisering of de mislukkingskosten. Na Alpenglow hermeten (alleen OF1, niets zenden), geen bouw.
+
+### 2.6 Sneller en meer toetsen (M4)
+
+- Geen strategievoordeel maar onderzoekscapaciteit: de gedeelde kern in de backtest met rayon (ontwerp §16.4) maakt meer hypothesen per week mogelijk met dezelfde DSR- en pre-registratiediscipline. Grootte onbekend tot de wall-time per stap gemeten is (1/4/8/14 threads, NAS-job).
+
+## 3. Meetplan (alles zonder geld; volgorde)
+
+| # | meting | data | wanneer | levert |
+|---|---|---|---|---|
+| M-a | **instap per transactie**: K3 (tp4_T600) en H4/H5 op dev met instap op de toestand na de trigger-tx + k ∈ {0, 1, 3, 10} transacties, op de eerste tx van t + 1, en op t + 1 … t + 3 slot-einde; dagbootstrap; d 1/2/3 als controle (= bestaande tabellen) | OF1 dev 1033–1046 (verbruikte data; alleen gevoeligheid, geen claim) | NAS-job, na de paperstart; spec vooraf | de curve resultaat tegen vertraging in ms; de bovengrens van idee 1 |
+| M-b | **intra-slot-verlies van exits**: per exit de prijs op de eerste rechtvaardigende tx tegen de prijs op t_exit + d; apart voor take-profit, flow-stop, drain | OF1 dev | NAS-job, zelfde spec | de bovengrens van idee 2 |
+| M-c | **waarde van de gemiste triggers**: netto van de 2.857 gemiste organische F7-triggers met de K3- en H-exits | `trigger-gap-v1` + OF1 dev | VPS of NAS | idee 3 |
+| M-d | **latency-histogrammen** per stap (`t_recv`, `t_decision` tegen `block_time`) en de echte d per trigger | M3-shadow (b1, daarna b2) | bij M3 | de echte d van idee 1 en 2; vergelijking met de gesimuleerde 600 ms |
+| M-e | **latency per trigger in paper** (`alpenglow_metrics` M1) en de Triton-punten 1, 4, 7 | paper, eerste twee weken | loopt vanaf 20 okt | kostenmodel; voorbode van de drain (idee 2) |
+
+Een claim komt pas forward, pre-geregistreerd, met DSR en LAB review; M-a t/m M-c zijn gevoeligheidsmetingen op verbruikte dev-data.
+
+## 4. Wat Rust niet oplost
+
+- De landingskans en de kosten van mislukte orders: alleen meetbaar door te zenden (buiten paper); Triton-punt 1 geeft een bovengrens.
+- De rand zelf: K3 organisch is op de hold-out bij d ≥ 2 niet van 0 te onderscheiden; sneller instappen vergroot een rand, het maakt er geen.
+- Marktstructuur: MEV-monopolisering (E17), de 5-minutencyclus van fabriekspools (K2), de vertraging-tegen-pump van K1.
+
+## 5. Technische haalbaarheid en kosten (Lab Backtest; in te vullen)
+
+Per idee: wat M3 (b1/b2, `processed`, accountfilters) en M4 kunnen; wat het kost in bytes, VPS-geheugen en bouwtijd; welke latency realistisch is (netwerk VPS → Triton, Riptide als vergelijking); en wat niet kan zonder zenden.
+
+| idee | kan in M3/M4 | wat het vraagt | kosten | latency (verwacht, te meten) | opmerking |
+|---|---|---|---|---|---|
+| 1 sneller instappen | | | | | |
+| 2 sneller uitstappen | | | | | |
+| 3 alle pools volgen | | | | | |
+| 6 M4 toetsen | | | | | |
+
+## 6. Bronnen
+
+`lab/docs/rust-live-route-design-2026-10-16.md` (§1, §9, §10, §16); `lab/reports/2026-10-12-holdout.md` (d-tabel); `2026-10-12-watchlist-meting.md`; `2026-10-15-markouts.md` (E11); `2026-10-15-mev-fase0.md` (E17); `2026-10-16-alpenglow-meetnotitie.md`; `2026-10-17-triton-live-kansen.md`; register E28, E30, E36, E40.
