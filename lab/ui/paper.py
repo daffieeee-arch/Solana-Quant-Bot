@@ -590,14 +590,17 @@ def triton_view(now):
     }
 
 
-RISK_DEFAULT = "/home/chupa/Solana-project/worktrees/lab-paper-live/lab/paper/risk.yaml"  # the paper engine's checkout
+RISK_DEFAULT = "/home/chupa/Solana-project/worktrees/paper-run/lab/paper/risk.yaml"  # the run checkout (runbook §3)
 SAMPLE_WALLET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_sample", "wallet.json")
 ADDRESS_RE = __import__("re").compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 
-def risk_limits():
-    """The paper engine's owner-only limits (lab/paper/risk.yaml: flat 'key: value' lines). None if not found."""
-    path = os.environ.get("LAB_PAPER_RISK") or RISK_DEFAULT
+def risk_limits(path=None):
+    """The paper engine's owner-only limits (lab/paper/risk.yaml: flat 'key: value' lines). None if not found.
+    path: a group's risk file as the journal records it (state 'groups', `risk`: absolute, next to its config);
+    else LAB_PAPER_RISK or the run checkout's risk.yaml."""
+    ok = isinstance(path, str) and os.path.isabs(path) and path.endswith(".yaml")
+    path = path if ok else os.environ.get("LAB_PAPER_RISK") or RISK_DEFAULT
     try:
         with open(path) as f:
             text = f.read()
@@ -615,10 +618,17 @@ def risk_limits():
     return out
 
 
-def _wallet_state(journal):
-    """The live engine's <journal>/wallet.json (format in lab/ui/web/README.md), else the marked sample."""
-    path = os.environ.get("LAB_WALLET_STATE") or (os.path.join(os.path.dirname(journal), "wallet.json") if journal else "")
+def _wallet_state(journal, name="wallet.json", sample_ok=True, clock=None):
+    """The live engine's <journal>/<name> (wallet.json for K3, a further group's own file such as wallet-h.json;
+    format in lab/ui/web/README.md), else the marked sample (sample_ok) or None. clock: slot -> unix for the paper
+    wallet's transactions, which carry no time of their own."""
+    if os.path.basename(name) != name or not name.endswith(".json"):
+        return None
+    env = os.environ.get("LAB_WALLET_STATE") if name == "wallet.json" else None
+    path = env or (os.path.join(os.path.dirname(journal), name) if journal else "")
     sample = not (path and os.path.isfile(path))
+    if sample and not sample_ok:
+        return None
     try:
         with open(SAMPLE_WALLET if sample else path) as f:
             w = json.load(f)
@@ -629,7 +639,9 @@ def _wallet_state(journal):
     for t in (w.get("txs") or [])[:50]:
         if not isinstance(t, dict) or (isinstance(t.get("slot"), int) and HOLDOUT[0] <= t["slot"] < HOLDOUT[1]):
             continue
-        txs.append({"signature": str(t.get("signature", ""))[:100], "slot": num(t.get("slot")), "time_unix": num(t.get("time_unix")),
+        sig = t.get("signature")
+        txs.append({"signature": sig[:100] if isinstance(sig, str) and sig else None, "slot": num(t.get("slot")),
+                    "time_unix": num(t.get("time_unix")) or (clock(t["slot"]) if clock and isinstance(t.get("slot"), int) else None),
                     "kind": str(t.get("kind", ""))[:10], "mint": t.get("mint") if isinstance(t.get("mint"), str) else None,
                     "symbol": str(t.get("symbol") or "")[:20] or None, "amount_sol": (num(t.get("amount_lamports")) or 0) / 1e9,
                     "fee_sol": (num(t.get("fee_lamports")) or 0) / 1e9, "tip_sol": (num(t.get("tip_lamports")) or 0) / 1e9,
@@ -647,7 +659,8 @@ def _wallet_state(journal):
             t["mint"] = n["mint"]
     return {"sample": sample, "mode": "paper" if paper_mode else "onchain",
             "address": None if paper_mode else (w.get("address") if isinstance(w.get("address"), str) and ADDRESS_RE.match(w["address"]) else None),
-            "slot": num(w.get("slot")), "time_unix": num(w.get("time_unix")), "balance_sol": bal / 1e9 if bal is not None else None,
+            "slot": num(w.get("slot")), "time_unix": num(w.get("time_unix")) or (clock(w["slot"]) if clock and num(w.get("slot")) else None),
+            "balance_sol": bal / 1e9 if bal is not None else None,
             "note": str(w.get("note") or "")[:200] or None, "txs": txs}
 
 
@@ -681,7 +694,8 @@ def wallet_view(now):
         finally:
             j.close()
         clock = slot_clock(beats)
-        primary, _ = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
+        primary, further = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
+        settings = _group_settings(state)
         # The bot's wallet is the primary group's (K3); the arms (H) keep their own paper wallet.
         own = lambda r: not r["family"].startswith("N2_") and (primary is None or r["variant"] in primary)  # noqa: E731
         traded = [x for x in exits if own(x)]
@@ -690,7 +704,7 @@ def wallet_view(now):
         day = today if today in days or not days else days[-1]
         t_day = [x for x in traded if x["day"] == day]
         failed = [x for x in t_day if not x["tokens"]]
-        risk = risk_limits() or {}
+        risk = risk_limits(next((g["risk"] for g in settings.values() if g.get("primary")), None)) or {}
         exit_of = {(x["family"], x["variant"], x["key"], x["t"]): x for x in traded}
         order_of = {(o["family"], o["variant"], o["key"], o["t"]): o for o in orders if own(o)}
         txs = []
@@ -730,8 +744,41 @@ def wallet_view(now):
                  "today_net_sol": today_net, "failed_today": len(failed), "failed_cost_sol": -sum(x["pnl"] or 0 for x in failed) / 1e9,
                  "daily_loss_limit_sol": risk.get("daily_loss_limit_sol"), "risk_found": bool(risk),
                  "kill_switch": risk.get("kill_switch"), "max_open_positions": risk.get("max_open_positions"),
-                 "size_sol": risk.get("size_sol"), "txs": txs}
-    return {"paper": paper, "onchain": _wallet_state(path), "address": configured_address(), "now_unix": int(now)}
+                 "size_sol": risk.get("size_sol"), "risk_file": os.path.basename(risk["path"]) if risk else None, "txs": txs}
+        groups = [_group_wallet(name, set(variants), settings.get(name, {}), exits, opens, path, day, clock)
+                  for name, variants in sorted(further.items())]
+    else:
+        groups, clock = [], None
+    return {"paper": paper, "onchain": _wallet_state(path, clock=clock), "groups": groups, "address": configured_address(),
+            "now_unix": int(now)}
+
+
+def _group_settings(state):
+    """The journal's groups (state 'groups', engine.groups_state): name -> {primary, variants, risk, wallet}."""
+    try:
+        gs = json.loads(state.get(stoprule.GROUPS_KEY) or "{}")
+    except ValueError:
+        return {}
+    return {str(k): v for k, v in gs.items() if isinstance(v, dict)} if isinstance(gs, dict) else {}
+
+
+def _group_wallet(name, variants, conf, exits, opens, journal, day, clock):
+    """A further group's (H) paper wallet beside K3's: its own file (wallet-h.json), its own risk file and daily
+    loss, as the engine keeps them per group; its trades are its variants' (no N2: the arms have no shadow)."""
+    mine = lambda r: not r["family"].startswith("N2_") and r["variant"] in variants  # noqa: E731
+    traded = [x for x in exits if mine(x)]
+    t_day = [x for x in traded if x["day"] == day]
+    failed = [x for x in t_day if not x["tokens"]]
+    risk = risk_limits(conf.get("risk")) if conf.get("risk") else None
+    return {"group": name, "variants": sorted(variants),
+            "wallet": _wallet_state(journal, conf.get("wallet") or "", sample_ok=False, clock=clock),
+            "wallet_file": conf.get("wallet"), "trades": sum(1 for x in traded if x["tokens"]),
+            "realised_sol": sum(x["pnl"] or 0 for x in traded) / 1e9, "today_net_sol": sum(x["pnl"] or 0 for x in t_day) / 1e9,
+            "failed_today": len(failed), "open_positions": sum(1 for p in opens if mine(p)),
+            "in_positions_sol": sum(p["cost"] or 0 for p in opens if mine(p)) / 1e9,
+            "risk_found": bool(risk), "risk_file": os.path.basename(risk["path"]) if risk else None,
+            "daily_loss_limit_sol": (risk or {}).get("daily_loss_limit_sol"), "kill_switch": (risk or {}).get("kill_switch"),
+            "max_open_positions": (risk or {}).get("max_open_positions"), "size_sol": (risk or {}).get("size_sol")}
 
 
 def view(now=None):
