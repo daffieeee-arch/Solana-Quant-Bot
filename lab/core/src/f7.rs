@@ -42,6 +42,14 @@ impl Recent {
         self.last_seen.get(&key).copied()
     }
 
+    /// The key's last leg, whose post state is the engine's `last_state[key]` (engine.py:400; C2's entry state and
+    /// s_dec, C2 spec §3.4-§3.5). Step 3 writes both from the slot's last leg, the trim never empties a deque it has
+    /// just extended (the slot's own legs are not older than slot - HISTORY_SLOTS), and the sweep drops a key's legs
+    /// with its last_seen as the engine drops last_state with it (:679-682).
+    pub fn back(&self, key: Id) -> Option<&Leg> {
+        self.legs.get(&key)?.back()
+    }
+
     /// The hourly sweep (engine.py `_sweep_history`, :675-684): keys without an event since `before` leave, except
     /// those `keep` names (C2: open, pending or waiting for a graduation). A swept key's legs are all older than
     /// slot - HISTORY_SLOTS, so F7 never sees the sweep.
@@ -383,5 +391,24 @@ pub(crate) mod tests {
         r.sweep(1_402, |k| k == 9);
         assert_eq!((r.get(7).is_none(), r.last_seen(7), r.last_seen(8), r.last_seen(9)), (true, None, Some(1_500), Some(1_200)));
         assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn the_back_of_a_keys_legs_is_its_last_state() {
+        // engine.py:396-401: last_state[key] is the post of the slot's last leg; the trim keeps it, the sweep drops it.
+        let mut r = Recent::default();
+        assert_eq!(r.back(7), None);
+        let a = [curve((1_000, 0), 7, 3, true, 1, 1, 1), curve((1_000, 2), 7, 4, false, 1, 1, 2)];
+        r.extend(7, &a, 1_000);
+        assert_eq!(r.back(7), Some(&a[1]));
+        // 500 slots on, the trim drops slot 1000's legs and the back is the new slot's last leg.
+        let b = [curve((1_500, 1), 7, 3, true, 1, 1, 3)];
+        r.extend(7, &b, 1_500);
+        assert_eq!((r.get(7).map(VecDeque::len), r.back(7)), (Some(1), Some(&b[0])));
+        // A quiet key keeps it until the sweep drops its legs with its last_seen.
+        r.sweep(1_600, |_| true);
+        assert_eq!(r.back(7), Some(&b[0]));
+        r.sweep(1_600, |_| false);
+        assert_eq!((r.back(7), r.last_seen(7)), (None, None));
     }
 }
