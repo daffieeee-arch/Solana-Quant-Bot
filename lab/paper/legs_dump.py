@@ -6,6 +6,7 @@ and with --segments for lab-live's live source (M3-09a of research/m3-design-202
                             [--window N]
   python -m paper.legs_dump --segments <recorder dir> --store <store.duckdb> --from SLOT [--to SLOT] --summary FILE
                             [--snapshot-before SLOT [--h24 N]] [--memory 1GB] [--out FILE [--out-from SLOT]] [--window N]
+                            [--max-rss-gb G]
 
 Every Event of ReplayFeed(store, from, to), in its order, as one tab-separated line:
 - common: venue key slot tx outer inner block_time tau_u (tau_u = hash(order) % 10_000, the PositionSim's draw);
@@ -37,6 +38,7 @@ and LiveFeed's stats and its farmer seed (without the store's path).
 import argparse
 import hashlib
 import json
+import resource
 
 from .feed import ReplayFeed
 
@@ -100,6 +102,17 @@ class _Digest:
         return {"count": self.n, "sha256": self.sha.hexdigest()}
 
 
+def capped(events, max_rss_mb, every=50_000):
+    """The events, stopping the run (SystemExit) once the process's peak RSS passes max_rss_mb (checked every `every`
+    events): a dump beside a long NAS job stays within what was planned for it."""
+    for i, ev in enumerate(events):
+        if i % every == 0:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if rss > max_rss_mb:
+                raise SystemExit(f"legs_dump: peak RSS {rss} MB over the cap of {max_rss_mb} MB after {i:,} events: stopped")
+        yield ev
+
+
 def _summary(events, lo, hi, window, out, out_from, no_farm=False, slot_end=None, arrivals=None):
     """Count and hash the events' lines, in total and per window [lo + k*window, ...) (to hi when given); with
     no_farm the farmer-free digests too, with slot_end a call at the end of each slot (when the next slot's first
@@ -152,11 +165,12 @@ def _summary(events, lo, hi, window, out, out_from, no_farm=False, slot_end=None
     return dict(res, kinds=dict(sorted(kinds.items())), windows=windows)
 
 
-def dump(store, lo, hi, window=10_000, out=None, out_from=0):
+def dump(store, lo, hi, window=10_000, out=None, out_from=0, max_rss_mb=None):
     """The summary of ReplayFeed's events over [lo, hi); with `out`, the lines of the slots from `out_from` on too."""
     feed = ReplayFeed(store, lo, hi)
     try:
-        return _summary(feed.events(), lo, hi, window, out, out_from)
+        events = feed.events() if max_rss_mb is None else capped(feed.events(), max_rss_mb)
+        return _summary(events, lo, hi, window, out, out_from)
     finally:
         feed.con.close()
 
@@ -179,7 +193,7 @@ SIDE = ("history", "flag_fixes", "learned", "usage", "new_pools", "arrivals")
 
 
 def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0, snapshot_before=None, h24=None,
-                  memory="1GB"):
+                  memory="1GB", max_rss_mb=None):
     """The summary of LiveFeed's events over the recorder's complete segments under `root` (the module doc's
     --segments), with what the engine takes from it beside them."""
     from .live import LiveFeed
@@ -202,8 +216,8 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
             side["usage"].add(json.dumps(u, sort_keys=True))
 
     try:
-        res = _summary(feed.events(), lo, hi, window, out, out_from, no_farm=True, slot_end=drain,
-                       arrivals=side["arrivals"])
+        events = feed.events() if max_rss_mb is None else capped(feed.events(), max_rss_mb)
+        res = _summary(events, lo, hi, window, out, out_from, no_farm=True, slot_end=drain, arrivals=side["arrivals"])
         for p in feed.new_pools:
             side["new_pools"].add(p)
         seed = {k: v for k, v in (feed.farm_seed or {}).items() if k != "store"} or None
@@ -229,18 +243,23 @@ def main(argv=None):
     ap.add_argument("--snapshot-before", dest="snapshot_before", type=int)
     ap.add_argument("--h24", type=int)
     ap.add_argument("--memory", default="1GB")
+    ap.add_argument("--max-rss-gb", dest="max_rss_gb", type=float, help="stop the run when its peak RSS passes this")
     a = ap.parse_args(argv)
+    cap = None if a.max_rss_gb is None else int(a.max_rss_gb * 1024)
     if a.segments:
-        res = dump_segments(a.segments, a.store, a.lo, a.hi, a.window, a.out, a.out_from, a.snapshot_before, a.h24, a.memory)
+        res = dump_segments(a.segments, a.store, a.lo, a.hi, a.window, a.out, a.out_from, a.snapshot_before, a.h24, a.memory,
+                            cap)
     else:
         if a.hi is None:
             ap.error("--to is needed without --segments")
         if a.snapshot_before is not None or a.h24 is not None:
             ap.error("--snapshot-before and --h24 go with --segments")
-        res = dump(a.store, a.lo, a.hi, a.window, a.out, a.out_from)
+        res = dump(a.store, a.lo, a.hi, a.window, a.out, a.out_from, cap)
     with open(a.summary, "w") as f:
         json.dump(res, f, indent=1)
-    print(json.dumps({k: v for k, v in res.items() if k not in ("windows", "stats")}))
+    # The process's peak RSS beside the summary, not in it (two runs' summaries stay byte-equal).
+    rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+    print(json.dumps({"rss_max_mb": rss_mb} | {k: v for k, v in res.items() if k not in ("windows", "stats")}))
 
 
 if __name__ == "__main__":

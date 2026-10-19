@@ -10,6 +10,10 @@
 #
 #   LAB_PY=/lab/venv/bin/python bash lab/paper/nas_m3_09a.sh          (lab runner; short: three passes over ~2 days)
 #
+# The passes run one after another. Each is one Python process, DuckDB at 1 GB (as paper.engine's LiveFeed), and stops
+# itself once its peak RSS passes MAX_RSS_GB (default 8; RED in job.log), so it fits beside a long job in the runner.
+# Measured on the VPS (dev2, every row, 20,000 slots): ~9,000 events/s, ~0.43 KB of state per event before the
+# one-day prunes; job 91's 16.4 M events give an estimate of ~3-5 GB and ~30-50 min for a LiveFeed pass.
 # Writes to $DATA/backtests/m3-09a-<commit7>/ (job.log, pytest.log, run1/, run2/, store/: summary.json and run.log).
 set -euo pipefail
 
@@ -25,6 +29,7 @@ SEGMENTS=$DATA/backtests/shadow-arms-1053-1054-2c3e5fe/rec/segments  # job 91's 
 STORE=$DATA/store/fwd1053-1054.duckdb
 LO=454896000
 HI=455760000
+MAX_RSS_GB=${MAX_RSS_GB:-8}
 [ -d "$SEGMENTS" ] || { log "no segments at $SEGMENTS"; exit 1; }
 [ -f "$STORE" ] || { log "no store at $STORE"; exit 1; }
 export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1
@@ -41,10 +46,11 @@ run() {  # name, then legs_dump's arguments
   shift
   mkdir -p "$OUT/$name"
   t0=$(date +%s)
-  "$PY" -m paper.legs_dump --store "$STORE" --from $LO --to $HI --summary "$OUT/$name/summary.json" --memory 2GB "$@" \
+  "$PY" -m paper.legs_dump --store "$STORE" --from $LO --to $HI --summary "$OUT/$name/summary.json" --memory 1GB \
+    --max-rss-gb "$MAX_RSS_GB" "$@" \
     > "$OUT/$name/run.log" 2>&1 || rc=$?
   [ "$rc" = 0 ] || { tail -20 "$OUT/$name/run.log" | tee -a "$OUT/job.log"; log "$name: FAILED (rc $rc)"; exit 1; }
-  log "$name: $(($(date +%s) - t0)) s; $(tail -1 "$OUT/$name/run.log" | cut -c1-300)"
+  log "$name: $(($(date +%s) - t0)) s; $(tail -1 "$OUT/$name/run.log" | cut -c1-240)"   # starts with the peak RSS
 }
 run run1 --segments "$SEGMENTS" --snapshot-before $LO
 run run2 --segments "$SEGMENTS" --snapshot-before $LO

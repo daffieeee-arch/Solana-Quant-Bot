@@ -205,3 +205,15 @@ def test_the_segments_options_are_refused_without_segments(tmp_path):
     for extra in (["--to", "3000", "--h24", "5"], ["--to", "3000", "--snapshot-before", "1000"], []):
         with pytest.raises(SystemExit):
             legs_dump.main(["--store", "store", "--from", "1000", "--summary", s] + extra)
+
+
+def test_a_run_over_its_rss_cap_stops(monkeypatch, tmp_path):
+    evs = [_curve(1100, 0), _curve(1101, 0)]
+    assert list(legs_dump.capped(iter(evs), 1 << 30)) == evs
+    with pytest.raises(SystemExit, match="over the cap of 1 MB after 0 events"):
+        list(legs_dump.capped(iter(evs), 1))
+    _Feed.events_list = evs
+    monkeypatch.setattr(legs_dump, "ReplayFeed", _Feed)
+    with pytest.raises(SystemExit, match="peak RSS"):
+        legs_dump.main(["--store", "store", "--from", "1000", "--to", "3000", "--summary", str(tmp_path / "s.json"),
+                        "--max-rss-gb", "0.001"])
