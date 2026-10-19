@@ -162,6 +162,11 @@ run = {"p1_journal_sha": sha("p1"), "p2_journal_sha": sha("p2"),
        and all(filecmp.cmp(os.path.join(out, "p1", f), os.path.join(out, "p2", f), shallow=False) for f in wallets),
        "exit_codes": rc, "segments_read": seg.get("read"), "segments_expected": 3145,
        "incomplete_skipped": seg.get("incomplete_skipped", []), "p1_secs": p1.get("secs")}
+if rc["p3"] != 0:  # reported, not gated (spec E5): the reason from its log's last line
+    try:
+        run["p3_note"] = (open(os.path.join(out, "p3.log")).read().strip().splitlines() or ["(empty log)"])[-1][-300:]
+    except OSError as e:
+        run["p3_note"] = f"no log: {e}"
 json.dump(run, open(os.path.join(out, "run.json"), "w"), indent=1)
 print(f"run.json: journals {'equal' if run['p1_journal_sha'] and run['p1_journal_sha'] == run['p2_journal_sha'] else 'DIFFER'}, "
       f"wallets {'equal' if run['wallets_equal'] else 'DIFFER'}, segments {run['segments_read']} of 3145")

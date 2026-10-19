@@ -106,7 +106,8 @@ def test_short_input_missing_facts_and_nondeterminism_are_red(tmp_path):
     assert failing(plateau.evaluate(p1, None)) == ["run facts (run.json)"]
     assert failing(plateau.evaluate(p1, {**RUN, "p2_journal_sha": "b" * 64})) == ["determinism: P1 and P2 journal sha256"]
     assert failing(plateau.evaluate(p1, {**RUN, "wallets_equal": False})) == ["determinism: wallet files"]
-    assert failing(plateau.evaluate(p1, {**RUN, "exit_codes": {"p1": 0, "p2": 101}})) == ["the runs' exit codes"]
+    assert failing(plateau.evaluate(p1, {**RUN, "exit_codes": {"p1": 0, "p2": 101}})) == ["the runs' exit codes (P1, P2)"]
+    assert failing(plateau.evaluate(p1, {**RUN, "exit_codes": {"p1": 0}})) == ["the runs' exit codes (P1, P2)"]  # P2 not run
     assert failing(plateau.evaluate(p1, {**RUN, "segments_read": 3140})) == ["segments read"]
     assert plateau.evaluate(p1, {**RUN, "segments_read": 3140, "incomplete_skipped": ["1", "2", "3", "4", "5"]})["ok"]
 
@@ -118,6 +119,22 @@ def test_the_quantiles_follow_memlog_buckets():
     assert (q["n"], q["p50"], q["p90"], q["p99"], q["max"]) == (69, 35, 63, 99, 100)
     assert plateau.quantiles({}, 0)["p99"] == 0
     assert plateau.slope([0, 1, 2], [1, 3, 5]) == 2 and plateau.slope([1], [1]) == 0
+
+
+def test_p3_is_reported_not_gated(tmp_path, capsys):
+    # spec E5: P3 (the chunks) is the upper bound, reported only. An OOM of P3 beside P1 and P2 (exit 137, an empty or
+    # cut log) leaves a flat P1 GREEN; the report names P3's exit code and its note.
+    p1 = log(tmp_path / "p1.jsonl")
+    assert plateau.evaluate(plateau.load(p1), {**RUN, "exit_codes": {"p1": 0, "p2": 0, "p3": 137}})["ok"]
+    (tmp_path / "p3.jsonl").write_text("")  # killed before its first minute line
+    (tmp_path / "run.json").write_text(json.dumps({**RUN, "exit_codes": {"p1": 0, "p2": 0, "p3": 137}, "p3_note": "Killed"}))
+    out = tmp_path / "plateau.md"
+    assert plateau.main(["--p1", str(p1), "--p2", str(p1), "--p3", str(tmp_path / "p3.jsonl"), "--run", str(tmp_path / "run.json"),
+                         "--spec-sha", "f" * 64, "--out", str(out)]) == 0
+    assert capsys.readouterr().out.strip().endswith("GREEN")
+    md = out.read_text()
+    assert "P3's exit code (reported, not gated): 137; Killed." in md and "## P3 (the chunks, the upper bound) (reported)" in md
+    assert "Its log is not readable" in md
 
 
 def test_the_cli_writes_the_report_and_one_line(tmp_path, capsys):

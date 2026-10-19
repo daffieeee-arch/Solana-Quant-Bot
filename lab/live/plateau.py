@@ -230,8 +230,11 @@ def evaluate(p1, run=None):
         check("determinism: P1 and P2 journal sha256", "equal" if sha[0] and sha[0] == sha[1] else f"{sha[0]} vs {sha[1]}", "equal",
               sha[0] is not None and sha[0] == sha[1])
         check("determinism: wallet files", "equal" if run.get("wallets_equal") else "differ", "equal", bool(run.get("wallets_equal")))
+        # P1 and P2 are gated; P3 (the chunks, the upper bound) is reported only (spec E5): its exit code and reason are in
+        # the report, never in the gate (an OOM of P3 beside the others must not turn a flat P1 RED).
         codes = run.get("exit_codes", {})
-        check("the runs' exit codes", codes, "all 0", bool(codes) and all(c == 0 for c in codes.values()))
+        gated = {k: codes.get(k) for k in ("p1", "p2")}
+        check("the runs' exit codes (P1, P2)", gated, "both 0", all(c == 0 for c in gated.values()))
         read, expected, skipped = run.get("segments_read"), run.get("segments_expected"), run.get("incomplete_skipped", [])
         check("segments read", f"{read} of {expected} ({len(skipped)} incomplete skipped)", "all, or the incomplete named",
               read is not None and expected is not None and read + len(skipped) == expected)
@@ -291,7 +294,14 @@ def report(res, spec_sha, others, run):
     out += ["", "Per hour of chain time (µs):", "", "| hour (unix) | n | p50 | p99 | p999 | max |", "|---|---|---|---|---|---|"]
     for hr, q in res["hours"].items():
         out.append(f"| {hr} | {q['n']:,} | {us(q['p50'])} | {us(q['p99'])} | {us(q['p999'])} | {us(q['max'])} |")
+    if run is not None:
+        p3 = run.get("exit_codes", {}).get("p3")
+        if p3 is not None:
+            out += ["", f"P3's exit code (reported, not gated): {p3}" + (f"; {run['p3_note']}" if run.get("p3_note") else "") + "."]
     for label, s in others:
+        if "error" in s:
+            out += ["", f"## {label} (reported)", "", f"- Its log is not readable: {s['error']}."]
+            continue
         out += ["", f"## {label} (reported)", "",
                 f"- Minutes {s['minutes'][0]}..{s['minutes'][1]} ({s['hours']} h)."]
         if s["rss"]:
@@ -341,10 +351,18 @@ def main(argv=None):
     try:
         p1 = load(a.p1)
         run = json.load(open(a.run)) if a.run else None
-        others = [(label, summary_of(load(p))) for label, p in (("P2 (the segments again)", a.p2), ("P3 (the chunks, the upper bound)", a.p3)) if p]
     except (OSError, ValueError, KeyError) as e:
         print(f"lab-live plateau: unreadable input: {e}", file=sys.stderr)
         return 2
+    # P2 and P3 are reported only: an unreadable log (a run that died early) is a note in the report, not an input error
+    others = []
+    for label, path in (("P2 (the segments again)", a.p2), ("P3 (the chunks, the upper bound)", a.p3)):
+        if not path:
+            continue
+        try:
+            others.append((label, summary_of(load(path))))
+        except (OSError, ValueError, KeyError) as e:
+            others.append((label, {"error": str(e)}))
     res = evaluate(p1, run)
     with open(a.out, "w") as f:
         f.write(report(res, a.spec_sha, others, run))
