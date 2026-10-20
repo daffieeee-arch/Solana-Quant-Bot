@@ -1,7 +1,7 @@
 #!/bin/bash
 # UI job template "backtest-f7" (spec v0.3 §5): one F7 variant and K3 (tp4_T600) on the same store period, the
 # tournament with the job's size, delay and segment, decisions in the job's whole epochs; then the result
-# (uijobs/result.py): net P&L per trade and Σ per day with the 10,000-draw day bootstrap, under the base costs.
+# (uijobs/result.py): the tournament report's own rows (backtest.report.summarize, base costs) per variant, d and regime.
 # Pinned on the NAS by SHA256SUMS; run by nas_runner.py only. Every job value arrives as a UI_* environment value
 # that schema.py validated (enums, bounded numbers, a ULID); nothing here is built from free text.
 set -euo pipefail
