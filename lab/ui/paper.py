@@ -531,7 +531,23 @@ def journal_view(path, now):
     arm_closed = sorted((x for (f, v), xs in by_group.items() if arm(f, v) for x in xs),
                         key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
     arm_rows += [dict(pos_row(x, x), group=arm_of[x["variant"]]) for x in arm_closed[:POSITIONS_SHOWN]]
-    names = token_names([r["key"] for r in pos + shadow_rows + arm_rows])
+    # The day report card (backlog 7): per group the day's trades, Σ, best and worst trade.
+    def card(group, keep):
+        xs = [x for (f, v), rows_ in by_group.items() if keep(f, v) for x in rows_]
+        filled = [x for x in xs if x["tokens"]]
+        pick = lambda x: None if x is None else {"key": x["key"], "variant": x["variant"], "ret": x["ret"],  # noqa: E731
+                                                  "pnl_sol": (x["pnl"] or 0) / 1e9, "exit_reason": x["exit_reason"]}
+        return {"group": group, "trades": len(filled), "entry_failed": len(xs) - len(filled),
+                "net_sol": sum(x["pnl"] or 0 for x in xs) / 1e9, "wins": sum(1 for x in filled if (x["pnl"] or 0) > 0),
+                "best": pick(max(filled, key=lambda x: x["pnl"] or 0, default=None)),
+                "worst": pick(min(filled, key=lambda x: x["pnl"] or 0, default=None))}
+    day_card = [card("K3", ours)] + [card(g, lambda f, v, vs=set(vs): f == "F7" and v in vs) for g, vs in sorted(further.items())]
+    names = token_names([r["key"] for r in pos + shadow_rows + arm_rows]
+                        + [c[k]["key"] for c in day_card for k in ("best", "worst") if c[k]])
+    for c in day_card:
+        for k in ("best", "worst"):
+            if c[k]:
+                c[k].update({a: names.get(c[k]["key"], {}).get(a) for a in ("mint", "symbol", "name")})
     for r in pos + shadow_rows + arm_rows:
         r.update(names.get(r["key"], {}))
 
@@ -570,7 +586,8 @@ def journal_view(path, now):
             "source": {"feed": feed, "paper_trading": feed == "live" and not run.startswith("parity"), "journal": run},
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
             "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
-            "arms": arm_groups(exits, positions, further, day), "arm_positions": arm_rows, "journal_usage_rows": len(usage),
+            "arms": arm_groups(exits, positions, further, day), "arm_positions": arm_rows, "day_card": day_card,
+            "journal_usage_rows": len(usage),
             "groups_inferred": groups_inferred,
             "holdout_rows_dropped": j.dropped}
 
