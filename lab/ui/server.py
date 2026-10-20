@@ -515,7 +515,8 @@ def api_paper_explain(q):
 
 def api_ui_jobs(q):
     """The UI's research jobs and the form's choices (read-only; submitting one is an action: /api/action)."""
-    return {"jobs": actions.jobs_view(), "options": actions.job_options(), "in_flight": actions.job_in_flight()}
+    return {"jobs": actions.jobs_view(), "options": actions.job_options(), "in_flight": actions.job_in_flight(),
+            "dispatcher": actions.dispatcher_state()}
 
 
 def api_paper_trades(q):

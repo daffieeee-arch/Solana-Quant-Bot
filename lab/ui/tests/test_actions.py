@@ -300,6 +300,15 @@ class NasJob(Base):
         self.assertEqual(self.disp.run({}, put_fails), [(rid2, "put failed", "Connection timed out")])
         self.assertEqual(self.a.jobs_view()[0]["state"], "queued_here")  # stays queued for the next pass
 
+    def test_dispatcher_state_for_the_page(self):
+        self.assertEqual(self.a.dispatcher_state()["state"], "off")  # never ran: the NAS side is not installed yet
+        hb = os.path.join(self.a.CONTROL, "nas-dispatch.json")
+        os.makedirs(self.a.CONTROL, exist_ok=True)
+        for ok, age, want in ((True, 30, "ok"), (False, 30, "error"), (True, 900, "stale")):
+            with open(hb, "w") as f:
+                json.dump({"last_run_unix": int(time.time()) - age, "ok": ok, "last_error": None if ok else "put failed: x"}, f)
+            self.assertEqual(self.a.dispatcher_state()["state"], want)
+
     def test_ssh_is_strict_and_settings_are_checked(self):
         argv = []
         real = self.disp.subprocess.run

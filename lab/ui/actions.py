@@ -61,7 +61,7 @@ def _job_params(params):
 
 
 def _job_text(p):
-    return (f"Backtest op de NAS: {p['variant']} naast K3 (tp4_T600), {p['segment']}, farm {p['farm']}, {p['size_sol']:g} SOL, "
+    return (f"Backtest op de NAS: {p['variant']} naast K3 (tp4_T600), {p['segment']}, farm {p['farm']}, {str(p['size_sol']).rstrip('0').rstrip('.').replace('.', ',')} SOL, "
             f"{p['d_ms']} ms, store {p['store']} epochs {p['epoch_from']}–{p['epoch_to']}. Verkennend: telt als een trial in het "
             "register. Verandert niets aan de paper-bot.")
 
@@ -103,7 +103,7 @@ def jobs_view(limit=20):
                             "reason": j.get("reason"), "ts": j.get("sent_unix") or j.get("checked_unix")}
         except (OSError, ValueError, KeyError):
             continue
-    res_dir = os.path.join(DATA, "nas-results", "ui")
+    res_dir = os.environ.get("LAB_NAS_RESULTS", os.path.join(DATA, "nas-results", "ui"))
     for jid, j in out.items():
         p = os.path.join(res_dir, jid, "result.json")
         if os.path.isfile(p):
@@ -113,6 +113,20 @@ def jobs_view(limit=20):
             except (OSError, ValueError):
                 pass
     return sorted(out.values(), key=lambda j: j["id"], reverse=True)[:limit]
+
+
+def dispatcher_state(now=None):
+    """Whether the NAS dispatcher runs (its heartbeat <control>/nas-dispatch.json, written every pass): 'off' (never
+    ran: the NAS side is not installed yet), 'stale' (no pass for 10 minutes), 'error' (the last NAS call failed)
+    or 'ok'."""
+    try:
+        with open(os.path.join(CONTROL, "nas-dispatch.json")) as f:
+            hb = json.load(f)
+    except (OSError, ValueError):
+        return {"state": "off"}
+    age = (now or time.time()) - (hb.get("last_run_unix") or 0)
+    return {"state": "stale" if age > 600 else ("ok" if hb.get("ok") else "error"), "last_run_unix": hb.get("last_run_unix"),
+            "last_error": hb.get("last_error")}
 
 
 def job_options():
