@@ -156,8 +156,12 @@ def run(cfg, call=ssh):
 def main():
     with open(os.path.join(CONTROL, "nas-dispatch.lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        for rid, what, err in run(settings()):
+        did = run(settings())
+        for rid, what, err in did:
             print(f"{time.strftime('%FT%TZ', time.gmtime())} {rid} {what} {err}".rstrip(), flush=True)
+        # A heartbeat for the page: whether the dispatcher runs at all, and whether its last NAS call failed.
+        bad = [f"{w}: {e}" for _, w, e in did if w.endswith("failed") or w == "bad answer"]
+        _write(os.path.join(CONTROL, "nas-dispatch.json"), {"last_run_unix": int(time.time()), "ok": not bad, "last_error": bad[-1][:200] if bad else None})
 
 
 if __name__ == "__main__":

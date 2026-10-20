@@ -50,14 +50,16 @@ function Pairing({ onDone }: { onDone: () => void }) {
   );
 }
 
-function ActionButton({ s, action, onLog }: { s: Session; action: string; onLog: () => void }) {
+function ActionButton({ s, action, onLog, params = {}, label, disabled = false, bare = false }: {
+  s: Session; action: string; onLog: () => void; params?: Record<string, unknown>; label?: string; disabled?: boolean; bare?: boolean;
+}) {
   const [confirm, setConfirm] = useState<{ nonce: string; text: string } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const ask = () => {
     setErr(null);
     setStatus(null);
-    postAction<{ nonce: string; text: string }>("prepare", { csrf: s.csrf, action, params: {} }).then(setConfirm).catch((e) => setErr(e.message));
+    postAction<{ nonce: string; text: string }>("prepare", { csrf: s.csrf, action, params }).then(setConfirm).catch((e) => setErr(e.message));
   };
   const go = async () => {
     const c = confirm;
@@ -82,12 +84,14 @@ function ActionButton({ s, action, onLog }: { s: Session; action: string; onLog:
     onLog();
   };
   return (
-    <div className="flex flex-wrap items-center gap-3 py-2 border-b border-line-soft last:border-0">
-      <div className="grow min-w-0">
-        <div className="text-sm font-bold">{ACTION_LABEL[action] ?? action}</div>
-        <div className="text-[11px] text-muted">{s.actions[action]}</div>
-      </div>
-      <Button type="button" onClick={ask} disabled={!!s.actions_off}>Uitvoeren…</Button>
+    <div className={cn("flex flex-wrap items-center gap-3", !bare && "py-2 border-b border-line-soft last:border-0")}>
+      {!bare && (
+        <div className="grow min-w-0">
+          <div className="text-sm font-bold">{ACTION_LABEL[action] ?? action}</div>
+          <div className="text-[11px] text-muted">{s.actions[action]}</div>
+        </div>
+      )}
+      <Button type="button" onClick={ask} disabled={!!s.actions_off || disabled}>{label ?? "Uitvoeren…"}</Button>
       {(status || err) && <span className={cn("w-full text-xs", err ? "text-sell" : "text-fg-2")}>{err ?? status}</span>}
       <Dialog.Root open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
         <Dialog.Portal>
@@ -104,6 +108,91 @@ function ActionButton({ s, action, onLog }: { s: Session; action: string; onLog:
         </Dialog.Portal>
       </Dialog.Root>
     </div>
+  );
+}
+
+// The strategy chooser (B3b): a backtest on the NAS from a fixed template, its queue and its result beside K3.
+interface JobRow { variant: string; d: number; regime: string; n: number; filled: number; days: number; mean_pnl_sol: number | null;
+  pnl_ci_lo: number | null; pnl_ci_hi: number | null; sum_sol_per_day: number | null; failed_entries: number }
+interface Job { id: string; state: string; params?: Record<string, string | number>; reason?: string | null; ts?: number;
+  result?: { rows?: JobRow[]; k3?: string; variant?: string; note?: string } }
+interface Jobs { jobs: Job[]; in_flight: boolean; dispatcher: { state: "off" | "stale" | "error" | "ok"; last_error?: string | null };
+  options: { grids: Record<string, string[]>; k3: string; segments: string[]; farms: string[]; sizes: number[]; delays_ms: number[];
+    max_epochs: number; stores: Record<string, { from: number; to: number }> } }
+const JOB_STATE: Record<string, string> = {
+  queued_here: "in de wachtrij (VPS)", sent: "naar de NAS gestuurd", queued: "in de wachtrij op de NAS", running: "draait op de NAS",
+  done: "klaar", failed: "mislukt", refused: "geweigerd",
+};
+const DISPATCHER: Record<string, string> = {
+  off: "De NAS-runner is nog niet geïnstalleerd: jobs wachten in de wachtrij tot de coördinator hem na de paperstart installeert.",
+  stale: "De dispatcher heeft al 10 minuten niet gedraaid: jobs wachten.", error: "De laatste verbinding met de NAS mislukte; de dispatcher probeert het opnieuw.",
+};
+const sol4 = (v: number | null | undefined) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("nl-NL", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`);
+
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return <label className="grid gap-1 text-[11px] text-muted min-w-0">{label}{children}</label>;
+}
+const selCls = "min-h-10 px-2 rounded-lg bg-surface-2 border border-line text-sm text-fg";
+
+function Jobs({ s, refresh, onLog }: { s: Session; refresh: number; onLog: () => void }) {
+  const [d, setD] = useState<Jobs | null>(null);
+  const [f, setF] = useState({ variant: "flow300_tp100_H6", segment: "pool_reversed", farm: "organic", size_sol: 0.5, d_ms: 600, store: "dev2", epoch_from: 1040, epoch_to: 1046 });
+  useEffect(() => { get<Jobs>("ui_jobs").then(setD).catch(() => setD(null)); }, [refresh]);
+  if (!d) return null;
+  const st = d.options.stores[f.store];
+  const valid = st && f.epoch_from >= st.from && f.epoch_to <= st.to && f.epoch_from <= f.epoch_to && f.epoch_to - f.epoch_from + 1 <= d.options.max_epochs;
+  const set = (k: string, v: string | number) => setF((o) => ({ ...o, [k]: v }));
+  const epochs = st ? Array.from({ length: st.to - st.from + 1 }, (_, i) => st.from + i) : [];
+  return (
+    <Panel className="grid gap-3">
+      <div>
+        <h2 className="m-0 text-base font-extrabold">Backtest op de NAS</h2>
+        <p className="m-0 text-[11px] text-muted">Een vast sjabloon: één F7-variant naast K3 ({d.options.k3}) op ontwikkeldata. Hold-out en de clean-periode zijn niet te kiezen. Verandert niets aan de paper-bot. Elke job telt als een trial: verkennend, geen bewijs.</p>
+      </div>
+      {d.dispatcher.state !== "ok" && <p className="m-0 px-3 py-2 rounded-xl bg-surface-2 border border-line text-xs text-fg-2">{DISPATCHER[d.dispatcher.state]}</p>}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <Field label="Variant"><select className={selCls} value={f.variant} onChange={(e) => set("variant", e.target.value)}>
+          {Object.entries(d.options.grids).map(([g, vs]) => <optgroup key={g} label={g}>{vs.map((v) => <option key={v} value={v}>{v}</option>)}</optgroup>)}
+        </select></Field>
+        <Field label="Segment"><select className={selCls} value={f.segment} onChange={(e) => set("segment", e.target.value)}>{d.options.segments.map((v) => <option key={v}>{v}</option>)}</select></Field>
+        <Field label="Farm"><select className={selCls} value={f.farm} onChange={(e) => set("farm", e.target.value)}>{d.options.farms.map((v) => <option key={v}>{v}</option>)}</select></Field>
+        <Field label="Grootte (SOL)"><select className={selCls} value={f.size_sol} onChange={(e) => set("size_sol", Number(e.target.value))}>{d.options.sizes.map((v) => <option key={v} value={v}>{v}</option>)}</select></Field>
+        <Field label="Vertraging (ms)"><select className={selCls} value={f.d_ms} onChange={(e) => set("d_ms", Number(e.target.value))}>{d.options.delays_ms.map((v) => <option key={v} value={v}>{v}</option>)}</select></Field>
+        <Field label="Store"><select className={selCls} value={f.store} onChange={(e) => { const o = d.options.stores[e.target.value]; setF((x) => ({ ...x, store: e.target.value, epoch_from: Math.max(o.from, o.to - d.options.max_epochs + 1), epoch_to: o.to })); }}>
+          {Object.entries(d.options.stores).map(([k, o]) => <option key={k} value={k}>{k} ({o.from}–{o.to})</option>)}</select></Field>
+        <Field label="Van epoch"><select className={selCls} value={f.epoch_from} onChange={(e) => set("epoch_from", Number(e.target.value))}>{epochs.map((v) => <option key={v}>{v}</option>)}</select></Field>
+        <Field label="Tot en met epoch"><select className={selCls} value={f.epoch_to} onChange={(e) => set("epoch_to", Number(e.target.value))}>{epochs.map((v) => <option key={v}>{v}</option>)}</select></Field>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <ActionButton bare s={s} action="nas_job" params={f} label="Backtest aanvragen…" disabled={!valid || d.in_flight} onLog={onLog} />
+        {!valid && <span className="text-[11px] text-warn">Kies hoogstens {d.options.max_epochs} epochs binnen de store.</span>}
+        {d.in_flight && <span className="text-[11px] text-muted">Er loopt al een job (één tegelijk).</span>}
+      </div>
+      {!!d.jobs.length && (
+        <div className="grid gap-2">
+          <h3 className="m-0 text-xs font-extrabold text-fg-2">Jobs</h3>
+          {d.jobs.map((j) => (
+            <div key={j.id} className="rounded-xl border border-line p-2.5 grid gap-1.5 min-w-0">
+              <div className="flex flex-wrap justify-between gap-2 text-xs">
+                <span className="font-bold">{String(j.params?.variant ?? "?")} <span className="font-normal text-muted">{String(j.params?.segment ?? "")} · {String(j.params?.farm ?? "")} · {String(j.params?.size_sol ?? "")} SOL · {String(j.params?.d_ms ?? "")} ms · {String(j.params?.store ?? "")} {String(j.params?.epoch_from ?? "")}–{String(j.params?.epoch_to ?? "")}</span></span>
+                <span className={cn(j.state === "done" ? "text-buy" : j.state === "failed" || j.state === "refused" ? "text-sell" : "text-fg-2")}>{JOB_STATE[j.state] ?? j.state}{j.reason ? `: ${j.reason}` : ""}</span>
+              </div>
+              {j.result?.rows && (
+                <div className="overflow-x-auto"><table className="w-full text-[11px] num border-collapse">
+                  <thead><tr className="text-muted text-left"><th className="py-1 pr-2 font-normal">variant</th><th className="font-normal">d · regime</th><th className="font-normal text-right">trades</th><th className="font-normal text-right">SOL/trade</th><th className="font-normal text-right">95%-interval</th><th className="font-normal text-right">Σ/dag</th></tr></thead>
+                  <tbody>{j.result.rows.map((r, i) => (
+                    <tr key={i} className={cn("border-t border-line-soft", r.variant === j.result?.k3 && "text-fg-2")}>
+                      <td className="py-1 pr-2">{r.variant}{r.variant === j.result?.k3 ? " (K3)" : ""}</td><td>{r.d} · {r.regime}</td><td className="text-right">{r.filled.toLocaleString("nl-NL")}</td>
+                      <td className={cn("text-right", (r.mean_pnl_sol ?? 0) > 0 ? "text-buy" : (r.mean_pnl_sol ?? 0) < 0 ? "text-sell" : "")}>{sol4(r.mean_pnl_sol)}</td>
+                      <td className="text-right">{sol4(r.pnl_ci_lo)} … {sol4(r.pnl_ci_hi)}</td><td className="text-right">{r.sum_sol_per_day == null ? "–" : sol4(r.sum_sol_per_day)}</td>
+                    </tr>))}</tbody>
+                </table><p className="m-0 mt-1 text-[10px] text-muted">De rijen van het toernooirapport zelf (base-kosten, dag-bootstrap). {j.result.note}</p></div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -164,9 +253,10 @@ export default function Control() {
           {state.s.actions_off && <p className="m-0 px-3 py-2.5 rounded-xl bg-warn-soft border border-warn-line text-warn text-xs">Acties staan uit: {state.s.actions_off}.</p>}
           <Panel>
             <h2 className="m-0 mb-1 text-base font-extrabold">Acties</h2>
-            {Object.keys(state.s.actions).map((a) => <ActionButton key={a} s={state.s} action={a} onLog={() => setRefresh((n) => n + 1)} />)}
+            {Object.keys(state.s.actions).filter((a) => a !== "nas_job").map((a) => <ActionButton key={a} s={state.s} action={a} onLog={() => setRefresh((n) => n + 1)} />)}
             <p className="m-0 mt-2 text-[11px] text-muted">Pauze en start/stop van de bot komen pas als de webapp als eigen systeemgebruiker draait (variant A).</p>
           </Panel>
+          {"nas_job" in state.s.actions && <Jobs s={state.s} refresh={refresh} onLog={() => setRefresh((n) => n + 1)} />}
           <Log refresh={refresh} />
         </>
       )}
