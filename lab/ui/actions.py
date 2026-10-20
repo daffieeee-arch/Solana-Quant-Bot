@@ -74,12 +74,62 @@ def _no_params(params):
     return {}
 
 
+import re as _re
+NOTE_MAX = 500
+_NOTE_DROP = _re.compile(r"[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def note_params(p):
+    """An owner's note (backlog 5): {"text"} plus a day {"day"} or a position {"key", "variant", "t"}. The text is the
+    owner's own words: control and bidi characters dropped, at most NOTE_MAX characters; the page escapes it. The
+    executor checks the same (lab/ops/control/executor.py)."""
+    if not isinstance(p, dict) or set(p) not in ({"text", "day"}, {"text", "key", "variant", "t"}):
+        raise Refused(400, "note: text and a day, or text and key, variant, t")
+    text = _NOTE_DROP.sub("", p["text"]).strip() if isinstance(p["text"], str) else ""
+    if not 1 <= len(text) <= NOTE_MAX:
+        raise Refused(400, f"note: 1 to {NOTE_MAX} characters")
+    if "day" in p:
+        if not (isinstance(p["day"], str) and _re.fullmatch(r"20\d\d-\d\d-\d\d", p["day"])):
+            raise Refused(400, "note: day as YYYY-MM-DD")
+        return {"text": text, "day": p["day"]}
+    if not (isinstance(p["key"], str) and 32 <= len(p["key"]) <= 44 and p["key"].isalnum()
+            and isinstance(p["variant"], str) and _re.fullmatch(r"[A-Za-z0-9_]{1,40}", p["variant"])
+            and type(p["t"]) is int and p["t"] > 0):
+        raise Refused(400, "note: a position as key, variant, t")
+    return {"text": text, "key": p["key"], "variant": p["variant"], "t": p["t"]}
+
+
+def _note_text(p):
+    target = f"dag {p['day']}" if "day" in p else f"trade {p['key'][:4]}…{p['key'][-4:]} ({p['variant']}, slot {p['t']})"
+    short = p["text"] if len(p["text"]) <= 80 else p["text"][:79] + "…"
+    return f"Notitie bij {target}: “{short}”. Opgeslagen in een eigen bestand, niet in het journaal; de bot leest het nooit."
+
+
+def notes(day=None, key=None, variant=None, t=None, limit=50):
+    """The owner's notes for a day or a position (<control>/notes/notes.jsonl, written by the executor), newest first."""
+    out = []
+    try:
+        with open(os.path.join(CONTROL, "notes", "notes.jsonl")) as f:
+            for line in f:
+                try:
+                    n = json.loads(line)
+                except ValueError:
+                    continue
+                if (day and n.get("day") == day) or (key and n.get("key") == key and n.get("variant") == variant and n.get("t") == t):
+                    out.append({k: n.get(k) for k in ("id", "ts", "text", "day", "key", "variant", "t")})
+    except OSError:
+        pass
+    return sorted(out, key=lambda n: n.get("ts") or 0, reverse=True)[:limit]
+
+
 ACTIONS = {
     "ping": (_no_params, lambda p: "Test: de executor antwoordt (verandert niets)."),
     "nas_job": (_job_params, _job_text),
+    "note": (note_params, _note_text),
 }
 DESCRIPTIONS = {"ping": "Test: de executor antwoordt (verandert niets).",
-                "nas_job": "Een backtest op de NAS uit een vast sjabloon (strategiekiezer); verandert niets aan de paper-bot."}
+                "nas_job": "Een backtest op de NAS uit een vast sjabloon (strategiekiezer); verandert niets aan de paper-bot.",
+                "note": "Een notitie bij een trade of een dag, in een eigen bestand; de bot leest het nooit."}
 
 
 def jobs_view(limit=20):

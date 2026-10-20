@@ -1,6 +1,7 @@
 import { cn } from "../lib/utils";
 import { label, shortAddr } from "../format";
 import type { PaperJournal, PaperRecorder } from "../paperTypes";
+import NoteBox from "./NoteBox";
 
 // Day report card (backlog 7): per group the day's trades, Σ, best and worst trade, and Triton's use today.
 // Read-only; from the journal (lab/ui/paper.py journal_view day_card) and the recorder's budget.json.
@@ -39,6 +40,7 @@ export default function DayCard({ j, r }: { j: PaperJournal; r: PaperRecorder | 
           {c.trades > 1 && <TradeLine k="Slechtste" t={c.worst} />}
         </div>
       ))}
+      <NoteBox target={{ day: j.day }} />
     </section>
   );
 }

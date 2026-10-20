@@ -654,6 +654,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(HTTPStatus.OK, actions.result((query.get("id") or [""])[0]))
             if path == "/api/action/log":
                 return self.send_json(HTTPStatus.OK, {"events": actions.log()})
+            if path == "/api/action/notes":  # the owner's notes: only for a paired device
+                g = lambda k: (query.get(k) or [""])[0]  # noqa: E731
+                t = g("t")
+                return self.send_json(HTTPStatus.OK, {"notes": actions.notes(day=g("day") or None, key=g("key") or None,
+                                                                           variant=g("variant") or None, t=int(t) if t.isdigit() else None)})
             return self.send_json(HTTPStatus.NOT_FOUND, {"error": "onbekend pad"})
         except actions.Refused as e:
             return self.send_json(e.status, {"error": e.reason})
