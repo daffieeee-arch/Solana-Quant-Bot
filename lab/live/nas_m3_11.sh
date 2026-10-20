@@ -65,7 +65,7 @@ SEED_FROM_SEQ=${SEED_FROM_SEQ:-2249}
 STORE=$DATA/store/fwd1053-1054.duckdb
 LO=454896000
 CONFIG=paper/k3-paper-2026-10-12.yaml
-GROUPS=paper/h-arms-2026-10-16.yaml
+H_ARMS=paper/h-arms-2026-10-16.yaml  # not GROUPS: a bash builtin (the gids), an assignment to it is silently ignored
 VARIANTS=0.04:600
 ACCEPT=$REPO/lab/live/m3_11_accept.py
 [ -x "$BIN" ] || { log "no binary at $BIN: run STEP=build first"; exit 1; }
@@ -77,7 +77,7 @@ count() {  # the complete segments under $1/segments
 complete=$(count "$REC")
 [ "$complete" = "$JOB91_SEGMENTS" ] || { log "M3-11: RED: $complete complete segments under $REC/segments, not $JOB91_SEGMENTS"; exit 1; }
 log "input: $complete complete segments under $REC/segments; lab-live $(sha256sum "$BIN" | cut -c1-16)"
-sha256sum "$REPO/lab/$CONFIG" "$REPO/lab/$GROUPS" "$REPO/lab/paper/risk.yaml" "$REPO/lab/paper/risk-h.yaml" | tee -a "$OUT/job.log"
+sha256sum "$REPO/lab/$CONFIG" "$REPO/lab/$H_ARMS" "$REPO/lab/paper/risk.yaml" "$REPO/lab/paper/risk-h.yaml" | tee -a "$OUT/job.log"
 export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1
 cd "$REPO/lab"
 
@@ -101,7 +101,7 @@ runs() {  # prefix, root, segments, snapshot, the first live slot, h24 (- for un
   rm -rf "${OUT:?}/${prefix}py" "${OUT:?}/${prefix}rs1" "${OUT:?}/${prefix}rs2" "${OUT:?}/${prefix}diff"
   mkdir -p "$OUT/${prefix}py"
   timed "${prefix}py" "$PY" -m paper.live_reference --snapshot-before "$first" "${h[@]}" --summary "$OUT/${prefix}py/summary.json" -- \
-    --live "$root" --catch-up --no-watchlist --no-backup --config "$CONFIG" --groups "$GROUPS" --store "$STORE" --journal "$OUT/${prefix}py"
+    --live "$root" --catch-up --no-watchlist --no-backup --config "$CONFIG" --groups "$H_ARMS" --store "$STORE" --journal "$OUT/${prefix}py"
   # the groups and the cost scenario as this run journaled them: lab-live's inputs
   "$PY" - "$OUT/${prefix}py" "$OUT/${prefix}" <<'EOF'
 import os, sqlite3, sys
