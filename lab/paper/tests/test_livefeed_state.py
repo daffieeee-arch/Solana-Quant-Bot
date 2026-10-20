@@ -220,16 +220,38 @@ def test_seed_window_and_when_the_farm_labels_are_complete(tmp_path):
 
 def test_a_start_never_knows_the_store_past_its_first_live_slot(tmp_path):
     """LAB review on Codex finding 3 (383a24d): a store whose pool rows reach the first live slot needs snapshot_before (at
-    or before that slot: paper.shadow's lo may lie just before it); one that ends before the start is taken whole."""
+    or before that slot: paper.shadow's lo may lie just before it); one that ends before the start is taken whole. LAB
+    review on #478: for every feed with a store, seeded or not."""
     store = fake_store(tmp_path / "s.duckdb", range(0, 5_000, 10))
-    for before, first, ok in ((None, 4_000, False), (4_001, 4_000, False), (4_000, 4_000, True), (3_990, 4_000, True), (None, 5_000, True)):
-        f = LiveFeed(str(tmp_path), store=store, follow=False, seed_farmers=True, snapshot_before=before)
+    for seed in (True, False):
+        for before, first, ok in ((None, 4_000, False), (4_001, 4_000, False), (4_000, 4_000, True), (3_990, 4_000, True),
+                                  (None, 5_000, True)):
+            f = LiveFeed(str(tmp_path), store=store, follow=False, seed_farmers=seed, snapshot_before=before)
+            try:
+                if ok:
+                    f._check_snapshot_before(first)
+                else:
+                    with pytest.raises(SystemExit, match="snapshot_before"):
+                        f._check_snapshot_before(first)
+            finally:
+                f.close()
+
+
+def test_a_store_only_feed_refuses_at_its_first_segment(tmp_path):
+    """LAB review on #478: the bound runs at the first segment for a feed with a store and no farmer seed too, before
+    anything of that segment is learned or handed out; without a store there is nothing to check."""
+    store = fake_store(tmp_path / "s.duckdb", range(0, 5_000, 10))
+    d = tmp_path / "rec" / "segments" / f"{0:09d}"
+    d.mkdir(parents=True)
+    (d / "_segment.json").write_text(json.dumps({"seq": 0, "first_slot": 4_000, "last_slot": 4_099, "complete": True}))
+    for kw, ok in (({}, False), ({"snapshot_before": 4_000}, True), ({"store": None}, True)):
+        f = LiveFeed(str(tmp_path / "rec"), **{"store": store, **kw}, follow=False, h24=1_000, memory="200MB")
         try:
             if ok:
-                f._init_seed(first, 1_000)
-                assert f.farm_seed["first_live_slot"] == first
+                assert list(f.events()) == [] and f.bound_checked
             else:
-                with pytest.raises(SystemExit, match="snapshot_before"):
-                    f._init_seed(first, 1_000)
+                with pytest.raises(SystemExit, match="no snapshot_before"):
+                    list(f.events())
+                assert not f.learned  # nothing of the segment learned
         finally:
             f.close()

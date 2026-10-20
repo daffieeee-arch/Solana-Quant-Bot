@@ -287,7 +287,8 @@ class LiveFeed(Feed):
         # The farmer window before the first live slot from the store, per pool when it first trades
         # live (_seed_pool); farm_seed records the range and from which slot the labels are complete.
         self.seed_farmers, self.seed_con, self.farm_seed, self.seeded = bool(seed_farmers and store), None, None, set()
-        self.snapshot_before = snapshot_before  # _init_seed checks it against the first live slot
+        # _check_snapshot_before checks it against the first live slot, for every feed with a store (seeded or not)
+        self.snapshot_before, self.bound_checked = snapshot_before, not store
         self.next_seq = from_seq
         self.con = duckdb.connect()
         self.con.execute(f"SET memory_limit = '{memory}'; SET threads TO 2")
@@ -509,22 +510,33 @@ class LiveFeed(Feed):
             self.seed_con.close()
             self.seed_con = None
 
-    def _init_seed(self, first_slot, h24):
-        """Seed window at the first live slot: [first_slot - h24, first_slot), as far as the store
-        reaches. The farm labels are complete from first_slot when it reaches it, else a day later."""
-        self.seed_con = streams.open_store(self.store, threads=1, memory="256MB")
-        start, end = self.seed_con.execute("SELECT min(slot), max(slot) + 1 FROM pool").fetchone()
-        start, end = start or 0, end or 0
-        # A start knows the store only before its first live slot (LAB review, Codex finding 3 on 383a24d; lab-live's
-        # follow::check_snapshot_before): a snapshot_before after it, or none while the store's pool rows reach it, would
-        # have loaded tokens and pools created after the start (_load_snapshot). paper.shadow's lo may lie just before.
-        if self.snapshot_before is not None and self.snapshot_before > first_slot:
-            raise SystemExit(f"LiveFeed: snapshot_before {self.snapshot_before} is after the first live slot {first_slot}: the start "
-                             f"would know the tokens and pools created in [{first_slot}, {self.snapshot_before}): refused")
-        if self.snapshot_before is None and end > first_slot:
+    def _check_snapshot_before(self, first_slot):
+        """A start knows the store only before its first live slot (LAB review, Codex finding 3 on 383a24d; lab-live's
+        follow::check_snapshot_before), for every feed with a store, seeded or not (LAB review on #478): a snapshot_before
+        after it, or none while the store's pool rows reach it, would have loaded tokens and pools created after the start
+        (_load_snapshot). paper.shadow's lo may lie just before. A store that ends before the start is taken whole."""
+        if self.snapshot_before is not None:
+            if self.snapshot_before > first_slot:
+                raise SystemExit(f"LiveFeed: snapshot_before {self.snapshot_before} is after the first live slot {first_slot}: the "
+                                 f"start would know the tokens and pools created in [{first_slot}, {self.snapshot_before}): refused")
+            return
+        con = streams.open_store(self.store, threads=1, memory="256MB")
+        try:
+            end = con.execute("SELECT max(slot) + 1 FROM pool").fetchone()[0] or 0
+        finally:
+            con.close()
+        if end > first_slot:
             raise SystemExit(f"LiveFeed: the store's pool rows reach slot {end - 1}, at or after the first live slot {first_slot}, and "
                              f"no snapshot_before: the start would know tokens and pools created after it: give snapshot_before "
                              f"{first_slot}, or a store that ends before the start")
+
+    def _init_seed(self, first_slot, h24):
+        """Seed window at the first live slot: [first_slot - h24, first_slot), as far as the store
+        reaches. The farm labels are complete from first_slot when it reaches it, else a day later. The first segment
+        checked the bound before (_check_snapshot_before)."""
+        self.seed_con = streams.open_store(self.store, threads=1, memory="256MB")
+        start, end = self.seed_con.execute("SELECT min(slot), max(slot) + 1 FROM pool").fetchone()
+        start, end = start or 0, end or 0
         lo, hi = max(first_slot - h24, start), min(first_slot, end)
         # Complete once the window [t - h24, t) holds no slot without history: from the store's start
         # on when it reaches the first live slot, else from the first live slot on.
@@ -705,6 +717,9 @@ class LiveFeed(Feed):
     def segment_events(self, seq, seg, meta):
         """The Events of one segment, sorted (curve and pool merged)."""
         c = Chunk((meta["first_slot"], meta["last_slot"] + 1, seg))
+        if not self.bound_checked:  # the first segment: before anything of it is learned or handed out
+            self._check_snapshot_before(meta["first_slot"])
+            self.bound_checked = True
         self.seq = seq
         self._new_tokens_and_pools(c)
         # Backfill rows before the segment are history now; those inside it are merged into its

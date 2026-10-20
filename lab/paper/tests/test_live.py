@@ -72,7 +72,9 @@ def setup(tmp_path_factory):
 
 
 def live_events(root, h24, hist, **kw):
-    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB", **kw)
+    # the store is known before LO only: LiveFeed refuses a store past its first live slot without snapshot_before (LAB
+    # review on #478, for every feed with a store)
+    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB", **{"snapshot_before": LO, **kw})
     feed.farmers.seed(hist)
     return feed, [key(e) for e in feed.events()]
 
@@ -125,9 +127,12 @@ def test_usage_rows_reach_the_engine(setup):
 
 
 def test_new_pools_are_classified_like_the_store(setup):
-    """A pool created inside the segments is classified from its CreatePoolEvent as the store does."""
+    """A pool created inside the segments is classified from its CreatePoolEvent as the store does: the feed knows the
+    store before LO only (snapshot_before), and learns the segments' pools as the whole store has them (a second feed,
+    for its lookups only: it reads no segment, so it starts nothing)."""
     root, h24, hist, _ = setup
-    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB")
+    store = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB")
+    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB", snapshot_before=LO)
     created = []
     for _, seg, meta in segment_dirs(root):
         f = glob.glob(os.path.join(seg, "pump_amm", "CreatePoolEvent", "*.parquet"))
@@ -135,14 +140,12 @@ def test_new_pools_are_classified_like_the_store(setup):
             created += [r[0] for r in feed.con.execute(f"SELECT pool FROM read_parquet('{f[0]}')").fetchall()]
     if not created:
         pytest.skip("no pool created in the fixture slots")
-    snapshot = {p: feed.pools.get(p) for p in created}
-    for p in created:  # forget them, as if they were created after the snapshot
-        feed.pools.pop(p, None)
-        feed.pool_class.pop(p, None)
-    feed.con.execute("DELETE FROM live_pools WHERE pool IN (SELECT unnest(?))", [created])
+    want = {p: store.pools.get(p) for p in created}
+    store.close()
+    assert all(feed.pools.get(p) is None for p in created)  # created at or after LO: not in the snapshot before it
     list(feed.events())
     for p in created:
-        assert feed.pools.get(p) == snapshot[p], p
+        assert feed.pools.get(p) == want[p], p
 
 
 def test_a_pool_only_the_account_streams_name_is_not_learned(tmp_path):
@@ -263,7 +266,7 @@ def test_engine_on_the_live_feed(setup, tmp_path):
     from paper.journal import Journal
 
     root, h24, hist, _ = setup
-    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB")
+    feed = LiveFeed(root, store=STORE, follow=False, h24=h24, memory="500MB", snapshot_before=LO)
     feed.farmers.seed(hist)
     j = Journal(str(tmp_path / "journal"))
     Engine(feed, j, None, ignore_risk=True, n2_k=0, clock=feed.clock, backup=False).run()
@@ -389,7 +392,16 @@ def test_a_live_restart_after_the_keeper_ends_with_the_uninterrupted_journal(set
     make_segments(chunk, full, usage=False)
 
     class Crash(LiveFeed):
+        """Both runs know the whole store, as before the store bound (LAB review on #478 runs it for every store feed): this
+        test is about the high-water-mark restart. A restart from segment 1 knows a token created in segment 0 only when
+        it graduated (live.py learns tokens at their completion or migration), so with the store before LO only it drops
+        that token's later curve rows and a curve position on it; that restart gap is reported to LAB on its own.
+        Production cannot start this way: the bound refuses a store past the first live slot."""
         crash_slot = None
+
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.bound_checked = True  # test only: the whole store (see the docstring)
 
         def events(self):
             for e in super().events():
@@ -426,7 +438,7 @@ def test_a_live_restart_after_the_keeper_ends_with_the_uninterrupted_journal(set
     shutil.rmtree(os.path.join(later, "segments", f"{0:09d}"))
     os.makedirs(os.path.join(first, "segments"))
     shutil.copytree(os.path.join(full, "segments", f"{0:09d}"), os.path.join(first, "segments", f"{0:09d}"))
-    f0, _ = live_events(first, h24, hist)
+    f0, _ = live_events(first, h24, hist)  # segment 0's farmer history (pool trades: the same with the store before LO)
     r = run(later, "r", farmers=f0.farmers)
     f0.close()
     # What segment 0 taught (pools created there) is known to the restart, from the journal.
@@ -501,7 +513,7 @@ def test_a_late_backfill_corrects_the_recorded_trades_farmer_flags(setup, tmp_pa
     late = late_backfill_root(root, tmp_path)
 
     def farm_window(r, name):
-        feed = LiveFeed(r, store=STORE, follow=False, h24=h24, memory="500MB")
+        feed = LiveFeed(r, store=STORE, follow=False, h24=h24, memory="500MB", snapshot_before=LO)
         feed.farmers.seed(hist)
         eng = Engine(feed, Journal(str(tmp_path / name)), None, ignore_risk=True, n2_k=0, clock=feed.clock, backup=False)
         eng.run()
@@ -555,7 +567,7 @@ def test_a_late_backfill_just_after_a_restart_leaves_the_rows_up_to_the_hwm(setu
 
     def run(name, crash_slot=None):
         j = Journal(str(tmp_path / name))
-        feed = Crash(late, store=STORE, follow=False, h24=h24, memory="500MB", learned=j.rows("learned"))
+        feed = Crash(late, store=STORE, follow=False, h24=h24, memory="500MB", learned=j.rows("learned"), snapshot_before=LO)
         feed.crash_slot = crash_slot
         feed.farmers.seed(hist)
         eng = Engine(feed, j, None, ignore_risk=True, variants=["0.04:120"], n2_k=0, clock=feed.clock, backup=False,
