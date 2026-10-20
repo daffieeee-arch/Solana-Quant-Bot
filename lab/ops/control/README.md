@@ -43,6 +43,9 @@ EOF
 chmod 600 ~/.config/solana-lab/ui-actors.json
 ```
 
+- **Never list the VPS itself.** `whois` of the VPS's own address answers with the VPS node, so an entry for it would let anything running on the VPS act through the UI. Only the owner's phone and laptop belong in the file.
+- **Every later action validates its own `params` in the executor** (exact keys, types and ranges per action), not only in the web app.
+
 ## Pairing a device (the owner)
 
 In a VPS shell:

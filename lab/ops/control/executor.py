@@ -75,7 +75,7 @@ def handle(path):
             raise ValueError("params")
         result = fn(req["params"])
         outcome = "ok"
-    except (ValueError, OSError, KeyError, TypeError) as e:
+    except (ValueError, OSError, KeyError, TypeError, RecursionError) as e:  # RecursionError: deeply nested JSON
         result = {"ok": False, "error": str(e)[:300]}
     done = {"id": rid or name[:40], "state": "done" if outcome == "ok" else "refused", "action": req.get("action"),
             "result": result, "ended_unix": int(time.time())}

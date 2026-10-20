@@ -16,6 +16,7 @@ The template's fixed environment comes from this runner's own: LAB_PY, LAB_CODE,
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -38,6 +39,25 @@ def _sums():
             if len(parts) == 2 and schema.SHA_RE.match(parts[0]):
                 out[parts[1]] = parts[0]
     return out
+
+
+def _kill_group(proc, grace=30):
+    """TERM to the job's process group, then KILL after `grace` seconds; waits for the leader."""
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 10)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            return
+        try:
+            proc.wait(timeout=wait)
+            if sig == signal.SIGTERM:
+                try:  # the leader is gone; make sure no worker of its group is left
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def _write(path, obj):
@@ -75,7 +95,7 @@ def once():
         with open(path, "rb") as f:
             if hashlib.sha256(f.read()).hexdigest() != pinned:
                 raise ValueError(f"template {tpl}: the file no longer matches SHA256SUMS")
-    except (ValueError, OSError) as e:
+    except (ValueError, OSError, RecursionError) as e:
         _write(os.path.join(res, "status.json"), dict(status, reason=str(e)[:300], ended_unix=int(time.time())))
         os.replace(run_path, os.path.join(ROOT, "done", name))
         return jid
@@ -83,12 +103,16 @@ def once():
     env.update(schema.env(job), UI_OUT=res, UI_LIB=HERE, HOME=res, LANG="C.UTF-8")
     _write(os.path.join(res, "status.json"), dict(status, state="running"))
     rc = None
-    try:
-        with open(os.path.join(res, "job.log"), "w") as log:
-            rc = subprocess.run(["nice", "-n", "19", "bash", path], env=env, cwd=res, stdout=log, stderr=subprocess.STDOUT,
-                                timeout=TIMEOUT).returncode
-    except subprocess.TimeoutExpired:
-        rc = "timeout"
+    with open(os.path.join(res, "job.log"), "w") as log:
+        # Its own process group: at the timeout the whole job goes (the tournament and its workers, not only bash),
+        # so the next job never starts beside a leftover (LAB review on #440).
+        proc = subprocess.Popen(["nice", "-n", "19", "bash", path], env=env, cwd=res, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        try:
+            rc = proc.wait(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            rc = "timeout"
+            _kill_group(proc)
     ok = rc == 0 and os.path.isfile(os.path.join(res, "result.json"))
     _write(os.path.join(res, "status.json"), dict(status, state="done" if ok else "failed", rc=rc, ended_unix=int(time.time())))
     os.replace(run_path, os.path.join(ROOT, "done", name))

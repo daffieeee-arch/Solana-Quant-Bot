@@ -240,7 +240,7 @@ def check_post(headers, origin_ok, body):
         raise Refused(413, "body too large")
     try:
         data = json.loads(body or b"{}")
-    except ValueError:
+    except (ValueError, RecursionError):
         raise Refused(400, "not JSON") from None
     if not isinstance(data, dict):
         raise Refused(400, "a JSON object")
