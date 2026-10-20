@@ -9,6 +9,10 @@ learn_pool, set_epoch_ms) and must make the same writes.
 A case's `learn` list says what the feed learns and when: an item applies right before the first event whose slot is
 at least its at_slot (after the last event when there is none). LiveFeed learns while it reads a segment, before it yields
 that segment's events, so the engine's end of the slot before (run when that event arrives) already sees it.
+
+M3-11 (research/m3-11-paper-loop-spec-2026-10-20.md §5.1) adds the flag fixes (a recorded trade's farmer flag computed again
+after a late backfill, LiveFeed drain_flag_fixes, lab/core `fix_farm`) with the engine's day count, and events with an
+arrival (the signal latency columns, lab/core `push_arrived`).
 """
 
 import json
@@ -16,7 +20,7 @@ import os
 import re
 import sys
 import tempfile
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 from paper.feed import PoolInfo, TokenInfo
 from paper.journal import Journal
@@ -26,18 +30,26 @@ from paper.tests import c2_position_cases as C2
 SOL = C1.SOL
 T = C1.T
 PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "m3_live_cases.json")
-CASE = (*C2.CASE[:-2], "window_rule", "learn", "cost_scenario", "expect_ops")
+CASE = (*C2.CASE[:-2], "window_rule", "learn", "cost_scenario", "expect_ops", "expect_flag_fix_days")
 
 FORMAT = {
     **{k: v for k, v in C2.FORMAT.items() if k not in ("case", "regenerate")},
     "case": "name, why, clock, dev_bounds, groups, labels, tokens, pools, events (as in c2_position_cases.json FORMAT), "
-            "learn, cost_scenario, expect_ops. tokens and pools are the snapshot: what the feed knows at the start.",
+            "learn, cost_scenario, expect_ops, expect_flag_fix_days. tokens and pools are the snapshot: what the feed knows "
+            "at the start.",
+    "arrival": "M3-11: an event may carry arrival [received_unix_ns, created_unix_ns, written_unix] (each nullable), as "
+               "LiveFeed's Event.arrival: the signal rows of its slot read it for the latency columns (engine.py _latency).",
+    "expect_flag_fix_days": "M3-11: the engine's flag_fix_days after the run (state farm_flag_fixes): {day: [fixes, of "
+                            "them in a pool with an open position]}.",
     "learn": "what the feed learns while it reads, in order: {at_slot, token} (a tokens row: the token is replaced), "
              "{at_slot, pool} (a pools row: added when the pool is not known yet, as a SOL market when its quote_class is "
              "sol or reversed), {at_slot, history: {pool, events}} (M3-08b: a backfill's trades of the pool, history only, "
              "drained at the next slot end as LiveFeed's drain_history) or {at_slot, epoch, ms} (the epoch's ms per slot in "
-             "the engine's clock). An item applies right before the first event whose slot is >= at_slot, after the last "
-             "event when there is none (lab/core: learn_token, learn_pool, add_history, set_epoch_ms before that push).",
+             "the engine's clock), or {at_slot, flag_fix: {pool, order, farmer}} (M3-11: a recorded trade's farmer flag "
+             "computed again, order its [slot, tx, outer, inner], drained at the next slot end after the backfills as "
+             "LiveFeed's drain_flag_fixes). An item applies right before the first event whose slot is >= at_slot, after the "
+             "last event when there is none (lab/core: learn_token, learn_pool, add_history, fix_farm, set_epoch_ms before "
+             "that push).",
     "window_rule": "the feed's farm-window rule: all_pools (a replay's, CaseFeed) or live (M3-08b: LiveFeed's per pool, "
                    "engine.py:806-813; lab/core WindowRule::Live).",
     "regenerate": "M3_CASES_REGEN=1 pytest paper/tests/test_live_cases.py (or python -m paper.tests.m3_live_cases).",
@@ -55,10 +67,18 @@ class LearnFeed(C1.CaseFeed):
         self.clock = None  # the engine's (run sets it)
         self.all_pools = case["window_rule"] == "all_pools"  # live: the engine's per-pool farm-window rule
         self.history = []
+        self.flag_fixes = []
+        # M3-11: an event's arrival (LiveFeed's Event.arrival), from its case entry
+        self.evs = [replace(ev, arrival=tuple(d["arrival"])) if "arrival" in d else ev for ev, d in zip(self.evs, case["events"])]
 
     def drain_history(self):
         """Backfill trades since the last call, as (pool, [leg]): history only (LiveFeed.drain_history)."""
         out, self.history = self.history, []
+        return out
+
+    def drain_flag_fixes(self):
+        """Flag fixes since the last call, as (pool, order, farmer) (LiveFeed.drain_flag_fixes, M3-10)."""
+        out, self.flag_fixes = self.flag_fixes, []
         return out
 
     def _apply(self, x):
@@ -69,6 +89,9 @@ class LearnFeed(C1.CaseFeed):
         elif "history" in x:
             h = x["history"]
             self.history.append((h["pool"], [C1.event(e).leg for e in h["events"]]))
+        elif "flag_fix" in x:
+            f = x["flag_fix"]
+            self.flag_fixes.append((f["pool"], tuple(f["order"]), f["farmer"]))
         elif "pool" in x:
             p = x["pool"]
             if p["pool"] not in self.classed:
@@ -106,7 +129,7 @@ class Case(C2.Case):
 
     def __init__(self, *a, window_rule="all_pools", **kw):
         super().__init__(*a, **kw)
-        self.learn, self.window_rule = [], window_rule
+        self.learn, self.window_rule, self.arrivals = [], window_rule, {}
 
     def learn_token(self, mint, at_slot, **change):
         """The token leaves the snapshot (or, with `keep`, stays there as it is) and is learned at at_slot with `change`."""
@@ -131,8 +154,25 @@ class Case(C2.Case):
         evs = sorted(moved + copied, key=lambda e: e.order)
         self.learn.append({"at_slot": at_slot, "history": {"pool": pool, "events": [C1.fields(e) for e in evs]}})
 
+    def learn_fix(self, pool, order, farmer, at_slot):
+        """M3-11: the recorded trade at `order` of `pool` gets the farmer flag `farmer` (LiveFeed's _reflag) at at_slot."""
+        self.learn.append({"at_slot": at_slot, "flag_fix": {"pool": pool, "order": list(order), "farmer": farmer}})
+
+    def arrive(self, leg, received, created, written):
+        """M3-11: the arrival of the event of `leg` (LiveFeed's Event.arrival)."""
+        self.arrivals[leg.order] = (received, created, written)
+
+    def no_block_time(self, leg):
+        """The event of `leg` without a block time (a slot whose first event has none: no latency, engine.py:658)."""
+        self.evs = [replace(e, block_time=None) if e.order == leg.order else e for e in self.evs]
+
     def build(self):
         case = C1.Case.build(self)
+        for e in case["events"]:
+            a = self.arrivals.get((e["slot"], e["tx"], e["outer"], e["inner"]))
+            if a is not None:
+                e["arrival"] = list(a)
+        assert len(self.arrivals) == sum("arrival" in e for e in case["events"]), f"{self.name}: an arrival of no event"
         assert [x["at_slot"] for x in self.learn] == sorted(x["at_slot"] for x in self.learn), f"{self.name}: learn order"
         case["window_rule"], case["learn"] = self.window_rule, self.learn
         with tempfile.TemporaryDirectory(prefix="m3-case-") as d:  # the engine's own groups and cost scenario text
@@ -142,6 +182,7 @@ class Case(C2.Case):
             case["cost_scenario"] = json.dumps(asdict(eng.scn), sort_keys=True)
             j.close()
         case["expect_ops"], self.eng = run(case)
+        case["expect_flag_fix_days"] = dict(self.eng.flag_fix_days)
         self.ops = case["expect_ops"]
         return case
 
@@ -336,12 +377,88 @@ def backfill_of_an_unknown_pool():
     return case
 
 
+def flag_fix_reaches_the_farm_label():
+    """M3-11 (engine.py:422-428): a recorded trade's farmer flag computed again after a late backfill (LiveFeed _reflag)
+    reaches the pool's farm window at the next slot end (`_farm_fix`), or, when that trade's slot has not ended yet, waits
+    for it (`_farm_add` takes it before the duplicate check); each fix is counted on its day, with the pools that have an
+    open position."""
+    c = Case("flag_fix_reaches_the_farm_label",
+             "Live rule; O trades from t - 20,000. PF's 60 SOL buy at t - 3,000 is recorded as organic. A fix (farmer) comes "
+             "with O's event at t - 1,000 and is drained at the end of t - 2,000, after the buy's slot ended: PF's trigger at "
+             "t is 'flagged', so H skips 'farm flagged' and K3 enters. A fix back to organic comes with O's event at t + 50 "
+             "and is drained at the end of t + 40, while K3's PF position is open. PG's 60 SOL buy at t + 100 gets its fix "
+             "(farmer) with its own event: drained at the end of t + 50, before the buy's slot ended, it waits and is taken "
+             "when the buy enters PG's window, so PG's trigger at t + 200 is 'flagged' too. flag_fix_days: 3 fixes, 1 of "
+             "them in a pool with an open position.", n2_k=0, window_rule="live")
+    t = 450_160_000
+    pf, pg, o = c.pool("PF"), c.pool("PG"), c.pool("O")
+    pf_legs = reversed_trigger(c, pf, t, 400 * SOL, early=[(t - 3_000, 0, "farmer", "buy", 60 * SOL, False)])
+    pg_legs = reversed_trigger(c, pg, t + 200, 400 * SOL, early=[(t + 100, 0, "farmer", "buy", 60 * SOL, False)])
+    c.trades(o, "reversed", 5_000 * SOL, 10**15, [(s, 0, "small buyer", "buy", SOL, False)
+                                                   for s in (t - 20_000, t - 2_000, t - 1_000, t + 40, t + 50, t + 3_000)])
+    c.learn_fix(pf, pf_legs[0].order, True, t - 1_000)
+    c.learn_fix(pf, pf_legs[0].order, False, t + 50)
+    c.learn_fix(pg, pg_legs[0].order, True, t + 100)
+    case = c.build()
+    for key in (pf, pg):
+        rows = h_rows(c, key)
+        ok(rows and all(r["farm"] == "flagged" and r["reason"] == "farm flagged" for r in rows), c, f"H {key} {rows}")
+        ok(c.one("orders", key=key, variant="tp4_T600")["status"] == "filled", c, f"{key} K3")
+    ok(c.eng.flag_fix_days == {"2026-09-22": [3, 1]} and not c.eng.farm_fixes, c, f"{c.eng.flag_fix_days} {c.eng.farm_fixes}")
+    return case
+
+
+def latency_of_a_live_signal():
+    """M3-11 spec §3 (engine.py `_latency`): an event's arrival gives the signal rows of its trigger the seven latency
+    columns (an N2 row its trigger's), NULL without an arrival, without the slot's block time, or with neither a receive
+    nor a written time; latency_ms is Python's float rounded half to even."""
+    c = Case("latency_of_a_live_signal",
+             "Live rule; O trades from t - 20,000. PA's trigger transaction at t arrived 801 ms after its block time (created "
+             "500 ms before that), in a segment written 2 s after it: its rows (K3's F7 and N2 pick PN, H's two) have "
+             "latency_ms 801, segment_lag_ms 2,000 and d_ms 536 (2 slots at 267.83 ms). PB's (t + 100) arrived 1,234.5 ms "
+             "after, without a created time: latency_ms 1,234 (half to even). PC's slot (t + 200) has no block time on its "
+             "first event: all seven NULL. PD's (t + 300) has only a written time: no latency_ms. PE's (t + 400) only a "
+             "created time, PG's (t + 500) none: NULL.", n2_k=1, window_rule="live")
+    t = 450_160_000
+    o, pn = c.pool("O"), c.pool("PN")
+    c.trades(o, "reversed", 5_000 * SOL, 10**15, [(t - 20_000, 0, "small buyer", "buy", SOL, False),
+                                                   (t + 3_000, 0, "small buyer", "buy", SOL, False)])
+    c.trades(pn, "reversed", 400 * SOL, 10**15, [(t - 200, 0, "small buyer", "buy", SOL, False)])
+    pools, trig = {}, {}
+    for i, label in enumerate(("PA", "PB", "PC", "PD", "PE", "PG")):
+        pools[label] = c.pool(label)
+        trig[label] = reversed_trigger(c, pools[label], t + 100 * i, 400 * SOL)[-1]
+    bt = {k: C1.block_time(leg.slot) for k, leg in trig.items()}
+    c.arrive(trig["PA"], (bt["PA"] * 1_000 + 801) * 10**6, (bt["PA"] * 1_000 + 301) * 10**6, bt["PA"] + 2)
+    c.arrive(trig["PB"], bt["PB"] * 10**9 + 1_234_500_000, None, bt["PB"] + 1)
+    c.arrive(trig["PC"], (bt["PC"] * 1_000 + 900) * 10**6, None, bt["PC"] + 1)
+    c.no_block_time(trig["PC"])
+    c.arrive(trig["PD"], None, None, bt["PD"] + 3)
+    c.arrive(trig["PE"], None, (bt["PE"] * 1_000 + 5) * 10**6, None)
+    case = c.build()
+    lat = ("block_time", "received_unix_ns", "created_unix_ns", "latency_ms", "segment_written_unix", "segment_lag_ms", "d_ms")
+    pa = [r for r in c.rows("signals") if r["t"] == t]
+    ok(len(pa) == 4 and {r["key"] for r in pa} == {pools["PA"], pn}, c, f"PA's rows and its N2 pick {pa}")
+    want = (bt["PA"], (bt["PA"] * 1_000 + 801) * 10**6, (bt["PA"] * 1_000 + 301) * 10**6, 801, bt["PA"] + 2, 2_000, 536)
+    ok(all(tuple(r[k] for k in lat) == want for r in pa), c, f"PA {pa}")
+    pb = [r for r in c.rows("signals") if r["t"] == t + 100]
+    ok(pb and all((r["latency_ms"], r["created_unix_ns"], r["segment_lag_ms"]) == (1_234, None, 1_000) for r in pb), c, f"PB {pb}")
+    pd = [r for r in c.rows("signals") if r["t"] == t + 300]
+    ok(pd and all((r["latency_ms"], r["received_unix_ns"], r["segment_lag_ms"], r["d_ms"]) == (None, None, 3_000, 536) for r in pd),
+       c, f"PD {pd}")
+    for dt in (200, 400, 500):
+        rows = [r for r in c.rows("signals") if r["t"] == t + dt]
+        ok(rows and all(r[k] is None for r in rows for k in lat), c, f"t + {dt} {rows}")
+    return case
+
+
 def reversed_trigger(c, pool, t, depth, **kw):
     return C1._reversed_trigger(c, pool, t, depth, **kw)
 
 
 CASES = [pool_learned_mid_run, graduation_learned_after_the_entry, completion_learned_too_late, clock_learned_mid_run,
-         window_rule_live, backfill_as_history, backfill_of_an_unknown_pool]
+         window_rule_live, backfill_as_history, backfill_of_an_unknown_pool, flag_fix_reaches_the_farm_label,
+         latency_of_a_live_signal]
 
 
 # ---------------------------------------------------------------------------------------------- the file

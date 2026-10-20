@@ -28,7 +28,7 @@ use crate::costs::Scenario;
 use crate::exact::{ge, gt, lt};
 use crate::exits::{check_groups, rule_for, variant, ExitRule, VariantError};
 use crate::flow::LiveFlowIndex;
-use crate::legs::{Event, Id, Leg, Order, Venue};
+use crate::legs::{Arrival, Event, Id, Leg, Order, Venue};
 use crate::mem::{self, Mem};
 use crate::n2::N2Keys;
 use crate::positions::{
@@ -456,6 +456,9 @@ pub struct Paper {
     pub(crate) last_event: Option<Order>,
     minute: Option<i64>,
     last_slot: Option<u64>,
+    /// Live (M3-11): the flag fixes per UTC day (engine.py `flag_fix_days`, journal state farm_flag_fixes): [fixes, of
+    /// them in a pool with an open position]. The day is the engine's (None before the first block time).
+    flag_fix_days: BTreeMap<Option<String>, [u64; 2]>,
     pub ops: Vec<Op>,
     pub counts: PaperCounts,
     /// Some: each curve entry's holdings after the fill (`lab-live paper --trace`).
@@ -505,6 +508,7 @@ impl Paper {
             last_event: None,
             minute: None,
             last_slot: None,
+            flag_fix_days: BTreeMap::new(),
             ops: Vec::new(),
             counts: PaperCounts::default(),
             seeds: None,
@@ -537,6 +541,12 @@ impl Paper {
         self.minute
     }
 
+    /// Live (M3-11): the flag fixes counted per day so far (engine.py `flag_fix_days`): the caller writes them as the
+    /// state farm_flag_fixes where `_live_minute` and `_close_day` do (a fresh journal's start: none).
+    pub fn flag_fix_days(&self) -> &BTreeMap<Option<String>, [u64; 2]> {
+        &self.flag_fix_days
+    }
+
     /// The memory log (C4-2, read-only): the snapshot's part (the graduation info, its tokens only since M3-08b moved
     /// the pools' create slot into the Universe, and the store's curve_hold, entries per mint), then the state: busy, the pending entries and their keys, the keys waiting for a graduation, the open
     /// positions (with each PositionSim), their order and the graduation queue, the run's curve sums (entries per
@@ -560,6 +570,7 @@ impl Paper {
             Mem::new("cooldowns", self.cool.iter().map(HashMap::len).sum(), self.cool.iter().map(mem::map).sum()),
             Mem::new("wallet_txs", self.wallets.iter().map(|w| w.txs.len()).sum(), self.wallets.iter().map(|w| mem::deque(&w.txs)).sum()),
             Mem::new("ops", self.ops.len(), mem::vec(&self.ops)),
+            Mem::new("flag_fix_days", self.flag_fix_days.len(), mem::btree(&self.flag_fix_days)),
         ]
     }
 
@@ -1172,7 +1183,7 @@ impl Hooks for Paper {
             return Status::Skipped(why.into());
         }
         self.busy.insert(bk, Busy::Open);
-        let d = g.d_ms.map_or(g.d, |ms| eng.clock.slots(ms as f64, row.t)); // `_d_at` at t (engine.py:667-672)
+        let d = g.d_at(row.t, &eng.clock); // `_d_at` at t (engine.py:667-672)
         let s_dec = if row.seg == Segment::Curve { eng.recent.back(row.key).map(curve_post) } else { None };
         let p = Pending {
             family: row.family,
@@ -1195,6 +1206,14 @@ impl Hooks for Paper {
     /// waiting for one.
     fn keep(&self, key: Id) -> bool {
         self.open.contains(key) || self.pending_keys.contains_key(&key) || self.grad_wait.contains(key) || self.grad_keys.contains_key(&key)
+    }
+
+    /// Live (M3-11, engine.py:425-428): a flag fix counted on the slot's day, and among the fixes in a pool with an
+    /// open position (`pool in self.open`: there the flag reaches the position's flow window only from its next legs).
+    fn flag_fixed(&mut self, eng: &SignalEngine, pool: Id) {
+        let n = self.flag_fix_days.entry(eng.day.clone()).or_default();
+        n[0] += 1;
+        n[1] += u64::from(self.open.contains(pool));
     }
 
     /// The run's curve sums (spec §3.5), then step 5 (engine.py:429-438): time passes for the open positions on keys
@@ -1272,9 +1291,15 @@ impl PaperEngine {
     /// One event (engine.py `run`, :301-316): a new slot ends the one before it, then the entries due in the quiet
     /// slots between them (:310).
     pub fn push(&mut self, ev: &Event, keys: &mut impl N2Keys) -> Result<(), PaperError> {
+        self.push_arrived(ev, None, keys)
+    }
+
+    /// Live (M3-11): `push` with the event's arrival (LiveFeed's `Event.arrival`), for its slot's signal rows' latency
+    /// columns (`signals::Latency`).
+    pub fn push_arrived(&mut self, ev: &Event, arrival: Option<&Arrival>, keys: &mut impl N2Keys) -> Result<(), PaperError> {
         let slot = ev.leg.slot();
         self.accepts(Some(slot))?;
-        self.sig.push_with(ev, keys, &mut self.paper)?;
+        self.sig.push_arrived(ev, arrival, keys, &mut self.paper)?;
         if self.cur != Some(slot) {
             self.cur = Some(slot);
             self.paper.quiet_entries(&self.sig, slot);
@@ -1378,6 +1403,14 @@ impl PaperEngine {
     /// precedes in the feed, and a source that closes slots early gives what it read first.
     pub fn add_history(&mut self, pool: Id, legs: Vec<Leg>) {
         self.sig.add_history(pool, legs);
+    }
+
+    /// Live (M3-11 spec §2.2): a recorded trade's farmer flag computed again after a late backfill (LiveFeed
+    /// `drain_flag_fixes`), taken at the next slot end after the backfills (engine.py:422-428): into the farm window
+    /// (`_farm_fix`: the first entry of the trade, else kept for its add and swept hourly) and counted per day
+    /// (`flag_fix_days`). It goes in where add_history does.
+    pub fn fix_farm(&mut self, pool: Id, order: Order, farmer: bool) {
+        self.sig.add_flag_fix(pool, order, farmer);
     }
 
     /// Live (spec D4): an epoch's ms per slot as LiveFeed measures it while it reads (live.py:637-650), in the one

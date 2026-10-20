@@ -16,12 +16,15 @@
 //!   the sweep's keep-set, step 5 after the farm windows. `push`, `finish` and `end_slot` are C1b's, with `NoHooks`: no
 //!   step runs and a row past the gates stays NULL.
 //! - A replay row has NULL block_time, the latency columns and d_ms (ReplayFeed events carry no arrival), and NULL
-//!   farm_complete (no farm_seed).
+//!   farm_complete (no farm_seed). Live (M3-11): an event's arrival comes with its push (`push_arrived`), and a row's
+//!   `Latency` is its trigger transaction's (engine.py `_latency`).
+//! - Live (M3-11): a recorded trade's farmer flag computed again (`add_flag_fix`) reaches the farm windows at the next
+//!   slot end, after the backfills (engine.py:422-428), and `Hooks::flag_fixed` counts it.
 
 use crate::clock::{day_of, Clock, EPOCH_SLOTS, HISTORY_SLOTS, POOL_SEEN_KEEP_MS};
 use crate::f7::{f7_signal, trigger, Recent};
 use crate::farm::{live_complete, FarmWindow, WindowRule};
-use crate::legs::{Event, Id, Leg, Venue, NONE};
+use crate::legs::{Arrival, Event, Id, Leg, Order, Venue, NONE};
 use crate::mem::{self, Mem};
 use crate::n2::{HourIndex, N2Keys};
 use crate::universe::{Reject, Segment, Universe};
@@ -107,6 +110,50 @@ impl GroupSpec {
     pub fn trades(&self, seg: Segment) -> bool {
         self.segments.is_none_or(|s| s[seg.index()])
     }
+
+    /// engine.py `_d_at` (:667-672): the entry and exit delay of a decision at t, d_ms in the clock's slots at t, else d.
+    pub fn d_at(&self, t: u64, clock: &Clock) -> u64 {
+        self.d_ms.map_or(self.d, |ms| clock.slots(ms as f64, t))
+    }
+}
+
+/// The live-only signal columns (engine.py `_latency`, :650-665): the trigger transaction's arrival beside the slot's
+/// block time, and the group's d in ms. Reporting only: journal_diff compares block_time and d_ms, not the measured ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Latency {
+    pub block_time: i64,
+    pub received_unix_ns: Option<u64>,
+    pub created_unix_ns: Option<i64>,
+    /// `round(received / 1e6 - bt * 1000)`: Python's float, half to even.
+    pub latency_ms: Option<i64>,
+    pub segment_written_unix: Option<u64>,
+    /// `(written - bt) * 1000`, integers.
+    pub segment_lag_ms: Option<i64>,
+    /// `round(d_at(t, group) * ms_per_slot(t))`, half to even.
+    pub d_ms: i64,
+}
+
+impl Latency {
+    /// None (the seven columns NULL) without an arrival, without the slot's block time, or with neither a receive nor a
+    /// written time (engine.py:658-659); else the columns, d the group's delay in slots at the trigger's slot and ms that
+    /// slot's ms per slot.
+    pub fn of(arrival: Option<&Arrival>, block_time: Option<i64>, d: u64, ms: f64) -> Option<Latency> {
+        let (a, bt) = (arrival?, block_time?);
+        if a.received.is_none() && a.written.is_none() {
+            return None;
+        }
+        let int = |x: i128| i64::try_from(x).unwrap_or(if x < 0 { i64::MIN } else { i64::MAX });
+        Some(Latency {
+            block_time: bt,
+            received_unix_ns: a.received,
+            created_unix_ns: a.created,
+            // Python's int / 1e6 is the int rounded to a float (half to even, as `as f64`), then divided
+            latency_ms: a.received.map(|r| (r as f64 / 1e6 - (i128::from(bt) * 1000) as f64).round_ties_even() as i64),
+            segment_written_unix: a.written,
+            segment_lag_ms: a.written.map(|w| int((i128::from(w) - i128::from(bt)) * 1000)),
+            d_ms: (d as f64 * ms).round_ties_even() as i64,
+        })
+    }
 }
 
 /// `_signal`'s decision up to busy (engine.py:737-742): the farm gates first, in this order, then `Pass`. A NULL
@@ -123,8 +170,9 @@ pub fn gate(g: &GroupSpec, farm: Farm, farm_complete: Option<u8>, window: Option
     }
 }
 
-/// One signals row (journal.py:17-30) as far as the stream decides it. The columns not here are NULL in a replay:
-/// block_time, received_unix_ns, created_unix_ns, latency_ms, segment_written_unix, segment_lag_ms, d_ms.
+/// One signals row (journal.py:17-30) as far as the stream decides it. `lat` is the seven live-only columns (block_time,
+/// received_unix_ns, created_unix_ns, latency_ms, segment_written_unix, segment_lag_ms, d_ms), all NULL when None (a
+/// replay: no arrivals).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignalRow {
     pub family: Family,
@@ -145,6 +193,8 @@ pub struct SignalRow {
     pub pool_seen_slot: Option<u64>,
     pub farm_window_complete: Option<u8>,
     pub gate: Gate,
+    /// Live (M3-11): the trigger's `Latency` for the row's group (an N2 row carries its F7 trigger's).
+    pub lat: Option<Latency>,
 }
 
 impl SignalRow {
@@ -322,8 +372,14 @@ pub trait Hooks {
         false
     }
 
+    /// Live (M3-11): a flag fix of `pool` reached the farm windows (engine.py:425-428), after the slot's backfills and
+    /// before step 5; `eng.day` is the slot's. The paper engine counts it per day, with whether `pool` has an open
+    /// position (state farm_flag_fixes).
+    fn flag_fixed(&mut self, _eng: &SignalEngine, _pool: Id) {}
+
     /// Step 5 after the farm windows (engine.py:429-441): time passes for the open positions on keys without an event in
-    /// this slot, and the graduations still waiting are sold. (The feed drains at :416-428 are LiveFeed's.)
+    /// this slot, and the graduations still waiting are sold. (The feed drains at :416-428 are LiveFeed's: `add_history`,
+    /// `add_flag_fix`.)
     fn after_farm(&mut self, _eng: &SignalEngine, _slot: u64, _by_key: &SlotLegs) {}
 
     /// A row and its status, in the engine's write order; the journal's INSERT OR REPLACE is the implementation's.
@@ -370,6 +426,12 @@ pub struct SignalEngine {
     pub backfilled: HashSet<Id>,
     /// Live (M3-08b): backfills given since the last slot end (`add_history`), drained at the next one.
     history: Vec<(Id, Vec<Leg>)>,
+    /// Live (M3-11): flag fixes given since the last slot end (`add_flag_fix`), drained at the next one after `history`.
+    fixes: Vec<(Id, Order, bool)>,
+    /// Live (M3-11): the open slot's arrivals by tx index (engine.py `slot_arrivals`), and the block time of the slot
+    /// being ended (`slot_block_time`): the rows' `Latency`.
+    arrivals: HashMap<u32, Arrival>,
+    slot_bt: Option<i64>,
     pub counts: Counts,
     /// Some: F7 passes and rollovers are recorded here for the caller to drain.
     pub trace: Option<Vec<Trace>>,
@@ -383,7 +445,7 @@ impl SignalEngine {
     /// windows, the hour's N2 candidates, pool_seen and pool_last (24 h after a pool's last trade), the slot's legs and
     /// the slot's written rows.
     pub fn mem_report(&self) -> Vec<Mem> {
-        let mut v = Vec::with_capacity(12);
+        let mut v = Vec::with_capacity(16);
         v.extend(self.universe.mem());
         v.extend(self.recent.mem());
         v.extend(self.farm.mem());
@@ -393,6 +455,8 @@ impl SignalEngine {
         v.push(Mem::new("backfilled", self.backfilled.len(), mem::set(&self.backfilled)));
         let legs: usize = self.history.iter().map(|(_, l)| l.len()).sum();
         v.push(Mem::new("history_pending", legs, mem::vec(&self.history) + self.history.iter().map(|(_, l)| mem::vec(l)).sum::<usize>()));
+        v.push(Mem::new("flag_fixes_pending", self.fixes.len(), mem::vec(&self.fixes)));
+        v.push(Mem::new("slot_arrivals", self.arrivals.len(), mem::map(&self.arrivals)));
         v.push(self.by_key.mem());
         v.push(Mem::new("slot_written", self.written.len(), mem::set(&self.written)));
         v
@@ -426,6 +490,9 @@ impl SignalEngine {
             pool_last: HashMap::new(),
             backfilled: HashSet::new(),
             history: Vec::new(),
+            fixes: Vec::new(),
+            arrivals: HashMap::new(),
+            slot_bt: None,
             counts: Counts::default(),
             trace: None,
             cur: None,
@@ -443,10 +510,20 @@ impl SignalEngine {
     /// `push` with the hooks. After a push whose event started a new slot, the slot before it has ended: the caller's
     /// quiet entries go there (engine.py:310), before the next push.
     pub fn push_with(&mut self, ev: &Event, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<(), SignalError> {
+        self.push_arrived(ev, None, keys, hooks)
+    }
+
+    /// Live (M3-11): `push_with` and the event's arrival, kept for its slot's rows by tx index (engine.py:313-314: the
+    /// slot's last arrival of a transaction counts; an event without one keeps the one before).
+    pub fn push_arrived(&mut self, ev: &Event, arrival: Option<&Arrival>, keys: &mut impl N2Keys, hooks: &mut impl Hooks)
+                        -> Result<(), SignalError> {
         let slot = ev.leg.slot();
         if self.cur.map(|c| c.0) != Some(slot) {
             self.flush(keys, hooks)?;
             self.cur = Some((slot, ev.block_time));
+        }
+        if let Some(a) = arrival {
+            self.arrivals.insert(ev.leg.order().tx, *a);
         }
         self.by_key.push(ev.venue, ev.key, ev.leg);
         Ok(())
@@ -482,12 +559,20 @@ impl SignalEngine {
         self.history.push((pool, legs));
     }
 
+    /// Live (M3-11): a recorded trade of `pool` whose farmer flag a late backfill computed again (LiveFeed
+    /// `drain_flag_fixes`, M3-10). Queued like `add_history`, and taken at the next slot end after its backfills
+    /// (engine.py:422-428): `FarmWindow::fix`, then `Hooks::flag_fixed`.
+    pub fn add_flag_fix(&mut self, pool: Id, order: Order, farmer: bool) {
+        self.fixes.push((pool, order, farmer));
+    }
+
     fn flush(&mut self, keys: &mut impl N2Keys, hooks: &mut impl Hooks) -> Result<(), SignalError> {
         let Some((slot, bt)) = self.cur.take() else { return Ok(()) };
         let by_key = std::mem::take(&mut self.by_key);
         let done = self.end_slot_with(slot, bt, &by_key, keys, hooks);
         self.by_key = by_key;
         self.by_key.clear();
+        self.arrivals.clear();
         done
     }
 
@@ -504,7 +589,8 @@ impl SignalEngine {
     }
 
     /// One slot with at least one event (engine.py `_end_slot`, :362-444): `_clock`'s day, the hooks' steps 1-2b, the
-    /// history (3), the signals with the hooks' busy and Pending (4), the farm windows (4b), the hooks' step 5.
+    /// history (3), the signals with the hooks' busy and Pending (4), the farm windows (4b), live the backfills (4c) and
+    /// flag fixes (4d), the hooks' step 5. The rows' arrivals are the open slot's (`push_arrived`; none here).
     pub fn end_slot_with(
         &mut self,
         slot: u64,
@@ -513,6 +599,7 @@ impl SignalEngine {
         keys: &mut impl N2Keys,
         hooks: &mut impl Hooks,
     ) -> Result<(), SignalError> {
+        self.slot_bt = block_time;
         if self.first_slot.is_none() {
             self.first_slot = Some(slot);
         }
@@ -564,6 +651,12 @@ impl SignalEngine {
                 self.farm.add(pool, p.reversed, &legs, &self.clock);
             }
         }
+        // 4d. live: the flag fixes given since the last slot end (engine.py:422-428), after the backfills: each into the
+        // farm windows (`_farm_fix`), then counted by the hooks (the day count, not in a restart's replay: M3-13).
+        for (pool, order, farmer) in std::mem::take(&mut self.fixes) {
+            self.farm.fix(pool, order, farmer);
+            hooks.flag_fixed(self, pool);
+        }
         // 5. time passes for the open positions on keys without an event here, and the graduations waiting
         // (engine.py:429-441).
         hooks.after_farm(self, slot, by_key);
@@ -609,16 +702,20 @@ impl SignalEngine {
         if let Some(tr) = self.trace.as_mut() {
             tr.push(Trace::Trig { t, venue, key, depth, farm });
         }
-        // engine.py:642-648: per group its F7 rows, then per N2 pick its rows (depth and farm the trigger's, no trader).
+        // engine.py:642-648: per group its trigger's latency, its F7 rows, then per N2 pick its rows (depth, farm and
+        // latency the trigger's, no trader).
         let trig = Trig { t, seg: k.seg, depth, farm };
+        let arrival = self.arrivals.get(&leg.order().tx);
         let mut rows = Vec::new();
         for (gi, g) in self.groups.iter().enumerate().filter(|(_, g)| g.trades(k.seg)) {
+            let at = leg.slot();
+            let lat = Latency::of(arrival, self.slot_bt, g.d_at(at, &self.clock), self.clock.ms_per_slot(at));
             for (vi, v) in g.variants.iter().enumerate() {
-                rows.push(((Family::F7, gi, vi, key), self.row(Family::F7, (gi, v), key, leg.trader(), &trig)));
+                rows.push(((Family::F7, gi, vi, key), self.row(Family::F7, (gi, v), key, leg.trader(), &trig, lat)));
             }
             for m in self.hours.pick(k.seg, key, t, depth, g.n2_k, keys) {
                 for (vi, v) in g.variants.iter().enumerate() {
-                    rows.push(((Family::N2F7, gi, vi, m), self.row(Family::N2F7, (gi, v), m, NONE, &trig)));
+                    rows.push(((Family::N2F7, gi, vi, m), self.row(Family::N2F7, (gi, v), m, NONE, &trig, lat)));
                 }
             }
         }
@@ -635,7 +732,7 @@ impl SignalEngine {
 
     /// engine.py `_signal` up to the farm gates, for a group's variant; pool_seen_slot and farm_window_complete for the
     /// row's own key.
-    fn row(&self, family: Family, (group, variant): (usize, &str), key: Id, trader: Id, trig: &Trig) -> SignalRow {
+    fn row(&self, family: Family, (group, variant): (usize, &str), key: Id, trader: Id, trig: &Trig, lat: Option<Latency>) -> SignalRow {
         let Trig { t, seg, depth, farm } = *trig;
         let pool = seg.venue() == Venue::Pool;
         let farm_complete = self.farm_complete_from.map(|c| u8::from(t >= c));
@@ -655,6 +752,7 @@ impl SignalEngine {
             pool_seen_slot: if pool { self.pool_seen.get(&key).copied() } else { None },
             farm_window_complete: window,
             gate: gate(&self.groups[group], farm, farm_complete, window),
+            lat,
         }
     }
 
@@ -675,8 +773,8 @@ impl SignalEngine {
             if let Some(tr) = self.trace.as_mut() {
                 tr.push(Trace::Hour { slot, venue, key });
             }
-            self.farm.rollover(slot, &self.clock);
-            // (farm_fixes: live only, M3.) The hooks keep the keys with an open, pending or graduating position.
+            self.farm.rollover(slot, &self.clock); // and the waiting flag fixes (live, engine.py:694-695)
+            // The hooks keep the keys with an open, pending or graduating position.
             self.recent.sweep(slot.saturating_sub(HISTORY_SLOTS.max(h)), |k| hooks.keep(k));
             // pool_seen of pools without a trade for 24 h goes, and their backfill mark (live); the test reads pool_last
             // (engine.py:697-701).
@@ -760,7 +858,7 @@ mod tests {
             let row = SignalRow {
                 family: Family::F7, group: 0, variant: "tp4_T600".into(), key: T1_MINT, t: 450_197_213, day: Some("2026-09-22".into()),
                 seg: Segment::Curve, depth: 53_657_221_584, trigger_trader: T1_TRADER, farm: Farm::NotApplicable, farm_complete: None,
-                pool_seen_slot: None, farm_window_complete: None, gate: Gate::Pass,
+                pool_seen_slot: None, farm_window_complete: None, gate: Gate::Pass, lat: None,
             };
             assert_eq!(rows, vec![row]);
             // engine.hour_events: each slot's last leg's post rq.
@@ -847,6 +945,7 @@ mod tests {
         let row = |gate| SignalRow {
             family: Family::N2F7, group: 1, variant: "flow300_H6".into(), key: 1, t: 2, day: None, seg: Segment::PoolReversed, depth: 3,
             trigger_trader: NONE, farm: Farm::Flagged, farm_complete: None, pool_seen_slot: Some(1), farm_window_complete: Some(1), gate,
+            lat: None,
         };
         assert_eq!((row(Gate::Pass).status(), row(Gate::FarmFlagged).status()), (None, Some("skipped")));
         assert_eq!((Family::N2F7.as_str(), Farm::NotApplicable.as_str()), ("N2_F7", "n/a"));
@@ -867,6 +966,122 @@ mod tests {
         assert_eq!(rows.iter().map(|r| (r.variant.as_str(), r.farm_complete, r.gate)).collect::<Vec<_>>(),
                    [("tp4_T600", Some(0), Gate::Pass), ("flow300_H6", Some(0), Gate::FarmHistoryIncomplete),
                     ("flow300_tp100_H6", Some(0), Gate::FarmHistoryIncomplete)]);
+    }
+
+    #[test]
+    fn the_latency_columns_mirror_pythons_floats_and_none_cases() {
+        // engine.py `_latency` (:650-665), values from Python 3: round(r / 1e6 - bt * 1000) half to even on floats.
+        let bt = 1_790_000_000i64;
+        let r = |extra: u64| Some(bt as u64 * 1_000_000_000 + extra);
+        let a = |received, created, written| Arrival { received, created, written };
+        let lat = |x: &Arrival| Latency::of(Some(x), Some(bt), 2, 267.83).unwrap();
+        for (extra, ms) in [(2_500_000, 2), (3_500_000, 4), (1_234_500_000, 1_234), (400_000_001, 400), (999_499_999, 1_000)] {
+            assert_eq!(lat(&a(r(extra), None, None)).latency_ms, Some(ms), "{extra}"); // 999.499999 is 999.5 as a float
+        }
+        let full = lat(&a(r(7), Some(-3), Some(bt as u64 + 2)));
+        assert_eq!(full, Latency { block_time: bt, received_unix_ns: r(7), created_unix_ns: Some(-3), latency_ms: Some(0),
+                                   segment_written_unix: Some(bt as u64 + 2), segment_lag_ms: Some(2_000), d_ms: 536 });
+        // Without received: no latency_ms; without written: no lag. Written before the block time: a negative lag.
+        let w = lat(&a(None, Some(5), Some(bt as u64 - 1)));
+        assert_eq!((w.latency_ms, w.segment_lag_ms, w.created_unix_ns), (None, Some(-1_000), Some(5)));
+        assert_eq!(lat(&a(r(0), None, None)).segment_lag_ms, None);
+        // d_ms: round(d * ms), half to even: 2 * 100.25 = 200.5 -> 200, 6 * 100.25 = 601.5 -> 602; 3 * 267.83 -> 803.
+        let d = |d, ms| Latency::of(Some(&a(r(0), None, None)), Some(bt), d, ms).unwrap().d_ms;
+        assert_eq!((d(2, 100.25), d(6, 100.25), d(3, 267.83)), (200, 602, 803));
+        // The three None cases: no arrival, no block time, neither received nor written (created alone).
+        assert_eq!(Latency::of(None, Some(bt), 2, 267.83), None);
+        assert_eq!(Latency::of(Some(&a(r(0), None, None)), None, 2, 267.83), None);
+        assert_eq!(Latency::of(Some(&a(None, Some(5), None)), Some(bt), 2, 267.83), None);
+    }
+
+    /// farm_complete_follows_the_live_seed's pool: a reversed pool's inflow at t - 10 and its trigger at t (tx 0).
+    fn latency_engine(ms: f64) -> (SignalEngine, [Leg; 2]) {
+        let mut u = dev2_universe();
+        u.add_pool(1, PoolMeta { reversed: true, mayhem: false, mint_tok: None, coin_creator: 9, create_slot: None });
+        let s = SOL as i64;
+        let t = 450_200_000;
+        let legs = [pool((t - 10, 0), 1, 3, PoolKind::Sell, (20 * s, 0), (300 * s, 0)),
+                    pool((t, 0), 1, 4, PoolKind::Buy, (15 * s, 0), (320 * s, 0))];
+        let mut g = groups(0);
+        (g[1].d, g[1].d_ms) = (2, None); // H: d 2 slots, K3: d_ms 600
+        let mut eng = SignalEngine::new(u, dev2(), g, WindowRule::AllPools).unwrap();
+        eng.clock.per_epoch.insert(t / EPOCH_SLOTS, ms);
+        (eng, legs)
+    }
+
+    #[test]
+    fn a_rows_latency_is_its_trigger_transactions_arrival_in_its_group() {
+        // M3-11 spec §3: the slot's arrivals by (slot, tx) and its first event's block time; d_ms per group (K3 600 ms is
+        // 6 slots at 100.25 ms: 601.5 -> 602; H's d 2: 200.5 -> 200). The trigger's tx has two events (a deposit after
+        // the trigger): the later one without an arrival keeps the earlier one's (engine.py:313-314).
+        let bt = 1_790_000_000i64;
+        let a = Arrival { received: Some(bt as u64 * 1_000_000_000 + 2_500_000), created: Some(1), written: Some(bt as u64 + 1) };
+        let other = Arrival { received: Some(1), created: None, written: None };
+        let run = |first_bt: Option<i64>, arrivals: [Option<&Arrival>; 3]| {
+            let (mut eng, [inflow, trig]) = latency_engine(100.25);
+            let Leg::Pool(mut again) = pool((trig.slot(), 0), 1, 4, PoolKind::Deposit, (1, 1), (320 * SOL as i64, 0)) else { unreachable!() };
+            again.order.inner = 1;
+            let mut keys = FakeKeys::default();
+            let mut rows = Vec::new();
+            let evs = [(inflow, Some(bt - 4)), (trig, first_bt), (Leg::Pool(again), Some(bt))];
+            for ((l, b), arr) in evs.into_iter().zip(arrivals) {
+                eng.push_arrived(&Event::new(l, b), arr, &mut keys, &mut NoHooks(|r| rows.push(r))).unwrap();
+            }
+            eng.finish(&mut keys, &mut |r| rows.push(r)).unwrap();
+            rows.iter().map(|r| (r.variant.clone(), r.lat)).collect::<Vec<_>>()
+        };
+        let rows = run(Some(bt), [Some(&other), Some(&a), None]);
+        let lat = |d_ms| Some(Latency { block_time: bt, received_unix_ns: a.received, created_unix_ns: Some(1), latency_ms: Some(2),
+                                        segment_written_unix: a.written, segment_lag_ms: Some(1_000), d_ms });
+        assert_eq!(rows, [("tp4_T600".into(), lat(602)), ("flow300_H6".into(), lat(200)), ("flow300_tp100_H6".into(), lat(200))]);
+        // The slot's block time is its first event's: None there, all seven NULL. No arrival for the trigger's tx (tx 0 of
+        // the inflow's slot had one: the arrivals are the slot's). And without arrivals at all (a replay's push): NULL.
+        for (first_bt, arrivals) in [(None, [Some(&other), Some(&a), None]), (Some(bt), [Some(&a), None, None]), (Some(bt), [None; 3])] {
+            let rows = run(first_bt, arrivals);
+            assert!(rows.len() == 3 && rows.iter().all(|r| r.1.is_none()), "{first_bt:?} {rows:?}");
+        }
+    }
+
+    #[test]
+    fn flag_fixes_reach_the_farm_windows_at_the_next_slot_end_after_the_backfills() {
+        // M3-11 (engine.py:416-428): given between two pushes, a fix waits for the slot end; there it comes after the
+        // slot's own farm adds and the backfills, and before step 5. P's recorded inflow at t - 10 is organic; a fix makes
+        // it a farmer's, so P's trigger at t is flagged and group H (organic) skips it.
+        struct Seen(Vec<String>);
+        impl Hooks for Seen {
+            fn flag_fixed(&mut self, eng: &SignalEngine, pool: Id) {
+                let items = eng.farm.items(pool).map_or(0, <[_]>::len);
+                self.0.push(format!("fix {pool}: backfilled {}, items {items}", eng.backfilled.contains(&pool)));
+            }
+            fn after_farm(&mut self, _: &SignalEngine, slot: u64, _: &SlotLegs) {
+                self.0.push(format!("step 5 {slot}"));
+            }
+            fn emit(&mut self, row: SignalRow, _: Status) {
+                self.0.push(format!("{} {:?}", row.variant, row.gate));
+            }
+        }
+        let (mut eng, [inflow, trig]) = latency_engine(267.83);
+        let t = trig.slot();
+        let mut keys = FakeKeys::default();
+        let mut seen = Seen(Vec::new());
+        let ev = |l: Leg| Event::new(l, Some(1_790_000_000));
+        eng.push_with(&ev(inflow), &mut keys, &mut seen).unwrap();
+        eng.add_flag_fix(1, inflow.order(), true);
+        eng.add_history(1, vec![pool((t - 500, 0), 1, 3, PoolKind::Sell, (SOL as i64, 0), (280 * SOL as i64, 0))]);
+        assert_eq!(eng.mem_report().iter().find(|m| m.name == "flag_fixes_pending").map(|m| m.entries), Some(1));
+        eng.push_with(&ev(trig), &mut keys, &mut seen).unwrap();
+        eng.finish_with(&mut keys, &mut seen).unwrap();
+        assert_eq!(seen.0, ["fix 1: backfilled true, items 2".into(), format!("step 5 {}", t - 10), "tp4_T600 Pass".into(),
+                            "flow300_H6 FarmFlagged".into(), "flow300_tp100_H6 FarmFlagged".into(), format!("step 5 {t}")]);
+        assert_eq!((eng.farm.items(1).map(|i| i[1].3 > 0), eng.farm.fixes()), (Some(true), 0));
+        // The same without the fix: organic, H passes the farm gate (and stops at AllPools' window gate, its first hour).
+        let (mut eng, _) = latency_engine(267.83);
+        let mut seen = Seen(Vec::new());
+        for l in [inflow, trig] {
+            eng.push_with(&ev(l), &mut keys, &mut seen).unwrap();
+        }
+        eng.finish_with(&mut keys, &mut seen).unwrap();
+        assert!(seen.0.contains(&"flow300_H6 FarmWindowIncomplete".to_owned()), "{:?}", seen.0);
     }
 
     #[test]

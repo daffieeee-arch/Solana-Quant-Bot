@@ -283,7 +283,7 @@ pub fn row_cells(r: &SignalRow, names: &impl KeyNames) -> Result<Vec<(&'static s
         v.map_or(Ok(Cell::Null), |x| Ok(Cell::Int(i64::try_from(x).with_context(|| format!("{what} {x} beyond INTEGER"))?)))
     };
     let small = |v: Option<u8>| v.map_or(Cell::Null, |x| Cell::Int(x.into()));
-    Ok(vec![
+    let mut cells = vec![
         ("family", text(r.family.as_str())),
         ("variant", text(&r.variant)),
         ("key", text(names.name(r.key).context("a signal row of an id without a key")?)),
@@ -299,7 +299,21 @@ pub fn row_cells(r: &SignalRow, names: &impl KeyNames) -> Result<Vec<(&'static s
         ("farm_complete", small(r.farm_complete)),
         ("pool_seen_slot", int(r.pool_seen_slot, "pool_seen_slot")?),
         ("farm_window_complete", small(r.farm_window_complete)),
-    ])
+    ];
+    // Live (M3-11): the trigger's latency, all seven columns (engine.py `**(lat or {})`); none written in a replay
+    if let Some(l) = &r.lat {
+        let signed = |v: Option<i64>| v.map_or(Cell::Null, Cell::Int);
+        cells.extend([
+            ("block_time", Cell::Int(l.block_time)),
+            ("received_unix_ns", int(l.received_unix_ns, "received_unix_ns")?),
+            ("created_unix_ns", signed(l.created_unix_ns)),
+            ("latency_ms", signed(l.latency_ms)),
+            ("segment_written_unix", int(l.segment_written_unix, "segment_written_unix")?),
+            ("segment_lag_ms", signed(l.segment_lag_ms)),
+            ("d_ms", Cell::Int(l.d_ms)),
+        ]);
+    }
+    Ok(cells)
 }
 
 /// State 'feed' as paper.engine main writes it for a replay (engine.py:1493): Python's json.dumps of
@@ -347,7 +361,7 @@ pub(crate) mod tests {
     use lab_core::clock::Clock;
     use lab_core::farm::WindowRule;
     use lab_core::legs::{CurveLeg, CurveVariant, Event, Leg, Order, PoolKind, PoolLeg, DIRECT, EXACT_OUT, FARMER, X0, X1};
-    use lab_core::signals::{Farm, SignalEngine};
+    use lab_core::signals::{Farm, Latency, SignalEngine};
 
     /// The shared golden cases (paper/tests/c1b_signal_cases.py writes them from the engine; FORMAT there).
     const CASES: &str = include_str!("../../paper/tests/data/c1b_signal_cases.json");
@@ -783,7 +797,7 @@ pub(crate) mod tests {
         let row = SignalRow {
             family: Family::N2F7, group: 1, variant: "flow300_H6".into(), key: pool, t: 450_200_000, day: Some("2026-09-22".into()),
             seg: Segment::PoolReversed, depth: 1 << 60, trigger_trader: NONE, farm: Farm::Flagged, farm_complete: None,
-            pool_seen_slot: Some(450_190_000), farm_window_complete: Some(1), gate: Gate::FarmFlagged,
+            pool_seen_slot: Some(450_190_000), farm_window_complete: Some(1), gate: Gate::FarmFlagged, lat: None,
         };
         let cells = row_cells(&row, &keys).unwrap();
         let get = |c: &str| cells.iter().find(|x| x.0 == c).map(|x| x.1.clone());
@@ -799,6 +813,15 @@ pub(crate) mod tests {
         let get = |c: &str| cells.iter().find(|x| x.0 == c).map(|x| x.1.clone());
         assert_eq!([get("status"), get("reason"), get("trigger_trader"), get("orientation"), get("farm"), get("pool_seen_slot")],
                    [Some(Cell::Null), Some(Cell::Null), text("T"), text("curve"), text("n/a"), Some(Cell::Null)]);
+        // M3-11: a live row's latency, its seven columns written (a NULL among them as NULL)
+        let lat = Latency { block_time: 1_790_000_000, received_unix_ns: Some(1_790_000_000_400_000_000), created_unix_ns: None,
+                            latency_ms: Some(400), segment_written_unix: Some(1_790_000_002), segment_lag_ms: Some(2_000), d_ms: 534 };
+        let cells = row_cells(&SignalRow { lat: Some(lat), ..row.clone() }, &keys).unwrap();
+        let get = |c: &str| cells.iter().find(|x| x.0 == c).map(|x| x.1.clone());
+        let int = |i: i64| Some(Cell::Int(i));
+        assert_eq!([get("block_time"), get("received_unix_ns"), get("created_unix_ns"), get("latency_ms"), get("segment_written_unix"),
+                    get("segment_lag_ms"), get("d_ms")],
+                   [int(1_790_000_000), int(1_790_000_000_400_000_000), Some(Cell::Null), int(400), int(1_790_000_002), int(2_000), int(534)]);
         assert!(row_cells(&SignalRow { depth: i128::from(i64::MAX) + 1, ..row }, &keys).is_err());
         assert_eq!(gate_name(Gate::FarmWindowIncomplete), "farm window incomplete");
     }

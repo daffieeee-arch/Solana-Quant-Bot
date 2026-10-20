@@ -376,6 +376,16 @@ impl Event {
     }
 }
 
+/// Live only (M3-11): when the recorder had an event's transaction (paper/feed.py `Event.arrival`, from the segment's
+/// arrivals/ and _segment.json): its local receive time and the server's created time in unix ns, and its segment's
+/// written_unix (seconds). A replay event has none; the engine reads it for the signal latency (signals.rs `Latency`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Arrival {
+    pub received: Option<u64>,
+    pub created: Option<i64>,
+    pub written: Option<u64>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

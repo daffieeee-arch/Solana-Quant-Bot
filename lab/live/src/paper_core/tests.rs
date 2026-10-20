@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use lab_core::legs::NONE;
+use lab_core::legs::{Arrival, Order, NONE};
 use lab_core::paper::{GradInfo, PaperCfg, PaperEngine, RiskSource};
 use lab_core::universe::{MintMeta, PoolMeta};
 use serde_json::{json, Map, Value};
@@ -155,7 +155,7 @@ enum Close {
 
 /// One item of a case's `learn` (m3_live_cases.py FORMAT) into the engine's live API: a token replaced, a SOL market
 /// added (its mint interned, so its token is looked up when it is used, as Python's `feed.token(p.mint)`; its
-/// create_slot in its PoolMeta), a backfill as history (M3-08b), an epoch's ms per slot.
+/// create_slot in its PoolMeta), a backfill as history (M3-08b), a flag fix (M3-11), an epoch's ms per slot.
 fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<()> {
     if let Some(t) = x.get("token") {
         let mayhem = field(t, "mayhem")?;
@@ -183,10 +183,28 @@ fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<(
         let legs = field(h, "events")?.as_array().context("history events")?.iter().map(|e| event(e, keys).map(|ev| ev.leg))
             .collect::<Result<Vec<_>>>()?;
         eng.add_history(keys.id(s(h, "pool")?), legs);
+    } else if let Some(f) = x.get("flag_fix") {
+        // M3-11: a recorded trade's farmer flag computed again (LiveFeed drain_flag_fixes)
+        let o: Vec<u64> = field(f, "order")?.as_array().context("order")?.iter().map(|v| v.as_u64().context("order"))
+            .collect::<Result<_>>()?;
+        ensure!(o.len() == 4, "order {o:?}");
+        let order = Order { slot: o[0], tx: u32::try_from(o[1])?, outer: u16::try_from(o[2])?, inner: u16::try_from(o[3])? };
+        eng.fix_farm(keys.id(s(f, "pool")?), order, b(f, "farmer")?);
     } else {
         eng.set_epoch_ms(field(x, "epoch")?.as_u64().context("epoch")?, field(x, "ms")?.as_f64().context("ms")?);
     }
     Ok(())
+}
+
+/// M3-11: a case event's arrival (m3_live_cases.py FORMAT arrival), None without one.
+fn arrival(e: &Value) -> Result<Option<Arrival>> {
+    let Some(a) = e.get("arrival") else { return Ok(None) };
+    let a = a.as_array().filter(|a| a.len() == 3).context("arrival")?;
+    let (received, written) = (a[0].as_u64(), a[2].as_u64());
+    ensure!(received.is_some() || a[0].is_null(), "received {a:?}");
+    ensure!(written.is_some() || a[2].is_null(), "written {a:?}");
+    ensure!(a[1].is_i64() || a[1].is_null(), "created {a:?}");
+    Ok(Some(Arrival { received, created: a[1].as_i64(), written }))
 }
 
 fn run_case(case: &Value, scenario: &str, risk: Option<&str>) -> Result<(Vec<Write>, PaperEngine, CaseKeys)> {
@@ -240,7 +258,7 @@ fn run_case_closing(case: &Value, scenario: &str, risk: Option<&str>, close: Clo
         if let Some(f) = files.as_mut() {
             f.before(slot)?;
         }
-        eng.push(&ev, &mut seeds.with(&keys))?;
+        eng.push_arrived(&ev, arrival(e)?.as_ref(), &mut seeds.with(&keys))?;
         for op in eng.paper.ops.drain(..) {
             writes.push(op_write(&op, &keys)?);
         }
@@ -314,10 +332,15 @@ fn every_m3_case_gives_the_engines_writes_with_what_it_learns() {
             let (writes, eng, _, _) = run_case_closing(case, scenario, None, close).unwrap_or_else(|e| panic!("{name} {close:?}: {e:#}"));
             n += same_writes(&format!("{name} {close:?}"), &writes, case, &cols);
             assert_eq!((eng.paper.open_positions(), eng.paper.pending()), (0, 0), "{name} {close:?}");
+            // M3-11: the flag fixes per day (state farm_flag_fixes), as the engine's flag_fix_days
+            let days: Map<String, Value> = eng.paper.flag_fix_days().iter()
+                .map(|(d, n)| (d.clone().unwrap_or_else(|| "null".into()), json!(n))).collect();
+            assert_eq!(Value::Object(days), case["expect_flag_fix_days"], "{name} {close:?}");
         }
         // Without the learns, or with the other farm-window rule, the case writes something else (test_live_cases.py SAME:
         // completion_learned_too_late's learn comes too late, window_rule_live learns nothing, M3-08's cases have no
-        // window-gated row): it shows what the live API carries.
+        // window-gated row; latency_of_a_live_signal learns nothing, its arrivals are the events'): it shows what the live
+        // API carries.
         let same = |c: &Value| {
             let (writes, _, _, _) = run_case_closing(c, scenario, None, Close::Replay).unwrap();
             let got: Vec<Value> = writes.iter().filter(|w| c2_write(w)).map(|w| write_json(w, &cols, &[])).collect();
@@ -329,7 +352,7 @@ fn every_m3_case_gives_the_engines_writes_with_what_it_learns() {
         other["window_rule"] = json!(if case["window_rule"] == "live" { "all_pools" } else { "live" });
         let live = case["window_rule"] == "live";
         assert_eq!((same(&bare), same(&other)),
-                   (["completion_learned_too_late", "window_rule_live"].contains(&name), !live), "{name}");
+                   (["completion_learned_too_late", "window_rule_live", "latency_of_a_live_signal"].contains(&name), !live), "{name}");
     }
     assert!(n > 0);
 }

@@ -9,8 +9,10 @@
 //! - The two prunes are lazy and take n at other slots than the query: Rust copies them, it does not "fix" them. Where
 //!   n grows at an epoch change, Python can drop items a later window would include.
 //! - Live (M3-08b): backfills reach the windows as history (signals.rs `add_history`, engine.py:417-421) and the live
-//!   farm_window_complete rule is `live_complete`. Not ported yet: `farm_fixes` (late farmer flags, engine.py:588-597,
-//!   M3-10).
+//!   farm_window_complete rule is `live_complete`.
+//! - Live (M3-11): a recorded trade's farmer flag computed again after a late backfill (LiveFeed `_reflag`) reaches its
+//!   window entry (`fix`, engine.py `_farm_fix` :588-597), or waits in `fixes` for the trade's `add` (`_farm_add` :579),
+//!   swept at the hour rollover (:694-695). Mirrored, not fixed: the first match only.
 
 use crate::clock::{Clock, F6_FARM_MS, F6_FARM_SHARE, SINCE_CREATION_MS};
 use crate::exact::gt;
@@ -25,12 +27,17 @@ pub type FarmItem = (u64, Order, i128, i128);
 #[derive(Clone, Debug, Default)]
 pub struct FarmWindow {
     win: HashMap<Id, Vec<FarmItem>>,
+    /// Live (M3-11): (pool, order) -> the farmer flag a late backfill gave a trade not in the window yet (engine.py
+    /// `farm_fixes`); taken by that trade's `add`, swept at the rollover. Empty in a replay.
+    fixes: HashMap<(Id, Order), bool>,
 }
 
 impl FarmWindow {
     /// The slot's legs of a pool in the SOL-market map, mayhem included (engine.py `_farm_add`; the caller looks the
     /// pool up). Buys and sells only, each once:
     ///
+    /// - live: a trade's farmer flag is a waiting fix's (taken, `fixes.pop`) before the duplicate check, so a duplicate
+    ///   uses it up too (engine.py:579);
     /// - the duplicate check bisects on the full 4-tuple, as `bisect_left(xs, item)`: with (s, o, a, 0) present an
     ///   (s, o, a, a) lands after it and is stored too; the reverse order is skipped (a live backfill's path only);
     /// - then the lazy prune: when the first item is older than L - 2n, with L the last item's slot and n the hour at
@@ -43,7 +50,8 @@ impl FarmWindow {
                 continue;
             }
             let a = l.sol_side(reversed).1;
-            let item = (l.order.slot, l.order, a, if l.flag(FARMER) { a } else { 0 });
+            let farmer = if self.fixes.is_empty() { l.flag(FARMER) } else { self.fixes.remove(&(pool, l.order)).unwrap_or(l.flag(FARMER)) };
+            let item = (l.order.slot, l.order, a, if farmer { a } else { 0 });
             let i = xs.partition_point(|x| *x < item);
             if xs.get(i).is_some_and(|x| (x.0, x.1) == (item.0, item.1)) {
                 continue;
@@ -73,11 +81,32 @@ impl FarmWindow {
         gt(farm, F6_FARM_SHARE * vol as f64)
     }
 
-    /// The hour rollover's prune (engine.py:691-693): pools whose list is empty or whose last trade is before
-    /// slot - n, n the hour at the rollover slot.
+    /// Live (M3-11): a recorded trade's farmer flag computed again (engine.py `_farm_fix`, :588-597). The first entry of
+    /// the pool's window at (order.slot, order) gets it (`bisect_left(xs, (order[0], order))`): of a trade stored twice,
+    /// (s, o, a, 0) and (s, o, a, a), only the first changes. A trade not in the window (its slot not ended yet, or its
+    /// pool without a window) gets it at its `add`; a later fix of the same trade replaces it.
+    pub fn fix(&mut self, pool: Id, order: Order, farmer: bool) {
+        if let Some(xs) = self.win.get_mut(&pool) {
+            let i = xs.partition_point(|x| (x.0, x.1) < (order.slot, order));
+            if let Some(x) = xs.get_mut(i).filter(|x| (x.0, x.1) == (order.slot, order)) {
+                x.3 = if farmer { x.2 } else { 0 };
+                return;
+            }
+        }
+        self.fixes.insert((pool, order), farmer);
+    }
+
+    /// The hour rollover's prune (engine.py:691-695): pools whose list is empty or whose last trade is before
+    /// slot - n, n the hour at the rollover slot; and the waiting fixes of trades before slot - n (never added).
     pub fn rollover(&mut self, slot: u64, clock: &Clock) {
         let lo = slot.saturating_sub(clock.slots(F6_FARM_MS, slot));
         self.win.retain(|_, xs| xs.last().is_some_and(|x| x.0 >= lo));
+        self.fixes.retain(|(_, o), _| o.slot >= lo);
+    }
+
+    /// The fixes waiting for their trade (for the tests and the summary).
+    pub fn fixes(&self) -> usize {
+        self.fixes.len()
     }
 
     pub fn items(&self, pool: Id) -> Option<&[FarmItem]> {
@@ -99,11 +128,13 @@ impl FarmWindow {
     }
 
     /// The memory log (C4-2): the pools with a list and the items in them. `add`'s lazy prune keeps a list within about
-    /// two hours of its last item; the hour rollover drops a pool without a trade in the last hour.
-    pub fn mem(&self) -> [Mem; 2] {
+    /// two hours of its last item; the hour rollover drops a pool without a trade in the last hour. Live (M3-11): the
+    /// waiting fixes, swept with the hour.
+    pub fn mem(&self) -> [Mem; 3] {
         [
             Mem::new("farm_pools", self.win.len(), mem::map(&self.win)),
             Mem::new("farm_items", self.len(), self.win.values().map(mem::vec).sum()),
+            Mem::new("farm_fixes", self.fixes.len(), mem::map(&self.fixes)),
         ]
     }
 }
@@ -273,6 +304,83 @@ mod tests {
         w.rollover(s, &c);
         assert_eq!((w.pools(), w.items(1).is_some()), (1, true));
         assert!(w.flagged(1, s + 1, &c));
+    }
+
+    #[test]
+    fn a_fix_changes_the_trades_entry_or_waits_for_its_add() {
+        // M3-11 (engine.py `_farm_fix` :588-597, `_farm_add` :579): a recorded trade's farmer flag computed again.
+        let c = dev2();
+        let t = 450_200_000;
+        let o = |l: &Leg| l.order();
+        let (x, y) = (trade(t - 100, 0, 10, false), trade(t - 50, 0, 9, false));
+        // In the window: its entry gets the flag, and the label follows (10 of 19 is above half).
+        let mut w = FarmWindow::default();
+        w.add(1, true, &[x, y], &c);
+        assert!(!w.flagged(1, t, &c));
+        w.fix(1, o(&x), true);
+        assert_eq!((w.items(1), w.fixes()), (Some(&[(t - 100, o(&x), 10, 10), (t - 50, o(&y), 9, 0)][..]), 0));
+        assert!(w.flagged(1, t, &c));
+        w.fix(1, o(&x), false); // and back
+        assert!(!w.flagged(1, t, &c) && w.items(1).is_some_and(|i| i[0].3 == 0));
+        // Not in the window yet (its slot not ended, or a pool without a window): kept; the trade's add takes it before
+        // the duplicate check, once; a later fix of the same trade replaces the kept one.
+        let mut w = FarmWindow::default();
+        w.fix(1, o(&x), false);
+        w.fix(1, o(&x), true);
+        w.fix(2, o(&y), true);
+        assert!(w.items(1).is_none() && w.fixes() == 2);
+        w.add(1, true, &[x, x], &c); // the second x is a duplicate: no fix left for it, (s, o, 10, 0) lands on (s, o, 10, 10)
+        assert_eq!((w.items(1), w.fixes()), (Some(&[(t - 100, o(&x), 10, 10)][..]), 1));
+        // A kept fix of another pool's trade is not taken; a kept fix overrides the trade's own farmer flag.
+        let farmer = trade(t - 50, 0, 9, true);
+        w.add(1, true, &[farmer], &c);
+        assert_eq!((w.items(1).map(<[_]>::len), w.fixes()), (Some(2), 1));
+        w.fix(3, o(&farmer), false);
+        w.add(3, true, &[farmer], &c);
+        assert_eq!((w.items(3), w.fixes()), (Some(&[(t - 50, o(&farmer), 9, 0)][..]), 1));
+        let names: Vec<(&str, usize)> = w.mem().iter().map(|m| (m.name, m.entries)).collect();
+        assert_eq!(names, [("farm_pools", 2), ("farm_items", 3), ("farm_fixes", 1)]);
+    }
+
+    #[test]
+    fn a_fix_changes_the_first_entry_of_a_trade_stored_twice() {
+        // engine.py:591-594: bisect_left(xs, (order[0], order)) and the first match only. A recorded trade (s, o, a, 0)
+        // and its backfill copy (s, o, a, a) are both stored (the_duplicate_check_bisects_on_the_full_tuple): a fix to
+        // organic changes the first (already 0), the copy keeps its farmer volume, and the label stays flagged.
+        let c = dev2();
+        let t = 450_200_000;
+        let (organic, farmer) = (trade(t - 10, 0, 10, false), trade(t - 10, 0, 10, true));
+        let o = organic.order();
+        let mut w = FarmWindow::default();
+        w.add(1, true, &[organic], &c);
+        w.add(1, true, &[farmer], &c);
+        w.fix(1, o, false);
+        assert_eq!(w.items(1), Some(&[(t - 10, o, 10, 0), (t - 10, o, 10, 10)][..]));
+        assert!(!w.flagged(1, t, &c)); // 10 of 20 is not above half; with a farmer's trade at t - 5 it is
+        w.add(1, true, &[trade(t - 5, 0, 1, true)], &c);
+        assert!(w.flagged(1, t, &c));
+        // A fix to farmer changes the first too: both entries count now.
+        w.fix(1, o, true);
+        assert_eq!(&w.items(1).unwrap()[..2], &[(t - 10, o, 10, 10), (t - 10, o, 10, 10)]);
+        // The key is (slot, order): a fix of an order at another slot finds nothing and is kept.
+        w.fix(1, crate::legs::Order { slot: t - 9, ..o }, false);
+        assert_eq!(w.fixes(), 1);
+    }
+
+    #[test]
+    fn the_rollover_sweeps_the_fixes_of_trades_never_added() {
+        // engine.py:694-695: at the hour rollover the kept fixes of trades before slot - n go (n the hour at the slot).
+        let c = dev2();
+        let s = 450_200_000; // n 13441
+        let mut w = FarmWindow::default();
+        let (old, edge) = (trade(s - 13_442, 0, 1, false).order(), trade(s - 13_441, 0, 1, false).order());
+        w.fix(1, old, true);
+        w.fix(1, edge, true);
+        w.fix(2, trade(s + 5, 0, 1, false).order(), false);
+        w.rollover(s, &c);
+        assert_eq!(w.fixes(), 2);
+        w.add(1, true, &[trade(s - 13_441, 0, 4, false)], &c); // the edge's fix is still taken
+        assert_eq!((w.items(1), w.fixes()), (Some(&[(s - 13_441, edge, 4, 4)][..]), 1));
     }
 
     #[test]
