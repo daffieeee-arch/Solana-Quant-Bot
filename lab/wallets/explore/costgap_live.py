@@ -1,12 +1,11 @@
-"""F7 cost-gap decomposition on dev, in points of the stake (additive waterfall per trigger; wipe-outs are -100 pt, not
+"""F7 cost-gap decomposition on dev (run with PYTHONPATH=lab, the legs dir as the argument), in points of the stake (additive waterfall per trigger; wipe-outs are -100 pt, not
 -690 lp), E45 unit: per-pool mean of the pool's triggers, 0.5 % trimmed mean over pools, pool bootstrap (BOOT, seed 7).
 mech - delay - fee_in - imp_in - fee_out - imp_out - network = net, exactly per trigger."""
 import json, math, os, sys, time
 import duckdb, numpy as np
-sys.path.insert(0, "/home/chupa/Solana-project/worktrees/lab-research/lab")
 from wallets.markout_report import trimmed_mean, day_ci, BOOT
 
-LAB = "/home/chupa/Solana-project/data-old-faithful-one/lab"
+LAB = os.environ.get("LAB_DATA", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 SP = sys.argv[1]  # the directory with legs-<epoch>.parquet (costgap_legs.py); the json lands there too
 MK = f"{LAB}/wallets/markout-v1-txdelay-v4/markout-f7rev-txdelay.parquet"
 RJ = json.load(open(f"{LAB}/wallets/markout-v1-txdelay-v4/run-markout-f7rev-txdelay.json"))

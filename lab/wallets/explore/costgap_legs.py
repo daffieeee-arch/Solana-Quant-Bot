@@ -1,6 +1,6 @@
 """costgap step 1: trigger-slot legs of the F7 pool_reversed signals from the dev store, one epoch per call (timing probe)."""
-import sys, time, duckdb
-LAB = "/home/chupa/Solana-project/data-old-faithful-one/lab"
+import os, sys, time, duckdb
+LAB = os.environ.get("LAB_DATA", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 ep = int(sys.argv[1]); out = sys.argv[2]
 lo, hi = ep * 432000, (ep + 1) * 432000 - 1
 t0 = time.time()
