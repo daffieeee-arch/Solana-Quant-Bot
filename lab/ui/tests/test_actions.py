@@ -336,6 +336,43 @@ class NasJob(Base):
             self.disp.settings(env)
 
 
+class Notes(Base):
+    """Backlog 5: the owner's note on a day or a position, confirmed like every action, checked by the web app and
+    the executor, written to <control>/notes/notes.jsonl (never the journal); control and bidi characters dropped."""
+
+    def note(self, params):
+        sid, csrf = self.session()
+        p = self.a.prepare("100.64.0.1:5000", sid, {"csrf": csrf, "action": "note", "params": params}, 8501)
+        rid = self.a.commit("100.64.0.1:5000", sid, {"csrf": csrf, "nonce": p["nonce"]}, 8501)["id"]
+        self.assertEqual(self.ex.run(), [(rid, "ok")])
+        return p
+
+    def test_day_and_position_notes(self):
+        key = "Poo1111111111111111111111111111111111111111"
+        p = self.note({"day": "2026-10-20", "text": "Eerste dag live\u202e <b>x</b>"})
+        self.assertIn("dag 2026-10-20", p["text"])
+        self.note({"key": key, "variant": "tp4_T600", "t": 470000010, "text": "Instap te laat?"})
+        (d,) = self.a.notes(day="2026-10-20")
+        self.assertEqual(d["text"], "Eerste dag live <b>x</b>")  # bidi override dropped; HTML stays text (the page escapes)
+        (n,) = self.a.notes(key=key, variant="tp4_T600", t=470000010)
+        self.assertEqual(n["text"], "Instap te laat?")
+        self.assertEqual(self.a.notes(key=key, variant="tp4_T600", t=1), [])
+
+    def test_bad_notes_are_refused(self):
+        sid, csrf = self.session()
+        for bad in ({"day": "2026-10-20"}, {"day": "x", "text": "a"}, {"day": "2026-10-20", "text": ""}, {"day": "2026-10-20", "text": "a" * 501},
+                    {"key": "../x", "variant": "v", "t": 1, "text": "a"}, {"key": "P" * 40, "variant": "v", "t": "1", "text": "a"},
+                    {"day": "2026-10-20", "text": "a", "extra": 1}):
+            self.refused(400, self.a.prepare, "100.64.0.1:5000", sid, {"csrf": csrf, "action": "note", "params": bad}, 8501)
+        # the executor checks again: a request that skipped the web app's check is refused
+        rid = self.a.ulid()
+        d = os.path.join(self.ex.CONTROL, "requests")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, f"{rid}.json"), "w") as f:
+            json.dump({"id": rid, "action": "note", "params": {"day": "2026-10-20", "text": ""}, "node": PHONE, "name": "x", "ts": 1}, f)
+        self.assertEqual(self.ex.run(), [(rid, "refused")])
+
+
 class Executor(Base):
     def put(self, name, obj):
         d = os.path.join(self.ex.CONTROL, "requests")

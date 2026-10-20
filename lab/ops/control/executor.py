@@ -80,7 +80,42 @@ def _nas_job(params, rid):
     return {"ok": True, "job_id": rid, "state": "queued"}
 
 
-ACTIONS = {"ping": _ping, "nas_job": _nas_job}
+NOTE_MAX = 500
+NOTE_DROP = re.compile(r"[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def _note(params, rid):
+    """An owner's note on a day or a position: checked again (as lab/ui/actions.note_params), one JSON line appended to
+    <control>/notes/notes.jsonl. Never the journal: the bot never reads it."""
+    p = params
+    if set(p) not in ({"text", "day"}, {"text", "key", "variant", "t"}):
+        raise ValueError("note: text and a day, or text and key, variant, t")
+    text = NOTE_DROP.sub("", p["text"]).strip() if isinstance(p["text"], str) else ""
+    if not 1 <= len(text) <= NOTE_MAX:
+        raise ValueError("note: 1 to 500 characters")
+    if "day" in p:
+        if not (isinstance(p["day"], str) and re.fullmatch(r"20\d\d-\d\d-\d\d", p["day"])):
+            raise ValueError("note: day")
+        target = {"day": p["day"]}
+    else:
+        if not (isinstance(p["key"], str) and 32 <= len(p["key"]) <= 44 and p["key"].isalnum()
+                and isinstance(p["variant"], str) and re.fullmatch(r"[A-Za-z0-9_]{1,40}", p["variant"])
+                and type(p["t"]) is int and p["t"] > 0):
+            raise ValueError("note: position")
+        target = {"key": p["key"], "variant": p["variant"], "t": p["t"]}
+    d = os.path.join(CONTROL, "notes")
+    os.makedirs(d, exist_ok=True)
+    line = json.dumps({"id": rid, "ts": int(time.time()), "text": text, **target}, ensure_ascii=False, sort_keys=True) + "\n"
+    fd = os.open(os.path.join(d, "notes.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
+    try:
+        os.write(fd, line.encode())
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return {"ok": True}
+
+
+ACTIONS = {"ping": _ping, "nas_job": _nas_job, "note": _note}
 
 
 def _audit(**fields):
