@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Badge, DexLink, Loading, SolscanLink } from "../components/ui";
 import { Button } from "../components/Button";
 import PaperChart from "../components/PaperChart";
+import Explain from "../components/Explain";
 import OnCourse from "../components/OnCourse";
 import DayCard from "../components/DayCard";
 import { Change, Num } from "../components/Num";
@@ -268,6 +269,8 @@ type Filter = string;
 const filtersFor = (groups: string[]) => [{ value: "all", label: "K3" }, { value: "open", label: "K3 open" },
   ...groups.map((g) => ({ value: `arm:${g}`, label: `Groep ${g}` })), { value: "shadow", label: "N2-schaduw" }];
 
+const rowId = (p: PaperPosition) => `${p.family}|${p.variant}|${p.key}|${p.entry_slot}`;
+
 function PositionsTable({ rows, sel, onSel }: { rows: PaperPosition[]; sel: string | null; onSel: (k: string) => void }) {
   return (
     <div className="overflow-x-auto">
@@ -282,9 +285,9 @@ function PositionsTable({ rows, sel, onSel }: { rows: PaperPosition[]; sel: stri
         </thead>
         <tbody>
           {rows.map((p) => {
-            const ret = retOf(p), sym = label(p.symbol, 16) || shortAddr(p.mint ?? p.key), name = label(p.name, 32), on = sel === p.key;
+            const ret = retOf(p), sym = label(p.symbol, 16) || shortAddr(p.mint ?? p.key), name = label(p.name, 32), on = sel === rowId(p);
             return (
-              <tr key={`${p.family}|${p.variant}|${p.key}|${p.entry_slot}`} onClick={() => onSel(p.key)} aria-selected={on}
+              <tr key={`${p.family}|${p.variant}|${p.key}|${p.entry_slot}`} onClick={() => onSel(rowId(p))} aria-selected={on}
                 className={cn("border-b border-[#161D2A] cursor-pointer hover:bg-surface-2/50", on && "bg-accent-soft")}>
                 <td className="px-2 py-2.5">
                   <span className="inline-flex items-center gap-2.5">
@@ -324,7 +327,9 @@ export default function Paper() {
   if (!data) return <Loading what="Paper" />;
   const j = data.journal, r = data.recorder;
   const nOpen = j?.positions.filter((p) => p.status === "open").length ?? 0;
-  const chartKey = sel ?? j?.positions[0]?.key ?? null;
+  const allRows = j ? [...j.positions, ...j.shadow_positions, ...(j.arm_positions ?? [])] : [];
+  const selRow = allRows.find((p) => rowId(p) === sel) ?? j?.positions[0] ?? null;
+  const chartKey = selRow?.key ?? null;
   const armGroups = j ? [...new Set([...j.arms.map((a) => a.group), ...j.arm_positions.map((p) => p.group)])] : [];
   const armRows = (g: string) => j?.arm_positions.filter((p) => p.group === g) ?? [];
   const tableRows = !j ? [] : filter === "shadow" ? j.shadow_positions : filter === "open" ? j.positions.filter((p) => p.status === "open")
@@ -350,6 +355,7 @@ export default function Paper() {
           <div className="hidden lg:flex flex-wrap gap-[18px]">
             <section className="flex-[999_1_640px] min-w-0 rounded-[18px] bg-surface-alt border border-line p-[18px]">
               {chartKey ? <PaperChart k={chartKey} height={400} /> : <p className="text-muted m-0">Nog geen posities.</p>}
+              {selRow && <div className="mt-4 pt-3 border-t border-line"><Explain p={selRow} /></div>}
             </section>
             <aside className="flex-[1_1_340px] min-w-0 grid gap-3.5 content-start">
               <Hero j={j} />
@@ -371,7 +377,7 @@ export default function Paper() {
                 ))}
               </div>
             </div>
-            {tableRows.length ? <PositionsTable rows={tableRows.slice(0, shown * 2)} sel={chartKey} onSel={setSel} />
+            {tableRows.length ? <PositionsTable rows={tableRows.slice(0, shown * 2)} sel={selRow ? rowId(selRow) : null} onSel={setSel} />
               : <p className="text-sm text-muted m-0">{filter === "shadow" ? "Geen N2-schaduw in dit journaal." : filter.startsWith("arm:") ? `Geen posities van groep ${filter.slice(4)} ${j.is_today ? "vandaag" : j.day}.` : "Geen posities."}</p>}
             {tableRows.length > shown * 2 && <Button type="button" onClick={() => setShown(shown + 25)} className="justify-self-start">Toon meer ({tableRows.length - shown * 2} over)</Button>}
           </section>
@@ -406,7 +412,7 @@ export default function Paper() {
                             <PositionRow p={p} lastSlot={j.status.last_slot} />
                           </div>
                           {open === id && (
-                            <div className="mt-2 rounded-[14px] bg-surface-alt border border-line p-3"><PaperChart k={p.key} height={240} /></div>
+                            <div className="mt-2 rounded-[14px] bg-surface-alt border border-line p-3 grid gap-3"><PaperChart k={p.key} height={240} /><Explain p={p} /></div>
                           )}
                         </motion.div>
                       );

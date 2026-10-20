@@ -806,7 +806,8 @@ LIVE_CACHE = 16
 def live_pool_candles(pool, slots, reversed_, now=None):
     """1-minute price candles of one PumpSwap pool from the live recorder's segments (pump_amm Buy/SellEvent
     parquet, the watchlist's trades), around the bot's trades: for tokens newer than the development store. Price
-    in SOL per token as the store's (labstore: SOL reserve / token reserve / 1000 after the trade); `reversed_`: the
+    in SOL per token as the store's: each trade at the pool's state before it, e = quote vault + virtual quote
+    reserves, e/b (reversed: b/e) / 1000 (labstore.pool_trades_sql, store.py pool_select); `reversed_`: the
     pool's base is WSOL. Read-only, DuckDB in memory with a fixed budget (256 MB, one thread): the recorder and the
     paper engine come first on the VPS. [] without a recorder or without trades of the pool."""
     root, sample = recorder_root()
@@ -825,16 +826,20 @@ def live_pool_candles(pool, slots, reversed_, now=None):
     parts, params = [], []
     for ev, base_col, quote_col in (("BuyEvent", "base_amount_out", "quote_amount_in"), ("SellEvent", "base_amount_in", "quote_amount_out")):
         if files[ev]:
-            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, "timestamp" AS ts, pool_base_token_reserves AS b,
-                                    pool_quote_token_reserves AS q, {base_col} AS base_amt, {quote_col} AS quote_amt, '{ev}' AS ev
+            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, "timestamp" AS ts, pool_base_token_reserves::DOUBLE AS b,
+                                    pool_quote_token_reserves::DOUBLE + COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0) AS e,
+                                    {base_col} AS base_amt, {quote_col} AS quote_amt, '{ev}' AS ev
                              FROM read_parquet(?, union_by_name = true) WHERE pool = ? AND slot BETWEEN ? AND ?""")
             params += [files[ev], pool, lo, hi]
     if not parts:
         return []
     rev = "true" if reversed_ else "false"
+    # The store's definition (labstore.pool_trades_sql, the dev candles of the same chart): each trade's price from
+    # the pool's state BEFORE it, e = the quote vault + the virtual quote reserves (store.py pool_select), price e/b
+    # (reversed: b/e) / 1000.
     sql = f"""
         WITH t AS ({" UNION ALL ".join(parts)}),
-        p AS (SELECT *, CASE WHEN {rev} THEN b::DOUBLE / NULLIF(q::DOUBLE, 0) ELSE q::DOUBLE / NULLIF(b::DOUBLE, 0) END / 1000 AS price,
+        p AS (SELECT *, CASE WHEN {rev} THEN b / NULLIF(e, 0) ELSE e / NULLIF(b, 0) END / 1000 AS price,
                      CASE WHEN {rev} THEN base_amt ELSE quote_amt END AS sol,
                      (ev = 'BuyEvent') <> {rev} AS token_buy FROM t)
         SELECT 'pool' AS venue, (ts // 60 * 60)::BIGINT AS time,
@@ -855,6 +860,105 @@ def live_pool_candles(pool, slots, reversed_, now=None):
     if len(_live_candles) >= LIVE_CACHE:
         _live_candles.pop(next(iter(_live_candles)))
     _live_candles[key] = out
+    return out
+
+
+MAX_PRICE_AGE_SECS = 60  # an older last trade (block time) is no market price at the asked time
+
+
+def pool_price_at(pool, slot, reversed_, at_unix=None, now=None):
+    """The pool's price (SOL per token, as the store's) in its state AFTER its last trade at or before `slot`, from
+    the recorder's segments: the events carry the state before the trade, so the trade's own deltas are applied as
+    the store applies them (store.py: base_amount_out / _in; the quote vault moves by quote_amount_in_with_lp_fee on
+    a buy and quote_amount_out_without_lp_fee on a sell, the LP fee stays in the pool), plus the virtual quote
+    reserves (e = vault + vq). (price, its slot), or (None, None): no trade, or a last trade more than
+    MAX_PRICE_AGE_SECS of block time before `at_unix` (when given). Read-only, 256 MB."""
+    root, sample = recorder_root()
+    if sample or slot is None:
+        return None, None
+    segs = [x for x in _segments_since(root, (now or time.time()) - 3 * 86_400)
+            if x["first_slot"] is not None and x["last_slot"] is not None and x["first_slot"] <= slot and x["last_slot"] >= slot - LIVE_PAD]
+    files = {ev: [f for x in segs[:LIVE_MAX_FILES // 2] for f in glob.glob(os.path.join(x["dir"], "pump_amm", ev, "*.parquet"))]
+             for ev in ("BuyEvent", "SellEvent")}
+    parts, params = [], []
+    for ev, base_after, e_delta in (("BuyEvent", "- base_amount_out", "+ quote_amount_in_with_lp_fee"),
+                                    ("SellEvent", "+ base_amount_in", "- quote_amount_out_without_lp_fee")):
+        if files[ev]:
+            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, "timestamp" AS ts,
+                                    pool_base_token_reserves::DOUBLE {base_after} AS b,
+                                    pool_quote_token_reserves::DOUBLE {e_delta} + COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0) AS e
+                             FROM read_parquet(?, union_by_name = true) WHERE pool = ? AND slot <= ?""")
+            params += [files[ev], pool, slot]
+    if not parts:
+        return None, None
+    import duckdb
+    con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+    try:
+        r = con.execute(f"SELECT b, e, slot, ts FROM ({' UNION ALL '.join(parts)}) ORDER BY slot DESC, tx_index DESC, outer_ix DESC, inner_ix DESC LIMIT 1",
+                        params).fetchone()
+    except duckdb.Error:
+        r = None
+    finally:
+        con.close()
+    if not r or not r[0] or not r[1] or (at_unix is not None and r[3] and at_unix - r[3] > MAX_PRICE_AGE_SECS):
+        return None, None
+    b, e = float(r[0]), float(r[1])
+    return (b / e if reversed_ else e / b) / 1000, r[2]
+
+
+def explain(key, variant, t):
+    """One position, explained (backlog 2): the signal (the F7 trigger's depth and trader, the farm label and the
+    farmer history and window behind it, the measured latency against d), the entry (the delay, the market price at
+    the signal and just before the entry from the recorder, our fill price with its fees and impact), the exit
+    (reason, slots held, the peak since the entry, P&L). Read-only."""
+    path = journal_path()
+    if not path:
+        raise LookupError("no paper journal")
+    j = Journal(path)
+    try:
+        w, args = "key = ? AND variant = ? AND t = ? AND family NOT LIKE 'N2_%'", (key, variant, t)
+        sig = (j.rows("signals", w, args) or [None])[0]
+        order = (j.rows("orders", w, args) or [None])[0]
+        fills = {f["side"]: f for f in j.rows("fills", w, args)}
+        ex = (j.rows("exits", w, args) or [None])[0]
+        pos = (j.rows("positions", w, args) or [None])[0]
+        beats = j.rows("heartbeat")
+    finally:
+        j.close()
+    if not (sig or order or ex or pos):
+        raise LookupError("no such position")
+    clock = slot_clock(beats)
+    rev = (sig or {}).get("orientation") == "reversed"
+    venue = (sig or {}).get("venue")
+    buy, sell = fills.get("buy"), fills.get("sell")
+    price = lambda f: (f["quote"] / f["tokens"] / 1000) if f and f.get("tokens") and f.get("quote") else None  # noqa: E731
+    entry_slot = (order or ex or pos or {}).get("entry_slot")
+    at_signal = pool_price_at(key, t, rev, at_unix=clock(t)) if venue == "pool" else (None, None)
+    before_entry = pool_price_at(key, entry_slot - 1, rev, at_unix=clock(entry_slot)) if venue == "pool" and entry_slot else (None, None)
+    fill = price(buy)
+    cost = (ex or pos or {}).get("cost")
+    out = {
+        "key": key, "variant": variant, "t": t, "time_unix": clock(t), **token_names([key]).get(key, {}),
+        "signal": None if not sig else {
+            "status": sig["status"], "reason": sig.get("reason"), "venue": venue, "orientation": sig.get("orientation"),
+            "depth_sol": (sig.get("depth") or 0) / 1e9, "trigger_trader": sig.get("trigger_trader"), "farm": sig.get("farm"),
+            "farm_complete": sig.get("farm_complete"), "farm_window_complete": sig.get("farm_window_complete"),
+            "latency_ms": sig.get("latency_ms"), "d_ms": sig.get("d_ms")},
+        "entry": None if not order else {
+            "status": order["status"], "reason": order.get("reason"), "slot": entry_slot, "time_unix": clock(entry_slot),
+            "delay_slots": entry_slot - t if entry_slot else None, "size_sol": (order.get("size") or 0) / 1e9,
+            "price_at_signal": at_signal[0], "price_before_entry": before_entry[0], "fill_price": fill,
+            "drift_pct": (before_entry[0] / at_signal[0] - 1) * 100 if at_signal[0] and before_entry[0] else None,
+            "fill_vs_market_pct": (fill / before_entry[0] - 1) * 100 if fill and before_entry[0] else None},
+        "exit": None if not ex else {
+            "reason": ex["exit_reason"], "slot": ex.get("exit_slot"), "time_unix": clock(ex.get("exit_slot")),
+            "held_slots": ex["exit_slot"] - ex["entry_slot"] if ex.get("exit_slot") and ex.get("entry_slot") else None,
+            "fill_price": price(sell), "ret": ex.get("ret"), "pnl_sol": (ex.get("pnl") or 0) / 1e9, "attempts": ex.get("exit_attempts"),
+            "peak_ret": (ex["peak_mark"] / cost - 1) if ex.get("peak_mark") and cost else None,
+            "peak_slots": ex["peak_slot"] - ex["entry_slot"] if ex.get("peak_slot") and ex.get("entry_slot") else None},
+        "open": None if not pos else {"mark_pnl_sol": (pos.get("mark_pnl") or 0) / 1e9 if pos.get("mark_pnl") is not None else None,
+                                      "mark_slot": pos.get("mark_slot")},
+    }
     return out
 
 

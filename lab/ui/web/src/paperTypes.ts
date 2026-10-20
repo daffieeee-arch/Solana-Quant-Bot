@@ -13,7 +13,7 @@ export interface PaperRange {
 }
 export interface PaperPosition {
   family: string; variant: string; key: string; venue: string | null; orientation: string | null; farm?: string | null; entry_slot: number;
-  cost_sol: number | null; status: string; pnl_sol: number | null; ret?: number | null; mark_sol?: number | null;
+  cost_sol: number | null; status: string; pnl_sol: number | null; ret?: number | null; mark_sol?: number | null; signal_slot?: number;
   failed?: boolean; slots?: number | null; entry_time?: number | null; exit_time?: number | null; mint?: string | null; symbol?: string | null; name?: string | null;
 }
 export interface PaperJournal {
