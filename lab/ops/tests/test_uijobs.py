@@ -204,11 +204,33 @@ def test_result_rows_are_the_tournament_reports():
                               WHERE scenario = 'base' AND family = 'F7' AND variant IN ('flow300_H6', 'tp4_T600')
                                     AND segment = 'pool_reversed' AND farm = '{farm}' AND size_sol = 0.5""").fetchall()
         assert len(got) == len(want) == 8
+        assert len(json.dumps(got).encode()) < 8_192  # 14 epochs, both variants: a few KB, far under get's 64 KB
         w = {(r[0], r[1], r[2]): r[3:] for r in want}
         for r in got:
             assert tuple(r[k] for k in keys) == w[(r["variant"], r["d"], r["regime"])], (farm, r["variant"], r["d"], r["regime"])
     k3 = next(r for r in result.rows(LONG_DEV, ["tp4_T600"], "pool_reversed", "all", 0.5) if r["d"] == 2 and r["regime"] == "270ms")
     assert round(k3["mean_pnl_sol"], 4) == 0.0029  # the report's d 2 270 ms
+
+
+def test_a_result_stays_well_under_the_get_cap(monkeypatch, capsys):
+    """ui_queue's get refuses a result over MAX_RESULT (64 KB); the dispatcher then fails the job (#470 review). A
+    7-epoch job never comes near it: with the job's one --delay-ms each epoch gives one d, so at most 7 (d, regime)
+    rows per variant. Pessimistic here: 2 variants x 7 regimes x 3 d = 42 rows, the longest variant name, every
+    number at full float precision: still under half the cap."""
+    result, q = _load("result"), _load("ui_queue")
+    longest = max(schema.GRID_OF, key=len)
+    rows = [{"variant": v, "d": d, "regime": f"{270 + 10 * i}ms", "n": 123_456, "filled": 123_000, "days": 7,
+             "mean_pnl_sol": -0.012345678901234567, "total_pnl_sol": -1234.5678901234567, "pnl_ci_lo": -0.023456789012345678,
+             "pnl_ci_hi": 0.0012345678901234567, "mean_ret": -0.024691357802469135, "win_rate": 0.41234567890123456,
+             "verdict": "insufficient_evidence", "failed_entries": 456, "sum_sol_per_day": -176.36684144620810}
+            for v in (longest, schema.K3) for i in range(7) for d in (1, 2, 3)]
+    monkeypatch.setattr(result, "rows", lambda *a, **k: rows)
+    monkeypatch.setattr(sys, "argv", ["result.py", "--run", "r", "--variant", longest, "--k3", schema.K3, "--segment", "pool_reversed",
+                                      "--farm", "organic", "--size", "25", "--id", JID])
+    result.main()
+    out = capsys.readouterr().out.encode()
+    assert len(json.loads(out)["rows"]) == 42
+    assert len(out) < q.MAX_RESULT // 2, len(out)  # about 18 KB
 
 
 def test_sums_and_deep_json():
