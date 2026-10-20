@@ -264,11 +264,12 @@ fn opts(a: &Args) -> Opts {
 }
 
 /// F7's triggers come minutes after a reversed pool is created (99% the same day), so without
-/// creation detection (--pool-creations or --new-reversed) no new pool is probed or followed.
-fn creation_warning(a: &Args) -> Option<&'static str> {
-    (!a.pool_creations && !a.new_reversed).then_some(
-        "F7 coverage ~0% without creation detection: pass --pool-creations and/or --new-reversed \
-         (new reversed pools are found only through them; graduations alone cover M1, not F7)",
+/// creation detection (--new-reversed) no new pool is probed or followed. --pool-creations is a
+/// measurement of pool writes and starts nothing (creation-filters spec v0.2 P3).
+fn creation_warning(new_reversed: bool) -> Option<&'static str> {
+    (!new_reversed).then_some(
+        "F7 coverage ~0% without creation detection: pass --new-reversed (new reversed pools are found only \
+         through it; --pool-creations measures pool writes and starts nothing; graduations alone cover M1, not F7)",
     )
 }
 
@@ -473,7 +474,7 @@ async fn run(a: Args) -> Result<i32> {
                 "vaults": {"accounts": vaults.accounts.values().map(|v| v.account.len()).sum::<usize>()},
                 "budget": meter.state(),
                 "watchlist_source": watch.source,
-                "warnings": creation_warning(&a).into_iter().collect::<Vec<_>>(),
+                "warnings": creation_warning(a.new_reversed).into_iter().collect::<Vec<_>>(),
                 "learned_excludes": ex.summary(),
                 "learned_excludes_notes": ex_notes,
                 "invalid_addresses": watch.invalid,
@@ -497,7 +498,7 @@ async fn run(a: Args) -> Result<i32> {
         } // an unknown spend is logged by the meter, with the override
         return Ok(EXIT_BUDGET);
     }
-    if let Some(w) = creation_warning(&a) {
+    if let Some(w) = creation_warning(a.new_reversed) {
         log::warn!("{w}");
     }
     // A configuration error reserves nothing (each failed start would add a reservation; LAB review).
@@ -604,7 +605,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_session, end_on, parse_assume, reserve_and_open, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
+    use super::{count_session, creation_warning, end_on, parse_assume, reserve_and_open, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
 
     #[test]
     fn the_budget_reservation_is_on_disk_before_the_segments_remove_an_unfinished_directory() {
@@ -646,6 +647,13 @@ mod tests {
         let b = BudgetWriteError("injected".into());
         assert_eq!(end_on(anyhow::Error::new(b).context("on_update"), &mut meter).unwrap(), EXIT_SEGMENT);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_the_new_reversed_stream_detects_creations() {
+        // creation-filters spec v0.2 P3: --pool-creations alone starts no probe, so it no longer silences the warning
+        assert!(creation_warning(false).is_some_and(|w| w.contains("--new-reversed")));
+        assert_eq!(creation_warning(true), None);
     }
 
     #[test]
