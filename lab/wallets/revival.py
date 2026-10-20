@@ -19,10 +19,12 @@ key-hash bucket of the pool (LAB_MARKOUT_BUCKETS-style, `--buckets`), the union 
 result; one bucket on the VPS smoke, 8-16 on the NAS. Slots stay before the hold-out (common.guard).
 
 The NAS script skips the aggregate when pool_hour.parquet exists (resumable), so a run on a new commit needs a fresh
-REVIVAL_DIR. Step 2, `detect` (VPS, on the aggregate): the sleeping pools and the revival signals of the 18 cells, as a parts-like
-signals.parquet for `wallets.markout` (step 3, a NAS job when the signals are many).
+REVIVAL_DIR for the aggregate; `detect` and `markout` take the aggregate dir as AGG_DIR). Step 2, `detect` (NAS on the full
+store, the VPS for a smoke): the sleeping pools from the aggregate, then one scan of the store's pool legs restricted to the
+candidate hours for the point-in-time signal of every cell (t = the first leg at which the hour's running volume reaches
+max(D, 10 x p90_7d) and the running distinct traders reach T), as a parts-like signals.parquet for `wallets.markout`.
 
-  python -m wallets.revival detect --agg <aggregate dir> --out <dir> [--first-day 2026-09-21] [--last-day D]
+  LAB_STORE=<dev2> python -m wallets.revival detect --agg <aggregate dir> --out <dir> [--first-day 2026-09-21] [--last-day D]
 
 Step 3, `report` (VPS): frequency per cell and day, liquidity at t (depth, own impact at 0.5 / 2 / 5 SOL, the size at 1 %
 impact) from the signals, and, with --markout, the markout tables per cell (markout_report's tables on the REV rows).
@@ -156,19 +158,44 @@ FIRST_DAY = "2026-09-21"  # pools from before the window are >= 10 days old by c
 MS_PER_SLOT = 267.3       # REF_MS: the 10-day age of an in-window pool in slots (approximation; the store's regimes are 266-317 ms)
 
 
+def candidate_legs_sql(legs_table="pool", cand="cand"):
+    """The trade legs of the candidate (pool, hour) rows from the store's pool table (slot in [first_slot, last_slot] of the
+    hour: slots are time-ordered, so every leg of the pool in that range is in that hour), in block order, with the running
+    SOL volume, distinct traders (NULL traders do not count, as in the aggregate), trades and farmer trades up to and including
+    each leg. The join is an equality on pool (a hash join) with the slot range as a filter; test_candidate_legs_plan checks it."""
+    return f"""
+      SELECT pool, hour, slot, tx_index, outer_ix, inner_ix, sol_depth,
+             (sum(sol_amount) OVER w)::BIGINT AS cum, (sum(is_new) OVER w)::BIGINT AS cum_traders, count(*) OVER w AS cum_trades,
+             (sum(farmer) OVER w)::BIGINT AS cum_farmer
+      FROM (SELECT c.pool, c.hour, p.slot::BIGINT AS slot, p.tx_index, p.outer_ix, p.inner_ix, p.sol_depth, COALESCE(p.sol_amount, 0)::BIGINT AS sol_amount,
+                   COALESCE(p.farmer, false)::INT AS farmer,
+                   (p.trader IS NOT NULL AND row_number() OVER (PARTITION BY c.pool, c.hour, p.trader ORDER BY p.slot, p.tx_index, p.outer_ix, p.inner_ix) = 1)::INT AS is_new
+            FROM {legs_table} p JOIN {cand} c ON p.pool = c.pool AND p.slot >= c.first_slot AND p.slot <= c.last_slot
+            WHERE p.kind IN {KINDS})
+      WINDOW w AS (PARTITION BY pool, hour ORDER BY slot, tx_index, outer_ix, inner_ix ROWS UNBOUNDED PRECEDING)"""
+
+
 def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, require_mint=False):
-    """Signals of the 18 cells (S x D x T) from pool_hour.parquet: per pool and hour the trailing 7-day stats over the hours
-    before it (median and p90 of the SOL volume over the traded hours, the number of traded hours); sleeping = median <= S
-    (no traded hour counts as sleeping too) and >= 80 % of the 168 hours without a trade; a revival hour = sleeping before it,
-    volume >= max(D, 10 x p90), >= T unique traders, and the D threshold reached in the hour; signal slot t = the first slot at
-    which the hour's cumulative volume reached D (point in time; traders up to that leg are reported as traders_at_t: the spec's
-    shift of t to the first slot with >= T traders needs the legs and is left to the markout step's caller). Age: a pool from
-    before the window from FIRST_DAY on, an in-window pool from create_slot + 10 days; no mayhem pools. One signal per pool,
-    day and cell (the earliest hour). Mayhem pools are excluded (not in the spec; the store's mayhem flag, as every other
-    exploration). Writes signals.parquet in the parts' column layout (family REV, variant = the cell, venue pool, segment by
-    orientation, farm organic / flagged by the hour's farmer share >= 0.5, mint from the store's pools table: NULL for most
-    pools from before the window, which have no creation event in the store; `mint_known` says so, run-detect.json counts them,
-    and require_mint drops them; markout keys pools on `pool`, so they stay in by default) plus run-detect.json."""
+    """Signals of the 18 cells (S x D x T), point in time. From pool_hour.parquet: per pool and hour the trailing 7-day stats
+    over the hours before it (median and p90 of the SOL volume over the traded hours, the number of traded hours); sleeping =
+    median <= S (no traded hour counts as sleeping too) and >= 80 % of the 168 hours without a trade. A revival signal of cell
+    (S, D, T) is the first leg of an hour of a sleeping pool at which the hour's running SOL volume reaches max(D, 10 x p90_7d)
+    AND the running number of distinct traders reaches T: t = that leg's slot (t_tx its transaction), and the depth, volume,
+    traders, trades and farmer share at t are those up to and including that leg. Everything in the rule is known at t: the
+    7-day stats are over earlier hours and the running values are over earlier legs (the 2026-10-20 Codex finding: the first
+    version selected hours on their end-of-hour volume and traders and put t on the D crossing, a look-ahead when 10 x p90 > D
+    or when T was reached after the D leg). The candidate hours are pre-filtered on the hour totals of the loosest cell (the
+    totals bound the running values, so no signal is lost), and only their legs are read from the store (the one scan of this
+    step: a NAS step on the full store, the VPS for a smoke). Age: a pool from before the window from FIRST_DAY on, an in-window
+    pool from create_slot + 10 days (on t). One signal per pool, day and cell (the earliest t). Mayhem pools are excluded (not
+    in the spec; the store's mayhem flag, as every other exploration). Writes signals.parquet in the parts' column layout (family
+    REV, variant = the cell, venue pool, segment by orientation, farm organic / flagged by the farmer share of the trades up to
+    t >= 0.5, mint from the store's pools table: NULL for most pools from before the window, which have no creation event in
+    the store; `mint_known` says so, run-detect.json counts them, and require_mint drops them; markout keys pools on `pool`, so
+    they stay in by default), with t_d_slot (the D crossing, the first version's t) and shift_slots = t - t_d_slot beside it
+    and the hour totals under an hour_ prefix (end-of-hour facts, never part of the rule), plus run-detect.json. The legs read
+    for the candidate hours must reproduce the aggregate's hour totals (trades, volume, distinct traders) on every candidate
+    hour, else detect stops RED (`consistency` in run-detect.json)."""
     con = connect(store or STORE, memory=os.environ.get("LAB_WALLETS_MEMORY", "1GB"), threads=int(os.environ.get("LAB_WALLETS_THREADS", "2")))
     os.makedirs(out_dir, exist_ok=True)
     ph, po = os.path.join(agg_dir, "pool_hour.parquet"), os.path.join(agg_dir, "pools.parquet")
@@ -186,44 +213,84 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, req
       WHERE NOT p.mayhem
       WINDOW w AS (PARTITION BY h.pool ORDER BY h.hour RANGE BETWEEN {WEEK_S} PRECEDING AND 1 PRECEDING)""")
     progress("rolling 7-day stats", _count(con, "roll"))
-    cells = [(S, D, T) for S in SLEEP_S for D in THRESHOLDS for T in REVIVE_T]
+    # candidate hours: sleeping under the loosest S, hour totals at or above the loosest (D, T) threshold (the running values
+    # never exceed the totals), old enough by the hour's last slot; the signal-level rule below is the point-in-time one
+    s_max, d_min, t_min_all = max(SLEEP_S), min(THRESHOLDS), min(REVIVE_T)
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE cand AS
+      SELECT pool, hour, day, first_slot, last_slot, orientation, mint, created_in_period, create_slot, med_7d, p90_7d, hours_traded_7d,
+             sol_volume, traders, buyers, net_inflow, trades, farmer_trades::DOUBLE / trades AS farmer_share_hour, end_depth
+      FROM roll
+      WHERE hour >= {hour_min} + {WEEK_S}
+        AND (hours_traded_7d = 0 OR med_7d <= {s_max * SOL})
+        AND (168 - hours_traded_7d) >= {SLEEP_QUIET} * 168
+        AND sol_volume >= round(GREATEST({d_min * SOL}, {REVIVE_P90_X} * COALESCE(p90_7d, 0)))::BIGINT
+        AND traders >= {t_min_all}
+        AND ((NOT created_in_period AND day >= '{first_day}') OR (create_slot IS NOT NULL AND last_slot >= create_slot + {age_slots}))
+        {f"AND day <= '{last_day}'" if last_day else ""}""")
+    n_cand = _count(con, "cand")
+    progress("candidate hours", n_cand)
+    con.execute(f"CREATE OR REPLACE TEMP TABLE cl AS {candidate_legs_sql()}")
+    n_legs = _count(con, "cl")
+    progress("candidate legs", n_legs)
+    # the scan proves itself: per candidate hour the legs read from the store must reproduce the aggregate's hour totals
+    # (trades, SOL volume, distinct traders); a deviation means another store, a cut hour or a changed leg rule, and is RED
+    check = con.execute("""
+      SELECT count(*), sum((l.n IS NULL)::INT), sum((l.n <> c.trades)::INT), sum((l.vol <> c.sol_volume)::INT), sum((l.trd <> c.traders)::INT)
+      FROM cand c LEFT JOIN (SELECT pool, hour, count(*) AS n, max(cum) AS vol, max(cum_traders) AS trd FROM cl GROUP BY 1, 2) l USING (pool, hour)""").fetchone()
+    consistency = {"candidate_hours": check[0], "hours_without_legs": int(check[1] or 0), "trades_mismatch": int(check[2] or 0),
+                   "volume_mismatch": int(check[3] or 0), "traders_mismatch": int(check[4] or 0)}
+    if any(v for k, v in consistency.items() if k != "candidate_hours"):
+        raise SystemExit(f"RED: the candidate legs do not reproduce the aggregate's hour totals: {consistency} (store {store or STORE}, aggregate {agg_dir})")
+    progress("consistency", n_cand, "legs = trades, max cum = volume, max traders = traders on every candidate hour")
+    dt = ", ".join(f"({D}, {D * SOL}, {T})" for D in THRESHOLDS for T in REVIVE_T)
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE cross_dt AS
+      SELECT c.pool, c.hour, dt.d_sol, dt.t_min, round(GREATEST(dt.d_lam, {REVIVE_P90_X} * COALESCE(c.p90_7d, 0)))::BIGINT AS thr,
+             arg_min(struct_pack(slot := l.slot, tx := l.tx_index, depth := l.sol_depth, cum := l.cum, traders := l.cum_traders, trades := l.cum_trades, farmer := l.cum_farmer),
+                     (l.slot, l.tx_index, l.outer_ix, l.inner_ix))
+               FILTER (WHERE l.cum >= round(GREATEST(dt.d_lam, {REVIVE_P90_X} * COALESCE(c.p90_7d, 0)))::BIGINT AND l.cum_traders >= dt.t_min) AS at_t,
+             min(l.slot) FILTER (WHERE l.cum >= dt.d_lam) AS t_d_slot
+      FROM cand c JOIN cl l USING (pool, hour) CROSS JOIN (VALUES {dt}) dt(d_sol, d_lam, t_min)
+      GROUP BY 1, 2, 3, 4, 5""")
     sel = []
-    for S, D, T in cells:
+    for S in SLEEP_S:
         sel.append(f"""
-          SELECT 'S{S}_D{D}_T{T}' AS variant, {S} AS s_sol, {D} AS d_sol, {T} AS t_min, pool, mint, orientation, day, hour, t{D}_slot AS t, t{D}_tx AS t_tx,
-                 t{D}_traders AS traders_at_t, t{D}_depth AS depth_at_t, sol_volume, traders, buyers, net_inflow, trades,
-                 farmer_trades::DOUBLE / trades AS farmer_share, med_7d, p90_7d, hours_traded_7d, end_depth
-          FROM roll
-          WHERE hour >= {hour_min} + {WEEK_S}
-            AND (hours_traded_7d = 0 OR med_7d <= {S * SOL})
-            AND (168 - hours_traded_7d) >= {SLEEP_QUIET} * 168
-            AND sol_volume >= GREATEST({D * SOL}, {REVIVE_P90_X} * COALESCE(p90_7d, 0))
-            AND traders >= {T} AND t{D}_slot IS NOT NULL
-            AND ((NOT created_in_period AND day >= '{first_day}') OR (create_slot IS NOT NULL AND t{D}_slot >= create_slot + {age_slots}))
-            {f"AND day <= '{last_day}'" if last_day else ""}""")
+          SELECT 'S{S}_D' || x.d_sol::VARCHAR || '_T' || x.t_min::VARCHAR AS variant, {S} AS s_sol, x.d_sol, x.t_min, c.pool, c.mint, c.orientation, c.day, c.hour,
+                 x.at_t.slot AS t, x.at_t.tx AS t_tx, x.at_t.traders AS traders_at_t, x.at_t.depth AS depth_at_t, x.at_t.cum AS volume_at_t,
+                 x.at_t.trades AS trades_at_t, x.at_t.farmer::DOUBLE / x.at_t.trades AS farmer_share_at_t, x.thr / {SOL}.0 AS thr_sol,
+                 x.t_d_slot, x.at_t.slot - x.t_d_slot AS shift_slots,
+                 c.sol_volume AS hour_sol_volume, c.traders AS hour_traders, c.buyers AS hour_buyers, c.net_inflow AS hour_net_inflow, c.trades AS hour_trades,
+                 c.farmer_share_hour AS hour_farmer_share, c.end_depth AS hour_end_depth, c.med_7d, c.p90_7d, c.hours_traded_7d
+          FROM cross_dt x JOIN cand c USING (pool, hour)
+          WHERE x.at_t IS NOT NULL
+            AND (c.hours_traded_7d = 0 OR c.med_7d <= {S * SOL})
+            AND (NOT c.created_in_period OR x.at_t.slot >= c.create_slot + {age_slots})""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sig AS
-      SELECT * EXCLUDE (rn) FROM (SELECT *, row_number() OVER (PARTITION BY variant, pool, day ORDER BY hour) AS rn FROM ({' UNION ALL '.join(sel)})) WHERE rn = 1""")
+      SELECT * EXCLUDE (rn) FROM (SELECT *, row_number() OVER (PARTITION BY variant, pool, day ORDER BY t, t_tx) AS rn FROM ({' UNION ALL '.join(sel)})) WHERE rn = 1""")
     n = _count(con, "sig")
-    progress("signals", n, f"{len(cells)} cells")
+    progress("signals", n, f"{len(SLEEP_S) * len(THRESHOLDS) * len(REVIVE_T)} cells")
     out = os.path.join(out_dir, "signals.parquet")
     con.execute(f"""
       COPY (SELECT 'REV' AS family, variant, mint, t, 'pool' AS venue, pool, orientation,
                    CASE WHEN orientation = 'reversed' THEN 'pool_reversed' ELSE 'pool_normal' END AS segment,
-                   CASE WHEN farmer_share >= 0.5 THEN 'flagged' ELSE 'organic' END AS farm, day, 0.5 AS size_sol,
+                   CASE WHEN farmer_share_at_t >= 0.5 THEN 'flagged' ELSE 'organic' END AS farm, day, 0.5 AS size_sol,
                    NULL::VARCHAR AS ref_mint, NULL::BIGINT AS ref_t, NULL::VARCHAR AS trigger_trader, mint IS NOT NULL AS mint_known,
-                   s_sol, d_sol, t_min, hour, t_tx, traders_at_t, depth_at_t, sol_volume, traders, buyers, net_inflow, trades, farmer_share,
-                   med_7d, p90_7d, hours_traded_7d, end_depth
+                   s_sol, d_sol, t_min, hour, t_tx, traders_at_t, depth_at_t, volume_at_t, trades_at_t, farmer_share_at_t, thr_sol, t_d_slot, shift_slots,
+                   hour_sol_volume, hour_traders, hour_buyers, hour_net_inflow, hour_trades, hour_farmer_share, hour_end_depth, med_7d, p90_7d, hours_traded_7d
             FROM sig {"WHERE mint IS NOT NULL" if require_mint else ""} ORDER BY variant, pool, t) TO '{out}' (FORMAT parquet, COMPRESSION zstd)""")
     null_mint, null_mint_pools = con.execute("SELECT sum((mint IS NULL)::INT), count(DISTINCT pool) FILTER (WHERE mint IS NULL) FROM sig").fetchone()
-    per_cell = {r[0]: {"signals": r[1], "pools": r[2], "days": r[3], "reversed": r[4], "traders_at_t_ge_T": r[5]}
+    per_cell = {r[0]: {"signals": r[1], "pools": r[2], "days": r[3], "reversed": r[4], "shifted": r[5], "shift_slots_p50": r[6], "shift_slots_p90": r[7]}
                 for r in con.execute("SELECT variant, count(*), count(DISTINCT pool), count(DISTINCT day), sum((orientation = 'reversed')::INT), "
-                                     "sum((traders_at_t >= t_min)::INT) FROM sig GROUP BY 1 ORDER BY 1").fetchall()}
+                                     "sum((shift_slots > 0)::INT), quantile_cont(shift_slots, 0.5), quantile_cont(shift_slots, 0.9) FROM sig GROUP BY 1 ORDER BY 1").fetchall()}
     sleeping = {str(S): dict(con.execute(f"""SELECT day, count(DISTINCT pool) FROM roll WHERE hour >= {hour_min} + {WEEK_S} AND (hours_traded_7d = 0 OR med_7d <= {S * SOL})
                                             AND (168 - hours_traded_7d) >= {SLEEP_QUIET} * 168 AND day >= '{first_day}' GROUP BY 1 ORDER BY 1""").fetchall()) for S in SLEEP_S}
     info = {"step": "detect", "aggregate": agg_dir, "store": store or STORE, "first_day": first_day, "last_day": last_day, "history_from_hour": hour_min,
-            "cells": len(cells), "sleep_s_sol": list(SLEEP_S), "thresholds_sol": list(THRESHOLDS), "revive_t": list(REVIVE_T),
+            "point_in_time": "t = first leg with running volume >= max(D, 10 x p90_7d) and running distinct traders >= T",
+            "cells": len(SLEEP_S) * len(THRESHOLDS) * len(REVIVE_T), "sleep_s_sol": list(SLEEP_S), "thresholds_sol": list(THRESHOLDS), "revive_t": list(REVIVE_T),
             "revive_p90_x": REVIVE_P90_X, "sleep_quiet_share": SLEEP_QUIET, "age_days": AGE_DAYS, "age_slots_in_window": age_slots,
+            "candidate_hours": n_cand, "candidate_legs": n_legs, "consistency": consistency,
             "signals": n, "signals_without_mint": int(null_mint or 0), "pools_without_mint": int(null_mint_pools or 0),
             "require_mint": require_mint, "mayhem_excluded": True, "per_cell": per_cell, "sleeping_pools_per_day_with_trades": sleeping,
             "commit": git_commit(), "seconds": round(sum(PHASES.values()), 1), "phases_seconds": PHASES}
@@ -244,17 +311,19 @@ F7_DEPTH_SOL = 150
 def liquidity(con, signals_path):
     """Per cell: the SOL depth x at t (p10 / p50 / p90), the share >= 150 SOL (F7's floor), and for a buy of 0.5 / 2 / 5 SOL
     on a constant-product pool with that depth the pool share s / (x + s) and the average fill s / x above the mid (model
-    assumptions that ignore the fee and the token side), plus the size at which the pool share reaches 1 % (x / 99)."""
+    assumptions that ignore the fee and the token side), plus the size at which the pool share reaches 1 % (x / 99), and the
+    shift of t from the D crossing (slots, p50 / p90, the share of signals with a shift > 0)."""
     rows = con.execute(f"""
       SELECT variant, count(*), quantile_cont(depth_at_t, 0.1) / 1e9, quantile_cont(depth_at_t, 0.5) / 1e9, quantile_cont(depth_at_t, 0.9) / 1e9,
              avg((depth_at_t >= {F7_DEPTH_SOL * SOL})::INT),
              {', '.join(f"quantile_cont({sz} / (depth_at_t / 1e9 + {sz}), 0.5)" for sz in IMPACT_SIZES)},
              {', '.join(f"quantile_cont({sz} / (depth_at_t / 1e9), 0.5)" for sz in IMPACT_SIZES)},
-             quantile_cont(depth_at_t / 1e9 / 99, 0.5), avg((traders_at_t >= t_min)::INT), avg((orientation = 'reversed')::INT),
+             quantile_cont(depth_at_t / 1e9 / 99, 0.5), quantile_cont(shift_slots, 0.5), quantile_cont(shift_slots, 0.9), avg((shift_slots > 0)::INT),
+             avg((orientation = 'reversed')::INT),
              avg((farm = 'flagged')::INT)
       FROM read_parquet('{signals_path}') WHERE depth_at_t IS NOT NULL GROUP BY 1 ORDER BY 1""").fetchall()
     keys = ["n", "depth_p10", "depth_p50", "depth_p90", "share_ge_150", *[f"impact_{sz}" for sz in IMPACT_SIZES], *[f"fill_{sz}" for sz in IMPACT_SIZES], "size_1pct_p50",
-            "traders_at_t_ge_T", "reversed_share", "flagged_share"]
+            "shift_p50", "shift_p90", "shifted", "reversed_share", "flagged_share"]
     return {r[0]: dict(zip(keys, r[1:])) for r in rows}
 
 
@@ -276,11 +345,12 @@ def report(out_path, signals_path, markout_dir=None, detect_json=None, boot=10_0
     det = json.load(open(detect_json)) if detect_json else {}
     L = ["## Revival (spec research/spec-revival-2026-10-19.md v0.1a): sleeping PumpSwap pools with a sudden inflow, dev 1033-1046", "",
          f"Signals {signals_path}; cells S (7-day median SOL per traded hour <= S, >= 80 % of the hours quiet) x D (the hour's cumulative volume reaches D SOL; "
-         f"t = that slot) x T (unique traders in the hour); one signal per pool, day and cell; pools from before the window from {det.get('first_day', FIRST_DAY)}, "
+         f"t = the first leg at which the hour's running volume reaches max(D, 10 x p90) and the running distinct traders reach T) x T; one signal per pool, day and cell; "
+         f"pools from before the window from {det.get('first_day', FIRST_DAY)}, "
          f"in-window pools from create_slot + {AGE_DAYS} days; mayhem pools excluded (not in the spec; the store's flag). "
-         f"**Point in time:** only the D crossing is known at t; `traders >= T` and `volume >= 10 x p90` are facts of the end of the hour. The main markout "
-         f"table per cell is therefore the subset with **traders at the D leg >= T** (`traders_at_t >= T`: known at t), with the dropped share beside it; "
-         f"the end-of-hour rows are shown as a second line and are a selection on the outcome (E39/E40 lesson), not a signal. "
+         f"**Point in time by construction:** every part of the rule is known at t (the 7-day stats are over earlier hours, the running volume and "
+         f"traders over earlier legs); the first version put t on the D crossing and selected hours on their end-of-hour totals (a look-ahead, "
+         f"Codex 2026-10-20); `shift` below is how much later the point-in-time t lies than that D crossing. "
          f"Signals without a mint: {det.get('signals_without_mint', '?')} of {det.get('signals', '?')} (pre-window pools without a creation event; markout keys pools on pool). "
          f"Exploration on used dev data: a positive cell is a candidate trial, not a finding.", ""]
     L += ["### Frequency: signals per day per cell", "", "| cell | " + " | ".join(sorted({d for v in freq.values() for d in v})) + " | total |",
@@ -291,49 +361,43 @@ def report(out_path, signals_path, markout_dir=None, detect_json=None, boot=10_0
     if det.get("sleeping_pools_per_day_with_trades"):
         for S, per in det["sleeping_pools_per_day_with_trades"].items():
             L.append(f"| sleeping pools (S{S}, traded that day) | " + " | ".join(str(per.get(d, "")) for d in days) + " | |")
-    L += ["", "### Liquidity at t (SOL depth x of the pool after the D leg; constant-product model assumption: pool share = s / (x + s), average fill = s / x above mid)", "",
-          "| cell | n | depth p10 / p50 / p90 (SOL) | >= 150 SOL | pool share 0.5 / 2 / 5 SOL (median) | average fill 0.5 / 2 / 5 SOL (median) | size at 1 % pool share (median) | traders at t >= T | reversed | flagged |",
-          "|---|---|---|---|---|---|---|---|---|---|"]
+    L += ["", "### Liquidity at t (SOL depth x of the pool after the signal leg; constant-product model assumption: pool share = s / (x + s), average fill = s / x above mid)", "",
+          "| cell | n | depth p10 / p50 / p90 (SOL) | >= 150 SOL | pool share 0.5 / 2 / 5 SOL (median) | average fill 0.5 / 2 / 5 SOL (median) | size at 1 % pool share (median) | shift from the D crossing (slots p50 / p90) | shifted | reversed | flagged |",
+          "|---|---|---|---|---|---|---|---|---|---|---|"]
     for v in cells:
         q = liq[v]
         L.append(f"| {v} | {q['n']} | {q['depth_p10']:.1f} / {q['depth_p50']:.1f} / {q['depth_p90']:.1f} | {q['share_ge_150'] * 100:.0f}% | "
                  + " / ".join(f"{q[f'impact_{sz}'] * 100:.1f}%" for sz in IMPACT_SIZES) + " | "
                  + " / ".join(f"{q[f'fill_{sz}'] * 100:.1f}%" for sz in IMPACT_SIZES)
-                 + f" | {q['size_1pct_p50']:.2f} SOL | {q['traders_at_t_ge_T'] * 100:.0f}% | {q['reversed_share'] * 100:.0f}% | {q['flagged_share'] * 100:.0f}% |")
+                 + f" | {q['size_1pct_p50']:.2f} SOL | {q['shift_p50']:.0f} / {q['shift_p90']:.0f} | {q['shifted'] * 100:.0f}% | {q['reversed_share'] * 100:.0f}% | {q['flagged_share'] * 100:.0f}% |")
     summary = {}
     if markout_dir:
         if os.environ.get("LAB_REPORT_WORKERS", "1") != "1":
             mr._pool(mr.workers())
         try:
             mr.load(con, markout_dir)
-            con.execute(f"CREATE OR REPLACE TEMP TABLE pit AS SELECT variant, pool, t, traders_at_t >= t_min AS pit FROM read_parquet('{signals_path}')")
             ds = [r[0] for r in con.execute("SELECT DISTINCT d FROM m WHERE family = 'REV' ORDER BY 1").fetchall()]
             L += ["", "### Markouts per cell (net after costs, 0.5 SOL round trip, base; trimmed mean with day CI; dead = the pool could not pay)", "",
-                  "Main line = **point in time** (traders at the D leg >= T; `dropped` = the share of the cell's signals left out); second line = "
-                  "end of hour (all signals of the cell: a selection on the hour's outcome, not a signal).", "",
-                  "| cell | d | rows | dropped | " + " | ".join(f"n / net trim / CI / dead @ {h}" for h in H_SUMMARY) + " |", "|---|---|---|---|" + "---|" * len(H_SUMMARY)]
+                  "Every row is point in time (the signal rule is known at t; see the legend).", "",
+                  "| cell | d | " + " | ".join(f"n / net trim / CI / dead @ {h}" for h in H_SUMMARY) + " |", "|---|---|" + "---|" * len(H_SUMMARY)]
             for v in cells:
-                n_all, n_pit = con.execute("SELECT count(*), sum(pit::INT) FROM pit WHERE variant = ?", [v]).fetchone()
-                dropped = 1 - (n_pit or 0) / n_all if n_all else None
                 for d in ds:
-                    for label, extra in (("point in time", f" AND (pool, t) IN (SELECT pool, t FROM pit WHERE variant = '{v}' AND pit)"), ("end of hour", "")):
-                        cols, key = [], f"{d}|{label}"
-                        summary.setdefault(v, {})[key] = {}
-                        for h in H_SUMMARY:
-                            st = mr.stats(con, f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND h = '{h}'{extra}", "net", boot)
-                            if st:
-                                summary[v][key][h] = {k: st[k] for k in ("n", "trim", "lo", "hi", "dead", "pos")}
-                                cols.append(f"{st['n']} / {mr.fmt(st['trim'], 1, True, True)} / {mr.fmt(st['lo'], 1, True, True)} … {mr.fmt(st['hi'], 1, True, True)} / {mr.fmt(st['dead'], 0, True)}")
-                            else:
-                                cols.append("–")
-                        L.append(f"| {v} | {d} | {label} | {'' if label == 'end of hour' or dropped is None else f'{dropped * 100:.0f}%'} | " + " | ".join(cols) + " |")
+                    cols, key = [], f"{d}"
+                    summary.setdefault(v, {})[key] = {}
+                    for h in H_SUMMARY:
+                        st = mr.stats(con, f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND h = '{h}'", "net", boot)
+                        if st:
+                            summary[v][key][h] = {k: st[k] for k in ("n", "trim", "lo", "hi", "dead", "pos")}
+                            cols.append(f"{st['n']} / {mr.fmt(st['trim'], 1, True, True)} / {mr.fmt(st['lo'], 1, True, True)} … {mr.fmt(st['hi'], 1, True, True)} / {mr.fmt(st['dead'], 0, True)}")
+                        else:
+                            cols.append("–")
+                    L.append(f"| {v} | {d} | " + " | ".join(cols) + " |")
             L.append("")
-            L.append("Cells with n < 30 at a horizon are counted, not read. The full per-cell tables (blocks and regimes) follow for the point-in-time subset only.")
+            L.append("Cells with n < 30 at a horizon are counted, not read. The full per-cell tables (blocks and regimes) follow.")
             L.append("")
             for v in cells:
                 for d in ds:
-                    L.append(mr.table(con, f"REV · {v} · d = {d} · point in time (traders at the D leg >= T)",
-                                      f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND (pool, t) IN (SELECT pool, t FROM pit WHERE variant = '{v}' AND pit)", boot, twin=False))
+                    L.append(mr.table(con, f"REV · {v} · d = {d}", f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d}", boot, twin=False))
         finally:
             mr.close_pool()
     md = "\n".join(L) + "\n"
