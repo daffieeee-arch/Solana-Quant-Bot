@@ -324,7 +324,9 @@ Until its day comes, `--replace` moves it, and the earlier start stays in the re
 
 From the clock start, the daily report's stop-rule counter and capital simulation count K3's trades entered on or after that day. The report shows:
 - the clock day;
-- when the decision is due: after 28 days with ≥ 200 trades, else at 200 trades, at most day 42.
+- when the verdict is due: as soon as there are ≥ 200 filled trades and ≥ 5 trading days (paper/stoprule.py MIN_TRADES,
+  MIN_DAYS_CI), at most day 42. Four weeks (28 days) is the planned length, not a minimum (owner, 2026-10-16). An early
+  verdict states its basis and remaining uncertainty, and a GO never authorizes real money: that is a separate owner decision.
 
 Before the clock start, the report counts every paper day, without a decision.
 
