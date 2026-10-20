@@ -3,23 +3,23 @@ follow source against Python LiveFeed, from the summaries of `lab-live legs --fo
 
   python lab/live/m3_09b_accept.py compare OUT SEGMENTS EVENTS
   python lab/live/m3_09b_accept.py restart OUT SEGMENTS EVENTS ROOT AT N
+  python lab/live/m3_09b_accept.py seed OUT SEGMENTS -
 
 compare (spec §4.2, the strict tier), OUT/py, OUT/rs1 and OUT/rs2, GREEN needs:
 - the input, hard: SEGMENTS segments read and EVENTS events in every summary;
 - the two lab-live runs equal, but for their own measurements (`lab_live`);
-- against LiveFeed equal: events, kinds, every window's count and sha256 without the farmer flag, the learned,
-  new_pools, usage, arrivals and history (without the farmer flag) digests, the clock, the farm seed, snapshot_before
-  and h24, and the stats segments, late_rows, duplicate_rows, backfill_rows, backfill_duplicates, tokens_dropped,
-  seeded_pools and unknown_pool_rows;
+- against LiveFeed equal: events, kinds, every window's count and sha256 with and without the farmer flag (M3-10),
+  the learned, new_pools, usage, arrivals, history (with and without the flag) and flag_fixes digests, the clock, the
+  farm seed, snapshot_before and h24, and the stats segments, late_rows, duplicate_rows, backfill_rows,
+  backfill_duplicates, tokens_dropped, seeded_pools, farmer_flags_fixed and unknown_pool_rows;
 - #430's counters (unknown_pools by its rule, unknown_pool_other_rows, unknown_mint_rows) equal LiveFeed's where it is
   #430's, else 99zzt's on job 91 (3, 2, 12,127).
-Reported, not gated: the sha256 and history with the farmer flag, flag_fixes and farmer_flags_fixed (M3-10).
 
 restart (spec §4.3): the same summaries of the injected restart (paper.restart_root: segments AT .. AT + N - 1 again,
 after the last of them) in OUT/restart-py, -rs1, -rs2. GREEN needs compare's rules on it (SEGMENTS is the restart root's,
 N more), and against the plain run's LiveFeed (OUT/py), for LiveFeed and lab-live alike:
-- equal: events, kinds, every window (count, sha256 without the farmer flag), arrivals, history, new_pools, the clock,
-  the farm seed, and LiveFeed's sha256 with the farmer flag (its duplicates change no flag);
+- equal: events, kinds, every window (count, sha256 with and without the farmer flag), arrivals, history (with and
+  without the flag), flag_fixes, new_pools, the clock and the farm seed (the copies' duplicates change no flag);
 - the learned rows as many (those after the copies carry a seq N higher, so the digest differs by design);
 - the usage rows N segments' more: the copies' own (with their seqs);
 - the stats: segments N more, duplicate_rows more (the copies' admitted rows); late_rows, backfill_rows, tokens_dropped
@@ -30,6 +30,10 @@ N more), and against the plain run's LiveFeed (OUT/py), for LiveFeed and lab-liv
 The restart it checks is a near one: the copies come right after segment AT + N - 1, within SEEN_KEEP_SLOTS (3,000
 slots) of what was read, so their rows are duplicates. Segments written again from further back are no duplicates but
 late rows (their slots were released), which this test does not cover (spec v0.4 §4.3).
+
+seed (M3-10 spec v0.2 §6.2): compare's rules on OUT/seed-py, -rs1, -rs2, a start inside the store (job 91 from a later
+segment, its own snapshot with the seed window's trades); EVENTS `-` takes LiveFeed's count (the input's hard count is
+SEGMENTS). GREEN needs too: the seed window holds slots and pools were seeded, so the seed was exercised.
 """
 
 import json
@@ -38,16 +42,16 @@ import sys
 
 # The stats both sides count alike (spec §4.2's list).
 STATS = ("segments", "late_rows", "duplicate_rows", "backfill_rows", "backfill_duplicates", "tokens_dropped", "seeded_pools",
-         "unknown_pool_rows")
+         "farmer_flags_fixed", "unknown_pool_rows")
 # #430's counters on job 91 (99zzt, d5750c6), for a LiveFeed from before #430.
 REF_430 = {"unknown_pools": 3, "unknown_pool_other_rows": 2, "unknown_mint_rows": 12127}
-EQUAL = ("events", "kinds", "learned", "new_pools", "usage", "arrivals", "history_no_farmer", "sha256_no_farmer", "clock",
-         "farm_seed", "snapshot_before", "h24")
+EQUAL = ("events", "kinds", "learned", "new_pools", "usage", "arrivals", "history", "history_no_farmer", "flag_fixes", "sha256",
+         "sha256_no_farmer", "clock", "farm_seed", "snapshot_before", "h24")
 
 
 def windows(v):
-    """Each window's [count, sha256 without the farmer flag], by its start."""
-    return {w[0]: (w[2], w[4]) for w in v["windows"]}
+    """Each window's [count, sha256 with the farmer flag, sha256 without it], by its start."""
+    return {w[0]: (w[2], w[3], w[4]) for w in v["windows"]}
 
 
 def short(x):
@@ -82,10 +86,9 @@ def strict(py, rs, rs2, segs, events):
     pw, rw = windows(py), windows(rs)
     differ = sorted(a for a in set(pw) | set(rw) if pw.get(a) != rw.get(a))
     if differ:
-        red.append(f"{len(differ)} windows differ in their count or sha256 without the farmer flag, the first {differ[:5]}")
-    info.append(f"sha256 with the farmer flag {'equal' if py['sha256'] == rs['sha256'] else 'differs'}, history with it "
-                f"{'equal' if py.get('history') == rs.get('history') else 'differs'} (M3-10); LiveFeed flag_fixes "
-                f"{(py.get('flag_fixes') or {}).get('count')}, farmer_flags_fixed {ps.get('farmer_flags_fixed')} (M3-10)")
+        red.append(f"{len(differ)} windows differ in their count or sha256 (with or without the farmer flag), the first {differ[:5]}")
+    info.append(f"farmer flags: flag_fixes {(rs.get('flag_fixes') or {}).get('count')}, farmer_flags_fixed {ls.get('farmer_flags_fixed')}; "
+                f"windows whose sha256 with the flag differs from the one without: {sum(1 for w in rs['windows'] if w[3] != w[4])}")
     info.append("LiveFeed stats: " + json.dumps(ps))
     info.append("lab-live stats: " + json.dumps(ls))
     info.append("clock: " + json.dumps(rs.get("clock")) + "; farm seed: " + json.dumps(rs.get("farm_seed")))
@@ -98,7 +101,8 @@ def restart(plain, py, rs, n, copied_usage):
     red, info = [], []
     ps0 = plain["stats"]
     for name, v in (("LiveFeed", py), ("lab-live", rs)):
-        for k in ("events", "kinds", "arrivals", "history_no_farmer", "new_pools", "clock", "farm_seed", "sha256_no_farmer"):
+        for k in ("events", "kinds", "arrivals", "history", "history_no_farmer", "flag_fixes", "new_pools", "clock", "farm_seed", "sha256",
+                  "sha256_no_farmer"):
             if v.get(k) != plain.get(k):
                 red.append(f"{name} on the restart: {k} {short(v.get(k))}, the plain run {short(plain.get(k))}")
         if windows(v) != windows(plain):
@@ -118,8 +122,6 @@ def restart(plain, py, rs, n, copied_usage):
         for k in ("backfill_duplicates", "unknown_pool_rows", "unknown_pool_other_rows", "unknown_mint_rows"):
             if k in ps0 and s.get(k, 0) < ps0[k]:
                 red.append(f"{name} on the restart: {k} {s.get(k)}, below the plain run's {ps0[k]}")
-    if py["history"] != plain["history"] or py["sha256"] != plain["sha256"]:
-        red.append("LiveFeed on the restart: its history or sha256 with the farmer flag differ from the plain run's")
     s, l = py["stats"], rs["stats"]
     info.append(f"the restart: duplicate_rows {l.get('duplicate_rows')} (plain {ps0.get('duplicate_rows')}), backfill_duplicates "
                 f"{l.get('backfill_duplicates')} (plain {ps0.get('backfill_duplicates')}), unknown_pool_rows {l.get('unknown_pool_rows')} "
@@ -147,17 +149,30 @@ def _secs(out, name):
     return open(p).read().strip() if os.path.exists(p) else "?"
 
 
+def seeded(py, rs):
+    """The seed step's own rule: the window held slots and pools were seeded (on both sides, which strict makes equal)."""
+    w, n = rs.get("farm_seed") or {}, rs.get("stats", {}).get("seeded_pools", 0)
+    if not w or w.get("hi", 0) <= w.get("lo", 0) or not n:
+        return [f"the seed was not exercised: window {json.dumps(w)}, seeded_pools {n}"], []
+    return [], [f"the seed: window [{w['lo']}, {w['hi']}), {n} pools seeded"]
+
+
 def main(argv):
-    step, out, segs, events = argv[0], argv[1], int(argv[2]), int(argv[3])
-    prefix = "" if step == "compare" else "restart-"
+    step, out, segs = argv[0], argv[1], int(argv[2])
+    prefixes = {"compare": "", "restart": "restart-", "seed": "seed-"}
+    if step not in prefixes:
+        raise SystemExit(f"unknown step {step}")
+    prefix = prefixes[step]
     py, rs, rs2 = (_load(out, prefix + n) for n in ("py", "rs1", "rs2"))
+    events = py["events"] if argv[3] == "-" else int(argv[3])
     red, info = strict(py, rs, rs2, segs, events)
     if step == "restart":
         root, at, n = argv[4], int(argv[5]), int(argv[6])
         r2, i2 = restart(_load(out, "py"), py, rs, n, copied_usage(root, at, n))
         red, info = red + r2, info + i2
-    elif step != "compare":
-        raise SystemExit(f"unknown step {step}")
+    elif step == "seed":
+        r2, i2 = seeded(py, rs)
+        red, info = red + r2, info + i2
     for line in info:
         print("information: " + line)
     ls = rs["stats"]
@@ -167,13 +182,13 @@ def main(argv):
                f"{ls['unknown_pools']} pools ({ls['unknown_pool_rows']} trade, {ls['unknown_pool_other_rows']} other rows), {ls['unknown_mints']} mints "
                f"({ls['unknown_mint_rows']} rows); LiveFeed {_secs(out, prefix + 'py')} s, lab-live {_secs(out, prefix + 'rs1')} s and "
                f"{_secs(out, prefix + 'rs2')} s, peak RSS {rss / 2**20:.0f} MB")
-    what = "M3-09b" if step == "compare" else "M3-09b restart"
+    what = {"compare": "M3-09b", "restart": "M3-09b restart", "seed": "M3-10 seed"}[step]
     if red:
         print(f"{what}: RED: " + "; ".join(red))
         print("measure: " + measure)
         return 1
-    print(f"{what}: GREEN: lab-live's follow source equals LiveFeed without the farmer flag (events, kinds, every window, learned, new_pools, "
-          "usage, arrivals, history, clock, farm seed, stats); two lab-live runs equal"
+    print(f"{what}: GREEN: lab-live's follow source equals LiveFeed with the farmer flag (events, kinds, every window, learned, new_pools, "
+          "usage, arrivals, history, flag fixes, clock, farm seed, stats); two lab-live runs equal"
           + ("; on the restart both equal the plain run but for the copies (learned seqs, usage, duplicate and unknown counts)" if step == "restart" else "")
           + ". " + measure)
     return 0

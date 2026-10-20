@@ -3,6 +3,7 @@ in which segments AT .. AT + N - 1 come again, with new seqs, right after the la
 below its last segment writes them (the same rows, new segments). LiveFeed and lab-live's follow source both read it.
 
   python -m paper.restart_root --root REC --out DIR --at SEQ [--n 3]
+  python -m paper.restart_root --root REC --out DIR --from-seq SEQ       (M3-10's seed step: the segments from SEQ on)
 
 The copy is made of symlinks: each segment directory of REC/segments (complete or not) becomes OUT/segments/<new seq>
 holding a link to each entry of the original but `_segment.json`, which is written with the new seq (the rest of it as
@@ -29,13 +30,43 @@ def _segments(root):
     return sorted(out, key=lambda s: (s[0], s[1]))
 
 
-def make(root, out, at, n=3):
-    """Write the copy (module doc) under `out`; returns what it wrote: segments, the copied seqs and their new seqs."""
-    root, out = os.path.abspath(root), os.path.abspath(out)
+def _refuse_out(root, out):
     if os.path.commonpath([root, out]) == root:
         raise SystemExit(f"restart_root: {out} is inside {root}: refused")
     if os.path.exists(out) and os.listdir(out):
         raise SystemExit(f"restart_root: {out} exists and is not empty: refused")
+
+
+def _link(src, dst, meta, seq):
+    """A segment directory of links to `src`'s entries, its `_segment.json` written with `seq`."""
+    os.mkdir(dst)
+    for entry in sorted(os.listdir(src)):
+        if entry != "_segment.json":
+            os.symlink(os.path.join(src, entry), os.path.join(dst, entry))
+    with open(os.path.join(dst, "_segment.json"), "w") as f:
+        json.dump(dict(meta, seq=seq), f)
+
+
+def link(root, out, from_seq):
+    """M3-10's seed step (spec v0.2 §6.2): the segments of `root` from seq `from_seq` on, as links with their own seqs, so
+    a run on them starts inside the store. Returns the segments written, the complete ones and the first one's first slot
+    (refused when it is not there and complete)."""
+    root, out = os.path.abspath(root), os.path.abspath(out)
+    _refuse_out(root, out)
+    segs = [s for s in _segments(root) if s[0] >= from_seq]
+    if not segs or segs[0][0] != from_seq or not segs[0][2].get("complete"):
+        raise SystemExit(f"restart_root: segment {from_seq} is not there and complete: refused")
+    base = os.path.join(root, "segments")
+    os.makedirs(os.path.join(out, "segments"), exist_ok=True)
+    for seq, name, meta in segs:
+        _link(os.path.join(base, name), os.path.join(out, "segments", name), meta, seq)
+    return {"segments": len(segs), "complete": sum(1 for s in segs if s[2].get("complete")), "first_slot": int(segs[0][2]["first_slot"])}
+
+
+def make(root, out, at, n=3):
+    """Write the copy (module doc) under `out`; returns what it wrote: segments, the copied seqs and their new seqs."""
+    root, out = os.path.abspath(root), os.path.abspath(out)
+    _refuse_out(root, out)
     segs = _segments(root)
     by_seq = {}
     for seq, name, meta in segs:
@@ -54,13 +85,7 @@ def make(root, out, at, n=3):
     base = os.path.join(root, "segments")
     os.makedirs(os.path.join(out, "segments"), exist_ok=True)
     for new, name, meta in sorted(plan, key=lambda p: p[0]):
-        src, dst = os.path.join(base, name), os.path.join(out, "segments", f"{new:09d}")
-        os.mkdir(dst)
-        for entry in sorted(os.listdir(src)):
-            if entry != "_segment.json":
-                os.symlink(os.path.join(src, entry), os.path.join(dst, entry))
-        with open(os.path.join(dst, "_segment.json"), "w") as f:
-            json.dump(dict(meta, seq=new), f)
+        _link(os.path.join(base, name), os.path.join(out, "segments", f"{new:09d}"), meta, new)
     return {"segments": len(plan), "copied": copied, "copies": list(range(at + n, at + 2 * n)), "moved_up_by": n}
 
 
@@ -68,9 +93,15 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--root", required=True, help="the recorder's directory (its segments/ is read)")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--at", type=int, required=True, help="the first segment that comes again")
+    ap.add_argument("--at", type=int, help="the first segment that comes again")
     ap.add_argument("--n", type=int, default=3)
+    ap.add_argument("--from-seq", type=int, help="only link the segments from this seq on (no copies)")
     a = ap.parse_args(argv)
+    if (a.at is None) == (a.from_seq is None):
+        ap.error("give --at (a restart) or --from-seq (a later start)")
+    if a.from_seq is not None:
+        print(json.dumps(link(a.root, a.out, a.from_seq)))
+        return
     if a.n < 1:
         ap.error("--n must be at least 1")
     print(json.dumps(make(a.root, a.out, a.at, a.n)))

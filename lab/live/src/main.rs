@@ -78,6 +78,7 @@ mod sink;
 // `lab-live paper` reads it; its lookups (`of`, `net`) serve the tests and the seed proof's debugging.
 #[allow(dead_code)]
 mod curve_hold;
+mod farm_live;
 mod follow;
 mod journal;
 mod legs;

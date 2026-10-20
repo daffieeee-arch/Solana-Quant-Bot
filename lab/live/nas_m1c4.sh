@@ -148,6 +148,10 @@ if [ "$STEP" = build ]; then
            follow::tests::backfills_are_history_before_inside_and_after_and_a_restart_is_deduplicated \
            follow::tests::the_seen_keys_leave_in_their_order_once_the_oldest_is_three_thousand_slots_behind \
            follow::tests::the_prune_drops_old_tokens_and_farm_keys_at_the_hundredth_segment_with_events \
+           farm_live::tests::every_golden_case_gives_farmerflags_answers_and_states farm_live::tests::the_float_rule_is_pythons_not_the_stores \
+           farm_live::tests::the_constants_are_the_stores_where_the_file_is_at_hand \
+           follow::tests::a_late_backfill_reflags_a_recorded_trade_and_the_flags_follow_livefeeds_window \
+           follow::tests::the_seed_window_takes_the_exports_trades_at_a_pools_first_live_row \
            tests::the_follow_dump_takes_a_root_a_snapshot_a_grid_origin_and_a_summary; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done

@@ -93,6 +93,8 @@ pub struct Snapshot {
     pub seed: BTreeMap<String, Vec<SeedTrade>>,
     /// The seed's traders, by `SeedTrade::trader`.
     pub traders: Vec<String>,
+    /// The seed was read (`load`, farm_seed.parquet), even when it holds no trade.
+    pub seed_loaded: bool,
     /// The store's pool rows: [min slot, max slot + 1).
     pub pool_slots: (u64, u64),
     /// The export's seed window [lo, hi).
@@ -323,6 +325,7 @@ impl Snapshot {
         if !with_seed {
             return Ok(s);
         }
+        s.seed_loaded = true;
         let mut ids: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
         let (seed, traders) = (&mut s.seed, &mut s.traders);
         each_row(&dir.join("farm_seed.parquet"), &["pool", "trader", "slot", "token_buy", "token_amount"], |r| {

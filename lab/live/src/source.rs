@@ -15,7 +15,7 @@ use crate::legs::Keys;
 use crate::legs_read::{Replay, ReplayMem};
 use crate::snapshot::{PoolInfo, TokenInfo};
 use anyhow::Result;
-use lab_core::legs::{Event, Id, Leg};
+use lab_core::legs::{Event, Id, Leg, Order};
 use serde_json::Value;
 
 /// One slot's events, in chain order: every event of the slot the source has, within its range. The follow source
@@ -71,6 +71,8 @@ pub enum Item<'a> {
     Learned(&'a Learned),
     /// follow: a backfill trade of `pool`, history only, never an event (LiveFeed `drain_history`: one leg per trade).
     History { pool: Id, legs: &'a [Leg] },
+    /// follow (M3-10): a recorded trade whose farmer flag a late backfill changed (LiveFeed `drain_flag_fixes`).
+    FlagFix { pool: Id, order: Order, farmer: bool },
     /// follow: a usage row of the segment's `_segment.json`, with its seq (LiveFeed `drain_usage`).
     Usage(&'a Value),
     /// follow: the segment just read, and the farmer window h24 after its blocks (LiveFeed `seq` and `_h24()`).

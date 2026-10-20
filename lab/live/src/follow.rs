@@ -40,19 +40,31 @@
 //!
 //! `--mem-log` (spec §4.5): the source's own structures (`Follow::mem`), every 100 segments and at the end.
 //!
-//! Not here yet (spec §5): the farmer flags and their fixes (M3-10: every flag here is false, history legs' too; the
-//! dump's comparison masks them), the curve legs for a live curve entry (M3-11), the paper loop, a process restart (the
-//! journal's learned rows, with the journal's live mode), and polling for new segments (this source is a catch-up: the
-//! complete segments at its start). The injected restart of spec §4.3 (segments written again, one process) is
+//! **The farmer flag** (M3-10, research/m3-10-farmer-flags-spec-2026-10-20.md v0.2; decision O3: mirror LiveFeed), on
+//! the pool legs of events and history (farm_live.rs, LiveFeed's `FarmerFlags`):
+//! - a history trade (`_history`) is flagged with the h24 of that moment, then joins the farmer history;
+//! - a recorded trade past the dedup is flagged with its segment's h24 and joins it unless it is there already (first seen
+//!   as history, or its position in its pool's farm keys); it enters the recorded deque (the last SEEN_KEEP_SLOTS
+//!   slots, in the order handed out);
+//! - the pools of a segment's backfill rows before it (duplicates included) are reflagged (`_reflag`): their recorded
+//!   trades' flags computed again, a change handed out as `Item::FlagFix` (LiveFeed's flag_fixes, farmer_flags_fixed);
+//! - at a pool's first live row its store trades of the seed window join first (`_seed_pool`; the snapshot export's
+//!   farm_seed, which must cover a window that holds slots: refused otherwise, never a silent empty seed);
+//! - the 100-segment prune drops the farmer histories whose last trade left the window.
+//!
+//! Not here yet (spec §5): the curve legs for a live curve entry (M3-11), the paper loop (with the engine's side of a
+//! flag fix), a process restart (the journal's learned rows, with the journal's live mode), and polling for new segments
+//! (this source is a catch-up: the complete segments at its start). The injected restart of spec §4.3 (segments written again, one process) is
 //! lab/live/nas_m3_09b.sh's STEP=restart, with paper.restart_root.
 
 use crate::legs::{event_kind, event_line, pool_leg, pool_line, Keys, PoolRow, DAY_MS};
 use crate::legs_read::{each_row, read_curve, read_pool, Admission, Col, Counts, ReplayMem, CLEAN, POOL_NORMAL, POOL_OTHER, POOL_REVERSED};
 use crate::rows::Part;
-use crate::snapshot::{PoolInfo, SeedWindow, Snapshot, TokenInfo};
+use crate::farm_live::FarmerFlags;
+use crate::snapshot::{PoolInfo, SeedTrade, SeedWindow, Snapshot, TokenInfo};
 use crate::source::{Arrival, Item, Learned, Slot, Source};
 use anyhow::{bail, Context, Result};
-use lab_core::legs::{Event, Id, Leg, Order, PoolCtx, Venue, DEFAULT_KEY, HOLDOUT, WSOL};
+use lab_core::legs::{Event, Id, Leg, Order, PoolCtx, Venue, DEFAULT_KEY, FARMER, HOLDOUT, NONE, WSOL};
 use lab_core::mem::{self as lmem, Mem};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -289,6 +301,7 @@ pub struct Stats {
     pub backfill_duplicates: u64,
     pub tokens_dropped: u64,
     pub seeded_pools: u64,
+    pub farmer_flags_fixed: u64,
     pub unknown_pools: u64,
     pub unknown_pool_rows: u64,
     pub unknown_pool_other_rows: u64,
@@ -300,7 +313,7 @@ impl Stats {
     pub fn json(&self) -> Value {
         json!({"segments": self.segments, "late_rows": self.late_rows, "duplicate_rows": self.duplicate_rows,
                "backfill_rows": self.backfill_rows, "backfill_duplicates": self.backfill_duplicates, "tokens_dropped": self.tokens_dropped,
-               "seeded_pools": self.seeded_pools,
+               "seeded_pools": self.seeded_pools, "farmer_flags_fixed": self.farmer_flags_fixed,
                "unknown_pools": self.unknown_pools, "unknown_pool_rows": self.unknown_pool_rows,
                "unknown_pool_other_rows": self.unknown_pool_other_rows, "unknown_mints": self.unknown_mints,
                "unknown_mint_rows": self.unknown_mint_rows})
@@ -324,6 +337,8 @@ struct SegOut {
     learned: Vec<Learned>,
     /// backfill trades as history, one leg each (live.py `history`)
     history: Vec<(Id, Leg)>,
+    /// recorded trades whose farmer flag a late backfill changed (live.py `flag_fixes`)
+    flag_fixes: Vec<(Id, Order, bool)>,
     usage: Vec<Value>,
     events: Vec<(Event, Arrival)>,
 }
@@ -396,14 +411,31 @@ pub struct Follow {
     seeded: HashSet<Id>,
     /// `--mem-log`: the items carry the source's structures (`mem`); off, only the segments read.
     pub mem_log: bool,
+    /// M3-10: LiveFeed's farmer flag (farm_live.rs), the recorded trades of the last SEEN_KEEP_SLOTS slots for `_reflag`
+    /// (slot, pool, position, trader, flag), and the seed's trades by pool (the snapshot's farm_seed, its traders and the
+    /// export's window), taken per pool when it is seeded.
+    farmers: FarmerFlags,
+    recorded: VecDeque<(u64, Id, Order, Id, bool)>,
+    seed_trades: Option<SeedTrades>,
+}
+
+/// The snapshot's seed: per pool its store buys and sells of the export's window, the traders they name, the window.
+struct SeedTrades {
+    by_pool: BTreeMap<String, Vec<SeedTrade>>,
+    traders: Vec<String>,
+    export: (u64, u64),
 }
 
 impl Follow {
     /// A follow source over `<root>/segments` with the snapshot as known before the first live slot (spec §2.1: the
     /// snapshot loaded with `before`), `h24` fixed when given (LiveFeed's `h24=`), the farmer seed's window taken when
     /// `seed` (LiveFeed's `seed_farmers`, as paper.engine --live and paper.legs_dump --segments build it).
-    pub fn open(root: &Path, snap: Snapshot, h24: Option<u64>, seed: bool) -> Result<Self> {
+    pub fn open(root: &Path, mut snap: Snapshot, h24: Option<u64>, seed: bool) -> Result<Self> {
         let mut adm = Admission::live(&snap)?;
+        // an export with the seed's trades (farm_seed.parquet read): kept for `seed_pool`
+        let seed_trades = snap.seed_loaded.then(|| SeedTrades {
+            by_pool: std::mem::take(&mut snap.seed), traders: std::mem::take(&mut snap.traders), export: snap.export_seed,
+        });
         let mut tokens = HashMap::with_capacity(snap.tokens.len());
         for (m, t) in snap.tokens {
             tokens.insert(adm.learn_mint(&m), t);
@@ -414,7 +446,8 @@ impl Follow {
             unknown_mints: HashSet::new(), counts: Counts::default(), next_seq: 0, heap: BTreeMap::new(), queued: HashSet::new(),
             out_keys: HashSet::new(), last_out: None, top: None, tie: 0, done: false, cap: UNKNOWN_CAP, seen_keys: HashMap::new(),
             seen_order: VecDeque::new(), seen_hi: 0, farm_keys: HashMap::new(), backfill_pending: Vec::new(), backfill_counts: Counts::default(),
-            pool_slots: snap.pool_slots, seed, farm_seed: None, seeded: HashSet::new(), mem_log: false,
+            pool_slots: snap.pool_slots, seed, farm_seed: None, seeded: HashSet::new(), mem_log: false, farmers: FarmerFlags::default(),
+            recorded: VecDeque::new(), seed_trades,
         })
     }
 
@@ -643,12 +676,50 @@ impl Follow {
         None
     }
 
-    /// live.py `_seed_pool`: a pool's first live row after the seed window was taken; with a window that holds slots it
-    /// counts as seeded. Its seed trades for the farmer history are M3-10's.
-    fn seed_pool(&mut self, pool: Id) {
-        let Some(w) = self.farm_seed else { return };
-        if self.seeded.insert(pool) && w.hi > w.lo {
-            self.stats.seeded_pools += 1;
+    /// live.py `_seed_pool`: a pool's first live row after the seed window was taken. With a window that holds slots its
+    /// store buys and sells there join the farmer history in chain order (M3-10, spec v0.2 §3), and it counts as seeded.
+    fn seed_pool(&mut self, pool: Id) -> Result<()> {
+        let Some(w) = self.farm_seed else { return Ok(()) };
+        if !self.seeded.insert(pool) || w.hi <= w.lo {
+            return Ok(());
+        }
+        let st = self.seed_trades.as_mut().context("a seed window with slots and no seed trades (checked when it was taken)")?;
+        let name = self.adm.keys.name(pool).context("a pool without its key")?.to_owned();
+        for t in st.by_pool.remove(&name).unwrap_or_default().into_iter().filter(|t| t.slot >= w.lo && t.slot < w.hi) {
+            let trader = t.trader.map_or(NONE, |i| self.adm.keys.id(&st.traders[i as usize]));
+            let amount = t.token_amount.with_context(|| format!("a seed trade of {name} at slot {} without its amount", t.slot))?;
+            let amount = u64::try_from(amount).with_context(|| format!("a seed trade of {name} at slot {}: a negative amount", t.slot))?;
+            self.farmers.add(pool, trader, t.slot, t.token_buy.unwrap_or(false), amount);
+        }
+        self.stats.seeded_pools += 1;
+        Ok(())
+    }
+
+    /// LiveFeed's flag of a pool trade at `slot` and, unless it is in the farmer history already, the trade joins it
+    /// (live.py `_history` and `segment_events`). None for a row that is no trade (its flag is false, it never joins).
+    fn farm(&mut self, r: &PoolRow, h24: u64, seen: bool) -> Result<Option<bool>> {
+        let Some((buy, amount)) = r.token_side() else { return Ok(None) };
+        let farmer = self.farmers.flag(r.pool, r.trader, r.order.slot, h24);
+        if !seen {
+            let amount = u64::try_from(amount).with_context(|| format!("a negative token amount at {:?}", r.order))?;
+            self.farmers.add(r.pool, r.trader, r.order.slot, buy, amount);
+        }
+        Ok(Some(farmer))
+    }
+
+    /// live.py `_reflag(pools, h24)`: the recorded trades of these pools (the last SEEN_KEEP_SLOTS slots, in the order
+    /// handed out) flagged again now that a backfill brought earlier trades; a flag that changed is a fix.
+    fn reflag(&mut self, pools: &HashSet<Id>, h24: u64, out: &mut SegOut) {
+        let (recorded, farmers) = (&mut self.recorded, &mut self.farmers);
+        for (slot, pool, order, trader, flag) in recorded.iter_mut() {
+            if pools.contains(pool) {
+                let new = farmers.flag(*pool, *trader, *slot, h24);
+                if new != *flag {
+                    *flag = new;
+                    out.flag_fixes.push((*pool, *order, new));
+                    self.stats.farmer_flags_fixed += 1;
+                }
+            }
         }
     }
 
@@ -661,10 +732,14 @@ impl Follow {
             self.stats.backfill_duplicates += 1;
             return Ok(());
         }
-        self.seed_pool(r.pool);
+        self.seed_pool(r.pool)?;
         self.farm_keys.entry(r.pool).or_default().insert(r.order);
         self.stats.backfill_rows += 1;
-        let leg = pool_leg(r, self.ctx.entry(r.pool).or_default())?;
+        // its flag with the h24 of this moment (before the segment's blocks for the rows before it), then it joins
+        let farmer = self.farm(r, self.h24(), false)?;
+        let mut r = *r;
+        r.flags = if farmer == Some(true) { r.flags | FARMER } else { r.flags & !FARMER };
+        let leg = pool_leg(&r, self.ctx.entry(r.pool).or_default())?;
         if r.kind.is_trade() {
             out.history.push((r.pool, Leg::Pool(leg)));
         }
@@ -676,6 +751,7 @@ impl Follow {
     /// last - h24 go (a pool left without keys is no longer a backfilled pool). The farmer history and the curve legs
     /// are M3-10's and M3-11's.
     fn prune(&mut self, last: u64, h24: u64) {
+        self.farmers.prune(last, h24);
         let bound = last.checked_sub(TOKEN_KEEP_DAYS * h24);
         let old: Vec<Id> = self.tokens.iter()
             .filter(|(_, t)| t.complete_slot.is_none() && t.pool.is_none() && t.create_slot.is_some_and(|c| bound.is_some_and(|b| c < b)))
@@ -713,8 +789,14 @@ impl Follow {
         }
         back.sort_by_key(|r| r.order); // stable: the pending rows first on an equal position
         // before the segment: history now; inside it: merged with its rows below; after it: the next segment's
+        let mut late = HashSet::new();
         for r in back.iter().filter(|r| r.order.slot < s.first) {
             self.history(r, &mut out)?;
+            late.insert(r.pool); // a duplicate's pool too (live.py adds it after `_history`, whatever that found)
+        }
+        if !late.is_empty() && !self.recorded.is_empty() {
+            let h24 = self.h24();
+            self.reflag(&late, h24, &mut out);
         }
         let inside: Vec<PoolRow> = back.iter().filter(|r| (s.first..=s.last).contains(&r.order.slot)).copied().collect();
         self.backfill_pending = back.into_iter().filter(|r| r.order.slot > s.last).collect();
@@ -730,8 +812,19 @@ impl Follow {
             }
         }
         // live.py `_init_seed`, at the first segment with its h24 (the history rows before it were not seeded)
+        let h24 = self.h24();
         if self.seed && self.farm_seed.is_none() {
-            let w = SeedWindow::of(self.pool_slots, s.first, self.h24());
+            let w = SeedWindow::of(self.pool_slots, s.first, h24);
+            if w.hi > w.lo {
+                // the seed's trades must be the export's (Snapshot::seed_window's rule): never a silently empty seed
+                let Some(st) = &self.seed_trades else {
+                    bail!("the seed window [{}, {}) holds slots, but the snapshot has no seed: export it with snapshot_export --seed-from {} \
+                           --seed-to {}", w.lo, w.hi, w.lo, w.hi);
+                };
+                if w.lo < st.export.0 || w.hi > st.export.1 {
+                    bail!("the seed window [{}, {}) of a start at {} is not in the export's [{}, {})", w.lo, w.hi, s.first, st.export.0, st.export.1);
+                }
+            }
             log::info!("farmer history seeded from the store over [{}, {}), complete from slot {}", w.lo, w.hi, w.complete_from);
             self.farm_seed = Some(w);
         }
@@ -767,16 +860,28 @@ impl Follow {
                 self.history(r, &mut out)?;
                 continue;
             }
-            if self.seen((1, r.pool, r.order), r.order.slot, Src::Rec) == Some(Src::Rec) {
+            let prev = self.seen((1, r.pool, r.order), r.order.slot, Src::Rec);
+            if prev == Some(Src::Rec) {
                 self.stats.duplicate_rows += 1;
                 continue;
             }
-            self.seed_pool(r.pool);
-            // a backfilled pool: its recorded trades join its farm keys, so a later backfill of them counts once
+            self.seed_pool(r.pool)?;
+            // in the farmer history already: first seen as history, or (a backfilled pool) its position in the farm keys,
+            // which the recorded trade joins so a later backfill of it counts once
+            let mut seen = prev == Some(Src::Hist);
             if let Some(keys) = self.farm_keys.get_mut(&r.pool) {
+                seen |= keys.contains(&r.order);
                 keys.insert(r.order);
             }
-            let leg = pool_leg(r, self.ctx.entry(r.pool).or_default())?;
+            let mut r = *r;
+            if let Some(farmer) = self.farm(&r, h24, seen)? {
+                r.flags = if farmer { r.flags | FARMER } else { r.flags & !FARMER };
+                self.recorded.push_back((r.order.slot, r.pool, r.order, r.trader, farmer));
+                while self.recorded.front().is_some_and(|f| f.0 + SEEN_KEEP_SLOTS < r.order.slot) {
+                    self.recorded.pop_front();
+                }
+            }
+            let leg = pool_leg(&r, self.ctx.entry(r.pool).or_default())?;
             out.events.push((Event::new(Leg::Pool(leg), at(r.order.slot)), arrival(r.order)));
         }
         out.events.sort_by_key(|(e, _)| e.leg.order()); // stable: curve first on an equal order, as Python's list.sort
@@ -795,7 +900,7 @@ impl Follow {
         // bounded memory in a long live run: the prune at the last event's slot, with this segment's h24
         if self.stats.segments % PRUNE_EVERY == 0 {
             if let Some((e, _)) = out.events.last() {
-                let (last, h24) = (e.leg.slot(), self.h24());
+                let last = e.leg.slot();
                 self.prune(last, h24);
             }
         }
@@ -882,6 +987,11 @@ impl Follow {
         let farm_keys: usize = self.farm_keys.values().map(BTreeSet::len).sum();
         let heap_text: usize = self.heap.keys().map(|k| k.2.capacity()).sum();
         let unknown_text = |s: &HashSet<Option<String>>| s.iter().map(text).sum::<usize>();
+        let (fk, ft, fb) = self.farmers.mem();
+        let seed_left = self.seed_trades.as_ref().map_or((0, 0), |st| {
+            let n: usize = st.by_pool.values().map(Vec::len).sum();
+            (n, st.by_pool.values().map(lmem::vec).sum::<usize>())
+        });
         m.mems = vec![
             Mem::new("interned_keys", self.adm.keys.len(), self.adm.heap_bytes()),
             Mem::new("tokens", self.tokens.len(), lmem::map(&self.tokens) + token_text),
@@ -894,6 +1004,10 @@ impl Follow {
             Mem::new("unknown_sets", self.unknown_pools.len() + self.unknown_mints.len(),
                      lmem::set(&self.unknown_pools) + lmem::set(&self.unknown_mints) + unknown_text(&self.unknown_pools) + unknown_text(&self.unknown_mints)),
             Mem::new("clock", self.ms_window.len() + self.epoch_span.len(), lmem::deque(&self.ms_window) + lmem::map(&self.epoch_span)),
+            Mem::new("farmer_hist", fk, fb),
+            Mem::new("farmer_hist_trades", ft, 0),
+            Mem::new("recorded", self.recorded.len(), lmem::deque(&self.recorded)),
+            Mem::new("seed_left", seed_left.0, seed_left.1),
         ];
         m
     }
@@ -936,6 +1050,9 @@ impl Source for Follow {
             }
             for (pool, leg) in &out.history {
                 f(keys, &mem, Item::History { pool: *pool, legs: std::slice::from_ref(leg) })?;
+            }
+            for &(pool, order, farmer) in &out.flag_fixes {
+                f(keys, &mem, Item::FlagFix { pool, order, farmer })?;
             }
             for u in &out.usage {
                 f(keys, &mem, Item::Usage(u))?;
@@ -1101,6 +1218,9 @@ struct Dump {
     arrivals: Lines,
     history: Lines,
     history_nf: Lines,
+    flag_fixes: Lines,
+    /// flag-fix lines without their `at`
+    pend_fixes: Vec<String>,
     /// history lines without their `at` (the slot whose end drains them)
     pend_history: Vec<String>,
     pend_learned: Vec<String>,
@@ -1138,6 +1258,7 @@ impl Dump {
             from: a.from, to: a.to, window: a.window, events: 0, total: Sha256::new(), nf_total: Sha256::new(), kinds: BTreeMap::new(),
             windows: Vec::new(), cur: None, slot: None, out, out_from: a.out_from, learned: Lines::default(), new_pools: Lines::default(),
             usage: Lines::default(), arrivals: Lines::default(), history: Lines::default(), history_nf: Lines::default(),
+            flag_fixes: Lines::default(), pend_fixes: Vec::new(),
             pend_history: Vec::new(), pend_learned: Vec::new(), pend_pools: Vec::new(), pend_usage: Vec::new(),
             seq: None, h24: None, clock_h24: Vec::new(), per_epoch: BTreeMap::new(), items: BTreeMap::new(),
             mem_log: match &a.mem_log {
@@ -1175,6 +1296,12 @@ impl Dump {
             Item::Pool(p) => {
                 self.pend_pools.push(p.pool.clone());
                 "pool"
+            }
+            Item::FlagFix { pool, order: o, farmer } => {
+                // legs_dump: `at pool slot tx outer inner farmer`
+                let name = keys.name(pool).context("a flag fix of a pool without its key")?;
+                self.pend_fixes.push(format!("{name}\t{}\t{}\t{}\t{}\t{}", o.slot, o.tx, o.outer, o.inner, if farmer { "true" } else { "false" }));
+                "flag_fix"
             }
             Item::EpochMs { epoch, ms } => {
                 self.per_epoch.insert(epoch, ms);
@@ -1219,6 +1346,9 @@ impl Dump {
     /// being read.
     fn drain(&mut self) {
         let at = opt_str(self.slot);
+        for x in std::mem::take(&mut self.pend_fixes) {
+            self.flag_fixes.add(&format!("{at}\t{x}"));
+        }
         for h in std::mem::take(&mut self.pend_history) {
             let line = format!("{at}\t{h}");
             self.history.add(&line);
@@ -1296,10 +1426,9 @@ impl Dump {
             "sha256_no_farmer": hex(self.nf_total), "kinds": self.kinds, "windows": self.windows,
             "learned": self.learned.result(), "new_pools": self.new_pools.result(), "usage": self.usage.result(),
             "arrivals": self.arrivals.result(),
-            // the history lines carry the leg's farmer flag (M3-10's: false here), so they are compared without it
+            // the history lines carry the leg's farmer flag (M3-10: LiveFeed's), and without it
             "history": self.history.result(), "history_no_farmer": self.history_nf.result(),
-            // the farmer flags' fixes: M3-10 (null: not computed, never an empty digest)
-            "flag_fixes": null,
+            "flag_fixes": self.flag_fixes.result(),
             "clock": {"per_epoch": per_epoch, "h24": self.clock_h24},
             "lab_live_items": self.items,
             "lab_live_mem_max": mem_max,
@@ -1323,7 +1452,12 @@ pub fn run(a: &FollowArgs) -> Result<Value> {
             }
         }
     }
-    let snap = Snapshot::load_known(&a.snapshot, a.snapshot_before)?;
+    // with the seed's trades when the export has them (farm_seed.parquet): the seed window then reads them (M3-10 §3)
+    let snap = if a.snapshot.join("farm_seed.parquet").is_file() {
+        Snapshot::load(&a.snapshot, a.snapshot_before)?
+    } else {
+        Snapshot::load_known(&a.snapshot, a.snapshot_before)?
+    };
     let (n_tokens, n_classed) = (snap.tokens.len(), snap.pool_class.len());
     let mut src = Follow::open(&a.root, snap, a.h24, true)?;
     src.mem_log = a.mem_log.is_some();
@@ -1365,7 +1499,7 @@ pub fn run(a: &FollowArgs) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::idl::{Kind, Val};
-    use crate::legs_read::tests::{export, pool_cols, ptrade, put, tmp, trade, BUY, SELL, TRADE};
+    use crate::legs_read::tests::{edit_meta, export, pool_cols, ptrade, put, tmp, trade, BUY, SELL, TRADE};
     use lab_core::legs::BOOST_BUY_DISC;
 
     fn s(x: &str) -> Val {
@@ -1466,7 +1600,7 @@ mod tests {
     }
 
     fn open(root: &Path, h24: Option<u64>) -> Follow {
-        Follow::open(root, Snapshot::load_known(&root.join("snap"), Some(1000)).unwrap(), h24, true).unwrap()
+        Follow::open(root, Snapshot::load(&root.join("snap"), Some(1000)).unwrap(), h24, true).unwrap()
     }
 
     /// The items as short lines: `slot S key...`, `token MINT complete pool`, `pool P`, `learned LINE`, `segment SEQ`, ...
@@ -1480,6 +1614,7 @@ mod tests {
                 Item::EpochMs { epoch, ms } => format!("epoch_ms {epoch} {ms}"),
                 Item::Learned(l) => format!("learned {}", l.line()),
                 Item::History { pool, legs } => format!("history {} {}", keys.name(pool).unwrap(), legs.iter().map(|l| l.slot().to_string()).collect::<Vec<_>>().join(",")),
+                Item::FlagFix { pool, order, farmer } => format!("flag_fix {} {} {farmer}", keys.name(pool).unwrap(), order.slot),
                 Item::Usage(u) => format!("usage {}", py_json(u)),
                 Item::Segment { seq, h24 } => format!("segment {seq} {h24}"),
             });
@@ -1634,7 +1769,7 @@ mod tests {
         assert_eq!(v["arrivals"], json!({"count": 7, "sha256": sha(arrivals)}));
         // the first drain is at the end of 1010, when 1030 arrives: seg 1 has been read by then (as in legs_dump)
         assert_eq!(v["clock"], json!({"per_epoch": {}, "h24": [[1, 500]]}));
-        assert_eq!((&v["history"]["count"], &v["flag_fixes"]), (&json!(0), &Value::Null));
+        assert_eq!((&v["history"]["count"], &v["flag_fixes"]["count"]), (&json!(0), &json!(0)));
         // the seed window at the first segment (1000, h24 500) over the store's pool rows [1000, 3000): empty, so no pool
         // counts as seeded
         assert_eq!(v["farm_seed"], json!({"lo": 1000, "hi": 1000, "h24": 500, "first_live_slot": 1000, "complete_from": 1500}));
@@ -1645,6 +1780,12 @@ mod tests {
         assert!(err(FollowArgs { root: root.join("segments"), ..args(None) }).contains("holds the segments themselves"));
         assert!(err(FollowArgs { root: root.join("snap"), ..args(None) }).contains("no segments/"));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The export's seed as covering the store's whole pool range [1000, 3000) (its one seed trade, W's buy of P1 at 2500,
+    /// stays): a start inside the store has a seed window with slots, which must be the export's (M3-10 §3).
+    fn seed_all(snap: &Path) {
+        edit_meta(snap, |v| v["farm_seed"] = json!({"lo": 1000, "hi": 3000, "h24": 2000}));
     }
 
     /// P1's buy at `slot` (transaction `tx`), its fees 20/5 and virtual quote 7 unless given.
@@ -1673,6 +1814,7 @@ mod tests {
     fn backfill_fixture(root: &Path) {
         fs::create_dir_all(root.join("snap")).unwrap();
         export(&root.join("snap"));
+        seed_all(&root.join("snap"));
         let d0 = seg(root, 0, 2000, 2099, json!({}));
         put(&d0, "pump_amm/BuyEvent", 0, &pool_cols(&BUY), &[buy(2010, 0, None), buy(2050, 0, None)]);
         let d1 = seg(root, 1, 2100, 2199, json!({"backfills": [{"pool": "P1", "status": "complete", "rows": 6}]}));
@@ -1721,8 +1863,10 @@ mod tests {
         let lines: Vec<Value> = log.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!((lines.len(), &lines[0]["at"], &lines[0]["segments"], &lines[0]["events"]), (1, &json!("end"), &json!(4), &json!(7)));
         let mems = lines[0]["mems"].as_object().unwrap();
+        // M3-10 added farmer_hist, farmer_hist_trades, recorded and seed_left (spec v0.2 §2, §3)
         assert_eq!(mems.keys().map(String::as_str).collect::<Vec<_>>(),
-                   ["backfill_pending", "clock", "farm_keys", "heap", "interned_keys", "pool_ctx", "seeded_pools", "seen_keys", "tokens", "unknown_sets"]);
+                   ["backfill_pending", "clock", "farm_keys", "farmer_hist", "farmer_hist_trades", "heap", "interned_keys", "pool_ctx", "recorded",
+                    "seed_left", "seeded_pools", "seen_keys", "tokens", "unknown_sets"]);
         assert_eq!((&mems["farm_keys"][0], &mems["tokens"][0], &mems["heap"][0], &mems["seeded_pools"][0]), (&json!(9), &json!(1), &json!(0), &json!(1)));
         assert!(mems["seen_keys"][0].as_u64() > Some(0) && mems["interned_keys"][1].as_u64() > Some(0));
         assert_eq!(v["lab_live"]["mem_max"]["farm_keys"], mems["farm_keys"]);
@@ -1764,6 +1908,7 @@ mod tests {
             let root = tmp(&format!("follow-prune-{events}"));
             fs::create_dir_all(root.join("snap")).unwrap();
             export(&root.join("snap"));
+            seed_all(&root.join("snap"));
             for k in 0..101u64 {
                 let lo = 3000 + 10 * k;
                 let meta = if k == 0 { json!({"backfills": [{"status": "failed", "rows": 1}]}) } else { json!({}) };
@@ -1793,6 +1938,95 @@ mod tests {
             assert_eq!((f.stats.seeded_pools, f.seeded.contains(&p1)), (u64::from(events), false));
             fs::remove_dir_all(&root).unwrap();
         }
+    }
+
+    /// W's trade of P1 at `slot` (a buy or a sell of `amount` tokens, transaction 0).
+    fn wtrade(slot: u64, sell: bool, amount: u64) -> Vec<Val> {
+        let mut r = ptrade(slot, "P1", "W", None, amount, 1_000, sell);
+        r[1] = u(0);
+        r
+    }
+
+    fn put_trades(dir: &Path, rows: &[(u64, bool, u64)]) {
+        let (buys, sells): (Vec<_>, Vec<_>) = rows.iter().partition(|r| !r.1);
+        if !buys.is_empty() {
+            put(dir, "pump_amm/BuyEvent", 0, &pool_cols(&BUY), &buys.iter().map(|&&(s, _, a)| wtrade(s, false, a)).collect::<Vec<_>>());
+        }
+        if !sells.is_empty() {
+            put(dir, "pump_amm/SellEvent", 0, &pool_cols(&SELL), &sells.iter().map(|&&(s, _, a)| wtrade(s, true, a)).collect::<Vec<_>>());
+        }
+    }
+
+    /// The pool lines' farmer flags (their last field) by slot, from a dump's lines.
+    fn farmer_by_slot(text: &str) -> Vec<(u64, String)> {
+        text.lines().filter(|l| l.starts_with("pool\t"))
+            .map(|l| (l.split('\t').nth(2).unwrap().parse().unwrap(), l.rsplit('\t').next().unwrap().to_owned())).collect()
+    }
+
+    #[test]
+    fn a_late_backfill_reflags_a_recorded_trade_and_the_flags_follow_livefeeds_window() {
+        // M3-10 §1.2 and §4 (h24 500, snapshot before 1000):
+        // - seg 0 [3000, 3099]: W buys 100 at 3050 (no history: not a farmer);
+        // - seg 1 [3100, 3199]: its complete backfill brings W's sell of 100 at 3040 and buy of 100 at 3045, before the
+        //   segment: history (each flagged before it joins: no farmer), then `_reflag`: 3050's window now holds two trades
+        //   netting 0, so its flag turns true, a fix at the end of slot 3050; the leg already built keeps false. Recorded:
+        //   W buys 100 at 3150 and sells 200 at 3155 (not farmers: net 100 of 300, 200 of 400), buys 1 at 3160 (net 0 of
+        //   600: a farmer).
+        let root = tmp("follow-reflag");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        export(&root.join("snap"));
+        let d0 = seg(&root, 0, 3000, 3099, json!({}));
+        put_trades(&d0, &[(3050, false, 100)]);
+        let d1 = seg(&root, 1, 3100, 3199, json!({"backfills": [{"pool": "P1", "status": "complete", "rows": 2}]}));
+        put_trades(&d1.join("backfill"), &[(3040, true, 100), (3045, false, 100)]);
+        put_trades(&d1, &[(3150, false, 100), (3155, true, 200), (3160, false, 1)]);
+        let a = FollowArgs { root: root.clone(), snapshot: root.join("snap"), snapshot_before: Some(1000), h24: Some(500), from: 3000, to: None,
+                             window: 1000, summary: root.join("s.json"), out: Some(root.join("lines.txt")), out_from: 0, expect_segments: Some(2),
+                             mem_log: Some(root.join("mem.jsonl")) };
+        let v = run(&a).unwrap();
+        let lines = fs::read_to_string(root.join("lines.txt")).unwrap();
+        let want: Vec<(u64, String)> = [(3050, "false"), (3150, "false"), (3155, "false"), (3160, "true")].iter().map(|&(s, f)| (s, f.to_owned())).collect();
+        assert_eq!(farmer_by_slot(&lines), want);
+        let sha = |t: &str| hex(Sha256::new_with_prefix(t.as_bytes()));
+        assert_eq!(v["flag_fixes"], json!({"count": 1, "sha256": sha("3050\tP1\t3050\t0\t0\t2\ttrue\n")}));
+        assert_eq!((&v["stats"]["farmer_flags_fixed"], &v["history"]["count"]), (&json!(1), &json!(2)));
+        // the history legs carry their flag (false here) and the masked digest masks it
+        assert_ne!(v["history"]["sha256"], v["history_no_farmer"]["sha256"]);
+        // the memory log has the farmer history: W's 7 trades in P1 under one key (the export's seed trade at 2500, which
+        // the start at 3000 with h24 500 takes and the first query drops from the window, is held until a compaction), and
+        // the recorded deque
+        let end: Value = serde_json::from_str(fs::read_to_string(root.join("mem.jsonl")).unwrap().lines().last().unwrap()).unwrap();
+        assert_eq!((&end["mems"]["farmer_hist"][0], &end["mems"]["farmer_hist_trades"][0], &end["mems"]["recorded"][0]), (&json!(1), &json!(7), &json!(4)));
+        assert_eq!(v["stats"]["seeded_pools"], 1);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_seed_window_takes_the_exports_trades_at_a_pools_first_live_row() {
+        // M3-10 §3: a start at 2600 inside the store [1000, 3000) with h24 500: the window [2100, 2600) holds the export's
+        // seed trade, W's buy of 1 at 2500. Seg 0's backfill before it (W's sell of 1 at 2590) is history before the
+        // window is taken, so not seeded; W's buy at 2620 is P1's first recorded row: the seed joins first, and its
+        // window (2500 buy 1, 2590 sell 1: net 0 of 2) flags it. A window the export does not cover, or an export
+        // without its seed, is refused.
+        let root = tmp("follow-seed");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        export(&root.join("snap"));
+        let d0 = seg(&root, 0, 2600, 2699, json!({"backfills": [{"pool": "P1", "status": "complete", "rows": 1}]}));
+        put_trades(&d0.join("backfill"), &[(2590, true, 1)]);
+        put_trades(&d0, &[(2620, false, 50)]);
+        let a = FollowArgs { root: root.clone(), snapshot: root.join("snap"), snapshot_before: Some(2600), h24: Some(500), from: 2600, to: None,
+                             window: 1000, summary: root.join("s.json"), out: Some(root.join("lines.txt")), out_from: 0, expect_segments: Some(1),
+                             mem_log: None };
+        let v = run(&a).unwrap();
+        assert_eq!(v["farm_seed"], json!({"lo": 2100, "hi": 2600, "h24": 500, "first_live_slot": 2600, "complete_from": 2600}));
+        assert_eq!((&v["stats"]["seeded_pools"], &v["stats"]["backfill_rows"]), (&json!(1), &json!(1)));
+        assert_eq!(farmer_by_slot(&fs::read_to_string(root.join("lines.txt")).unwrap()), [(2620, "true".to_owned())]);
+        let err = |a: &FollowArgs| format!("{:#}", run(a).unwrap_err());
+        edit_meta(&root.join("snap"), |m| m["farm_seed"] = json!({"lo": 2200, "hi": 3000, "h24": 800}));
+        assert!(err(&a).contains("not in the export's [2200, 3000)"), "{}", err(&a));
+        fs::remove_file(root.join("snap/farm_seed.parquet")).unwrap();
+        assert!(err(&a).contains("the snapshot has no seed"), "{}", err(&a));
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
