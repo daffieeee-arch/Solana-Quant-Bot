@@ -41,6 +41,7 @@ BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/recorder
 BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/ui-cache
 BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/backtests
 BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/wallets/cases-v1
+BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/token_meta
 ProtectSystem=strict
 PrivateTmp=yes
 PrivateDevices=yes

@@ -13,7 +13,7 @@ Interactive-UI spec v0.3 §2.3 (`data-old-faithful-one/lab/research/ui-interacti
   - Hij mag precies de mappen **lezen** die de pagina's tonen, en verder niets.
   - Hij kan niet bij je instellingen of het token, kan geen services starten of stoppen, en kan de bot niet beïnvloeden.
 - **Pas daarna** kunnen knoppen die de bot raken (pauze, start/stop) veilig worden gebouwd.
-- **Wat jij doet:** eenmalig stap 1 en 3 hieronder, met `sudo`, zo'n 2 minuten werk. Stap 2 doet de coördinator of LAB ui, zonder sudo.
+- **Wat jij doet:** eenmalig stap 1 en 3 hieronder, met `sudo`, zo'n 5 minuten werk. Stap 2 doet de coördinator of LAB ui, zonder sudo.
 - **Effect op de bot: geen.** Recorder en paper-bot draaien gewoon door. Alleen de webapp herstart een keer (ongeveer 5 seconden weg).
 
 ## Step 1 — the owner, with sudo (once)
@@ -30,50 +30,57 @@ From the deploy worktree (it carries this file once merged):
 
 ```bash
 cd ~/Solana-project/worktrees/lab-ui-deploy
-bash lab/ops/ui-grant-read.sh            # shows what it will do: traverse on the path down, read on the app's trees
+bash lab/ops/ui-grant-read.sh            # shows what it will do
 bash lab/ops/ui-grant-read.sh --apply
 ```
 
-- **What it grants:**
-  - traverse (`x`) on the directories down from `/home/chupa`;
-  - read (`rX`, with default ACLs so new files inherit) on the deploy worktree, the server's Python, `paper-run/lab/paper` (the risk files), and `lab/{analytics,store,journal,recorder,ui-cache,backtests,wallets/cases-v1}`.
-- **Never:** any write, and nothing under `~/.config/solana-lab` (the script refuses if it finds one).
+- **What it grants:** read (`rX`, with default ACLs so new files inherit) on exactly the trees the unit binds: the deploy worktree, the server's Python, `paper-run/lab/paper` (the risk files), and `lab/{analytics,store,journal,recorder,ui-cache,backtests,wallets/cases-v1,token_meta}`.
+- **What it never grants:**
+  - a write;
+  - a traverse (`x`) on the way down (`/home/chupa`, `.local`, …). systemd mounts the trees as root into the unit's empty home, so `lab-ui` needs no path through `/home/chupa`. An `x` there would open every world-readable file below it to `lab-ui` outside the sandbox.
+  - anything under `~/.config`. The script refuses if it finds an entry for `lab-ui` on those directories.
 - **Run it again** after `paper-run` exists, and after a new checkout outside the inherited trees.
 
-**Check before step 3: SQLite WAL as a reader that cannot write `-shm`.** Every journal page depends on this.
+## Step 3 — the owner, with sudo: check inside the sandbox, then switch
+
+All checks run **inside a transient unit with the service's own sandbox** (`lab/ops/ui-sandbox-run.sh` reads the isolation lines from the unit file), not as `sudo -u lab-ui` on the real tree.
+
+**3a. SQLite WAL as a reader that cannot write `-shm`.** Every journal page depends on this.
 
 ```bash
-sudo -u lab-ui ~/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155/bin/python -I -c '
+cd ~/Solana-project/worktrees/lab-ui-deploy
+PY=/home/chupa/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155/bin/python
+bash lab/ops/ui-sandbox-run.sh $PY -I -c '
 import glob, sqlite3
 for p in glob.glob("/home/chupa/Solana-project/data-old-faithful-one/lab/journal/*/journal/journal.sqlite"):
     db = sqlite3.connect(f"file:{p}?mode=ro", uri=True); db.execute("PRAGMA query_only=1")
     print(p, db.execute("SELECT count(*) FROM exits").fetchone())'
 ```
 
-If it fails with "attempt to write a readonly database" or "unable to open", grant `rw` on the `-shm` file only (`setfacl -m u:lab-ui:rw …/journal.sqlite-shm`). Do not use `immutable=1`: it would read stale data.
+If it fails with "attempt to write a readonly database" or "unable to open", grant `rw` on the `-shm` file only (`setfacl -m u:lab-ui:rw …/journal.sqlite-shm`), as `chupa`. Do not use `immutable=1`: it would read stale data.
 
-## Step 3 — the owner, with sudo: switch the web app to the system unit
+**3b. Acceptance: each of these must FAIL inside the sandbox** (the last line prints `ALL BLOCKED`):
 
 ```bash
-cd ~/Solana-project/worktrees/lab-ui-deploy
+P=$(systemctl --user show -p MainPID --value lab-paper)      # 0 if the paper bot is not running: the kill check is then skipped
+bash lab/ops/ui-sandbox-run.sh /bin/sh -c "
+  ok=1
+  test -e /run/user/1000/bus && { echo 'user bus visible'; ok=0; }
+  ls /home/chupa/.config >/dev/null 2>&1 && { echo '.config readable'; ok=0; }
+  touch /home/chupa/Solana-project/data-old-faithful-one/lab/journal/x 2>/dev/null && { echo 'journal writable'; ok=0; }
+  [ $P -gt 0 ] && kill -0 $P 2>/dev/null && { echo 'can signal the bot'; ok=0; }
+  [ \$ok = 1 ] && echo 'ALL BLOCKED'"
+```
+
+**3c. Switch.** Start the unit once without any traverse ACL; all five pages must answer 200.
+
+```bash
 sudo install -m 644 lab/ops/systemd/lab-ui-web.system.service /etc/systemd/system/lab-ui-web.service
 sudo systemd-analyze verify /etc/systemd/system/lab-ui-web.service     # no errors
 systemctl --user disable --now lab-ui-web                               # the old user unit (same port)
 sudo systemctl daemon-reload && sudo systemctl enable --now lab-ui-web
 systemctl status lab-ui-web --no-pager | head -5                        # active (running), User lab-ui
 for p in / /api/paper /api/wallet /api/triton /api/overview; do curl -s -o /dev/null -w "$p %{http_code}\n" http://100.112.193.63:8501$p; done   # all 200
-```
-
-## Acceptance (variant A), as `lab-ui` inside the unit's sandbox
-
-Each of these must **fail**:
-
-```bash
-sudo systemd-run --pipe --wait -p User=lab-ui -p ProtectHome=tmpfs -p InaccessiblePaths=/run/user \
-  -- sh -c 'systemctl --user is-active lab-ui-web; echo "systemctl rc=$?"'            # rc ≠ 0 (no user bus)
-sudo -u lab-ui cat /home/chupa/.config/solana-lab/recorder.env                        # Permission denied
-sudo -u lab-ui touch /home/chupa/Solana-project/data-old-faithful-one/lab/journal/x   # Permission denied
-sudo -u lab-ui kill -0 "$(systemctl --user show -p MainPID --value lab-paper)"        # Operation not permitted
 ```
 
 ## Rollback
@@ -83,4 +90,16 @@ sudo systemctl disable --now lab-ui-web && sudo rm /etc/systemd/system/lab-ui-we
 systemctl --user enable --now lab-ui-web            # the user unit again (lab/ops/systemd/lab-ui-web.service)
 ```
 
-The ACLs and the user can stay; they grant read only. Remove them with `setfacl -R -x u:lab-ui <dir>` and `sudo userdel lab-ui`.
+The ACLs and the user can stay; they grant read only. To remove them (as `chupa`, then `sudo userdel lab-ui`):
+
+```bash
+H=/home/chupa; L=$H/Solana-project/data-old-faithful-one/lab
+for d in $H/Solana-project/worktrees/lab-ui-deploy $H/Solana-project/worktrees/paper-run/lab/paper \
+         $H/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155 $H/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu \
+         $L/analytics $L/store $L/journal $L/recorder $L/ui-cache $L/backtests $L/wallets/cases-v1 $L/token_meta; do
+  [ -d $d ] && setfacl -R -x u:lab-ui $d && find $d -type d -exec setfacl -x d:u:lab-ui {} +
+done
+for d in $H $H/.local $H/.local/share $H/Solana-project $H/Solana-project/data-old-faithful-one $L; do
+  setfacl -x u:lab-ui $d 2>/dev/null || true             # traverse ACLs of an older version of the script, if any
+done
+```

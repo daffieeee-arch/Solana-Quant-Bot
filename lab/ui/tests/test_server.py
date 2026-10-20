@@ -318,15 +318,28 @@ class SystemUnit(unittest.TestCase):
         self.assertFalse(any(".config" in b or b.rstrip("/") in ("/home/chupa", "/home/chupa/Solana-project") for b in binds))
         self.assertNotRegex(self.text, r"(?m)^BindPaths=")
 
-    def test_grant_script_reads_only(self):
+    def test_grant_script_reads_only_the_bound_trees(self):
+        """Read (rX) on exactly the trees the unit binds; no traverse ACL on the way down (LAB review on #438: an
+        x on /home/chupa would open every world-readable file below it to lab-ui outside the sandbox)."""
         with open(os.path.join(self.OPS, "ui-grant-read.sh")) as f:
             sh = f.read()
         acls = re.findall(r'setfacl[^\n]*"(d?:?u:\$U:[^"]*)"', sh)
         self.assertTrue(acls)
-        self.assertTrue(all(a.split(":")[-1] in ("x", "rX") for a in acls), acls)
+        self.assertTrue(all(a.split(":")[-1] == "rX" for a in acls), acls)
+        loop = sh[sh.index("# Read (rX)"):sh.index("# Never:")]
+        paths = {p.replace("$H", "/home/chupa").replace("$P", "/home/chupa/Solana-project")
+                 .replace("$L", "/home/chupa/Solana-project/data-old-faithful-one/lab") for p in re.findall(r'"(\$[HPL][^"]*)"', loop)}
+        binds = set(re.findall(r"(?m)^BindReadOnlyPaths=-?(\S+)$", self.text))
+        self.assertEqual(paths, binds)
         code = [ln for ln in sh.split("# Never:")[0].splitlines() if not ln.lstrip().startswith("#")]
-        self.assertFalse([ln for ln in code if ".config" in ln])  # granted nowhere; only the closing check names it
+        self.assertFalse([ln for ln in code if ".config" in ln])
 
+    def test_sandbox_check_uses_the_units_own_lines(self):
+        with open(os.path.join(self.OPS, "ui-sandbox-run.sh")) as f:
+            sh = f.read()
+        self.assertIn("systemd/lab-ui-web.system.service", sh)
+        for key in ("User", "ProtectHome", "BindReadOnlyPaths", "InaccessiblePaths", "ProtectSystem"):
+            self.assertIn(key, sh)
 
 if __name__ == "__main__":
     unittest.main()
