@@ -15,9 +15,10 @@
 #                   --follow` twice, the same root and slots;
 #                5. GREEN needs: the two lab-live summaries equal (but their own `lab_live` measurements); against LiveFeed
 #                   equal events, kinds, each window's count, the learned, new_pools, usage and arrivals digests, the clock,
-#                   snapshot_before and h24, and the stats segments, late_rows, duplicate_rows, unknown_pools and
-#                   unknown_pool_rows; unknown_pool_other_rows and unknown_mint_rows equal LiveFeed's where it counts them
-#                   (#430), else 99zzr's split (2 and 12,127 = 11,606 + 521).
+#                   snapshot_before and h24, and the stats segments, late_rows, duplicate_rows and unknown_pool_rows. #430's
+#                   counters (unknown_pools by its rule, which also counts the pools of unknown boost, withdraw and deposit
+#                   rows; unknown_pool_other_rows; unknown_mint_rows) equal LiveFeed's where it is #430's, else 99zzt's
+#                   (#430, d5750c6, on these segments: 3, 2 and 12,127 = 11,606 + 521); unknown_mints is reported.
 #                   Reported, not gated in PR 1: each window's sha256 without the farmer flag (a backfill's rows set the
 #                   pool context of the withdraw and deposit legs after them: PR 2 brings the backfill as history), the
 #                   sha256 with it (M3-10), history and flag_fixes (PR 2, M3-10), the farm seed (PR 3).
@@ -111,11 +112,14 @@ for k in ("events", "kinds", "learned", "new_pools", "usage", "arrivals", "clock
     if py.get(k) != rs.get(k):
         red.append(f"{k}: LiveFeed {json.dumps(py.get(k))[:300]}, lab-live {json.dumps(rs.get(k))[:300]}")
 ps, ls = py["stats"], rs["stats"]
-for k in ("segments", "late_rows", "duplicate_rows", "unknown_pools", "unknown_pool_rows"):
+for k in ("segments", "late_rows", "duplicate_rows", "unknown_pool_rows"):
     if ps.get(k) != ls.get(k):
         red.append(f"stats {k}: LiveFeed {ps.get(k)}, lab-live {ls.get(k)}")
-for k, split in (("unknown_pool_other_rows", 2), ("unknown_mint_rows", 12127)):  # #430's, else 99zzr's split
-    ref, src = (ps[k], "LiveFeed") if k in ps else (split, "99zzr's split")
+# #430's counters: LiveFeed's when it is #430's (main's unknown_pools counts the pools of unknown buys and sells only),
+# else 99zzt's (#430, d5750c6, on these segments)
+p430 = "unknown_pool_other_rows" in ps
+for k, ref99 in (("unknown_pools", 3), ("unknown_pool_other_rows", 2), ("unknown_mint_rows", 12127)):
+    ref, src = (ps[k], "LiveFeed") if p430 else (ref99, "99zzt (#430)")
     if ls.get(k) != ref:
         red.append(f"stats {k}: lab-live {ls.get(k)}, {src} {ref}")
 pw, rw = ({w[0]: w for w in v["windows"]} for v in (py, rs))
