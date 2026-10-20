@@ -36,13 +36,15 @@ their trigger. Farm (organic / flagged) and the trigger's day come along for the
       [--families F7,N2_F7] [--from-slot A --to-slot B] [--out DIR] [--cfg week2-defaults.yaml]
 
 Writes markout-<run>.parquet (one row per signal x d x horizon) and run-markout-<run>.json.
-Slots stay before the hold-out (common.guard). Heavy on a full run (ASOF join against the pool
+Slots stay before the hold-out (common.guard); the one exception is E20's finished clean run under its clean.lock
+(--clean-lock, clean_lock(): that run's parts, store and engine snapshot only; the F7 mechanism pre-registration). Heavy on a full run (ASOF join against the pool
 and curve tables): NAS; one day on the VPS as a smoke test.
 """
 
 # no-quote-filter: consumed data, conclusions audited 2026-10-18 (lab/reports/2026-10-18-audit-niet-sol-quote.md)
 import argparse
 import glob
+import hashlib
 import json
 import math
 import os
@@ -636,17 +638,79 @@ def round_trips(con, per_order, mk_path, size=SIZE):
     return n
 
 
-def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS, tx_delays=False):
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+CLEAN_LOCK_KEYS = ("store", "store_sha256", "test_run", "test_config_sha256", "engine_commit", "trading_days")
+
+
+def clean_lock(path, parts_dir, lo=None, hi=None):
+    """The one exception to guard() (research/prereg-f7-mechanism-clean-2026-10-21.md): the finished E20 run under its
+    clean.lock. backtest.clean_test writes the lock once E20's run has passed its minimum of trading days (the store is
+    final); nothing in it is this module's. Admitted are exactly the lock's test run's parts and the lock's store:
+    - parts_dir is <test_run>/parts of the lock, and <test_run>/config.json still has the lock's sha256;
+    - the store is the lock's, and its sha256 (computed here, before any read) is the lock's;
+    - the run's engine snapshot <test_run>/engine carries the lock's engine commit; LAB_ENGINE must be that directory
+      (or unset: it is set to it);
+    - no --from-slot / --to-slot: the whole run, no sub-window;
+    - trading_days >= 1 (the lock holds E20's count).
+    Anything else is refused with ValueError; without a lock guard() applies as always. Returns (store, engine_dir, lock)."""
+    try:
+        lock = json.load(open(path))
+    except (OSError, ValueError) as e:
+        raise ValueError(f"clean.lock unreadable: {e}")
+    missing = [k for k in CLEAN_LOCK_KEYS if k not in lock]
+    if missing:
+        raise ValueError(f"clean.lock lacks {missing}")
+    if lo is not None or hi is not None:
+        raise ValueError("clean.lock: no --from-slot / --to-slot, the whole locked run only")
+    run_dir = os.path.realpath(lock["test_run"])
+    if os.path.realpath(parts_dir) != os.path.join(run_dir, "parts"):
+        raise ValueError(f"clean.lock admits only {os.path.join(run_dir, 'parts')}, not {parts_dir}")
+    cfg = os.path.join(run_dir, "config.json")
+    if not os.path.exists(cfg) or _sha256(cfg) != lock["test_config_sha256"]:
+        raise ValueError("clean.lock: the test run's config.json is missing or not the locked one")
+    store = os.path.realpath(lock["store"])
+    if not os.path.exists(store):
+        raise ValueError(f"clean.lock: no store at {store}")
+    if _sha256(store) != lock["store_sha256"]:
+        raise ValueError("clean.lock: the store's sha256 is not the locked one")
+    engine_dir = os.path.join(run_dir, "engine")
+    commit_file = os.path.join(engine_dir, "COMMIT")
+    if not os.path.exists(os.path.join(engine_dir, "backtest", "venues.py")) or not os.path.exists(commit_file):
+        raise ValueError(f"clean.lock: no engine snapshot at {engine_dir}")
+    commit = open(commit_file).read().strip()
+    if not lock["engine_commit"] or not commit.startswith(str(lock["engine_commit"])[:7]):
+        raise ValueError(f"clean.lock: engine snapshot {commit[:7]} is not the locked {lock['engine_commit']}")
+    want = os.environ.get("LAB_ENGINE")
+    if want and os.path.realpath(want.rstrip("/")) != os.path.realpath(engine_dir):
+        raise ValueError(f"clean.lock: LAB_ENGINE must be the run's snapshot {engine_dir}, not {want}")
+    os.environ["LAB_ENGINE"] = engine_dir
+    if not isinstance(lock["trading_days"], int) or lock["trading_days"] < 1:
+        raise ValueError("clean.lock: E20's run has no trading days")
+    return store, engine_dir, lock
+
+
+def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS, tx_delays=False, clean=None):
     import yaml
     t0 = time.time()
     _T0[0] = t0
     PHASES.clear()
+    lock = None
+    if clean:
+        store, _, lock = clean_lock(clean, parts_dir, lo, hi)
     mem = os.environ.get("LAB_WALLETS_MEMORY", "1GB")  # common.connect defaults to 1 GB: the NAS run died in the last join at 953 MiB
     con = connect(store, memory=mem) if store else connect(memory=mem)
     clock = Clock.from_store(con)
     meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
     end_slot = int(meta["slot_end_exclusive"])
-    guard(hi if hi is not None else end_slot)
+    if lock is None:  # the clean.lock run is the one admitted past the hold-out (clean_lock above)
+        guard(hi if hi is not None else end_slot)
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
     global V
@@ -677,7 +741,7 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
             "curve_states": n_curve, "states": "at target slots only", "buckets": buckets(), "targets": n_targets, "rows": n_rows, "size_sol": SIZE / SOL,
             "per_order_lamports": per_order, "delays": list(delays(tx_delays)) + (list(TX_DELAYS) if tx_delays else []),
             "tx_delays": {d: delay_label(d) for d in TX_DELAYS} if tx_delays else None, "tx_stats": tx_stats(con) if tx_delays else None,
-            "horizons": dict(HORIZONS_MS), "commit": git_commit(),
+            "horizons": dict(HORIZONS_MS), "commit": git_commit(), "clean_lock": {k: lock.get(k) for k in CLEAN_LOCK_KEYS} | {"path": os.path.abspath(clean)} if lock else None, "store": store or os.environ.get("LAB_STORE"),
             "seconds": round(time.time() - t0, 1), "phases_seconds": dict(PHASES)}
     with open(os.path.join(out_dir, f"run-markout-{run_name}.json"), "w") as f:
         json.dump(info, f, indent=1)
@@ -694,8 +758,10 @@ def main():
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "markout-v1"))
     ap.add_argument("--cfg", default=DEFAULTS)
     ap.add_argument("--tx-delays", action="store_true", help="add the transaction-level entries (TX_DELAYS codes in d; spec M-a)")
+    ap.add_argument("--clean-lock", help="E20's clean.lock: the one run admitted past the hold-out (clean_lock); the store and engine come from it")
     a = ap.parse_args()
-    info = run(a.parts, a.run, a.out, a.families.split(",") if a.families else None, a.from_slot, a.to_slot, cfg_path=a.cfg, tx_delays=a.tx_delays)
+    info = run(a.parts, a.run, a.out, a.families.split(",") if a.families else None, a.from_slot, a.to_slot, cfg_path=a.cfg, tx_delays=a.tx_delays,
+               clean=a.clean_lock)
     print(json.dumps(info), file=sys.stderr)
 
 
