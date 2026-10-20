@@ -33,7 +33,10 @@ Signals are deduplicated over exit variants (tp4 / tp6, trail20 / trail35 share 
 their trigger. Farm (organic / flagged) and the trigger's day come along for the K1-K3 rows.
 
   LAB_STORE=<dev2> LAB_ENGINE=<engine dir> python -m wallets.markout --parts DIR --run NAME
-      [--families F7,N2_F7] [--from-slot A --to-slot B] [--out DIR] [--cfg week2-defaults.yaml]
+      [--families F7,N2_F7] [--from-slot A --to-slot B] [--out DIR] [--cfg week2-defaults.yaml] [--delay-ms 600]
+
+--delay-ms adds, beside DELAYS, the slot delay of that many ms per epoch through the store's Clock (the engine's rule for
+E20's d_ms 600: 2 slots at 268 ms, 3 at 218 ms); the run JSON lists it per epoch (delay_slots_per_epoch).
 
 Writes markout-<run>.parquet (one row per signal x d x horizon) and run-markout-<run>.json.
 Slots stay before the hold-out (common.guard); the one exception is E20's finished clean run under its clean.lock
@@ -341,20 +344,32 @@ def ms_case(clock, slot_sql):
     return "CASE " + " ".join(parts) + " END"
 
 
-def build_targets(con, clock, end_slot, tx_delays=False):
+def delay_slots(clock, delay_ms):
+    """The slot delay of `delay_ms` per measured epoch of the store (Clock.slots: max(1, round(ms / ms_per_slot))), and the
+    default for an unmeasured epoch (REF_MS). E20 enters at d_ms 600 through the engine's Clock: 2 slots at 268 ms, 3 at 218 ms."""
+    per_epoch = {ep: clock.slots(delay_ms, ep * EPOCH) for ep in sorted(clock.per_epoch)} if clock and clock.per_epoch else {}
+    return per_epoch, max(1, round(delay_ms / REF_MS))
+
+
+def build_targets(con, clock, end_slot, tx_delays=False, delay_ms=None):
     """signal x d x (entry, horizons) -> target slot; the entry is horizon '' at t + d. In SQL (the Python
     executemany took 100 s per 190k rows on the NAS): the same arithmetic as horizon_slots, ms of the entry
     slot's epoch, ceil(h_ms / ms). With tx_delays the slot delays are delays(True) and the TX_DELAYS codes are added
     for pool signals: their entry slot is t (1xxx) or t + 1 (2001) and the entry state comes from tx_entries(), not
     from the slot's end."""
     hz = "('', 0), " + ", ".join(f"('{n}', {h})" for n, h in HORIZONS_MS)
-    ds = ", ".join(str(d) for d in (delays(True) + tuple(TX_DELAYS) if tx_delays else DELAYS))
+    ds = "[" + ", ".join(str(d) for d in (delays(True) + tuple(TX_DELAYS) if tx_delays else DELAYS)) + "]"
+    if delay_ms:  # the per-signal delay of delay_ms through the Clock of the signal's epoch, beside DELAYS
+        per_epoch, default = delay_slots(clock, delay_ms)
+        d_case = ("CASE t // {e} " + " ".join(f"WHEN {ep} THEN {d}" for ep, d in per_epoch.items()) + f" ELSE {default} END").format(e=EPOCH)
+        ds = f"list_distinct({ds} || [{d_case}])"
+    con.execute(f"CREATE OR REPLACE TEMP TABLE sd AS SELECT sid, unnest({ds})::INTEGER AS d FROM sig")
     dslot = "CASE WHEN d.d >= 2000 THEN 1 WHEN d.d >= 1000 THEN 0 ELSE d.d END"
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE targets AS
       SELECT s.sid::BIGINT AS sid, d.d::INTEGER AS d, hz.h::VARCHAR AS h, hz.h_ms::BIGINT AS h_ms,
              (s.t + {dslot} + CASE WHEN hz.h_ms = 0 THEN 0 ELSE ceil(hz.h_ms / ({ms_case(clock, 's.t + ' + dslot)}))::BIGINT END)::BIGINT AS target
-      FROM sig s, (SELECT unnest([{ds}]) AS d) d, (SELECT * FROM (VALUES {hz}) v(h, h_ms)) hz
+      FROM sig s JOIN sd d USING (sid), (SELECT * FROM (VALUES {hz}) v(h, h_ms)) hz
       {"WHERE s.venue = 'pool' OR d.d IN (" + ", ".join(str(d) for d in DELAYS) + ")" if tx_delays else ""}""")
     n = _count(con, "targets")
     progress("targets", n)
@@ -696,7 +711,7 @@ def clean_lock(path, parts_dir, lo=None, hi=None):
     return store, engine_dir, lock
 
 
-def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS, tx_delays=False, clean=None):
+def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS, tx_delays=False, clean=None, delay_ms=None):
     import yaml
     t0 = time.time()
     _T0[0] = t0
@@ -718,7 +733,7 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     scn = costs.Scenario.from_cfg("base", cfg)
     per_order = scn.per_tx()
     n_sig = load_signals(con, parts_dir, families, lo, hi, clock)
-    n_targets = build_targets(con, clock, end_slot, tx_delays)
+    n_targets = build_targets(con, clock, end_slot, tx_delays, delay_ms)
     if not tx_delays:
         con.execute("CREATE OR REPLACE TEMP TABLE tx_entry (sid BIGINT, d INTEGER, slot BIGINT, b BIGINT, e BIGINT, virt BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT, capped BOOLEAN)")
     n_pool, n_curve = match_states(con, *slot_bounds(con, clock, tx_delays), tx_delays=tx_delays)
@@ -737,7 +752,10 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
         FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms
       ) TO '{out_path}' (FORMAT PARQUET)""")  # streamed by DuckDB: the full table is never an Arrow table in Python
     progress("parquet written", n_rows)
-    info = {"run": run_name, "parts": parts_dir, "families": families, "slots": [lo, hi], "signals": n_sig, "pool_states": n_pool,
+    per_epoch, default = delay_slots(clock, delay_ms) if delay_ms else ({}, None)
+    info = {"run": run_name, "parts": parts_dir, "parts_sha256": {os.path.basename(f): _sha256(f) for f in sorted(glob.glob(os.path.join(parts_dir, "*.parquet")))},
+            "families": families, "slots": [lo, hi], "signals": n_sig, "pool_states": n_pool,
+            "delay_ms": delay_ms, "delay_slots_per_epoch": {str(ep): d for ep, d in per_epoch.items()}, "delay_slots_default": default,
             "curve_states": n_curve, "states": "at target slots only", "buckets": buckets(), "targets": n_targets, "rows": n_rows, "size_sol": SIZE / SOL,
             "per_order_lamports": per_order, "delays": list(delays(tx_delays)) + (list(TX_DELAYS) if tx_delays else []),
             "tx_delays": {d: delay_label(d) for d in TX_DELAYS} if tx_delays else None, "tx_stats": tx_stats(con) if tx_delays else None,
@@ -759,9 +777,10 @@ def main():
     ap.add_argument("--cfg", default=DEFAULTS)
     ap.add_argument("--tx-delays", action="store_true", help="add the transaction-level entries (TX_DELAYS codes in d; spec M-a)")
     ap.add_argument("--clean-lock", help="E20's clean.lock: the one run admitted past the hold-out (clean_lock); the store and engine come from it")
+    ap.add_argument("--delay-ms", type=int, help="add the slot delay of this many ms per epoch through the store's Clock (E20's d_ms 600) beside DELAYS")
     a = ap.parse_args()
     info = run(a.parts, a.run, a.out, a.families.split(",") if a.families else None, a.from_slot, a.to_slot, cfg_path=a.cfg, tx_delays=a.tx_delays,
-               clean=a.clean_lock)
+               clean=a.clean_lock, delay_ms=a.delay_ms)
     print(json.dumps(info), file=sys.stderr)
 
 

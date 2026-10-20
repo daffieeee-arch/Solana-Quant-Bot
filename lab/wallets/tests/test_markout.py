@@ -348,3 +348,20 @@ def test_tx_level_entries(tmp_path):
     h1 = {r["d"]: r["target"] for r in R if r["h"] == "1s"}
     assert h1[2001] == A + 1 + 3 and h1[1000] == A + 3 and h1[1] == A + 1 + 3 and h1[0] == A + 3
     assert all(r["capped"] == ent[r["d"]]["capped"] for r in R)               # the horizon rows carry the entry's flag
+
+
+def test_delay_ms_adds_the_clock_delay(tmp_path, monkeypatch):
+    """--delay-ms: the slot delay of that many ms per epoch through the Clock beside DELAYS (400 ms on the mini store: 1,300 ms
+    = 3 slots), listed per epoch in the run JSON, with the parts' sha256s."""
+    _store(tmp_path / "s.duckdb")
+    _parts(tmp_path / "parts")
+    monkeypatch.setenv("LAB_ENGINE", ENGINE)
+    info = markout.run(str(tmp_path / "parts"), "dm", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path), delay_ms=1300)
+    assert info["delay_ms"] == 1300 and info["delay_slots_per_epoch"] == {str(SLOT0 // 432_000): 3} and info["delays"] == [1, 2]
+    assert list(info["parts_sha256"]) == ["part-0.parquet"] and len(info["parts_sha256"]["part-0.parquet"]) == 64
+    con = duckdb.connect()
+    ds = [r[0] for r in con.execute(f"SELECT DISTINCT d FROM read_parquet('{tmp_path}/out/markout-dm.parquet') ORDER BY 1").fetchall()]
+    assert ds == [1, 2, 3]
+    # d 3 rows: the entry at t + 3, one per signal and horizon, same count as d 2
+    n2, n3 = con.execute(f"SELECT count(*) FILTER (WHERE d = 2), count(*) FILTER (WHERE d = 3) FROM read_parquet('{tmp_path}/out/markout-dm.parquet')").fetchone()
+    assert n2 == n3 > 0

@@ -11,8 +11,9 @@
 #   1. the lock exists and names a test run with parts/ and an engine snapshot;
 #   2. the tests: wallets/tests/test_markout.py (with the dev engine, the clean-lock refusals included) and
 #      test_mechanism_report.py;
-#   3. markout --clean-lock over the run's parts (families F7 and N2_F7) → $OUT/markout-clean-e20.parquet; RED when
-#      signals, pool states or rows are 0 or the json carries no clean_lock;
+#   3. markout --clean-lock --delay-ms 600 over the run's parts (families F7 and N2_F7: the rule's d per epoch through
+#      the Clock, beside DELAYS) → $OUT/markout-clean-e20.parquet; RED when signals, pool states or rows are 0 or the json
+#      carries no clean_lock or no delay per epoch;
 #   4. mechanism_report → $OUT/mechanism.md + mechanism.json; the sha256 of every output.
 # Tunables (env): MEMORY (DuckDB limit, default 12GB), BUCKETS (venue-state match buckets, default 8), THREADS (6),
 # WORKERS (bootstrap processes, 4), BOOT (10000), LAB_SPILL_DIR, LAB_SPILL_MAX, OUT (default $DATA/wallets/mechanism-<commit7>).
@@ -53,15 +54,16 @@ grep -q "test_clean_lock_refuses_anything_else" <("$PY" -m pytest --collect-only
 
 # 3. the markouts under the lock
 rc=0
-env -u LAB_ENGINE nice -n 10 "$PY" -u -m wallets.markout --parts "$PARTS" --run clean-e20 --out "$OUT" --families F7,N2_F7 --clean-lock "$LOCK" \
+env -u LAB_ENGINE nice -n 10 "$PY" -u -m wallets.markout --parts "$PARTS" --run clean-e20 --out "$OUT" --families F7,N2_F7 --clean-lock "$LOCK" --delay-ms 600 \
   > "$LOG/markout-clean-e20.log" 2>&1 || rc=$?
 [ "$rc" = 0 ] || { tail -5 "$LOG/markout-clean-e20.log" | tee -a "$LOG/nas_mechanism.log"; red "markout failed (rc $rc)"; }
 "$PY" - "$OUT/run-markout-clean-e20.json" >> "$LOG/nas_mechanism.log" 2>&1 <<'PYEOF' || red "markout output is empty or unlocked"
 import json, sys
 j = json.load(open(sys.argv[1]))
 print(f"markout: signals {j['signals']:,}, pool states {j['pool_states']:,}, rows {j['rows']:,}, store {j.get('store')}, "
-      f"clean_lock {j.get('clean_lock') and j['clean_lock'].get('engine_commit')}, {j['seconds']} s")
-sys.exit(0 if j["signals"] > 0 and j["pool_states"] > 0 and j["rows"] > 0 and j.get("clean_lock") else 1)
+      f"clean_lock {j.get('clean_lock') and j['clean_lock'].get('engine_commit')}, delay {j.get('delay_ms')} ms = slots per epoch "
+      f"{j.get('delay_slots_per_epoch')}, parts {len(j.get('parts_sha256') or {})}, {j['seconds']} s")
+sys.exit(0 if j["signals"] > 0 and j["pool_states"] > 0 and j["rows"] > 0 and j.get("clean_lock") and j.get("delay_slots_per_epoch") else 1)
 PYEOF
 tail -1 "$LOG/nas_mechanism.log"
 
