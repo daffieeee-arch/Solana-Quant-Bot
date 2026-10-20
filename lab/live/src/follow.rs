@@ -1557,6 +1557,26 @@ pub fn snapshot_known(dir: &Path, before: Option<u64>) -> Result<Snapshot> {
     }
 }
 
+/// A live start knows the store only before its first live slot (Codex finding 3 on 383a24d; LiveFeed's `_load_snapshot`
+/// with `before`). `snapshot_before` must be at or before the first complete segment's first slot (paper.shadow passes
+/// its `lo`, which can be a skipped slot just before it); without it, only a store that ends by then (meta.json
+/// `store_slots`: an older store, the paper start's case) is taken whole. Anything else would know tokens and pools
+/// created after the start from the start: refused, for `legs --follow` and `paper --follow` alike. No segment: nothing to
+/// check (the run refuses that itself).
+pub fn check_snapshot_before(snap: &Snapshot, before: Option<u64>, segs: &[SegMeta]) -> Result<()> {
+    let Some(first) = segs.first().map(|s| s.first) else { return Ok(()) };
+    match (before, snap.store_slots) {
+        (Some(b), _) if b > first => bail!("--snapshot-before {b} is after the first segment's first slot {first}: the start would know the \
+                                            tokens and pools created in [{first}, {b}): refused"),
+        (Some(_), _) => Ok(()),
+        (None, Some((_, end))) if end <= first => Ok(()),
+        (None, Some((_, end))) => bail!("no --snapshot-before, and the snapshot's store reaches slot {end}, past the first segment's first slot \
+                                         {first}: the start would know tokens and pools created after it: give --snapshot-before {first}"),
+        (None, None) => bail!("no --snapshot-before, and the snapshot's meta.json has no store_slots to show its store ends by the first \
+                               segment's first slot {first}: give --snapshot-before {first}"),
+    }
+}
+
 /// `lab-live legs --follow`: the follow source's events and side digests in paper.legs_dump's `--segments` form (spec
 /// §4.1), refused when it reads no segment, another number than `expect_segments`, a segment in the hold-out or the clean
 /// period, or no event.
@@ -1566,6 +1586,7 @@ pub fn run(a: &FollowArgs) -> Result<Value> {
     }
     let segs = locked_out(&a.root)?;
     let snap = snapshot_known(&a.snapshot, a.snapshot_before)?;
+    check_snapshot_before(&snap, a.snapshot_before, &segs)?;
     let (n_tokens, n_classed) = (snap.tokens.len(), snap.pool_class.len());
     let mut src = Follow::open(&a.root, snap, a.h24, true)?;
     src.mem_log = a.mem_log.is_some();
@@ -2143,6 +2164,44 @@ pub(crate) mod tests {
         fs::remove_file(root.join("snap/farm_seed.parquet")).unwrap();
         assert!(err(&a).contains("the snapshot has no seed"), "{}", err(&a));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_start_never_knows_the_store_past_its_first_live_slot() {
+        // Codex finding 3 (on 383a24d). The rule on its own: --snapshot-before at or before the first segment's first slot;
+        // without it only a store whose store_slots end (exclusive) by then; no segment, nothing to check.
+        let sm = |first| SegMeta { seq: 0, dir: PathBuf::new(), first, last: first + 9, meta: Value::Null };
+        let snap = |store| Snapshot { store_slots: store, ..Snapshot::default() };
+        let err = |r: Result<()>| format!("{:#}", r.unwrap_err());
+        assert!(check_snapshot_before(&snap(Some((0, 9))), Some(5), &[sm(5)]).is_ok());
+        assert!(check_snapshot_before(&snap(Some((0, 9))), Some(4), &[sm(5)]).is_ok()); // paper.shadow's lo: a skipped slot before
+        assert!(err(check_snapshot_before(&snap(Some((0, 9))), Some(6), &[sm(5)])).contains("[5, 6)"));
+        assert!(check_snapshot_before(&snap(Some((0, 5))), None, &[sm(5)]).is_ok());
+        assert!(err(check_snapshot_before(&snap(Some((0, 6))), None, &[sm(5)])).contains("give --snapshot-before 5"));
+        assert!(err(check_snapshot_before(&snap(None), None, &[sm(5)])).contains("no store_slots"));
+        assert!(check_snapshot_before(&snap(Some((0, 6))), None, &[]).is_ok());
+        // Through the CLI route (main.rs parse_follow_args, then run): the store [1000, 3000) and one segment with a buy of
+        // P1. From 2600: without --snapshot-before, or with 2601, refused; with 2600 it runs. From 3100 (an older store, the
+        // paper start's case) it runs without one.
+        for (first, before, ok) in [(2600, None, false), (2600, Some(2601), false), (2600, Some(2600), true), (3100, None, true)] {
+            let root = tmp(&format!("follow-bound-{first}-{}", before.unwrap_or(0)));
+            fs::create_dir_all(root.join("snap")).unwrap();
+            export(&root.join("snap"));
+            let d0 = seg(&root, 0, first, first + 99, json!({}));
+            put_trades(&d0, &[(first + 20, false, 50)]);
+            let mut argv = format!("--follow {} --snapshot {} --h24 500 --from {first} --summary {}", root.display(), root.join("snap").display(),
+                                   root.join("s.json").display());
+            if let Some(b) = before {
+                argv.push_str(&format!(" --snapshot-before {b}"));
+            }
+            let argv: Vec<String> = argv.split(' ').map(str::to_owned).collect();
+            let r = run(&crate::parse_follow_args(&argv).unwrap());
+            assert_eq!(r.is_ok(), ok, "{first} {before:?}: {r:?}");
+            if !ok {
+                assert!(format!("{:#}", r.unwrap_err()).contains("--snapshot-before"));
+            }
+            fs::remove_dir_all(&root).unwrap();
+        }
     }
 
     #[test]

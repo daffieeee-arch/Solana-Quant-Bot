@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from backtest.store import Chunk
 from backtest.strategies import Clock
@@ -202,7 +203,10 @@ def test_seed_window_and_when_the_farm_labels_are_complete(tmp_path):
         (range(0, 2_000, 10), 4_000, (3_000, 3_000, 5_000)),  # it ends before: a gap, complete a day after the start
     )
     for i, (slots, first, want) in enumerate(cases):
-        f = LiveFeed(str(tmp_path), store=fake_store(tmp_path / f"s{i}.duckdb", slots), follow=False, seed_farmers=True)
+        # a store that reaches the first live slot is taken as known before it (LiveFeed refuses it whole: below)
+        before = first if max(slots) >= first else None
+        f = LiveFeed(str(tmp_path), store=fake_store(tmp_path / f"s{i}.duckdb", slots), follow=False, seed_farmers=True,
+                     snapshot_before=before)
         f._init_seed(first, h24)
         assert (f.farm_seed["lo"], f.farm_seed["hi"], f.farm_seed["complete_from"]) == want
         f._seed_pool("P")
@@ -212,3 +216,20 @@ def test_seed_window_and_when_the_farm_labels_are_complete(tmp_path):
         # Once per pool; a seed window left empty by a gap queries nothing.
         assert sum(len(dq) for dq in f.farmers.hist.values()) == n and f.stats["seeded_pools"] == (want[1] > want[0])
         f.close()
+
+
+def test_a_start_never_knows_the_store_past_its_first_live_slot(tmp_path):
+    """LAB review on Codex finding 3 (383a24d): a store whose pool rows reach the first live slot needs snapshot_before (at
+    or before that slot: paper.shadow's lo may lie just before it); one that ends before the start is taken whole."""
+    store = fake_store(tmp_path / "s.duckdb", range(0, 5_000, 10))
+    for before, first, ok in ((None, 4_000, False), (4_001, 4_000, False), (4_000, 4_000, True), (3_990, 4_000, True), (None, 5_000, True)):
+        f = LiveFeed(str(tmp_path), store=store, follow=False, seed_farmers=True, snapshot_before=before)
+        try:
+            if ok:
+                f._init_seed(first, 1_000)
+                assert f.farm_seed["first_live_slot"] == first
+            else:
+                with pytest.raises(SystemExit, match="snapshot_before"):
+                    f._init_seed(first, 1_000)
+        finally:
+            f.close()

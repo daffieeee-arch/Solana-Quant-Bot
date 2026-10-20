@@ -160,7 +160,9 @@ if [ "$STEP" = build ]; then
            paper::tests::a_follow_run_writes_the_live_states_and_counts_a_flag_fix_on_its_slots_day \
            paper::tests::learned_and_usage_rows_wait_for_the_next_dated_minute_and_none_after_the_last \
            paper::tests::a_group_that_could_trade_a_curve_is_refused_with_follow paper::tests::the_flag_fix_days_are_written_as_python_dumps_them \
-           tests::the_paper_command_takes_the_follow_source_without_the_replays_options; do
+           tests::the_paper_command_takes_the_follow_source_without_the_replays_options \
+           follow::tests::a_start_never_knows_the_store_past_its_first_live_slot \
+           paper::tests::the_cli_route_refuses_a_snapshot_past_the_first_live_slot; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
