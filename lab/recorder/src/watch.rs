@@ -119,9 +119,11 @@ impl Default for Opts {
 pub struct Extra {
     pub probes: Vec<String>,
     pub fresh_vaults: Vec<String>,
+    /// `tx_new_reversed`'s learned exclusions (exclude.rs), beside NEW_REVERSED_EXCLUDE.
+    pub excludes: Vec<String>,
 }
 
-fn valid(key: &str) -> bool {
+pub(crate) fn valid(key: &str) -> bool {
     bs58::decode(key).into_vec().is_ok_and(|v| v.len() == 32)
 }
 
@@ -232,6 +234,9 @@ pub struct Filter {
     pub pool_accounts: bool,
     pub pool_creations: bool,
     pub new_reversed: bool,
+    /// `tx_new_reversed`'s learned exclusions (creation-filters spec v0.2 P1), sent after NEW_REVERSED_EXCLUDE; empty
+    /// when the stream is off.
+    pub learned_excludes: Vec<String>,
     pub pump_creates: bool,
     /// Graduation transactions (new canonical pools for M1).
     pub new_pools: bool,
@@ -268,6 +273,7 @@ impl Filter {
             pool_accounts: o.pool_accounts && on("pool_accounts"),
             pool_creations: o.pool_creations && on("pool_creations"),
             new_reversed: o.new_reversed && on("tx_new_reversed"),
+            learned_excludes: if o.new_reversed && on("tx_new_reversed") { extra.excludes.clone() } else { Vec::new() },
             pump_creates: o.pump_creates && on("tx_pump_creates"),
             new_pools: o.new_pools,
             backfill: o.backfill && on("backfill"),
@@ -344,7 +350,7 @@ impl Filter {
                     vote: Some(false),
                     failed: Some(false),
                     account_include: vec![PUMP_AMM.to_owned()],
-                    account_exclude: NEW_REVERSED_EXCLUDE.iter().map(|a| (*a).to_owned()).collect(),
+                    account_exclude: self.new_reversed_exclude(),
                     ..Default::default()
                 },
             );
@@ -416,12 +422,19 @@ impl Filter {
         }
     }
 
+    /// NEW_REVERSED_EXCLUDE, then the learned exclusions it does not hold.
+    pub fn new_reversed_exclude(&self) -> Vec<String> {
+        let mut out: Vec<String> = NEW_REVERSED_EXCLUDE.iter().map(|a| (*a).to_owned()).collect();
+        out.extend(self.learned_excludes.iter().filter(|a| !NEW_REVERSED_EXCLUDE.contains(&a.as_str())).cloned());
+        out
+    }
+
     pub fn summary(&self) -> Value {
         json!({"level": self.level, "dropped": &DOWNSCALE[..self.level.min(DOWNSCALE.len())],
                "tx_pools": self.tx_pools.len(), "tx_probes": self.tx_probes.len(), "tx_wallets": self.tx_wallets.len(),
                "vaults": self.vaults.len(), "new_vaults": self.fresh_vaults.len(), "pool_accounts": self.pool_accounts,
                "pool_creations": self.pool_creations, "new_reversed": self.new_reversed, "new_pools": self.new_pools,
-               "pump_creates": self.pump_creates,
+               "pump_creates": self.pump_creates, "learned_excludes": self.learned_excludes.len(),
                "backfill": self.backfill,
                "truncated": self.truncated})
     }
@@ -554,7 +567,7 @@ mod tests {
     #[test]
     fn downscale_drops_streams_in_order_and_keeps_open_pools() {
         let w = watch();
-        let extra = Extra { probes: vec![A.to_owned(), C.to_owned()], fresh_vaults: vec![D.to_owned()] };
+        let extra = Extra { probes: vec![A.to_owned(), C.to_owned()], fresh_vaults: vec![D.to_owned()], ..Extra::default() };
         let full = Filter::new(&w, &extra, 0, &opts(true, 10_000));
         assert_eq!(full.tx_pools, vec![B.to_owned(), A.to_owned()]); // open pool first, no duplicate
         assert_eq!(full.tx_probes, vec![C.to_owned()]); // A is already a watchlist pool
@@ -598,7 +611,7 @@ mod tests {
         assert_eq!(r.block_footer.get("block_footers").map(|f| f.include_certificates), Some(Some(false)));
         assert!(empty.vault_request().block_footer.is_empty()); // the vault stream asks for none
         assert!(empty.vault_request().accounts.is_empty());
-        let extra = Extra { probes: vec![C.to_owned()], fresh_vaults: vec![A.to_owned()] };
+        let extra = Extra { probes: vec![C.to_owned()], fresh_vaults: vec![A.to_owned()], ..Extra::default() };
         let full = Filter::new(&watch(), &extra, 0, &opts(true, 10_000));
         let r = full.request(None);
         for f in r.transactions.values() {
@@ -611,6 +624,17 @@ mod tests {
         let nr = &r.transactions["tx_new_reversed"];
         assert_eq!((nr.account_include.clone(), nr.account_exclude.len()), (vec![PUMP_AMM.to_owned()], NEW_REVERSED_EXCLUDE.len()));
         assert!(NEW_REVERSED_EXCLUDE.iter().all(|a| valid(a)));
+        // creation-filters spec v0.2 P1: the learned exclusions follow the static list, without a duplicate, and only while
+        // the stream is on
+        let learned = Extra { excludes: vec![D.to_owned(), NEW_REVERSED_EXCLUDE[0].to_owned()], ..extra.clone() };
+        let with = Filter::new(&watch(), &learned, 0, &opts(true, 10_000));
+        let req = with.request(None);
+        let ex = &req.transactions["tx_new_reversed"].account_exclude;
+        assert_eq!((ex.len(), &ex[..NEW_REVERSED_EXCLUDE.len()], ex.last()), (NEW_REVERSED_EXCLUDE.len() + 1, &nr.account_exclude[..], Some(&D.to_owned())));
+        assert_eq!(with.summary()["learned_excludes"], 2);
+        assert!(with != full && !with.same_streams(&full)); // a changed set is a resubscribe
+        let off = Filter::new(&watch(), &learned, 0, &Opts { new_reversed: false, ..opts(true, 10_000) });
+        assert!(off.learned_excludes.is_empty() && !off.request(None).transactions.contains_key("tx_new_reversed"));
         assert_eq!(r.transactions["tx_probes"].account_include, vec![C.to_owned()]);
         // Graduations stay at every downscale level.
         assert!(Filter::new(&watch(), &extra, DOWNSCALE.len(), &opts(true, 10_000)).request(None).transactions.contains_key("tx_new_pools"));
