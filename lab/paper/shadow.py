@@ -174,10 +174,15 @@ class ShadowRecorder:
     """Writes the recorder's segments for [lo, hi) from the chunks, one at a time (write(seq))."""
 
     def __init__(self, scon, chunks, root, lo, hi, clock, window, probes_on=True, gaps=3, reconnects=6, seed=1052,
-                 watch_warmup_minutes=0, work=None, memory="1GB", log=print, reuse=False, pump_creates=False, prepare=True):
+                 watch_warmup_minutes=0, work=None, memory="1GB", log=print, reuse=False, pump_creates=False, prepare=True,
+                 engine_only_root=None):
         self.root, self.lo, self.hi, self.clock, self.log = root, lo, hi, clock, log
         self.pump_creates = pump_creates
         os.makedirs(os.path.join(root, "segments"), exist_ok=True)
+        # M3-04 (--engine-only): recorder B's segments beside A's, the same slots (write_b)
+        self.root_b, self.totals_b = engine_only_root, Counter()
+        if engine_only_root:
+            os.makedirs(os.path.join(engine_only_root, "segments"), exist_ok=True)
         t0 = time.time()
         warm_lo = max(lo - clock.slots(watch_warmup_minutes * 60_000, lo), 0)
         self.watch = watchlists(scon, lo, hi, warm_lo)
@@ -441,6 +446,8 @@ class ShadowRecorder:
             json.dump(wl, f)
         with open(os.path.join(d, "_segment.json"), "w") as f:
             json.dump(meta, f)
+        if self.root_b:
+            self.write_b(seq, watch, opened, reconnects)
         self.totals["segments_with_chunk_loads"] = self.loads
         self.totals.update({"segments": 1, "rows": rows, "slots": n_slots, "pool_creations": n_pc, "backfills": len(backfills),
                             "backfill_txs": n_back, **{STREAMS[s]: n for s, n in per.items()}})
@@ -454,6 +461,88 @@ class ShadowRecorder:
                 with open(self.state_log, "a") as f:
                     f.write(json.dumps({"seq": seq, "rss_mb": rss, "s": round(time.time() - self.t_start), **st}) + "\n")
         return seq, d, meta
+
+    def write_b(self, seq, watch, opened, reconnects):
+        """M3-04 (--engine-only): recorder B's segment seq, beside A's in root_b: b2's engine-only filter
+        (research/m3-design-2026-10-19.md §7) on the same slots, gaps and reconnects. It receives:
+        - the minute list's f7_rev pools and the engine's open pools (tx_watchlist);
+        - the probes (A's are reversed only already) and their backfills;
+        - reversed-pool creations (tx_new_reversed; pool_creations with base WSOL);
+        - every block.
+        No m1 pools, wallets, graduations (tx_new_pools) or pump.fun creates. B's transactions are a subset of A's (its
+        pools a subset of A's list, the same probes and creations), so every row is in the work database already: a
+        missing one is refused. check_engine_only compares the rows after the run."""
+        m, a, b = self.ranges[seq]
+        d = os.path.join(self.root_b, "segments", f"{seq:09d}")
+        if os.path.exists(d):
+            shutil.rmtree(d)
+        os.makedirs(d)
+        rev = {p for p, tags in watch.items() if "f7_rev" in tags}
+        listed = rev | opened
+        recv = [(p, a, b, 1) for p in sorted(listed)]
+        recv += [(p, max(a, s), min(b, e), 2) for p, _, s, e, _, _ in self.probes if s < b and a < e and p not in listed]
+        con = self.con
+        con.register("recv_b_arrow", pa.table({"pool": [r[0] for r in recv], "lo": [r[1] for r in recv], "hi": [r[2] for r in recv],
+                                               "src": [r[3] for r in recv]},
+                                              schema=pa.schema([("pool", pa.string()), ("lo", pa.uint64()), ("hi", pa.uint64()),
+                                                                ("src", pa.int32())])))
+        con.execute(f"""CREATE OR REPLACE TEMP TABLE seg_keys_b AS SELECT slot, tx_index, min(src) AS src FROM (
+                          SELECT t.slot, t.tx_index, r.src FROM txu t JOIN recv_b_arrow r
+                            ON t.pool = r.pool AND t.slot >= r.lo AND t.slot < r.hi WHERE {self._pred(a, b, 't.slot')}
+                          UNION ALL SELECT slot, tx_index, 4 FROM crev WHERE {self._pred(a, b)}) GROUP BY 1, 2""")
+        con.unregister("recv_b_arrow")
+        missing = con.execute("SELECT count(*) FROM (SELECT slot, tx_index FROM seg_keys_b EXCEPT SELECT slot, tx_index FROM allkeys)"
+                              ).fetchone()[0]
+        if missing:
+            raise SystemExit(f"shadow --engine-only: segment {seq}: {missing} of B's transactions are not A's (refused)")
+        rows = 0
+        for t, name in self.tables.items():
+            if seq in self.with_rows[t]:
+                rows += self._copy(f"""SELECT x.* FROM {name} x SEMI JOIN seg_keys_b k ON x.slot = k.slot AND x.tx_index = k.tx_index
+                                       WHERE x.slot >= {a} AND x.slot < {b}""", os.path.join(d, t, "part-00000.parquet"))
+        n_slots = self._copy(f"SELECT * FROM blocks_t WHERE {self._pred(a, b)}", os.path.join(d, "blocks", "part-00000.parquet"))
+        n_pc = self._copy(f"""SELECT slot, pool, base_mint, quote_mint, coin_creator, is_mayhem_mode FROM pc
+                              WHERE {self._pred(a, b)} AND base_mint = '{WSOL}'""", os.path.join(d, "pool_creations", "part-00000.parquet"))
+        per = dict(con.execute("SELECT src, count(*) FROM seg_keys_b GROUP BY 1").fetchall())
+        usage = [{"minute": m, "stream": STREAMS[k], "bytes": n * TX_BYTES, "messages": n, "note": "estimated: 3 KB per transaction"}
+                 for k, n in sorted(per.items())]
+        usage.append({"minute": m, "stream": "blocks_meta", "bytes": n_slots * 200, "messages": n_slots, "note": "estimated"})
+        if n_pc:
+            usage.append({"minute": m, "stream": "pool_creations", "bytes": n_pc * 400, "messages": n_pc, "note": "estimated"})
+        backfills, n_back = [], 0
+        for i, (p, created, start, _, to_slot, arrive) in enumerate(self.probes):
+            if not a <= arrive < b:
+                continue
+            n = 0
+            for t, name in self.tables.items():
+                n += self._copy(f"""SELECT x.* FROM {name} x SEMI JOIN (SELECT DISTINCT slot, tx_index FROM txu
+                                      WHERE pool = '{p}' AND slot >= {created} AND slot <= {to_slot}) k
+                                      ON x.slot = k.slot AND x.tx_index = k.tx_index
+                                      WHERE x.slot >= {created} AND x.slot <= {to_slot}""",
+                                os.path.join(d, "backfill", t, f"part-{i:05d}.parquet"))
+            txs = con.execute(f"SELECT count(DISTINCT (slot, tx_index)) FROM txu WHERE pool = '{p}' AND slot >= {created} "
+                              f"AND slot <= {to_slot}").fetchone()[0]
+            n_back += txs
+            backfills.append({"id": f"{p}-{created}", "pool": p, "from_slot": created, "to_slot": to_slot, "rows": n,
+                              "status": "complete", "error": None})
+        if n_back:
+            usage.append({"minute": m, "stream": "backfill", "bytes": n_back * TX_BYTES, "messages": n_back,
+                          "note": "estimated: 3 KB per transaction"})
+        wl = {"pools": [{"pool": p} for p in sorted(listed)], "wallets": [], "pools_partial": [], "wallets_partial": [],
+              "vaults": [], "new_pools": False, "new_reversed": True, "engine_only": True,
+              "filter": {"tx_pools": len(listed), "tx_probes": sum(1 for r in recv if r[3] == 2)},
+              "source": {"valid_for_minute": m, "counts": {"f7_rev": len(rev), "open_pools": len(opened)}}}
+        meta = {"seq": seq, "first_slot": a, "last_slot": b - 1, "complete": True, "usage": usage, "budget": {},
+                "filter": wl["filter"], "reconnects": reconnects, "totals": {"rows": rows},
+                "shadow": {"minute": m, "engine_only": True, "f7_rev": len(rev), "open_pools": len(opened)}}
+        if backfills:
+            meta["backfills"] = backfills
+        with open(os.path.join(d, "watchlist.json"), "w") as f:
+            json.dump(wl, f)
+        with open(os.path.join(d, "_segment.json"), "w") as f:
+            json.dump(meta, f)
+        self.totals_b.update({"segments": 1, "rows": rows, "slots": n_slots, "pool_creations": n_pc, "backfills": len(backfills),
+                              "backfill_txs": n_back, **{STREAMS[k]: n for k, n in per.items()}})
 
     def coverage(self):
         return Coverage(self.recv, self.gaps)
@@ -483,6 +572,35 @@ class ShadowRecorder:
 
     def gap_segments(self):
         return {i for i, (_, a, b) in enumerate(self.ranges) if any(ga < b and a < gb for ga, gb in self.gaps)}
+
+
+def check_engine_only(root_a, root_b, memory="1GB"):
+    """M3-04: recorder B's rows against A's over the whole run. Per event table (in segments and in backfills), B's rows
+    must be A's (every row of B, with its multiplicity, also in A: EXCEPT ALL is empty), and B's blocks must equal A's.
+    Returns {"ok", "tables": {table: {"b_rows", "a_rows", "not_in_a"}}, "blocks_equal"}."""
+    con = data.connect(threads=2, memory=memory)
+    out, ok = {}, True
+    tabs = sorted({os.path.relpath(os.path.dirname(f), seg) for kind in ("", "backfill")
+                   for seg in glob.glob(os.path.join(root_b, "segments", "*", kind))
+                   for f in glob.glob(os.path.join(seg, "pump*", "*", "*.parquet"))})
+    for kind in ("", "backfill"):
+        for t in tabs:
+            fb = sorted(glob.glob(os.path.join(root_b, "segments", "*", kind, t, "*.parquet")))
+            fa = sorted(glob.glob(os.path.join(root_a, "segments", "*", kind, t, "*.parquet")))
+            if not fb:
+                continue
+            nb = con.execute(f"SELECT count(*) FROM read_parquet({fb!r}, union_by_name=true)").fetchone()[0]
+            na = con.execute(f"SELECT count(*) FROM read_parquet({fa!r}, union_by_name=true)").fetchone()[0] if fa else 0
+            extra = con.execute(f"""SELECT count(*) FROM (SELECT * FROM read_parquet({fb!r}, union_by_name=true)
+                                     EXCEPT ALL SELECT * FROM read_parquet({fa!r}, union_by_name=true))""").fetchone()[0] if fa else nb
+            out[os.path.join(kind, t) if kind else t] = {"b_rows": nb, "a_rows": na, "not_in_a": extra}
+            ok = ok and extra == 0
+    blk = lambda r: sorted(glob.glob(os.path.join(r, "segments", "*", "blocks", "*.parquet")))  # noqa: E731
+    ba, bb = blk(root_a), blk(root_b)
+    same = bool(ba) and con.execute(f"""SELECT count(*) FROM ((SELECT * FROM read_parquet({ba!r}) EXCEPT ALL SELECT * FROM read_parquet({bb!r}))
+                                        UNION ALL (SELECT * FROM read_parquet({bb!r}) EXCEPT ALL SELECT * FROM read_parquet({ba!r})))""").fetchone()[0] == 0
+    con.close()
+    return {"ok": ok and same, "tables": out, "blocks_equal": same}
 
 
 def _state_sizes(feed, eng):
@@ -899,6 +1017,15 @@ def _status(out, step, **kw):
     os.replace(path + ".tmp", path)
 
 
+def _root_b(a, out):
+    """M3-04: recorder B's root (<out>/rec-b) with --engine-only, emptied first; else None."""
+    if not getattr(a, "engine_only", False):
+        return None
+    root_b = os.path.join(out, "rec-b")
+    shutil.rmtree(root_b, ignore_errors=True)
+    return root_b
+
+
 def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, variants, resume, info, log):
     """Step 2: the shadow recorder writes the segments one minute at a time while LiveFeed and the engine
     read them. Returns (recorder, the live journal's directory); closes the store connection."""
@@ -906,7 +1033,7 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
     rec = ShadowRecorder(scon, data.complete_chunks(a.chunks), root, lo, hi, clock, window, probes_on=not a.no_probes,
                          gaps=a.gaps, reconnects=a.reconnects, seed=a.seed, watch_warmup_minutes=a.watch_warmup,
                          work=os.path.join(out, "work"), memory=a.memory, log=log, reuse=resume,
-                         pump_creates=getattr(a, "pump_creates", False))
+                         pump_creates=getattr(a, "pump_creates", False), engine_only_root=_root_b(a, out))
     _status(out, "recorder input")
     scon.close()  # not needed while live runs (its cache would hold memory); reopened for the comparison
     gc.collect()
@@ -930,6 +1057,8 @@ def _record_and_live(a, scon, out, root, lo, hi, clock, window, blo, bhi, h24, v
     info["live_watchlist"] = compare_watchlists(os.path.join(root, "watchlist-log.jsonl"), rec.watch)
     info["livefeed"] = dict(feed.stats)
     info["recorder"] = dict(rec.totals)
+    if rec.root_b:
+        info["recorder_b"] = dict(rec.totals_b)
     feed.close()  # the recorder's and LiveFeed's databases are done: free their memory
     rec.con.close()
     del feed
@@ -1036,6 +1165,9 @@ def run(a, log=print):
         # compared journal: it compares an earlier run's.
         raise SystemExit("shadow: the engine commit is unknown (no .git, no LAB_ENGINE_COMMIT): set LAB_ENGINE_COMMIT "
                          "(e.g. from the export's COMMIT file) or run from a git checkout")
+    if getattr(a, "engine_only", False) and (from_compare or from_segments):
+        raise SystemExit("shadow: --engine-only writes recorder B's segments while A's are written: not with --from-compare "
+                         "or --from-segments")
     os.makedirs(out, exist_ok=True)
     if from_segments:
         status = json.load(open(os.path.join(out, "STATUS.json"))).get("step") if os.path.exists(os.path.join(out, "STATUS.json")) else None
@@ -1115,6 +1247,13 @@ def run(a, log=print):
     days = max(1e-9, (hi - lo) * ms / DAY_MS)
     info["estimated_gb_per_day"] = round(sum(rec.totals[s] for s in list(STREAMS.values()) + ["backfill_txs"])
                                          * TX_BYTES / 1e9 / days, 2)
+    if info.get("recorder_b") is not None:  # M3-04: recorder B's volume and its rows against A's
+        tb = info["recorder_b"]
+        info["estimated_gb_per_day_b"] = round(sum(tb.get(s, 0) for s in list(STREAMS.values()) + ["backfill_txs"])
+                                               * TX_BYTES / 1e9 / days, 2)
+        info["engine_only_check"] = check_engine_only(root, os.path.join(out, "rec-b"), memory=a.memory)
+        log(f"engine-only (recorder B): {info['estimated_gb_per_day_b']} GB/day against A's {info['estimated_gb_per_day']}; "
+            f"B's rows within A's: {info['engine_only_check']['ok']}")
     log(f"live done ({time.time() - t0:.0f}s): {dict(rec.totals)}")
     if not from_compare:
         _status(out, "live", segments=rec.totals.get("segments", 0))
@@ -1206,6 +1345,25 @@ def _segments(root):
     return segment_dirs(root)
 
 
+def _render_b(info):
+    """M3-04: recorder B's lines in the recorder section (none without --engine-only)."""
+    tb = info.get("recorder_b")
+    if tb is None:
+        return []
+    ck = info.get("engine_only_check", {})
+    bad = {t: x for t, x in ck.get("tables", {}).items() if x["not_in_a"]}
+    return ["", "### Recorder B: the engine-only filter (M3-04, rec-b/)", "",
+            "- Filter: the list's f7_rev pools and the engine's open pools, the (reversed) probes and backfills, reversed-pool "
+            "creations and every block; no m1 pools, wallets, graduations or pump.fun creates. Open pools come from this "
+            "shadow's engine (all its variants, ignore_risk), a superset of the paper's.",
+            "- Transactions: " + ", ".join(f"{s} {tb.get(s, 0):,}" for s in STREAMS.values())
+            + f"; backfills {tb.get('backfills', 0)} ({tb.get('backfill_txs', 0):,} transactions); pool creations {tb.get('pool_creations', 0):,}.",
+            f"- Estimated volume: **{info.get('estimated_gb_per_day_b')} GB/day** (A: {info['estimated_gb_per_day']}) at 3 KB per transaction.",
+            f"- B's rows within A's: **{'yes' if ck.get('ok') else 'NO'}** ({sum(x['b_rows'] for x in ck.get('tables', {}).values()):,} rows "
+            f"in {len(ck.get('tables', {}))} tables; blocks equal: {ck.get('blocks_equal')})"
+            + (f"; not in A: {bad}" if bad else "") + "."]
+
+
 def render(info, rows):
     L = [f"# Shadow live: {info['from_slot']}–{info['to_slot']}", "",
          f"Store {os.path.basename(info['store'])}"
@@ -1255,6 +1413,7 @@ def render(info, rows):
           "- Transactions: " + ", ".join(f"{s} {rt.get(s, 0):,}" for s in STREAMS.values())
           + f"; backfills {rt.get('backfills', 0)} ({rt.get('backfill_txs', 0):,} transactions); pool creations {rt.get('pool_creations', 0):,}.",
           f"- Estimated volume: **{info['estimated_gb_per_day']} GB/day** at 3 KB per transaction (the #180 convention).",
+          *_render_b(info),
           f"- Simulated gaps (slots): {info['gaps']}; lossless reconnects: {len(info['reconnects'])}.",
           f"- LiveFeed: {info['livefeed']}.",
           f"- Live watchlist (received pools only) against the batch list: {info.get('live_watchlist')}.", "",
@@ -1289,6 +1448,9 @@ def main():
     ap.add_argument("--risk", default=os.path.join(os.path.dirname(__file__), "risk.yaml"))
     ap.add_argument("--reconcile-every", type=int, default=30)
     ap.add_argument("--memory", default=os.environ.get("LAB_DUCKDB_MEM", "1GB"), help="per DuckDB connection")
+    ap.add_argument("--engine-only", action="store_true",
+                    help="M3-04: also write recorder B's segments (b2's engine-only filter) to <out>/rec-b, its volume and its "
+                         "rows against A's")
     ap.add_argument("--resume", action="store_true",
                     help="reuse a finished replay and work database of the same settings (the rest runs again)")
     ap.add_argument("--from-compare", action="store_true",
