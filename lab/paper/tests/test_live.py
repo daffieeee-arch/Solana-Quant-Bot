@@ -94,11 +94,12 @@ def test_live_events_equal_the_replay(setup):
 
 def test_the_segments_dump_gives_the_stores_lines(setup):
     """paper.legs_dump --segments (M3-09a) as paper.engine --live builds the feed (the store's farmer seed, not the
-    test's): the same lines as the store form over the same slots, window by window."""
+    test's): the same lines as the store form over the same slots, window by window. The store reaches past LO, so the
+    start takes it as known before LO (LiveFeed refuses a store past its first live slot without snapshot_before)."""
     from paper import legs_dump
 
     root, h24, _, replay = setup
-    live = legs_dump.dump_segments(root, STORE, LO, HI, window=SEG, h24=h24, memory="500MB")
+    live = legs_dump.dump_segments(root, STORE, LO, HI, window=SEG, snapshot_before=LO, h24=h24, memory="500MB")
     store = legs_dump.dump(STORE, LO, HI, window=SEG)
     assert live["events"] == len(replay) and live["kinds"] == store["kinds"]
     assert [w[:4] for w in live["windows"]] == store["windows"] and live["sha256"] == store["sha256"]
