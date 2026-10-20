@@ -43,7 +43,7 @@ LO_SOL, HI_SOL = RULE["depth_band_sol"]
 SOL = 10**9
 LG = "ln(GREATEST(1 + gross, 0.001))"
 CREATOR_CLASS = """CASE WHEN creator_prior_pools IS NULL THEN 'pool niet in de store' WHEN creator_prior_pools < 0 THEN 'creator onbekend (system-program)'
-                        WHEN creator_prior_pools = 0 THEN 'eerste pool van de creator' WHEN creator_prior_pools < 10 THEN 'creator met 1-9 eerdere pools'
+                        WHEN creator_prior_pools = 0 THEN 'eerste in de store-window' WHEN creator_prior_pools < 10 THEN 'creator met 1-9 eerdere pools'
                         WHEN creator_prior_pools < 100 THEN 'creator met 10-99 eerdere pools' ELSE 'creator met >= 100 eerdere pools' END"""
 
 

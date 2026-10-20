@@ -109,7 +109,7 @@ def test_wiped_share_and_creator_class(tmp_path, monkeypatch):
     w = res["secondary"]["5m"]["band_wiped"]
     assert abs(w["mean"] - 0.5) < 1e-9 and abs(res["descriptive"]["per_trigger"]["wiped"] - 0.5) < 1e-9
     assert abs(res["primary"]["5m"]["P1_net"]["mean"] - (-0.35)) < 1e-9
-    assert set(res["descriptive"]["creator_class"]) == {"creator onbekend (system-program)", "eerste pool van de creator", "creator met 1-9 eerdere pools",
+    assert set(res["descriptive"]["creator_class"]) == {"creator onbekend (system-program)", "eerste in de store-window", "creator met 1-9 eerdere pools",
                                                         "creator met 10-99 eerdere pools", "creator met >= 100 eerdere pools", "pool niet in de store"}
     assert all(v["net"]["pools"] == 20 for v in res["descriptive"]["creator_class"].values())
 

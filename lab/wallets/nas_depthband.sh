@@ -12,7 +12,8 @@
 #   2. the tests: test_markout.py (dev engine, the clean-lock refusals included) and test_depthband_report.py;
 #   3. markout --clean-lock --delay-ms 600 over the run's parts (family F7) → $OUT/markout-clean-e49.parquet; RED when
 #      signals, pool states or rows are 0, the json carries no clean_lock or no delay per epoch, or depth_entry is missing;
-#   4. depthband_report → $OUT/depthband.md + depthband.json; the sha256 of every output.
+#   4. depthband_report → $OUT/depthband.md + depthband.json; RED when the report saw no triggers at all or none in the band
+#      (a band of zero on nine clean days is a pipeline error, not NOT JUDGED); band triggers / pools / days logged; the sha256 of every output.
 # Tunables (env): MEMORY (default 12GB), BUCKETS (8), THREADS (6), WORKERS (4), BOOT (10000), LAB_SPILL_DIR, LAB_SPILL_MAX,
 # OUT (default $DATA/wallets/depthband-<commit7>).
 set -euo pipefail
@@ -71,5 +72,14 @@ rc=0
 nice -n 10 "$PY" -m wallets.depthband_report --markout "$OUT" --run clean-e49 --boot "${BOOT:-10000}" --out "$OUT/depthband.md" > "$LOG/report.log" 2>&1 || rc=$?
 [ "$rc" = 0 ] || { tail -5 "$LOG/report.log" | tee -a "$LOG/nas_depthband.log"; red "depthband_report failed (rc $rc)"; }
 log "report: $(tail -1 "$LOG/report.log")"
+"$PY" - "$OUT/depthband.json" >> "$LOG/nas_depthband.log" 2>&1 <<'PYEOF' || red "the report saw no triggers (all or band): a pipeline error, not NOT JUDGED"
+import json, sys
+j = json.load(open(sys.argv[1]))
+i = j["input"]
+print(f"band: {i['band_triggers']:,} triggers in {i['band_pools']:,} pools over {i['band_days']} days (all F7 pool_reversed: {i['all_triggers']:,} triggers, "
+      f"{i['all_pools']:,} pools, {i['all_days']} days); outcome {j['verdict']['outcome']}")
+sys.exit(0 if i["all_triggers"] > 0 and i["band_triggers"] > 0 else 1)
+PYEOF
+tail -1 "$LOG/nas_depthband.log"
 for f in markout-clean-e49.parquet run-markout-clean-e49.json depthband.md depthband.json; do log "sha256 $f $(sha256sum "$OUT/$f" | cut -c1-64)"; done
 log "done"
