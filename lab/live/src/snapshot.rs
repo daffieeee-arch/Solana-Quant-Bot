@@ -206,6 +206,12 @@ impl Snapshot {
         Self::read(dir, None, false)
     }
 
+    /// The tokens and pools known before `before`, without the seed day (M3-09b's follow source: LiveFeed's admission
+    /// at its first live slot; the farmer seed is its PR 3's).
+    pub fn load_known(dir: &Path, before: Option<u64>) -> Result<Self> {
+        Self::read(dir, before, false)
+    }
+
     fn read(dir: &Path, before: Option<u64>, with_seed: bool) -> Result<Self> {
         let meta: Value = serde_json::from_slice(&fs::read(dir.join("meta.json")).with_context(|| format!("read {}/meta.json", dir.display()))?)
             .with_context(|| format!("{}/meta.json", dir.display()))?;

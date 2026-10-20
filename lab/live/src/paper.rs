@@ -268,6 +268,8 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
                     }
                 }
             }
+            // the replay hands out slots only; the follow source's items reach the engine with M3-09b's paper loop
+            _ => bail!("lab-live paper takes the replay's slots only (the follow source is M3-09b's, not wired here yet)"),
         }
         Ok(())
     })?;

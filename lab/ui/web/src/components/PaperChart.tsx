@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { get, type Candle } from "../api";
-import { label, shortAddr } from "../format";
+import { compactPrice, label, shortAddr } from "../format";
 import { cn } from "../lib/utils";
 import { Change } from "./Num";
 import PriceChart, { mcapCandles, type ChartMarker } from "./PriceChart";
@@ -17,7 +17,7 @@ interface ChartData {
 }
 const FRAMES = [{ s: 60, label: "1m" }, { s: 300, label: "5m" }, { s: 900, label: "15m" }, { s: 3600, label: "1u" }];
 const fmtVal = (v: number, unit: "mcap" | "price") => unit === "price"
-  ? v.toLocaleString("nl-NL", { maximumSignificantDigits: 3 })
+  ? compactPrice(v)
   : (v >= 1000 ? (v / 1000).toLocaleString("nl-NL", { maximumFractionDigits: 1 }) + "k" : v.toLocaleString("nl-NL", { maximumFractionDigits: 1 })) + " SOL";
 
 export default function PaperChart({ k, height = 320, compact = false }: { k: string; height?: number; compact?: boolean }) {

@@ -333,7 +333,7 @@ def report(out_path, signals_path, markout_dir=None, detect_json=None, boot=10_0
             for v in cells:
                 for d in ds:
                     L.append(mr.table(con, f"REV · {v} · d = {d} · point in time (traders at the D leg >= T)",
-                                      f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND (pool, t) IN (SELECT pool, t FROM pit WHERE variant = '{v}' AND pit)", boot))
+                                      f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND (pool, t) IN (SELECT pool, t FROM pit WHERE variant = '{v}' AND pit)", boot, twin=False))
         finally:
             mr.close_pool()
     md = "\n".join(L) + "\n"

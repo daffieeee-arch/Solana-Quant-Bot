@@ -164,3 +164,23 @@ def test_day_ci_parallel_is_bit_identical(monkeypatch):
     assert r.day_ci(v, days, boot=600, seed=8) != serial  # another seed is another key, not a cache hit
     r.close_pool()
     assert r._POOL == [None, 0]
+
+
+def test_table_without_twin_renders_na():
+    """twin=False: a positive group shows 'n/a' in the advantage column and verdict, never a free 'yes'."""
+    import duckdb
+    from wallets import markout_report as mr
+    con = duckdb.connect()
+    con.execute("CREATE TABLE m (family VARCHAR, segment VARCHAR, venue VARCHAR, mint VARCHAR, pool VARCHAR, t BIGINT, d INTEGER, h VARCHAR, "
+                "day VARCHAR, regime VARCHAR, farm VARCHAR, gross DOUBLE, net DOUBLE, cut BOOLEAN, variants VARCHAR[])")
+    rows = [("REV", "pool_normal", "pool", None, f"P{i}", 1000 + i, 2, h, f"2026-09-{21 + i % 5:02d}", "270ms", "organic", 0.1, 0.05 + 0.001 * i, False, ["S5_D10_T5"])
+            for i in range(40) for h in mr.H_ORDER]
+    con.executemany("INSERT INTO m VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    con.execute("CREATE TABLE entries AS SELECT *, 0.01 AS impact FROM m WHERE h = '1m'")
+    con.execute("CREATE TABLE pairs (family VARCHAR, segment VARCHAR, mint VARCHAR, t BIGINT, d INTEGER, h VARCHAR, day VARCHAR, regime VARCHAR, "
+                "farm VARCHAR, gross DOUBLE, net DOUBLE, n2_gross DOUBLE, n2_net DOUBLE, n_n2 BIGINT)")
+    where = "family = 'REV' AND d = 2 AND list_contains(variants, 'S5_D10_T5')"
+    md = mr.table(con, "REV test", where, 200, twin=False)
+    assert "**n/a** |" in md and "n/a without an N2 twin" in md and "**yes**" not in md
+    md2 = mr.table(con, "REV test", "family = 'REV' AND d = 2", 200)  # twin=True on a run without twins: the old 'yes' path
+    assert "**yes**" in md2

@@ -44,15 +44,38 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// Epochs 1055-1063: the clean test period, locked (like the hold-out, never replayed here).
-const CLEAN: (u64, u64) = (455_760_000, 459_648_000);
+pub(crate) const CLEAN: (u64, u64) = (455_760_000, 459_648_000);
 
 /// The snapshot's keys and what the feed admits: curve rows of its mints, pool rows of its SOL markets (with their
 /// orientation). Interned first, so their ids are dense from 0.
+///
+/// M3-09b (follow.rs, `Admission::live`): LiveFeed's admission instead, which grows while it reads: `live_mints` (the
+/// snapshot's tokens before the first live slot, then each CreateEvent's) and `live_pools` (every pool classed, SOL
+/// markets or not). There the rows of mints and pools not known are counted per segment (`unknown`).
 pub struct Admission {
     pub keys: Keys,
     is_mint: Vec<bool>,
-    /// per id: 0 not a SOL market, 1 normal, 2 reversed
+    /// per id: 0 not known (the replay: not a SOL market), 1 normal, 2 reversed, 3 known but no SOL market (live only)
     pool: Vec<u8>,
+    /// The live form's rows of keys not known (off in the replay).
+    pub unknown: Unknown,
+}
+
+/// The pool class codes of `Admission::pool`.
+pub const POOL_NORMAL: u8 = 1;
+pub const POOL_REVERSED: u8 = 2;
+pub const POOL_OTHER: u8 = 3;
+
+/// M3-09b: the rows LiveFeed drops for a key it does not know, per key (None: a NULL key), while `on`: curve trades of
+/// mints (`_unknown_mints`: `_curve_trades` ANTI JOIN live_mints), buys and sells (`_pool_trades`, boost-crank inner
+/// buys excluded) and the boost, withdraw and deposit rows (`_pool_other`) of pools (ANTI JOIN live_pools: a pool of
+/// another class is known). follow.rs takes them per segment.
+#[derive(Default)]
+pub struct Unknown {
+    pub on: bool,
+    pub mints: BTreeMap<Option<String>, u64>,
+    pub trades: BTreeMap<Option<String>, u64>,
+    pub other: BTreeMap<Option<String>, u64>,
 }
 
 /// The replay's own structures for `--mem-log` (M1 C4-2, memlog.rs), taken once per chunk (or segment unit) after its
@@ -128,7 +151,68 @@ impl Admission {
                 o => bail!("pool {k}: orientation {o:?} (normal or reversed expected)"),
             };
         }
-        Ok(Admission { keys, is_mint, pool })
+        Ok(Admission { keys, is_mint, pool, unknown: Unknown::default() })
+    }
+
+    /// M3-09b: LiveFeed's admission at its start (live.py `_load_snapshot`): the snapshot's tokens (`live_mints`) and every
+    /// pool it classes (`live_pools`), the SOL markets with their orientation; the unknown rows counted from here on.
+    pub fn live(s: &Snapshot) -> Result<Self> {
+        let mut a = Admission { keys: Keys::default(), is_mint: Vec::new(), pool: Vec::new(), unknown: Unknown { on: true, ..Unknown::default() } };
+        for m in s.tokens.keys() {
+            a.learn_mint(m);
+        }
+        for (k, (cls, orient)) in &s.pool_class {
+            let code = pool_class_code(cls.as_deref(), orient.as_deref()).with_context(|| format!("pool {k}"))?;
+            a.learn_pool(k, code);
+        }
+        Ok(a)
+    }
+
+    /// A mint known from here on (`live_mints`).
+    pub fn learn_mint(&mut self, k: &str) -> Id {
+        let id = self.keys.id(k);
+        let i = id as usize;
+        if self.is_mint.len() <= i {
+            self.is_mint.resize(i + 1, false);
+        }
+        self.is_mint[i] = true;
+        id
+    }
+
+    /// A mint no longer known (live.py `_prune`: a token learned live, dropped after TOKEN_KEEP_DAYS without a graduation).
+    pub fn forget_mint(&mut self, id: Id) {
+        if let Some(m) = self.is_mint.get_mut(id as usize) {
+            *m = false;
+        }
+    }
+
+    pub fn known_mint(&self, k: &str) -> bool {
+        self.mint(k).is_some()
+    }
+
+    /// A pool classed from here on (`live_pools`): POOL_NORMAL or POOL_REVERSED for a SOL market, POOL_OTHER else.
+    pub fn learn_pool(&mut self, k: &str, code: u8) -> Id {
+        let id = self.keys.id(k);
+        let i = id as usize;
+        if self.pool.len() <= i {
+            self.pool.resize(i + 1, 0);
+        }
+        self.pool[i] = code;
+        id
+    }
+
+    /// The pool is classed (any class).
+    pub fn known_pool(&self, k: &str) -> bool {
+        self.keys.get(k).is_some_and(|id| self.pool.get(id as usize).is_some_and(|&c| c != 0))
+    }
+
+    /// While `unknown.on`: a pool row dropped for its pool, counted when the pool is not classed at all.
+    fn unknown_pool(&mut self, k: Option<&str>, trade: bool) {
+        if !self.unknown.on || k.is_some_and(|k| self.known_pool(k)) {
+            return;
+        }
+        let m = if trade { &mut self.unknown.trades } else { &mut self.unknown.other };
+        *m.entry(k.map(str::to_owned)).or_default() += 1;
     }
 
     fn mint(&self, k: &str) -> Option<Id> {
@@ -150,8 +234,21 @@ impl Admission {
     }
 }
 
+/// A pool's class code (`Admission::pool`) from its quote_class and orientation: a SOL market (sol or reversed) by its
+/// orientation, which the store's token side reads (never NULL there, store.py:630), any other class POOL_OTHER.
+pub fn pool_class_code(cls: Option<&str>, orient: Option<&str>) -> Result<u8> {
+    if !cls.is_some_and(|c| crate::snapshot::SOL_MARKETS.contains(&c)) {
+        return Ok(POOL_OTHER);
+    }
+    match orient {
+        Some("normal") => Ok(POOL_NORMAL),
+        Some("reversed") => Ok(POOL_REVERSED),
+        o => bail!("a SOL market of orientation {o:?} (normal or reversed expected)"),
+    }
+}
+
 /// One column of a batch, typed; `Absent` when the file has no such column (reads as NULL).
-enum Col<'a> {
+pub(crate) enum Col<'a> {
     U(&'a UInt64Array),
     I(&'a Int64Array),
     B(&'a BooleanArray),
@@ -162,7 +259,7 @@ enum Col<'a> {
 }
 
 impl<'a> Col<'a> {
-    fn of(batch: &'a RecordBatch, name: &str) -> Result<Self> {
+    pub(crate) fn of(batch: &'a RecordBatch, name: &str) -> Result<Self> {
         let Some(a) = batch.column_by_name(name) else { return Ok(Col::Absent) };
         let any = a.as_any();
         Ok(if let Some(x) = any.downcast_ref::<UInt64Array>() {
@@ -182,7 +279,7 @@ impl<'a> Col<'a> {
         })
     }
 
-    fn null(&self, i: usize) -> bool {
+    pub(crate) fn null(&self, i: usize) -> bool {
         match self {
             Col::U(a) => a.is_null(i),
             Col::I(a) => a.is_null(i),
@@ -195,7 +292,7 @@ impl<'a> Col<'a> {
     }
 
     /// An unsigned integer column's value (a u64 as written; an i64 when it is not negative).
-    fn u64(&self, i: usize) -> Result<Option<u64>> {
+    pub(crate) fn u64(&self, i: usize) -> Result<Option<u64>> {
         if self.null(i) {
             return Ok(None);
         }
@@ -207,7 +304,7 @@ impl<'a> Col<'a> {
     }
 
     /// DuckDB's hard `::BIGINT` of the value: out of range is an error.
-    fn bigint(&self, i: usize) -> Result<Option<i64>> {
+    pub(crate) fn bigint(&self, i: usize) -> Result<Option<i64>> {
         if self.null(i) {
             return Ok(None);
         }
@@ -219,7 +316,7 @@ impl<'a> Col<'a> {
     }
 
     /// DuckDB's hard `::INTEGER`: out of range is an error.
-    fn integer(&self, i: usize) -> Result<Option<u32>> {
+    pub(crate) fn integer(&self, i: usize) -> Result<Option<u32>> {
         match self.bigint(i)? {
             None => Ok(None),
             Some(v) => {
@@ -229,7 +326,7 @@ impl<'a> Col<'a> {
         }
     }
 
-    fn bool(&self, i: usize) -> Result<Option<bool>> {
+    pub(crate) fn bool(&self, i: usize) -> Result<Option<bool>> {
         if self.null(i) {
             return Ok(None);
         }
@@ -239,7 +336,7 @@ impl<'a> Col<'a> {
         }
     }
 
-    fn str(&self, i: usize) -> Result<Option<&'a str>> {
+    pub(crate) fn str(&self, i: usize) -> Result<Option<&'a str>> {
         if self.null(i) {
             return Ok(None);
         }
@@ -293,7 +390,7 @@ fn arg(args: Option<&Value>, key: &str) -> Result<Option<u64>> {
 
 /// The row's chain order from its key columns (slot, tx_index, outer_ix, inner_ix at 0..4): a NULL is an error (the
 /// store's flag join and the feed's sort need them).
-fn order(c: &[Col], i: usize, slot: u64) -> Result<Order> {
+pub(crate) fn order(c: &[Col], i: usize, slot: u64) -> Result<Order> {
     let key = |k: usize, what: &str| c[k].u64(i)?.with_context(|| format!("{what} is NULL at slot {slot}"));
     Ok(Order {
         slot,
@@ -331,7 +428,7 @@ fn unsigned(v: Option<i64>, what: &str) -> Result<Option<u64>> {
 
 /// Every row of `<dir>/<table>/*.parquet` (sorted), with only `cols` read; `f` gets the batch's columns in that order
 /// and the row. A column of `required` that none of the table's files has is an error (DuckDB's binder fails there).
-fn each_row(dir: &Path, table: &str, cols: &[&str], required: &[&str], mut f: impl FnMut(&[Col], usize) -> Result<()>) -> Result<u64> {
+pub(crate) fn each_row(dir: &Path, table: &str, cols: &[&str], required: &[&str], mut f: impl FnMut(&[Col], usize) -> Result<()>) -> Result<u64> {
     let tdir = dir.join(table);
     let Ok(entries) = fs::read_dir(&tdir) else { return Ok(0) }; // no files: the table's part of the SQL is skipped
     let mut files: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| p.extension().is_some_and(|x| x == "parquet")).collect();
@@ -480,7 +577,11 @@ pub fn read_curve(part: &Part, adm: &mut Admission, (from, to): (u64, u64), coun
         if slot < from || slot >= to {
             return Ok(());
         }
-        let Some(mint) = c[4].str(i)?.and_then(|m| adm.mint(m)) else {
+        let key = c[4].str(i)?;
+        let Some(mint) = key.and_then(|m| adm.mint(m)) else {
+            if adm.unknown.on {
+                *adm.unknown.mints.entry(key.map(str::to_owned)).or_default() += 1;
+            }
             counts.add(t, "dropped, mint not in the store");
             return Ok(());
         };
@@ -561,7 +662,9 @@ pub fn read_pool(part: &Part, adm: &mut Admission, (lo, hi): (u64, u64), counts:
                 counts.add(table, "dropped, boost-crank inner buy");
                 return Ok(());
             }
-            let Some((pool, reversed)) = c[4].str(i)?.and_then(|p| adm.pool(p)) else {
+            let key = c[4].str(i)?;
+            let Some((pool, reversed)) = key.and_then(|p| adm.pool(p)) else {
+                adm.unknown_pool(key, true);
                 counts.add(table, "dropped, not a SOL market of the store");
                 return Ok(());
             };
@@ -622,7 +725,9 @@ pub fn read_pool(part: &Part, adm: &mut Admission, (lo, hi): (u64, u64), counts:
         if slot < lo || slot >= hi {
             return Ok(());
         }
-        let Some((pool, reversed)) = c[4].str(i)?.and_then(|p| adm.pool(p)) else {
+        let key = c[4].str(i)?;
+        let Some((pool, reversed)) = key.and_then(|p| adm.pool(p)) else {
+            adm.unknown_pool(key, false);
             counts.add(boost, "dropped, not a SOL market of the store");
             return Ok(());
         };
@@ -666,7 +771,9 @@ pub fn read_pool(part: &Part, adm: &mut Admission, (lo, hi): (u64, u64), counts:
             if slot < lo || slot >= hi {
                 return Ok(());
             }
-            let Some((pool, reversed)) = c[4].str(i)?.and_then(|p| adm.pool(p)) else {
+            let key = c[4].str(i)?;
+            let Some((pool, reversed)) = key.and_then(|p| adm.pool(p)) else {
+                adm.unknown_pool(key, false);
                 counts.add(table, "dropped, not a SOL market of the store");
                 return Ok(());
             };
@@ -1226,7 +1333,7 @@ pub(crate) mod tests {
         vec![s(pool), s(trader), u(slot), Val::I64(0), Val::I64(0), Val::I64(2), Val::Bool(buy), Val::I64(amount)]
     }
 
-    const TRADE: [(&str, Kind); 23] = [
+    pub(crate) const TRADE: [(&str, Kind); 23] = [
         ("slot", Kind::U64), ("tx_index", Kind::U64), ("outer_ix", Kind::U64), ("inner_ix", Kind::U64), ("mint", Kind::Utf8),
         ("is_buy", Kind::Bool), ("token_amount", Kind::U64), ("quote_amount", Kind::U64), ("sol_amount", Kind::U64), ("fee", Kind::U64),
         ("creator_fee", Kind::U64), ("parent_ix_disc", Kind::Utf8), ("fee_basis_points", Kind::U64), ("creator_fee_basis_points", Kind::U64),
@@ -1236,7 +1343,7 @@ pub(crate) mod tests {
     ];
 
     /// A curve buy of 1,000 tokens for 50 (sol_amount; quote_amount NULL as in pre-v2 rows), fees 2 + 1.
-    fn trade(slot: u64, tx: u64, mint: &str, args: Option<&str>) -> Vec<Val> {
+    pub(crate) fn trade(slot: u64, tx: u64, mint: &str, args: Option<&str>) -> Vec<Val> {
         vec![u(slot), u(tx), u(0), u(1), s(mint), Val::Bool(true), u(1_000), Val::Null, u(50), u(2), u(1), s("66063d1201daebea"), u(95),
              u(30), u(900_000), Val::Null, u(30_000), u(700_000), Val::Null, u(20_000), s("T"), s(PUMP), args.map_or(Val::Null, s)]
     }
@@ -1459,7 +1566,7 @@ pub(crate) mod tests {
             let (mut by_slot, mut slots) = (Vec::new(), Vec::new());
             let mut r = open();
             crate::source::Source::for_each_item(&mut r, &mut |keys, m, item| {
-                let crate::source::Item::Slot(sl) = item;
+                let crate::source::Item::Slot(sl) = item else { panic!("the replay hands out slots only") };
                 assert!(!sl.events.is_empty() && sl.events.iter().all(|e| e.leg.slot() == sl.slot), "seg {seg}: slot {}", sl.slot);
                 slots.push(sl.slot);
                 by_slot.extend(sl.events.iter().map(|e| (crate::legs::event_line(keys, e), m.clone())));
