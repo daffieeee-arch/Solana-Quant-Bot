@@ -109,7 +109,28 @@ RESULT_SCHEMA = pa.schema([
     ("peak_mark", pa.int64()), ("peak_slot", pa.int64()),
     # Mayhem-agent transactions the replay refused (replay.MAYHEM_AGENT); 0 in every universe, which excludes mayhem.
     ("mayhem_reverted", pa.int64()),
+    # Route (ii), --entries: the entry code (ENTRIES; d, d_ms and q are then the exit's), whether the entry slot had fewer
+    # token buys than the code's k (its end instead), and the pool's transactions in the entry slot before our order.
+    ("entry", pa.string()), ("capped", pa.bool_()), ("k_tx", pa.int64()),
 ])
+
+# Route (ii) (research/spec-route-ii-sneller-instappen-2026-10-20.md v0.3 §3.3): an entry code -> (entry delay in slots,
+# entry position, exit delay in slots or None for the paper exit: PAPER_EXIT_MS in the trigger epoch's slots, q
+# PAPER_EXIT_Q). A position is ("q", q_frac) or ("k", k): after the k-th token-buying transaction (replay._entry_index).
+# E0 is K0: our fill is the first transaction of t + 1 (v0.3). D1Q1 and D0Q1 are the smoke's property tests (§4.3): K
+# past the slot's buys = D1Q1 row for row; D0Q1 fills on E0's state with an entry slot one lower.
+PAPER_EXIT_MS, PAPER_EXIT_Q = 600, 0.5
+ENTRIES = {"R": (2, ("q", 0.5), None), "D1both": (1, ("q", 0.5), 1), "D1": (1, ("q", 0.5), None), "E0": (1, ("k", 0), None),
+           "D1Q1": (1, ("q", 1.0), None), "D0Q1": (0, ("q", 1.0), None)}
+
+
+def entry_code(code):
+    """ENTRIES[code], or K<n> as (1, ("k", n), None)."""
+    if code in ENTRIES:
+        return ENTRIES[code]
+    if code[:1] == "K" and code[1:].isdigit():
+        return (1, ("k", int(code[1:])), None)
+    raise ValueError(f"unknown entry code {code!r}: {', '.join(ENTRIES)} or K<n>")
 
 
 def io_written():
@@ -516,8 +537,9 @@ O7_FAMILIES = ("F7", "N2_F7", "F1", "N2_F1")
 
 
 def _row(sig, r, mint, size_sol, d, tau_mode, clock, ov="none", q=0.5, ins_share=None, curve_buyers=None, peak_ret=None,
-         ins_reason=None):
+         ins_reason=None, entry=None):
     return {
+        "entry": entry, "capped": r.capped, "k_tx": r.k_tx,
         "ins_share": ins_share, "curve_buyers": curve_buyers, "peak_ret": peak_ret, "ins_reason": ins_reason,
         "family": sig.family, "variant": sig.variant, "mint": mint, "t": sig.t, "venue": sig.venue,
         "depth": sig.depth, "ref_mint": sig.ref[0] if sig.ref else None, "ref_t": sig.ref[1] if sig.ref else None,
@@ -581,7 +603,7 @@ def f6_flows(con, pool, sigs, hi, clock):
 
 
 def _work(args):
-    task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays, only, delay_ms = args
+    task_id, out, items, sizes, delays, taus, qs, tol, cfg, clock, overlays, only, delay_ms, entries = args
     health.wait_ok(log, f"batch {task_id}")
     io0, fb0 = io_written(), INSIDER_FALLBACKS[0]
     con = streams.open_store(STORE, threads=1, memory="600MB")
@@ -601,16 +623,21 @@ def _work(args):
                                  or (sg.family in M1_LIKE and sg.params[1] == M1_FLOW) for sg in sigs):  # flow exits
             flows = FlowIndex(st)
         ins_cache = {}
+        # (delay, q, entry code): --delays x --q, or route (ii)'s --entries, each with its exit's delay and q
+        plans = ([(d_set, q, None) for d_set in delays for q in qs] if not entries
+                 else [(entry_code(c)[2], PAPER_EXIT_Q, c) for c in entries])
         for size_sol in sizes:
             size = int(size_sol * LAMPORTS)
-            for d_set in delays:
-                for q in qs:
+            for d_set, q, code in plans:
+                    entry = None if code is None else entry_code(code)[:2]
                     for tau_mode in taus:
                         tau = replay.Tau(tau_mode)
                         busy_until = defaultdict(lambda: -1)
                         for sig in sigs:
-                            # --delay-ms: the delay in whole slots of the trigger's epoch (the engine's _d_at).
-                            d = delay_slots(delay_ms, sig.t, clock) if d_set is None else d_set
+                            # --delay-ms: the delay in whole slots of the trigger's epoch (the engine's _d_at); with
+                            # --entries the exit's (the paper's d_ms unless the code fixes it).
+                            ms = delay_ms if code is None else PAPER_EXIT_MS
+                            d = delay_slots(ms, sig.t, clock) if d_set is None else d_set
                             if only and not _allowed(only, sig, size=size_sol, d=d, q=q):
                                 continue
                             fk = (sig.family, sig.variant)
@@ -630,7 +657,12 @@ def _work(args):
                             sim = replay.simulate_pool_position if sig.venue == "pool" else replay.simulate_curve_position
                             ins_m1 = _insiders(con, st, sig.venue, clock, ins_cache) if sig.family in M1_LIKE else None
                             rule = exit_rule_for(sig, base, d, clock, st, flows, ins_m1)
-                            r = sim(st, sig.t, size, d, q, rule, tol, tau)
+                            if entry is None:
+                                r = sim(st, sig.t, size, d, q, rule, tol, tau)
+                            elif sig.venue == "pool":
+                                r = sim(st, sig.t, size, d, q, rule, tol, tau, entry=entry)
+                            else:
+                                raise ValueError("--entries: pool positions only (route (ii) is F7 pool_reversed)")
                             busy_until[fk] = r.exit_slot or sig.t
                             fam_x = sig.family.removeprefix("N2_")
                             if fam_x in M1X:
@@ -647,7 +679,7 @@ def _work(args):
                                     rows.append(_row(sig, res, mint, size_sol, d, tau_mode, clock, veto, q=q, ins_share=share,
                                                      curve_buyers=buyers, peak_ret=pr if res is r else None, ins_reason=why))
                                 continue
-                            rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q))
+                            rows.append(_row(sig, r, mint, size_sol, d, tau_mode, clock, q=q, entry=code))
                             # O7 on the same trigger (paired with the base row): V1 veto, V2 exit, V3 both.
                             if overlays and sig.family in O7_FAMILIES:
                                 # Fail-closed (vins-definition-2026-10-15.md): an undefined share, unknown insiders
@@ -694,11 +726,20 @@ def results_glob(run_dir):
 
 def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals, run_id, n2_k=5, batch=40,
         label="tournament_v1", segments=None, slot_range=None, only=None, decide_range=None, delay_ms=None,
-        variants=None, report=True, f7_grid="v1", m1_grid="v1"):
+        variants=None, report=True, f7_grid="v1", m1_grid="v1", entries=None):
     if delay_ms is not None:
         if delay_ms <= 0:
             raise ValueError("delay_ms must be > 0")
         delays = [None]  # one delay, in slots per trigger (delay_slots)
+    if entries:
+        # Route (ii): F7 in pools only, each code with its own exit; --delays, --delay-ms and --q do not apply.
+        for c in entries:
+            entry_code(c)
+        if families != ["F7"] or not segments or any(not x.startswith("pool_") for x in segments):
+            raise ValueError("--entries: --families F7 and pool --segments only (route (ii))")
+        if delay_ms is not None:
+            raise ValueError("--entries replaces --delay-ms")
+        delays, qs = [None], [PAPER_EXIT_Q]
     cfg = load_defaults()
     out = os.path.join(OUT, run_id)
     os.makedirs(os.path.join(out, "parts"), exist_ok=True)
@@ -718,7 +759,7 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     del signals
     overlays = "O7" in families
     only_rules = parse_only(only)
-    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, qs, tol, cfg, clock, overlays, only_rules, delay_ms)
+    tasks = [(i, out, items[j:j + batch], sizes, delays, taus, qs, tol, cfg, clock, overlays, only_rules, delay_ms, entries)
              for i, j in enumerate(range(0, len(items), batch))]
     todo = [t for t in tasks if not os.path.exists(_part_path(out, t[0]))]
     log(f"{n_signals} signals in {len(items)} clusters, {len(tasks)} batches ({len(tasks) - len(todo)} already done) "
@@ -738,7 +779,9 @@ def run(families, sizes, delays, taus, qs, tol, workers, n1_sample, max_signals,
     log(f"{total} positions in {len(os.listdir(os.path.join(out, 'parts')))} parts")
     config = {"run_id": run_id, "batch": label, "engine_commit": engine_commit(), "engine_dir": os.path.dirname(os.path.abspath(__file__)),
               "venue_math": V.CORE,  # 'python' or 'rust' (lab-core through LAB_CORE=rust; the same rows either way)
-              "families": families, "sizes_sol": sizes, "delays": delays, "delay_ms": delay_ms, "variants": variants, "f7_grid": f7_grid, "m1_grid": m1_grid, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
+              "families": families, "sizes_sol": sizes, "delays": delays, "delay_ms": delay_ms, "entries": entries or None,
+              "entry_codes": {c: entry_code(c) for c in entries} if entries else None,
+              "paper_exit": {"d_ms": PAPER_EXIT_MS, "q": PAPER_EXIT_Q} if entries else None, "variants": variants, "f7_grid": f7_grid, "m1_grid": m1_grid, "tau": taus, "q": qs, "segments": segments, "slot_range": slot_range, "decide_range": decide_range, "only": only or None, "f6_trigger_cap": F6_STATS or None,
               "gate_sizes": list(GATE_SIZES), "slippage_tol": tol, "n1_sample": n1_sample, "n2_k": n2_k,
               "max_signals": max_signals, "store": meta,
               "signals": n_signals, "positions": total, "seconds": round(time.time() - t0),
@@ -778,7 +821,9 @@ def main():
     ap.add_argument("--m1-grid", default="v1",
                     help="M1/M1P/M1E variants: v1 = trail20/35 (default), long = trail30/50 and flow300, all = both")
     ap.add_argument("--tau", default="empirical")
-    ap.add_argument("--q", default="0.5", help="intra-slot position(s) of our order, comma separated")
+    ap.add_argument("--q", default=None, help="intra-slot position(s) of our order, comma separated (default 0.5)")
+    ap.add_argument("--entries", default="", help="route (ii): entry codes (R,D1both,D1,E0,K1,...; ENTRIES), each with the "
+                                                  "paper exit, instead of --delays/--delay-ms/--q")
     ap.add_argument("--segments", default="", help="F7 only: keep these segments (curve,pool_normal,pool_reversed)")
     ap.add_argument("--tol", type=float, default=0.05)
     ap.add_argument("--workers", type=int, default=2)
@@ -793,12 +838,16 @@ def main():
     a = ap.parse_args()
     if a.delay_ms is not None and a.delays is not None:
         raise SystemExit("pass --delays or --delay-ms, not both")
+    entries = [x for x in a.entries.split(",") if x]
+    if entries and (a.delays is not None or a.delay_ms is not None or a.q is not None):
+        raise SystemExit("--entries replaces --delays, --delay-ms and --q (each code has its entry and the paper exit)")
     run(a.families.split(","), [float(x) for x in a.sizes.split(",")], [int(x) for x in (a.delays or "1,2").split(",")],
-        a.tau.split(","), [float(x) for x in a.q.split(",")], a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch,
+        a.tau.split(","), [float(x) for x in (a.q or "0.5").split(",")], a.tol, a.workers, a.n1_sample, a.max_signals, a.run_id, a.n2_k, label=a.batch,
         segments=[x for x in a.segments.split(",") if x] or None,
         slot_range=tuple(int(x) for x in a.range.split(":")) if a.range else None, only=a.only,
         decide_range=tuple(int(x) for x in a.decide.split(":")) if a.decide else None, delay_ms=a.delay_ms,
-        variants=[x for x in a.variants.split(",") if x] or None, report=not a.no_report, f7_grid=a.f7_grid, m1_grid=a.m1_grid)
+        variants=[x for x in a.variants.split(",") if x] or None, report=not a.no_report, f7_grid=a.f7_grid, m1_grid=a.m1_grid,
+        entries=entries or None)
 
 
 if __name__ == "__main__":

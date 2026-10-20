@@ -178,6 +178,10 @@ class Result:
     sells_dropped: int = 0
     sells_scaled: int = 0
     mayhem_reverted: int = 0  # Mayhem-agent transactions refused (their virtual-quote reset is not modelled)
+    # Route (ii) (an entry position apart from the exit's): the slot had fewer token buys than the entry's k, so the
+    # entry is at its end; the pool's transactions in the entry slot before our order. None without an entry position.
+    capped: bool = None
+    k_tx: int = None
     hist_mid_entry: float = None  # historical mid price (no us) at entry and exit
     hist_mid_exit: float = None
     marks: list = field(default_factory=list)
@@ -205,6 +209,48 @@ def _insertion_index(legs, slot, q_frac):
     while i < j and legs[i].tx != txs[k]:
         i += 1
     return i
+
+
+def _entry_index(legs, slot, pos, orientation):
+    """Route (ii) (research/spec-route-ii-sneller-instappen-2026-10-20.md v0.2 §3.2): our entry's insertion index at
+    `slot` and (capped, k_tx). pos is ("q", q_frac), placed as _insertion_index places it, or ("k", k): after the
+    transaction that holds the pool's k-th token buy in the slot. A transaction counts once whatever its legs (a round
+    trip [buy, sell] is one buy), a sell does not count (it lowers our price: "k buys" is the conservative reading), and
+    the order never goes between two legs of one transaction. Fewer token-buying transactions than k: the slot end,
+    capped. k_tx: the pool's transactions in the slot before the index."""
+    lo, hi = 0, len(legs)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if legs[mid].slot < slot:
+            lo = mid + 1
+        else:
+            hi = mid
+    starts = []  # each transaction's first leg in the slot
+    j = lo
+    while j < len(legs) and legs[j].slot == slot:
+        if not starts or legs[starts[-1]].tx != legs[j].tx:
+            starts.append(j)
+        j += 1
+    kind, value = pos
+    if kind == "q":
+        idx, capped = _insertion_index(legs, slot, value), None
+    elif kind == "k":
+        if value < 0:
+            raise ValueError(f"k must be >= 0, not {value}")
+        idx, capped, buys = (lo, False, 0) if value == 0 else (j, True, 0)
+        normal = orientation == "normal"
+        for n, a in enumerate(starts):
+            if value == 0:
+                break
+            b = starts[n + 1] if n + 1 < len(starts) else j
+            if any(l.kind in ("buy", "sell") and (l.kind == "buy") == normal for l in legs[a:b]):
+                buys += 1
+                if buys == value:
+                    idx, capped = b, False
+                    break
+    else:
+        raise ValueError(f"an entry position is ('q', q_frac) or ('k', k), not {pos!r}")
+    return idx, capped, sum(1 for a in starts if a < idx)
 
 
 def _hist_state(legs, idx):
@@ -686,15 +732,16 @@ def pool_venue(orientation):
 
 
 def open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau=None, max_slots=400_000,
-                       hist_state=None):
+                       hist_state=None, entry=None):
     """Our token buy in the pool at decision_slot + d; stream.pool_legs must cover the decision and
     entry slots. In a reversed pool (WSOL base) the token is bought with a pool sell of WSOL and
     sold with an exact-in pool buy; other traders' holdings are not tracked there.
-    Returns (Result, PositionSim or None, i)."""
+    entry (route (ii)): (d_e, pos), the entry at decision_slot + d_e at position pos (`_entry_index`) instead of
+    (d, q_frac); the exit keeps (d, q_frac). Returns (Result, PositionSim or None, i)."""
     tau = tau or Tau()
     r = Result(stream.mint, decision_slot, size=size, venue="pool")
     legs = stream.pool_legs
-    r.entry_slot = decision_slot + d
+    r.entry_slot = decision_slot + (d if entry is None else entry[0])
     if WINDOW_END is not None and r.entry_slot >= WINDOW_END:
         r.skipped, r.exit_reason = True, "after_window_end"
         return r, None, None
@@ -704,7 +751,10 @@ def open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, t
         r.skipped, r.exit_reason = True, "no_pool_state"
         return r, None, None
     expected = buy(s_dec, size)
-    i = _insertion_index(legs, r.entry_slot, q_frac)
+    if entry is None:
+        i = _insertion_index(legs, r.entry_slot, q_frac)
+    else:
+        i, r.capped, r.k_tx = _entry_index(legs, r.entry_slot, entry[1], stream.orientation)
     state = _hist_state(legs, i)
     r.hist_mid_entry = price(state)
     fill = buy(state, size)
@@ -717,8 +767,8 @@ def open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, t
     return r, sim, i
 
 
-def simulate_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau=None, max_slots=400_000):
-    """Buy the token in the pool at decision_slot + d; later pool events are re-executed with their
-    limits (see open_pool_position)."""
-    r, sim, i = open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots)
+def simulate_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau=None, max_slots=400_000, entry=None):
+    """Buy the token in the pool at decision_slot + d (or at entry = (d_e, pos), route (ii)); later pool events are
+    re-executed with their limits (see open_pool_position)."""
+    r, sim, i = open_pool_position(stream, decision_slot, size, d, q_frac, exit_rule, tol, tau, max_slots, entry=entry)
     return feed_batch(sim, stream.pool_legs, i) if sim else r
