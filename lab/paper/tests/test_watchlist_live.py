@@ -162,3 +162,96 @@ def test_a_trade_on_a_pruned_archived_pool_restores_it(tmp_path):
     w.minute(1012, 5_400)
     assert "P" in w.wl.pools and w.wl.restored_total == 1 and w.wl.state["P"].organic is True
 
+
+
+class TwoPools(Pools):
+    """P (reversed, deep and organic: f7_rev) and S (sol/normal, created live at slot 150: M1 for its first hours)."""
+
+    def __init__(self):
+        super().__init__()
+        self.pools["S"] = PoolInfo("S", "MS", "normal", "sol", False, None, 150)
+        self.new_pools = ["S"]
+
+
+def test_without_m1_the_list_keeps_its_f7_rev_pools_only(tmp_path):
+    """--watchlist-no-m1 (paper.engine watchlist_rules): no pool is tagged m1, and the f7_rev pools are the default's;
+    the default rules are unchanged (None: wallets.watchlist.Rules())."""
+    from paper.engine import watchlist_rules
+    from wallets import watchlist as W
+
+    assert watchlist_rules() is None and watchlist_rules(False) is None
+    assert watchlist_rules(True) == W.Rules(m1_max_age_minutes=-1)
+    assert {k: v for k, v in vars(watchlist_rules(True)).items() if k != "m1_max_age_minutes"} == \
+        {k: v for k, v in vars(W.Rules()).items() if k != "m1_max_age_minutes"}
+    out = {}
+    for name, rules in (("default", watchlist_rules(False)), ("no_m1", watchlist_rules(True))):
+        (tmp_path / name).mkdir()
+        w = LiveWatchlist(TwoPools(), str(tmp_path / name), rules=rules)
+        w.slot(100, 1000)
+        w.trades("P", 1000, [leg(100, 3, 130)])
+        w.slot(150, 1000)
+        out[name] = [w.minute(1001, 300)]
+        w.slot(400, 1001)
+        w.trades("P", 1001, [leg(400, 1, 125)])
+        out[name].append(w.minute(1002, 500))
+    assert out["default"] == [{"P": ("f7_rev",), "S": ("m1",)}] * 2
+    assert out["no_m1"] == [{"P": ("f7_rev",)}] * 2
+
+
+@pytest.mark.parametrize("argv", [[], ["--live", "/x", "--no-watchlist"]])
+def test_the_no_m1_flag_needs_the_live_watchlist(tmp_path, argv):
+    from paper.engine import main
+
+    with pytest.raises(SystemExit) as e:
+        main(["--journal", str(tmp_path / "j"), "--watchlist-no-m1"] + argv)
+    assert e.value.code == 2
+
+
+def test_every_start_that_changes_the_watchlist_setting_journals_it(tmp_path, monkeypatch):
+    """LAB review on #489: journal state 'watchlist_rules' (paper.engine record_watchlist_rules), written before the feed.
+    A first start with the default rules, a restart with --watchlist-no-m1 (from its HWM), the same again (no entry) and
+    one with --no-watchlist."""
+    from dataclasses import asdict
+
+    from paper import engine as E
+    from paper import live
+    from paper import restart as RS
+    from paper.journal import Journal
+    from paper.tests.test_livefeed_state import fake_store, segment
+    from wallets import watchlist as W
+
+    root, jdir = tmp_path / "rec", str(tmp_path / "j")
+    for i in range(3):
+        segment(root, i, 1_000 + 100 * i, 1_099 + 100 * i, 1_700_000_000 + 60 * i, [])
+    store = fake_store(tmp_path / "s.duckdb", range(0, 10, 10))
+
+    class Stop(Exception):
+        pass
+
+    def feed(*a, **k):
+        raise Stop
+
+    monkeypatch.setattr(live, "LiveFeed", feed)
+
+    def start(*extra):
+        with pytest.raises(Stop):
+            E.main(["--live", str(root), "--catch-up", "--journal", jdir, "--store", store, "--no-backup", *extra])
+        j = Journal(jdir)
+        try:
+            return json.loads(j.state("watchlist_rules"))
+        finally:
+            j.close()
+
+    default = {"from_hwm_slot": None, "watchlist": True, "m1": True, "rules": asdict(W.Rules())}
+    assert start() == [default]
+    assert start() == [default]  # unchanged: no entry
+    j = Journal(jdir)
+    j.state(RS.HWM_KEY, json.dumps({"slot": 1_250, "minute": None, "day": None}))
+    j.state(RS.HWM_STATE_KEY, json.dumps({"groups": {}, "busy": []}))
+    j.commit()
+    j.close()
+    no_m1 = {"from_hwm_slot": 1_250, "watchlist": True, "m1": False, "rules": asdict(W.Rules(m1_max_age_minutes=-1))}
+    assert start("--watchlist-no-m1") == [default, no_m1]
+    assert start("--watchlist-no-m1") == [default, no_m1]
+    off = {"from_hwm_slot": 1_250, "watchlist": False, "m1": False, "rules": None}
+    assert start("--no-watchlist") == [default, no_m1, off]

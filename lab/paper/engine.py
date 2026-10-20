@@ -1336,6 +1336,32 @@ def groups_state(eng):
                                 "require_farm_complete": g.require_farm_complete} for g in eng.groups}, sort_keys=True)
 
 
+def watchlist_rules(no_m1=False):
+    """The live watchlist's rules: the default (None), or without M1 (--watchlist-no-m1): wallets.watchlist tags m1 only
+    when 0 <= age <= m1_max_age_minutes, so -1 tags none; every other rule is the default's (the f7_rev list unchanged)."""
+    if not no_m1:
+        return None
+    from wallets import watchlist as W
+
+    return W.Rules(m1_max_age_minutes=-1)
+
+
+def record_watchlist_rules(j, on, rules, hwm_slot):
+    """Journal state 'watchlist_rules' (LAB review on #489): the live watchlist's setting at every start that changed it,
+    a list of {"from_hwm_slot", "watchlist", "m1", "rules"}; its last entry is the running engine's. from_hwm_slot: the
+    high-water mark the start resumes from (None at a first start), the minute the watchlist log goes on with the new
+    setting. A journal whose first entry has a from_hwm_slot was begun by an engine without this key: up to that slot it
+    ran the default rules (the only ones that engine had), or none with --no-watchlist. Committed here, before the feed."""
+    from wallets import watchlist as W
+
+    r = asdict(rules or W.Rules()) if on else None
+    now = {"watchlist": on, "m1": bool(on and r["m1_max_age_minutes"] >= 0), "rules": r}
+    seen = json.loads(j.state("watchlist_rules") or "[]")
+    if not seen or {k: seen[-1][k] for k in now} != now:
+        j.state("watchlist_rules", json.dumps(seen + [{"from_hwm_slot": hwm_slot, **now}], sort_keys=True))
+        j.commit()
+
+
 def main(argv=None):
     from .feed import ReplayFeed
 
@@ -1346,6 +1372,9 @@ def main(argv=None):
     ap.add_argument("--catch-up", action="store_true", help="live: stop after the last complete segment")
     ap.add_argument("--no-watchlist", action="store_true",
                     help="live: do not write the recorder's watchlist-current.json (paper.watchlist_live)")
+    ap.add_argument("--watchlist-no-m1", action="store_true",
+                    help="live: the watchlist without M1 pools (the recorder's tx_pools keeps the f7_rev pools only; "
+                         "K3/H trade reversed pools); default: as before")
     ap.add_argument("--journal", required=True)
     ap.add_argument("--config", help="paper config (YAML, e.g. paper/k3-paper-2026-10-12.yaml): segments, farm, variants, "
                                      "d, q, n2_k and the risk file; its sha256 goes into the journal")
@@ -1369,6 +1398,8 @@ def main(argv=None):
     if a.ignore_risk and (a.config or a.live):
         # A paper run (a config, or live data) always has its risk limits.
         ap.error("--ignore-risk is for replay parity runs only: not with --config or --live")
+    if a.watchlist_no_m1 and (not a.live or a.no_watchlist):
+        ap.error("--watchlist-no-m1 shapes the live watchlist: only with --live and without --no-watchlist")
     if a.live and not (a.store and os.path.isfile(a.store)):
         # Without the snapshot every pool created before the recorder started would be unknown.
         ap.error(f"--live needs a readable --store (the snapshot of tokens and pools; PAPER_STORE in live.env), got {a.store!r}")
@@ -1402,6 +1433,7 @@ def main(argv=None):
         from_seq = RS.window_start_seq(segment_dirs(a.live), found[0]) if found else 0
         if found:
             print(f"restart: HWM slot {found[0]['slot']}; replay from segment {from_seq} ({RS.WINDOW_H} h)", flush=True)
+        record_watchlist_rules(j, not a.no_watchlist, watchlist_rules(a.watchlist_no_m1), found[0]["slot"] if found else None)
         # Pools and graduations learned live by earlier runs (journal table 'learned'): known again after a restart.
         feed = LiveFeed(a.live, store=a.store, follow=not a.catch_up, seed_farmers=True, learned=j.rows("learned"),
                         from_seq=from_seq)
@@ -1426,7 +1458,7 @@ def main(argv=None):
     if a.live and not a.no_watchlist:
         from .watchlist_live import LiveWatchlist
 
-        watch = LiveWatchlist(feed, a.live, clock=feed.clock, wall_clock=time.time)
+        watch = LiveWatchlist(feed, a.live, rules=watchlist_rules(a.watchlist_no_m1), clock=feed.clock, wall_clock=time.time)
     # Live: the high-water mark per commit and, on a journal with one, the replay with its decisions
     # (paper/restart.py); the recorder's files are not rewritten while catching up.
     eng = Engine(feed, j, a.risk, variants=variants, d=a.d, d_ms=a.d_ms, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
