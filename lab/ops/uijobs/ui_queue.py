@@ -5,13 +5,18 @@
 
 The client's command line arrives in SSH_ORIGINAL_COMMAND and may only be:
   sums           the pinned templates' sha256 ({"backtest-f7": "<hex>"}), read-only
-  put            a job (JSON on stdin, at most schema.MAX_BYTES), checked against schema.py, written atomically to
-                 <UI_JOBS_DIR>/queue/ui-<id>.json; prints the id
-  status <id>    the job's state: queued, running, done or failed (status.json), or unknown
-  get <id>       the job's result.json (at most MAX_RESULT bytes)
+  put            a job (JSON on stdin, at most schema.MAX_BYTES), checked against schema.py, written atomically in
+                 its canonical form to <UI_JOBS_DIR>/queue/ui-<id>.json; prints the id. Idempotent: the same job
+                 again under its id (a put whose answer was lost) prints the id and stores nothing; a different job
+                 under a used id is refused.
+  status <id>    the job's state: queued, running, done, failed or refused (status.json), or unknown; with the
+                 stored job's job_sha256, so the dispatcher never takes another job under that id for its own
+  get <id>       the job's result.json (at most MAX_RESULT bytes), only once the job is done
 Nothing else: no paths, no listing, no other files. Exit 0 on success, 2 when refused (reason on stderr).
 """
 
+import fcntl
+import hashlib
 import json
 import os
 import sys
@@ -25,30 +30,56 @@ ROOT = os.environ.get("UI_JOBS_DIR", "/lab/jobs-ui")
 MAX_RESULT = 65_536
 
 
+def _job_file(jid):
+    """The stored job, wherever the runner has moved it. Checked in the order the runner moves a job (queue, running,
+    done), so a move during the look-up is never missed."""
+    for d in ("queue", "running", "done"):
+        p = os.path.join(ROOT, d, f"ui-{jid}.json")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def _state(jid):
-    """status.json of a started job, else where the job file is."""
+    """status.json of a started job, else where the job file is; with the stored job's sha256."""
+    out = {"id": jid, "state": "unknown"}
     st = os.path.join(ROOT, "results", jid, "status.json")
     if os.path.isfile(st):
         with open(st) as f:
-            return json.load(f)
-    for d, state in (("queue", "queued"), ("running", "running")):
-        if os.path.isfile(os.path.join(ROOT, d, f"ui-{jid}.json")):
-            return {"id": jid, "state": state}
-    return {"id": jid, "state": "unknown"}
+            out = json.load(f)
+    else:
+        # done/ without a status: not final until the runner's recovery writes one (nas_runner._recover), but known
+        for d, state in (("queue", "queued"), ("running", "running"), ("done", "running")):
+            if os.path.isfile(os.path.join(ROOT, d, f"ui-{jid}.json")):
+                out = {"id": jid, "state": state}
+    path = _job_file(jid)
+    if path:  # put stores the canonical bytes, so their sha256 is the job's (schema.job_sha256), with no re-validation
+        with open(path, "rb") as f:
+            out = dict(out, job_sha256=hashlib.sha256(f.read(schema.MAX_BYTES + 1)).hexdigest())
+    return out
 
 
 def run(command, stdin, out):
     parts = (command or "").split()
     if parts == ["put"]:
         job = schema.validate(stdin.read(schema.MAX_BYTES + 1))
-        if _state(job["id"])["state"] != "unknown":
-            raise ValueError("this id is already used")
+        data = schema.canonical(job)
         q = os.path.join(ROOT, "queue")
         os.makedirs(q, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=q, prefix=".put-", suffix=".tmp")
-        with os.fdopen(fd, "w") as f:
-            json.dump(job, f)
-        os.replace(tmp, os.path.join(q, f"ui-{job['id']}.json"))
+        # One put at a time (the check and the write together): a retry that overlaps a slow first put of the same
+        # job can never write it a second time after the runner took the first (LAB review: a lost answer).
+        with open(os.path.join(q, ".put.lock"), "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            st = _state(job["id"])
+            if st["state"] != "unknown":
+                if st.get("job_sha256") == hashlib.sha256(data).hexdigest():
+                    out.write(job["id"] + "\n")  # this very job is already here: the answer to an earlier put was lost
+                    return
+                raise ValueError("this id is already used by another job")
+            fd, tmp = tempfile.mkstemp(dir=q, prefix=".put-", suffix=".tmp")
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp, os.path.join(q, f"ui-{job['id']}.json"))
         out.write(job["id"] + "\n")
         return
     if parts == ["sums"]:
@@ -69,7 +100,8 @@ def run(command, stdin, out):
             out.write(json.dumps(_state(jid)) + "\n")
             return
         path = os.path.join(ROOT, "results", jid, "result.json")
-        if not os.path.isfile(path):
+        if _state(jid)["state"] != "done" or not os.path.isfile(path):
+            # A result.json of an interrupted job is never served: only the runner's 'done' (rc 0) vouches for it.
             raise ValueError("no result (yet)")
         with open(path, "rb") as f:
             data = f.read(MAX_RESULT + 1)

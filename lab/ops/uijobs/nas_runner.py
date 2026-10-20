@@ -11,8 +11,19 @@ Directories under UI_JOBS_DIR (default /lab/jobs-ui): queue/ (ui_queue.py writes
 results/<id>/ (status.json, result.json, job.log). Templates: UI_TEMPLATES_DIR (default /lab/templates) with
 SHA256SUMS ("<sha256>  <template>.sh" lines, written by the coordinator after review).
 The template's fixed environment comes from this runner's own: LAB_PY, LAB_CODE, LAB_STORE_DIR, PATH.
+
+One runner at a time (an flock on <UI_JOBS_DIR>/runner.lock). A job's steps: queue/ -> running/, status
+'running', the template, then the final status (done, failed or refused) and only then running/ -> done/, so a job
+in done/ always has its final status. A runner that stops anywhere in between (a crash, a NAS restart) leaves the
+job in running/; the next runner, holding the lock, recovers it before anything else and never runs it again:
+  - the job's processes still alive (any process whose environment carries UI_JOB_ID=<id>, which the runner sets
+    and the template's workers inherit; no pid file, so nothing races the start): it waits, one job at a time,
+    and past the timeout it kills them;
+  - then the final status already written stays (stopped between status and move); otherwise failed, with the
+    reason 'interrupted'. A result.json of an interrupted job is never served (ui_queue get wants 'done').
 """
 
+import fcntl
 import hashlib
 import json
 import os
@@ -29,6 +40,7 @@ ROOT = os.environ.get("UI_JOBS_DIR", "/lab/jobs-ui")
 TEMPLATES = os.environ.get("UI_TEMPLATES_DIR", "/lab/templates")
 TIMEOUT = int(os.environ.get("UI_JOB_TIMEOUT", 6 * 3600))
 PASS = ("LAB_PY", "LAB_CODE", "LAB_STORE_DIR", "PATH")  # the runner's own settings a template may see
+FINAL = ("done", "failed", "refused")
 
 
 def _sums():
@@ -66,20 +78,105 @@ def _write(path, obj):
     os.replace(path + ".tmp", path)
 
 
+def _move(src, dst):
+    os.replace(src, dst)  # one place for a job's moves (the tests stop the runner at each step)
+
+
+def _res(jid):
+    return os.path.join(ROOT, "results", jid if schema.ID_RE.match(jid) else "invalid")
+
+
+def _status(jid):
+    try:
+        with open(os.path.join(_res(jid), "status.json")) as f:
+            st = json.load(f)
+        return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def job_pids(jid):
+    """The live processes of a job: those whose environment carries UI_JOB_ID=<id> (the runner sets it, the
+    template's workers inherit it). A zombie's environment reads empty, so it does not count."""
+    want = f"UI_JOB_ID={jid}".encode()
+    pids = []
+    for n in os.listdir("/proc"):
+        if n.isdigit():
+            try:
+                with open(f"/proc/{n}/environ", "rb") as f:
+                    if want in f.read().split(b"\0"):
+                        pids.append(int(n))
+            except OSError:
+                continue
+    return pids
+
+
+def _recover():
+    """With the runner lock held, the jobs a stopped runner left behind (see the module's docstring). True while
+    such a job's processes still run: no new job may start beside them."""
+    run_dir, done_dir = os.path.join(ROOT, "running"), os.path.join(ROOT, "done")
+    left = [(os.path.join(run_dir, n), True) for n in sorted(os.listdir(run_dir)) if n.startswith("ui-") and n.endswith(".json")]
+    # Defensive: a job in done/ without a final status (an older runner moved before it wrote the status).
+    left += [(os.path.join(done_dir, n), False) for n in sorted(os.listdir(done_dir)) if n.startswith("ui-") and n.endswith(".json")
+             and _status(n[3:-5]).get("state") not in FINAL]
+    for path, in_running in left:
+        jid = os.path.basename(path)[3:-5]
+        st = _status(jid)
+        reason = "interrupted: the runner stopped before the job ended; never run again"
+        pids = job_pids(jid)
+        if pids:
+            started = st.get("started_unix") or os.stat(path).st_mtime
+            if time.time() - started < TIMEOUT:
+                return True  # still running without its runner: wait (one at a time), never a second copy
+            for pid in pids:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            for _ in range(50):
+                if not job_pids(jid):
+                    break
+                time.sleep(0.1)
+            else:
+                return True
+            reason = "interrupted: the runner stopped; the job's processes were killed at the timeout; never run again"
+        if st.get("state") not in FINAL:
+            os.makedirs(_res(jid), exist_ok=True)
+            _write(os.path.join(_res(jid), "status.json"), dict(st, id=jid, state="failed", rc=None, reason=reason, ended_unix=int(time.time())))
+        if in_running:
+            _move(path, os.path.join(done_dir, os.path.basename(path)))
+    return False
+
+
 def once():
-    """Run at most one queued job; its id, or None (nothing queued, or held)."""
+    """Run at most one queued job; its id, or None (nothing queued, held, another runner at work, or a job left
+    by a stopped runner still running)."""
     if os.path.exists(os.path.join(ROOT, "ui-hold")):
         return None
     for d in ("queue", "running", "done", "results"):
         os.makedirs(os.path.join(ROOT, d), exist_ok=True)
+    fd = os.open(os.path.join(ROOT, "runner.lock"), os.O_RDWR | os.O_CREAT, 0o600)  # not inherited by the job
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return None
+        if _recover():
+            return None
+        return _next()
+    finally:
+        os.close(fd)
+
+
+def _next():
     queued = sorted(n for n in os.listdir(os.path.join(ROOT, "queue")) if n.startswith("ui-") and n.endswith(".json"))
     if not queued:
         return None
     name = queued[0]  # ULIDs sort by time: the oldest first
     run_path = os.path.join(ROOT, "running", name)
-    os.replace(os.path.join(ROOT, "queue", name), run_path)
+    _move(os.path.join(ROOT, "queue", name), run_path)
     jid = name[3:-5]
-    res = os.path.join(ROOT, "results", jid if schema.ID_RE.match(jid) else "invalid")
+    res = _res(jid)
     os.makedirs(res, exist_ok=True)
     status = {"id": jid, "state": "refused", "started_unix": int(time.time())}
     try:
@@ -97,10 +194,10 @@ def once():
                 raise ValueError(f"template {tpl}: the file no longer matches SHA256SUMS")
     except (ValueError, OSError, RecursionError) as e:
         _write(os.path.join(res, "status.json"), dict(status, reason=str(e)[:300], ended_unix=int(time.time())))
-        os.replace(run_path, os.path.join(ROOT, "done", name))
+        _move(run_path, os.path.join(ROOT, "done", name))
         return jid
     env = {k: os.environ[k] for k in PASS if k in os.environ}
-    env.update(schema.env(job), UI_OUT=res, UI_LIB=HERE, HOME=res, LANG="C.UTF-8")
+    env.update(schema.env(job), UI_JOB_ID=jid, UI_OUT=res, UI_LIB=HERE, HOME=res, LANG="C.UTF-8")
     _write(os.path.join(res, "status.json"), dict(status, state="running"))
     rc = None
     with open(os.path.join(res, "job.log"), "w") as log:
@@ -114,8 +211,9 @@ def once():
             rc = "timeout"
             _kill_group(proc)
     ok = rc == 0 and os.path.isfile(os.path.join(res, "result.json"))
+    # The final status first, then the move: a job in done/ always has its final status.
     _write(os.path.join(res, "status.json"), dict(status, state="done" if ok else "failed", rc=rc, ended_unix=int(time.time())))
-    os.replace(run_path, os.path.join(ROOT, "done", name))
+    _move(run_path, os.path.join(ROOT, "done", name))
     return jid
 
 

@@ -94,6 +94,10 @@ def test_grids_are_the_engines():
     assert schema.GRIDS["big"] == [f7_exit_variant(*p) for p in F7_BIG_GRID]
 
 
+def _visible(d):
+    return sorted(n for n in os.listdir(d) if not n.startswith("."))  # without put's lock file
+
+
 def _queue(root, command, stdin=b""):
     env = dict(os.environ, UI_JOBS_DIR=root, SSH_ORIGINAL_COMMAND=command)
     return subprocess.run([sys.executable, "-I", os.path.join(UIJOBS, "ui_queue.py")], input=stdin, env=env, capture_output=True)
@@ -103,8 +107,8 @@ def test_forced_command_puts_and_reads_only():
     with tempfile.TemporaryDirectory() as root:
         r = _queue(root, "put", json.dumps(job()).encode())
         assert r.returncode == 0 and r.stdout.decode().strip() == JID
-        assert os.listdir(os.path.join(root, "queue")) == [f"ui-{JID}.json"]
-        assert _queue(root, "put", json.dumps(job()).encode()).returncode == 2  # the id is used
+        assert _visible(os.path.join(root, "queue")) == [f"ui-{JID}.json"]
+        assert _queue(root, "put", json.dumps(job(farm="all")).encode()).returncode == 2  # the id is used by another job
         assert json.loads(_queue(root, f"status {JID}").stdout)["state"] == "queued"
         assert _queue(root, f"get {JID}").returncode == 2  # no result yet
         for cmd in ("", "ls", "put x", "get ../../etc/passwd", "get " + JID + " x", "status /lab", "rm -rf /", "cat /etc/passwd"):
@@ -114,8 +118,11 @@ def test_forced_command_puts_and_reads_only():
         os.makedirs(os.path.join(root, "results", JID))
         with open(os.path.join(root, "results", JID, "result.json"), "w") as f:
             f.write('{"ok": 1}')
+        assert _queue(root, f"get {JID}").returncode == 2  # a result without the runner's 'done' is never served
+        with open(os.path.join(root, "results", JID, "status.json"), "w") as f:
+            json.dump({"id": JID, "state": "done"}, f)
         assert json.loads(_queue(root, f"get {JID}").stdout) == {"ok": 1}
-        assert sorted(os.listdir(root)) == ["queue", "results"]
+        assert _visible(root) == ["queue", "results"]
 
 
 STUB = """#!/bin/bash
@@ -158,7 +165,7 @@ def test_runner_runs_only_pinned_templates_with_the_jobs_values():
         with open(os.path.join(res, "env.txt")) as f:
             names = {ln.split("=", 1)[0] for ln in f}
         assert "SECRET_TOKEN" not in names and "SSH_ORIGINAL_COMMAND" not in names
-        assert names <= set(schema.env(schema.validate(job()))) | {"UI_OUT", "UI_LIB", "HOME", "LANG", "PATH", "PWD", "SHLVL", "_", "OLDPWD"} | set(runner.PASS)
+        assert names <= set(schema.env(schema.validate(job()))) | {"UI_JOB_ID", "UI_OUT", "UI_LIB", "HOME", "LANG", "PATH", "PWD", "SHLVL", "_", "OLDPWD"} | set(runner.PASS)
 
         other = "01JABCDEFGHJKMNPQRSTVWXYZ1"
         put(dict(job(), id=other, template_sha256="1" * 64))  # a sha the NAS did not pin
@@ -252,3 +259,218 @@ def test_timeout_kills_the_whole_job():
             time.sleep(0.1)
         else:
             raise AssertionError("the job's child survived the timeout")
+
+
+# --- A lost answer and an interrupted runner (Codex review on main 383a24d, findings 4 and 5) ---------------------
+
+def test_put_is_idempotent_and_never_two_jobs_under_one_id():
+    """The same job again under its id (a retry after a lost answer; any spacing or key order) is accepted and stored
+    once, wherever the runner has moved it; another job under a used id is refused; status gives the stored job's
+    sha256, the one the dispatcher computes."""
+    with tempfile.TemporaryDirectory() as root:
+        j = job()
+        assert _queue(root, "put", json.dumps(j).encode()).returncode == 0
+        again = json.dumps(dict(reversed(list(j.items()))), indent=2).encode()
+        for where in ("queue", "running", "done"):
+            if where != "queue":
+                os.makedirs(os.path.join(root, where), exist_ok=True)
+                src = next(os.path.join(root, d, f"ui-{JID}.json") for d in ("queue", "running") if os.path.exists(os.path.join(root, d, f"ui-{JID}.json")))
+                os.replace(src, os.path.join(root, where, f"ui-{JID}.json"))
+            r = _queue(root, "put", again)
+            assert r.returncode == 0 and r.stdout.decode().strip() == JID, where
+            st = json.loads(_queue(root, f"status {JID}").stdout)
+            assert st["job_sha256"] == schema.job_sha256(j), where
+            other = _queue(root, "put", json.dumps(job(farm="all")).encode())
+            assert other.returncode == 2 and b"another job" in other.stderr, where
+            stored = [n for d in ("queue", "running", "done") if os.path.isdir(os.path.join(root, d))
+                      for n in _visible(os.path.join(root, d))]
+            assert stored == [f"ui-{JID}.json"], where  # once, never a second copy in queue/
+
+
+STUB_RUNS = """#!/bin/bash
+set -eu
+echo run >> "$UI_OUT/runs"
+printf '{"variant": "%s"}' "$UI_VARIANT" > "$UI_OUT/result.json"
+"""
+JID2 = "01JABCDEFGHJKMNPQRSTVWXYZ9"
+
+
+class Stop(BaseException):
+    """The runner process stopping at this point (a crash, a NAS restart): nothing after it runs."""
+
+
+def _runner(root, tpl, stub):
+    runner = _load("nas_runner")
+    with open(os.path.join(tpl, "backtest-f7.sh"), "w") as f:
+        f.write(stub)
+    sha = hashlib.sha256(stub.encode()).hexdigest()
+    with open(os.path.join(tpl, "SHA256SUMS"), "w") as f:
+        f.write(f"{sha}  backtest-f7.sh\n")
+    runner.ROOT, runner.TEMPLATES = root, tpl
+    q = _load("ui_queue")
+    q.ROOT = root
+    for jid in (JID, JID2):
+        q.run("put", io.BytesIO(json.dumps(dict(job(), id=jid, template_sha256=sha)).encode()), io.StringIO())
+    return runner, q
+
+
+def _st(root, jid):
+    with open(os.path.join(root, "results", jid, "status.json")) as f:
+        return json.load(f)
+
+
+def _runs(root, jid):
+    p = os.path.join(root, "results", jid, "runs")
+    return sum(1 for _ in open(p)) if os.path.exists(p) else 0
+
+
+def _get(q, jid):
+    out = io.StringIO()
+    try:
+        q.run(f"get {jid}", io.BytesIO(b""), out)
+    except ValueError:
+        return None
+    return json.loads(out.getvalue())
+
+
+def _wait_gone(runner, jid, secs=15):
+    import time
+    for _ in range(secs * 10):
+        if not runner.job_pids(jid):
+            return
+        time.sleep(0.1)
+    raise AssertionError("the job's processes did not end")
+
+
+@pytest.mark.parametrize("point", ["after_move_to_running", "after_status_running", "after_result_before_final_status",
+                                   "after_final_status_before_move"])
+def test_a_runner_stopped_at_each_step_is_recovered_never_rerun(point, monkeypatch):
+    """The runner stops at each step of a job. The next runner (holding the lock) gives that job a final status
+    without running it again, and the queue goes on: the status already final stays (stopped between status and
+    move); otherwise failed 'interrupted', and its result.json, if any, is never served."""
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as tpl:
+        runner, q = _runner(root, tpl, STUB_RUNS)
+        real_move, real_write = runner._move, runner._write
+
+        def move(src, dst):
+            if point == "after_final_status_before_move" and os.path.dirname(dst).endswith("done"):
+                raise Stop
+            real_move(src, dst)
+            if point == "after_move_to_running":
+                raise Stop
+
+        def write(path, obj):
+            if point == "after_result_before_final_status" and obj.get("state") in ("done", "failed"):
+                assert os.path.exists(os.path.join(os.path.dirname(path), "result.json"))  # the result is written
+                raise Stop
+            real_write(path, obj)
+            if point == "after_status_running" and obj.get("state") == "running":
+                raise Stop
+
+        monkeypatch.setattr(runner, "_move", move)
+        monkeypatch.setattr(runner, "_write", write)
+        with pytest.raises(Stop):
+            runner.once()
+        monkeypatch.undo()
+        assert os.listdir(os.path.join(root, "running")) == [f"ui-{JID}.json"]  # left behind at every point
+        _wait_gone(runner, JID)
+        assert runner.once() == JID2  # JID recovered first, then the queue goes on
+        assert runner.once() is None  # and JID is never run again
+        st = _st(root, JID)
+        assert os.listdir(os.path.join(root, "running")) == []
+        assert f"ui-{JID}.json" in os.listdir(os.path.join(root, "done"))
+        started = point in ("after_result_before_final_status", "after_final_status_before_move")
+        assert _runs(root, JID) == (1 if started else 0)
+        if point == "after_final_status_before_move":
+            assert (st["state"], st["rc"]) == ("done", 0)
+            assert _get(q, JID) == {"variant": "flow300_H6"}
+        else:
+            assert st["state"] == "failed" and st["reason"].startswith("interrupted")
+            assert _get(q, JID) is None
+        assert _st(root, JID2)["state"] == "done" and _runs(root, JID2) == 1
+
+
+def test_a_job_in_done_without_a_final_status_becomes_interrupted():
+    """Defensive (an older runner moved before writing the status): a job in done/ whose status is not final."""
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as tpl:
+        runner, q = _runner(root, tpl, STUB_RUNS)
+        assert runner.once() == JID
+        with open(os.path.join(root, "results", JID, "status.json"), "w") as f:
+            json.dump({"id": JID, "state": "running", "started_unix": 1}, f)
+        assert runner.once() == JID2
+        assert _st(root, JID)["state"] == "failed" and _get(q, JID) is None and _runs(root, JID) == 1
+
+
+STUB_SLOW = """#!/bin/bash
+set -eu
+echo run >> "$UI_OUT/runs"
+sleep SECS &
+wait
+printf '{"variant": "%s"}' "$UI_VARIANT" > "$UI_OUT/result.json"
+"""
+
+
+@pytest.fixture
+def no_orphans():
+    """Kills whatever a test's orphaned job left, so a failing test never leaves a process carrying a test id."""
+    yield
+    runner = _load("nas_runner")
+    for jid in (JID, JID2):
+        for pid in runner.job_pids(jid):
+            try:
+                os.kill(pid, 9)
+            except ProcessLookupError:
+                pass
+
+
+def _stop_after_start(runner, monkeypatch):
+    real = runner.subprocess.Popen
+
+    def popen(*a, **k):
+        real(*a, **k)  # the job starts in its own session and outlives the runner
+        raise Stop
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+
+
+def test_a_live_job_without_its_runner_is_waited_for_never_doubled(monkeypatch, no_orphans):
+    """The runner stops right after starting a job, whose processes run on: the next runner neither starts it again
+    nor starts the next job beside it; once they end, the job becomes failed 'interrupted' and the queue goes on.
+    A second runner while one holds the lock does nothing."""
+    import fcntl
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as tpl:
+        runner, q = _runner(root, tpl, STUB_SLOW.replace("SECS", "2"))
+        _stop_after_start(runner, monkeypatch)
+        with pytest.raises(Stop):
+            runner.once()
+        monkeypatch.undo()
+        assert runner.job_pids(JID)  # found by its marker, with no pid file
+        assert runner.once() is None  # alive: wait
+        assert _st(root, JID)["state"] == "running" and _visible(os.path.join(root, "queue")) == [f"ui-{JID2}.json"]
+        with open(os.path.join(root, "runner.lock"), "w") as held:
+            fcntl.flock(held, fcntl.LOCK_EX)
+            _wait_gone(runner, JID)
+            assert runner.once() is None  # another runner holds the lock
+        assert runner.once() == JID2
+        st = _st(root, JID)
+        assert st["state"] == "failed" and st["reason"].startswith("interrupted") and _runs(root, JID) == 1
+        assert _get(q, JID) is None  # its result.json was written, but no runner saw it end
+
+
+def test_an_orphaned_job_past_the_timeout_is_killed_then_interrupted(monkeypatch, no_orphans):
+    import time
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as tpl:
+        runner, _ = _runner(root, tpl, STUB_SLOW.replace("SECS", "300"))
+        _stop_after_start(runner, monkeypatch)
+        with pytest.raises(Stop):
+            runner.once()
+        monkeypatch.undo()
+        for _ in range(50):  # bash and, once it has forked, its sleep
+            if len(runner.job_pids(JID)) >= 2:
+                break
+            time.sleep(0.1)
+        assert len(runner.job_pids(JID)) >= 2
+        runner.TIMEOUT = 1
+        time.sleep(1.5)
+        assert runner.once() == JID2
+        assert not runner.job_pids(JID)
+        assert "killed at the timeout" in _st(root, JID)["reason"]

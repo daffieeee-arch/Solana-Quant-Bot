@@ -9,6 +9,7 @@ Hold-out (epochs 1047-1051) and the clean test period (1055-1063) are never sele
 and validate() refuses any period that touches them, a second time on the NAS before a store is opened.
 """
 
+import hashlib
 import json
 import re
 
@@ -89,6 +90,17 @@ def validate(raw):
         raise ValueError(f"epochs: at most {MAX_EPOCHS}")
     params = dict(p, size_sol=float(p["size_sol"]))
     return {"id": jid, "template": tpl, "template_sha256": sha, "params": params}
+
+
+def canonical(job):
+    """A validated job's canonical bytes (sorted keys, no spaces): what the NAS stores and job_sha256 hashes."""
+    return json.dumps(job, sort_keys=True, separators=(",", ":")).encode()
+
+
+def job_sha256(raw):
+    """The sha256 of a job's canonical form (raw as for validate): the dispatcher and the NAS tell the same job
+    from a different one under the same id by it, whatever the JSON's spacing or key order."""
+    return hashlib.sha256(canonical(validate(raw))).hexdigest()
 
 
 def slots(params):
