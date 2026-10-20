@@ -29,7 +29,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import labstore  # noqa: E402
 
 
-
 def _load_paper():
     """lab/ui/paper.py by its path, as the module 'lab_ui_paper': the name 'paper' is lab/paper's package, and both
     can be loaded in one process (pytest over lab/paper/tests and lab/ui/tests)."""
