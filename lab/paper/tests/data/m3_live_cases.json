@@ -8,7 +8,7 @@
   "case": "name, why, clock, dev_bounds, groups, labels, tokens, pools, events (as in c2_position_cases.json FORMAT), learn, cost_scenario, expect_ops, expect_flag_fix_days. tokens and pools are the snapshot: what the feed knows at the start.",
   "arrival": "M3-11: an event may carry arrival [received_unix_ns, created_unix_ns, written_unix] (each nullable), as LiveFeed's Event.arrival: the signal rows of its slot read it for the latency columns (engine.py _latency).",
   "expect_flag_fix_days": "M3-11: the engine's flag_fix_days after the run (state farm_flag_fixes): {day: [fixes, of them in a pool with an open position]}.",
-  "learn": "what the feed learns while it reads, in order: {at_slot, token} (a tokens row: the token is replaced), {at_slot, pool} (a pools row: added when the pool is not known yet, as a SOL market when its quote_class is sol or reversed), {at_slot, history: {pool, events}} (M3-08b: a backfill's trades of the pool, history only, drained at the next slot end as LiveFeed's drain_history) or {at_slot, epoch, ms} (the epoch's ms per slot in the engine's clock), or {at_slot, flag_fix: {pool, order, farmer}} (M3-11: a recorded trade's farmer flag computed again, order its [slot, tx, outer, inner], drained at the next slot end after the backfills as LiveFeed's drain_flag_fixes). An item applies right before the first event whose slot is >= at_slot, after the last event when there is none (lab/core: learn_token, learn_pool, add_history, fix_farm, set_epoch_ms before that push).",
+  "learn": "what the feed learns while it reads, in order: {at_slot, token} (a tokens row: the token is replaced), {at_slot, pool} (a pools row: added when the pool is not known yet, as a SOL market when its quote_class is sol or reversed), {at_slot, history: {pool, events}} (M3-08b: a backfill's trades of the pool, history only, drained at the next slot end as LiveFeed's drain_history) or {at_slot, epoch, ms} (the epoch's ms per slot in the engine's clock), or {at_slot, flag_fix: {pool, order, farmer}} (M3-11: a recorded trade's farmer flag computed again, order its [slot, tx, outer, inner], drained at the next slot end after the backfills as LiveFeed's drain_flag_fixes), or {at_slot, forget_token: mint} (M3-11 v0.3: the token leaves the feed's tokens, as LiveFeed's _prune drops it). An item applies right before the first event whose slot is >= at_slot, after the last event when there is none (lab/core: learn_token, learn_pool, add_history, fix_farm, forget_token, set_epoch_ms before that push).",
   "window_rule": "the feed's farm-window rule: all_pools (a replay's, CaseFeed) or live (M3-08b: LiveFeed's per pool, engine.py:806-813; lab/core WindowRule::Live).",
   "regenerate": "M3_CASES_REGEN=1 pytest paper/tests/test_live_cases.py (or python -m paper.tests.m3_live_cases)."
  },
@@ -845,6 +845,73 @@
     ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "6FuTR4wXKtxKcXceu12jbkaxSGg1YctD4ES2yDchH1oB", "t": 450160500, "side": "sell", "day": "2026-09-22", "slot": 450161103, "tokens": 1372327508813, "quote": 497011573}],
     ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "6FuTR4wXKtxKcXceu12jbkaxSGg1YctD4ES2yDchH1oB", "t": 450160500, "day": "2026-09-22", "entry_slot": 450160502, "exit_decision_slot": 450161101, "exit_slot": 450161103, "exit_reason": "time", "tokens": 1372327508813, "cost": 500000000, "proceeds": 497011573, "pnl": -4429663, "ret": -0.008819910560577293, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 497011573, "peak_slot": 450160502, "n_flow_slots": null, "cap_slots": 599}],
     ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "6FuTR4wXKtxKcXceu12jbkaxSGg1YctD4ES2yDchH1oB", "t": 450160500}]
+   ],
+   "expect_flag_fix_days": {}
+  },
+  {
+   "name": "a_forgotten_token_gives_its_pool_the_coin_creator",
+   "why": "PT's mint is token T, created by 'dev'; PT's coin creator is another key. 'dev' sells 20 SOL out of PT at t and again at t + 100 (each after a 2 SOL inflow 30 slots before). At t the creator is T's 'dev': the trigger is the creator's own and is no trigger (no row; slot t ends with O's event at t + 40, before the drop). The feed then drops T (with the inflow at t + 70, as LiveFeed's _prune); at t + 100 the creator is PT's coin creator, so 'dev''s sell triggers and K3 enters.",
+   "clock": {
+    "1033": 316.36,
+    "1034": 315.9,
+    "1035": 316.53,
+    "1036": 317.13,
+    "1037": 266.46,
+    "1038": 266.83,
+    "1039": 267.12,
+    "1040": 266.17,
+    "1041": 265.83,
+    "1042": 267.83,
+    "1043": 267.93,
+    "1044": 268.26,
+    "1045": 267.65,
+    "1046": 267.35
+   },
+   "dev_bounds": [
+    446256000,
+    452304000
+   ],
+   "groups": "{\"H\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"organic\", \"n2_k\": 0, \"primary\": false, \"q\": 0.5, \"require_farm_complete\": true, \"risk\": null, \"segments\": [\"pool_reversed\"], \"variants\": [\"flow300_H6\", \"flow300_tp100_H6\"], \"wallet\": \"wallet-h.json\"}, \"K3\": {\"d\": 1, \"d_ms\": 600, \"farm\": \"all\", \"n2_k\": 0, \"primary\": true, \"q\": 0.5, \"require_farm_complete\": false, \"risk\": null, \"segments\": null, \"variants\": [\"tp4_T600\"], \"wallet\": \"wallet.json\"}}",
+   "labels": {
+    "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ": "O",
+    "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi": "PT",
+    "37qc9v7AeaBBaXzti4RyujZARQ2giMjuJEpYoikzP7Z8": "T",
+    "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy": "buyer",
+    "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx": "coin creator",
+    "EV2QvHdsXkjNFA34fSh73QSVBrM4Ae2EFC18YGgRHAdU": "dev",
+    "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2": "small buyer"
+   },
+   "tokens": [
+    {"mint": "37qc9v7AeaBBaXzti4RyujZARQ2giMjuJEpYoikzP7Z8", "create_slot": 450100000, "creator": "EV2QvHdsXkjNFA34fSh73QSVBrM4Ae2EFC18YGgRHAdU", "mayhem": false, "quote_mint": "11111111111111111111111111111111", "complete_slot": null, "pool": null}
+   ],
+   "pools": [
+    {"pool": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "mint": "37qc9v7AeaBBaXzti4RyujZARQ2giMjuJEpYoikzP7Z8", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000},
+    {"pool": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "mint": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "orientation": "reversed", "quote_class": "reversed", "mayhem": false, "coin_creator": "2kmWdKPiMR8cgERdxb478Nu1DPnin2BwQq76D1HZMTtx", "create_slot": 450000000}
+   ],
+   "events": [
+    {"venue": "pool", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "slot": 450159970, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042711, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 4985000000000, "b": 398000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -4990000000000, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "slot": 450160000, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042720, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 52526054210529, "b": 400000000000, "e": 995010000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 52473685263159, "trader": "EV2QvHdsXkjNFA34fSh73QSVBrM4Ae2EFC18YGgRHAdU", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "HzFhpKjUusakG7ibd4wTHSWD9B8jNxjSky3wjVPzU1vJ", "slot": 450160040, "tx": 10, "outer": 0, "inner": 0, "block_time": 1790042730, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 199360127974, "b": 5000000000000, "e": 1000000000000000, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -199560087982, "trader": "vHaa1VQ3WfpBdePsJVCvRTyq953BKPwKTF6fkn34AT2", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "slot": 450160070, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042738, "kind": "sell", "exact_out": false, "base": 2000000000, "quote_net": 5467755152915, "b": 380000000000, "e": 1047483685263159, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -5473239360693, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "slot": 450160100, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790042746, "kind": "buy", "exact_out": true, "base": 20000000000, "quote_net": 57742346808851, "b": 382000000000, "e": 1042010445902466, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": 57684777170955, "trader": "EV2QvHdsXkjNFA34fSh73QSVBrM4Ae2EFC18YGgRHAdU", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false},
+    {"venue": "pool", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "slot": 450163000, "tx": 0, "outer": 0, "inner": 0, "block_time": 1790043521, "kind": "sell", "exact_out": false, "base": 1000000000, "quote_net": 3020375034169, "b": 362000000000, "e": 1099695223073421, "lp_bps": 20, "protocol_bps": 5, "creator_bps": 5, "cashback_bps": 0, "virt": 0, "e_delta": -3023404497595, "trader": "CrR3WATSG6LDmvzEEFm8ik6pnHiFAP3MF7njHu1iLYcy", "limit_quote": null, "limit_base": null, "boost_left": null, "direct": true, "lp_amount": null, "lp_supply": null, "farmer": false}
+   ],
+   "window_rule": "all_pools",
+   "learn": [
+    {"at_slot": 450160070, "forget_token": "37qc9v7AeaBBaXzti4RyujZARQ2giMjuJEpYoikzP7Z8"}
+   ],
+   "cost_scenario": "{\"adverse_per_side\": 0.0, \"ata_rent\": 1513840, \"failed_tx\": 505000, \"fee_per_tx\": 605000, \"land_prob\": 0.97, \"name\": \"base\", \"rent_mode\": \"refunded_on_full_exit\", \"tip\": 100000}",
+   "expect_ops": [
+    ["put", "signals", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 382000000000, "trigger_trader": "EV2QvHdsXkjNFA34fSh73QSVBrM4Ae2EFC18YGgRHAdU", "status": "entered", "reason": null, "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_H6", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 382000000000, "trigger_trader": "EV2QvHdsXkjNFA34fSh73QSVBrM4Ae2EFC18YGgRHAdU", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "signals", {"family": "F7", "variant": "flow300_tp100_H6", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "day": "2026-09-22", "venue": "pool", "orientation": "reversed", "depth": 382000000000, "trigger_trader": "EV2QvHdsXkjNFA34fSh73QSVBrM4Ae2EFC18YGgRHAdU", "status": "skipped", "reason": "farm window incomplete", "farm": "organic", "block_time": null, "received_unix_ns": null, "created_unix_ns": null, "latency_ms": null, "segment_written_unix": null, "segment_lag_ms": null, "d_ms": null, "farm_complete": null, "pool_seen_slot": 450159970, "farm_window_complete": 0}],
+    ["put", "orders", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "day": "2026-09-22", "entry_slot": 450160102, "size": 500000000, "status": "filled", "reason": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "side": "buy", "day": "2026-09-22", "slot": 450160102, "tokens": 1512270534349, "quote": 500000000}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "entry_slot": 450160102, "cost": 500000000, "tokens": 1512270534349, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "positions", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "entry_slot": 450160102, "cost": 500000000, "tokens": 1512270534349, "status": "open", "mark_proceeds": null, "mark_slot": null, "mark_pnl": null}],
+    ["put", "fills", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "side": "sell", "day": "2026-09-22", "slot": 450160703, "tokens": 1512270534349, "quote": 497011702}],
+    ["put", "exits", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100, "day": "2026-09-22", "entry_slot": 450160102, "exit_decision_slot": 450160701, "exit_slot": 450160703, "exit_reason": "time", "tokens": 1512270534349, "cost": 500000000, "proceeds": 497011702, "pnl": -4429534, "ret": -0.008819653708427966, "exit_attempts": 1, "cf_graduation": 0, "seed_pool": 0, "vault_capped": 0, "reverted_direct": 0, "reverted_router": 0, "sells_dropped": 0, "sells_scaled": 0, "peak_mark": 497011702, "peak_slot": 450160102, "n_flow_slots": null, "cap_slots": 599}],
+    ["delete", "positions", {"family": "F7", "variant": "tp4_T600", "key": "BH2AyZGucgjQ2Cj8bNsuyPxNSkrVwKt6kiLFfGXePEVi", "t": 450160100}]
    ],
    "expect_flag_fix_days": {}
   }

@@ -155,7 +155,8 @@ enum Close {
 
 /// One item of a case's `learn` (m3_live_cases.py FORMAT) into the engine's live API: a token replaced, a SOL market
 /// added (its mint interned, so its token is looked up when it is used, as Python's `feed.token(p.mint)`; its
-/// create_slot in its PoolMeta), a backfill as history (M3-08b), a flag fix (M3-11), an epoch's ms per slot.
+/// create_slot in its PoolMeta), a backfill as history (M3-08b), a flag fix and a dropped token (M3-11), an epoch's ms
+/// per slot.
 fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<()> {
     if let Some(t) = x.get("token") {
         let mayhem = field(t, "mayhem")?;
@@ -183,6 +184,9 @@ fn learn_item(eng: &mut PaperEngine, x: &Value, keys: &mut CaseKeys) -> Result<(
         let legs = field(h, "events")?.as_array().context("history events")?.iter().map(|e| event(e, keys).map(|ev| ev.leg))
             .collect::<Result<Vec<_>>>()?;
         eng.add_history(keys.id(s(h, "pool")?), legs);
+    } else if let Some(m) = x.get("forget_token") {
+        // M3-11 v0.3: the token leaves the feed (LiveFeed `_prune`)
+        eng.forget_token(keys.id(m.as_str().context("forget_token")?));
     } else if let Some(f) = x.get("flag_fix") {
         // M3-11: a recorded trade's farmer flag computed again (LiveFeed drain_flag_fixes)
         let o: Vec<u64> = field(f, "order")?.as_array().context("order")?.iter().map(|v| v.as_u64().context("order"))

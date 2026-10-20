@@ -34,23 +34,45 @@
 //!   (`<trader> <net>` lines, sorted, the NULL trader as `None`, zero nets left out), which the seed proof compares with
 //!   `Holdings.seed(curve_history(mint, S)[:i])`; and `settle <family> <variant> <key> <t> <exit_slot> <reason> <pnl>`
 //!   per exit row.
+//!
+//! M3-11 (research/m3-11-paper-loop-spec-2026-10-20.md v0.3), the paper loop on the follow source, against
+//! `paper.engine --live --catch-up` (paper/live_reference.py):
+//!
+//!   lab-live paper --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --groups FILE --variants SPEC[,SPEC...]
+//!                  --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--mem-log FILE] [--expect-segments N]
+//!
+//! - The start (spec §2.1): the snapshot as known before the first live slot, every SOL market's mint interned; an empty
+//!   clock (REF_MS until an epoch is measured); LiveFeed's dev bounds (0, 2^63 - 1); no curve seed; the live farm-window
+//!   rule. Refused before the first event: a group whose segments are unset or hold curve (the live curve entry is
+//!   M3-11b), a segment in the hold-out or the clean period.
+//! - The follow source's items (spec §2.2): tokens, SOL markets, epochs' ms per slot and dropped tokens into the engine
+//!   at once; backfills and flag fixes at the next slot end; each event pushed with its arrival; the farmer seed's
+//!   complete_from for farm_complete. The learned and usage rows wait for the engine's next dated minute (`_live_minute`):
+//!   those after the last one are not journaled (no flush at the end), as in Python.
+//! - The journal's states: groups, cost_scenario (the files' text), feed (`{"kind": "live", "from": null, "to": null}`),
+//!   farmer_seed and farmer_seeds (`_journal_seed`; `store` the snapshot's meta.json store), farm_flag_fixes (at each
+//!   dated minute and at the end, when it changed) and the summary. Not yet: the HWM states, open-pools.json, the commit
+//!   per minute (M3-12).
 
 use crate::curve_hold;
+use crate::follow::{self, py_json, Follow};
 use crate::journal::Journal;
 use crate::legs::Keys;
 use crate::legs_read::{Replay, ReplayMem};
 use crate::memlog::{MemLog, Report};
-use crate::source::{Item, Source};
+use crate::snapshot::SeedWindow;
+use crate::source::{Item, Learned, Source};
 use crate::paper_core::{op_write, parse_scenario, Write};
-use crate::signals::load;
-use crate::signals_core::{counts_json, feed_state, parse_groups, Cell, KeyNames, Seeds};
+use crate::signals::{load, universe_of};
+use crate::signals_core::{counts_json, feed_state, parse_groups, Cell, Groups, KeyNames, Seeds};
 use anyhow::{bail, ensure, Context, Result};
+use lab_core::clock::{day_of, Bounds, Clock};
 use lab_core::exits::{check_groups, variant_for_spec};
 use lab_core::farm::WindowRule;
 use lab_core::legs::{Id, NONE};
 use lab_core::paper::{GradInfo, Op, PaperCfg, PaperEngine, PosKey, RiskSource, SeedTrace};
 use lab_core::signals::{SignalEngine, Status};
-use lab_core::universe::Segment;
+use lab_core::universe::{MintMeta, PoolMeta, Segment};
 use rusqlite::types::Value as Sql;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -61,6 +83,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 pub struct PaperArgs {
+    /// M3-11: the follow source over a recorder root instead of the replay (`from`, `to` and the chunks then unused).
+    pub follow: Option<FollowOpts>,
     pub chunks_root: PathBuf,
     /// Some: the recorder's segments under this directory instead of the chunks (M1 C4-1, legs_read.rs `open_segments`).
     pub segments: Option<PathBuf>,
@@ -79,6 +103,17 @@ pub struct PaperArgs {
     /// `--keep-farmer-history` (M1 C4-4): no prune of the farmer histories (legs_read.rs `prune_farm`); for the A/B only.
     pub keep_farmer_history: bool,
 }
+
+/// `--follow ROOT` and its own options (M3-11; legs --follow's).
+pub struct FollowOpts {
+    pub root: PathBuf,
+    pub snapshot_before: Option<u64>,
+    pub h24: Option<u64>,
+    pub expect_segments: Option<u64>,
+}
+
+/// State 'feed' of a live run, Python's json.dumps of {"kind": "live", "from": None, "to": None} (engine.py:1493).
+pub const LIVE_FEED_STATE: &str = r#"{"kind": "live", "from": null, "to": null}"#;
 
 fn sql(c: Cell) -> Sql {
     match c {
@@ -183,22 +218,29 @@ fn drain(eng: &mut PaperEngine, keys: &Keys, to: u64, j: &mut Journal, tally: &m
     Ok(())
 }
 
-/// The replay's paper journal (see the module doc); the summary.
+/// Each group's risk file (risk on), or inert (`--ignore-risk`).
+fn risk_source(ignore: bool, groups: &Groups) -> Result<RiskSource> {
+    if ignore {
+        return Ok(RiskSource::Ignore);
+    }
+    let paths: Vec<PathBuf> = groups
+        .specs
+        .iter()
+        .zip(&groups.risk)
+        .map(|(g, r)| r.as_ref().map(PathBuf::from).with_context(|| format!("group {}: risk on, but its groups text names no risk file", g.name)))
+        .collect::<Result<_>>()?;
+    Ok(RiskSource::Files(Box::new(move |g: usize| crate::risk::load(&paths[g]))))
+}
+
+/// The replay's paper journal (see the module doc); the summary. With `--follow`, the live paper loop (`run_follow`).
 pub fn run(a: &PaperArgs) -> Result<Value> {
+    if let Some(fo) = &a.follow {
+        return run_follow(a, fo);
+    }
     let t0 = Instant::now();
     let groups_text = text(&a.groups, "--groups")?;
     let groups = parse_groups(&groups_text).with_context(|| format!("--groups {}", a.groups.display()))?;
-    let risk = if a.ignore_risk {
-        RiskSource::Ignore
-    } else {
-        let paths: Vec<PathBuf> = groups
-            .specs
-            .iter()
-            .zip(&groups.risk)
-            .map(|(g, r)| r.as_ref().map(PathBuf::from).with_context(|| format!("group {}: risk on, but its groups text names no risk file", g.name)))
-            .collect::<Result<_>>()?;
-        RiskSource::Files(Box::new(move |g: usize| crate::risk::load(&paths[g])))
-    };
+    let risk = risk_source(a.ignore_risk, &groups)?;
     check_groups(&groups.specs).context("--groups")?;
     check_variants(&a.variants, &groups.specs[0].variants)?;
     let scn_text = text(&a.cost_scenario, "--cost-scenario")?;
@@ -268,8 +310,8 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
                     }
                 }
             }
-            // the replay hands out slots only; the follow source's items reach the engine with M3-09b's paper loop
-            _ => bail!("lab-live paper takes the replay's slots only (the follow source is M3-09b's, not wired here yet)"),
+            // the replay hands out slots only (the follow source's items are run_follow's)
+            _ => bail!("the replay handed out an item other than a slot"),
         }
         Ok(())
     })?;
@@ -321,6 +363,302 @@ pub fn run(a: &PaperArgs) -> Result<Value> {
     Ok(v)
 }
 
+/// The live loop's own part beside the engine (M3-11 spec §2.2, §4): the learned and usage rows waiting for the engine's
+/// next dated minute, the minute last seen, the farmer seed until its first event, the flag-fix days last written, and
+/// what it handed on.
+#[derive(Default)]
+struct Live {
+    learned: Vec<Learned>,
+    usage: Vec<Value>,
+    minute: Option<i64>,
+    seed: Option<SeedWindow>,
+    seed_journaled: bool,
+    store: String,
+    fixes_written: BTreeMap<Option<String>, [u64; 2]>,
+    items: BTreeMap<&'static str, u64>,
+    rows: BTreeMap<&'static str, u64>,
+}
+
+/// A JSON value as the journal's cell (Python's sqlite3: None, int, float or str).
+fn json_sql(v: &Value) -> Result<Sql> {
+    Ok(match v {
+        Value::Null => Sql::Null,
+        Value::Bool(b) => Sql::Integer(i64::from(*b)),
+        Value::Number(n) => match n.as_i64() {
+            Some(i) => Sql::Integer(i),
+            None => Sql::Real(n.as_f64().with_context(|| format!("{n} beyond INTEGER"))?),
+        },
+        Value::String(t) => Sql::Text(t.clone()),
+        other => bail!("a usage field {other} is no journal cell"),
+    })
+}
+
+/// State farm_flag_fixes' text (engine.py `json.dumps(self.flag_fix_days, sort_keys=True)`): a day of None as "null".
+pub fn flag_fixes_state(days: &BTreeMap<Option<String>, [u64; 2]>) -> String {
+    let m: serde_json::Map<String, Value> = days.iter().map(|(d, n)| (d.clone().unwrap_or_else(|| "null".to_owned()), json!(n))).collect();
+    py_json(&Value::Object(m))
+}
+
+impl Live {
+    /// `_journal_seed` (engine.py:333-351) at the first event after the seed: farmer_seed (the first start's) and
+    /// farmer_seeds (every start's once; a fresh journal: this one), Python's json.dumps with sort_keys.
+    fn journal_seed(&mut self, j: &mut Journal) -> Result<()> {
+        let Some(w) = self.seed.filter(|_| !self.seed_journaled) else { return Ok(()) };
+        self.seed_journaled = true;
+        let seed = json!({"store": self.store, "lo": w.lo, "hi": w.hi, "h24": w.h24, "first_live_slot": w.first_live_slot,
+                          "complete_from": w.complete_from});
+        j.state("farmer_seed", &py_json(&seed))?;
+        j.state("farmer_seeds", &py_json(&json!([seed])))?;
+        Ok(())
+    }
+
+    /// `_live_minute` (engine.py:482-496) when the engine's dated minute moved on in the slot end just run: the usage rows
+    /// (their own minute, else this one), farm_flag_fixes when it changed, the learned rows.
+    fn minute(&mut self, eng: &PaperEngine, j: &mut Journal) -> Result<()> {
+        let minute = eng.paper.minute();
+        if minute == self.minute {
+            return Ok(());
+        }
+        self.minute = minute;
+        let Some(now) = minute else { return Ok(()) };
+        for u in self.usage.drain(..) {
+            let m = match u.get("minute") {
+                None => now,
+                Some(v) => v.as_i64().with_context(|| format!("a usage row's minute {v}: Python's _day would fail"))?,
+            };
+            let field = |k: &str| json_sql(u.get(k).unwrap_or(&Value::Null));
+            j.put("usage", &[("minute", Sql::Integer(m)), ("day", day_of(m * 60).map_or(Sql::Null, Sql::Text)), ("stream", field("stream")?),
+                             ("bytes", field("bytes")?), ("messages", field("messages")?), ("seq", field("seq")?), ("note", field("note")?)])?;
+            *self.rows.entry("usage").or_default() += 1;
+        }
+        self.fixes(eng, j)?;
+        for l in self.learned.drain(..) {
+            j.put("learned", &[("kind", Sql::Text(l.kind.to_owned())), ("key", Sql::Text(l.key)), ("seq", Sql::Integer(i64::try_from(l.seq)?)),
+                               ("slot", l.slot.map_or(Ok(Sql::Null), |s| i64::try_from(s).map(Sql::Integer))?), ("info", Sql::Text(l.info))])?;
+            *self.rows.entry("learned").or_default() += 1;
+        }
+        Ok(())
+    }
+
+    /// State farm_flag_fixes when the counts changed since it was last written (`_live_minute`, `_close_day`).
+    fn fixes(&mut self, eng: &PaperEngine, j: &mut Journal) -> Result<()> {
+        let days = eng.paper.flag_fix_days();
+        if *days != self.fixes_written {
+            j.state("farm_flag_fixes", &flag_fixes_state(days))?;
+            self.fixes_written = days.clone();
+        }
+        Ok(())
+    }
+}
+
+/// M3-11: the live paper loop on the follow source (module doc); the summary.
+fn run_follow(a: &PaperArgs, fo: &FollowOpts) -> Result<Value> {
+    let t0 = Instant::now();
+    let groups_text = text(&a.groups, "--groups")?;
+    let groups = parse_groups(&groups_text).with_context(|| format!("--groups {}", a.groups.display()))?;
+    // spec v0.2 #1: the live curve entry is M3-11b; a group that could trade a curve must not run without it
+    for g in &groups.specs {
+        if g.segments.is_none_or(|s| s[Segment::Curve.index()]) {
+            bail!("group {}: its segments are unset or hold curve, and the live curve entry is not ported (M3-11b): refused with --follow",
+                  g.name);
+        }
+    }
+    let risk = risk_source(a.ignore_risk, &groups)?;
+    check_groups(&groups.specs).context("--groups")?;
+    check_variants(&a.variants, &groups.specs[0].variants)?;
+    let scn_text = text(&a.cost_scenario, "--cost-scenario")?;
+    let scn = parse_scenario(&scn_text).with_context(|| format!("--cost-scenario {}", a.cost_scenario.display()))?;
+    let segs = follow::locked_out(&fo.root)?;
+    let meta: Value = serde_json::from_slice(&fs::read(a.snapshot.join("meta.json")).with_context(|| format!("read {}/meta.json", a.snapshot.display()))?)?;
+    let snap = follow::snapshot_known(&a.snapshot, fo.snapshot_before)?;
+    let (n_tokens, n_classed) = (snap.tokens.len(), snap.pool_class.len());
+    // spec §2.1: LiveFeed's meta_bounds (0, 2^63 - 1) on an empty clock; every SOL market's mint interned (v0.3)
+    let clock = Clock::default();
+    let bounds = Bounds::new((0, i64::MAX as u64), &clock);
+    let (mut src, (universe, grad, load)) = Follow::open_with(&fo.root, snap, fo.h24, true, |snap, adm| {
+        for p in snap.pools.values() {
+            adm.keys.id(&p.mint);
+        }
+        let (universe, load) = universe_of(snap, &mut adm.keys, bounds)?;
+        let mut grad = GradInfo::default();
+        for t in snap.tokens.values() {
+            let pool = t.pool.as_deref().map(|p| adm.keys.id(p));
+            grad.add_token(adm.keys.id(&t.mint), t.complete_slot, pool);
+        }
+        Ok((universe, grad, load))
+    })?;
+    let mut j = Journal::open(&a.journal)?;
+    if j.count("signals")? > 0 || j.count("orders")? > 0 {
+        bail!("{}: the journal has rows already: give a new --journal", a.journal.display());
+    }
+    j.state("groups", &groups_text)?;
+    j.state("cost_scenario", &scn_text)?;
+    j.state("feed", LIVE_FEED_STATE)?;
+    let names: Vec<String> = groups.specs.iter().map(|g| g.name.clone()).collect();
+    let sig = SignalEngine::new(universe, clock, groups.specs, WindowRule::Live)?;
+    let mut eng = PaperEngine::with_risk(sig, PaperCfg::new(groups.q, scn, grad, HashMap::new()), risk)?;
+    let (mut seeds, mut tally) = (Seeds::default(), Tally::default());
+    let store = meta["store"].as_str().context("the snapshot's meta.json has no store (paper.snapshot_export writes it): farmer_seed names it")?;
+    let mut live = Live { store: store.to_owned(), ..Live::default() };
+    let mut memlog = a.mem_log.as_deref().map(MemLog::create).transpose()?;
+    src.mem_log = memlog.is_some();
+    let mems = |eng: &PaperEngine, seeds: &Seeds, tally: &Tally, r: &ReplayMem| {
+        let mut v = eng.mem_report();
+        v.push(seeds.mem());
+        v.push(lab_core::mem::Mem::new("entered_rows", tally.entered.len(), lab_core::mem::map(&tally.entered)));
+        v.extend(r.mems.iter().cloned());
+        Report { mems: v, tables: r.tables.clone() }
+    };
+    let mut last_slot = 0;
+    src.for_each_item(&mut |keys, rmem, item| {
+        let kind = match item {
+            Item::Slot(sl) => {
+                last_slot = sl.slot;
+                let arr = sl.arrivals.context("the follow source gives every event its arrival")?;
+                for (ev, arrival) in sl.events.iter().zip(arr) {
+                    let t = Instant::now();
+                    eng.push_arrived(ev, Some(arrival), &mut seeds.with(keys))?;
+                    live.journal_seed(&mut j)?; // engine.py:315-318: after the event joined its slot
+                    drain(&mut eng, keys, u64::MAX, &mut j, &mut tally, &groups.wallet, None)?;
+                    live.minute(&eng, &mut j)?;
+                    if let Some(m) = memlog.as_mut() {
+                        let ns = u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX);
+                        m.event(ns, eng.paper.minute(), last_slot, rmem.segments, || mems(&eng, &seeds, &tally, rmem))?;
+                    }
+                }
+                "slot"
+            }
+            Item::Token(t) => {
+                let mint = keys.get(&t.mint).context("a token learned without its key")?;
+                let creator = t.creator.as_deref().map_or(NONE, |c| keys.get(c).unwrap_or(NONE));
+                ensure!(t.creator.is_none() || creator != NONE, "token {}: its creator has no key", t.mint);
+                let pool = t.pool.as_deref().map(|p| keys.get(p).context("a token's pool without its key")).transpose()?;
+                eng.learn_token(mint, MintMeta::new(t.create_slot, creator, t.mayhem, t.quote_mint.as_deref()), t.complete_slot, pool);
+                "token"
+            }
+            Item::Pool(p) => {
+                let reversed = match p.orientation.as_deref() {
+                    Some("normal") => false,
+                    Some("reversed") => true,
+                    o => bail!("pool {}: orientation {o:?} (normal or reversed expected)", p.pool),
+                };
+                let id = keys.get(&p.pool).context("a pool learned without its key")?;
+                let coin_creator = p.coin_creator.as_deref().map_or(Ok(NONE), |c| keys.get(c).context("a coin creator without its key"))?;
+                let mint_tok = Some(keys.get(&p.mint).context("a pool's mint without its key")?);
+                eng.learn_pool(id, PoolMeta { reversed, mayhem: p.mayhem, mint_tok, coin_creator, create_slot: p.create_slot });
+                "pool"
+            }
+            Item::EpochMs { epoch, ms } => {
+                eng.set_epoch_ms(epoch, ms);
+                "epoch_ms"
+            }
+            Item::Learned(l) => {
+                live.learned.push(l.clone());
+                "learned"
+            }
+            Item::History { pool, legs } => {
+                eng.add_history(pool, legs.to_vec());
+                "history"
+            }
+            Item::FlagFix { pool, order, farmer } => {
+                eng.fix_farm(pool, order, farmer);
+                "flag_fix"
+            }
+            Item::Usage(u) => {
+                live.usage.push(u.clone());
+                "usage"
+            }
+            Item::Segment { .. } => "segment",
+            Item::FarmSeed(w) => {
+                ensure!(live.seed.is_none(), "a second farmer seed");
+                eng.sig.farm_complete_from = Some(w.complete_from);
+                live.seed = Some(w);
+                "farm_seed"
+            }
+            Item::TokenForget { mint } => {
+                eng.forget_token(mint);
+                "token_forget"
+            }
+        };
+        *live.items.entry(kind).or_default() += 1;
+        Ok(())
+    })?;
+    let keys = &src.adm.keys;
+    eng.finish(&mut seeds.with(keys))?; // the last slot, then the end of data (engine.py:321-326)
+    drain(&mut eng, keys, u64::MAX, &mut j, &mut tally, &groups.wallet, None)?;
+    live.minute(&eng, &mut j)?; // a minute the last slot end started
+    // `_end_of_data`'s `_close_day` when the run has a day (engine.py:1307-1308: `if self.day`); the learned and usage rows
+    // still waiting stay unwritten
+    if eng.sig.day.is_some() {
+        live.fixes(&eng, &mut j)?;
+    }
+    let read = src.stats.segments;
+    ensure!(read > 0, "the follow source read no complete segment under {}/segments: refused", fo.root.display());
+    if let Some(n) = fo.expect_segments.filter(|&n| n != read) {
+        bail!("the follow source read {read} complete segments, not the {n} expected: refused");
+    }
+    ensure!(eng.sig.counts.events > 0, "no event: an empty run is no result: refused");
+    // spec v0.3 §5.2: one TokenForget item per dropped token, never one lost
+    let forgets = live.items.get("token_forget").copied().unwrap_or(0);
+    ensure!(forgets == src.stats.tokens_dropped, "{forgets} TokenForget items for {} tokens dropped", src.stats.tokens_dropped);
+    // the end line: the engine after finish, the source after its last segment
+    let mem_lines = match memlog {
+        Some(m) => {
+            let r = src.mem();
+            Some(m.end(eng.paper.minute(), last_slot, r.segments, &mems(&eng, &seeds, &tally, &r))?)
+        }
+        None => None,
+    };
+    let c = &eng.paper.counts;
+    let mut v = counts_json(&eng.sig.counts);
+    v["first_slot"] = json!(eng.sig.first_slot);
+    v["bounds"] = json!([bounds.dev0, bounds.dev1, bounds.burn, bounds.dlo, bounds.dhi]);
+    v["groups"] = json!(names);
+    v["variants"] = json!(a.variants);
+    v["universe"] = json!({"tokens": load.tokens, "sol_markets": load.markets, "tokens_quote_null": load.quote_null, "interned": load.interned});
+    v["paper"] = json!({
+        "entered": c.entered, "busy": c.busy, "not_loaded": c.not_loaded, "orders": c.orders, "exits": c.exits,
+        "curve_entries": c.curve_entries, "seed_pool_sales": c.seed_pool_sales, "pool_sales": c.pool_sales, "max_open": c.max_open,
+        "wallet_files_written": tally.wallets, "risk": if a.ignore_risk { "inert" } else { "files" }, "risk_skips": c.risk_skips,
+        "at_entry": c.at_entry, "flag_fix_days": flag_fixes_state(eng.paper.flag_fix_days()),
+    });
+    v["journal"] = json!({"puts": tally.puts, "deletes": tally.deletes, "signals": j.count("signals")?, "orders": j.count("orders")?,
+                          "fills": j.count("fills")?, "exits": j.count("exits")?, "positions": j.count("positions")?,
+                          "learned": j.count("learned")?, "usage": j.count("usage")?});
+    v["n2_seeds"] = json!(seeds.len());
+    v["follow"] = json!({
+        "root": fo.root.display().to_string(), "snapshot_before": fo.snapshot_before, "h24": fo.h24, "segments_listed": segs.len(),
+        "snapshot": {"tokens": n_tokens, "pools_classed": n_classed}, "stats": src.stats.json(), "admission": src.counts.json(),
+        "keys": src.adm.keys.len(), "items": live.items, "rows_written": live.rows,
+        "waiting_at_end": {"learned": live.learned.len(), "usage": live.usage.len()},
+        "farm_seed": live.seed.map_or(Value::Null, |w| json!({"lo": w.lo, "hi": w.hi, "h24": w.h24, "first_live_slot": w.first_live_slot,
+                                                               "complete_from": w.complete_from})),
+        "token_forgets": forgets,
+    });
+    if let (Some(p), Some(n)) = (&a.mem_log, mem_lines) {
+        v["mem_log"] = json!({"file": p.display().to_string(), "lines": n, "heap_bytes_at_end": crate::mem::heap_bytes()});
+    }
+    v["peak_rss_bytes"] = json!(crate::mem::peak_rss_bytes());
+    v["secs"] = json!(t0.elapsed().as_secs_f64());
+    j.state("lab_live_paper", &v.to_string())?;
+    j.close()?;
+    if let Some(p) = &a.summary {
+        fs::write(p, serde_json::to_string_pretty(&v)?).with_context(|| format!("write {}", p.display()))?;
+    }
+    log::info!("{}", log_line_follow(&v));
+    Ok(v)
+}
+
+/// The live loop's summary in one line.
+pub fn log_line_follow(v: &Value) -> String {
+    let jr = &v["journal"];
+    format!("lab-live paper --follow: {} segments, {} events; journal signals {}, orders {}, fills {}, exits {}, learned {}, usage {}; \
+             orders {}; exits {}; tokens forgotten {}; peak RSS {} MB, {:.1} s",
+            v["follow"]["stats"]["segments"], v["events"], jr["signals"], jr["orders"], jr["fills"], jr["exits"], jr["learned"], jr["usage"],
+            v["paper"]["orders"], v["paper"]["exits"], v["follow"]["token_forgets"],
+            v["peak_rss_bytes"].as_u64().unwrap_or(0) >> 20, v["secs"].as_f64().unwrap_or(0.0))
+}
+
 /// The summary in one line: events, journal rows per table, orders per status, exits per reason, curve entries (with a seed
 /// from before from; at or after to), peak RSS and seconds.
 pub fn log_line(v: &Value) -> String {
@@ -345,7 +683,7 @@ mod tests {
 
     fn args(root: &Path, journal: &str) -> PaperArgs {
         PaperArgs {
-            chunks_root: root.join("chunks"), segments: None, snapshot: root.join("snap"), from: 1000, to: 3000, groups: root.join("groups.json"),
+            follow: None, chunks_root: root.join("chunks"), segments: None, snapshot: root.join("snap"), from: 1000, to: 3000, groups: root.join("groups.json"),
             variants: vec!["0.04:600".into()], cost_scenario: root.join("scn.json"), ignore_risk: true, journal: root.join(journal),
             summary: Some(root.join(format!("{journal}.json"))), trace: None, mem_log: None,
             keep_farmer_history: false,
@@ -513,6 +851,138 @@ mod tests {
             assert_eq!(t["len"], end["structures"][name]["entries"], "{name}: {t}");
             assert!(t["buckets"].as_u64().is_some_and(|b| b == 0 || b.is_power_of_two()) && t["tombstones"].is_u64() && t["bytes"].is_u64(), "{name}: {t}");
         }
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    // ------------------------------------------------------------------------------------------ M3-11: --follow
+
+    /// The reference groups, both on [pool_reversed] (spec v0.2 #1: no curve path with --follow).
+    fn live_groups() -> String {
+        GROUPS.replace(r#""segments": null"#, r#""segments": ["pool_reversed"]"#)
+    }
+
+    /// A follow run's args over `root` (its snapshot before 1000 with the store /store/x.duckdb, h24 500, risk inert).
+    fn follow_args(root: &Path, journal: &str) -> PaperArgs {
+        fs::write(root.join("live-groups.json"), live_groups()).unwrap();
+        fs::write(root.join("scn.json"), format!("{BASE_SCENARIO}\n")).unwrap();
+        edit_meta(&root.join("snap"), |v| v["store"] = json!("/store/x.duckdb"));
+        PaperArgs {
+            follow: Some(FollowOpts { root: root.to_owned(), snapshot_before: Some(1000), h24: Some(500), expect_segments: None }),
+            chunks_root: PathBuf::new(), segments: None, snapshot: root.join("snap"), from: 0, to: 0, groups: root.join("live-groups.json"),
+            variants: vec!["0.04:600".into()], cost_scenario: root.join("scn.json"), ignore_risk: true, journal: root.join(journal),
+            summary: Some(root.join(format!("{journal}.json"))), trace: None, mem_log: None, keep_farmer_history: false,
+        }
+    }
+
+    #[test]
+    fn a_follow_run_writes_the_live_states_and_counts_a_flag_fix_on_its_slots_day() {
+        // M3-11 spec §2.1, §2.2, §4 on follow.rs's reflag fixture (M3-10 §1.2): seg 1's backfill reflags W's buy at 3050, a
+        // fix handed out with seg 1's items and taken at the next slot end. No block time anywhere, so the engine's day is
+        // None: the fix counts under None ({"null": [1, 0]}, P1 has no position), and no dated minute and no day to close
+        // write the state (engine.py:1307: `if self.day`). feed byte for byte; the seed window of the start at 3000 (store
+        // [1000, 3000), h24 500) as _journal_seed writes it.
+        use crate::follow::tests::{put_trades, seg};
+        let root = tmp("paper-follow-fix");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        crate::legs_read::tests::export(&root.join("snap"));
+        let d0 = seg(&root, 0, 3000, 3099, json!({}));
+        put_trades(&d0, &[(3050, false, 100)]);
+        let d1 = seg(&root, 1, 3100, 3199, json!({"backfills": [{"pool": "P1", "status": "complete", "rows": 2}]}));
+        put_trades(&d1.join("backfill"), &[(3040, true, 100), (3045, false, 100)]);
+        put_trades(&d1, &[(3150, false, 100), (3155, true, 200), (3160, false, 1)]);
+        let a = follow_args(&root, "jf");
+        let v = run(&PaperArgs { follow: Some(FollowOpts { expect_segments: Some(2), ..a.follow.unwrap() }), ..follow_args(&root, "jf") }).unwrap();
+        let j = Journal::open(&root.join("jf")).unwrap();
+        let state = |k: &str| j.get_state(k).unwrap();
+        assert_eq!(state("feed").as_deref(), Some(r#"{"kind": "live", "from": null, "to": null}"#));
+        let seed = r#"{"complete_from": 3000, "first_live_slot": 3000, "h24": 500, "hi": 3000, "lo": 2500, "store": "/store/x.duckdb"}"#;
+        assert_eq!((state("farmer_seed").as_deref(), state("farmer_seeds")), (Some(seed), Some(format!("[{seed}]"))));
+        assert_eq!((state("farm_flag_fixes"), &v["paper"]["flag_fix_days"]), (None, &json!(r#"{"null": [1, 0]}"#)));
+        assert_eq!((state("groups"), state("cost_scenario").as_deref()), (Some(live_groups()), Some(BASE_SCENARIO)));
+        let f = &v["follow"];
+        assert_eq!((&f["items"]["flag_fix"], &f["items"]["farm_seed"], &f["token_forgets"], &f["stats"]["farmer_flags_fixed"]),
+                   (&json!(1), &json!(1), &json!(0), &json!(1)));
+        assert_eq!((&v["events"], &v["journal"]["signals"], &v["journal"]["learned"]), (&json!(4), &json!(0), &json!(0)));
+        assert_eq!(v["bounds"], json!([0, i64::MAX, 324_000, 324_000, i64::MAX as u64 - 20_000]));
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_flag_fix_days_are_written_as_python_dumps_them() {
+        // engine.py `json.dumps(self.flag_fix_days, sort_keys=True)`; a day of None is "null" (LAB review, nit a)
+        let days = |v: &[(Option<&str>, [u64; 2])]| v.iter().map(|(d, n)| (d.map(str::to_owned), *n)).collect::<BTreeMap<_, _>>();
+        assert_eq!(flag_fixes_state(&days(&[])), "{}");
+        assert_eq!(flag_fixes_state(&days(&[(None, [1, 0])])), r#"{"null": [1, 0]}"#);
+        assert_eq!(flag_fixes_state(&days(&[(Some("2026-09-23"), [1, 1]), (Some("2026-09-22"), [3, 0])])),
+                   r#"{"2026-09-22": [3, 0], "2026-09-23": [1, 1]}"#);
+    }
+
+    #[test]
+    fn learned_and_usage_rows_wait_for_the_next_dated_minute_and_none_after_the_last() {
+        // M3-11 spec §2.2 (v0.2 #3), `_live_minute`: the rows queued when the engine's dated minute moves on are written then
+        // (usage with its own minute, else that minute); those queued after the last move are not written.
+        // - seg 0 [1000, 1099]: usage (minute 7); blocks at 1010 (minute 10,000) and 1030 (10,001); P1 buys there; the
+        //   clock's epoch row;
+        // - seg 1 [1100, 1199]: creates PN (a SOL market); P1 buys at 1110 (minute 10,003);
+        // - seg 2 [1200, 1299]: usage without a minute; P1 buys at 1210 (10,003);
+        // - seg 3 [1300, 1399]: creates PQ; P1 buys at 1310 (10,003);
+        // - seg 4 [1400, 1499]: creates PZ; P1 buys at 1410 (10,003).
+        // The release lags a slot: 1010 ends when 1030 arrives (after seg 1's items): minute 10,000, seg 0's usage and the
+        // epoch and PN rows; 1030 ends after seg 2's items: 10,001, seg 2's usage at 10,001; 1110 ends after seg 3's
+        // items: 10,003, PQ's row. Then the minute stays: PZ's row waits and is not written.
+        use crate::follow::tests::{blocks, create_pool, put_trades, seg};
+        let root = tmp("paper-follow-minutes");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        crate::legs_read::tests::export(&root.join("snap"));
+        let d0 = seg(&root, 0, 1000, 1099, json!({"usage": [{"minute": 7, "stream": "a", "bytes": 5}]}));
+        blocks(&d0, &[(1010, Some(600_000), Some(false)), (1030, Some(600_100), Some(false))]);
+        put_trades(&d0, &[(1010, false, 100), (1030, false, 100)]);
+        let d1 = seg(&root, 1, 1100, 1199, json!({}));
+        create_pool(&d1, 0, &[(1100, "PN", "AN", lab_core::legs::WSOL)]);
+        blocks(&d1, &[(1110, Some(600_200), Some(false))]);
+        put_trades(&d1, &[(1110, false, 100)]);
+        let d2 = seg(&root, 2, 1200, 1299, json!({"usage": [{"stream": "b", "bytes": 6}]}));
+        blocks(&d2, &[(1210, Some(600_210), Some(false))]);
+        put_trades(&d2, &[(1210, false, 100)]);
+        for (seq, pool, bt) in [(3, "PQ", 600_215), (4, "PZ", 600_220)] {
+            let lo = 1000 + 100 * seq;
+            let d = seg(&root, seq, lo, lo + 99, json!({}));
+            create_pool(&d, 0, &[(lo, pool, &format!("A{pool}"), lab_core::legs::WSOL)]);
+            blocks(&d, &[(lo + 10, Some(bt), Some(false))]);
+            put_trades(&d, &[(lo + 10, false, 100)]);
+        }
+        let v = run(&follow_args(&root, "jm")).unwrap();
+        let j = Journal::open(&root.join("jm")).unwrap();
+        let db = rusqlite::Connection::open(root.join("jm").join("journal.sqlite")).unwrap();
+        let rows = |sql: &str| -> Vec<String> {
+            let mut st = db.prepare(sql).unwrap();
+            st.query_map([], |r| r.get::<_, String>(0)).unwrap().map(Result::unwrap).collect()
+        };
+        assert_eq!(rows("SELECT kind || ' ' || key || ' ' || seq || ' ' || coalesce(slot, 'null') FROM learned ORDER BY seq, kind, key"),
+                   ["epoch 0 0 1010", "pool PN 1 1100", "pool PQ 3 1300"]);
+        assert_eq!(rows("SELECT minute || ' ' || day || ' ' || stream || ' ' || bytes || ' ' || seq || ' ' || coalesce(note, 'null') FROM usage ORDER BY minute"),
+                   ["7 1970-01-01 a 5 0 null", "10001 1970-01-07 b 6 2 null"]);
+        let f = &v["follow"];
+        assert_eq!((&f["rows_written"], &f["waiting_at_end"]), (&json!({"learned": 3, "usage": 2}), &json!({"learned": 1, "usage": 0})));
+        assert_eq!((j.get_state("farm_flag_fixes").unwrap(), &v["journal"]["learned"]), (None, &json!(3))); // no fix: never written
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_group_that_could_trade_a_curve_is_refused_with_follow() {
+        // spec v0.2 #1: segments unset (None means everywhere) or holding curve: refused before the first event, no journal
+        let root = tmp("paper-follow-curve");
+        fs::create_dir_all(root.join("snap")).unwrap();
+        crate::legs_read::tests::export(&root.join("snap"));
+        crate::follow::tests::seg(&root, 0, 3000, 3099, json!({}));
+        let a = follow_args(&root, "jc");
+        for (i, groups) in [GROUPS.to_owned(), GROUPS.replace(r#""segments": null"#, r#""segments": ["curve"]"#)].into_iter().enumerate() {
+            let path = root.join(format!("g{i}.json"));
+            fs::write(&path, groups).unwrap();
+            let e = format!("{:#}", run(&PaperArgs { groups: path, ..follow_args(&root, "jc") }).unwrap_err());
+            assert!(e.contains("group K3") && e.contains("M3-11b"), "{e}");
+        }
+        assert!(!a.journal.exists());
         fs::remove_dir_all(&root).unwrap();
     }
 }

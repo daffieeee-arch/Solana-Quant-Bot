@@ -52,12 +52,13 @@ def test_m3_11_cases_carry_flag_fixes_and_arrivals():
 # too late (each the other's check); M3-08's cases have no group H row a window decides; window_rule_live learns
 # nothing; backfill_as_history's backfill already comes with the first event. M3-11: latency_of_a_live_signal learns
 # nothing (its arrivals are the events'); flag_fix_reaches_the_farm_label's fixes all at the start leave PF organic (the
-# later fix of the same trade replaces the first while it waits).
+# later fix of the same trade replaces the first while it waits). a_forgotten_token_gives_its_pool_the_coin_creator's drop at
+# the start lets the trigger at t pass too; it has no row a window decides.
 SAME = {"pool_learned_mid_run": (False, False, True), "graduation_learned_after_the_entry": (False, True, True),
         "completion_learned_too_late": (True, False, True), "clock_learned_mid_run": (False, False, True),
         "window_rule_live": (True, True, False), "backfill_as_history": (False, True, False),
         "backfill_of_an_unknown_pool": (False, False, False), "flag_fix_reaches_the_farm_label": (False, False, False),
-        "latency_of_a_live_signal": (True, True, False)}
+        "latency_of_a_live_signal": (True, True, False), "a_forgotten_token_gives_its_pool_the_coin_creator": (False, False, True)}
 
 
 @pytest.mark.parametrize("name", list(CASES))
@@ -99,6 +100,8 @@ def test_the_files_format():
                                                                                  "quote_mint", "complete_slot", "pool"], name
             elif "pool" in x:
                 assert list(x) == ["at_slot", "pool"] and list(x["pool"]) == list(case["pools"][0] if case["pools"] else x["pool"]), name
+            elif "forget_token" in x:
+                assert list(x) == ["at_slot", "forget_token"] and x["forget_token"] in {t["mint"] for t in case["tokens"]}, name
             elif "flag_fix" in x:
                 f = x["flag_fix"]
                 assert list(x) == ["at_slot", "flag_fix"] and list(f) == ["pool", "order", "farmer"], name

@@ -482,3 +482,24 @@ fn a_live_push_gives_the_rows_their_latency_and_the_live_bounds_decide_everywher
                                                          latency_ms: Some(801), segment_written_unix: a.written,
                                                          segment_lag_ms: Some(1_000), d_ms: 536 })));
 }
+
+#[test]
+fn a_forgotten_token_leaves_its_pool_with_the_coin_creator() {
+    // M3-11 (LiveFeed `_prune`, engine.py:567-568): once the feed drops a token, a pool of its mint takes the pool's coin
+    // creator as the F7 creator, the token's curve is out of the universe, and its graduation fields are gone.
+    const G: Id = 4;
+    const M: Id = 5;
+    let mut eng = engine_live(vec![k3()], vec![0.5]);
+    assert!(eng.learn_pool(G, PoolMeta { reversed: true, mayhem: false, mint_tok: Some(M), coin_creator: 9, create_slot: None }));
+    eng.learn_token(M, MintMeta::new(Some(T - 1_000), 7, Some(false), None), None, None);
+    let creator = |eng: &PaperEngine| eng.sig.universe.f7_key(Venue::Pool, G).map(|k| k.creator);
+    assert_eq!(creator(&eng), Ok(7));
+    assert!(eng.paper.cfg.grad.tokens.contains_key(&M));
+    eng.forget_token(M);
+    assert_eq!(creator(&eng), Ok(9));
+    assert!(eng.sig.universe.mint(M).is_none() && !eng.paper.cfg.grad.tokens.contains_key(&M));
+    assert_eq!(eng.sig.universe.f7_key(Venue::Curve, M).map(|k| k.creator), Err(crate::universe::Reject::CurveAbsent));
+    // learned again (a later create of the same mint): known again
+    eng.learn_token(M, MintMeta::new(Some(T - 1_000), 7, Some(false), None), None, None);
+    assert_eq!(creator(&eng), Ok(7));
+}

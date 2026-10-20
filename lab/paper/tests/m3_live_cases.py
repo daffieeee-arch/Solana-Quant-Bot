@@ -47,9 +47,10 @@ FORMAT = {
              "drained at the next slot end as LiveFeed's drain_history) or {at_slot, epoch, ms} (the epoch's ms per slot in "
              "the engine's clock), or {at_slot, flag_fix: {pool, order, farmer}} (M3-11: a recorded trade's farmer flag "
              "computed again, order its [slot, tx, outer, inner], drained at the next slot end after the backfills as "
-             "LiveFeed's drain_flag_fixes). An item applies right before the first event whose slot is >= at_slot, after the "
-             "last event when there is none (lab/core: learn_token, learn_pool, add_history, fix_farm, set_epoch_ms before "
-             "that push).",
+             "LiveFeed's drain_flag_fixes), or {at_slot, forget_token: mint} (M3-11 v0.3: the token leaves the feed's tokens, "
+             "as LiveFeed's _prune drops it). An item applies right before the first event whose slot is >= at_slot, after the "
+             "last event when there is none (lab/core: learn_token, learn_pool, add_history, fix_farm, forget_token, "
+             "set_epoch_ms before that push).",
     "window_rule": "the feed's farm-window rule: all_pools (a replay's, CaseFeed) or live (M3-08b: LiveFeed's per pool, "
                    "engine.py:806-813; lab/core WindowRule::Live).",
     "regenerate": "M3_CASES_REGEN=1 pytest paper/tests/test_live_cases.py (or python -m paper.tests.m3_live_cases).",
@@ -92,6 +93,8 @@ class LearnFeed(C1.CaseFeed):
         elif "flag_fix" in x:
             f = x["flag_fix"]
             self.flag_fixes.append((f["pool"], tuple(f["order"]), f["farmer"]))
+        elif "forget_token" in x:
+            del self.tokens[x["forget_token"]]  # live.py `_prune`: `del self.tokens[m]`
         elif "pool" in x:
             p = x["pool"]
             if p["pool"] not in self.classed:
@@ -157,6 +160,10 @@ class Case(C2.Case):
     def learn_fix(self, pool, order, farmer, at_slot):
         """M3-11: the recorded trade at `order` of `pool` gets the farmer flag `farmer` (LiveFeed's _reflag) at at_slot."""
         self.learn.append({"at_slot": at_slot, "flag_fix": {"pool": pool, "order": list(order), "farmer": farmer}})
+
+    def forget_token(self, mint, at_slot):
+        """M3-11 v0.3: the token leaves the feed at at_slot (LiveFeed's `_prune`)."""
+        self.learn.append({"at_slot": at_slot, "forget_token": mint})
 
     def arrive(self, leg, received, created, written):
         """M3-11: the arrival of the event of `leg` (LiveFeed's Event.arrival)."""
@@ -452,13 +459,39 @@ def latency_of_a_live_signal():
     return case
 
 
+def a_forgotten_token_gives_its_pool_the_coin_creator():
+    """M3-11 v0.3 (LiveFeed `_prune`, engine.py:567-568): once the feed drops a token, a pool of its mint takes the pool's
+    coin creator as the F7 creator, so a trigger by the token's creator is no longer the creator's own."""
+    c = Case("a_forgotten_token_gives_its_pool_the_coin_creator",
+             "PT's mint is token T, created by 'dev'; PT's coin creator is another key. 'dev' sells 20 SOL out of PT at t and "
+             "again at t + 100 (each after a 2 SOL inflow 30 slots before). At t the creator is T's 'dev': the trigger is the "
+             "creator's own and is no trigger (no row; slot t ends with O's event at t + 40, before the drop). The feed then "
+             "drops T (with the inflow at t + 70, as LiveFeed's _prune); at t + 100 the creator is PT's coin creator, so "
+             "'dev''s sell triggers and K3 enters.", n2_k=0)
+    t = 450_160_000
+    tok = c.token("T", creator="dev")
+    pt = c.pool("PT", mint=tok)
+    c.trades(pt, "reversed", 398 * SOL, 10**15, [(t - 30, 0, "buyer", "buy", 2 * SOL, False), (t, 0, "dev", "sell", 20 * SOL, False),
+                                                 (t + 70, 0, "buyer", "buy", 2 * SOL, False), (t + 100, 0, "dev", "sell", 20 * SOL, False),
+                                                 (t + 3_000, 0, "buyer", "buy", SOL, False)])
+    c.trades(c.pool("O"), "reversed", 5_000 * SOL, 10**15, [(t + 40, 0, "small buyer", "buy", SOL, False)])
+    c.forget_token(tok, t + 70)
+    case = c.build()
+    ok(not [r for r in c.rows("signals", key=pt) if r["t"] == t], c, "no row at t: the trigger is the creator's")
+    rows = [r for r in c.rows("signals", key=pt) if r["t"] == t + 100]
+    ok(len(rows) == 3 and rows[0]["trigger_trader"] == c.key("dev"), c, f"rows at t + 100 {rows}")
+    ok(c.one("orders", key=pt, variant="tp4_T600")["status"] == "filled", c, "K3 enters at t + 100")
+    ok(tok not in {m for m in c.eng.feed.tokens}, c, "T is dropped")
+    return case
+
+
 def reversed_trigger(c, pool, t, depth, **kw):
     return C1._reversed_trigger(c, pool, t, depth, **kw)
 
 
 CASES = [pool_learned_mid_run, graduation_learned_after_the_entry, completion_learned_too_late, clock_learned_mid_run,
          window_rule_live, backfill_as_history, backfill_of_an_unknown_pool, flag_fix_reaches_the_farm_label,
-         latency_of_a_live_signal]
+         latency_of_a_live_signal, a_forgotten_token_gives_its_pool_the_coin_creator]
 
 
 # ---------------------------------------------------------------------------------------------- the file
