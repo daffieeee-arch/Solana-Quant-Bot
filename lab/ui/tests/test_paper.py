@@ -511,33 +511,33 @@ class GroupsUnknown(unittest.TestCase):
 
 
 class Alerts(unittest.TestCase):
-    """Display-only markings from the owner's thresholds: K3's loss today against a share of its daily loss limit,
-    Triton's spend against a share of the cap, minutes without a recorder segment; the thresholds file overrides."""
+    """Display-only markings from the owner's thresholds: K3's and each group's loss today against a share of its own
+    daily loss limit (the day card's, from the group's risk file), Triton's spend against a share of the cap, minutes
+    without a recorder segment; the thresholds file overrides."""
 
     def test_markings(self):
         with tempfile.TemporaryDirectory() as d:
-            risk = os.path.join(d, "risk.yaml")
-            with open(risk, "w") as f:
-                f.write("size_sol: 0.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\n")
-            os.environ["LAB_PAPER_RISK"] = risk
             old = paper.ALERTS_FILE
             paper.ALERTS_FILE = os.path.join(d, "alerts.json")
             try:
                 now = 1_792_497_600
-                j = {"day_card": [{"group": "K3", "net_sol": -0.85}, {"group": "H", "net_sol": -5.0}]}
+                j = {"day_card": [{"group": "K3", "net_sol": -0.85, "daily_loss_limit_sol": 1.0},
+                                  {"group": "H", "net_sol": -0.3, "daily_loss_limit_sol": 0.25},
+                                  {"group": "H2", "net_sol": -5.0, "daily_loss_limit_sol": None}]}  # no risk file: no marking
                 rec = {"sample": False, "cap_gb": 25.0, "spent_gb": 23.0, "stopped": False, "last_segment_unix": now - 400}
-                keys = {a["key"]: a["level"] for a in paper.alerts(j, rec, now)}
-                self.assertEqual(keys, {"daily_loss_K3": "warn", "triton": "warn", "recorder_gap": "alert"})
+                got = paper.alerts(j, rec, now)
+                self.assertEqual({a["key"]: a["level"] for a in got},
+                                 {"daily_loss_K3": "warn", "daily_loss_H": "alert", "triton": "warn", "recorder_gap": "alert"})
+                self.assertIn("groep H: verlies vandaag 0,300 SOL", next(a["text"] for a in got if a["key"] == "daily_loss_H"))
                 j["day_card"][0]["net_sol"] = -1.0
                 self.assertEqual(paper.alerts(j, dict(rec, spent_gb=1.0, last_segment_unix=now - 10), now)[0]["level"], "alert")
-                self.assertEqual(paper.alerts({"day_card": [{"group": "K3", "net_sol": 0.4}]}, dict(rec, spent_gb=1.0, last_segment_unix=now), now), [])
+                self.assertEqual(paper.alerts({"day_card": [{"group": "K3", "net_sol": 0.4, "daily_loss_limit_sol": 1.0}]}, dict(rec, spent_gb=1.0, last_segment_unix=now), now), [])
                 with open(paper.ALERTS_FILE, "w") as f:
                     json.dump({"recorder_gap_min": 10, "triton_share": 0.95}, f)
                 self.assertEqual({a["key"] for a in paper.alerts({"day_card": []}, rec, now)}, set())  # 400 s < 10 min, 23/25 < 95 %
                 self.assertEqual(paper.alerts(None, dict(rec, sample=True), now), [])  # the sample recorder never alarms
             finally:
                 paper.ALERTS_FILE = old
-                del os.environ["LAB_PAPER_RISK"]
 
 
 class ExplainTrade(unittest.TestCase):
@@ -828,8 +828,11 @@ class WalletAndTriton(unittest.TestCase):
             os.environ["LAB_PAPER_JOURNAL"] = path
             try:
                 w = paper.wallet_view(1_792_497_600)  # 2026-10-20 12:00 UTC
+                v = paper.journal_view(path, 1_792_497_600)
             finally:
                 del os.environ["LAB_PAPER_JOURNAL"]
+        # The day card's limits for the alert markings come from the same risk files (#454 review).
+        self.assertEqual([(c["group"], c["daily_loss_limit_sol"]) for c in v["day_card"]], [("K3", 1.0), ("H", 0.25)])
         p, (h,) = w["paper"], w["groups"]
         self.assertEqual((p["risk_file"], p["daily_loss_limit_sol"], p["kill_switch"]), ("risk.yaml", 1.0, False))
         self.assertAlmostEqual(p["realised_sol"], 0.02)  # K3's trade only

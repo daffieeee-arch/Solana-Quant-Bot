@@ -37,3 +37,18 @@ export const solShort = (v: unknown) => {
   if (a >= 1e4) return nf1.format(x / 1e3) + "k";
   return (a >= 100 ? nf0 : nf1).format(x);
 };
+
+const SUB = "₀₁₂₃₄₅₆₇₈₉";
+/** A token price in SOL, compact as DEX pages write it: 0,000000358 -> "0,0₆358" (the subscript counts the zeros
+ *  after the comma); 3 significant digits; values within 1e-15 of zero (a floating rest on a price axis) are 0. */
+export const compactPrice = (v: number | null | undefined): string => {
+  if (v == null || !Number.isFinite(v)) return "–";
+  const a = Math.abs(v);
+  if (a < 1e-15) return "0";
+  if (a >= 0.001) return v.toLocaleString("nl-NL", { maximumSignificantDigits: a >= 1 ? 6 : 3 });
+  let zeros = -Math.floor(Math.log10(a)) - 1;
+  let n = Math.round(a * 10 ** (zeros + 3));
+  if (n >= 1000) { zeros -= 1; n = Math.round(n / 10); } // 0,00009996 rounds up to 0,0₃100, not 0,0₄1
+  const digits = n.toString().replace(/0+$/, "") || "0";
+  return `${v < 0 ? "−" : ""}0,0${[...String(zeros)].map((d) => SUB[+d]).join("")}${digits}`;
+};

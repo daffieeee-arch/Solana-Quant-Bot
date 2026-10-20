@@ -28,7 +28,11 @@ interface GroupWallet {
   today_net_sol: number; failed_today: number; open_positions: number; in_positions_sol: number; risk_found: boolean; risk_file: string | null;
   daily_loss_limit_sol: number | null; kill_switch: boolean | null; max_open_positions: number | null; size_sol: number | null;
 }
-const EXIT: Record<string, string> = { take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data" };
+// Every exit reason the engine journals, in Dutch (as the Paper tab).
+const EXIT: Record<string, string> = {
+  take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data", outflow: "uitstroom", graduation: "migratie",
+  restart_lost: "verloren bij herstart", entry_slippage: "instap: slippage", after_window_end: "einde data", end_of_data: "einde data",
+};
 const f3 = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("nl-NL", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
 const solscanAccount = (a: string) => `https://solscan.io/account/${encodeURIComponent(a)}`;
 
