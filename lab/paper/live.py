@@ -310,7 +310,11 @@ class LiveFeed(Feed):
         self.stats = {"segments": 0, "late_rows": 0, "unknown_pools": 0, "unknown_pool_rows": 0, "unknown_pool_other_rows": 0,
                       "unknown_mints": 0, "unknown_mint_rows": 0, "backfill_rows": 0,
                       "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0, "tokens_dropped": 0,
-                      "farmer_flags_fixed": 0}
+                      "farmer_flags_fixed": 0, "pools_seen_without_creation": 0, "late_probes": 0,
+                      "creation_detection_off_segments": 0, "probes_off_segments": 0}
+        # Pools only a pool_creations / pool_accounts row named (no CreatePoolEvent): not learned (creation-filters
+        # spec v0.2 M1), counted once each (capped as the unknown sets)
+        self.no_creation_seen = set()
         self.unknown_seen = set()  # pools whose rows were dropped (not in the snapshot, creation not received)
         self.unknown_mints_seen = set()  # mints whose curve rows were dropped (the same, for tokens)
         self.seen_keys, self.seen_order, self.seen_hi = {}, deque(), 0  # key -> "rec" | "hist" (SEEN_KEEP_SLOTS)
@@ -456,17 +460,15 @@ class LiveFeed(Feed):
                 if t and t.pool is None:
                     self.tokens[mint] = TokenInfo(t.mint, t.create_slot, t.creator, t.mayhem, t.quote_mint, t.complete_slot, pool)
                     self._learn_token(self.tokens[mint])
-        # New pools: from their CreatePoolEvent, else from the recorder's pool account streams
-        # (pool_creations, pool_accounts: the same mints and coin creator, slot = first seen).
+        # New pools: only from their CreatePoolEvent (creation-filters spec v0.2 M1). The recorder's pool account streams
+        # (pool_creations, pool_accounts) see every pool write, old pools included (the "fresh fees" filter is refuted):
+        # a pool they alone name is not learned (_no_creation counts it).
         for table, sql in (("pump_amm/CreatePoolEvent", """
               SELECT pool, base_mint, quote_mint, slot, coin_creator, COALESCE(is_mayhem_mode, false)
-              FROM {src} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1 ORDER BY slot, pool"""),
-                           ("pool_creations", None), ("pool_accounts", None)):
+              FROM {src} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1 ORDER BY slot, pool"""),):
             src = c.src(table)
             if not src:
                 continue
-            sql = sql or """SELECT pool, any_value(base_mint), any_value(quote_mint), min(slot), any_value(coin_creator),
-                                   bool_or(COALESCE(is_mayhem_mode, false)) FROM {src} GROUP BY pool ORDER BY 4, 1"""
             for pool, base, quote, slot, creator, mayhem in self.con.execute(sql.format(src=src)).fetchall():
                 if pool in self.pool_class:
                     continue
@@ -534,6 +536,49 @@ class LiveFeed(Feed):
                    AND slot >= ? AND slot < ? ORDER BY slot, tx_index, outer_ix, inner_ix""", [pool, lo, hi]).fetchall():
             self.farmers.add(pool, trader, slot, tb, amount)
         self.stats["seeded_pools"] += 1
+
+    def _no_creation(self, c):
+        """Pools a pool_creations or pool_accounts row of the segment names that no creation made known (M1): counted
+        once each in pools_seen_without_creation (capped at 1,000,000 as the unknown sets); their number in this
+        segment."""
+        new = 0
+        for table in ("pool_creations", "pool_accounts"):
+            src = c.src(table)
+            if not src:
+                continue
+            for (pool,) in self.con.execute(f"SELECT pool FROM {src} GROUP BY pool ORDER BY min(slot), pool").fetchall():
+                if pool in self.pool_class or pool in self.no_creation_seen:
+                    continue
+                new += 1
+                self.stats["pools_seen_without_creation"] += 1
+                if len(self.no_creation_seen) < 1_000_000:
+                    self.no_creation_seen.add(pool)
+        return new
+
+    def _segment_notes(self, seq, meta, no_creation):
+        """The segment's own usage rows for the engine's journal (creation-filters spec v0.2 M1, M4, S3), after the
+        recorder's: pools named without a creation, the filter without creation detection (new_reversed false: not
+        configured or dropped by a downscale), without probes (tx_probes dropped), and probes whose backfill reached
+        past Triton's replay window (late probes, their farmer history starts at the probe)."""
+        rows = []
+        if no_creation:
+            rows.append({"stream": "pools_seen_without_creation", "bytes": 0, "messages": no_creation,
+                         "note": "pools named only by pool_creations / pool_accounts: not learned"})
+        f = meta.get("filter")
+        if isinstance(f, dict) and f.get("new_reversed") is False:
+            self.stats["creation_detection_off_segments"] += 1
+            rows.append({"stream": "creation_detection_off", "bytes": 0, "messages": 1,
+                         "note": f"segment {seq}: new reversed pools not detected (dropped: {', '.join(f.get('dropped') or []) or '-'})"})
+        if isinstance(f, dict) and "tx_probes" in (f.get("dropped") or ()):
+            self.stats["probes_off_segments"] += 1
+            rows.append({"stream": "probes_off", "bytes": 0, "messages": 1, "note": f"segment {seq}: tx_probes dropped by a downscale"})
+        late = sorted(b.get("pool") or "" for b in meta.get("backfills", ())
+                      if b.get("status") == "failed" and "not available" in str(b.get("error") or ""))
+        if late:
+            self.stats["late_probes"] += len(late)
+            rows.append({"stream": "late_probe", "bytes": 0, "messages": len(late),
+                         "note": "backfill past the replay window: " + " ".join(late)})
+        return [dict(r, seq=seq) for r in rows]
 
     def _unknown_pools(self, c, seq):
         """Count (and log the new) pools whose rows pool_select drops: not in the snapshot and their creation not
@@ -654,6 +699,7 @@ class LiveFeed(Feed):
         # Backfill rows before the segment are history now; those inside it are merged into its
         # rows in chain order (no events); those after it wait for the next segment.
         back = self._backfill_rows(seg, meta)
+        no_creation = self._no_creation(c)  # after the backfill's creations
         late = set()
         for pool, tb, ta, *row in (r for r in back if r[4] < meta["first_slot"]):
             self._history(pool, tb, ta, row)
@@ -733,7 +779,7 @@ class LiveFeed(Feed):
                 leg = streams.pool_leg(tuple(row) + (farmer,), self.ctx.setdefault(pool, {}))
                 out.append(Event(slot, row[2], row[3], row[4], bt.get(slot), "pool", pool, leg, arrival(slot, row[2])))
         out.sort(key=lambda e: e.order)
-        self.usage += [dict(u, seq=seq) for u in meta.get("usage", ())]
+        self.usage += [dict(u, seq=seq) for u in meta.get("usage", ())] + self._segment_notes(seq, meta, no_creation)
         self.stats["segments"] += 1
         if self.stats["segments"] % 100 == 0 and out:  # bounded memory in a long live run
             self._prune(out[-1].slot, h24)

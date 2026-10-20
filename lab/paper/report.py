@@ -277,6 +277,36 @@ def farm_lines(journal, day):
     return lines
 
 
+DETECTION_STREAMS = ("creation_detection_off", "probes_off", "pools_seen_without_creation", "late_probe")
+
+
+def detection_lines(journal, day):
+    """What the recording could not see that day (creation-filters spec v0.2 M1, M4, S3; LiveFeed's usage rows): the
+    minutes without creation detection (new reversed pools not followed: no creation is no evidence of none) and
+    without probes, the pools only the account streams named (not learned), and the probes whose backfill reached past
+    Triton's replay window (their farmer history starts at the probe)."""
+    rows = [r for r in journal.rows("usage", "day = ?", (day,)) if r["stream"] in DETECTION_STREAMS]
+    if not rows:
+        return []
+    minutes = defaultdict(set)
+    count = defaultdict(int)
+    for r in rows:
+        minutes[r["stream"]].add(r["minute"])
+        count[r["stream"]] += r["messages"] or 0
+    lines = ["", "## Detection", ""]
+    if minutes["creation_detection_off"]:
+        lines.append(f"- {len(minutes['creation_detection_off'])} minutes without creation detection (the filter had no new reversed "
+                     "pools: not configured or dropped by a downscale): no new pool from them is no evidence of none")
+    if minutes["probes_off"]:
+        lines.append(f"- {len(minutes['probes_off'])} minutes without probes (dropped by a downscale): new pools known, their trades not followed")
+    if count["pools_seen_without_creation"]:
+        lines.append(f"- {count['pools_seen_without_creation']} pools named only by the pool account streams, not learned (no creation seen)")
+    if count["late_probe"]:
+        lines.append(f"- {count['late_probe']} probes whose backfill reached past Triton's replay window: their farmer history starts "
+                     "at the probe")
+    return lines
+
+
 def daily_report(journal, day, watch_log=None):
     """Write <journal>/<day>/report.md and report.parquet; returns the summary rows."""
     exits = journal.rows("exits")
@@ -344,6 +374,7 @@ def daily_report(journal, day, watch_log=None):
               + (f" (largest {max(b['gap_slots'] for b in gaps)} slots)" if gaps else "")]
     lines += latency_lines(journal, day)
     lines += farm_lines(journal, day)
+    lines += detection_lines(journal, day)
     lines += seed_lines(journal)
     lines += restart_lines(journal, day)
     for group, variants in sorted(further.items()):

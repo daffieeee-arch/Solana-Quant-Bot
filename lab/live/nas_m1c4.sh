@@ -154,6 +154,7 @@ if [ "$STEP" = build ]; then
            farm_live::tests::the_constants_are_the_stores_where_the_file_is_at_hand \
            follow::tests::a_late_backfill_reflags_a_recorded_trade_and_the_flags_follow_livefeeds_window \
            follow::tests::the_seed_window_takes_the_exports_trades_at_a_pools_first_live_row \
+           follow::tests::a_pool_only_the_account_streams_name_is_not_learned_and_the_segment_notes_say_why \
            tests::the_follow_dump_takes_a_root_a_snapshot_a_grid_origin_and_a_summary \
            signals_core::tests::rows_become_the_journals_columns \
            paper::tests::a_follow_run_writes_the_live_states_and_counts_a_flag_fix_on_its_slots_day \
