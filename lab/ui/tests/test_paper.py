@@ -89,6 +89,36 @@ class ParityJournal(unittest.TestCase):
         self.assertTrue(any(p["venue"] == "pool" and p.get("mint") and p["mint"] != p["key"] for p in named))
 
 
+class JournalChoice(unittest.TestCase):
+    """The page shows the paper run's journal (paper-k3) once it exists, also when a measuring-hour chain test or
+    a parity run was written later; before it, the journal written last, counting its WAL file."""
+
+    def test_paper_run_first_then_the_latest_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            def journal(name, mtime, wal=None):
+                db = make_journal(os.path.join(d, "journal", name, "journal"), [])
+                os.utime(db, (mtime, mtime))
+                for f in (db + "-wal",):
+                    if os.path.exists(f):
+                        os.remove(f)
+                if wal:
+                    open(db + "-wal", "wb").close()
+                    os.utime(db + "-wal", (wal, wal))
+                return db
+            old, data = paper.DATA, d
+            paper.DATA = data
+            try:
+                parity = journal("parity-450144000-450360000", 1_000)
+                measure = journal("measure-20261020", 500, wal=2_000)  # its writes are still in the WAL
+                self.assertEqual(paper.journal_path(), measure)
+                os.utime(parity, (3_000, 3_000))
+                self.assertEqual(paper.journal_path(), parity)
+                run = journal(paper.PAPER_RUN, 100)
+                self.assertEqual(paper.journal_path(), run)  # the paper run wins however old its file looks
+            finally:
+                paper.DATA = old
+
+
 class Synthetic(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -410,6 +440,38 @@ class TokenNames(unittest.TestCase):
                         self.assertNotIn("dangerouslySetInnerHTML", fh.read(), f)  # token names are user-chosen text
 
 
+class GroupPositions(unittest.TestCase):
+    """Group H's own open positions and the day's exits appear apart from K3's (arm_positions, each with its group);
+    K3's list, totals and stop rule stay K3's only."""
+
+    def test_arm_positions_are_listed_per_group(self):
+        jmod, _ = lab_paper()
+        sol = 1_000_000_000
+        with tempfile.TemporaryDirectory() as d:
+            j = jmod.Journal(os.path.join(d, "paper-k3", "journal"))
+            j.state("groups", json.dumps({"K3": {"primary": True, "variants": ["tp4_T600"]}, "H": {"primary": False, "variants": ["flow300_H6"]}}))
+            j.state("feed", json.dumps({"kind": "live"}))
+            t = 460_000_000
+            for variant, pnl in (("tp4_T600", 20_000_000), ("flow300_H6", -100_000_000)):
+                t += 100
+                j.put("signals", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", venue="pool", orientation="reversed",
+                      depth=0, trigger_trader="w", status="entered")
+                j.put("exits", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", entry_slot=t + 3, exit_slot=t + 50,
+                      exit_reason="time", tokens=5, cost=sol // 2, proceeds=sol // 2 + pnl, pnl=pnl, ret=pnl / (sol / 2), exit_attempts=1)
+            j.put("positions", family="F7", variant="flow300_H6", key="Popen", t=t + 1, entry_slot=t + 4, cost=sol // 2, tokens=7, status="open")
+            j.put("heartbeat", minute=29_874_960, day="2026-10-20", last_slot=t + 900, events=3, open_positions=1, gap_slots=0, note="")
+            j.commit()
+            path = os.path.join(j.dir, "journal.sqlite")
+            j.close()
+            v = paper.journal_view(path, now=1_792_497_600)  # 2026-10-20 12:00 UTC
+        self.assertEqual([p["variant"] for p in v["positions"]], ["tp4_T600"])
+        self.assertEqual(v["totals"]["trades"], 1)
+        h = v["arm_positions"]
+        self.assertEqual([(p["group"], p["status"], p["key"]) for p in h], [("H", "open", "Popen"), ("H", "time", "P460000200")])
+        self.assertAlmostEqual(h[1]["pnl_sol"], -0.1)
+        self.assertEqual(h[1]["venue"], "pool")
+
+
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"
@@ -468,11 +530,17 @@ class Marks(unittest.TestCase):
 
 class WalletAndTriton(unittest.TestCase):
     def test_wallet_paper_part_is_the_capital_simulation_and_onchain_is_marked_sample(self):
-        if not paper.journal_path():
-            self.skipTest("no paper journal")
-        w = paper.wallet_view(1_791_800_000)
+        # The parity journal (no wallet.json), not whichever journal the page picks: from the paper start on that
+        # is paper-k3, which has the engine's wallet.
+        if not os.path.exists(os.path.join(PARITY, "journal.sqlite")):
+            self.skipTest("no parity journal")
+        os.environ["LAB_PAPER_JOURNAL"] = PARITY
+        try:
+            w = paper.wallet_view(1_791_800_000)
+        finally:
+            del os.environ["LAB_PAPER_JOURNAL"]
         p = w["paper"]
-        v = paper.journal_view(paper.journal_path(), 1_791_800_000)
+        v = paper.journal_view(os.path.join(PARITY, "journal.sqlite"), 1_791_800_000)
         self.assertAlmostEqual(p["balance_sol"], v["capital"]["final_sol"])
         self.assertTrue(all(t["status"] in ("filled", "entry_failed", "skipped") for t in p["txs"]))
         self.assertTrue(w["onchain"]["sample"])  # no live wallet.json yet
@@ -507,6 +575,36 @@ class WalletAndTriton(unittest.TestCase):
         self.assertTrue(100 < t["latency"]["p50"] < t["latency"]["p90"] < 1000)
         self.assertEqual(sum(t["latency"]["hist"]), t["latency"]["n"])
         self.assertTrue(any(s["dropped"] for s in t["streams"]))
+
+    def test_triton_forecast_from_the_first_recorded_minute(self):
+        """A recorder that starts mid-month: the forecast is the spend so far plus the rate since its first minute
+        (at most the daily cap) over the days left, not the spend spread over the month from the 1st. The budget is
+        the recorder's own cap, and a day stopped on an unknown spend says why."""
+        now = 1_792_497_600  # 2026-10-20 12:00 UTC: 12 days left in October
+        start = now - 6 * 3600  # the recorder ran 6 hours
+        with tempfile.TemporaryDirectory() as root:
+            for i in range(6):  # one segment per hour, 0.1 GB each: 0.6 GB, $0.048
+                minute = (start + i * 3600) // 60
+                d = os.path.join(root, "segments", f"{i:09d}")
+                os.makedirs(d)
+                with open(os.path.join(d, "_segment.json"), "w") as f:
+                    json.dump({"seq": i, "first_slot": 460_000_000 + i, "last_slot": 460_000_000 + i, "complete": True,
+                               "written_unix": minute * 60 + 60, "usage": [{"minute": minute, "stream": "tx_watchlist",
+                                                                         "bytes": 100_000_000, "messages": 10}]}, f)
+            with open(os.path.join(root, "budget.json"), "w") as f:
+                json.dump({"day": now // 86_400, "spent_bytes": 600_000_000, "cap_bytes": 50_000_000_000, "spent_gb": 0.6,
+                           "stopped": True, "wire_ratio": 1.0, "unknown": "segments/000000009 has no _segment.json"}, f)
+            os.environ["LAB_RECORDER_ROOT"] = root
+            try:
+                t = paper.triton_view(now)
+            finally:
+                del os.environ["LAB_RECORDER_ROOT"]
+        self.assertAlmostEqual(t["month_usd"], 0.048)
+        self.assertEqual(t["since_unix"], start // 60 * 60)
+        self.assertAlmostEqual(t["rate_usd_per_day"], 0.048 * 4, places=6)  # 6 hours: a quarter of a day
+        self.assertAlmostEqual(t["forecast_usd"], 0.048 + 0.192 * 11.5, places=6)  # 11.5 days left after noon
+        self.assertEqual(t["recorder"]["budget_usd"], 4.0)  # 50 GB at $0.08
+        self.assertIn("no _segment.json", t["recorder"]["unknown"])
 
     def test_risk_limits_parse(self):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as fh:

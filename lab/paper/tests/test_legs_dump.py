@@ -275,7 +275,8 @@ def test_an_empty_dump_is_refused(monkeypatch, tmp_path):
 
 def test_the_segments_options_are_refused_without_segments(tmp_path):
     s = str(tmp_path / "s.json")
-    for extra in (["--to", "3000", "--h24", "5"], ["--to", "3000", "--snapshot-before", "1000"], ["--to", "3000", "--expect-segments", "3"], []):
+    for extra in (["--to", "3000", "--h24", "5"], ["--to", "3000", "--snapshot-before", "1000"], ["--to", "3000", "--expect-segments", "3"],
+                  ["--to", "3000", "--memory", "1GB"], []):
         with pytest.raises(SystemExit):
             legs_dump.main(["--store", "store", "--from", "1000", "--summary", s] + extra)
 

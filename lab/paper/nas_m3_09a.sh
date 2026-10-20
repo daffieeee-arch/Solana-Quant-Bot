@@ -14,7 +14,8 @@
 #
 #   LAB_PY=/lab/venv/bin/python bash lab/paper/nas_m3_09a.sh          (lab runner; short: three passes over ~2 days)
 #
-# The passes run one after another. Each is one Python process, DuckDB at 1 GB (as paper.engine's LiveFeed), and stops
+# The passes run one after another. Each is one Python process, DuckDB at 1 GB (LiveFeed's --memory, as paper.engine's;
+# the store form at ReplayFeed's own 1 GB), and stops
 # itself once its peak RSS passes MAX_RSS_GB (default 8; RED in job.log), so it fits beside a long job in the runner.
 # Measured on the VPS (dev2, every row, 20,000 slots): ~9,000 events/s, ~0.43 KB of state per event before the
 # one-day prunes; job 91's 16.4 M events give an estimate of ~3-5 GB and ~30-50 min for a LiveFeed pass.
@@ -59,7 +60,7 @@ run() {  # name, then legs_dump's arguments; a failed pass ends the job RED, but
   mkdir -p "$OUT/$name"
   rm -f "$OUT/$name/summary.json"  # a rerun on this commit never reads an earlier run's
   t0=$(date +%s)
-  "$PY" -m paper.legs_dump --store "$STORE" --from $LO --to $HI --summary "$OUT/$name/summary.json" --memory 1GB \
+  "$PY" -m paper.legs_dump --store "$STORE" --from $LO --to $HI --summary "$OUT/$name/summary.json" \
     --max-rss-gb "$MAX_RSS_GB" "$@" \
     > "$OUT/$name/run.log" 2>&1 || rc=$?
   if [ "$rc" != 0 ]; then
@@ -70,8 +71,8 @@ run() {  # name, then legs_dump's arguments; a failed pass ends the job RED, but
   fi
   log "$name: $(($(date +%s) - t0)) s; $(tail -1 "$OUT/$name/run.log" | cut -c1-240)"   # starts with the peak RSS
 }
-run run1 --segments "$REC" --snapshot-before $LO --expect-segments "$JOB91_SEGMENTS"
-run run2 --segments "$REC" --snapshot-before $LO --expect-segments "$JOB91_SEGMENTS"
+run run1 --segments "$REC" --snapshot-before $LO --expect-segments "$JOB91_SEGMENTS" --memory 1GB
+run run2 --segments "$REC" --snapshot-before $LO --expect-segments "$JOB91_SEGMENTS" --memory 1GB
 # GREEN: byte-equal AND not empty (the degenerate case, two empty summaries, is byte-equal too: RED here).
 rc=0
 "$PY" - "$OUT" "$JOB91_SEGMENTS" "$JOB91_MIN_EVENTS" > "$OUT/acceptance.log" 2>&1 <<'EOF' || rc=$?
