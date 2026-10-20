@@ -513,6 +513,11 @@ def api_paper_explain(q):
     return paper.explain(key, variant, int(t))
 
 
+def api_ui_jobs(q):
+    """The UI's research jobs and the form's choices (read-only; submitting one is an action: /api/action)."""
+    return {"jobs": actions.jobs_view(), "options": actions.job_options(), "in_flight": actions.job_in_flight()}
+
+
 def api_paper_trades(q):
     """The paper bot's entries and exits on one token, for its token page: the mint itself (curve trades) and
     every pool of that mint in the development store (pool trades)."""
@@ -559,6 +564,7 @@ ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": a
           "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases,
           "/api/paper": api_paper,
           "/api/strategy_overview": api_strategy_overview, "/api/paper_chart": api_paper_chart, "/api/paper_explain": api_paper_explain,
+          "/api/ui_jobs": api_ui_jobs,
           "/api/paper_trades": api_paper_trades,
           "/api/wallet": api_wallet, "/api/triton": api_triton}
 
@@ -653,7 +659,7 @@ class Handler(BaseHTTPRequestHandler):
                 s = actions.session(self._peer(), self._cookie())
                 why = actions.exposure(self.bound[1])
                 return self.send_json(HTTPStatus.OK, {"paired": True, "name": s["name"], "csrf": s["csrf"], "expires_unix": s["expires"],
-                                                      "actions_off": why, "actions": actions.ACTIONS})
+                                                      "actions_off": why, "actions": actions.DESCRIPTIONS})
             actions.session(self._peer(), self._cookie())
             if path == "/api/action/result":
                 return self.send_json(HTTPStatus.OK, actions.result((query.get("id") or [""])[0]))

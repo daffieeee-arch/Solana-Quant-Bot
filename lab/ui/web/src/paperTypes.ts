@@ -34,6 +34,16 @@ export interface PaperJournal {
   arms: { group: string; variants: (PaperGroup & { variant: string; today_sol: number })[] }[];
   // Further groups' (H) open positions and the day's exits (lab/ui/paper.py journal_view), each with its group.
   arm_positions: (PaperPosition & { group: string })[];
+  // "Op koers?" (lab/ui/paper.py on_course): paper per trade beside LAB research's pinned expectation file.
+  on_course: {
+    error?: string; version?: string; sha256?: string; regime_note?: string; rules: string[]; min_trades: number;
+    candidates: {
+      id: string; name: string | null; variant: string; group: string | null; position: "inside" | "below" | "above" | null; caveats: string[];
+      paper: { trades: number; failed_entries: number; days: number; mean_sol: number | null; ci95_sol: [number, number] | null };
+      primary: { label: string | null; status: string | null; trades: number | null; mean_sol: number | null; ci95_sol: number[] | null; verdict: string | null; source: string | null };
+      secondary: { label: string | null; regime: string | null; trades: number | null; mean_sol: number | null; ci95_sol: number[] | null }[];
+    }[];
+  };
   // The day report card (lab/ui/paper.py journal_view day_card): per group the day's trades, Σ, best and worst.
   day_card: { group: string; trades: number; entry_failed: number; net_sol: number; wins: number;
     best: DayTrade | null; worst: DayTrade | null }[];

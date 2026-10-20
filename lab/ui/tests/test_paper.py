@@ -524,9 +524,10 @@ class ExplainTrade(unittest.TestCase):
             sd = os.path.join(root, "segments", "000000001")
             os.makedirs(os.path.join(sd, "pump_amm", "SellEvent"))
             duckdb.sql(f"""COPY (SELECT * FROM (VALUES (470000010::UBIGINT, 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, {t0}::BIGINT, '{pool}',
-                         30000000000::UBIGINT, 100000000000000::UBIGINT, 2000000000::UBIGINT, 5000000000000::UBIGINT))
+                         30000000000::UBIGINT, 100000000000000::UBIGINT, 2000000000::UBIGINT, 5000000000000::UBIGINT, 4990000000000::UBIGINT, '0'))
                          t(slot, tx_index, outer_ix, inner_ix, "timestamp", pool, pool_base_token_reserves, pool_quote_token_reserves,
-                           base_amount_in, quote_amount_out)) TO '{os.path.join(sd, "pump_amm", "SellEvent", "part-00000.parquet")}' (FORMAT parquet)""")
+                           base_amount_in, quote_amount_out, quote_amount_out_without_lp_fee, virtual_quote_reserves))
+                         TO '{os.path.join(sd, "pump_amm", "SellEvent", "part-00000.parquet")}' (FORMAT parquet)""")
             with open(os.path.join(sd, "_segment.json"), "w") as f:
                 json.dump({"seq": 1, "first_slot": 470_000_000, "last_slot": 470_000_100, "complete": True, "written_unix": int(time.time()) - 60, "usage": []}, f)
             with open(os.path.join(root, "budget.json"), "w") as f:
@@ -551,7 +552,7 @@ class ExplainTrade(unittest.TestCase):
                     paper.explain(pool, "tp4_T600", t + 1)
             finally:
                 del os.environ["LAB_PAPER_JOURNAL"], os.environ["LAB_RECORDER_ROOT"]
-        after = 32 * sol / 95_000_000_000_000 / 1000  # the reserves after the SellEvent: 30 + 2 SOL, 100e12 - 5e12 tokens
+        after = 32 * sol / (100_000_000_000_000 - 4_990_000_000_000) / 1000  # after the SellEvent: 30 + 2 SOL, the vault less the quote without the LP fee
         e, o, s = x["entry"], x["exit"], x["signal"]
         self.assertEqual((s["depth_sol"], s["farm"], s["farm_complete"]), (150.0, "organic", 1))
         self.assertEqual((e["delay_slots"], e["price_at_signal"], e["price_before_entry"]), (3, after, after))
@@ -559,6 +560,48 @@ class ExplainTrade(unittest.TestCase):
         self.assertAlmostEqual(e["fill_vs_market_pct"], (e["fill_price"] / after - 1) * 100)
         self.assertEqual((o["reason"], o["held_slots"], o["peak_slots"]), ("take_profit", 47, 37))
         self.assertAlmostEqual(o["peak_ret"], 0.06)
+
+
+class OnCourse(unittest.TestCase):
+    """'Op koers?': the paper per trade beside LAB research's expectation file, pinned by sha256; a file that is not
+    the pinned one shows nothing; the primary band in SOL per trade at the file's size; the position only from
+    MIN_TRADES_SHOWN trades on."""
+
+    def test_pinned_file_and_position(self):
+        import hashlib
+        exp = {"version": "t", "regime_note": "n", "rules": ["beslist niets"], "candidates": {
+            "K3": {"name": "K3", "primary": {"ci95_ret_pct": [-0.9, 0.61], "mean_ret_pct": 0.02, "trades": 3789,
+                                             "config": {"variant": "tp4_T600", "size_sol": 0.5}}, "secondary": []},
+            "H5": {"name": "H5", "primary": {"status": "pending"}, "caveats": ["c"],
+                   "secondary": [{"regime": "270ms", "mean_net_sol_per_trade": 0.044, "ci95_sol_per_trade": [0.02, 0.06],
+                                  "config": {"variant": "flow300_tp100_H6", "size_sol": 0.5}}]},
+            "H4": {"name": "H4", "primary": {"status": "pending"}, "secondary": [{"config": {"variant": "flow300_H6", "size_sol": 0.5}}]}}}
+        raw = json.dumps(exp).encode()
+        exits = [{"family": "F7", "variant": "tp4_T600", "day": f"2026-10-{20 + i % 6}", "tokens": 5, "pnl": 1_000_000} for i in range(60)]
+        exits += [{"family": "F7", "variant": "flow300_tp100_H6", "day": "2026-10-20", "tokens": 5, "pnl": -100_000_000}]
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            f.write(raw)
+        old = paper.EXPECTATIONS, paper.EXPECTATIONS_SHA256
+        try:
+            paper.EXPECTATIONS, paper.EXPECTATIONS_SHA256 = f.name, hashlib.sha256(raw).hexdigest()
+            oc = paper.on_course(exits, {"tp4_T600"}, {"H": ["flow300_tp100_H6"]})
+            self.assertEqual([c["id"] for c in oc["candidates"]], ["K3", "H5"])  # H4's variant does not run here
+            k3, h5 = oc["candidates"]
+            self.assertEqual((k3["group"], k3["paper"]["trades"], k3["position"]), ("K3", 60, "inside"))  # +0.001 in [-0.0045, 0.00305]
+            self.assertAlmostEqual(k3["primary"]["ci95_sol"][0], -0.0045)
+            self.assertIsNotNone(k3["paper"]["ci95_sol"])  # 6 days: the stop rule's interval
+            self.assertEqual((h5["group"], h5["position"], h5["primary"]["status"], h5["caveats"]), ("H", None, "pending", ["c"]))
+            paper.EXPECTATIONS_SHA256 = "0" * 64
+            self.assertEqual(paper.on_course(exits, {"tp4_T600"}, {})["candidates"], [])  # not the pinned file: nothing
+            self.assertIn("sha256", paper.on_course(exits, {"tp4_T600"}, {})["error"])
+        finally:
+            paper.EXPECTATIONS, paper.EXPECTATIONS_SHA256 = old
+            os.unlink(f.name)
+
+    def test_the_real_file_is_the_pinned_one(self):
+        if not os.path.exists(paper.EXPECTATIONS):
+            self.skipTest("no expectations file here")
+        self.assertIsNone(paper._expectations()[1])
 
 
 class Recorder(unittest.TestCase):
@@ -666,9 +709,12 @@ class WalletAndTriton(unittest.TestCase):
         self.assertTrue(any(s["dropped"] for s in t["streams"]))
 
     def test_live_pool_candles_from_the_recorder_segments(self):
-        """A live pool newer than the store: 1-minute candles from the recorder's pump_amm Buy/SellEvent parquet, in
-        SOL per token as the store's (reversed pool: SOL reserve / token reserve / 1000), token buys on the right
-        side, and only segments around the bot's trades; none from the sample recorder."""
+        """A live pool newer than the store: 1-minute candles from the recorder's pump_amm Buy/SellEvent parquet, priced
+        as the store prices a trade (labstore.pool_trades_sql: the state BEFORE the trade, e = quote vault + virtual
+        quote reserves, reversed b/e / 1000), token buys on the right side, only segments around the bot's trades;
+        pool_price_at = the state AFTER the last trade, with the store's deltas (the vault moves by the quote amount
+        with the LP fee on a buy, without it on a sell) and vq, none older than MAX_PRICE_AGE_SECS; none from the
+        sample recorder."""
         import duckdb
         pool, t0 = "Poo1111111111111111111111111111111111111111", 1_792_497_600
         with tempfile.TemporaryDirectory() as root:
@@ -676,40 +722,42 @@ class WalletAndTriton(unittest.TestCase):
                 d = os.path.join(root, "segments", f"{seq:09d}")
                 for ev, rows in events.items():
                     os.makedirs(os.path.join(d, "pump_amm", ev))
-                    base, quote = ("base_amount_out", "quote_amount_in") if ev == "BuyEvent" else ("base_amount_in", "quote_amount_out")
-                    values = ", ".join(f"({s}::UBIGINT, {i}::UBIGINT, 0::UBIGINT, 0::UBIGINT, {ts}::BIGINT, '{p}', {b}::UBIGINT, {q}::UBIGINT, {ba}::UBIGINT, {qa}::UBIGINT)"
-                                       for s, i, ts, p, b, q, ba, qa in rows)
+                    base, quote, fee = (("base_amount_out", "quote_amount_in", "quote_amount_in_with_lp_fee") if ev == "BuyEvent"
+                                        else ("base_amount_in", "quote_amount_out", "quote_amount_out_without_lp_fee"))
+                    values = ", ".join(f"({s}::UBIGINT, {i}::UBIGINT, 0::UBIGINT, 0::UBIGINT, {ts}::BIGINT, '{p}', {b}::UBIGINT, {q}::UBIGINT, "
+                                       f"{ba}::UBIGINT, {qa}::UBIGINT, {qf}::UBIGINT, '{vq}')" for s, i, ts, p, b, q, ba, qa, qf, vq in rows)
                     duckdb.sql(f"COPY (SELECT * FROM (VALUES {values}) t(slot, tx_index, outer_ix, inner_ix, \"timestamp\", pool, "
-                               f"pool_base_token_reserves, pool_quote_token_reserves, {base}, {quote})) "
+                               f"pool_base_token_reserves, pool_quote_token_reserves, {base}, {quote}, {fee}, virtual_quote_reserves)) "
                                f"TO '{os.path.join(d, 'pump_amm', ev, 'part-00000.parquet')}' (FORMAT parquet)")
                 with open(os.path.join(d, "_segment.json"), "w") as f:
                     json.dump({"seq": seq, "first_slot": slot, "last_slot": slot + 149, "complete": True, "written_unix": t0 - 600 + seq,
                                "usage": []}, f)
-            sol = 1_000_000_000
+            sol, T = 1_000_000_000, 1_000_000_000_000
             # Reversed pool (base WSOL): a BuyEvent buys SOL with the token (a token sale), a SellEvent sells SOL (a token buy).
-            segment(1, 470_000_000, {"BuyEvent": [(470_000_010, 1, t0, pool, 30 * sol, 100_000_000_000_000, 1 * sol, 3_000_000_000_000)],
-                                     "SellEvent": [(470_000_020, 2, t0 + 30, pool, 32 * sol, 95_000_000_000_000, 2 * sol, 5_000_000_000_000),
-                                                   (470_000_030, 1, t0 + 70, "Other11111111111111111111111111111111111111", 1, 1, 1, 1)]})
-            segment(2, 480_000_000, {"SellEvent": [(480_000_010, 1, t0 + 9000, pool, 40 * sol, 90_000_000_000_000, 1 * sol, 1)]})  # far away
+            segment(1, 470_000_000, {"BuyEvent": [(470_000_010, 1, t0, pool, 30 * sol, 100 * T, 1 * sol, 3 * T, 3_010_000_000_000, T)],
+                                     "SellEvent": [(470_000_020, 2, t0 + 30, pool, 32 * sol, 95 * T, 2 * sol, 5 * T, 4_990_000_000_000, 0),
+                                                   (470_000_030, 1, t0 + 70, "Other11111111111111111111111111111111111111", 1, 1, 1, 1, 1, 0)]})
+            segment(2, 480_000_000, {"SellEvent": [(480_000_010, 1, t0 + 9000, pool, 40 * sol, 90 * T, 1 * sol, 1, 1, 0)]})  # far away
             with open(os.path.join(root, "budget.json"), "w") as f:
                 json.dump({"day": t0 // 86_400, "spent_bytes": 1, "cap_bytes": 25_000_000_000}, f)
             os.environ["LAB_RECORDER_ROOT"] = root
             try:
                 c = paper.live_pool_candles(pool, [470_000_015, 470_000_025], True, now=t0)
-                at = [paper.pool_price_at(pool, s_, True, now=t0) for s_ in (470_000_025, 470_000_015, 470_000_005, 470_000_149)]
+                at = [paper.pool_price_at(pool, s_, True, now=t0) for s_ in (470_000_025, 470_000_015, 470_000_005)]
+                fresh = paper.pool_price_at(pool, 470_000_025, True, at_unix=t0 + 30 + 59, now=t0)
+                stale = paper.pool_price_at(pool, 470_000_025, True, at_unix=t0 + 30 + 61, now=t0)
             finally:
                 del os.environ["LAB_RECORDER_ROOT"]
         (k,) = c
         self.assertEqual((k["time"], k["trades"]), (t0, 2))
-        # The events carry the reserves before the trade: the price is the one after it (the BuyEvent takes 1 SOL out
-        # and puts 3e12 tokens in; the SellEvent puts 2 SOL in and takes 5e12 tokens out).
-        self.assertAlmostEqual(k["open"], 29 * sol / 103_000_000_000_000 / 1000)
-        self.assertAlmostEqual(k["close"], 34 * sol / 90_000_000_000_000 / 1000)
+        self.assertAlmostEqual(k["open"], 30 * sol / (100 * T + T) / 1000)  # before the buy, with vq
+        self.assertAlmostEqual(k["close"], 32 * sol / (95 * T) / 1000)  # before the sell
         self.assertAlmostEqual(k["volume_quote"], 3.0)  # the SOL side: 1 + 2
         self.assertAlmostEqual(k["buy_quote"], 2.0)  # the SellEvent is the token buy in a reversed pool
-        # The price after the last trade at or before a slot (explain's market price); none before the first trade.
-        self.assertEqual(at, [(34 * sol / 90_000_000_000_000 / 1000, 470_000_020), (29 * sol / 103_000_000_000_000 / 1000, 470_000_010), (None, None),
-                              (34 * sol / 90_000_000_000_000 / 1000, 470_000_020)])
+        after_buy = 29 * sol / (100 * T + 3_010_000_000_000 + T) / 1000  # base out; the vault takes the quote with the LP fee; + vq
+        after_sell = 34 * sol / (95 * T - 4_990_000_000_000) / 1000  # base in; the vault gives the quote without the LP fee
+        self.assertEqual(at, [(after_sell, 470_000_020), (after_buy, 470_000_010), (None, None)])
+        self.assertEqual((fresh, stale), ((after_sell, 470_000_020), (None, None)))  # older than 60 s of block time: no price
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"  # the sample recorder: no live candles
         try:
             self.assertEqual(paper.live_pool_candles(pool, [470_000_015], True, now=t0), [])

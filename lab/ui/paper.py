@@ -22,6 +22,7 @@ and counted, as is any recorder usage of such a segment.
 import bisect
 import calendar
 import glob
+import hashlib
 import heapq
 import importlib.util
 import json
@@ -587,9 +588,75 @@ def journal_view(path, now):
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
             "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
             "arms": arm_groups(exits, positions, further, day), "arm_positions": arm_rows, "day_card": day_card,
-            "journal_usage_rows": len(usage),
+            "journal_usage_rows": len(usage), "on_course": on_course(exits, primary, further),
             "groups_inferred": groups_inferred,
             "holdout_rows_dropped": j.dropped}
+
+
+# "Op koers?" (backlog 3): paper per trade beside the backtest's expectation, from LAB research's versioned file,
+# pinned by its sha256 (a new version gets a new sha and a new pin here; a mismatch shows nothing).
+EXPECTATIONS = os.path.join(DATA, "research", "paper-expectations-2026-10-20.json")
+EXPECTATIONS_SHA256 = "f1a62c3dc296404df3b2b21dda4acc121bc5dc5ebbcb2373a4dc3a9b5f0391d1"
+MIN_TRADES_SHOWN = 50  # below this many filled paper trades the comparison says "nog te weinig"
+
+
+def _expectations():
+    try:
+        with open(EXPECTATIONS, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None, "geen verwachtingsbestand"
+    if hashlib.sha256(raw).hexdigest() != EXPECTATIONS_SHA256:
+        return None, "verwachtingsbestand wijkt af van de gepinde sha256"
+    try:
+        return json.loads(raw), None
+    except ValueError:
+        return None, "verwachtingsbestand onleesbaar"
+
+
+def on_course(exits, primary, further):
+    """Per candidate whose variant this journal runs: the paper's net P&L per filled trade (failed entries' costs
+    included, as the stop rule), with the stop rule's day bootstrap from 5 days, beside the expectation file's
+    primary (out-of-sample) and secondary (dev in-sample, 'optimistisch') per-trade bands, in SOL per trade at
+    the file's size. Where the paper mean falls against the primary band, from MIN_TRADES_SHOWN trades on.
+    Decides nothing: the stop rule and the forward test do."""
+    exp, why = _expectations()
+    if exp is None:
+        return {"error": why, "candidates": []}
+    running = set(primary or ()) | {v for vs in further.values() for v in vs}
+    out = []
+    for cid, c in exp.get("candidates", {}).items():
+        prim, sec = c.get("primary") or {}, c.get("secondary") or []
+        cfg = prim.get("config") or (sec[0].get("config") if sec else {}) or {}
+        variant, size = cfg.get("variant"), float(cfg.get("size_sol") or 0.5)
+        if variant not in running:
+            continue
+        xs = [x for x in exits if x["family"] == "F7" and x["variant"] == variant]
+        by_day, filled_by_day, n = stoprule.stop_rule_inputs([dict(x, pnl=x["pnl"] or 0) for x in xs])
+        mean, lo, hi, _ = stoprule.verdict(by_day, n, filled_by_day)
+        sol = lambda v: None if v is None else v / 1e9  # noqa: E731
+        band = None
+        if prim.get("ci95_ret_pct"):
+            band = [p / 100 * size for p in prim["ci95_ret_pct"]]
+        elif prim.get("ci95_sol_per_trade"):
+            band = list(prim["ci95_sol_per_trade"])
+        pm = sol(mean)
+        position = None
+        if band and pm is not None and n >= MIN_TRADES_SHOWN:
+            position = "below" if pm < band[0] else "above" if pm > band[1] else "inside"
+        out.append({
+            "id": cid, "name": c.get("name"), "variant": variant, "group": "K3" if primary and variant in primary else next(
+                (g for g, vs in further.items() if variant in vs), None),
+            "paper": {"trades": n, "failed_entries": len(xs) - n, "days": len(by_day), "mean_sol": pm, "ci95_sol": [sol(lo), sol(hi)] if lo is not None else None},
+            "primary": {"label": prim.get("label"), "status": prim.get("status"), "trades": prim.get("trades"),
+                        "mean_sol": (prim["mean_ret_pct"] / 100 * size) if prim.get("mean_ret_pct") is not None else prim.get("mean_net_sol_per_trade"),
+                        "ci95_sol": band, "verdict": prim.get("verdict"), "source": prim.get("source")},
+            "secondary": [{"label": x.get("label"), "regime": x.get("regime"), "trades": x.get("trades"), "mean_sol": x.get("mean_net_sol_per_trade"),
+                           "ci95_sol": x.get("ci95_sol_per_trade")} for x in sec],
+            "caveats": [str(v) for v in (c.get("caveats") or [])], "position": position,
+        })
+    return {"version": exp.get("version"), "sha256": EXPECTATIONS_SHA256, "regime_note": exp.get("regime_note"),
+            "rules": exp.get("rules") or [], "min_trades": MIN_TRADES_SHOWN, "candidates": out}
 
 
 def arm_groups(exits, positions, further, day):
@@ -739,8 +806,8 @@ LIVE_CACHE = 16
 def live_pool_candles(pool, slots, reversed_, now=None):
     """1-minute price candles of one PumpSwap pool from the live recorder's segments (pump_amm Buy/SellEvent
     parquet, the watchlist's trades), around the bot's trades: for tokens newer than the development store. Price
-    in SOL per token as the store's (SOL reserve / token reserve / 1000 after the trade: the events carry the
-    reserves before it, so the trade's amounts are applied); `reversed_`: the
+    in SOL per token as the store's: each trade at the pool's state before it, e = quote vault + virtual quote
+    reserves, e/b (reversed: b/e) / 1000 (labstore.pool_trades_sql, store.py pool_select); `reversed_`: the
     pool's base is WSOL. Read-only, DuckDB in memory with a fixed budget (256 MB, one thread): the recorder and the
     paper engine come first on the VPS. [] without a recorder or without trades of the pool."""
     root, sample = recorder_root()
@@ -759,23 +826,22 @@ def live_pool_candles(pool, slots, reversed_, now=None):
     parts, params = [], []
     for ev, base_col, quote_col in (("BuyEvent", "base_amount_out", "quote_amount_in"), ("SellEvent", "base_amount_in", "quote_amount_out")):
         if files[ev]:
-            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, "timestamp" AS ts, pool_base_token_reserves AS b,
-                                    pool_quote_token_reserves AS q, {base_col} AS base_amt, {quote_col} AS quote_amt, '{ev}' AS ev
+            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, "timestamp" AS ts, pool_base_token_reserves::DOUBLE AS b,
+                                    pool_quote_token_reserves::DOUBLE + COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0) AS e,
+                                    {base_col} AS base_amt, {quote_col} AS quote_amt, '{ev}' AS ev
                              FROM read_parquet(?, union_by_name = true) WHERE pool = ? AND slot BETWEEN ? AND ?""")
             params += [files[ev], pool, lo, hi]
     if not parts:
         return []
     rev = "true" if reversed_ else "false"
+    # The store's definition (labstore.pool_trades_sql, the dev candles of the same chart): each trade's price from
+    # the pool's state BEFORE it, e = the quote vault + the virtual quote reserves (store.py pool_select), price e/b
+    # (reversed: b/e) / 1000.
     sql = f"""
         WITH t AS ({" UNION ALL ".join(parts)}),
-        -- The events carry the pool's reserves BEFORE the trade (checked on job 91's segments: the next trade's base
-        -- reserve equals this one's plus or minus its base amount); the price after the trade comes from the reserves
-        -- after it: a BuyEvent takes base out and puts quote in, a SellEvent the other way round.
-        r AS (SELECT *, CASE WHEN ev = 'BuyEvent' THEN b::DOUBLE - base_amt ELSE b::DOUBLE + base_amt END AS b_after,
-                        CASE WHEN ev = 'BuyEvent' THEN q::DOUBLE + quote_amt ELSE q::DOUBLE - quote_amt END AS q_after FROM t),
-        p AS (SELECT *, CASE WHEN {rev} THEN b_after / NULLIF(q_after, 0) ELSE q_after / NULLIF(b_after, 0) END / 1000 AS price,
+        p AS (SELECT *, CASE WHEN {rev} THEN b / NULLIF(e, 0) ELSE e / NULLIF(b, 0) END / 1000 AS price,
                      CASE WHEN {rev} THEN base_amt ELSE quote_amt END AS sol,
-                     (ev = 'BuyEvent') <> {rev} AS token_buy FROM r)
+                     (ev = 'BuyEvent') <> {rev} AS token_buy FROM t)
         SELECT 'pool' AS venue, (ts // 60 * 60)::BIGINT AS time,
                arg_min(price, (slot, tx_index, outer_ix, inner_ix)) AS open, max(price) AS high, min(price) AS low,
                arg_max(price, (slot, tx_index, outer_ix, inner_ix)) AS "close", count(*) AS trades,
@@ -797,13 +863,16 @@ def live_pool_candles(pool, slots, reversed_, now=None):
     return out
 
 
-MAX_PRICE_AGE_SLOTS = 150  # about a minute: an older last trade is no market price at `slot`
+MAX_PRICE_AGE_SECS = 60  # an older last trade (block time) is no market price at the asked time
 
 
-def pool_price_at(pool, slot, reversed_, now=None):
-    """The pool's price (SOL per token, as the store's) after its last trade at or before `slot`, from the recorder's
-    segments (pump_amm Buy/SellEvent; their reserves are before the trade, so its amounts are applied): (price, its
-    slot), or (None, None). Read-only, 256 MB."""
+def pool_price_at(pool, slot, reversed_, at_unix=None, now=None):
+    """The pool's price (SOL per token, as the store's) in its state AFTER its last trade at or before `slot`, from
+    the recorder's segments: the events carry the state before the trade, so the trade's own deltas are applied as
+    the store applies them (store.py: base_amount_out / _in; the quote vault moves by quote_amount_in_with_lp_fee on
+    a buy and quote_amount_out_without_lp_fee on a sell, the LP fee stays in the pool), plus the virtual quote
+    reserves (e = vault + vq). (price, its slot), or (None, None): no trade, or a last trade more than
+    MAX_PRICE_AGE_SECS of block time before `at_unix` (when given). Read-only, 256 MB."""
     root, sample = recorder_root()
     if sample or slot is None:
         return None, None
@@ -811,14 +880,13 @@ def pool_price_at(pool, slot, reversed_, now=None):
             if x["first_slot"] is not None and x["last_slot"] is not None and x["first_slot"] <= slot and x["last_slot"] >= slot - LIVE_PAD]
     files = {ev: [f for x in segs[:LIVE_MAX_FILES // 2] for f in glob.glob(os.path.join(x["dir"], "pump_amm", ev, "*.parquet"))]
              for ev in ("BuyEvent", "SellEvent")}
-    # The reserves after the last trade at or before `slot` (the events carry the reserves before the trade): a
-    # BuyEvent takes base out and puts quote in, a SellEvent the other way round. One SELECT per event type, so a
-    # segment set without one of them still works.
     parts, params = [], []
-    for ev, base_col, quote_col, sign in (("BuyEvent", "base_amount_out", "quote_amount_in", -1), ("SellEvent", "base_amount_in", "quote_amount_out", 1)):
+    for ev, base_after, e_delta in (("BuyEvent", "- base_amount_out", "+ quote_amount_in_with_lp_fee"),
+                                    ("SellEvent", "+ base_amount_in", "- quote_amount_out_without_lp_fee")):
         if files[ev]:
-            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, pool_base_token_reserves::DOUBLE + {sign} * {base_col} AS b,
-                                    pool_quote_token_reserves::DOUBLE - {sign} * {quote_col} AS q
+            parts.append(f"""SELECT slot, tx_index, outer_ix, inner_ix, "timestamp" AS ts,
+                                    pool_base_token_reserves::DOUBLE {base_after} AS b,
+                                    pool_quote_token_reserves::DOUBLE {e_delta} + COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0) AS e
                              FROM read_parquet(?, union_by_name = true) WHERE pool = ? AND slot <= ?""")
             params += [files[ev], pool, slot]
     if not parts:
@@ -826,16 +894,16 @@ def pool_price_at(pool, slot, reversed_, now=None):
     import duckdb
     con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
     try:
-        r = con.execute(f"SELECT b, q, slot FROM ({' UNION ALL '.join(parts)}) ORDER BY slot DESC, tx_index DESC, outer_ix DESC, inner_ix DESC LIMIT 1",
+        r = con.execute(f"SELECT b, e, slot, ts FROM ({' UNION ALL '.join(parts)}) ORDER BY slot DESC, tx_index DESC, outer_ix DESC, inner_ix DESC LIMIT 1",
                         params).fetchone()
     except duckdb.Error:
         r = None
     finally:
         con.close()
-    if not r or not r[0] or not r[1] or slot - r[2] > MAX_PRICE_AGE_SLOTS:
-        return None, None  # no trade, or only one so old (outside the recorded segments) that it is no market price
-    b, q = float(r[0]), float(r[1])
-    return (b / q if reversed_ else q / b) / 1000, r[2]
+    if not r or not r[0] or not r[1] or (at_unix is not None and r[3] and at_unix - r[3] > MAX_PRICE_AGE_SECS):
+        return None, None
+    b, e = float(r[0]), float(r[1])
+    return (b / e if reversed_ else e / b) / 1000, r[2]
 
 
 def explain(key, variant, t):
@@ -865,8 +933,8 @@ def explain(key, variant, t):
     buy, sell = fills.get("buy"), fills.get("sell")
     price = lambda f: (f["quote"] / f["tokens"] / 1000) if f and f.get("tokens") and f.get("quote") else None  # noqa: E731
     entry_slot = (order or ex or pos or {}).get("entry_slot")
-    at_signal = pool_price_at(key, t, rev) if venue == "pool" else (None, None)
-    before_entry = pool_price_at(key, entry_slot - 1, rev) if venue == "pool" and entry_slot else (None, None)
+    at_signal = pool_price_at(key, t, rev, at_unix=clock(t)) if venue == "pool" else (None, None)
+    before_entry = pool_price_at(key, entry_slot - 1, rev, at_unix=clock(entry_slot)) if venue == "pool" and entry_slot else (None, None)
     fill = price(buy)
     cost = (ex or pos or {}).get("cost")
     out = {
