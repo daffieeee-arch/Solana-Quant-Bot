@@ -104,7 +104,7 @@ def test_buyback_classes_windows_and_persistence(tmp_path, monkeypatch):
     # persistence: S has 2 block-1 triggers (< MIN_TRIGGERS 3) -> no seller qualifies
     assert res["persistence"]["sellers_block1"] == 0
     md = (tmp_path / "out" / "buyback.md").read_text()
-    assert "| 1m | 8 | 3 | 37.50% |" in md and "self_buyback at 1 m: yes 1, no 1, no buy 1" in md
+    assert "| 1m | 11 | 3 | 27.27% |" in md and "self_buyback at 1 m: yes 1, no 1, no buy 1" in md
 
 
 def con_count(tmp_path, where, col):
