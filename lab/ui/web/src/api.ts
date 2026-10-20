@@ -72,6 +72,17 @@ export interface TokenDetail {
   tape: TapeRow[];
 }
 
+/** POST to the action layer (lab/ui/actions.py): JSON, the X-Lab-Action header (CSRF), the session cookie. */
+export async function postAction<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const res = await fetch(`/api/action/${path}`, {
+    method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json", "X-Lab-Action": "1" },
+    body: JSON.stringify(body),
+  });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((out as { error?: string }).error ?? `Fout ${res.status}`);
+  return out as T;
+}
+
 export async function get<T>(path: string, params: Record<string, string | number | undefined> = {}, signal?: AbortSignal): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") qs.set(k, String(v));

@@ -16,6 +16,7 @@ const Cases = lazy(() => import("./views/Cases"));
 const Paper = lazy(() => import("./views/Paper"));
 const Wallet = lazy(() => import("./views/Wallet"));
 const Triton = lazy(() => import("./views/Triton"));
+const Control = lazy(() => import("./views/Control"));
 
 // Tabs appear only when the API reports data for them (no empty tabs). Order = desktop nav order.
 const TABS: Record<string, { slug: string; label: string; short?: string }> = {
@@ -27,6 +28,7 @@ const TABS: Record<string, { slug: string; label: string; short?: string }> = {
   cases: { slug: "casussen", label: "Casussen" },
   overview: { slug: "overzicht", label: "Overzicht" },
   ticker: { slug: "ticker", label: "Ticker" },
+  control: { slug: "bediening", label: "Bediening" },
 };
 
 export default function App() {
@@ -53,6 +55,7 @@ export default function App() {
   else if (active.key === "paper") view = <Paper />;
   else if (active.key === "wallet") view = <Wallet />;
   else if (active.key === "triton") view = <Triton />;
+  else if (active.key === "control") view = <Control />;
   else view = <Overview />;
 
   return (
